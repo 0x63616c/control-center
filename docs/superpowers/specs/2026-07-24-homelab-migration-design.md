@@ -17,6 +17,42 @@ and folds Home Assistant into that cluster as a container.
 
 ---
 
+## 0. Decisions LOCKED — 2026-07-24 (session 4, with Calum)
+
+These override any contrary text below. Product-owner calls, not grill material.
+
+1. **HA recorder → its OWN CNPG Cluster** (Option B — a separate Postgres instance, NOT
+   a second db inside `control-center-1`). DB name `home_assistant`. Rationale: recorder
+   is chatty + disposable; `control_center` is the one irreplaceable DB — no shared blast
+   radius. Supersedes the P3 "SQLite-in-PVC" recommendation and the "recorder→CNPG same
+   cluster" brainstorm lock.
+2. **NO recorder history migration.** Calum uses HA only as the integration engine;
+   Control Center is the product and never reads the HA recorder (verified: only app
+   `recorder` refs are unrelated; Tesla modal explicitly "NO recorder dependency"). Old
+   energy/history graphs are disposable. HA starts fresh recording against an empty
+   `home_assistant` db. Set an aggressive purge (few days) to keep it tiny.
+3. **At cutover, copy ONLY `.storage` (pairings/tokens) + YAML config — NOT
+   `home-assistant_v2.db`.** `.storage` is the irreplaceable state (drives device
+   pairings; nothing unsyncs as long as it moves clean). The recorder SQLite file is left
+   behind. This shrinks the risky HA cutover.
+4. **HA workload → its own `home-assistant` namespace** (hyphen; DNS-1123). The
+   `home_assistant` CNPG Cluster lives there too. Nothing HA touches `control-center` ns.
+5. **Full k8s namespace / multi-tenancy strategy = DEFERRED** to a dedicated design
+   session AFTER migration. Migration is lift-and-shift of existing namespaces; only the
+   NEW in-cluster HA resources get placed now (#4). Cross-ns DB access is a service-DNS +
+   NetworkPolicy detail, so this boxes nothing in; moving a CNPG cluster between ns later
+   is a restore op (reversible).
+
+**Still OPEN (Calum to call at BIOS time):** disk encryption — TPM-sealed vs
+unencrypted. Physical-theft threat model only; passphrase ruled out (kills headless
+reboot). Recommend TPM-sealed if Secure Boot cooperates cleanly, unencrypted fallback.
+
+Naming rule (recurring confusion): k8s resource names use **hyphens** (`control-center`,
+`home-assistant` — DNS-1123); Postgres db names use **underscores** (`control_center`,
+`home_assistant`).
+
+---
+
 ## 1. Why
 
 Today's prod is a Mac mini running two unrelated stacks that keep taking the house
@@ -156,16 +192,16 @@ schema and there is **no clean import of existing history** (including the Tesla
 long-term statistics we explicitly want to keep). Community SQLite→PG importers exist but
 are fragile and unsupported.
 
-**Recommendation (Calum to confirm — flagged, not unilaterally decided):**
-**Keep HA on SQLite inside the `/config` PVC for the migration.** The copied
-`home-assistant_v2.db` rides along untouched — zero history loss, zero conversion risk,
-and it is strictly *simpler* than the locked plan. Moving the recorder to CNPG becomes a
-**later, separate, reversible** step (HA supports switching the recorder DB via config;
-at that point you either start fresh history or run an importer deliberately). This keeps
-the risky HA cutover as small as possible.
-- If Calum still wants Postgres now: the plan adds an explicit history-migration spike
-  with a go/no-go, and accepts possible loss of pre-migration detailed history (LTS
-  may be salvageable separately). Default is SQLite-in-PVC.
+**DECIDED 2026-07-24 (§0.1–3), superseding the SQLite recommendation this section
+originally made:** the lossy-conversion problem this section raised is what made history
+*disposable* the right answer — Calum confirmed the app never reads the recorder and he
+doesn't care about HA's own history graphs. So: **HA recorder → a fresh empty
+`home_assistant` db in its OWN CNPG Cluster** (not a second db in `control-center-1`),
+with **no history migrated** and only `.storage`+YAML copied at cutover. The SQLite
+`home-assistant_v2.db` is left behind entirely. This is *simpler* than both the original
+locked plan (no conversion) and the SQLite-in-PVC fallback (no second datastore type),
+and gives Calum the single-Postgres end state he wanted while keeping HA's disposable
+churn off the one irreplaceable DB.
 
 ### P4 — `infra/src/services.ts` hardcodes mini/OrbStack values (the app "not changing" is false for infra)
 Three values are pinned to the mini and will silently break HA-backed tiles and Plex
@@ -229,7 +265,7 @@ after cutover — they are **not** "regenerable" and **not** "unchanged":
 - **Static node IP** in the machine config **+ matching UniFi DHCP reservation**.
 
 ### Revisited by recon
-- **Recorder: SQLite-in-PVC, not CNPG** (P3). ← changes a locked decision, needs a nod.
+- **Recorder → own CNPG Cluster `home_assistant`, no history migration** (§0.1–3, decided). Supersedes the SQLite-in-PVC recommendation in P3 below.
 - **Images: multi-arch** during transition (P1).
 - **LoadBalancer:** k3s ServiceLB (klipper) does not exist on Talos. `api` and `plex`
   are `type: LoadBalancer` today (EXTERNAL-IP `192.168.139.2`, an OrbStack subnet).
@@ -258,7 +294,8 @@ after cutover — they are **not** "regenerable" and **not** "unchanged":
 |---|---|---|
 | NFS PVs (api/worker/plex/pg-backup) | Synology | **Re-mount.** Nothing moves. |
 | CNPG Postgres (`control_center`) | local-path, mini | **`pg_dump` at cutover** → restore into new CNPG → **row-count + checksum verify vs live mini** before wiping. Mini stays as rollback. |
-| HA `/config` | HAOS qcow2, mini | **Two copies.** (1) An early **throwaway rehearsal tar** (HA running) to build+test the container in the VM phase. (2) The **authoritative copy at cutover with HA STOPPED** (C1). Includes `.storage` (pairings/tokens) + `home-assistant_v2.db` (SQLite recorder). Land in a new `ha-config` PVC. |
+| HA `/config` | HAOS qcow2, mini | **Two copies.** (1) An early **throwaway rehearsal tar** (HA running) to build+test the container in the VM phase. (2) The **authoritative copy at cutover with HA STOPPED** (C1). Copy `.storage` (pairings/tokens) + YAML **only** — NOT `home-assistant_v2.db` (recorder left behind, §0.3). Land in a new `ha-config` PVC. |
+| HA recorder | — | **Not migrated (§0.2).** New `home_assistant` db in its own CNPG Cluster (`home-assistant` ns); HA records fresh from cutover, aggressive purge. |
 | `plex-config` | local-path, mini | Copy (Plex library/metadata). Non-critical; acceptable to re-scan if it fails. |
 | `maps` | local-path, mini | **Do not migrate.** Re-provision via cron / initContainer. |
 
@@ -269,9 +306,10 @@ after cutover — they are **not** "regenerable" and **not** "unchanged":
 Container HA has **no Supervisor**, so HA's built-in snapshot/backup button disappears.
 The migration must not leave the house *less* recoverable than today. Replacement:
 - **`ha-config` PVC → scheduled backup to the Synology** (a CronJob, same NFS pattern as
-  `pg-backup`), covering `.storage` + SQLite recorder.
-- CNPG's existing daily `pg-backup` cron continues to cover `control_center` (and any
-  future `home_assistant` PG db).
+  `pg-backup`), covering `.storage` + YAML (the irreplaceable state; §0.3).
+- CNPG's existing daily `pg-backup` cron covers `control_center`; the new
+  `home_assistant` CNPG Cluster (§0.1) gets its own backup entry (its data is disposable,
+  but keep the pattern uniform).
 
 This is **in scope**, not deferred.
 
@@ -289,9 +327,9 @@ This is **in scope**, not deferred.
 5. **HA LAST** — the only point the house goes dark. Sequence inside the gate:
    1. **Stop HAOS on the mini** (`ha core stop`, or stop the recorder at minimum) and
       **verify stopped**.
-   2. **Only now** take the authoritative `/config` copy (C1) — a stopped-HA snapshot, or
-      `sqlite3 home-assistant_v2.db ".backup"` for the recorder. A live tar risks
-      half-written `.storage` (HomeKit/Thread pairings) and a torn SQLite WAL — the one
+   2. **Only now** take the authoritative `/config` copy (C1) — a stopped-HA snapshot of
+      `.storage` + YAML **only** (recorder db NOT copied, §0.3). A live tar risks
+      half-written `.storage` (HomeKit/Thread pairings) — the one
       truly irreplaceable data in the whole migration.
    3. Load it into the `ha-config` PVC; **start the new HA container.**
    Both HAs must never talk to devices simultaneously (`.storage` pairing corruption for
@@ -323,7 +361,9 @@ This collapses the real-hardware work toward a single pass.
   now so it needs no reinstall. Today `local-path` means the HA pod can move but its data
   can't.
 - **Node #2** — out of scope.
-- **Recorder → CNPG Postgres** — deferred by P3 unless Calum wants it now.
+- **Full k8s namespace / multi-tenancy strategy** — deferred to a post-migration design
+  session (§0.5). Migration only places the new in-cluster HA resources (§0.4).
+- ~~Recorder → CNPG Postgres~~ — **DECIDED** (§0.1): own CNPG Cluster, no history migration.
 - **Cilium** — with node #2.
 
 ## 11. What needs Calum (physically or a decision)
@@ -337,7 +377,8 @@ session; BIOS is at the desk):
 4. Present for the HA cutover to confirm the panel + lights feel right.
 
 Decisions:
-- **P3**: SQLite-in-PVC (recommended) vs CNPG-now. Default SQLite-in-PVC.
+- ~~P3 recorder~~ — **DECIDED §0**: own CNPG Cluster `home_assistant`, no history migration.
+- **Disk encryption** — TPM-sealed vs unencrypted. STILL OPEN; call at BIOS time (§0).
 - **MetalLB vs hostNetwork/NodePort** for the two LoadBalancer services (plan will
   recommend MetalLB).
 
