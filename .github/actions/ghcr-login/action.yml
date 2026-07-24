@@ -5,12 +5,20 @@ description: Install sops+age, extract GHCR PAT from SOPS vault, login to ghcr.i
 runs:
   using: composite
   steps:
-    - name: Install sops + age (arm64)
+    # Talos migration (SDD homelab-migration Task 1): build jobs now run on
+    # BOTH native arm64 (the mini, staying live) and native amd64 (the new
+    # Talos node) runners, so this can no longer hardcode the arm64 binary.
+    - name: Install sops + age (host arch)
       shell: bash
       run: |
-        curl -fsSL https://github.com/getsops/sops/releases/download/v3.13.1/sops-v3.13.1.linux.arm64 \
+        case "$(uname -m)" in
+          aarch64|arm64) ARCH=arm64 ;;
+          x86_64|amd64) ARCH=amd64 ;;
+          *) echo "Unsupported arch: $(uname -m)"; exit 1 ;;
+        esac
+        curl -fsSL "https://github.com/getsops/sops/releases/download/v3.13.1/sops-v3.13.1.linux.$ARCH" \
           -o /usr/local/bin/sops && chmod +x /usr/local/bin/sops
-        curl -fsSL https://github.com/FiloSottile/age/releases/download/v1.3.1/age-v1.3.1-linux-arm64.tar.gz \
+        curl -fsSL "https://github.com/FiloSottile/age/releases/download/v1.3.1/age-v1.3.1-linux-$ARCH.tar.gz" \
           | tar -xzC /usr/local/bin --strip-components=1 age/age age/age-keygen
     - name: Extract GHCR PAT and login
       shell: bash

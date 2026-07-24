@@ -1,5 +1,5 @@
-name: Build and push ARM64 image
-description: Reusable product image build for CI, with shared GHCR auth/login + Buildx cache settings.
+name: Build and push single-arch product image
+description: Reusable single-arch product image build for CI, with shared GHCR auth/login + Buildx cache settings. Pushes only the per-arch child tag; a dependent merge job (docker buildx imagetools create) composes the multi-arch index at `:main`/`:<sha>` (SDD homelab-migration Task 1).
 inputs:
   image:
     description: Full image repository name without registry, e.g. www-control-center-web
@@ -10,9 +10,9 @@ inputs:
   context:
     description: Build context path
     default: .
-  platforms:
-    description: Buildx platform list
-    default: linux/arm64
+  arch:
+    description: Target arch for this leg (amd64 or arm64). Maps to the single-platform buildx target — never QEMU-emulated, the job's runner is native for this arch.
+    required: true
   cache-scope:
     description: Buildx cache scope string
     required: true
@@ -22,6 +22,16 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Resolve platform from arch
+      id: platform
+      shell: bash
+      run: |
+        case "${{ inputs.arch }}" in
+          amd64) echo "platform=linux/amd64" >> "$GITHUB_OUTPUT" ;;
+          arm64) echo "platform=linux/arm64" >> "$GITHUB_OUTPUT" ;;
+          *) echo "Unsupported arch: ${{ inputs.arch }}"; exit 1 ;;
+        esac
+
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
@@ -30,16 +40,15 @@ runs:
       env:
         SOPS_AGE_KEY: ${{ env.SOPS_AGE_KEY }}
 
-    - name: Build and push image
+    - name: Build and push per-arch image
       uses: docker/build-push-action@v6
       with:
         context: ${{ inputs.context }}
         file: ${{ inputs.dockerfile }}
-        platforms: ${{ inputs.platforms }}
+        platforms: ${{ steps.platform.outputs.platform }}
         push: true
         build-args: ${{ inputs.build-args }}
         tags: |
-          ghcr.io/0x63616c/${{ inputs.image }}:${{ github.sha }}
-          ghcr.io/0x63616c/${{ inputs.image }}:${{ github.ref_name == 'main' && 'main' || github.sha }}
-        cache-from: type=gha,scope=${{ inputs.cache-scope }}
-        cache-to: type=gha,mode=max,scope=${{ inputs.cache-scope }}
+          ghcr.io/0x63616c/${{ inputs.image }}:${{ github.sha }}-${{ inputs.arch }}
+        cache-from: type=gha,scope=${{ inputs.cache-scope }}-${{ inputs.arch }}
+        cache-to: type=gha,mode=max,scope=${{ inputs.cache-scope }}-${{ inputs.arch }}
