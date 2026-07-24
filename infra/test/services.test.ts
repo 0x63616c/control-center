@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { composeGhcrDockerConfigJson, composeGo2rtcConfig } from "../src/services.ts";
+import {
+  composeGhcrDockerConfigJson,
+  composeGo2rtcConfig,
+  haTarget,
+  parseSubstrate,
+  plexAdvertiseIp,
+} from "../src/services.ts";
 
 // The two pure string builders pulled out of deployServices (www-j934.6): the
 // go2rtc config YAML and the GHCR imagePullSecret `.dockerconfigjson`. Both take
@@ -166,5 +172,44 @@ describe("composeGhcrDockerConfigJson", () => {
 
   test("is deterministic: identical PAT yields byte-identical output", () => {
     expect(composeGhcrDockerConfigJson("ghp_token")).toBe(composeGhcrDockerConfigJson("ghp_token"));
+  });
+});
+
+// The `substrate` flag (mini-migration Task 3): haTarget/plexAdvertiseIp must
+// keep the mini's ("orbstack") values byte-identical to today's live deploy
+// when the flag is absent, and switch to the node LAN IP on "talos".
+describe("parseSubstrate", () => {
+  test("undefined config defaults to orbstack (the mini)", () => {
+    expect(parseSubstrate(undefined)).toBe("orbstack");
+  });
+
+  test("accepts the two known substrates verbatim", () => {
+    expect(parseSubstrate("orbstack")).toBe("orbstack");
+    expect(parseSubstrate("talos")).toBe("talos");
+  });
+
+  test("rejects an unknown substrate value", () => {
+    expect(() => parseSubstrate("swarm")).toThrow(/wwwinfra:substrate/);
+  });
+});
+
+describe("haTarget", () => {
+  test("ha target is the node LAN IP on talos (api/worker are non-hostNetwork pods)", () => {
+    expect(haTarget("talos", "192.168.0.5")).toBe("192.168.0.5");
+    expect(haTarget("orbstack", "192.168.0.5")).toBe("homelab.tail8c014d.ts.net");
+  });
+
+  test("orbstack ignores nodeIp entirely (mini has no node LAN IP concept)", () => {
+    expect(haTarget("orbstack", "10.0.0.99")).toBe("homelab.tail8c014d.ts.net");
+  });
+});
+
+describe("plexAdvertiseIp", () => {
+  test("plex advertise uses node LAN IP on talos", () => {
+    expect(plexAdvertiseIp("talos", "192.168.0.5")).toBe("http://192.168.0.5:32400");
+  });
+
+  test("orbstack is the mini's frozen LAN IP regardless of nodeIp", () => {
+    expect(plexAdvertiseIp("orbstack", "192.168.0.5")).toBe("http://192.168.0.147:32400");
   });
 });

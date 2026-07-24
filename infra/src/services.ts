@@ -101,6 +101,65 @@ const ghcr = (name: string, digests: ImageDigests = {}): string => {
 const HA_TAILNET_FQDN = "homelab.tail8c014d.ts.net";
 const HA_PORT = 8123;
 
+// The two homelab substrates this program can target: "orbstack" is the
+// currently-live Mac mini (arm64, OrbStack k3s) and is the DEFAULT everywhere
+// below so an omitted `wwwinfra:substrate` config renders byte-identical mini
+// output; "talos" is the Talos cluster on the gaming PC (amd64) migration
+// target. Never add a third value without re-auditing every haTarget/
+// plexAdvertiseIp call site.
+export type Substrate = "orbstack" | "talos";
+
+/**
+ * Boundary-validates the raw `wwwinfra:substrate` Pulumi config string (or
+ * undefined) into a {@link Substrate}. Missing config = "orbstack" (the mini),
+ * preserving today's live-deploy behavior exactly; any value other than the
+ * two known substrates is a hard config error, not a silent fallback.
+ *
+ * @public - unit-tested in infra/test/services.test.ts.
+ */
+export function parseSubstrate(value: string | undefined): Substrate {
+  if (value === undefined || value === "orbstack") return "orbstack";
+  if (value === "talos") return "talos";
+  throw new Error(`wwwinfra:substrate must be "orbstack" or "talos", got "${value}"`);
+}
+
+// Mini (orbstack) values below are frozen: they are the CURRENT LIVE prod
+// values and must never change as a side effect of this file. The talos
+// counterparts route through the node's LAN IP instead (see haTarget /
+// plexAdvertiseIp).
+const MINI_PLEX_ADVERTISE_IP = "http://192.168.0.147:32400";
+const PLEX_PORT = 32400;
+
+/**
+ * The `ha` ExternalName Service target (www-j934.17). On "orbstack" (the mini,
+ * default) this is unconditionally the host's tailnet FQDN: OrbStack pods
+ * can't route to the LAN, but the Mac locally routes its own tailnet IP to the
+ * host HA socat (see the HA_TAILNET_FQDN comment above). On "talos", api/
+ * worker are ordinary (non-hostNetwork) pods, so they can't reach a
+ * hostNetwork HA via loopback — HA binds :8123 in the *node's* netns, which is
+ * reachable from any pod at the node's LAN IP.
+ *
+ * @public - unit-tested in infra/test/services.test.ts; consumed by
+ * deployServices below and by Task 4.
+ */
+export function haTarget(substrate: Substrate, nodeIp: string): string {
+  return substrate === "talos" ? nodeIp : HA_TAILNET_FQDN;
+}
+
+/**
+ * Plex's `ADVERTISE_IP` env var: the externally-reachable URL Plex advertises
+ * to clients (e.g. the Apple TV). On "orbstack" (the mini, default) this is
+ * the Mac's LAN IP, republished on the host by OrbStack's expose_services. On
+ * "talos" this is the node's LAN IP with the MetalLB-published :32400
+ * LoadBalancer port.
+ *
+ * @public - unit-tested in infra/test/services.test.ts; consumed by
+ * serviceSpecs below and by Task 4.
+ */
+export function plexAdvertiseIp(substrate: Substrate, nodeIp: string): string {
+  return substrate === "talos" ? `http://${nodeIp}:${PLEX_PORT}` : MINI_PLEX_ADVERTISE_IP;
+}
+
 const TZ = "America/Los_Angeles";
 
 // The CNPG read-write Service (www-j934.5) the app connects to. env.ts builds
@@ -169,12 +228,19 @@ const mountSecrets = (service: ServiceSecretName) =>
  *   non-prod local applies, where every image falls back to the :main tag. www-j934.14.
  * - requireImageDigestPins: prod safety guard. Refuse to render app Deployments
  *   with mutable/private :main images when wwwinfra:imageDigests is incomplete.
+ * - substrate: which cluster this program targets, "orbstack" (the mini,
+ *   default) or "talos" (the gaming-PC migration target). Drives
+ *   plexAdvertiseIp() below; default preserves the mini's exact current value.
+ * - nodeIp: the target node's LAN IP. Only consulted when substrate is
+ *   "talos" (see plexAdvertiseIp); ignored on "orbstack".
  */
 export interface ServiceSpecOptions {
   cloudflaredReplicas: number;
   nasNfsServer: string;
   imageDigests?: ImageDigests;
   requireImageDigestPins?: boolean;
+  substrate?: Substrate;
+  nodeIp?: string;
 }
 
 /** @public - all app WorkloadSpecs, parameterised by {@link ServiceSpecOptions}. */
@@ -184,6 +250,8 @@ export function serviceSpecs(opts: ServiceSpecOptions): OwnedWorkloadSpec[] {
     nasNfsServer,
     imageDigests: digests = {},
     requireImageDigestPins = false,
+    substrate = "orbstack",
+    nodeIp = "",
   } = opts;
   validateImageDigests(digests);
   if (requireImageDigestPins) validateRequiredImageDigests(digests);
@@ -348,11 +416,12 @@ export function serviceSpecs(opts: ServiceSpecOptions): OwnedWorkloadSpec[] {
         HOSTNAME: "Plex",
         // No PLEX_CLAIM: plex.tv/claim tokens expire in ~4 min so none can be
         // pre-stored. The server boots UNCLAIMED; claim it once via the web UI
-        // (docs/plex.md). ADVERTISE_IP publishes the Mac-host LAN address so
-        // clients get a directly-reachable URL, not the OrbStack-internal pod IP:
-        // the LoadBalancer port below is republished by OrbStack on the Mac host
-        // at 192.168.0.147:32400 (en0 LAN). Update if the Mac's LAN IP changes.
-        ADVERTISE_IP: "http://192.168.0.147:32400",
+        // (docs/plex.md). ADVERTISE_IP publishes the substrate's LAN address so
+        // clients get a directly-reachable URL, not the in-cluster pod IP: on
+        // "orbstack" (default) that's the Mac's LAN IP, republished on the host
+        // by OrbStack's expose_services (en0 LAN, update if it changes); on
+        // "talos" it's the node's LAN IP with the MetalLB :32400 LoadBalancer.
+        ADVERTISE_IP: plexAdvertiseIp(substrate, nodeIp),
       },
       // Plex config/metadata (SQLite) MUST live on fast local disk, never NFS
       // (SQLite over NFS corrupts). local-path PVC on the OrbStack SSD.
@@ -432,6 +501,13 @@ export interface ServicesArgs {
   imageDigests?: ImageDigests;
   // Prod stack guard against rendering app Deployments with mutable :main images.
   requireImageDigestPins?: boolean;
+  // Which cluster this program targets: "orbstack" (the mini, default) or
+  // "talos" (the migration target). Drives haTarget() below; default
+  // preserves the mini's exact current `ha` ExternalName value.
+  substrate?: Substrate;
+  // The target node's LAN IP. Only consulted when substrate is "talos" (see
+  // haTarget); ignored on "orbstack".
+  nodeIp?: string;
   // Decrypted vault from vault.ts (CC-k8t7).
   vault: Record<string, string>;
 }
@@ -521,6 +597,8 @@ export function deployServices(args: ServicesArgs): ServicesResources {
     nasNfsServer,
     imageDigests,
     requireImageDigestPins,
+    substrate = "orbstack",
+    nodeIp = "",
     vault,
   } = args;
   const opts = { provider };
@@ -558,12 +636,14 @@ export function deployServices(args: ServicesArgs): ServicesResources {
     opts,
   );
 
-  // `ha` -> the host's tailnet FQDN (api/worker reach `http://ha:8123`, which
-  // CNAMEs to the host socat via the locally-routed tailnet IP, www-j934.17).
+  // `ha` -> haTarget(substrate, nodeIp) (api/worker reach `http://ha:8123`).
+  // On "orbstack" (default) this CNAMEs to the host's tailnet FQDN, delivered
+  // to the host HA socat via the locally-routed tailnet IP (www-j934.17). On
+  // "talos" it's the node's LAN IP (hostNetwork HA's own netns).
   const haService = new ExternalService(
     {
       name: "ha",
-      externalName: HA_TAILNET_FQDN,
+      externalName: haTarget(substrate, nodeIp),
       provider,
       namespace: namespaces["control-center"],
     },
@@ -592,6 +672,8 @@ export function deployServices(args: ServicesArgs): ServicesResources {
     nasNfsServer,
     imageDigests,
     requireImageDigestPins,
+    substrate,
+    nodeIp,
   }).map(
     ({ namespaceName, ...spec }) =>
       new Workload(

@@ -14,7 +14,7 @@ import { deployCrons } from "./src/crons.ts";
 import { installEso } from "./src/eso.ts";
 import { verifyLiveGhcrPullSecrets } from "./src/ghcr-pull-secret-preflight.ts";
 import { installMetricsServer } from "./src/metrics-server.ts";
-import { deployServices, shouldRequireImageDigestPins } from "./src/services.ts";
+import { deployServices, parseSubstrate, shouldRequireImageDigestPins } from "./src/services.ts";
 import { loadVault } from "./src/vault.ts";
 
 const cfg = new pulumi.Config("wwwinfra");
@@ -108,6 +108,18 @@ if (Object.keys(imageDigests).length > 0) {
   verifyLiveGhcrPullSecrets({ context: kubeContext });
 }
 
+// substrate: which cluster this program targets. Missing config = "orbstack"
+// (the mini), so an untouched stack keeps rendering today's live mini values
+// byte-for-byte (haTarget/plexAdvertiseIp in services.ts). The Talos migration
+// target is "home-server" node context / "talos" substrate, at the static LAN
+// IP below (MetalLB pool 192.168.0.3-192.168.0.4 sits alongside it).
+// Drive via `pulumi config set wwwinfra:substrate talos` on the talos stack.
+const substrate = parseSubstrate(cfg.get("substrate"));
+// nodeIp: the target node's LAN IP. Only consulted when substrate is "talos";
+// defaults to the Talos node's static IP (locked decision), but is inert on
+// "orbstack" (the mini ignores it entirely).
+const nodeIp = cfg.get("nodeIp") ?? "192.168.0.5";
+
 const services = deployServices({
   provider: cluster.provider,
   namespaces,
@@ -115,6 +127,8 @@ const services = deployServices({
   nasNfsServer,
   requireImageDigestPins: shouldRequireImageDigestPins(stackName),
   imageDigests,
+  substrate,
+  nodeIp,
   vault,
 });
 
