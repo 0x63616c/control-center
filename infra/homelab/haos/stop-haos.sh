@@ -26,7 +26,19 @@ set -uo pipefail # NOT -e: probing a dying process is expected control flow.
 HAOS_DIR="$HOME/homeassistant-os"
 PIDFILE="${HAOS_PIDFILE:-$HAOS_DIR/haos.pid}"
 MONITOR_SOCK="${HAOS_MONITOR_SOCK:-/tmp/haos-mon.sock}"
-ACPI_WAIT="${HAOS_ACPI_WAIT:-60}"  # seconds to allow a graceful guest shutdown
+# 180s, raised from 60s after the first real trial (2026-07-24 09:00, triggered by
+# the HA watchdog) timed out and fell back to SIGTERM. A full HA shutdown stops
+# Core, then the add-ons, then the supervisor, and flushes the recorder , that
+# routinely exceeds 60s, so 60 was simply too aggressive.
+#
+# UNPROVEN, BE HONEST: it is NOT yet established that HAOS responds to the ACPI
+# power button at all. What IS established is that the transport works , sending
+# `info status` over the same monitor socket returns "VM status: running", so
+# `system_powerdown` definitely reached QEMU and the guest did not act on it in
+# 60s. If 180s also falls back, the guest is ignoring ACPI and the real fix is a
+# guest-side `ha host shutdown` (needs the SSH add-on or :22222 access), not a
+# longer timeout here.
+ACPI_WAIT="${HAOS_ACPI_WAIT:-180}" # seconds to allow a graceful guest shutdown
 TERM_WAIT="${HAOS_TERM_WAIT:-15}"  # seconds to allow SIGTERM to land
 
 if [ ! -f "$PIDFILE" ]; then

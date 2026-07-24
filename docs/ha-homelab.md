@@ -125,6 +125,49 @@ outright at 07:52:58 (hence refusals, not hangs), and nothing brought it back
 while the supervisor stayed healthy. **Next occurrence, read
 `/tmp/haos-serial.log` first** — that is precisely the gap it was added to close.
 
+### It recurred the same morning — the cause is NOT fixed
+
+At **08:53–09:00 PDT**, ~30 minutes after recovery, HA went unreachable again in
+the same flapping pattern. The newly installed watchdog caught it and restarted
+the guest at 09:00:55; HA has been up since. So the outage is *contained*, not
+cured — **the watchdog is currently what is keeping HA up.** Chasing the
+Companion wedge (physically restarting the Living Room Apple TV, per the runbook
+above) is the outstanding work.
+
+### The ACPI clean shutdown did not work on its first trial
+
+The 09:00 watchdog restart logged `guest did not exit within 60s of ACPI
+powerdown` and fell back to SIGTERM. Two things are now known:
+
+- **The transport is fine.** Sending `info status` over the same monitor socket
+  returns `VM status: running`, so `system_powerdown` definitely reached QEMU.
+- **The guest did not act on it within 60s.** `HAOS_ACPI_WAIT` has been raised to
+  180s, since a full HA shutdown (Core → add-ons → supervisor → recorder flush)
+  routinely exceeds 60s.
+
+If 180s also falls back, HAOS is ignoring the ACPI power button outright and the
+real fix is a guest-side `ha host shutdown`, which needs in-guest access — see
+the SSH-add-on note below. **Until a stop logs `guest shut down cleanly`, treat
+the clean-shutdown path as unproven.**
+
+### In-guest access: prefer the SSH add-on over patching the disk image
+
+`:22222` is open but has no authorized key, and installing one means mounting the
+FAT `hassos-boot` partition inside `haos.qcow2`. That was assessed and **is not
+recommended**: `qemu-img` cannot even open the image while the VM runs (it holds
+a write lock), macOS has no NBD client to attach a qcow2 directly, and the
+workable route — convert the whole 12.7 GB image to raw, `dd` partition 1 out,
+mount it, write the key, `dd` back, convert back — makes several full copies of
+the only extant HA state, with the VM down throughout.
+
+The **Terminal & SSH add-on** achieves the same payoff with none of that risk: it
+is installed through HA's own UI/API while Core is healthy, and because add-ons
+are supervisor-managed containers it keeps running *when Core dies* — which is
+exactly the condition where in-guest access is wanted. It would also provide
+`ha core restart` (recover Core without cycling the VM) and `ha host shutdown`
+(a genuinely clean stop). Not installed yet; it widens the SSH surface, so it is
+a decision to take deliberately.
+
 ## Notes
 
 - The VM is provisioned with **2GB RAM, which is tight** for HAOS + recorder +
