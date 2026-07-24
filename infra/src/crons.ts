@@ -87,6 +87,110 @@ export function postgresBackupCronSpec(
   };
 }
 
+// The shared NAS backup root every product's backups live under (mirrors
+// @www/platform's homelabTarget.nas , not imported directly because
+// home-assistant is deliberately NOT a @www/platform ProductSlug (Task 4: its
+// CNPG cluster is self-contained in homeassistant.ts, not the closed
+// ProductDatabase/DatabaseBackup union). Kept as a literal string constant
+// here so it can't silently drift from the platform value without a reviewer
+// noticing the duplication.
+const NAS_BACKUP_ROOT = "backups/world-wide-webb";
+
+/**
+ * @public - the `ha-config` PVC's daily backup: tars `.storage` + the YAML
+ * config files (NOT the recorder history, which lives in the separate
+ * `home_assistant` CNPG cluster below and is backed up via pg_dump instead ,
+ * see homeAssistantPgBackupCronSpec). Mirrors postgresBackupCronSpec's NFS
+ * destination pattern. Talos-only: consumed by homeassistant.ts, itself only
+ * invoked from program.ts behind `substrate === "talos"`.
+ */
+export function haConfigBackupCronSpec(args: {
+  nasNfsServer: string;
+  haConfigClaimName: string;
+}): CronJobSpec {
+  const { nasNfsServer, haConfigClaimName } = args;
+  const backupMountPath = "/backup";
+  return {
+    name: "ha-config-backup",
+    image: "alpine:3.20",
+    schedule: "15 1 * * *",
+    // alpine's /bin/sh is busybox ash (no `pipefail`), and this command has no
+    // pipe , plain `set -e` is sufficient and correct here, unlike
+    // postgresBackupCommand's pg_dump-into-gzip pipe.
+    command: [
+      "sh",
+      "-c",
+      [
+        "set -e",
+        "cd /config",
+        `out="${backupMountPath}/ha-config-$(date +%Y%m%d).tar.gz"`,
+        // `.storage` (registries, auth, tokens) + top-level YAML (configuration/
+        // automations/scripts/etc). Recorder history is NOT here (§0.3): it lives
+        // entirely in the home_assistant CNPG cluster, backed up separately below.
+        'tar -czf "$out" .storage *.yaml',
+        'echo "wrote $out"',
+      ].join("\n"),
+    ],
+    env: { TZ },
+    volumes: [
+      // Read-only: this cron only ever reads the live config, never writes it.
+      { mountPath: "/config", claim: haConfigClaimName, readOnly: true },
+      {
+        mountPath: backupMountPath,
+        nfs: { server: nasNfsServer, path: "/volume1/Homelab" },
+        subPath: `${NAS_BACKUP_ROOT}/home-assistant/ha-config`,
+      },
+    ],
+  };
+}
+
+/**
+ * @public - the `home_assistant` CNPG cluster's daily pg_dump, alongside
+ * control-center's (Step 6b): keeps the backup pattern uniform across every
+ * Postgres cluster in the stack even though this data is disposable (§0.1 ,
+ * no recorder history is migrated from the mini). Talos-only: consumed by
+ * homeassistant.ts.
+ */
+export function homeAssistantPgBackupCronSpec(args: {
+  nasNfsServer: string;
+  serviceHost: string;
+  databaseName: string;
+  owner: string;
+  authSecretName: string;
+}): CronJobSpec {
+  const { nasNfsServer, serviceHost, databaseName, owner, authSecretName } = args;
+  const authMountPath = "/run/pgauth";
+  const backupMountPath = "/backup";
+  return {
+    name: "home-assistant-pg-backup",
+    // Same CNPG-provided pg_dump/pg_restore-compatible image as
+    // control-center's backup, so both crons share one bash-based image (not
+    // Debian's dash /bin/sh) for `set -o pipefail`.
+    image: "ghcr.io/cloudnative-pg/postgresql:18",
+    schedule: "0 1 * * *",
+    command: [
+      "bash",
+      "-c",
+      [
+        "set -eo pipefail",
+        `export PGPASSWORD="$(cat ${authMountPath}/password)"`,
+        `out="${backupMountPath}/${databaseName}-$(date +%Y%m%d).sql.gz"`,
+        `pg_dump -h ${serviceHost} -U ${owner} -d ${databaseName} | gzip -c > "$out"`,
+        'echo "wrote $out"',
+      ].join("\n"),
+    ],
+    env: { TZ },
+    extraSecretMounts: [{ secretName: authSecretName, mountPath: authMountPath }],
+    volumes: [
+      {
+        mountPath: backupMountPath,
+        nfs: { server: nasNfsServer, path: "/volume1/Homelab" },
+        subPath: `${NAS_BACKUP_ROOT}/home-assistant/postgres`,
+      },
+    ],
+  };
+}
+
 const controlCenterManifest = controlCenterProductManifest();
 const controlCenterBackup = controlCenterManifest.backup;
 const controlCenterPostgresHost = controlCenterManifest.database.rwServiceName;

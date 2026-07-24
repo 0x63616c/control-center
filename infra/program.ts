@@ -13,8 +13,16 @@ import { installCnpg } from "./src/cnpg.ts";
 import { deployCrons } from "./src/crons.ts";
 import { installEso } from "./src/eso.ts";
 import { verifyLiveGhcrPullSecrets } from "./src/ghcr-pull-secret-preflight.ts";
+import { installHomeAssistant } from "./src/homeassistant.ts";
+import { installLocalPath } from "./src/local-path.ts";
+import { installMetallb } from "./src/metallb.ts";
 import { installMetricsServer } from "./src/metrics-server.ts";
-import { deployServices, parseSubstrate, shouldRequireImageDigestPins } from "./src/services.ts";
+import { installNvidiaRuntimeClass } from "./src/nvidia.ts";
+import {
+  deployServices,
+  parseSubstrateTarget,
+  shouldRequireImageDigestPins,
+} from "./src/services.ts";
 import { loadVault } from "./src/vault.ts";
 
 const cfg = new pulumi.Config("wwwinfra");
@@ -108,17 +116,15 @@ if (Object.keys(imageDigests).length > 0) {
   verifyLiveGhcrPullSecrets({ context: kubeContext });
 }
 
-// substrate: which cluster this program targets. Missing config = "orbstack"
+// target: which cluster this program targets. Missing config = "orbstack"
 // (the mini), so an untouched stack keeps rendering today's live mini values
 // byte-for-byte (haTarget/plexAdvertiseIp in services.ts). The Talos migration
 // target is "home-server" node context / "talos" substrate, at the static LAN
-// IP below (MetalLB pool 192.168.0.3-192.168.0.4 sits alongside it).
+// IP below (MetalLB pool 192.168.0.3-192.168.0.4 sits alongside it). A talos
+// target's nodeIp is REQUIRED by SubstrateTarget's type (Task 4's deferred
+// Task-3 cleanup), so it can never reach a talos code path empty.
 // Drive via `pulumi config set wwwinfra:substrate talos` on the talos stack.
-const substrate = parseSubstrate(cfg.get("substrate"));
-// nodeIp: the target node's LAN IP. Only consulted when substrate is "talos";
-// defaults to the Talos node's static IP (locked decision), but is inert on
-// "orbstack" (the mini ignores it entirely).
-const nodeIp = cfg.get("nodeIp") ?? "192.168.0.5";
+const target = parseSubstrateTarget(cfg.get("substrate"), cfg.get("nodeIp"));
 
 const services = deployServices({
   provider: cluster.provider,
@@ -127,8 +133,7 @@ const services = deployServices({
   nasNfsServer,
   requireImageDigestPins: shouldRequireImageDigestPins(stackName),
   imageDigests,
-  substrate,
-  nodeIp,
+  target,
   vault,
 });
 
@@ -143,6 +148,30 @@ const crons = deployCrons({
   namespaces,
   nasNfsServer,
 });
+
+// Task 4 (Talos migration): local-path-provisioner, MetalLB, the `nvidia`
+// RuntimeClass, and the Home Assistant workload + its dedicated CNPG cluster
+// + backup crons. ALL gated behind `target.substrate === "talos"` , on
+// "orbstack" (the default, and every stack today) this whole block does not
+// run, so the mini's live deploy adds ZERO new resources from this task.
+// Talos node context IS the k3s "orbstack" equivalent here: the mini needs
+// neither a storage provisioner (OrbStack ships one) nor a LoadBalancer
+// implementation (OrbStack's expose_services), and has no GPU passthrough.
+if (target.substrate === "talos") {
+  installLocalPath({ provider: cluster.provider, version: "v0.0.31" });
+  installMetallb({ provider: cluster.provider, version: "v0.14.9" });
+  installNvidiaRuntimeClass({ provider: cluster.provider });
+  installHomeAssistant({
+    provider: cluster.provider,
+    // Reuses the ALREADY-installed CNPG operator (cnpg.ts's installCnpg()
+    // above): its CRDs/webhooks are cluster-scoped singletons, so
+    // home_assistant's Cluster only needs to depend on that install having
+    // finished, never a second operator install.
+    cnpgOperator: cnpg.operator,
+    vault,
+    nasNfsServer,
+  });
+}
 
 // Surface resource names (not values) for the Phase-3 acceptance checks.
 export const externalSecretNames = eso.externalSecrets.map((e) => e.metadata.name);

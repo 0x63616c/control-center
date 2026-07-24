@@ -14,6 +14,12 @@ export interface ResourceSpec {
   memory?: string;
   reserveCpus?: string;
   reserveMemory?: string;
+  // GPU units (nvidia.com/gpu). Kubernetes extended resources require
+  // limits === requests (no overcommit), so buildPod sets both to this value.
+  // Only meaningful alongside a runtimeClassName (Task 4: Plex/HA transcode on
+  // the Talos node's RTX 3060 via the `nvidia` RuntimeClass); absent
+  // everywhere on "orbstack" today.
+  gpu?: number;
 }
 
 export interface PortSpec {
@@ -58,6 +64,17 @@ export interface WorkloadSpec {
     items?: { key: string; path: string }[];
   }[];
   initContainers?: InitContainerSpec[];
+  // hostNetwork + dnsPolicy: Task 4's HA workload binds :8123 in the NODE's
+  // netns (Talos has no equivalent to the mini's tailnet-routed socat), so
+  // other pods reach it at the node LAN IP (see services.ts haTarget).
+  // dnsPolicy MUST be "ClusterFirstWithHostNet" alongside hostNetwork, or the
+  // pod loses in-cluster DNS entirely (plain "ClusterFirst" only applies to
+  // non-hostNetwork pods). Absent everywhere on "orbstack" today.
+  hostNetwork?: boolean;
+  dnsPolicy?: "ClusterFirst" | "ClusterFirstWithHostNet" | "Default" | "None";
+  // RuntimeClass name (Task 4: "nvidia", for Plex/HA GPU transcode on the
+  // Talos node's RTX 3060). Absent everywhere on "orbstack" today.
+  runtimeClassName?: string;
 }
 
 export interface CronJobSpec {
@@ -126,6 +143,9 @@ interface DeploymentArgs {
         volumes: PodVolume[];
         imagePullSecrets?: { name: string }[];
         automountServiceAccountToken?: boolean;
+        hostNetwork?: boolean;
+        dnsPolicy?: string;
+        runtimeClassName?: string;
       };
     };
   };
@@ -248,7 +268,7 @@ interface PodInputs {
   name: string;
   image: string;
   command?: string[];
-  resources?: { memory?: string; reserveCpus?: string; reserveMemory?: string };
+  resources?: ResourceSpec;
   secrets?: SecretRef[];
   env?: Record<string, string>;
   volumes?: VolumeSpec[];
@@ -281,6 +301,12 @@ function buildPod(p: PodInputs): {
   }
   if (p.resources?.reserveCpus) {
     requests.cpu = p.resources.reserveCpus;
+  }
+  if (p.resources?.gpu) {
+    // Extended resources (nvidia.com/gpu) do not support overcommit: the
+    // scheduler requires limits === requests, unlike memory/cpu above.
+    limits["nvidia.com/gpu"] = String(p.resources.gpu);
+    requests["nvidia.com/gpu"] = String(p.resources.gpu);
   }
 
   const env: EnvVar[] = Object.entries(p.env ?? {}).map(([name, value]) => ({ name, value }));
@@ -427,6 +453,9 @@ export function renderWorkload(w: WorkloadSpec): RenderedWorkload {
             ? { imagePullSecrets: w.imagePullSecrets.map((name) => ({ name })) }
             : {}),
           automountServiceAccountToken: false,
+          ...(w.hostNetwork ? { hostNetwork: true } : {}),
+          ...(w.dnsPolicy ? { dnsPolicy: w.dnsPolicy } : {}),
+          ...(w.runtimeClassName ? { runtimeClassName: w.runtimeClassName } : {}),
         },
       },
     },

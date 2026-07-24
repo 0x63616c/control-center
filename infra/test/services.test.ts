@@ -4,6 +4,7 @@ import {
   composeGo2rtcConfig,
   haTarget,
   parseSubstrate,
+  parseSubstrateTarget,
   plexAdvertiseIp,
 } from "../src/services.ts";
 
@@ -195,21 +196,57 @@ describe("parseSubstrate", () => {
 
 describe("haTarget", () => {
   test("ha target is the node LAN IP on talos (api/worker are non-hostNetwork pods)", () => {
-    expect(haTarget("talos", "192.168.0.5")).toBe("192.168.0.5");
-    expect(haTarget("orbstack", "192.168.0.5")).toBe("homelab.tail8c014d.ts.net");
-  });
-
-  test("orbstack ignores nodeIp entirely (mini has no node LAN IP concept)", () => {
-    expect(haTarget("orbstack", "10.0.0.99")).toBe("homelab.tail8c014d.ts.net");
+    expect(haTarget({ substrate: "talos", nodeIp: "192.168.0.5" })).toBe("192.168.0.5");
+    expect(haTarget({ substrate: "orbstack" })).toBe("homelab.tail8c014d.ts.net");
   });
 });
 
 describe("plexAdvertiseIp", () => {
   test("plex advertise uses node LAN IP on talos", () => {
-    expect(plexAdvertiseIp("talos", "192.168.0.5")).toBe("http://192.168.0.5:32400");
+    expect(plexAdvertiseIp({ substrate: "talos", nodeIp: "192.168.0.5" })).toBe(
+      "http://192.168.0.5:32400",
+    );
   });
 
-  test("orbstack is the mini's frozen LAN IP regardless of nodeIp", () => {
-    expect(plexAdvertiseIp("orbstack", "192.168.0.5")).toBe("http://192.168.0.147:32400");
+  test("orbstack is the mini's frozen LAN IP", () => {
+    expect(plexAdvertiseIp({ substrate: "orbstack" })).toBe("http://192.168.0.147:32400");
+  });
+});
+
+// Task 4's deferred Task-3 cleanup: a talos SubstrateTarget always carries its
+// nodeIp by construction (no `nodeIp?: string` default-"" footgun), so the
+// only place a nodeIp is ever attached to a substrate is this boundary function.
+describe("parseSubstrateTarget", () => {
+  test("undefined config defaults to orbstack, with no nodeIp field at all", () => {
+    expect(parseSubstrateTarget(undefined, undefined)).toEqual({ substrate: "orbstack" });
+  });
+
+  test("talos with an explicit nodeIp config value", () => {
+    expect(parseSubstrateTarget("talos", "10.0.0.9")).toEqual({
+      substrate: "talos",
+      nodeIp: "10.0.0.9",
+    });
+  });
+
+  test("talos with no nodeIp config falls back to the locked static IP", () => {
+    expect(parseSubstrateTarget("talos", undefined)).toEqual({
+      substrate: "talos",
+      nodeIp: "192.168.0.5",
+    });
+  });
+
+  test("talos with an empty-string nodeIp config also falls back (not a silent empty nodeIp)", () => {
+    expect(parseSubstrateTarget("talos", "")).toEqual({
+      substrate: "talos",
+      nodeIp: "192.168.0.5",
+    });
+  });
+
+  test("orbstack ignores any nodeIp value entirely (the field doesn't exist on this variant)", () => {
+    expect(parseSubstrateTarget("orbstack", "10.0.0.9")).toEqual({ substrate: "orbstack" });
+  });
+
+  test("rejects an unknown substrate value (delegates to parseSubstrate)", () => {
+    expect(() => parseSubstrateTarget("swarm", undefined)).toThrow(/wwwinfra:substrate/);
   });
 });

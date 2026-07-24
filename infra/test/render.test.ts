@@ -407,3 +407,87 @@ describe("serviceSpecs: web map-provision initContainer (www-hn1i)", () => {
     );
   });
 });
+
+// Task 4 (Talos migration): Plex's GPU/RuntimeClass wiring is talos-only. The
+// load-bearing safety property , an untouched ("orbstack") apply renders
+// Plex's spec BYTE-IDENTICAL to before this task , is asserted directly here.
+describe("serviceSpecs: Plex GPU transcode is talos-only (Task 4)", () => {
+  const baseOpts = {
+    cloudflaredReplicas: 2,
+    nasNfsServer: "192.168.0.218",
+  };
+  const plexOf = (opts: Parameters<typeof serviceSpecs>[0]) =>
+    serviceSpecs(opts).find((s) => s.name === "plex");
+
+  test("orbstack (default, no target passed): no gpu limit, no runtimeClassName", () => {
+    const plex = plexOf(baseOpts);
+    expect(plex?.resources?.gpu).toBeUndefined();
+    expect(plex?.runtimeClassName).toBeUndefined();
+  });
+
+  test("orbstack (explicit target): identical to the default", () => {
+    const plex = plexOf({ ...baseOpts, target: { substrate: "orbstack" } });
+    expect(plex?.resources?.gpu).toBeUndefined();
+    expect(plex?.runtimeClassName).toBeUndefined();
+  });
+
+  test("talos: gpu:1 limit + the nvidia RuntimeClass", () => {
+    const plex = plexOf({
+      ...baseOpts,
+      target: { substrate: "talos", nodeIp: "192.168.0.5" },
+    });
+    expect(plex?.resources?.gpu).toBe(1);
+    expect(plex?.runtimeClassName).toBe("nvidia");
+  });
+
+  test("talos ADVERTISE_IP uses the node LAN IP + MetalLB port, not the mini's frozen IP", () => {
+    const plex = plexOf({
+      ...baseOpts,
+      target: { substrate: "talos", nodeIp: "192.168.0.5" },
+    });
+    expect(plex?.env?.ADVERTISE_IP).toBe("http://192.168.0.5:32400");
+  });
+
+  test("orbstack ADVERTISE_IP is still the mini's frozen LAN IP", () => {
+    expect(plexOf(baseOpts)?.env?.ADVERTISE_IP).toBe("http://192.168.0.147:32400");
+  });
+});
+
+// Task 4: component.ts's new optional WorkloadSpec fields (hostNetwork,
+// dnsPolicy, runtimeClassName, resources.gpu) are additive , absent by
+// default, so every EXISTING workload (api/worker/web/plex-on-orbstack/etc.)
+// renders with none of these keys present at all (not merely `undefined`
+// values leaking into the k8s object).
+describe("renderWorkload: Task 4's GPU/hostNetwork fields are opt-in", () => {
+  test("a spec with none of the new fields renders a pod spec without them", () => {
+    const r = renderWorkload(api);
+    const podSpec = r.deployment.spec.template.spec;
+    expect(podSpec.hostNetwork).toBeUndefined();
+    expect(podSpec.dnsPolicy).toBeUndefined();
+    expect(podSpec.runtimeClassName).toBeUndefined();
+    expect(r.deployment.spec.template.spec.containers[0].resources.limits["nvidia.com/gpu"]).toBe(
+      undefined,
+    );
+  });
+
+  test("hostNetwork + dnsPolicy + runtimeClassName + gpu all render onto the pod spec", () => {
+    const spec: WorkloadSpec = {
+      ...api,
+      name: "home-assistant",
+      resources: { memory: "1G", gpu: 1 },
+      hostNetwork: true,
+      dnsPolicy: "ClusterFirstWithHostNet",
+      runtimeClassName: "nvidia",
+    };
+    const r = renderWorkload(spec);
+    const podSpec = r.deployment.spec.template.spec;
+    expect(podSpec.hostNetwork).toBe(true);
+    expect(podSpec.dnsPolicy).toBe("ClusterFirstWithHostNet");
+    expect(podSpec.runtimeClassName).toBe("nvidia");
+    const limits = r.deployment.spec.template.spec.containers[0].resources.limits;
+    const requests = r.deployment.spec.template.spec.containers[0].resources.requests;
+    expect(limits["nvidia.com/gpu"]).toBe("1");
+    // Extended resources require limits === requests (no GPU overcommit).
+    expect(requests["nvidia.com/gpu"]).toBe("1");
+  });
+});
