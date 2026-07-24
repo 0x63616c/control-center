@@ -27,7 +27,23 @@ HAOS_SMP="${HAOS_SMP:-4}"
 # `-serial null`, `:22222` debug SSH has no authorized key, and the observer on
 # :4357 only exposes a health page — so there was no path to Core's logs and no
 # way to restart Core without killing the whole VM.
-#   -serial file:  captures the guest console (kernel + supervisor + Core boot).
+#   -chardev file,append=on + -serial chardev:
+#                  captures the guest console ACROSS BOOTS. The obvious
+#                  `-serial file:PATH` TRUNCATES on every QEMU start, which we
+#                  found out the hard way: the 08:26 recovery boot's log was
+#                  silently destroyed by the 09:00 watchdog restart a half hour
+#                  later. A console log that erases itself on restart is useless
+#                  precisely when you need it, since the thing you want to read
+#                  is what happened BEFORE the reboot. append=on fixes that.
+#                  (Consequence: nothing rotates this file. It grows ~35KB per
+#                  boot, so it is trivial for now, but it is not bounded.)
+#
+#   SCOPE LIMIT, know this before relying on it: the serial console carries the
+#   guest KERNEL and early systemd only, up to the login prompt. It does NOT
+#   carry Home Assistant Core's logs , Core runs in a supervisor-managed
+#   container and logs to the journal. So this WILL show a kernel panic or a
+#   kernel OOM-killer, and will NOT show an application-level Core crash. For
+#   the latter you still need in-guest access (see docs/ha-homelab.md).
 #   -monitor unix: gives stop-haos.sh an ACPI `system_powerdown` channel, so a
 #                  stop is a CLEAN guest shutdown instead of SIGTERM to QEMU.
 #                  Unclean shutdowns corrupt HA's recorder DB (a 2026-07-13
@@ -79,7 +95,8 @@ run_qemu() {
     -device virtio-net-pci,netdev=net0 \
     -netdev socket,id=net0,fd=3 \
     -display none \
-    -serial file:"$SERIAL_LOG" \
+    -chardev file,id=haosserial,path="$SERIAL_LOG",append=on \
+    -serial chardev:haosserial \
     -monitor unix:"$MONITOR_SOCK",server,nowait \
     -daemonize \
     -pidfile "$PIDFILE" 2>&1
