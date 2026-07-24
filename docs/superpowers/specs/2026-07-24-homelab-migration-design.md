@@ -2,9 +2,18 @@
 
 **Status:** design, pre-plan. Written 2026-07-24. All times LA local.
 **Author:** Claude (session 5435128b), from a brainstorm with Calum.
-**Supersedes runtime substrate only.** The application (features/, apps/, packages/)
-does not change. This moves the *cluster it runs on* off the mini onto a Talos node,
+**Scope.** The product code (`features/`, `apps/`, `packages/`) does not change. But
+**`infra/` does** — it hardcodes mini/OrbStack-specific values (§4 P4) that must be
+edited at cutover. This moves the *cluster it runs on* off the mini onto a Talos node,
 and folds Home Assistant into that cluster as a container.
+
+> **Revised 2026-07-24 after adversarial review** (agent pass): added P4 (hardcoded
+> infra values), P5 (tailnet-name collision), tightened the `.storage` copy to a
+> stopped-HA snapshot at cutover (C1), the multi-arch build to require QEMU/binfmt
+> (P1), the Talos API-exposure model to certSANs+`:6443` not a `serve` forward (P2),
+> and the TPM story to require the SecureBoot/UKI schematic with BIOS finalized before
+> first encrypted boot (§5). All five original factual claims were independently
+> re-verified TRUE.
 
 ---
 
@@ -101,33 +110,43 @@ deploy.
 
 **Decision: build multi-arch (`linux/amd64,linux/arm64`) for the transition.** Not
 amd64-only, because the mini (arm64) is the rollback target and must keep pulling
-runnable images. Mechanism: `platforms: linux/amd64,linux/arm64` on the buildx step.
-Native amd64 runner builds amd64 fast and emulates arm64 (or keep both native runners
-and merge a manifest). Cost: longer builds during the transition window. After the mini
-is retired for good, drop back to amd64-only.
+runnable images.
+- **The current build action cannot do this as-is.** `.github/actions/build-product-image/
+  action.yml` sets up buildx but has **no `docker/setup-qemu-action`** (zero binfmt/QEMU
+  anywhere in `.github/`), and the runner is `ubuntu-24.04-arm`. Adding
+  `platforms: linux/amd64,linux/arm64` on an arm runner with no binfmt fails to emulate
+  amd64. **Concrete mechanism (pick in plan):** (a) switch build jobs to an **amd64
+  runner + `setup-qemu-action`** for the arm64 leg, or (b) keep **both native runners**
+  (`ubuntu-24.04-arm` + `ubuntu-24.04`) and merge with `docker buildx imagetools create`.
+  (b) is faster and avoids OOM-prone emulation of bun builds; (a) is fewer moving parts.
+- **Digest-pinning still works:** the deploy step pins the multi-arch **index** digest,
+  which is arch-agnostic — no change needed there.
 - **Verify, do not assume:** every base image (`oven/bun`, cloudnative-pg, alpine for
   map-provision, plex, go2rtc, HA) publishes an amd64 tag. All are known multi-arch,
   but the plan confirms each digest resolves for amd64 before cutover.
 
 ### P2 — Deploy path is welded to OrbStack
 The entire CI→cluster path assumes OrbStack: the CA, the `k8s.orb.local` SAN, the
-`tailscale serve` host-daemon forward, the `orbstack` kube context. **None exist on
-Talos.** Rebuilding it:
-- **Tailscale on Talos** exposing the kube API over the tailnet. Talos has no host
-  shell, so this is **not** `tailscale up`. Options: (a) the Siderolabs **Tailscale
-  system extension** (`tailscaled` as a Talos ExtensionService, host-level, configured
-  via `ExtensionServiceConfig` — closest to today's `tailscale serve`), or (b) the
-  **Tailscale Kubernetes operator** exposing the API server in-cluster. **Lean (a)**:
-  it reproduces today's "host advertises the API over the tailnet" shape and keeps CI's
-  mental model. Plan spikes (a) in the VM phase; falls back to (b) if the extension
-  can't cleanly forward the API port.
-- **New PKI.** Talos generates its own kube API cert/CA. The cert must carry a **SAN
-  the CI kubeconfig can validate** (the tailnet DNS name, or keep an explicit
-  `tls-server-name` + embedded Talos CA). Configured in the Talos machine config
-  (`machine.certSANs` + cluster CA), not patched after.
-- **Regenerate `KUBECONFIG__B64`** in the SOPS vault: new CA, new client cert
-  (Talos admin talosconfig → kubeconfig), new endpoint. Update `wwwinfra:kubeContext`.
-- **`tag:ci` ACL** must still be allowed to reach the new node's API port on the tailnet.
+`tailscale serve` host-daemon forward at `:26443`, the `orbstack` kube context. **None
+exist on Talos.** The rebuild is *simpler* than today, not just different — the
+`tailscale serve`/socat port-forward is an OrbStack artifact (pods can't route the LAN),
+and it disappears:
+- **Talos kube-apiserver binds `:6443` on all interfaces, including the Tailscale one.**
+  There is **no `serve` forward to reproduce** and the endpoint port changes
+  `26443 → 6443`. The requirement is just: give the node a tailnet IP + a cert the CI
+  kubeconfig validates.
+- **Tailscale on Talos** = the Siderolabs **Tailscale system extension** (`tailscaled`
+  as a Talos ExtensionService, configured via `ExtensionServiceConfig` with an auth key
+  from SOPS). Its only job is to put the node on the tailnet; CI then hits
+  `https://<talos-tailnet-name>:6443`. (Not `tailscale up` — Talos has no host shell.)
+- **New PKI via certSANs.** Talos generates its own kube API cert/CA. Add the node's
+  tailnet FQDN to **`machine.certSANs`** so the cert validates without a
+  `tls-server-name` hack. Configured in the machine config, not patched after.
+- **Regenerate `KUBECONFIG__B64`** in the SOPS vault: new Talos CA, new admin client
+  cert (talosconfig → kubeconfig), new `:6443` endpoint. Update `wwwinfra:kubeContext`.
+- **`tag:ci` ACL** must be allowed to reach the new node's `:6443` on the tailnet.
+- **Hostname collision (see P5):** the node must NOT take the tailnet name `homelab` —
+  the mini keeps it for rollback, and `homelab` is also load-bearing for HA routing.
 
 ### P3 — HA recorder is SQLite, not Postgres (locked decision needs revisiting)
 The brainstorm locked "recorder → CNPG `home_assistant`, separate db same cluster." That
@@ -148,6 +167,34 @@ the risky HA cutover as small as possible.
   with a go/no-go, and accepts possible loss of pre-migration detailed history (LTS
   may be salvageable separately). Default is SQLite-in-PVC.
 
+### P4 — `infra/src/services.ts` hardcodes mini/OrbStack values (the app "not changing" is false for infra)
+Three values are pinned to the mini and will silently break HA-backed tiles and Plex
+after cutover — they are **not** "regenerable" and **not** "unchanged":
+- **`HA_TAILNET_FQDN = "homelab.tail8c014d.ts.net"`** (services.ts:101) — the `ha`
+  ExternalName Service CNAMEs to it (line 566); api/worker reach HA via `http://ha:8123`
+  → `HA_URL` (line 140). This FQDN routes to the **mini's** HA socat. Retire the mini and
+  every HA tile (climate, controls, weight-ingest) dies. On a hostNetwork HA on the Talos
+  node, the `ha` ExternalName must point at the node/localhost, not a tailnet name.
+- **Plex `ADVERTISE_IP: "http://192.168.0.147:32400"`** (services.ts:355) — the **Mac's**
+  LAN IP. After migration the Apple TV gets an unreachable advertise URL. Must become the
+  Talos node's LAN IP (or the Plex MetalLB IP).
+- The whole `ha`-via-tailnet-FQDN indirection exists **only** because OrbStack pods can't
+  route `192.168.0.0/24` (services.ts:97). On a real-LAN Talos node this hack should be
+  **deleted**, not ported. (Same for the UniFi `:8444` and LAN-443 socat forwards — they
+  simply vanish; a genuine simplification.)
+
+**These are explicit plan edits, gated behind the VM validation.**
+
+### P5 — the tailnet name `homelab` is shared by the kube API AND HA, and collides with rollback
+`homelab.tail8c014d.ts.net` serves the kube API (`:26443`) **and** the HA socat (`:8123`)
+— it is the **mini**. Two independent consumers, one name. Rollback (§8 step 5 =
+`start-haos.sh` on the mini) requires the **mini to keep owning `homelab`**. Therefore:
+- The Talos node joins the tailnet under a **distinct** machine name (e.g. `talos-prod`).
+- Update: the CI kubeconfig endpoint, `machine.certSANs`, the `ha` ExternalName (P4), and
+  the `tag:ci` ACL to the new name.
+- **Rollback is defined:** repoint CI + the `ha` ExternalName back to `homelab` (mini),
+  Talos stays off that name. Never let both machines claim `homelab`.
+
 ## 5. Decisions
 
 ### Locked (from brainstorm, still hold)
@@ -161,8 +208,21 @@ the risky HA cutover as small as possible.
 
 ### Locked defaults (Calum: "defaults is fine")
 - **Disk encryption: yes, TPM-sealed** (Z690 fTPM 2.0), STATE + EPHEMERAL partitions.
-  No passphrase → unattended reboots work. Recovery path (TPM state change ⇒ rebuild
-  node) documented; cheap on a single declarative node with NFS-backed data.
+  No passphrase → unattended reboots work. **Prerequisites (H4, do not skip):**
+  - Talos TPM sealing is coupled to **Secure Boot + UKI** — the Image Factory schematic
+    must be the **SecureBoot variant** (not the plain NVIDIA+iscsi schematic). Without
+    it, encryption falls back to a **passphrase**, which breaks unattended reboots — the
+    whole reliability goal. Plan confirms the exact requirement for the pinned Talos
+    version before committing.
+  - **All BIOS security settings (fTPM, Secure Boot) must be finalized BEFORE the first
+    encrypted boot.** TPM sealing binds to PCR measurements; any Secure Boot / PCR change
+    *after* first boot re-seals to different values → node won't unseal → rebuild. This is
+    a hard step-order gate in §11 (BIOS is set once, at the desk, before install).
+  - Recovery path (TPM/PCR change ⇒ rebuild node) documented; cheap on a single
+    declarative node with NFS-backed data.
+  - **Fallback if SecureBoot proves fiddly on this board:** ship **unencrypted** and
+    revisit, rather than a passphrase that defeats headless reboots. Encryption is a
+    nice-to-have here (physical-theft only); unattended reboot is load-bearing.
 - **CNI: Flannel** (Talos default). Revisit Cilium when node #2 exists.
 - **Config: talhelper + SOPS**, checked in under `infra/talos/`.
 - **Repo is truth**; drift dies.
@@ -172,9 +232,14 @@ the risky HA cutover as small as possible.
 - **Recorder: SQLite-in-PVC, not CNPG** (P3). ← changes a locked decision, needs a nod.
 - **Images: multi-arch** during transition (P1).
 - **LoadBalancer:** k3s ServiceLB (klipper) does not exist on Talos. `api` and `plex`
-  are `type: LoadBalancer` today. Replace with **MetalLB (L2, single-address pool)** or
-  fold to `hostNetwork`/NodePort. **Lean MetalLB** — keeps the Service type unchanged in
-  `infra/src/services.ts`, minimal blast radius. Decide in the plan.
+  are `type: LoadBalancer` today (EXTERNAL-IP `192.168.139.2`, an OrbStack subnet).
+  Replace with **MetalLB (L2, single-address pool on the real LAN)** or fold to
+  `hostNetwork`/NodePort. **Lean MetalLB** — keeps the Service type unchanged in
+  `infra/src/services.ts`, minimal blast radius. **M7 — the new LB IPs ripple** and the
+  plan must inventory the fan-out: the UniFi DHCP reservation (reserve the MetalLB
+  pool too, not just the node IP), the cert-manager cert for `api`'s 443, cloudflared's
+  origin targets, and Plex `ADVERTISE_IP` (P4). Also watch MetalLB-L2 ARP vs the
+  hostNetwork HA pod on a single node (§12).
 
 ### Picked (default unless objected)
 - Talos + k8s: latest stable, pinned explicitly in the repo.
@@ -193,7 +258,7 @@ the risky HA cutover as small as possible.
 |---|---|---|
 | NFS PVs (api/worker/plex/pg-backup) | Synology | **Re-mount.** Nothing moves. |
 | CNPG Postgres (`control_center`) | local-path, mini | **`pg_dump` at cutover** → restore into new CNPG → **row-count + checksum verify vs live mini** before wiping. Mini stays as rollback. |
-| HA `/config` | HAOS qcow2, mini | Tar out via SSH add-on once. Includes `.storage` (pairings/tokens) + `home-assistant_v2.db` (SQLite recorder). Land in a new `ha-config` PVC. |
+| HA `/config` | HAOS qcow2, mini | **Two copies.** (1) An early **throwaway rehearsal tar** (HA running) to build+test the container in the VM phase. (2) The **authoritative copy at cutover with HA STOPPED** (C1). Includes `.storage` (pairings/tokens) + `home-assistant_v2.db` (SQLite recorder). Land in a new `ha-config` PVC. |
 | `plex-config` | local-path, mini | Copy (Plex library/metadata). Non-critical; acceptable to re-scan if it fails. |
 | `maps` | local-path, mini | **Do not migrate.** Re-provision via cron / initContainer. |
 
@@ -221,10 +286,21 @@ This is **in scope**, not deferred.
    deployed and healthy against migrated/mounted storage. Deploy path (P2) working so CI
    can reach the node.
 4. **Postgres**: dump → restore → verify row counts vs live mini.
-5. **HA LAST** — the only point the house goes dark. Hard gate: **old HA (HAOS on mini)
-   stopped and verified stopped BEFORE new HA starts.** Both HAs must never talk to
-   devices simultaneously (`.storage` pairing corruption for HomeKit/Thread/ESPHome).
-   Rollback: stop new HA, `start-haos.sh` on the mini.
+5. **HA LAST** — the only point the house goes dark. Sequence inside the gate:
+   1. **Stop HAOS on the mini** (`ha core stop`, or stop the recorder at minimum) and
+      **verify stopped**.
+   2. **Only now** take the authoritative `/config` copy (C1) — a stopped-HA snapshot, or
+      `sqlite3 home-assistant_v2.db ".backup"` for the recorder. A live tar risks
+      half-written `.storage` (HomeKit/Thread pairings) and a torn SQLite WAL — the one
+      truly irreplaceable data in the whole migration.
+   3. Load it into the `ha-config` PVC; **start the new HA container.**
+   Both HAs must never talk to devices simultaneously (`.storage` pairing corruption for
+   HomeKit/Thread/ESPHome). Rollback: stop new HA, `start-haos.sh` on the mini, repoint
+   the `ha` ExternalName + CI back to `homelab` (P5).
+   - **Cutover verification (M8):** confirm the `renpho_fitness_scale_ble` custom
+     integration (and any HACS `custom_components`) reinstalls its pip deps into
+     `/config/deps` on container-HA boot — official container HA ships no HACS. Verify the
+     weight sensor entity resolves post-cutover.
 6. **Plex** cut over; **mini powered down, cold spare.**
 
 ## 9. Validate before touching hardware (Phase 1.5)
