@@ -1,0 +1,57 @@
+# Talos machine config for the homelab cluster, rendered by talhelper.
+# Single control-plane node `home-server` (MSI PRO Z690-A, amd64, RTX 3060).
+#
+# Disk is UNENCRYPTED by design (no TPM / Secure Boot / UKI on this box). See
+# README.md for the full rationale and the Image Factory schematic this config
+# pins.
+#
+# Render:   talhelper genconfig
+# Validate: scripts/test-talos-config.sh (talhelper genconfig + talosctl validate)
+# Secrets:  talsecret.sops.yaml (SOPS+age encrypted, see README.md)
+
+clusterName: prod
+talosVersion: v1.13.7
+kubernetesVersion: v1.36.2 # Talos v1.13.7 default target (pkg/machinery/constants)
+endpoint: https://home-server.tail8c014d.ts.net:6443 # tailnet name, NOT homelab (P5)
+
+nodes:
+  - hostname: home-server
+    ipAddress: 192.168.0.5
+    controlPlane: true
+    installDisk: /dev/nvme0n1
+    # Plain (non-SecureBoot, non-UKI) Image Factory schematic. talhelper hashes
+    # this customization block into the schematic ID at genconfig time (POSTs
+    # to factory.talos.dev unless run with --offline-mode); the resulting ID
+    # for this exact extension set + v1.13.7 is recorded in README.md and MUST
+    # match after any edit here.
+    schematic:
+      customization:
+        systemExtensions:
+          officialExtensions:
+            - siderolabs/nonfree-kmod-nvidia-production
+            - siderolabs/nvidia-container-toolkit-production
+            - siderolabs/iscsi-tools
+            - siderolabs/nfs-utils
+            - siderolabs/tailscale
+    networkInterfaces:
+      - interface: enp2s0 # 2.5GbE NIC — PLACEHOLDER, confirm real name on first boot (see README.md)
+        addresses:
+          - 192.168.0.5/24
+        routes:
+          - network: 0.0.0.0/0
+            gateway: 192.168.0.1
+    nameservers:
+      - 192.168.0.1 # UniFi gateway (also DNS resolver on this LAN)
+
+patches:
+  - |-
+    machine:
+      certSANs: [home-server.tail8c014d.ts.net, 192.168.0.5]
+      sysctls:
+        fs.inotify.max_user_watches: "1048576"
+        fs.inotify.max_user_instances: "8192"
+      logging: {}
+      # NO systemDiskEncryption — disk is UNENCRYPTED (locked; no TPM/SecureBoot/UKI).
+    cluster:
+      discovery: { enabled: false }
+      allowSchedulingOnControlPlanes: true

@@ -1,3 +1,5 @@
 creation_rules:
   - path_regex: secrets/.*\.yaml$
     age: age1zds5tlctxmh9lse5p5cjv3vgsqxl5f0n774hculp78tdwymshd4q8vd0ew
+  - path_regex: infra/talos/.*\.sops\.yaml$
+    age: age1zds5tlctxmh9lse5p5cjv3vgsqxl5f0n774hculp78tdwymshd4q8vd0ew
