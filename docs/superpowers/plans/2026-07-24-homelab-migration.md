@@ -6,13 +6,15 @@
 
 **Goal:** Move prod off the Mac mini (HAOS-in-qcow2 + k3s-in-OrbStack) onto Talos Linux
 bare metal on the gaming PC, fold Home Assistant in as a container, expose the RTX 3060
-as a schedulable GPU, and keep CI `push-to-main` deploying — with the mini intact as a
-one-command rollback.
+as a schedulable GPU, and keep CI `push-to-main` deploying — a fast flip onto the new
+node; the mini is **disposable** (brief downtime accepted, no long soak, §0).
 
 **Architecture:** Single-node Talos cluster, control plane schedulable. Product workloads
 re-declared via the existing Pulumi program (`infra/`) with mini-specific values edited
-out behind a `substrate` flag. HA runs `hostNetwork: true` with `/config` on a PVC (SQLite
-recorder rides along). CI reaches the node's kube-apiserver at `:6443` over Tailscale
+out behind a `substrate` flag. HA runs `hostNetwork: true` with `/config` on a PVC; the
+recorder writes to its **own CNPG Postgres cluster** (db `home_assistant`) in a new
+`home-assistant` namespace — no SQLite recorder, no history migrated (§0.1–3). CI reaches
+the node's kube-apiserver at `:6443` over Tailscale
 (system extension), with new PKI. Everything reversible happens before anything
 irreversible; HA cuts over last.
 
@@ -36,7 +38,10 @@ OAuth), Docker buildx multi-arch, GitHub Actions, cloudflared, cert-manager.
 ## Global Constraints
 
 - **Reversible before irreversible.** No mini state is destroyed until a restored copy is
-  verified against the still-live mini. Mini is never wiped; HAOS qcow2 stays as rollback.
+  verified against the still-live mini. The mini is left **untouched** — never wiped, never
+  deleted — and powered off by Calum once told, post-cutover. That powered-off-but-unwiped
+  mini is the **implicit fallback only**; no rollback machinery is designed or built around
+  it (§0 decision 7).
 - **Both HAs must NEVER talk to devices simultaneously** (`.storage` pairing corruption).
   This includes the mini's **`ha-watchdog`** silently restarting HA — it MUST be disabled
   before the cutover stop (C2).
@@ -45,12 +50,15 @@ OAuth), Docker buildx multi-arch, GitHub Actions, cloudflared, cert-manager.
 - **Repo is truth.** New substrate lives in `infra/talos/` (talhelper) + `infra/src/`.
 - **Deploy targeting is a committed one-liner, not a secret swap.** `KUBECONFIG__B64`
   carries **both** contexts (mini + Talos); the live target is chosen by the plaintext
-  `wwwinfra:kubeContext` in `Pulumi.prod.yaml`. Rollback = revert one line. (H4)
+  `wwwinfra:kubeContext` in `Pulumi.prod.yaml`. Kept only so CI/Pulumi can talk to
+  both clusters during the migration — not a designed rollback system (§0 decision 7).
+  (H4)
 - **Main-push quiet window** announced across sessions for the Task 9–11 cutover span
   (8–10 sessions push `main`, mostly direct — MEMORY `parallel-claude-sessions-push-main`).
 - **Arch:** node is amd64; images multi-arch (`linux/amd64,linux/arm64`) until the mini is
   retired. The **arm64 leg stays native** (don't degrade the mini's live deploy). (H6)
-- **Tailnet name:** the node is `talos-prod`, NOT `homelab` (the mini keeps that). ACL
+- **Tailnet name + hostname:** the node is `home-server` (hyphen), NOT `homelab` (the mini
+  keeps that). ACL
   grants are ADDED, not replaced. (P5, H5)
 - **Pulumi digest namespace is `wwwinfra:`** (not `ccinfra:`).
 - **kubectl against the mini is READ-ONLY** except the explicit cutover steps.
@@ -124,38 +132,37 @@ echo "PASS"
 **Files:** Create `infra/talos/talconfig.yaml`, `infra/talos/talsecret.sops.yaml`,
 `infra/talos/README.md`; Test `scripts/test-talos-config.sh`.
 
-**Interfaces:** Produces a validated single-node machine config for `talos-prod`.
+**Interfaces:** Produces a validated single-node machine config for `home-server`.
 
-- [ ] **Step 1: Pin a SecureBoot Image Factory schematic** with
+- [ ] **Step 1: Pin a plain (non-SecureBoot) Image Factory schematic** with
   `siderolabs/nonfree-kmod-nvidia`, `siderolabs/nvidia-container-toolkit`,
-  `siderolabs/iscsi-tools`, `siderolabs/tailscale`. Record the ID in `README.md`. Confirm
-  the pinned Talos version's `tpm` disk-encryption key type works with SecureBoot before
-  locking; else fall back to **unencrypted** (NOT a passphrase — §5/H4).
+  `siderolabs/iscsi-tools`, `siderolabs/nfs-utils`, `siderolabs/tailscale`. Record the ID in
+  `README.md`. **Disk is UNENCRYPTED (locked §0)** — no TPM / Secure Boot / UKI. (`nfs-utils`
+  provides the `mount.nfs` helper the kernel needs for the four **NFSv3** Synology PVs, which
+  Talos base omits; NFS recon 2026-07-24.)
 - [ ] **Step 2: Write `talconfig.yaml`** — the patch is a **single `machine:` block** (M1:
   no duplicate top-level key):
 ```yaml
 clusterName: prod
-endpoint: https://talos-prod.tail8c014d.ts.net:6443     # tailnet name, NOT homelab (P5)
+endpoint: https://home-server.tail8c014d.ts.net:6443     # tailnet name, NOT homelab (P5)
 nodes:
-  - hostname: talos-prod
+  - hostname: home-server
     controlPlane: true
     installDisk: /dev/nvme0n1
     schematic: { id: <SCHEMATIC_ID> }                    # from Step 1 (hardware-known)
     networkInterfaces:
       - interface: <2.5GbE-iface>                        # confirm on first boot
-        addresses: [192.168.0.NNN/24]                    # static; = UniFi reservation (M3)
+        addresses: [192.168.0.5/24]                      # static; = UniFi reservation (M3)
         routes: [{ network: 0.0.0.0/0, gateway: 192.168.0.1 }]
 patches:
   - |-
     machine:
-      certSANs: [talos-prod.tail8c014d.ts.net, 192.168.0.NNN]   # CI kubeconfig validates
+      certSANs: [home-server.tail8c014d.ts.net, 192.168.0.5]     # CI kubeconfig validates
       sysctls:
         fs.inotify.max_user_watches: "1048576"
         fs.inotify.max_user_instances: "8192"
       logging: {}                                         # only way off a shell-less box (§10)
-      systemDiskEncryption:                               # drop this whole key if SecureBoot fights the board (H4)
-        state:     { provider: luks2, keys: [{ tpm: {}, slot: 0 }] }
-        ephemeral: { provider: luks2, keys: [{ tpm: {}, slot: 0 }] }
+      # NO systemDiskEncryption — disk is UNENCRYPTED (locked §0; no TPM/SecureBoot/UKI).
     cluster:
       discovery: { enabled: false }
       allowSchedulingOnControlPlanes: true
@@ -179,11 +186,11 @@ when `"talos"`. Default `orbstack` → mini byte-identical.
   worker are normal pods; `127.0.0.1` would be their own loopback):
 ```ts
 test("ha target is the node LAN IP on talos (api/worker are non-hostNetwork pods)", () => {
-  expect(haTarget("talos", "192.168.0.NNN")).toBe("192.168.0.NNN");
-  expect(haTarget("orbstack", "192.168.0.NNN")).toBe("homelab.tail8c014d.ts.net");
+  expect(haTarget("talos", "192.168.0.5")).toBe("192.168.0.5");
+  expect(haTarget("orbstack", "192.168.0.5")).toBe("homelab.tail8c014d.ts.net");
 });
 test("plex advertise uses node LAN IP on talos", () => {
-  expect(plexAdvertiseIp("talos", "192.168.0.NNN")).toBe("http://192.168.0.NNN:32400");
+  expect(plexAdvertiseIp("talos", "192.168.0.5")).toBe("http://192.168.0.5:32400");
 });
 ```
 - [ ] **Step 2: Run, expect FAIL.**
@@ -197,7 +204,7 @@ test("plex advertise uses node LAN IP on talos", () => {
 - [ ] **Step 6: Commit + push.** With `substrate=orbstack` the next `pulumi up` shows **no
   `ha`/`plex` diff** — verify.
 
-### Task 4: MetalLB + local-path-provisioner + HA + GPU RuntimeClass + backup cron (behind flag)
+### Task 4: MetalLB + local-path-provisioner + HA + `home_assistant` CNPG + GPU RuntimeClass + backup cron (behind flag)
 
 **Files:** Create `infra/src/metallb.ts`, `infra/src/local-path.ts`,
 `infra/src/homeassistant.ts`, `infra/src/nvidia.ts`; Modify `infra/src/crons.ts`,
@@ -215,16 +222,26 @@ test("plex advertise uses node LAN IP on talos", () => {
 - [ ] **Step 3: `nvidia` RuntimeClass (M2).** Create the `RuntimeClass` object and extend
   the Plex `WorkloadSpec` (`services.ts:334-374`) to carry `runtimeClassName: "nvidia"` +
   a `nvidia.com/gpu: 1` limit (Talos-only, behind the flag).
-- [ ] **Step 4: HA manifest.** `Deployment` `ghcr.io/home-assistant/home-assistant:stable`
+- [ ] **Step 4: `home_assistant` CNPG Cluster (§0.1).** In `homeassistant.ts`, a **separate**
+  CNPG `Cluster` (NOT a second db in `control-center-1`) in a **new `home-assistant`
+  namespace** (L1), db `home_assistant`. This is the recorder's datastore. Its own daily
+  `pg-backup` entry (Step 6) keeps the pattern uniform even though the data is disposable.
+- [ ] **Step 5: HA manifest.** `Deployment` `ghcr.io/home-assistant/home-assistant:stable`
   (multi-arch upstream), `hostNetwork:true`, `dnsPolicy:ClusterFirstWithHostNet`, `/config`
-  ← `ha-config` PVC (`local-path`, **20Gi** — recorder history, M8), resource headroom, its
-  own namespace (L1). No Supervisor. Comment: PVC seeded from the **stopped-HA snapshot** at
-  cutover (C1/Task 11), and an **immutable copy kept on the NAS first** (M8).
-- [ ] **Step 5: `ha-config` backup cron (§7).** In `crons.ts`, a CronJob mirroring
-  `postgresBackupCronSpec`'s NFS pattern: `sqlite3 .backup` the recorder + `tar` `.storage`
-  → Synology NFS, `set -eo pipefail`. Replaces the Supervisor snapshot the container loses.
-- [ ] **Step 6: Guard** asserts local-path/MetalLB/HA/RuntimeClass/backup-cron absent on
-  `orbstack`, present on `talos`. **Typecheck + test + commit + push** (mini unaffected).
+  ← `ha-config` PVC (`local-path`, **5Gi** — holds `.storage` + YAML only; the recorder does
+  NOT live here, §0.3), resource headroom, in the **new `home-assistant` namespace** (L1).
+  Set HA's `recorder:` to the `home_assistant` CNPG Postgres via a `postgresql://` URL, with
+  an **aggressive purge (few days, §0.2)**. No Supervisor. Comment: PVC seeded from the
+  **stopped-HA `.storage`+YAML snapshot** at cutover (C1/Task 11), **immutable copy to the
+  NAS first** (M8). NOTE: nothing HA touches the `control-center` ns (§0.4).
+- [ ] **Step 6: backup crons (§7).** In `crons.ts`: (a) an `ha-config` CronJob mirroring
+  `postgresBackupCronSpec`'s NFS pattern — `tar` `.storage` + YAML → Synology NFS,
+  `set -eo pipefail` (**no recorder db** — recorder is in the `home_assistant` CNPG cluster);
+  replaces the Supervisor snapshot the container loses. (b) a `home_assistant` CNPG
+  `pg-backup` entry alongside `control_center`'s.
+- [ ] **Step 7: Guard** asserts local-path/MetalLB/HA/`home_assistant`-CNPG/RuntimeClass/
+  backup-crons absent on `orbstack`, present on `talos`. **Typecheck + test + commit + push**
+  (mini unaffected).
 
 ### Task 5: Postgres restore-proof rehearsal (folded into Task 6's VM — M6)
 
@@ -242,15 +259,18 @@ vs a same-moment live count → go/no-go. Commit the runbook.
 
 - [ ] **Step 1:** `talosctl cluster create --name talos-vm …`.
 - [ ] **Step 2:** Apply the rendered manifests with `substrate:talos` at the VM: local-path,
-  MetalLB, CNPG, api/web/worker/go2rtc/plex/cloudflared(**replicas:0**)/cert-manager, HA.
+  MetalLB, CNPG (both the `control_center` and the new `home_assistant` clusters),
+  api/web/worker/go2rtc/plex/cloudflared(**replicas:0**)/cert-manager, HA (recorder pointed
+  at the `home_assistant` cluster).
 - [ ] **Step 3 (Task 5):** restore the safety dump into the VM's CNPG; `--compare-counts` vs
   `cc-rowcounts-20260724.tsv` → zero mismatches. Write the cutover runbook.
 - [ ] **Step 4 (L3, scoped):** confirm a kubeconfig built from **Talos PKI** reaches the API
   over `:6443` with a certSAN match. NOTE: the VM joins the tailnet as a *different* node —
-  the real `talos-prod` name/certSAN/Tailscale-extension path is only fully provable on
+  the real `home-server` name/certSAN/Tailscale-extension path is only fully provable on
   hardware (Task 7). Do not overclaim.
-- [ ] **Step 5:** record hardware-only gaps (GPU, mDNS discovery, TPM, real tailnet name).
-  `talosctl cluster destroy`. **Step 6:** commit config fixes the VM surfaced.
+- [ ] **Step 5:** record hardware-only gaps (GPU, mDNS discovery, NFSv3 mount off the real
+  Synology, real tailnet name). `talosctl cluster destroy`. **Step 6:** commit config fixes
+  the VM surfaced.
 
 ---
 
@@ -258,18 +278,27 @@ vs a same-moment live count → go/no-go. Commit the runbook.
 
 ### Task 7: UniFi reservations, flash, BIOS, boot Talos (M3 + H4)
 
-- [ ] **Step 1 (Calum, in UniFi — M3):** create a DHCP **reservation** for the node's MAC at
-  `192.168.0.NNN`, and **exclude the MetalLB pool** from the DHCP range. Verify both.
-- [ ] **Step 2 (Calum, at the desk):** reflash the boot USB with the SecureBoot Talos image.
-  **Finalize BIOS BEFORE first encrypted boot (H4):** enable fTPM, enable Secure Boot, set
-  USB→NVMe boot order. Once, at the desk, monitor attached.
-- [ ] **Step 3:** `talhelper` → `talosctl apply-config --insecure`; `talosctl bootstrap`;
-  `talosctl kubeconfig`. `kubectl --context talos-prod get nodes` Ready.
+- [ ] **Step 1 (codify in `infra/unifi`, M3 — §0.3):** the node's static IP is pinned in the
+  machine config (Task 2) **and** a **matching DHCP reservation is codified in the existing
+  `infra/unifi` Pulumi project** (additive, like the guest VLAN — Boundary-1 safe), for the
+  node's MAC at `192.168.0.5`, plus the MetalLB pool (`192.168.0.3`–`192.168.0.4`) reserved out of DHCP. (The
+  MAC is captured at first boot, then committed to the fixed-IP manifest.) `pulumi up` the
+  unifi project; confirm zero-diff on the adopted resources. Static IP ⇔ reservation must
+  match.
+- [ ] **Step 2 (Calum, at the desk):** reflash the boot USB with the **plain (non-SecureBoot)
+  Talos image**. **BIOS at the desk, monitor attached:** **disable Secure Boot**, set
+  USB→NVMe boot order — nothing else. **No fTPM / no TPM** (disk is UNENCRYPTED, §0). BIOS is
+  set once, here.
+- [ ] **Step 3 (headless, in the cupboard — §0.4):** power off, move the PC to the cupboard,
+  plug **Ethernet (2.5 GbE; no WiFi)**, power on. **First bring-up is HEADLESS over the LAN**
+  (the monitor stays at the desk). `talhelper` → `talosctl apply-config --insecure`;
+  `talosctl bootstrap`; `talosctl kubeconfig`. `kubectl --context home-server get nodes` Ready.
 - [ ] **Step 4:** confirm the Tailscale extension put the node on the tailnet as
-  `talos-prod`; `kubectl` over `:6443` via the tailnet works. Confirm encryption active
-  (`talosctl get systemdiskencryption`) or consciously unencrypted (H4 fallback).
-- [ ] **Step 5:** stay at the desk until HA cutover verified. **Rollback:** none — mini
-  untouched; powering the PC off is free.
+  `home-server`; `kubectl` over `:6443` via the tailnet works. Confirm the disk is
+  **UNENCRYPTED as intended** (no `systemDiskEncryption` in the machine config; §0).
+- [ ] **Step 5:** stay reachable until HA cutover verified (over the LAN — node is already in
+  the cupboard). No rollback machinery here — the mini stays untouched and powered on;
+  powering the PC off later is free.
 
 ### Task 8: GPU + storage + MetalLB substrate
 
@@ -279,7 +308,8 @@ vs a same-moment live count → go/no-go. Commit the runbook.
   on the LAN.
 - [ ] **Step 3:** throwaway pod mounts each of the four Synology NFS PVs from the Talos node
   netns — confirm reachable.
-- [ ] **Step 4:** CNPG operator installed. **Rollback:** delete Talos workloads; mini safe.
+- [ ] **Step 4:** CNPG operator installed. (Mini untouched throughout this phase; no
+  rollback machinery needed — deleting Talos workloads is enough if this needs undoing.)
 
 ---
 
@@ -292,26 +322,26 @@ vs a same-moment live count → go/no-go. Commit the runbook.
 `wwwinfra:cloudflaredReplicas`), Tailscale ACL.
 
 - [ ] **Step 1 (H4/H5, prep, reversible):** rebuild `KUBECONFIG__B64` to embed **both**
-  contexts (mini `cc-homelab` + `talos-prod`), default `current-context` still the mini.
-  **ADD** a `tag:ci` ACL grant to `talos-prod:6443` **without removing** `homelab:26443`.
+  contexts (mini `cc-homelab` + `home-server`), default `current-context` still the mini.
+  **ADD** a `tag:ci` ACL grant to `home-server:6443` **without removing** `homelab:26443`.
   Commit. CI still deploys the mini (context unchanged) — nothing cuts over yet.
-- [ ] **Step 2 (H3, first apply):** with `wwwinfra:kubeContext=talos-prod` **and
+- [ ] **Step 2 (H3, first apply):** with `wwwinfra:kubeContext=home-server` **and
   `imageDigests` EMPTY**, run `pulumi up` once. Empty digests skips
   `verifyLiveGhcrPullSecrets` (index.ts:107 throws on a fresh cluster that lacks the
   `…-ghcr-pull` secret) and lets this apply **create** that secret. Seeds local-path,
   MetalLB, namespaces, the GHCR pull secret.
 - [ ] **Step 3 (deploy stateless, H1):** set `wwwinfra:substrate=talos`,
-  `wwwinfra:nodeIp=192.168.0.NNN`, and **`wwwinfra:cloudflaredReplicas=0`** (services.ts:402
+  `wwwinfra:nodeIp=192.168.0.5`, and **`wwwinfra:cloudflaredReplicas=0`** (services.ts:402
   — a Talos cloudflared at >0 would grab the live tunnel token and split-brain external
   users across both clusters). `pulumi up` (digest-pinned now) deploys api/web/worker/
   go2rtc/plex/cert-manager on Talos; cloudflared present at 0. Mini still serves the house.
 - [ ] **Step 4:** verify each Talos workload healthy; `api /up` green; go2rtc streams under
   hostNetwork; cert-manager issued `api`'s cert (DNS-01, IP-independent — L2). HA tiles
   still error (HA on mini; `ha` now targets the Talos node which has no HA yet) — expected.
-- [ ] **Step 5 (make Talos the deploy target):** flip `wwwinfra:kubeContext=talos-prod` as
-  the committed default so CI deploys Talos. **Rollback:** revert that one line →
-  `cc-homelab`; mini stays fully deployable throughout (H4). Announce the main-push quiet
-  window (Global Constraints).
+- [ ] **Step 5 (make Talos the deploy target):** flip `wwwinfra:kubeContext=home-server` as
+  the committed default so CI deploys Talos. This flip is a plain revert, not a designed
+  rollback feature; the mini remains untouched and powered on until Task 12 powers it down
+  (H4). Announce the main-push quiet window (Global Constraints).
 
 ### Task 10: Postgres cutover
 
@@ -319,8 +349,8 @@ vs a same-moment live count → go/no-go. Commit the runbook.
   row-count.
 - [ ] **Step 2:** restore into Talos CNPG; `--compare-counts` vs the same-moment count →
   zero mismatches (runbook, Task 5).
-- [ ] **Step 3:** verify weight/weather/frontend_log tiles read correctly on Talos.
-  **Rollback:** point the app back at the mini DB (untouched, live).
+- [ ] **Step 3:** verify weight/weather/frontend_log tiles read correctly on Talos. (The
+  mini's DB stays untouched and live throughout; no rollback machinery is built for this.)
 
 ---
 
@@ -337,48 +367,59 @@ vs a same-moment live count → go/no-go. Commit the runbook.
 - [ ] **Step 1:** announce the house-dark window. `ha core stop`; **verify stopped**
   (`:8123` refuses) and **stays** stopped (watchdog confirmed off, Step 0).
 - [ ] **Step 2 (C1-copy / M8):** ONLY NOW take the authoritative `/config` — a stopped-HA
-  snapshot / `sqlite3 home-assistant_v2.db ".backup"`. Write an **immutable copy to the NAS
-  first**, then load `.storage` + YAML + recorder into the `ha-config` PVC.
-- [ ] **Step 3:** start the Talos HA container. It reinstalls custom-integration pip deps
-  into `/config/deps` on boot.
+  snapshot of **`.storage` + YAML ONLY** (do **NOT** copy `home-assistant_v2.db` — the
+  recorder is left behind, §0.3). Write an **immutable copy to the NAS first**, then load
+  `.storage` + YAML into the `ha-config` PVC.
+- [ ] **Step 3:** start the Talos HA container. It records **fresh into the empty
+  `home_assistant` CNPG cluster** (no history migrated, §0.2) and reinstalls
+  custom-integration pip deps into `/config/deps` on boot.
 - [ ] **Step 4 (M8 verify):** Hue/Shelly/HomeKit/Apple TV/Sonos/Tesla/ESPHome/Thread
   reconnect; **`renpho_fitness_scale_ble` entity resolves**; go2rtc cameras work; **wall
   panel live, lights respond. Calum confirms it feels right.**
 - [ ] **Step 5:** confirm the `ha-config` backup cron runs once to the Synology.
-- **Rollback (M7 — window is explicit, NOT one-command):** clean **only before the Talos HA
-  re-pairs HomeKit/Thread** (those re-key on pairing, staling the mini's `.storage`). Within
-  that window: stop Talos HA, re-enable the mini watchdog, `start-haos.sh` on the mini,
-  revert `wwwinfra:kubeContext`→`cc-homelab` + `substrate`→`orbstack`, `pulumi up`. After
-  re-pairing, rollback means re-pairing those devices back to the mini by hand.
+- **No designed rollback past this point (§0 decision 7).** The mini stays untouched and
+  powered off (Task 12) — the only fallback. Restoring it would mean re-pairing
+  HomeKit/Thread/ESPHome to it by hand, same as any fresh HA stand-up; no automated or
+  scripted rollback path is built for this cutover.
 
 ### Task 12: Plex GPU + cold-spare the mini
 
 - [ ] **Step 1:** confirm Plex hardware transcode on the 3060 (RuntimeClass + `nvidia.com/gpu`
   from Task 4; Plex Pass required for NVENC); `ADVERTISE_IP` = Talos node IP; verify Apple
   TV playback + a real transcode.
-- [ ] **Step 2:** move the PC to the cupboard (one power-cycle; static IP + reservation →
-  identical return).
-- [ ] **Step 3:** power down the mini. **Do not wipe.** Cold spare; HAOS qcow2 +
-  `start-haos.sh` intact.
+- [ ] **Step 2:** the PC is **already in the cupboard** (moved at Task 7 Step 3 for the
+  headless bring-up); confirm the static IP + DHCP reservation survived any power-cycle.
+- [ ] **Step 3:** power down the mini. Not wiped, not deleted — left untouched as the
+  implicit fallback only (§0 decision 7); HAOS qcow2 + `start-haos.sh` remain on disk, but
+  no rollback machinery is built around them.
 - [ ] **Step 4:** docs: `CODEBASE_OVERVIEW.md` (deploy path, arch, substrate), `AGENTS.md`
   Infra, `docs/homelab-host.md`; fix stale `ccinfra:`→`wwwinfra:`.
-- [ ] **Step 5 (optional, post-soak):** once rollback is truly abandoned, drop the arm64
-  build leg (reverse Task 1) and the `orbstack` `substrate` branch.
+- [ ] **Step 5:** the mini is disposable and the flip is fast (§0/decision 7) — **no soak
+  window**. Once CI is confirmed deploying to `home-server`, drop the arm64 build leg
+  (reverse Task 1) and the `orbstack` `substrate` branch.
 
 ---
 
 ## Self-Review (against the spec + plan review)
 
 **Spec coverage:** §2→T2,7,8,9,11,12. §4 P1→T1, P2→T2/T9, P3→T4/T11, P4→T3, P5→T2/T9. §5
-(TPM/H4→T2/T7, Flannel/talhelper/static-IP→T2, MetalLB/M7→T4/T9). §6→T5/T10/T11 (+maps/
-plex-config re-provision T9). §7→T4/T11. §8→Phases 0–4. §9→T6. §10 deferred→untasked
-(correct). §11→T7/T11. §12 risks→rollback lines.
+(**unencrypted disk §0→T2/T7**, Flannel/talhelper/static-IP→T2, `nfs-utils`→T2, MetalLB/M7→
+T4/T9). §6→T5/T10/T11 (+maps/plex-config re-provision T9). §7→T4/T11. §8→Phases 0–4. §9→T6.
+§10 deferred→untasked (correct). §11→T7/T11. §12 risks→open-risk notes (no rollback
+machinery is carried against them; the mini is the implicit fallback only).
 
 **Plan-review coverage:** C1→T3, **C2→T11 Step 0**, H1→T9 Step 3, H2→T4 Step 1/T8, H3→T9
 Step 2, H4→Global + T9 Step 1/5, H5→T9 Step 1, H6→T1 (branch-first native), M1→T2 Step 2,
 M2→T4 Step 3, M3→T7 Step 1, M4→T3 Step 3, M5→**no-op (already handled)**, M6→T5-into-T6,
-M7→T11 rollback, M8→T4 Step 4/T11 Step 2, L1→T4 namespaces, L2→T9 Step 4, L3→T6 Step 4.
+M7→T9 LB-IP fan-out, M8→T4 Step 4/T11 Step 2, L1→T4 namespaces, L2→T9 Step 4, L3→T6 Step 4.
 
-**Open decisions still Calum's:** SQLite-in-PVC vs CNPG-now (default SQLite); encryption vs
-unencrypted if SecureBoot fights the board (T2/T7); the Task 1 build mechanism is now fixed
-to native two-runner (no decision needed).
+**Locked in §0 (no longer open):** recorder → its **own `home_assistant` CNPG cluster** in
+the **`home-assistant` namespace**, no history migrated, `.storage`+YAML-only copy (§0.1–4);
+**disk UNENCRYPTED**, no TPM/SecureBoot/UKI (§0 decision 6); node **hostname + tailnet name
+`home-server`** (§0 decision 8); static IP `192.168.0.5` + MetalLB pool
+`192.168.0.3`–`192.168.0.4`, UniFi DHCP reservation codified in `infra/unifi` (§0 decision 9);
+the mini is **left untouched** (never wiped, never deleted), powered off by Calum
+post-cutover, as the **implicit fallback only — no designed rollback machinery** (§0
+decision 7, superseding the earlier open tension between "disposable" framing and the
+plan's rollback scaffolding); the Task 1 build mechanism is native two-runner. The
+`nfs-utils` extension is included (NFSv3 mount helper; NFS recon).

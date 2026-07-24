@@ -43,9 +43,27 @@ These override any contrary text below. Product-owner calls, not grill material.
    NetworkPolicy detail, so this boxes nothing in; moving a CNPG cluster between ns later
    is a restore op (reversible).
 
-**Still OPEN (Calum to call at BIOS time):** disk encryption — TPM-sealed vs
-unencrypted. Physical-theft threat model only; passphrase ruled out (kills headless
-reboot). Recommend TPM-sealed if Secure Boot cooperates cleanly, unencrypted fallback.
+6. **Disk UNENCRYPTED. No TPM, no Secure Boot, no UKI.** Pin a plain (non-SecureBoot)
+   Image Factory schematic. BIOS work at the desk is limited to: disable Secure Boot,
+   set USB→NVMe boot order. Physical-theft threat model only, ruled acceptable; a
+   passphrase was already ruled out (kills headless reboot), and TPM-sealing's
+   Secure-Boot/UKI coupling and first-boot PCR-lock-in risk aren't worth carrying for
+   that threat model. Supersedes the "Still OPEN … recommend TPM-sealed" framing
+   this section previously carried.
+7. **The mini is left UNTOUCHED**: never wiped, never deleted, powered off by Calum
+   once told, post-cutover. The powered-off-but-unwiped mini is the **implicit
+   fallback only** — that requires zero engineering. No active rollback scaffolding,
+   no soak window, and no `cloudflaredReplicas=0` knob framed as a rollback feature
+   are designed into this migration. The operational two-context kubeconfig (mini +
+   Talos) is kept only insofar as it's needed to talk to both clusters **during** the
+   migration, not as a rollback safety system. Supersedes any language below (§2, §5,
+   §8, §11) that describes designed rollback mechanisms, two-context juggling as a
+   rollback feature, or reversibility scaffolding.
+8. **Node hostname + tailnet name = `home-server`** (hyphen), NOT `talos-prod` (an
+   earlier placeholder used below in §5/§11/P5) and NOT `homelab` (the mini keeps
+   that name). Supersedes every `talos-prod` reference below.
+9. **Node static IP = `192.168.0.5`; MetalLB pool = `192.168.0.3`–`192.168.0.4`.**
+   UniFi DHCP reservation for both codified in `infra/unifi/`.
 
 Naming rule (recurring confusion): k8s resource names use **hyphens** (`control-center`,
 `home-assistant` — DNS-1123); Postgres db names use **underscores** (`control_center`,
@@ -81,7 +99,9 @@ substrate, no hand-managed layer beneath it**, on hardware with a schedulable GP
   all devices exactly as HAOS did.
 - **RTX 3060 as a schedulable k8s resource** (Talos NVIDIA extensions + device
   plugin). Plex transcodes on it; Frigate/Whisper/Ollama later.
-- Mac mini **retired to cold spare**, never wiped, HAOS qcow2 intact = rollback.
+- Mac mini left **untouched** — never wiped, never deleted — and powered off by Calum
+  once told, post-cutover. HAOS qcow2 stays on disk as the **implicit fallback only**;
+  no rollback machinery is designed around it (§0 decision 7).
 - CI `push-to-main` deploys to the Talos cluster, same as today.
 - Repo is the single source of truth: Talos machine config, workloads, secrets all
   checked in. No hand-applied drift.
@@ -145,8 +165,8 @@ builds is arm64-only and will not run on Talos.** This touches the build, not ju
 deploy.
 
 **Decision: build multi-arch (`linux/amd64,linux/arm64`) for the transition.** Not
-amd64-only, because the mini (arm64) is the rollback target and must keep pulling
-runnable images.
+amd64-only, because the untouched, powered-on mini (arm64) is the implicit fallback
+during the transition and must keep pulling runnable images.
 - **The current build action cannot do this as-is.** `.github/actions/build-product-image/
   action.yml` sets up buildx but has **no `docker/setup-qemu-action`** (zero binfmt/QEMU
   anywhere in `.github/`), and the runner is `ubuntu-24.04-arm`. Adding
@@ -182,7 +202,8 @@ and it disappears:
   cert (talosconfig → kubeconfig), new `:6443` endpoint. Update `wwwinfra:kubeContext`.
 - **`tag:ci` ACL** must be allowed to reach the new node's `:6443` on the tailnet.
 - **Hostname collision (see P5):** the node must NOT take the tailnet name `homelab` —
-  the mini keeps it for rollback, and `homelab` is also load-bearing for HA routing.
+  the mini keeps it as the untouched implicit fallback, and `homelab` is also
+  load-bearing for HA routing.
 
 ### P3 — HA recorder is SQLite, not Postgres (locked decision needs revisiting)
 The brainstorm locked "recorder → CNPG `home_assistant`, separate db same cluster." That
@@ -213,7 +234,8 @@ after cutover — they are **not** "regenerable" and **not** "unchanged":
   node, the `ha` ExternalName must point at the node/localhost, not a tailnet name.
 - **Plex `ADVERTISE_IP: "http://192.168.0.147:32400"`** (services.ts:355) — the **Mac's**
   LAN IP. After migration the Apple TV gets an unreachable advertise URL. Must become the
-  Talos node's LAN IP (or the Plex MetalLB IP).
+  Talos node's LAN IP `192.168.0.5` (§0 decision 9) (or the Plex MetalLB IP, out of the
+  `192.168.0.3`–`192.168.0.4` pool).
 - The whole `ha`-via-tailnet-FQDN indirection exists **only** because OrbStack pods can't
   route `192.168.0.0/24` (services.ts:97). On a real-LAN Talos node this hack should be
   **deleted**, not ported. (Same for the UniFi `:8444` and LAN-443 socat forwards — they
@@ -221,48 +243,44 @@ after cutover — they are **not** "regenerable" and **not** "unchanged":
 
 **These are explicit plan edits, gated behind the VM validation.**
 
-### P5 — the tailnet name `homelab` is shared by the kube API AND HA, and collides with rollback
+### P5 — the tailnet name `homelab` is shared by the kube API AND HA, and collides with the mini's fallback identity
 `homelab.tail8c014d.ts.net` serves the kube API (`:26443`) **and** the HA socat (`:8123`)
-— it is the **mini**. Two independent consumers, one name. Rollback (§8 step 5 =
-`start-haos.sh` on the mini) requires the **mini to keep owning `homelab`**. Therefore:
-- The Talos node joins the tailnet under a **distinct** machine name (e.g. `talos-prod`).
+— it is the **mini**. Two independent consumers, one name. The mini stays untouched and
+powered on until cutover, so it must **keep owning `homelab`** throughout. Therefore:
+- The Talos node joins the tailnet under a **distinct** machine name: **`home-server`**
+  (§0 decision 8; not `talos-prod`, an earlier placeholder).
 - Update: the CI kubeconfig endpoint, `machine.certSANs`, the `ha` ExternalName (P4), and
   the `tag:ci` ACL to the new name.
-- **Rollback is defined:** repoint CI + the `ha` ExternalName back to `homelab` (mini),
-  Talos stays off that name. Never let both machines claim `homelab`.
+- No designed rollback is built on top of this naming split (§0 decision 7). Never let
+  both machines claim `homelab` — that's the only invariant here.
 
 ## 5. Decisions
 
 ### Locked (from brainstorm, still hold)
 - Talos bare metal, single node, control plane schedulable.
 - HA as a container, not HAOS. `hostNetwork: true` (mDNS/SSDP: Hue/HomeKit/Sonos/Shelly).
-- Mini retired cold spare, qcow2 intact, rollback = `start-haos.sh` on the mini.
+- Mini left untouched (never wiped, never deleted), powered off by Calum post-cutover;
+  qcow2 intact as the implicit fallback only — no rollback machinery designed around
+  it (§0 decision 7).
 - 3060 schedulable via Talos NVIDIA extensions + device plugin.
 - ESP32 BLE proxy stays (board has no onboard BT/WiFi; radios must be near devices).
 - What migrates from HA is `/config` (`.storage` + YAML + `home-assistant_v2.db`),
   tarred out once via the SSH add-on. HAOS qcow2 itself is not migrated.
 
 ### Locked defaults (Calum: "defaults is fine")
-- **Disk encryption: yes, TPM-sealed** (Z690 fTPM 2.0), STATE + EPHEMERAL partitions.
-  No passphrase → unattended reboots work. **Prerequisites (H4, do not skip):**
-  - Talos TPM sealing is coupled to **Secure Boot + UKI** — the Image Factory schematic
-    must be the **SecureBoot variant** (not the plain NVIDIA+iscsi schematic). Without
-    it, encryption falls back to a **passphrase**, which breaks unattended reboots — the
-    whole reliability goal. Plan confirms the exact requirement for the pinned Talos
-    version before committing.
-  - **All BIOS security settings (fTPM, Secure Boot) must be finalized BEFORE the first
-    encrypted boot.** TPM sealing binds to PCR measurements; any Secure Boot / PCR change
-    *after* first boot re-seals to different values → node won't unseal → rebuild. This is
-    a hard step-order gate in §11 (BIOS is set once, at the desk, before install).
-  - Recovery path (TPM/PCR change ⇒ rebuild node) documented; cheap on a single
-    declarative node with NFS-backed data.
-  - **Fallback if SecureBoot proves fiddly on this board:** ship **unencrypted** and
-    revisit, rather than a passphrase that defeats headless reboots. Encryption is a
-    nice-to-have here (physical-theft only); unattended reboot is load-bearing.
+- **Disk encryption: UNENCRYPTED. No TPM, no Secure Boot, no UKI** (§0 decision 6 —
+  supersedes the earlier "TPM-sealed" default this section carried). Pin a **plain
+  (non-SecureBoot) Image Factory schematic**. BIOS work at the desk is limited to:
+  disable Secure Boot, set USB→NVMe boot order — nothing else. Physical-theft threat
+  model only; a passphrase was already ruled out (kills headless reboot), and
+  unencrypted avoids the Secure-Boot/UKI coupling and first-boot PCR lock-in that
+  TPM-sealing would have required. Unattended reboot is load-bearing; encryption here
+  was only ever a nice-to-have.
 - **CNI: Flannel** (Talos default). Revisit Cilium when node #2 exists.
 - **Config: talhelper + SOPS**, checked in under `infra/talos/`.
 - **Repo is truth**; drift dies.
-- **Static node IP** in the machine config **+ matching UniFi DHCP reservation**.
+- **Static node IP `192.168.0.5`** in the machine config **+ matching UniFi DHCP
+  reservation codified in `infra/unifi/`** (§0 decision 9).
 
 ### Revisited by recon
 - **Recorder → own CNPG Cluster `home_assistant`, no history migration** (§0.1–3, decided). Supersedes the SQLite-in-PVC recommendation in P3 below.
@@ -271,11 +289,12 @@ after cutover — they are **not** "regenerable" and **not** "unchanged":
   are `type: LoadBalancer` today (EXTERNAL-IP `192.168.139.2`, an OrbStack subnet).
   Replace with **MetalLB (L2, single-address pool on the real LAN)** or fold to
   `hostNetwork`/NodePort. **Lean MetalLB** — keeps the Service type unchanged in
-  `infra/src/services.ts`, minimal blast radius. **M7 — the new LB IPs ripple** and the
-  plan must inventory the fan-out: the UniFi DHCP reservation (reserve the MetalLB
-  pool too, not just the node IP), the cert-manager cert for `api`'s 443, cloudflared's
-  origin targets, and Plex `ADVERTISE_IP` (P4). Also watch MetalLB-L2 ARP vs the
-  hostNetwork HA pod on a single node (§12).
+  `infra/src/services.ts`, minimal blast radius. Pool is **`192.168.0.3`–`192.168.0.4`**
+  (§0 decision 9). **M7 — the new LB IPs ripple** and the plan must inventory the
+  fan-out: the UniFi DHCP reservation (reserve the MetalLB pool too, not just the node
+  IP — both codified in `infra/unifi/`), the cert-manager cert for `api`'s 443,
+  cloudflared's origin targets, and Plex `ADVERTISE_IP` (P4). Also watch MetalLB-L2 ARP
+  vs the hostNetwork HA pod on a single node (§12).
 
 ### Picked (default unless objected)
 - Talos + k8s: latest stable, pinned explicitly in the repo.
@@ -293,7 +312,7 @@ after cutover — they are **not** "regenerable" and **not** "unchanged":
 | Data | Where | Action |
 |---|---|---|
 | NFS PVs (api/worker/plex/pg-backup) | Synology | **Re-mount.** Nothing moves. |
-| CNPG Postgres (`control_center`) | local-path, mini | **`pg_dump` at cutover** → restore into new CNPG → **row-count + checksum verify vs live mini** before wiping. Mini stays as rollback. |
+| CNPG Postgres (`control_center`) | local-path, mini | **`pg_dump` at cutover** → restore into new CNPG → **row-count + checksum verify vs live mini** before wiping. Mini stays untouched throughout as the implicit fallback. |
 | HA `/config` | HAOS qcow2, mini | **Two copies.** (1) An early **throwaway rehearsal tar** (HA running) to build+test the container in the VM phase. (2) The **authoritative copy at cutover with HA STOPPED** (C1). Copy `.storage` (pairings/tokens) + YAML **only** — NOT `home-assistant_v2.db` (recorder left behind, §0.3). Land in a new `ha-config` PVC. |
 | HA recorder | — | **Not migrated (§0.2).** New `home_assistant` db in its own CNPG Cluster (`home-assistant` ns); HA records fresh from cutover, aggressive purge. |
 | `plex-config` | local-path, mini | Copy (Plex library/metadata). Non-critical; acceptable to re-scan if it fails. |
@@ -333,8 +352,10 @@ This is **in scope**, not deferred.
       truly irreplaceable data in the whole migration.
    3. Load it into the `ha-config` PVC; **start the new HA container.**
    Both HAs must never talk to devices simultaneously (`.storage` pairing corruption for
-   HomeKit/Thread/ESPHome). Rollback: stop new HA, `start-haos.sh` on the mini, repoint
-   the `ha` ExternalName + CI back to `homelab` (P5).
+   HomeKit/Thread/ESPHome) — the mini's HA (and its watchdog) must be stopped/disabled
+   before this step, not just left running. No designed rollback is built past this
+   point (§0 decision 7); the untouched, powered-off mini is the only fallback, and
+   restoring it means re-pairing devices to it by hand.
    - **Cutover verification (M8):** confirm the `renpho_fitness_scale_ble` custom
      integration (and any HACS `custom_components`) reinstalls its pip deps into
      `/config/deps` on container-HA boot — official container HA ships no HACS. Verify the
@@ -349,7 +370,7 @@ local Talos VM** (`talosctl cluster create`, Docker/QEMU) before the PC ever boo
   restores the dump, HA container starts, MetalLB assigns, the Tailscale-extension /
   kubeconfig story is exercised.
 - **Cannot prove (hardware-only, verified once on the real box):** GPU (no 3060 to pass
-  through), mDNS/SSDP device discovery (NAT'd VM net), TPM disk encryption (no real TPM).
+  through), mDNS/SSDP device discovery (NAT'd VM net).
 
 This collapses the real-hardware work toward a single pass.
 
@@ -371,16 +392,16 @@ This collapses the real-hardware work toward a single pass.
 Physical (cannot be automated — reflashing the boot USB powers off the live rescue
 session; BIOS is at the desk):
 1. Confirm rescued files open, or accept the checksum verification.
-2. Reflash the USB stick with Talos; **BIOS at the desk**: enable fTPM, USB boot order,
-   confirm Secure Boot state.
+2. Reflash the USB stick with Talos; **BIOS at the desk**: disable Secure Boot, set
+   USB→NVMe boot order. Nothing else — no fTPM/TPM step (disk is unencrypted, §0).
 3. Power off, move to the cupboard, plug Ethernet, power on.
 4. Present for the HA cutover to confirm the panel + lights feel right.
 
 Decisions:
 - ~~P3 recorder~~ — **DECIDED §0**: own CNPG Cluster `home_assistant`, no history migration.
-- **Disk encryption** — TPM-sealed vs unencrypted. STILL OPEN; call at BIOS time (§0).
-- **MetalLB vs hostNetwork/NodePort** for the two LoadBalancer services (plan will
-  recommend MetalLB).
+- ~~Disk encryption~~ — **DECIDED §0 (decision 6)**: unencrypted. No TPM/Secure Boot/UKI.
+- ~~MetalLB vs hostNetwork/NodePort~~ — **DECIDED**: MetalLB, pool
+  `192.168.0.3`–`192.168.0.4` (§0 decision 9).
 
 ## 12. Open risks (for the grilling session)
 
