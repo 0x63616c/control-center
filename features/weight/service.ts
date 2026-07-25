@@ -26,7 +26,7 @@ export function median(xs: number[]): number {
 /** Notification copy for a freshly-ingested weigh-in. */
 export function formatWeighInAlert(weightKg: number): { title: string; body: string } {
   const lb = (weightKg * LB_PER_KG).toFixed(1);
-  return { title: "Weight logged", body: `${lb} lb` };
+  return { title: `New weight logged: ${lb}lbs`, body: "" };
 }
 
 /** Band is inactive until 3 included readings exist (first-days bootstrap). */
