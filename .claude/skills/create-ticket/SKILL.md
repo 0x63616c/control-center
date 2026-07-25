@@ -33,7 +33,14 @@ Rules:
 
 ## Labels
 
+Get the current, authoritative set from the repo (don't trust a hardcoded list — it goes stale, and the repo also carries unrelated default labels like `bug`/`enhancement`/`ruby` you must ignore):
+
+```bash
+gh label list --limit 100 --json name | jq -r '.[].name' | grep -E '^(area|type)/'
+```
+
+As of 2026-07-25 that's:
 - `area/`: `infra` `network` `hardware` `panel-ui` `tiles` `integrations` `observability` `docs` `tooling` `security`
-- `type/`: `bug` `chore` `feature` `design` `spike` `verify` `question`
+- `type/`: `bug` `chore` `design` `feature` `question` `spike` `verify`
 
 If neither list fits, ask the user rather than inventing a new label.
