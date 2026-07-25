@@ -1,6 +1,7 @@
 export type {
   CronJobSpec,
   ExternalServiceArgs,
+  HostBackedServiceArgs,
   InitContainerSpec,
   PortSpec,
   RenderedCronJob,
@@ -15,6 +16,7 @@ export type {
 } from "./component.ts";
 export {
   ExternalService,
+  HostBackedService,
   renderCronJob,
   renderExternalService,
   renderWorkload,

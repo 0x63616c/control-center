@@ -68,3 +68,50 @@ describe("Workload logical names", () => {
     expect(urn).toContain("control-center-api");
   });
 });
+
+describe("HostBackedService", () => {
+  test("selector-less ClusterIP + manual EndpointSlice to the host IP, matching port names", async () => {
+    const provider = new k8s.Provider("hbs-test", { context: "x" });
+    const hbs = new component.HostBackedService({
+      name: "ha",
+      hostIp: "192.168.0.5",
+      port: 8123,
+      provider,
+      namespace: "control-center",
+    });
+
+    const svcSpec = await get<{
+      type: string;
+      selector?: Record<string, string>;
+      ports: { name: string; port: number; targetPort: number; protocol: string }[];
+    }>(hbs.service, "spec");
+    expect(svcSpec.type).toBe("ClusterIP");
+    // No selector: endpoints come from the EndpointSlice, not a pod match.
+    expect(svcSpec.selector).toBeUndefined();
+    expect(svcSpec.ports).toEqual([
+      { name: "http", port: 8123, targetPort: 8123, protocol: "TCP" },
+    ]);
+
+    const esMeta = await get<{ name: string; labels: Record<string, string> }>(
+      hbs.endpointSlice,
+      "metadata",
+    );
+    expect(esMeta.name).toBe("ha-manual");
+    // The Service association label kube-proxy keys on.
+    expect(esMeta.labels["kubernetes.io/service-name"]).toBe("ha");
+
+    const endpoints = await get<{ addresses: string[]; conditions: { ready: boolean } }[]>(
+      hbs.endpointSlice,
+      "endpoints",
+    );
+    expect(endpoints).toEqual([{ addresses: ["192.168.0.5"], conditions: { ready: true } }]);
+
+    // EndpointSlice port name MUST match the Service port name or the endpoint
+    // is ignored.
+    const esPorts = await get<{ name: string; port: number; protocol: string }[]>(
+      hbs.endpointSlice,
+      "ports",
+    );
+    expect(esPorts).toEqual([{ name: "http", port: 8123, protocol: "TCP" }]);
+  });
+});

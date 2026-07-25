@@ -13,7 +13,7 @@ import * as pulumi from "@pulumi/pulumi";
 import { controlCenterProductManifest, defineProduct } from "@www/platform";
 import type { InfraNamespaceName } from "./cluster.ts";
 import type { WorkloadSpec } from "./component.ts";
-import { ExternalService, Workload } from "./component.ts";
+import { ExternalService, HostBackedService, Workload } from "./component.ts";
 import { GHCR_PULL_SECRET_NAME, GHCR_PULL_SECRET_NAMESPACES } from "./ghcr-pull-secrets.ts";
 import { NVIDIA_RUNTIME_CLASS_NAME } from "./nvidia.ts";
 import { SERVICE_SECRET_TARGETS, SERVICE_SECRETS, type ServiceSecretName } from "./secrets-map.ts";
@@ -563,7 +563,7 @@ export interface ServicesArgs {
 export interface ServicesResources {
   ghcrPullSecrets: k8s.core.v1.Secret[];
   go2rtcConfigSecret: k8s.core.v1.Secret;
-  haService: ExternalService;
+  haService: ExternalService | HostBackedService;
   pvcs: k8s.core.v1.PersistentVolumeClaim[];
   workloads: Workload[];
 }
@@ -683,19 +683,40 @@ export function deployServices(args: ServicesArgs): ServicesResources {
     opts,
   );
 
-  // `ha` -> haTarget(target) (api/worker reach `http://ha:8123`). On
-  // "orbstack" (default) this CNAMEs to the host's tailnet FQDN, delivered to
-  // the host HA socat via the locally-routed tailnet IP (www-j934.17). On
-  // "talos" it's the node's LAN IP (hostNetwork HA's own netns).
-  const haService = new ExternalService(
-    {
-      name: "ha",
-      externalName: haTarget(target),
-      provider,
-      namespace: namespaces["control-center"],
-    },
-    opts,
-  );
+  // `ha` -> the HA :8123 endpoint (api/worker reach `http://ha:8123`). The
+  // Service SHAPE differs by substrate because the reachable target differs:
+  //   - "orbstack" (mini, default): an ExternalName CNAME to the host's tailnet
+  //     FQDN (a valid DNS name), delivered to the host HA socat via the
+  //     locally-routed tailnet IP (www-j934.17).
+  //   - "talos": HA is a hostNetwork pod in the `home-assistant` namespace,
+  //     bound on the NODE's LAN IP. A cross-namespace selector Service can't
+  //     reach it, and an ExternalName to the bare node IP is an invalid CNAME
+  //     (kube-dns hands the IP back and api/worker get `bad address 'ha:8123'`).
+  //     So front the fixed node IP with a selector-less ClusterIP + a manual
+  //     EndpointSlice (HostBackedService) — the upstream idiom for a Service
+  //     over a fixed IP. (Codified from the 2026-07-24 cutover live-patch, which
+  //     replaced the malformed ExternalName by hand.)
+  const haService =
+    target.substrate === "talos"
+      ? new HostBackedService(
+          {
+            name: "ha",
+            hostIp: target.nodeIp,
+            port: HA_PORT,
+            provider,
+            namespace: namespaces["control-center"],
+          },
+          opts,
+        )
+      : new ExternalService(
+          {
+            name: "ha",
+            externalName: haTarget(target),
+            provider,
+            namespace: namespaces["control-center"],
+          },
+          opts,
+        );
 
   // local-path PVCs the workloads mount by claim name (web maps).
   const pvcs = LOCAL_PATH_CLAIMS.map(

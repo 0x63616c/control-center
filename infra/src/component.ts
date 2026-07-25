@@ -624,6 +624,89 @@ export class ExternalService extends pulumi.ComponentResource {
   }
 }
 
+export interface HostBackedServiceArgs {
+  // Service (and in-cluster DNS) name.
+  name: string;
+  // The fixed off-cluster / host endpoint IP the Service fronts (e.g. a
+  // hostNetwork pod bound on the node's LAN IP).
+  hostIp: string;
+  port: number;
+  // Shared port name across the Service and its EndpointSlice — the two MUST
+  // match by name or kube-proxy ignores the endpoint. Defaults to "http"
+  // (HA's :8123 is plain HTTP).
+  portName?: string;
+  provider: k8s.Provider;
+  namespace: pulumi.Input<string>;
+}
+
+/**
+ * A stable in-cluster ClusterIP Service whose endpoints are a FIXED host IP,
+ * supplied via a manually-managed EndpointSlice rather than a pod selector.
+ *
+ * The canonical use: reaching a `hostNetwork` workload that lives in ANOTHER
+ * namespace. A selector Service only matches pods in its own namespace, and a
+ * hostNetwork pod's endpoint IP is the node IP anyway, so cross-namespace
+ * access is expressed as "Service in front of the node's LAN IP:port".
+ *
+ * Why not `ExternalService` (ExternalName): an ExternalName Service is a CNAME,
+ * valid only to a DNS NAME, never a bare IP — `ha -> 192.168.0.5` makes kube-dns
+ * hand back the IP verbatim and callers get `bad address 'ha:8123'`. A
+ * selector-less ClusterIP + manual EndpointSlice is the upstream-documented
+ * idiom for "a Service pointing at a fixed IP".
+ *
+ * @public - the talos-substrate shape of the `ha` Service (services.ts); on
+ * "orbstack" the host is reached by a tailnet FQDN, so {@link ExternalService}
+ * (a valid CNAME target) is used there instead.
+ */
+export class HostBackedService extends pulumi.ComponentResource {
+  readonly service: k8s.core.v1.Service;
+  readonly endpointSlice: k8s.discovery.v1.EndpointSlice;
+
+  constructor(args: HostBackedServiceArgs, opts?: pulumi.ComponentResourceOptions) {
+    super("control-center:infra:HostBackedService", args.name, {}, opts);
+    const { name, hostIp, port, portName = "http", provider, namespace } = args;
+    const childOpts: pulumi.ComponentResourceOptions = { parent: this, provider };
+
+    this.service = new k8s.core.v1.Service(
+      name,
+      {
+        metadata: { name, namespace, labels: { app: name } },
+        spec: {
+          type: "ClusterIP",
+          // No selector: endpoints come from the EndpointSlice below, not from
+          // a pod-label match (the target pod is in another namespace).
+          ports: [{ name: portName, port, targetPort: port, protocol: "TCP" }],
+        },
+      },
+      childOpts,
+    );
+
+    // Manual EndpointSlice, associated to the Service by the well-known
+    // `kubernetes.io/service-name` label. The `-manual` suffix marks it as NOT
+    // endpoint-controller-managed (there is no selector to reconcile from), so
+    // the controller leaves it alone.
+    this.endpointSlice = new k8s.discovery.v1.EndpointSlice(
+      `${name}-manual`,
+      {
+        metadata: {
+          name: `${name}-manual`,
+          namespace,
+          labels: { "kubernetes.io/service-name": name },
+        },
+        addressType: "IPv4",
+        endpoints: [{ addresses: [hostIp], conditions: { ready: true } }],
+        ports: [{ name: portName, port, protocol: "TCP" }],
+      },
+      childOpts,
+    );
+
+    this.registerOutputs({
+      service: this.service.id,
+      endpointSlice: this.endpointSlice.id,
+    });
+  }
+}
+
 /** @public */
 export interface ScheduledJobArgs extends CronJobSpec {
   provider: k8s.Provider;

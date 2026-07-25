@@ -103,16 +103,30 @@ describe("installHomeAssistant (Task 4, §0.1-§0.4, talos-only)", () => {
     expect(spec.resources.requests.storage).toBe("5Gi");
   });
 
-  test("the HA Deployment is hostNetwork + ClusterFirstWithHostNet + the nvidia RuntimeClass", async () => {
+  test("the HA Deployment is hostNetwork + ClusterFirstWithHostNet, with NO GPU / RuntimeClass", async () => {
     const res = install();
     const spec = await get<{
       template: {
-        spec: { hostNetwork?: boolean; dnsPolicy?: string; runtimeClassName?: string };
+        spec: {
+          hostNetwork?: boolean;
+          dnsPolicy?: string;
+          runtimeClassName?: string;
+          containers: { resources: { limits?: Record<string, string> } }[];
+        };
       };
     }>(res.workload.deployment, "spec");
     expect(spec.template.spec.hostNetwork).toBe(true);
     expect(spec.template.spec.dnsPolicy).toBe("ClusterFirstWithHostNet");
-    expect(spec.template.spec.runtimeClassName).toBe("nvidia");
+    // HA needs no GPU: the earlier gpu:1 + `nvidia` RuntimeClass were a Plex
+    // copy-paste that left the pod Pending on the (deferred) device plugin.
+    expect(spec.template.spec.runtimeClassName).toBeUndefined();
+    expect(spec.template.spec.containers[0].resources.limits?.["nvidia.com/gpu"]).toBeUndefined();
+  });
+
+  test("the home-assistant namespace is labeled Pod Security privileged (HA is hostNetwork)", async () => {
+    const res = install();
+    const metadata = await get<{ labels?: Record<string, string> }>(res.namespace, "metadata");
+    expect(metadata.labels?.["pod-security.kubernetes.io/enforce"]).toBe("privileged");
   });
 
   test("the HA Deployment mounts /config from the ha-config claim", async () => {

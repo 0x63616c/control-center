@@ -25,7 +25,6 @@ import * as k8s from "@pulumi/kubernetes";
 import * as pulumi from "@pulumi/pulumi";
 import { ScheduledJob, Workload } from "./component.ts";
 import { haConfigBackupCronSpec, homeAssistantPgBackupCronSpec } from "./crons.ts";
-import { NVIDIA_RUNTIME_CLASS_NAME } from "./nvidia.ts";
 
 export const HOME_ASSISTANT_NAMESPACE = "home-assistant";
 
@@ -148,7 +147,19 @@ export function installHomeAssistant(args: HomeAssistantArgs): HomeAssistantReso
 
   const namespace = new k8s.core.v1.Namespace(
     HOME_ASSISTANT_NAMESPACE,
-    { metadata: { name: HOME_ASSISTANT_NAMESPACE } },
+    {
+      metadata: {
+        name: HOME_ASSISTANT_NAMESPACE,
+        // Pod Security "privileged": HA runs hostNetwork (binds :8123 in the
+        // node netns for mDNS/HomeKit/Thread/ESPHome discovery, see the
+        // Workload below), which the cluster-default `baseline` PSA forbids —
+        // an unlabeled namespace leaves the HA pod FORBIDDEN at admission.
+        // This dedicated namespace holds only HA + its own CNPG Postgres, so
+        // scoping it privileged is contained (codified from the 2026-07-24
+        // cutover, where this was a live `kubectl label` emergency patch).
+        labels: { "pod-security.kubernetes.io/enforce": "privileged" },
+      },
+    },
     opts,
   );
   const namespaceName = namespace.metadata.name;
@@ -193,14 +204,17 @@ export function installHomeAssistant(args: HomeAssistantArgs): HomeAssistantReso
       provider,
       image: "ghcr.io/home-assistant/home-assistant:stable",
       replicas: 1,
+      // NO gpu / runtimeClassName: HA Core delegates camera/media work to its
+      // integrations (go2rtc, upstream services), not a local CUDA transcode,
+      // so it needs no GPU. The earlier `gpu: 1` + `nvidia` RuntimeClass were a
+      // copy-paste from the Plex workload (services.ts) and, with the node's
+      // NVIDIA device plugin still deferred, left the pod Pending "Insufficient
+      // nvidia.com/gpu" for its whole life — codified removal from the
+      // 2026-07-24 cutover live-patch.
       resources: {
         memory: "1G",
         reserveCpus: "0.5",
-        // GPU transcode (camera streams / media proxy) on the Talos node's
-        // RTX 3060, same nvidia.ts RuntimeClass Plex uses (services.ts).
-        gpu: 1,
       },
-      runtimeClassName: NVIDIA_RUNTIME_CLASS_NAME,
       // hostNetwork: HA binds :8123 in the NODE's netns so other pods (and
       // the `ha` ExternalName in services.ts) reach it at the node LAN IP,
       // mirroring how the mini's HA is reached via its host's tailnet

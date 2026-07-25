@@ -1,0 +1,18 @@
+config:
+  # The Talos home-server cluster is production (the mini/prod stack is a retired
+  # cold spare). substrate=talos renders the node-local storage/LoadBalancer/GPU
+  # RuntimeClass + the Home Assistant workload (program.ts's talos block), and the
+  # node-IP-backed `ha` Service shape (services.ts). nodeIp is the node's static
+  # LAN IP (UniFi reservation); it backs the `ha` EndpointSlice + Plex ADVERTISE_IP.
+  wwwinfra:substrate: talos
+  wwwinfra:nodeIp: "192.168.0.5"
+  # HA (2 replicas) — the live CF tunnel is served from here now, not the mini.
+  wwwinfra:cloudflaredReplicas: "2"
+  # Local `pulumi up` targets the `home-server` kubeconfig context (infra/talos/
+  # clusterconfig/hs.kubeconfig). CI OVERWRITES this at deploy time from the sole
+  # context in its KUBECONFIG__B64 blob (the tailnet kubeconfig), so this value
+  # only governs local applies.
+  wwwinfra:kubeContext: home-server
+  # CI pins per-service image digests here (`pulumi config set --path
+  # wwwinfra:imageDigests.<svc>`); empty on a local apply falls back to :main.
+  wwwinfra:imageDigests: {}
