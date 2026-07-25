@@ -462,7 +462,7 @@ jobs:
             "$IMAGE:${{ github.sha }}-amd64" \
             "$IMAGE:${{ github.sha }}-arm64"
 
-  # After the images build on main, deploy to the homelab k3s cluster with
+  # After the images build on main, deploy to the home-server Talos cluster with
   # `pulumi up` (www-j934.14). The runner joins the tailnet with an EPHEMERAL
   # Tailscale key (auto-revoked when the job ends), reaches the kube-apiserver
   # over the tailnet, and runs the Pulumi program in infra/. CI is the deployer.
@@ -594,7 +594,7 @@ jobs:
           echo "map=$json" >> "$GITHUB_OUTPUT"
 
       # Join the tailnet with an EPHEMERAL, tag-scoped key so the runner can reach
-      # the homelab kube-apiserver. The node is auto-revoked when the job ends
+      # the home-server kube-apiserver. The node is auto-revoked when the job ends
       # (ephemeral: true + the action's post-step). No long-lived tailnet creds
       # live on the runner, only the single-use OAuth-minted key.
       - name: Connect to Tailscale (ephemeral)
@@ -616,14 +616,16 @@ jobs:
       - name: Install Pulumi CLI
         uses: pulumi/actions@v6
 
-      # Write the kubeconfig the Pulumi k8s provider uses to reach the homelab
+      # Write the kubeconfig the Pulumi k8s provider uses to reach the home-server
       # kube-apiserver over the tailnet (www-j934.9 produces this secret).
-      # Contract:
-      #   - server: https://homelab.tail8c014d.ts.net:26443 (a `tailscale serve`
-      #     TCP forward to 127.0.0.1:26443 on homelab)
-      #   - the kube API cert has NO tailnet SAN (SANs: k8s.orb.local, localhost),
-      #     so the cluster entry sets `tls-server-name: k8s.orb.local` and embeds
-      #     the OrbStack CA; auth is the OrbStack client cert/key.
+      # Contract (home-server / Talos, since the OrbStack-mini cutover):
+      #   - server: https://home-server.tail8c014d.ts.net:6443 - the Talos
+      #     apiserver cert's certSANs include the tailnet name directly
+      #     (infra/talos/talconfig.yaml), so no `tls-server-name` override or
+      #     `tailscale serve` TCP forward is needed the way the old OrbStack
+      #     setup required.
+      #   - auth is the Talos-issued client cert/key against the Talos-generated
+      #     cluster CA (not an OrbStack CA).
       # All of that lives INSIDE the vault KUBECONFIG__B64, decoded from the env.
       - name: Write kubeconfig
         run: |

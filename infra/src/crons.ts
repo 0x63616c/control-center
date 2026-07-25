@@ -293,7 +293,7 @@ export interface CronsArgs {
   provider: k8s.Provider;
   namespaces: Readonly<Record<InfraNamespaceName, pulumi.Input<string>>>;
   // NFS server for the NAS backup PV; the NAS LAN IP by default. kubelet mounts
-  // the PV from the node netns (reaches the LAN on homelab, DESIGN §5b); the
+  // the PV from the node netns (reaches the LAN on home-server, DESIGN §5b); the
   // pod-egress no-route limit (§5c) does not apply to PV mounts. www-j934.17.
   nasNfsServer: string;
   // Same CI-supplied digest-pin map as services.ts's deployServices; defaults

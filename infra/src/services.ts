@@ -265,7 +265,7 @@ const mountSecrets = (service: ServiceSecretName) =>
  *   NOT grab the live tunnel token and split-brain prod with Swarm), flipped to 2
  *   (HA) at the cutover (www-j934.9 / DESIGN §7 step 3).
  * - nasNfsServer: the NFS server address for the media share, the NAS LAN IP by
- *   default. The PV is mounted by kubelet in the node netns, which on homelab (the
+ *   default. The PV is mounted by kubelet in the node netns, which on home-server (the
  *   prod target) reaches the home LAN directly (DESIGN 5b); the pod-egress no-route
  *   limit (DESIGN 5c) does not apply to PV mounts. www-j934.17.
  * - imageDigests: CI-supplied digest pin map (name -> sha256:…); absent only in
@@ -556,7 +556,7 @@ export interface ServicesArgs {
   // Swarm), 2 (HA) at the cutover (www-j934.9 / DESIGN §7).
   cloudflaredReplicas: number;
   // NFS server for the media share: NAS LAN IP by default; kubelet mounts the PV
-  // from the node netns, which reaches the LAN on homelab (DESIGN 5b/5c, www-j934.17).
+  // from the node netns, which reaches the LAN on home-server (DESIGN 5b/5c, www-j934.17).
   nasNfsServer: string;
   // Per-service image digest pins from CI (name -> sha256:…); see ghcr().
   imageDigests?: ImageDigests;
