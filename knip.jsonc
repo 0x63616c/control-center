@@ -25,7 +25,12 @@
     "features/_generated/**",
     "docs/media-tiles/**", // Design handoff bundle (prototypes/reference, not app code)
     "docs/captive-portal/design/**", // Captive portal design handoff (reference, not app code)
-    "**/ios/**/public/**" // Capacitor web-bundle copies synced into iOS project (not source)
+    "**/ios/**/public/**", // Capacitor web-bundle copies synced into iOS project (not source)
+    // Agent harness config: skills, hooks and Workflow scripts. These are entrypoints
+    // invoked by Claude Code by name, never imported, so knip cannot see an edge to them.
+    // (Re-added after #36 dropped it as stale; it only looked stale because .claude held
+    // no JS until .claude/workflows/ existed.)
+    ".claude/**"
   ],
 
   // Real runtime deps with no JS-visible import edge.
