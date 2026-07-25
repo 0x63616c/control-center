@@ -82,3 +82,17 @@ patches:
     cluster:
       discovery: { enabled: false }
       allowSchedulingOnControlPlanes: true
+  # Tailscale extension runtime config. Top-level document (ExtensionServiceConfig
+  # is not a `machine:` sub-key) — do not nest this under the patch above. This
+  # was previously live on the node but absent here: a full (non-patch)
+  # apply-config would have deleted it, dropping tailscaled's auth key and
+  # taking the node off the tailnet mid-apply — which also kills the
+  # `endpoint` above (resolved over Tailscale) and CI's only path to the
+  # cluster. Do not remove this document; if you think it's noise, it isn't.
+  - |-
+    apiVersion: v1alpha1
+    kind: ExtensionServiceConfig
+    name: tailscale
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_HOSTNAME=home-server
