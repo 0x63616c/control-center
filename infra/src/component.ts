@@ -232,7 +232,11 @@ export interface RenderedCronJob {
 // Pure mapping layer (formerly render.ts)
 // ──────────────────────────────────────────────
 
-const NFS_MOUNT_OPTIONS = ["nfsvers=3", "nolock", "tcp"];
+// The Talos node's kernel does in-kernel NFSv4 mounts only (no working NFSv3
+// helper path), so v3 mounts fail with "incorrect mount option". NFSv4.0 is
+// enabled on the DS420+ and mounts cleanly. `nolock` stays (Talos has no
+// rpc.statd); bare `tcp` is dropped (NFSv4 is TCP-only by default).
+const NFS_MOUNT_OPTIONS = ["nfsvers=4.0", "nolock"];
 
 /**
  * Declared capacity for statically-provisioned NFS PVs (pg-backup, media

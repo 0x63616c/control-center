@@ -228,7 +228,7 @@ describe("pg-backup (NEW nightly logical backup to the NAS)", () => {
     const r = renderCronJob(backup() as CronJobSpec);
     expect(r.persistentVolumes).toHaveLength(1);
     const pv = r.persistentVolumes[0];
-    expect(pv.spec.mountOptions).toEqual(["nfsvers=3", "nolock", "tcp"]);
+    expect(pv.spec.mountOptions).toEqual(["nfsvers=4.0", "nolock"]);
     // The DS420+ exports only /volume1/Homelab; subPath lands in a backups dir.
     expect(pv.spec.nfs.server).toBe(NAS);
     expect(pv.spec.nfs.path).toBe("/volume1/Homelab");

@@ -91,7 +91,7 @@ describe("renderWorkload", () => {
     expect(renderWorkload(worker).services).toHaveLength(0);
   });
 
-  test("an NFS volume emits mountOptions [nfsvers=3, nolock, tcp] (DS420+ is NFSv3-only, §5b)", () => {
+  test("an NFS volume emits mountOptions [nfsvers=4.0, nolock] (Talos does in-kernel NFSv4 only, §5b)", () => {
     const media: WorkloadSpec = {
       name: "worker",
       image: "ghcr.io/0x63616c/www-control-center-worker:main",
@@ -106,7 +106,7 @@ describe("renderWorkload", () => {
     const r = renderWorkload(media);
     expect(r.persistentVolumes).toHaveLength(1);
     const pv = r.persistentVolumes[0];
-    expect(pv.spec.mountOptions).toEqual(["nfsvers=3", "nolock", "tcp"]);
+    expect(pv.spec.mountOptions).toEqual(["nfsvers=4.0", "nolock"]);
     expect(pv.spec.nfs.server).toBe("192.168.0.218");
     expect(pv.spec.nfs.path).toBe("/volume1/Homelab/media");
   });

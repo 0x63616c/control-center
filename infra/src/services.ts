@@ -385,7 +385,8 @@ export function serviceSpecs(opts: ServiceSpecOptions): OwnedWorkloadSpec[] {
       },
       // NFS PV for the Synology media share. The DS420+ exports ONLY
       // /volume1/Homelab (not its subdirs), so mount that export and subPath
-      // into media/. nfsvers=3 is enforced by the render layer (DS420+ is v3-only).
+      // into media/. nfsvers=4.0 is enforced by the render layer (the Talos node
+      // does in-kernel NFSv4 mounts only; NFSv4 is enabled on the DS420+).
       volumes: [
         {
           mountPath: "/app/media",
