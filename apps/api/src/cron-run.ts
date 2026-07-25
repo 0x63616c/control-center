@@ -6,6 +6,13 @@
  * invokes its run(), then exits — a one-shot job (PRD Backend rule 7), NOT a
  * worker loop, mirroring purge.ts's shape.
  */
+// Must run before CRON_HANDLERS is imported: that import eagerly constructs
+// each feature's Pool/drizzle from DATABASE_URL, which boot-env derives from
+// the mounted POSTGRES_PASSWORD secret + POSTGRES_HOST. Skipping this (as this
+// entrypoint used to) leaves DATABASE_URL unset, NODE_ENV/APP_ENV non-"production",
+// so the registry's devDefault silently points every purge cron at
+// localhost:5432 instead of the real cluster DB — see issue #27.
+import "./boot-env";
 import { CRON_HANDLERS } from "@features/_generated/cron-handlers.gen";
 import { createLogger } from "@www/logger";
 

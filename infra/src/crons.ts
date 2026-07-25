@@ -215,7 +215,15 @@ function generatedCronSpecs(): OwnedCronJobSpec[] {
     // every generated cron. Do NOT rename/remove this key: secrets-map.ts is
     // out of scope for this fold, and every generated cron's secret depends on it.
     secretName: SERVICE_SECRET_TARGETS["portal-data-purge"].secretName,
-    env: { TZ, POSTGRES_HOST: controlCenterPostgresHost },
+    // NODE_ENV/APP_ENV must be "production" here (mirrors haEnv in services.ts):
+    // the env registry's DATABASE_URL devDefault (localhost) only yields to the
+    // secret-derived DATABASE_URL when APP_ENV === "production" — see issue #27.
+    env: {
+      TZ,
+      POSTGRES_HOST: controlCenterPostgresHost,
+      NODE_ENV: "production",
+      APP_ENV: "production",
+    },
     imagePullSecrets: [GHCR_PULL_SECRET_NAME],
   }));
 }
