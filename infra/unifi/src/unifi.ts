@@ -170,13 +170,16 @@ export function adoptExisting(
     ]),
   );
 
-  // Static A record captive-portal.worldwidewebb.co -> 192.168.0.147 (split
-  // horizon already done). Adopt as-is; the www-guest VLAN must resolve this too.
+  // Static A record captive-portal.worldwidewebb.co -> 192.168.0.3 (split-horizon
+  // LAN override; public DNS keeps the proxied CF wildcard). The www-guest VLAN
+  // must resolve this too. Was 192.168.0.147 (the retired mini's LAN IP); it now
+  // points at the home-server guest listener's MetalLB LoadBalancer IP, which
+  // serves the captive portal on control-center-api (:80/:443).
   const captivePortalDns = new unifi.dns.Record(
     "captive-portal",
     {
       name: "captive-portal.worldwidewebb.co",
-      value: "192.168.0.147",
+      value: "192.168.0.3",
       type: "A",
       enabled: true,
     },
@@ -199,7 +202,7 @@ export function adoptExisting(
   // the bridged provider cannot round-trip cleanly are listed in ignoreChanges.
   // auth=custom: External Portal Server mode (NOT hotspot or none).
   // portalUseHostname=FALSE: Apple's Captive Network Assistant only renders the
-  // captive sheet from a RAW-IP HTTP landing (http://192.168.0.147/...), NOT a
+  // captive sheet from a RAW-IP HTTP landing (http://192.168.0.3/...), NOT a
   // real domain (www-q002.26). www-jtp0.3.6 flipped this to a hostname and broke
   // real-device auth; www-p9hx reverts it. The guest redirect targets customIp
   // directly, so no portalHostname is declared (the abandoned app--cp hostname
@@ -213,10 +216,11 @@ export function adoptExisting(
       auth: "custom",
       portalEnabled: true,
       portalUseHostname: false,
-      // customIp: required by provider when auth=custom; the Mini LAN IP that
-      // serves the captive portal. With portalUseHostname=false the guest is
-      // redirected here by raw IP over HTTP (the only thing Apple's CNA renders).
-      customIp: "192.168.0.147",
+      // customIp: required by provider when auth=custom; the LAN IP that serves
+      // the captive portal. With portalUseHostname=false the guest is redirected
+      // here by raw IP over HTTP (the only thing Apple's CNA renders). Was the
+      // mini's 192.168.0.147; now the home-server guest listener's MetalLB IP.
+      customIp: "192.168.0.3",
       ecEnabled: false,
       expire: 43200,
     },
@@ -274,7 +278,7 @@ export interface GuestVlanArgs {
   ssid: string;
   passphrase?: pulumi.Input<string>;
   // The portal host the guest VLAN is allowed to reach pre-auth (DESIGN §8).
-  portalHost: string; // "192.168.0.147"
+  portalHost: string; // "192.168.0.3" (home-server guest LB; was mini .147)
   // First free index in the LAN-IN ruleset for the scoped allow rule.
   firewallRuleIndex: number;
 }

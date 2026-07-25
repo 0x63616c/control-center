@@ -62,7 +62,8 @@ if (cfg.getBoolean("applyGuest")) {
     passphrase: cfg.getSecret("guestPassphrase"),
     // The portal host the guest VLAN may reach pre-auth (split-horizon DNS
     // resolves captive-portal.worldwidewebb.co to this for guest clients too).
-    portalHost: cfg.get("portalHost") ?? "192.168.0.147",
+    // The home-server guest listener's MetalLB LB IP; was the retired mini's .147.
+    portalHost: cfg.get("portalHost") ?? "192.168.0.3",
     // LAN_IN user-rule index. The UCG-Fiber uses a 5-digit range (its IPS rules
     // sit at 20000/20001); 2000 is rejected as out-of-range, so default into the
     // valid window above the IPS rules (www-j934.3.2).

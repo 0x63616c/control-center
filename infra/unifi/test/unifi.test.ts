@@ -68,12 +68,12 @@ describe("adoptExisting", () => {
     expect((adopted as unknown as Record<string, unknown>).rsyslogd).toBeUndefined();
   });
 
-  test("the captive-portal DNS record adopts the live host -> .147 mapping", async () => {
+  test("the captive-portal DNS record maps the portal host -> .3 (home-server LB)", async () => {
     const adopted = mod.adoptExisting(testProvider(), []);
     expect(await get<string>(adopted.captivePortalDns, "name")).toBe(
       "captive-portal.worldwidewebb.co",
     );
-    expect(await get<string>(adopted.captivePortalDns, "value")).toBe("192.168.0.147");
+    expect(await get<string>(adopted.captivePortalDns, "value")).toBe("192.168.0.3");
   });
 });
 
@@ -128,17 +128,18 @@ describe("guestAccess explicit fields (www-jtp0.5.9)", () => {
 });
 
 describe("captive-portal split-DNS record (adopted, LAN-only)", () => {
-  // captive-portal.worldwidewebb.co -> 192.168.0.147 is the live, adopted split-DNS
-  // record for the guest portal. The abandoned app--cp.worldwidewebb.co A record +
-  // its applyAppCp gate were removed in Task 7 Step C (ADR-0006 dissolved the
-  // captive-portal product; that host never went live on the controller).
+  // captive-portal.worldwidewebb.co -> 192.168.0.3 is the split-DNS LAN record for
+  // the guest portal (home-server guest LB; was the mini's .147). The abandoned
+  // app--cp.worldwidewebb.co A record + its applyAppCp gate were removed in Task 7
+  // Step C (ADR-0006 dissolved the captive-portal product; that host never went
+  // live on the controller).
 
-  test("the captive-portal DNS record is adopted (A -> 192.168.0.147)", async () => {
+  test("the captive-portal DNS record maps to the home-server LB (A -> 192.168.0.3)", async () => {
     const adopted = mod.adoptExisting(testProvider(), []);
     expect(await get<string>(adopted.captivePortalDns, "name")).toBe(
       "captive-portal.worldwidewebb.co",
     );
-    expect(await get<string>(adopted.captivePortalDns, "value")).toBe("192.168.0.147");
+    expect(await get<string>(adopted.captivePortalDns, "value")).toBe("192.168.0.3");
   });
 });
 
@@ -153,7 +154,7 @@ describe("createGuestVlan (additive, gated, OPEN captive-portal guest net)", () 
       dhcpStart: "192.168.20.6",
       dhcpStop: "192.168.20.254",
       ssid: "www-guest",
-      portalHost: "192.168.0.147",
+      portalHost: "192.168.0.3",
       firewallRuleIndex: 2000,
     });
 
@@ -174,9 +175,9 @@ describe("createGuestVlan (additive, gated, OPEN captive-portal guest net)", () 
     // Assigned to the default AP group (else the controller errors ApGroupMissing).
     expect(await get<string[]>(guest.wlan, "apGroupIds")).toEqual(["ap-group-default"]);
 
-    // The one scoped cross-VLAN allowance: guest -> portal .147 on 80/443.
+    // The one scoped cross-VLAN allowance: guest -> portal .3 on 80/443.
     expect(await get<string>(guest.portalAllowRule, "action")).toBe("accept");
-    expect(await get<string>(guest.portalAllowRule, "dstAddress")).toBe("192.168.0.147");
+    expect(await get<string>(guest.portalAllowRule, "dstAddress")).toBe("192.168.0.3");
     expect(await get<string>(guest.portalAllowRule, "dstPort")).toBe("80,443");
     expect(await get<string>(guest.portalAllowRule, "ruleset")).toBe("LAN_IN");
   });
