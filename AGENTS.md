@@ -42,6 +42,8 @@
 - Storybook-first for new UI.
 - IDs default to `prefix_<id>`.
 - Backend code uses structured logging.
+- **Never read secret values** (e.g. contents of `secret/vault.yaml`). Checking
+  key names/presence is fine; do not print or inspect the decrypted values.
 
 ## Debugging
 
