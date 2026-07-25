@@ -5,7 +5,7 @@
  * Copied from the approved PinConcepts visual reference.
  */
 
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { PIN_LENGTH } from "../../lib/settings";
 import { Icon } from "../Icon";
 
@@ -21,6 +21,42 @@ export function PinPadView({
   onDigit: (d: string) => void;
   onBackspace: () => void;
 }) {
+  // Keyboard support: digit keys append, Backspace/Delete remove. Routed
+  // through refs (same pattern as PinGateModal's onCloseRef/onSuccessRef) so
+  // the listener attaches once on mount rather than detaching/reattaching on
+  // every keystroke , both real callers (PinGateModal, SecurityPage) pass a
+  // fresh onDigit/onBackspace identity every render.
+  //
+  // NB: this listener is per-mounted-instance. Today only one PinPadView is
+  // ever mounted at a time (PinGateModal is exclusive-open; SecurityPage is a
+  // single settings sub-page), so a single global listener is safe. If a
+  // future screen ever renders two PinPadViews simultaneously, both would
+  // receive every keydown , worth revisiting then.
+  const onDigitRef = useRef(onDigit);
+  onDigitRef.current = onDigit;
+  const onBackspaceRef = useRef(onBackspace);
+  onBackspaceRef.current = onBackspace;
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      // Let Cmd/Ctrl/Alt shortcuts (e.g. Cmd+0 zoom-reset, Ctrl+Backspace
+      // word-delete) through untouched instead of also mutating the PIN.
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (/^[0-9]$/.test(e.key)) {
+        e.preventDefault();
+        onDigitRef.current(e.key);
+        return;
+      }
+      if (e.key === "Backspace" || e.key === "Delete") {
+        // Prevent browser/webview back-navigation on Backspace outside a
+        // focused input , this panel runs in a Capacitor shell.
+        e.preventDefault();
+        onBackspaceRef.current();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 24 }}>
       {/* Entry dots */}

@@ -61,3 +61,31 @@ export const Interactive: Story = {
     await expect(solid).toHaveLength(3);
   },
 };
+
+/** Keyboard entry: digit keys append, Backspace/Delete remove, Cmd/Ctrl+digit is ignored. */
+export const KeyboardEntry: Story = {
+  args: { entered: 0, onDigit: () => {}, onBackspace: () => {} },
+  render: () => <PinPadHarness />,
+  play: async ({ canvasElement }) => {
+    const solidDots = () =>
+      Array.from(
+        canvasElement.querySelectorAll<HTMLElement>('div[style*="border-radius: 50%"]'),
+      ).filter((el) => el.style.width === "14px" && el.style.background !== "transparent");
+
+    // Typing digit keys fills dots, same as tapping.
+    await userEvent.keyboard("123");
+    await expect(solidDots()).toHaveLength(3);
+
+    // Backspace removes the last digit.
+    await userEvent.keyboard("{Backspace}");
+    await expect(solidDots()).toHaveLength(2);
+
+    // Delete also removes the last digit.
+    await userEvent.keyboard("{Delete}");
+    await expect(solidDots()).toHaveLength(1);
+
+    // Cmd+digit (e.g. browser zoom-reset) must NOT enter a digit.
+    await userEvent.keyboard("{Meta>}0{/Meta}");
+    await expect(solidDots()).toHaveLength(1);
+  },
+};
