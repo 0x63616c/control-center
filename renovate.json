@@ -1,0 +1,52 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "timezone": "America/Los_Angeles",
+  "schedule": ["before 6am on monday"],
+  "prConcurrentLimit": 8,
+  "minimumReleaseAge": "3 days",
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "schedule": ["at any time"]
+  },
+  "dependencyDashboard": true,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on monday"]
+  },
+  "packageRules": [
+    {
+      "matchDepTypes": ["devDependencies"],
+      "groupName": "dev dependencies",
+      "automerge": true,
+      "matchUpdateTypes": ["patch", "minor"]
+    },
+    {
+      "matchUpdateTypes": ["patch"],
+      "matchDepTypes": ["dependencies"],
+      "groupName": "prod dependencies (patch)",
+      "automerge": true
+    },
+    {
+      "matchUpdateTypes": ["major"],
+      "matchDepTypes": ["dependencies"],
+      "groupName": "prod dependencies (major)",
+      "automerge": false
+    },
+    {
+      "matchPackageNames": ["react", "react-dom"],
+      "groupName": "react"
+    },
+    {
+      "matchPackageNames": ["drizzle-orm", "drizzle-kit"],
+      "groupName": "drizzle"
+    },
+    {
+      "matchManagers": ["bundler"],
+      "matchFileNames": ["apps/web/ios/**"],
+      "groupName": "ios (bundler)",
+      "schedule": ["before 6am on monday"]
+    }
+  ],
+  "ignorePaths": ["**/node_modules/**", ".claude/worktrees/**"]
+}
