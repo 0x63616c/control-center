@@ -19,7 +19,7 @@ const imageOf = (specs: ReturnType<typeof serviceSpecs>, logicalName: string): s
 const specsWith = (imageDigests?: ImageDigests): ReturnType<typeof serviceSpecs> =>
   serviceSpecs({
     cloudflaredReplicas: 2,
-    nasNfsServer: "192.168.0.218",
+    nasNfsServer: "192.168.0.219",
     imageDigests,
   });
 
@@ -80,7 +80,7 @@ describe("serviceSpecs image digest pinning", () => {
     expect(() =>
       serviceSpecs({
         cloudflaredReplicas: 2,
-        nasNfsServer: "192.168.0.218",
+        nasNfsServer: "192.168.0.219",
         imageDigests: {},
         requireImageDigestPins: shouldRequireImageDigestPins("prod"),
       }),
@@ -90,7 +90,7 @@ describe("serviceSpecs image digest pinning", () => {
   test("allows prod app Deployment rendering when every digest pin is present", () => {
     const specs = serviceSpecs({
       cloudflaredReplicas: 2,
-      nasNfsServer: "192.168.0.218",
+      nasNfsServer: "192.168.0.219",
       imageDigests: ALL_IMAGE_DIGESTS,
       requireImageDigestPins: shouldRequireImageDigestPins("prod"),
     });

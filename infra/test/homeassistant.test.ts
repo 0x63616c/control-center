@@ -44,7 +44,7 @@ function install() {
     provider: provider(),
     cnpgOperator: cnpgOperator(),
     vault: mockVault,
-    nasNfsServer: "192.168.0.218",
+    nasNfsServer: "192.168.0.219",
   });
 }
 
@@ -88,7 +88,7 @@ describe("installHomeAssistant (Task 4, §0.1-§0.4, talos-only)", () => {
         provider: provider(),
         cnpgOperator: cnpgOperator(),
         vault: {},
-        nasNfsServer: "192.168.0.218",
+        nasNfsServer: "192.168.0.219",
       }),
     ).toThrow(/HOME_ASSISTANT_POSTGRES__PASSWORD/);
   });

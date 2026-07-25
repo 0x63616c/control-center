@@ -11,13 +11,13 @@ import { type ImageDigests, serviceSpecs } from "../src/services.ts";
 const specsWith = (imageDigests?: ImageDigests): ReturnType<typeof serviceSpecs> =>
   serviceSpecs({
     cloudflaredReplicas: 2,
-    nasNfsServer: "192.168.0.218",
+    nasNfsServer: "192.168.0.219",
     imageDigests,
   });
 
 describe("GHCR pull secret coverage", () => {
   test("declares the pull secret in every namespace with GHCR services or cron jobs", () => {
-    const consumers = [...specsWith(), ...cronSpecs("192.168.0.218")];
+    const consumers = [...specsWith(), ...cronSpecs("192.168.0.219")];
     expect(collectGhcrPullSecretNamespaces(consumers)).toEqual(["control-center"]);
     expect(() => assertGhcrPullSecretNamespaceCoverage(consumers)).not.toThrow();
   });

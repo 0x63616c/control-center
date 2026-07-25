@@ -34,6 +34,9 @@ export interface LocalPathResources {
   // configurations); every explicit `storageClassName: "local-path"` PVC in
   // this repo works either way.
   defaultStorageClassPatch: k8s.storage.v1.StorageClassPatch;
+  // PSA relabel of the provisioner namespace to `privileged` so its hostPath
+  // helper-pods are admitted (Talos defaults the ns to `baseline`).
+  namespacePsaPatch: k8s.core.v1.NamespacePatch;
 }
 
 /**
@@ -52,6 +55,30 @@ export function installLocalPath(args: LocalPathArgs): LocalPathResources {
     opts,
   );
 
+  // The provisioner works by spawning a short-lived `helper-pod` that mounts a
+  // hostPath dir on the node to create/delete each PVC's backing directory. On
+  // Talos the `local-path-storage` namespace defaults to PodSecurity `baseline`,
+  // which FORBIDS hostPath volumes , so every helper-pod is rejected
+  // ("violates PodSecurity baseline: hostPath volumes") and every local-path PVC
+  // (CNPG primaries, plex-config, ha-config, maps) sits Pending forever. Label
+  // the namespace `privileged` so the helper-pod's hostPath is allowed. The
+  // upstream manifest owns the Namespace object, so patch it (SSA) rather than
+  // redeclaring it.
+  const namespacePsaPatch = new k8s.core.v1.NamespacePatch(
+    "local-path-storage-psa",
+    {
+      metadata: {
+        name: "local-path-storage",
+        labels: {
+          "pod-security.kubernetes.io/enforce": "privileged",
+          "pod-security.kubernetes.io/warn": "privileged",
+          "pod-security.kubernetes.io/audit": "privileged",
+        },
+      },
+    },
+    { ...opts, dependsOn: [provisioner] },
+  );
+
   // Server-side-apply patch (not a full StorageClass resource): the manifest
   // above already owns the "local-path" StorageClass object, so this only
   // adds the default-class annotation rather than fighting over ownership of
@@ -67,5 +94,5 @@ export function installLocalPath(args: LocalPathArgs): LocalPathResources {
     { ...opts, dependsOn: [provisioner] },
   );
 
-  return { provisioner, defaultStorageClassPatch };
+  return { provisioner, defaultStorageClassPatch, namespacePsaPatch };
 }
