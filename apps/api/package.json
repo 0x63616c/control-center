@@ -26,7 +26,7 @@
   },
   "dependencies": {
     "@www/core": "workspace:*",
-    "@www/logger": "*",
+    "@www/logger": "workspace:*",
     "@www/platform": "workspace:*",
     "@trpc/server": "^11.17.0",
     "drizzle-orm": "^0.45.2",
