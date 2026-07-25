@@ -1,6 +1,7 @@
 /**
- * Weight ingest — polls the HA Renpho BLE weight sensor and appends new
- * measurements. Deduped on TWO axes, because either alone is insufficient:
+ * Weight ingest — polls the HA weight sensor entity (Withings, via HA's
+ * cloud integration) and appends new measurements. Deduped on TWO axes,
+ * because either alone is insufficient:
  * the measured_at unique index catches the same reading polled twice, and
  * isRepeatReading() catches an entity that re-emits an unchanged weight under a
  * fresh last_updated (which the index cannot see). The original claim here —
@@ -35,8 +36,8 @@ export async function runWeightIngestCycle(): Promise<void> {
   try {
     entity = await ha.getEntity(config.HA_WEIGHT_ENTITY_ID);
   } catch (err) {
-    // 404 = the scale isn't paired in HA yet (needs a connectable BT proxy).
-    // A quiet no-op, not a failing worker: the entity may not exist for days.
+    // 404 = the entity doesn't exist in HA yet (integration not set up, or
+    // no weigh-in has landed yet). A quiet no-op, not a failing worker.
     if (err instanceof HaError && err.status === 404) return;
     throw err;
   }
@@ -83,7 +84,7 @@ export async function runWeightIngestCycle(): Promise<void> {
       measuredAt,
       weightKg,
       bodyMetrics: null,
-      source: "ha_ble",
+      source: "ha_withings",
       excludedReason: excluded ? "sanity_band" : null,
     })
     .onConflictDoNothing({ target: weightMeasurement.measuredAt })
