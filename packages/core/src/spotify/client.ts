@@ -341,7 +341,7 @@ export class SpotifyClient {
 
     // Log success with expires_in but NEVER the token value (redacted anyway,
     // but discipline is the primary layer , docs/logging.md §4).
-    getLogger().debug({ expiresIn }, "spotify token refreshed");
+    getLogger().info({ expiresIn }, "spotify token refreshed");
 
     return accessToken;
   }

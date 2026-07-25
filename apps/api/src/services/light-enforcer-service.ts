@@ -33,7 +33,7 @@ import {
   runCycle,
   windowOpen,
 } from "@www/core";
-import { getLogger } from "@www/logger";
+import { getLogger, logChange } from "@www/logger";
 import { eq } from "drizzle-orm";
 import { deviceStateStore } from "../db/device-state-store";
 import { db } from "../db/index";
@@ -261,7 +261,11 @@ async function applyDecision(
       // Both write desired (and refresh availability); neither pushes to HA.
       if (decision.kind === "adopt") {
         // Log the absorbed state so we can see external drift that we accepted.
-        getLogger().debug(
+        // logChange, not a raw info: this runs on a 1s loop, so only a CHANGE in
+        // what we adopted is an event (docs/logging.md §3).
+        logChange(
+          getLogger(),
+          `light-adopt:${device.entityId}`,
           {
             entityId: device.entityId,
             adoptedOn: decision.desired.on,
@@ -282,7 +286,14 @@ async function applyDecision(
     }
     case "push": {
       // Re-assert desired onto HA. on→turn_on (with brightness/color); off→turn_off.
-      getLogger().debug(
+      // logChange, not a raw info: a light that never converges (HA ignoring us,
+      // bulb offline mid-window) is pushed again every second, which at info
+      // would be ~86k lines/day for one stuck bulb. The first push is the event;
+      // the identical follow-ups are counted into `repeats` and re-announced
+      // every 15 min so a stuck enforcer is loud but not a flood.
+      logChange(
+        getLogger(),
+        `light-push:${device.entityId}`,
         {
           entityId: device.entityId,
           on: decision.desired.on,

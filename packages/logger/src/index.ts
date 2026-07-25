@@ -13,8 +13,27 @@ import pino, { type Logger as PinoLogger } from "pino";
 // stream is bundled inline and works everywhere.
 import prettyStream from "pino-pretty";
 
-/** @public, re-exported Logger type for service call sites */
-export type Logger = PinoLogger;
+/**
+ * The logger our own code is allowed to use. Deliberately has NO `debug`
+ * method: every line WE write is `info` or above, so it is visible at the prod
+ * default level and we never have to raise `LOG_LEVEL` to read our own
+ * diagnostics. Raising it to `debug` would also unmute every third-party
+ * library that logs through pino (drizzle, node internals, HTTP clients),
+ * which is noise we did not ask for and cannot tune per-source.
+ *
+ * The corollary: a line that isn't worth `info` in steady state does not get
+ * demoted to `debug`, it gets made to fire LESS (on transition/change, not per
+ * tick). See `logChange` below and docs/logging.md §3.
+ *
+ * `debug`/`trace` are omitted at the TYPE level rather than banned by a lint
+ * rule so a `.debug(...)` call is a compile error at every call site. Code we
+ * don't own still logs at debug through its own pino instance, unaffected.
+ *
+ * @public, Logger type used at every service call site.
+ */
+export type Logger = Omit<PinoLogger, "debug" | "trace" | "child"> & {
+  child(bindings: pino.Bindings, options?: pino.ChildLoggerOptions): Logger;
+};
 
 export type CreateLoggerOptions = {
   /** Service name bound on every line, e.g. "api" | "worker". */
@@ -145,6 +164,70 @@ export function createLogger(opts: CreateLoggerOptions): Logger {
 
   _root = logger;
   return logger;
+}
+
+// Last emission per change-log key: the signature that was logged and when.
+// Bounded by the number of distinct keys the callers use (one per managed
+// entity), i.e. tens of rows, not unbounded cardinality , keys must therefore
+// be entity-scoped identifiers, never something per-request or per-tick.
+const _lastChange = new Map<string, { signature: string; at: number; repeats: number }>();
+
+/** How long an unchanged state waits before it re-announces itself. */
+const DEFAULT_REPEAT_AFTER_MS = 15 * 60_000;
+
+export type LogChangeOptions = {
+  /**
+   * Re-emit an unchanged line after this long so a stuck state stays visible
+   * in a log tail instead of going silent forever. Defaults to 15 minutes.
+   */
+  repeatAfterMs?: number;
+};
+
+/**
+ * Emit an `info` line ONLY when its content changed since the last call for
+ * the same `key` (or when `repeatAfterMs` has elapsed). This is how a 1s
+ * reconcile loop logs its decisions at `info` without writing 86,400 lines a
+ * day: the interesting event is "the enforcer started pushing this light",
+ * not the 3,600 identical follow-up ticks.
+ *
+ * A re-announced or changed line carries `repeats`, the number of suppressed
+ * identical cycles since it was last printed, so a stuck enforcer is
+ * self-evident ("repeats: 3421") rather than invisible.
+ *
+ * `key` must be entity-scoped (e.g. `light-push:light.desk`), never
+ * per-request , see the bound on `_lastChange` above.
+ */
+export function logChange(
+  log: Logger,
+  key: string,
+  fields: Record<string, unknown>,
+  msg: string,
+  opts: LogChangeOptions = {},
+): void {
+  const signature = JSON.stringify(fields);
+  const now = Date.now();
+  const previous = _lastChange.get(key);
+  const repeatAfterMs = opts.repeatAfterMs ?? DEFAULT_REPEAT_AFTER_MS;
+
+  if (previous && previous.signature === signature && now - previous.at < repeatAfterMs) {
+    previous.repeats += 1;
+    return;
+  }
+
+  const repeats = previous?.signature === signature ? previous.repeats : 0;
+  _lastChange.set(key, { signature, at: now, repeats: 0 });
+  log.info(repeats > 0 ? { ...fields, repeats } : fields, msg);
+}
+
+/**
+ * Forget a change-log key (or all of them) so the next `logChange` emits.
+ * Call when the underlying state stops existing , e.g. a device goes
+ * unreachable , so its return is logged as a fresh event rather than being
+ * suppressed as "unchanged". Also the reset hook for tests.
+ */
+export function resetChangeLog(key?: string): void {
+  if (key === undefined) _lastChange.clear();
+  else _lastChange.delete(key);
 }
 
 /**

@@ -197,7 +197,7 @@ export async function sendApnsPush(
 ): Promise<ApnsSendResult> {
   const log = getLogger();
   if (!isApnsConfigured()) {
-    log.debug({ notificationId: alert.notificationId }, "apns not configured, skipping push");
+    log.info({ notificationId: alert.notificationId }, "apns not configured, skipping push");
     return "skipped";
   }
 

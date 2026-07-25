@@ -170,10 +170,15 @@ const server = Bun.serve({
     }
 
     const durationMs = +(performance.now() - startedAt).toFixed(1);
-    // OPTIONS preflights are transport noise, log at debug so they don't
-    // double the info line count in steady state (docs/logging.md §6).
+    // A successful OPTIONS preflight is pure transport noise (always the same
+    // 2xx) and would roughly double the info line count, so it is not logged at
+    // all rather than demoted to debug , we do not emit below info
+    // (docs/logging.md §3). A FAILING preflight is the interesting case (it
+    // breaks every subsequent request), so that one is a warn.
     if (req.method === "OPTIONS") {
-      reqLog.debug({ status: res.status, durationMs }, "request completed");
+      if (res.status >= 400) {
+        reqLog.warn({ status: res.status, durationMs }, "cors preflight rejected");
+      }
     } else {
       reqLog.info({ status: res.status, durationMs }, "request completed");
     }

@@ -346,7 +346,7 @@ export async function handleNotifyJob(rawPayload: unknown, db: Db = singletonDb)
   // A notification the user already read between the raise and the job running
   // (they were watching the panel) needs no push.
   if (row.readAt) {
-    log.debug({ notificationId }, "notify skipped , already read");
+    log.info({ notificationId }, "notify skipped , already read");
     return;
   }
 
@@ -355,7 +355,7 @@ export async function handleNotifyJob(rawPayload: unknown, db: Db = singletonDb)
     .from(schema.devicePushToken)
     .where(eq(schema.devicePushToken.pushEnabled, true));
   if (devices.length === 0) {
-    log.debug({ notificationId }, "notify: no push-enabled devices registered");
+    log.info({ notificationId }, "notify: no push-enabled devices registered");
     return;
   }
 

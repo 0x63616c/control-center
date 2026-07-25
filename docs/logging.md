@@ -106,6 +106,9 @@ export type CreateLoggerOptions = {
   env?: string;
   /** Explicit level override. Defaults to LOG_LEVEL env, else "debug" (pretty) / "info" (JSON). */
   level?: string;
+  // NOTE: the level FLOOR here is about what the sink passes through, including
+  // third-party pino output. It does not license our own code to log at debug ,
+  // the exported Logger type has no debug method. See "the no-debug rule" in §3.
   /** Force pretty/JSON. Omitted → JSON, opting into pretty only on LOG_PRETTY=1. */
   pretty?: boolean;
 };
@@ -239,10 +242,42 @@ documentation/validation, but the logger reads `process.env.LOG_LEVEL` directly
 | `error` | an operation was **lost** or a loop/process is degraded: permanently-failed job, no-handler, worker cycle threw, top-level fatal, enforcer/sync cycle failure. Pages-worthy. |
 | `warn`  | recoverable / retried / degraded-but-serving: HA non-2xx, job retry scheduled, command timeout, DB read fell back to "unavailable", missing optional secret (enrichment skipped), 404 webhook, malformed override arg. |
 | `info`  | lifecycle + business outcomes an operator wants in steady state: startup line, shutdown, migrations start/done, request completed (api), job claimed/completed, poller cycle summary, secrets/routes reconcile summary, deploy timing, worker failure→recovery transition. |
-| `debug` | high-cardinality detail for active debugging, off in prod by default: per-enforcer decision (push/adopt), per-`op read` timing, queue-empty tick, scheduler heartbeat, periodic worker stats snapshot, Spotify refresh success. |
+| `debug` | **NEVER USED BY OUR CODE.** Reserved for libraries we don't own. See the rule below. |
 
-Steady-state prod runs at `info`. Flip `LOG_LEVEL=debug` on one service to light
-up the decision-level detail without redeploying code.
+### The no-debug rule
+
+**Every line WE write is `info` or above.** `debug` is not a level our code
+emits at, it is reserved for code we do not own (pino internals, drizzle, node
+HTTP clients).
+
+Why: raising `LOG_LEVEL=debug` to read our own diagnostics also unmutes every
+third-party library logging through the same pino root. That is noise we did not
+ask for and cannot tune per-source, so in practice the flag never gets flipped
+and any line parked at `debug` is a line that is never read. A diagnostic that
+is invisible at the default level does not exist.
+
+So `LOG_LEVEL` stays at `info` in prod permanently. If it is ever raised, that is
+to inspect a LIBRARY, not ourselves.
+
+**The corollary , this is the part that takes work.** A line that would be too
+noisy at `info` does not get demoted to `debug`; it gets made to fire LESS:
+
+- **Per-tick reconcile decisions** (the 1s enforcer loops) use `logChange()` from
+  `@www/logger`: emit only when the logged content CHANGES for a given key, and
+  re-announce an unchanged state every 15 min carrying a `repeats` count. The
+  event is "the enforcer started pushing this light", not the 3,600 identical
+  follow-up ticks. A stuck enforcer still shows up , as `repeats: 3421`.
+- **Periodic heartbeats** (worker stats) use a wall-clock interval, so cadence
+  tracks the operator's need, not the worker's tick rate.
+- **Pure transport chatter** with no signal (a 2xx CORS preflight, a per-request
+  "ok" inside a 10s poll) is **not logged at all**. Only its failing or
+  degraded case is (`warn` on a rejected preflight, on a slow-but-successful
+  call).
+
+**Enforcement is type-level, not lint-level.** `@www/logger`'s exported `Logger`
+type omits `debug` and `trace`, so `log.debug(...)` is a compile error at every
+call site. `packages/logger/test/change-log.test.ts` pins this with
+`@ts-expect-error` (the logger tsconfig includes `test/`, so it is checked).
 
 ---
 
@@ -357,7 +392,7 @@ ingest, controls, enforcers, see the §5 ownership note); those modules log via
 **Replace:**
 - `server.ts:53` tRPC onError `console.error` → `reqLog.error({ err, path }, "trpc error")`.
 - `server.ts:76` 500 `console.error` → `reqLog.error({ err, status: 500, durationMs }, "request failed")`.
-- `server.ts:82` per-request `console.warn` → **`reqLog.info({ status, durationMs }, "request completed")`** for real methods (it was mis-levelled at warn for 200s; completed requests are `info`). **CORS `OPTIONS` preflights log at `debug`, not `info`** (transport noise, see §6 volume note). Build `reqLog = log.child({ reqId, method, path })` at the top of `fetch()`.
+- `server.ts:82` per-request `console.warn` → **`reqLog.info({ status, durationMs }, "request completed")`** for real methods (it was mis-levelled at warn for 200s; completed requests are `info`). **A SUCCESSFUL CORS `OPTIONS` preflight is not logged at all** (transport noise, always the same 2xx, would roughly double the line count); a preflight returning >=400 is a `warn` ("cors preflight rejected"), since a broken preflight breaks every request behind it. Build `reqLog = log.child({ reqId, method, path })` at the top of `fetch()`.
 - `server.ts:87` startup `console.warn` → `log.info({ port, env }, "api started")`.
 - `party-service.ts:131` `console.error("Transient HA error…")` → `log.error({ err, tick, speed }, "party engine tick failed")` (now carries the real error).
 - `playlist-poller-service.ts:77` `console.warn` → `log.warn({ err, sourceId }, "yt-dlp failed for source")`.
@@ -366,16 +401,16 @@ ingest, controls, enforcers, see the §5 ownership note); those modules log via
 **Add (new structured logs):**
 - `db/migrate.ts`, `info` migrations start (folder) + `info` done / `error` on throw.
 - `env.ts` hydrate path, `info` which secret-file vars resolved vs left default (**names only, never values**).
-- `/health/climate` route, `debug` HA probe latency + ok/fail.
+- `/health/climate` route, `info` HA probe latency + ok/fail.
 - `trpc/init.ts` `haErrorMiddleware`, `warn` with tRPC path, original `HaError.status`, message (preserve the HTTP status lost in the remap).
 - `integrations/homeassistant/index.ts` `request()` catch, `warn` HA path, status (0 = network), `durationMs` on every non-2xx/timeout (single HA I/O chokepoint).
 - `device-sync-service.ts`, `light-enforcer-service.ts`, `climate-enforcer-service.ts`, `error` on cycle catch / `markHeartbeat(error)` with message + `consecutiveFailures`.
-- `light-enforcer-service.ts applyDecision`, `debug` per push (entityId, on/off, brightness, **colour as kelvin/rgb tuple only**) and per adopt (entityId, adopted reported state).
+- `light-enforcer-service.ts applyDecision`, `logChange` (info) per push (entityId, on/off, brightness, **colour as kelvin/rgb tuple only**) and per adopt (entityId, adopted reported state), keyed `light-push:<entityId>` / `light-adopt:<entityId>` so a stuck 1s push is one line + `repeats`, not a flood.
 - `device-sync-service.ts sweepExpiredWindows`, `warn` on command marked Timeout (deviceId, entityId, desired, elapsed).
-- `jobs/queue.ts`, `error` no-handler; `warn` retry (jobId, type, attempt, delaySec, err); `error` permanent failure (jobId, type, attempts, err); plus `claimAndRun` `info` claimed (jobId, type, attempts) / `info` completed (jobId, type, durationMs) / `debug` queue-empty (these fire under BOTH the api and media-worker roots via `getLogger()`).
-- `youtube-ingest-service.ts`, `debug` idempotent skip; `error` media_item not found; `info` yt-dlp audio/video start+complete (videoId, path, bytes, durationMs); `warn` metadata-fetch failure (null duration); `info` OpenRouter enrich start/complete (model, durationMs); `warn` enrich skipped when `OPENROUTER_API_KEY` absent (**never the key value**). Runs under the media-worker root in practice but the code is api-owned.
-- `integrations/spotify/client.ts refreshToken`, `debug` success with `expires_in` (**never the token**).
-- `playlist-poller-service.ts`, `info` cycle start/summary (sourceId, found, new vs known); `debug` empty playlist; `info` new items discovered (sourceId, newCount, videoIds).
+- `jobs/queue.ts`, `error` no-handler; `warn` retry (jobId, type, attempt, delaySec, err); `error` permanent failure (jobId, type, attempts, err); plus `claimAndRun` `info` claimed (jobId, type, attempts) / `info` completed (jobId, type, durationMs) / queue-empty NOT logged (a queue that is empty is the normal case and carries no signal) (these fire under BOTH the api and media-worker roots via `getLogger()`).
+- `youtube-ingest-service.ts`, `info` idempotent skip; `error` media_item not found; `info` yt-dlp audio/video start+complete (videoId, path, bytes, durationMs); `warn` metadata-fetch failure (null duration); `info` OpenRouter enrich start/complete (model, durationMs); `warn` enrich skipped when `OPENROUTER_API_KEY` absent (**never the key value**). Runs under the media-worker root in practice but the code is api-owned.
+- `integrations/spotify/client.ts refreshToken`, `info` success with `expires_in` (**never the token**). Hourly, so `info` is cheap.
+- `playlist-poller-service.ts`, `info` cycle start/summary (sourceId, found, new vs known); `info` empty playlist; `info` new items discovered (sourceId, newCount, videoIds).
 - `controls-service.ts`, `warn` getControlsState DB-read failure (devices appear unavailable); `warn` writeDesired per-entity DB write failure (entityId, desired).
 
 > All of the above `@control-center/api` domain modules acquire their logger via
@@ -397,7 +432,7 @@ cycle error into `stats` and emits nothing.
 - **recovery transition** (`consecutiveFailures` >0→0) → `info` "worker recovered" with the streak length just cleared.
 - **start()** → `info` per worker registered (name, intervalMs, runOnStart).
 - **stop()** → `info` timers cleared, which workers had an in-flight timer.
-- **periodic stats** (finally, every N runs / ~60s) → `debug` snapshot (totalRuns, consecutiveFailures, lastDurationMs, rss/heapUsed).
+- **periodic stats** → `info` snapshot (totalRuns, consecutiveFailures, lastDurationMs) on a 5-minute WALL-CLOCK interval (`STATS_INTERVAL_MS`), staggered per worker. Not every-N-runs: that tied cadence to tick rate, so a 1s worker snapshotted 60x more often than a 60s one.
 - **slow-cycle** (lastDurationMs > intervalMs) → `warn` (name, lastDurationMs, intervalMs, ratio).
 - `index.ts` after `runMigrations()` → `info` migrations done / `error` on throw.
 - SIGINT/SIGTERM handler → `info` final per-worker stats snapshot at shutdown.
@@ -447,7 +482,7 @@ stream to confirm liveness:
 | service        | startup line                              | steady-state visible at `info`                                   |
 |----------------|-------------------------------------------|------------------------------------------------------------------|
 | api            | `"api started" {port,env}`                | `"request completed" {status,durationMs}` per request            |
-| worker         | `"worker started" {workers:[…]}`          | failure→recovery transitions; (decision/heartbeat detail at `debug`) |
+| worker         | `"worker started" {workers:[…]}`          | failure→recovery transitions; enforcer decision CHANGES; 5-min stats snapshot |
 | media-worker   | `"media-worker started" {workers:[…]}`    | `"job claimed"`/`"job completed"`, poller cycle summaries        |
 
 Liveness contract:
@@ -455,9 +490,9 @@ Liveness contract:
 - **Failure-transition + recovery lines** (worker/media-worker) → a degraded
   loop is now *visible in stdout*, not buried in `stats()`. This is the bug §5
   fixes; the AC for the worker tickets asserts these lines exist.
-- **`info` is the prod default**, so all of the above show without enabling
-  debug. Flip `LOG_LEVEL=debug` to add per-decision / per-`op read` / heartbeat
-  detail during an incident.
+- **`info` is the prod default and everything we write is visible there.**
+  There is no "turn on debug during an incident" step, because there is nothing
+  of ours parked below `info` , see the no-debug rule in §3.
 
 **Expected `info`-volume / log-rate (so an operator isn't surprised):** the api
 logs `"request completed"` at `info` on **every** request through the single
@@ -465,9 +500,10 @@ logs `"request completed"` at `info` on **every** request through the single
 polling plus the tRPC client, whose `QueryClient` **retries infinitely** (per
 project CLAUDE.md), so:
 
-- **CORS `OPTIONS` preflights** are logged at **`debug`, not `info`** (or skipped)
- , they are pure transport noise and would otherwise roughly double the line
-  count. Only the real method's completion is an `info` liveness line.
+- **Successful CORS `OPTIONS` preflights are not logged** , pure transport
+  noise that would otherwise roughly double the line count. Only the real
+  method's completion is an `info` liveness line (plus a `warn` for a preflight
+  that actually failed).
 - During an HA / backend outage the infinite-retry `QueryClient` must NOT spin a
   tight error-retry loop that floods `"request failed"` at `error`. The api's
   per-tile reads fail fast and the client backs off; confirm the retry cadence is
@@ -477,8 +513,10 @@ project CLAUDE.md), so:
 - Document the **expected steady-state req/s** (tiles × poll interval) in this
   section once measured, so the `info` rate is a known quantity.
 
-The **1s worker loops stay silent** in steady state (only transitions + periodic
-`debug` stats), which is the correct bound on the highest-frequency emitters.
+The **1s worker loops stay silent** in steady state , not because their lines
+are parked at `debug`, but because `logChange` makes them fire on transitions
+only, plus the 5-minute stats snapshot. That is the correct bound on the
+highest-frequency emitters.
 
 ---
 

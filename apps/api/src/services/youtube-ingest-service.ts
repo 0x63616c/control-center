@@ -181,7 +181,7 @@ async function handleYoutubeIngest(rawPayload: unknown, signal: AbortSignal): Pr
 
   // Idempotency: if already complete, skip.
   if (item.status === "ready") {
-    getLogger().debug({ mediaItemId, videoId }, "youtube_ingest skipped , already ready");
+    getLogger().info({ mediaItemId, videoId }, "youtube_ingest skipped , already ready");
     return;
   }
 

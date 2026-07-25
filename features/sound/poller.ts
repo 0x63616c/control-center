@@ -93,7 +93,7 @@ export async function runPlaylistPollerCycle(
     }
 
     if (entries.length === 0) {
-      getLogger().debug({ sourceId: source.id }, "playlist empty");
+      getLogger().info({ sourceId: source.id }, "playlist empty");
       continue;
     }
 

@@ -29,7 +29,7 @@ import {
   TOPOLOGY_ANCHOR_IP,
   windowOpen,
 } from "@www/core";
-import { getLogger } from "@www/logger";
+import { getLogger, logChange } from "@www/logger";
 import { deviceStateStore, integrationSyncStore } from "./db";
 
 const ENFORCER_INTEGRATION_ID = "sonos-volume-enforcer";
@@ -252,7 +252,10 @@ async function applyDecision(
     case "seed":
     case "adopt": {
       if (decision.kind === "adopt") {
-        getLogger().debug(
+        // 1s loop , only a change in the adopted volume is an event. See §3.
+        logChange(
+          getLogger(),
+          `sonos-adopt:${speaker.deviceIp}`,
           { deviceIp: speaker.deviceIp, adoptedVolume: decision.desired.volume },
           "sonos-volume-enforcer adopted external volume",
         );
@@ -268,7 +271,11 @@ async function applyDecision(
     }
     case "push":
     case "cap": {
-      getLogger().debug(
+      // A speaker that ignores setVolume is re-pushed every second; logChange
+      // keeps that one event plus a `repeats` count instead of a flood. See §3.
+      logChange(
+        getLogger(),
+        `sonos-push:${speaker.deviceIp}`,
         {
           deviceIp: speaker.deviceIp,
           volume: decision.desired.volume,

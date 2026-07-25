@@ -275,8 +275,12 @@ function withRequestLogging(
     }
 
     const durationMs = +(performance.now() - startedAt).toFixed(1);
+    // Successful preflights are not logged (see server.ts): we never emit below
+    // info, and a 2xx OPTIONS carries no signal. A rejected one does.
     if (req.method === "OPTIONS") {
-      reqLog.debug({ status: res.status, durationMs }, "guest request completed");
+      if (res.status >= 400) {
+        reqLog.warn({ status: res.status, durationMs }, "guest cors preflight rejected");
+      }
     } else {
       reqLog.info({ status: res.status, durationMs }, "guest request completed");
     }

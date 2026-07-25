@@ -330,25 +330,48 @@ describe("lifecycle logging", () => {
 });
 
 describe("stats snapshot cadence", () => {
-  it("emits a debug stats snapshot every STATS_EVERY_N_RUNS cycles (default cadence)", async () => {
+  // Cadence is wall-clock (STATS_INTERVAL_MS = 5 min), not every-N-runs: a 1s
+  // worker and a 60s worker must heartbeat at the same rate. Emitted at INFO
+  // because we never log below info (docs/logging.md §3).
+  it("emits an info stats snapshot on the wall-clock interval, not per N runs", async () => {
     const log = makeLogger();
     const run = vi.fn().mockResolvedValue(undefined);
     const rt = createWorkerRuntime([{ name: "w", intervalMs: 100, runOnStart: true, run }], {
       logger: log,
     });
 
+    const snapshots = () =>
+      (log.info as ReturnType<typeof vi.fn>).mock.calls
+        .map((c) => c[1])
+        .filter((m) => m === "worker stats snapshot");
+
     rt.start();
     await tick(0); // run 1
-    for (let i = 2; i < 60; i++) {
-      await tick(100); // run i , below the cadence boundary
+    // 100 cycles , far past the old N=60 boundary , but only 10s of wall clock.
+    for (let i = 2; i <= 100; i++) {
+      await tick(100);
     }
-    let snapshotMessages = (log.debug as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[1]);
-    expect(snapshotMessages).not.toContain("worker stats snapshot");
+    expect(snapshots()).toHaveLength(0);
 
-    await tick(100); // run 60 , cadence boundary
-    snapshotMessages = (log.debug as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[1]);
-    expect(snapshotMessages).toContain("worker stats snapshot");
+    // Cross the 5 minute interval.
+    await tick(5 * 60_000);
+    expect(snapshots()).toHaveLength(1);
 
     rt.stop();
+  });
+
+  it("never emits below info , the runtime has no debug lines at all", async () => {
+    const log = makeLogger();
+    const rt = createWorkerRuntime(
+      [{ name: "w", intervalMs: 100, runOnStart: true, run: vi.fn().mockResolvedValue(undefined) }],
+      { logger: log },
+    );
+
+    rt.start();
+    await tick(0);
+    await tick(5 * 60_000);
+    rt.stop();
+
+    expect((log.debug as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
   });
 });

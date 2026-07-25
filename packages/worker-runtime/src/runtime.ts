@@ -4,12 +4,12 @@
  * device-sync-service loop shape , an await-before-reschedule setTimeout per
  * worker so cycles never overlap, each run() wrapped in try/catch so one failing
  * cycle never kills its own loop or a sibling's , but generalizes it: stats are
- * accumulated per worker for failure streaks and the periodic debug snapshot.
+ * accumulated per worker for failure streaks and the periodic stats snapshot.
  *
  * Shared package (www-rw07) used by the single worker app in
  * worker: the onset-or-ongoing failure logging and
  * stop() final-stats snapshot are the runtime's shape; the periodic stats
- * cadence is a fixed constant (every-N-runs model).
+ * cadence is a fixed wall-clock interval (STATS_INTERVAL_MS).
  */
 import type { Logger } from "@www/logger";
 import type { Worker, WorkerRuntime, WorkerStats } from "./types";
@@ -20,11 +20,20 @@ interface WorkerState {
   worker: Worker;
   stats: WorkerStats;
   timer: ReturnType<typeof setTimeout> | null;
+  /** When this worker last emitted a stats snapshot (epoch ms). */
+  lastStatsAt: number;
 }
 
-// Cycles between periodic debug stats snapshots. At debug level only , not
-// every cycle (a 1s worker would spam).
-const STATS_EVERY_N_RUNS = 60;
+// Interval between periodic stats snapshots. TIME-based, not every-N-runs: the
+// old N=60 rule meant a 1s worker snapshotted once a minute and a 60s worker
+// once an hour, so cadence tracked the worker's speed instead of the operator's
+// need. Time-based makes every worker's heartbeat land at the same rate.
+//
+// Emitted at INFO (docs/logging.md §3: we never log below info, so that our own
+// lines are readable at the prod default without unmuting third-party debug
+// chatter). 5 min × ~13 workers is ~3.7k lines/day, and this is the only
+// steady-state proof the loops are alive at all.
+const STATS_INTERVAL_MS = 5 * 60_000;
 
 export type WorkerRuntimeOptions = {
   /** Structured logger bound to this process root (service: "worker" | "api"). */
@@ -40,9 +49,13 @@ export function createWorkerRuntime(workers: Worker[], opts: WorkerRuntimeOption
     seen.add(w.name);
   }
 
-  const states: WorkerState[] = workers.map((worker) => ({
+  // Stagger the first snapshot per worker so 13 workers don't all log in the
+  // same millisecond every 5 minutes.
+  const startedAt = Date.now();
+  const states: WorkerState[] = workers.map((worker, index) => ({
     worker,
     timer: null,
+    lastStatsAt: startedAt + index * 1_000,
     stats: {
       name: worker.name,
       lastRunAt: null,
@@ -107,9 +120,10 @@ export function createWorkerRuntime(workers: Worker[], opts: WorkerRuntimeOption
       );
     }
 
-    // Periodic debug stats snapshot , not every cycle.
-    if (state.stats.totalRuns % STATS_EVERY_N_RUNS === 0) {
-      workerLog.debug(
+    // Periodic stats snapshot , not every cycle.
+    if (Date.now() - state.lastStatsAt >= STATS_INTERVAL_MS) {
+      state.lastStatsAt = Date.now();
+      workerLog.info(
         {
           totalRuns: state.stats.totalRuns,
           consecutiveFailures: state.stats.consecutiveFailures,

@@ -4,6 +4,9 @@ import { WithingsError } from "./errors";
 import type { WithingsCredentials, WithingsMeasureGroup, WithingsTokenPair } from "./types";
 
 const WITHINGS_REQUEST_TIMEOUT_MS = 5_000;
+// A successful call slower than this is worth a line: the weigh-in path has a
+// <30s end-to-end budget and this request sits inside a 10s poll.
+const SLOW_REQUEST_MS = 2_000;
 const TOKEN_URL = "https://wbsapi.withings.com/v2/oauth2";
 const MEASURE_URL = "https://wbsapi.withings.com/measure";
 
@@ -100,7 +103,14 @@ export class WithingsClient {
       );
       throw new WithingsError(`${logLabel}: HTTP ${res.status}`);
     }
-    getLogger().debug({ withingsCall: logLabel, durationMs }, "withings request ok");
+    // No per-request success line: the weight poller calls this every 10s, so an
+    // "ok" line would be ~8,600/day of pure heartbeat. We do not demote it to
+    // debug (docs/logging.md §3 , we never emit below info), we only log the
+    // case that carries signal: a call that succeeded but was slow enough to
+    // threaten the <30s weigh-in budget. Failures already warn above.
+    if (durationMs > SLOW_REQUEST_MS) {
+      getLogger().warn({ withingsCall: logLabel, durationMs }, "withings request slow");
+    }
     return res.json();
   }
 
@@ -129,7 +139,7 @@ export class WithingsClient {
         `refreshToken: withings status ${parsed.status} , ${parsed.error ?? ""}`,
       );
     }
-    getLogger().debug({ expiresIn: parsed.body.expires_in }, "withings token refreshed");
+    getLogger().info({ expiresIn: parsed.body.expires_in }, "withings token refreshed");
     return {
       accessToken: parsed.body.access_token,
       refreshToken: parsed.body.refresh_token,
