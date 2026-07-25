@@ -81,3 +81,9 @@ docs/screenshots/
 # ESPHome per-config WiFi creds — beside the config, never committed (main
 # WiFi pw lives in 1Password, not SOPS). See infra/esphome/README.md.
 infra/esphome/secrets.yaml
+
+# Talos/kube clusterconfig — ephemeral, rebuilt each session. Holds cluster CA +
+# admin client cert/key + talos secrets. talhelper's generated inner .gitignore
+# only shields talosconfig + the machine config, NOT the kubeconfigs, so ignore
+# the whole dir here to stop an accidental `git add` leaking cluster-admin creds.
+infra/talos/clusterconfig/
