@@ -23,7 +23,7 @@ import {
   withingsOauthToken,
 } from "@features/weight/schema";
 import { formatWeighInAlert, isOutsideSanityBand, notDeleted } from "@features/weight/service";
-import { getLogger } from "@www/logger";
+import { getLogger, logChange } from "@www/logger";
 import { and, eq, gte, isNull } from "drizzle-orm";
 import { db } from "../db/index";
 import { withings } from "../integrations/withings";
@@ -47,8 +47,16 @@ export async function runWithingsWeightIngestCycle(): Promise<void> {
     .limit(1);
   if (!row) {
     // Expected state until the activation runbook seeds the token , not an
-    // error, just nothing to do yet.
-    getLogger().warn({}, "withings oauth token not seeded, skipping cycle");
+    // error, just nothing to do yet. logChange because this cycle runs every
+    // 10s: as a raw warn it was ~8,600 lines/day of a state that is not going
+    // to change on its own, which drowns the info stream it sits in.
+    logChange(
+      getLogger(),
+      "withings-token-unseeded",
+      {},
+      "withings oauth token not seeded, skipping cycle",
+      { level: "warn" },
+    );
     return;
   }
 

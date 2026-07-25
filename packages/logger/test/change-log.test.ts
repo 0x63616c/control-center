@@ -54,6 +54,14 @@ describe("logChange", () => {
     expect(lines[1].repeats).toBe(10);
   });
 
+  it("can emit at warn for a degraded-but-expected state", () => {
+    const { log, lines } = capturingLogger();
+    logChange(log, "withings-token-unseeded", {}, "not seeded", { level: "warn" });
+    expect(lines).toHaveLength(1);
+    expect(lines[0].level).toBe(40); // pino warn
+    expect(lines[0].msg).toBe("not seeded");
+  });
+
   it("keys are independent , one entity's churn cannot mute another's", () => {
     const { log, lines } = capturingLogger();
     logChange(log, "light-push:a", { on: true }, "pushing");

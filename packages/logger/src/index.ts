@@ -181,6 +181,12 @@ export type LogChangeOptions = {
    * in a log tail instead of going silent forever. Defaults to 15 minutes.
    */
   repeatAfterMs?: number;
+  /**
+   * Level to emit at. `info` (default) for a normal state change; `warn` for a
+   * degraded-but-expected state that a fast loop would otherwise repeat
+   * forever. Never below info , that is the point of this module.
+   */
+  level?: "info" | "warn" | "error";
 };
 
 /**
@@ -216,7 +222,7 @@ export function logChange(
 
   const repeats = previous?.signature === signature ? previous.repeats : 0;
   _lastChange.set(key, { signature, at: now, repeats: 0 });
-  log.info(repeats > 0 ? { ...fields, repeats } : fields, msg);
+  log[opts.level ?? "info"](repeats > 0 ? { ...fields, repeats } : fields, msg);
 }
 
 /**
