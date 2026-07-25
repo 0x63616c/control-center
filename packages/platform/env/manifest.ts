@@ -35,7 +35,7 @@ export const ENV = defineEnv({
   HA_TOKEN: secret().required().forRuntime("api", "worker").forFeature("ac"),
   CLIMATE_ENTITY_ID: str().default("climate.home").forRuntime("api").forFeature("ac"),
   HA_WEIGHT_ENTITY_ID: str()
-    .default("sensor.withings_weight")
+    .default("sensor.renpho_scale_weight")
     .forRuntime("worker")
     .forFeature("weight"),
 
