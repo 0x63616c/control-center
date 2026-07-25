@@ -59,6 +59,12 @@ describe("getDeviceSettings", () => {
     expect(s).toEqual({ ...DEFAULTS, volume: 0.8 });
   });
 
+  it("returns the empty-string name default for a row with no name key", async () => {
+    const { db } = fakeDb({ volume: 0.5 });
+    const s = await getDeviceSettings(db, "ipad13-1-3f9a2c1b");
+    expect(s.name).toBe("");
+  });
+
   it("falls back to DEFAULTS rather than throwing when the read fails", async () => {
     const db = {
       select: () => {
@@ -85,6 +91,24 @@ describe("updateDeviceSettings", () => {
   it("rejects an out-of-range volume rather than persisting it", async () => {
     const { db, upserts } = fakeDb(undefined);
     await expect(updateDeviceSettings(db, "ipad13-1-3f9a2c1b", { volume: 1.5 })).rejects.toThrow();
+    expect(upserts).toHaveLength(0);
+  });
+
+  it("patches the device name", async () => {
+    const { db, upserts } = fakeDb({ volume: 0.5, name: "" });
+    const next = await updateDeviceSettings(db, "ipad13-1-3f9a2c1b", { name: "Calum's iPad" });
+    expect(next.name).toBe("Calum's iPad");
+    expect(upserts[0]).toMatchObject({
+      deviceId: "ipad13-1-3f9a2c1b",
+      value: { name: "Calum's iPad" },
+    });
+  });
+
+  it("rejects an over-length name rather than persisting it", async () => {
+    const { db, upserts } = fakeDb(undefined);
+    await expect(
+      updateDeviceSettings(db, "ipad13-1-3f9a2c1b", { name: "x".repeat(61) }),
+    ).rejects.toThrow();
     expect(upserts).toHaveLength(0);
   });
 });

@@ -25,6 +25,11 @@
 export const VOLUME_MIN = 0;
 export const VOLUME_MAX = 1;
 
+/** Longest device name accepted server-side. The client truncates to this
+ *  bound before pushing (see lib/device-name.ts), this is the enforcement
+ *  point that truncation exists to avoid hitting. */
+export const NAME_MAX_LENGTH = 60;
+
 // ─── defaults ─────────────────────────────────────────────────────────────────
 
 /** Every per-device setting and its default , the baseline returned when a panel

@@ -5,6 +5,7 @@
 // and pg over the wire.
 export {
   DEVICE_SETTINGS_DEFAULTS,
+  NAME_MAX_LENGTH,
   VOLUME_MAX,
   VOLUME_MIN,
 } from "@control-center/api/contract-device-settings";
