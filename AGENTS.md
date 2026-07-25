@@ -76,6 +76,9 @@ means a GitHub issue - same thing, one vocabulary.
   - `area/`: `infra` `network` `hardware` `panel-ui` `tiles` `integrations`
     `observability` `docs` `tooling` `security`
   - `type/`: `bug` `chore` `feature` `design` `spike` `verify` `question`
+  - List below can drift; confirm with
+    `gh label list --limit 100 --json name | jq -r '.[].name' | grep -E '^(area|type)/'`
+    (repo also carries unrelated default labels like `bug`/`enhancement` - ignore those).
 - One issue per request, even when several arrive together, so they close
   independently. Brain dumps record their origin (e.g. `item #22`) in the body;
   those numbers are not GitHub issue numbers.
