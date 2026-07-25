@@ -643,14 +643,18 @@ jobs:
           # context, yielding /.kube/config -> "current-context is not set".)
           DIGEST_MAP: ${{ steps.digests.outputs.map }}
         run: |
+          # Production is the Talos home-server cluster; the `prod` stack (the
+          # retired OrbStack mini) is a cold spare and is NEVER deployed to. Its
+          # cloudflared would grab the shared CF tunnel token and split-brain the
+          # live tunnel, so keeping deploys off it is load-bearing, not cosmetic.
+          STACK=home-server
           pulumi login
-          pulumi stack select prod
+          pulumi stack select "$STACK"
           # Pin the k8s provider to the context the CI kubeconfig actually carries,
-          # read from the file itself, so the provider never falls back to the
-          # local `orbstack` context (which resolves per-machine to a DIFFERENT
-          # cluster). The CI kubeconfig holds exactly one context (homelab over the
-          # tailnet), so its current-context is unambiguous, no name agreed in
-          # advance with www-j934.9 needed. If the blob ever ships WITHOUT a
+          # read from the file itself, so the provider never falls back to a
+          # local context (which resolves per-machine to a DIFFERENT cluster). The
+          # CI kubeconfig holds exactly one context (home-server over the tailnet),
+          # so its current-context is unambiguous. If the blob ever ships WITHOUT a
           # current-context set, self-heal by selecting its sole context, so a
           # rebuilt secret that forgot `current-context:` can't strand the deploy
           # on "current-context is not set".
@@ -659,8 +663,8 @@ jobs:
             ctx=$(kubectl config get-contexts -o name | head -n1)
             kubectl config use-context "$ctx" >/dev/null
           fi
-          echo "Deploying with kube context: $ctx"
-          pulumi config set wwwinfra:kubeContext "$ctx" --stack prod
+          echo "Deploying stack $STACK with kube context: $ctx"
+          pulumi config set wwwinfra:kubeContext "$ctx" --stack "$STACK"
           # Pin each changed app image by digest: a changed digest rolls only that
           # workload (www-czg). Clear the prior map first so a no-longer-built image
           # can't keep a phantom pin, then set each service's digest path.
@@ -669,12 +673,12 @@ jobs:
           # imageDigests.<svc>` writes under the PROJECT namespace (world-wide-webb:),
           # which the program never reads, so every image silently renders `:main`
           # (mutable tag) and pods NEVER roll to the freshly built build (www-j934.9).
-          pulumi config rm wwwinfra:imageDigests --stack prod >/dev/null 2>&1 || true
+          pulumi config rm wwwinfra:imageDigests --stack "$STACK" >/dev/null 2>&1 || true
           for svc in $(echo "$DIGEST_MAP" | jq -r 'keys[]'); do
             dig=$(echo "$DIGEST_MAP" | jq -r --arg s "$svc" '.[$s]')
-            pulumi config set --path "wwwinfra:imageDigests.$svc" "$dig" --stack prod
+            pulumi config set --path "wwwinfra:imageDigests.$svc" "$dig" --stack "$STACK"
           done
-          pulumi up --yes --stack prod
+          pulumi up --yes --stack "$STACK"
 
   # Push a phone ping via ntfy.sh when main CI fails, and a quiet "deployed"
   # ping when the deploy job succeeds. Terminal job: never fails the pipeline

@@ -103,4 +103,12 @@ describe("serviceSpecs image digest pinning", () => {
     expect(shouldRequireImageDigestPins("dev")).toBe(false);
     expect(specsWith().length).toBeGreaterThan(0);
   });
+
+  test("requires digest pins on both production-cluster stacks (mini + home-server)", () => {
+    // "home-server" is the live Talos cluster CI deploys to; "prod" is the
+    // retired mini. Both must fail-fast on an incomplete CI digest map rather
+    // than silently render mutable :main images.
+    expect(shouldRequireImageDigestPins("prod")).toBe(true);
+    expect(shouldRequireImageDigestPins("home-server")).toBe(true);
+  });
 });

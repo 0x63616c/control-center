@@ -73,8 +73,14 @@ function validateRequiredImageDigests(digests: ImageDigests): void {
   }
 }
 
+// Stacks that manage a real production cluster: app Deployments must NOT render
+// mutable :main images there (an incomplete CI digest map is a hard error, not a
+// silent :main fallback). "prod" is the retired mini; "home-server" is the live
+// Talos cluster CI now deploys to.
+const PROD_LIKE_STACKS = new Set(["prod", "home-server"]);
+
 export function shouldRequireImageDigestPins(stackName: string): boolean {
-  return stackName === "prod";
+  return PROD_LIKE_STACKS.has(stackName);
 }
 
 // GHCR image ref. Digest-pinned (@sha256:…) when CI supplied a digest for this
