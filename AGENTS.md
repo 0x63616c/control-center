@@ -52,7 +52,24 @@
 
 ## Infra
 
-- "prod" = homelab cluster. No other production environment.
+- **"prod" = the `home-server` Talos node** (`192.168.0.5`, single control-plane,
+  amd64, RTX 3060). No other production environment.
+- **There is NO SSH into home-server.** Talos ships no shell and no sshd; port 22 is
+  closed by design. Administer it with `talosctl` (node) and `kubectl` (cluster) -
+  `export TALOSCONFIG=$PWD/infra/talos/clusterconfig/talosconfig` then
+  `talosctl dashboard`. The binary is `talosctl`, not `talos`, and needs no `-e`/`-n`
+  (endpoint + node are baked into the talosconfig).
+- `infra/talos/clusterconfig/` is gitignored and regenerated per session
+  (`talhelper genconfig`) - it holds the cluster CA and admin client key. Machine
+  config source of truth is `infra/talos/talconfig.yaml`.
+- The Mac mini ("homelab", k3s/OrbStack, HAOS VM at `192.168.0.38`) was **retired and
+  powered off 2026-07-25** and kept as a cold spare - do NOT wipe it. Any `homelab`
+  reference in this repo is stale by definition, including `scripts/ssh-homelab.sh`,
+  which points at powered-off hardware. Home Assistant now answers on
+  `192.168.0.5:8123`, not `.38`.
+- Deploy the `home-server` Pulumi stack. A stack named `prod` still exists but targets
+  the retired mini - **never deploy it** (its cloudflared would split-brain the live
+  Cloudflare tunnel). Images must be **multi-arch/amd64**; the node is x86.
 - Push to `main` triggers CI + deploy.
 - CI/deploy is product-aware: per-product path filters build only changed product
   images plus shared-package dependents.

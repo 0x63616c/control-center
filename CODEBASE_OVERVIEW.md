@@ -1,6 +1,6 @@
 # Codebase Overview
 
-This repository is a Bun monorepo for a smart-home wall-panel dashboard. The app is built around a fixed iPad wall panel, a tRPC API, background reconciliation workers, and a Pulumi-managed Kubernetes deployment on `homelab`.
+This repository is a Bun monorepo for a smart-home wall-panel dashboard. The app is built around a fixed iPad wall panel, a tRPC API, background reconciliation workers, and a Pulumi-managed Kubernetes deployment on the `home-server` Talos node (see `## Where Prod Runs`).
 
 > **Staleness note (2026-07-24):** Parts of the "Runtime Shape", "Domain Services",
 > and end-of-file flow sections below still describe the *pre-fold* architecture,
@@ -33,10 +33,35 @@ background loops and jobs
 
 deploy
   -> GitHub Actions
-  -> GHCR arm64 images
-  -> Pulumi in infra/
-  -> k3s on homelab
+  -> GHCR multi-arch images (amd64 required: the home-server node is x86)
+  -> Pulumi in infra/ (stack `home-server`)
+  -> Talos Kubernetes on home-server (192.168.0.5)
 ```
+
+## Where Prod Runs
+
+Prod is a **single-node Talos Linux Kubernetes cluster** called `home-server`
+(`192.168.0.5`, amd64, RTX 3060). It is the only production environment.
+
+**There is no SSH into it.** Talos ships no shell and no sshd; port 22 is closed by
+design. Administer it with `talosctl` (node level) and `kubectl` (cluster level):
+
+```
+export TALOSCONFIG=$PWD/infra/talos/clusterconfig/talosconfig
+talosctl dashboard                  # node TUI; binary is talosctl, not talos
+export KUBECONFIG=$PWD/infra/talos/clusterconfig/hs.kubeconfig
+kubectl get pods -A
+```
+
+`infra/talos/clusterconfig/` is **gitignored and regenerated per session**
+(`talhelper genconfig`) because it holds the cluster CA and admin client key. The
+Talos machine config source of truth is `infra/talos/talconfig.yaml`.
+
+Naming to be aware of: the Talos/kubectl context is `prod` / `home-server`, and the
+Pulumi stack is `home-server`. A second Pulumi stack named `prod` still exists but
+targets the **retired Mac mini** — never deploy it (its cloudflared would split-brain
+the live tunnel). The mini was powered off on 2026-07-25 and is kept as a cold spare,
+so anything in this repo still referencing `homelab` is stale by definition.
 
 ## Workspace Layout
 
@@ -176,7 +201,7 @@ Logger behavior is keyed off runtime env like `APP_ENV`, `LOG_LEVEL`, and `LOG_P
 Frontend logs (the web app's own log store, `apps/web/src/lib/log/`) are shipped to Postgres: a cursor-tracked shipper pushes every entry to the `logs.ingest` tRPC mutation, which writes the `frontend_log` table (30-day retention, purged daily). Every entry carries a stable `deviceId` (`<model-slug>-<idfv8>`), the mutable display `deviceName`, the git `sha`, and the App Store `build` number. To read panel logs from a desk, query Postgres instead of exporting from the device:
 
 ```
-kubectl --context cc-homelab -n control-center exec control-center-1 -c postgres -- \
+kubectl --context home-server -n control-center exec control-center-1 -c postgres -- \
   psql -U postgres -d control_center -c "select ts, level, source, msg from frontend_log \
   where level in ('warn','error') and ts > now() - interval '1 day' order by ts desc limit 100"
 ```
@@ -198,7 +223,7 @@ Important infra files:
 - `infra/src/certmanager.ts` - certificate automation.
 - `infra/src/cluster.ts` - cluster-level setup.
 
-GitHub Actions builds linux/arm64 images in `.github/workflows/ci.yml`, pushes them to GHCR, joins the tailnet with an ephemeral `tag:ci` identity, writes kubeconfig, sets Pulumi image digest config, and runs `pulumi up --stack prod`.
+GitHub Actions builds **multi-arch** images in `.github/workflows/ci.yml`: each Dockerfile builds twice on native runners (`amd64` on `ubuntu-24.04`, `arm64` on `ubuntu-24.04-arm`, no QEMU emulation), each pushing a per-arch child tag, and a dependent `merge-*` job composes them into a multi-arch manifest index via `docker buildx imagetools create`. amd64 is not optional — the home-server node is x86. CI then joins the tailnet with an ephemeral `tag:ci` identity, writes kubeconfig, sets Pulumi image digest config, and runs `pulumi up --stack home-server`.
 
 The image digest config key must be namespaced as `ccinfra:imageDigests.<svc>`. Without `ccinfra:`, the Pulumi program does not read the values correctly.
 

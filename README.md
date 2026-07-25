@@ -31,7 +31,20 @@ Workers reconcile desired state and ingest background data. UI tiles read merged
 
 ## Deploy
 
-Push to `main` runs CI, builds changed multi-arch images (product-aware: only changed product images plus shared-package dependents), writes digest pins to `wwwinfra:imageDigests.*`, then runs `pulumi up` against the homelab Kubernetes cluster.
+Push to `main` runs CI, builds changed multi-arch images (product-aware: only changed product images plus shared-package dependents), writes digest pins to `wwwinfra:imageDigests.*`, then runs `pulumi up` against the `home-server` stack.
+
+Prod is a single-node **Talos Linux** Kubernetes cluster, `home-server` (`192.168.0.5`, amd64, RTX 3060) — the only production environment. Talos has no shell and no sshd, so there is **no SSH into it**; use `talosctl` for the node and `kubectl` for the cluster:
+
+```sh
+export TALOSCONFIG=$PWD/infra/talos/clusterconfig/talosconfig
+talosctl dashboard
+export KUBECONFIG=$PWD/infra/talos/clusterconfig/hs.kubeconfig
+kubectl get pods -A
+```
+
+`infra/talos/clusterconfig/` is gitignored and regenerated per session with `talhelper genconfig`, since it contains the cluster CA and admin client key. Machine config lives in `infra/talos/talconfig.yaml`.
+
+A Pulumi stack named `prod` also exists but targets a retired Mac mini (powered off 2026-07-25, kept as a cold spare) — never deploy it; its cloudflared would split-brain the live tunnel.
 
 ## Commands
 
