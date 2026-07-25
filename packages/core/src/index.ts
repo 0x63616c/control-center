@@ -23,3 +23,4 @@ export * from "./media-path";
 export * from "./sonos";
 export * from "./spotify";
 export * from "./unifi";
+export * from "./withings";

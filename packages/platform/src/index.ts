@@ -288,6 +288,10 @@ export const secretCatalog = {
   unifi: {
     localApiKey: secret("UniFi", "local_api_key", "UNIFI__LOCAL_API_KEY"),
   },
+  withings: {
+    clientId: secret("Withings", "client_id", "WITHINGS_CLIENT_ID"),
+    clientSecret: secret("Withings", "client_secret", "WITHINGS_CLIENT_SECRET"),
+  },
   wifiGuest: {
     password: secret("WiFi Guest Wifi", "password", "WIFI_GUEST_WIFI_PASSWORD"),
     ssid: secret("WiFi Guest Wifi", "ssid", "WIFI_GUEST_WIFI_SSID"),
@@ -367,6 +371,11 @@ export function controlCenterServiceSecretUsages(): Record<
     APNS_KEY_ID: secretCatalog.apns.keyId,
     APNS_TEAM_ID: secretCatalog.apns.teamId,
     APNS_KEY_CONTENT: secretCatalog.apns.p8Content,
+    // Withings direct-API weight ingest. Only the worker polls Withings, but
+    // api/worker secret sets are kept in lockstep (see comment above), so it
+    // appears in both.
+    WITHINGS_CLIENT_ID: secretCatalog.withings.clientId,
+    WITHINGS_CLIENT_SECRET: secretCatalog.withings.clientSecret,
   } as const;
 
   return {
