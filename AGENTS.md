@@ -3,6 +3,9 @@
 ## Start Here
 
 - Read `CODEBASE_OVERVIEW.md` first.
+- **Issue tracking is GitHub Issues** (since 2026-07-25), via `gh issue`. It is
+  also the brain-dump inbox: file ideas there rather than losing them in chat.
+  See `## Issue tracking` below for the label scheme and the verbatim rule.
 - **Beads (`bd`) dropped 2026-07-11.** Never create or query `bd` tickets. Archive:
   `docs/beads-archive/` - `OPEN-IDEAS.md` (unfinished ideas), `beads-export.jsonl`
   (raw dump). Pull ideas from there.
@@ -55,6 +58,24 @@
   images plus shared-package dependents.
 - Pulumi digest pins use `wwwinfra:imageDigests.*`.
 - Cron jobs live in `infra/src/crons.ts`.
+
+## Issue tracking
+
+GitHub Issues (`gh issue`) is the tracker and the brain-dump inbox.
+
+- **Preserve the requester's exact wording.** Every issue body opens with an
+  `## Original ask (verbatim)` blockquote holding the request character-for-character
+  - typos, trailing fragments and all. Never paraphrase it away. Interpretation goes
+  below it, clearly marked as ours. Summarising the ask is the one unacceptable edit.
+- Title is a cleaned-up handle; a one-line description sits above the verbatim block.
+- **Labels: exactly one `area/*` and one `type/*`. Nothing else.** No priority, no
+  status, no milestones, no Projects board - deliberately, so it cannot go stale.
+  - `area/`: `infra` `network` `hardware` `panel-ui` `tiles` `integrations`
+    `observability` `docs` `tooling` `security`
+  - `type/`: `bug` `chore` `feature` `design` `spike` `verify` `question`
+- One issue per request, even when several arrive together, so they close
+  independently. Brain dumps record their origin (e.g. `item #22`) in the body;
+  those numbers are not GitHub issue numbers.
 
 ## Workflow
 
