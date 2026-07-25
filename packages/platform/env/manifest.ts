@@ -32,7 +32,7 @@ export const ENV = defineEnv({
 
   // ── Home Assistant (ac, ctrl, dogcam, tesla, tv) ──────────────────────────
   HA_URL: url().default("http://homeassistant.local:8123"),
-  HA_TOKEN: secret().required().forFeature("ac"),
+  HA_TOKEN: secret().required().forRuntime("api", "worker").forFeature("ac"),
   CLIMATE_ENTITY_ID: str().default("climate.home").forRuntime("api").forFeature("ac"),
   HA_WEIGHT_ENTITY_ID: str()
     .default("sensor.renpho_scale_weight")
@@ -51,8 +51,12 @@ export const ENV = defineEnv({
   WIFI_GUEST_SSID: secret().required().forRuntime("api").forFeature("network"),
 
   // ── Home location (tesla, weather) ────────────────────────────────────────
-  HOME_LAT: num().required().devDefault(34.0537).forFeature("weather"),
-  HOME_LON: num().required().devDefault(-118.2428).forFeature("weather"),
+  HOME_LAT: num().required().devDefault(34.0537).forRuntime("api", "worker").forFeature("weather"),
+  HOME_LON: num()
+    .required()
+    .devDefault(-118.2428)
+    .forRuntime("api", "worker")
+    .forFeature("weather"),
   HOME_PLACE_NAME: str().default("Home").forFeature("weather"),
   HOME_RADIUS_MILES: num().default(1).forRuntime("api").forFeature("tesla"),
 
