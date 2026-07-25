@@ -14,6 +14,36 @@ seams that are generic on the API side but still hand-wired on the web side.
 
 ---
 
+## Status: triaged and ticketed 2026-07-25 — with two corrections
+
+Every finding below is now a GitHub issue (#93–#108); each issue quotes its finding verbatim. Three
+items were **not** ticketed because they are done or were never real:
+
+- The **device-ownership hoist** shipped (`311ab7ce8`) — `ownerOf`/`DeviceOwner` now live in
+  `packages/core/src/device-state/ownership.ts`.
+- The **type-safety sweep** is a phantom task: zero `@ts-ignore` in the repo, all 21 sites are
+  justified `@ts-expect-error` in tests/scaffolding, and the single production `any`
+  (`features/wakes/photos.ts` `NodePgDatabase<any>`) already carries a `biome-ignore` plus rationale.
+- **F3.5** was already flagged as "not a problem".
+
+**Correction 1 — finding #5 / X.1 ("`guest-wifi` has zero tests") is FALSE.** The original pass
+searched only inside `features/guest-wifi/` and concluded the auth logic was untested. It is not:
+`apps/api/src/__tests__/portal-service.test.ts` is a 252-line suite covering the exact behaviours the
+finding named — global daily wrong-attempt limit, that the limit is global rather than per-MAC, UTC-day
+rollover, idempotent MAC authorization, server-side re-verification, and the brute-force cap — alongside
+four more portal test files. The real (much smaller) issue is that guest-wifi is the last feature whose
+tests never moved with the fold; that is #96.
+
+**Correction 2 — F1.5 ("`repo.fake.ts` is imported by nothing") is FALSE.** It is imported by
+`apps/api/src/__tests__/portal-service.test.ts:12`. Being unreferenced from runtime code, it does not
+ship in the bundle regardless of which directory it sits in. This also undercuts F1.3's "the pattern
+buys nothing" reasoning — the Repository inversion is actively paying for itself.
+
+Lesson for future review passes: "feature X has no tests" must be checked against the whole repo, not
+the feature directory, while test-location debt from a migration is still being paid down.
+
+---
+
 ## Executive summary — top 5 for a human
 
 1. **N independent Postgres pools per process.** Every feature's `db.ts` (and `ac`/`ctrl` `deps.ts`)
