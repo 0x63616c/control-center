@@ -47,4 +47,8 @@ export { installLocalPath } from "./local-path.ts";
 export type { MetallbArgs, MetallbResources } from "./metallb.ts";
 export { installMetallb, METALLB_ADDRESS_POOL_RANGE } from "./metallb.ts";
 export type { NvidiaArgs, NvidiaResources } from "./nvidia.ts";
-export { installNvidiaRuntimeClass, NVIDIA_RUNTIME_CLASS_NAME } from "./nvidia.ts";
+export {
+  installNvidiaDevicePlugin,
+  installNvidiaRuntimeClass,
+  NVIDIA_RUNTIME_CLASS_NAME,
+} from "./nvidia.ts";

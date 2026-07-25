@@ -41,3 +41,31 @@ describe("installNvidiaRuntimeClass (Task 4, talos-only)", () => {
     expect(nvidia.NVIDIA_RUNTIME_CLASS_NAME).toBe("nvidia");
   });
 });
+
+describe("installNvidiaDevicePlugin (talos-only)", () => {
+  test("a kube-system DaemonSet running under the nvidia RuntimeClass with a pinned image", async () => {
+    const ds = nvidia.installNvidiaDevicePlugin({ provider: provider() });
+    const meta = await get<{ name: string; namespace: string }>(ds, "metadata");
+    expect(meta).toMatchObject({
+      name: "nvidia-device-plugin-daemonset",
+      namespace: "kube-system",
+    });
+    const spec = await get<{
+      template: {
+        spec: {
+          runtimeClassName: string;
+          containers: { image: string }[];
+          volumes: { hostPath?: { path: string } }[];
+        };
+      };
+    }>(ds, "spec");
+    // The plugin MUST run under the nvidia runtime to see the GPU.
+    expect(spec.template.spec.runtimeClassName).toBe("nvidia");
+    // Pinned tag, never :latest.
+    expect(spec.template.spec.containers[0].image).toMatch(
+      /^nvcr\.io\/nvidia\/k8s-device-plugin:v/,
+    );
+    // Registers with the kubelet device-plugin socket via the hostPath mount.
+    expect(spec.template.spec.volumes[0].hostPath?.path).toBe("/var/lib/kubelet/device-plugins");
+  });
+});

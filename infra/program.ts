@@ -17,7 +17,7 @@ import { installHomeAssistant } from "./src/homeassistant.ts";
 import { installLocalPath } from "./src/local-path.ts";
 import { installMetallb } from "./src/metallb.ts";
 import { installMetricsServer } from "./src/metrics-server.ts";
-import { installNvidiaRuntimeClass } from "./src/nvidia.ts";
+import { installNvidiaDevicePlugin, installNvidiaRuntimeClass } from "./src/nvidia.ts";
 import {
   deployServices,
   parseSubstrateTarget,
@@ -175,6 +175,9 @@ if (target.substrate === "talos") {
   installLocalPath({ provider: cluster.provider, version: "v0.0.31" });
   installMetallb({ provider: cluster.provider, version: "v0.14.9" });
   installNvidiaRuntimeClass({ provider: cluster.provider });
+  // The device plugin advertises nvidia.com/gpu so GPU workloads (Plex) can be
+  // scheduled; needs the nvidia kernel modules (infra/talos machine.kernel).
+  installNvidiaDevicePlugin({ provider: cluster.provider });
   installHomeAssistant({
     provider: cluster.provider,
     // Reuses the ALREADY-installed CNPG operator (cnpg.ts's installCnpg()

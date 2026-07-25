@@ -24,6 +24,11 @@ export const NVIDIA_RUNTIME_CLASS_NAME = "nvidia";
 // different knobs (k8s object name vs. containerd handler name).
 const NVIDIA_CONTAINERD_HANDLER = "nvidia";
 
+// The upstream NVIDIA k8s device plugin. Pinned tag (never :latest): the plugin
+// is what makes the node advertise `nvidia.com/gpu` capacity to the scheduler,
+// so a silent roll on node restart is unwanted. Public NGC image, no pull secret.
+const NVIDIA_DEVICE_PLUGIN_IMAGE = "nvcr.io/nvidia/k8s-device-plugin:v0.17.1";
+
 export interface NvidiaArgs {
   provider: k8s.Provider;
 }
@@ -47,4 +52,69 @@ export function installNvidiaRuntimeClass(args: NvidiaArgs): NvidiaResources {
     { provider },
   );
   return { runtimeClass };
+}
+
+/**
+ * @public - the NVIDIA k8s device plugin DaemonSet. WITHOUT it the node never
+ * advertises `nvidia.com/gpu`, so a pod that names the RuntimeClass + a
+ * `nvidia.com/gpu` limit (Plex) is unschedulable forever. The plugin container
+ * itself runs under the `nvidia` RuntimeClass so it can see the GPU (the
+ * container toolkit only exposes devices to nvidia-runtime containers), then
+ * registers the GPU with the kubelet device-plugin socket via the hostPath
+ * mount. Requires the nvidia kernel modules to be loaded (infra/talos
+ * machine.kernel.modules). Consumed by program.ts, gated to "talos".
+ */
+export function installNvidiaDevicePlugin(args: NvidiaArgs): k8s.apps.v1.DaemonSet {
+  const { provider } = args;
+  const labels = { name: "nvidia-device-plugin-ds" };
+  return new k8s.apps.v1.DaemonSet(
+    "nvidia-device-plugin",
+    {
+      metadata: { name: "nvidia-device-plugin-daemonset", namespace: "kube-system" },
+      spec: {
+        selector: { matchLabels: labels },
+        updateStrategy: { type: "RollingUpdate" },
+        template: {
+          metadata: { labels },
+          spec: {
+            runtimeClassName: NVIDIA_RUNTIME_CLASS_NAME,
+            priorityClassName: "system-node-critical",
+            // Schedule on the (tainted or not) control-plane node and on any
+            // future GPU-tainted node; this single node is both.
+            tolerations: [
+              { key: "nvidia.com/gpu", operator: "Exists", effect: "NoSchedule" },
+              {
+                key: "node-role.kubernetes.io/control-plane",
+                operator: "Exists",
+                effect: "NoSchedule",
+              },
+            ],
+            containers: [
+              {
+                name: "nvidia-device-plugin-ctr",
+                image: NVIDIA_DEVICE_PLUGIN_IMAGE,
+                // Don't crash-loop the plugin on a node that (transiently) has no
+                // GPU/driver; it just advertises 0 until the driver is ready.
+                env: [{ name: "FAIL_ON_INIT_ERROR", value: "false" }],
+                securityContext: {
+                  allowPrivilegeEscalation: false,
+                  capabilities: { drop: ["ALL"] },
+                },
+                volumeMounts: [
+                  { name: "device-plugin", mountPath: "/var/lib/kubelet/device-plugins" },
+                ],
+              },
+            ],
+            volumes: [
+              {
+                name: "device-plugin",
+                hostPath: { path: "/var/lib/kubelet/device-plugins" },
+              },
+            ],
+          },
+        },
+      },
+    },
+    { provider },
+  );
 }
