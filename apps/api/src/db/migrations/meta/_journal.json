@@ -211,6 +211,13 @@
       "when": 1784769166583,
       "tag": "0030_giant_skaar",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1784993698738,
+      "tag": "0031_fixed_demogoblin",
+      "breakpoints": true
     }
   ]
 }

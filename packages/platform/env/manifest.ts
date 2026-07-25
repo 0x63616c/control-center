@@ -72,6 +72,13 @@ export const ENV = defineEnv({
   SPOTIFY_CLIENT_SECRET: secret().optionalSecret().forRuntime("api").forFeature("sound"),
   SPOTIFY_REFRESH_TOKEN: secret().optionalSecret().forRuntime("api").forFeature("sound"),
 
+  // ── Withings direct-poll ingest (weight) ──────────────────────────────────
+  // No WITHINGS_REFRESH_TOKEN/ACCESS_TOKEN here: Withings rotates the refresh
+  // token on every use, so the live pair lives in Postgres (withings_oauth_token),
+  // not env/vault. Only the static app credentials live here.
+  WITHINGS_CLIENT_ID: secret().optionalSecret().forRuntime("worker").forFeature("weight"),
+  WITHINGS_CLIENT_SECRET: secret().optionalSecret().forRuntime("worker").forFeature("weight"),
+
   // ── App Store Connect poll (worker) ───────────────────────────────────────
   ASC_KEY_ID: secret().optionalSecret().forRuntime("worker").forFeature("worker"),
   ASC_ISSUER_ID: secret().optionalSecret().forRuntime("worker").forFeature("worker"),

@@ -77,6 +77,8 @@ describe("secret catalog and service usage", () => {
       "WIFI_GUEST_SSID",
       "WIFI_PASSWORD",
       "WIFI_SSID",
+      "WITHINGS_CLIENT_ID",
+      "WITHINGS_CLIENT_SECRET",
     ].sort();
 
     expect(Object.keys(usages.api.secrets).sort()).toEqual(expectedKeys);
