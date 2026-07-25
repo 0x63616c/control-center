@@ -33,7 +33,7 @@ beforeAll(async () => {
 
 // The NAS server (default LAN IP) the pg-backup NFS PV points at, threaded in the
 // same way services.ts threads it into the worker media volume (www-j934.17).
-const NAS = "192.168.0.219";
+const NAS = "192.168.0.218";
 const testNamespaces = {
   "control-center": "control-center",
   platform: "platform",

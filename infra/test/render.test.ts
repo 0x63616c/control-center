@@ -99,7 +99,7 @@ describe("renderWorkload", () => {
       volumes: [
         {
           mountPath: "/app/media",
-          nfs: { server: "192.168.0.219", path: "/volume1/Homelab/media" },
+          nfs: { server: "192.168.0.218", path: "/volume1/Homelab/media" },
         },
       ],
     };
@@ -107,7 +107,7 @@ describe("renderWorkload", () => {
     expect(r.persistentVolumes).toHaveLength(1);
     const pv = r.persistentVolumes[0];
     expect(pv.spec.mountOptions).toEqual(["nfsvers=3", "nolock", "tcp"]);
-    expect(pv.spec.nfs.server).toBe("192.168.0.219");
+    expect(pv.spec.nfs.server).toBe("192.168.0.218");
     expect(pv.spec.nfs.path).toBe("/volume1/Homelab/media");
   });
 
@@ -201,7 +201,7 @@ describe("renderWorkload: NFS PV + PVC pair (www-j934.6)", () => {
       volumes: [
         {
           mountPath: "/app/media",
-          nfs: { server: "192.168.0.219", path: "/volume1/Homelab/media" },
+          nfs: { server: "192.168.0.218", path: "/volume1/Homelab/media" },
         },
       ],
     };
@@ -231,7 +231,7 @@ describe("renderExternalService (ExternalName CNAME to an off-cluster host)", ()
 describe("serviceSpecs (replica + NFS knobs, www-j934.17 / www-j934.18)", () => {
   const baseOpts = {
     cloudflaredReplicas: 2,
-    nasNfsServer: "192.168.0.219",
+    nasNfsServer: "192.168.0.218",
   };
   const specOf = (specs: WorkloadSpec[], name: string) => specs.find((s) => s.name === name);
 
@@ -382,7 +382,7 @@ describe("renderWorkload: initContainers (www-hn1i)", () => {
 describe("serviceSpecs: web map-provision initContainer (www-hn1i)", () => {
   const baseOpts = {
     cloudflaredReplicas: 2,
-    nasNfsServer: "192.168.0.219",
+    nasNfsServer: "192.168.0.218",
   };
   const web = () => serviceSpecs(baseOpts).find((s) => s.name === "web");
 
@@ -414,7 +414,7 @@ describe("serviceSpecs: web map-provision initContainer (www-hn1i)", () => {
 describe("serviceSpecs: Plex GPU transcode is talos-only (Task 4)", () => {
   const baseOpts = {
     cloudflaredReplicas: 2,
-    nasNfsServer: "192.168.0.219",
+    nasNfsServer: "192.168.0.218",
   };
   const plexOf = (opts: Parameters<typeof serviceSpecs>[0]) =>
     serviceSpecs(opts).find((s) => s.name === "plex");

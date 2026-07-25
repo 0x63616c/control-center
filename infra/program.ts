@@ -109,7 +109,7 @@ const controlCenterGuestCert = issuePortalCertificate({
 // Non-prod local applies may omit it and fall back to :main.
 
 // The NAS NFS server, shared by the worker media share and the pg-backup target.
-const nasNfsServer = cfg.get("nasNfsServer") ?? "192.168.0.219";
+const nasNfsServer = cfg.get("nasNfsServer") ?? "192.168.0.218";
 const imageDigests = cfg.getObject<Record<string, string>>("imageDigests") ?? {};
 
 // coldStart: a one-time escape hatch for the FIRST `pulumi up` against a brand
