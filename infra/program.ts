@@ -112,7 +112,21 @@ const controlCenterGuestCert = issuePortalCertificate({
 const nasNfsServer = cfg.get("nasNfsServer") ?? "192.168.0.218";
 const imageDigests = cfg.getObject<Record<string, string>>("imageDigests") ?? {};
 
-if (Object.keys(imageDigests).length > 0) {
+// coldStart: a one-time escape hatch for the FIRST `pulumi up` against a brand
+// new, empty cluster (the Talos home-server bring-up, www-j934.9). Two steady-
+// state guards both assume the cluster is already seeded and deadlock a cold
+// cluster: (1) `verifyLiveGhcrPullSecrets` asserts the ESO-managed `ghcr-pull`
+// Secret already exists live — but that Secret is created BY this same apply, so
+// on an empty cluster the preflight throws before the apply that would create
+// it; (2) the prod digest-pin requirement refuses to render app Deployments
+// without a complete `imageDigests` map, but a cold bring-up has no CI-built
+// digests yet and just wants the current `:main` images. `coldStart=true`
+// relaxes BOTH so a single apply can seed the cluster (namespaces + ghcr-pull +
+// local-path/MetalLB/CNPG + workloads on `:main`); the very next steady-state
+// deploy (default `coldStart=false`) restores digest pinning + the preflight.
+const coldStart = cfg.getBoolean("coldStart") ?? false;
+
+if (!coldStart && Object.keys(imageDigests).length > 0) {
   verifyLiveGhcrPullSecrets({ context: kubeContext });
 }
 
@@ -131,7 +145,7 @@ const services = deployServices({
   namespaces,
   cloudflaredReplicas: cfg.getNumber("cloudflaredReplicas") ?? 2,
   nasNfsServer,
-  requireImageDigestPins: shouldRequireImageDigestPins(stackName),
+  requireImageDigestPins: shouldRequireImageDigestPins(stackName) && !coldStart,
   imageDigests,
   target,
   vault,
