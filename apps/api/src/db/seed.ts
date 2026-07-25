@@ -5,7 +5,7 @@
 
 import { events } from "@features/events/schema";
 import { createLogger } from "@www/logger";
-import { db, pool } from "./index";
+import { db } from "./index";
 
 const log = createLogger({ service: "api" });
 
@@ -38,7 +38,7 @@ async function seed() {
   await db.delete(events);
   const inserted = await db.insert(events).values(seedEvents).returning();
   log.info({ count: inserted.length }, "events seeded");
-  await pool.end();
+  await db.$client.end();
 }
 
 seed().catch((err) => {

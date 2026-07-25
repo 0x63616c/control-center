@@ -9,18 +9,17 @@
  * they are stateless adapters, not owners of state.
  */
 import {
+  createFeatureDb,
   createHomeAssistantClient,
   createPgDeviceStateStore,
-  createPool,
   deviceState,
 } from "@www/core";
-import { drizzle } from "drizzle-orm/node-postgres";
 import { config } from "./config";
 
 // The device_state store over this feature's own lazy pool (no connection
 // until first query).
 export const deviceStateStore = createPgDeviceStateStore(
-  drizzle(createPool(config.DATABASE_URL), { schema: { deviceState } }),
+  createFeatureDb(config.DATABASE_URL, { deviceState }),
 );
 
 // The env-free HA client bound to this feature's config slice.
