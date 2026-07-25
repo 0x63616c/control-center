@@ -1,3 +1,4 @@
+import * as React from "react";
 import { TileStatus } from "../../ui";
 
 type TileArgType = Record<string, unknown>;
@@ -69,4 +70,33 @@ export function defineTileMeta<C>(
  */
 export function modalDocsParameters(docsHeight = 880) {
   return { docs: { story: { inline: false, height: `${docsHeight}px` } } };
+}
+
+/**
+ * Decorator wrapping a story in a page-sized container standing in for
+ * TileDetailHost's content region (the flex:1/minHeight:0/overflowY:auto div
+ * that hosts full-page tile detail bodies).
+ *
+ * Pass an explicit `heightPx` for components that flex-fill their container
+ * (e.g. AllAppsModal, #66) , without a definite height, a flex-fill child has
+ * nothing to fill and the story can't demonstrate fill-to-bottom behavior.
+ * Omit it for components that size themselves (the historical `100vh`
+ * fallback), matching the copy-pasted decorator this factors out.
+ */
+export function pageHostDecorator(heightPx?: number) {
+  return (Story: React.ComponentType) =>
+    React.createElement(
+      "div",
+      {
+        style: {
+          ...(heightPx === undefined ? { minHeight: "100vh" } : { height: `${heightPx}px` }),
+          display: "flex",
+          flexDirection: "column",
+          background: "var(--bg)",
+          padding: 24,
+          boxSizing: "border-box",
+        },
+      },
+      React.createElement(Story),
+    );
 }

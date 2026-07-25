@@ -8,9 +8,9 @@
  */
 import "@testing-library/jest-dom";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AllAppsModalProps } from "../AllAppsModal";
-import { AllAppsModal } from "../AllAppsModal";
+import { AllAppsModal, cellsToFillHeight } from "../AllAppsModal";
 
 afterEach(cleanup);
 
@@ -71,9 +71,32 @@ describe("AllAppsModal (A27)", () => {
   });
 });
 
-describe("AllAppsModal , fixed grid viewport (www-cb57)", () => {
-  // 6 rows of 4 fully covers the 5.5-row visible viewport.
-  const MIN_CELLS = 24;
+describe("cellsToFillHeight (#66)", () => {
+  it("falls back to the pre-measurement row count when unmeasured", () => {
+    // 6 rows of 4 , matches the old fixed-viewport design, used only until a
+    // real measurement lands.
+    expect(cellsToFillHeight(0)).toBe(24);
+    expect(cellsToFillHeight(-10)).toBe(24);
+  });
+
+  it("scales up for a small measured height", () => {
+    // 300px viewport , CELL_H=92, GRID_GAP=10 → ceil((300+10)/102) = 4 rows.
+    expect(cellsToFillHeight(300)).toBe(16);
+  });
+
+  it("scales up for a realistic full TileDetailHost content-region height", () => {
+    // ~860px , the real host region (panel minus header/padding) is taller
+    // than the old fixed 24-cell design accounted for, so this must exceed 24.
+    const cells = cellsToFillHeight(860);
+    expect(cells).toBeGreaterThan(24);
+    expect(cells % 4).toBe(0);
+  });
+});
+
+describe("AllAppsModal , flex-fill grid viewport (#66, was www-cb57)", () => {
+  // The jsdom-default (unmeasured) fallback , single source of truth is the
+  // component's own cellsToFillHeight, not a re-duplicated constant here.
+  const UNMEASURED_CELLS = cellsToFillHeight(0);
 
   function cellCount(container: HTMLElement): number {
     const apps = container.querySelectorAll("button[aria-label^='Launch ']").length;
@@ -83,26 +106,30 @@ describe("AllAppsModal , fixed grid viewport (www-cb57)", () => {
 
   it("keeps the cell count constant when search filters the grid", () => {
     const { container } = render(<AllAppsModal {...baseProps} />);
-    expect(cellCount(container)).toBe(MIN_CELLS);
+    expect(cellCount(container)).toBe(UNMEASURED_CELLS);
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "net" } });
-    expect(cellCount(container)).toBe(MIN_CELLS);
+    expect(cellCount(container)).toBe(UNMEASURED_CELLS);
   });
 
   it("fills the grid with placeholder tiles when nothing matches", () => {
     const { container } = render(<AllAppsModal {...baseProps} />);
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "zzz no match" } });
-    expect(container.querySelectorAll("[data-testid='app-placeholder']")).toHaveLength(MIN_CELLS);
+    expect(container.querySelectorAll("[data-testid='app-placeholder']")).toHaveLength(
+      UNMEASURED_CELLS,
+    );
     expect(screen.queryByText(/no apps match/i)).not.toBeInTheDocument();
   });
 
-  it("scrolls inside a fixed-height viewport instead of resizing the modal", () => {
+  it("flex-fills the host's content region instead of pinning a height", () => {
     const { container } = render(<AllAppsModal {...baseProps} />);
     const viewport = container.querySelector("[data-testid='apps-grid-viewport']");
     expect(viewport).not.toBeNull();
     const style = (viewport as HTMLElement).style;
-    // A pinned px height (not max-height) is what keeps the modal size
-    // invariant under filtering; overflow makes long lists scroll within it.
-    expect(style.height).toMatch(/^\d+(\.\d+)?px$/);
+    // flex:1/minHeight:0 is what lets the viewport match whatever height the
+    // real TileDetailHost content region gives it (#66), instead of a pinned
+    // px height that leaves dead space below the grid.
+    expect(style.flex).toBe("1 1 0%");
+    expect(style.minHeight).toBe("0px");
     expect(style.overflowY).toBe("auto");
   });
 
@@ -110,5 +137,41 @@ describe("AllAppsModal , fixed grid viewport (www-cb57)", () => {
     const manyApps = Array.from({ length: 30 }, (_, i) => `App ${i + 1}`);
     const { container } = render(<AllAppsModal {...baseProps} apps={manyApps} />);
     expect(container.querySelectorAll("[data-testid='app-placeholder']")).toHaveLength(0);
+  });
+
+  describe("with a measured (tall) viewport", () => {
+    let originalClientHeight: PropertyDescriptor | undefined;
+    const TALL_HEIGHT = 860;
+
+    class FakeResizeObserver {
+      observe() {}
+      disconnect() {}
+    }
+
+    beforeEach(() => {
+      originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+      Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+        configurable: true,
+        value: TALL_HEIGHT,
+      });
+      vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+    });
+
+    afterEach(() => {
+      if (originalClientHeight) {
+        Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+      }
+      vi.unstubAllGlobals();
+    });
+
+    it("scales placeholder padding with the measured height, not a fixed 24, even under search filtering", () => {
+      // The exact regression scenario: a tall (now flex-filled) viewport
+      // narrowed by search to a handful of matches must still pad to the
+      // TALL_HEIGHT cell count, not the old fixed 24.
+      const { container } = render(<AllAppsModal {...baseProps} />);
+      fireEvent.change(screen.getByRole("textbox"), { target: { value: "net" } });
+      expect(cellCount(container)).toBe(cellsToFillHeight(TALL_HEIGHT));
+      expect(cellCount(container)).not.toBe(UNMEASURED_CELLS);
+    });
   });
 });

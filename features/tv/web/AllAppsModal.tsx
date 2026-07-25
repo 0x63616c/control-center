@@ -8,22 +8,41 @@
  * behavior). Bare page body (no <Modal>) , hosted by TileDetailHost.
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { TvAppMark, tvAppsInOrder } from "./tv-app-logos";
 
-// ── Grid geometry (www-cb57) ──────────────────────────────────────────────────
-// The grid lives in a pinned-height viewport (4 columns × 5.5 rows , the half
-// row signals scrollability) so filtering never resizes the grid. Underfull
-// results are padded with placeholder cells up to a full 6 rows, so the grid
-// stays visually full even with zero matches.
+// ── Grid geometry (www-cb57, www-<ticket-66>) ──────────────────────────────────
+// The grid viewport flex-fills whatever height TileDetailHost's content region
+// actually gives it (rather than a pinned constant , see #66, a pinned height
+// left visible dead space whenever the real host region was taller than the
+// guessed constant). Underfull results are padded with placeholder cells up to
+// a full viewport of rows , computed from the MEASURED height , so the grid
+// stays visually full even with zero matches, and stays full when the viewport
+// is genuinely tall.
 
 const GRID_COLS = 4;
 const GRID_GAP = 10;
 // 12px padding + 48px logo + 6px gap + ~14px label + 12px padding.
 const CELL_H = 92;
-const VISIBLE_ROWS = 5.5;
-const VIEWPORT_H = VISIBLE_ROWS * CELL_H + Math.floor(VISIBLE_ROWS) * GRID_GAP;
-const MIN_CELLS = GRID_COLS * Math.ceil(VISIBLE_ROWS);
+// Rows to pad to before the viewport has been measured (first paint, or in
+// environments without ResizeObserver, e.g. jsdom) , matches the old fixed
+// 5.5-visible-row design so there's no flash of an under-filled grid.
+const FALLBACK_ROWS = 6;
+
+/**
+ * Number of grid cells (apps + placeholders) needed to visually fill a
+ * viewport of the given measured height. Pure function of the grid geometry
+ * so it's directly testable without rendering or a ResizeObserver.
+ *
+ * `Math.ceil` overshoots the exact row count whenever the height isn't a
+ * multiple of the row pitch, which reproduces the old design's "partial row
+ * peek" scroll affordance for free.
+ */
+export function cellsToFillHeight(viewportHeightPx: number): number {
+  if (viewportHeightPx <= 0) return GRID_COLS * FALLBACK_ROWS;
+  const rows = Math.ceil((viewportHeightPx + GRID_GAP) / (CELL_H + GRID_GAP));
+  return GRID_COLS * rows;
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -37,6 +56,22 @@ export interface AllAppsModalProps {
 
 export function AllAppsModal({ apps, currentApp, onLaunchApp }: AllAppsModalProps) {
   const [query, setQuery] = useState("");
+  const viewportRef = useRef<HTMLDivElement>(null);
+  // 0 means "unmeasured" , cellsToFillHeight falls back to FALLBACK_ROWS until
+  // the effect below (or its ResizeObserver) reports a real height.
+  const [viewportH, setViewportH] = useState(0);
+
+  // The viewport flex-fills TileDetailHost's content region, so the fill
+  // target has to follow the measured height rather than a constant , see
+  // LogsView's listRef/ResizeObserver for the same pattern.
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    setViewportH(el.clientHeight);
+    const ro = new ResizeObserver(() => setViewportH(el.clientHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // Favorites first, then logo apps, then glyph-only , same order as the tile.
   const ordered = tvAppsInOrder(apps);
@@ -45,8 +80,16 @@ export function AllAppsModal({ apps, currentApp, onLaunchApp }: AllAppsModalProp
     : ordered;
 
   return (
-    <div style={{ maxWidth: 920, margin: "0 auto" }}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    <div
+      style={{
+        maxWidth: 920,
+        margin: "0 auto",
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 14, flex: 1, minHeight: 0 }}>
         {/* Search */}
         <input
           type="text"
@@ -67,12 +110,14 @@ export function AllAppsModal({ apps, currentApp, onLaunchApp }: AllAppsModalProp
           }}
         />
 
-        {/* Grid , pinned-height scroll viewport so filtering never resizes
-            the grid; modal-scroll hides the scrollbar (kiosk style). */}
+        {/* Grid , flex-fills the remaining height so the page always fills the
+            real host region instead of a pinned guess (#66); modal-scroll
+            hides the scrollbar (kiosk style). */}
         <div
+          ref={viewportRef}
           data-testid="apps-grid-viewport"
           className="modal-scroll"
-          style={{ height: VIEWPORT_H, overflowY: "auto" }}
+          style={{ flex: 1, minHeight: 0, overflowY: "auto" }}
         >
           <div
             style={{
@@ -137,20 +182,23 @@ export function AllAppsModal({ apps, currentApp, onLaunchApp }: AllAppsModalProp
 
             {/* Placeholder cells keep the grid visually full when results
                 underfill the viewport (including zero matches). */}
-            {Array.from({ length: Math.max(0, MIN_CELLS - filtered.length) }, (_, i) => (
-              <div
-                // Cells are interchangeable blanks; position is identity.
-                // biome-ignore lint/suspicious/noArrayIndexKey: static decorative fillers
-                key={i}
-                data-testid="app-placeholder"
-                aria-hidden="true"
-                style={{
-                  borderRadius: 12,
-                  background: "var(--tile-2)",
-                  opacity: 0.35,
-                }}
-              />
-            ))}
+            {Array.from(
+              { length: Math.max(0, cellsToFillHeight(viewportH) - filtered.length) },
+              (_, i) => (
+                <div
+                  // Cells are interchangeable blanks; position is identity.
+                  // biome-ignore lint/suspicious/noArrayIndexKey: static decorative fillers
+                  key={i}
+                  data-testid="app-placeholder"
+                  aria-hidden="true"
+                  style={{
+                    borderRadius: 12,
+                    background: "var(--tile-2)",
+                    opacity: 0.35,
+                  }}
+                />
+              ),
+            )}
           </div>
         </div>
       </div>

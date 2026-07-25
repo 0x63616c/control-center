@@ -5,8 +5,8 @@
  * inside a plain page-sized container matching the host's content region.
  */
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, fn, within } from "storybook/test";
-import { modalDocsParameters } from "@/components/tiles/__stories__/factory";
+import { expect, fn, userEvent, within } from "storybook/test";
+import { modalDocsParameters, pageHostDecorator } from "@/components/tiles/__stories__/factory";
 import { AllAppsModal } from "./AllAppsModal";
 
 const apps = [
@@ -27,21 +27,10 @@ const meta = {
   component: AllAppsModal,
   tags: ["autodocs"],
   parameters: { ...modalDocsParameters(), boardWrapper: false, layout: "fullscreen" },
-  // Page-sized container standing in for the TileDetailHost content region.
-  decorators: [
-    (Story) => (
-      <div
-        style={{
-          minHeight: "100vh",
-          background: "var(--bg)",
-          padding: 24,
-          boxSizing: "border-box",
-        }}
-      >
-        <Story />
-      </div>
-    ),
-  ],
+  // Page-sized container standing in for the TileDetailHost content region,
+  // sized to the real fixed 1366x1024 panel (#66) so the story demonstrates
+  // true fill-to-bottom behavior rather than an arbitrary browser 100vh.
+  decorators: [pageHostDecorator(1024)],
   args: {
     apps,
     currentApp: "Netflix",
@@ -97,5 +86,19 @@ export const FullProdList: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(canvas.getByLabelText("Launch YouTube")).toBeInTheDocument();
+  },
+};
+
+/**
+ * A search narrowed to 1-2 matches (#66): the grid must still fill the host
+ * region with placeholder cells rather than leaving dead space , the exact
+ * scenario the fixed-viewport bug left uncovered.
+ */
+export const FilteredFewMatches: Story = {
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.type(canvas.getByLabelText("Search apps"), "Netflix");
+    await expect(canvas.getByLabelText("Launch Netflix")).toBeInTheDocument();
+    await expect(canvas.queryByLabelText("Launch Disney+")).not.toBeInTheDocument();
   },
 };
