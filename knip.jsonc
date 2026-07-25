@@ -23,8 +23,6 @@
     // (Slice 5 flips runtime consumers), and generated files are opaque to the
     // dead-code detector just as they are to biome (`.gen.ts` is ignored there too).
     "features/_generated/**",
-    ".claude/**", // Workflow-tool scripts (run by the Workflow tool, never imported)
-    ".opencode/**", // OpenCode plugins (loaded at runtime by the opencode host, never imported)
     "docs/media-tiles/**", // Design handoff bundle (prototypes/reference, not app code)
     "docs/captive-portal/design/**", // Captive portal design handoff (reference, not app code)
     "**/ios/**/public/**" // Capacitor web-bundle copies synced into iOS project (not source)
