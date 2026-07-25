@@ -1,6 +1,7 @@
-# ble-proxy-desk — Seeed XIAO ESP32-C6 running as a *connectable* Bluetooth
-# proxy for Home Assistant. (Physically on the desk; the old "bathroom" name
-# was a misnomer carried over from an earlier location.)
+# ble-proxy — Seeed XIAO ESP32-C6 running as a *connectable* Bluetooth
+# proxy for Home Assistant. Location has moved twice ("bathroom" -> "desk" ->
+# current spot); the name is deliberately location-agnostic now so it doesn't
+# need renaming again on the next move.
 #
 # Why this device exists: HA's Renpho scale integration needs a GATT connection
 # to read a weigh-in (`connectable: true` in its manifest). The Shelly BLE
@@ -15,8 +16,8 @@
 # the SOPS vault only carries the *guest* WiFi password).
 
 substitutions:
-  device_name: ble-proxy-desk
-  friendly_name: BLE Proxy Desk
+  device_name: ble-proxy
+  friendly_name: BLE Proxy
 
 esphome:
   name: ${device_name}

@@ -1,16 +1,16 @@
 # ESPHome devices
 
 Firmware configs for the ESP32s in the flat. Versioned here because the previous
-config for `ble-proxy-desk` lived only in `/tmp` on the mini and was lost to
+config for `ble-proxy` lived only in `/tmp` on the mini and was lost to
 a reboot — leaving a load-bearing house device unreproducible.
 
 ## Devices
 
 | Device              | Hardware            | IP            | Role                                                     |
 | ------------------- | ------------------- | ------------- | -------------------------------------------------------- |
-| `ble-proxy-desk` | Seeed XIAO ESP32-C6 | 192.168.0.211 | The only **connectable** BLE proxy in the flat (see below) |
+| `ble-proxy` | Seeed XIAO ESP32-C6 | 192.168.0.211 | The only **connectable** BLE proxy in the flat (see below) |
 
-### Why `ble-proxy-desk` matters
+### Why `ble-proxy` matters
 
 HA's Renpho scale integration declares `connectable: true` — it must open a GATT
 connection to read a weigh-in. The Shelly BLE proxies are **advertisement-only**
@@ -68,7 +68,7 @@ Confirm with `grep wifi_ssid secrets.yaml` in the directory you are flashing fro
 ESPHome is run via `uvx`, so there is nothing to install:
 
 ```sh
-~/.local/bin/uvx esphome run infra/esphome/ble-proxy-desk.yaml --device 192.168.0.211
+~/.local/bin/uvx esphome run infra/esphome/ble-proxy.yaml --device 192.168.0.211
 ```
 
 ### Secrets
@@ -91,10 +91,11 @@ delete it afterwards.
 - The API is **plaintext** (`noise_psk: ""` in the HA config entry) and OTA has
   **no password**. Adding either breaks the existing HA entry until re-paired.
 - HA keys the config entry off `name:`. This device was renamed
-  `ble-proxy-bathroom` → `ble-proxy-desk` (2026-07-23, the hardware is on the
-  desk); the rename orphans the old esphome config entry in HA, so after
-  flashing, delete the stale `ble-proxy-bathroom` entry and add the newly
-  discovered `ble-proxy-desk` node (plaintext API, empty noise_psk). The scale
+  `ble-proxy-bathroom` → `ble-proxy-desk` (2026-07-23) → `ble-proxy`
+  (2026-07-25, dropped the location suffix after the hardware moved again —
+  see git history for where); each rename orphans the old esphome config
+  entry in HA, so after flashing, delete the stale entry and add the newly
+  discovered `ble-proxy` node (plaintext API, empty noise_psk). The scale
   entity id (`HA_WEIGHT_ENTITY_ID`) is unaffected — it belongs to the Renpho
   integration, not this proxy.
 - If an OTA flash bricks the WiFi config, recover over USB with
