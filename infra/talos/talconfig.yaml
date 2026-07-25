@@ -52,6 +52,20 @@ patches:
   - |-
     machine:
       certSANs: [home-server.tail8c014d.ts.net, 192.168.0.5]
+      # NVIDIA (RTX 3060) kernel modules. The nonfree-kmod-nvidia-production +
+      # nvidia-container-toolkit-production system extensions (schematic above)
+      # ship the .ko files, but Talos only auto-loads modules listed here — so
+      # without this block the driver never binds (`/proc/driver/nvidia` absent)
+      # and the k8s device plugin finds no GPU. Loaded at boot, so applying this
+      # reboots the node. nvidia_uvm = CUDA, nvidia_drm/modeset = NVENC/NVDEC
+      # (Plex hardware transcode). Prereq for the nvidia RuntimeClass + device
+      # plugin the cluster uses to schedule Plex on the GPU.
+      kernel:
+        modules:
+          - name: nvidia
+          - name: nvidia_uvm
+          - name: nvidia_drm
+          - name: nvidia_modeset
       # NTP: this box has no reliable RTC across hard power cuts. If the clock
       # resets on boot, Talos' PKI certs look "not yet valid" and apid refuses to
       # start (node pings but no services). Sync fast + hard from the LAN gateway
