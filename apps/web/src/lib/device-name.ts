@@ -7,10 +7,16 @@
  * settings input, the "please set your name" banner, and the logger all read one
  * live source of truth without prop-drilling.
  *
- * DELIBERATELY NOT part of lib/settings.ts. That store is GLOBAL: every write
- * goes through a server sink and syncs to every wall panel. The device name is
- * the opposite , it is strictly per-device and must never leave the browser, so
- * it lives in its own local-only store with no server sink.
+ * DELIBERATELY NOT folded into lib/device-settings.ts (ticket #63). The name
+ * used to be strictly local-only ("must never leave the browser"); that turned
+ * out to be wrong , without a server copy the name is invisible off-device and
+ * lost on reinstall, exactly the gap device-settings.ts's volume field solved
+ * for panel preferences generally. Rather than adding a `name` field to that
+ * store's KEYS/DEFAULTS (which would give two stores unconditional
+ * write-every-key hydration over the SAME localStorage key, a real clobber
+ * hazard), this store stays the sole owner of both `cc-device-name` keys and
+ * grows its own bespoke, name-scoped sink , see `registerNameServerSink` below
+ * , wired up by useDeviceSettingsSync.ts alongside its existing volume sink.
  *
  * Two localStorage keys, on purpose (a separate-key design, not a sentinel):
  *   - `cc-device-name`      the USER-set name. Absent until the user explicitly
@@ -23,15 +29,24 @@
  * the auto default , so it is never empty, while "user has not chosen one" stays
  * independently detectable for the banner.
  *
+ * A THIRD key, `cc-device-name-migrated`, is a one-shot flag (see
+ * `markDeviceNameMigrated`/`nameToMigrate`) covering the upgrade case: a panel
+ * that already had a local name before this ticket shipped needs that name
+ * pushed to the server exactly once. It is set on any resolved outcome
+ * (pushed, or nothing to migrate) so an over-length legacy name is not retried
+ * every reload once it has been truncated and pushed.
+ *
  * MUST NOT statically import log/logger.ts: the logger imports getDeviceName()
  * to stamp every line, so a static import back would form a cycle. (A lazy
  * dynamic import inside a setter would be fine, but we do not log name changes.)
  */
 
+import { NAME_MAX_LENGTH } from "@cc/api/device-settings";
 import { createStore, useStore } from "./store";
 
 const USER_KEY = "cc-device-name";
 const AUTO_KEY = "cc-device-name-auto";
+const MIGRATED_KEY = "cc-device-name-migrated";
 
 /** Honest last resort when there is no UA to derive from (SSR / locked-down env). */
 const UNKNOWN_DEVICE = "unknown-device";
@@ -173,6 +188,19 @@ function snapshotNow(): DeviceNameState {
 // stable snapshot between changes (no re-render storm on unrelated updates).
 const store = createStore<DeviceNameState>(snapshotNow());
 
+// Optional server sink, registered by useDeviceSettingsSync. Null when
+// unmounted / in tests / Storybook , the store is then local-only, same
+// pattern as device-settings.ts's serverSink but scoped to just the name.
+let serverSink: ((name: string) => void) | null = null;
+
+/** Register the server pusher; returns an unregister fn. */
+export function registerNameServerSink(fn: (name: string) => void): () => void {
+  serverSink = fn;
+  return () => {
+    if (serverSink === fn) serverSink = null;
+  };
+}
+
 export function setDeviceName(name: string): void {
   if (name.trim()) {
     writeRaw(USER_KEY, name);
@@ -181,6 +209,56 @@ export function setDeviceName(name: string): void {
   }
   cache = null; // recompute lazily on next getDeviceName()
   store.set(snapshotNow());
+  serverSink?.(readRaw(USER_KEY) ?? "");
+}
+
+// ─── server sync (ticket #63) ───────────────────────────────────────────────
+
+/**
+ * Adopt an authoritative name the SERVER reported, without echoing back. A
+ * no-op when `serverName` is empty (that case is the migration's job, not
+ * this function's , see `nameToMigrate`) or matches what is already local.
+ */
+export function hydrateDeviceName(serverName: string): void {
+  const trimmed = serverName.trim();
+  if (!trimmed) return;
+  if (readRaw(USER_KEY) === trimmed) return;
+  writeRaw(USER_KEY, trimmed);
+  cache = null;
+  store.set(snapshotNow());
+}
+
+function hasMigrated(): boolean {
+  return readRaw(MIGRATED_KEY) === "1";
+}
+
+/** Mark the one-time upward migration resolved, so it is never retried. */
+export function markDeviceNameMigrated(): void {
+  writeRaw(MIGRATED_KEY, "1");
+}
+
+/**
+ * The one-time upward migration check: a panel that already had a local name
+ * before server-side persistence existed needs that name pushed up once.
+ *
+ * Returns the local name (truncated to NAME_MAX_LENGTH) to push iff migration
+ * has not already resolved, the server has no name yet, and the user has
+ * actually set one locally. Otherwise marks migration resolved (there is
+ * nothing to do) and returns null , this is what stops a legacy name that will
+ * never validate server-side from being retried on every reload.
+ */
+export function nameToMigrate(serverName: string): string | null {
+  if (hasMigrated()) return null;
+  if (serverName.trim()) {
+    markDeviceNameMigrated();
+    return null;
+  }
+  if (!isDeviceNameSet()) {
+    markDeviceNameMigrated();
+    return null;
+  }
+  const local = readRaw(USER_KEY) ?? "";
+  return local.slice(0, NAME_MAX_LENGTH);
 }
 
 /**
@@ -195,4 +273,9 @@ export function useDeviceName(): DeviceNameState {
 export function resetDeviceNameForTests(): void {
   cache = null;
   store.set(snapshotNow());
+}
+
+/** Test seam: read the migration flag directly, without going through a poll. */
+export function hasMigratedForTests(): boolean {
+  return hasMigrated();
 }

@@ -11,11 +11,31 @@
  *  - Store → server: an edit fires the store's sink; edits are debounced into a
  *    single mutation so dragging the volume slider isn't a write per frame.
  *
+ * Ticket #63 folded the device NAME into this same round trip, even though it
+ * lives in a separate local store (lib/device-name.ts, not device-settings.ts ,
+ * see that file's header for why). Two things beyond the volume flow above:
+ *
+ *  - A one-time upward MIGRATION: a panel that already had a local name before
+ *    server persistence existed needs it pushed once. Each poll first checks
+ *    `nameToMigrate`; if it returns a name, that pass pushes-and-marks-migrated
+ *    and skips hydration entirely so the just-pushed local name can't be
+ *    clobbered by the (still-empty) server value this same tick, then the NEXT
+ *    poll picks up the now-populated row normally.
+ *  - A second debounced push effect, sibling to the volume one, sharing this
+ *    hook's mutateRef/inFlight so both fields funnel through the same
+ *    in-flight guard and debounce window.
+ *
  * Mount ONCE, inside the tRPC + Query providers (see app.tsx).
  */
 
 import { useEffect, useRef } from "react";
 import { getDeviceId } from "./device-id";
+import {
+  hydrateDeviceName,
+  markDeviceNameMigrated,
+  nameToMigrate,
+  registerNameServerSink,
+} from "./device-name";
 import { type DeviceSettings, hydrateDeviceSettings, registerServerSink } from "./device-settings";
 import { POLL } from "./hooks";
 import { trpc } from "./trpc";
@@ -40,8 +60,31 @@ export function useDeviceSettingsSync(): void {
 
   const data = query.data;
   useEffect(() => {
-    if (data && inFlight.current === 0) hydrateDeviceSettings(data);
-  }, [data]);
+    if (!data || inFlight.current !== 0) return;
+
+    // Migration check runs FIRST, strictly before any hydration touches local
+    // state: if there is a legacy local name to push, push it and stop , do
+    // not hydrate volume/name from this (pre-migration) snapshot at all. The
+    // next poll, after the mutation lands, will see the server's own name.
+    const migrateName = nameToMigrate(data.name);
+    if (migrateName !== null) {
+      inFlight.current += 1;
+      mutateRef.current(
+        { deviceId, patch: { name: migrateName } },
+        {
+          onSettled: () => {
+            markDeviceNameMigrated();
+            inFlight.current = Math.max(0, inFlight.current - 1);
+            void utils.deviceSettings.get.invalidate({ deviceId });
+          },
+        },
+      );
+      return;
+    }
+
+    hydrateDeviceName(data.name);
+    hydrateDeviceSettings(data);
+  }, [data, deviceId, utils]);
 
   useEffect(() => {
     let timer = 0;
@@ -63,6 +106,35 @@ export function useDeviceSettingsSync(): void {
     };
     const unregister = registerServerSink((next) => {
       pending = next;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(flush, PUSH_DEBOUNCE_MS);
+    });
+    return () => {
+      window.clearTimeout(timer);
+      unregister();
+    };
+  }, [utils, deviceId]);
+
+  useEffect(() => {
+    let timer = 0;
+    let pending: string | null = null;
+    const flush = () => {
+      const name = pending;
+      pending = null;
+      if (name === null) return;
+      inFlight.current += 1;
+      mutateRef.current(
+        { deviceId, patch: { name } },
+        {
+          onSettled: () => {
+            inFlight.current = Math.max(0, inFlight.current - 1);
+            void utils.deviceSettings.get.invalidate({ deviceId });
+          },
+        },
+      );
+    };
+    const unregister = registerNameServerSink((name) => {
+      pending = name;
       window.clearTimeout(timer);
       timer = window.setTimeout(flush, PUSH_DEBOUNCE_MS);
     });

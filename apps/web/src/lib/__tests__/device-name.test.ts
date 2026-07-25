@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   deriveDefaultName,
   getDeviceName,
+  hasMigratedForTests,
+  hydrateDeviceName,
   isDeviceNameSet,
+  markDeviceNameMigrated,
+  nameToMigrate,
   resetDeviceNameForTests,
   setDeviceName,
 } from "../device-name";
@@ -108,6 +112,73 @@ describe("device name store", () => {
     resetDeviceNameForTests();
     expect(getDeviceName()).toBe(first);
     expect(localStorage.getItem(AUTO_KEY)).toBe(first);
+  });
+});
+
+describe("nameToMigrate (ticket #63 upward migration)", () => {
+  it("returns the pre-existing local name when the server has none yet", () => {
+    setDeviceName("Calum's Laptop");
+    expect(nameToMigrate("")).toBe("Calum's Laptop");
+  });
+
+  it("does not mark migrated on its own , the caller marks it once the push settles", () => {
+    setDeviceName("Calum's Laptop");
+    nameToMigrate("");
+    expect(hasMigratedForTests()).toBe(false);
+  });
+
+  it("truncates an over-length legacy name to NAME_MAX_LENGTH", () => {
+    const long = "x".repeat(120);
+    setDeviceName(long);
+    const result = nameToMigrate("");
+    expect(result).not.toBeNull();
+    expect(result?.length).toBe(60);
+  });
+
+  it("returns null and marks migrated when the server already has a name", () => {
+    setDeviceName("Old Local Name");
+    expect(nameToMigrate("Server Name")).toBeNull();
+    expect(hasMigratedForTests()).toBe(true);
+  });
+
+  it("returns null and marks migrated when no local name was ever set", () => {
+    expect(nameToMigrate("")).toBeNull();
+    expect(hasMigratedForTests()).toBe(true);
+  });
+
+  it("returns null once already migrated, even if conditions would otherwise match", () => {
+    setDeviceName("Calum's Laptop");
+    markDeviceNameMigrated();
+    expect(nameToMigrate("")).toBeNull();
+  });
+});
+
+describe("markDeviceNameMigrated / hasMigratedForTests persistence", () => {
+  it("persists across a simulated reload", () => {
+    expect(hasMigratedForTests()).toBe(false);
+    markDeviceNameMigrated();
+    resetDeviceNameForTests();
+    expect(hasMigratedForTests()).toBe(true);
+  });
+});
+
+describe("hydrateDeviceName", () => {
+  it("adopts a non-empty server value", () => {
+    hydrateDeviceName("Server Name");
+    expect(getDeviceName()).toBe("Server Name");
+    expect(isDeviceNameSet()).toBe(true);
+  });
+
+  it("ignores an empty server value (that's the migration's job, not hydration's)", () => {
+    setDeviceName("Local Name");
+    hydrateDeviceName("");
+    expect(getDeviceName()).toBe("Local Name");
+  });
+
+  it("is a no-op when the server value already matches the local one", () => {
+    setDeviceName("Same Name");
+    hydrateDeviceName("Same Name");
+    expect(getDeviceName()).toBe("Same Name");
   });
 });
 
