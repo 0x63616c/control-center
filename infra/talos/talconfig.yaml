@@ -35,6 +35,11 @@ nodes:
             - siderolabs/tailscale
     networkInterfaces:
       - interface: enp4s0 # 2.5GbE NIC — confirmed on hardware 2026-07-24 via `talosctl get links` (MAC d8:bb:c1:df:7d:19)
+        dhcp: false # CRITICAL: Talos defaults physical links to DHCP. Without this,
+                    # the node runs static .5 AND a DHCP lease at once (Talos docs:
+                    # "wouldn't work correctly"), and a networkd reconcile drops the
+                    # static .5 leaving only the DHCP address -> control plane (certs
+                    # pinned to .5) dies. Pure-static kills the drift entirely.
         addresses:
           - 192.168.0.5/24
         routes:
@@ -47,6 +52,14 @@ patches:
   - |-
     machine:
       certSANs: [home-server.tail8c014d.ts.net, 192.168.0.5]
+      # NTP: this box has no reliable RTC across hard power cuts. If the clock
+      # resets on boot, Talos' PKI certs look "not yet valid" and apid refuses to
+      # start (node pings but no services). Sync fast + hard from the LAN gateway
+      # so services come up cleanly after any power loss.
+      time:
+        servers:
+          - 192.168.0.1
+          - time.cloudflare.com
       sysctls:
         fs.inotify.max_user_watches: "1048576"
         fs.inotify.max_user_instances: "8192"
