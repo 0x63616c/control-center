@@ -52,6 +52,28 @@ patches:
   - |-
     machine:
       certSANs: [home-server.tail8c014d.ts.net, 192.168.0.5]
+      network:
+        # `endpoint:` above is the node's own tailnet MagicDNS name, but the
+        # node's only resolver is the UniFi gateway (nameservers above), which
+        # knows nothing about `.ts.net`. Talos' own k8s.StaticEndpointController
+        # and k8s.EndpointController resolve `endpoint` on the HOST — so they
+        # failed every ~15s forever with `lookup home-server.tail8c014d.ts.net
+        # on 127.0.0.53:53: no such host` (GH #91). Cluster stayed healthy; it
+        # was a resolution gap, not an outage.
+        #
+        # Fixed with a static host entry rather than adding tailscale MagicDNS
+        # (100.100.100.100) to `nameservers:`: a MagicDNS resolver would put ALL
+        # host DNS behind tailscaled being up, so an extension restart or an
+        # expired auth key would take out NTP, the image registry, and boot-time
+        # resolution too. A hosts entry has no such dependency. The address is
+        # this node's stable tailnet IPv4 (`talosctl get addresses` ->
+        # tailscale0); it only changes if the node is removed from the tailnet
+        # and re-registered, which also invalidates `endpoint` anyway.
+        extraHostEntries:
+          - ip: 100.88.154.126
+            aliases:
+              - home-server.tail8c014d.ts.net
+              - home-server
       # NVIDIA (RTX 3060) kernel modules. The nonfree-kmod-nvidia-production +
       # nvidia-container-toolkit-production system extensions (schematic above)
       # ship the .ko files, but Talos only auto-loads modules listed here — so
