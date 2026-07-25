@@ -69,6 +69,15 @@ wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
 
+# Onboard user LED (GPIO15, active low on XIAO boards). Solid = WiFi + API both
+# connected and healthy; blinking = a warning/error condition. Board previously
+# had no visible power/status indicator at all, making it impossible to tell at
+# a glance whether it was actually alive.
+status_led:
+  pin:
+    number: GPIO15
+    inverted: true
+
 logger:
 
 # Plaintext API, no encryption — matches the existing HA config entry
