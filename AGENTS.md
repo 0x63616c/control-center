@@ -82,6 +82,13 @@ means a GitHub issue - same thing, one vocabulary.
 - One issue per request, even when several arrive together, so they close
   independently. Brain dumps record their origin (e.g. `item #22`) in the body;
   those numbers are not GitHub issue numbers.
+- **Never let a commit message auto-close a ticket you haven't validated live.**
+  `Fixes #N`/`Closes #N` in a commit body closes the issue the moment it merges
+  to `main` - before deploy finishes, before you've confirmed the fix actually
+  works against the real system. Push the fix WITHOUT a closing keyword, verify
+  it live (rerun the failing job/request/flow), THEN close with a comment
+  stating what was verified. If a keyword slips through and auto-closes early,
+  reopen immediately and say why.
 
 ## Workflow
 
