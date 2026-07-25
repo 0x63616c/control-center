@@ -268,6 +268,57 @@ describe("deployCrons (Pulumi wiring)", () => {
   });
 });
 
+// Digest-pinning (issue #27): a CronJob pod runs with imagePullPolicy:
+// IfNotPresent, so a plain :main tag never re-pulls once any :main layer is
+// cached on the node — every purge cron silently kept running whatever image
+// first landed there, regardless of new pushes. Mirrors
+// infra/test/image-digests.test.ts's coverage of serviceSpecs.
+describe("cronSpecs image digest pinning", () => {
+  const VALID = `sha256:${"a".repeat(64)}`;
+
+  test("falls back to the :main tag when no digest is supplied", () => {
+    expect(byName(crons.cronSpecs(NAS), "deploys-purge")?.image).toBe(
+      "ghcr.io/0x63616c/www-control-center-api:main",
+    );
+    expect(byName(crons.cronSpecs(NAS), "map-extract")?.image).toBe(
+      "ghcr.io/0x63616c/www-control-center-map-provision:main",
+    );
+  });
+
+  test("pins every generated-cron's api image by digest when one is supplied", () => {
+    const specs = crons.cronSpecs(NAS, { "control-center-api": VALID });
+    for (const name of [
+      "deploys-purge",
+      "felogs-purge",
+      "guest-wifi-purge",
+      "wake-photo-purge",
+      "weather-purge",
+    ]) {
+      expect(byName(specs, name)?.image).toBe(`ghcr.io/0x63616c/www-control-center-api@${VALID}`);
+    }
+  });
+
+  test("pins map-extract's image independently of the api digest", () => {
+    const specs = crons.cronSpecs(NAS, { "control-center-map-provision": VALID });
+    expect(byName(specs, "map-extract")?.image).toBe(
+      `ghcr.io/0x63616c/www-control-center-map-provision@${VALID}`,
+    );
+    expect(byName(specs, "deploys-purge")?.image).toBe(
+      "ghcr.io/0x63616c/www-control-center-api:main",
+    );
+  });
+
+  test("deployCrons's imageDigests param reaches cronSpecs (rendered container image)", () => {
+    const spec = byName(
+      crons.cronSpecs(NAS, { "control-center-api": VALID }),
+      "deploys-purge",
+    ) as CronJobSpec;
+    const rendered = renderCronJob(spec);
+    const image = rendered.cronJob.spec.jobTemplate.spec.template.spec.containers[0]?.image;
+    expect(image).toBe(`ghcr.io/0x63616c/www-control-center-api@${VALID}`);
+  });
+});
+
 // Task 4 (Talos migration, §7): two NEW pure builders for home-assistant's
 // backup crons. These are plain CronJobSpec (not OwnedCronJobSpec) , unlike
 // every cron above, they are NOT part of cronSpecs()/deployCrons()'s closed

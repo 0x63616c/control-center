@@ -161,6 +161,7 @@ const crons = deployCrons({
   provider: cluster.provider,
   namespaces,
   nasNfsServer,
+  imageDigests,
 });
 
 // Task 4 (Talos migration): local-path-provisioner, MetalLB, the `nvidia`

@@ -29,8 +29,22 @@ export type OwnedCronJobSpec = CronJobSpec & { namespaceName: InfraNamespaceName
 
 const controlCenterProduct = defineProduct("control-center");
 
-// GHCR image ref (mutable :main tag; CI digest-pins at deploy). Mirrors services.ts.
-const ghcr = (name: string) => `${controlCenterProduct.imageRepository(name)}:main`;
+// Per-image digest pins, name -> "sha256:…" (same shape/source as services.ts's
+// ImageDigests: CI's deploy job writes these via `pulumi config set --path
+// imageDigests.<svc>`). Digest-pinned (@sha256:…) when supplied, else the
+// mutable :main tag. This MUST match services.ts's Deployments: a CronJob pod
+// runs with imagePullPolicy: IfNotPresent, so a plain :main tag never re-pulls
+// once a node has any :main layer cached — every purge CronJob silently kept
+// running whatever image first landed on the node regardless of new pushes
+// (issue #27's second half: the boot-env fix alone couldn't reach a running
+// pod until this pinning existed).
+export type ImageDigests = Record<string, string>;
+
+const ghcr = (name: string, digests: ImageDigests = {}): string => {
+  const repository = controlCenterProduct.imageRepository(name);
+  const digest = digests[controlCenterProduct.imageDigestKey(name)];
+  return digest ? `${repository}@${digest}` : `${repository}:main`;
+};
 
 const TZ = "America/Los_Angeles";
 
@@ -202,11 +216,11 @@ const controlCenterPostgresHost = controlCenterManifest.database.rwServiceName;
 // image's generic cron dispatcher (`bun cron.js <name>`), which invokes the
 // feature's run() via cron-handlers.gen.ts. Replaces per-cron hand-wiring: a new
 // purge-bearing feature declares defineCron and appears here automatically.
-function generatedCronSpecs(): OwnedCronJobSpec[] {
+function generatedCronSpecs(digests: ImageDigests): OwnedCronJobSpec[] {
   return GENERATED_CRONS.map((c) => ({
     name: c.name,
     namespaceName: "control-center",
-    image: ghcr("api"),
+    image: ghcr("api", digests),
     schedule: c.schedule,
     command: ["bun", "cron.js", c.name],
     secrets: [{ name: "POSTGRES_PASSWORD", ref: "eso" }],
@@ -231,16 +245,21 @@ function generatedCronSpecs(): OwnedCronJobSpec[] {
 /**
  * @public - the declared CronJob set (pure data). nasNfsServer is threaded into
  * the pg-backup NFS PV the same way services.ts threads it into the worker
- * (www-j934.17); the NAS LAN IP by default. Consumed by deployCrons + the unit
+ * (www-j934.17); the NAS LAN IP by default. imageDigests defaults to {} (plain
+ * :main, e.g. local/coldStart applies) and is otherwise the same CI-supplied
+ * map services.ts's Deployments pin from. Consumed by deployCrons + the unit
  * tests; no other internal consumer.
  */
-export function cronSpecs(nasNfsServer: string): OwnedCronJobSpec[] {
+export function cronSpecs(
+  nasNfsServer: string,
+  imageDigests: ImageDigests = {},
+): OwnedCronJobSpec[] {
   return [
     // One CronJob per collected defineCron facet (S2 seam), e.g. guest-wifi's
     // guest-wifi-purge. Runs the api image's generic `bun cron.js <name>`
     // dispatcher. New purge-bearing features appear here automatically with
     // zero hand-wiring.
-    ...generatedCronSpecs(),
+    ...generatedCronSpecs(imageDigests),
 
     // Tesla-map basemap refresher (www-gma → www-hn1i). Runs the in-repo
     // map-provision image in FORCE mode: resolve the newest Protomaps planet
@@ -254,7 +273,7 @@ export function cronSpecs(nasNfsServer: string): OwnedCronJobSpec[] {
     {
       name: "map-extract",
       namespaceName: "control-center",
-      image: ghcr("map-provision"),
+      image: ghcr("map-provision", imageDigests),
       schedule: "23 5 3 * *",
       command: ["/provision.sh", "force"],
       env: { TZ },
@@ -277,6 +296,9 @@ export interface CronsArgs {
   // the PV from the node netns (reaches the LAN on homelab, DESIGN §5b); the
   // pod-egress no-route limit (§5c) does not apply to PV mounts. www-j934.17.
   nasNfsServer: string;
+  // Same CI-supplied digest-pin map as services.ts's deployServices; defaults
+  // to {} (plain :main) so existing callers/tests are unaffected.
+  imageDigests?: ImageDigests;
 }
 
 export interface CronsResources {
@@ -288,8 +310,8 @@ export interface CronsResources {
  * cluster program (program.ts); no other internal consumer in this ticket.
  */
 export function deployCrons(args: CronsArgs): CronsResources {
-  const { provider, namespaces, nasNfsServer } = args;
-  const jobs = cronSpecs(nasNfsServer).map(
+  const { provider, namespaces, nasNfsServer, imageDigests = {} } = args;
+  const jobs = cronSpecs(nasNfsServer, imageDigests).map(
     ({ namespaceName, ...spec }) =>
       new ScheduledJob({ ...spec, provider, namespace: namespaces[namespaceName] }, { provider }),
   );
