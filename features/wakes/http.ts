@@ -1,6 +1,6 @@
 import { defineHttp } from "@app-kit";
 import { db } from "./db";
-import { saveWakePhoto } from "./photos";
+import { readWakePhoto, saveWakePhoto } from "./photos";
 
 /**
  * Wake-photo ingest (Track C, Wave 5 fold , moved out of the interim
@@ -48,6 +48,28 @@ export const routes = defineHttp([
           status: 400,
         });
       }
+    },
+  },
+  // Wake-photo bytes for the viewer. Stored files never change, so the
+  // content is immutable-cacheable; traversal/missing both 404 via the
+  // service's null.
+  {
+    method: "GET",
+    path: "/media/wake-photos/",
+    match: "prefix",
+    handler: async (_req, url) => {
+      const rel = decodeURIComponent(url.pathname.slice("/media/wake-photos/".length));
+      const photo = await readWakePhoto(rel);
+      if (!photo) {
+        return new Response("Not Found", { status: 404 });
+      }
+      return new Response(photo.bytes, {
+        status: 200,
+        headers: {
+          "Content-Type": "image/jpeg",
+          "Cache-Control": "public, max-age=31536000, immutable",
+        },
+      });
     },
   },
 ]);

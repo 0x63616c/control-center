@@ -5,6 +5,7 @@ import {
   BOOTH_PHOTO_MODES,
   type BoothPhotoMode,
   newBoothGroupId,
+  readBoothPhoto,
   saveBoothPhoto,
 } from "./service";
 
@@ -75,6 +76,28 @@ export const routes = defineHttp([
           status: 400,
         });
       }
+    },
+  },
+  // Photo-booth bytes for the gallery. Stored files never change, so the content
+  // is immutable-cacheable; traversal/missing both 404 via the service's null.
+  // Content-Type follows the extension (GIF animations vs. JPEG stills).
+  {
+    method: "GET",
+    path: "/media/booth-photos/",
+    match: "prefix",
+    handler: async (_req, url) => {
+      const rel = decodeURIComponent(url.pathname.slice("/media/booth-photos/".length));
+      const photo = await readBoothPhoto(rel);
+      if (!photo) {
+        return new Response("Not Found", { status: 404 });
+      }
+      return new Response(photo.bytes, {
+        status: 200,
+        headers: {
+          "Content-Type": rel.endsWith(".gif") ? "image/gif" : "image/jpeg",
+          "Cache-Control": "public, max-age=31536000, immutable",
+        },
+      });
     },
   },
 ]);

@@ -6,10 +6,7 @@
 // bare side-effect import pinned at top as a leading barrier. See design spec §5.6.
 import "./boot-env";
 import { GENERATED_ROUTES } from "@features/_generated/http.gen";
-import { getClimate } from "@features/ac/service";
-import { readBoothPhoto } from "@features/booth/service";
-import { openCameraStream } from "@features/dogcam/service";
-import { backfillWakePhotoIndex, readWakePhoto } from "@features/wakes/photos";
+import { backfillWakePhotoIndex } from "@features/wakes/photos";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { createLogger } from "@www/logger";
 import { ENV as config } from "@www/platform/env";
@@ -114,81 +111,20 @@ async function handle(req: Request, url: URL): Promise<Response> {
     return new Response("OK", { status: 200, headers: CORS_HEADERS });
   }
 
-  // Deploy-health probe target (www-hya3). The deploy `verify` step curls this to
-  // prove the api can reach live Home Assistant, decoupled from the tRPC wire format so
-  // a procedure rename can't silently turn the probe advisory-red (which is how
-  // the old /api/climate.now probe rotted). getClimate() throws on an HA outage
-  // or misconfig (services-throw convention), surfacing as a 500 -> red probe.
-  if (url.pathname === "/health/climate") {
-    const { ambient } = await getClimate();
-    return Response.json({ ambient }, { status: 200, headers: CORS_HEADERS });
-  }
+  // Deploy-health probe target (www-hya3) moved to features/ac/http.ts (S3 route seam).
 
   // Now-playing artwork proxy moved to features/tv/http.ts (Track C, Wave 6),
   // reached via the generated route table above.
 
-  // Live camera MJPEG proxy. go2rtc holds the RTSP credentials and transcodes
-  // the bedroom stream to MJPEG; the panel just consumes this same-origin path
-  // in an <img>. The body is a long-lived multipart stream, so it is piped
-  // through verbatim and MUST NOT be cached (a max-age here would freeze the
-  // feed on the first frame) and MUST NOT carry any request timeout.
-  if (url.pathname === "/media/camera-stream") {
-    const upstream = await openCameraStream();
-    if (!upstream) {
-      return new Response("Not Found", { status: 404, headers: CORS_HEADERS });
-    }
-    return new Response(upstream.body, {
-      status: 200,
-      headers: {
-        ...CORS_HEADERS,
-        "Content-Type":
-          upstream.headers.get("content-type") ?? "multipart/x-mixed-replace; boundary=frame",
-        "Cache-Control": "no-store",
-      },
-    });
-  }
+  // Camera-stream proxy moved to features/dogcam/http.ts (S3 route seam).
 
   // Wake-photo ingest moved to apps/api/src/http/wake.http.ts (S3 route seam).
 
-  // Wake-photo bytes for the viewer. Stored files never change, so the
-  // content is immutable-cacheable; traversal/missing both 404 via the
-  // service's null.
-  if (url.pathname.startsWith("/media/wake-photos/")) {
-    const rel = decodeURIComponent(url.pathname.slice("/media/wake-photos/".length));
-    const photo = await readWakePhoto(rel);
-    if (!photo) {
-      return new Response("Not Found", { status: 404, headers: CORS_HEADERS });
-    }
-    return new Response(photo.bytes, {
-      status: 200,
-      headers: {
-        ...CORS_HEADERS,
-        "Content-Type": "image/jpeg",
-        "Cache-Control": "public, max-age=31536000, immutable",
-      },
-    });
-  }
+  // Wake-photo bytes for the viewer moved to features/wakes/http.ts (S3 route seam).
 
   // Photo-booth ingest moved to apps/api/src/http/booth.http.ts (S3 route seam).
 
-  // Photo-booth bytes for the gallery. Stored files never change, so the content
-  // is immutable-cacheable; traversal/missing both 404 via the service's null.
-  // Content-Type follows the extension (GIF animations vs. JPEG stills).
-  if (url.pathname.startsWith("/media/booth-photos/")) {
-    const rel = decodeURIComponent(url.pathname.slice("/media/booth-photos/".length));
-    const photo = await readBoothPhoto(rel);
-    if (!photo) {
-      return new Response("Not Found", { status: 404, headers: CORS_HEADERS });
-    }
-    return new Response(photo.bytes, {
-      status: 200,
-      headers: {
-        ...CORS_HEADERS,
-        "Content-Type": rel.endsWith(".gif") ? "image/gif" : "image/jpeg",
-        "Cache-Control": "public, max-age=31536000, immutable",
-      },
-    });
-  }
+  // Photo-booth bytes for the gallery moved to features/booth/http.ts (S3 route seam).
 
   if (url.pathname.startsWith("/trpc")) {
     const res = await fetchRequestHandler({
