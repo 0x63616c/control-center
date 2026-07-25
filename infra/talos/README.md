@@ -98,13 +98,17 @@ If the extension list in `talconfig.yaml` ever changes, re-render
 whatever the current `talconfig.yaml` renders, but this doc should stay in
 sync as the audit trail.
 
-## Network interface — placeholder, confirm on first boot
+## Network interface — confirmed on hardware
 
-`talconfig.yaml` currently pins `interface: enp2s0` for the static
-`192.168.0.5/24` address on the 2.5GbE NIC. This name is a **placeholder** —
-Talos's predictable network interface naming depends on the actual PCI
-topology of the MSI PRO Z690-A, which is only knowable once Talos boots on
-the real hardware. Before first apply:
+`talconfig.yaml` pins `interface: enp4s0` for the static `192.168.0.5/24`
+address on the 2.5GbE NIC. This name was **confirmed on the real hardware on
+2026-07-24**: Talos v1.13.7 booted to maintenance mode (DHCP `192.168.0.236`)
+and `talosctl get links` reported a single up ethernet link `enp4s0` with MAC
+`d8:bb:c1:df:7d:19`. (It was previously a placeholder `enp2s0`, since Talos's
+predictable interface naming depends on the board's actual PCI topology, which
+is only knowable once Talos boots on the real hardware.)
+
+To re-confirm if the hardware ever changes:
 
 1. Boot the Talos ISO on the box (maintenance mode).
 2. `talosctl get links -n <dhcp-assigned-ip>` (or `talosctl get addresses`) to
@@ -177,8 +181,7 @@ YAML) is gitignored for the same reason.
   once** to prove the encrypted secret file actually decrypts and renders —
   this repo's own verification only proved the mechanism using a disposable
   plaintext secret, never the committed encrypted one.
-- The NIC name (`enp2s0`) is a placeholder — see "Network interface" above.
-  Applying this config to real hardware without confirming it first will
-  likely fail or bind the wrong interface.
+- The NIC name (`enp4s0`) was confirmed on the real hardware 2026-07-24 — see
+  "Network interface" above.
 - No `kubeconfig`/cluster bootstrap has happened. This task is machine-config
   authoring only, per scope.

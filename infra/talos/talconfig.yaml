@@ -34,7 +34,7 @@ nodes:
             - siderolabs/nfs-utils
             - siderolabs/tailscale
     networkInterfaces:
-      - interface: enp2s0 # 2.5GbE NIC — PLACEHOLDER, confirm real name on first boot (see README.md)
+      - interface: enp4s0 # 2.5GbE NIC — confirmed on hardware 2026-07-24 via `talosctl get links` (MAC d8:bb:c1:df:7d:19)
         addresses:
           - 192.168.0.5/24
         routes:
