@@ -1,14 +1,14 @@
 export const meta = {
   name: 'grind-tickets',
-  description: 'Close N low-hanging GitHub issues: plan -> adversarial review -> revise -> implement in isolated worktrees, serialized merge to main, forced full rebuild, live deploy verification, then close only what actually shipped',
+  description: 'Work a caller-specified set of GitHub issues: plan -> adversarial review -> revise -> implement in isolated worktrees, serialized merge to main, forced full rebuild, live deploy verification, then close only what actually shipped. Anything blocked is posted as a question on its own issue.',
   whenToUse:
-    'Batch-clearing backlog tickets unattended. Pass {tickets:[108,99,...]} to pick explicitly, or {count:8} to let a triage agent choose safe ones. Only give it self-contained work — it deliberately refuses hardware, secrets and design-decision tickets.',
+    'Batch-clearing backlog tickets unattended. REQUIRES an explicit ticket list: {tickets:[108,99,...]}. It never chooses its own work. Add {dryRun:true} to plan and implement without pushing.',
   phases: [
-    { title: 'Triage', detail: 'pick safe tickets when none were named', model: 'sonnet' },
     { title: 'Plan', detail: 'explore the codebase, draft a full plan per ticket', model: 'sonnet' },
     { title: 'Review', detail: 'a distinct agent attacks each plan', model: 'sonnet' },
     { title: 'Revise', detail: 'planner answers every finding', model: 'sonnet' },
     { title: 'Implement', detail: 'fresh agent executes in an isolated worktree', model: 'sonnet' },
+    { title: 'Blocked', detail: 'post questions and blockers onto their own issues', model: 'sonnet' },
     { title: 'Merge', detail: 'serialized rebase + push to main, one at a time', model: 'sonnet' },
     { title: 'Rebuild', detail: 'force_all dispatch so no image digest is stranded', model: 'sonnet' },
     { title: 'Verify', detail: 'bounded CI polling + live pod check', model: 'sonnet' },
@@ -18,16 +18,27 @@ export const meta = {
 
 // ---------------------------------------------------------------------------
 // Inputs
-//   args.tickets  number[]  explicit issue numbers (skips triage)
-//   args.count    number    how many to auto-pick when tickets is absent (default 8)
+//   args.tickets  number[]  REQUIRED - the exact issue numbers to work. This
+//                           workflow never selects its own work: picking what to
+//                           spend effort on is the owner's call, not an agent's.
 //   args.repoDir  string    override the checkout path
 //   args.dryRun   boolean   plan/review/revise/implement but never merge or push
 // ---------------------------------------------------------------------------
 
 const REPO = (args && args.repoDir) || '/Users/calum/code/github.com/0x63616c/world-wide-webb'
-const WANT = (args && args.count) || 8
 const DRY_RUN = !!(args && args.dryRun)
-const EXPLICIT = args && Array.isArray(args.tickets) ? args.tickets : null
+
+const tickets = args && Array.isArray(args.tickets)
+  ? args.tickets.map(Number).filter((n) => Number.isInteger(n) && n > 0)
+  : []
+
+if (tickets.length === 0) {
+  throw new Error(
+    'grind-tickets requires an explicit ticket list, e.g. args: {tickets: [108, 99, 93]}. ' +
+      'It deliberately will not choose its own tickets.',
+  )
+}
+if (tickets.length > 4096) throw new Error('too many tickets')
 
 const HOUSE_RULES = `
 REPO: ${REPO} (branch main). Read AGENTS.md + CODEBASE_OVERVIEW.md before anything.
@@ -48,6 +59,14 @@ Hard house rules you MUST obey:
 - NEVER write "Fixes #N"/"Closes #N" in a commit message. Closing happens only after live verification.
 - Commit messages are written in NORMAL English prose, not compressed/caveman style.
 - Do not run background jobs or yield waiting on anything. Everything foreground and bounded.
+
+WHEN YOU ARE STUCK OR NEED A DECISION:
+The repo owner is NOT watching this run. Do not guess at a decision that is theirs to make,
+and do not quietly narrow a ticket's scope to whatever you could figure out. Instead, state
+the blocker plainly in your structured output - be specific about what you tried, what you
+found, and the exact question you need answered. A later stage posts it as a comment on that
+issue so the owner sees it. Reporting an honest blocker is a SUCCESSFUL outcome; inventing a
+change so the run looks productive is a failure.
 `
 
 const PLAN_SCHEMA = {
@@ -90,7 +109,6 @@ const REVIEW_SCHEMA = {
 const IMPL_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['ticket', 'status', 'branch', 'commits', 'filesChanged', 'verification', 'summary', 'notes'],
   properties: {
     ticket: { type: 'number' },
     status: { type: 'string', enum: ['done', 'partial', 'abandoned'] },
@@ -100,7 +118,13 @@ const IMPL_SCHEMA = {
     verification: { type: 'string', description: 'Commands run and their REAL outcome. Quote failures verbatim.' },
     summary: { type: 'string', description: 'One or two sentences fit to paste into the closing comment.' },
     notes: { type: 'string', description: 'Deviations from the plan, and anything left undone.' },
+    blocker: {
+      type: 'string',
+      description:
+        'Empty if nothing is blocked. Otherwise the specific question or obstacle needing the owner: what you tried, what you found, and the exact decision required. This gets posted to the issue.',
+    },
   },
+  required: ['ticket', 'status', 'branch', 'commits', 'filesChanged', 'verification', 'summary', 'notes', 'blocker'],
 }
 
 const MERGE_SCHEMA = {
@@ -128,77 +152,12 @@ const CI_SCHEMA = {
   },
 }
 
-// ---------------------------------------------------------------------------
-// Phase 0 - triage
-// ---------------------------------------------------------------------------
-
-let tickets = EXPLICIT
-
-if (!tickets) {
-  phase('Triage')
-  const TRIAGE_SCHEMA = {
-    type: 'object',
-    additionalProperties: false,
-    required: ['picked', 'rejected'],
-    properties: {
-      picked: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['number', 'title', 'why'],
-          properties: { number: { type: 'number' }, title: { type: 'string' }, why: { type: 'string' } },
-        },
-      },
-      rejected: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['number', 'why'],
-          properties: { number: { type: 'number' }, why: { type: 'string' } },
-        },
-      },
-    },
-  }
-
-  const triage = await agent(`${HOUSE_RULES}
-
-You are the TRIAGE agent. Pick up to ${WANT} open GitHub issues an autonomous agent can fully
-close WITHOUT asking the repo owner a single question.
-
-Run \`cd ${REPO} && gh issue list --state open --limit 100 --json number,title,labels,body\`.
-
-PICK a ticket only if all hold:
-- The work is self-contained in this repo: code, config, tests or docs.
-- Success is objectively checkable (typecheck, a test, a screenshot, a command's output).
-- It needs no physical action, no purchase, no vendor console, no credential, no secret value.
-- It needs no taste/product decision that only the owner can make.
-
-REJECT (do not pick):
-- area/hardware, or anything requiring touching a machine.
-- Anything about secrets, vaults, credentials or key rotation.
-- type/design, type/question, type/spike - these want a human's judgement, not an implementation.
-- Anything whose fix depends on an upstream release or an external service's state.
-- Sweeping "clean up everything" tickets whose scope you cannot bound from the text.
-
-Prefer tickets that touch disjoint files, so parallel implementers do not collide.
-Order \`picked\` with wide-sweeping/whole-tree tickets LAST - they merge last and rebase over everything.
-
-Return picked and rejected, each with a one-line reason.`,
-    { label: 'triage', phase: 'Triage', model: 'sonnet', schema: TRIAGE_SCHEMA })
-
-  if (!triage || !triage.picked || triage.picked.length === 0) {
-    log('Triage picked nothing - stopping.')
-    return { picked: [], reason: 'triage returned no actionable tickets', rejected: triage ? triage.rejected : null }
-  }
-  tickets = triage.picked.map((p) => p.number)
-  log(`Triage picked ${tickets.length}: ${tickets.map((n) => '#' + n).join(', ')}`)
-  for (const r of (triage.rejected || []).slice(0, 12)) log(`  rejected #${r.number}: ${r.why}`)
-}
-
-if (tickets.length > 4096) throw new Error('too many tickets')
 log(`Working ${tickets.length} tickets${DRY_RUN ? ' (DRY RUN - nothing will be pushed)' : ''}`)
+
+// Blockers accumulated across every phase. Each entry becomes a comment on its
+// own issue, so a question an agent could not answer lands where the owner will
+// actually see it rather than dying inside a workflow result.
+const blockers = []
 
 // ---------------------------------------------------------------------------
 // Phases 1-4 - plan -> review -> revise -> implement, pipelined per ticket
@@ -251,8 +210,16 @@ Return the structured review.`, { label: `review:#${n}`, phase: 'Review', model:
 
   async (review, n) => {
     if (review && review.verdict === 'ticket-not-actionable') {
-      log(`#${n} not actionable: ${review.findings.map((f) => f.problem).join('; ')}`)
-      return { skip: true, ticket: n, reason: review.findings.map((f) => f.problem).join('; ') }
+      const reason = review.findings
+        .map((f) => `- **${f.severity}:** ${f.problem}\n  - suggested: ${f.fix}`)
+        .join('\n')
+      log(`#${n} not actionable - will post the blocker to the issue`)
+      blockers.push({
+        ticket: n,
+        stage: 'review',
+        body: `A plan review concluded this cannot be closed without a decision from you.\n\n${reason}`,
+      })
+      return { skip: true, ticket: n, reason }
     }
     const revised = await agent(`${HOUSE_RULES}
 
@@ -272,7 +239,7 @@ Return the revised structured plan.`, { label: `revise:#${n}`, phase: 'Revise', 
     if (!rev || rev.skip) {
       return {
         ticket: n, status: 'abandoned', branch: '', commits: [], filesChanged: [],
-        verification: 'not attempted', summary: '',
+        verification: 'not attempted', summary: '', blocker: '',
         notes: rev ? `skipped: ${rev.reason}` : 'planning failed',
       }
     }
@@ -299,6 +266,9 @@ Rules:
 - If a check fails and you cannot fix it, set status "partial" and quote the failure verbatim.
 
 Set \`summary\` to one or two sentences suitable for pasting into the ticket's closing comment.
+Set \`blocker\` to "" if nothing needs the owner. Otherwise put the specific question there -
+it will be posted as a comment on issue #${n}. Use it when you hit a decision only the owner
+can make, an external dependency you cannot change, or a scope call you should not make alone.
 Return the structured report, with \`branch\` = "ticket-${n}" if you committed, else "".`,
       { label: `impl:#${n}`, phase: 'Implement', model: 'sonnet', schema: IMPL_SCHEMA, isolation: 'worktree' })
   },
@@ -310,6 +280,63 @@ const notLanded = impls.filter((r) => !(r.branch && r.commits && r.commits.lengt
 
 log(`Implemented: ${ready.length} branches ready, ${notLanded.length} produced no commit`)
 for (const r of notLanded) log(`  no commit: #${r.ticket} (${r.status}) - ${r.notes}`)
+
+// ---------------------------------------------------------------------------
+// Blocked - post every question and obstacle onto its own issue.
+// Runs BEFORE merge so a blocker is recorded even if a later phase dies.
+// ---------------------------------------------------------------------------
+
+for (const r of impls) {
+  if (r.blocker && r.blocker.trim()) {
+    blockers.push({ ticket: r.ticket, stage: 'implementation', body: r.blocker.trim() })
+  } else if (r.status === 'partial') {
+    blockers.push({
+      ticket: r.ticket,
+      stage: 'implementation',
+      body: `Implementation stopped part-way.\n\nWhat was done: ${r.summary || '(none reported)'}\n\nNotes: ${r.notes}\n\nVerification output:\n\n\`\`\`\n${r.verification}\n\`\`\``,
+    })
+  }
+}
+
+async function postBlockers(list) {
+  if (list.length === 0) return
+  phase('Blocked')
+  log(`Posting ${list.length} blocker(s) to their issues`)
+  await parallel(
+    list.map((b) => () =>
+      agent(`${HOUSE_RULES}
+
+Post a blocker comment on GitHub issue #${b.ticket}. Work in ${REPO}.
+
+An agent working this ticket during the ${b.stage} stage could not proceed without a decision
+from the repo owner. Raw report:
+
+---
+${b.body}
+---
+
+Write that up as a clear comment addressed to the owner and post it with:
+  gh issue comment ${b.ticket} --body "..."
+(the flag is --body, NOT --comment)
+
+Requirements for the comment:
+- Open with a bold one-line statement of what is needed, so it is obvious at a glance.
+- Then what was tried and what was found, concretely - file paths, commands, error text.
+- Then the decision or answer required, as a short numbered list of options where options exist.
+- If the raw report contains anything resembling a secret value, token or key, DO NOT include
+  it; refer to the key by NAME only.
+- No hedging filler, no apologies. The owner is reading this cold, possibly weeks later, so it
+  must stand alone without the run's context.
+
+Do NOT close the issue. Do NOT change any labels. Do NOT edit code.
+Return one line: the issue number and that you commented.`,
+        { label: `blocked:#${b.ticket}`, phase: 'Blocked', model: 'sonnet' }),
+    ),
+  )
+  list.length = 0
+}
+
+await postBlockers(blockers)
 
 if (DRY_RUN) {
   log('DRY RUN - stopping before merge.')
@@ -355,6 +382,17 @@ Return the structured merge report.`, { label: `merge:#${r.ticket}`, phase: 'Mer
   if (m) merged.push(m)
   log(`merge #${r.ticket}: ${m ? m.status + ' ' + m.sha : 'agent failed'}`)
 }
+
+for (const m of merged) {
+  if (m.status !== 'pushed') {
+    blockers.push({
+      ticket: m.ticket,
+      stage: `merge (${m.status})`,
+      body: `The work for this ticket was implemented but could NOT be merged to main.\n\n${m.notes}\n\nThe commits still exist on branch \`ticket-${m.ticket}\` locally. Nothing was pushed and main was left untouched.`,
+    })
+  }
+}
+await postBlockers(blockers)
 
 const pushed = merged.filter((m) => m.status === 'pushed')
 if (pushed.length === 0) {
@@ -431,6 +469,23 @@ Return the structured status.`, { label: `ci-poll-${attempt}`, phase: 'Verify', 
 
 if (!ci || ci.conclusion !== 'success' || !ci.buildsRan) {
   log(`NOT closing any ticket: ${!ci ? 'no CI verdict' : `conclusion=${ci.conclusion} buildsRan=${ci.buildsRan}`}`)
+
+  // The code IS on main but is not provably deployed. Say so on every affected
+  // issue rather than leaving them silently open and looking untouched.
+  const why = !ci
+    ? 'CI never returned a verdict within the polling window.'
+    : ci.buildsRan === false && ci.conclusion === 'success'
+      ? `CI run ${ci.runId} was green but every image build was SKIPPED, so the deploy reused stale image digests. The code is on main but is not running in prod.`
+      : `CI run ${ci.runId} finished with conclusion "${ci.conclusion}".\n\n${ci.detail}`
+  for (const p of pushed) {
+    blockers.push({
+      ticket: p.ticket,
+      stage: 'deploy verification',
+      body: `The fix for this ticket was merged to main as ${p.sha}, but I could NOT verify it reached prod, so I am leaving this open.\n\n${why}\n\nNeeded: confirm whether this failure is caused by these commits or by unrelated work already on main, then re-run the deploy.`,
+    })
+  }
+  await postBlockers(blockers)
+
   return {
     implemented: impls.map((r) => ({ ticket: r.ticket, status: r.status, notes: r.notes })),
     notLanded: notLanded.map((r) => ({ ticket: r.ticket, why: r.notes })),
