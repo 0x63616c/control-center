@@ -114,6 +114,47 @@ it("accepts distinct table names + router keys", () => {
   ).not.toThrow();
 });
 
+it("throws when two schema.ts files export the same symbol name", () => {
+  expect(() =>
+    validate(
+      {
+        apps: [app({ id: "a", home: true })],
+        schemaExports: [
+          { name: "job", source: "feature:weight" },
+          { name: "job", source: "base" },
+        ],
+      },
+      [],
+    ),
+  ).toThrow(/duplicate schema export/);
+});
+
+it("accepts today's real schema export set (feature schemas + @www/core re-exports) with no collision", () => {
+  expect(() =>
+    validate(
+      {
+        apps: [app({ id: "a", home: true, guestExposed: true })],
+        schemaExports: [
+          // @www/core re-exports off apps/api/src/db/schema.ts.
+          { name: "deviceState", source: "base" },
+          { name: "integrationSyncStatus", source: "base" },
+          { name: "job", source: "base" },
+          { name: "DeviceKind", source: "base" },
+          { name: "LightColor", source: "base" },
+          { name: "DeviceClimateState", source: "base" },
+          { name: "DeviceLightState", source: "base" },
+          { name: "DeviceSpeakerState", source: "base" },
+          { name: "DeviceStateValue", source: "base" },
+          // Distinct feature-local exports, no overlap with the base set above.
+          { name: "boothPhoto", source: "feature:booth" },
+          { name: "weightMeasurement", source: "feature:weight" },
+        ],
+      },
+      ["a"],
+    ),
+  ).not.toThrow();
+});
+
 // ─── multi-tile proof (F0) ────────────────────────────────────────────────
 
 it("accepts a single app with two non-overlapping tiles, exactly one home", () => {

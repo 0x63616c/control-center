@@ -26,8 +26,31 @@ it("collect() unions the guest-wifi feature manifest, deduped against the regist
   expect(model.routerKeys).toContainEqual({ key: "portal", source: "feature:guest-wifi" });
   expect(model.crons.map((c) => c.name)).toContain("guest-wifi-purge");
 
+  // The feature's schema.ts named exports are collected with a feature source
+  // label (used to detect schema.gen.ts `export *` symbol collisions).
+  expect(model.schemaExports).toContainEqual({
+    name: "portalAuthorization",
+    source: "feature:guest-wifi",
+  });
+  expect(model.schemaExports).toContainEqual({
+    name: "portalRateLimit",
+    source: "feature:guest-wifi",
+  });
+
   // And the whole collected model still validates against the real allowlist.
   expect(() => validate(model, ["tile_guestwifi"])).not.toThrow();
+});
+
+// The base apps/api/src/db/schema.ts module re-exports several symbols from
+// @www/core (`export { ... } from "@www/core"`, not a local declaration).
+// Object.keys() on the imported module module picks these up the same way as
+// locally-declared exports, so they must appear with source "base".
+it("collect() sources the base schema's @www/core re-exports with source 'base'", async () => {
+  const model = await collect();
+  const baseExportNames = model.schemaExports.filter((e) => e.source === "base").map((e) => e.name);
+  expect(baseExportNames).toEqual(
+    expect.arrayContaining(["deviceState", "integrationSyncStatus", "job", "DeviceKind"]),
+  );
 });
 
 // Track C, final tile fold: the booth-photo upload facet moved out of the

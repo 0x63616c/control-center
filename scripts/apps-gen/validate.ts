@@ -43,6 +43,10 @@ interface Model {
   /** Collected `defineHttp` routes; two routes with the same method+match+path
    *  would shadow each other in the generated route table. */
   httpRoutes?: { method?: string; path: string; match: string; source: string }[];
+  /** Collected named exports off every schema.ts module (feature + base);
+   *  schema.gen.ts is a flat `export *` barrel, so a duplicate export name
+   *  across two schema.ts files would silently last-write-win in the barrel. */
+  schemaExports?: { name: string; source: string }[];
 }
 
 function overlaps(a: Rect, b: Rect): boolean {
@@ -139,6 +143,24 @@ export function validate(model: Model, guestExposed: readonly string[]): void {
         );
       }
       seenRoute.set(key, r.source);
+    }
+  }
+
+  // Duplicate export symbol across every schema.ts module (feature + base).
+  // schema.gen.ts is a flat `export *` barrel across all of these, so two
+  // schema.ts files exporting the same symbol name would silently
+  // last-write-win in the generated barrel — a hard fold error (mirrors the
+  // dup table/router-key/job/cron/http-route checks).
+  if (model.schemaExports) {
+    const seenExport = new Map<string, string>();
+    for (const e of model.schemaExports) {
+      const prev = seenExport.get(e.name);
+      if (prev) {
+        throw new CodegenError(
+          `duplicate schema export '${e.name}' (declared by ${prev} and ${e.source}) — two schema.ts files cannot export the same symbol name`,
+        );
+      }
+      seenExport.set(e.name, e.source);
     }
   }
 

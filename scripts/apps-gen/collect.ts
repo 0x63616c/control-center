@@ -44,6 +44,18 @@ interface CollectedTable {
   source: string;
 }
 
+/**
+ * A collected named export off a schema.ts module (feature or base), tagged
+ * with its source. schema.gen.ts is a flat `export *` barrel across every
+ * folded feature's schema.ts plus the base apps/api schema.ts, so two schema
+ * modules exporting the same symbol name would silently last-write-win in the
+ * barrel; this feeds the dup-export-name check in validate.ts.
+ */
+interface CollectedSchemaExport {
+  name: string;
+  source: string;
+}
+
 /** A collected top-level tRPC router key, tagged with its owning feature. */
 interface CollectedRouterKey {
   key: string;
@@ -109,6 +121,7 @@ export interface AppModel {
   apps: CollectedApp[];
   features: CollectedFeature[];
   tables: CollectedTable[];
+  schemaExports: CollectedSchemaExport[];
   routerKeys: CollectedRouterKey[];
   crons: CollectedCron[];
   jobs: CollectedJob[];
@@ -188,6 +201,7 @@ export async function collect(): Promise<AppModel> {
   const featureApps: CollectedApp[] = [];
   const features: CollectedFeature[] = [];
   const tables: CollectedTable[] = [];
+  const schemaExports: CollectedSchemaExport[] = [];
   const routerKeys: CollectedRouterKey[] = [];
   const crons: CollectedCron[] = [];
   const jobs: CollectedJob[] = [];
@@ -222,6 +236,9 @@ export async function collect(): Promise<AppModel> {
     if (hasSchema) {
       const schemaMod = (await import(join(base, "schema.ts"))) as Record<string, unknown>;
       for (const name of tableNames(schemaMod)) tables.push({ name, source: `feature:${dir}` });
+      for (const name of Object.keys(schemaMod)) {
+        schemaExports.push({ name, source: `feature:${dir}` });
+      }
     }
 
     const hasApi = existsSync(join(base, "api.ts"));
@@ -313,6 +330,9 @@ export async function collect(): Promise<AppModel> {
   // can never silently re-declare a table that already lives in the base schema.
   const baseSchemaMod = (await import(BASE_SCHEMA)) as Record<string, unknown>;
   for (const name of tableNames(baseSchemaMod)) tables.push({ name, source: "base" });
+  for (const name of Object.keys(baseSchemaMod)) {
+    schemaExports.push({ name, source: "base" });
+  }
 
   // Registry leftovers: every TILE_REGISTRY entry NOT already owned by a feature.
   // Dedup by the union of feature TILE ids, not app ids — a multi-tile app's tile
@@ -342,6 +362,7 @@ export async function collect(): Promise<AppModel> {
     apps: [...featureApps, ...registryApps],
     features,
     tables,
+    schemaExports,
     routerKeys,
     crons,
     jobs,
