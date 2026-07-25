@@ -1,17 +1,19 @@
-import { useEffect } from "react";
 import { useDeviceName } from "../lib/device-name";
-import { useNotifications } from "../lib/useNotifications";
 import { NotificationBanner } from "./ui/NotificationBanner";
 
-const NOTIF_ID = "device-name";
-// Single source of truth so the DOM and the shared notifications store stay in sync.
+// Single source of truth for the copy shown in the view below.
 const MESSAGE = "Please set your device name in settings";
 
 /**
  * Un-dismissable RED banner (top-right inside .board) shown until the user has
- * explicitly set a device name. Follows the same www-awm seam as
- * ConnectionLostBanner / AppUpdateBanner: it raises into the shared notifications
- * store AND renders its own absolutely-positioned view.
+ * explicitly set a device name.
+ *
+ * Ticket #63: this used to also raise into the shared notifications store
+ * (like ConnectionLostBanner / AppUpdateBanner), which meant a one-time setup
+ * nag was creating a persistent `notifications.raise` row every time it fired.
+ * It is now a pure presentational read of useDeviceName().isSet with no
+ * notification-center side effect , the live board banner is signal enough for
+ * a thing you fix once during setup.
  *
  * There is intentionally NO dismiss control and no clear path other than the
  * name becoming set , the banner exists to force the one-time setup, so it must
@@ -19,15 +21,6 @@ const MESSAGE = "Please set your device name in settings";
  */
 export function DeviceNameBanner() {
   const { isSet } = useDeviceName();
-  const { raiseNotification, clearNotification } = useNotifications();
-
-  useEffect(() => {
-    if (!isSet) {
-      raiseNotification({ id: NOTIF_ID, message: MESSAGE });
-    } else {
-      clearNotification(NOTIF_ID);
-    }
-  }, [isSet, raiseNotification, clearNotification]);
 
   if (isSet) return null;
 

@@ -7,15 +7,8 @@ import {
 } from "../notification-bridge";
 
 describe("alertToRaise", () => {
-  it("maps the device-name banner to a system warning", () => {
-    const payload = alertToRaise({ id: "device-name", message: "Please set your device name" });
-    expect(payload).toEqual({
-      dedupeKey: "device-name:Please set your device name",
-      category: "system",
-      severity: "warning",
-      title: "Please set your device name",
-      body: undefined,
-    });
+  it("ignores the device-name banner , ticket #63 dropped its notification-center entry", () => {
+    expect(alertToRaise({ id: "device-name", message: "Please set your device name" })).toBeNull();
   });
 
   it("carries the banner detail through as the body", () => {

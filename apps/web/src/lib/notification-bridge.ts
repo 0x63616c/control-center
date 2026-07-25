@@ -1,12 +1,14 @@
 /**
  * Pure translation rules for the banner → notification-center bridge.
  *
- * The board's three ephemeral banners (ConnectionLostBanner, AppUpdateBanner,
- * DeviceNameBanner) raise into the in-memory store in lib/useNotifications.ts.
- * That store is deliberately NOT the notification center: it is live board
- * state ("is this banner on screen right now"), it has no history, and it must
- * keep working with the API down , it is the only thing that can tell you the
- * API is down.
+ * The board's two ephemeral banners (ConnectionLostBanner, AppUpdateBanner)
+ * raise into the in-memory store in lib/useNotifications.ts. That store is
+ * deliberately NOT the notification center: it is live board state ("is this
+ * banner on screen right now"), it has no history, and it must keep working
+ * with the API down , it is the only thing that can tell you the API is down.
+ * DeviceNameBanner does NOT raise into that store (ticket #63): it is a
+ * one-time setup nag, not a repeating alert worth a persistent history row, so
+ * it has no entry in ALERT_SPECS below and stays a pure presentational read.
  *
  * This module holds the rules for turning one of those live entries into a
  * persistent `notifications.raise` payload. It is pure so the mapping (and
@@ -26,7 +28,6 @@ const ALERT_SPECS: Record<
   string,
   { category: NotificationCategory; severity: NotificationSeverity }
 > = {
-  "device-name": { category: "system", severity: "warning" },
   "app-update": { category: "system", severity: "info" },
   "battery-not-charging": { category: "system", severity: "critical" },
   [CONNECTION_ALERT_ID]: { category: "system", severity: "critical" },
