@@ -453,7 +453,13 @@ export function serviceSpecs(opts: ServiceSpecOptions): OwnedWorkloadSpec[] {
       // Version-pinned public image (multi-arch; arm64 manifest for the OrbStack
       // node). Third-party like cloudflared: no GHCR pull secret, no digest pin.
       image: "plexinc/pms-docker:1.43.2.10687-563d026ea",
-      replicas: 1,
+      // On "talos" Plex requests the RTX 3060 (gpu:1 + `nvidia` RuntimeClass
+      // below), but the node's NVIDIA device plugin is still deferred, so the
+      // pod is unschedulable and its local-path PVC never binds — leaving Plex
+      // Pending forever AND making every `pulumi up` time out awaiting its
+      // readiness (a hard deploy failure for a non-house-critical media server).
+      // Park it at 0 on talos until the device plugin lands; the mini keeps 1.
+      replicas: target.substrate === "talos" ? 0 : 1,
       resources: {
         memory: "1G",
         reserveCpus: "0.5",
@@ -466,6 +472,11 @@ export function serviceSpecs(opts: ServiceSpecOptions): OwnedWorkloadSpec[] {
       // RuntimeClass for GPU device-plugin scheduling (nvidia.ts). Same
       // talos-only gating as the gpu resource above.
       ...(target.substrate === "talos" ? { runtimeClassName: NVIDIA_RUNTIME_CLASS_NAME } : {}),
+      // On talos Plex is parked (0 replicas) pending the NVIDIA device plugin,
+      // and its local-path PVC is WaitForFirstConsumer so it never binds without
+      // a pod — which makes pulumi's Deployment readiness await hang the whole
+      // deploy. skipAwait tells the provider not to block on this Deployment.
+      ...(target.substrate === "talos" ? { annotations: { "pulumi.com/skipAwait": "true" } } : {}),
       env: {
         TZ,
         HOSTNAME: "Plex",

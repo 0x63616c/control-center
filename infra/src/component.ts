@@ -75,6 +75,11 @@ export interface WorkloadSpec {
   // RuntimeClass name (Task 4: "nvidia", for Plex/HA GPU transcode on the
   // Talos node's RTX 3060). Absent everywhere on "orbstack" today.
   runtimeClassName?: string;
+  // Annotations to stamp on the Deployment's metadata. The pulumi-kubernetes
+  // provider reads its own `pulumi.com/*` await-control keys from here (e.g.
+  // `pulumi.com/skipAwait: "true"` to not block the deploy on a workload that
+  // cannot become Ready — Plex on talos, parked pending the GPU device plugin).
+  annotations?: Record<string, string>;
 }
 
 export interface CronJobSpec {
@@ -131,7 +136,7 @@ interface Container {
 }
 
 interface DeploymentArgs {
-  metadata: { name: string; labels: Record<string, string> };
+  metadata: { name: string; labels: Record<string, string>; annotations?: Record<string, string> };
   spec: {
     replicas: number;
     selector: { matchLabels: Record<string, string> };
@@ -443,7 +448,13 @@ export function renderWorkload(w: WorkloadSpec): RenderedWorkload {
   );
 
   const deployment: DeploymentArgs = {
-    metadata: { name: w.name, labels },
+    metadata: {
+      name: w.name,
+      labels,
+      ...(w.annotations && Object.keys(w.annotations).length > 0
+        ? { annotations: w.annotations }
+        : {}),
+    },
     spec: {
       replicas: w.replicas,
       selector: { matchLabels: labels },

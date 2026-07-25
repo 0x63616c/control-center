@@ -440,6 +440,16 @@ describe("serviceSpecs: Plex GPU transcode is talos-only (Task 4)", () => {
     expect(plex?.runtimeClassName).toBe("nvidia");
   });
 
+  test("talos: parked at 0 replicas (GPU device plugin deferred), 1 on orbstack", () => {
+    // Plex requests the RTX 3060 on talos, but the NVIDIA device plugin is not
+    // installed, so a 1-replica Plex is unschedulable forever and stalls every
+    // `pulumi up` awaiting its readiness. Park it until the plugin lands.
+    expect(
+      plexOf({ ...baseOpts, target: { substrate: "talos", nodeIp: "192.168.0.5" } })?.replicas,
+    ).toBe(0);
+    expect(plexOf({ ...baseOpts, target: { substrate: "orbstack" } })?.replicas).toBe(1);
+  });
+
   test("talos ADVERTISE_IP uses the node LAN IP + MetalLB port, not the mini's frozen IP", () => {
     const plex = plexOf({
       ...baseOpts,
