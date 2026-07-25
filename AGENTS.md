@@ -61,8 +61,11 @@
 
 ## Issue tracking
 
-GitHub Issues (`gh issue`) is the tracker and the brain-dump inbox.
+GitHub Issues (`gh issue`) is the tracker and the brain-dump inbox. "Ticket"
+means a GitHub issue - same thing, one vocabulary.
 
+- Use the `/create-ticket` skill to file one; it applies the verbatim rule and
+  label scheme below automatically.
 - **Preserve the requester's exact wording.** Every issue body opens with an
   `## Original ask (verbatim)` blockquote holding the request character-for-character
   - typos, trailing fragments and all. Never paraphrase it away. Interpretation goes
