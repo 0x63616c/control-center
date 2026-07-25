@@ -23,6 +23,12 @@ export function median(xs: number[]): number {
   return s.length % 2 || lower === undefined ? upper : (lower + upper) / 2;
 }
 
+/** Notification copy for a freshly-ingested weigh-in. */
+export function formatWeighInAlert(weightKg: number): { title: string; body: string } {
+  const lb = (weightKg * LB_PER_KG).toFixed(1);
+  return { title: "Weight logged", body: `${lb} lb` };
+}
+
 /** Band is inactive until 3 included readings exist (first-days bootstrap). */
 export function isOutsideSanityBand(kg: number, recentIncludedKg: number[]): boolean {
   if (recentIncludedKg.length < 3) return false;

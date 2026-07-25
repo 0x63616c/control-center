@@ -9,8 +9,11 @@
  * Spec: docs/superpowers/specs/2026-07-21-weight-tile-design.md.
  */
 
+import { db as notifDb } from "@features/notif/db";
+import { raiseNotification } from "@features/notif/service";
 import { weightMeasurement } from "@features/weight/schema";
 import {
+  formatWeighInAlert,
   isOutsideSanityBand,
   isRepeatReading,
   LB_PER_KG,
@@ -87,5 +90,11 @@ export async function runWeightIngestCycle(): Promise<void> {
     .returning({ id: weightMeasurement.id });
   if (inserted.length > 0) {
     getLogger().info({ weightKg, measuredAt, excluded }, "weight measurement ingested");
+    const { title, body } = formatWeighInAlert(weightKg);
+    try {
+      await raiseNotification(notifDb, { category: "home", severity: "info", title, body });
+    } catch (err) {
+      getLogger().error({ err }, "failed to raise weigh-in notification");
+    }
   }
 }

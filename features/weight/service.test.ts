@@ -4,6 +4,7 @@ import {
   assembleDays,
   dailyMedians,
   dayExpr,
+  formatWeighInAlert,
   isOutsideSanityBand,
   isRepeatReading,
   isValidTimeZone,
@@ -16,6 +17,21 @@ describe("median", () => {
   it("odd and even counts", () => {
     expect(median([3, 1, 2])).toBe(2);
     expect(median([4, 1, 3, 2])).toBe(2.5);
+  });
+});
+
+describe("formatWeighInAlert", () => {
+  it("converts kg to lb, rounded to 1 decimal", () => {
+    expect(formatWeighInAlert(72.5)).toEqual({
+      title: "Weight logged",
+      body: "159.8 lb",
+    });
+  });
+  it("rounds at the boundary", () => {
+    expect(formatWeighInAlert(50)).toEqual({
+      title: "Weight logged",
+      body: "110.2 lb",
+    });
   });
 });
 
