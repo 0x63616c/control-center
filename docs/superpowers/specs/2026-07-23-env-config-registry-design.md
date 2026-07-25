@@ -181,6 +181,16 @@ redaction list) and that ride the `/run/secrets` docker-secret mount.
 | `GUEST_STATIC_DIR` | str | optional | — | | api | api/guest-server |
 | `GUEST_HTTP_PORT` | int | optional | — | | api | api/guest-server |
 
+The table above lists all 45 env keys touched by this design, but the typed
+manifest at `packages/platform/env/manifest.ts` (`defineEnv({...})`) declares
+only **42** of them. The gap is the three `logger (carve-out, §6)` /
+`logger (carve-out)` rows — `APP_ENV`, `LOG_LEVEL`, `LOG_PRETTY` — which are
+real env vars read directly via `process.env` in `packages/platform/env/`
+(`fields.ts`, `assert.ts`), deliberately kept outside the typed registry per
+§6's carve-out mechanism. They exist and behave as documented in the table;
+they're just not `defineEnv` keys. 45 table rows − 3 carve-outs = 42 manifest
+keys, matching the live file.
+
 ### Hydration inputs (not typed registry keys)
 
 `databaseUrlFromSecret()` consumes these to **derive** `DATABASE_URL`; they are
