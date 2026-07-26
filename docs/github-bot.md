@@ -135,8 +135,26 @@ this is in the App settings UI:
    the old key.
 2. **Client secrets** → *Generate a new client secret*, delete the old one.
 3. **Webhook** → *Change* the secret to a fresh random value.
-4. Put the new values into a JSON file of the same shape as the conversion
-   response and re-run `scripts/save-github-bot.sh`, then commit the re-encrypted
-   `secrets/vault.yaml`. The deploy rolls the k8s Secret.
+4. Run `scripts/rotate-github-bot.sh` and paste the two values when prompted.
+   It reads the `.pem` off disk (newest `www-software-factory-bot*.pem` in
+   `~/Downloads`, or `--pem <path>`) rather than asking you to paste a multi-line
+   key, base64s it, and writes everything into SOPS. Prompts are silent and
+   nothing is echoed. Press Enter to skip any credential you are not rotating —
+   rotating only the webhook secret is fine.
+5. Commit the re-encrypted `secrets/vault.yaml`, push, merge. The deploy rolls
+   the k8s Secret.
+
+⚠️ **Rotating the webhook secret opens a gap.** The running api verifies against
+the old secret until the deploy lands, so deliveries in that window get a 401 —
+and GitHub does **not** retry them automatically. Afterwards, open the App's
+*Advanced → Recent Deliveries* and hit **Redeliver** on anything that failed.
+Replaying is safe: `incoming_webhook` is keyed on the delivery id, so a
+redelivery cannot duplicate a row.
+
+The private key and client secret have no such window — nothing in the cluster
+reads them yet.
+
+`scripts/save-github-bot.sh` remains the bulk path, for when every credential is
+being written at once from a manifest-conversion JSON (i.e. a fresh App).
 
 App id and installation id are **not** secrets and never rotate.
