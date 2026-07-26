@@ -261,9 +261,17 @@ export function installDbUi(args: DbUiArgs): DbUiResources {
           metadata: { labels },
           spec: {
             automountServiceAccountToken: false,
-            // The image's entrypoint chowns /var/lib/pgadmin and the pgpass
-            // mount to this uid on start, so the fsGroup only needs to cover
-            // the ConfigMap-backed servers.json (root-owned by default).
+            // dpage/pgadmin4's documented non-root uid/gid for /var/lib/pgadmin
+            // bind mounts. NOT verified against this exact image tag's actual
+            // runtime user — if the container in fact runs as root (its
+            // common default), this is an inert no-op; if it runs as uid 5050,
+            // this is required for the PVC. Either way, note the pgpass
+            // Secret below is mode 0600 (owner-only, per libpq's OWN
+            // passfile-permission check), so fsGroup membership alone does
+            // NOT grant a non-root, non-owning process read access to it —
+            // only a literal root process can read a 0600 root-owned file.
+            // Verify pgAdmin can actually authenticate against all 3 servers
+            // after deploy; if not, this is the first place to look.
             securityContext: { fsGroup: 5050 },
             containers: [
               {
