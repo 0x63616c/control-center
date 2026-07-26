@@ -1,0 +1,27 @@
+version: "1.0"
+
+# Worktrees live outside the repo tree entirely (never nested under
+# .claude/worktrees/ or any repo subfolder) so lefthook, glob-based tooling,
+# and gitignore scoping never get confused by a nested checkout. See
+# https://github.com/0x63616c/world-wide-webb/issues/182.
+defaults:
+  base_dir: "/Users/calum/.worktrees/world-wide-webb"
+
+hooks:
+  post_create:
+    # This repo has no .env — local dev env comes from scripts/secrets.sh at
+    # runtime, never a dotenv file (see AGENTS.md). A wtp hook that copies a
+    # nonexistent file aborts every later hook in the chain, so the essential
+    # setup steps run first and the optional per-machine copy runs last.
+    - type: command
+      command: "bun install"
+
+    - type: command
+      command: "bunx lefthook install --force"
+
+    # Per-machine Claude Code permission grants (gitignored). Not present on
+    # every machine — kept last so its absence doesn't block bun install /
+    # lefthook above.
+    - type: copy
+      from: ".claude/settings.local.json"
+      to: ".claude/settings.local.json"

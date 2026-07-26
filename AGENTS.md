@@ -111,6 +111,17 @@ means a GitHub issue - same thing, one vocabulary.
 
 ## Workflow
 
+- **Never edit in the main checkout - always `wtp add` a worktree first.**
+  `wtp add <branch>` (or `wtp add -b <new-branch>`) for a new branch, `wtp cd
+  <branch>` to jump back into an existing one. `.wtp.yml` puts every worktree
+  under `~/.worktrees/world-wide-webb/` (never nested in `.claude/worktrees/`
+  or any repo subfolder - that's what caused lefthook/env setup to be flaky)
+  and its `post_create` hooks run `bun install` + `lefthook install`
+  automatically, so a fresh worktree is immediately usable. A `PreToolUse`
+  hook blocks Edit/Write/`apply_patch` and branch-switching Bash commands
+  (`git checkout`, `git switch`, etc.) in the main checkout for both Claude
+  Code and Codex - if you hit that, you're in the wrong directory, not
+  wrongly permissioned. See #182.
 - **Branch -> PR -> merge is the default for all work, including agent work.**
   Create a worktree/branch named after the task, commit there, and open a PR
   against `main` (`gh pr create`, using the PR template). Use the
