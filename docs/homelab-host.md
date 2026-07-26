@@ -1,8 +1,16 @@
-# The Homelab Host (the Mac mini)
+# The Homelab Host (the Mac mini) — RETIRED
 
-Everything called "prod" runs on one machine: an **M2 Mac mini, 8 GB RAM, 8
+> **Historical record.** The Mac mini described below was retired and powered
+> off 2026-07-25; it is kept as a cold spare, not production. "prod" is now
+> the `home-server` Talos node (`192.168.0.5`) — see `AGENTS.md`. This doc is
+> left in place as a historical account of the mini's setup, not a live
+> runbook. `scripts/ssh-homelab.sh` and `scripts/mount-homelab-drive.sh`,
+> referenced below, were deleted in #140 as dead code; do not expect them to
+> exist on disk.
+
+Everything called "prod" ran on one machine: an **M2 Mac mini, 8 GB RAM, 8
 cores**, hostname `captive-portal.worldwidewebb.co`, tailnet
-`homelab.tail8c014d.ts.net`. There is no other production environment.
+`homelab.tail8c014d.ts.net`. There was no other production environment.
 
 This doc exists because there wasn't one. Until 2026-07-24 the host's
 configuration lived only *on the host* — hand-edited scripts, a LaunchAgent

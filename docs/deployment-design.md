@@ -178,20 +178,19 @@ the OrbStack VM node IP `192.168.139.2:26443`. OrbStack does **not** always rebi
 loopback to the apiserver after a restart, so without this job `kubectl` (and `pulumi up`)
 against the loopback context can fail post-reboot. The job is `KeepAlive` so it self-restores.
 
-**`com.calum.portal-443-forward` root LaunchDaemon (www-j934.20).** Forwards the mini's LAN
-en1 `192.168.0.147:443` → the k8s captive-portal LB `192.168.139.2:443`, so
-`https://app--cp.worldwidewebb.co` and the legacy
-`https://captive-portal.worldwidewebb.co` are reachable on the LAN with the cert-manager cert.
-OrbStack `expose_services` republishes the portal LB's `:80` onto en1 but NOT `:443`: OrbStack's
-own built-in HTTPS proxy (`network.https: true`, serving `*.orb.local`) already holds the
-wildcard host `:443`, so `expose_services` only lands `:443` on a random NodePort. This raw-TCP
-passthrough (the portal terminates its own TLS) is the surgical, restart-free fix. It is a
-**system** LaunchDaemon, not a user LaunchAgent, because `:443` is privileged. Install/reinstall
-on the mini with `products/captive-portal/apps/frontend/deploy/install-portal-443-forward.sh` (runs `sudo`);
-artifacts: `scripts/portal-443-forward.sh` + `products/captive-portal/apps/frontend/deploy/com.calum.portal-443-forward.plist`.
-`KeepAlive`, so it self-restores after a reboot/OrbStack restart. Doc-managed like the other
-host launchd jobs (apiserver-forward, NFS, watchdog); GOAL boundary 5 wants these under a Pulumi
-`LaunchdJob` `command.remote` component, which was never built, tracked in www-j934.22.
+**`com.calum.portal-443-forward` root LaunchDaemon (www-j934.20) — historical, retired.**
+Forwarded the mini's LAN en1 `192.168.0.147:443` → the k8s captive-portal LB
+`192.168.139.2:443`, so `https://app--cp.worldwidewebb.co` and the legacy
+`https://captive-portal.worldwidewebb.co` were reachable on the LAN with the cert-manager cert.
+OrbStack `expose_services` republished the portal LB's `:80` onto en1 but NOT `:443`: OrbStack's
+own built-in HTTPS proxy (`network.https: true`, serving `*.orb.local`) already held the
+wildcard host `:443`, so `expose_services` only landed `:443` on a random NodePort. This raw-TCP
+passthrough (the portal terminated its own TLS) was the surgical, restart-free fix. It was a
+**system** LaunchDaemon, not a user LaunchAgent, because `:443` is privileged. Both the mini and
+the `captive-portal` product it served are gone (mini retired 2026-07-25; captive-portal
+dissolved into the single-product repo, ADR-0006); `products/captive-portal/` no longer exists
+and `scripts/portal-443-forward.sh` was deleted as dead code in #140. Kept here as a historical
+record only, not a live runbook.
 
 **ESO removed (CC-k8t7).** The external-secrets operator and 1Password SDK provider have been
 removed from the cluster. Secrets now flow from `secrets/vault.yaml` via `loadVault()` at
