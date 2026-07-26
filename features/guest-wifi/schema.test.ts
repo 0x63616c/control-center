@@ -5,13 +5,9 @@
  * needed , all checks use static schema metadata.
  */
 
-import {
-  PORTAL_RATE_LIMIT_ID,
-  portalAuthorization,
-  portalRateLimit,
-} from "@features/guest-wifi/schema";
 import { getTableConfig } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
+import { PORTAL_RATE_LIMIT_ID, portalAuthorization, portalRateLimit } from "./schema";
 
 // Helper: find a column config by its SQL column name.
 function col(table: ReturnType<typeof getTableConfig>, name: string) {

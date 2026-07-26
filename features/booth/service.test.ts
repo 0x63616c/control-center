@@ -23,7 +23,7 @@ function gif(payload = "x"): Uint8Array {
 // ─── in-memory db harness (mirrors features/wakes/service.test.ts): a plain object
 // implementing only the drizzle surface this service calls. `update().where()`
 // ignores the (opaque) drizzle predicate and marks every live row, the same
-// trust-drizzle-for-the-WHERE convention portal-purge-service.test.ts uses; the
+// trust-drizzle-for-the-WHERE convention features/guest-wifi/jobs.test.ts uses; the
 // service's own tests populate a single group when that matters. ─────────────
 
 type BoothRow = {
