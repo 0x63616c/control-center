@@ -41,6 +41,7 @@ vi.mock("../../lib/tile-registry", () => {
   return { TILE_REGISTRY: [fake], HOME_TILE: fake };
 });
 vi.mock("../ConnectionLostBanner", () => ({ ConnectionLostBanner: () => null }));
+vi.mock("../DevOverlayHud", () => ({ DevOverlayHud: () => null }));
 vi.mock("../tiles/detail/registry", () => ({ getTileDetailEntry: () => undefined }));
 // Native so the session is enabled; the backlight calls are inert.
 vi.mock("../../lib/brightness", () => ({
@@ -52,6 +53,16 @@ vi.mock("../../lib/wake-capture", () => ({
   captureWakeBurst: vi.fn(),
   // DevicePage (rendered by the I-1 test below) polls this on mount.
   cameraPermissionState: vi.fn(() => Promise.resolve("granted")),
+}));
+// DevicePage (#64: folds in the former About page) reads server build info via
+// trpc; stub a stably-loading query so the I-1 test below doesn't need a real
+// trpc/QueryClient context just to mount Settings on the Device page.
+vi.mock("../../lib/trpc", () => ({
+  trpc: {
+    health: {
+      buildHash: { useQuery: () => ({ isLoading: true, data: undefined }) },
+    },
+  },
 }));
 // jsdom has no AudioContext; the alarm tests below drive the real alarm store,
 // whose fire path plays cues through the sound bus.

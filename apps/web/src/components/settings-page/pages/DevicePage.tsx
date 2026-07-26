@@ -1,14 +1,32 @@
 /**
- * Device settings page , identity (editable name) plus live status readouts
- * (battery, mount tilt, stable device id). Wires the shared settings/sensor
- * stores into the Concept-A section cards exactly like the old SettingsPanel's
- * Device section; carries no local state of its own.
+ * Device settings page , identity (editable name), live status readouts
+ * (battery, mount tilt, stable device id), build provenance, and developer
+ * tools. Wires the shared settings/sensor stores into the Concept-A section
+ * cards exactly like the old SettingsPanel's Device section; carries no local
+ * state of its own beyond the camera probe and the reset confirmation.
+ *
+ * #64: folds the former Debug and About pages in here , build/version info
+ * lives where you'd look for "what is this panel" instead of a separate
+ * pair of pages, and Debug's three overlay switches (with no readouts) sat
+ * next to About's readouts (with no switches), which was the exact sprawl
+ * this merge removes. The Build section (web/server/app build SHA + age)
+ * moved from AboutPage.tsx verbatim; the Developer section replaces Debug's
+ * three separate switches with one ("Developer overlay", see
+ * useDeveloperOverlay/setDeveloperOverlay in lib/settings.ts and
+ * DevOverlayHud.tsx); Reset moved from Debug's "Diagnostics" section into a
+ * low-emphasis Danger zone at the bottom.
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { BUILD_HASH, BUILD_TIME } from "../../../config/build";
+import { getInstalledBuildNumber } from "../../../lib/app-update";
 import { getDeviceId } from "../../../lib/device-id";
 import { deriveDefaultName, setDeviceName, useDeviceName } from "../../../lib/device-name";
+import { formatRelativeAge } from "../../../lib/relative-age";
+import { resetSettings, setDeveloperOverlay, useDeveloperOverlay } from "../../../lib/settings";
+import { formatSha } from "../../../lib/short-sha";
 import { formatTilt } from "../../../lib/tilt";
+import { trpc } from "../../../lib/trpc";
 import { formatBattery, useBatteryInfo } from "../../../lib/useBatteryInfo";
 import { useTiltAngle } from "../../../lib/useTiltAngle";
 import {
@@ -17,6 +35,9 @@ import {
   cameraPermissionState,
   probeCamera,
 } from "../../../lib/wake-capture";
+import { ConfirmDialog } from "../../ui/ConfirmDialog";
+import { Skeleton } from "../../ui/Skeleton";
+import { Switch } from "../../ui/Switch";
 import { TextInput } from "../../ui/TextInput";
 import { ActionButton, ChevronValue, RowShell, SectionCard } from "../blocks";
 import type { PageProps } from "../SettingsPage";
@@ -35,6 +56,13 @@ const CAMERA_PERMISSION_LABEL: Record<CameraPermissionState, string> = {
   unknown: "Unknown , this WebKit can't report it; use Test camera",
 };
 
+/** "<sha> · <age>" when an age is available, else just the SHA. Moved from
+ *  AboutPage.tsx verbatim (#64). */
+function shaWithAge(hash: string, builtAtMs: number, nowMs: number): string {
+  const age = formatRelativeAge(builtAtMs, nowMs);
+  return age ? `${formatSha(hash)} · ${age}` : formatSha(hash);
+}
+
 export function DevicePage({ onOpenLevel }: PageProps) {
   const { name: deviceName, isSet: deviceNameSet } = useDeviceName();
   // The page only mounts while Settings is open, so both sensors run exactly
@@ -44,6 +72,28 @@ export function DevicePage({ onOpenLevel }: PageProps) {
 
   const [cameraPermission, setCameraPermission] = useState<CameraPermissionState | null>(null);
   const [probe, setProbe] = useState<CameraProbeResult | "running" | null>(null);
+
+  // Folded in from About (#64): build provenance.
+  const server = trpc.health.buildHash.useQuery();
+  // Native CFBundleVersion resolves asynchronously and only on the device; a
+  // plain browser (dev/Storybook) yields null, shown as "n/a".
+  const [appBuild, setAppBuild] = useState<number | null>(null);
+  useEffect(() => {
+    let live = true;
+    void getInstalledBuildNumber().then((n) => {
+      if (live) setAppBuild(n);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  // A single "now" captured at render is fine for a coarse age readout that
+  // only needs minute/hour/day granularity.
+  const now = Date.now();
+
+  // Folded in from Debug (#64): the developer overlay toggle + guarded reset.
+  const developerOverlay = useDeveloperOverlay();
+  const [confirmReset, setConfirmReset] = useState(false);
 
   // Re-read on mount and after every probe , the OS state changes outside
   // React (the TCC prompt, or a Settings toggle while the app is backgrounded).
@@ -152,6 +202,94 @@ export function DevicePage({ onOpenLevel }: PageProps) {
           />,
         ]}
       </SectionCard>
+
+      {/* Folded in from About (#64): build provenance lives with device
+          identity now, instead of a separate page. */}
+      <SectionCard title="Build">
+        {[
+          <RowShell
+            key="web"
+            label="Web"
+            sub="The panel bundle currently running."
+            control={<span style={VALUE_TEXT}>{shaWithAge(BUILD_HASH, BUILD_TIME, now)}</span>}
+          />,
+          <RowShell
+            key="server"
+            label="Server"
+            sub="The control-center API build serving this panel."
+            control={
+              server.isLoading ? (
+                <Skeleton w={120} />
+              ) : server.data ? (
+                <span style={VALUE_TEXT}>
+                  {shaWithAge(server.data.hash, Date.parse(server.data.deployedAt), now)}
+                </span>
+              ) : (
+                <span style={{ ...VALUE_TEXT, color: "var(--ink-3)" }}>unavailable</span>
+              )
+            }
+          />,
+          <RowShell
+            key="app"
+            label="App build"
+            sub="The native TestFlight build installed on this device."
+            control={<span style={VALUE_TEXT}>{appBuild === null ? "n/a" : appBuild}</span>}
+          />,
+          <RowShell
+            key="screen"
+            label="Screen"
+            sub="Fixed wall-panel resolution."
+            control={<span style={VALUE_TEXT}>1366×1024</span>}
+          />,
+        ]}
+      </SectionCard>
+
+      {/* Folded in from Debug (#64): one "Developer overlay" switch replaces
+          the three separate FPS/build-badge/build-number switches, driving a
+          single consolidated HUD on the board (see DevOverlayHud.tsx). */}
+      <SectionCard title="Developer">
+        {[
+          <RowShell
+            key="overlay"
+            label="Developer overlay"
+            sub="Show a live diagnostics HUD on the board: FPS, build, connection, device ID."
+            control={
+              <Switch
+                label="Developer overlay"
+                checked={developerOverlay}
+                onChange={setDeveloperOverlay}
+              />
+            }
+          />,
+        ]}
+      </SectionCard>
+
+      {/* Moved from Debug's "Diagnostics" section (#64): a destructive,
+          rarely-used action gets its own low-emphasis zone at the bottom
+          rather than sitting beside the overlay switches. */}
+      <SectionCard title="Danger zone">
+        {[
+          <RowShell
+            key="reset"
+            label="Reset settings"
+            sub="Restore every setting on this panel to its default."
+            control={<ActionButton onClick={() => setConfirmReset(true)}>Reset</ActionButton>}
+          />,
+        ]}
+      </SectionCard>
+
+      <ConfirmDialog
+        open={confirmReset}
+        title="Reset settings?"
+        message="Restore every setting on this panel to its default. This cannot be undone."
+        confirmLabel="Reset"
+        tone="danger"
+        onConfirm={() => {
+          resetSettings();
+          setConfirmReset(false);
+        }}
+        onClose={() => setConfirmReset(false)}
+      />
     </>
   );
 }

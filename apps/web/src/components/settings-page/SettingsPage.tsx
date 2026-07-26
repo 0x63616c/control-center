@@ -19,9 +19,7 @@ import { useIsNarrow } from "../../lib/useIsNarrow";
 import { Icon } from "../Icon";
 import { BackButton, PageHeader } from "./blocks";
 import { PAGE_BY_KEY, PAGES, type PageKey } from "./pages";
-import { AboutPage } from "./pages/AboutPage";
 import { BoardPage } from "./pages/BoardPage";
-import { DebugPage } from "./pages/DebugPage";
 import { DevicePage } from "./pages/DevicePage";
 import { DisplayPage } from "./pages/DisplayPage";
 import { LogsPage } from "./pages/LogsPage";
@@ -49,8 +47,6 @@ const PAGE_COMPONENTS: Partial<Record<PageKey, ComponentType<PageProps>>> = {
   notifications: NotificationsPage,
   security: SecurityPage,
   logs: LogsPage,
-  debug: DebugPage,
-  about: AboutPage,
 };
 
 export function SettingsPage({

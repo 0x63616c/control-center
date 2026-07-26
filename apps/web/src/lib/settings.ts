@@ -337,16 +337,43 @@ export function setIdleDimLevel(level: number): void {
   patch("idleDimLevel", clamped, String(clamped));
 }
 
-export function setShowFps(v: boolean): void {
+// Not exported (#64): the three overlay fields used to have their own Debug-page
+// switches, so each setter was public. Debug folded into Device's single
+// "Developer overlay" switch (setDeveloperOverlay below), which is now the only
+// caller , keep these module-private until something else needs one alone.
+function setShowFps(v: boolean): void {
   patch("showFps", v, String(v));
 }
 
-export function setShowBuildBadge(v: boolean): void {
+function setShowBuildBadge(v: boolean): void {
   patch("showBuildBadge", v, String(v));
 }
 
-export function setShowBuildNumber(v: boolean): void {
+function setShowBuildNumber(v: boolean): void {
   patch("showBuildNumber", v, String(v));
+}
+
+/**
+ * Whether the on-board developer overlay HUD should render (#64: the FPS
+ * meter, build badge, and build-number badge collapsed into one consolidated
+ * HUD driven by one Settings toggle instead of three independent switches).
+ * The three underlying fields stay separate , they are synced wire-contract
+ * settings (`@control-center/api/contract`), and folding them into a single
+ * field would be a server schema migration, not a UI restructure , so the
+ * combined toggle is derived (any one on counts as "on") rather than backed
+ * by its own field.
+ */
+export function useDeveloperOverlay(): boolean {
+  const settings = useSettings();
+  return settings.showFps || settings.showBuildBadge || settings.showBuildNumber;
+}
+
+/** Flip all three overlay fields together, so the single Settings switch reads
+ *  as one on/off toggle even though it drives three synced fields. */
+export function setDeveloperOverlay(v: boolean): void {
+  setShowFps(v);
+  setShowBuildBadge(v);
+  setShowBuildNumber(v);
 }
 
 export function setSnapMode(mode: SnapMode): void {

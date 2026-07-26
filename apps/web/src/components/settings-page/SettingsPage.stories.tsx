@@ -56,8 +56,9 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 /**
- * The full-page settings shell open over the fullscreen frame. Page bodies land
- * in later tasks; here we assert the sidebar surfaces all nine pages.
+ * The full-page settings shell open over the fullscreen frame. Here we assert
+ * the sidebar surfaces all eight pages , Debug and About folded into Device
+ * (#64), so the count is nine minus two folded-away pages, i.e. eight.
  */
 export const Open: Story = {
   play: async ({ canvasElement }) => {
@@ -71,10 +72,11 @@ export const Open: Story = {
       "Notifications",
       "Security",
       "Logs",
-      "Debug",
-      "About",
     ]) {
       await expect(doc.getByRole("button", { name })).toBeInTheDocument();
+    }
+    for (const name of ["Debug", "About"]) {
+      expect(doc.queryByRole("button", { name })).not.toBeInTheDocument();
     }
   },
 };
