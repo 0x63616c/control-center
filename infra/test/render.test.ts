@@ -503,3 +503,31 @@ describe("renderWorkload: Task 4's GPU/hostNetwork fields are opt-in", () => {
     expect(requests["nvidia.com/gpu"]).toBe("1");
   });
 });
+
+// #87: CPU limits are banned repo-wide, deliberately — CFS quota throttles a
+// container even when the node has idle CPU
+// (https://home.robusta.dev/blog/stop-using-cpu-limits), so a CPU limit buys
+// nothing and only adds latency spikes; requests.cpu alone (ResourceSpec.
+// reserveCpus) already gives fair-share scheduling under contention. This is
+// enforced today by ResourceSpec having no `limitCpus` field at all (buildPod
+// physically cannot set one) — this sweep is the regression test: it renders
+// every currently-declared workload and fails loudly if that type-level
+// guarantee is ever loosened and a workload starts carrying limits.cpu.
+describe("renderWorkload: no workload ever sets limits.cpu (#87)", () => {
+  test("every serviceSpecs() workload renders with resources.limits.cpu absent", () => {
+    const specs = serviceSpecs({ cloudflaredReplicas: 2, nasNfsServer: "192.168.0.219" });
+    for (const spec of specs) {
+      const container = renderWorkload(spec).deployment.spec.template.spec.containers[0];
+      expect(
+        container.resources.limits.cpu,
+        `${spec.name} must not set limits.cpu`,
+      ).toBeUndefined();
+    }
+  });
+
+  test("the api fixture (memory + reserveCpus) still has no limits.cpu", () => {
+    const container = renderWorkload(api).deployment.spec.template.spec.containers[0];
+    expect(container.resources.limits.cpu).toBeUndefined();
+    expect(container.resources.requests.cpu).toBe("0.5");
+  });
+});

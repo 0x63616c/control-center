@@ -421,6 +421,13 @@ export function controlCenterServiceSecretUsages(): Record<
   };
 }
 
+// `limits` deliberately has no `cpu` key (only `requests` does) — same
+// asymmetry as infra/src/component.ts's ResourceSpec, and for the same reason
+// (#87): CPU is compressible, so a CPU limit only throttles under CFS quota
+// with no benefit (https://home.robusta.dev/blog/stop-using-cpu-limits),
+// while memory is incompressible and needs the limit to bound OOM risk.
+// requests.cpu alone gives fair-share scheduling. Do not add a `cpu` field to
+// `limits` to "match" requests — the asymmetry is intentional.
 export type DatabaseResources = Readonly<{
   limits: Readonly<{ memory: string }>;
   requests: Readonly<{ cpu: string; memory: string }>;

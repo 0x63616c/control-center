@@ -61,6 +61,10 @@ describe("installCnpg", () => {
     expect(spec.storage.storageClass).toBe("local-path");
     expect(spec.resources.limits.memory).toBe("768Mi");
     expect(spec.resources.requests.cpu).toBe("500m");
+    // #87: CPU limits are banned — DatabaseResources.limits has no `cpu` key
+    // at the type level, so this just pins that nothing smuggles one in via a
+    // widened cast.
+    expect((spec.resources.limits as Record<string, string>).cpu).toBeUndefined();
     // Bridged password: both refs point at the same native basic-auth secret.
     expect(spec.bootstrap.initdb.database).toBe("control_center");
     expect(spec.bootstrap.initdb.owner).toBe("postgres");
