@@ -32,77 +32,86 @@ export const ENV = defineEnv({
 
   // ── Home Assistant (ac, ctrl, dogcam, tesla, tv) ──────────────────────────
   HA_URL: url().default("http://homeassistant.local:8123"),
-  HA_TOKEN: secret().required().forRuntime("api", "worker").forFeature("ac"),
-  CLIMATE_ENTITY_ID: str().default("climate.home").forRuntime("api").forFeature("ac"),
+  HA_TOKEN: secret()
+    .required()
+    .forRuntime("api", "worker")
+    .forFeatures("ac", "ctrl", "dogcam", "tesla", "tv"),
+  CLIMATE_ENTITY_ID: str().default("climate.home").forRuntime("api").forFeatures("ac"),
   HA_WEIGHT_ENTITY_ID: str()
     .default("sensor.renpho_scale_weight")
     .forRuntime("worker")
-    .forFeature("weight"),
+    .forFeatures("weight"),
 
   // ── UniFi / Wi-Fi (network, guest-wifi) ───────────────────────────────────
-  UNIFI_API_KEY: secret().required().forRuntime("api").forFeature("network"),
+  UNIFI_API_KEY: secret().required().forRuntime("api").forFeatures("network"),
   UNIFI_CONTROLLER_URL: url()
     .default("https://192.168.0.1")
     .forRuntime("api")
-    .forFeature("network"),
-  UNIFI_SITE_ID: str().default("default").forRuntime("api").forFeature("network"),
-  WIFI_SSID: secret().required().forRuntime("api").forFeature("network"),
-  WIFI_PASSWORD: secret().required().forRuntime("api").forFeature("network"),
-  WIFI_GUEST_SSID: secret().required().forRuntime("api").forFeature("network"),
+    .forFeatures("network"),
+  UNIFI_SITE_ID: str().default("default").forRuntime("api").forFeatures("network"),
+  WIFI_SSID: secret().required().forRuntime("api").forFeatures("network"),
+  WIFI_PASSWORD: secret().required().forRuntime("api").forFeatures("network"),
+  WIFI_GUEST_SSID: secret().required().forRuntime("api").forFeatures("network"),
 
   // ── Home location (tesla, weather) ────────────────────────────────────────
-  HOME_LAT: num().required().devDefault(34.0537).forRuntime("api", "worker").forFeature("weather"),
+  HOME_LAT: num().required().devDefault(34.0537).forRuntime("api", "worker").forFeatures("weather"),
   HOME_LON: num()
     .required()
     .devDefault(-118.2428)
     .forRuntime("api", "worker")
-    .forFeature("weather"),
-  HOME_PLACE_NAME: str().default("Home").forFeature("weather"),
-  HOME_RADIUS_MILES: num().default(1).forRuntime("api").forFeature("tesla"),
+    .forFeatures("weather"),
+  HOME_PLACE_NAME: str().default("Home").forFeatures("weather"),
+  HOME_RADIUS_MILES: num().default(1).forRuntime("api").forFeatures("tesla"),
 
   // ── Tesla (ac, tesla) ─────────────────────────────────────────────────────
-  TESLA_ENTITY_PREFIX: str().default("evee").forRuntime("api").forFeature("tesla"),
+  TESLA_ENTITY_PREFIX: str().default("evee").forRuntime("api").forFeatures("tesla"),
 
   // ── Media (booth, wakes, worker) ──────────────────────────────────────────
-  MEDIA_STORAGE_DIR: str().default("/mnt/media").forRuntime("worker", "api").forFeature("booth"),
-  YOUTUBE_INGEST_ENABLED: bool().default(false).forRuntime("worker").forFeature("sound"),
+  MEDIA_STORAGE_DIR: str()
+    .default("/mnt/media")
+    .forRuntime("worker", "api")
+    .forFeatures("booth", "wakes"),
+  YOUTUBE_INGEST_ENABLED: bool().default(false).forRuntime("worker"),
 
   // ── Spotify (sound) ───────────────────────────────────────────────────────
-  SPOTIFY_CLIENT_ID: secret().optionalSecret().forRuntime("api").forFeature("sound"),
-  SPOTIFY_CLIENT_SECRET: secret().optionalSecret().forRuntime("api").forFeature("sound"),
-  SPOTIFY_REFRESH_TOKEN: secret().optionalSecret().forRuntime("api").forFeature("sound"),
+  SPOTIFY_CLIENT_ID: secret().optionalSecret().forRuntime("api").forFeatures("sound"),
+  SPOTIFY_CLIENT_SECRET: secret().optionalSecret().forRuntime("api").forFeatures("sound"),
+  SPOTIFY_REFRESH_TOKEN: secret().optionalSecret().forRuntime("api").forFeatures("sound"),
 
   // ── Withings direct-poll ingest (weight) ──────────────────────────────────
   // No WITHINGS_REFRESH_TOKEN/ACCESS_TOKEN here: Withings rotates the refresh
   // token on every use, so the live pair lives in Postgres (withings_oauth_token),
   // not env/vault. Only the static app credentials live here.
-  WITHINGS_CLIENT_ID: secret().optionalSecret().forRuntime("worker").forFeature("weight"),
-  WITHINGS_CLIENT_SECRET: secret().optionalSecret().forRuntime("worker").forFeature("weight"),
+  WITHINGS_CLIENT_ID: secret().optionalSecret().forRuntime("worker").forFeatures("weight"),
+  WITHINGS_CLIENT_SECRET: secret().optionalSecret().forRuntime("worker").forFeatures("weight"),
 
   // ── App Store Connect poll (worker) ───────────────────────────────────────
-  ASC_KEY_ID: secret().optionalSecret().forRuntime("worker").forFeature("worker"),
-  ASC_ISSUER_ID: secret().optionalSecret().forRuntime("worker").forFeature("worker"),
-  ASC_KEY_CONTENT: secret().optionalSecret().forRuntime("worker").forFeature("worker"),
-  ASC_APP_ID: str().default("6762095888").forRuntime("worker").forFeature("worker"),
+  ASC_KEY_ID: secret().optionalSecret().forRuntime("worker"),
+  ASC_ISSUER_ID: secret().optionalSecret().forRuntime("worker"),
+  ASC_KEY_CONTENT: secret().optionalSecret().forRuntime("worker"),
+  ASC_APP_ID: str().default("6762095888").forRuntime("worker"),
 
   // ── Deploys (deploys) ─────────────────────────────────────────────────────
-  GITHUB_ACTIONS_TOKEN: secret().optionalSecret().forRuntime("worker").forFeature("deploys"),
-  GITHUB_REPO: str().default("0x63616c/world-wide-webb").forRuntime("worker").forFeature("deploys"),
+  GITHUB_ACTIONS_TOKEN: secret().optionalSecret().forRuntime("worker").forFeatures("deploys"),
+  GITHUB_REPO: str()
+    .default("0x63616c/world-wide-webb")
+    .forRuntime("worker")
+    .forFeatures("deploys"),
 
   // ── APNs push (notif) ─────────────────────────────────────────────────────
-  APNS_KEY_ID: secret().optionalSecret().forRuntime("worker").forFeature("notif"),
-  APNS_TEAM_ID: secret().optionalSecret().forRuntime("worker").forFeature("notif"),
-  APNS_KEY_CONTENT: secret().optionalSecret().forRuntime("worker").forFeature("notif"),
+  APNS_KEY_ID: secret().optionalSecret().forRuntime("worker").forFeatures("notif"),
+  APNS_TEAM_ID: secret().optionalSecret().forRuntime("worker").forFeatures("notif"),
+  APNS_KEY_CONTENT: secret().optionalSecret().forRuntime("worker").forFeatures("notif"),
   APNS_BUNDLE_ID: str()
     .default("co.worldwidewebb.theworkflowengine")
     .forRuntime("worker")
-    .forFeature("notif"),
-  APNS_HOST: url().default("https://api.push.apple.com").forRuntime("worker").forFeature("notif"),
+    .forFeatures("notif"),
+  APNS_HOST: url().default("https://api.push.apple.com").forRuntime("worker").forFeatures("notif"),
 
   // ── Camera / go2rtc (dogcam) ──────────────────────────────────────────────
-  GO2RTC_URL: url().default("http://go2rtc:1984").forRuntime("api").forFeature("dogcam"),
-  CAMERA_STREAM_NAME: str().default("bedroom_mjpeg").forRuntime("api").forFeature("dogcam"),
-  CAMERA_LABEL: str().default("Living Room Cam").forRuntime("api").forFeature("dogcam"),
+  GO2RTC_URL: url().default("http://go2rtc:1984").forRuntime("api").forFeatures("dogcam"),
+  CAMERA_STREAM_NAME: str().default("bedroom_mjpeg").forRuntime("api").forFeatures("dogcam"),
+  CAMERA_LABEL: str().default("Living Room Cam").forRuntime("api").forFeatures("dogcam"),
 
   // ── Temporal (temporal-worker) ────────────────────────────────────────────
   // All four carry safe in-cluster defaults, so the temporal-worker Deployment

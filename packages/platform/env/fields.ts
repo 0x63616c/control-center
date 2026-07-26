@@ -40,7 +40,7 @@ export class FieldBuilder<TOut> {
   _devDefault: unknown;
   _hasDevDefault = false;
   _runtimes: Runtime[] = ["all"];
-  _feature: string | undefined;
+  _features: readonly string[] = [];
   readonly _secret: boolean;
   private readonly _parse: RawParse;
 
@@ -91,9 +91,9 @@ export class FieldBuilder<TOut> {
     return this;
   }
 
-  /** Tag the owning feature id (documentation + query grouping). */
-  forFeature(id: string): this {
-    this._feature = id;
+  /** Tag the owning feature id(s) (documentation + query grouping). */
+  forFeatures(...ids: string[]): this {
+    this._features = ids;
     return this;
   }
 
