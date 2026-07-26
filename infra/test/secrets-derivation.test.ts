@@ -42,7 +42,7 @@ const GOLDEN_SERVICE_SECRETS: Record<string, Record<string, string>> = {
   api: SHARED_API_WORKER_SECRETS,
   worker: SHARED_API_WORKER_SECRETS,
   cloudflared: {
-    TUNNEL_TOKEN: "CLOUDFLARE_TUNNEL_EVEE_WEBHOOKS__CONNECTOR_TOKEN",
+    TUNNEL_TOKEN: "CLOUDFLARE_TUNNEL_WORLD_WIDE_WEBB__CONNECTOR_TOKEN",
   },
   // The #127 cutover connector, running against the project-owned tunnel.
   // Removed together with the legacy tunnel once the cutover has soaked.

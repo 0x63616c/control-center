@@ -401,7 +401,9 @@ export function controlCenterServiceSecretUsages(): Record<
     cloudflared: defineServiceSecretUsage(
       controlCenter,
       "cloudflared",
-      { TUNNEL_TOKEN: secretCatalog.cloudflare.tunnelToken },
+      // Points at the project-owned tunnel since the #127 cutover. The legacy
+      // key stays in the catalog only until the old tunnel is deleted.
+      { TUNNEL_TOKEN: secretCatalog.cloudflare.managedTunnelToken },
       { targetSecretName: "cloudflare-secrets-cloudflared", namespaceName: "cloudflare" },
     ),
     // The second connector, running against the project-owned tunnel across the
