@@ -29,6 +29,7 @@ const TOUCHED = [
   "WIFI_SSID",
   "WIFI_PASSWORD",
   "WIFI_GUEST_SSID",
+  "GITHUB_BOT_WEBHOOK_SECRET",
 ];
 
 // The full set of api-runtime required keys, with valid values — a prod boot
@@ -42,6 +43,7 @@ const API_REQUIRED: Record<string, string> = {
   WIFI_GUEST_SSID: "guest",
   HOME_LAT: "34.0537",
   HOME_LON: "-118.2428",
+  GITHUB_BOT_WEBHOOK_SECRET: "hook-secret",
 };
 
 function clear() {

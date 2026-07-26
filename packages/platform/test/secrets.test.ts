@@ -62,6 +62,7 @@ describe("secret catalog and service usage", () => {
       "APNS_TEAM_ID",
       "ASC_ISSUER_ID",
       "ASC_KEY_CONTENT",
+      "GITHUB_BOT_WEBHOOK_SECRET",
       "ASC_KEY_ID",
       "GITHUB_ACTIONS_TOKEN",
       "HA_TOKEN",
