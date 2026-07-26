@@ -2,7 +2,7 @@
 // Source of truth: features/*/{manifest,api,schema,jobs}.ts + apps/api/src/db/schema.ts.
 // Re-run `bun run apps:gen` after changing a feature facet; commit the result.
 
-import type { JobSpec } from "@www/core";
+import type { JobSpec } from "@app-kit";
 import { jobs as notifJobs } from "../notif/jobs";
 
 export const GENERATED_JOBS: readonly JobSpec[] = [

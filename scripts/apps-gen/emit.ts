@@ -189,7 +189,7 @@ export function renderJobs(model: AppModel): string {
   if (withJobs.length === 0) {
     return `${GEN_HEADER}
 
-import type { JobSpec } from "@www/core";
+import type { JobSpec } from "@app-kit";
 
 export const GENERATED_JOBS: readonly JobSpec[] = [];
 `;
@@ -200,7 +200,7 @@ export const GENERATED_JOBS: readonly JobSpec[] = [];
   const spread = withJobs.map((f) => `...${ident(f.dir)}Jobs`).join(",\n  ");
   return `${GEN_HEADER}
 
-import type { JobSpec } from "@www/core";
+import type { JobSpec } from "@app-kit";
 ${imports}
 
 export const GENERATED_JOBS: readonly JobSpec[] = [
