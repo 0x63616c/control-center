@@ -93,10 +93,9 @@ const DYNAMIC_CONFIG_MOUNT = "/etc/temporal/dynamicconfig";
 const DYNAMIC_CONFIG_FILE = `${DYNAMIC_CONFIG_MOUNT}/docker.yaml`;
 
 // Retention for the control-center namespace: how long a CLOSED workflow's
-// history is queryable. HealthCheckWorkflow closes 1440 runs a day, so a long
-// window is mostly noise; 3 days is enough to answer "was it healthy over the
-// weekend" without carrying a month of one-minute heartbeats.
-const NAMESPACE_RETENTION = "72h";
+// history is queryable. Set to 10 years per explicit request (issue #157) —
+// long-term workflow history over storage economy.
+const NAMESPACE_RETENTION = "87600h";
 
 export interface TemporalArgs {
   provider: k8s.Provider;
@@ -219,6 +218,8 @@ function schemaSetupScript(): string {
  * returns AlreadyExists on every deploy after the first, which is a success for
  * our purposes — but the `describe` that follows is NOT tolerated failing, so a
  * genuinely absent namespace still fails the Job instead of passing silently.
+ * `namespace update` runs unconditionally after, so a retention change to an
+ * already-existing namespace still takes effect on redeploy.
  */
 function namespaceSetupScript(): string {
   const address = `${TEMPORAL_FRONTEND_SERVICE}:${FRONTEND_GRPC_PORT}`;
@@ -228,6 +229,7 @@ function namespaceSetupScript(): string {
     'echo "waiting for temporal frontend…"',
     "until temporal operator cluster health >/dev/null 2>&1; do sleep 2; done",
     `temporal operator namespace create --namespace ${TEMPORAL_CLUSTER_NAMESPACE} --retention ${NAMESPACE_RETENTION} || true`,
+    `temporal operator namespace update --namespace ${TEMPORAL_CLUSTER_NAMESPACE} --retention ${NAMESPACE_RETENTION}`,
     `temporal operator namespace describe --namespace ${TEMPORAL_CLUSTER_NAMESPACE}`,
   ].join("\n");
 }
