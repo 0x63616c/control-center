@@ -11,7 +11,7 @@
         ]
       },
       {
-        "matcher": "Edit|Write|NotebookEdit|Bash",
+        "matcher": "Edit|Write|NotebookEdit|Bash|EnterWorktree",
         "hooks": [
           {
             "type": "command",
