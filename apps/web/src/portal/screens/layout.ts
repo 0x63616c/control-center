@@ -6,11 +6,19 @@ import type { CSSProperties } from "react";
 // plain style objects (no CSS classes) per the cc idiom. No fixed widths , the
 // guest screens run on phones, so `stage` centers a column that shrinks to
 // its own maxWidth rather than assuming a fixed viewport.
+//
+// minHeight is a viewport unit (100dvh), NOT a percentage (#76): #portal-root
+// only sets min-height in portal.css, and a percentage height on `stage` can't
+// resolve against an ancestor whose own height is itself only a min-height ,
+// per spec that computes to auto, so `stage` collapsed to its content height
+// and the flex centering had no extra room to center within (content pinned
+// to the top). dvh sidesteps the ancestor chain entirely and also tracks
+// mobile Safari's dynamic toolbar, which plain vh does not.
 export const stage: CSSProperties = {
   position: "relative",
   zIndex: 1,
   flex: "1 1 auto",
-  minHeight: "100%",
+  minHeight: "100dvh",
   width: "100%",
   display: "flex",
   alignItems: "center",

@@ -455,6 +455,52 @@
   height: 30px;
 }
 
+/* checkbox (#76) , appearance:none drops the native box (a plain white square
+   on most platforms, including iOS Safari on the guest portal) so the box
+   itself, not just the check mark, wears theme colors. The ::after checkmark
+   only renders because appearance:none turns the input back into a normal
+   (non-replaced) box , this is the standard cross-browser custom-checkbox
+   trick, not an accent-color-only fix (accent-color themes the fill but
+   leaves the unchecked box native on several browsers, which is the bug). */
+.wwb-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 17px;
+  height: 17px;
+  margin: 0;
+  border-radius: 4px;
+  border: 1px solid var(--hair-2);
+  background: var(--nest);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+.wwb-checkbox:checked {
+  background: var(--acc);
+  border-color: var(--acc);
+}
+.wwb-checkbox:checked::after {
+  content: "";
+  width: 5px;
+  height: 9px;
+  border: solid var(--bg);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg) translate(-1px, -1px);
+}
+.wwb-checkbox:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 2px;
+}
+.wwb-checkbox.error {
+  border-color: var(--red, #e5484d);
+  outline: 2px solid var(--red, #e5484d);
+  outline-offset: 1px;
+}
+
 /* Thin scrub variant , media progress bars. Slim rail + small thumb so it
    reads as a seek bar rather than a settings control. */
 .range-scrub {
