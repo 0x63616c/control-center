@@ -24,6 +24,7 @@ vi.mock("../../lib/tile-registry", () => {
   return { TILE_REGISTRY: [fake], HOME_TILE: fake };
 });
 vi.mock("../ConnectionLostBanner", () => ({ ConnectionLostBanner: () => null }));
+vi.mock("../DevOverlayHud", () => ({ DevOverlayHud: () => null }));
 
 // Fake detail registry: tile_fake opens a single-variant full page. Mocking it
 // also keeps jsdom clear of the real tile wiring (and transitively maplibre-gl).
@@ -49,7 +50,6 @@ vi.mock("../tiles/detail/registry", () => ({
       : undefined,
 }));
 
-import { BUILD_HASH } from "../../config/build";
 import { closeTileDetail } from "../../lib/tile-detail-store";
 import { Board } from "../Board";
 
@@ -88,13 +88,5 @@ describe("Board", () => {
     render(<Board />);
     fireEvent.click(screen.getByRole("button", { name: "inner-control" }));
     expect(screen.queryByTestId("fake-detail")).toBeNull();
-  });
-
-  it("renders the build-hash badge from the build config, prefixed with #", () => {
-    render(<Board />);
-    // No vite `define` in the test env, so BUILD_HASH falls back to "dev" and
-    // BUILD_TIME is NaN (no age shown); the badge renders the '#'-prefixed SHA.
-    expect(BUILD_HASH).toBe("dev");
-    expect(screen.getByText(`#${BUILD_HASH.slice(0, 7)}`)).toBeTruthy();
   });
 });

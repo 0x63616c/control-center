@@ -38,6 +38,7 @@ vi.mock("../../lib/tile-registry", () => {
   return { TILE_REGISTRY: [self], HOME_TILE: self };
 });
 vi.mock("../ConnectionLostBanner", () => ({ ConnectionLostBanner: () => null }));
+vi.mock("../DevOverlayHud", () => ({ DevOverlayHud: () => null }));
 // The detail registry imports real tile wiring (and transitively maplibre-gl),
 // which jsdom cannot load , stub it so taps resolve to no detail entry.
 vi.mock("../tiles/detail/registry", () => ({ getTileDetailEntry: () => undefined }));

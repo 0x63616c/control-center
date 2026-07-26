@@ -1,9 +1,13 @@
 /**
- * Stories for the four data-backed Settings pages (Network, Notifications,
- * Debug, About). Same 720px column frame as SettingsPages.stories so each page
- * reads the way it does inside the full-page shell.
+ * Stories for the data-backed Settings pages (Network, Notifications). Same
+ * 720px column frame as SettingsPages.stories so each page reads the way it
+ * does inside the full-page shell.
  *
- * Network and About read tRPC; there is no global trpc provider in Storybook, so
+ * #64: Debug and About folded into Device (see SettingsPages.stories.tsx's
+ * `Device` story, which now covers the merged Build/Developer/Danger-zone
+ * sections that used to live here).
+ *
+ * Network reads tRPC; there is no global trpc provider in Storybook, so
  * `TrpcHarness` stands up a throwaway QueryClient + trpc provider and primes the
  * exact query keys with fixtures. The fixtures live ONLY here , the shipped
  * pages render whatever the real queries return (Skeleton / "unavailable"
@@ -18,8 +22,6 @@ import { useEffect, useState } from "react";
 import { expect, within } from "storybook/test";
 import { trpc } from "../../../lib/trpc";
 import { useNotifications } from "../../../lib/useNotifications";
-import { AboutPage } from "./AboutPage";
-import { DebugPage } from "./DebugPage";
 import { NetworkPage } from "./NetworkPage";
 import { NotificationsPage } from "./NotificationsPage";
 
@@ -179,55 +181,5 @@ export const NotificationsActive: Story = {
     await expect(canvas.getByText("WAN offline")).toBeInTheDocument();
     await expect(canvas.getByText("Update available")).toBeInTheDocument();
     await expect(canvas.getAllByRole("button", { name: "Dismiss" })).toHaveLength(2);
-  },
-};
-
-// ─── Debug ────────────────────────────────────────────────────────────────────
-
-export const Debug: Story = {
-  render: () => (
-    <ColumnFrame>
-      <DebugPage />
-    </ColumnFrame>
-  ),
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-    await expect(canvas.getByRole("switch", { name: "FPS meter" })).toBeInTheDocument();
-    await expect(canvas.getByRole("switch", { name: "Build badge" })).toBeInTheDocument();
-    await expect(canvas.getByRole("switch", { name: "Build number" })).toBeInTheDocument();
-    // Reset is now guarded: tapping it opens a confirmation dialog (which the
-    // Modal portals to document.body) rather than resetting immediately.
-    const doc = within(canvasElement.ownerDocument.body);
-    canvas.getByRole("button", { name: "Reset" }).click();
-    await expect(await doc.findByText("Reset settings?")).toBeInTheDocument();
-  },
-};
-
-// ─── About ────────────────────────────────────────────────────────────────────
-
-export const About: Story = {
-  render: () => (
-    <TrpcHarness
-      prime={(qc) => {
-        qc.setQueryData(getQueryKey(trpc.health.buildHash, undefined, "query"), {
-          hash: "abc1234deadbeef",
-          deployedAt: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
-        });
-      }}
-    >
-      <ColumnFrame>
-        <AboutPage />
-      </ColumnFrame>
-    </TrpcHarness>
-  ),
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-    await expect(canvas.getByText("Web")).toBeInTheDocument();
-    await expect(canvas.getByText("Server")).toBeInTheDocument();
-    await expect(canvas.getByText("App build")).toBeInTheDocument();
-    await expect(canvas.getByText("Device ID")).toBeInTheDocument();
-    await expect(canvas.getByText("1366×1024")).toBeInTheDocument();
-    // Server SHA is shortened to 7 chars with a relative age appended.
-    await expect(canvas.getByText(/abc1234 · /)).toBeInTheDocument();
   },
 };

@@ -1,8 +1,6 @@
 import { QueryErrorResetBoundary } from "@tanstack/react-query";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { BUILD_HASH, BUILD_TIME } from "../config/build";
-import { getInstalledBuildNumber } from "../lib/app-update";
 import {
   attachCamera,
   type BoardCameraHost,
@@ -30,9 +28,7 @@ import {
 import { dismissAllModals, useAnyModalOpen } from "../lib/modal-open-store";
 import { panelSession, registerSessionEffects, setSessionEnabled } from "../lib/panel-session";
 import { bentoFor } from "../lib/placeholder-tiles";
-import { formatRelativeAge } from "../lib/relative-age";
-import { useSettings } from "../lib/settings";
-import { formatSha } from "../lib/short-sha";
+import { useDeveloperOverlay, useSettings } from "../lib/settings";
 import { closeTileDetail, openTileDetail } from "../lib/tile-detail-store";
 import { HOME_TILE, type TileRegistryEntry } from "../lib/tile-registry";
 import { useAlarmFiring } from "../lib/time-suite/alarm-store";
@@ -40,7 +36,7 @@ import { captureWakeBurst } from "../lib/wake-capture";
 import { AppUpdateBanner } from "./AppUpdateBanner";
 import { ConnectionLostBanner } from "./ConnectionLostBanner";
 import { DeviceNameBanner } from "./DeviceNameBanner";
-import { FpsSparkline } from "./FpsSparkline";
+import { DevOverlayHud } from "./DevOverlayHud";
 import {
   getVisibleTiles,
   useBoardDragPan,
@@ -112,116 +108,6 @@ function BoundedTile({ children }: { children: React.ReactNode }) {
         </TileBoundary>
       )}
     </QueryErrorResetBoundary>
-  );
-}
-
-// Small live FPS readout pinned top-right, for tuning the canvas feel on-device.
-// A subtle sparkline of the last 60s (120 samples at 2/sec) sits beneath the
-// number so a momentary stutter is visible after it has passed.
-function FpsMeter() {
-  const [fps, setFps] = useState(0);
-  const [samples, setSamples] = useState<number[]>([]);
-  useEffect(() => {
-    let raf = 0;
-    let frames = 0;
-    let last = performance.now();
-    const loop = (now: number) => {
-      frames++;
-      if (now - last >= 500) {
-        const fpsValue = Math.round((frames * 1000) / (now - last));
-        setFps(fpsValue);
-        // 120 samples × 500ms = 60s of history; sampled twice a second, not per
-        // rAF frame, so the array stays small and the sparkline stays legible.
-        setSamples((s) => [...s, fpsValue].slice(-120));
-        frames = 0;
-        last = now;
-      }
-      raf = requestAnimationFrame(loop);
-    };
-    raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
-  }, []);
-  return (
-    <div
-      style={{
-        position: "absolute",
-        top: 0,
-        right: 12,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "flex-end",
-        gap: 2,
-        fontFamily: "var(--mono)",
-        fontSize: 11,
-        letterSpacing: "-0.02em",
-        color: "var(--ink-3)",
-      }}
-    >
-      <span>{fps} fps</span>
-      <FpsSparkline samples={samples} />
-    </div>
-  );
-}
-
-// Git short SHA of the running web bundle, pinned bottom-left. The SHA is
-// prefixed with '#' and trailed by a compact "time since commit" readout (e.g.
-// "#a1b2c3d 10secs" → "3 days 3hrs") so you can tell at a glance both which
-// build a wall panel is on and how stale it is. The age ticks once a minute.
-function BuildHashBadge() {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const t = window.setInterval(() => setNow(Date.now()), 60_000);
-    return () => window.clearInterval(t);
-  }, []);
-  const age = formatRelativeAge(BUILD_TIME, now);
-  return (
-    <div
-      style={{
-        position: "absolute",
-        bottom: 0,
-        left: 12,
-        fontFamily: "var(--mono)",
-        fontSize: 11,
-        letterSpacing: "-0.02em",
-        color: "var(--ink-3)",
-      }}
-    >
-      {formatSha(BUILD_HASH)}
-      {age ? ` ${age}` : ""}
-    </div>
-  );
-}
-
-// Installed native app build number (CFBundleVersion), pinned bottom-left one
-// line ABOVE the git-sha BuildHashBadge so the two stack without overlapping.
-// Native-only: getInstalledBuildNumber resolves null in a plain browser
-// (dev/Storybook), where this renders nothing.
-function BuildNumberBadge() {
-  const [build, setBuild] = useState<number | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    void getInstalledBuildNumber().then((b) => {
-      if (!cancelled) setBuild(b);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  if (build === null) return null;
-  return (
-    <div
-      style={{
-        position: "absolute",
-        bottom: 16,
-        left: 12,
-        fontFamily: "var(--mono)",
-        fontSize: 11,
-        letterSpacing: "-0.02em",
-        color: "var(--ink-3)",
-      }}
-    >
-      build {build}
-    </div>
   );
 }
 
@@ -393,6 +279,9 @@ export function Board() {
   // Idle dimming is native-only: off-device (browser/Storybook) there is no
   // backlight to drop, so the whole feature is a no-op rather than a CSS scrim.
   const nativeDisplay = isNativeDisplay();
+  // #64: the three overlay switches (FPS/build-badge/build-number) drive one
+  // consolidated HUD now instead of three independent floaters.
+  const developerOverlay = useDeveloperOverlay();
 
   // The panel session's current phase. "ended" = the idle timeout elapsed:
   // the panel is dimmed, relocked, and homed. Drives the DimOverlay wake shield
@@ -878,9 +767,7 @@ export function Board() {
               start with the clock page closed. */}
           <TimeSuiteBanner />
         </NotificationBannerStack>
-        {settings.showFps ? <FpsMeter /> : null}
-        {settings.showBuildBadge ? <BuildHashBadge /> : null}
-        {settings.showBuildNumber ? <BuildNumberBadge /> : null}
+        {developerOverlay ? <DevOverlayHud /> : null}
         <SettingsButton />
         {/* Minimap + its centered-tile label are one visual unit (the label is
             positioned relative to the minimap box and reads as part of it), so

@@ -3,6 +3,10 @@
  * sidebar renders, each with its tinted icon chip and one-line blurb. Copied
  * from approved Concept A (`SettingsConceptGroupedCards`), with a Security page
  * inserted between Notifications and Debug.
+ *
+ * #64: Debug and About folded into Device (build info + the developer
+ * overlay toggle now live there instead of on their own pages), so those two
+ * keys are gone , 10 pages down to 8.
  */
 
 import type { IconName } from "../Icon";
@@ -15,9 +19,7 @@ export type PageKey =
   | "network"
   | "notifications"
   | "security"
-  | "logs"
-  | "debug"
-  | "about";
+  | "logs";
 
 export interface PageDef {
   key: PageKey;
@@ -41,7 +43,7 @@ export const PAGES: PageDef[] = [
     label: "Device",
     icon: "settings",
     tint: "#8e8e93",
-    blurb: "Name, battery, mount level",
+    blurb: "Name, battery, build, developer tools",
   },
   {
     key: "display",
@@ -78,7 +80,7 @@ export const PAGES: PageDef[] = [
     icon: "lock",
     // Indigo, not the red it used to share with Notifications , adjacent rows
     // in the sidebar read as one group when their chips are the same hue. Kept
-    // clear of Board's sky blue (#4a90d9) and Debug's violet (#9a6ad4).
+    // clear of Board's sky blue (#4a90d9).
     tint: "#5c6bc0",
     blurb: "PIN for locked tiles and settings",
   },
@@ -89,14 +91,6 @@ export const PAGES: PageDef[] = [
     tint: "#5aa2c7",
     blurb: "On-device log viewer",
     fill: true,
-  },
-  { key: "debug", label: "Debug", icon: "bolt", tint: "#9a6ad4", blurb: "FPS and build overlays" },
-  {
-    key: "about",
-    label: "About",
-    icon: "globe",
-    tint: "#6e6e6e",
-    blurb: "Build, version, licenses",
   },
 ];
 
