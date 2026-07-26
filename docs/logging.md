@@ -1,11 +1,11 @@
 # Structured logging (www-rw07)
 
-Status: **implemented** (www-rw07). Foundation (`@repo/logger`) + the backend services shipped in www-rw07.1. Library: **pino**. (bosun was a 4th consumer at the time; it has since been replaced by Pulumi + k8s and removed, so the current backend consumers are api, worker, media-worker.)
+Status: **implemented** (www-rw07). Foundation (`@repo/logger`) + the backend services shipped in www-rw07.1. Library: **pino**. (bosun was a 4th consumer at the time; it has since been replaced by Pulumi + k8s and removed. `media-worker` below was also a consumer at rollout time but does not exist in this repo today — the current backend consumers are api and worker only.)
 
 This document is the contract for adopting structured logging across the
-control-center **backend** (api, worker, media-worker). The web app is
-explicitly out of scope (see §9). Read this before writing any logging code or
-adding a `console.*` call to a backend service.
+control-center **backend** (api, worker, and historically media-worker — see
+above). The web app is explicitly out of scope (see §9). Read this before
+writing any logging code or adding a `console.*` call to a backend service.
 
 ---
 
@@ -181,6 +181,29 @@ patterns above):
 Errors are passed as `log.error({ err }, "msg")`, pino's standard `err`
 serializer renders `message` + `stack`. Never `JSON.stringify(err)` (drops the
 stack) and never interpolate the error into the message string.
+
+### `installFatalHandlers(log)`, process-level crash visibility
+
+```ts
+export function installFatalHandlers(log: Logger): void;
+```
+
+Registers process-wide `uncaughtException` / `unhandledRejection` handlers.
+Each logs `log.fatal({ err }, "uncaught exception" | "unhandled rejection")`
+(via pino's `err` serializer, so message + stack render, with a non-`Error`
+`unhandledRejection` reason normalized to an `Error` first) and then calls
+`process.exit(1)`. `fatal` is above `error` and therefore visible at the prod
+`info` default (§3). This does not change process behavior beyond logging ,
+the process still exits non-zero so k8s/Swarm restarts the pod , it exists
+solely so the crash-loop leaves a structured line explaining why, instead of
+silence.
+
+Call it once per process, immediately after building the root logger:
+`api`'s `server.ts` and `worker`'s `index.ts` both do this. It is deliberately
+**not** invoked from inside `createLogger()` itself, since `createLogger()`
+also runs in contexts (tests, tooling) that must not install process-level
+handlers , any future backend entrypoint must call it explicitly at its own
+startup.
 
 ---
 

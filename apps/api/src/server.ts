@@ -8,7 +8,7 @@ import "./boot-env";
 import { GENERATED_ROUTES } from "@features/_generated/http.gen";
 import { backfillWakePhotoIndex } from "@features/wakes/photos";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
-import { createLogger } from "@www/logger";
+import { createLogger, installFatalHandlers } from "@www/logger";
 import { ENV as config } from "@www/platform/env";
 import { db } from "./db/index";
 import { runMigrations } from "./db/migrate";
@@ -21,6 +21,10 @@ import { appRouter } from "./trpc/routers/index";
 // Root logger, created ONCE at process startup, bound to every line in this
 // process. Domain services use getLogger() (see docs/logging.md §2).
 const log = createLogger({ service: "api" });
+
+// An escaping async throw or an untracked rejected promise otherwise kills
+// this process with zero structured output; see docs/logging.md.
+installFatalHandlers(log);
 
 // Deploys reach this box automatically: push to main -> CI builds the image ->
 // the cluster rolls the service to the new digest (www-a8p).

@@ -237,6 +237,41 @@ export function resetChangeLog(key?: string): void {
 }
 
 /**
+ * Install process-wide `uncaughtException` / `unhandledRejection` handlers
+ * that log a `fatal` line (via pino's `err` serializer, so message + stack
+ * render correctly) and then `process.exit(1)`.
+ *
+ * Without this, an escaping async throw or an untracked rejected promise
+ * kills the process with ZERO structured output , the pod just crash-loops
+ * silently and nothing in `frontend_log`/stdout explains why. `fatal` is
+ * above `error` and therefore visible at the prod `info` default (see §3,
+ * the no-below-info rule).
+ *
+ * Deliberately NOT called from inside `createLogger()` itself: createLogger
+ * also runs in contexts (tests, tooling) that must not install process-level
+ * handlers. Call this explicitly, once, at each service's own startup ,
+ * immediately after building the root logger.
+ *
+ * We still exit non-zero after logging so k8s/Swarm restarts the pod; this
+ * is a visibility fix, not a recovery mechanism.
+ */
+export function installFatalHandlers(log: Logger): void {
+  process.on("uncaughtException", (err) => {
+    log.fatal({ err }, "uncaught exception");
+    process.exit(1);
+  });
+
+  process.on("unhandledRejection", (reason) => {
+    // `reason` is typed `unknown` and can be any thrown value (a string, a
+    // plain object, etc). Normalize to an Error so pino's `err` serializer
+    // renders a real message/stack instead of a malformed or missing one.
+    const err = reason instanceof Error ? reason : new Error(String(reason));
+    log.fatal({ err }, "unhandled rejection");
+    process.exit(1);
+  });
+}
+
+/**
  * Process-wide accessor. createLogger() registers the root; getLogger()
  * returns it. Throws if called before createLogger, a hard signal that a
  * module logged before the process initialized its logger (no silent

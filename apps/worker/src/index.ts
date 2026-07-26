@@ -32,12 +32,16 @@ import { GENERATED_JOBS } from "@features/_generated/jobs.gen";
 import { runSonosVolumeEnforcerCycle } from "@features/sound/enforcer";
 import { runPlaylistPollerCycle } from "@features/sound/poller";
 import { runWeatherIngestCycle } from "@features/weather/ingest";
-import { createLogger } from "@www/logger";
+import { createLogger, installFatalHandlers } from "@www/logger";
 import { ENV as config } from "@www/platform/env";
 import { createWorkerRuntime, type Worker } from "@www/worker-runtime";
 import { hasSufficientDisk } from "./disk-guard";
 
 const log = createLogger({ service: "worker" });
+
+// An escaping async throw or an untracked rejected promise otherwise kills
+// this process with zero structured output; see docs/logging.md.
+installFatalHandlers(log);
 
 // Apply pending migrations before any cycle touches the DB. The api also runs
 // this at boot; whichever wins is idempotent, and the worker must not poll a
