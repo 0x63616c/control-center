@@ -40,6 +40,7 @@ import {
   sanitizeClimateDesired,
   windowOpen,
 } from "@www/core";
+import { getLogger, logChange } from "@www/logger";
 import { ENV as config } from "@www/platform/env";
 import { deviceStateStore } from "../db/device-state-store";
 import { integrationSyncStore } from "../db/integration-sync-store";
@@ -211,6 +212,16 @@ async function applyDecision(
 ): Promise<void> {
   switch (decision.kind) {
     case "unreachable": {
+      // Log the lost thermostat so an outage is visible without a device
+      // export. logChange, not a raw info: unreachable holds steady across many
+      // cycles while HA is down, so only the transition is the event
+      // (docs/logging.md §3).
+      logChange(
+        getLogger(),
+        `climate-unreachable:${device.entityId}`,
+        { entityId: device.entityId },
+        "climate enforcer lost the thermostat",
+      );
       // Honest availability , never paint desired as a real reading when down.
       await store.writeReported({
         id: device.id,
@@ -225,6 +236,24 @@ async function applyDecision(
     // Adopt persists exactly like seed: desired := the commandable slice of
     // reported, no HA call , an external change became the new intent (www-qktc).
     case "adopt": {
+      if (decision.kind === "adopt") {
+        // Log the absorbed state so external drift (wall unit / ecobee app /
+        // schedule) that we accepted is visible. logChange, not a raw info ,
+        // same reasoning as light-enforcer's adopt line (docs/logging.md §3).
+        logChange(
+          getLogger(),
+          `climate-adopt:${device.entityId}`,
+          {
+            entityId: device.entityId,
+            adoptedMode: decision.desired.mode,
+            adoptedTarget: decision.desired.target,
+            adoptedTargetLow: decision.desired.targetLow,
+            adoptedTargetHigh: decision.desired.targetHigh,
+            adoptedFanMode: decision.desired.fanMode,
+          },
+          "climate enforcer adopted reported state",
+        );
+      }
       await store.writeReported({
         id: device.id,
         reported: mapped.reported,
@@ -235,6 +264,22 @@ async function applyDecision(
       return;
     }
     case "push": {
+      // Log the push before actuating , same reasoning as light-enforcer's push
+      // line: a drift that never converges pushes every cycle, so logChange
+      // (not a raw info) keeps a stuck thermostat loud but not a flood.
+      logChange(
+        getLogger(),
+        `climate-push:${device.entityId}`,
+        {
+          entityId: device.entityId,
+          mode: decision.desired.mode,
+          target: decision.desired.target,
+          targetLow: decision.desired.targetLow,
+          targetHigh: decision.desired.targetHigh,
+          fanMode: decision.desired.fanMode,
+        },
+        "climate enforcer pushing desired state to HA",
+      );
       await pushToHa(device.entityId, decision.desired);
       await store.writeReported({
         id: device.id,
