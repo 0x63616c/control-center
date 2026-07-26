@@ -8,8 +8,15 @@
 // confirm button, and GitHub redirects back to this server with a short-lived
 // code. Exchanging that code returns EVERY credential in one JSON response.
 //
+// ONE-SHOT. This CREATES an App; it cannot update one. The manifest flow has no
+// update mode and GitHub exposes no API for editing an App's permissions,
+// events, name or webhook URL - all of that is UI-only after creation. So
+// re-running this does NOT apply manifest edits to the existing bot, it mints a
+// SECOND App. The guard below refuses to run once the vault holds an app id;
+// --force is for deliberately provisioning a replacement.
+//
 // Usage:
-//   bun scripts/create-github-bot-app.ts [--port 8931] [--out <path>]
+//   bun scripts/create-github-bot-app.ts [--port 8931] [--out <path>] [--force]
 //
 // Then open http://127.0.0.1:<port>/ in a browser that is signed in to GitHub
 // as the account that should own the App, and click "Create GitHub App".
@@ -28,9 +35,39 @@ const argOf = (flag: string): string | undefined => {
   return i === -1 ? undefined : args[i + 1];
 };
 
+const FORCE = args.includes("--force");
 const PORT = Number(argOf("--port") ?? 8931);
 const OUT = argOf("--out") ?? join(tmpdir(), "github-bot-app-credentials.json");
 const REDIRECT = `http://127.0.0.1:${PORT}/cb`;
+
+// Refuse to mint a duplicate App. Checking for the KEY only - the value is never
+// read, decrypted or printed; `sops -d` would expose every other secret in the
+// file, so a grep against the encrypted YAML is deliberate.
+async function existingAppIdDeclared(): Promise<boolean> {
+  const vault = Bun.file(new URL("../secrets/vault.yaml", import.meta.url).pathname);
+  if (!(await vault.exists())) return false;
+  return (await vault.text()).includes("GITHUB_BOT_APP__APP_ID:");
+}
+
+if (!FORCE && (await existingAppIdDeclared())) {
+  console.error(
+    [
+      "Refusing to run: GITHUB_BOT_APP__APP_ID is already in secrets/vault.yaml.",
+      "",
+      "This script CREATES a GitHub App - it cannot update one. Re-running it",
+      "would mint a SECOND App, not apply changes to the existing bot.",
+      "",
+      "To change permissions, events, the name or the webhook URL of the app that",
+      "already exists, edit it in the settings UI:",
+      "  https://github.com/settings/apps/www-software-factory-bot",
+      "(and mirror the change into the manifest below, so a future re-creation matches).",
+      "",
+      "To rotate credentials:      scripts/rotate-github-bot.sh",
+      "To deliberately replace it: re-run with --force",
+    ].join("\n"),
+  );
+  process.exit(1);
+}
 
 // Guards the manifest POST against CSRF; GitHub echoes it back on the redirect.
 const nonce = crypto.randomUUID();
