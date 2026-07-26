@@ -111,11 +111,15 @@ The dashboard is not a normal responsive layout. It is a fixed wall-panel world:
 
 Tile placement is declared per-feature, not centralized. Each feature's `manifest.ts`
 declares its tile's id, label, components, and world position/size via `defineApp`
-(ADR-0001); `bun run apps:gen` collects every manifest into
-`features/_generated/tiles.gen.ts`, which is the board's actual source of tile data at
-runtime. `apps/web/src/lib/tile-registry.ts` still exists as the union point (it merges
-a now-empty `REGISTRY_ENTRIES` array with the folded features' manifests) but every real
-tile today comes from a feature — there is no hand-placed tile left. There is no runtime
+(ADR-0001). At runtime, `apps/web/src/lib/tile-registry.ts` still statically imports
+all 16 feature manifests by hand and unions them with a now-empty `REGISTRY_ENTRIES`
+array — every real tile today comes from a feature, there is no hand-placed tile left,
+but the board does not read from codegen for this. `bun run apps:gen` also emits
+`features/_generated/tiles.gen.ts` (`GENERATED_TILES`), a data-only projection of the
+same manifests, but as of this writing it has **no runtime consumer** — it's written
+and drift-checked but nothing imports it (open issue: #97, "tiles.gen.ts has no
+runtime consumer"). Placement data is therefore dual-sourced until that's resolved
+one way or the other. There is no runtime
 placement override table; a tile's position is edited by changing its manifest's
 `worldCol`/`worldRow`/`cols`/`rows` and re-running codegen.
 
