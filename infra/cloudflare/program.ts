@@ -15,7 +15,9 @@
 //   cloudflare apiToken   CLOUDFLARE_API__CREDENTIAL in vault (account-owned;
 //                          verify via GET /accounts/{account_id}/tokens/verify,
 //                          NOT /user/tokens/verify)
-//   accountId / zoneId / tunnelId / zoneName   CLOUDFLARE_API__* in vault
+//   accountId / zoneId / zoneName              CLOUDFLARE_API__* in vault
+//   tunnelSecret                               the managed tunnel's password;
+//                          REPLACE-FORCING, so never rotate it in place
 //   allowedEmail                               the OTP allow email (PII; SECRET config)
 
 import * as cloudflare from "@pulumi/cloudflare";
@@ -31,21 +33,6 @@ const cfg = new pulumi.Config();
 const zoneName = cfg.require("zoneName");
 const accountId = cfg.requireSecret("accountId");
 const zoneId = cfg.requireSecret("zoneId");
-// legacyTunnelId is the inherited `evee-webhooks` tunnel (#127). It stays the
-// CNAME target until `activeTunnel` is flipped to "managed", and is deleted once
-// the cutover has soaked.
-const legacyTunnelId = cfg.requireSecret("tunnelId");
-// activeTunnel selects which tunnel every proxied CNAME points at (#127):
-//   "legacy"  -> the imported evee-webhooks tunnel (pre-cutover, the default)
-//   "managed" -> the Pulumi-created `world-wide-webb` tunnel below
-// Both tunnels carry the SAME ingress rules across the overlap, so whichever one
-// DNS points at can serve. Flipping this is THE cutover: only do it once the new
-// cloudflared reports healthy connectors, and roll back by flipping it back.
-// Flip via: pulumi config set activeTunnel managed --stack prod
-const activeTunnel = cfg.get("activeTunnel") ?? "legacy";
-if (activeTunnel !== "legacy" && activeTunnel !== "managed") {
-  throw new Error(`activeTunnel must be "legacy" or "managed", got "${activeTunnel}"`);
-}
 // applyAccessGate gates the zone-wide access gate (www-cuuw): the *.<zone>
 // default-deny floor + tooling locks. Default false so the floor never blocks a
 // currently-public host (the live dashboard panel) before each
@@ -154,23 +141,20 @@ export const managedTunnelToken = managedTunnel.tunnelToken;
 export const managedTunnelId = managedTunnel.id;
 
 // --- Tunnel ingress config ---
-// A ZeroTrustTunnelCloudflaredConfig holds all ingress rules in order, ending in
-// the catchall http_status:404 (matches live exactly). BOTH tunnels carry the
-// same rules across the cutover overlap so either can serve.
-const ingressRules = [
-  ...desiredIngressRules(zoneName).map((r) => ({ hostname: r.hostname, service: r.service })),
-  { service: "http_status:404" },
-];
-
-new cloudflare.ZeroTrustTunnelCloudflaredConfig(
-  "tunnel-config",
-  { accountId, tunnelId: legacyTunnelId, config: { ingressRules } },
-  opts,
-);
-
+// A single ZeroTrustTunnelCloudflaredConfig holds all ingress rules in order,
+// ending in the catchall http_status:404.
 new cloudflare.ZeroTrustTunnelCloudflaredConfig(
   "tunnel-config-managed",
-  { accountId, tunnelId: managedTunnel.id, config: { ingressRules } },
+  {
+    accountId,
+    tunnelId: managedTunnel.id,
+    config: {
+      ingressRules: [
+        ...desiredIngressRules(zoneName).map((r) => ({ hostname: r.hostname, service: r.service })),
+        { service: "http_status:404" },
+      ],
+    },
+  },
   opts,
 );
 
@@ -190,9 +174,6 @@ new cloudflare.ZeroTrustTunnelCloudflaredConfig(
 // VALUE-IDENTICAL live target (verified: live `dig`/API content ==
 // <tunnelId>.cfargotunnel.com). The update is a no-op that self-heals on apply
 // (www-kbiy promoted this stack to a live deploy target).
-const cnameTunnelId: pulumi.Output<string> =
-  activeTunnel === "managed" ? managedTunnel.id : legacyTunnelId;
-
 for (const c of desiredCnames(zoneName)) {
   new cloudflare.Record(
     sub(c.hostname),
@@ -200,10 +181,8 @@ for (const c of desiredCnames(zoneName)) {
       zoneId,
       name: sub(c.hostname),
       type: "CNAME",
-      // The cutover switch (#127): one interpolated value drives EVERY CNAME, so
-      // flipping `activeTunnel` moves all tunnel-routed DNS in a single apply.
-      // legacyTunnelId is a secret Output, so build the target via interpolate.
-      content: pulumi.interpolate`${cnameTunnelId}.cfargotunnel.com`,
+      // The tunnel id is an Output, so build the target via interpolate.
+      content: pulumi.interpolate`${managedTunnel.id}.cfargotunnel.com`,
       proxied: c.proxied,
       ttl: 1,
       ...(c.comment ? { comment: c.comment } : {}),
@@ -219,7 +198,6 @@ for (const c of desiredCnames(zoneName)) {
 
 export const summary = {
   zoneName,
-  activeTunnel,
   accessApps: desiredAccessApps(zoneName, applyAccessGate).map((a) => a.domain),
   ingressHosts: desiredIngressRules(zoneName).map((r) => r.hostname),
   cnames: desiredCnames(zoneName).map((c) => c.hostname),

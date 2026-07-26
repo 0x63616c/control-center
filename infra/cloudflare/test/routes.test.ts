@@ -7,9 +7,9 @@ import {
   tunnelCnameTarget,
 } from "../src/routes.ts";
 
-// ADOPT-ONLY (www-j934.2): the ingress rules + CNAMEs must mirror the LIVE state
-// exactly. Ingress = just the product app host; CNAMEs = the product app host
-// PLUS the stray hooks-test leftover (asymmetric on purpose).
+// These pin the LIVE state exactly. Ingress and CNAMEs are now symmetric: the
+// stray hooks-test CNAME (which had no ingress rule) was deleted alongside the
+// evee-webhooks tunnel in #127.
 // dashboard.worldwidewebb.co removed in CC-2ff. The flattened
 // app--cc.worldwidewebb.co cutover host was retired in Task 7 Step C (the product
 // app route is now the single-label app.worldwidewebb.co). The dead portainer +
@@ -93,15 +93,13 @@ describe("desiredIngressRules", () => {
 });
 
 describe("desiredCnames", () => {
-  test("declares the product-derived app CNAME plus legacy proxied CNAMEs incl. stray hooks-test", () => {
+  test("declares exactly the product-derived CNAMEs, with no legacy leftovers", () => {
     const hosts = desiredCnames(ZONE)
       .map((c) => c.hostname)
       .sort();
-    expect(hosts).toEqual([
-      "app.worldwidewebb.co",
-      "hooks-test.worldwidewebb.co",
-      "temporal-ui.worldwidewebb.co",
-    ]);
+    expect(hosts).toEqual(["app.worldwidewebb.co", "temporal-ui.worldwidewebb.co"]);
+    // #127: the EVEE-218 hooks-test leftover was deleted with the old tunnel.
+    expect(hosts).not.toContain("hooks-test.worldwidewebb.co");
     // Task 7 Step C: the flattened app--cc cutover CNAME is retired.
     expect(hosts).not.toContain("app--cc.worldwidewebb.co");
   });
@@ -118,10 +116,8 @@ describe("desiredCnames", () => {
     const byHost = Object.fromEntries(desiredCnames(ZONE).map((c) => [c.hostname, c.comment]));
     // dashboard.worldwidewebb.co retired in CC-2ff
     expect(byHost).not.toHaveProperty("dashboard.worldwidewebb.co");
-    // legacy evee comment (kept verbatim so import is zero-diff)
-    expect(byHost["hooks-test.worldwidewebb.co"]).toBe(
-      "EVEE-218 webhook test (apex naming, covered by Universal SSL)",
-    );
+    // #127: the EVEE-218 leftover is gone, comment and all.
+    expect(byHost).not.toHaveProperty("hooks-test.worldwidewebb.co");
     // product-derived platform route comment (not a frozen legacy value)
     expect(byHost["app.worldwidewebb.co"]).toBe("platform:control-center private app route");
     expect(byHost["temporal-ui.worldwidewebb.co"]).toBe("platform:temporal web ui route");
