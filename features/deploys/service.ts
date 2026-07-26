@@ -21,7 +21,7 @@ import {
 
 const GITHUB_BASE_URL = "https://api.github.com";
 /** Name of the deploy job in ci.yml; its conclusion defines "deployed". */
-export const DEPLOY_JOB_NAME = "deploy";
+export const DEPLOY_JOB_NAME = "deploy-home-server";
 /** Poll gap while no run is in flight (hot runs poll every worker tick). */
 export const IDLE_POLL_MS = 60_000;
 /** Stored failure-log tail size. */
