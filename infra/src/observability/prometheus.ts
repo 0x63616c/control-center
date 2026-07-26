@@ -2,6 +2,7 @@
 // the TSDB, a single-replica Deployment and a ClusterIP Service. No operator,
 // no CRDs (ADR #207) — the whole server is legible in one file.
 
+import { createHash } from "node:crypto";
 import * as k8s from "@pulumi/kubernetes";
 import {
   OBSERVABILITY_NAMESPACE,
@@ -60,6 +61,7 @@ export type PrometheusResources = {
 
 export function installPrometheus(args: PrometheusArgs): PrometheusResources {
   const { provider, namespace, rulesConfigMap } = args;
+  const configYaml = buildPrometheusConfig();
   const opts = { provider, dependsOn: [namespace] };
 
   const serviceAccount = new k8s.core.v1.ServiceAccount(
@@ -104,7 +106,7 @@ export function installPrometheus(args: PrometheusArgs): PrometheusResources {
     CONFIG_MAP_NAME,
     {
       metadata: { name: CONFIG_MAP_NAME, namespace: OBSERVABILITY_NAMESPACE, labels },
-      data: { "prometheus.yml": buildPrometheusConfig() },
+      data: { "prometheus.yml": configYaml },
     },
     opts,
   );
@@ -134,7 +136,18 @@ export function installPrometheus(args: PrometheusArgs): PrometheusResources {
         // deadlock waiting.
         strategy: { type: "Recreate" },
         template: {
-          metadata: { labels },
+          metadata: {
+            labels,
+            // Roll the pod when the scrape config changes. A mounted ConfigMap
+            // updates in place but Prometheus only reads it at boot, so without
+            // this a config fix sits deployed-but-inert until some unrelated
+            // restart — which is exactly how the kube-state-metrics
+            // honor_labels fix looked "applied" while the running server was
+            // still using the old config.
+            annotations: {
+              "checksum/config": createHash("sha256").update(configYaml).digest("hex"),
+            },
+          },
           spec: {
             serviceAccountName: NAME,
             securityContext: { fsGroup: NOBODY_UID, runAsUser: NOBODY_UID, runAsNonRoot: true },

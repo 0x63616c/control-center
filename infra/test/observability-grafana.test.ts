@@ -105,3 +105,16 @@ describe("installGrafana (issues #209, #210)", () => {
     expect(spec.ports[0].port).toBe(3000);
   });
 });
+
+describe("config changes roll the pod", () => {
+  test("the Grafana pod template carries a config checksum annotation", async () => {
+    // A mounted ConfigMap updates in place, but Grafana reads provisioning
+    // only at boot. Without this a datasource change is deployed-but-inert
+    // until an unrelated restart.
+    const spec = await get<{ template: { metadata: { annotations?: Record<string, string> } } }>(
+      install().deployment,
+      "spec",
+    );
+    expect(spec.template.metadata.annotations?.["checksum/config"]).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
