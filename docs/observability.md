@@ -343,3 +343,16 @@ volume, means a gap in scraping).
 - `infra/observability/` — vendored dashboard JSON and recording rules.
 - `packages/platform/metrics/` — the `@www/platform/metrics` primitive.
 - `docs/logging.md` — the pino logging contract and the frontend log pipeline.
+
+## Known gap: local-path volumes report no PVC usage
+
+`kubelet_volume_stats_*` — what the Kubernetes / Persistent Volumes dashboard is built on — is
+only emitted for volumes the kubelet tracks that way. On this cluster that means the three
+NFS-backed PVCs in `control-center`; the `local-path` PVCs (`maps`, `plex-config`, `ha-config`
+and the three CNPG data volumes) report nothing, because local-path is a hostPath directory
+rather than a real volume plugin.
+
+So that dashboard covers NFS only. Headroom for everything on local-path is the node filesystem
+panels on Node Exporter / Nodes instead — which is the number that actually matters here, since
+every local-path PVC shares the node's single disk and none of them are quota-enforced. A PVC's
+declared size is documentation, not a limit.
