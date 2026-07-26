@@ -9,6 +9,7 @@ export * from "../deploys/schema";
 export * from "../events/schema";
 export * from "../felogs/schema";
 export * from "../guest-wifi/schema";
+export * from "../hooks/schema";
 export * from "../notif/schema";
 export * from "../sound/schema";
 export * from "../wakes/schema";

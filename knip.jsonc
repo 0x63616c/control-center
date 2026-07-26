@@ -23,6 +23,11 @@
     // (Slice 5 flips runtime consumers), and generated files are opaque to the
     // dead-code detector just as they are to biome (`.gen.ts` is ignored there too).
     "features/_generated/**",
+    // A HEADLESS App's manifest (#126). Manifests are collected by a build-time
+    // glob in scripts/apps-gen.ts, not imported, so the only edge knip can see is
+    // the tiles barrel importing manifests that declare tiles. A tileless App has
+    // no such edge and reads as dead, though deleting it would unregister the App.
+    "features/*/manifest.ts",
     "docs/media-tiles/**", // Design handoff bundle (prototypes/reference, not app code)
     "docs/captive-portal/design/**", // Captive portal design handoff (reference, not app code)
     "**/ios/**/public/**", // Capacitor web-bundle copies synced into iOS project (not source)

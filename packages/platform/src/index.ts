@@ -132,6 +132,21 @@ export type WebExposure =
       cloudflareAccess: true;
     }>
   | Readonly<{
+      // A host GitHub (or any other third party) must be able to POST to from
+      // the public internet, so it is deliberately NOT Access-gated. There is
+      // exactly one today, the webhook receiver, and its OWN auth is an HMAC
+      // over the request body — Cloudflare is not the boundary. Never reach for
+      // this to "make a page easier to load"; private-web is the default and
+      // this kind is a security decision each time.
+      kind: "public-web";
+      policy: "public";
+      target: ImplementedTargetName;
+      host: string;
+      hostname: string;
+      tls: WebTlsRequirement;
+      cloudflareAccess: false;
+    }>
+  | Readonly<{
       kind: "captive-portal-web";
       policy: "captive";
       target: ImplementedTargetName;
@@ -175,6 +190,25 @@ export function privateWeb(target: HomelabTarget, options: WebHostOptions): WebE
     hostname,
     tls: webTlsRequirement(hostname),
     cloudflareAccess: true,
+  };
+}
+
+/**
+ * A publicly reachable, NON-Access-gated tunnel host. See the `public-web`
+ * variant of {@link WebExposure} — using this means the service behind it owns
+ * its own authentication.
+ */
+export function publicWeb(target: HomelabTarget, options: WebHostOptions): WebExposure {
+  const hostname = webHostname(target, options.host);
+
+  return {
+    kind: "public-web",
+    policy: "public",
+    target: target.name,
+    host: options.host,
+    hostname,
+    tls: webTlsRequirement(hostname),
+    cloudflareAccess: false,
   };
 }
 
@@ -403,6 +437,9 @@ export function controlCenterServiceSecretUsages(): Record<
     ASC_KEY_ID: secretCatalog.appStoreConnect.keyId,
     ASC_ISSUER_ID: secretCatalog.appStoreConnect.issuerId,
     ASC_KEY_CONTENT: secretCatalog.appStoreConnect.p8Content,
+    // GitHub webhook signature verification (#126). Only the api serves the
+    // endpoint, but api/worker secret sets are kept in lockstep (www-51hf.35).
+    GITHUB_BOT_WEBHOOK_SECRET: secretCatalog.githubBot.webhookSecret,
     // Deploys-tile poller. Only the worker reads it, but api/worker secret sets
     // are kept in lockstep (www-51hf.35), so it appears in both.
     GITHUB_ACTIONS_TOKEN: secretCatalog.github.ghcrPat,
@@ -623,6 +660,13 @@ export type ControlCenterProductManifest = Readonly<{
   temporalUi: Readonly<{
     exposure: WebExposure;
   }>;
+  // The public GitHub webhook host (#126). Served by the api workload, but it
+  // is NOT the api's exposure: api stays `internalService` for in-cluster
+  // traffic and gains this one public hostname that the tunnel maps to it.
+  // Owned here because every other public name in this system is owned here.
+  hooks: Readonly<{
+    exposure: WebExposure;
+  }>;
   services: Readonly<Record<ControlCenterServiceName, ProductServiceDeclaration>>;
   secretUsages: Readonly<Record<ControlCenterSecretUsageName, ServiceSecretUsage>>;
   database: ProductDatabase;
@@ -658,6 +702,11 @@ export function controlCenterProductManifest(): ControlCenterProductManifest {
       // Single label under the zone, so Universal SSL's one-label wildcard
       // covers it (see webHostname).
       exposure: privateWeb(target, { host: "temporal-ui" }),
+    },
+    hooks: {
+      // PUBLIC on purpose: GitHub posts here from the internet and would be
+      // 403'd by Access. Auth is the HMAC in features/hooks/service.ts.
+      exposure: publicWeb(target, { host: "hooks" }),
     },
     services: {
       api: {

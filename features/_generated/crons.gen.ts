@@ -12,6 +12,7 @@ export const GENERATED_CRONS: readonly GeneratedCron[] = [
   { name: "deploys-purge", schedule: "0 5 * * *", source: "feature:deploys" },
   { name: "felogs-purge", schedule: "0 4 * * *", source: "feature:felogs" },
   { name: "guest-wifi-purge", schedule: "0 2 * * *", source: "feature:guest-wifi" },
+  { name: "hooks-purge", schedule: "0 6 * * *", source: "feature:hooks" },
   { name: "wake-photo-purge", schedule: "0 4 * * *", source: "feature:wakes" },
   { name: "weather-purge", schedule: "0 3 * * *", source: "feature:weather" },
 ];

@@ -218,6 +218,13 @@
       "when": 1784993698738,
       "tag": "0031_fixed_demogoblin",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1785087250841,
+      "tag": "0032_married_dexter_bennett",
+      "breakpoints": true
     }
   ]
 }

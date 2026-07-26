@@ -53,7 +53,7 @@ type CronSpec = ReturnType<typeof crons.cronSpecs>[number];
 const byName = (specs: CronSpec[], name: string) => specs.find((s) => s.name === name);
 
 describe("cronSpecs: the declared CronJob set", () => {
-  test("declares product backups plus deploys-purge, guest-wifi-purge, weather-purge, felogs-purge, wake-photo-purge and map-extract (no image-prune, no cert-renew)", () => {
+  test("declares product backups plus deploys-purge, guest-wifi-purge, weather-purge, felogs-purge, hooks-purge, wake-photo-purge and map-extract (no image-prune, no cert-renew)", () => {
     const names = crons
       .cronSpecs(NAS)
       .map((c) => c.name)
@@ -62,6 +62,7 @@ describe("cronSpecs: the declared CronJob set", () => {
       "deploys-purge",
       "felogs-purge",
       "guest-wifi-purge",
+      "hooks-purge",
       "map-extract",
       "pg-backup",
       "wake-photo-purge",
@@ -291,6 +292,7 @@ describe("cronSpecs image digest pinning", () => {
       "deploys-purge",
       "felogs-purge",
       "guest-wifi-purge",
+      "hooks-purge",
       "wake-photo-purge",
       "weather-purge",
     ]) {
