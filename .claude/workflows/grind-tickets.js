@@ -1,18 +1,15 @@
 export const meta = {
   name: 'grind-tickets',
-  description: 'Work a caller-specified set of GitHub issues: plan -> adversarial review -> revise -> implement in isolated worktrees, serialized merge to main, forced full rebuild, live deploy verification, then close only what actually shipped. Anything blocked is posted as a question on its own issue.',
+  description: 'Work a caller-specified set of GitHub issues: plan -> adversarial review -> revise -> implement in isolated worktrees, then open one draft PR per ticket. It never pushes to main, never merges, and never closes a ticket. Anything blocked is posted as a question on its own issue.',
   whenToUse:
-    'Batch-clearing backlog tickets unattended. REQUIRES an explicit ticket list: {tickets:[108,99,...]}. It never chooses its own work. Add {dryRun:true} to plan and implement without pushing.',
+    'Batch-clearing backlog tickets unattended. REQUIRES an explicit ticket list: {tickets:[108,99,...]}. It never chooses its own work. Output is draft PRs for you to review - merging, and therefore deploying, stays yours. Add {dryRun:true} to plan and implement without pushing.',
   phases: [
     { title: 'Plan', detail: 'explore the codebase, draft a full plan per ticket', model: 'sonnet' },
     { title: 'Review', detail: 'a distinct agent attacks each plan', model: 'sonnet' },
     { title: 'Revise', detail: 'planner answers every finding', model: 'sonnet' },
     { title: 'Implement', detail: 'fresh agent executes in an isolated worktree', model: 'sonnet' },
     { title: 'Blocked', detail: 'post questions and blockers onto their own issues', model: 'sonnet' },
-    { title: 'Merge', detail: 'serialized rebase + push to main, one at a time', model: 'sonnet' },
-    { title: 'Rebuild', detail: 'force_all dispatch so no image digest is stranded', model: 'sonnet' },
-    { title: 'Verify', detail: 'bounded CI polling + live pod check', model: 'sonnet' },
-    { title: 'Close', detail: 'close only tickets whose code is provably deployed', model: 'sonnet' },
+    { title: 'Propose', detail: 'serialized rebase + push branch + open a draft PR, one at a time', model: 'sonnet' },
   ],
 }
 
@@ -22,7 +19,7 @@ export const meta = {
 //                           workflow never selects its own work: picking what to
 //                           spend effort on is the owner's call, not an agent's.
 //   args.repoDir  string    override the checkout path
-//   args.dryRun   boolean   plan/review/revise/implement but never merge or push
+//   args.dryRun   boolean   plan/review/revise/implement but never push or open a PR
 // ---------------------------------------------------------------------------
 
 // `args` can arrive as a JSON STRING rather than an object , the Skill wrapper
@@ -135,28 +132,16 @@ const IMPL_SCHEMA = {
   required: ['ticket', 'status', 'branch', 'commits', 'filesChanged', 'verification', 'summary', 'notes', 'blocker'],
 }
 
-const MERGE_SCHEMA = {
+const PROPOSE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   required: ['ticket', 'status', 'sha', 'notes'],
   properties: {
     ticket: { type: 'number' },
-    status: { type: 'string', enum: ['pushed', 'skipped', 'conflict-abandoned'] },
-    sha: { type: 'string' },
+    status: { type: 'string', enum: ['proposed', 'skipped', 'conflict-abandoned'] },
+    pr: { type: 'number', description: 'The draft PR number opened for this ticket, if any.' },
+    sha: { type: 'string', description: 'Final sha on the pushed branch. Never a sha on main.' },
     notes: { type: 'string' },
-  },
-}
-
-const CI_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['runId', 'state', 'conclusion', 'buildsRan', 'detail'],
-  properties: {
-    runId: { type: 'string' },
-    state: { type: 'string', enum: ['running', 'finished', 'not-found'] },
-    conclusion: { type: 'string', enum: ['success', 'failure', 'cancelled', 'unknown'] },
-    buildsRan: { type: 'boolean', description: 'True only if build-* and merge-* jobs actually RAN (not skipped).' },
-    detail: { type: 'string', description: 'Job conclusions; verbatim failure output if red.' },
   },
 }
 
@@ -347,201 +332,75 @@ Return one line: the issue number and that you commented.`,
 await postBlockers(blockers)
 
 if (DRY_RUN) {
-  log('DRY RUN - stopping before merge.')
+  log('DRY RUN - stopping before pushing any branch.')
   return { dryRun: true, implemented: impls }
 }
 if (ready.length === 0) {
-  return { implemented: impls, merged: [], ci: null, closed: [], summary: 'nothing to merge' }
+  return { implemented: impls, proposed: [], summary: 'nothing to propose' }
 }
-
 // ---------------------------------------------------------------------------
-// Phase 5 - SERIALIZED merge. Never parallel: concurrent pushes to main evict
-// each other's queued CI runs and race on the shared checkout.
+// Phase 5 - PROPOSE. One draft PR per ticket.
+//
+// This used to cherry-pick onto main and push. It no longer does: main is now
+// branch-and-PR by default (#120), so an unattended workflow must not be the one
+// exception that still writes to main. Nothing here merges, so there is also
+// nothing to rebuild, deploy-verify or auto-close - those phases went with the
+// push. A human merging the PR is what triggers the deploy, and closing a ticket
+// stays a deliberate act after verifying live (AGENTS.md).
+//
+// Serialized rather than parallel: these branches share one checkout and the
+// worktrees they came from, and concurrent pushes race.
 // ---------------------------------------------------------------------------
 
-phase('Merge')
+phase('Propose')
 
-const merged = []
+const proposed = []
 for (const r of ready) {
-  const m = await agent(`${HOUSE_RULES}
+  const p = await agent(`${HOUSE_RULES}
 
-You are the MERGE agent for issue #${r.ticket}. Work in the MAIN checkout: ${REPO}.
-Other Claude sessions share this checkout and push to main concurrently. Use
-\`git -C ${REPO} ...\` for every git command so you can never act on the wrong tree.
+You are the PROPOSE agent for issue #${r.ticket}. NEVER push to main and never merge anything.
 
 Commits sit on local branch \`${r.branch}\` (SHAs: ${r.commits.join(', ')}), possibly in a
 worktree - \`git -C ${REPO} worktree list\` and \`git -C ${REPO} branch --list ${r.branch}\` locate them.
 
-1. \`git -C ${REPO} fetch origin\` then \`git -C ${REPO} status\`. If the checkout holds
-   UNCOMMITTED changes from another session, leave them completely alone - never stash,
-   never discard, never stage them. If they block you, report status "skipped".
-2. Bring the ticket commits onto main rebased on latest origin/main. Cherry-picking the
-   named SHAs is usually cleanest.
-3. On conflict, resolve only if mechanical and both intents survive. Otherwise abort cleanly
-   (\`git cherry-pick --abort\`), leave main untouched, report "conflict-abandoned".
-4. Run \`bun run typecheck\` from ${REPO}. If it fails because of YOUR merge, fix forward and
-   commit. If it fails for unrelated pre-existing reasons, note that and continue.
-5. \`git -C ${REPO} push origin main\`. If rejected because a peer pushed first: fetch, rebase,
-   re-run typecheck, push again. Up to 3 attempts.
-6. Report the final sha on origin/main.
+1. \`git -C ${REPO} fetch origin\`. Rebase \`${r.branch}\` onto latest origin/main so the PR is
+   mergeable. On a conflict you cannot resolve mechanically, abort cleanly, leave the branch
+   as it was, and report status "conflict-abandoned".
+2. Run \`bun run typecheck\` and the tests relevant to the change. If it fails because of THIS
+   branch, fix forward and commit. If it fails for unrelated pre-existing reasons, say so in
+   notes and continue. Never claim a passing check you did not see pass.
+3. Push the BRANCH, never main: \`git -C ${REPO} push -u origin ${r.branch}\`.
+   If the pre-push hook fails because the worktree has no node_modules, run \`bun install\`
+   there - do NOT reach for --no-verify.
+4. Open a DRAFT pull request:
+   \`gh pr create --draft --base main --head ${r.branch} --title "<conventional commit title>" --body-file <file>\`
+   The body states what changed and how it was verified, with real pasted output, and
+   references the issue as \`Refs #${r.ticket}\`. NEVER \`Fixes\`/\`Closes\` - that auto-closes an
+   unvalidated ticket the moment somebody merges.
+5. Report the PR number and the final sha on the branch.
 
-Do NOT watch CI. Push and return. Foreground only, no background jobs.
-Return the structured merge report.`, { label: `merge:#${r.ticket}`, phase: 'Merge', model: 'sonnet', schema: MERGE_SCHEMA })
-  if (m) merged.push(m)
-  log(`merge #${r.ticket}: ${m ? m.status + ' ' + m.sha : 'agent failed'}`)
+Return the structured report.`, { label: `propose:#${r.ticket}`, phase: 'Propose', model: 'sonnet', schema: PROPOSE_SCHEMA })
+  if (p) proposed.push(p)
+  log(`propose #${r.ticket}: ${p ? `${p.status} ${p.pr ? `PR #${p.pr}` : p.sha}` : 'agent failed'}`)
 }
 
-for (const m of merged) {
-  if (m.status !== 'pushed') {
+for (const p of proposed) {
+  if (p.status !== 'proposed') {
     blockers.push({
-      ticket: m.ticket,
-      stage: `merge (${m.status})`,
-      body: `The work for this ticket was implemented but could NOT be merged to main.\n\n${m.notes}\n\nThe commits still exist on branch \`ticket-${m.ticket}\` locally. Nothing was pushed and main was left untouched.`,
+      ticket: p.ticket,
+      stage: `propose (${p.status})`,
+      body: `The work for this ticket was implemented but no PR could be opened.\n\n${p.notes}\n\nThe commits still exist on branch \`ticket-${p.ticket}\` locally. Nothing was pushed to main.`,
     })
   }
 }
 await postBlockers(blockers)
 
-const pushed = merged.filter((m) => m.status === 'pushed')
-if (pushed.length === 0) {
-  return { implemented: impls, merged, ci: null, closed: [], summary: 'nothing reached main' }
-}
-
-// ---------------------------------------------------------------------------
-// Phase 6 - forced rebuild.
-// A batch of rapid pushes leaves the last run's path filter looking at only the
-// LAST push's diff, so build-*/merge-* get skipped and deploy ships stale digests
-// while reporting green. Earlier runs were evicted from the queue before starting
-// (GitHub keeps one pending run per concurrency group; cancel-in-progress:false
-// does not help). So never trust the push-triggered run - force a full rebuild.
-// ---------------------------------------------------------------------------
-
-phase('Rebuild')
-
-const dispatch = await agent(`${HOUSE_RULES}
-
-You are the REBUILD dispatcher. ${pushed.length} commits just landed on main:
-${pushed.map((p) => `  #${p.ticket} -> ${p.sha}`).join('\n')}
-
-Rapid pushes mean the push-triggered CI runs cannot be trusted: each run's path filter sees
-only its own push's diff, so image builds get skipped and deploy reuses stale digests while
-still reporting success.
-
-Do exactly this:
-1. \`cd ${REPO} && gh workflow run ci.yml --ref main -f force_all=true\`
-2. Wait ~15s, then \`gh run list --workflow=ci.yml --branch main --event workflow_dispatch --limit 3\`
-3. Return ONLY the numeric run id of the dispatch you just created. Nothing else.
-
-Do not watch it. Do not wait for it. Return the id immediately.`,
-  { label: 'dispatch-rebuild', phase: 'Rebuild', model: 'sonnet' })
-
-const runIdMatch = String(dispatch || '').match(/\b(\d{8,})\b/)
-const runId = runIdMatch ? runIdMatch[1] : null
-log(`force_all run: ${runId || 'UNKNOWN - verifier will locate it'}`)
-
-// ---------------------------------------------------------------------------
-// Phase 7 - bounded CI polling.
-// Each agent call watches for a BOUNDED time and returns. The loop lives in the
-// script, so no agent can answer "I'll report back when it finishes" and exit -
-// which is exactly how the first version of this workflow silently failed.
-// ---------------------------------------------------------------------------
-
-phase('Verify')
-
-let ci = null
-for (let attempt = 1; attempt <= 10; attempt++) {
-  const s = await agent(`${HOUSE_RULES}
-
-You are the CI VERIFIER (poll ${attempt} of 10). Work in ${REPO}.
-${runId ? `Target run: ${runId}.` : 'Find the newest workflow_dispatch CI run on main.'}
-
-Run EXACTLY this, which is bounded and WILL return:
-  cd ${REPO} && timeout 240 gh run watch ${runId || '<run-id>'} --exit-status --interval 20; echo "RC=$?"
-
-Then \`gh run view <id> --json status,conclusion,headSha,jobs\`.
-
-Rules that matter:
-- NEVER answer that you are waiting and will report later. You must return a verdict from the
-  data you have RIGHT NOW. If the run is still going after the timeout, return state "running".
-- Set buildsRan TRUE only if the build-*/merge-* jobs actually ran. If they are "skipped",
-  set it FALSE even when the run is green - a green run that built nothing did not deploy.
-- If the run is red, include the failing job's verbatim output in \`detail\`, and say whether
-  the failure comes from these commits or is pre-existing/another session's.
-
-Return the structured status.`, { label: `ci-poll-${attempt}`, phase: 'Verify', model: 'sonnet', schema: CI_SCHEMA })
-
-  if (s && s.state === 'finished') { ci = s; break }
-  if (s && s.state === 'not-found' && attempt >= 3) { ci = s; break }
-  log(`poll ${attempt}: ${s ? s.state : 'agent failed'}`)
-}
-
-if (!ci || ci.conclusion !== 'success' || !ci.buildsRan) {
-  log(`NOT closing any ticket: ${!ci ? 'no CI verdict' : `conclusion=${ci.conclusion} buildsRan=${ci.buildsRan}`}`)
-
-  // The code IS on main but is not provably deployed. Say so on every affected
-  // issue rather than leaving them silently open and looking untouched.
-  const why = !ci
-    ? 'CI never returned a verdict within the polling window.'
-    : ci.buildsRan === false && ci.conclusion === 'success'
-      ? `CI run ${ci.runId} was green but every image build was SKIPPED, so the deploy reused stale image digests. The code is on main but is not running in prod.`
-      : `CI run ${ci.runId} finished with conclusion "${ci.conclusion}".\n\n${ci.detail}`
-  for (const p of pushed) {
-    blockers.push({
-      ticket: p.ticket,
-      stage: 'deploy verification',
-      body: `The fix for this ticket was merged to main as ${p.sha}, but I could NOT verify it reached prod, so I am leaving this open.\n\n${why}\n\nNeeded: confirm whether this failure is caused by these commits or by unrelated work already on main, then re-run the deploy.`,
-    })
-  }
-  await postBlockers(blockers)
-
-  return {
-    implemented: impls.map((r) => ({ ticket: r.ticket, status: r.status, notes: r.notes })),
-    notLanded: notLanded.map((r) => ({ ticket: r.ticket, why: r.notes })),
-    merged, ci, closed: [],
-    summary: 'code is on main but NOT verified deployed - tickets left open deliberately',
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Phase 8 - close, but only what is provably live.
-// ---------------------------------------------------------------------------
-
-phase('Close')
-
-const closeReport = await agent(`${HOUSE_RULES}
-
-You are the CLOSER. CI run ${ci.runId} finished: conclusion=${ci.conclusion}, builds actually ran.
-
-First PROVE the code is live, do not assume:
-  kubectl get pods -n control-center
-Pod age must postdate the deploy. If pods did not roll, STOP and close nothing.
-
-Then, for each ticket below, decide honestly whether it is FULLY resolved. A ticket whose
-implementer reported "partial", or deliberately left part of the scope undone, must be
-COMMENTED and left OPEN - not closed. Closing a partially-done ticket is worse than leaving it.
-
-${pushed.map((p) => {
-  const impl = impls.find((i) => i.ticket === p.ticket) || {}
-  return `#${p.ticket} sha=${p.sha} status=${impl.status}\n  summary: ${impl.summary}\n  notes: ${impl.notes}`
-}).join('\n\n')}
-
-For fully-resolved tickets:
-  gh issue close <N> --comment "Shipped in <sha>. <summary>
-
-CI run ${ci.runId} green with a full force_all rebuild - all build/merge/deploy jobs ran.
-Verified live: control-center pods rolled to the new images."
-
-For partially-resolved ones, use \`gh issue comment <N> --body "..."\` stating exactly what
-shipped and what is deliberately left, so it is obvious later. Note: the flag is --body,
-not --comment, for \`gh issue comment\`.
-
-Return plain text: which tickets you closed, which you left open and why, and the pod evidence.`,
-  { label: 'close-tickets', phase: 'Close', model: 'sonnet' })
+const opened = proposed.filter((p) => p.status === 'proposed')
+log(`${opened.length} draft PR(s) opened - none merged. Review and merge them yourself.`)
 
 return {
   implemented: impls.map((r) => ({ ticket: r.ticket, status: r.status, files: r.filesChanged, notes: r.notes })),
   notLanded: notLanded.map((r) => ({ ticket: r.ticket, why: r.notes })),
-  merged,
-  ci,
-  closeReport,
+  proposed,
+  summary: `${opened.length} draft PR(s) opened for review. Nothing merged, nothing deployed, no ticket closed.`,
 }
