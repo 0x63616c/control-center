@@ -136,12 +136,15 @@ describe("runWeatherIngestCycle", () => {
     expect(forecast?.targetHour instanceof Date).toBe(true);
   });
 
-  it("records the heartbeat with an error message when the fetch fails", async () => {
+  it("records the heartbeat with an error message, then rethrows, when the fetch fails", async () => {
     captured.rows.length = 0;
     captured.streakRows = [];
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("bad", { status: 502 }));
 
-    await runWeatherIngestCycle();
+    // runCycle (www-bd0c) records the heartbeat BEFORE rethrowing, so the
+    // worker runtime observes the failure and drives its own onset/recovery
+    // liveness logging instead of this cycle silently swallowing it.
+    await expect(runWeatherIngestCycle()).rejects.toThrow("HTTP 502");
 
     const heartbeat = captured.rows.filter((r) => "integrationId" in r);
     expect(heartbeat).toHaveLength(1);
@@ -156,7 +159,7 @@ describe("runWeatherIngestCycle", () => {
     captured.streakRows = [{ n: 2 }];
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("bad", { status: 502 }));
 
-    await runWeatherIngestCycle();
+    await expect(runWeatherIngestCycle()).rejects.toThrow();
 
     const heartbeat = captured.rows.filter((r) => "integrationId" in r);
     expect(heartbeat).toHaveLength(1);

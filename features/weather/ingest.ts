@@ -4,7 +4,7 @@
  * queue job — importing this module directly via `@features/weather/ingest`
  * (apps/worker → @features is allowed).
  */
-import { createPgIntegrationSyncStore, heartbeat } from "@www/core";
+import { createPgIntegrationSyncStore, heartbeat, runCycle } from "@www/core";
 import { z } from "zod";
 
 import { config } from "./config";
@@ -84,51 +84,55 @@ function hourBoundaryMs(): number {
   return h.getTime();
 }
 
+// Routed through the shared runCycle helper (www-bd0c) instead of a hand-rolled
+// try/catch/heartbeat block: this cycle used to swallow its own errors after
+// recording the heartbeat, which hid every ingest failure from the worker
+// runtime's onset/recovery liveness logging (docs/logging.md §6) the same way
+// the other four heartbeat-backed cycles did before the fix.
 export async function runWeatherIngestCycle(): Promise<void> {
-  const hb = heartbeat(integrationSyncStore, INGEST_INTEGRATION_ID);
-  try {
-    const bundle = await fetchOpenMeteoBundle();
-    const now = new Date();
-    const boundary = hourBoundaryMs();
-    const h = bundle.hourly;
+  await runCycle(
+    heartbeat(integrationSyncStore, INGEST_INTEGRATION_ID),
+    "weather-ingest",
+    async () => {
+      const bundle = await fetchOpenMeteoBundle();
+      const now = new Date();
+      const boundary = hourBoundaryMs();
+      const h = bundle.hourly;
 
-    const hourlyRows = h.time.map((iso, i) => {
-      const target = new Date(iso);
-      const isPast = target.getTime() < boundary;
-      return {
-        kind: isPast ? ("observed" as const) : ("forecast" as const),
-        targetHour: target,
+      const hourlyRows = h.time.map((iso, i) => {
+        const target = new Date(iso);
+        const isPast = target.getTime() < boundary;
+        return {
+          kind: isPast ? ("observed" as const) : ("forecast" as const),
+          targetHour: target,
+          recordedAt: now,
+          tempF: Math.round(h.temperature_2m[i]),
+          feelsF: Math.round(h.apparent_temperature[i]),
+          humidity: Math.round(h.relative_humidity_2m[i]),
+          weatherCode: h.weather_code[i],
+          windMph: Math.round(h.wind_speed_10m[i]),
+          isDay: h.is_day[i] === 1,
+          precipProbability: h.precipitation_probability[i] ?? null,
+          uvIndex: null as number | null, // uv only present on `current`, not hourly
+        };
+      });
+      if (hourlyRows.length > 0) await db.insert(weatherReading).values(hourlyRows);
+
+      const d = bundle.daily;
+      const dailyRows = d.time.map((date, i) => ({
+        targetDate: date,
         recordedAt: now,
-        tempF: Math.round(h.temperature_2m[i]),
-        feelsF: Math.round(h.apparent_temperature[i]),
-        humidity: Math.round(h.relative_humidity_2m[i]),
-        weatherCode: h.weather_code[i],
-        windMph: Math.round(h.wind_speed_10m[i]),
-        isDay: h.is_day[i] === 1,
-        precipProbability: h.precipitation_probability[i] ?? null,
-        uvIndex: null as number | null, // uv only present on `current`, not hourly
-      };
-    });
-    if (hourlyRows.length > 0) await db.insert(weatherReading).values(hourlyRows);
-
-    const d = bundle.daily;
-    const dailyRows = d.time.map((date, i) => ({
-      targetDate: date,
-      recordedAt: now,
-      hiF: Math.round(d.temperature_2m_max[i]),
-      loF: Math.round(d.temperature_2m_min[i]),
-      weatherCode: d.weather_code[i],
-      precipProbability:
-        d.precipitation_probability_max[i] == null
-          ? null
-          : Math.round(d.precipitation_probability_max[i] as number),
-      sunriseIso: d.sunrise[i] ?? null,
-      sunsetIso: d.sunset[i] ?? null,
-    }));
-    if (dailyRows.length > 0) await db.insert(weatherDailyReading).values(dailyRows);
-
-    await hb.ok();
-  } catch (err) {
-    await hb.fail(err instanceof Error ? err.message : String(err));
-  }
+        hiF: Math.round(d.temperature_2m_max[i]),
+        loF: Math.round(d.temperature_2m_min[i]),
+        weatherCode: d.weather_code[i],
+        precipProbability:
+          d.precipitation_probability_max[i] == null
+            ? null
+            : Math.round(d.precipitation_probability_max[i] as number),
+        sunriseIso: d.sunrise[i] ?? null,
+        sunsetIso: d.sunset[i] ?? null,
+      }));
+      if (dailyRows.length > 0) await db.insert(weatherDailyReading).values(dailyRows);
+    },
+  );
 }

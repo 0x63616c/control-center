@@ -282,7 +282,10 @@ describe("runDeviceSyncCycle heartbeat", () => {
       .mockReturnValue({ onConflictDoUpdate: vi.fn().mockResolvedValue(undefined) });
     mockDbInsert.mockReturnValue({ values: insertValues });
 
-    await runDeviceSyncCycle(store);
+    // runCycle now rethrows after recording the heartbeat (www-bd0c), so the
+    // worker runtime observes the failure and drives its own onset/recovery
+    // logging; the heartbeat write below is still expected to have landed.
+    await expect(runDeviceSyncCycle(store)).rejects.toThrow("HA down");
 
     expect(insertValues).toHaveBeenCalledWith(
       expect.objectContaining({ lastError: "HA down", consecutiveFailures: 3 }),

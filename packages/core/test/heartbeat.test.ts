@@ -53,17 +53,31 @@ describe("runCycle", () => {
     expect(row?.consecutiveFailures).toBe(0);
   });
 
-  it("swallows a work failure and records it as a heartbeat failure", async () => {
+  it("records the heartbeat failure BEFORE rethrowing the original error", async () => {
     const store = createInMemoryIntegrationSyncStore();
     await store.recordFail("device-sync", "prior");
     const work = vi.fn().mockRejectedValue(new Error("kaboom"));
 
-    await expect(
-      runCycle(heartbeat(store, "device-sync"), "device-sync", work),
-    ).resolves.toBeUndefined();
+    // The heartbeat write is a store side effect independent of the rejection ,
+    // assert it landed, not just that the promise eventually rejects, so a
+    // regression that reorders fail()-after-throw (losing the streak) would be
+    // caught even though "rejects" alone wouldn't notice.
+    await expect(runCycle(heartbeat(store, "device-sync"), "device-sync", work)).rejects.toThrow(
+      "kaboom",
+    );
 
     const row = await store.read("device-sync");
     expect(row?.lastError).toBe("kaboom");
     expect(row?.consecutiveFailures).toBe(2);
+  });
+
+  it("rethrows the exact original error instance (not a wrapped one)", async () => {
+    const store = createInMemoryIntegrationSyncStore();
+    const original = new Error("boom");
+    const work = vi.fn().mockRejectedValue(original);
+
+    await expect(runCycle(heartbeat(store, "device-sync"), "device-sync", work)).rejects.toBe(
+      original,
+    );
   });
 });
