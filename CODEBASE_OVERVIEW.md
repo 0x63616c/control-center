@@ -160,9 +160,10 @@ Most feature-owned business logic lives inside each feature's own facet files
 (`features/<id>/api.ts`, `jobs.ts`) rather than a shared `services/` directory.
 `apps/api/src/services/` still holds a residual set of interval-cycle enforcers that
 are hand-wired into `apps/worker` rather than folded into a feature yet: climate,
-light, sonos-volume, and device-sync enforcers, party mode, ASC version polling,
-weight ingest (including the Withings variant), and YouTube ingest. These are pending
-a hoist to a shared substrate (tracked as open structural debt); see
+light, and device-sync enforcers, party mode, ASC version polling, weight ingest
+(including the Withings variant), and YouTube ingest. The sonos-volume enforcer has
+already been folded into `features/sound/enforcer.ts`. The rest are pending a hoist
+to a shared substrate (tracked as open structural debt); see
 `docs/superpowers/reviews/2026-07-23-post-track-c-codebase-review.md` for the current
 list.
 
@@ -269,7 +270,7 @@ Important infra files:
 
 GitHub Actions builds **multi-arch** images in `.github/workflows/ci.yml`: each Dockerfile builds twice on native runners (`amd64` on `ubuntu-24.04`, `arm64` on `ubuntu-24.04-arm`, no QEMU emulation), each pushing a per-arch child tag, and a dependent `merge-*` job composes them into a multi-arch manifest index via `docker buildx imagetools create`. amd64 is not optional — the home-server node is x86. CI then joins the tailnet with an ephemeral `tag:ci` identity, writes kubeconfig, sets Pulumi image digest config, and runs `pulumi up --stack home-server`.
 
-The image digest config key must be namespaced as `ccinfra:imageDigests.<svc>`. Without `ccinfra:`, the Pulumi program does not read the values correctly.
+The image digest config key must be namespaced as `wwwinfra:imageDigests.<svc>`. Without `wwwinfra:`, the Pulumi program does not read the values correctly.
 
 ## Cron Jobs
 
@@ -333,7 +334,7 @@ the default, so tests inject the in-memory adapter instead of stubbing drizzle.
 - Use `bun` and `bunx`, never `npm` or `npx`.
 - Run tests with `bun run test`, never bare `bun test`.
 - Do not add fake, fallback, or placeholder data. Unavailable data should shimmer or error and recover.
-- Backend code uses structured logging through `@repo/logger`, not `console.*`.
+- Backend code uses structured logging through `@www/logger`, not `console.*`.
 - Tiles should use shared UI primitives from `apps/web/src/components/ui`.
 - Component work should be Storybook-first where practical.
 - IDs should default to Stripe-style `prefix_<id>`.
