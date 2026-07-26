@@ -7,7 +7,7 @@
  * `@www/core`'s other exports (DeviceKind, mergeDeviceState, etc.) that
  * `service.ts` also imports directly from `@www/core`.
  */
-import { createHomeAssistantClient } from "@www/core";
+import { haFromConfig } from "@www/core";
 import { config } from "./config";
 
-export const ha = createHomeAssistantClient({ baseUrl: config.HA_URL, token: config.HA_TOKEN });
+export const ha = haFromConfig(config);

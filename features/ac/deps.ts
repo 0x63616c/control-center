@@ -8,12 +8,7 @@
  * SAME shared `device_state` row (rendezvous via `CLIMATE_DEVICE_ID`) — correct,
  * they are stateless adapters, not owners of state.
  */
-import {
-  createFeatureDb,
-  createHomeAssistantClient,
-  createPgDeviceStateStore,
-  deviceState,
-} from "@www/core";
+import { createFeatureDb, createPgDeviceStateStore, deviceState, haFromConfig } from "@www/core";
 import { config } from "./config";
 
 // The device_state store over this feature's own lazy pool (no connection
@@ -23,4 +18,4 @@ export const deviceStateStore = createPgDeviceStateStore(
 );
 
 // The env-free HA client bound to this feature's config slice.
-export const ha = createHomeAssistantClient({ baseUrl: config.HA_URL, token: config.HA_TOKEN });
+export const ha = haFromConfig(config);
