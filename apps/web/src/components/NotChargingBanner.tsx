@@ -8,8 +8,15 @@ const NOTIF_ID = "battery-not-charging";
 // Single source of truth so the DOM and the shared notifications store stay in
 // sync. Named after the device rather than a hardcoded "iPad" so a push landing
 // on a phone says which panel is unplugged.
-const message = (deviceName: string) =>
-  `${deviceName} is not connected to power or charging properly`;
+//
+// Split into headline + detail because this pair becomes an APNs alert's
+// title/body (notification-bridge → apns.buildApnsPayload). iOS renders a
+// notification title on ONE line and truncates it hard, so the headline stays
+// short enough to survive that ("Kitchen Panel is not charging"), and the
+// explanation and the thing to actually go do live in the body, which iOS wraps
+// over two lines and expands on long-press.
+const message = (deviceName: string) => `${deviceName} is not charging`;
+const detail = "Running on battery. Check the dock cable and power adapter.";
 
 /**
  * Prominent red banner (top-right inside .board) shown when the panel's own
@@ -35,7 +42,7 @@ export function NotChargingBanner() {
 
   useEffect(() => {
     if (notCharging) {
-      raiseNotification({ id: NOTIF_ID, message: message(deviceName) });
+      raiseNotification({ id: NOTIF_ID, message: message(deviceName), detail });
     } else {
       clearNotification(NOTIF_ID);
     }
@@ -48,5 +55,11 @@ export function NotChargingBanner() {
 
 /** Presentational banner, exported for Storybook. */
 export function NotChargingBannerView({ deviceName }: { deviceName: string }) {
-  return <NotificationBanner tone="red">{message(deviceName)}</NotificationBanner>;
+  // The panel banner has horizontal room the iOS title does not, so it shows
+  // both halves: headline first, then the same detail line the push body uses.
+  return (
+    <NotificationBanner tone="red">
+      {message(deviceName)} <span style={{ opacity: 0.75 }}>· {detail}</span>
+    </NotificationBanner>
+  );
 }

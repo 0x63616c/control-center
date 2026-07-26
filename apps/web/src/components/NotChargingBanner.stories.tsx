@@ -45,6 +45,7 @@ export const NotCharging: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(canvas.getByRole("status")).toBeInTheDocument();
-    await expect(canvas.getByText(/Kitchen Panel is not connected to power/i)).toBeInTheDocument();
+    await expect(canvas.getByText(/Kitchen Panel is not charging/i)).toBeInTheDocument();
+    await expect(canvas.getByText(/Check the dock cable and power adapter/i)).toBeInTheDocument();
   },
 };
