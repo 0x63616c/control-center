@@ -33,17 +33,64 @@ export const Loading: Story = {
   },
 };
 
-// ── Story: Error / empty state ────────────────────────────────────────────────
+// ── Story: Offline (#42) , car fully off or unreachable, no last-seen known ──
 
 export const ErrorState: Story = {
-  name: "Error / empty",
-  args: { status: TeslaTileStatus.Error },
+  name: "Offline · unknown last-seen",
+  args: { status: TeslaTileStatus.Error, lastSeenAt: null },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    // Error falls through to TeslaSkeleton , same appearance as loading (title stays visible)
     const tile = canvasElement.querySelector(".tile");
     expect(tile).not.toBeNull();
     expect(canvas.getByText("Tesla")).toBeInTheDocument();
+    expect(canvas.getAllByText("Offline").length).toBeGreaterThan(0);
+    // No fabricated age when we've never had a successful poll this session.
+    expect(canvas.getByText("Last online unknown")).toBeInTheDocument();
+  },
+};
+
+// ── Story: Offline with a known last-seen time ───────────────────────────────
+
+export const OfflineWithLastSeen: Story = {
+  name: "Offline · last online 5hrs ago",
+  args: {
+    status: TeslaTileStatus.Error,
+    lastSeenAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(),
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    expect(canvas.getAllByText("Offline").length).toBeGreaterThan(0);
+    expect(canvas.getByText("Last online 5hrs ago")).toBeInTheDocument();
+  },
+};
+
+// ── Story: stale-but-populated , the poll is failing but a last-known snapshot
+// is still shown (data-first precedence, www-355t.13); flagged rather than
+// silently read as live (#42). ────────────────────────────────────────────────
+
+export const StalePolling: Story = {
+  name: "Populated · currently offline (stale snapshot)",
+  args: {
+    status: TeslaTileStatus.Populated,
+    locked: true,
+    charging: false,
+    rate: 0,
+    pct: 64,
+    range: 192,
+    odo: "12,345 mi",
+    climate: 66,
+    lat: 34.0537,
+    lon: -118.2428,
+    place: "Home",
+    stale: true,
+    updatedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    expect(canvas.getByText(/Offline · synced 2hrs ago/)).toBeInTheDocument();
+    // Last-known values still render (data-first), dimmed like the Asleep case.
+    expect(canvas.getByText("64%")).toBeInTheDocument();
+    expect(canvasElement.querySelector("[data-asleep]")).not.toBeNull();
   },
 };
 

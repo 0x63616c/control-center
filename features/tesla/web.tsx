@@ -1,5 +1,5 @@
 import { Icon } from "@/components/Icon";
-import { Skeleton, Stat, Tile, TileHeader, TileStatus } from "@/components/ui";
+import { Pill, PillTone, Skeleton, Stat, Tile, TileHeader, TileStatus } from "@/components/ui";
 import { POLL } from "@/lib/hooks";
 import { formatRelativeAge } from "@/lib/relative-age";
 import { trpc } from "@/lib/trpc";
@@ -101,6 +101,50 @@ function TeslaSkeleton() {
   );
 }
 
+// ── Offline layout (#42): the car is fully off or unreachable (no signal in a
+// multi-story garage), as opposed to "asleep" above, where HA can still see it.
+// getTeslaData() throws when even the battery entity is dead, which is the
+// server's only signal for "car unreachable" , there is no separate
+// asleep-vs-offline distinction available from HA today, so this is a genuine
+// error state, not a variant of Populated. ────────────────────────────────────
+
+function TeslaOffline({ lastSeenAt }: { lastSeenAt: string | null }) {
+  const age = lastSeenAt ? formatRelativeAge(Date.parse(lastSeenAt), Date.now()) : null;
+  return (
+    <Tile padding={22} style={{ gap: 16 }}>
+      <TileHeader
+        icon="car"
+        title="Tesla"
+        right={
+          <Pill tone={PillTone.Amber}>
+            <Icon name="wifi-off" s={14} />
+            Offline
+          </Pill>
+        }
+      />
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 8,
+          color: "var(--ink-2)",
+        }}
+      >
+        <Icon name="wifi-off" s={32} c="var(--ink-3)" />
+        <div style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)" }}>Offline</div>
+        {/* No fabricated age when we've never seen a successful poll this
+            session , honest absence beats a made-up number. */}
+        <div style={{ fontSize: 12.5 }}>
+          {age ? `Last online ${age} ago` : "Last online unknown"}
+        </div>
+      </div>
+    </Tile>
+  );
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export const TeslaTileStatus = TileStatus;
@@ -108,7 +152,12 @@ export type TeslaTileStatus = TileStatus;
 
 export type TeslaTileViewProps =
   | { status: typeof TileStatus.Loading }
-  | { status: typeof TileStatus.Error }
+  | {
+      status: typeof TileStatus.Error;
+      /** ISO timestamp of the last successful poll this session; null when
+       *  we've never had one (e.g. cold start with the car already unreachable). */
+      lastSeenAt?: string | null;
+    }
   | {
       status: typeof TileStatus.Populated;
       locked: boolean;
@@ -125,21 +174,35 @@ export type TeslaTileViewProps =
       asleep?: boolean;
       /** ISO timestamp of the snapshot the values came from; null when unknown. */
       updatedAt?: string | null;
+      /** True when the LATEST poll failed but a prior snapshot is still shown
+       *  (www-355t.13 data-first precedence) , distinct from `asleep`, which is
+       *  a real HA-reported car state. This is "we don't actually know if this
+       *  is still true, the car stopped answering." */
+      stale?: boolean;
     };
 
 // ── Pure view ────────────────────────────────────────────────────────────────
 
 export function TeslaTileView(props: TeslaTileViewProps) {
-  if (props.status !== TileStatus.Populated) return <TeslaSkeleton />;
+  if (props.status === TileStatus.Loading) return <TeslaSkeleton />;
+  if (props.status === TileStatus.Error) {
+    return <TeslaOffline lastSeenAt={props.lastSeenAt ?? null} />;
+  }
 
   const { locked, charging, rate, pct, range, odo, climate, lat, lon, place } = props;
   const asleep = props.asleep === true;
+  const stale = props.stale === true;
   // While asleep every value is a stale snapshot , suppress the live "charging"
   // treatment (green bar/accent) so stale data never reads as fresh activity.
-  const chargingLive = charging && !asleep;
+  // A poll failure (`stale`) is the same situation , the shown values are the
+  // last-known snapshot, not confirmed current , so it dims the same way.
+  const dimmed = asleep || stale;
+  const chargingLive = charging && !dimmed;
   const age =
     asleep && props.updatedAt ? formatRelativeAge(Date.parse(props.updatedAt), Date.now()) : null;
   const asleepLabel = asleep ? (age ? `Asleep · ${age}` : "Asleep") : null;
+  const staleAge =
+    stale && props.updatedAt ? formatRelativeAge(Date.parse(props.updatedAt), Date.now()) : null;
 
   return (
     <Tile padding={22} style={{ gap: 16 }}>
@@ -154,6 +217,17 @@ export function TeslaTileView(props: TeslaTileViewProps) {
         }
       />
 
+      {/* stale banner , the poll is currently failing but we still have a last-known
+          snapshot to show (data-first precedence, www-355t.13); this is the honest
+          "we don't know if this is still true" flag the silent stale-Populated case
+          was missing (#42). */}
+      {stale && (
+        <Pill tone={PillTone.Amber} style={{ alignSelf: "flex-start" }}>
+          <Icon name="wifi-off" s={13} />
+          {staleAge ? `Offline · synced ${staleAge} ago` : "Offline · last sync unknown"}
+        </Pill>
+      )}
+
       {/* map */}
       <div style={{ flex: 1, minHeight: 140 }}>
         <TeslaMap lat={lat} lon={lon} place={place} />
@@ -161,12 +235,12 @@ export function TeslaTileView(props: TeslaTileViewProps) {
 
       {/* charge + stats , dimmed as a block while the snapshot is stale */}
       <div
-        data-asleep={asleep ? "true" : undefined}
+        data-asleep={dimmed ? "true" : undefined}
         style={{
           display: "flex",
           flexDirection: "column",
           gap: 16,
-          opacity: asleep ? 0.55 : 1,
+          opacity: dimmed ? 0.55 : 1,
         }}
       >
         {/* charging bar */}
@@ -186,13 +260,19 @@ export function TeslaTileView(props: TeslaTileViewProps) {
 // ── Container ────────────────────────────────────────────────────────────────
 
 export function TeslaTile() {
-  const q = useTileQuery(
-    trpc.tesla.get.useQuery(undefined, {
-      refetchInterval: POLL.tesla,
-    }),
-  );
+  const raw = trpc.tesla.get.useQuery(undefined, { refetchInterval: POLL.tesla });
+  const q = useTileQuery(raw);
 
-  if (q.status !== TileStatus.Populated) return <TeslaTileView status={q.status} />;
+  // dataUpdatedAt is react-query's own "when did `data` last actually change"
+  // stamp , a real timestamp (0 when there has never been a successful fetch
+  // this session), not a fabricated one. It's the only "last seen" signal
+  // available today: nothing persists it server-side (#42's open item).
+  const lastSeenAt = raw.dataUpdatedAt > 0 ? new Date(raw.dataUpdatedAt).toISOString() : null;
+
+  if (q.status === TileStatus.Loading) return <TeslaTileView status={q.status} />;
+  if (q.status === TileStatus.Error) {
+    return <TeslaTileView status={q.status} lastSeenAt={lastSeenAt} />;
+  }
 
   const data = q.data;
   return (
@@ -208,6 +288,11 @@ export function TeslaTile() {
       lat={data.lat ?? null}
       lon={data.lon ?? null}
       place={data.place ?? ""}
+      // The latest poll failed but useTileQuery's data-first precedence
+      // (www-355t.13) is still showing this last-known snapshot , flag it as
+      // stale rather than let it read as live (#42).
+      stale={raw.isError}
+      updatedAt={raw.isError ? lastSeenAt : undefined}
     />
   );
 }
