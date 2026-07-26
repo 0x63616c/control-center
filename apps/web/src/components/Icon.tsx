@@ -34,6 +34,7 @@ import {
   Volume2,
   Weight,
   Wifi,
+  WifiOff,
   Zap,
 } from "lucide-react";
 
@@ -52,6 +53,7 @@ export type IconName =
   | "lock"
   | "unlock"
   | "wifi"
+  | "wifi-off"
   | "pin"
   | "cam"
   | "camera"
@@ -104,6 +106,7 @@ export const GLYPHS: Record<IconName, LucideIcon> = {
   lock: Lock,
   unlock: LockOpen,
   wifi: Wifi,
+  "wifi-off": WifiOff,
   pin: MapPin,
   cam: Video,
   camera: Camera,

@@ -96,16 +96,55 @@ describe("TeslaTileView , loading/skeleton state", () => {
   });
 });
 
-describe("TeslaTileView , error state", () => {
+describe("TeslaTileView , error/offline state (#42)", () => {
   it("renders a .tile container", () => {
     const { container } = render(<TeslaTileView status="error" />);
     const tile = container.querySelector(".tile") as HTMLElement;
     expect(tile).toBeInTheDocument();
   });
 
-  it("keeps the Tesla header visible in the error/retry state so the tile is identifiable", () => {
+  it("keeps the Tesla header visible in the offline state so the tile is identifiable", () => {
     render(<TeslaTileView status="error" />);
     expect(screen.getByText("Tesla")).toBeInTheDocument();
+  });
+
+  it("renders a distinct Offline state, not the loading skeleton", () => {
+    render(<TeslaTileView status="error" />);
+    expect(screen.getAllByText("Offline").length).toBeGreaterThan(0);
+  });
+
+  it("shows last-seen age when lastSeenAt is provided", () => {
+    render(
+      <TeslaTileView
+        status="error"
+        lastSeenAt={new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString()}
+      />,
+    );
+    expect(screen.getByText("Last online 5hrs ago")).toBeInTheDocument();
+  });
+
+  it("says last-seen is unknown rather than fabricating an age when there is none", () => {
+    render(<TeslaTileView status="error" lastSeenAt={null} />);
+    expect(screen.getByText("Last online unknown")).toBeInTheDocument();
+  });
+});
+
+describe("TeslaTileView , stale-but-populated state (#42)", () => {
+  it("renders a stale pill and dims the data block when the latest poll failed", () => {
+    const { container } = render(
+      <TeslaTileView
+        {...populatedProps}
+        stale
+        updatedAt={new Date(Date.now() - 90 * 60 * 1000).toISOString()}
+      />,
+    );
+    expect(screen.getByText(/Offline · synced/)).toBeInTheDocument();
+    expect(container.querySelector("[data-asleep]")).not.toBeNull();
+  });
+
+  it("does not render the stale pill when the poll is healthy", () => {
+    render(<TeslaTileView {...populatedProps} />);
+    expect(screen.queryByText(/Offline · synced/)).not.toBeInTheDocument();
   });
 });
 

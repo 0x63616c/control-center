@@ -145,18 +145,53 @@ describe("TeslaTile", () => {
     expect(screen.queryByText("264 mi")).not.toBeInTheDocument();
   });
 
-  it("renders skeleton on error (no fake data)", async () => {
+  it("renders a distinct Offline state on error, not the loading skeleton (#42)", async () => {
     const useQuery = await getTeslaUseQuery();
     useQuery.mockReturnValue({
       data: undefined,
       isLoading: false,
       isError: true,
+      dataUpdatedAt: 0,
     });
 
     render(<TeslaTile />);
 
     // Real data must NOT be rendered
     expect(screen.queryByText("264 mi")).not.toBeInTheDocument();
+    // ... and it reads as offline, not as a perpetual shimmer.
+    expect(screen.getAllByText("Offline").length).toBeGreaterThan(0);
+    expect(screen.getByText("Last online unknown")).toBeInTheDocument();
+  });
+
+  it("shows the last-seen age on the Offline state from react-query's dataUpdatedAt (#42)", async () => {
+    const useQuery = await getTeslaUseQuery();
+    const fiveHoursAgo = Date.now() - 5 * 60 * 60 * 1000;
+    useQuery.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      dataUpdatedAt: fiveHoursAgo,
+    });
+
+    render(<TeslaTile />);
+    expect(screen.getByText("Last online 5hrs ago")).toBeInTheDocument();
+  });
+
+  it("shows a stale pill and keeps the last-known snapshot when a poll fails but cached data remains (#42)", async () => {
+    const useQuery = await getTeslaUseQuery();
+    const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000;
+    useQuery.mockReturnValue({
+      data: MOCK_DATA,
+      isLoading: false,
+      isError: true,
+      dataUpdatedAt: twoHoursAgo,
+    });
+
+    render(<TeslaTile />);
+    // Data-first precedence (www-355t.13): still shows the last-known values...
+    expect(screen.getByText("82%")).toBeInTheDocument();
+    // ...but now honestly flagged as unconfirmed rather than silently shown as live.
+    expect(screen.getByText(/Offline · synced 2hrs ago/)).toBeInTheDocument();
   });
 
   it("www-lad: stat rows use shared Stat primitive (data-stat-value attribute present)", async () => {

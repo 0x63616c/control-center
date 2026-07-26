@@ -44,7 +44,16 @@ vi.mock("@protomaps/basemaps", () => ({
   namedFlavor: vi.fn().mockReturnValue({}),
 }));
 
-const { Loading, ErrorState, Populated, Charging, NoLocation, Asleep } = composeStories(stories);
+const {
+  Loading,
+  ErrorState,
+  OfflineWithLastSeen,
+  Populated,
+  Charging,
+  NoLocation,
+  Asleep,
+  StalePolling,
+} = composeStories(stories);
 
 afterEach(cleanup);
 
@@ -58,12 +67,30 @@ describe("TeslaTileView stories , Loading", () => {
   });
 });
 
-describe("TeslaTileView stories , ErrorState", () => {
-  it("renders .tile container (skeleton) and keeps the Tesla header in the error/retry state", async () => {
+describe("TeslaTileView stories , ErrorState (Offline, #42)", () => {
+  it("renders .tile container, keeps the Tesla header, and shows a distinct Offline state", async () => {
     const { container } = render(<ErrorState />);
     if (ErrorState.play) await ErrorState.play({ canvasElement: container });
     expect(container.querySelector(".tile")).not.toBeNull();
     expect(screen.getByText("Tesla")).toBeInTheDocument();
+    expect(screen.getAllByText("Offline").length).toBeGreaterThan(0);
+  });
+});
+
+describe("TeslaTileView stories , OfflineWithLastSeen", () => {
+  it("shows the last-seen age", async () => {
+    const { container } = render(<OfflineWithLastSeen />);
+    if (OfflineWithLastSeen.play) await OfflineWithLastSeen.play({ canvasElement: container });
+    expect(screen.getByText("Last online 5hrs ago")).toBeInTheDocument();
+  });
+});
+
+describe("TeslaTileView stories , StalePolling (populated but currently offline)", () => {
+  it("keeps the last-known snapshot but flags it as stale", async () => {
+    const { container } = render(<StalePolling />);
+    if (StalePolling.play) await StalePolling.play({ canvasElement: container });
+    expect(screen.getByText(/Offline · synced 2hrs ago/)).toBeInTheDocument();
+    expect(screen.getByText("64%")).toBeInTheDocument();
   });
 });
 
