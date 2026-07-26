@@ -1,8 +1,11 @@
 /**
  * In-memory PortalRepo for service tests (www-q002.9, password-only since
  * www-p9hx). Honours the same contract as the drizzle-backed repo the router
- * wires in production, with no Postgres. Kept in __tests__ so it never ships in
- * the bundle.
+ * wires in production, with no Postgres. Lives flat at the feature root (the
+ * repo's convention for backend test helpers, e.g. features/weather/*.test.ts
+ * sit beside the code they test rather than in a __tests__ subfolder); it is
+ * imported only by ./service.test.ts, so it is tree-shaken out of the bundle
+ * regardless of directory (#96).
  */
 import type { PortalAuthorizationRow, PortalRateLimitRow, PortalRepo } from "./service";
 

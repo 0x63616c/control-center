@@ -7,11 +7,11 @@
  * self-resets daily and needs no purge.
  */
 
-import { AUTHORIZATION_GRACE_MS, purgePortalData } from "@features/guest-wifi/jobs";
-import type * as schema from "@features/guest-wifi/schema";
-import { portalAuthorization } from "@features/guest-wifi/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { describe, expect, it } from "vitest";
+import { AUTHORIZATION_GRACE_MS, purgePortalData } from "./jobs";
+import type * as schema from "./schema";
+import { portalAuthorization } from "./schema";
 
 // A fake drizzle db: db.delete(table).where(cond) resolves to { rowCount }.
 const asDb = (fake: unknown) => fake as unknown as NodePgDatabase<typeof schema>;

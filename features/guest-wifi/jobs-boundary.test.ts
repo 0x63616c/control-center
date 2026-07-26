@@ -6,8 +6,8 @@
  * single source of truth that the SQL WHERE clause mirrors 1:1.
  */
 
-import { AUTHORIZATION_GRACE_MS, authorizationShouldPurge } from "@features/guest-wifi/jobs";
 import { describe, expect, it } from "vitest";
+import { AUTHORIZATION_GRACE_MS, authorizationShouldPurge } from "./jobs";
 
 const NOW = new Date(Date.UTC(2026, 5, 10, 12, 0, 0));
 const daysAgo = (d: number) => new Date(NOW.getTime() - d * 24 * 60 * 60 * 1000);

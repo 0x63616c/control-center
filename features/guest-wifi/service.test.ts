@@ -9,10 +9,10 @@
  * status fresh/active/expired/heal.
  */
 
-import { makeInMemoryPortalRepo } from "@features/guest-wifi/repo.fake";
-import { createPortalService, PortalError, PortalErrorCode } from "@features/guest-wifi/service";
 import type { UnifiGuestAuthorization, UnifiGuestClient } from "@www/core";
 import { describe, expect, it, vi } from "vitest";
+import { makeInMemoryPortalRepo } from "./repo.fake";
+import { createPortalService, PortalError, PortalErrorCode } from "./service";
 
 const MAC = "aa:bb:cc:dd:ee:ff";
 const PW = "correct-horse";
