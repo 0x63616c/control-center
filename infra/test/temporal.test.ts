@@ -150,6 +150,12 @@ describe("installTemporal (issue #124, talos-only)", () => {
     expect(script).toMatch(/attempt.*-ge \d+/);
   });
 
+  test("the worker declares APP_ENV=production so its prod logs are not stamped 'development'", async () => {
+    const spec = await get<DeploymentSpec>(install().worker, "spec");
+    const env = spec.template.spec.containers[0].env ?? [];
+    expect(env.find((e) => e.name === "APP_ENV")?.value).toBe("production");
+  });
+
   test("the UI accepts the tunnel hostname as a CORS origin, not just port-forward localhost", async () => {
     const spec = await get<DeploymentSpec>(install().ui, "spec");
     const cors = spec.template.spec.containers[0].env?.find(

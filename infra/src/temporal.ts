@@ -543,9 +543,14 @@ export function installTemporal(args: TemporalArgs): TemporalResources {
               {
                 name: "temporal-worker",
                 image: ghcrImage("temporal-worker", imageDigests),
-                // No env: every knob (address, namespace, task queue, N) has an
-                // in-cluster default in the env manifest. Overrides belong here
-                // when they stop matching, not a duplicated copy of the defaults.
+                // Only APP_ENV: every other knob (address, namespace, task
+                // queue, N) has an in-cluster default in the env manifest, and
+                // overrides belong here only when they stop matching. APP_ENV
+                // is not one of those knobs — @www/logger reads it LIVE (never
+                // NODE_ENV, which bundlers bake in) and falls back to
+                // "development", so without it every prod log line from this
+                // worker is stamped with the wrong environment.
+                env: [{ name: "APP_ENV", value: "production" }],
                 resources: {
                   limits: { memory: "512Mi" },
                   requests: { cpu: "100m", memory: "256Mi" },
