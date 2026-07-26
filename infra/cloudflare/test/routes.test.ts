@@ -20,12 +20,13 @@ import {
 const ZONE = "worldwidewebb.co";
 
 describe("desiredIngressRules", () => {
-  test("declares the product-derived app + temporal-ui hosts as the only ingress hosts", () => {
+  test("declares the product-derived app + temporal-ui + grafana hosts as the only ingress hosts", () => {
     const byHost = Object.fromEntries(
       desiredIngressRules(ZONE).map((r) => [r.hostname, r.service]),
     );
     expect(Object.keys(byHost).sort()).toEqual([
       "app.worldwidewebb.co",
+      "grafana.worldwidewebb.co",
       "hooks.worldwidewebb.co",
       "temporal-ui.worldwidewebb.co",
     ]);
@@ -39,6 +40,11 @@ describe("desiredIngressRules", () => {
     // cluster-local FQDN resolves the Service in `temporal`.
     expect(byHost["temporal-ui.worldwidewebb.co"]).toBe(
       "http://temporal-ui.temporal.svc.cluster.local:8080",
+    );
+    // #209: same cross-NAMESPACE rule — the Grafana Service lives in
+    // `observability`, so a bare `grafana` origin would 502.
+    expect(byHost["grafana.worldwidewebb.co"]).toBe(
+      "http://grafana.observability.svc.cluster.local:3000",
     );
     expect(byHost["dashboard.worldwidewebb.co"]).toBeUndefined();
     expect(byHost["storybook.worldwidewebb.co"]).toBeUndefined();
@@ -125,6 +131,7 @@ describe("desiredCnames", () => {
       .sort();
     expect(hosts).toEqual([
       "app.worldwidewebb.co",
+      "grafana.worldwidewebb.co",
       "hooks.worldwidewebb.co",
       "temporal-ui.worldwidewebb.co",
     ]);
@@ -151,6 +158,7 @@ describe("desiredCnames", () => {
     // product-derived platform route comment (not a frozen legacy value)
     expect(byHost["app.worldwidewebb.co"]).toBe("platform:control-center private app route");
     expect(byHost["temporal-ui.worldwidewebb.co"]).toBe("platform:temporal web ui route");
+    expect(byHost["grafana.worldwidewebb.co"]).toBe("platform:grafana web ui route");
     expect(byHost["hooks.worldwidewebb.co"]).toBe(
       "platform:github webhook receiver (public, HMAC-authenticated)",
     );

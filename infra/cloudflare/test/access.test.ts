@@ -14,7 +14,11 @@ describe("desiredAccessApps", () => {
     const domains = desiredAccessApps(ZONE)
       .map((a) => a.domain)
       .sort();
-    expect(domains).toEqual(["app.worldwidewebb.co", "temporal-ui.worldwidewebb.co"]);
+    expect(domains).toEqual([
+      "app.worldwidewebb.co",
+      "grafana.worldwidewebb.co",
+      "temporal-ui.worldwidewebb.co",
+    ]);
     expect(domains).not.toContain("*.worldwidewebb.co");
     expect(domains).not.toContain("hooks.worldwidewebb.co");
     expect(domains).not.toContain("drizzle.worldwidewebb.co");
@@ -29,6 +33,7 @@ describe("desiredAccessApps", () => {
     expect(domains).toEqual([
       "*.worldwidewebb.co",
       "app.worldwidewebb.co",
+      "grafana.worldwidewebb.co",
       "hooks.worldwidewebb.co",
       "temporal-ui.worldwidewebb.co",
     ]);
@@ -70,6 +75,23 @@ describe("desiredAccessApps", () => {
     );
 
     expect(ui?.policies).toEqual([
+      {
+        decision: "allow",
+        include: { configKey: "allowedEmail", kind: "email-config" },
+        name: "email-otp",
+        precedence: 1,
+      },
+    ]);
+  });
+
+  test("grafana is human-login only — NEVER reachable with the kiosk token", () => {
+    // #209: the panel never calls Grafana, and Grafana can edit datasources and
+    // dashboards, so the on-device kiosk token must not open this door either.
+    const grafana = desiredAccessApps(ZONE, true).find(
+      (entry) => entry.domain === "grafana.worldwidewebb.co",
+    );
+
+    expect(grafana?.policies).toEqual([
       {
         decision: "allow",
         include: { configKey: "allowedEmail", kind: "email-config" },

@@ -18,6 +18,7 @@ import { installLocalPath } from "./src/local-path.ts";
 import { installMetallb } from "./src/metallb.ts";
 import { installMetricsServer } from "./src/metrics-server.ts";
 import { installNvidiaDevicePlugin, installNvidiaRuntimeClass } from "./src/nvidia.ts";
+import { installObservability } from "./src/observability/index.ts";
 import {
   deployServices,
   parseSubstrateTarget,
@@ -189,6 +190,10 @@ if (target.substrate === "talos") {
     vault,
     imageDigests,
   });
+  // Observability (#33): Prometheus/Grafana/Loki, hand-written like Temporal
+  // above — no Helm, no operator, no CRDs (ADR #207). Grafana is reached ONLY
+  // through the Cloudflare tunnel; nothing here takes a LoadBalancer address.
+  installObservability({ provider: cluster.provider });
   installHomeAssistant({
     provider: cluster.provider,
     // Reuses the ALREADY-installed CNPG operator (cnpg.ts's installCnpg()

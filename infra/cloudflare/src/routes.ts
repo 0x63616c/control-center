@@ -122,6 +122,14 @@ function productRoutes(): CloudflareRoutes {
       origin: "http://temporal-ui.temporal.svc.cluster.local:8080",
       comment: "platform:temporal web ui route",
     },
+    {
+      exposure: cc.grafana.exposure,
+      // FQDN, not the short Service name: cloudflared runs in the `cloudflare`
+      // namespace, so `grafana` alone would not resolve across into the
+      // `observability` namespace.
+      origin: "http://grafana.observability.svc.cluster.local:3000",
+      comment: "platform:grafana web ui route",
+    },
   ];
 
   return cloudflareRoutesForExposures(sources);

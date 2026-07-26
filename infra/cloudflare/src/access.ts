@@ -149,6 +149,10 @@ export function desiredAccessApps(zone: string, includeGate = false): DesiredAcc
       // wall panel has no business reaching it, and the UI can terminate and
       // reset running workflows — so it stays behind a human login.
       { exposure: ccManifest.temporalUi.exposure, policies: ["email-otp"] },
+      // Grafana: email-OTP ONLY, for the same reason as the Temporal UI. The
+      // panel never calls Grafana, so it gets no kiosk service token, and the
+      // UI can edit datasources and dashboards — a human login only.
+      { exposure: ccManifest.grafana.exposure, policies: ["email-otp"] },
     ]),
   ];
 
