@@ -183,5 +183,93 @@ YAML) is gitignored for the same reason.
   plaintext secret, never the committed encrypted one.
 - The NIC name (`enp4s0`) was confirmed on the real hardware 2026-07-24 — see
   "Network interface" above.
-- No `kubeconfig`/cluster bootstrap has happened. This task is machine-config
-  authoring only, per scope.
+- **Update 2026-07-25: the cluster has since been bootstrapped from this
+  config.** The line above ("no kubeconfig/cluster bootstrap has happened")
+  described the state at authoring time only. See "kubectl + talosctl context
+  setup" below for the current, live context configuration.
+
+## kubectl + talosctl context setup
+
+Answers #22 ("is our kubectl and talosctl contexts set up so we can use those
+with home-server? is that using the raw ip") — verified live against the
+running cluster on 2026-07-25.
+
+### Where the contexts live
+
+`clusterconfig/` is talhelper's render output. It is **gitignored** (own
+`.gitignore` written by talhelper, contains plaintext private keys/certs) and
+regenerated per session with `talhelper genconfig` (or `scripts/secrets.sh
+talhelper genconfig` if you need the real decrypted secrets, e.g. to actually
+reach the live cluster rather than just validate config shape). If the
+directory is missing, regenerate it before trying anything below; if
+regeneration fails, fall back to reasoning from this doc rather than guessing.
+
+| File | Contains | Server/endpoint it targets |
+| --- | --- | --- |
+| `clusterconfig/talosconfig` | talosctl client config, context `prod` | raw LAN IP `192.168.0.5`, **not** the tailnet name |
+| `clusterconfig/kubeconfig` | kubectl config, context `admin@prod` | tailnet MagicDNS name `home-server.tail8c014d.ts.net:6443` |
+| `clusterconfig/kubeconfig.direct` | kubectl config, same cluster/creds | raw LAN IP `192.168.0.5:6443` |
+| `clusterconfig/prod-home-server.yaml` | the fully-rendered Talos machine config (what actually gets applied to the node) | n/a |
+
+So: **talosctl's default context uses the raw LAN IP. kubectl's default
+(`kubeconfig`) uses the tailnet hostname; a second file (`kubeconfig.direct`)
+exists for the raw-IP path.** This is a real asymmetry, not an oversight to
+"fix" without thought — talosctl's maintenance/apply-config flows are
+LAN-bound anyway (see the network-recovery notes elsewhere in this repo: a
+node that loses its static IP has no other reliable path), whereas kubectl
+traffic (including CI's) is meant to prefer the tailnet, matching
+`talconfig.yaml`'s own `endpoint:` comment ("tailnet name, NOT homelab").
+
+### Verified live (2026-07-25)
+
+```
+$ export TALOSCONFIG=infra/talos/clusterconfig/talosconfig
+$ talosctl version
+Client: Talos v1.13.7
+Server: NODE: 192.168.0.5 ... OS/Arch: linux/amd64 ... Enabled: RBAC
+
+$ talosctl -e 100.88.154.126 -n 100.88.154.126 version
+# also succeeds — the Talos apiserver answers on the tailnet IP too, the
+# default context's talosconfig just doesn't point there.
+
+$ export KUBECONFIG=infra/talos/clusterconfig/kubeconfig
+$ kubectl get nodes -o wide
+NAME          STATUS   ROLES           VERSION   INTERNAL-IP
+home-server   Ready    control-plane   v1.36.2   100.88.154.126
+# note: the node's registered Kubernetes InternalIP is the TAILSCALE address,
+# not the LAN one — the apiserver is genuinely bound/advertised on the tailnet
+# interface, this isn't just an incidental route.
+
+$ KUBECONFIG=infra/talos/clusterconfig/kubeconfig.direct kubectl get nodes -o wide
+# also succeeds, same cluster, over the raw LAN IP.
+```
+
+Both talosctl and kubectl reach the live cluster; the difference is only
+which identity (LAN IP vs. tailnet name) each config's default context
+carries.
+
+### Practical guidance
+
+- **Day-to-day from a machine on the home LAN**: either works. Default to
+  `kubeconfig` (tailnet name) for kubectl, since that's what CI uses and keeps
+  local usage consistent with the pipeline.
+- **From off the home LAN**: only the tailnet paths work — `kubeconfig`
+  works as-is; `talosconfig`'s default context does not (it's pinned to the
+  LAN IP), but `talosctl -e 100.88.154.126 -n 100.88.154.126 <cmd>` does, since
+  the Talos API also answers on the tailnet address. There's no tailnet-native
+  `talosctl` context checked in today, only the ad-hoc `-e`/`-n` override
+  above — worth adding a second named context if this becomes routine (see
+  #22 open question below).
+- **CI** does not use either of these files: it writes its own kubeconfig at
+  deploy time, decoded from the `KUBECONFIG__B64` SOPS vault secret
+  (`.github/workflows/ci.yml`, `deploy` job), targeting
+  `https://home-server.tail8c014d.ts.net:6443` — the tailnet path,
+  consistent with `kubeconfig` above, not `kubeconfig.direct`.
+
+### Open question for Calum
+
+Worth a tailnet-named `talosctl` context (e.g. `talosctl config context
+home-server-tailnet --endpoints 100.88.154.126 --nodes 100.88.154.126`) so
+off-LAN `talosctl` usage doesn't need the `-e`/`-n` override every time? Low
+cost either way — flagging since it's a one-line preference, not a
+correctness issue.
