@@ -159,7 +159,7 @@ jobs:
       - name: Storybook docs guard
         # Authoritative backstop for the lefthook pre-commit `storybook-docs`
         # hook (bypassable with --no-verify): fails the test job if any tracked
-        # *.stories.tsx lacks an autodocs Docs page. `deploy` needs `test-unit`, so a
+        # *.stories.tsx lacks an autodocs Docs page. `deploy-home-server` needs `test-unit`, so a
         # missing doc blocks the deploy. Fast (grep), runs before the slow
         # Playwright install so it fails early (www-o0ko).
         run: bash scripts/check-storybook-docs.sh
@@ -249,7 +249,7 @@ jobs:
 
   # Typecheck + dead-code run in parallel with the test suite so type
   # errors and knip regressions surface without waiting for Playwright to
-  # install and all tests to run. `deploy` depends on `test-unit`,
+  # install and all tests to run. `deploy-home-server` depends on `test-unit`,
   # `test-storybook`, and `typecheck` all passing (www-q2p5). Build jobs do
   # NOT — they gate on `changes` alone, so they run concurrently with these.
   typecheck:
@@ -270,14 +270,14 @@ jobs:
         # --no-verify bypass or an uninstalled hook can skip). Export-level checks
         # are disabled in the shared script because Temporal registers runtime
         # activity/workflow exports dynamically by name.
-        # `deploy` needs `typecheck`, so a regression blocks the prod deploy (www-k6p1).
+        # `deploy-home-server` needs `typecheck`, so a regression blocks the prod deploy (www-k6p1).
         run: bun run knip
 
   # Build jobs depend on `changes` ONLY, not on test/typecheck. They run
   # concurrently with the test suite instead of queueing behind it (measured
   # 180s off the critical path, because the build fan-in is shorter than the
   # test job and now hides entirely under it).
-  # This does NOT weaken the deploy gate: `deploy` still lists test-unit + test-storybook + typecheck
+  # This does NOT weaken the deploy gate: `deploy-home-server` still lists test-unit + test-storybook + typecheck
   # in its own `needs:`, so an image built for a commit that fails tests is
   # simply never deployed. The only cost is building images for the ~9% of
   # pushes that fail — they are content-addressed and otherwise inert.
@@ -539,7 +539,7 @@ jobs:
   # tweak with no rebuild) must both converge the declared stack. `pulumi up` is
   # declarative-convergent, so the latest green run always reconciles prod to the
   # committed digests, no deploy marker needed (www-bom8 retired).
-  deploy:
+  deploy-home-server:
     needs:
       [
         changes,
@@ -758,9 +758,16 @@ jobs:
   # tunnelId/allowedEmail) is already SECRET config encrypted in
   # infra/cloudflare/Pulumi.prod.yaml via Pulumi's own per-stack encryption, so
   # the only credential this job needs from the vault is PULUMI_ACCESS_TOKEN
-  # (same token the home-server `deploy` job above already uses).
+  # (same token the home-server `deploy-home-server` job above already uses).
+  #
+  # Ordered AFTER deploy-home-server (needs it, not parallel): if a new
+  # hostname's Cloudflare tunnel-ingress rule applied before the k8s backend
+  # existed, that route would 502 for real users the moment it's live. Landing
+  # k8s first means an unrouted-yet service just sits inert until this job
+  # catches up — no user-facing gap either way, but this ordering is the one
+  # with no failure mode.
   deploy-cloudflare:
-    needs: [changes, typecheck]
+    needs: [changes, typecheck, deploy-home-server]
     if: |
       always() &&
       github.ref_name == 'main' &&
@@ -828,7 +835,7 @@ jobs:
         merge-api,
         merge-worker,
         merge-map-provision,
-        deploy,
+        deploy-home-server,
         deploy-cloudflare,
       ]
     if: always() && github.ref_name == 'main'
@@ -842,11 +849,14 @@ jobs:
         env:
           SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
           ANY_FAILED: ${{ contains(needs.*.result, 'failure') }}
-          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          DEPLOY_HOME_SERVER_RESULT: ${{ needs.deploy-home-server.result }}
+          DEPLOY_CLOUDFLARE_RESULT: ${{ needs.deploy-cloudflare.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          if [ "$ANY_FAILED" != "true" ] && [ "$DEPLOY_RESULT" != "success" ]; then
+          if [ "$ANY_FAILED" != "true" ] \
+            && [ "$DEPLOY_HOME_SERVER_RESULT" != "success" ] \
+            && [ "$DEPLOY_CLOUDFLARE_RESULT" != "success" ]; then
             echo "Nothing to notify (no failure, no deploy)."
             exit 0
           fi
