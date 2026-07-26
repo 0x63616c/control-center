@@ -10,6 +10,7 @@
 import { Client, Connection } from "@temporalio/client";
 import { NativeConnection, Worker } from "@temporalio/worker";
 import { createLogger } from "@www/logger";
+import { initMetrics, startMetricsServer } from "@www/platform/metrics";
 import * as activities from "./activities";
 import { temporalWorkerConfig } from "./config";
 import { upsertHealthCheckSchedule } from "./schedule";
@@ -23,6 +24,15 @@ const workflowsPath = new URL("./workflows.ts", import.meta.url).pathname;
 
 async function main(): Promise<void> {
   const config = temporalWorkerConfig();
+
+  // Prometheus exposition on a dedicated port (#214). This process otherwise
+  // serves no HTTP — it dials OUT to temporal-server:7233 — so the listener
+  // exists only for scraping. No Kubernetes Service fronts it: Prometheus
+  // reaches the pod IP directly via the pod annotations on the Deployment in
+  // infra/src/temporal.ts, which keeps it in-cluster only.
+  initMetrics({ service: "temporal-worker" });
+  startMetricsServer({ port: config.metricsPort, logger });
+
   logger.info(
     {
       address: config.address,

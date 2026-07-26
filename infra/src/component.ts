@@ -90,6 +90,22 @@ export interface WorkloadSpec {
   // `pulumi.com/skipAwait: "true"` to not block the deploy on a workload that
   // cannot become Ready — Plex on talos, parked pending the GPU device plugin).
   annotations?: Record<string, string>;
+  // Declares this workload as a Prometheus scrape target (#214). Rendered onto
+  // the POD TEMPLATE's annotations, deliberately NOT onto `annotations` above:
+  // Prometheus's `role: pod` service discovery only ever sees Pod objects, so
+  // an annotation that lands on the Deployment is invisible to it and
+  // discovery silently finds nothing.
+  //
+  // `port` is required rather than optional because Prometheus 3.x no longer
+  // appends a default port to a discovered address — a pod annotated
+  // `prometheus.io/scrape: "true"` with no `prometheus.io/port` resolves to a
+  // bare pod IP and the target fails. Making it non-optional means the
+  // annotation set is never half-declared.
+  //
+  // Scraping is pod-IP direct, so the metrics port needs no Service and must
+  // NOT be added to `ports` — anything exposed there becomes a Service and, for
+  // the api, reachable through the Cloudflare tunnel.
+  scrape?: { port: number; path?: string };
 }
 
 export interface CronJobSpec {
@@ -151,7 +167,7 @@ interface DeploymentArgs {
     replicas: number;
     selector: { matchLabels: Record<string, string> };
     template: {
-      metadata: { labels: Record<string, string> };
+      metadata: { labels: Record<string, string>; annotations?: Record<string, string> };
       spec: {
         containers: Container[];
         initContainers?: Container[];
@@ -445,6 +461,20 @@ function buildInitContainer(
   };
 }
 
+/**
+ * The three annotations Prometheus's pod service discovery relabels on. Kept as
+ * one function so the key names and the "/metrics" default live in exactly one
+ * place — a workload declares intent (`scrape: { port }`), never the strings.
+ */
+function scrapeAnnotations(scrape: WorkloadSpec["scrape"]): Record<string, string> | undefined {
+  if (!scrape) return undefined;
+  return {
+    "prometheus.io/scrape": "true",
+    "prometheus.io/port": String(scrape.port),
+    "prometheus.io/path": scrape.path ?? "/metrics",
+  };
+}
+
 function legacyAliases(name: string | undefined): pulumi.Alias[] | undefined {
   return name ? [{ name }] : undefined;
 }
@@ -460,6 +490,7 @@ export function renderWorkload(w: WorkloadSpec): RenderedWorkload {
   const inits = (w.initContainers ?? []).map((ic, i) =>
     buildInitContainer(ic, i, claimVolumeNames),
   );
+  const podAnnotations = scrapeAnnotations(w.scrape);
 
   const deployment: DeploymentArgs = {
     metadata: {
@@ -473,7 +504,7 @@ export function renderWorkload(w: WorkloadSpec): RenderedWorkload {
       replicas: w.replicas,
       selector: { matchLabels: labels },
       template: {
-        metadata: { labels },
+        metadata: { labels, ...(podAnnotations ? { annotations: podAnnotations } : {}) },
         spec: {
           containers: [container],
           ...(inits.length > 0 ? { initContainers: inits.map((i) => i.container) } : {}),

@@ -53,6 +53,7 @@ interface ContainerSpec {
   image: string;
   env?: { name: string; value?: string; valueFrom?: unknown }[];
   command?: string[];
+  ports?: { name: string; containerPort: number }[];
   resources?: unknown;
 }
 interface PodSpec {
@@ -62,7 +63,13 @@ interface PodSpec {
 interface DeploymentSpec {
   replicas: number;
   selector: { matchLabels: Record<string, string> };
-  template: { spec: PodSpec };
+  template: {
+    metadata?: { labels?: Record<string, string>; annotations?: Record<string, string> };
+    spec: PodSpec;
+  };
+}
+interface ServiceSpec {
+  ports: { name: string; port: number; targetPort: number }[];
 }
 
 const envValue = (container: ContainerSpec, name: string) =>
@@ -230,6 +237,56 @@ describe("installTemporal (issue #124, talos-only)", () => {
       `ghcr.io/0x63616c/www-control-center-temporal-worker@${digest}`,
     );
     expect(spec.template.spec.imagePullSecrets).toEqual([{ name: "ghcr-pull" }]);
+  });
+
+  // Issue #215. Prometheus metrics are only reachable if ALL of these line up:
+  // the env var that makes the server open the listener at all, the container
+  // port, the Service port, and the pod annotations the scrape job discovers.
+  // Any one missing yields metrics that exist but are never collected.
+  describe("prometheus metrics endpoint (issue #215)", () => {
+    test("PROMETHEUS_ENDPOINT binds 0.0.0.0 so the listener is reachable outside the container", async () => {
+      const spec = await get<DeploymentSpec>(install().server, "spec");
+      const container = spec.template.spec.containers[0];
+      // The 1.31.x config template renders this value straight into
+      // global.metrics.prometheus.listenAddress; localhost would bind the
+      // listener where no scraper can reach it.
+      expect(envValue(container, "PROMETHEUS_ENDPOINT")).toBe("0.0.0.0:9090");
+      // The template's chain is `if STATSD_ENDPOINT / else if
+      // PROMETHEUS_ENDPOINT`, so a STATSD_ENDPOINT here would silently win and
+      // leave the prometheus block unrendered.
+      expect(container.env?.map((e) => e.name)).not.toContain("STATSD_ENDPOINT");
+    });
+
+    test("the metrics port is declared on the container, without colliding with grpc/http", async () => {
+      const spec = await get<DeploymentSpec>(install().server, "spec");
+      const ports = spec.template.spec.containers[0].ports ?? [];
+      expect(ports).toContainEqual({ name: "metrics", containerPort: 9090 });
+      expect(ports.map((p) => p.containerPort)).toEqual([7233, 7243, 9090]);
+    });
+
+    test("the temporal-server Service exposes the metrics port", async () => {
+      const spec = await get<ServiceSpec>(install().serverService, "spec");
+      expect(spec.ports).toContainEqual({ name: "metrics", port: 9090, targetPort: 9090 });
+    });
+
+    test("scrape annotations sit on the POD template, so both replicas are discovered separately", async () => {
+      const res = install();
+      const spec = await get<DeploymentSpec>(res.server, "spec");
+      expect(spec.template.metadata?.annotations).toEqual({
+        "prometheus.io/scrape": "true",
+        "prometheus.io/port": "9090",
+        "prometheus.io/path": "/metrics",
+      });
+      // Annotations on the Deployment itself would discover nothing: pod
+      // discovery reads the pods', and each of the 2 replicas runs all four
+      // roles and therefore reports its own distinct series.
+      expect(spec.replicas).toBe(2);
+      const deploymentMeta = await get<{ annotations?: Record<string, string> }>(
+        res.server,
+        "metadata",
+      );
+      expect(deploymentMeta.annotations?.["prometheus.io/scrape"]).toBeUndefined();
+    });
   });
 
   test("server, UI and worker are named exactly as the ask asked", async () => {

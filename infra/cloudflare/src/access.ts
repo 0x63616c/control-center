@@ -152,6 +152,10 @@ export function desiredAccessApps(zone: string, includeGate = false): DesiredAcc
       // pgAdmin (#65): same treatment as Temporal UI — a database admin
       // surface with full read/write, no kiosk business reaching it.
       { exposure: ccManifest.dbUi.exposure, policies: ["email-otp"] },
+      // Grafana: email-OTP ONLY, for the same reason as the Temporal UI. The
+      // panel never calls Grafana, so it gets no kiosk service token, and the
+      // UI can edit datasources and dashboards — a human login only.
+      { exposure: ccManifest.grafana.exposure, policies: ["email-otp"] },
     ]),
   ];
 

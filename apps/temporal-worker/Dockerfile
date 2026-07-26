@@ -74,5 +74,6 @@ COPY --from=build /app/node_modules node_modules
 COPY --from=build /app/apps/temporal-worker/src src
 COPY --from=build /app/dist/index.mjs src/index.mjs
 
-# No port: the worker dials OUT to temporal-server:7233 and serves no HTTP.
+# The worker dials OUT to temporal-server:7233; its only listener is the
+# Prometheus exposition on :9464 (#214), scraped by pod IP in-cluster.
 CMD ["node", "src/index.mjs"]

@@ -23,6 +23,8 @@ export interface TemporalWorkerConfig {
   readonly namespace: string;
   readonly taskQueue: string;
   readonly healthCheckIterations: number;
+  /** Port the Prometheus exposition listener binds (#214). */
+  readonly metricsPort: number;
 }
 
 /** @public - read once at boot in index.ts. */
@@ -32,11 +34,13 @@ export function temporalWorkerConfig(): TemporalWorkerConfig {
     "TEMPORAL_NAMESPACE",
     "TEMPORAL_TASK_QUEUE",
     "TEMPORAL_HEALTH_CHECK_ITERATIONS",
+    "METRICS_PORT",
   );
   return {
     address: env.TEMPORAL_ADDRESS,
     namespace: env.TEMPORAL_NAMESPACE,
     taskQueue: env.TEMPORAL_TASK_QUEUE,
     healthCheckIterations: env.TEMPORAL_HEALTH_CHECK_ITERATIONS,
+    metricsPort: env.METRICS_PORT,
   };
 }

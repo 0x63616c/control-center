@@ -129,6 +129,14 @@ function productRoutes(): CloudflareRoutes {
       origin: "http://db-ui.db-ui.svc.cluster.local:80",
       comment: "platform:pgAdmin multi-database web ui route (#65)",
     },
+    {
+      exposure: cc.grafana.exposure,
+      // FQDN, not the short Service name: cloudflared runs in the `cloudflare`
+      // namespace, so `grafana` alone would not resolve across into the
+      // `observability` namespace.
+      origin: "http://grafana.observability.svc.cluster.local:3000",
+      comment: "platform:grafana web ui route",
+    },
   ];
 
   return cloudflareRoutesForExposures(sources);

@@ -52,3 +52,9 @@ export {
   installNvidiaRuntimeClass,
   NVIDIA_RUNTIME_CLASS_NAME,
 } from "./nvidia.ts";
+export type { ObservabilityArgs, ObservabilityResources } from "./observability/index.ts";
+export {
+  installObservability,
+  OBSERVABILITY_NAMESPACE,
+  PROMETHEUS_DATASOURCE_UID,
+} from "./observability/index.ts";

@@ -11,6 +11,7 @@
 import * as k8s from "@pulumi/kubernetes";
 import * as pulumi from "@pulumi/pulumi";
 import { controlCenterProductManifest, defineProduct } from "@www/platform";
+import { DEFAULT_METRICS_PORT } from "@www/platform/metrics";
 import type { InfraNamespaceName } from "./cluster.ts";
 import type { WorkloadSpec } from "./component.ts";
 import { ExternalService, HostBackedService, Workload } from "./component.ts";
@@ -373,6 +374,11 @@ export function serviceSpecs(opts: ServiceSpecOptions): OwnedWorkloadSpec[] {
         },
       ],
       imagePullSecrets: [GHCR_PULL_SECRET_NAME],
+      // #214. The metrics listener is a SEPARATE port from the 4201 above and
+      // is deliberately absent from `ports`: 4201 is what the Cloudflare tunnel
+      // maps the public `hooks.` host to, and anything listed in `ports` gets a
+      // Service. Prometheus scrapes the pod IP directly off these annotations.
+      scrape: { port: DEFAULT_METRICS_PORT },
     },
     {
       logicalName: "control-center-worker",
@@ -409,6 +415,8 @@ export function serviceSpecs(opts: ServiceSpecOptions): OwnedWorkloadSpec[] {
         },
       ],
       imagePullSecrets: [GHCR_PULL_SECRET_NAME],
+      // #214: the worker serves no other HTTP, so this is its only listener.
+      scrape: { port: DEFAULT_METRICS_PORT },
     },
     {
       logicalName: "control-center-web",

@@ -36,6 +36,7 @@
 import * as k8s from "@pulumi/kubernetes";
 import * as pulumi from "@pulumi/pulumi";
 import { controlCenterProductManifest } from "@www/platform";
+import { DEFAULT_METRICS_PORT } from "@www/platform/metrics";
 import { GHCR_PULL_SECRET_NAME } from "./ghcr-pull-secrets.ts";
 import { composeGhcrDockerConfigJson, ghcrImage, type ImageDigests } from "./services.ts";
 
@@ -56,6 +57,12 @@ export const TEMPORAL_FRONTEND_SERVICE = "temporal-server";
 const FRONTEND_GRPC_PORT = 7233;
 const FRONTEND_HTTP_PORT = 7243;
 const UI_PORT = 8080;
+// Where the server's Prometheus reporter listens. 9090 is Temporal's own
+// documented convention for this listener and collides with neither frontend
+// port; it is a per-pod listener, so sharing the number with the Prometheus
+// server's own port in another namespace costs nothing.
+const METRICS_PORT = 9090;
+const METRICS_PATH = "/metrics";
 
 // Image pins. `server` and `admin-tools` MUST move together: the schema the Job
 // installs is the schema the server expects.
@@ -171,6 +178,12 @@ function serverEnv(): k8s.types.input.core.v1.EnvVar[] {
     },
     { name: "DYNAMIC_CONFIG_FILE_PATH", value: DYNAMIC_CONFIG_FILE },
     { name: "LOG_LEVEL", value: "info" },
+    // Turns on global.metrics.prometheus in the image's config template, which
+    // renders it as `listenAddress` verbatim — hence 0.0.0.0 and not localhost,
+    // or the listener would be unreachable from outside the container. The
+    // template's chain is `if STATSD_ENDPOINT / else if PROMETHEUS_ENDPOINT`,
+    // so setting STATSD_ENDPOINT here would silently disable all of this.
+    { name: "PROMETHEUS_ENDPOINT", value: `0.0.0.0:${METRICS_PORT}` },
   ];
 }
 
@@ -414,7 +427,20 @@ export function installTemporal(args: TemporalArgs): TemporalResources {
         replicas: 2,
         selector: { matchLabels: serverLabels },
         template: {
-          metadata: { labels: serverLabels },
+          metadata: {
+            labels: serverLabels,
+            // On the POD template, not the Deployment: annotation-based scrape
+            // discovery reads pod annotations, and it is pods we want scraped
+            // individually. Both replicas run all four roles, so each carries
+            // its own history/matching/frontend series — scraping through the
+            // Service would land on an arbitrary one of the two and silently
+            // lose half the cluster's metrics.
+            annotations: {
+              "prometheus.io/scrape": "true",
+              "prometheus.io/port": String(METRICS_PORT),
+              "prometheus.io/path": METRICS_PATH,
+            },
+          },
           spec: {
             automountServiceAccountToken: false,
             containers: [
@@ -425,6 +451,7 @@ export function installTemporal(args: TemporalArgs): TemporalResources {
                 ports: [
                   { name: "grpc", containerPort: FRONTEND_GRPC_PORT },
                   { name: "http", containerPort: FRONTEND_HTTP_PORT },
+                  { name: "metrics", containerPort: METRICS_PORT },
                 ],
                 volumeMounts: [{ name: "dynamic-config", mountPath: DYNAMIC_CONFIG_MOUNT }],
                 // TCP, not gRPC-health: the frontend answers on :7233 only once
@@ -468,6 +495,10 @@ export function installTemporal(args: TemporalArgs): TemporalResources {
         ports: [
           { name: "grpc", port: FRONTEND_GRPC_PORT, targetPort: FRONTEND_GRPC_PORT },
           { name: "http", port: FRONTEND_HTTP_PORT, targetPort: FRONTEND_HTTP_PORT },
+          // Present so the port is addressable by name and visible in `kubectl
+          // get svc`; the actual scrape goes pod-by-pod (see the pod
+          // annotations), because this Service would balance across replicas.
+          { name: "metrics", port: METRICS_PORT, targetPort: METRICS_PORT },
         ],
       },
     },
@@ -578,7 +609,24 @@ export function installTemporal(args: TemporalArgs): TemporalResources {
         replicas: 1,
         selector: { matchLabels: workerLabels },
         template: {
-          metadata: { labels: workerLabels },
+          metadata: {
+            labels: workerLabels,
+            // Prometheus scrape target (#214). On the POD TEMPLATE, not the
+            // Deployment: `role: pod` service discovery only ever sees Pods.
+            // This Deployment is hand-written (it lives in the `temporal`
+            // namespace, not the control-center WorkloadSpec set), so the
+            // annotations are spelled out here rather than coming from
+            // `WorkloadSpec.scrape`. The PORT is our own app-level exposition
+            // port (`DEFAULT_METRICS_PORT`, shared with the listener the worker
+            // starts), NOT the `METRICS_PORT` above — that one is the upstream
+            // Temporal server's own reporter. No Service fronts it: in-cluster
+            // scraping only.
+            annotations: {
+              "prometheus.io/scrape": "true",
+              "prometheus.io/port": String(DEFAULT_METRICS_PORT),
+              "prometheus.io/path": METRICS_PATH,
+            },
+          },
           spec: {
             automountServiceAccountToken: false,
             imagePullSecrets: [{ name: GHCR_PULL_SECRET_NAME }],

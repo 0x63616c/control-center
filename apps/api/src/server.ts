@@ -10,6 +10,7 @@ import { backfillWakePhotoIndex } from "@features/wakes/photos";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { createLogger, installFatalHandlers } from "@www/logger";
 import { ENV as config } from "@www/platform/env";
+import { initMetrics, observeHttpRequest, startMetricsServer } from "@www/platform/metrics";
 import { db } from "./db/index";
 import { runMigrations } from "./db/migrate";
 import { startGuestServer } from "./guest-server";
@@ -25,6 +26,11 @@ const log = createLogger({ service: "api" });
 // An escaping async throw or an untracked rejected promise otherwise kills
 // this process with zero structured output; see docs/logging.md.
 installFatalHandlers(log);
+
+// Prometheus registry for this process. Called before anything else observes,
+// so `service="api"` is stamped on every series including the process/runtime
+// defaults. The listener itself starts at the bottom, after Bun.serve.
+initMetrics({ service: "api" });
 
 // Deploys reach this box automatically: push to main -> CI builds the image ->
 // the cluster rolls the service to the new digest (www-a8p).
@@ -94,6 +100,19 @@ const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
 };
+
+/**
+ * The bounded `route` label for a request. Every value here is declared in
+ * code — a generated route-table path, `/trpc`, `/up`, or the `other` bucket —
+ * so no photo id, wake id or query string can ever become a metric series.
+ * Deliberately NOT `url.pathname`: the prefix routes (photo bytes, camera
+ * streams) carry ids, and one series per photo would be unbounded.
+ */
+function routeLabel(method: string, pathname: string): string {
+  if (pathname.startsWith("/trpc")) return "/trpc";
+  if (pathname === "/up") return "/up";
+  return findRoute(GENERATED_ROUTES, method, pathname)?.path ?? "other";
+}
 
 // Routes a single request. Wrapped by fetch() below, which logs every call.
 async function handle(req: Request, url: URL): Promise<Response> {
@@ -169,11 +188,26 @@ const server = Bun.serve({
       res = await handle(req, url);
     } catch (err) {
       const durationMs = +(performance.now() - startedAt).toFixed(1);
+      observeHttpRequest({
+        route: routeLabel(req.method, url.pathname),
+        method: req.method,
+        status: 500,
+        durationSeconds: durationMs / 1000,
+        failed: true,
+      });
       reqLog.error({ err, status: 500, durationMs }, "request failed");
       throw err;
     }
 
     const durationMs = +(performance.now() - startedAt).toFixed(1);
+    // Same chokepoint as the logging below, so metrics and logs can never
+    // disagree about what this process served.
+    observeHttpRequest({
+      route: routeLabel(req.method, url.pathname),
+      method: req.method,
+      status: res.status,
+      durationSeconds: durationMs / 1000,
+    });
     // A successful OPTIONS preflight is pure transport noise (always the same
     // 2xx) and would roughly double the info line count, so it is not logged at
     // all rather than demoted to debug , we do not emit below info
@@ -193,6 +227,13 @@ const server = Bun.serve({
 // Startup liveness line (docs/logging.md §6): "api started" with port + env
 // is the operator's first grep after a deploy.
 log.info({ port: server.port, env: config.NODE_ENV }, "api started");
+
+// Prometheus exposition on its OWN port, never on `config.PORT`. :4201 is what
+// the Cloudflare tunnel maps the public `hooks.` host to, so a /metrics route
+// there would publish this process's internals to the internet. This listener
+// has no Kubernetes Service in front of it (see WorkloadSpec.scrape in
+// infra/src/component.ts) and is therefore reachable in-cluster only.
+startMetricsServer({ port: config.METRICS_PORT, logger: log });
 
 // The api is request-only (www-7d5b.1.2). The device-sync and weather-ingest
 // loops now run in the dedicated worker process (src/worker.ts), so the api no

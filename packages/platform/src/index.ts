@@ -699,6 +699,14 @@ export type ControlCenterProductManifest = Readonly<{
   dbUi: Readonly<{
     exposure: WebExposure;
   }>;
+  // The Grafana web UI (#209). Same story again: it runs in the
+  // `observability` namespace from an upstream image (infra/src/observability/)
+  // rather than as a control-center workload, but it does have a hostname on
+  // the tunnel behind Access, and hostnames are owned here rather than beside
+  // the workload that answers on them.
+  grafana: Readonly<{
+    exposure: WebExposure;
+  }>;
   // The public GitHub webhook host (#126). Served by the api workload, but it
   // is NOT the api's exposure: api stays `internalService` for in-cluster
   // traffic and gains this one public hostname that the tunnel maps to it.
@@ -744,6 +752,11 @@ export function controlCenterProductManifest(): ControlCenterProductManifest {
     },
     dbUi: {
       exposure: privateWeb(target, { host: "db-ui" }),
+    },
+    grafana: {
+      // Single label under the zone, so Universal SSL's one-label wildcard
+      // covers it (see webHostname).
+      exposure: privateWeb(target, { host: "grafana" }),
     },
     hooks: {
       // PUBLIC on purpose: GitHub posts here from the internet and would be

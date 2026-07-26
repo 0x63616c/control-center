@@ -18,6 +18,7 @@
  * here — they feed `databaseUrlFromSecret()` in hydrate.ts to derive
  * DATABASE_URL (design spec §4 "Hydration inputs").
  */
+import { DEFAULT_METRICS_PORT } from "../metrics/port";
 import { bool, enumOf, int, num, pgUrl, secret, str, url } from "./fields";
 import { defineEnv } from "./registry";
 
@@ -26,6 +27,13 @@ export const ENV = defineEnv({
   NODE_ENV: enumOf("development", "production", "test").default("development"),
   PORT: int().default(4201).forRuntime("api"),
   BUILD_HASH: str().default("dev"),
+  // Prometheus exposition listener (#214). A DEDICATED port on every backend
+  // runtime, never a route on the service's own port: the api's :4201 is mapped
+  // through the Cloudflare tunnel, so /metrics there would be public. 9464 is
+  // the conventional Prometheus-exporter port. No `.forRuntime()` — api,
+  // worker and temporal-worker all serve it, and the default is always right
+  // in-cluster (nothing else in a pod binds it), so it is never set in prod.
+  METRICS_PORT: int().default(DEFAULT_METRICS_PORT),
 
   // ── Database (11 features + core) ─────────────────────────────────────────
   DATABASE_URL: pgUrl().required().devDefault("postgresql://cc:cc@localhost:5432/controlcenter"),
