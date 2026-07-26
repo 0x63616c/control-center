@@ -83,8 +83,8 @@
   ],
 
   // `tilt` is the dev-stack binary invoked by the root `dev` script; not an npm dep.
-  // `security` is the macOS Keychain CLI used by vault.ts + migrate-1p-to-sops.ts to
-  // retrieve the age private key at runtime; not an npm dep (CC-k8t7).
+  // `security` is the macOS Keychain CLI used by vault.ts to retrieve the age
+  // private key at runtime; not an npm dep (CC-k8t7).
   // `kubectl` is spawned by the infra ghcr-pull-secret preflight to read live
   // Secrets during `pulumi up`; a system binary on the deploy runner, not an npm dep.
   // `openssl` is spawned by the guest-server TLS test to generate a throwaway
