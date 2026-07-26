@@ -37,7 +37,6 @@ const serviceSecretUsages = {
   api: controlCenterUsages.api,
   worker: controlCenterUsages.worker,
   cloudflared: controlCenterUsages.cloudflared,
-  "cloudflared-managed": controlCenterUsages["cloudflared-managed"],
   "portal-data-purge": controlCenterUsages["portal-data-purge"],
 } as const satisfies Record<string, ServiceSecretUsage>;
 
@@ -77,6 +76,5 @@ export const SERVICE_SECRET_TARGETS = {
   api: targetOf(serviceSecretUsages.api),
   worker: targetOf(serviceSecretUsages.worker),
   cloudflared: targetOf(serviceSecretUsages.cloudflared),
-  "cloudflared-managed": targetOf(serviceSecretUsages["cloudflared-managed"]),
   "portal-data-purge": targetOf(serviceSecretUsages["portal-data-purge"]),
 } as const satisfies Record<ServiceSecretName, ServiceSecretTarget>;

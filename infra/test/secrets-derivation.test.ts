@@ -44,11 +44,6 @@ const GOLDEN_SERVICE_SECRETS: Record<string, Record<string, string>> = {
   cloudflared: {
     TUNNEL_TOKEN: "CLOUDFLARE_TUNNEL_WORLD_WIDE_WEBB__CONNECTOR_TOKEN",
   },
-  // The #127 cutover connector, running against the project-owned tunnel.
-  // Removed together with the legacy tunnel once the cutover has soaked.
-  "cloudflared-managed": {
-    TUNNEL_TOKEN: "CLOUDFLARE_TUNNEL_WORLD_WIDE_WEBB__CONNECTOR_TOKEN",
-  },
   "portal-data-purge": {
     POSTGRES_PASSWORD: "CONTROL_CENTER_POSTGRES__PASSWORD",
   },
@@ -63,10 +58,6 @@ const GOLDEN_SERVICE_SECRET_TARGETS: Record<string, { namespaceName: string; sec
     api: { namespaceName: "control-center", secretName: "control-center-secrets-api" },
     worker: { namespaceName: "control-center", secretName: "control-center-secrets-worker" },
     cloudflared: { namespaceName: "cloudflare", secretName: "cloudflare-secrets-cloudflared" },
-    "cloudflared-managed": {
-      namespaceName: "cloudflare",
-      secretName: "cloudflare-secrets-cloudflared-managed",
-    },
     "portal-data-purge": {
       namespaceName: "control-center",
       secretName: "control-center-secrets-portal-data-purge",

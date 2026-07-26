@@ -7,9 +7,10 @@
 // scheme were retired in Task 7 Step C; the one imported legacy tooling host
 // below (hooks-test) stays explicit as its own removal ticket.
 //
-// Ingress and CNAMEs are SEPARATE lists because the live state isn't symmetric:
-// every ingress host has a CNAME, but `hooks-test` has a CNAME with NO ingress
-// rule (a leftover). Modeling them separately is what makes the import exact.
+// Ingress and CNAMEs are SEPARATE lists because the live state was not always
+// symmetric: the retired `hooks-test` record was a CNAME with no ingress rule.
+// They are symmetric today, but keeping the lists separate leaves room for the
+// next asymmetric host without reshaping the model.
 //
 // captive-portal is intentionally absent from BOTH: it is LAN-only, reached over
 // the OrbStack LoadBalancer on the mini's en1 (DESIGN §5a), never tunneled.
@@ -33,9 +34,7 @@ export interface DesiredCname {
   hostname: string;
   proxied: true;
   target: (tunnelId: string) => string;
-  // The record's CF `comment`, matching live EXACTLY for a zero-diff import.
-  // Frozen legacy value below: `hooks-test` carries a legacy evee comment;
-  // `undefined` = no comment.
+  // The record's CF `comment`, matching live EXACTLY. `undefined` = no comment.
   comment?: string;
 }
 
@@ -57,13 +56,10 @@ export type CloudflareRoutes = Readonly<{
 // pruned here.
 const LEGACY_INGRESS: Record<string, string> = {};
 
-// LIVE proxied CNAMEs: the product app host PLUS the stray `hooks-test` leftover,
-// which carries its exact live CF comment for a zero-diff import. The dead `hooks`
-// + `portainer` CNAMEs were pruned in www-oa74; `storybook` and `drizzle` were
-// pruned here.
-const LEGACY_CNAME_COMMENTS: Record<string, string | undefined> = {
-  "hooks-test": "EVEE-218 webhook test (apex naming, covered by Universal SSL)",
-};
+// LIVE proxied CNAMEs beyond the product-derived ones: none. The dead `hooks` +
+// `portainer` CNAMEs were pruned in www-oa74; `storybook` and `drizzle` later;
+// the `hooks-test` leftover went with the evee-webhooks tunnel in #127.
+const LEGACY_CNAME_COMMENTS: Record<string, string | undefined> = {};
 
 export function cloudflareRoutesForExposures(
   sources: readonly CloudflareExposureSource[],
