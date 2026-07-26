@@ -5,7 +5,7 @@
  */
 
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { modalDocsParameters } from "@/components/tiles/__stories__/factory";
+import { modalDocsParameters, pageHostDecorator } from "@/components/tiles/__stories__/factory";
 import { Next12HoursModalSkyClock } from "./Next12HoursModalSkyClock";
 
 // ─── fixtures ─────────────────────────────────────────────────────────────────
@@ -73,20 +73,7 @@ const meta = {
   tags: ["autodocs"],
   parameters: { ...modalDocsParameters(), boardWrapper: false, layout: "fullscreen" },
   // Page-sized container standing in for the TileDetailHost content region.
-  decorators: [
-    (Story) => (
-      <div
-        style={{
-          minHeight: "100vh",
-          background: "var(--bg)",
-          padding: 24,
-          boxSizing: "border-box",
-        }}
-      >
-        <Story />
-      </div>
-    ),
-  ],
+  decorators: [pageHostDecorator()],
   args: {
     hours: hoursAfternoon,
     now: nowAfternoon,

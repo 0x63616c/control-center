@@ -11,7 +11,7 @@ import { ExpandedNotificationCenterView } from "@features/notif/web";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "storybook/test";
 import type { NotificationItem } from "@/lib/notifications";
-import { modalDocsParameters } from "../__stories__/factory";
+import { modalDocsParameters, pageHostDecorator } from "../__stories__/factory";
 
 // A fixed "now" so every age label in these stories is stable.
 const NOW = Date.parse("2026-07-18T12:00:00.000Z");
@@ -50,20 +50,7 @@ const meta = {
   tags: ["autodocs"],
   parameters: { ...modalDocsParameters(), boardWrapper: false, layout: "fullscreen" },
   // Page-sized container standing in for the TileDetailHost content region.
-  decorators: [
-    (Story) => (
-      <div
-        style={{
-          minHeight: "100vh",
-          background: "var(--bg)",
-          padding: 24,
-          boxSizing: "border-box",
-        }}
-      >
-        <Story />
-      </div>
-    ),
-  ],
+  decorators: [pageHostDecorator()],
   args: {
     filter: "unread" as const,
     onFilterChange: fn(),

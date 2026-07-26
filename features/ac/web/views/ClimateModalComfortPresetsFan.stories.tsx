@@ -8,7 +8,7 @@
 
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { fn } from "storybook/test";
-import { modalDocsParameters } from "@/components/tiles/__stories__/factory";
+import { modalDocsParameters, pageHostDecorator } from "@/components/tiles/__stories__/factory";
 import type { ClimateZone } from "./ClimateModalComfortPresetsFan";
 import { ClimateModalComfortPresetsFan } from "./ClimateModalComfortPresetsFan";
 
@@ -103,20 +103,7 @@ const meta = {
   tags: ["autodocs"],
   parameters: { ...modalDocsParameters(), boardWrapper: false, layout: "fullscreen" },
   // Page-sized container standing in for the TileDetailHost content region.
-  decorators: [
-    (Story) => (
-      <div
-        style={{
-          minHeight: "100vh",
-          background: "var(--bg)",
-          padding: 24,
-          boxSizing: "border-box",
-        }}
-      >
-        <Story />
-      </div>
-    ),
-  ],
+  decorators: [pageHostDecorator()],
   args: {
     zones,
     onSetPreset: fn(),

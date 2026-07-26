@@ -90,8 +90,6 @@ export function pageHostDecorator(heightPx?: number) {
       {
         style: {
           ...(heightPx === undefined ? { minHeight: "100vh" } : { height: `${heightPx}px` }),
-          display: "flex",
-          flexDirection: "column",
           background: "var(--bg)",
           padding: 24,
           boxSizing: "border-box",
