@@ -25,11 +25,19 @@ export const meta = {
 //   args.dryRun   boolean   plan/review/revise/implement but never merge or push
 // ---------------------------------------------------------------------------
 
-const REPO = (args && args.repoDir) || '/Users/calum/code/github.com/0x63616c/world-wide-webb'
-const DRY_RUN = !!(args && args.dryRun)
+// `args` can arrive as a JSON STRING rather than an object , the Skill wrapper
+// passes its arguments through as text, and the value survives stringified even
+// when the caller supplies a real object. Normalise both shapes BEFORE reading
+// any field: reading `args.tickets` off a string yields undefined, and the
+// workflow then rejects a perfectly valid ticket list with "requires an
+// explicit ticket list" (cost two failed launches on 2026-07-25).
+const ARGS = typeof args === 'string' ? JSON.parse(args) : (args || {})
 
-const tickets = args && Array.isArray(args.tickets)
-  ? args.tickets.map(Number).filter((n) => Number.isInteger(n) && n > 0)
+const REPO = ARGS.repoDir || '/Users/calum/code/github.com/0x63616c/world-wide-webb'
+const DRY_RUN = !!ARGS.dryRun
+
+const tickets = Array.isArray(ARGS.tickets)
+  ? ARGS.tickets.map(Number).filter((n) => Number.isInteger(n) && n > 0)
   : []
 
 if (tickets.length === 0) {
