@@ -122,6 +122,14 @@ means a GitHub issue - same thing, one vocabulary.
   (`git checkout`, `git switch`, etc.) in the main checkout for both Claude
   Code and Codex - if you hit that, you're in the wrong directory, not
   wrongly permissioned. See #182.
+  - **Agents (Claude Code):** `wtp cd` only moves a shell subprocess, not the
+    agent's own session - it does nothing for you. After `wtp add`, call
+    `EnterWorktree({path: <path wtp printed>})` to actually relocate the
+    session into the worktree wtp created (this does not create a new nested
+    `.claude/worktrees/` checkout - it just points the existing session at an
+    already-wtp-created directory). Skipping this step means every Edit/Write
+    still targets the main checkout and gets denied by the guard above, even
+    if the file path you pass looks like it's inside a worktree.
 - **Branch -> PR -> merge is the default for all work, including agent work.**
   Create a worktree/branch named after the task, commit there, and open a PR
   against `main` (`gh pr create`, using the PR template). Use the
