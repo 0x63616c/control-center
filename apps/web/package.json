@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "proto:longpress": "bun run src/lib/prototype-longpress-editmode.tui.ts",
     "build": "tsc -b && vite build",
     "dev:portal": "vite --config vite.portal.config.ts",
     "build:portal": "tsc -b && vite build --config vite.portal.config.ts",
