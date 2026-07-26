@@ -49,6 +49,9 @@ jobs:
       # infra-only changes (Pulumi program / specs) deploy without any image
       # rebuild: a `pulumi up` must still converge the declared stack.
       infra: ${{ steps.filter.outputs.infra }}
+      # infra/cloudflare is a separate Pulumi project (ticket #52): its own
+      # filter so it deploys independently of the home-server `infra` stack.
+      cloudflareinfra: ${{ steps.filter.outputs.cloudflareinfra }}
       any_app: ${{ steps.filter.outputs.any_app }}
     steps:
       - uses: actions/checkout@v4
@@ -104,6 +107,15 @@ jobs:
             # converge an infra-only diff (e.g. a resource cap or env change).
             infra:
               - 'infra/**'
+            # infra/cloudflare (ticket #52): the Cloudflare edge project (Access
+            # apps + tunnel ingress + DNS), separate from the home-server `infra`
+            # stack above. Also watch packages/platform/src/index.ts: its
+            # controlCenterProductManifest() feeds desiredAccessApps() (src/access.ts)
+            # and productRoutes() (src/routes.ts), so a manifest-only change with
+            # no infra/cloudflare/ diff must still redeploy.
+            cloudflareinfra:
+              - 'infra/cloudflare/**'
+              - 'packages/platform/src/index.ts'
             # Basemap provisioner (www-hn1i): a self-contained alpine + pmtiles
             # CLI + sh image, no workspace deps, so it rebuilds solely on its
             # own tree.
@@ -740,6 +752,61 @@ jobs:
           done
           pulumi up --yes --stack "$STACK"
 
+  # infra/cloudflare (ticket #52): a separate Pulumi project from the k8s stack
+  # above — no LAN/tailnet dependency at all, it only talks to the Cloudflare
+  # API over the internet. All its stack config (apiToken/accountId/zoneId/
+  # tunnelId/allowedEmail) is already SECRET config encrypted in
+  # infra/cloudflare/Pulumi.prod.yaml via Pulumi's own per-stack encryption, so
+  # the only credential this job needs from the vault is PULUMI_ACCESS_TOKEN
+  # (same token the home-server `deploy` job above already uses).
+  deploy-cloudflare:
+    needs: [changes, typecheck]
+    if: |
+      always() &&
+      github.ref_name == 'main' &&
+      needs.changes.outputs.cloudflareinfra == 'true' &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: prod
+    steps:
+      - uses: actions/checkout@v4
+
+      # Decrypt only PULUMI_ACCESS_TOKEN from the vault (the sole secret this
+      # job needs off the AGE key; the Cloudflare-specific config lives
+      # encrypted in Pulumi.prod.yaml itself, see header comment above).
+      - name: Decrypt vault (SOPS+age)
+        env:
+          SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
+        run: |
+          curl -fsSL https://github.com/getsops/sops/releases/download/v3.13.1/sops-v3.13.1.linux.amd64 \
+            -o /usr/local/bin/sops && chmod +x /usr/local/bin/sops
+          curl -fsSL https://github.com/FiloSottile/age/releases/download/v1.3.1/age-v1.3.1-linux-amd64.tar.gz \
+            | tar -xzC /usr/local/bin --strip-components=1 age/age age/age-keygen
+
+          PULUMI_TOKEN=$(sops -d secrets/vault.yaml | grep "^PULUMI__ACCESS_TOKEN:" | cut -d' ' -f2-)
+          echo "::add-mask::$PULUMI_TOKEN"
+          echo "PULUMI_ACCESS_TOKEN=$PULUMI_TOKEN" >> "$GITHUB_ENV"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.19
+
+      - name: Install infra deps
+        run: bun install --frozen-lockfile
+
+      - name: Install Pulumi CLI
+        uses: pulumi/actions@v6
+
+      - name: pulumi up (Cloudflare edge state)
+        working-directory: infra/cloudflare
+        run: |
+          STACK=prod
+          pulumi login
+          pulumi stack select "$STACK"
+          pulumi up --yes --stack "$STACK"
+
   # Push a phone ping via ntfy.sh when main CI fails, and a quiet "deployed"
   # ping when the deploy job succeeds. Terminal job: never fails the pipeline
   # (curl errors are swallowed), never runs off main. The topic name lives in
@@ -762,6 +829,7 @@ jobs:
         merge-worker,
         merge-map-provision,
         deploy,
+        deploy-cloudflare,
       ]
     if: always() && github.ref_name == 'main'
     runs-on: ubuntu-latest
