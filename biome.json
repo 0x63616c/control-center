@@ -174,6 +174,26 @@
       }
     },
     {
+      "includes": ["features/**", "!features/wakes/service.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@features/**"],
+                    "message": "features/ must not import other features directly — cross-feature coupling grows silently. Hoist genuinely-shared data/logic into packages/core or packages/platform, or add a reviewed carve-out (see the wakes -> felogs exception in this file's includes) if the coupling is intentional."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
       "includes": ["app-kit/**", "!app-kit/server.ts"],
       "linter": {
         "rules": {
