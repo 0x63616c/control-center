@@ -14,3 +14,5 @@ config:
     secure: AAABACsqHbau/ipUH6pTLW/ZK+6N/07Pr3o2LVUC0vaMVLBzMMuRmYI6s1IpBOBw5u6hMdWBD7bhmWj/JMD3xvBR/CzRgSw=
   world-wide-webb-cloudflare:kioskTokenId:
     secure: AAABAAxCBdFuE/9OBh3z51qiHAY1807osaDMQE7mKcnZv4F0g+4vwfoJzfc+LTTbkVzggyyvpGtISbaCLGWFdgSxPnw=
+  world-wide-webb-cloudflare:tunnelSecret:
+    secure: AAABAJn24cIT+M2CxIbq0iSwu36XpsuyUVzPTWwHn/d37aOP1Y2NB04HbDRTSAM5pWPga1b8Ek/WOwZGWB9WgJpv/dt9c82VDbOMhw==
