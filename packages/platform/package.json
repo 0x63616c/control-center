@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./env": "./env/index.ts",
-    "./metrics": "./metrics/index.ts"
+    "./metrics": "./metrics/index.ts",
+    "./metrics/port": "./metrics/port.ts"
   },
   "scripts": {
     "test": "vitest run --config vitest.config.ts",
