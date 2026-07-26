@@ -337,15 +337,19 @@ export function setIdleDimLevel(level: number): void {
   patch("idleDimLevel", clamped, String(clamped));
 }
 
-export function setShowFps(v: boolean): void {
+// Not exported (#64): the three overlay fields used to have their own Debug-page
+// switches, so each setter was public. Debug folded into Device's single
+// "Developer overlay" switch (setDeveloperOverlay below), which is now the only
+// caller , keep these module-private until something else needs one alone.
+function setShowFps(v: boolean): void {
   patch("showFps", v, String(v));
 }
 
-export function setShowBuildBadge(v: boolean): void {
+function setShowBuildBadge(v: boolean): void {
   patch("showBuildBadge", v, String(v));
 }
 
-export function setShowBuildNumber(v: boolean): void {
+function setShowBuildNumber(v: boolean): void {
   patch("showBuildNumber", v, String(v));
 }
 
