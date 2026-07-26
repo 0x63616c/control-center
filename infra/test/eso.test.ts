@@ -29,7 +29,7 @@ function get<T>(r: pulumi.Resource, prop: string): Promise<T> {
 
 const testNamespaces = {
   "control-center": "control-center",
-  platform: "platform",
+  cloudflare: "cloudflare",
 } as const;
 
 describe("SERVICE_SECRETS", () => {
@@ -120,8 +120,8 @@ describe("installEso (native Secrets, CC-k8t7)", () => {
     expect(metadata.find((m) => m.name === "control-center-secrets-api")?.namespace).toBe(
       "control-center",
     );
-    expect(metadata.find((m) => m.name === "platform-secrets-cloudflared")?.namespace).toBe(
-      "platform",
+    expect(metadata.find((m) => m.name === "cloudflare-secrets-cloudflared")?.namespace).toBe(
+      "cloudflare",
     );
   });
 });

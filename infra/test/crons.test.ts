@@ -36,7 +36,7 @@ beforeAll(async () => {
 const NAS = "192.168.0.218";
 const testNamespaces = {
   "control-center": "control-center",
-  platform: "platform",
+  cloudflare: "cloudflare",
 } as const;
 
 function get<T>(r: pulumi.Resource, prop: string): Promise<T> {
