@@ -1,17 +1,16 @@
-const FALLBACK_ALPHABET_BASE = 36;
-
 // crypto.randomUUID is present in every real runtime this repo ships to
 // (browser webview, Bun, Node), but not always in test doubles (older jsdom,
-// Storybook). The fallback keeps those environments from throwing.
+// Storybook). getRandomValues is far more widely implemented, so it is the
+// fallback — not Math.random, which CodeQL (rightly) flags as insecure
+// randomness for anything id-shaped.
 function randomHex(length: number): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID().replaceAll("-", "").slice(0, length);
   }
-  let out = "";
-  while (out.length < length) {
-    out += Math.random().toString(FALLBACK_ALPHABET_BASE).slice(2);
-  }
-  return out.slice(0, length);
+  const bytes = crypto.getRandomValues(new Uint8Array(Math.ceil(length / 2)));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, length);
 }
 
 /**
