@@ -36,6 +36,7 @@
 import * as k8s from "@pulumi/kubernetes";
 import * as pulumi from "@pulumi/pulumi";
 import { controlCenterProductManifest } from "@www/platform";
+import { DEFAULT_METRICS_PORT } from "@www/platform/metrics";
 import { GHCR_PULL_SECRET_NAME } from "./ghcr-pull-secrets.ts";
 import { composeGhcrDockerConfigJson, ghcrImage, type ImageDigests } from "./services.ts";
 
@@ -566,7 +567,24 @@ export function installTemporal(args: TemporalArgs): TemporalResources {
         replicas: 1,
         selector: { matchLabels: workerLabels },
         template: {
-          metadata: { labels: workerLabels },
+          metadata: {
+            labels: workerLabels,
+            // Prometheus scrape target (#214). On the POD TEMPLATE, not the
+            // Deployment: `role: pod` service discovery only ever sees Pods.
+            // This Deployment is hand-written (it lives in the `temporal`
+            // namespace, not the control-center WorkloadSpec set), so the
+            // annotations are spelled out here rather than coming from
+            // `WorkloadSpec.scrape`. The PORT is our own app-level exposition
+            // port (`DEFAULT_METRICS_PORT`, shared with the listener the worker
+            // starts), NOT the `METRICS_PORT` above — that one is the upstream
+            // Temporal server's own reporter. No Service fronts it: in-cluster
+            // scraping only.
+            annotations: {
+              "prometheus.io/scrape": "true",
+              "prometheus.io/port": String(DEFAULT_METRICS_PORT),
+              "prometheus.io/path": METRICS_PATH,
+            },
+          },
           spec: {
             automountServiceAccountToken: false,
             imagePullSecrets: [{ name: GHCR_PULL_SECRET_NAME }],

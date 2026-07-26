@@ -22,6 +22,7 @@
  */
 
 import { getLogger } from "@www/logger";
+import { observeJobRun } from "@www/platform/metrics";
 import { sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { job } from "./schema";
@@ -279,6 +280,11 @@ export async function claimOne(db: JobQueueDb, spec: JobSpec): Promise<boolean> 
     // A shutdown release already handed the row back to `queued`; marking it
     // done here would resurrect a job whose work was cut short mid-flight.
     if (entry.released) return true;
+    // Instrumented HERE, on the real claim/run path, so the counters can never
+    // disagree with the row transitions above. A shutdown release (the early
+    // return) is deliberately neither a success nor a failure: the work is
+    // handed back to `queued` and will be run again by the next pod.
+    observeJobRun({ job: type, outcome: "success", durationSeconds: durationMs / 1000 });
     getLogger().info({ jobId: claimed.id, type: claimed.type, durationMs }, "job completed");
     await db.execute(
       sql`
@@ -295,6 +301,11 @@ export async function claimOne(db: JobQueueDb, spec: JobSpec): Promise<boolean> 
     // already requeued the row; retrying here would burn an attempt (or, at
     // max_attempts, permanently fail) a job that never actually failed.
     if (entry.released) return true;
+    observeJobRun({
+      job: type,
+      outcome: "failure",
+      durationSeconds: (performance.now() - startedAt) / 1000,
+    });
     const msg = err instanceof Error ? err.message : String(err);
     const nextAttempts = claimed.attempts + 1; // attempts was incremented above
     if (nextAttempts < claimed.max_attempts) {

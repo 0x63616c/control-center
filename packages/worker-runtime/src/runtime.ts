@@ -12,6 +12,7 @@
  * cadence is a fixed wall-clock interval (STATS_INTERVAL_MS).
  */
 import type { Logger } from "@www/logger";
+import { observeCronRun } from "@www/platform/metrics";
 import type { Worker, WorkerRuntime, WorkerStats } from "./types";
 
 // Mutable per-worker bookkeeping. Kept in a closure (no module-global state) so
@@ -76,8 +77,14 @@ export function createWorkerRuntime(workers: Worker[], opts: WorkerRuntimeOption
     // Bind the worker name once so every log line from this cycle carries it.
     const workerLog = logger.child({ worker: state.worker.name });
     const prevConsecutiveFailures = state.stats.consecutiveFailures;
+    // Every recurring cycle in this system is scheduled here, so this is the one
+    // place the "cron" metrics need to be raised (#214). The gauge that matters
+    // is last-success: a loop that stops emits nothing at all, and only a
+    // staleness check on a timestamp catches that.
+    let succeeded = false;
     try {
       await state.worker.run();
+      succeeded = true;
       state.stats.consecutiveFailures = 0;
       state.stats.lastError = null;
       // Recovery transition: log when a previously failing worker clears its streak.
@@ -105,6 +112,11 @@ export function createWorkerRuntime(workers: Worker[], opts: WorkerRuntimeOption
       state.stats.totalRuns += 1;
       state.stats.lastRunAt = new Date();
       state.stats.lastDurationMs = Date.now() - startedAt;
+      observeCronRun({
+        cron: state.worker.name,
+        outcome: succeeded ? "success" : "failure",
+        durationSeconds: state.stats.lastDurationMs / 1000,
+      });
     }
 
     // Slow-cycle warning: this cycle took longer than its own configured interval.

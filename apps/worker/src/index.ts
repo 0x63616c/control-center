@@ -34,6 +34,7 @@ import { runPlaylistPollerCycle } from "@features/sound/poller";
 import { runWeatherIngestCycle } from "@features/weather/ingest";
 import { createLogger, installFatalHandlers } from "@www/logger";
 import { ENV as config } from "@www/platform/env";
+import { initMetrics, startMetricsServer } from "@www/platform/metrics";
 import { createWorkerRuntime, type Worker } from "@www/worker-runtime";
 import { hasSufficientDisk } from "./disk-guard";
 
@@ -42,6 +43,15 @@ const log = createLogger({ service: "worker" });
 // An escaping async throw or an untracked rejected promise otherwise kills
 // this process with zero structured output; see docs/logging.md.
 installFatalHandlers(log);
+
+// Prometheus registry + exposition listener (#214). The worker serves no HTTP
+// of its own, so this dedicated port is the ONLY listener it has; it fronts no
+// Kubernetes Service (Prometheus scrapes the pod IP off the annotations set by
+// `WorkloadSpec.scrape`), so it is reachable in-cluster only and never through
+// the Cloudflare tunnel. Started before the loops so the very first cycle's
+// metrics are already collectable.
+initMetrics({ service: "worker" });
+startMetricsServer({ port: config.METRICS_PORT, logger: log });
 
 // Apply pending migrations before any cycle touches the DB. The api also runs
 // this at boot; whichever wins is idempotent, and the worker must not poll a

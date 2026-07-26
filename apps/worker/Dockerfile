@@ -68,5 +68,6 @@ COPY --from=build /app/dist/worker.js worker.js
 # live in api (the schema's home) and are re-exported via @control-center/api.
 COPY --from=build /app/apps/api/src/db/migrations migrations
 
-# No port: the worker serves no HTTP, it only reaches out to HA + Postgres.
+# The only listener is the Prometheus exposition on :9464 (#214), scraped by pod
+# IP in-cluster; no EXPOSE is needed for that and no Service fronts it.
 CMD ["bun", "worker.js"]
