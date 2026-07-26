@@ -24,6 +24,7 @@ import {
 } from "@features/weight/schema";
 import { formatWeighInAlert, isOutsideSanityBand, notDeleted } from "@features/weight/service";
 import { getLogger, logChange } from "@www/logger";
+import { genId } from "@www/platform";
 import { and, eq, gte, isNull } from "drizzle-orm";
 import { db } from "../db/index";
 import { withings } from "../integrations/withings";
@@ -34,7 +35,7 @@ const EXPIRY_BUFFER_MS = 60_000;
 const SANITY_BAND_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 
 function newWeightId(): string {
-  return `wm_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  return genId("wm", { length: 16 });
 }
 
 export async function runWithingsWeightIngestCycle(): Promise<void> {

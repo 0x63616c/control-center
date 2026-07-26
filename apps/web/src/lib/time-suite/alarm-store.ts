@@ -33,6 +33,7 @@
  * reload, NO cue evaluation , the writing tab already cued).
  */
 
+import { genId } from "@www/platform";
 import { playCue, warmAudio } from "../sound";
 import { createStore, useStoreSelector } from "../store";
 import { computeNextFireAtMs, validRepeatDays } from "./pure";
@@ -231,7 +232,7 @@ export function addAlarm(input: AlarmInput): void {
   if (!validWallTime(input.hour, input.minute) || !validRepeatDays(input.repeatDays ?? [])) return;
   const now = Date.now();
   const alarm: AlarmRecord = {
-    id: `alarm_${crypto.randomUUID()}`,
+    id: genId("alarm"),
     label: input.label ?? null,
     hour: input.hour,
     minute: input.minute,

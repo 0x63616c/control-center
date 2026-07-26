@@ -16,6 +16,7 @@
  * listener below (state reload, no cue evaluation , there are no cues).
  */
 
+import { genId } from "@www/platform";
 import { createStore, useStore } from "../store";
 import { stopwatchElapsedMs } from "./pure";
 import { onExternalWrite, readJson, writeJson } from "./storage";
@@ -108,7 +109,7 @@ export function lapStopwatch(): void {
   if (!state.running) return;
   const elapsed = stopwatchElapsedMs(state, Date.now());
   const lap: StopwatchLap = {
-    id: `lap_${crypto.randomUUID()}`,
+    id: genId("lap"),
     ms: elapsed - state.lapStartElapsedMs,
   };
   mutate({ ...state, laps: [lap, ...state.laps], lapStartElapsedMs: elapsed });

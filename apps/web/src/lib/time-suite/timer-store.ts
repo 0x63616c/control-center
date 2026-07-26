@@ -24,6 +24,7 @@
  * evaluation), so the non-writing tab follows along without double cues.
  */
 
+import { genId } from "@www/platform";
 import { playCue, warmAudio } from "../sound";
 import { createStore, useStore, useStoreSelector } from "../store";
 import { onExternalWrite, readJson, writeJson } from "./storage";
@@ -196,7 +197,7 @@ export function addTimer(durationMs: number, label?: string): void {
   if (!Number.isFinite(durationMs) || durationMs <= 0) return;
   const now = Date.now();
   const timer: TimerRecord = {
-    id: `timer_${crypto.randomUUID()}`,
+    id: genId("timer"),
     label: label ?? null,
     durationMs,
     endsAtMs: now + durationMs,
