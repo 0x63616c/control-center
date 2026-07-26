@@ -183,5 +183,23 @@ YAML) is gitignored for the same reason.
   plaintext secret, never the committed encrypted one.
 - The NIC name (`enp4s0`) was confirmed on the real hardware 2026-07-24 — see
   "Network interface" above.
-- No `kubeconfig`/cluster bootstrap has happened. This task is machine-config
-  authoring only, per scope.
+- **Update 2026-07-25: the cluster has since been bootstrapped from this
+  config.** The line above ("no kubeconfig/cluster bootstrap has happened")
+  described the state at authoring time only.
+
+## kubectl + talosctl context setup
+
+Endpoints and contexts are **declared in `talconfig.yaml`** (`endpoint:`,
+`ipAddress:`, `certSANs:`) — `clusterconfig/` is talhelper's gitignored render
+of that file; read the source, not this doc, if it ever seems out of sync.
+
+One fact that isn't derivable from `talconfig.yaml` and had to be checked
+live: the node's Kubernetes-registered `InternalIP` is the **Tailscale**
+address (`100.88.154.126`), not the LAN IP — the apiserver is genuinely
+bound/advertised on the tailnet interface. Confirmed 2026-07-26 via
+`KUBECONFIG=infra/talos/clusterconfig/kubeconfig kubectl get nodes -o wide`.
+
+There is no tailnet-named `talosctl` context checked in, so off-LAN
+`talosctl` needs `talosctl -e <tailnet-ip> -n <tailnet-ip> <cmd>` rather than
+the default context. **Open question for Calum:** worth adding a named
+tailnet context so that override isn't needed every time?
