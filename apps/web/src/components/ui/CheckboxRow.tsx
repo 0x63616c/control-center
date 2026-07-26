@@ -37,15 +37,11 @@ export function CheckboxRow({
         aria-invalid={error || undefined}
         aria-describedby={errorMessage ? fieldErrorId(id) : undefined}
         onChange={(e) => onChange(e.target.checked)}
-        style={{
-          flexShrink: 0,
-          width: 17,
-          height: 17,
-          marginTop: 2,
-          accentColor: error ? "var(--red, #e5484d)" : "var(--acc)",
-          outline: error ? "2px solid var(--red, #e5484d)" : undefined,
-          outlineOffset: error ? 1 : undefined,
-        }}
+        // .wwb-checkbox (tokens.css) fully themes the box , native checkbox
+        // chrome renders an unthemed white box on several platforms until
+        // checked, `accent-color` alone only themes the fill (#76).
+        className={error ? "wwb-checkbox error" : "wwb-checkbox"}
+        style={{ flexShrink: 0, marginTop: 2 }}
       />
       <label
         htmlFor={id}
