@@ -20,6 +20,12 @@ pre-commit:
       # BLOCKING: rejects reintroduction of Ofelia (replaced by k8s CronJobs,
       # www-79k). The token is sanctioned only in the guard script itself.
       run: bash scripts/check-no-ofelia.sh {staged_files}
+    no-inline-ids:
+      glob: "*.{ts,tsx}"
+      # BLOCKING: rejects hand-rolled `prefix_${crypto.randomUUID()}` ids outside
+      # packages/platform/src/id.ts. Use genId() so every id-mint site shares one
+      # implementation. See www-184.
+      run: bash scripts/check-no-inline-ids.sh {staged_files}
     no-home-address:
       # BLOCKING: rejects the private home-location name (any casing) so the home
       # address never re-enters the public repo. The blocked pattern is

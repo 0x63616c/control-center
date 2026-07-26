@@ -28,6 +28,7 @@
  * is exactly what a tap is.
  */
 
+import { genId } from "@www/platform";
 import { log } from "./logger";
 
 /** The broad area of the UI a person touched. */
@@ -88,13 +89,7 @@ let lastSessionId: string | null = null;
 let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
 function newSessionId(): string {
-  // `prefix_<id>` per the repo ID convention. randomUUID is present in the
-  // panel's webview and in jsdom; the fallback keeps Storybook/older envs sane.
-  const raw =
-    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-      ? crypto.randomUUID().replace(/-/g, "").slice(0, 12)
-      : Math.random().toString(36).slice(2, 14);
-  return `isn_${raw}`;
+  return genId("isn", { length: 12 });
 }
 
 function armIdleTimer(): void {

@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { nextFreeName } from "@www/core";
 import { getLogger } from "@www/logger";
+import { genId } from "@www/platform";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { config } from "./config";
@@ -103,14 +104,13 @@ export function defaultBoothPhotoRoot(): string {
   return join(config.MEDIA_STORAGE_DIR, "booth-photos");
 }
 
-/** New booth-photo id (repo IDs default to prefix_<id>). */
 function newBoothPhotoId(): string {
-  return `bph_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  return genId("bph", { length: 16 });
 }
 
 /** New capture-group id, shared by every frame of one burst/strip. */
 export function newBoothGroupId(): string {
-  return `bpg_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  return genId("bpg", { length: 16 });
 }
 
 function hasMagic(bytes: Uint8Array, magic: number[]): boolean {

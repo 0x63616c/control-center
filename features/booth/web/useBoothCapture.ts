@@ -20,6 +20,7 @@
  * let the backend mint one.
  */
 
+import { genId } from "@www/platform";
 import { useEffect, useRef, useState } from "react";
 import { playCue } from "@/lib/sound";
 import { type CountdownOption, filterCss } from "./camera-model";
@@ -45,11 +46,7 @@ const ERROR_LINGER_MS = 4000;
 
 /** Mint a group id in the api's `^bpg_[0-9a-z]{1,32}$` shape (matches the backend). */
 function newBoothGroupId(): string {
-  const raw =
-    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-      ? crypto.randomUUID().replace(/-/g, "").slice(0, 16)
-      : Math.random().toString(36).slice(2, 14);
-  return `bpg_${raw}`;
+  return genId("bpg", { length: 16 });
 }
 
 export interface BoothCaptureArgs {

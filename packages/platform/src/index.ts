@@ -1,3 +1,5 @@
+export { genId } from "./id";
+
 export const productSlugs = ["control-center", "captive-portal"] as const;
 
 export type ProductSlug = (typeof productSlugs)[number];

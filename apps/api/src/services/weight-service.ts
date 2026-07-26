@@ -20,6 +20,7 @@ import {
   notDeleted,
 } from "@features/weight/service";
 import { getLogger } from "@www/logger";
+import { genId } from "@www/platform";
 import { ENV as config } from "@www/platform/env";
 import { and, desc, gte, isNull } from "drizzle-orm";
 import { db } from "../db/index";
@@ -27,7 +28,7 @@ import { ha } from "../integrations/homeassistant/index";
 import { HaError } from "../integrations/homeassistant/types";
 
 function newWeightId(): string {
-  return `wm_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  return genId("wm", { length: 16 });
 }
 
 export async function runWeightIngestCycle(): Promise<void> {
