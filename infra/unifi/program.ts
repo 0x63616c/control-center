@@ -23,7 +23,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import * as pulumi from "@pulumi/pulumi";
 import type { FixedIpReservation } from "./src/manifest.ts";
-import { adoptExisting, createGuestVlan, makeProvider } from "./src/unifi.ts";
+import { adoptExisting, createGuestVlan, createLanDnsRecord, makeProvider } from "./src/unifi.ts";
 
 function loadFixedIpReservations(): FixedIpReservation[] {
   const path =
@@ -76,6 +76,28 @@ function exportGuest(guest: ReturnType<typeof createGuestVlan>): void {
   // Surface the new network/wlan ids only (no secret).
   pulumi.all([guest.network.id, guest.wlan.id]).apply(([net, wlan]) => {
     pulumi.log.info(`www-guest network=${net} wlan=${wlan}`);
+  });
+}
+
+// LAN-only local DNS record for Home Assistant (#75: Calum picked "B" — a
+// UniFi Local DNS Record over a public Cloudflare Tunnel route, since HA
+// controls physical devices in the house and there's no live need to reach
+// its UI off-LAN today). Gated behind `unifi:applyHaDns` (default false) so
+// this stays additive-only until Calum explicitly approves the apply, same
+// pattern as `applyGuest` above. Resolves to the home-server Talos node
+// (192.168.0.5, DEFAULT_TALOS_NODE_IP in infra/src/services.ts) — HA runs
+// in-cluster there; see infra/src/services.ts `haTarget()`.
+if (cfg.getBoolean("applyHaDns")) {
+  const haDns = createLanDnsRecord(provider, {
+    hostname: cfg.get("haHostname") ?? "ha.worldwidewebb.co",
+    target: cfg.get("haTarget") ?? "192.168.0.5",
+  });
+  exportHaDns(haDns);
+}
+
+function exportHaDns(record: ReturnType<typeof createLanDnsRecord>): void {
+  pulumi.all([record.name, record.value]).apply(([name, value]) => {
+    pulumi.log.info(`ha local DNS record ${name} -> ${value}`);
   });
 }
 

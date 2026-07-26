@@ -263,6 +263,41 @@ export function adoptExisting(
   };
 }
 
+export interface LanDnsRecordArgs {
+  // The hostname to resolve on the LAN, e.g. "ha.worldwidewebb.co".
+  hostname: string;
+  // The LAN IP it resolves to.
+  target: string;
+}
+
+/**
+ * @public - a NEW, additive split-DNS "Local DNS Record" (Settings → Internet →
+ * Local DNS Record on this UDM-class controller): resolves `hostname` to
+ * `target` for LAN clients only, no public DNS/Cloudflare/tunnel involved.
+ * Same `unifi.dns.Record` resource type as the adopted `captivePortalDns`
+ * (src/unifi.ts's `adoptExisting`), but this one doesn't exist on the
+ * controller yet, so it's a plain create (no `import`) rather than an
+ * adopt. Not `protect: true` on create either: adopt-only protection guards
+ * against destroying something that already existed before this repo managed
+ * it (Boundary 1); a record this program itself created can be safely
+ * destroyed by this program too.
+ */
+export function createLanDnsRecord(
+  provider: unifi.Provider,
+  args: LanDnsRecordArgs,
+): unifi.dns.Record {
+  return new unifi.dns.Record(
+    args.hostname,
+    {
+      name: args.hostname,
+      value: args.target,
+      type: "A",
+      enabled: true,
+    },
+    { provider },
+  );
+}
+
 export interface GuestVlanArgs {
   // VLAN id for the isolated guest network (unused on this flat LAN today).
   vlanId: number;

@@ -182,3 +182,16 @@ describe("createGuestVlan (additive, gated, OPEN captive-portal guest net)", () 
     expect(await get<string>(guest.portalAllowRule, "ruleset")).toBe("LAN_IN");
   });
 });
+
+describe("createLanDnsRecord (additive, gated: #75 LAN-only HA DNS)", () => {
+  test("resolves the given hostname to the given LAN target as an A record", async () => {
+    const record = mod.createLanDnsRecord(testProvider(), {
+      hostname: "ha.worldwidewebb.co",
+      target: "192.168.0.5",
+    });
+    expect(await get<string>(record, "name")).toBe("ha.worldwidewebb.co");
+    expect(await get<string>(record, "value")).toBe("192.168.0.5");
+    expect(await get<string>(record, "type")).toBe("A");
+    expect(await get<boolean>(record, "enabled")).toBe(true);
+  });
+});
