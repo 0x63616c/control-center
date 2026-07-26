@@ -20,11 +20,19 @@ import {
 const ZONE = "worldwidewebb.co";
 
 describe("desiredIngressRules", () => {
-  test("declares the product-derived app host as the only ingress host", () => {
+  test("declares the product-derived app + temporal-ui hosts as the only ingress hosts", () => {
     const byHost = Object.fromEntries(
       desiredIngressRules(ZONE).map((r) => [r.hostname, r.service]),
     );
-    expect(Object.keys(byHost).sort()).toEqual(["app.worldwidewebb.co"]);
+    expect(Object.keys(byHost).sort()).toEqual([
+      "app.worldwidewebb.co",
+      "temporal-ui.worldwidewebb.co",
+    ]);
+    // Cross-NAMESPACE origin: cloudflared runs in control-center, so only the
+    // cluster-local FQDN resolves the Service in `temporal`.
+    expect(byHost["temporal-ui.worldwidewebb.co"]).toBe(
+      "http://temporal-ui.temporal.svc.cluster.local:8080",
+    );
     expect(byHost["dashboard.worldwidewebb.co"]).toBeUndefined();
     expect(byHost["storybook.worldwidewebb.co"]).toBeUndefined();
     expect(byHost["drizzle.worldwidewebb.co"]).toBeUndefined();
@@ -89,7 +97,11 @@ describe("desiredCnames", () => {
     const hosts = desiredCnames(ZONE)
       .map((c) => c.hostname)
       .sort();
-    expect(hosts).toEqual(["app.worldwidewebb.co", "hooks-test.worldwidewebb.co"]);
+    expect(hosts).toEqual([
+      "app.worldwidewebb.co",
+      "hooks-test.worldwidewebb.co",
+      "temporal-ui.worldwidewebb.co",
+    ]);
     // Task 7 Step C: the flattened app--cc cutover CNAME is retired.
     expect(hosts).not.toContain("app--cc.worldwidewebb.co");
   });
@@ -112,6 +124,7 @@ describe("desiredCnames", () => {
     );
     // product-derived platform route comment (not a frozen legacy value)
     expect(byHost["app.worldwidewebb.co"]).toBe("platform:control-center private app route");
+    expect(byHost["temporal-ui.worldwidewebb.co"]).toBe("platform:temporal web ui route");
     // Task 7 Step C: the flattened app--cc cutover CNAME is retired.
     expect(byHost).not.toHaveProperty("app--cc.worldwidewebb.co");
     // pruned dead routes are absent (www-oa74; storybook + drizzle pruned since)

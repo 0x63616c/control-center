@@ -35,6 +35,7 @@
 
 import * as k8s from "@pulumi/kubernetes";
 import * as pulumi from "@pulumi/pulumi";
+import { controlCenterProductManifest } from "@www/platform";
 import { GHCR_PULL_SECRET_NAME } from "./ghcr-pull-secrets.ts";
 import { composeGhcrDockerConfigJson, ghcrImage, type ImageDigests } from "./services.ts";
 
@@ -483,9 +484,18 @@ export function installTemporal(args: TemporalArgs): TemporalResources {
                   },
                   { name: "TEMPORAL_UI_PORT", value: String(UI_PORT) },
                   { name: "TEMPORAL_DEFAULT_NAMESPACE", value: TEMPORAL_CLUSTER_NAMESPACE },
-                  // Reached by `kubectl port-forward`, so the browser's origin
-                  // is localhost, not the Service name.
-                  { name: "TEMPORAL_CORS_ORIGINS", value: `http://localhost:${UI_PORT}` },
+                  // Two browser origins, both real: the Cloudflare tunnel host
+                  // (the normal way in) and localhost for `kubectl
+                  // port-forward` (the way in when the tunnel or Access is the
+                  // thing being debugged). Never the Service name — no browser
+                  // ever sees that as an origin.
+                  {
+                    name: "TEMPORAL_CORS_ORIGINS",
+                    value: [
+                      `https://${controlCenterProductManifest().temporalUi.exposure.hostname}`,
+                      `http://localhost:${UI_PORT}`,
+                    ].join(","),
+                  },
                 ],
                 ports: [{ name: "http", containerPort: UI_PORT }],
                 resources: {

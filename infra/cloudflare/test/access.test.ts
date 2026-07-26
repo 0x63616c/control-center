@@ -14,7 +14,7 @@ describe("desiredAccessApps", () => {
     const domains = desiredAccessApps(ZONE)
       .map((a) => a.domain)
       .sort();
-    expect(domains).toEqual(["app.worldwidewebb.co"]);
+    expect(domains).toEqual(["app.worldwidewebb.co", "temporal-ui.worldwidewebb.co"]);
     expect(domains).not.toContain("*.worldwidewebb.co");
     expect(domains).not.toContain("hooks.worldwidewebb.co");
     expect(domains).not.toContain("drizzle.worldwidewebb.co");
@@ -30,9 +30,28 @@ describe("desiredAccessApps", () => {
       "*.worldwidewebb.co",
       "app.worldwidewebb.co",
       "hooks.worldwidewebb.co",
+      "temporal-ui.worldwidewebb.co",
     ]);
     expect(domains).not.toContain("app--cc.worldwidewebb.co");
     expect(domains).not.toContain("drizzle.worldwidewebb.co");
+  });
+
+  test("temporal-ui is human-login only — NEVER reachable with the kiosk token", () => {
+    // The Temporal UI can terminate and reset running workflows. The wall panel
+    // authenticates with a service token it stores on-device and never prompts
+    // for; that token must not open this door.
+    const ui = desiredAccessApps(ZONE, true).find(
+      (entry) => entry.domain === "temporal-ui.worldwidewebb.co",
+    );
+
+    expect(ui?.policies).toEqual([
+      {
+        decision: "allow",
+        include: { configKey: "allowedEmail", kind: "email-config" },
+        name: "email-otp",
+        precedence: 1,
+      },
+    ]);
   });
 
   test("supports kiosk service-token access for app (+ email-OTP fallback for browser, CC-d15)", () => {

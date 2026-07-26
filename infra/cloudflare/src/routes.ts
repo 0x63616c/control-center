@@ -99,6 +99,14 @@ function productRoutes(): CloudflareRoutes {
       origin: "http://web.control-center.svc.cluster.local:80",
       comment: "platform:control-center private app route",
     },
+    {
+      exposure: cc.temporalUi.exposure,
+      // FQDN, not the short Service name: cloudflared runs in the
+      // `control-center` namespace, so `temporal-ui` alone would not resolve
+      // across into the `temporal` namespace.
+      origin: "http://temporal-ui.temporal.svc.cluster.local:8080",
+      comment: "platform:temporal web ui route",
+    },
   ];
 
   return cloudflareRoutesForExposures(sources);

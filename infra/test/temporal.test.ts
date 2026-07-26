@@ -150,6 +150,16 @@ describe("installTemporal (issue #124, talos-only)", () => {
     expect(script).toMatch(/attempt.*-ge \d+/);
   });
 
+  test("the UI accepts the tunnel hostname as a CORS origin, not just port-forward localhost", async () => {
+    const spec = await get<DeploymentSpec>(install().ui, "spec");
+    const cors = spec.template.spec.containers[0].env?.find(
+      (e) => e.name === "TEMPORAL_CORS_ORIGINS",
+    );
+    // Hostname comes from the platform manifest, so the tunnel route, the
+    // Access app and this CORS allowlist cannot drift apart.
+    expect(cors?.value).toBe("https://temporal-ui.worldwidewebb.co,http://localhost:8080");
+  });
+
   test("registers the control-center Temporal namespace, and fails the Job if it is absent", async () => {
     const spec = await get<{ template: { spec: PodSpec } }>(install().namespaceJob, "spec");
     const script = spec.template.spec.containers[0].command?.join("\n") ?? "";

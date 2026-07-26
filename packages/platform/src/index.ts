@@ -566,6 +566,15 @@ export type ControlCenterProductManifest = Readonly<{
   app: Readonly<{
     exposure: WebExposure;
   }>;
+  // The Temporal web UI. Declared here rather than in `services` because it is
+  // NOT a control-center workload: it runs in the `temporal` namespace from an
+  // upstream image (infra/src/temporal.ts), and `services` drives control-center
+  // workload derivation. What it shares with the product is the exposure surface
+  // — one hostname, tunnel-routed, Access-gated — so the hostname is owned here,
+  // where every other public name in this system is owned.
+  temporalUi: Readonly<{
+    exposure: WebExposure;
+  }>;
   services: Readonly<Record<ControlCenterServiceName, ProductServiceDeclaration>>;
   secretUsages: Readonly<Record<ControlCenterSecretUsageName, ServiceSecretUsage>>;
   database: ProductDatabase;
@@ -596,6 +605,11 @@ export function controlCenterProductManifest(): ControlCenterProductManifest {
     target,
     app: {
       exposure: privateWeb(target, { host: "app" }),
+    },
+    temporalUi: {
+      // Single label under the zone, so Universal SSL's one-label wildcard
+      // covers it (see webHostname).
+      exposure: privateWeb(target, { host: "temporal-ui" }),
     },
     services: {
       api: {

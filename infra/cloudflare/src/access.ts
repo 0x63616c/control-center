@@ -145,6 +145,10 @@ export function desiredAccessApps(zone: string, includeGate = false): DesiredAcc
     // human login) plus an email-OTP fallback for browser access (CC-d15).
     ...accessAppsForPrivateWeb([
       { exposure: ccManifest.app.exposure, policies: ["kiosk-service-token", "email-otp"] },
+      // Temporal UI: email-OTP ONLY, deliberately no kiosk service token. The
+      // wall panel has no business reaching it, and the UI can terminate and
+      // reset running workflows — so it stays behind a human login.
+      { exposure: ccManifest.temporalUi.exposure, policies: ["email-otp"] },
     ]),
   ];
 
