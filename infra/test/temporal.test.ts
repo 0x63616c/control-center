@@ -136,6 +136,20 @@ describe("installTemporal (issue #124, talos-only)", () => {
     expect(script).not.toMatch(/update-schema[^\n]*\|\| true/);
   });
 
+  test("waits for postgres with a bounded TCP probe, never a temporal-sql-tool subcommand", async () => {
+    const spec = await get<{ template: { spec: PodSpec } }>(install().schemaJob, "spec");
+    const script = spec.template.spec.containers[0].command?.join("\n") ?? "";
+    // `temporal-sql-tool` 1.31.2 has no `ping`: setup-schema, update-schema,
+    // create-database and drop-database are the only subcommands. An
+    // `until … ping` gate therefore never succeeds and the Job hangs Running
+    // forever against a perfectly healthy database.
+    expect(script).not.toContain("ping");
+    expect(script).toContain("nc -z temporal-postgres-rw 5432");
+    // Bounded: unreachable Postgres must fail the Job, not hang it.
+    expect(script).toContain("exit 1");
+    expect(script).toMatch(/attempt.*-ge \d+/);
+  });
+
   test("registers the control-center Temporal namespace, and fails the Job if it is absent", async () => {
     const spec = await get<{ template: { spec: PodSpec } }>(install().namespaceJob, "spec");
     const script = spec.template.spec.containers[0].command?.join("\n") ?? "";

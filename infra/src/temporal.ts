@@ -78,6 +78,10 @@ const DATABASE_NAME = "temporal";
 const VISIBILITY_DATABASE_NAME = "temporal_visibility";
 const DATABASE_PORT = "5432";
 
+// Bounded wait for Postgres in the schema Job: ~2 minutes, then fail the Job.
+const DB_WAIT_MAX_ATTEMPTS = 60;
+const DB_WAIT_INTERVAL_SECONDS = 2;
+
 // History shards are FIXED AT CREATION — changing this on a cluster that holds
 // data is not a migration, it is a new cluster. 512 is the standard small-
 // production value: enough headroom to grow into, cheap to poll at this size.
@@ -179,13 +183,28 @@ function sqlToolFlags(database: string): string {
  *   - `update-schema` then applies whatever versioned migrations are missing,
  *     and is NOT tolerated failing — a broken schema must fail the Job (and so
  *     the deploy) rather than leave the server crash-looping against it.
+ *
+ * The readiness gate is a plain TCP probe with `nc`, not a `temporal-sql-tool`
+ * subcommand: 1.31.2's sql tool has exactly four commands (setup-schema,
+ * update-schema, create-database, drop-database) and no `ping`, so an earlier
+ * `until … ping` loop spun forever on a healthy database. The probe is also
+ * bounded — an unreachable Postgres must fail the Job (and the deploy) instead
+ * of leaving it Running indefinitely, which is how that bug hid.
  */
 function schemaSetupScript(): string {
   const schemaRoot = "/etc/temporal/schema/postgresql/v12";
   return [
     "set -eu",
     'echo "waiting for postgres…"',
-    `until temporal-sql-tool ${sqlToolFlags(DATABASE_NAME)} ping >/dev/null 2>&1; do sleep 2; done`,
+    `attempt=0`,
+    `until nc -z ${CNPG_RW_SERVICE_NAME} ${DATABASE_PORT}; do`,
+    `  attempt=$((attempt + 1))`,
+    `  if [ "$attempt" -ge ${DB_WAIT_MAX_ATTEMPTS} ]; then`,
+    `    echo "postgres ${CNPG_RW_SERVICE_NAME}:${DATABASE_PORT} unreachable after ${DB_WAIT_MAX_ATTEMPTS} attempts" >&2`,
+    `    exit 1`,
+    `  fi`,
+    `  sleep ${DB_WAIT_INTERVAL_SECONDS}`,
+    `done`,
     `temporal-sql-tool ${sqlToolFlags(DATABASE_NAME)} setup-schema -v 0.0 || true`,
     `temporal-sql-tool ${sqlToolFlags(DATABASE_NAME)} update-schema -d ${schemaRoot}/temporal/versioned`,
     `temporal-sql-tool ${sqlToolFlags(VISIBILITY_DATABASE_NAME)} setup-schema -v 0.0 || true`,
@@ -324,7 +343,16 @@ export function installTemporal(args: TemporalArgs): TemporalResources {
         },
       },
     },
-    { ...inNamespace, dependsOn: [cluster] },
+    {
+      ...inNamespace,
+      dependsOn: [cluster],
+      // A Job's pod template is immutable, so editing the migration script for
+      // an UNCHANGED Temporal version (a fix to the script itself, not a
+      // version bump) can only ship as a replacement. The name is fixed, hence
+      // delete-before-replace rather than the default create-then-delete.
+      replaceOnChanges: ["spec"],
+      deleteBeforeReplace: true,
+    },
   );
 
   const server = new k8s.apps.v1.Deployment(
