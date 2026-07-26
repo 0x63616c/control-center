@@ -318,9 +318,12 @@ export function installDbUi(args: DbUiArgs): DbUiResources {
                   { name: "pgpass", mountPath: PGPASS_MOUNT_DIR },
                   { name: "data", mountPath: "/var/lib/pgadmin" },
                 ],
+                // 256Mi OOMKilled 9.16 on boot (confirmed live 2026-07-26) — the
+                // 9.4 pin this was sized against was lighter. 512Mi/256Mi is
+                // still trivial next to the rest of this cluster's workloads.
                 resources: {
-                  limits: { memory: "256Mi" },
-                  requests: { cpu: "50m", memory: "128Mi" },
+                  limits: { memory: "512Mi" },
+                  requests: { cpu: "50m", memory: "256Mi" },
                 },
               },
             ],
