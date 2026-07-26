@@ -11,7 +11,7 @@
  */
 
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { modalDocsParameters } from "../__stories__/factory";
+import { modalDocsParameters, pageHostDecorator } from "../__stories__/factory";
 import type { TeslaModalRangeReachProps } from "./TeslaModalRangeReach";
 import { TeslaModalRangeReach } from "./TeslaModalRangeReach";
 
@@ -44,20 +44,7 @@ const meta = {
   tags: ["autodocs"],
   parameters: { ...modalDocsParameters(), boardWrapper: false, layout: "fullscreen" },
   // Page-sized container standing in for the TileDetailHost content region.
-  decorators: [
-    (Story) => (
-      <div
-        style={{
-          minHeight: "100vh",
-          background: "var(--bg)",
-          padding: 24,
-          boxSizing: "border-box",
-        }}
-      >
-        <Story />
-      </div>
-    ),
-  ],
+  decorators: [pageHostDecorator()],
   args: primaryData,
 } satisfies Meta<typeof TeslaModalRangeReach>;
 
