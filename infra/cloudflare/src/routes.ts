@@ -122,6 +122,13 @@ function productRoutes(): CloudflareRoutes {
       origin: "http://temporal-ui.temporal.svc.cluster.local:8080",
       comment: "platform:temporal web ui route",
     },
+    {
+      exposure: cc.dbUi.exposure,
+      // FQDN, same cross-namespace reason as temporal-ui above: cloudflared
+      // runs in `control-center`, pgAdmin runs in `db-ui`.
+      origin: "http://db-ui.db-ui.svc.cluster.local:80",
+      comment: "platform:pgAdmin multi-database web ui route (#65)",
+    },
   ];
 
   return cloudflareRoutesForExposures(sources);

@@ -14,7 +14,11 @@ describe("desiredAccessApps", () => {
     const domains = desiredAccessApps(ZONE)
       .map((a) => a.domain)
       .sort();
-    expect(domains).toEqual(["app.worldwidewebb.co", "temporal-ui.worldwidewebb.co"]);
+    expect(domains).toEqual([
+      "app.worldwidewebb.co",
+      "db-ui.worldwidewebb.co",
+      "temporal-ui.worldwidewebb.co",
+    ]);
     expect(domains).not.toContain("*.worldwidewebb.co");
     expect(domains).not.toContain("hooks.worldwidewebb.co");
     expect(domains).not.toContain("drizzle.worldwidewebb.co");
@@ -29,6 +33,7 @@ describe("desiredAccessApps", () => {
     expect(domains).toEqual([
       "*.worldwidewebb.co",
       "app.worldwidewebb.co",
+      "db-ui.worldwidewebb.co",
       "hooks.worldwidewebb.co",
       "temporal-ui.worldwidewebb.co",
     ]);
