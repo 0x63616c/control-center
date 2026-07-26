@@ -531,8 +531,9 @@ export function installTemporal(args: TemporalArgs): TemporalResources {
     {
       metadata: { name: "temporal-worker", namespace: namespaceName, labels: workerLabels },
       spec: {
-        // Two, so a rolling deploy never leaves the `main` task queue unpolled.
-        replicas: 2,
+        // Single replica: worker has no listener to keep up during a
+        // rolling deploy, so redundancy doesn't buy anything here.
+        replicas: 1,
         selector: { matchLabels: workerLabels },
         template: {
           metadata: { labels: workerLabels },
