@@ -43,3 +43,46 @@ describe("installMetallb (Task 4, talos-only)", () => {
     expect(l2Spec.ipAddressPools).toEqual([poolMeta.name]);
   });
 });
+
+// The single-node announcement fix (#29): without --ignore-exclude-lb the
+// speaker silently refuses to announce from this control-plane node, and BOTH
+// LAN LoadBalancers (.3 guest portal, .4 plex) go dark with no error logged.
+describe("withIgnoreExcludeLb", () => {
+  const speakerDs = () => ({
+    kind: "DaemonSet",
+    metadata: { name: "speaker" },
+    spec: {
+      template: { spec: { containers: [{ name: "speaker", args: ["--port=7472"] }] } },
+    },
+  });
+
+  test("appends the flag to the speaker container, preserving upstream args", () => {
+    const ds = speakerDs();
+    metallb.withIgnoreExcludeLb(ds);
+    expect(ds.spec.template.spec.containers[0]?.args).toEqual([
+      "--port=7472",
+      metallb.IGNORE_EXCLUDE_LB_FLAG,
+    ]);
+  });
+
+  test("is idempotent, so a re-apply does not accumulate duplicate flags", () => {
+    const ds = speakerDs();
+    metallb.withIgnoreExcludeLb(ds);
+    metallb.withIgnoreExcludeLb(ds);
+    expect(
+      ds.spec.template.spec.containers[0]?.args?.filter(
+        (a) => a === metallb.IGNORE_EXCLUDE_LB_FLAG,
+      ),
+    ).toHaveLength(1);
+  });
+
+  test("leaves every other object in the upstream manifest untouched", () => {
+    const controller = {
+      kind: "Deployment",
+      metadata: { name: "controller" },
+      spec: { template: { spec: { containers: [{ name: "controller", args: ["--port=7472"] }] } } },
+    };
+    metallb.withIgnoreExcludeLb(controller);
+    expect(controller.spec.template.spec.containers[0]?.args).toEqual(["--port=7472"]);
+  });
+});
