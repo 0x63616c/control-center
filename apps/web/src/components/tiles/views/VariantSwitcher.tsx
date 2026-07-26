@@ -2,11 +2,12 @@
  * VariantSwitcher , floating segmented selector that sits ABOVE the open detail
  * page and lets you swap between a tile's designed detail variants live.
  *
- * Portaled to <body> (like the detail page) as a fixed, top-centered pill bar
- * layered above the page overlay (zIndex 110 > the page's 100). The portal is
- * load-bearing: in-tree it lives under #stage's own stacking context and 110
- * would never beat the body-level overlay. Only shown when a tile has >1
- * variant.
+ * Portaled to <body> (like the detail page) as a fixed, bottom-centered pill
+ * bar layered above the page overlay (zIndex 110 > the page's 100). Bottom
+ * placement matches the current iOS tab-bar convention (issue #61) instead of
+ * the old top-centered pill. The portal is load-bearing: in-tree it lives
+ * under #stage's own stacking context and 110 would never beat the body-level
+ * overlay. Only shown when a tile has >1 variant.
  */
 
 import { createPortal } from "react-dom";
@@ -29,11 +30,13 @@ export function VariantSwitcher({ variants, activeSlug, onSelect }: VariantSwitc
   // Modal , leaving it buried behind the backdrop. Same context ⇒ 110 > 100 wins.
   return createPortal(
     <div
-      // Fixed top-center, above the Modal (z 100). pointerEvents none on the
+      // Fixed bottom-center, above the Modal (z 100). pointerEvents none on the
       // wrapper so it never blocks backdrop clicks outside the pill bar itself.
+      // `bottom` adds the safe-area inset so the pill clears the home
+      // indicator on native, matching the 18px top offset it replaces.
       style={{
         position: "fixed",
-        top: 18,
+        bottom: "calc(18px + env(safe-area-inset-bottom, 0px))",
         left: 0,
         right: 0,
         zIndex: 110,
