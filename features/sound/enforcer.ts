@@ -168,7 +168,13 @@ async function fetchPlayers(): Promise<LivePlayer[]> {
         const volume = await new SonosClient(m.ip).getVolume();
         return { ip: m.ip, zoneName: m.zoneName, reading: { volume, available: true } };
       } catch {
-        // One dead player must not fail the whole cycle for its siblings.
+        // One dead player must not fail the whole cycle for its siblings, but
+        // a failed probe is still a real signal (unreachable speaker) , warn
+        // so it isn't silently swallowed.
+        getLogger().warn(
+          { ip: m.ip, zoneName: m.zoneName },
+          "sonos volume probe failed, marking unavailable",
+        );
         return { ip: m.ip, zoneName: m.zoneName, reading: { volume: null, available: false } };
       }
     }),
