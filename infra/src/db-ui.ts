@@ -37,15 +37,33 @@ import {
 
 export const DB_UI_NAMESPACE = "db-ui";
 
-const IMAGE = "dpage/pgadmin4:9.4";
+const IMAGE = "dpage/pgadmin4:9.16";
 const PORT = 80;
 const DATA_CLAIM_NAME = "pgadmin-data";
 const DATA_CLAIM_SIZE = "1Gi";
 const CONFIG_MAP_NAME = "db-ui-servers";
 const PGPASS_SECRET_NAME = "db-ui-pgpass";
 const LOGIN_SECRET_NAME = "db-ui-login";
-const PGPASS_MOUNT_DIR = "/pgpass";
-const PGPASS_FILE_PATH = `${PGPASS_MOUNT_DIR}/pgpass`;
+// pgAdmin's own local login identity (NOT a real mailbox — see loginSecret
+// below). Fixed, not vault-sourced: it's just a string key, and the storage
+// path below is derived from it.
+const LOGIN_EMAIL = "db-ui-admin@worldwidewebb.co";
+// The value handed to pgAdmin's `PassFile` connection param. In SERVER_MODE
+// (the web/container build, which is what this is), pgAdmin does NOT treat
+// this as a real filesystem path: `get_complete_file_path()`
+// (pgadmin/utils/__init__.py) strips the leading slash and re-joins it under
+// that user's private file-manager storage root,
+// `/var/lib/pgadmin/storage/<sanitized-login-email>/`, then checks
+// `os.path.isfile()` on THAT path — silently falling back to a password
+// prompt if it doesn't exist there. (Confirmed live 2026-07-26 against a
+// deployed pod: the naive `/pgpass/pgpass` mount from the first cut of this
+// module never resolved, and every connect prompted for a password.) The
+// sanitization is `email.replace("@", "_")` (pgadmin/utils/paths.py
+// preprocess_username) — LOGIN_EMAIL has no "/" or "\", so that's the only
+// transform that applies here.
+const PGPASS_FILE_PATH = "/pgpass/pgpass";
+const PGADMIN_STORAGE_USER = LOGIN_EMAIL.replace("@", "_");
+const PGPASS_MOUNT_DIR = `/var/lib/pgadmin/storage/${PGADMIN_STORAGE_USER}/pgpass`;
 
 const labels = { app: "db-ui" };
 
@@ -228,7 +246,7 @@ export function installDbUi(args: DbUiArgs): DbUiResources {
     {
       metadata: { name: LOGIN_SECRET_NAME, namespace: namespaceName },
       stringData: {
-        email: "db-ui-admin@worldwidewebb.co",
+        email: LOGIN_EMAIL,
         password: pulumi.secret(pgAdminPassword),
       },
     },
@@ -261,17 +279,11 @@ export function installDbUi(args: DbUiArgs): DbUiResources {
           metadata: { labels },
           spec: {
             automountServiceAccountToken: false,
-            // dpage/pgadmin4's documented non-root uid/gid for /var/lib/pgadmin
-            // bind mounts. NOT verified against this exact image tag's actual
-            // runtime user — if the container in fact runs as root (its
-            // common default), this is an inert no-op; if it runs as uid 5050,
-            // this is required for the PVC. Either way, note the pgpass
-            // Secret below is mode 0600 (owner-only, per libpq's OWN
-            // passfile-permission check), so fsGroup membership alone does
-            // NOT grant a non-root, non-owning process read access to it —
-            // only a literal root process can read a 0600 root-owned file.
-            // Verify pgAdmin can actually authenticate against all 3 servers
-            // after deploy; if not, this is the first place to look.
+            // Verified live (2026-07-26): this image runs as uid 5050(pgadmin),
+            // primary gid 0(root), supplementary group 5050 — fsGroup here puts
+            // the pgpass Secret's group ownership at 5050 too, so the 0600-ish
+            // mode below (rw owner, r group) is readable via that supplementary
+            // membership without needing world/other bits.
             securityContext: { fsGroup: 5050 },
             containers: [
               {
