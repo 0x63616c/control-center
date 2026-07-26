@@ -100,7 +100,9 @@ for (const r of runs.filter((x) => x.conclusion === "success")) {
   const { jobs } = await gh<{ jobs: Job[] }>(
     `repos/${REPO}/actions/runs/${r.id}/jobs?per_page=100`,
   );
-  const dep = jobs.find((j) => j.name === "deploy" && j.conclusion === "success" && j.completed_at);
+  const dep = jobs.find(
+    (j) => j.name === "deploy-home-server" && j.conclusion === "success" && j.completed_at,
+  );
   if (!dep?.completed_at) continue;
   const start = Date.parse(r.created_at);
   const done = Date.parse(dep.completed_at);
