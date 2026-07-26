@@ -1,11 +1,13 @@
 /**
- * VariantSwitcher , floating segmented selector that sits ABOVE the open detail
- * page and lets you swap between a tile's designed detail variants live.
+ * VariantSwitcher , floating segmented selector that sits at the BOTTOM of the
+ * open detail page and lets you swap between a tile's designed detail variants
+ * live (moved down from a top-centered bar to match the iOS 26/Instagram-style
+ * bottom tab convention , see #61).
  *
- * Portaled to <body> (like the detail page) as a fixed, top-centered pill bar
- * layered above the page overlay (zIndex 110 > the page's 100). The portal is
- * load-bearing: in-tree it lives under #stage's own stacking context and 110
- * would never beat the body-level overlay. Only shown when a tile has >1
+ * Portaled to <body> (like the detail page) as a fixed, bottom-centered pill
+ * bar layered above the page overlay (zIndex 110 > the page's 100). The portal
+ * is load-bearing: in-tree it lives under #stage's own stacking context and
+ * 110 would never beat the body-level overlay. Only shown when a tile has >1
  * variant.
  */
 
@@ -29,11 +31,13 @@ export function VariantSwitcher({ variants, activeSlug, onSelect }: VariantSwitc
   // Modal , leaving it buried behind the backdrop. Same context ⇒ 110 > 100 wins.
   return createPortal(
     <div
-      // Fixed top-center, above the Modal (z 100). pointerEvents none on the
+      // Fixed bottom-center, above the Modal (z 100). pointerEvents none on the
       // wrapper so it never blocks backdrop clicks outside the pill bar itself.
+      // The 18px base offset stacks with the safe-area inset so the bar clears
+      // the home indicator on-device instead of sitting flush against it.
       style={{
         position: "fixed",
-        top: 18,
+        bottom: "calc(18px + env(safe-area-inset-bottom, 0px))",
         left: 0,
         right: 0,
         zIndex: 110,
@@ -54,7 +58,7 @@ export function VariantSwitcher({ variants, activeSlug, onSelect }: VariantSwitc
           background: "var(--tile)",
           border: "1px solid var(--hair)",
           borderRadius: 999,
-          boxShadow: "0 12px 32px -12px rgba(0,0,0,0.7)",
+          boxShadow: "0 -12px 32px -12px rgba(0,0,0,0.7)",
           pointerEvents: "auto",
         }}
       >
