@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    // NOT `bun`: this is the one app that runs on NODE, not bun. The Temporal
+    // TypeScript SDK's native bridge (@temporalio/core-bridge) ships prebuilt
+    // binaries for glibc Node only, and its Workflow sandbox is built on node's
+    // `vm` module — so both the image (node:22-slim) and the types are node's.
+    "types": ["node"],
+    // Imports stay extensionless (`./pacing`, not `./pacing.ts`): workflows.ts is
+    // NOT bundled by us — the Worker feeds it to its own webpack+swc pipeline at
+    // boot, and that resolver is extension-based.
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src"]
+}

@@ -6,6 +6,7 @@
     "apps/web",
     "apps/api",
     "apps/worker",
+    "apps/temporal-worker",
     "apps/storybook",
     "apps/map-provision",
     "packages/*",

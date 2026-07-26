@@ -47,6 +47,7 @@ if (workspaceManifests.length === 0) {
 const FULL_INSTALL_DOCKERFILES = [
   "apps/api/Dockerfile",
   "apps/worker/Dockerfile",
+  "apps/temporal-worker/Dockerfile",
   "apps/web/Dockerfile",
 ];
 
@@ -110,9 +111,20 @@ for (const df of FULL_INSTALL_DOCKERFILES) {
 // feature tiles, api mounts feature routers/schema, worker drains feature jobs,
 // so all three images must copy them in. A miss ships an image that can't
 // resolve @app-kit/@features at build time.
+//
+// Scoped to the images that actually CONSUME that surface, not to every
+// full-install Dockerfile: apps/temporal-worker serves the Temporal task queue
+// and imports no feature facet, so copying features/ in would ship a tree the
+// image never reads (and hand it a rebuild on every unrelated feature edit).
+// An image that starts draining feature work belongs on this list.
 const REQUIRED_SOURCE_DIRS = ["app-kit", "features"];
+const C7_AUTHORING_SURFACE_DOCKERFILES = [
+  "apps/api/Dockerfile",
+  "apps/worker/Dockerfile",
+  "apps/web/Dockerfile",
+];
 const sourceDirOffenders: Array<{ dockerfile: string; missing: string[] }> = [];
-for (const df of FULL_INSTALL_DOCKERFILES) {
+for (const df of C7_AUTHORING_SURFACE_DOCKERFILES) {
   if (!existsSync(join(ROOT, df))) continue;
   const content = readFileSync(join(ROOT, df), "utf8");
   const copiedDirs = new Set<string>();
@@ -151,7 +163,7 @@ if (floatingBunOffenders.length > 0) {
 
 if (exitCode === 0) {
   console.log(
-    `✓ All ${FULL_INSTALL_DOCKERFILES.length} frozen-install Dockerfiles cover all ${workspaceManifests.length} workspace manifests from bun.lock, COPY the C7 authoring-surface dirs (${REQUIRED_SOURCE_DIRS.join(", ")}), and use pinned bun base tags.`,
+    `✓ All ${FULL_INSTALL_DOCKERFILES.length} frozen-install Dockerfiles cover all ${workspaceManifests.length} workspace manifests from bun.lock and use pinned bun base tags; the ${C7_AUTHORING_SURFACE_DOCKERFILES.length} C7 images COPY the authoring-surface dirs (${REQUIRED_SOURCE_DIRS.join(", ")}).`,
   );
 } else if (allMissing.length > 0) {
   console.error(
