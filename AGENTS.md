@@ -111,14 +111,22 @@ means a GitHub issue - same thing, one vocabulary.
 
 ## Workflow
 
-- **Work on `main` (default).** Use worktrees only when asked; name them after the
-  task.
-- **Commit and push extremely often, without asking.** Push to `main` deploys to
-  prod. Commit each coherent change (passing test, working slice, doc update);
-  never batch. Push immediately.
-- Commit + push to `main` is pre-approved for every requested change. Never pause
-  to ask.
-- Verify before pushing where cheap (`bun run typecheck`, relevant tests). On
-  failure, fix forward and push again - never sit on unpushed work.
-- No PRs for shipping.
+- **Branch -> PR -> merge is the default for all work, including agent work.**
+  Create a worktree/branch named after the task, commit there, and open a PR
+  against `main` (`gh pr create`, using the PR template). Use the
+  `.github/pull_request_template.md` fields (`Refs #N`, never `Fixes`/`Closes`
+  - see the issue-tracking rule above).
+- **Commit and push extremely often, without asking.** Commit each coherent
+  change (passing test, working slice, doc update); never batch. Push the
+  branch immediately - the push target is now the PR branch, not `main`.
+- Opening a PR, and self-merging it once it's green, is pre-approved for every
+  requested change. Never pause to ask, and no required reviewers are needed -
+  the goal is an auditable trail ("here's the PR for that change"), not an
+  approval gate.
+- **Merging to `main` deploys to prod** (push-to-main triggers CI + deploy), so
+  merging the PR is the deliberate act. Merge once CI is green; don't merge a
+  red PR.
+- Verify before opening/merging where cheap (`bun run typecheck`, relevant
+  tests). On failure, fix forward on the branch and push again - never sit on
+  an unpushed or unmerged change.
 - Keep docs current when behavior changes.
