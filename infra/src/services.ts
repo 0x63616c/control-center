@@ -45,6 +45,14 @@ const IMAGE_REPOSITORIES = {
     digestKey: controlCenterProduct.imageDigestKey("map-provision"),
     repository: controlCenterProduct.imageRepository("map-provision"),
   },
+  // The Temporal worker (apps/temporal-worker). Deployed by temporal.ts into
+  // its own namespace, but the image is a control-center product component like
+  // any other, so it pins through the SAME digest map — one place where "what
+  // does CI build and pin" is answered.
+  "temporal-worker": {
+    digestKey: controlCenterProduct.imageDigestKey("temporal-worker"),
+    repository: controlCenterProduct.imageRepository("temporal-worker"),
+  },
 } as const satisfies Record<string, { digestKey: string; repository: string }>;
 
 const IMAGE_DIGEST_KEYS = new Set(
@@ -87,7 +95,7 @@ export function shouldRequireImageDigestPins(stackName: string): boolean {
 // service, else the mutable :main tag (local applies, first deploy before any
 // digest is set). The digest is validated shape-wise so a malformed config value
 // can't silently produce an unpullable ref.
-const ghcr = (name: string, digests: ImageDigests = {}): string => {
+export const ghcrImage = (name: string, digests: ImageDigests = {}): string => {
   const image = IMAGE_REPOSITORIES[name as keyof typeof IMAGE_REPOSITORIES];
   if (!image) throw new Error(`no image repository configured for ${name}`);
   const digest = digests[image.digestKey];
@@ -304,7 +312,7 @@ export function serviceSpecs(opts: ServiceSpecOptions): OwnedWorkloadSpec[] {
       legacyLogicalName: "api",
       name: "api",
       namespaceName: "control-center",
-      image: ghcr("api", digests),
+      image: ghcrImage("api", digests),
       replicas: 1,
       resources: { memory: "512M", reserveCpus: "0.5" },
       secrets: mountSecrets("api"),
@@ -371,7 +379,7 @@ export function serviceSpecs(opts: ServiceSpecOptions): OwnedWorkloadSpec[] {
       legacyLogicalName: "worker",
       name: "worker",
       namespaceName: "control-center",
-      image: ghcr("worker", digests),
+      image: ghcrImage("worker", digests),
       replicas: 1,
       // 512M covers the Bun process and a yt-dlp subprocess: downloads stream to
       // disk through a small buffer, so memory is flat in the file's size.
@@ -407,7 +415,7 @@ export function serviceSpecs(opts: ServiceSpecOptions): OwnedWorkloadSpec[] {
       legacyLogicalName: "web",
       name: "web",
       namespaceName: "control-center",
-      image: ghcr("web", digests),
+      image: ghcrImage("web", digests),
       replicas: 1,
       resources: { memory: "96M" },
       env: { TZ },
@@ -423,7 +431,7 @@ export function serviceSpecs(opts: ServiceSpecOptions): OwnedWorkloadSpec[] {
       initContainers: [
         {
           name: "map-provision",
-          image: ghcr("map-provision", digests),
+          image: ghcrImage("map-provision", digests),
           command: ["/provision.sh"],
           volumes: [{ mountPath: "/out", claim: "maps" }],
         },

@@ -44,6 +44,7 @@ jobs:
       web: ${{ steps.filter.outputs.web }}
       api: ${{ steps.filter.outputs.api }}
       worker: ${{ steps.filter.outputs.worker }}
+      temporalworker: ${{ steps.filter.outputs.temporalworker }}
       mapprovision: ${{ steps.filter.outputs.mapprovision }}
       # infra-only changes (Pulumi program / specs) deploy without any image
       # rebuild: a `pulumi up` must still converge the declared stack.
@@ -90,6 +91,14 @@ jobs:
               - 'app-kit/**'
               - 'features/**'
               - 'bun.lock'
+            # The Temporal worker shares only packages/ (logger + the env
+            # manifest) with the rest — no api/, no features/ — so it rebuilds
+            # on a much narrower surface than the C7 images above.
+            temporalworker:
+              - 'apps/temporal-worker/**'
+              - 'packages/logger/**'
+              - 'packages/platform/**'
+              - 'bun.lock'
             # infra-only changes (the Pulumi program + workload specs) deploy
             # with NO image rebuild: the deploy job runs `pulumi up`, which must
             # converge an infra-only diff (e.g. a resource cap or env change).
@@ -107,6 +116,7 @@ jobs:
               - 'apps/web/**'
               - 'apps/api/**'
               - 'apps/worker/**'
+              - 'apps/temporal-worker/**'
               - 'apps/map-provision/**'
               - 'packages/**'
               - 'app-kit/**'
@@ -416,6 +426,52 @@ jobs:
             "$IMAGE:${{ github.sha }}-amd64" \
             "$IMAGE:${{ github.sha }}-arm64"
 
+  build-temporal-worker:
+    needs: [changes]
+    if: needs.changes.outputs.temporalworker == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 25
+    environment: prod
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and push temporal-worker image (${{ matrix.arch }})
+        uses: ./.github/actions/build-product-image
+        env:
+          SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
+        with:
+          image: www-control-center-temporal-worker
+          dockerfile: apps/temporal-worker/Dockerfile
+          arch: ${{ matrix.arch }}
+          cache-scope: temporal-worker
+
+  merge-temporal-worker:
+    needs: [changes, build-temporal-worker]
+    if: needs.changes.outputs.temporalworker == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: prod
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to GHCR
+        uses: ./.github/actions/ghcr-login
+        env:
+          SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
+      - name: Create multi-arch manifest index
+        run: |
+          IMAGE=ghcr.io/0x63616c/www-control-center-temporal-worker
+          tags=(-t "$IMAGE:${{ github.sha }}")
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            tags+=(-t "$IMAGE:main")
+          fi
+          docker buildx imagetools create "${tags[@]}" \
+            "$IMAGE:${{ github.sha }}-amd64" \
+            "$IMAGE:${{ github.sha }}-arm64"
+
   build-map-provision:
     needs: [changes]
     if: needs.changes.outputs.mapprovision == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
@@ -481,10 +537,12 @@ jobs:
         build-web,
         build-api,
         build-worker,
+        build-temporal-worker,
         build-map-provision,
         merge-web,
         merge-api,
         merge-worker,
+        merge-temporal-worker,
         merge-map-provision,
       ]
     # always() lets us run even when some build jobs were skipped (no changes).
@@ -577,7 +635,7 @@ jobs:
           # KEY is product-component scoped and matches the Pulumi imageDigests
           # config key, while repo names use full product slugs.
           declare -A out=()
-          for entry in www-control-center-web:control-center-web www-control-center-api:control-center-api www-control-center-worker:control-center-worker www-control-center-map-provision:control-center-map-provision; do
+          for entry in www-control-center-web:control-center-web www-control-center-api:control-center-api www-control-center-worker:control-center-worker www-control-center-temporal-worker:control-center-temporal-worker www-control-center-map-provision:control-center-map-provision; do
             repo="${entry%%:*}"
             name="${entry#*:}"
             d=$(docker buildx imagetools inspect "ghcr.io/0x63616c/$repo:main" --format '{{.Manifest.Digest}}' 2>/dev/null || true)

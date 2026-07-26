@@ -29,6 +29,9 @@ const ALL_IMAGE_DIGESTS = {
   "control-center-worker": VALID,
   "control-center-web": VALID,
   "control-center-map-provision": VALID,
+  // Deployed by temporal.ts, not deployServices, but it pins through the same
+  // required-digest map — so prod still refuses to render on a missing pin.
+  "control-center-temporal-worker": VALID,
 } satisfies ImageDigests;
 
 describe("serviceSpecs image digest pinning", () => {
