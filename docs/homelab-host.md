@@ -53,7 +53,7 @@ Scripts expected to be run *from* this checkout, on the box:
 | `scripts/install-haos.sh` | Install HAOS start/stop scripts + LaunchAgent from `infra/homelab/haos/`. `--check` fails on drift. |
 | `scripts/provision-orbstack.sh` | Size the OrbStack VM. `--check` reports drift; `--restart` forces an apply. |
 | `scripts/install-orbstack-watchdog.sh` | Install the docker-hang watchdog LaunchAgent. |
-| `scripts/mount-homelab-drive.sh` | Mount the Synology NFS share. |
+| `scripts/mount-homelab-drive.sh` | Mount the Synology NFS share. **Removed in #140** — the mount step is not currently scripted. |
 | `scripts/install-ha-watchdog.sh` | Install the HA Core watchdog LaunchAgent. |
 | `scripts/install-drift-check.sh` | Schedule every `--check` on a 6h interval. |
 | `scripts/drift-check.sh` | Run every `--check` once, now. |
