@@ -75,9 +75,10 @@ const accessName = (host: string) =>
   host.replace(`.${zoneName}`, "").replace("*", "wildcard").replaceAll(".", "-");
 
 // --- Access apps + policies ---
-// The provider DERIVES selfHostedDomains from `name` and treats sessionDuration /
-// appLauncherVisible / autoRedirectToIdentity as managed defaults, so declaring
-// them here would show a spurious update.
+// The provider DERIVES selfHostedDomains from `name` and treats appLauncherVisible /
+// autoRedirectToIdentity as managed defaults, so declaring them here would show a
+// spurious update. sessionDuration is the exception (www-178): we deliberately
+// override CF's 24h default so a human login/OTP lasts 30 days.
 for (const app of desiredAccessApps(zoneName, applyAccessGate)) {
   const name = accessName(app.domain);
   const cfApp = new cloudflare.ZeroTrustAccessApplication(
@@ -91,6 +92,7 @@ for (const app of desiredAccessApps(zoneName, applyAccessGate)) {
       domain: app.domain,
       type: app.type,
       httpOnlyCookieAttribute: true,
+      sessionDuration: "720h",
       tags: [app.tag],
     },
     opts,
