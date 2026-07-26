@@ -1,4 +1,35 @@
-export { genId } from "./id";
+// crypto.randomUUID is present in every real runtime this repo ships to
+// (browser webview, Bun, Node), but not always in test doubles (older jsdom,
+// Storybook). getRandomValues is far more widely implemented, so it is the
+// fallback — not Math.random, which CodeQL (rightly) flags as insecure
+// randomness for anything id-shaped.
+function randomHex(length: number): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID().replaceAll("-", "").slice(0, length);
+  }
+  const bytes = crypto.getRandomValues(new Uint8Array(Math.ceil(length / 2)));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, length);
+}
+
+/**
+ * Mint a Stripe-style `prefix_<id>`. Without `length`, the id is a full
+ * `crypto.randomUUID()` (36 chars incl. dashes). With `length`, it is that
+ * many hex characters of a de-dashed UUID — for ids that also need to fit a
+ * shorter validation pattern (e.g. an API's `^prefix_[0-9a-z]{1,32}$`).
+ */
+export function genId(prefix: string, options?: { length?: number }): string {
+  const { length } = options ?? {};
+  if (length === undefined) {
+    const uuid =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : randomHex(32);
+    return `${prefix}_${uuid}`;
+  }
+  return `${prefix}_${randomHex(length)}`;
+}
 
 export const productSlugs = ["control-center", "captive-portal"] as const;
 
