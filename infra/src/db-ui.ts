@@ -279,12 +279,33 @@ export function installDbUi(args: DbUiArgs): DbUiResources {
           metadata: { labels },
           spec: {
             automountServiceAccountToken: false,
-            // Verified live (2026-07-26): this image runs as uid 5050(pgadmin),
-            // primary gid 0(root), supplementary group 5050 — fsGroup here puts
-            // the pgpass Secret's group ownership at 5050 too, so the 0600-ish
-            // mode below (rw owner, r group) is readable via that supplementary
-            // membership without needing world/other bits.
-            securityContext: { fsGroup: 5050 },
+            // Verified live (2026-07-26): libpq's OWN pgpass permission check
+            // (fe-connect.c) unconditionally rejects any file with group OR
+            // world bits set — it inspects the mode bits alone, not whether the
+            // reading process happens to satisfy them. Kubernetes Secret
+            // volumes can't produce a bare 0600 (owner-only, no group bits) the
+            // moment a pod sets `fsGroup` (needed at all for this image's
+            // non-root uid 5050 to read a Secret volume): kubelet always ORs in
+            // group-read once fsGroup applies, landing at 0640 — which libpq
+            // then silently refuses, falling back to a password prompt. Fixed
+            // by copying the Secret into an emptyDir via a root initContainer
+            // and chmod-ing it there, where we control the exact bits and can
+            // chown straight to uid 5050 instead of relying on group access.
+            initContainers: [
+              {
+                name: "pgpass-init",
+                image: "busybox:1.36",
+                command: [
+                  "sh",
+                  "-c",
+                  `cp /pgpass-secret/pgpass ${PGPASS_MOUNT_DIR}/pgpass && chown 5050:5050 ${PGPASS_MOUNT_DIR}/pgpass && chmod 600 ${PGPASS_MOUNT_DIR}/pgpass`,
+                ],
+                volumeMounts: [
+                  { name: "pgpass-secret", mountPath: "/pgpass-secret" },
+                  { name: "pgpass", mountPath: PGPASS_MOUNT_DIR },
+                ],
+              },
+            ],
             containers: [
               {
                 name: "pgadmin",
@@ -329,9 +350,10 @@ export function installDbUi(args: DbUiArgs): DbUiResources {
             ],
             volumes: [
               { name: "servers-config", configMap: { name: CONFIG_MAP_NAME } },
-              // 0600: libpq's pgpass permission check applies to explicit
-              // PassFile paths too, not just the default ~/.pgpass.
-              { name: "pgpass", secret: { secretName: PGPASS_SECRET_NAME, defaultMode: 0o600 } },
+              { name: "pgpass-secret", secret: { secretName: PGPASS_SECRET_NAME } },
+              // Populated by the pgpass-init initContainer above, not mounted
+              // straight from the Secret — see that container's comment.
+              { name: "pgpass", emptyDir: {} },
               { name: "data", persistentVolumeClaim: { claimName: DATA_CLAIM_NAME } },
             ],
           },
