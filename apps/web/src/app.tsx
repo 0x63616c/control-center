@@ -2,6 +2,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { createRouter, RouterProvider } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { NotificationBridge } from "./components/NotificationBridge";
+import { PanelFrame } from "./components/PanelFrame";
 import { PushRegistrar } from "./components/PushRegistrar";
 import { queryClient, trpc, trpcClient } from "./lib/trpc";
 import { useAccentTheme } from "./lib/useAccentTheme";
@@ -79,7 +80,12 @@ export function App() {
             app level, not in Settings: a normal launch never opens Settings,
             which is precisely why a stuck device never recovered. */}
         <PushRegistrar />
-        <RouterProvider router={router} />
+        {/* Caps the web app to the 1366x1024 panel resolution and, on a
+            desktop browser with room to spare, frames it like a device.
+            Passthrough (no-op) on the native kiosk shell , see PanelFrame.tsx. */}
+        <PanelFrame>
+          <RouterProvider router={router} />
+        </PanelFrame>
       </QueryClientProvider>
     </trpc.Provider>
   );

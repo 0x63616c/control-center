@@ -19,7 +19,13 @@
   right up front; code interfaces refactor cheaply later.
 - Shared primitives live in `packages/platform`, enforced by a Biome rule banning
   the raw escape hatch (see sound bus).
-- Fixed wall panel, `1366x1024`, not responsive.
+- Fixed wall panel, `1366x1024`, not responsive. Enforced by the OS on the
+  native/Capacitor kiosk shell and the physical panel hardware. The web build
+  matches it too, via `apps/web/src/components/PanelFrame.tsx`: it caps the app
+  to `1366x1024` and, on a desktop browser with room to spare, frames it like a
+  device instead of letting the board stretch to fill the window. `PanelFrame`
+  is a no-op passthrough on native, so this never touches the panel/native
+  behavior above.
 - Features are self-contained Apps under `features/<id>/` (manifest + facets:
   `web.tsx`, `api.ts`, `jobs.ts`, `schema.ts`); the folder existing is the App's
   registration (ADR-0001). Tile placement is declared as registry coords in the
