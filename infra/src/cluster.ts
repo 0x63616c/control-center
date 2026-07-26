@@ -1,5 +1,5 @@
-// The k8s Provider + product/platform namespaces for the homelab k3s stack.
-// The provider targets the OrbStack single-node cluster via
+// The k8s Provider + product/platform namespaces for the home-server Talos stack.
+// The provider targets the single-node cluster via
 // a kubeconfig context. Passing the provider in as an INPUT to every component
 // (Workload, ESO, CNPG, …) keeps the vocabulary cluster-agnostic, so a future
 // Hetzner cluster is a provider swap, not a rewrite (RECON decision 13 / DESIGN
@@ -21,12 +21,16 @@ export type InfraNamespaceName =
   | typeof CLOUDFLARE_NAMESPACE;
 export type InfraNamespaces = Readonly<Record<InfraNamespaceName, k8s.core.v1.Namespace>>;
 
-// Default kubeconfig context. The prod target is homelab's OrbStack cluster,
-// reached over the tailnet via the `cc-homelab` context (server
-// homelab.tail8c014d.ts.net:26443, tls-server-name k8s.orb.local). Machine-local
-// staging on a different box overrides `wwwinfra:kubeContext` (e.g. a bare
-// `orbstack` context for the MacBook's own cluster). www-j934 repoint.
-const DEFAULT_CONTEXT = "cc-homelab";
+// Default kubeconfig context. The prod target is the home-server Talos cluster,
+// reached over the tailnet via the `home-server` context (server
+// home-server.tail8c014d.ts.net:6443). Machine-local staging on a different box
+// overrides `wwwinfra:kubeContext` (e.g. a bare `orbstack` context for the
+// MacBook's own cluster). CI never relies on this default: it always sets
+// `wwwinfra:kubeContext` explicitly from the kubeconfig it writes
+// (.github/workflows/ci.yml), so this only matters for an unconfigured local
+// `pulumi preview`/`up`. Previously `cc-homelab`, which pointed at the
+// Mac mini's OrbStack cluster retired and powered off 2026-07-25 (#24).
+const DEFAULT_CONTEXT = "home-server";
 
 export interface ClusterResources {
   provider: k8s.Provider;

@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-KUBE_CONTEXT="${KUBE_CONTEXT:-cc-homelab}"
+KUBE_CONTEXT="${KUBE_CONTEXT:-home-server}"
 NAMESPACE="${NAMESPACE:-control-center}"
 DATABASE="${DATABASE:-control_center}"
 PGUSER="${PGUSER:-postgres}"
@@ -27,7 +27,7 @@ Usage:
   scripts/pg-snapshot-restore.sh --compare-counts <source.tsv> <scratch.tsv>
 
 Env:
-  KUBE_CONTEXT=cc-homelab NAMESPACE=control-center DATABASE=control_center PGUSER=postgres
+  KUBE_CONTEXT=home-server NAMESPACE=control-center DATABASE=control_center PGUSER=postgres
 USAGE
 }
 
