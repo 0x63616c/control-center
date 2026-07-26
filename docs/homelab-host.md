@@ -1,8 +1,16 @@
-# The Homelab Host (the Mac mini)
+# The Homelab Host (the Mac mini) — RETIRED
 
-Everything called "prod" runs on one machine: an **M2 Mac mini, 8 GB RAM, 8
+> **Historical record.** The Mac mini described below was retired and powered
+> off 2026-07-25; it is kept as a cold spare, not production. "prod" is now
+> the `home-server` Talos node (`192.168.0.5`) — see `AGENTS.md`. This doc is
+> left in place as a historical account of the mini's setup, not a live
+> runbook. `scripts/ssh-homelab.sh` and `scripts/mount-homelab-drive.sh`,
+> referenced below, were deleted in #140 as dead code; do not expect them to
+> exist on disk.
+
+Everything called "prod" ran on one machine: an **M2 Mac mini, 8 GB RAM, 8
 cores**, hostname `captive-portal.worldwidewebb.co`, tailnet
-`homelab.tail8c014d.ts.net`. There is no other production environment.
+`homelab.tail8c014d.ts.net`. There was no other production environment.
 
 This doc exists because there wasn't one. Until 2026-07-24 the host's
 configuration lived only *on the host* — hand-edited scripts, a LaunchAgent
@@ -45,7 +53,7 @@ Scripts expected to be run *from* this checkout, on the box:
 | `scripts/install-haos.sh` | Install HAOS start/stop scripts + LaunchAgent from `infra/homelab/haos/`. `--check` fails on drift. |
 | `scripts/provision-orbstack.sh` | Size the OrbStack VM. `--check` reports drift; `--restart` forces an apply. |
 | `scripts/install-orbstack-watchdog.sh` | Install the docker-hang watchdog LaunchAgent. |
-| `scripts/mount-homelab-drive.sh` | Mount the Synology NFS share. |
+| `scripts/mount-homelab-drive.sh` | Mount the Synology NFS share. **Removed in #140** — the mount step is not currently scripted. |
 | `scripts/install-ha-watchdog.sh` | Install the HA Core watchdog LaunchAgent. |
 | `scripts/install-drift-check.sh` | Schedule every `--check` on a 6h interval. |
 | `scripts/drift-check.sh` | Run every `--check` once, now. |

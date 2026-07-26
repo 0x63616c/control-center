@@ -85,7 +85,7 @@ fi
 # restarting OrbStack to apply the config, confirm the host NFS mount is healthy.
 echo "verifying host NFS mount before restarting OrbStack..."
 if ! mount | grep -q " ${NFS_MOUNT} "; then
-  echo "FATAL: $NFS_MOUNT is not mounted , run scripts/mount-homelab-drive.sh first" >&2
+  echo "FATAL: $NFS_MOUNT is not mounted , mount the Synology NFS share first" >&2
   echo "       (restarting OrbStack without the NFS mount up re-triggers www-6mz7)" >&2
   exit 1
 fi
