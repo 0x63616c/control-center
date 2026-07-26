@@ -151,7 +151,7 @@ export function DeployModalPipeline({
     <div style={{ maxWidth: 920, margin: "0 auto" }}>
       {/* status strip , mirrors the tile face so context carries over */}
       <div style={{ display: "flex", alignItems: "flex-start", gap: 40 }}>
-        <Stat label="deployed" value={deployedSha} accent sub={`${deployedWhen} · homelab`} />
+        <Stat label="deployed" value={deployedSha} accent sub={`${deployedWhen} · home-server`} />
         <PipelineStatLink url={pipelineUrl}>
           <Stat
             label="pipeline"

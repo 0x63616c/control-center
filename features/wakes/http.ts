@@ -15,8 +15,8 @@ import { readWakePhoto, saveWakePhoto } from "./photos";
  * client can't 500-spam the log.
  *
  * The attribution headers are UNAUTHENTICATED (as is this whole route , the
- * panel talks same-origin inside the homelab perimeter, there is no client
- * auth to check). Shape-validate them so arbitrary header bytes can never land
+ * panel talks same-origin inside the home network perimeter, there is no
+ * client auth to check). Shape-validate them so arbitrary header bytes can never land
  * in wake_photo: a malformed value stores as NULL (unattributed), the same
  * honest state a headerless upload gets.
  */

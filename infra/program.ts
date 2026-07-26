@@ -28,11 +28,11 @@ import { loadVault } from "./src/vault.ts";
 const cfg = new pulumi.Config("wwwinfra");
 const kubeContext = cfg.get("kubeContext");
 const stackName = pulumi.getStack();
-// kubeContext selects the target cluster. Default cc-homelab (prod, homelab's
-// OrbStack reached over the tailnet); a machine-local staging cluster overrides
+// kubeContext selects the target cluster. Default home-server (prod, the Talos
+// node reached over the tailnet); a machine-local staging cluster overrides
 // it (e.g. `pulumi config set wwwinfra:kubeContext orbstack`). CI points the
-// provider at the context name in its own kubeconfig (the homelab kube-apiserver
-// over the tailnet). www-j934 repoint.
+// provider at the context name in its own kubeconfig (the home-server
+// kube-apiserver over the tailnet).
 const cluster = makeCluster(kubeContext);
 const namespaces = Object.fromEntries(
   Object.entries(cluster.namespaces).map(([name, namespace]) => [name, namespace.metadata.name]),
