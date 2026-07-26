@@ -12,6 +12,16 @@ export interface SecretRef {
 
 export interface ResourceSpec {
   memory?: string;
+  // reserveCpus sets ONLY requests.cpu — there is deliberately no `limitCpus`
+  // sibling field. CPU is compressible (CFS quota throttles a container even
+  // when the node has idle CPU, causing latency spikes with zero benefit —
+  // https://home.robusta.dev/blog/stop-using-cpu-limits), unlike memory, which
+  // is incompressible and gets an OOM-kill if unbounded, hence the `memory`
+  // limit above. Do not add a CPU-limit field here to be "consistent" with
+  // memory; the asymmetry is intentional. reserveCpus alone (requests-only)
+  // already gives fair-share guarantees under contention. Enforced by
+  // infra/test/render.test.ts's "never sets limits.cpu" sweep over every
+  // declared workload (#87).
   reserveCpus?: string;
   reserveMemory?: string;
   // GPU units (nvidia.com/gpu). Kubernetes extended resources require
@@ -308,6 +318,10 @@ function buildPod(p: PodInputs): {
     limits.memory = p.resources.memory;
     requests.memory = p.resources.reserveMemory ?? defaultRequestMemory(p.resources.memory);
   }
+  // requests.cpu ONLY, never limits.cpu — see the ResourceSpec.reserveCpus
+  // comment above (#87: CPU limits cause CFS-quota throttling with no benefit;
+  // requests alone give fair-share scheduling). There is no ResourceSpec field
+  // that could set limits.cpu, so this can't quietly regress.
   if (p.resources?.reserveCpus) {
     requests.cpu = p.resources.reserveCpus;
   }
