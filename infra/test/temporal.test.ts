@@ -37,6 +37,7 @@ const cnpgOperator = () =>
 
 const mockVault: Record<string, string> = {
   GITHUB_PERSONAL_ACCESS_TOKEN__TOKEN: "mock-ghcr-pat",
+  TEMPORAL_POSTGRES__PASSWORD: "mock-temporal-postgres-password",
 };
 
 function install(imageDigests: Record<string, string> = {}) {
@@ -119,6 +120,50 @@ describe("installTemporal (issue #124, talos-only)", () => {
     expect(pwd?.valueFrom).toEqual({
       secretKeyRef: { name: "temporal-postgres-app", key: "password" },
     });
+  });
+
+  test("the app owner's server-facing credential is untouched by the superuser secret (#65)", async () => {
+    const spec = await get<DeploymentSpec>(install().server, "spec");
+    const pwd = spec.template.spec.containers[0].env?.find((e) => e.name === "POSTGRES_PWD");
+    expect(pwd?.valueFrom).toEqual({
+      secretKeyRef: { name: "temporal-postgres-app", key: "password" },
+    });
+  });
+
+  test("the postgres superuser gets a vault-sourced Secret so pgAdmin/db-ui has a durable credential (#65)", async () => {
+    const res = install();
+    const type = await get<string>(res.authSecret, "type");
+    const stringData = await get<{ username: string; password: string }>(
+      res.authSecret,
+      "stringData",
+    );
+    const meta = await get<{ name: string; namespace: string }>(res.authSecret, "metadata");
+    expect(type).toBe("kubernetes.io/basic-auth");
+    expect(stringData.username).toBe("postgres");
+    expect(stringData.password).toBe("mock-temporal-postgres-password");
+    expect(meta.name).toBe("temporal-postgres-auth");
+    expect(meta.namespace).toBe("temporal");
+  });
+
+  test("the CNPG cluster enables superuser access, keyed to the vault-sourced Secret (#65)", async () => {
+    const res = install();
+    const spec = await get<{
+      enableSuperuserAccess: boolean;
+      superuserSecret: { name: string };
+    }>(res.cluster, "spec");
+    expect(spec.enableSuperuserAccess).toBe(true);
+    expect(spec.superuserSecret).toEqual({ name: "temporal-postgres-auth" });
+  });
+
+  test("throws when the vault is missing TEMPORAL_POSTGRES__PASSWORD", () => {
+    expect(() =>
+      temporal.installTemporal({
+        provider: provider(),
+        cnpgOperator: cnpgOperator(),
+        vault: { GITHUB_PERSONAL_ACCESS_TOKEN__TOKEN: "mock-ghcr-pat" },
+        imageDigests: {},
+      }),
+    ).toThrow(/TEMPORAL_POSTGRES__PASSWORD/);
   });
 
   test("BIND_ON_IP / TEMPORAL_BROADCAST_ADDRESS stay unset so each replica broadcasts its own pod IP", async () => {

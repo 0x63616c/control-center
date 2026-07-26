@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Blocks hand-rolled `prefix_${crypto.randomUUID()}`-shaped IDs outside
-# packages/platform/src/id.ts. This repo's ID convention is Stripe-style
+# packages/platform/src/index.ts. This repo's ID convention is Stripe-style
 # `prefix_<id>` (AGENTS.md), minted through packages/platform's genId() so
 # every id-mint site shares one implementation (including the no-crypto
 # fallback) instead of re-deriving it ad hoc. See www-184.
@@ -15,7 +15,7 @@ set -euo pipefail
 
 is_sanctioned() {
   case "$1" in
-    packages/platform/src/id.ts) return 0 ;;
+    packages/platform/src/index.ts) return 0 ;;
     packages/platform/test/id.test.ts) return 0 ;;
     scripts/check-no-inline-ids.sh) return 0 ;;
     *) return 1 ;;

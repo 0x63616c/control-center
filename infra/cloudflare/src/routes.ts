@@ -123,6 +123,13 @@ function productRoutes(): CloudflareRoutes {
       comment: "platform:temporal web ui route",
     },
     {
+      exposure: cc.dbUi.exposure,
+      // FQDN, same cross-namespace reason as temporal-ui above: cloudflared
+      // runs in `control-center`, pgAdmin runs in `db-ui`.
+      origin: "http://db-ui.db-ui.svc.cluster.local:80",
+      comment: "platform:pgAdmin multi-database web ui route (#65)",
+    },
+    {
       exposure: cc.grafana.exposure,
       // FQDN, not the short Service name: cloudflared runs in the `cloudflare`
       // namespace, so `grafana` alone would not resolve across into the

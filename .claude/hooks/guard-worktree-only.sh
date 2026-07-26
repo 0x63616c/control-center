@@ -11,6 +11,9 @@
 # stdin schema (tool_name, tool_input.command, cwd) and the same
 # hookSpecificOutput.permissionDecision=deny response shape. `apply_patch` is
 # Codex's file-edit tool, equivalent to Claude's Edit/Write/NotebookEdit.
+# `EnterWorktree` is Claude Code-only (no Codex equivalent); its {name}
+# creation form is blocked here for the same reason as raw edits, but
+# {path} (relocating into an already-wtp-created worktree) is allowed.
 #
 # Scope: only enforced in repos that have opted in via a `.wtp.yml` at their
 # root, and only in the MAIN worktree - any linked worktree (wtp-created or
@@ -44,6 +47,11 @@ common_dir=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/
 case "$tool_name" in
   Edit|Write|NotebookEdit|apply_patch)
     deny "Edits blocked in the main checkout of a wtp-managed repo. Run 'wtp add <branch>' (or 'wtp cd <branch>' for an existing one) and work there instead."
+    ;;
+  EnterWorktree)
+    path=$(printf '%s' "$input" | jq -r '.tool_input.path // empty' 2>/dev/null)
+    [ -n "$path" ] && exit 0
+    deny "EnterWorktree({name}) creates a nested .claude/worktrees/ checkout, which skips wtp's post_create hooks (bun install / lefthook install). Run 'wtp add -b <branch>' instead, then EnterWorktree({path: <path wtp printed>}) to relocate the session into it."
     ;;
   Bash)
     cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/null)

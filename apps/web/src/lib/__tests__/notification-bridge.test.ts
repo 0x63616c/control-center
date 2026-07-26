@@ -40,10 +40,24 @@ describe("alertToRaise", () => {
   it("maps the not-charging banner to a system critical", () => {
     const payload = alertToRaise({
       id: "battery-not-charging",
-      message: "iPad is not connected to power or charging properly",
+      message: "iPad is not charging",
+      detail: "Running on battery. Check the dock cable and power adapter.",
     });
     expect(payload?.category).toBe("system");
     expect(payload?.severity).toBe("critical");
+  });
+
+  // iOS renders an APNs title on one truncated line, so the headline this
+  // bridge promotes to `title` has to stay short and the explanation has to
+  // land in `body`. A regression here shows up as "iPad is not connect…".
+  it("keeps the not-charging title short and puts the explanation in the body", () => {
+    const payload = alertToRaise({
+      id: "battery-not-charging",
+      message: "Kitchen Panel is not charging",
+      detail: "Running on battery. Check the dock cable and power adapter.",
+    });
+    expect(payload?.title.length).toBeLessThanOrEqual(38);
+    expect(payload?.body).toContain("dock cable");
   });
 
   it("ignores an unknown banner id rather than inventing a category", () => {

@@ -149,6 +149,9 @@ export function desiredAccessApps(zone: string, includeGate = false): DesiredAcc
       // wall panel has no business reaching it, and the UI can terminate and
       // reset running workflows — so it stays behind a human login.
       { exposure: ccManifest.temporalUi.exposure, policies: ["email-otp"] },
+      // pgAdmin (#65): same treatment as Temporal UI — a database admin
+      // surface with full read/write, no kiosk business reaching it.
+      { exposure: ccManifest.dbUi.exposure, policies: ["email-otp"] },
       // Grafana: email-OTP ONLY, for the same reason as the Temporal UI. The
       // panel never calls Grafana, so it gets no kiosk service token, and the
       // UI can edit datasources and dashboards — a human login only.

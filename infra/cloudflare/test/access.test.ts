@@ -16,6 +16,7 @@ describe("desiredAccessApps", () => {
       .sort();
     expect(domains).toEqual([
       "app.worldwidewebb.co",
+      "db-ui.worldwidewebb.co",
       "grafana.worldwidewebb.co",
       "temporal-ui.worldwidewebb.co",
     ]);
@@ -33,6 +34,7 @@ describe("desiredAccessApps", () => {
     expect(domains).toEqual([
       "*.worldwidewebb.co",
       "app.worldwidewebb.co",
+      "db-ui.worldwidewebb.co",
       "grafana.worldwidewebb.co",
       "hooks.worldwidewebb.co",
       "temporal-ui.worldwidewebb.co",

@@ -11,6 +11,7 @@ import { installCertManager, issuePortalCertificate } from "./src/certmanager.ts
 import { makeCluster } from "./src/cluster.ts";
 import { installCnpg } from "./src/cnpg.ts";
 import { deployCrons } from "./src/crons.ts";
+import { installDbUi } from "./src/db-ui.ts";
 import { installEso } from "./src/eso.ts";
 import { verifyLiveGhcrPullSecrets } from "./src/ghcr-pull-secret-preflight.ts";
 import { installHomeAssistant } from "./src/homeassistant.ts";
@@ -204,6 +205,13 @@ if (target.substrate === "talos") {
     vault,
     nasNfsServer,
   });
+  // pgAdmin (issue #65): declarative multi-database web GUI over the 3 CNPG
+  // clusters above. No new CNPG operator/cluster of its own, so it only needs
+  // `vault` (it reads the same passwords control-center/home-assistant/
+  // temporal already mint). No explicit dependsOn on those clusters: pgAdmin
+  // only registers server definitions at startup, it does not eagerly
+  // connect, so apply order relative to them doesn't matter.
+  installDbUi({ provider: cluster.provider, vault });
 }
 
 // Surface resource names (not values) for the Phase-3 acceptance checks.

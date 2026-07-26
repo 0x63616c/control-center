@@ -75,16 +75,23 @@ const UI_IMAGE = "temporalio/ui:2.52.1";
 // newer", not a pin to 12 — CNPG runs 17.
 const DB_PLUGIN = "postgres12";
 const CNPG_CLUSTER_NAME = "temporal-postgres";
-const CNPG_RW_SERVICE_NAME = `${CNPG_CLUSTER_NAME}-rw`;
+export const CNPG_RW_SERVICE_NAME = `${CNPG_CLUSTER_NAME}-rw`;
 // CNPG mints this Secret itself from bootstrap.initdb (keys: username,
-// password, …). Deliberately NOT a vault key: nothing outside the cluster ever
-// connects to this database, so the credential never needs to exist anywhere a
-// human could read it.
+// password, …) for the `temporal` app owner — the server and schema Jobs use
+// it, untouched. Nothing outside the cluster ever needs THIS credential.
 const CNPG_APP_SECRET_NAME = `${CNPG_CLUSTER_NAME}-app`;
-const DATABASE_OWNER = "temporal";
-const DATABASE_NAME = "temporal";
-const VISIBILITY_DATABASE_NAME = "temporal_visibility";
-const DATABASE_PORT = "5432";
+// A second, vault-sourced credential for the `postgres` superuser, same
+// simplified bridge cnpg.ts/homeassistant.ts use elsewhere (one basic-auth
+// Secret, enableSuperuserAccess:true, CNPG keeps its password reconciled to
+// this Secret continuously). Exists ONLY so a human (via db-ui/pgAdmin) has a
+// durable, known credential to browse this database with — the `temporal` app
+// owner's self-minted password above is deliberately left alone.
+export const CNPG_AUTH_SECRET_NAME = `${CNPG_CLUSTER_NAME}-auth`;
+const SUPERUSER = "postgres";
+export const DATABASE_OWNER = "temporal";
+export const DATABASE_NAME = "temporal";
+export const VISIBILITY_DATABASE_NAME = "temporal_visibility";
+export const DATABASE_PORT = "5432";
 
 // Bounded wait for Postgres in the schema Job: ~2 minutes, then fail the Job.
 const DB_WAIT_MAX_ATTEMPTS = 60;
@@ -109,9 +116,11 @@ export interface TemporalArgs {
   // The already-installed CNPG operator (cnpg.ts's installCnpg().operator): its
   // CRDs/webhooks are cluster-scoped singletons shared by every CNPG Cluster.
   cnpgOperator: k8s.yaml.ConfigFile;
-  // Decrypted vault (vault.ts) — used ONLY for the GHCR pull token, since the
-  // temporal-worker image is private. Temporal's own DB credential is minted by
-  // CNPG in-cluster (see CNPG_APP_SECRET_NAME).
+  // Decrypted vault (vault.ts) — the GHCR pull token (temporal-worker's image
+  // is private) and TEMPORAL_POSTGRES__PASSWORD (the `postgres` superuser
+  // credential, see CNPG_AUTH_SECRET_NAME). The `temporal` app owner's
+  // credential is still minted by CNPG in-cluster (see CNPG_APP_SECRET_NAME),
+  // untouched by this vault key.
   vault: Record<string, string>;
   // Per-service GHCR digest pins from CI, for the temporal-worker image.
   imageDigests: ImageDigests;
@@ -120,6 +129,7 @@ export interface TemporalArgs {
 export interface TemporalResources {
   namespace: k8s.core.v1.Namespace;
   ghcrPullSecret: k8s.core.v1.Secret;
+  authSecret: k8s.core.v1.Secret;
   cluster: k8s.apiextensions.CustomResource;
   dynamicConfig: k8s.core.v1.ConfigMap;
   schemaJob: k8s.batch.v1.Job;
@@ -247,6 +257,26 @@ function namespaceSetupScript(): string {
   ].join("\n");
 }
 
+function createAuthSecret(
+  vault: Record<string, string>,
+  namespace: pulumi.Input<string>,
+  opts: pulumi.CustomResourceOptions,
+): k8s.core.v1.Secret {
+  const password = vault.TEMPORAL_POSTGRES__PASSWORD;
+  if (password === undefined) {
+    throw new Error("temporal: vault key TEMPORAL_POSTGRES__PASSWORD not found");
+  }
+  return new k8s.core.v1.Secret(
+    CNPG_AUTH_SECRET_NAME,
+    {
+      metadata: { name: CNPG_AUTH_SECRET_NAME, namespace },
+      type: "kubernetes.io/basic-auth",
+      stringData: { username: SUPERUSER, password: pulumi.secret(password) },
+    },
+    opts,
+  );
+}
+
 const serverLabels = { app: TEMPORAL_FRONTEND_SERVICE };
 const uiLabels = { app: "temporal-ui" };
 const workerLabels = { app: "temporal-worker" };
@@ -282,6 +312,11 @@ export function installTemporal(args: TemporalArgs): TemporalResources {
     inNamespace,
   );
 
+  const authSecret = createAuthSecret(vault, namespaceName, {
+    ...inNamespace,
+    dependsOn: [namespace],
+  });
+
   const cluster = new k8s.apiextensions.CustomResource(
     CNPG_CLUSTER_NAME,
     {
@@ -290,6 +325,13 @@ export function installTemporal(args: TemporalArgs): TemporalResources {
       metadata: { name: CNPG_CLUSTER_NAME, namespace: namespaceName },
       spec: {
         instances: 1,
+        // `postgres` superuser access, keyed to a vault-sourced Secret CNPG
+        // reconciles continuously — same bridge cnpg.ts/homeassistant.ts use.
+        // Purely additive: the `temporal` app owner below is untouched, still
+        // self-minted into CNPG_APP_SECRET_NAME, still what the server/schema
+        // Jobs use.
+        enableSuperuserAccess: true,
+        superuserSecret: { name: CNPG_AUTH_SECRET_NAME },
         bootstrap: {
           initdb: {
             database: DATABASE_NAME,
@@ -309,7 +351,7 @@ export function installTemporal(args: TemporalArgs): TemporalResources {
         },
       },
     },
-    { ...inNamespace, dependsOn: [namespace, cnpgOperator] },
+    { ...inNamespace, dependsOn: [namespace, cnpgOperator, authSecret] },
   );
 
   const dynamicConfig = new k8s.core.v1.ConfigMap(
@@ -616,6 +658,7 @@ export function installTemporal(args: TemporalArgs): TemporalResources {
   return {
     namespace,
     ghcrPullSecret,
+    authSecret,
     cluster,
     dynamicConfig,
     schemaJob,
