@@ -36,7 +36,7 @@
 import * as k8s from "@pulumi/kubernetes";
 import * as pulumi from "@pulumi/pulumi";
 import { controlCenterProductManifest } from "@www/platform";
-import { DEFAULT_METRICS_PORT } from "@www/platform/metrics";
+import { DEFAULT_METRICS_PORT } from "@www/platform/metrics/port";
 import { GHCR_PULL_SECRET_NAME } from "./ghcr-pull-secrets.ts";
 import { composeGhcrDockerConfigJson, ghcrImage, type ImageDigests } from "./services.ts";
 

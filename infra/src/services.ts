@@ -11,7 +11,7 @@
 import * as k8s from "@pulumi/kubernetes";
 import * as pulumi from "@pulumi/pulumi";
 import { controlCenterProductManifest, defineProduct } from "@www/platform";
-import { DEFAULT_METRICS_PORT } from "@www/platform/metrics";
+import { DEFAULT_METRICS_PORT } from "@www/platform/metrics/port";
 import type { InfraNamespaceName } from "./cluster.ts";
 import type { WorkloadSpec } from "./component.ts";
 import { ExternalService, HostBackedService, Workload } from "./component.ts";
