@@ -47,10 +47,18 @@ COPY packages/platform packages/platform
 
 # Bundle only the NON-workflow entrypoint (--target=node: it runs under node).
 # workflows.ts is deliberately excluded from this bundle — see the header.
+#
+# `--external '@temporalio/*'`: the SDK is NOT bundleable. @temporalio/worker
+# pulls in webpack + swc-loader, whose lazy `require("loader-utils")` /
+# `require("@swc/wasm")` fallbacks a static bundler cannot resolve, and the
+# native bridge is a .node addon anyway. It resolves from the node_modules this
+# image ships. Everything of OURS (and pino) still bundles in.
+#
 # `.mjs`, not `.js`: the bundle is ESM and the runtime image ships no
 # package.json at /app, so node would otherwise parse it as CommonJS and die on
 # the first `import`.
-RUN cd apps/temporal-worker && bun build src/index.ts --target=node --outfile ../../dist/index.mjs
+RUN cd apps/temporal-worker && bun build src/index.ts --target=node \
+      --external '@temporalio/*' --outfile ../../dist/index.mjs
 
 # ── Stage 2: runtime ──────────────────────────────────────────────────────────
 FROM node:22-slim AS runtime
