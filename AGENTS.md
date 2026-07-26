@@ -53,10 +53,14 @@
 
 ## Debugging
 
-- Panel/frontend logs live in the control-center Postgres: table `frontend_log`,
-  30-day retention, tagged with stable `device_id`, display `device_name`, git
-  `sha`, app `build`. Query it (psql via kubectl exec on `control-center-1`);
-  never ask for a device export.
+- **Backend debugging starts in Grafana** - `https://grafana.worldwidewebb.co`
+  (Cloudflare Access email OTP). Metrics from Prometheus, every container's logs
+  from Loki (labels `namespace` `pod` `container` `app` `service` `level`; 14-day
+  retention). See `docs/observability.md`.
+- Panel/frontend logs are a SEPARATE pipeline and are NOT in Loki: they live in
+  the control-center Postgres, table `frontend_log`, 30-day retention, tagged
+  with stable `device_id`, display `device_name`, git `sha`, app `build`. Query
+  it (psql via kubectl exec on `control-center-1`); never ask for a device export.
 
 ## Infra
 

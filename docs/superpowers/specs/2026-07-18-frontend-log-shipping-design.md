@@ -24,6 +24,15 @@ SQL — without standing at the panel.
 - **Read path v1: SQL only** (psql / kubectl exec). No UI, no alerting, no
   Grafana in this iteration.
 
+> **Note added 2026-07-26 (#33).** "The repo has no Loki/Grafana stack" was true
+> when written and is not any more: the constraint behind it — an 8 GiB Mac mini
+> running lean — went away when that box was retired on 2026-07-25, and a
+> Prometheus/Loki/Grafana stack now runs on home-server (#33, #216 —
+> `docs/observability.md`). The decision itself is unchanged: **frontend logs
+> still ship to Postgres**, and Loki collects container logs only. The
+> "Grafana can read the same table later via its Postgres datasource" escape
+> hatch is now actually available, but is not wired up.
+
 ## Device identity
 
 Multiple devices ship logs (wall panel, iPhone, browser sessions). Two fields on

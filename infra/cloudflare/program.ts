@@ -3,8 +3,19 @@
 // LIVE DEPLOY TARGET (was adopt-only at import, www-j934.2; promoted www-kbiy).
 // This stack now drives the live Cloudflare edge: tunnel ingress routing, proxied
 // DNS, and per-product Access apps. The original "mirror, do not apply" import era
-// is over, `pulumi up` here is a real prod mutation. (Until CI owns it, www-cred,
-// it is applied by hand.) Every resource is still `protect: true`.
+// is over, `pulumi up` here is a real prod mutation. Every resource is still
+// `protect: true`.
+//
+// CI OWNS THIS PROJECT NOW (www-cred is done): `.github/workflows/ci.yml` has a
+// `deploy-cloudflare` job that runs `pulumi up` on push to `main`. It is gated
+// on the `cloudflareinfra` paths filter — `infra/cloudflare/**` plus
+// `packages/platform/src/index.ts`, because `controlCenterProductManifest()`
+// feeds `desiredAccessApps()` and `productRoutes()`, so a manifest-only change
+// with no diff in this directory must still redeploy. The job runs AFTER
+// `deploy-home-server`, not in parallel: a tunnel-ingress rule that applied
+// before its k8s backend existed would 502 for real users, whereas an unrouted
+// backend just sits inert. A local `pulumi up` here is now a manual override of
+// CI, not the normal path.
 //
 // The zone-wide ACCESS GATE (default-deny *.<zone> floor + tooling locks, www-cuuw)
 // is flag-gated OFF by `applyAccessGate` (see below): applying the floor would
