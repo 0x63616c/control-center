@@ -23,7 +23,7 @@ import {
  * `source_label` is a config Prometheus rejects at boot, so we keep the field
  * names in one place rather than spelling them per-job.
  */
-export type RelabelConfig = {
+type RelabelConfig = {
   source_labels?: string[];
   separator?: string;
   target_label?: string;
@@ -32,7 +32,7 @@ export type RelabelConfig = {
   action?: "replace" | "keep" | "drop" | "labelmap" | "labeldrop" | "labelkeep";
 };
 
-export type ScrapeConfig = {
+type ScrapeConfig = {
   job_name: string;
   scheme?: "http" | "https";
   metrics_path?: string;
@@ -43,7 +43,7 @@ export type ScrapeConfig = {
   relabel_configs?: RelabelConfig[];
 };
 
-export type PrometheusConfig = {
+type PrometheusConfig = {
   global: {
     scrape_interval: string;
     evaluation_interval: string;
