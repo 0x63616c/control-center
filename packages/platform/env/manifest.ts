@@ -63,6 +63,12 @@ export const ENV = defineEnv({
   HOME_PLACE_NAME: str().default("Home").forFeatures("weather"),
   HOME_RADIUS_MILES: num().default(1).forRuntime("api").forFeatures("tesla"),
 
+  // ── GitHub webhooks (hooks) ───────────────────────────────────────────────
+  // The shared secret GitHub signs every delivery with. Required: hooks. is a
+  // PUBLIC host with no Cloudflare Access in front, so this HMAC is the only
+  // auth boundary — booting the api without it would open a write endpoint.
+  GITHUB_BOT_WEBHOOK_SECRET: secret().required().forRuntime("api").forFeatures("hooks"),
+
   // ── Tesla (ac, tesla) ─────────────────────────────────────────────────────
   TESLA_ENTITY_PREFIX: str().default("evee").forRuntime("api").forFeatures("tesla"),
 

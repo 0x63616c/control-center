@@ -5,6 +5,7 @@
 import { purgeCron as deploys_purgeCron } from "../deploys/jobs";
 import { purgeCron as felogs_purgeCron } from "../felogs/jobs";
 import { purgeCron as guestWifi_purgeCron } from "../guest-wifi/jobs";
+import { purgeCron as hooks_purgeCron } from "../hooks/jobs";
 import { purgeCron as wakes_purgeCron } from "../wakes/jobs";
 import { purgeCron as weather_purgeCron } from "../weather/jobs";
 
@@ -12,6 +13,7 @@ export const CRON_HANDLERS: Record<string, () => Promise<void>> = {
   "deploys-purge": deploys_purgeCron.run,
   "felogs-purge": felogs_purgeCron.run,
   "guest-wifi-purge": guestWifi_purgeCron.run,
+  "hooks-purge": hooks_purgeCron.run,
   "wake-photo-purge": wakes_purgeCron.run,
   "weather-purge": weather_purgeCron.run,
 };

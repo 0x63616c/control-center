@@ -1,4 +1,4 @@
-import { homelabTarget, internalService, privateWeb } from "@www/platform";
+import { homelabTarget, internalService, privateWeb, publicWeb } from "@www/platform";
 import { describe, expect, test } from "vitest";
 import {
   cloudflareRoutesForExposures,
@@ -26,8 +26,11 @@ describe("desiredIngressRules", () => {
     );
     expect(Object.keys(byHost).sort()).toEqual([
       "app.worldwidewebb.co",
+      "hooks.worldwidewebb.co",
       "temporal-ui.worldwidewebb.co",
     ]);
+    // #126: the public webhook receiver, served by the in-cluster api.
+    expect(byHost["hooks.worldwidewebb.co"]).toBe("http://control-center-api:4201");
     // Cross-NAMESPACE origin: cloudflared runs in control-center, so only the
     // cluster-local FQDN resolves the Service in `temporal`.
     expect(byHost["temporal-ui.worldwidewebb.co"]).toBe(
@@ -40,7 +43,6 @@ describe("desiredIngressRules", () => {
     expect(byHost["app--cc.worldwidewebb.co"]).toBeUndefined();
     expect(byHost["app.worldwidewebb.co"]).toBe("http://web.control-center.svc.cluster.local:80");
     expect(byHost["portainer.worldwidewebb.co"]).toBeUndefined();
-    expect(byHost["hooks.worldwidewebb.co"]).toBeUndefined();
   });
 
   test("captive-portal is NEVER tunneled (LAN-only)", () => {
@@ -63,6 +65,26 @@ describe("desiredIngressRules", () => {
     const hosts = desiredIngressRules(ZONE).map((r) => r.hostname);
     expect(hosts).not.toContain("api--cc.worldwidewebb.co");
     expect(hosts.some((h) => h.startsWith("api.cc."))).toBe(false);
+  });
+
+  // Routing and Access-gating are separate decisions: a public-web host must get
+  // a tunnel route and a CNAME exactly like a private one, and differ ONLY in
+  // whether access.ts declares an app for it (asserted in access.test.ts).
+  test("routes public-web hosts alongside private-web ones", () => {
+    const routes = cloudflareRoutesForExposures([
+      { exposure: privateWeb(homelabTarget, { host: "app" }), origin: "http://cc-web:80" },
+      { exposure: publicWeb(homelabTarget, { host: "hooks" }), origin: "http://cc-api:4201" },
+    ]);
+
+    expect(routes.ingressRules.map((r) => r.hostname).sort()).toEqual([
+      "app.worldwidewebb.co",
+      "hooks.worldwidewebb.co",
+    ]);
+    expect(routes.cnames.map((c) => c.hostname).sort()).toEqual([
+      "app.worldwidewebb.co",
+      "hooks.worldwidewebb.co",
+    ]);
+    expect(routes.cnames.every((c) => c.proxied)).toBe(true);
   });
 
   test("renders private product route shapes without undeclared APIs", () => {
@@ -97,7 +119,11 @@ describe("desiredCnames", () => {
     const hosts = desiredCnames(ZONE)
       .map((c) => c.hostname)
       .sort();
-    expect(hosts).toEqual(["app.worldwidewebb.co", "temporal-ui.worldwidewebb.co"]);
+    expect(hosts).toEqual([
+      "app.worldwidewebb.co",
+      "hooks.worldwidewebb.co",
+      "temporal-ui.worldwidewebb.co",
+    ]);
     // #127: the EVEE-218 hooks-test leftover was deleted with the old tunnel.
     expect(hosts).not.toContain("hooks-test.worldwidewebb.co");
     // Task 7 Step C: the flattened app--cc cutover CNAME is retired.
@@ -121,10 +147,12 @@ describe("desiredCnames", () => {
     // product-derived platform route comment (not a frozen legacy value)
     expect(byHost["app.worldwidewebb.co"]).toBe("platform:control-center private app route");
     expect(byHost["temporal-ui.worldwidewebb.co"]).toBe("platform:temporal web ui route");
+    expect(byHost["hooks.worldwidewebb.co"]).toBe(
+      "platform:github webhook receiver (public, HMAC-authenticated)",
+    );
     // Task 7 Step C: the flattened app--cc cutover CNAME is retired.
     expect(byHost).not.toHaveProperty("app--cc.worldwidewebb.co");
     // pruned dead routes are absent (www-oa74; storybook + drizzle pruned since)
-    expect(byHost).not.toHaveProperty("hooks.worldwidewebb.co");
     expect(byHost).not.toHaveProperty("portainer.worldwidewebb.co");
     expect(byHost).not.toHaveProperty("storybook.worldwidewebb.co");
     expect(byHost).not.toHaveProperty("drizzle.worldwidewebb.co");

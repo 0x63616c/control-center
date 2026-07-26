@@ -64,12 +64,19 @@ const LEGACY_CNAME_COMMENTS: Record<string, string | undefined> = {};
 export function cloudflareRoutesForExposures(
   sources: readonly CloudflareExposureSource[],
 ): CloudflareRoutes {
+  // Both web kinds get a tunnel route and a proxied CNAME; they differ only in
+  // whether an Access app is declared for them (see access.ts, which filters on
+  // "private-web" alone). Routing and gating are deliberately separate
+  // decisions — conflating them is how a public host silently loses its gate.
   const exposed = sources.filter(
     (
       source,
     ): source is CloudflareExposureSource & {
-      exposure: Extract<ProductServiceDeclaration["exposure"], { kind: "private-web" }>;
-    } => source.exposure?.kind === "private-web",
+      exposure: Extract<
+        ProductServiceDeclaration["exposure"],
+        { kind: "private-web" } | { kind: "public-web" }
+      >;
+    } => source.exposure?.kind === "private-web" || source.exposure?.kind === "public-web",
   );
 
   return {
@@ -94,6 +101,13 @@ function productRoutes(): CloudflareRoutes {
       exposure: cc.app.exposure,
       origin: "http://web.control-center.svc.cluster.local:80",
       comment: "platform:control-center private app route",
+    },
+    {
+      exposure: cc.hooks.exposure,
+      // The api workload serves /hooks/github; the host is public, the origin
+      // is the same in-cluster api every tRPC call already reaches.
+      origin: "http://control-center-api:4201",
+      comment: "platform:github webhook receiver (public, HMAC-authenticated)",
     },
     {
       exposure: cc.temporalUi.exposure,

@@ -1,4 +1,4 @@
-import { captivePortalWeb, homelabTarget, privateWeb } from "@www/platform";
+import { captivePortalWeb, homelabTarget, privateWeb, publicWeb } from "@www/platform";
 import { describe, expect, test } from "vitest";
 import { accessAppsForPrivateWeb, desiredAccessApps } from "../src/access.ts";
 
@@ -22,7 +22,7 @@ describe("desiredAccessApps", () => {
     expect(domains).not.toContain("app--cc.worldwidewebb.co");
   });
 
-  test("declares the wildcard block floor, app kiosk, and hooks CI apps", () => {
+  test("declares the wildcard block floor, app kiosk, and the hooks bypass", () => {
     const domains = desiredAccessApps(ZONE, true)
       .map((a) => a.domain)
       .sort();
@@ -34,6 +34,31 @@ describe("desiredAccessApps", () => {
     ]);
     expect(domains).not.toContain("app--cc.worldwidewebb.co");
     expect(domains).not.toContain("drizzle.worldwidewebb.co");
+  });
+
+  // #126: hooks. is a PUBLIC receiver. The wildcard default-deny floor would
+  // sweep it up the moment the gate is switched on and silently break GitHub
+  // deliveries, so the bypass must exist and must be `everyone`. A service-token
+  // policy here (what this host used to carry) would reject every delivery.
+  test("hooks. carries an everyone bypass so the deny floor cannot break deliveries", () => {
+    const hooks = desiredAccessApps(ZONE, true).find(
+      (entry) => entry.domain === "hooks.worldwidewebb.co",
+    );
+
+    expect(hooks?.policies).toHaveLength(1);
+    expect(hooks?.policies[0]).toMatchObject({ decision: "allow", include: { kind: "everyone" } });
+    expect(hooks?.policies.some((p) => p.include.kind === "service-token-config")).toBe(false);
+  });
+
+  // The whole point of a separate exposure kind: public-web must never acquire
+  // an Access app, and adding it must never strip one from a private host.
+  test("public-web never yields an Access app, and app. keeps its gate", () => {
+    const apps = accessAppsForPrivateWeb([
+      { exposure: publicWeb(homelabTarget, { host: "hooks" }), policies: ["email-otp"] },
+      { exposure: privateWeb(homelabTarget, { host: "app" }), policies: ["email-otp"] },
+    ]);
+
+    expect(apps.map((a) => a.domain)).toEqual(["app.worldwidewebb.co"]);
   });
 
   test("temporal-ui is human-login only — NEVER reachable with the kiosk token", () => {
@@ -90,20 +115,10 @@ describe("desiredAccessApps", () => {
     ]);
   });
 
-  test("keeps hooks on CI service-token access, not human-only SSO", () => {
-    const hooks = desiredAccessApps(ZONE, true).find(
-      (app) => app.domain === "hooks.worldwidewebb.co",
-    );
-
-    expect(hooks?.policies).toEqual([
-      {
-        decision: "non_identity",
-        include: { configKey: "ciClientId", kind: "service-token-config" },
-        name: "ci-service-token",
-        precedence: 1,
-      },
-    ]);
-  });
+  // SUPERSEDED by #126: this host used to carry a CI service-token lock, from
+  // when it was an internal tooling endpoint. It is now the public GitHub
+  // receiver, and a service-token requirement would reject every delivery. The
+  // replacement assertion lives in the "everyone bypass" test above.
 
   test("emits no literal personal email anywhere in the access apps", () => {
     expect(JSON.stringify(desiredAccessApps(ZONE, true))).not.toMatch(

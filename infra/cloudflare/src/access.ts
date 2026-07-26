@@ -157,6 +157,17 @@ export function desiredAccessApps(zone: string, includeGate = false): DesiredAcc
   return [
     wildcardBlockFloor(zone),
     ...baseApps,
-    accessApp(`hooks.${zone}`, [serviceTokenPolicy("ci-service-token", "ciClientId")]),
+    // hooks. is PUBLIC (#126): GitHub posts to it from the internet and its auth
+    // is an HMAC, not Access. The wildcard floor above would otherwise sweep it
+    // into default-deny the moment the gate is switched on, breaking deliveries
+    // with no code change on our side — so the bypass is declared HERE, next to
+    // the floor, rather than left to be debugged later.
+    //
+    // This replaces the old CI service-token lock on this host: that predates
+    // the host being a public receiver, and a service-token requirement would
+    // reject every GitHub delivery.
+    accessApp(`hooks.${zone}`, [
+      { name: "public-bypass", decision: "allow", precedence: 1, include: { kind: "everyone" } },
+    ]),
   ];
 }
