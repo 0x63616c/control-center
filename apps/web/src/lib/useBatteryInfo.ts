@@ -33,7 +33,14 @@ export function useBatteryInfo(enabled: boolean): BatteryInfo | null {
         const { Device } = await import("@capacitor/device");
         const battery = await Device.getBatteryInfo();
         if (cancelled) return;
-        if (battery.batteryLevel == null || battery.isCharging == null) return;
+        // An unreadable value resets to unknown rather than keeping the last
+        // good reading: a stale `isCharging: false` left in state from before
+        // a plug event would otherwise freeze the not-charging banner on
+        // regardless of what the device is actually doing now (#201).
+        if (battery.batteryLevel == null || battery.isCharging == null) {
+          setInfo(null);
+          return;
+        }
         setInfo({ level: battery.batteryLevel, isCharging: battery.isCharging });
       } catch {
         // Best-effort , a battery read failure must never break settings.
@@ -42,9 +49,17 @@ export function useBatteryInfo(enabled: boolean): BatteryInfo | null {
 
     void read();
     const timer = setInterval(read, POLL_MS);
+    // Re-check immediately when the panel regains focus (e.g. right after the
+    // user plugs/unplugs it), so the banner reflects the current state
+    // instead of waiting up to a full POLL_MS tick.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void read();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
       clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [enabled]);
 
