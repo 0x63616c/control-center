@@ -4,8 +4,11 @@ import { GuestWifiTile, GuestWifiTileView } from "./web";
 /**
  * The guest-wifi app manifest (Track C, C7 — the fold canary). One inline
  * `defineApp` is the single source of truth for this tile: its id, board
- * placement (copied verbatim from the pre-fold tile-registry entry), and the
- * fact that it is reachable by unauthenticated LAN guests (`guestExposed`).
+ * placement, and the fact that it is reachable by unauthenticated LAN guests
+ * (`guestExposed`).
+ *
+ * worldRow 34 (moved from row 22 — issue #68): see the matching note in
+ * features/weight/manifest.ts for why.
  *
  * The codegen collects this manifest from `features/*` /manifest.ts` and unions
  * it with the tile-registry leftovers (D2). `apps/web`'s tile-registry imports
@@ -25,7 +28,7 @@ export default defineApp({
       component: GuestWifiTile,
       viewComponent: GuestWifiTileView,
       worldCol: 28,
-      worldRow: 22,
+      worldRow: 34,
       cols: 2,
       rows: 2,
     },
