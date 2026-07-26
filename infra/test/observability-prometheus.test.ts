@@ -9,7 +9,7 @@ type Relabel = {
   target_label?: string;
   replacement?: string;
 };
-type Job = { job_name: string; relabel_configs?: Relabel[] };
+type Job = { job_name: string; honor_labels?: boolean; relabel_configs?: Relabel[] };
 type Config = {
   global: { external_labels: Record<string, string> };
   rule_files: string[];
@@ -100,5 +100,16 @@ describe("buildPrometheusConfig", () => {
     const targets = job("cnpg").relabel_configs?.map((r) => r.target_label);
     expect(targets).toContain("cluster_name");
     expect(targets).not.toContain("cluster");
+  });
+});
+
+describe("kube-state-metrics label collisions", () => {
+  test("honor_labels is set, or the mixin's kube_pod_info joins collapse", () => {
+    // kube-state-metrics describes OTHER objects, so its series carry the
+    // namespace/pod of the object described. Without honor_labels the scrape
+    // overwrites those with the kube-state-metrics pod's own identity, every
+    // kube_pod_info says pod="kube-state-metrics-…", and every container
+    // CPU/memory dashboard renders one row instead of eighty. Seen live.
+    expect(job("kube-state-metrics").honor_labels).toBe(true);
   });
 });

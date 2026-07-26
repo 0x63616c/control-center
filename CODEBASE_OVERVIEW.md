@@ -85,6 +85,7 @@ that run/deploy, `packages/` = things you import); product features live under
 - `packages/logger` - Shared pino logger with centralized redaction and runtime-safe config.
 - `packages/platform` - Pure platform foundation package for product identity, target, exposure, secret, database, backup, and Control Center representation primitives.
 - `infra` - Pulumi program that declares the production k8s stack.
+- `infra/observability` - Vendored observability data, not code: Grafana dashboard JSON and Prometheus recording rules, read at preview time by `infra/src/observability/`.
 - `infra/unifi` and `infra/cloudflare` - Separate Pulumi projects for those providers.
 
 Dependency boundaries between `packages/*`, `features/*`, and `apps/*` are enforced by a
@@ -298,6 +299,11 @@ Important infra files:
 - `infra/src/cnpg.ts` - CloudNativePG Postgres.
 - `infra/src/certmanager.ts` - certificate automation.
 - `infra/src/cluster.ts` - cluster-level setup.
+- `infra/src/observability/` - the observability stack (#33): Prometheus,
+  node-exporter, kube-state-metrics, Loki, Alloy and Grafana in the
+  `observability` namespace. Hand-written resources, no Helm and no
+  prometheus-operator/CRDs (ADR #207); the vendored dashboards and recording
+  rules it mounts live in `infra/observability/`. See `docs/observability.md`.
 
 GitHub Actions builds **multi-arch** images in `.github/workflows/ci.yml`: each Dockerfile builds twice on native runners (`amd64` on `ubuntu-24.04`, `arm64` on `ubuntu-24.04-arm`, no QEMU emulation), each pushing a per-arch child tag, and a dependent `merge-*` job composes them into a multi-arch manifest index via `docker buildx imagetools create`. amd64 is not optional — the home-server node is x86. CI then joins the tailnet with an ephemeral `tag:ci` identity, writes kubeconfig, sets Pulumi image digest config, and runs `pulumi up --stack home-server`.
 

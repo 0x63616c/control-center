@@ -36,6 +36,8 @@ type ScrapeConfig = {
   job_name: string;
   scheme?: "http" | "https";
   metrics_path?: string;
+  /** Let the scraped series keep their own labels when they collide with the target's. */
+  honor_labels?: boolean;
   bearer_token_file?: string;
   tls_config?: { insecure_skip_verify: boolean };
   static_configs?: { targets: string[] }[];
@@ -115,6 +117,16 @@ function buildScrapeConfigs(): ScrapeConfig[] {
       // target cannot express "only that port", and scraping both would give
       // job="kube-state-metrics" two disjoint series sets from one job.
       job_name: "kube-state-metrics",
+      // kube-state-metrics' whole job is to describe OTHER objects, so its
+      // series already carry the `namespace`/`pod` of the object they describe.
+      // Without honor_labels the scrape overwrites those with the kube-state-
+      // metrics POD's own identity and demotes the real ones to `exported_pod`
+      // /`exported_namespace` — at which point every kube_pod_info series says
+      // pod="kube-state-metrics-…", the mixin's
+      // `* on (cluster, namespace, pod) group_left(node) kube_pod_info` joins
+      // match exactly one pod, and every container CPU/memory dashboard renders
+      // one row instead of eighty. Observed live before this was set.
+      honor_labels: true,
       kubernetes_sd_configs: [{ role: "endpoints" }],
       relabel_configs: [
         {
