@@ -2,19 +2,7 @@
 
 This repository is a Bun monorepo for a smart-home wall-panel dashboard. The app is built around a fixed iPad wall panel, a tRPC API, background reconciliation workers, and a Pulumi-managed Kubernetes deployment on the `home-server` Talos node (see `## Where Prod Runs`).
 
-> **Staleness note (2026-07-24):** Parts of the "Runtime Shape", "Domain Services",
-> and end-of-file flow sections below still describe the *pre-fold* architecture,
-> where business logic lived in `apps/api/src/services`. After the Track-C
-> migration, features are self-contained Apps under `features/<id>/` (manifest +
-> `web.tsx`/`api.ts`/`jobs.ts`/`schema.ts`; see `AGENTS.md` invariants and
-> ADR-0001/0002), shared substrate lives in `packages/core` (`@www/core`) and
-> `packages/platform` (`@www/platform`, incl. the env registry — there is no
-> longer an `apps/api/src/env.ts`), and `apps/api` is trending toward
-> routers-only. A residual set of worker enforcer cycles is still hand-wired in
-> `apps/api/src/services` pending hoist. For the current state and open
-> structural debt see `docs/superpowers/reviews/2026-07-23-post-track-c-codebase-review.md`.
-> This narrative is being refreshed; treat `AGENTS.md` + the ADRs as authoritative
-> where they disagree with the sections below.
+Product logic is organized as self-contained **Apps** under `features/<id>/` (ADR-0001/0002): each folder holds its own tile(s), tRPC router slice, jobs, and schema, and the folder existing *is* the App's registration. `bun run apps:gen` globs those manifests and emits checked-in aggregates under `features/_generated/*.gen.ts`; `bun run apps:check` re-runs codegen and fails on drift. Never hand-edit `_generated/`. See `AGENTS.md` for the full invariant list and the ADRs in `docs/adr/` for the "why."
 
 ## Runtime Shape
 
@@ -23,13 +11,14 @@ iPad / browser
   -> web React board
   -> /trpc same-origin HTTP
   -> api Bun + tRPC server
-  -> apps/api/src/services domain services
+  -> features/<id>/api.ts router slices (merged into featureAppRouter)
   -> Home Assistant / UniFi / Spotify / Postgres / media integrations
 
 background loops and jobs
   -> worker
-  -> @control-center/api/worker domain cycles
-  -> desired-state reconciliation, weather ingest, party mode, YouTube/media ingest
+  -> @control-center/api/worker domain cycles (apps/api/src/worker-deps.ts barrel)
+  -> desired-state reconciliation, weather ingest, party mode, weight/YouTube ingest,
+     GitHub deploy polling
 
 deploy
   -> GitHub Actions
@@ -70,10 +59,23 @@ to the root; captive-portal was folded into the guest listener inside `api/`
 and its own product folder is gone):
 
 Deployable apps live under `apps/` (Track B plan decision 6: `apps/` = things
-that run/deploy, `packages/` = things you import):
+that run/deploy, `packages/` = things you import); product features live under
+`features/`:
 
+- `features/<id>/` - one folder per self-contained App (`ac`, `booth`, `ctrl`, `deploys`,
+  `dogcam`, `events`, `felogs`, `guest-wifi`, `network`, `notif`, `sound`, `tesla`, `tv`,
+  `wakes`, `weather`, `weight` today). Each has a `manifest.ts` (tile placement, id) plus
+  whichever convention facets it needs: `web.tsx` (tile + detail view), `api.ts` (tRPC
+  router slice), `jobs.ts` (queue job handlers), `schema.ts` (owned tables).
+- `features/_generated/*.gen.ts` - committed codegen output (`bun run apps:gen`):
+  `tiles.gen.ts`, `router.gen.ts`, `guest-router.gen.ts`, `jobs.gen.ts`, `crons.gen.ts`,
+  `cron-handlers.gen.ts`, `http.gen.ts`, `schema.gen.ts`. Never hand-edit.
+- `app-kit` - the `defineApp`/manifest types and server-side router-merging helpers
+  every feature's `manifest.ts`/`api.ts` import.
 - `apps/web` - React dashboard, Storybook, and Capacitor iOS shell (`apps/web/ios`).
-- `apps/api` - Bun tRPC backend, DB schema, migrations, routers, services, shared domain logic, and the guest-WiFi listener.
+- `apps/api` - Bun tRPC backend, DB schema/migrations, the non-feature base routers
+  (health, settings, device-settings, system), a handful of still-hand-wired worker
+  cycles pending hoist (see `## Workers`), and the guest-WiFi HTTP listener.
 - `apps/worker` - Continuous interval workers for home-state reconciliation and ingest.
 - `apps/temporal-worker` - Temporal worker (Node, not bun) serving `HealthCheckWorkflow` on the `main` task queue.
 - `apps/storybook` - Thin wrapper delegating to the web Storybook.
@@ -84,6 +86,9 @@ that run/deploy, `packages/` = things you import):
 - `packages/platform` - Pure platform foundation package for product identity, target, exposure, secret, database, backup, and Control Center representation primitives.
 - `infra` - Pulumi program that declares the production k8s stack.
 - `infra/unifi` and `infra/cloudflare` - Separate Pulumi projects for those providers.
+
+Dependency boundaries between `packages/*`, `features/*`, and `apps/*` are enforced by a
+Biome `noRestrictedImports` rule, not a separate dependency-graph tool.
 
 ## Frontend
 
@@ -105,13 +110,21 @@ The dashboard is not a normal responsive layout. It is a fixed wall-panel world:
 - Module-level web stores share one primitive: `createStore`/`useStore` at
   `apps/web/src/lib/store.ts` (settings, alarms, timers, tile-detail, modals, …).
 
-Tile placement is centralized in `apps/web/src/lib/tile-registry.ts`. Each tile entry defines its id, label, component, detail view component, world position, and size. The registry's coordinates are *defaults* only: the `board_tile_placement` table holds per-tile overrides (world col/row) that win when present, so a user's saved layout survives registry additions/removals without a migration. `resolveLayout` (`apps/web/src/lib`) merges registry defaults with placement overrides and scanline-places any tile the user has never touched.
+Tile placement is declared per-feature, not centralized. Each feature's `manifest.ts`
+declares its tile's id, label, components, and world position/size via `defineApp`
+(ADR-0001). At runtime, `apps/web/src/lib/tile-registry.ts` still statically imports
+all 16 feature manifests by hand and unions them with a now-empty `REGISTRY_ENTRIES`
+array — every real tile today comes from a feature, there is no hand-placed tile left,
+but the board does not read from codegen for this. `bun run apps:gen` also emits
+`features/_generated/tiles.gen.ts` (`GENERATED_TILES`), a data-only projection of the
+same manifests, but as of this writing it has **no runtime consumer** — it's written
+and drift-checked but nothing imports it (open issue: #97, "tiles.gen.ts has no
+runtime consumer"). Placement data is therefore dual-sourced until that's resolved
+one way or the other. There is no runtime
+placement override table; a tile's position is edited by changing its manifest's
+`worldCol`/`worldRow`/`cols`/`rows` and re-running codegen.
 
-The `layout` tRPC router exposes `get` (merged, revision-tagged layout) and `save` (writes placement rows, prunes rows for tiles no longer in the registry). `useBoardLayout` blocks first paint on the initial `layout.get`, then polls every 5s (`POLL.layout`); a poll response whose revision is unchanged is skipped, so the resolved layout only ever applies on a revision change (last-write-wins).
-
-Layout editing is entered from the Board page of Settings ("Edit layout" row) and opens a full-screen, zoomed-out editor (`components/layout-editor/`) that freezes the board underneath (idle glide-home and idle-dim both disabled while it's open). Tiles drag-and-snap to the grid with overlap spring-back; Save is gated behind the active bento pattern (an invalid arrangement can't be saved), and Reset/Cancel discard the working copy. Any tile without a saved position (including newly-registered tiles) surfaces via an unplaced-tile banner.
-
-Settings is a full-page (`1366x1024`) body-portal overlay, not a modal: `components/settings-page/` holds the shell (`SettingsPage.tsx`, sidebar + page routing), shared framing (`blocks.tsx`), the page registry (`pages.ts`), and eight presentational pages under `pages/` (Device, Display, Board, Network, Notifications, Debug, About, Security). Live state comes from the module-level settings store (`lib/settings.ts`), which syncs every field across panels through the server's settings singleton. Sensitive surfaces (Settings gear, Wake photos viewer, any tile detail flagged `sensitive`) share ONE PIN unlock per panel session (`components/pin/`, `PinGateModal` + `PinPadView`, on `panelSession.unlock()`): a successful PIN entry unlocks everything sensitive until the session ends (idle timeout relocks). The PIN is a synced settings field (`pinCode`, default `"000000"`), enforced frontend-only — the API never validates it beyond schema shape (ADR-0004: accepted until Slice S lands server-side `session.unlock(pin)`; the relock is only as strong as the client). A `showMinimap` setting (Board page) gates the board minimap.
+Settings is a full-page (`1366x1024`) body-portal overlay, not a modal: `components/settings-page/` holds the shell (`SettingsPage.tsx`, sidebar + page routing), shared framing (`blocks.tsx`), the page registry (`pages.ts`), and eight presentational pages under `pages/` (Device, Display, Board, Network, Notifications, Debug, About, Security). Live state comes from the module-level settings store (`lib/settings.ts`), which syncs every field across panels through the server's settings singleton. Sensitive surfaces (Settings gear, Wake photos viewer, any tile detail flagged `sensitive`) share ONE PIN unlock per panel session (`components/pin/`, `PinGateModal` + `PinPadView`, on `panelSession.unlock()`): a successful PIN entry unlocks everything sensitive until the session ends (idle timeout relocks). The PIN is a synced settings field (`pinCode`, default `"000000"`), enforced frontend-only — the API never validates it beyond schema shape (ADR-0004: accepted until Slice S lands server-side `session.unlock(pin)`; the relock is only as strong as the client).
 
 Data access is through tRPC React Query in `apps/web/src/lib/trpc.ts`. Queries retry with bounded exponential backoff; mutations do not retry. Unavailable data should render skeleton/error states, not invented values.
 
@@ -126,8 +139,17 @@ Routes include:
 - `/media/tv-artwork` - proxies Home Assistant artwork bytes so tokenized HA URLs stay private.
 - `/media/wake-photo` (POST) + `/media/wake-photos/*` - ingests and serves the panel's wake-from-dim front-camera burst frames (stored under `MEDIA_STORAGE_DIR/wake-photos`).
 - `/trpc/*` - tRPC request handling.
+- Any HTTP routes owned by a feature's `http.ts` facet (e.g. the guest-WiFi captive
+  portal listener in `features/guest-wifi/`) are collected into
+  `features/_generated/http.gen.ts` and mounted alongside the routes above.
 
-The tRPC root router lives in `apps/api/src/trpc/routers/index.ts` and combines routers for health, weather, network, Tesla, climate, controls, camera, events, media, and portal.
+The tRPC root router is `apps/api/src/trpc/routers/index.ts`: a small non-feature
+`baseRouter` (health, settings, device-settings, system) merged with the generated
+`featureAppRouter` from `features/_generated/router.gen.ts`, which aggregates every
+feature's `api.ts` router slice (today: `ac`, `booth`, `ctrl`, `deploys`, `dogcam`,
+`events`, `felogs`, `guest-wifi`, `network`, `notif`, `sound`, `tesla`, `tv`, `wakes`,
+`weather`, `weight`). Adding a feature's tRPC surface means writing its `api.ts` and
+re-running `bun run apps:gen`, not editing this file.
 
 `apps/api/src/trpc/init.ts` adds middleware that remaps `HaError` into tRPC `SERVICE_UNAVAILABLE`, so clients can recover through normal query error handling.
 
@@ -135,9 +157,22 @@ The tRPC root router lives in `apps/api/src/trpc/routers/index.ts` and combines 
 
 ## Domain Services
 
-Most business logic lives in `apps/api/src/services`. Important services include climate, controls, device state/commands, light and climate enforcers, party mode, weather ingest/read, network, Tesla, Apple TV, Spotify, Sonos, playlist polling, YouTube ingest, and captive portal flows.
+Most feature-owned business logic lives inside each feature's own facet files
+(`features/<id>/api.ts`, `jobs.ts`) rather than a shared `services/` directory.
+`apps/api/src/services/` still holds a residual set of interval-cycle enforcers that
+are hand-wired into `apps/worker` rather than folded into a feature yet: climate,
+light, and device-sync enforcers, party mode, ASC version polling, weight ingest
+(including the Withings variant), and YouTube ingest. The sonos-volume enforcer has
+already been folded into `features/sound/enforcer.ts`. The rest are pending a hoist
+to a shared substrate (tracked as open structural debt); see
+`docs/superpowers/reviews/2026-07-23-post-track-c-codebase-review.md` for the current
+list.
 
-The Sonos sound-system query classifies each group's source from the coordinator's `GetMediaInfo` URI (`sourceKind`: line-in/tv/spotify/airplay/other/idle) and carries now-playing metadata. The web Groups modal (patch-bay UX, opened from the Sound System tile) moves speakers between live sources via `sonosGroupJoin`/`sonosGroupLeave`, grabbing TV audio to the Beam first when needed.
+The Sonos sound-system query (now under `features/sound/`) classifies each group's
+source from the coordinator's `GetMediaInfo` URI (`sourceKind`: line-in/tv/spotify/
+airplay/other/idle) and carries now-playing metadata. The web Groups modal (patch-bay
+UX, opened from the Sound System tile) moves speakers between live sources via
+`sonosGroupJoin`/`sonosGroupLeave`, grabbing TV audio to the Beam first when needed.
 
 A key pattern is DB-authoritative desired state:
 
@@ -148,24 +183,29 @@ frontend writes desired state
   -> frontend reads merged/effective state
 ```
 
-This keeps dashboard taps immediately self-consistent and avoids fighting upstream systems unless the device policy says to enforce.
+This keeps dashboard taps immediately self-consistent and avoids fighting upstream systems unless the device policy says to enforce. See `packages/core` below for the shared store this depends on.
 
 ## Database
 
-The Drizzle schema is in `apps/api/src/db/schema.ts`.
+The Drizzle schema is composed from `apps/api/src/db/schema.ts` plus every feature's
+own `schema.ts` (aggregated into `features/_generated/schema.gen.ts` by codegen). A
+feature owns its tables end to end in its own folder rather than a shared schema file
+growing without bound.
 
 Major tables include:
 
 - `job` - generic durable job queue.
-- `events` - upcoming events.
-- `device_state` - desired and reported device state.
+- `events` - upcoming events (`features/events/`).
+- `device_state` - desired and reported device state (`packages/core`).
 - `device_commands` - command audit and in-flight tracking.
 - `integration_sync_status` - integration/worker heartbeat state.
-- `weather_reading` and `weather_daily_reading` - append-only weather history.
+- `weather_reading` and `weather_daily_reading` - append-only weather history (`features/weather/`).
 - `lamp_mode` - singleton persistent party-mode state.
 - `media_source` and `media_item` - media pipeline state.
-- `board_tile_placement` - per-tile world position overrides for the board layout editor; absent rows fall back to `tile-registry.ts` defaults.
-- `weight_measurement` - append-only Renpho scale weigh-ins (kg canonical, lb display-only), ingested from an HA BLE sensor by the `weight-ingest` worker; sanity-band/manual exclusions live in `excluded_reason`, surfaced by the Weight tile and its Trend/Readings detail pages via the `weight` tRPC router.
+- `weight_measurement` - append-only Renpho scale weigh-ins (kg canonical, lb display-only), ingested from an HA BLE sensor by the `weight-ingest` worker cycle; sanity-band/manual exclusions live in `excluded_reason`, surfaced by the Weight tile and its Trend/Readings detail pages via the `weight` tRPC router (`features/weight/`).
+
+There is no longer a `board_tile_placement` table: tile position lives solely in each
+feature's manifest (ADR-0001).
 
 Both the API and workers run migrations at boot so whichever starts first can safely prepare the schema.
 
@@ -183,10 +223,15 @@ Registered workers currently include:
 - `weather-ingest` every 5m.
 - `weight-ingest` every 1m (HA Renpho BLE weight sensor → `weight_measurement`).
 - `asc-version-poll` every 1m (latest TestFlight build of the iOS shell, powering the board's update-available banner).
+- Any feature-owned queue job types are aggregated into
+  `features/_generated/jobs.gen.ts` and CronJob-driven cycles into
+  `features/_generated/crons.gen.ts`/`cron-handlers.gen.ts`; a feature adds a job or a
+  cron by writing `jobs.ts` and re-running `bun run apps:gen`, not editing worker code
+  directly.
 
 The shared runtime in `packages/worker-runtime` prevents overlapping cycles per worker, isolates failures, logs failure and recovery transitions, warns on slow cycles, and exposes stats.
 
-The media pipeline (playlist poller, ingest queue, NAS media mount) runs inside `worker`: media-worker was merged into it, so there is one worker deployable and one api barrel (`@control-center/api/worker` at `apps/api/src/worker-deps.ts`).
+The media pipeline (playlist poller, ingest queue, NAS media mount) runs inside `worker`: media-worker was merged into it (ADR-0003), so there is one worker deployable and one api barrel (`@control-center/api/worker` at `apps/api/src/worker-deps.ts`).
 
 - `queue-worker` every 2s.
 - `playlist-poller` every 2m.
@@ -239,7 +284,7 @@ kubectl --context home-server -n control-center exec control-center-1 -c postgre
 
 Design: `docs/superpowers/specs/2026-07-18-frontend-log-shipping-design.md`.
 
-Env/config goes through the central registry at `packages/platform` (`@www/platform/env`): a single key manifest with a lazy, order-proof config Proxy, fail-fast `assertEnv` at boot (via each app's pinned `boot-env` import), and a Biome rule banning raw `process.env` in features. The old `apps/api/src/env.ts` is gone. Production secrets are mounted as files under `/run/secrets/<NAME>` and hydrated at boot. Real credentials and private home-location values live outside git.
+Env/config goes through the central registry at `packages/platform` (`@www/platform/env`): a single key manifest with a lazy, order-proof config Proxy, fail-fast `assertEnv` at boot (via each app's pinned `boot-env` import), and a Biome rule banning raw `process.env` in features. Production secrets are mounted as files under `/run/secrets/<NAME>` and hydrated at boot. Real credentials and private home-location values live outside git.
 
 ## Deployment
 
@@ -256,11 +301,12 @@ Important infra files:
 
 GitHub Actions builds **multi-arch** images in `.github/workflows/ci.yml`: each Dockerfile builds twice on native runners (`amd64` on `ubuntu-24.04`, `arm64` on `ubuntu-24.04-arm`, no QEMU emulation), each pushing a per-arch child tag, and a dependent `merge-*` job composes them into a multi-arch manifest index via `docker buildx imagetools create`. amd64 is not optional — the home-server node is x86. CI then joins the tailnet with an ephemeral `tag:ci` identity, writes kubeconfig, sets Pulumi image digest config, and runs `pulumi up --stack home-server`.
 
-The image digest config key must be namespaced as `ccinfra:imageDigests.<svc>`. Without `ccinfra:`, the Pulumi program does not read the values correctly.
+The image digest config key must be namespaced as `wwwinfra:imageDigests.<svc>`. Without `wwwinfra:`, the Pulumi program does not read the values correctly.
 
 ## Cron Jobs
 
-Scheduled work is Kubernetes-native in `infra/src/crons.ts`:
+Scheduled work is Kubernetes-native in `infra/src/crons.ts`, plus any feature-owned
+crons aggregated into `features/_generated/crons.gen.ts`:
 
 - `portal-data-purge` - daily portal cleanup.
 - `map-extract` - monthly basemap refresh.
@@ -276,14 +322,23 @@ Do not add a third-party scheduler for new cron-style tasks.
 
 The repo previously moved toward a multi-product platform shape (Control Center
 + captive-portal as separate products under `products/<name>`). That shape is
-gone: captive-portal's guest-WiFi flow was folded into `api`'s guest listener,
-and SDD track 0 Task 9 flattened `*` to the repo root,
-so this is a single-product repo again. `docs/platform/*.html` are historical
-design notes from that era, not the current layout.
+gone: captive-portal's guest-WiFi flow was folded into a feature
+(`features/guest-wifi/`, ADR-0006), and SDD track 0 Task 9 flattened `*` to the
+repo root, so this is a single-product repo again. `docs/platform/*.html` are
+historical design notes from that era, not the current layout.
+
+Later, Track C (see `docs/adr/0001-features-are-self-contained-apps.md` and
+`docs/adr/0002-app-registration-via-committed-codegen.md`) dissolved the central
+`TILE_REGISTRY` / hand-written `appRouter` object literal / worker `Worker[]` array
+into the `features/<id>/` + committed-codegen shape described throughout this
+document. If you find a doc, comment, or test elsewhere in the repo still describing
+tiles as living solely in `apps/web/src/lib/tile-registry.ts`, or business logic as
+living solely in `apps/api/src/services`, treat this file and `AGENTS.md` as
+authoritative over it.
 
 CI path filters are now scoped per app directory (`apps/web/**`, `apps/api/**`,
 `apps/worker/**`, `apps/map-provision/**`), all rebuilding
-on `packages/**` or `bun.lock` changes too. The Tiltfile lives at the repo
+on `packages/**`, `features/**`, or `bun.lock` changes too. The Tiltfile lives at the repo
 root; root `bun run dev` runs `tilt up` directly. Local dev commands
 (`dev:web`, `dev:api`, `dev:worker`, `dev:storybook`, `dev:db`, `ios:*`) live
 on the root `package.json`.
@@ -310,7 +365,7 @@ the default, so tests inject the in-memory adapter instead of stubbing drizzle.
 - Use `bun` and `bunx`, never `npm` or `npx`.
 - Run tests with `bun run test`, never bare `bun test`.
 - Do not add fake, fallback, or placeholder data. Unavailable data should shimmer or error and recover.
-- Backend code uses structured logging through `@repo/logger`, not `console.*`.
+- Backend code uses structured logging through `@www/logger`, not `console.*`.
 - Tiles should use shared UI primitives from `apps/web/src/components/ui`.
 - Component work should be Storybook-first where practical.
 - IDs should default to Stripe-style `prefix_<id>`.
@@ -318,26 +373,25 @@ the default, so tests inject the in-memory adapter instead of stubbing drizzle.
 
 ## Where To Start For A Feature
 
-Most product changes follow this vertical slice:
+Adding a whole new tile/feature follows ADR-0001/0002: create `features/<id>/`
+with a `manifest.ts` and whichever facets it needs, then run `bun run apps:gen`.
+Extending an *existing* feature follows this vertical slice inside its folder:
 
 ```text
 UI tile/component
-  -> apps/web/src/components
+  -> features/<id>/web.tsx
   -> tRPC hook from apps/web/src/lib/trpc.ts
 
-API router
-  -> apps/api/src/trpc/routers
-  -> validates input/output
-
-Domain service
-  -> apps/api/src/services
-  -> talks DB or integration
+API router slice
+  -> features/<id>/api.ts
+  -> validates input/output, merged into featureAppRouter by codegen
 
 Persistent state
-  -> apps/api/src/db/schema.ts, if needed
+  -> features/<id>/schema.ts, if needed
 
 Background work
-  -> worker, if needed
+  -> features/<id>/jobs.ts (queue jobs/crons via codegen), or apps/worker for a
+     still-hand-wired interval enforcer (see `## Domain Services`)
 
 Deploy shape
   -> infra/src/services.ts or infra/src/crons.ts, if needed
