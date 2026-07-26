@@ -662,6 +662,12 @@ export type ControlCenterProductManifest = Readonly<{
   temporalUi: Readonly<{
     exposure: WebExposure;
   }>;
+  // pgAdmin (issue #65): same shape as temporalUi above — runs in the `db-ui`
+  // namespace from an upstream image (infra/src/db-ui.ts), not a
+  // control-center workload, but shares the hostname-ownership rule.
+  dbUi: Readonly<{
+    exposure: WebExposure;
+  }>;
   // The public GitHub webhook host (#126). Served by the api workload, but it
   // is NOT the api's exposure: api stays `internalService` for in-cluster
   // traffic and gains this one public hostname that the tunnel maps to it.
@@ -704,6 +710,9 @@ export function controlCenterProductManifest(): ControlCenterProductManifest {
       // Single label under the zone, so Universal SSL's one-label wildcard
       // covers it (see webHostname).
       exposure: privateWeb(target, { host: "temporal-ui" }),
+    },
+    dbUi: {
+      exposure: privateWeb(target, { host: "db-ui" }),
     },
     hooks: {
       // PUBLIC on purpose: GitHub posts here from the internet and would be

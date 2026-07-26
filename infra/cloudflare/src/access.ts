@@ -149,6 +149,9 @@ export function desiredAccessApps(zone: string, includeGate = false): DesiredAcc
       // wall panel has no business reaching it, and the UI can terminate and
       // reset running workflows — so it stays behind a human login.
       { exposure: ccManifest.temporalUi.exposure, policies: ["email-otp"] },
+      // pgAdmin (#65): same treatment as Temporal UI — a database admin
+      // surface with full read/write, no kiosk business reaching it.
+      { exposure: ccManifest.dbUi.exposure, policies: ["email-otp"] },
     ]),
   ];
 

@@ -26,6 +26,7 @@ describe("desiredIngressRules", () => {
     );
     expect(Object.keys(byHost).sort()).toEqual([
       "app.worldwidewebb.co",
+      "db-ui.worldwidewebb.co",
       "hooks.worldwidewebb.co",
       "temporal-ui.worldwidewebb.co",
     ]);
@@ -40,6 +41,7 @@ describe("desiredIngressRules", () => {
     expect(byHost["temporal-ui.worldwidewebb.co"]).toBe(
       "http://temporal-ui.temporal.svc.cluster.local:8080",
     );
+    expect(byHost["db-ui.worldwidewebb.co"]).toBe("http://db-ui.db-ui.svc.cluster.local:80");
     expect(byHost["dashboard.worldwidewebb.co"]).toBeUndefined();
     expect(byHost["storybook.worldwidewebb.co"]).toBeUndefined();
     expect(byHost["drizzle.worldwidewebb.co"]).toBeUndefined();
@@ -125,6 +127,7 @@ describe("desiredCnames", () => {
       .sort();
     expect(hosts).toEqual([
       "app.worldwidewebb.co",
+      "db-ui.worldwidewebb.co",
       "hooks.worldwidewebb.co",
       "temporal-ui.worldwidewebb.co",
     ]);
