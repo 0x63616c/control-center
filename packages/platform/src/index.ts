@@ -275,6 +275,43 @@ export const secretCatalog = {
   github: {
     ghcrPat: secret("GitHub Personal Access Token", "token", "GITHUB_PERSONAL_ACCESS_TOKEN__TOKEN"),
   },
+  // The www-software-factory-bot GitHub App (#125): the machine identity
+  // autonomous agents act as. Minted by the App-manifest flow
+  // (scripts/create-github-bot-app.ts) and written by scripts/save-github-bot.sh,
+  // so none of these values is ever hand-copied.
+  //
+  // appId and installationId are identifiers, not secrets, but they live here so
+  // the whole credential set has one declaration site. The PEM is stored base64
+  // encoded (it is multi-line), the same handling the APNs / App Store Connect
+  // .p8 keys already use.
+  githubBot: {
+    appId: secret("GitHub App www-software-factory-bot", "app_id", "GITHUB_BOT_APP__APP_ID"),
+    clientId: secret(
+      "GitHub App www-software-factory-bot",
+      "client_id",
+      "GITHUB_BOT_APP__CLIENT_ID",
+    ),
+    clientSecret: secret(
+      "GitHub App www-software-factory-bot",
+      "client_secret",
+      "GITHUB_BOT_APP__CLIENT_SECRET",
+    ),
+    privateKeyPem: secret(
+      "GitHub App www-software-factory-bot",
+      "private_key_pem",
+      "GITHUB_BOT_APP__PRIVATE_KEY_PEM",
+    ),
+    webhookSecret: secret(
+      "GitHub App www-software-factory-bot",
+      "webhook_secret",
+      "GITHUB_BOT_APP__WEBHOOK_SECRET",
+    ),
+    installationId: secret(
+      "GitHub App www-software-factory-bot",
+      "installation_id",
+      "GITHUB_BOT_APP__INSTALLATION_ID",
+    ),
+  },
   homeAssistant: {
     token: secret("Home Assistant Token", "credential", "HOME_ASSISTANT_TOKEN__CREDENTIAL"),
   },
