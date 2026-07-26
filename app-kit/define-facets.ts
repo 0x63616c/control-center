@@ -1,3 +1,8 @@
+// JobSpec is imported (not declared locally, unlike HttpRoute/CronSpec below):
+// job specs are also consumed by `@www/core`'s runtime queue engine
+// (`jobWorker`/`claimOne`), so the type lives with the engine, not the
+// authoring surface. Re-exported here so feature authors and generated code
+// can import every facet type from this one barrel.
 import type { JobSpec } from "@www/core";
 
 export const API_FACET_BRAND = Symbol.for("app-kit.api");
