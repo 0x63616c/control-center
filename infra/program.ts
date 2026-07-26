@@ -23,6 +23,7 @@ import {
   parseSubstrateTarget,
   shouldRequireImageDigestPins,
 } from "./src/services.ts";
+import { installTemporal } from "./src/temporal.ts";
 import { loadVault } from "./src/vault.ts";
 
 const cfg = new pulumi.Config("wwwinfra");
@@ -179,6 +180,15 @@ if (target.substrate === "talos") {
   // The device plugin advertises nvidia.com/gpu so GPU workloads (Plex) can be
   // scheduled; needs the nvidia kernel modules (infra/talos machine.kernel).
   installNvidiaDevicePlugin({ provider: cluster.provider });
+  // Temporal (issue #124): its own namespace, its own Postgres, hand-written
+  // Deployments — no Helm chart. Same reuse of the already-installed CNPG
+  // operator as Home Assistant above.
+  installTemporal({
+    provider: cluster.provider,
+    cnpgOperator: cnpg.operator,
+    vault,
+    imageDigests,
+  });
   installHomeAssistant({
     provider: cluster.provider,
     // Reuses the ALREADY-installed CNPG operator (cnpg.ts's installCnpg()

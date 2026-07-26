@@ -75,6 +75,7 @@ that run/deploy, `packages/` = things you import):
 - `apps/web` - React dashboard, Storybook, and Capacitor iOS shell (`apps/web/ios`).
 - `apps/api` - Bun tRPC backend, DB schema, migrations, routers, services, shared domain logic, and the guest-WiFi listener.
 - `apps/worker` - Continuous interval workers for home-state reconciliation and ingest.
+- `apps/temporal-worker` - Temporal worker (Node, not bun) serving `HealthCheckWorkflow` on the `main` task queue.
 - `apps/storybook` - Thin wrapper delegating to the web Storybook.
 - `apps/map-provision` - Basemap tile provisioner image.
 - `packages/api` - Browser-safe type bridge that re-exports the API router type only.
@@ -191,6 +192,36 @@ The media pipeline (playlist poller, ingest queue, NAS media mount) runs inside 
 - `playlist-poller` every 2m.
 
 It checks media storage free space before claiming download work.
+
+## Temporal
+
+Temporal runs on the cluster in its own `temporal` k8s namespace, declared by
+hand in `infra/src/temporal.ts` — plain Deployments/Services/Jobs, no Helm chart
+and no operator owning the cluster:
+
+- `temporal-server` — 2 replicas of the combined frontend+history+matching+worker
+  process, backed by its own CNPG Postgres (`temporal-postgres`) holding both the
+  `temporal` and `temporal_visibility` databases. Two replicas survive a pod
+  crash; on a single-node cluster nothing survives the node.
+- `temporal-schema-setup` / `temporal-namespace-setup` — Jobs that install the
+  schemas and register the `control-center` Temporal namespace. Schema work is a
+  Job precisely so two server replicas cannot race the same migration, which is
+  what the `auto-setup` image would do.
+- `temporal-ui` — ClusterIP only; reach it with
+  `kubectl -n temporal port-forward svc/temporal-ui 8080:8080`.
+- `temporal-worker` — our worker (`apps/temporal-worker`), namespace
+  `control-center`, task queue `main`.
+
+`HealthCheckWorkflow` is the liveness proof: a cron Schedule (`* * * * *`)
+upserted by the worker on every boot, firing `N` (default 5) `HealthCheckActivity`
+calls spread evenly across the minute. Each iteration sleeps against an absolute
+deadline (`i * 60s/N` from workflow start) rather than a fixed gap, so activity
+latency is absorbed by its own slot instead of accumulating.
+
+`apps/temporal-worker` is the ONE runtime here that runs on Node rather than bun:
+`@temporalio/core-bridge` publishes prebuilt glibc binaries only (no musl, so the
+image is `node:22-slim`, never alpine), and the workflow sandbox is built on
+node's `vm`.
 
 ## Logging And Config
 
