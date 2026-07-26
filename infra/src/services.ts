@@ -554,6 +554,32 @@ export function serviceSpecs(opts: ServiceSpecOptions): OwnedWorkloadSpec[] {
       ],
       // Public upstream image; no GHCR pull secret.
     },
+    {
+      // The connector for the project-owned `world-wide-webb` tunnel (#127).
+      // Runs ALONGSIDE the legacy connector across the cutover: both tunnels
+      // carry identical ingress rules, so DNS can point at either one. This
+      // Deployment must report healthy connectors BEFORE `activeTunnel` is
+      // flipped to "managed" in the infra/cloudflare stack, otherwise the flip
+      // moves DNS to a tunnel with nothing behind it. Once the old tunnel is
+      // gone this becomes the only connector and takes back the plain name.
+      logicalName: "cloudflare-cloudflared-managed",
+      name: "cloudflared-managed",
+      namespaceName: "cloudflare",
+      image: "cloudflare/cloudflared:2025.10.1",
+      replicas: cloudflaredReplicas,
+      resources: { memory: "128M", reserveCpus: "0.25" },
+      secrets: mountSecrets("cloudflared-managed"),
+      secretName: SERVICE_SECRET_TARGETS["cloudflared-managed"].secretName,
+      command: [
+        "cloudflared",
+        "tunnel",
+        "--no-autoupdate",
+        "run",
+        "--token-file",
+        "/run/secrets/TUNNEL_TOKEN",
+      ],
+      // Public upstream image; no GHCR pull secret.
+    },
   ];
 }
 

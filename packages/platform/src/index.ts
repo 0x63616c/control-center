@@ -221,7 +221,13 @@ export type ServiceSecretUsage = Readonly<{
   secrets: Readonly<Record<string, SecretCatalogEntry>>;
 }>;
 
-export type ControlCenterSecretUsageName = "api" | "worker" | "cloudflared" | "portal-data-purge";
+export type ControlCenterSecretUsageName =
+  | "api"
+  | "worker"
+  | "cloudflared"
+  // Transitional, for the #127 tunnel cutover overlap only.
+  | "cloudflared-managed"
+  | "portal-data-purge";
 
 function secret(item: string, field: string, vaultKey: string): SecretCatalogEntry {
   return { item, field, vaultKey };
@@ -255,10 +261,21 @@ export const secretCatalog = {
     ),
   },
   cloudflare: {
+    // The inherited `evee-webhooks` tunnel, retired by #127. Both tokens exist
+    // only across the cutover overlap; this one goes away with the old tunnel.
     tunnelToken: secret(
       "Cloudflare Tunnel evee-webhooks",
       "connector_token",
       "CLOUDFLARE_TUNNEL_EVEE_WEBHOOKS__CONNECTOR_TOKEN",
+    ),
+    // The project-owned `world-wide-webb` tunnel, created by the infra/cloudflare
+    // Pulumi stack. Its value is that stack's `managedTunnelToken` output, copied
+    // here rather than read via StackReference (the k8s deploy runs in CI, which
+    // has no access to the hand-applied cloudflare stack's state).
+    managedTunnelToken: secret(
+      "Cloudflare Tunnel world-wide-webb",
+      "connector_token",
+      "CLOUDFLARE_TUNNEL_WORLD_WIDE_WEBB__CONNECTOR_TOKEN",
     ),
   },
   controlCenter: {
@@ -386,6 +403,15 @@ export function controlCenterServiceSecretUsages(): Record<
       "cloudflared",
       { TUNNEL_TOKEN: secretCatalog.cloudflare.tunnelToken },
       { targetSecretName: "cloudflare-secrets-cloudflared", namespaceName: "cloudflare" },
+    ),
+    // The second connector, running against the project-owned tunnel across the
+    // #127 cutover overlap. Both connectors serve the same ingress rules, so
+    // whichever tunnel DNS points at can answer. Removed with the old tunnel.
+    "cloudflared-managed": defineServiceSecretUsage(
+      controlCenter,
+      "cloudflared-managed",
+      { TUNNEL_TOKEN: secretCatalog.cloudflare.managedTunnelToken },
+      { targetSecretName: "cloudflare-secrets-cloudflared-managed", namespaceName: "cloudflare" },
     ),
     "portal-data-purge": defineServiceSecretUsage(controlCenter, "portal-data-purge", {
       POSTGRES_PASSWORD: secretCatalog.controlCenter.postgresPassword,
