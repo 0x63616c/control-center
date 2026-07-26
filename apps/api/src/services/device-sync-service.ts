@@ -7,6 +7,7 @@ import {
   runCycle,
   stateEquals,
 } from "@www/core";
+import { getLogger, logChange } from "@www/logger";
 import { deviceStateStore } from "../db/device-state-store";
 import { integrationSyncStore } from "../db/integration-sync-store";
 import { ha } from "../integrations/homeassistant";
@@ -95,6 +96,22 @@ export async function sweepExpiredWindows(
     // enforcer-owned rows (lights, thermostat, speakers), so clearing it here
     // would wipe the enforcer's intent. Same ownership check as reconcile().
     if (ownerOf(device) !== DeviceOwner.DeviceSync) continue;
+
+    // The command window closed without HA ever converging to the desired
+    // state , warn (not info) since a timed-out command is a real signal that
+    // something didn't take, per docs/logging.md §5's named gap.
+    logChange(
+      getLogger(),
+      `device-sync-timeout:${device.id}`,
+      {
+        deviceId: device.id,
+        entityId: device.entityId,
+        desired: device.desiredState,
+        elapsed: device.desiredUntilUtc ? now.getTime() - device.desiredUntilUtc.getTime() : null,
+      },
+      "command window expired, clearing desired",
+      { level: "warn" },
+    );
 
     await store.clearDesired(device.id);
   }
