@@ -161,3 +161,17 @@ export class HomeAssistantClient {
 export function createHomeAssistantClient(opts: HomeAssistantClientOptions): HomeAssistantClient {
   return new HomeAssistantClient(opts);
 }
+
+/**
+ * Bind a `HomeAssistantClient` to a feature's own config slice. Every caller
+ * (ac/ctrl/tv/dogcam features, apps/api's singleton) was writing the identical
+ * `createHomeAssistantClient({ baseUrl: config.HA_URL, token: config.HA_TOKEN })`
+ * expression against its own `ENV.pick(...)` projection; this collapses that to
+ * one call while keeping each caller's config slice genuinely separate (the
+ * client stays env-free, this just names the binding). Accepts any object with
+ * the two fields rather than the full `ENV` type, since every caller's slice is
+ * a narrower projection.
+ */
+export function haFromConfig(config: { HA_URL: string; HA_TOKEN: string }): HomeAssistantClient {
+  return createHomeAssistantClient({ baseUrl: config.HA_URL, token: config.HA_TOKEN });
+}

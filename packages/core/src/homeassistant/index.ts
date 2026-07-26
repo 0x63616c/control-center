@@ -3,4 +3,4 @@
 // only the names consumers depend on. `HomeAssistantClientOptions` stays
 // package-private (callers pass an object literal to createHomeAssistantClient).
 export type { HaEntity } from "./client";
-export { createHomeAssistantClient, HaError, HomeAssistantClient } from "./client";
+export { createHomeAssistantClient, HaError, HomeAssistantClient, haFromConfig } from "./client";
