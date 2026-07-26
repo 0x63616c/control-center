@@ -300,10 +300,10 @@ describe("serviceSpecs (replica + NFS knobs, www-j934.17 / www-j934.18)", () => 
           namespaceName: "control-center",
         }),
         expect.objectContaining({
-          logicalName: "platform-cloudflared",
+          logicalName: "cloudflare-cloudflared",
           name: "cloudflared",
-          namespaceName: "platform",
-          secretName: "platform-secrets-cloudflared",
+          namespaceName: "cloudflare",
+          secretName: "cloudflare-secrets-cloudflared",
         }),
       ]),
     );

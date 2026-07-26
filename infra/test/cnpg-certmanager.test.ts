@@ -39,7 +39,7 @@ const mockVault: Record<string, string> = {
 
 const testNamespaces = {
   "control-center": "control-center",
-  platform: "platform",
+  cloudflare: "cloudflare",
 } as const;
 
 describe("installCnpg", () => {

@@ -532,10 +532,10 @@ export function serviceSpecs(opts: ServiceSpecOptions): OwnedWorkloadSpec[] {
       // Public upstream image; no GHCR pull secret.
     },
     {
-      logicalName: "platform-cloudflared",
-      legacyLogicalName: "cloudflared",
+      logicalName: "cloudflare-cloudflared",
+      legacyLogicalName: "platform-cloudflared",
       name: "cloudflared",
-      namespaceName: "platform",
+      namespaceName: "cloudflare",
       image: "cloudflare/cloudflared:2025.10.1",
       replicas: cloudflaredReplicas, // HA (2) at cutover; 0 pre-cutover so it
       // does not hold the live tunnel token alongside Swarm (www-j934.9 / §7).

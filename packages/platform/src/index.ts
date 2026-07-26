@@ -196,8 +196,8 @@ export function internalService(options: { port: number }): InternalServiceExpos
 }
 
 // The k8s namespace a service's target Secret lands in. Defaults to the owning
-// product's namespace; only cloudflared varies (it lives in `platform`).
-export type SecretNamespace = ProductSlug | "platform";
+// product's namespace; only cloudflared varies (it lives in `cloudflare`).
+export type SecretNamespace = ProductSlug | "cloudflare";
 
 // A single declared secret. `vaultKey` is the operative reference: the SOPS
 // ITEM__FIELD key in secrets/vault.yaml that vault.ts/eso.ts resolve (CC-k8t7
@@ -385,7 +385,7 @@ export function controlCenterServiceSecretUsages(): Record<
       controlCenter,
       "cloudflared",
       { TUNNEL_TOKEN: secretCatalog.cloudflare.tunnelToken },
-      { targetSecretName: "platform-secrets-cloudflared", namespaceName: "platform" },
+      { targetSecretName: "cloudflare-secrets-cloudflared", namespaceName: "cloudflare" },
     ),
     "portal-data-purge": defineServiceSecretUsage(controlCenter, "portal-data-purge", {
       POSTGRES_PASSWORD: secretCatalog.controlCenter.postgresPassword,

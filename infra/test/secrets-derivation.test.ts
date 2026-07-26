@@ -57,7 +57,7 @@ const GOLDEN_SERVICE_SECRET_TARGETS: Record<string, { namespaceName: string; sec
   {
     api: { namespaceName: "control-center", secretName: "control-center-secrets-api" },
     worker: { namespaceName: "control-center", secretName: "control-center-secrets-worker" },
-    cloudflared: { namespaceName: "platform", secretName: "platform-secrets-cloudflared" },
+    cloudflared: { namespaceName: "cloudflare", secretName: "cloudflare-secrets-cloudflared" },
     "portal-data-purge": {
       namespaceName: "control-center",
       secretName: "control-center-secrets-portal-data-purge",

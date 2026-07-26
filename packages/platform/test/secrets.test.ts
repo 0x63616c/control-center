@@ -94,7 +94,7 @@ describe("secret catalog and service usage", () => {
       "control-center-secrets-api",
     );
     expect(controlCenterServiceSecretUsages().cloudflared.targetSecretName).toBe(
-      "platform-secrets-cloudflared",
+      "cloudflare-secrets-cloudflared",
     );
     for (const usage of Object.values(usages)) {
       expect(usage.targetSecretName).not.toMatch(/^cc-secrets-/);

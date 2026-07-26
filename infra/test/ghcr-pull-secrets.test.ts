@@ -23,17 +23,17 @@ describe("GHCR pull secret coverage", () => {
   });
 
   test("does not require the secret in namespaces with only public upstream images", () => {
-    const cloudflared = specsWith().find((spec) => spec.logicalName === "platform-cloudflared");
-    expect(cloudflared?.namespaceName).toBe("platform");
+    const cloudflared = specsWith().find((spec) => spec.logicalName === "cloudflare-cloudflared");
+    expect(cloudflared?.namespaceName).toBe("cloudflare");
     expect(cloudflared?.imagePullSecrets).toBeUndefined();
-    expect(GHCR_PULL_SECRET_NAMESPACES).not.toContain("platform");
+    expect(GHCR_PULL_SECRET_NAMESPACES).not.toContain("cloudflare");
   });
 
   test("fails when a new GHCR namespace is not added to the preflight list", () => {
     expect(() =>
       assertGhcrPullSecretNamespaceCoverage([
-        { namespaceName: "platform", imagePullSecrets: [GHCR_PULL_SECRET_NAME] },
+        { namespaceName: "cloudflare", imagePullSecrets: [GHCR_PULL_SECRET_NAME] },
       ]),
-    ).toThrow(/missing from secret list: platform/);
+    ).toThrow(/missing from secret list: cloudflare/);
   });
 });

@@ -30,18 +30,18 @@ function get<T>(r: pulumi.Resource, prop: string): Promise<T> {
 }
 
 describe("cluster namespaces", () => {
-  test("creates product-owned namespaces plus the platform namespace", async () => {
+  test("creates product-owned namespaces plus the cloudflare namespace", async () => {
     const res = cluster.makeCluster("test-context");
 
-    expect(Object.keys(res.namespaces).sort()).toEqual(["control-center", "platform"]);
+    expect(Object.keys(res.namespaces).sort()).toEqual(["cloudflare", "control-center"]);
 
     const controlCenterMeta = await get<{ name: string }>(
       res.namespaces["control-center"],
       "metadata",
     );
-    const platformMeta = await get<{ name: string }>(res.namespaces.platform, "metadata");
+    const cloudflareMeta = await get<{ name: string }>(res.namespaces.cloudflare, "metadata");
     expect(controlCenterMeta.name).toBe("control-center");
-    expect(platformMeta.name).toBe("platform");
+    expect(cloudflareMeta.name).toBe("cloudflare");
   });
 });
 
