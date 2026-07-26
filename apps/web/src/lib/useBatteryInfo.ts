@@ -1,10 +1,12 @@
 /**
- * Battery readout for the settings Device section, via @capacitor/device.
+ * Battery readout via @capacitor/device , used by both the settings Device
+ * row (`enabled` only while that modal is open) and NotChargingBanner
+ * (`enabled` for the panel's whole lifetime).
  *
- * Polls while `enabled` (the settings modal is open) , the wall panel sits on
- * dock power, so the interesting signal is "still charging?" rather than a
- * fast-moving percentage. In a plain browser / Storybook the plugin has no
- * native side and this resolves to null, which the row renders as unavailable.
+ * The wall panel sits on dock power, so the interesting signal is "still
+ * charging?" rather than a fast-moving percentage , hence a 15s poll rather
+ * than something tighter. In a plain browser / Storybook the plugin has no
+ * native side and this resolves to null, which callers render as unavailable.
  * Mirrors the dynamic-import pattern in app-update.ts so the Capacitor module
  * stays out of the main bundle path.
  */
@@ -12,7 +14,7 @@
 import { Capacitor } from "@capacitor/core";
 import { useEffect, useState } from "react";
 
-const POLL_MS = 60_000;
+const POLL_MS = 15_000;
 
 export interface BatteryInfo {
   /** 0..1 */
