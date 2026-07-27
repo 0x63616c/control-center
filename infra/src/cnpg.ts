@@ -138,20 +138,5 @@ export function installCnpg(args: CnpgArgs): CnpgResources {
     ),
   );
 
-  // #111 migration: the manifest now names "control-center-postgres", so the
-  // legacy "control-center" cluster is the one declared here by hand. It holds
-  // the pre-cutover copy of the data and stays up, unreferenced by any workload,
-  // until the old Cluster CR is deleted as the migration's explicit final step.
-  // Same auth secret, so both clusters accept the same app credentials.
-  const controlCenterDatabase = databases[0];
-  const legacyCluster = createCluster(
-    { ...controlCenterDatabase, clusterName: "control-center" },
-    namespaces[controlCenterDatabase.product as InfraNamespaceName],
-    operator,
-    authSecrets[0],
-    opts,
-  );
-  clusters.push(legacyCluster);
-
   return { operator, authSecrets, clusters, authSecret: authSecrets[0], cluster: clusters[0] };
 }
