@@ -213,7 +213,7 @@ describe("assembleDays", () => {
         excludedReason: null,
         bodyMetrics: { fat_ratio_percent: 17.067, muscle_mass_kg: 57.19 },
       },
-      // An ha_ble-era row: a weight and nothing else.
+      // A weight-only Withings sync: no body composition reported at all.
       {
         id: "wm_b",
         day: "2026-07-22",
