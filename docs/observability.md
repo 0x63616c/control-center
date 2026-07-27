@@ -110,7 +110,11 @@ Dashboards in git are the source of truth. Steps:
 3. **Give it a unique, stable `uid`** at the top level (ours are prefixed `www-`:
    `www-k8s-cluster`, `www-node-exporter`, `www-cnpg-postgres`, …). A duplicate
    uid makes one dashboard shadow the other.
-4. Deploy. `installDashboardConfigMaps()` globs the directory and emits **one
+4. **Migrate angular panel types.** Grafana 12 removed angular outright, so a
+   `graph`, `singlestat` or `table-old` panel is an error box, not a chart —
+   convert them to `timeseries`/`stat`/`table`. Most dashboards published before
+   2022 are angular throughout.
+5. Deploy. `installDashboardConfigMaps()` globs the directory and emits **one
    ConfigMap per file** (a ConfigMap is capped at ~1 MiB by etcd and a single
    dashboard routinely runs to hundreds of KiB, so a combined ConfigMap would
    work right up until it didn't). Invalid JSON throws at `pulumi preview`, not
@@ -123,8 +127,45 @@ checked-in JSON the only way a dashboard changes, and it means recreating the
 Grafana PVC loses nothing. To iterate, edit in the browser, use the panel's
 **JSON Model** / dashboard export to copy the result out, and commit that.
 
+`infra/test/observability-dashboards.test.ts` enforces steps 2–4 over every file
+in the directory, so a dashboard vendored without them fails CI rather than
+rendering blank in the browser.
+
 Currently vendored: cluster and namespace compute resources, node-exporter
-nodes, persistent-volume usage, CloudNativePG/Postgres.
+nodes, persistent-volume usage, CloudNativePG/Postgres, and five Temporal
+dashboards (see below).
+
+### Temporal dashboards
+
+`temporal-server`, `temporal-frontend`, `temporal-history`, `temporal-matching`
+and `temporal-worker-service` come from
+[`temporalio/dashboards`](https://github.com/temporalio/dashboards) (`9a3a6f3`),
+adapted rather than copied. Every adaptation is one of these, and re-vendoring a
+newer upstream means redoing them:
+
+- **`namespace` is `exported_namespace` here.** Prometheus scrapes Temporal
+  through the generic `kubernetes-pods` job, so Temporal's own `namespace` label
+  collides with the Kubernetes one and is renamed on ingest. Upstream assumes a
+  relabel to `temporal_namespace`, which does not exist in our TSDB.
+- **1.31 renames.** `memory_num_gc` is a histogram now (`_count` is the counter),
+  `sharditem_acquisition_latency` needs the `_bucket` series for
+  `histogram_quantile`, the mutable-state cache operation is
+  `HistoryCacheGetOrCreateCurrent`, and the per-class `service_errors_*` counters
+  were superseded by `service_error_with_type{error_type=…}`.
+- **Upstream's `$Service`/`$Client` dropdowns were decorative** — the variables
+  appeared only in panel titles, never in the queries, so every panel charted all
+  four roles regardless. They are wired into the queries here.
+- **Dropped: everything that cannot have data.** The SDK and Temporal Cloud
+  dashboards (our TS worker installs no telemetry runtime — see #233), the
+  Elasticsearch visibility dashboard (we run SQL visibility on Postgres), and the
+  worker service's Replicator (single cluster, no XDC) and executions/history
+  scavenger rows (off by default in 1.31).
+
+25 of the 139 remaining panels read empty, all of them error or terminal-state
+counters — a workflow has not failed, timed out, been terminated or been
+cancelled yet, and Prometheus does not carry a series for a counter that never
+incremented. Those panels fill in the moment the thing they measure happens,
+which is the point of them.
 
 ---
 
