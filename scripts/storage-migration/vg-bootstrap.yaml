@@ -1,0 +1,44 @@
+# vg-bootstrap.yaml — create LVM volume group `storage` on the raw partition
+# Talos provisioned (RawVolumeConfig `storage` in infra/talos/talconfig.yaml).
+#
+# Run ONCE, after the cutover wipe (runbook step 6, docs/runbooks/
+# local-lvm-cutover.md): after `talosctl reset` + re-bootstrap, BEFORE the
+# `pulumi up` that creates the first local-lvm PVC — the lvm-localpv CSI
+# needs VG `storage` to exist.
+#
+#   kubectl apply -f scripts/storage-migration/vg-bootstrap.yaml
+#   kubectl -n kube-system wait --for=jsonpath='{.status.phase}'=Succeeded pod/vg-bootstrap --timeout=180s
+#   kubectl -n kube-system logs vg-bootstrap   # expect `vgs` showing ~730g free
+#   kubectl -n kube-system delete pod vg-bootstrap
+#
+# Idempotent-ish: pvcreate/vgcreate fail cleanly if the VG already exists —
+# a re-run on an already-bootstrapped node errors instead of clobbering.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vg-bootstrap
+  namespace: kube-system
+  labels: { app: storage-migration }
+spec:
+  restartPolicy: Never
+  hostPID: true
+  containers:
+    - name: lvm
+      image: alpine:3.20
+      securityContext:
+        privileged: true
+      command:
+        - sh
+        - -ec
+        - |
+          apk add --no-cache lvm2 >/dev/null
+          PART=/dev/disk/by-partlabel/storage
+          [ -e "$PART" ] || { echo "ERROR: $PART missing — did the RawVolumeConfig provision? (talosctl get discoveredvolumes)" >&2; exit 1; }
+          pvcreate "$PART"
+          vgcreate storage "$PART"
+          vgs storage
+      volumeMounts:
+        - { name: dev, mountPath: /dev }
+  volumes:
+    - name: dev
+      hostPath: { path: /dev }
