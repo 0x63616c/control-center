@@ -38,7 +38,7 @@ const DATA_PATH = "/loki";
 const LOKI_GRPC_PORT = 9096;
 
 /**
- * 30Gi on `local-path`, the node's only StorageClass. Node-local disk is
+ * 30Gi on `local-lvm`, the node's only StorageClass. Node-local disk is
  * finite (~930 GiB total, shared with Prometheus, Postgres and Plex), so the
  * PVC is the hard ceiling and `retention_period` is what keeps usage below it.
  * Sized for 14 days of a handful of chatty backend services at pino `info`.
@@ -47,7 +47,7 @@ const PVC_SIZE = "30Gi";
 
 /**
  * The upstream `grafana/loki` image runs as uid/gid 10001, NOT root. A
- * `local-path` PV is created root-owned, so without `fsGroup` the container
+ * `local-lvm` PV is created root-owned, so without `fsGroup` the container
  * cannot create `/loki/chunks` and crash-loops on boot with a permission
  * error that looks like a config problem. This single line is the difference
  * between "Loki works" and an afternoon of reading storage config.
@@ -229,7 +229,7 @@ export function installLoki(args: LokiArgs): LokiResources {
       metadata: { name: PVC_NAME, namespace: OBSERVABILITY_NAMESPACE, labels },
       spec: {
         accessModes: ["ReadWriteOnce"],
-        storageClassName: "local-path",
+        storageClassName: "local-lvm",
         resources: { requests: { storage: PVC_SIZE } },
       },
     },
@@ -262,7 +262,7 @@ export function installLoki(args: LokiArgs): LokiResources {
             securityContext: {
               runAsUser: LOKI_UID,
               runAsGroup: LOKI_UID,
-              // See LOKI_UID: without fsGroup the local-path volume stays
+              // See LOKI_UID: without fsGroup the local-lvm volume stays
               // root-owned and Loki crash-loops.
               fsGroup: LOKI_UID,
             },

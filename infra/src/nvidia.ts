@@ -9,7 +9,7 @@
 // TALOS-ONLY: never installed on "orbstack" (the mini has no GPU passthrough
 // and no `nvidia` containerd runtime registered). The install call is gated
 // in program.ts behind `substrate === "talos"`; this module itself has no
-// substrate awareness, same shape as metallb.ts/local-path.ts.
+// substrate awareness, same shape as metallb.ts/lvm-localpv.ts.
 
 import * as k8s from "@pulumi/kubernetes";
 

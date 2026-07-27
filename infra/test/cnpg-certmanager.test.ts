@@ -43,7 +43,7 @@ const testNamespaces = {
 } as const;
 
 describe("installCnpg", () => {
-  test("single-instance Cluster on local-path with the www-ke9a 768M cap, bridged credential", async () => {
+  test("single-instance Cluster on local-lvm with the www-ke9a 768M cap, bridged credential", async () => {
     const res = cnpg.installCnpg({
       provider: provider(),
       namespaces: testNamespaces,
@@ -58,7 +58,7 @@ describe("installCnpg", () => {
       superuserSecret: { name: string };
     }>(res.cluster, "spec");
     expect(spec.instances).toBe(1);
-    expect(spec.storage.storageClass).toBe("local-path");
+    expect(spec.storage.storageClass).toBe("local-lvm");
     expect(spec.resources.limits.memory).toBe("768Mi");
     expect(spec.resources.requests.cpu).toBe("500m");
     // #87: CPU limits are banned — DatabaseResources.limits has no `cpu` key

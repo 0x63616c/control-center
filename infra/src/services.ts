@@ -425,7 +425,7 @@ export function serviceSpecs(opts: ServiceSpecOptions): OwnedWorkloadSpec[] {
       resources: { memory: "96M" },
       env: { TZ },
       ports: [{ containerPort: 80, expose: "cluster" }],
-      // maps basemap served from a local-path PVC (provisioned by the
+      // maps basemap served from a local PVC (provisioned by the
       // map-provision init below + refreshed by the map-extract CronJob).
       volumes: [{ mountPath: "/usr/share/nginx/html/maps", claim: "maps", readOnly: true }],
       // Basemap self-provisioning (www-hn1i): runs before nginx in if-missing
@@ -459,7 +459,7 @@ export function serviceSpecs(opts: ServiceSpecOptions): OwnedWorkloadSpec[] {
     {
       // Plex Media Server (third-party). Serves the Synology media share to the
       // Apple TV. Not a control-center product component, but co-located in the
-      // control-center namespace to reuse the media NFS share + a local-path PVC.
+      // control-center namespace to reuse the media NFS share + a local PVC.
       logicalName: "control-center-plex",
       name: "plex",
       namespaceName: "control-center",
@@ -498,7 +498,7 @@ export function serviceSpecs(opts: ServiceSpecOptions): OwnedWorkloadSpec[] {
         ADVERTISE_IP: plexAdvertiseIp(target),
       },
       // Plex config/metadata (SQLite) MUST live on fast local disk, never NFS
-      // (SQLite over NFS corrupts). local-path PVC on the OrbStack SSD.
+      // (SQLite over NFS corrupts). local PVC on the OrbStack SSD.
       // The media share is the same NFS export + subPath as the worker, mounted
       // read-only; point a Plex library at /data (docs/plex.md).
       volumes: [
@@ -593,12 +593,12 @@ export interface ServicesResources {
   workloads: Workload[];
 }
 
-// The local-path PVCs the workloads mount by claim name: the web basemap dir
-// (map-extract, .7, writes into `maps`). local-path is the OrbStack built-in SSD
-// provisioner (same class CNPG uses).
-const LOCAL_PATH_CLAIMS: { name: string; size: string }[] = [
-  { name: "maps", size: "2Gi" },
-  // Plex config/metadata/thumbnails on the OrbStack SSD (SQLite must not be on
+// The local (node-SSD) PVCs the workloads mount by claim name: the web basemap
+// dir (map-extract, .7, writes into `maps`). Sizes are ENFORCED LVM
+// reservations (ADR-0009) — hitting one is an online expansion, not an outage.
+const LOCAL_CLAIMS: { name: string; size: string }[] = [
+  { name: "maps", size: "5Gi" },
+  // Plex config/metadata/thumbnails on the node SSD (SQLite must not be on
   // NFS). Mounted at /config by the plex workload above.
   { name: "plex-config", size: "10Gi" },
 ];
@@ -743,8 +743,8 @@ export function deployServices(args: ServicesArgs): ServicesResources {
           opts,
         );
 
-  // local-path PVCs the workloads mount by claim name (web maps).
-  const pvcs = LOCAL_PATH_CLAIMS.map(
+  // Local PVCs the workloads mount by claim name (web maps).
+  const pvcs = LOCAL_CLAIMS.map(
     (c) =>
       new k8s.core.v1.PersistentVolumeClaim(
         c.name,
@@ -752,7 +752,7 @@ export function deployServices(args: ServicesArgs): ServicesResources {
           metadata: { name: c.name, namespace: namespaces["control-center"] },
           spec: {
             accessModes: ["ReadWriteOnce"],
-            storageClassName: "local-path",
+            storageClassName: "local-lvm",
             resources: { requests: { storage: c.size } },
           },
         },

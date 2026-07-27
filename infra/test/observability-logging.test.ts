@@ -108,7 +108,7 @@ describe("installLoki (issue #216)", () => {
     expect(spec.template.spec.containers[0].args).toContain("-target=all");
   });
 
-  test("fsGroup 10001 is set, or the image crash-loops on the local-path volume", async () => {
+  test("fsGroup 10001 is set, or the image crash-loops on the local-lvm volume", async () => {
     const spec = await get<{ template: { spec: PodSpec } }>(installLoki().deployment, "spec");
     expect(spec.template.spec.securityContext?.fsGroup).toBe(10001);
   });

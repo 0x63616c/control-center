@@ -6,7 +6,7 @@
 //      writes constantly and purges aggressively , sharing an instance with
 //      control-center risks noisy-neighbor lock contention on a disposable
 //      dataset). No history is migrated from the mini's SQLite recorder.
-//   2. the `ha-config` PVC (local-path, 5Gi , §0.3: holds ONLY `.storage` +
+//   2. the `ha-config` PVC (local-lvm, 5Gi , §0.3: holds ONLY `.storage` +
 //      top-level YAML, seeded from a stopped-HA snapshot at cutover, Task 11;
 //      the recorder does NOT live here).
 //   3. the HA Deployment itself: hostNetwork (Talos has no tailnet-routed
@@ -125,7 +125,7 @@ function createCluster(
         // backed up as carefully as control-center's (the aggressive purge
         // means there's rarely more than RECORDER_PURGE_KEEP_DAYS of data to
         // lose anyway).
-        storage: { storageClass: "local-path", size: "5Gi" },
+        storage: { storageClass: "local-lvm", size: "5Gi" },
         resources: {
           limits: { memory: "512Mi" },
           requests: { cpu: "250m", memory: "256Mi" },
@@ -176,7 +176,7 @@ export function installHomeAssistant(args: HomeAssistantArgs): HomeAssistantReso
       metadata: { name: HA_CONFIG_CLAIM_NAME, namespace: namespaceName },
       spec: {
         accessModes: ["ReadWriteOnce"],
-        storageClassName: "local-path",
+        storageClassName: "local-lvm",
         resources: { requests: { storage: HA_CONFIG_CLAIM_SIZE } },
       },
     },

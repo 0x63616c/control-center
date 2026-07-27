@@ -39,7 +39,7 @@ const PROVISIONING_PATH = "/etc/grafana/provisioning";
 
 /**
  * Grafana's published images run as uid/gid 472. Without `fsGroup` the
- * local-path volume lands root-owned and Grafana cannot create its SQLite
+ * local-lvm volume lands root-owned and Grafana cannot create its SQLite
  * database, which shows up as an immediate, repeating crash loop rather than a
  * permissions error anyone would recognise.
  */
@@ -173,10 +173,10 @@ export function installGrafana(args: GrafanaArgs): GrafanaResources {
       metadata: { name: DATA_PVC, namespace: OBSERVABILITY_NAMESPACE, labels },
       spec: {
         accessModes: ["ReadWriteOnce"],
-        storageClassName: "local-path",
+        storageClassName: "local-lvm",
         // Grafana stores only its SQLite DB, sessions and the plugin cache here
-        // — dashboards and datasources come from ConfigMaps. 5Gi is generous.
-        resources: { requests: { storage: "5Gi" } },
+        // — dashboards and datasources come from ConfigMaps. 2Gi is generous.
+        resources: { requests: { storage: "2Gi" } },
       },
     },
     opts,

@@ -23,12 +23,12 @@ const CONFIG_MAP_NAME = "prometheus-config";
 const CLAIM_NAME = "prometheus-data";
 /**
  * 15d of retention for this cluster's series volume fits comfortably; the PVC
- * is the real bound, since `local-path` carves out of the node's root disk and
+ * is the real bound, since the PVC size is a hard LVM reservation (ADR-0009) and
  * a full root disk takes the cluster down, not just Prometheus.
  */
 const CLAIM_SIZE = "30Gi";
 /**
- * The official image runs as `nobody`. local-path mints the host directory
+ * The official image runs as `nobody`. the provisioner mints the volume root
  * root-owned, so without an fsGroup the container crash-loops on "permission
  * denied" opening the TSDB — the single most common hand-rolled-Prometheus
  * failure.
@@ -117,7 +117,7 @@ export function installPrometheus(args: PrometheusArgs): PrometheusResources {
       metadata: { name: CLAIM_NAME, namespace: OBSERVABILITY_NAMESPACE, labels },
       spec: {
         accessModes: ["ReadWriteOnce"],
-        storageClassName: "local-path",
+        storageClassName: "local-lvm",
         resources: { requests: { storage: CLAIM_SIZE } },
       },
     },

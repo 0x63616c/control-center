@@ -591,7 +591,7 @@ export function defineProductDatabase(
       secretName: authSecretName,
       password: options.authPassword ?? databasePasswordFor(product),
     },
-    storageClass: options.storageClass ?? "local-path",
+    storageClass: options.storageClass ?? "local-lvm",
     size: options.size,
     resources: options.resources ?? defaultDatabaseResources,
   };
@@ -734,7 +734,9 @@ export function controlCenterProductManifest(): ControlCenterProductManifest {
     authPassword: secretCatalog.controlCenter.postgresPassword,
     authSecretName: "cc-postgres-auth",
     clusterName: "control-center-postgres",
-    size: "5Gi",
+    // Enforced size (ADR-0009): 1.2GB actual + WAL headroom; expansion is a
+    // one-line edit, so honest-but-modest.
+    size: "10Gi",
   });
   const backup = defineDatabaseBackup(database, target, {
     name: "pg-backup",

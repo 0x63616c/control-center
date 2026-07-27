@@ -262,7 +262,7 @@ export function installDbUi(args: DbUiArgs): DbUiResources {
       metadata: { name: DATA_CLAIM_NAME, namespace: namespaceName },
       spec: {
         accessModes: ["ReadWriteOnce"],
-        storageClassName: "local-path",
+        storageClassName: "local-lvm",
         // pgAdmin's own prefs/session sqlite db only (query history, saved
         // filters) — never query result data, so this stays tiny forever.
         resources: { requests: { storage: DATA_CLAIM_SIZE } },

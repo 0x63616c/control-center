@@ -1,5 +1,5 @@
 // CloudNativePG: operator + product-owned single-instance Clusters. Clusters run
-// on local-path PVCs on the mini's SSD (NOT NFS: corruption footgun + the DS420+
+// on local-lvm PVCs on the node SSD (NOT NFS: corruption footgun + the DS420+
 // is 2GB RAM, RECON decision 5).
 //
 // Credential bridge (the key correctness point): the app connects as

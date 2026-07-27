@@ -21,7 +21,7 @@ describe("product CNPG database primitive", () => {
       roServiceName: "control-center-ro",
       rwServiceName: "control-center-rw",
       size: "5Gi",
-      storageClass: "local-path",
+      storageClass: "local-lvm",
       target: "homelab",
       resources: {
         limits: { memory: "768Mi" },
