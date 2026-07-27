@@ -9,6 +9,7 @@
  */
 
 import { formatRecency, LB_PER_KG } from "@features/weight/web";
+import { keepPreviousData } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { WeightMetricValue, WeightRange, WeightUnit } from "@/components/tiles/WeightPageView";
 import { WeightPageView } from "@/components/tiles/WeightPageView";
@@ -118,8 +119,23 @@ function useWeightVariants(): { variants: DetailVariant[]; loading: boolean } {
   const utils = trpc.useUtils();
   const summaryQuery = trpc.weight.summary.useQuery(
     { range, tz: TZ, metric },
-    { refetchInterval: POLL.weight },
+    { refetchInterval: POLL.weight, placeholderData: keepPreviousData },
   );
+
+  // While switching metrics, keepPreviousData renders the OLD metric's summary
+  // (avoiding the "blank chart" flash on the first switch to a metric) but the
+  // live `metric` state already points at the NEW selection — deriving
+  // unit/factor from `metric` while `summary` still holds old-metric numbers
+  // would mislabel them (e.g. a raw kg value shown with a "%" suffix).
+  // resolvedMetric tracks which metric `summary` actually belongs to, and only
+  // advances once the new metric's real (non-placeholder) data has landed, so
+  // the unit label and the numbers it describes always swap together.
+  const [resolvedMetric, setResolvedMetric] = useState<WeightMetricValue>(metric);
+  useEffect(() => {
+    if (summaryQuery.isPlaceholderData) return;
+    if (summaryQuery.data === undefined) return;
+    setResolvedMetric(metric);
+  }, [summaryQuery.data, summaryQuery.isPlaceholderData, metric]);
   const daysQuery = trpc.weight.days.useInfiniteQuery(
     { tz: TZ },
     {
@@ -181,7 +197,11 @@ function useWeightVariants(): { variants: DetailVariant[]; loading: boolean } {
       slug: "trend",
       label: "Trend",
       render: () => {
-        const f = factorOf(metric);
+        // Derived from resolvedMetric, not the live `metric` — while a switch
+        // is in flight `summary` may still be the previous metric's data
+        // (kept on screen via keepPreviousData to avoid a blank-chart flash),
+        // and resolvedMetric is what actually pairs with those numbers.
+        const f = factorOf(resolvedMetric);
         return summary ? (
           <WeightPageView
             status={TileStatus.Populated}
@@ -189,7 +209,7 @@ function useWeightVariants(): { variants: DetailVariant[]; loading: boolean } {
             onRangeChange={setRange}
             metric={metric}
             onMetricChange={setMetric}
-            unit={unitOf(metric)}
+            unit={unitOf(resolvedMetric)}
             lb={summary.latestKg * f}
             daily={summary.daily.map((d) => ({ day: d.day, lb: d.kg * f }))}
             low={summary.low * f}
@@ -207,7 +227,7 @@ function useWeightVariants(): { variants: DetailVariant[]; loading: boolean } {
             onRangeChange={setRange}
             metric={metric}
             onMetricChange={setMetric}
-            unit={unitOf(metric)}
+            unit={unitOf(resolvedMetric)}
           />
         );
       },
