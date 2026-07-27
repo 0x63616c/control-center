@@ -93,7 +93,7 @@ describe("deploys-purge (S2 generated-cron seam)", () => {
   test("points DATABASE at the CNPG rw Service and mounts only POSTGRES_PASSWORD", () => {
     const c = purge();
     // In k3s the api default host "postgres" does not resolve; the CNPG Service does.
-    expect(c?.env?.POSTGRES_HOST).toBe("control-center-rw");
+    expect(c?.env?.POSTGRES_HOST).toBe("control-center-postgres-rw");
     expect(c?.namespaceName).toBe("control-center");
     expect(c?.secrets?.map((s) => s.name)).toEqual(["POSTGRES_PASSWORD"]);
   });
@@ -127,7 +127,7 @@ describe("guest-wifi-purge (S2 generated-cron seam, first consumer)", () => {
 
   test("points DATABASE at the CNPG rw Service and mounts only POSTGRES_PASSWORD", () => {
     const c = purge();
-    expect(c?.env?.POSTGRES_HOST).toBe("control-center-rw");
+    expect(c?.env?.POSTGRES_HOST).toBe("control-center-postgres-rw");
     expect(c?.namespaceName).toBe("control-center");
     expect(c?.secrets?.map((s) => s.name)).toEqual(["POSTGRES_PASSWORD"]);
   });
@@ -222,7 +222,7 @@ describe("pg-backup (NEW nightly logical backup to the NAS)", () => {
     expect(cmd).toContain("gzip");
     // pg_dump against the CNPG rw Service.
     expect(cmd).toContain("pg_dump");
-    expect(cmd).toContain("control-center-rw");
+    expect(cmd).toContain("control-center-postgres-rw");
   });
 
   test("targets the NAS over an NFS PV with the mandatory NFSv3 mount options", () => {
