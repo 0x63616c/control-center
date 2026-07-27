@@ -2,13 +2,15 @@
    or tests, so the wall-panel reset can't leak into docs/canvas iframes.
 
    Principle: no-scroll is a property of the board, so it lives on #root (the
-   mount point), not the document. no-select lives on html/body instead of
-   #root: full-screen pages and modals render via createPortal(..., document.body)
-   (TileDetailHost, SettingsPage, Modal, PinGateModal, Board, NotificationBanner,
-   VariantSwitcher, LevelOverlay, CleanScreenOverlay), so they sit outside #root
-   in the DOM and never inherited a #root-only rule — that's what let a long
-   press on a portaled title trigger native text selection/iOS callout. Other
-   document-level behavior:
+   mount point), not the document. no-select/no-callout live on html/body
+   instead of #root (#249): ~10 components in this app (Modal, TileDetailHost,
+   DimOverlay, PinGateModal, Board, NotificationBanner, VariantSwitcher,
+   LevelOverlay, CleanScreenOverlay, SettingsPage) call
+   createPortal(..., document.body), appending siblings of #root that a
+   #root-only rule never reached — the same body-vs-#root escape hatch
+   PanelFrame.tsx's 1366x1024 cap had (#257), fixed the same way: put the rule
+   on the ancestor portaled content can't get outside of. Other document-level
+   behavior:
      - overscroll-behavior: kill rubber-band/pull-to-refresh on the panel
      - safe-area padding: clear the iPad home indicator in installed PWA mode
        (viewport-fit=cover extends content behind the home bar). */
@@ -21,6 +23,12 @@ body {
   color-scheme: dark;
   overscroll-behavior: none;
   padding-bottom: env(safe-area-inset-bottom);
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+body {
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
