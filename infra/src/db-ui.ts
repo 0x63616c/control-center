@@ -19,6 +19,7 @@
 // TALOS-ONLY: a no-op unless installDbUi() is called, which program.ts only
 // does behind `substrate === "talos"`.
 
+import { createHash } from "node:crypto";
 import * as k8s from "@pulumi/kubernetes";
 import * as pulumi from "@pulumi/pulumi";
 import { controlCenterProductManifest } from "@www/platform";
@@ -240,6 +241,21 @@ export function installDbUi(args: DbUiArgs): DbUiResources {
     inNamespace,
   );
 
+  // Forces a pod restart whenever servers.json/pgpass/login content changes.
+  // Neither a ConfigMap volume mount nor a Secret env var (secretKeyRef) is
+  // re-read by a running pod — plain kubectl/Pulumi apply just updates the
+  // object, leaving the live pod on stale content until something else
+  // restarts it. Folding a hash of that content into the pod template forces
+  // Kubernetes to see a spec diff and roll the deployment. (This is what
+  // silently broke db-ui after the control-center-postgres cutover, #111.)
+  const configChecksum = pulumi
+    .all([serversConfigMap.data, pgpassSecret.stringData, loginSecret.stringData])
+    .apply(([serversData, pgpassData, loginData]) =>
+      createHash("sha256")
+        .update(JSON.stringify({ serversData, pgpassData, loginData }))
+        .digest("hex"),
+    );
+
   const dataClaim = new k8s.core.v1.PersistentVolumeClaim(
     DATA_CLAIM_NAME,
     {
@@ -263,7 +279,7 @@ export function installDbUi(args: DbUiArgs): DbUiResources {
         replicas: 1,
         selector: { matchLabels: labels },
         template: {
-          metadata: { labels },
+          metadata: { labels, annotations: { "checksum/config": configChecksum } },
           spec: {
             automountServiceAccountToken: false,
             // Verified live (2026-07-26): libpq's OWN pgpass permission check
