@@ -47,16 +47,6 @@ export const GENERATED_SCHEDULES: readonly GeneratedSchedule[] = [
     source: "feature:guest-wifi",
   },
   {
-    scheduleId: "app_hooks_purge",
-    workflowType: "HooksPurgeWorkflow",
-    cron: "0 6 * * *",
-    timezone: "America/Los_Angeles",
-    argsJson: undefined,
-    timeout: "30 minutes",
-    catchupWindow: undefined,
-    source: "feature:hooks",
-  },
-  {
     scheduleId: "app_temporal-health_health-check",
     workflowType: "HealthCheckWorkflow",
     cron: "* * * * *",
@@ -65,16 +55,6 @@ export const GENERATED_SCHEDULES: readonly GeneratedSchedule[] = [
     timeout: "2 minutes",
     catchupWindow: "1 minute",
     source: "feature:temporal-health",
-  },
-  {
-    scheduleId: "app_wakes_purge",
-    workflowType: "WakesPurgeWorkflow",
-    cron: "0 4 * * *",
-    timezone: "America/Los_Angeles",
-    argsJson: undefined,
-    timeout: "30 minutes",
-    catchupWindow: undefined,
-    source: "feature:wakes",
   },
   {
     scheduleId: "app_weather_purge",
