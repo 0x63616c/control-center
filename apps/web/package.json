@@ -22,7 +22,6 @@
   "dependencies": {
     "@capacitor-community/screen-brightness": "^8.0.0",
     "@capacitor/app": "^8.1.0",
-    "@capacitor/browser": "^8",
     "@capacitor/core": "^8.3.1",
     "@capacitor/device": "^8.0.3",
     "@capacitor/filesystem": "^8.1.2",

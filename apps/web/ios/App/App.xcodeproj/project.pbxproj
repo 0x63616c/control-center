@@ -20,6 +20,7 @@
 		A781185F97AFAFF10D4FC405 /* KioskWatchdog.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDF3085D97C8694414B645FB /* KioskWatchdog.swift */; };
 		7A1E7FAC0002BDE64C0FA106 /* UISoundPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1E7FAC0001BDE64C0FA106 /* UISoundPlugin.swift */; };
 		7A1E7FAC0004BDE64C0FA106 /* PanelVolumePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1E7FAC0003BDE64C0FA106 /* PanelVolumePlugin.swift */; };
+		7A1E7FAC0006BDE64C0FA106 /* KioskBrowserPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1E7FAC0005BDE64C0FA106 /* KioskBrowserPlugin.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -38,6 +39,7 @@
 		EDF3085D97C8694414B645FB /* KioskWatchdog.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = KioskWatchdog.swift; sourceTree = "<group>"; };
 		7A1E7FAC0001BDE64C0FA106 /* UISoundPlugin.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = UISoundPlugin.swift; sourceTree = "<group>"; };
 		7A1E7FAC0003BDE64C0FA106 /* PanelVolumePlugin.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PanelVolumePlugin.swift; sourceTree = "<group>"; };
+		7A1E7FAC0005BDE64C0FA106 /* KioskBrowserPlugin.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = KioskBrowserPlugin.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -85,6 +87,7 @@
 				EDF3085D97C8694414B645FB /* KioskWatchdog.swift */,
 				7A1E7FAC0001BDE64C0FA106 /* UISoundPlugin.swift */,
 				7A1E7FAC0003BDE64C0FA106 /* PanelVolumePlugin.swift */,
+				7A1E7FAC0005BDE64C0FA106 /* KioskBrowserPlugin.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -176,6 +179,7 @@
 				A781185F97AFAFF10D4FC405 /* KioskWatchdog.swift in Sources */,
 				7A1E7FAC0002BDE64C0FA106 /* UISoundPlugin.swift in Sources */,
 				7A1E7FAC0004BDE64C0FA106 /* PanelVolumePlugin.swift in Sources */,
+				7A1E7FAC0006BDE64C0FA106 /* KioskBrowserPlugin.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
