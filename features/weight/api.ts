@@ -16,8 +16,16 @@ export const weightRouter = router({
   // Daily-median series + window stats for the tile and Trend page. Null until
   // the first included reading exists (day-one skeleton).
   summary: publicProcedure
-    .input(z.object({ range: z.enum(["7d", "30d", "all"]), tz: service.tzInput }))
-    .query(({ input }) => service.getSummary(input.range, input.tz)),
+    .input(
+      z.object({
+        range: z.enum(["7d", "30d", "all"]),
+        tz: service.tzInput,
+        // Which series to plot. Defaults to weight so the tile — which never
+        // sends one — keeps its existing contract.
+        metric: service.metricInput.default("weight_kg"),
+      }),
+    )
+    .query(({ input }) => service.getSummary(input.range, input.tz, input.metric)),
 
   // One page of days, newest first, for the Readings page.
   days: publicProcedure

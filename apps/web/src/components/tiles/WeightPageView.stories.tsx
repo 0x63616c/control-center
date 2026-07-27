@@ -29,7 +29,7 @@ const meta = {
       </div>
     ),
   ],
-  args: { onRangeChange: fn() },
+  args: { onRangeChange: fn(), metric: "weight_kg", onMetricChange: fn() },
 } satisfies Meta<typeof WeightPageView>;
 
 export default meta;
@@ -111,19 +111,58 @@ export const WithGap: Story = {
   },
 };
 
+/**
+ * A percentage metric. The kg→lb factor must NOT be applied to it, and every
+ * number carries "%" rather than "lb" — the regression this story guards.
+ */
+export const FatRatio: Story = {
+  args: {
+    status: "populated",
+    range: "30d",
+    metric: "fat_ratio_percent",
+    unit: "%",
+    lb: 17.1,
+    daily: [
+      { day: "2026-07-20", lb: 18.4 },
+      { day: "2026-07-21", lb: 17.9 },
+      { day: "2026-07-22", lb: 17.1 },
+    ],
+    low: 17.1,
+    high: 18.4,
+    average: 17.8,
+    change: -1.3,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    expect(canvas.getByText("17.8%")).toBeInTheDocument();
+    expect(canvas.getByText("-1.3%")).toBeInTheDocument();
+    // No lb anywhere on a percentage metric.
+    expect(canvas.queryByText(/lb/)).not.toBeInTheDocument();
+  },
+};
+
 export const Loading: Story = {
   args: { status: "loading", range: "30d" },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     expect(canvas.queryByText("Low")).not.toBeInTheDocument();
+    // The pickers survive every state — you must always be able to switch back.
+    expect(canvas.getByRole("radiogroup", { name: "Metric" })).toBeInTheDocument();
   },
 };
 
-// Day one: populated status but no included readings yet → skeleton.
-export const Empty: Story = {
-  args: { status: "populated", range: "30d" },
+/**
+ * Populated, but this metric has no history (the scale never reported bone
+ * mass). Names the metric, and critically KEEPS the picker mounted so you can
+ * select your way back out.
+ */
+export const NoDataForMetric: Story = {
+  args: { status: "populated", range: "30d", metric: "bone_mass_kg" },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
+    expect(canvas.getByText(/No bone data yet/)).toBeInTheDocument();
     expect(canvas.queryByText("Low")).not.toBeInTheDocument();
+    const picker = canvas.getByRole("radiogroup", { name: "Metric" });
+    expect(within(picker).getByRole("radio", { name: "Weight" })).toBeInTheDocument();
   },
 };

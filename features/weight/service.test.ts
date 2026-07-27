@@ -8,8 +8,11 @@ import {
   isOutsideSanityBand,
   isValidTimeZone,
   median,
+  metricExpr,
+  metricInput,
   summarize,
   tzInput,
+  WEIGHT_METRICS,
 } from "./service";
 
 describe("median", () => {
@@ -123,6 +126,46 @@ describe("dayExpr", () => {
   });
 });
 
+describe("metricExpr", () => {
+  it("reads weight from its own column, not the jsonb", () => {
+    const { sql } = dialect.sqlToQuery(metricExpr("weight_kg"));
+    expect(sql).toContain("weight_kg");
+    expect(sql).not.toContain("body_metrics");
+  });
+
+  it("reads body composition out of the jsonb as a number", () => {
+    const { params, sql } = dialect.sqlToQuery(metricExpr("fat_ratio_percent"));
+    expect(sql).toContain("body_metrics");
+    expect(sql).toContain("double precision");
+    // The key is bound, never concatenated into the statement.
+    expect(params).toContain("fat_ratio_percent");
+    expect(sql).not.toContain("'fat_ratio_percent'");
+  });
+});
+
+describe("metricInput", () => {
+  it("accepts every declared metric", () => {
+    for (const key of Object.keys(WEIGHT_METRICS)) {
+      expect(metricInput.parse(key)).toBe(key);
+    }
+  });
+  it("rejects an unknown metric rather than passing it into SQL", () => {
+    expect(() => metricInput.parse("bmi")).toThrow();
+    expect(() => metricInput.parse("weight_kg; drop table weight_measurement")).toThrow();
+  });
+});
+
+describe("WEIGHT_METRICS", () => {
+  it("marks the fat ratio as a percentage and every mass as kg", () => {
+    // The unit drives whether the web layer applies the lb conversion; getting
+    // this wrong renders a fat ratio of 17.1% as 37.7.
+    expect(WEIGHT_METRICS.fat_ratio_percent.unit).toBe("percent");
+    for (const [key, m] of Object.entries(WEIGHT_METRICS)) {
+      if (key !== "fat_ratio_percent") expect(m.unit).toBe("kg");
+    }
+  });
+});
+
 describe("tzInput", () => {
   it("accepts a real zone", () => {
     expect(tzInput.parse("America/Los_Angeles")).toBe("America/Los_Angeles");
@@ -159,6 +202,34 @@ describe("assembleDays", () => {
       excludedReason: null,
     },
   ];
+
+  it("passes body composition through, and normalises its absence to null", () => {
+    const withComp = [
+      {
+        id: "wm_a",
+        day: "2026-07-22",
+        measuredAt: new Date("2026-07-22T17:10:00Z"),
+        weightKg: 72.6,
+        excludedReason: null,
+        bodyMetrics: { fat_ratio_percent: 17.067, muscle_mass_kg: 57.19 },
+      },
+      // An ha_ble-era row: a weight and nothing else.
+      {
+        id: "wm_b",
+        day: "2026-07-22",
+        measuredAt: new Date("2026-07-22T16:55:00Z"),
+        weightKg: 72.95,
+        excludedReason: null,
+      },
+    ];
+    const [day] = assembleDays(withComp);
+    expect(day?.readings[0]?.bodyMetrics).toEqual({
+      fat_ratio_percent: 17.067,
+      muscle_mass_kg: 57.19,
+    });
+    // undefined would serialise away; null is the explicit "never had any".
+    expect(day?.readings[1]?.bodyMetrics).toBeNull();
+  });
 
   it("groups newest day first with medians and day-over-day deltas", () => {
     const days = assembleDays(rows);
