@@ -5,6 +5,7 @@
  * (apps/worker → @features is allowed).
  */
 import { createPgIntegrationSyncStore, heartbeat, runCycle } from "@www/core";
+import { getLogger } from "@www/logger";
 import { z } from "zod";
 
 import { config } from "./config";
@@ -133,6 +134,15 @@ export async function runWeatherIngestCycle(): Promise<void> {
         sunsetIso: d.sunset[i] ?? null,
       }));
       if (dailyRows.length > 0) await db.insert(weatherDailyReading).values(dailyRows);
+
+      // Log every successful cycle, including a degenerate 0/0 response, so a
+      // live-but-quiet ingest is distinguishable from a wedged one that has
+      // stopped running (this cycle's own heartbeat write is a silent DB row,
+      // not a log line the worker's stdout/kubectl logs would show).
+      getLogger().info(
+        { hourlyRows: hourlyRows.length, dailyRows: dailyRows.length },
+        "weather ingest cycle completed",
+      );
     },
   );
 }
