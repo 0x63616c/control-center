@@ -23,7 +23,6 @@ import {
   runEnforcerCycle,
   runGithubPollCycle,
   runMigrations,
-  runWeightIngestCycle,
   runWithingsWeightIngestCycle,
   runYoutubeIngest,
   staleJobReaper,
@@ -154,21 +153,11 @@ const workers: Worker[] = [
     run: runWeatherIngestCycle,
   },
   {
-    // Renpho weight ingest (spec 2026-07-21): HA sensor → weight_measurement.
-    // 15s so a weigh-in lands within ~30s end-to-end (matches POLL.weight on
-    // the panel); ~240 HA polls/hr is trivial.
-    name: "weight-ingest",
-    intervalMs: 15_000,
-    runOnStart: true,
-    run: runWeightIngestCycle,
-  },
-  {
-    // Withings direct-API weight ingest (replaces HA's 10min-poll integration
-    // for latency): fetches new measurements straight from Withings' cloud
-    // API. 10s , faster than the HA path above , because the <30s budget must
-    // also absorb Withings' own scale→cloud sync lag, not just this poll's
-    // wait. 6 req/min, trivial against Withings' 120/min limit. Inert (quiet
-    // no-op) until withings_oauth_token is seeded by the activation runbook.
+    // Withings direct-API weight ingest: fetches new measurements straight
+    // from Withings' cloud API. 10s so a weigh-in lands within ~30s
+    // end-to-end (matches POLL.weight on the panel), which must also absorb
+    // Withings' own scale→cloud sync lag. 6 req/min, trivial against
+    // Withings' 120/min limit.
     name: "withings-weight-ingest",
     intervalMs: 10_000,
     runOnStart: true,

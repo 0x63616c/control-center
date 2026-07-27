@@ -12,7 +12,7 @@ import { db } from "./db";
 import { weightMeasurement } from "./schema";
 
 const SANITY_BAND_KG = 5.4; // 12 lb
-export const LB_PER_KG = 2.2046226218;
+const LB_PER_KG = 2.2046226218;
 
 export function median(xs: number[]): number {
   const s = [...xs].sort((a, b) => a - b);
@@ -33,30 +33,6 @@ export function formatWeighInAlert(weightKg: number): { title: string; body: str
 export function isOutsideSanityBand(kg: number, recentIncludedKg: number[]): boolean {
   if (recentIncludedKg.length < 3) return false;
   return Math.abs(kg - median(recentIncludedKg)) > SANITY_BAND_KG;
-}
-
-/**
- * True when a polled reading is the SAME measurement we already stored, and so
- * must not be inserted again.
- *
- * WHY THIS IS NOT THE UNIQUE INDEX'S JOB: ingest dedupes on `measured_at`, which
- * is the HA entity's `last_updated`. That only holds while the entity is quiet
- * between weigh-ins. A flapping entity re-emits an UNCHANGED weight with a FRESH
- * `last_updated`, which sails through the unique index and lands a phantom
- * weigh-in on every poll. The Renpho scale did exactly this: bit-identical
- * `72.55000000160527` from 2026-07-23 03:00 onward, plus one more the instant HA
- * restarted on 2026-07-24. Those rows pollute History and drag the 14-day median
- * that isOutsideSanityBand() bands against.
- *
- * Compares EXACTLY, with no epsilon, deliberately. The failure mode is a sensor
- * repeating a value verbatim, so exact equality catches every phantom while being
- * incapable of suppressing a genuinely different reading. The residual cost is a
- * real weigh-in landing on the identical float as the previous one — for a BLE
- * scale carrying noise in the low decimals that is vanishingly unlikely, and it
- * would record the same weight we already have.
- */
-export function isRepeatReading(weightKg: number, latestStoredKg: number | undefined): boolean {
-  return latestStoredKg !== undefined && weightKg === latestStoredKg;
 }
 
 /** A reading already bucketed into a local calendar day by the caller. */
@@ -316,9 +292,10 @@ export async function setExcluded(id: string, excluded: boolean): Promise<void> 
     .where(and(eq(weightMeasurement.id, id), notDeleted()));
 }
 
-// Tombstone, never a hard DELETE: ingest re-inserts any row it can still see
-// in the HA sensor's current state (weight-service.ts, apps/api). Returns
-// whether a row was actually tombstoned; api.ts throws NOT_FOUND on false.
+// Tombstone, never a hard DELETE: a correction Calum makes in the Health Mate
+// app re-syncs the same grpid and would otherwise resurrect the row via
+// onConflictDoUpdate (withings-weight-service.ts, apps/api). Returns whether a
+// row was actually tombstoned; api.ts throws NOT_FOUND on false.
 export async function deleteReading(id: string): Promise<boolean> {
   const [deleted] = await db
     .update(weightMeasurement)

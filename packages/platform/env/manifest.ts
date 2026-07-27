@@ -45,10 +45,6 @@ export const ENV = defineEnv({
     .forRuntime("api", "worker")
     .forFeatures("ac", "ctrl", "dogcam", "tesla", "tv"),
   CLIMATE_ENTITY_ID: str().default("climate.home").forRuntime("api").forFeatures("ac"),
-  HA_WEIGHT_ENTITY_ID: str()
-    .default("sensor.renpho_scale_weight")
-    .forRuntime("worker")
-    .forFeatures("weight"),
 
   // ── UniFi / Wi-Fi (network, guest-wifi) ───────────────────────────────────
   UNIFI_API_KEY: secret().required().forRuntime("api").forFeatures("network"),

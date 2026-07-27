@@ -255,9 +255,6 @@ const haEnv = {
   GO2RTC_URL: `http://${GO2RTC_SERVICE_NAME}:${GO2RTC_PORT}`,
   CAMERA_STREAM_NAME,
   CAMERA_LABEL,
-  // Renpho scale weight sensor (via the renpho_fitness_scale_ble custom
-  // integration); entity id comes from HA's entity registry, not the env default.
-  HA_WEIGHT_ENTITY_ID: "sensor.qn_scale_ff_03_00_5a_89_84_calum_s_weight",
 };
 
 // A marker list so the Workload mounts its configured service Secret; the actual

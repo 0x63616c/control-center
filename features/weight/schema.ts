@@ -1,11 +1,13 @@
-// Renpho scale weigh-ins (spec: docs/superpowers/specs/2026-07-21-weight-tile-design.md),
-// folded into the weight feature (Track C, Wave 2). The codegen collects every
-// exported `pgTable` from a feature's schema.ts into the generated schema barrel
+// Withings scale weigh-ins, pulled straight from Withings' cloud API (spec:
+// docs/superpowers/specs/2026-07-21-weight-tile-design.md), folded into the
+// weight feature (Track C, Wave 2). The codegen collects every exported
+// `pgTable` from a feature's schema.ts into the generated schema barrel
 // (features/_generated/schema.gen.ts), which drizzle-kit reads.
 //
-// Raw and append-only: every HA sensor update becomes a row; nothing is ever
-// deleted or collapsed. Display-layer reduces to a daily median and hides rows
-// with excluded_reason set (auto sanity-band or manual toggle from the panel).
+// Raw and append-only: every ingested measurement becomes a row; nothing is
+// ever deleted or collapsed. Display-layer reduces to a daily median and
+// hides rows with excluded_reason set (auto sanity-band or manual toggle from
+// the panel).
 import {
   doublePrecision,
   index,
@@ -27,7 +29,7 @@ export const weightMeasurement = pgTable(
     weightKg: doublePrecision("weight_kg").notNull(),
     // Body composition as reported (fat/muscle/water/BMR...); stored, not shown.
     bodyMetrics: jsonb("body_metrics"),
-    source: text("source").notNull(), // 'ha_ble' | 'withings_api'
+    source: text("source").notNull(), // 'withings_api' (legacy rows may still say 'ha_ble')
     // Withings' own measurement-group id (direct-API ingest only; null for
     // HA-sourced rows). Unique so a correction Calum makes in the Health Mate
     // app , same grpid, edited value , updates the row via onConflictDoUpdate
