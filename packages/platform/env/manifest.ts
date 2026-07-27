@@ -131,6 +131,18 @@ export const ENV = defineEnv({
   TEMPORAL_ADDRESS: str().default("temporal-server.temporal.svc.cluster.local:7233"),
   TEMPORAL_NAMESPACE: str().default("control-center"),
   TEMPORAL_TASK_QUEUE: str().default("main"),
+  // Where the worker's Runtime.install({ telemetryOptions }) sends SDK-internal
+  // metrics (workflow/activity completions, schedule-to-start, sticky-cache
+  // hit rate, poller counts — see #233). This is the SDK's own OTel exporter,
+  // separate from METRICS_PORT above (this worker's app-level
+  // @www/platform/metrics listener) — the two are deliberately not merged.
+  // The collector this points at (infra/src/temporal.ts's
+  // temporal-otel-collector) re-exports to Prometheus over its own
+  // annotation-discovered scrape port, so no dedicated scrape job exists for
+  // it either.
+  TEMPORAL_OTEL_COLLECTOR_URL: url().default(
+    "http://temporal-otel-collector.temporal.svc.cluster.local:4317",
+  ),
 
   // ── Guest listener (api/guest-server, ADR-0006) ───────────────────────────
   GUEST_PORT: int().optional().forRuntime("api"),

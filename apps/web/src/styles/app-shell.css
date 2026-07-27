@@ -1,9 +1,16 @@
 /* Kiosk lockdown , app entry ONLY. Imported by main.tsx, never by Storybook
    or tests, so the wall-panel reset can't leak into docs/canvas iframes.
 
-   Principle: no-scroll and no-select are properties of the board, so they live
-   on #root (the mount point), not on the document. Only behavior that genuinely
-   must be document-level stays on html/body:
+   Principle: no-scroll is a property of the board, so it lives on #root (the
+   mount point), not the document. no-select/no-callout live on html/body
+   instead of #root (#249): ~10 components in this app (Modal, TileDetailHost,
+   DimOverlay, PinGateModal, Board, NotificationBanner, VariantSwitcher,
+   LevelOverlay, CleanScreenOverlay, SettingsPage) call
+   createPortal(..., document.body), appending siblings of #root that a
+   #root-only rule never reached — the same body-vs-#root escape hatch
+   PanelFrame.tsx's 1366x1024 cap had (#257), fixed the same way: put the rule
+   on the ancestor portaled content can't get outside of. Other document-level
+   behavior:
      - overscroll-behavior: kill rubber-band/pull-to-refresh on the panel
      - safe-area padding: clear the iPad home indicator in installed PWA mode
        (viewport-fit=cover extends content behind the home bar). */
@@ -16,15 +23,21 @@ body {
   color-scheme: dark;
   overscroll-behavior: none;
   padding-bottom: env(safe-area-inset-bottom);
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+body {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 #root {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  -webkit-touch-callout: none;
-  -webkit-user-select: none;
-  user-select: none;
 }
 
 /* The pannable canvas scrolls natively; hide its scrollbars on the kiosk panel

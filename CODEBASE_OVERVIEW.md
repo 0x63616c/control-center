@@ -22,7 +22,7 @@ background loops and jobs
 
 deploy
   -> GitHub Actions
-  -> GHCR multi-arch images (amd64 required: the home-server node is x86)
+  -> GHCR amd64 images (the home-server node is x86)
   -> Pulumi in infra/ (stack `home-server`)
   -> Talos Kubernetes on home-server (192.168.0.5)
 ```
@@ -311,7 +311,7 @@ Important infra files:
   prometheus-operator/CRDs (ADR #207); the vendored dashboards and recording
   rules it mounts live in `infra/observability/`. See `docs/observability.md`.
 
-GitHub Actions builds **multi-arch** images in `.github/workflows/ci.yml`: each Dockerfile builds twice on native runners (`amd64` on `ubuntu-24.04`, `arm64` on `ubuntu-24.04-arm`, no QEMU emulation), each pushing a per-arch child tag, and a dependent `merge-*` job composes them into a multi-arch manifest index via `docker buildx imagetools create`. amd64 is not optional — the home-server node is x86. CI then joins the tailnet with an ephemeral `tag:ci` identity, writes kubeconfig, sets Pulumi image digest config, and runs `pulumi up --stack home-server`.
+GitHub Actions builds **amd64-only** images in `.github/workflows/ci.yml`: each Dockerfile builds once on a native `ubuntu-24.04` runner (no QEMU emulation) and pushes the final tags directly (`:<sha>`, plus `:main` on main). The arm64 leg and the `merge-*` manifest-index jobs were dropped when the arm64 Mac mini was retired (2026-07-25) — the home-server node is x86 and is the only deploy target. `scripts/test-build-matrix.sh` guards that (it fails if an arm64 leg or QEMU emulation reappears). CI then joins the tailnet with an ephemeral `tag:ci` identity, writes kubeconfig, sets Pulumi image digest config, and runs `pulumi up --stack home-server`.
 
 The image digest config key must be namespaced as `wwwinfra:imageDigests.<svc>`. Without `wwwinfra:`, the Pulumi program does not read the values correctly.
 
@@ -384,7 +384,9 @@ the default, so tests inject the in-memory adapter instead of stubbing drizzle.
 - Backend code uses structured logging through `@www/logger`, not `console.*`.
 - Tiles should use shared UI primitives from `apps/web/src/components/ui`.
 - Component work should be Storybook-first where practical.
-- IDs should default to Stripe-style `prefix_<id>`.
+- IDs should default to Stripe-style `prefix_<id>`, minted via `genId()` from
+  `packages/platform` (never hand-roll `prefix_${crypto.randomUUID()}`); a lefthook guard
+  blocks hand-rolled ids outside `packages/platform/src/index.ts`.
 - Deployment and operations changes should update docs in the same change.
 
 ## Where To Start For A Feature

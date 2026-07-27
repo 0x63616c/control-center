@@ -46,7 +46,9 @@
   via the `PanelVolume` plugin and Sound settings page, never in-app gain.
 - No fake or placeholder data.
 - Storybook-first for new UI.
-- IDs default to `prefix_<id>`.
+- IDs default to `prefix_<id>` — mint them with `genId()` from `packages/platform` (never
+  hand-roll `prefix_${crypto.randomUUID()}`); a lefthook guard blocks hand-rolled ids outside
+  `packages/platform/src/index.ts`.
 - Backend code uses structured logging.
 - **Never read secret values** (e.g. contents of `secret/vault.yaml`). Checking
   key names/presence is fine; do not print or inspect the decrypted values.
@@ -81,7 +83,7 @@
   `192.168.0.5:8123`, not `.38`.
 - Deploy the `home-server` Pulumi stack. A stack named `prod` still exists but targets
   the retired mini - **never deploy it** (its cloudflared would split-brain the live
-  Cloudflare tunnel). Images must be **multi-arch/amd64**; the node is x86.
+  Cloudflare tunnel). Images are **amd64-only**; the node is x86.
 - Push to `main` triggers CI + deploy.
 - CI/deploy is product-aware: per-product path filters build only changed product
   images plus shared-package dependents.

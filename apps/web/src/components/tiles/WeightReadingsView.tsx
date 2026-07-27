@@ -32,9 +32,9 @@ export interface WeightReadingRow {
   auto: boolean;
   /**
    * Body composition for this reading, already formatted and unit-suffixed by
-   * the wiring layer. Empty/absent for the retired ha_ble-era rows, which
-   * carried a weight and nothing else — those simply render no strip rather
-   * than a row of dashes.
+   * the wiring layer. Empty/absent for a weight-only Withings sync (no
+   * bio-impedance contact) — those simply render no strip rather than a row
+   * of dashes.
    */
   composition?: { label: string; value: string }[];
 }

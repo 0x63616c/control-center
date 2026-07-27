@@ -12,27 +12,44 @@
  * the pannable world, while Modal.tsx separately clamped its own dialogs to
  * 1366x1024. That mismatch (board stretches, modals don't) is what this fixes.
  *
- * How the cap works: `panelStyle` below gives the 1366x1024 box a `transform`,
- * which per the CSS Transforms spec makes it the *containing block* for every
- * `position:fixed` descendant in the tree , including Board's own stage and
- * everything Board renders inside it (FPS meter, minimap, banners). Nothing in
- * Board.tsx, Modal.tsx, or grid-constants.ts changes; a fixed-position child
- * three levels down just starts resolving `inset:0` against this 1366x1024 box
- * instead of the browser viewport. The one thing this can't reach is a
- * `createPortal(..., document.body)` target (Modal's backdrop, DimOverlay) ,
- * those still cover the true browser window. In practice that reads fine: the
- * frame and the portal's flex-centering both center on the same point, so a
- * modal still opens in the right visual place; only its dimming veil bleeds
- * past the bezel into the surrounding desktop. Documented, not silently
- * papered over.
+ * How the cap works (#257): a `transform` makes its element the *containing
+ * block* for every `position:fixed` descendant , per the CSS Transforms
+ * spec , but only for descendants still inside that element's own subtree.
+ * The original version of this file put that transform on `panelStyle`, an
+ * inner div. That contained Board's own stage and everything Board renders
+ * inside it, but NOT the 10 components in this app that call
+ * `createPortal(..., document.body)` (Modal, PinGateModal, TileDetailHost,
+ * SettingsPage, DimOverlay, NotificationBanner, VariantSwitcher,
+ * LevelOverlay, CleanScreenOverlay): a portal appends outside the React tree
+ * entirely, so `panelStyle`'s transform was never an ancestor of that content
+ * and it resolved `position:fixed` against the true browser viewport instead.
+ *
+ * The fix moves the transform onto `document.body` itself (an effect below,
+ * not a static stylesheet rule, so it stays a no-op on native and cleans up
+ * for Storybook/tests). `document.body` is an ancestor of literally
+ * everything React ever mounts, portals included, so making IT the
+ * containing block , sized and positioned to exactly the same 1366x1024 box
+ * `panelStyle` already draws , contains every `position:fixed` descendant
+ * app-wide with zero edits to any of those 10 call sites. `panelStyle`'s own
+ * transform stays too (defense in depth for the React-tree case; harmless
+ * once it's coincident with `body`'s box).
+ *
+ * The Bezel is deliberately NOT inside that clipped body box: its box-shadow
+ * is designed to bleed a few px outward past the 1366x1024 edge, and
+ * `body`'s new `overflow:hidden` would cut that bleed off if the Bezel were
+ * a normal descendant. It's portaled instead to a sibling element appended
+ * directly to `<html>`, positioned to match body's box exactly but with no
+ * overflow clipping of its own.
  *
  * Native passthrough: on Capacitor (the kiosk shell) this renders `children`
- * completely unwrapped , no extra DOM node, no transform, no behavior change.
- * The physical panel and the native build are untouched by this file.
+ * completely unwrapped , no extra DOM node, no transform, no `document.body`
+ * mutation, no behavior change. The physical panel and the native build are
+ * untouched by this file.
  */
 
 import { Capacitor } from "@capacitor/core";
-import { type CSSProperties, type ReactNode, useSyncExternalStore } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useRef, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 
 // The physical wall panel's resolution. Intentionally NOT imported from
 // grid-constants , BOARD_W there is this same 1366, but BOARD_H is 1000 (a
@@ -140,23 +157,101 @@ function Bezel() {
 
 export function PanelFrame({ children }: { children: ReactNode }) {
   const { width, height } = useViewportSize();
+  const isNative = Capacitor.isNativePlatform();
+
+  // A sibling of `document.body`, appended straight to `<html>`. This is where
+  // the Bezel lives (see file header) , NOT a descendant of body, so body's
+  // own `overflow: hidden` (set by the effect below) never clips its
+  // box-shadow bleed. Created once per mount via lazy ref init, not state ,
+  // this element is a portal TARGET, not something React itself should ever
+  // re-render around.
+  const bezelRootRef = useRef<HTMLDivElement | null>(null);
+  if (!isNative && bezelRootRef.current === null) {
+    bezelRootRef.current = document.createElement("div");
+    bezelRootRef.current.setAttribute("data-panel-bezel-root", "");
+  }
+
+  // Mount/unmount only: create and attach the bezel-root sibling, and capture
+  // body/html's pre-existing inline `style` attribute so it can be restored
+  // byte-for-byte on cleanup , this must never leak the 1366x1024 cap into
+  // Storybook stories, other routes, or a later test in the same jsdom
+  // document once PanelFrame unmounts.
+  useEffect(() => {
+    if (isNative) return;
+    const bezelRoot = bezelRootRef.current;
+    if (!bezelRoot) return;
+
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtmlStyle = html.getAttribute("style");
+    const prevBodyStyle = body.getAttribute("style");
+    html.appendChild(bezelRoot);
+
+    return () => {
+      bezelRoot.remove();
+      if (prevBodyStyle === null) body.removeAttribute("style");
+      else body.setAttribute("style", prevBodyStyle);
+      if (prevHtmlStyle === null) html.removeAttribute("style");
+      else html.setAttribute("style", prevHtmlStyle);
+    };
+  }, [isNative]);
+
+  // Every resize: recompute the panel's centered position and push it onto
+  // both `body` (the containing block every `position:fixed` descendant ,
+  // portals included, see file header , now resolves against) and the
+  // bezel-root sibling (kept pixel-perfect in sync so the Bezel still traces
+  // the panel's exact edge). `transform` is what makes body a containing
+  // block; translate3d(0,0,0) is the smallest no-op transform that still
+  // counts for that purpose (same trick panelStyle already uses).
+  useEffect(() => {
+    if (isNative) return;
+    const bezelRoot = bezelRootRef.current;
+    if (!bezelRoot) return;
+
+    const body = document.body;
+    const left = Math.round((width - PANEL_WIDTH) / 2);
+    const top = Math.round((height - PANEL_HEIGHT) / 2);
+
+    Object.assign(body.style, {
+      position: "fixed",
+      left: `${left}px`,
+      top: `${top}px`,
+      margin: "0",
+      width: `${PANEL_WIDTH}px`,
+      height: `${PANEL_HEIGHT}px`,
+      overflow: "hidden",
+      transform: "translate3d(0, 0, 0)",
+    });
+    Object.assign(bezelRoot.style, {
+      position: "fixed",
+      left: `${left}px`,
+      top: `${top}px`,
+      width: `${PANEL_WIDTH}px`,
+      height: `${PANEL_HEIGHT}px`,
+      pointerEvents: "none",
+    });
+  }, [isNative, width, height]);
 
   // Native kiosk shell: the OS already constrains the viewport to the panel's
   // own resolution and there's no desktop chrome to frame it against.
-  // Unwrapped passthrough keeps the native build byte-for-byte unaffected.
-  if (Capacitor.isNativePlatform()) return <>{children}</>;
+  // Unwrapped passthrough keeps the native build byte-for-byte unaffected , no
+  // body mutation, no bezel-root, nothing above this line has any effect
+  // when native (both effects bail out via the `isNative` check first).
+  if (isNative) return <>{children}</>;
 
   const hasRoom =
     width - PANEL_WIDTH >= MIN_BEZEL_MARGIN && height - PANEL_HEIGHT >= MIN_BEZEL_MARGIN;
 
   return (
-    <div style={outerStyle}>
-      <div style={frameStyle}>
-        <div style={panelStyle} data-testid="panel-frame-canvas">
-          {children}
+    <>
+      <div style={outerStyle}>
+        <div style={frameStyle}>
+          <div style={panelStyle} data-testid="panel-frame-canvas">
+            {children}
+          </div>
         </div>
-        {hasRoom ? <Bezel /> : null}
       </div>
-    </div>
+      {hasRoom && bezelRootRef.current ? createPortal(<Bezel />, bezelRootRef.current) : null}
+    </>
   );
 }

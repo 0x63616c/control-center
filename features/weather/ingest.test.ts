@@ -10,6 +10,19 @@ const captured = vi.hoisted(() => ({
   rows: [] as Record<string, unknown>[],
   streakRows: [] as { n: number }[],
 }));
+
+// Spy on the structured logger so the success-summary log line (added to
+// distinguish a live-but-quiet cycle from a wedged one) is machine-checked,
+// following the same vi.hoisted + vi.mock("@www/logger", ...) pattern as
+// apps/worker/src/disk-guard.test.ts.
+const { logSpies } = vi.hoisted(() => {
+  const spies = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+  return { logSpies: spies };
+});
+vi.mock("@www/logger", () => ({
+  getLogger: () => logSpies,
+}));
+
 vi.mock("./db", () => ({
   db: {
     insert: () => ({
@@ -38,6 +51,10 @@ vi.mock("./db", () => ({
 afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
+  logSpies.info.mockClear();
+  logSpies.warn.mockClear();
+  logSpies.error.mockClear();
+  logSpies.debug.mockClear();
 });
 
 function bundleResponse() {
@@ -134,6 +151,13 @@ describe("runWeatherIngestCycle", () => {
     expect(forecast).toBeDefined();
     expect(typeof forecast?.tempF).toBe("number");
     expect(forecast?.targetHour instanceof Date).toBe(true);
+
+    // A successful cycle logs a summary line so it's distinguishable in
+    // kubectl logs / stdout from a wedged cycle that stopped running.
+    expect(logSpies.info).toHaveBeenCalledWith(
+      { hourlyRows: 3, dailyRows: 2 },
+      "weather ingest cycle completed",
+    );
   });
 
   it("records the heartbeat with an error message, then rethrows, when the fetch fails", async () => {
@@ -151,6 +175,9 @@ describe("runWeatherIngestCycle", () => {
     expect(heartbeat[0].lastError).toBe("HTTP 502");
     // no weather rows written on failure
     expect(captured.rows.filter((r) => "kind" in r)).toHaveLength(0);
+    // the success-summary line only fires when the cycle's work actually ran
+    // to completion, so a failed cycle must not log it
+    expect(logSpies.info).not.toHaveBeenCalled();
   });
 
   it("increments consecutiveFailures from the prior streak on a failed cycle", async () => {

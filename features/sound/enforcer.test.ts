@@ -13,6 +13,7 @@
  * else uses the injectable in-memory store.
  */
 import { createInMemoryDeviceStateStore, DeviceKind } from "@www/core";
+import { getLogger } from "@www/logger";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ─── mock the feature's own deviceStateStore (only backs setSpeakerDesiredVolume's
@@ -67,12 +68,16 @@ vi.mock("@www/core", async (importOriginal) => {
 
 import type { DeviceSpeakerState } from "@www/core";
 import { TOPOLOGY_ANCHOR_IP } from "@www/core";
+import { integrationSyncStore } from "./db";
 import {
   decideSpeakerEnforcement,
   runSonosVolumeEnforcerCycle,
   SPEAKER_MAX_VOLUME,
   setSpeakerDesiredVolume,
 } from "./enforcer";
+
+// Mirrors ENFORCER_INTEGRATION_ID in ./enforcer, which is not exported.
+const ENFORCER_INTEGRATION_ID = "sonos-volume-enforcer";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -365,6 +370,7 @@ describe("runSonosVolumeEnforcerCycle", () => {
       reportedState: { volume: 55 },
       available: true,
     });
+    const warnSpy = vi.spyOn(getLogger(), "warn");
 
     await runSonosVolumeEnforcerCycle(store);
 
@@ -373,6 +379,13 @@ describe("runSonosVolumeEnforcerCycle", () => {
     expect(row?.available).toBe(false);
     // Desired must survive the outage , intent is never wiped by unreachability.
     expect(row?.desiredState).toEqual({ volume: 55 });
+    // The failed probe is still a real signal (unreachable speaker) , it must
+    // not be silently swallowed by the per-player try/catch in fetchPlayers().
+    expect(warnSpy).toHaveBeenCalledWith(
+      { ip: LIVING_IP, zoneName: "Living Room" },
+      "sonos volume probe failed, marking unavailable",
+    );
+    warnSpy.mockRestore();
   });
 
   it("marks a vanished-from-topology speaker unavailable without touching reportedState", async () => {
@@ -393,5 +406,27 @@ describe("runSonosVolumeEnforcerCycle", () => {
     expect(row?.available).toBe(false);
     expect(row?.reportedState).toEqual({ volume: 20 });
     expect(row?.desiredState).toEqual({ volume: 55 });
+  });
+
+  // www-355t.9 / #149: runCycle (packages/core/src/integration-sync/heartbeat.ts)
+  // must rethrow a failing cycle instead of swallowing it, so the worker
+  // runtime's onset/ongoing/recovery transition logging actually fires for
+  // this loop. A topology-fetch failure (unlike a single dead player, which
+  // fetchPlayers already isolates) is not caught anywhere in reconcile(), so
+  // it propagates out of the cycle , assert both that the rejection surfaces
+  // AND that the heartbeat failure streak landed before the throw, mirroring
+  // packages/core/test/heartbeat.test.ts's "records the heartbeat failure
+  // BEFORE rethrowing" case.
+  it("propagates a topology-fetch failure and records the heartbeat streak before rethrowing", async () => {
+    client(TOPOLOGY_ANCHOR_IP).getZoneGroupState.mockRejectedValue(
+      new Error("topology unreachable"),
+    );
+    const store = createInMemoryDeviceStateStore();
+
+    await expect(runSonosVolumeEnforcerCycle(store)).rejects.toThrow("topology unreachable");
+
+    const row = await integrationSyncStore.read(ENFORCER_INTEGRATION_ID);
+    expect(row?.lastError).toBe("topology unreachable");
+    expect(row?.consecutiveFailures).toBe(1);
   });
 });
