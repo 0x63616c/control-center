@@ -313,7 +313,7 @@ describe("serviceSpecs (replica + NFS knobs, www-j934.17 / www-j934.18)", () => 
     const specs = serviceSpecs(baseOpts);
     const controlCenterApi = specs.find((spec) => spec.logicalName === "control-center-api");
 
-    expect(controlCenterApi?.env?.POSTGRES_HOST).toBe("control-center-rw");
+    expect(controlCenterApi?.env?.POSTGRES_HOST).toBe("control-center-postgres-rw");
   });
 });
 

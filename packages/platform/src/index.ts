@@ -727,10 +727,7 @@ export function controlCenterProductManifest(): ControlCenterProductManifest {
   const database = defineProductDatabase(product, target, {
     authPassword: secretCatalog.controlCenter.postgresPassword,
     authSecretName: "cc-postgres-auth",
-    clusterName: "control-center",
-    rwServiceName: "control-center-rw",
-    roServiceName: "control-center-ro",
-    readServiceName: "control-center-r",
+    clusterName: "control-center-postgres",
     size: "5Gi",
   });
   const backup = defineDatabaseBackup(database, target, {

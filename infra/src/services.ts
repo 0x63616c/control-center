@@ -314,9 +314,7 @@ export function serviceSpecs(opts: ServiceSpecOptions): OwnedWorkloadSpec[] {
       name: "api",
       namespaceName: "control-center",
       image: ghcrImage("api", digests),
-      // #111 maintenance window: 0 while the control-center-postgres data
-      // migration runs; restored to 1 in the cutover deploy.
-      replicas: 0,
+      replicas: 1,
       resources: { memory: "512M", reserveCpus: "0.5" },
       secrets: mountSecrets("api"),
       secretName: SERVICE_SECRET_TARGETS.api.secretName,
@@ -388,9 +386,7 @@ export function serviceSpecs(opts: ServiceSpecOptions): OwnedWorkloadSpec[] {
       name: "worker",
       namespaceName: "control-center",
       image: ghcrImage("worker", digests),
-      // #111 maintenance window: 0 while the control-center-postgres data
-      // migration runs; restored to 1 in the cutover deploy.
-      replicas: 0,
+      replicas: 1,
       // 512M covers the Bun process and a yt-dlp subprocess: downloads stream to
       // disk through a small buffer, so memory is flat in the file's size.
       resources: { memory: "512M" },

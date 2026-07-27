@@ -87,3 +87,7 @@ infra/esphome/secrets.yaml
 # only shields talosconfig + the machine config, NOT the kubeconfigs, so ignore
 # the whole dir here to stop an accidental `git add` leaking cluster-admin creds.
 infra/talos/clusterconfig/
+
+# Local prod DB dumps taken during the #111 postgres migration. Multi-MB
+# snapshots of real data — never commit them.
+.pg-snapshots/

@@ -62,7 +62,7 @@ describe("installDbUi (issue #65, talos-only)", () => {
       ]),
     );
     const cc = Object.values(parsed.Servers).find((s) => s.Name === "control-center");
-    expect(cc?.Host).toBe("control-center-rw.control-center.svc.cluster.local");
+    expect(cc?.Host).toBe("control-center-postgres-rw.control-center.svc.cluster.local");
     expect(cc?.MaintenanceDB).toBe("control_center");
     const visibility = Object.values(parsed.Servers).find((s) => s.Name === "temporal-visibility");
     expect(visibility?.MaintenanceDB).toBe("temporal_visibility");
@@ -82,7 +82,7 @@ describe("installDbUi (issue #65, talos-only)", () => {
     const lines = stringData.pgpass.trim().split("\n");
     expect(lines).toHaveLength(3);
     expect(lines).toContain(
-      "control-center-rw.control-center.svc.cluster.local:5432:*:postgres:mock-cc-pw",
+      "control-center-postgres-rw.control-center.svc.cluster.local:5432:*:postgres:mock-cc-pw",
     );
     expect(lines).toContain(
       "home-assistant-postgres-rw.home-assistant.svc.cluster.local:5432:*:postgres:mock-ha-pw",

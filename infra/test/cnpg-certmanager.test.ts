@@ -98,9 +98,10 @@ describe("installCnpg", () => {
       vault: mockVault,
     });
 
-    // Two clusters during the #111 rename migration: the old "control-center"
-    // and its replacement "control-center-postgres", both control_center.
-    // Collapses back to 1 when the old Cluster CR is deleted at cutover.
+    // Two clusters during the #111 rename migration: the live
+    // "control-center-postgres" the workloads now point at, and the drained
+    // legacy "control-center", both control_center. Collapses back to 1 when
+    // the legacy Cluster CR is deleted as the migration's final step.
     expect(res.clusters).toHaveLength(2);
     expect(res.authSecrets).toHaveLength(1);
 
