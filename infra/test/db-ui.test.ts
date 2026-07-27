@@ -46,26 +46,22 @@ describe("installDbUi (issue #65, talos-only)", () => {
     expect(meta.name).toBe("db-ui");
   });
 
-  test("servers.json declares all 3 clusters plus the temporal-visibility tree entry", async () => {
+  test("servers.json declares exactly one tree entry per cluster instance, no per-database duplicates", async () => {
     const res = install();
     const data = await get<{ "servers.json": string }>(res.serversConfigMap, "data");
     const parsed = JSON.parse(data["servers.json"]) as {
       Servers: Record<string, { Name: string; Host: string; MaintenanceDB: string }>;
     };
     const names = Object.values(parsed.Servers).map((s) => s.Name);
-    expect(names).toEqual(
-      expect.arrayContaining([
-        "control-center",
-        "home-assistant",
-        "temporal",
-        "temporal-visibility",
-      ]),
-    );
+    expect(names.sort()).toEqual(["control-center", "home-assistant", "temporal"]);
     const cc = Object.values(parsed.Servers).find((s) => s.Name === "control-center");
     expect(cc?.Host).toBe("control-center-rw.control-center.svc.cluster.local");
     expect(cc?.MaintenanceDB).toBe("control_center");
-    const visibility = Object.values(parsed.Servers).find((s) => s.Name === "temporal-visibility");
-    expect(visibility?.MaintenanceDB).toBe("temporal_visibility");
+    // temporal_visibility is NOT a separate server entry — it's just another
+    // database on the same `temporal` instance, already visible in pgAdmin's
+    // tree once connected. A dedicated "temporal-visibility" entry would be a
+    // redundant duplicate of the same host/instance.
+    expect(names).not.toContain("temporal-visibility");
   });
 
   test("no vault password value ever appears in servers.json (only PassFile paths)", async () => {

@@ -32,7 +32,6 @@ import {
   DATABASE_NAME as TEMPORAL_DATABASE_NAME,
   TEMPORAL_NAMESPACE,
   CNPG_RW_SERVICE_NAME as TEMPORAL_RW_SERVICE_NAME,
-  VISIBILITY_DATABASE_NAME as TEMPORAL_VISIBILITY_DATABASE_NAME,
 } from "./temporal.ts";
 
 export const DB_UI_NAMESPACE = "db-ui";
@@ -139,6 +138,11 @@ function pgpassLine(target: DbUiTarget): string {
 }
 
 function serversJson(dbTargets: DbUiTarget[]): string {
+  // One tree entry per Postgres INSTANCE, not per database: pgAdmin already
+  // lists every database the connected user can see under a server's own
+  // Databases node, so `temporal_visibility` shows up there once connected to
+  // `temporal` — a separate "temporal-visibility" server would point at the
+  // exact same host/instance and just be a redundant duplicate entry.
   const servers = Object.fromEntries(
     dbTargets.map((target, index) => [
       String(index + 1),
@@ -154,23 +158,6 @@ function serversJson(dbTargets: DbUiTarget[]): string {
       },
     ]),
   );
-  // Temporal's visibility store gets its own tree entry (same host/creds,
-  // different MaintenanceDB) so it's directly clickable rather than reached
-  // by manually retyping the database name after connecting.
-  const temporalIndex = dbTargets.findIndex((t) => t.name === "temporal");
-  if (temporalIndex !== -1) {
-    const temporal = dbTargets[temporalIndex];
-    servers[String(dbTargets.length + 1)] = {
-      Name: "temporal-visibility",
-      Group: "Servers",
-      Host: temporal.host,
-      Port: 5432,
-      MaintenanceDB: TEMPORAL_VISIBILITY_DATABASE_NAME,
-      Username: temporal.owner,
-      PassFile: PGPASS_FILE_PATH,
-      SSLMode: "prefer",
-    };
-  }
   return JSON.stringify({ Servers: servers }, null, 2);
 }
 
