@@ -227,7 +227,8 @@ function ReadingRow({
           ]}
         />
       </div>
-      {/* Body composition, aligned under the weight column. Absent entirely
+      {/* Body composition, indented to the same 54px gutter as the reading it
+          belongs to so it reads as that row's detail. Absent entirely
           for readings that never carried it. */}
       {composition.length > 0 && (
         <div

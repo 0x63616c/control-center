@@ -230,10 +230,16 @@ export function WeightPageView(props: WeightPageViewProps) {
               lineHeight: 1,
             }}
           >
-            {lb.toFixed(1)}
-            <span style={{ fontSize: 15, fontWeight: 400, color: "var(--ink-2)" }}>
-              {unit === "%" ? "%" : " lb"}
-            </span>
+            {/* "%" belongs to the number and stays at full size; "lb" is a
+                unit word and rides small and dimmed beside it. */}
+            {unit === "%" ? (
+              `${lb.toFixed(1)}%`
+            ) : (
+              <>
+                {lb.toFixed(1)}
+                <span style={{ fontSize: 15, fontWeight: 400, color: "var(--ink-2)" }}> lb</span>
+              </>
+            )}
           </span>
         )}
       </div>

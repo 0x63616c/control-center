@@ -9,11 +9,21 @@ import { expect, fn, within } from "storybook/test";
 import { modalDocsParameters } from "./__stories__/factory";
 import { WeightPageView } from "./WeightPageView";
 
-// 30 daily medians (lb), oldest → newest.
+// 28 daily medians (lb), oldest → newest, starting 2026-06-22.
+// Dates roll over the month boundary via Date arithmetic: the previous
+// `2026-06-${22 + i}` produced June 31st through June 49th, which parse as
+// Invalid Date, so two thirds of the series became NaN x-coordinates and the
+// chart rendered no line at all.
+const START = new Date("2026-06-22T00:00:00");
 const DAILY = [
   186.2, 185.8, 186.0, 185.4, 185.1, 185.5, 184.8, 184.4, 183.9, 183.2, 183.6, 182.8, 183.0, 182.1,
   182.5, 181.9, 182.3, 181.4, 181.7, 180.8, 181.2, 180.6, 181.0, 180.3, 179.9, 180.6, 179.7, 180.1,
-].map((lb, i) => ({ day: `2026-06-${String(22 + i).padStart(2, "0")}`, lb }));
+].map((lb, i) => {
+  const d = new Date(START);
+  d.setDate(d.getDate() + i);
+  const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return { day, lb };
+});
 
 const meta = {
   title: "Pages/WeightTrend",
