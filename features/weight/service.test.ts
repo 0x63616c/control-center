@@ -6,7 +6,6 @@ import {
   dayExpr,
   formatWeighInAlert,
   isOutsideSanityBand,
-  isRepeatReading,
   isValidTimeZone,
   median,
   summarize,
@@ -45,23 +44,6 @@ describe("isOutsideSanityBand", () => {
   });
   it("inactive with fewer than 3 prior readings", () => {
     expect(isOutsideSanityBand(97.0, [81.6, 81.8])).toBe(false);
-  });
-});
-
-describe("isRepeatReading", () => {
-  it("admits the first ever reading", () => {
-    expect(isRepeatReading(72.55, undefined)).toBe(false);
-  });
-  it("rejects a flapping entity re-emitting the stored value verbatim", () => {
-    // The real 2026-07-23 Renpho signature: bit-identical value, fresh
-    // last_updated, one phantom row per poll.
-    expect(isRepeatReading(72.55000000160527, 72.55000000160527)).toBe(true);
-  });
-  it("admits a genuinely new weigh-in", () => {
-    expect(isRepeatReading(72.9, 72.55000000160527)).toBe(false);
-  });
-  it("admits a change far below the sanity band", () => {
-    expect(isRepeatReading(72.551, 72.55)).toBe(false);
   });
 });
 

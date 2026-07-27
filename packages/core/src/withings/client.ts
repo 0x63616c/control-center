@@ -7,8 +7,8 @@ const WITHINGS_REQUEST_TIMEOUT_MS = 5_000;
 // A successful call slower than this is worth a line: the weigh-in path has a
 // <30s end-to-end budget and this request sits inside a 10s poll.
 const SLOW_REQUEST_MS = 2_000;
-const TOKEN_URL = "https://wbsapi.withings.com/v2/oauth2";
-const MEASURE_URL = "https://wbsapi.withings.com/measure";
+const TOKEN_URL = "https://wbsapi.withings.net/v2/oauth2";
+const MEASURE_URL = "https://wbsapi.withings.net/measure";
 
 // meastype 1 = weight. Everything else we keep is just along for the ride into
 // bodyMetrics (write-only today, not displayed , see plan for the decision).
