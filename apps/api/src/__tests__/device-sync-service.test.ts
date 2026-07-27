@@ -4,7 +4,8 @@
  * by the shared integration-heartbeat helper for integration_sync_status) + HA.
  */
 import { createInMemoryDeviceStateStore, DeviceKind, type SeedDevice } from "@www/core";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getLogger, resetChangeLog } from "@www/logger";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // ─── mock DB (only backs integration-heartbeat's integration_sync_status) ─────
 
@@ -193,10 +194,19 @@ describe("reconcile", () => {
 
 describe("sweepExpiredWindows", () => {
   let store: ReturnType<typeof createInMemoryDeviceStateStore>;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     vi.resetAllMocks();
     store = createInMemoryDeviceStateStore();
+    // Fresh emission per test , logChange suppresses a repeated identical
+    // signature for the same key within its window (docs/logging.md §3).
+    resetChangeLog();
+    warnSpy = vi.spyOn(getLogger(), "warn");
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
   });
 
   it("never clears a speaker row's sticky desired , owned by the sonos-volume-enforcer (www-5mek)", async () => {
@@ -243,6 +253,15 @@ describe("sweepExpiredWindows", () => {
     const row = await store.read("dev-1");
     expect(row?.desiredState).toBeNull();
     expect(row?.desiredUntilUtc).toBeNull();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: "dev-1",
+        entityId: "light.lamp",
+        desired: { on: true },
+        elapsed: expect.any(Number),
+      }),
+      "command window expired, clearing desired",
+    );
   });
 });
 
