@@ -43,6 +43,16 @@ interface Model {
   /** Collected `defineHttp` routes; two routes with the same method+match+path
    *  would shadow each other in the generated route table. */
   httpRoutes?: { method?: string; path: string; match: string; source: string }[];
+  /** Collected workflow type names off `defineTemporal` facets (ADR-0008); a
+   *  duplicate type would be ambiguous on the shared task queue AND collide in
+   *  the generated workflows barrel (`export *` re-exports). */
+  workflowTypes?: { type: string; source: string }[];
+  /** Collected Temporal schedule IDs (already `app_<dir>_<id>`-composed); a
+   *  duplicate would make two features fight over one Schedule on every boot. */
+  temporalSchedules?: { scheduleId: string; source: string }[];
+  /** Collected activity export names; GENERATED_ACTIVITIES is one merged
+   *  object, so a duplicate name silently last-write-wins. */
+  activities?: { name: string; source: string }[];
   /** Collected named exports off every schema.ts module (feature + base);
    *  schema.gen.ts is a flat `export *` barrel, so a duplicate export name
    *  across two schema.ts files would silently last-write-win in the barrel. */
@@ -143,6 +153,54 @@ export function validate(model: Model, guestExposed: readonly string[]): void {
         );
       }
       seenRoute.set(key, r.source);
+    }
+  }
+
+  // Duplicate Temporal workflow type across features (ADR-0008). Two features
+  // exporting the same workflow type would collide in the generated `export *`
+  // workflows barrel and be ambiguous to start on the shared task queue.
+  if (model.workflowTypes) {
+    const seenWf = new Map<string, string>();
+    for (const w of model.workflowTypes) {
+      const prev = seenWf.get(w.type);
+      if (prev) {
+        throw new CodegenError(
+          `duplicate workflow type '${w.type}' (declared by ${prev} and ${w.source}) — two features cannot export the same Temporal workflow type`,
+        );
+      }
+      seenWf.set(w.type, w.source);
+    }
+  }
+
+  // Duplicate Temporal schedule ID. IDs are already feature-prefixed
+  // (`app_<dir>_<id>`), so a duplicate means one feature declared the same
+  // local id twice.
+  if (model.temporalSchedules) {
+    const seenSched = new Map<string, string>();
+    for (const s of model.temporalSchedules) {
+      const prev = seenSched.get(s.scheduleId);
+      if (prev) {
+        throw new CodegenError(
+          `duplicate Temporal schedule id '${s.scheduleId}' (declared by ${prev} and ${s.source})`,
+        );
+      }
+      seenSched.set(s.scheduleId, s.source);
+    }
+  }
+
+  // Duplicate activity export name across features. GENERATED_ACTIVITIES is one
+  // merged object handed to the Temporal Worker, so a duplicate would silently
+  // last-write-win (mirrors the schema-export barrel check).
+  if (model.activities) {
+    const seenAct = new Map<string, string>();
+    for (const a of model.activities) {
+      const prev = seenAct.get(a.name);
+      if (prev) {
+        throw new CodegenError(
+          `duplicate activity export '${a.name}' (declared by ${prev} and ${a.source}) — two features cannot export the same activity name`,
+        );
+      }
+      seenAct.set(a.name, a.source);
     }
   }
 

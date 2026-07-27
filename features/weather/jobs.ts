@@ -13,19 +13,20 @@
  *    cutoff can never delete a row the dashboard still reads
  *    (service.ts only queries from today/now forward).
  *
- * Runs from the S2 cron seam (a daily one-shot k8s CronJob), never a worker
- * loop (PRD Backend rule 7). Deletes are BATCHED: the first production run has
- * millions of rows to remove and a single unbounded DELETE would hold one long
- * transaction and bloat WAL. Each batch is its own statement; whatever a run
- * doesn't finish is picked up by the next day's run.
+ * Runs as a daily Temporal Schedule (ADR-0008, see temporal.ts — formerly the
+ * S2 k8s CronJob seam), never a worker loop (PRD Backend rule 7). Deletes are
+ * BATCHED: the first production run has millions of rows to remove and a
+ * single unbounded DELETE would hold one long transaction and bloat WAL. Each
+ * batch is its own statement; whatever a run doesn't finish is picked up by
+ * the next day's run.
  *
- * jobs.ts exports ONLY this `defineCron` facet — weather-ingest is a Worker
- * interval, not a queue job, so this feature has no `defineJobs` facet.
+ * jobs.ts now carries only the purge implementation (consumed by
+ * activities.ts) — weather-ingest is a Worker interval, not a queue job, so
+ * this feature has no `defineJobs` facet and, since the Temporal migration,
+ * no `defineCron` either.
  */
-import { defineCron } from "@app-kit";
 import { sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { db } from "./db";
 import type * as schema from "./schema";
 
 /** Weather readings are retained for 30 days, then purged. */
@@ -112,20 +113,3 @@ export async function purgeWeatherData(
     truncated: readings.truncated || dailyReadings.truncated,
   };
 }
-
-/**
- * The scheduled purge as a branded {@link defineCron} facet (Track C, S2). The
- * codegen collects every exported `defineCron` into `features/_generated/crons.gen.ts`,
- * run by the generated `weather-purge` k8s CronJob via `bun cron.js weather-purge`.
- * Staggered off guest-wifi's `0 2 * * *`.
- *
- * @public collected by the codegen (dynamic import in scripts/apps-gen/collect.ts,
- * an edge knip can't see) into features/_generated/crons.gen.ts; no static import.
- */
-export const purgeCron = defineCron({
-  name: "weather-purge",
-  schedule: "0 3 * * *",
-  run: async () => {
-    await purgeWeatherData(db);
-  },
-});

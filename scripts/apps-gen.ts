@@ -28,14 +28,17 @@ import { fileURLToPath } from "node:url";
 import { GUEST_EXPOSED } from "../features/guest-exposed";
 import { collect } from "./apps-gen/collect";
 import {
+  renderActivities,
   renderCronHandlers,
   renderCrons,
   renderGuestRouter,
   renderHttp,
   renderJobs,
   renderRouter,
+  renderSchedules,
   renderSchema,
   renderTiles,
+  renderWorkflows,
 } from "./apps-gen/emit";
 import { validate } from "./apps-gen/validate";
 
@@ -54,6 +57,9 @@ async function main(): Promise<void> {
   writeFileSync(join(GEN_DIR, "cron-handlers.gen.ts"), renderCronHandlers(model));
   writeFileSync(join(GEN_DIR, "jobs.gen.ts"), renderJobs(model));
   writeFileSync(join(GEN_DIR, "http.gen.ts"), renderHttp(model));
+  writeFileSync(join(GEN_DIR, "workflows.gen.ts"), renderWorkflows(model));
+  writeFileSync(join(GEN_DIR, "activities.gen.ts"), renderActivities(model));
+  writeFileSync(join(GEN_DIR, "schedules.gen.ts"), renderSchedules(model));
 }
 
 main().catch((e) => {

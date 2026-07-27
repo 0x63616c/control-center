@@ -9,6 +9,7 @@ export const API_FACET_BRAND = Symbol.for("app-kit.api");
 export const JOBS_FACET_BRAND = Symbol.for("app-kit.jobs");
 export const CRON_BRAND = Symbol.for("app-kit.cron");
 export const HTTP_FACET_BRAND = Symbol.for("app-kit.http");
+export const TEMPORAL_FACET_BRAND = Symbol.for("app-kit.temporal");
 
 export interface CronSpec {
   name: string;
@@ -35,6 +36,50 @@ export interface HttpRoute {
   handler: (req: Request, url: URL) => Promise<Response>;
 }
 
+/**
+ * One Temporal Schedule declared by a feature (ADR-0008). `id` is LOCAL to the
+ * feature; codegen composes the full Temporal schedule ID as
+ * `app_<feature-dir>_<id>`, which is also the marker the worker's boot-time
+ * reconciler uses to recognise schedules it owns (and may delete when they
+ * disappear from the facet). All fields are plain data — the facet is imported
+ * by codegen under bun, so nothing here may touch `@temporalio/*`.
+ */
+export interface TemporalScheduleSpec {
+  /** Local schedule id (kebab-case); full ID becomes `app_<feature-dir>_<id>`. */
+  id: string;
+  /**
+   * The workflow type name to start — a STRING LITERAL matching a function
+   * exported from the feature's `workflows.ts`, never `fn.name` (importing
+   * workflows.ts here would drag `@temporalio/workflow` outside its sandbox).
+   * Must appear in the facet's `workflowTypes`; a per-feature test should
+   * assert literal and export agree (see features/temporal-health).
+   */
+  workflowType: string;
+  /** Standard 5-field cron expression. */
+  cron: string;
+  /** IANA timezone the cron is evaluated in. Defaults to America/Los_Angeles. */
+  timezone?: string;
+  /** The workflow's single argument (one-arg-in convention), JSON-serialisable. */
+  args?: unknown;
+  /** workflowExecutionTimeout, e.g. "2 minutes". */
+  timeout?: string;
+  /** Catchup window for missed runs. Defaults to "1 minute". */
+  catchupWindow?: string;
+}
+
+/**
+ * The Temporal facet (`features/<id>/temporal.ts`, ADR-0008): pure DATA naming
+ * the feature's workflow types and declaring its Schedules. The implementations
+ * live in sibling files codegen never imports: `workflows.ts` (sandboxed,
+ * reached only through the generated bundler entry) and `activities.ts`
+ * (worker main thread — may use the db and `@www/core`).
+ */
+export interface TemporalFacet {
+  /** Every workflow type `workflows.ts` exports, as string literals. */
+  workflowTypes: readonly string[];
+  schedules: readonly TemporalScheduleSpec[];
+}
+
 export function defineApi<T>(router: T): T {
   return brand(router, API_FACET_BRAND);
 }
@@ -46,6 +91,9 @@ export function defineCron(spec: CronSpec): CronSpec {
 }
 export function defineHttp(routes: HttpRoute[]): HttpRoute[] {
   return brand(routes, HTTP_FACET_BRAND);
+}
+export function defineTemporal(facet: TemporalFacet): TemporalFacet {
+  return brand(facet, TEMPORAL_FACET_BRAND);
 }
 
 function brand<T>(v: T, sym: symbol): T {

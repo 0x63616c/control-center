@@ -94,13 +94,14 @@ jobs:
               - 'app-kit/**'
               - 'features/**'
               - 'bun.lock'
-            # The Temporal worker shares only packages/ (logger + the env
-            # manifest) with the rest — no api/, no features/ — so it rebuilds
-            # on a much narrower surface than the C7 images above.
+            # The Temporal worker serves feature-declared workflows/activities
+            # (ADR-0008), so its build surface includes the feature tree and
+            # the shared packages their activities import.
             temporalworker:
               - 'apps/temporal-worker/**'
-              - 'packages/logger/**'
-              - 'packages/platform/**'
+              - 'app-kit/**'
+              - 'features/**'
+              - 'packages/**'
               - 'bun.lock'
             # infra-only changes (the Pulumi program + workload specs) deploy
             # with NO image rebuild: the deploy job runs `pulumi up`, which must

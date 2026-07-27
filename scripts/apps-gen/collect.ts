@@ -10,6 +10,8 @@ import {
   CRON_BRAND,
   HTTP_FACET_BRAND,
   JOBS_FACET_BRAND,
+  TEMPORAL_FACET_BRAND,
+  type TemporalFacet,
 } from "../../app-kit/index";
 import { TILE_REGISTRY } from "../../apps/web/src/lib/tile-registry";
 
@@ -102,6 +104,46 @@ interface CollectedHttpModule {
 }
 
 /**
+ * A collected workflow type name off a `defineTemporal` facet (ADR-0008), for
+ * the dup-workflow-type validator. The implementation is NEVER imported here —
+ * `workflows.ts` may only be loaded inside the Temporal sandbox's bundler.
+ */
+interface CollectedWorkflowType {
+  type: string;
+  source: string;
+}
+
+/**
+ * A collected Temporal Schedule (ADR-0008), fully composed: `scheduleId` is the
+ * FULL Temporal schedule ID (`app_<dir>_<localId>`), which doubles as the
+ * managed-by marker the temporal-worker's boot reconciler keys on. `argsJson`
+ * carries the workflow's single argument pre-serialised so the emitter's data
+ * listing stays trivially deterministic.
+ */
+interface CollectedTemporalSchedule {
+  scheduleId: string;
+  workflowType: string;
+  cron: string;
+  timezone: string | undefined;
+  argsJson: string | undefined;
+  timeout: string | undefined;
+  catchupWindow: string | undefined;
+  source: string;
+}
+
+/**
+ * A collected activity export name off `features/<dir>/activities.ts` (imported
+ * data-only, like api.ts — the module top-level must stay side-effect free).
+ * Feeds the dup-activity-name validator: GENERATED_ACTIVITIES is one merged
+ * object, so two features exporting the same activity name would silently
+ * last-write-win.
+ */
+interface CollectedActivity {
+  name: string;
+  source: string;
+}
+
+/**
  * Per-feature emit metadata — everything the emitter needs to render the
  * generated router/guest-router/schema/crons aggregates as deterministic import
  * barrels. `dir` is the feature folder name (relative import base from
@@ -115,6 +157,10 @@ export interface CollectedFeature {
   hasSchema: boolean;
   hasJobs: boolean;
   hasHttp: boolean;
+  /** True when the feature has a `defineTemporal` facet (temporal.ts, ADR-0008). */
+  hasTemporal: boolean;
+  /** True when the feature ships `activities.ts` (requires hasTemporal). */
+  hasActivities: boolean;
 }
 
 export interface AppModel {
@@ -127,6 +173,9 @@ export interface AppModel {
   jobs: CollectedJob[];
   httpRoutes: CollectedHttpRoute[];
   httpModules: CollectedHttpModule[];
+  workflowTypes: CollectedWorkflowType[];
+  temporalSchedules: CollectedTemporalSchedule[];
+  activities: CollectedActivity[];
 }
 
 const APP_BRAND = Symbol.for("app-kit.app");
@@ -207,6 +256,9 @@ export async function collect(): Promise<AppModel> {
   const jobs: CollectedJob[] = [];
   const httpRoutes: CollectedHttpRoute[] = [];
   const httpModules: CollectedHttpModule[] = [];
+  const workflowTypes: CollectedWorkflowType[] = [];
+  const temporalSchedules: CollectedTemporalSchedule[] = [];
+  const activities: CollectedActivity[] = [];
 
   for (const dir of dirs) {
     const base = join(FEATURES_DIR, dir);
@@ -292,6 +344,65 @@ export async function collect(): Promise<AppModel> {
       }
     }
 
+    // The Temporal facet (ADR-0008): temporal.ts is pure data (workflow type
+    // names + schedules). workflows.ts is deliberately NOT imported — it may
+    // only be loaded by the SDK's sandbox bundler via the generated barrel.
+    // activities.ts IS imported (data-only, like api.ts) to collect export
+    // names for the dup-activity validator.
+    let hasTemporal = false;
+    let hasActivities = false;
+    if (existsSync(join(base, "temporal.ts"))) {
+      const temporalMod = (await import(join(base, "temporal.ts"))) as Record<string, unknown>;
+      for (const v of Object.values(temporalMod)) {
+        if (!v || typeof v !== "object" || !(v as Record<symbol, unknown>)[TEMPORAL_FACET_BRAND]) {
+          continue;
+        }
+        hasTemporal = true;
+        const facet = v as TemporalFacet;
+        if (!existsSync(join(base, "workflows.ts"))) {
+          throw new Error(
+            `features/${dir}/temporal.ts declares a Temporal facet but features/${dir}/workflows.ts does not exist`,
+          );
+        }
+        const declaredTypes = new Set(facet.workflowTypes);
+        for (const type of facet.workflowTypes) {
+          workflowTypes.push({ type, source: `feature:${dir}` });
+        }
+        for (const s of facet.schedules) {
+          if (!declaredTypes.has(s.workflowType)) {
+            throw new Error(
+              `features/${dir}/temporal.ts schedule '${s.id}' starts workflowType '${s.workflowType}' which is not in the facet's workflowTypes`,
+            );
+          }
+          temporalSchedules.push({
+            scheduleId: `app_${dir}_${s.id}`,
+            workflowType: s.workflowType,
+            cron: s.cron,
+            timezone: s.timezone,
+            argsJson: s.args === undefined ? undefined : JSON.stringify(s.args),
+            timeout: s.timeout,
+            catchupWindow: s.catchupWindow,
+            source: `feature:${dir}`,
+          });
+        }
+      }
+      if (!hasTemporal) {
+        throw new Error(`features/${dir}/temporal.ts exists but exports no defineTemporal() facet`);
+      }
+    }
+    if (existsSync(join(base, "activities.ts"))) {
+      if (!hasTemporal) {
+        throw new Error(
+          `features/${dir}/activities.ts exists without a features/${dir}/temporal.ts facet`,
+        );
+      }
+      hasActivities = true;
+      const activitiesMod = (await import(join(base, "activities.ts"))) as Record<string, unknown>;
+      for (const [name, v] of Object.entries(activitiesMod)) {
+        if (typeof v === "function") activities.push({ name, source: `feature:${dir}` });
+      }
+    }
+
     features.push({
       dir,
       id: m.id,
@@ -300,6 +411,8 @@ export async function collect(): Promise<AppModel> {
       hasSchema,
       hasJobs,
       hasHttp,
+      hasTemporal,
+      hasActivities,
     });
   }
 
@@ -368,5 +481,8 @@ export async function collect(): Promise<AppModel> {
     jobs,
     httpRoutes,
     httpModules,
+    workflowTypes,
+    temporalSchedules,
+    activities,
   };
 }

@@ -6,23 +6,10 @@
  */
 import { ENV } from "@www/platform/env";
 
-/** Names shared with the infra program — they must agree or nothing connects. */
-export const HEALTH_CHECK_SCHEDULE_ID = "health-check";
-
-/**
- * The workflow type name the Schedule starts. Deliberately a LITERAL, not
- * `HealthCheckWorkflow.name`: importing workflows.ts here would drag
- * `@temporalio/workflow` into the main thread, outside the determinism sandbox
- * it expects to live in. `workflow-names.test.ts` asserts the literal still
- * matches the function actually exported by workflows.ts.
- */
-export const HEALTH_CHECK_WORKFLOW_TYPE = "HealthCheckWorkflow";
-
 export interface TemporalWorkerConfig {
   readonly address: string;
   readonly namespace: string;
   readonly taskQueue: string;
-  readonly healthCheckIterations: number;
   /** Port the Prometheus exposition listener binds (#214). */
   readonly metricsPort: number;
 }
@@ -33,14 +20,12 @@ export function temporalWorkerConfig(): TemporalWorkerConfig {
     "TEMPORAL_ADDRESS",
     "TEMPORAL_NAMESPACE",
     "TEMPORAL_TASK_QUEUE",
-    "TEMPORAL_HEALTH_CHECK_ITERATIONS",
     "METRICS_PORT",
   );
   return {
     address: env.TEMPORAL_ADDRESS,
     namespace: env.TEMPORAL_NAMESPACE,
     taskQueue: env.TEMPORAL_TASK_QUEUE,
-    healthCheckIterations: env.TEMPORAL_HEALTH_CHECK_ITERATIONS,
     metricsPort: env.METRICS_PORT,
   };
 }

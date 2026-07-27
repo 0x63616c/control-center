@@ -14,5 +14,4 @@ export const GENERATED_CRONS: readonly GeneratedCron[] = [
   { name: "guest-wifi-purge", schedule: "0 2 * * *", source: "feature:guest-wifi" },
   { name: "hooks-purge", schedule: "0 6 * * *", source: "feature:hooks" },
   { name: "wake-photo-purge", schedule: "0 4 * * *", source: "feature:wakes" },
-  { name: "weather-purge", schedule: "0 3 * * *", source: "feature:weather" },
 ];

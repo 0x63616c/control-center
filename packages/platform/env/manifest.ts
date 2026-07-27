@@ -124,15 +124,13 @@ export const ENV = defineEnv({
   CAMERA_LABEL: str().default("Living Room Cam").forRuntime("api").forFeatures("dogcam"),
 
   // ── Temporal (temporal-worker) ────────────────────────────────────────────
-  // All four carry safe in-cluster defaults, so the temporal-worker Deployment
-  // ships with no env at all and still lands on the right server/namespace/queue.
-  // No `.forRuntime()`: BootRuntime covers api|worker|cron, and the temporal
-  // worker is its own image with its own boot path (apps/temporal-worker).
+  // All three carry safe in-cluster defaults, so the temporal-worker Deployment
+  // needs no Temporal env at all and still lands on the right
+  // server/namespace/queue. (The old TEMPORAL_HEALTH_CHECK_ITERATIONS knob
+  // became plain facet data in features/temporal-health/temporal.ts, ADR-0008.)
   TEMPORAL_ADDRESS: str().default("temporal-server.temporal.svc.cluster.local:7233"),
   TEMPORAL_NAMESPACE: str().default("control-center"),
   TEMPORAL_TASK_QUEUE: str().default("main"),
-  // `N` in HealthCheckWorkflow: activities per one-minute run (60s/5 = 12s slots).
-  TEMPORAL_HEALTH_CHECK_ITERATIONS: int().default(5),
 
   // ── Guest listener (api/guest-server, ADR-0006) ───────────────────────────
   GUEST_PORT: int().optional().forRuntime("api"),

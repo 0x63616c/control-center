@@ -1,26 +1,33 @@
 /**
  * The Temporal worker: polls the `main` task queue in the `control-center`
- * namespace, serving HealthCheckWorkflow + HealthCheckActivity.
+ * namespace, serving every workflow/activity the features declare through
+ * their temporal facets (ADR-0008) — registration and Schedules both come from
+ * `features/_generated/`, zero per-feature hand-wiring here.
  *
  * This is the one runtime in the repo that runs on NODE rather than bun —
  * @temporalio/core-bridge is a native addon published for glibc Node only, and
  * the Workflow sandbox is built on node's `vm`. See the Dockerfile.
  */
 
+import "./boot-env";
 import { Client, Connection } from "@temporalio/client";
 import { NativeConnection, Worker } from "@temporalio/worker";
 import { createLogger } from "@www/logger";
 import { initMetrics, startMetricsServer } from "@www/platform/metrics";
-import * as activities from "./activities";
+import { GENERATED_ACTIVITIES } from "../../../features/_generated/activities.gen";
+import { GENERATED_SCHEDULES } from "../../../features/_generated/schedules.gen";
 import { temporalWorkerConfig } from "./config";
-import { upsertHealthCheckSchedule } from "./schedule";
+import { reconcileSchedules } from "./reconcile";
 
 const logger = createLogger({ service: "temporal-worker" });
 
-// workflows.ts is shipped as SOURCE and handed to the SDK's own bundler at boot
-// (it enforces the determinism sandbox), so this is a path, not an import. It
-// resolves next to this module in both the image (/app/src) and local dev.
-const workflowsPath = new URL("./workflows.ts", import.meta.url).pathname;
+// The generated workflows barrel is shipped as SOURCE and handed to the SDK's
+// own bundler at boot (it enforces the determinism sandbox), so this is a
+// path, not an import. The image mirrors the repo layout
+// (apps/temporal-worker/src ↔ features/), so the relative hop resolves
+// identically in the container and local dev.
+const workflowsPath = new URL("../../../features/_generated/workflows.gen.ts", import.meta.url)
+  .pathname;
 
 async function main(): Promise<void> {
   const config = temporalWorkerConfig();
@@ -38,23 +45,23 @@ async function main(): Promise<void> {
       address: config.address,
       namespace: config.namespace,
       taskQueue: config.taskQueue,
-      iterations: config.healthCheckIterations,
+      schedules: GENERATED_SCHEDULES.length,
     },
     "temporal worker starting",
   );
 
   // Two connections on purpose: the Worker needs the Rust bridge's
-  // NativeConnection, while the schedule upsert speaks the plain gRPC client.
+  // NativeConnection, while the schedule reconciler speaks the plain gRPC client.
   const connection = await NativeConnection.connect({ address: config.address });
   const clientConnection = await Connection.connect({ address: config.address });
   const client = new Client({ connection: clientConnection, namespace: config.namespace });
 
-  // Upsert BEFORE run(): if the schedule cannot be written the deploy should
-  // fail loudly here, not come up green with nothing ever being scheduled.
-  await upsertHealthCheckSchedule({
+  // Reconcile BEFORE run(): if the schedule set cannot be written the deploy
+  // should fail loudly here, not come up green with nothing ever scheduled.
+  await reconcileSchedules({
     client,
     taskQueue: config.taskQueue,
-    iterations: config.healthCheckIterations,
+    schedules: GENERATED_SCHEDULES,
     logger,
   });
 
@@ -63,7 +70,7 @@ async function main(): Promise<void> {
     namespace: config.namespace,
     taskQueue: config.taskQueue,
     workflowsPath,
-    activities,
+    activities: GENERATED_ACTIVITIES,
   });
 
   const shutdown = (signal: string) => {

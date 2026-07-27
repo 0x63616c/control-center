@@ -38,6 +38,7 @@ const cnpgOperator = () =>
 const mockVault: Record<string, string> = {
   GITHUB_PERSONAL_ACCESS_TOKEN__TOKEN: "mock-ghcr-pat",
   TEMPORAL_POSTGRES__PASSWORD: "mock-temporal-postgres-password",
+  CONTROL_CENTER_POSTGRES__PASSWORD: "mock-cc-postgres-password",
 };
 
 function install(imageDigests: Record<string, string> = {}) {

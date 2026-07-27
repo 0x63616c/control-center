@@ -26,11 +26,17 @@ import { fileURLToPath } from "node:url";
 import { GUEST_EXPOSED } from "../features/guest-exposed";
 import { collect } from "./apps-gen/collect";
 import {
+  renderActivities,
+  renderCronHandlers,
   renderCrons,
   renderGuestRouter,
+  renderHttp,
+  renderJobs,
   renderRouter,
+  renderSchedules,
   renderSchema,
   renderTiles,
+  renderWorkflows,
 } from "./apps-gen/emit";
 import { validate } from "./apps-gen/validate";
 
@@ -68,6 +74,34 @@ const AGGREGATES: readonly Aggregate[] = [
   {
     file: "crons.gen.ts",
     render: async () => renderCrons(await collect()),
+  },
+  // Backfill (issue #260): these three predate this entry but were never
+  // drift-checked — the natural mistake is emitting in apps-gen.ts and
+  // forgetting this list.
+  {
+    file: "cron-handlers.gen.ts",
+    render: async () => renderCronHandlers(await collect()),
+  },
+  {
+    file: "jobs.gen.ts",
+    render: async () => renderJobs(await collect()),
+  },
+  {
+    file: "http.gen.ts",
+    render: async () => renderHttp(await collect()),
+  },
+  // Temporal facet artifacts (ADR-0008).
+  {
+    file: "workflows.gen.ts",
+    render: async () => renderWorkflows(await collect()),
+  },
+  {
+    file: "activities.gen.ts",
+    render: async () => renderActivities(await collect()),
+  },
+  {
+    file: "schedules.gen.ts",
+    render: async () => renderSchedules(await collect()),
   },
 ];
 
