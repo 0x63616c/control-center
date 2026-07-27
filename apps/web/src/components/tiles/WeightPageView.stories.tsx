@@ -9,11 +9,21 @@ import { expect, fn, within } from "storybook/test";
 import { modalDocsParameters } from "./__stories__/factory";
 import { WeightPageView } from "./WeightPageView";
 
-// 30 daily medians (lb), oldest → newest.
+// 28 daily medians (lb), oldest → newest, starting 2026-06-22.
+// Dates roll over the month boundary via Date arithmetic: the previous
+// `2026-06-${22 + i}` produced June 31st through June 49th, which parse as
+// Invalid Date, so two thirds of the series became NaN x-coordinates and the
+// chart rendered no line at all.
+const START = new Date("2026-06-22T00:00:00");
 const DAILY = [
   186.2, 185.8, 186.0, 185.4, 185.1, 185.5, 184.8, 184.4, 183.9, 183.2, 183.6, 182.8, 183.0, 182.1,
   182.5, 181.9, 182.3, 181.4, 181.7, 180.8, 181.2, 180.6, 181.0, 180.3, 179.9, 180.6, 179.7, 180.1,
-].map((lb, i) => ({ day: `2026-06-${String(22 + i).padStart(2, "0")}`, lb }));
+].map((lb, i) => {
+  const d = new Date(START);
+  d.setDate(d.getDate() + i);
+  const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return { day, lb };
+});
 
 const meta = {
   title: "Pages/WeightTrend",
@@ -29,7 +39,7 @@ const meta = {
       </div>
     ),
   ],
-  args: { onRangeChange: fn() },
+  args: { onRangeChange: fn(), metric: "weight_kg", onMetricChange: fn() },
 } satisfies Meta<typeof WeightPageView>;
 
 export default meta;
@@ -111,19 +121,58 @@ export const WithGap: Story = {
   },
 };
 
+/**
+ * A percentage metric. The kg→lb factor must NOT be applied to it, and every
+ * number carries "%" rather than "lb" — the regression this story guards.
+ */
+export const FatRatio: Story = {
+  args: {
+    status: "populated",
+    range: "30d",
+    metric: "fat_ratio_percent",
+    unit: "%",
+    lb: 17.1,
+    daily: [
+      { day: "2026-07-20", lb: 18.4 },
+      { day: "2026-07-21", lb: 17.9 },
+      { day: "2026-07-22", lb: 17.1 },
+    ],
+    low: 17.1,
+    high: 18.4,
+    average: 17.8,
+    change: -1.3,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    expect(canvas.getByText("17.8%")).toBeInTheDocument();
+    expect(canvas.getByText("-1.3%")).toBeInTheDocument();
+    // No lb anywhere on a percentage metric.
+    expect(canvas.queryByText(/lb/)).not.toBeInTheDocument();
+  },
+};
+
 export const Loading: Story = {
   args: { status: "loading", range: "30d" },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     expect(canvas.queryByText("Low")).not.toBeInTheDocument();
+    // The pickers survive every state — you must always be able to switch back.
+    expect(canvas.getByRole("radiogroup", { name: "Metric" })).toBeInTheDocument();
   },
 };
 
-// Day one: populated status but no included readings yet → skeleton.
-export const Empty: Story = {
-  args: { status: "populated", range: "30d" },
+/**
+ * Populated, but this metric has no history (the scale never reported bone
+ * mass). Names the metric, and critically KEEPS the picker mounted so you can
+ * select your way back out.
+ */
+export const NoDataForMetric: Story = {
+  args: { status: "populated", range: "30d", metric: "bone_mass_kg" },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
+    expect(canvas.getByText(/No bone data yet/)).toBeInTheDocument();
     expect(canvas.queryByText("Low")).not.toBeInTheDocument();
+    const picker = canvas.getByRole("radiogroup", { name: "Metric" });
+    expect(within(picker).getByRole("radio", { name: "Weight" })).toBeInTheDocument();
   },
 };

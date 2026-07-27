@@ -10,7 +10,7 @@
 
 import { formatRecency, LB_PER_KG } from "@features/weight/web";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { WeightRange } from "@/components/tiles/WeightPageView";
+import type { WeightMetricValue, WeightRange, WeightUnit } from "@/components/tiles/WeightPageView";
 import { WeightPageView } from "@/components/tiles/WeightPageView";
 import type { WeightReadingDay } from "@/components/tiles/WeightReadingsView";
 import { WeightReadingsView } from "@/components/tiles/WeightReadingsView";
@@ -35,6 +35,33 @@ function windowLabelOf(daily: { day: string }[], now: Date): string | null {
   return `${fmt(first.day)} – ${end}`;
 }
 
+/**
+ * Body composition for one reading, in display order and units. Masses convert
+ * to lb like every other weight on this page; the fat ratio stays a percentage.
+ * Keys the scale didn't report are skipped, so a partial sync renders what it
+ * has instead of padding the row with blanks.
+ */
+const COMPOSITION_FIELDS: { key: string; label: string; unit: "lb" | "%" }[] = [
+  { key: "fat_ratio_percent", label: "Fat", unit: "%" },
+  { key: "fat_mass_kg", label: "Fat mass", unit: "lb" },
+  { key: "muscle_mass_kg", label: "Muscle", unit: "lb" },
+  { key: "hydration_kg", label: "Hydration", unit: "lb" },
+  { key: "bone_mass_kg", label: "Bone", unit: "lb" },
+  { key: "fat_free_mass_kg", label: "Fat-free", unit: "lb" },
+];
+
+function toComposition(
+  bodyMetrics: Record<string, number> | null,
+): { label: string; value: string }[] {
+  if (!bodyMetrics) return [];
+  return COMPOSITION_FIELDS.flatMap(({ key, label, unit }) => {
+    const raw = bodyMetrics[key];
+    if (raw == null) return [];
+    const value = unit === "%" ? `${raw.toFixed(1)}%` : `${(raw * LB_PER_KG).toFixed(1)} lb`;
+    return [{ label, value }];
+  });
+}
+
 function toViewDays(pages: RouterOutputs["weight"]["days"][], now: Date): WeightReadingDay[] {
   const all = pages.flatMap((page) =>
     page.days.map((d) => ({
@@ -52,6 +79,7 @@ function toViewDays(pages: RouterOutputs["weight"]["days"][], now: Date): Weight
         deltaLb: r.deltaKg == null ? null : r.deltaKg * LB_PER_KG,
         excluded: r.excludedReason != null,
         auto: r.excludedReason === "sanity_band",
+        composition: toComposition(r.bodyMetrics),
       })),
     })),
   );
@@ -68,13 +96,28 @@ function toViewDays(pages: RouterOutputs["weight"]["days"][], now: Date): Weight
   });
 }
 
+/**
+ * A fat RATIO is already a percentage — the kg→lb factor the rest of this page
+ * applies would turn 17.1% into a meaningless 37.7. Every other metric is a
+ * mass and converts normally.
+ */
+function unitOf(metric: WeightMetricValue): WeightUnit {
+  return metric === "fat_ratio_percent" ? "%" : "lb";
+}
+
+/** Scale factor from the api's kg/percent into the view's display unit. */
+function factorOf(metric: WeightMetricValue): number {
+  return unitOf(metric) === "%" ? 1 : LB_PER_KG;
+}
+
 function useWeightVariants(): { variants: DetailVariant[]; loading: boolean } {
   const [range, setRange] = useState<WeightRange>("30d");
+  const [metric, setMetric] = useState<WeightMetricValue>("weight_kg");
   const now = useNow();
 
   const utils = trpc.useUtils();
   const summaryQuery = trpc.weight.summary.useQuery(
-    { range, tz: TZ },
+    { range, tz: TZ, metric },
     { refetchInterval: POLL.weight },
   );
   const daysQuery = trpc.weight.days.useInfiniteQuery(
@@ -137,28 +180,37 @@ function useWeightVariants(): { variants: DetailVariant[]; loading: boolean } {
     {
       slug: "trend",
       label: "Trend",
-      render: () =>
-        summary ? (
+      render: () => {
+        const f = factorOf(metric);
+        return summary ? (
           <WeightPageView
             status={TileStatus.Populated}
             range={range}
             onRangeChange={setRange}
-            lb={summary.latestKg * LB_PER_KG}
-            daily={summary.daily.map((d) => ({ day: d.day, lb: d.kg * LB_PER_KG }))}
-            low={summary.low * LB_PER_KG}
-            high={summary.high * LB_PER_KG}
-            average={summary.average * LB_PER_KG}
-            change={summary.change * LB_PER_KG}
+            metric={metric}
+            onMetricChange={setMetric}
+            unit={unitOf(metric)}
+            lb={summary.latestKg * f}
+            daily={summary.daily.map((d) => ({ day: d.day, lb: d.kg * f }))}
+            low={summary.low * f}
+            high={summary.high * f}
+            average={summary.average * f}
+            change={summary.change * f}
             windowLabel={windowLabelOf(summary.daily, now) ?? undefined}
           />
         ) : (
-          // Null summary = day one (no included readings yet), not an error.
+          // Null summary = nothing to plot for this metric — either day one, or
+          // a metric the scale has never reported. Not an error.
           <WeightPageView
             status={summaryQuery.isPending ? TileStatus.Loading : TileStatus.Populated}
             range={range}
             onRangeChange={setRange}
+            metric={metric}
+            onMetricChange={setMetric}
+            unit={unitOf(metric)}
           />
-        ),
+        );
+      },
     },
     {
       slug: "readings",

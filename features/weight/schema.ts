@@ -27,8 +27,10 @@ export const weightMeasurement = pgTable(
     measuredAt: timestamp("measured_at", { withTimezone: true }).notNull().unique(),
     // Canonical metric. lb is presentation-only.
     weightKg: doublePrecision("weight_kg").notNull(),
-    // Body composition as reported (fat/muscle/water/BMR...); stored, not shown.
-    bodyMetrics: jsonb("body_metrics"),
+    // Body composition as reported (fat/muscle/hydration/bone/fat-free), keyed
+    // by the names in WEIGHT_METRICS. Null for the retired ha_ble-era rows,
+    // which carried a weight and nothing else.
+    bodyMetrics: jsonb("body_metrics").$type<Record<string, number>>(),
     source: text("source").notNull(), // 'withings_api' (legacy rows may still say 'ha_ble')
     // Withings' own measurement-group id (direct-API ingest only; null for
     // HA-sourced rows). Unique so a correction Calum makes in the Health Mate

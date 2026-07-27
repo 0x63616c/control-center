@@ -14,15 +14,47 @@ import { modalDocsParameters } from "./__stories__/factory";
 import type { WeightReadingDay, WeightReadingRow } from "./WeightReadingsView";
 import { WeightReadingsView } from "./WeightReadingsView";
 
-/** Today's four rows are the real ones recorded on 2026-07-22. */
+/** Withings body composition, as the wiring layer formats it. */
+const COMPOSITION = [
+  { label: "Fat", value: "17.1%" },
+  { label: "Fat mass", value: "27.3 lb" },
+  { label: "Muscle", value: "126.1 lb" },
+  { label: "Hydration", value: "94.8 lb" },
+  { label: "Bone", value: "6.6 lb" },
+  { label: "Fat-free", value: "132.7 lb" },
+];
+
+/**
+ * Today's four rows are the real ones recorded on 2026-07-22. Deliberately
+ * MIXED: the two newest carry Withings body composition, the two older ones
+ * are ha_ble-era rows that never had any. Both must render correctly in the
+ * same expanded day — the older rows show no strip at all, not a row of
+ * dashes.
+ */
 const TODAY: WeightReadingDay = {
   key: "2026-07-22",
   label: "Today",
   medianLb: 160.6,
   dayDeltaLb: -0.5,
   readings: [
-    { id: "wm_01", timeLabel: "11:43 AM", lb: 160.2, deltaLb: -0.2, excluded: false, auto: false },
-    { id: "wm_02", timeLabel: "11:12 AM", lb: 160.4, deltaLb: -0.4, excluded: false, auto: false },
+    {
+      id: "wm_01",
+      timeLabel: "11:43 AM",
+      lb: 160.2,
+      deltaLb: -0.2,
+      excluded: false,
+      auto: false,
+      composition: COMPOSITION,
+    },
+    {
+      id: "wm_02",
+      timeLabel: "11:12 AM",
+      lb: 160.4,
+      deltaLb: -0.4,
+      excluded: false,
+      auto: false,
+      composition: COMPOSITION,
+    },
     { id: "wm_03", timeLabel: "10:55 AM", lb: 160.8, deltaLb: -0.1, excluded: false, auto: false },
     { id: "wm_04", timeLabel: "9:30 AM", lb: 160.9, deltaLb: null, excluded: false, auto: false },
   ],
@@ -148,6 +180,25 @@ export const DayExpanded: Story = {
     expect(args.onDelete).not.toHaveBeenCalled();
     await userEvent.click(await within(document.body).findByRole("button", { name: "Delete" }));
     expect(args.onDelete).toHaveBeenCalledWith("wm_01");
+  },
+};
+
+/**
+ * Body composition renders under the readings that have it, and is simply
+ * absent — not blank or dashed — on the ha_ble-era rows that never carried it.
+ */
+export const BodyComposition: Story = {
+  args: { status: "populated", days: DAYS },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: /Today/ }));
+
+    // The two Withings rows each carry the full strip.
+    expect(canvas.getAllByText("17.1%")).toHaveLength(2);
+    expect(canvas.getAllByText("126.1 lb")).toHaveLength(2);
+    // Six metrics on two rows, and nothing extra leaking onto the legacy rows.
+    expect(canvas.getAllByText("Fat mass")).toHaveLength(2);
+    expect(canvas.getAllByText("Hydration")).toHaveLength(2);
   },
 };
 

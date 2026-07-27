@@ -113,6 +113,55 @@ export const tzInput = z.string().refine(isValidTimeZone, {
   message: "not a recognised IANA time zone",
 });
 
+/**
+ * The plottable series. `weight_kg` is its own column; every other metric is a
+ * key inside the `body_metrics` jsonb Withings reports alongside the weight.
+ *
+ * `unit` drives presentation end-to-end: "kg" values are converted to lb at the
+ * web boundary (the panel speaks lb for body mass), "percent" values are NOT —
+ * a fat ratio has no lb equivalent and multiplying it by 2.2 would be nonsense.
+ */
+export const WEIGHT_METRICS = {
+  weight_kg: { label: "Weight", unit: "kg" },
+  fat_ratio_percent: { label: "Fat", unit: "percent" },
+  fat_mass_kg: { label: "Fat mass", unit: "kg" },
+  muscle_mass_kg: { label: "Muscle", unit: "kg" },
+  hydration_kg: { label: "Hydration", unit: "kg" },
+  bone_mass_kg: { label: "Bone", unit: "kg" },
+  fat_free_mass_kg: { label: "Fat-free", unit: "kg" },
+} as const;
+
+export type WeightMetric = keyof typeof WEIGHT_METRICS;
+
+export const metricInput = z.enum(Object.keys(WEIGHT_METRICS) as [WeightMetric, ...WeightMetric[]]);
+
+/**
+ * The value being plotted, as a SQL expression. Body-composition metrics live
+ * in jsonb, so they need an explicit ->> + cast; weight is a real column.
+ */
+export function metricExpr(metric: WeightMetric): SQL<number> {
+  if (metric === "weight_kg") return sql<number>`${weightMeasurement.weightKg}`;
+  return sql<number>`(${weightMeasurement.bodyMetrics} ->> ${metric})::double precision`;
+}
+
+/**
+ * Trend reads are Withings-only, on purpose, and for EVERY metric including
+ * weight.
+ *
+ * The retired ha_ble ingest (Renpho scale over a BLE proxy) recorded a weight
+ * and nothing else — no body composition at all. Including those rows would
+ * start the weight series months before every other metric could possibly
+ * start, so switching from Weight to Fat would jump the window to a different
+ * date range and read as data loss. Pinning all series to the same source
+ * keeps their start dates identical, which is the whole point of the picker.
+ *
+ * The Readings list deliberately does NOT apply this: it is the audit trail,
+ * and hiding real historical weigh-ins there would be a lie.
+ */
+function withingsOnly() {
+  return eq(weightMeasurement.source, "withings_api");
+}
+
 const RANGE_DAYS = { "7d": 7, "30d": 30, all: null } as const;
 
 interface DayRow {
@@ -121,6 +170,8 @@ interface DayRow {
   measuredAt: Date;
   weightKg: number;
   excludedReason: string | null;
+  /** Withings body composition; absent/null for the retired ha_ble-era rows. */
+  bodyMetrics?: Record<string, number> | null;
 }
 
 /**
@@ -160,6 +211,7 @@ export function assembleDays(rows: DayRow[]) {
         weightKg: r.weightKg,
         excludedReason: r.excludedReason,
         deltaKg,
+        bodyMetrics: r.bodyMetrics ?? null,
       };
     });
     return {
@@ -183,20 +235,33 @@ export function assembleDays(rows: DayRow[]) {
 }
 
 // Daily-median series + window stats for the tile and Trend page. Null until
-// the first included reading exists (day-one skeleton).
-export async function getSummary(range: "7d" | "30d" | "all", tz: string) {
+// the first included reading exists (day-one skeleton). `metric` selects which
+// series is plotted; every metric reads the same Withings-only rows, so the
+// window start never moves when the picker changes (see withingsOnly).
+export async function getSummary(
+  range: "7d" | "30d" | "all",
+  tz: string,
+  metric: WeightMetric = "weight_kg",
+) {
   const days = RANGE_DAYS[range];
   const cutoff = days ? new Date(Date.now() - days * 24 * 60 * 60 * 1000) : null;
+  const value = metricExpr(metric);
   const rows = await db
     .select({
       day: dayExpr(tz),
-      weightKg: weightMeasurement.weightKg,
+      weightKg: value,
     })
     .from(weightMeasurement)
     .where(
       and(
         isNull(weightMeasurement.excludedReason),
         notDeleted(),
+        withingsOnly(),
+        // A Withings row can still lack a given body-composition key (a
+        // weight-only sync, or a metric the scale didn't report that session).
+        // Those must drop out of the series rather than land as nulls that
+        // median() would turn into NaN.
+        sql`${value} is not null`,
         ...(cutoff ? [gte(weightMeasurement.measuredAt, cutoff)] : []),
       ),
     )
@@ -266,6 +331,7 @@ export async function getDays(tz: string, cursor: string | undefined, limit: num
       measuredAt: weightMeasurement.measuredAt,
       weightKg: weightMeasurement.weightKg,
       excludedReason: weightMeasurement.excludedReason,
+      bodyMetrics: weightMeasurement.bodyMetrics,
     })
     .from(weightMeasurement)
     .where(and(notDeleted(), inArray(day, queryDays)))

@@ -12,6 +12,7 @@ import * as stories from "../WeightReadingsView.stories";
 const {
   Populated,
   DayExpanded,
+  BodyComposition,
   AutoFlagged,
   SingleDay,
   NoCountedReading,
@@ -51,6 +52,11 @@ describe("WeightReadingsView stories", () => {
   it("DayExpanded: delete is gated behind the confirm dialog", async () => {
     const { container } = render(<DayExpanded />);
     if (DayExpanded.play) await DayExpanded.play({ canvasElement: container });
+  });
+
+  it("BodyComposition: shows on Withings rows, absent on ha_ble-era rows", async () => {
+    const { container } = render(<BodyComposition />);
+    if (BodyComposition.play) await BodyComposition.play({ canvasElement: container });
   });
 
   it("AutoFlagged: only an auto-flagged reading offers to be counted again", async () => {

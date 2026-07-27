@@ -30,6 +30,13 @@ export interface WeightReadingRow {
   excluded: boolean;
   /** True when the exclusion came from the sanity band, not a manual toggle. */
   auto: boolean;
+  /**
+   * Body composition for this reading, already formatted and unit-suffixed by
+   * the wiring layer. Empty/absent for the retired ha_ble-era rows, which
+   * carried a weight and nothing else — those simply render no strip rather
+   * than a row of dashes.
+   */
+  composition?: { label: string; value: string }[];
 }
 
 export interface WeightReadingDay {
@@ -174,50 +181,74 @@ function ReadingRow({
   onToggle: (id: string, excluded: boolean) => void;
   onRequestDelete: ((row: WeightReadingRow) => void) | undefined;
 }) {
+  const composition = row.composition ?? [];
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 14,
-        // Indented under the day row it belongs to.
-        padding: "8px 8px 8px 54px",
-        opacity: row.excluded ? 0.55 : 1,
-      }}
-    >
-      <span className="mono" style={{ width: COL_WHEN, fontSize: 13, color: "var(--ink-2)" }}>
-        {row.timeLabel}
-      </span>
-      <Weight lb={row.lb} size={15} struck={row.excluded} width={COL_WEIGHT} />
-      <Delta lb={row.deltaLb} />
-      {row.excluded && row.auto && <Pill tone={PillTone.Amber}>AUTO-FLAGGED</Pill>}
-      <span style={{ marginLeft: "auto" }} />
-      <OverflowMenu
-        label={`Actions for the ${row.timeLabel} reading`}
-        items={[
-          // Only an auto-flagged reading offers to be counted again — every
-          // other row's exclusion would be a manual one nobody asked for.
-          ...(row.excluded
-            ? [
-                {
-                  key: "include",
-                  label: "Count this reading",
-                  onSelect: () => onToggle(row.id, false),
-                },
-              ]
-            : []),
-          ...(onRequestDelete
-            ? [
-                {
-                  key: "delete",
-                  label: "Delete",
-                  tone: "danger" as const,
-                  onSelect: () => onRequestDelete(row),
-                },
-              ]
-            : []),
-        ]}
-      />
+    <div style={{ opacity: row.excluded ? 0.55 : 1 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 14,
+          // Indented under the day row it belongs to.
+          padding: "8px 8px 8px 54px",
+        }}
+      >
+        <span className="mono" style={{ width: COL_WHEN, fontSize: 13, color: "var(--ink-2)" }}>
+          {row.timeLabel}
+        </span>
+        <Weight lb={row.lb} size={15} struck={row.excluded} width={COL_WEIGHT} />
+        <Delta lb={row.deltaLb} />
+        {row.excluded && row.auto && <Pill tone={PillTone.Amber}>AUTO-FLAGGED</Pill>}
+        <span style={{ marginLeft: "auto" }} />
+        <OverflowMenu
+          label={`Actions for the ${row.timeLabel} reading`}
+          items={[
+            // Only an auto-flagged reading offers to be counted again — every
+            // other row's exclusion would be a manual one nobody asked for.
+            ...(row.excluded
+              ? [
+                  {
+                    key: "include",
+                    label: "Count this reading",
+                    onSelect: () => onToggle(row.id, false),
+                  },
+                ]
+              : []),
+            ...(onRequestDelete
+              ? [
+                  {
+                    key: "delete",
+                    label: "Delete",
+                    tone: "danger" as const,
+                    onSelect: () => onRequestDelete(row),
+                  },
+                ]
+              : []),
+          ]}
+        />
+      </div>
+      {/* Body composition, indented to the same 54px gutter as the reading it
+          belongs to so it reads as that row's detail. Absent entirely
+          for readings that never carried it. */}
+      {composition.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "4px 18px",
+            padding: "0 8px 10px 54px",
+          }}
+        >
+          {composition.map((c) => (
+            <span key={c.label} style={{ fontSize: 12, color: "var(--ink-3)" }}>
+              {c.label}{" "}
+              <span className="mono" style={{ color: "var(--ink-2)" }}>
+                {c.value}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
