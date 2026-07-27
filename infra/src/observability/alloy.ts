@@ -19,6 +19,7 @@
 // the `/var/lib/docker/containers` path most examples assume. There are
 // therefore NO hostPath volumes in this DaemonSet, deliberately.
 
+import { createHash } from "node:crypto";
 import * as k8s from "@pulumi/kubernetes";
 import { ALLOY_IMAGE, LOKI_PORT, OBSERVABILITY_NAMESPACE } from "./constants.ts";
 import type { LokiResources } from "./loki.ts";
@@ -193,6 +194,7 @@ export type AlloyResources = {
  */
 export function installAlloy(args: AlloyArgs): AlloyResources {
   const { provider, namespace, loki } = args;
+  const alloyConfig = buildAlloyConfig();
   const options = { provider, dependsOn: [namespace] };
   const labels = { "app.kubernetes.io/name": ALLOY_NAME };
 
@@ -255,7 +257,7 @@ export function installAlloy(args: AlloyArgs): AlloyResources {
     CONFIG_MAP_NAME,
     {
       metadata: { name: CONFIG_MAP_NAME, namespace: OBSERVABILITY_NAMESPACE, labels },
-      data: { [CONFIG_FILE_NAME]: buildAlloyConfig() },
+      data: { [CONFIG_FILE_NAME]: alloyConfig },
     },
     options,
   );
@@ -267,7 +269,16 @@ export function installAlloy(args: AlloyArgs): AlloyResources {
       spec: {
         selector: { matchLabels: labels },
         template: {
-          metadata: { labels },
+          metadata: {
+            labels,
+            // Roll the pod when its config changes: a mounted ConfigMap updates
+            // in place, but the process only reads it at boot, so without this
+            // a config change sits deployed-but-inert until an unrelated
+            // restart.
+            annotations: {
+              "checksum/config": createHash("sha256").update(alloyConfig).digest("hex"),
+            },
+          },
           spec: {
             serviceAccountName: SERVICE_ACCOUNT_NAME,
             // The one node today is untainted, but a DaemonSet that silently

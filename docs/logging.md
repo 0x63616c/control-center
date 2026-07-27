@@ -541,6 +541,52 @@ are parked at `debug`, but because `logChange` makes them fire on transitions
 only, plus the 5-minute stats snapshot. That is the correct bound on the
 highest-frequency emitters.
 
+### Reading them from a desk: Loki (added 2026-07-26, #216)
+
+`kubectl logs` is still the fastest read for a pod you already have in front of
+you, but stdout is no longer the only place these lines live. Grafana Alloy runs
+as a DaemonSet in the `observability` namespace and streams every container's
+stdout/stderr — from the Kubernetes pod-log API, the same endpoint `kubectl logs
+-f` reads — into Loki. Query it in Grafana
+(`https://grafana.worldwidewebb.co`, Explore → Loki). Retention is 14 days.
+
+The pipeline understands **this contract's** JSON specifically. Alloy runs a
+`stage.json` over each line pulling out pino's own field names — numeric `level`,
+message `msg`, epoch-millis `time`, plus the `service` and `env` base fields
+bound by `packages/logger` (§1) — then:
+
+- **`level` is translated from pino's number to a word.** pino writes `30`/`50`;
+  a `{level="30"}` label means nothing to anyone, so a `stage.template` maps
+  10/20/30/40/50/60 to `trace`/`debug`/`info`/`warn`/`error`/`fatal`.
+- **The application's own `time` is used as the log timestamp**, not the moment
+  Alloy read the line, so a backlogged collector cannot stamp an hour-old line
+  with the wrong time.
+
+Labels available to query, and nothing else:
+
+| label | from |
+|-------|------|
+| `namespace`, `pod`, `container` | Kubernetes metadata |
+| `app` | the pod's `app.kubernetes.io/name` or `app` label |
+| `service` | this contract's `service` base field (`api`, `worker`, …) |
+| `level` | the mapped pino level |
+
+```logql
+{namespace="control-center", service="api", level="error"}
+{namespace="control-center", service="worker"} | json | msg =~ "job .*"
+```
+
+Only `service` and `level` are promoted from the log body, and both are bounded
+— by the number of services we deploy and by the six pino levels. **Every other
+field stays in the JSON line and is filtered at query time with `| json`.**
+Promoting an unbounded field (request id, device id, URL path) to a label
+creates one Loki stream per value and destroys the install; see
+`docs/observability.md` §6 before adding a third promotion.
+
+Lines that are not JSON — third-party images — extract nothing and arrive
+unlabelled. They are still there, just without `service`/`level`. Which is one
+more reason §3's "everything of ours is JSON at `info`" holds.
+
 ---
 
 ## 7. Web (browser), shipped separately
@@ -565,6 +611,14 @@ It does **not** POST to an api sink. That option was considered and dropped: the
 homelab is RAM-constrained and its previous log stack was deliberately removed, and
 a shipper that fails takes the diagnostics down with the thing you are trying to
 diagnose.
+
+> **Update 2026-07-18 / 2026-07-26.** The frontend does now ship, but to
+> **Postgres** (`frontend_log`, see "Logging And Config" in
+> `CODEBASE_OVERVIEW.md`), not to an api log sink — the on-device layers above
+> remain the primary read path. And the RAM constraint above is gone: the 8 GiB
+> Mac mini was retired, and a Loki/Grafana stack exists again on home-server
+> (#33/#216, `docs/observability.md`). It collects **container** logs; frontend
+> logs still go to Postgres.
 
 **§4 (redaction) is deliberately NOT applied to the web app.** The tRPC link
 records request inputs verbatim. This is an explicit decision by the panel's

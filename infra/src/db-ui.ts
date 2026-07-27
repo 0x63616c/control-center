@@ -37,15 +37,33 @@ import {
 
 export const DB_UI_NAMESPACE = "db-ui";
 
-const IMAGE = "dpage/pgadmin4:9.4";
+const IMAGE = "dpage/pgadmin4:9.16";
 const PORT = 80;
 const DATA_CLAIM_NAME = "pgadmin-data";
 const DATA_CLAIM_SIZE = "1Gi";
 const CONFIG_MAP_NAME = "db-ui-servers";
 const PGPASS_SECRET_NAME = "db-ui-pgpass";
 const LOGIN_SECRET_NAME = "db-ui-login";
-const PGPASS_MOUNT_DIR = "/pgpass";
-const PGPASS_FILE_PATH = `${PGPASS_MOUNT_DIR}/pgpass`;
+// pgAdmin's own local login identity (NOT a real mailbox — see loginSecret
+// below). Fixed, not vault-sourced: it's just a string key, and the storage
+// path below is derived from it.
+const LOGIN_EMAIL = "db-ui-admin@worldwidewebb.co";
+// The value handed to pgAdmin's `PassFile` connection param. In SERVER_MODE
+// (the web/container build, which is what this is), pgAdmin does NOT treat
+// this as a real filesystem path: `get_complete_file_path()`
+// (pgadmin/utils/__init__.py) strips the leading slash and re-joins it under
+// that user's private file-manager storage root,
+// `/var/lib/pgadmin/storage/<sanitized-login-email>/`, then checks
+// `os.path.isfile()` on THAT path — silently falling back to a password
+// prompt if it doesn't exist there. (Confirmed live 2026-07-26 against a
+// deployed pod: the naive `/pgpass/pgpass` mount from the first cut of this
+// module never resolved, and every connect prompted for a password.) The
+// sanitization is `email.replace("@", "_")` (pgadmin/utils/paths.py
+// preprocess_username) — LOGIN_EMAIL has no "/" or "\", so that's the only
+// transform that applies here.
+const PGPASS_FILE_PATH = "/pgpass/pgpass";
+const PGADMIN_STORAGE_USER = LOGIN_EMAIL.replace("@", "_");
+const PGPASS_MOUNT_DIR = `/var/lib/pgadmin/storage/${PGADMIN_STORAGE_USER}/pgpass`;
 
 const labels = { app: "db-ui" };
 
@@ -228,7 +246,7 @@ export function installDbUi(args: DbUiArgs): DbUiResources {
     {
       metadata: { name: LOGIN_SECRET_NAME, namespace: namespaceName },
       stringData: {
-        email: "db-ui-admin@worldwidewebb.co",
+        email: LOGIN_EMAIL,
         password: pulumi.secret(pgAdminPassword),
       },
     },
@@ -261,18 +279,33 @@ export function installDbUi(args: DbUiArgs): DbUiResources {
           metadata: { labels },
           spec: {
             automountServiceAccountToken: false,
-            // dpage/pgadmin4's documented non-root uid/gid for /var/lib/pgadmin
-            // bind mounts. NOT verified against this exact image tag's actual
-            // runtime user — if the container in fact runs as root (its
-            // common default), this is an inert no-op; if it runs as uid 5050,
-            // this is required for the PVC. Either way, note the pgpass
-            // Secret below is mode 0600 (owner-only, per libpq's OWN
-            // passfile-permission check), so fsGroup membership alone does
-            // NOT grant a non-root, non-owning process read access to it —
-            // only a literal root process can read a 0600 root-owned file.
-            // Verify pgAdmin can actually authenticate against all 3 servers
-            // after deploy; if not, this is the first place to look.
-            securityContext: { fsGroup: 5050 },
+            // Verified live (2026-07-26): libpq's OWN pgpass permission check
+            // (fe-connect.c) unconditionally rejects any file with group OR
+            // world bits set — it inspects the mode bits alone, not whether the
+            // reading process happens to satisfy them. Kubernetes Secret
+            // volumes can't produce a bare 0600 (owner-only, no group bits) the
+            // moment a pod sets `fsGroup` (needed at all for this image's
+            // non-root uid 5050 to read a Secret volume): kubelet always ORs in
+            // group-read once fsGroup applies, landing at 0640 — which libpq
+            // then silently refuses, falling back to a password prompt. Fixed
+            // by copying the Secret into an emptyDir via a root initContainer
+            // and chmod-ing it there, where we control the exact bits and can
+            // chown straight to uid 5050 instead of relying on group access.
+            initContainers: [
+              {
+                name: "pgpass-init",
+                image: "busybox:1.36",
+                command: [
+                  "sh",
+                  "-c",
+                  `cp /pgpass-secret/pgpass ${PGPASS_MOUNT_DIR}/pgpass && chown 5050:5050 ${PGPASS_MOUNT_DIR}/pgpass && chmod 600 ${PGPASS_MOUNT_DIR}/pgpass`,
+                ],
+                volumeMounts: [
+                  { name: "pgpass-secret", mountPath: "/pgpass-secret" },
+                  { name: "pgpass", mountPath: PGPASS_MOUNT_DIR },
+                ],
+              },
+            ],
             containers: [
               {
                 name: "pgadmin",
@@ -306,17 +339,21 @@ export function installDbUi(args: DbUiArgs): DbUiResources {
                   { name: "pgpass", mountPath: PGPASS_MOUNT_DIR },
                   { name: "data", mountPath: "/var/lib/pgadmin" },
                 ],
+                // 256Mi OOMKilled 9.16 on boot (confirmed live 2026-07-26) — the
+                // 9.4 pin this was sized against was lighter. 512Mi/256Mi is
+                // still trivial next to the rest of this cluster's workloads.
                 resources: {
-                  limits: { memory: "256Mi" },
-                  requests: { cpu: "50m", memory: "128Mi" },
+                  limits: { memory: "512Mi" },
+                  requests: { cpu: "50m", memory: "256Mi" },
                 },
               },
             ],
             volumes: [
               { name: "servers-config", configMap: { name: CONFIG_MAP_NAME } },
-              // 0600: libpq's pgpass permission check applies to explicit
-              // PassFile paths too, not just the default ~/.pgpass.
-              { name: "pgpass", secret: { secretName: PGPASS_SECRET_NAME, defaultMode: 0o600 } },
+              { name: "pgpass-secret", secret: { secretName: PGPASS_SECRET_NAME } },
+              // Populated by the pgpass-init initContainer above, not mounted
+              // straight from the Secret — see that container's comment.
+              { name: "pgpass", emptyDir: {} },
               { name: "data", persistentVolumeClaim: { claimName: DATA_CLAIM_NAME } },
             ],
           },

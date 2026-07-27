@@ -17,6 +17,7 @@
 //      manage. The login form is disabled outright so it cannot become an
 //      alternative, weaker way in.
 
+import { createHash } from "node:crypto";
 import * as k8s from "@pulumi/kubernetes";
 import {
   GRAFANA_IMAGE,
@@ -145,13 +146,14 @@ function dashboardVolumeName(configMapName: string): string {
  */
 export function installGrafana(args: GrafanaArgs): GrafanaResources {
   const { provider, namespace, dashboardConfigMaps } = args;
+  const datasourcesConfig = datasourcesYaml();
   const opts = { provider, dependsOn: [namespace] };
 
   const datasources = new k8s.core.v1.ConfigMap(
     DATASOURCES_CONFIGMAP,
     {
       metadata: { name: DATASOURCES_CONFIGMAP, namespace: OBSERVABILITY_NAMESPACE, labels },
-      data: { "datasources.yaml": datasourcesYaml() },
+      data: { "datasources.yaml": datasourcesConfig },
     },
     opts,
   );
@@ -205,7 +207,19 @@ export function installGrafana(args: GrafanaArgs): GrafanaResources {
         strategy: { type: "Recreate" },
         selector: { matchLabels: labels },
         template: {
-          metadata: { labels },
+          metadata: {
+            labels,
+            // Roll the pod when its config changes: a mounted ConfigMap updates
+            // in place, but the process only reads it at boot, so without this
+            // a config change sits deployed-but-inert until an unrelated
+            // restart.
+            annotations: {
+              "checksum/config": createHash("sha256")
+                .update(datasourcesConfig)
+                .update(dashboardConfigMaps.providerYaml)
+                .digest("hex"),
+            },
+          },
           spec: {
             automountServiceAccountToken: false,
             securityContext: { fsGroup: GRAFANA_UID },

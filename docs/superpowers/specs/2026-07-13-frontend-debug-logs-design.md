@@ -41,6 +41,15 @@ action below load-bearing rather than a convenience.
 - Session replay (rrweb, OpenReplay).
 - A remote-DevTools bridge (Chii). Viable, and worth revisiting, but orthogonal.
 
+> **Note added 2026-07-26 (#33).** The first non-goal's *constraint* no longer
+> holds: the 8GB Mac mini was retired on 2026-07-25, prod is now the home-server
+> Talos node, and a Prometheus/Loki/Grafana stack was stood back up there (#33,
+> #216 — see `docs/observability.md`). The decision it justified still stands as
+> written: the panel's own logs are captured locally and ship to **Postgres**
+> (`frontend_log`, `2026-07-18-frontend-log-shipping-design.md`), not to Loki.
+> Loki collects container logs. Nothing below is retracted; only the "we have no
+> such stack" premise is out of date.
+
 ## Decisions
 
 **Always-on, not flag-gated.** You cannot capture the crash you did not anticipate
