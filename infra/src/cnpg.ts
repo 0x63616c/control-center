@@ -138,5 +138,19 @@ export function installCnpg(args: CnpgArgs): CnpgResources {
     ),
   );
 
+  // #111 migration: second cluster "control-center-postgres" coexists with the
+  // old "control-center" cluster until data is restored into it and verified;
+  // the old Cluster CR is deleted as the migration's explicit final step. Same
+  // auth secret, so restored data and app credentials line up.
+  const controlCenterDatabase = databases[0];
+  const renamedCluster = createCluster(
+    { ...controlCenterDatabase, clusterName: "control-center-postgres" },
+    namespaces[controlCenterDatabase.product as InfraNamespaceName],
+    operator,
+    authSecrets[0],
+    opts,
+  );
+  clusters.push(renamedCluster);
+
   return { operator, authSecrets, clusters, authSecret: authSecrets[0], cluster: clusters[0] };
 }
