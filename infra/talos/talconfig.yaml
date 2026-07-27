@@ -118,3 +118,23 @@ patches:
     environment:
       - TS_AUTHKEY=${TS_AUTHKEY}
       - TS_HOSTNAME=home-server
+  # Storage layout (ADR-0009). EPHEMERAL capped so the rest of the NVMe backs
+  # LVM VG `storage` (OpenEBS LocalPV-LVM — the raw partition below is its PV).
+  # The cap does NOT shrink a live partition: it takes effect only when
+  # EPHEMERAL is re-provisioned, i.e. the cutover wipe
+  # (docs/runbooks/local-lvm-cutover.md). Changing the cap later = another wipe.
+  - |-
+    apiVersion: v1alpha1
+    kind: VolumeConfig
+    name: EPHEMERAL
+    provisioning:
+      maxSize: 200GiB
+  - |-
+    apiVersion: v1alpha1
+    kind: RawVolumeConfig
+    name: storage
+    provisioning:
+      diskSelector:
+        match: system_disk
+      minSize: 500GiB
+      grow: true
