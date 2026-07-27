@@ -11,7 +11,7 @@
 
 import "./boot-env";
 import { Client, Connection } from "@temporalio/client";
-import { NativeConnection, Worker } from "@temporalio/worker";
+import { NativeConnection, Runtime, Worker } from "@temporalio/worker";
 import { createLogger } from "@www/logger";
 import { initMetrics, startMetricsServer } from "@www/platform/metrics";
 import { GENERATED_ACTIVITIES } from "../../../features/_generated/activities.gen";
@@ -39,6 +39,14 @@ async function main(): Promise<void> {
   // infra/src/temporal.ts, which keeps it in-cluster only.
   initMetrics({ service: "temporal-worker" });
   startMetricsServer({ port: config.metricsPort, logger });
+
+  // SDK-internal metrics (workflow/activity completions, schedule-to-start,
+  // sticky-cache hit rate, poller counts — #233), entirely separate from the
+  // app-level listener above: this is Core's own OTel exporter, sent to a
+  // small in-cluster collector that re-exports it to Prometheus. Must be set
+  // before Worker.create() — it configures the process-wide Runtime the
+  // Worker then picks up.
+  Runtime.install({ telemetryOptions: { metrics: { otel: { url: config.otelCollectorUrl } } } });
 
   logger.info(
     {

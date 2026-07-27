@@ -297,4 +297,73 @@ describe("installTemporal (issue #124, talos-only)", () => {
     );
     expect(names.map((m) => m.name)).toEqual(["temporal-server", "temporal-ui", "temporal-worker"]);
   });
+
+  // Issue #233. The worker's SDK-internal metrics (Runtime.install's
+  // telemetryOptions.metrics.otel) go to this collector over OTLP/gRPC, which
+  // re-exports to its OWN Prometheus port for the existing generic
+  // `kubernetes-pods` scrape job — no dedicated scrape job is added.
+  describe("temporal-otel-collector (issue #233)", () => {
+    test("is pinned to the contrib image, since the Prometheus exporter only ships there", async () => {
+      const spec = await get<DeploymentSpec>(install().otelCollector, "spec");
+      expect(spec.template.spec.containers[0].image).toBe(
+        "otel/opentelemetry-collector-contrib:0.157.0",
+      );
+    });
+
+    test("exposes an OTLP/gRPC receiver port for the worker to dial", async () => {
+      const spec = await get<DeploymentSpec>(install().otelCollector, "spec");
+      const ports = spec.template.spec.containers[0].ports ?? [];
+      expect(ports).toContainEqual({ name: "otlp-grpc", containerPort: 4317 });
+    });
+
+    test("exposes its OWN Prometheus-exporter port, distinct from the server's and worker's", async () => {
+      const spec = await get<DeploymentSpec>(install().otelCollector, "spec");
+      const ports = spec.template.spec.containers[0].ports ?? [];
+      expect(ports).toContainEqual({ name: "metrics", containerPort: 9464 });
+    });
+
+    test("scrape annotations sit on the POD template, pointed at its own Prometheus port", async () => {
+      const spec = await get<DeploymentSpec>(install().otelCollector, "spec");
+      expect(spec.template.metadata?.annotations).toEqual({
+        "prometheus.io/scrape": "true",
+        "prometheus.io/port": "9464",
+        "prometheus.io/path": "/metrics",
+      });
+      const deploymentMeta = await get<{ annotations?: Record<string, string> }>(
+        install().otelCollector,
+        "metadata",
+      );
+      expect(deploymentMeta.annotations?.["prometheus.io/scrape"]).toBeUndefined();
+    });
+
+    test("the collector config is a ConfigMap wiring an OTLP receiver to a Prometheus exporter", async () => {
+      const res = install();
+      const data = await get<Record<string, string>>(res.otelCollectorConfig, "data");
+      const config = data["config.yaml"];
+      expect(config).toContain("otlp:");
+      expect(config).toContain("0.0.0.0:4317");
+      expect(config).toContain("prometheus:");
+      expect(config).toContain("0.0.0.0:9464");
+    });
+
+    test("the Service exposes only the OTLP port — no Service needed for the scrape, which is pod-IP direct", async () => {
+      const spec = await get<ServiceSpec>(install().otelCollectorService, "spec");
+      expect(spec.ports).toEqual([{ name: "otlp-grpc", port: 4317, targetPort: 4317 }]);
+    });
+
+    test("the collector Deployment/Service/ConfigMap depend on the namespace, in the right order", async () => {
+      const res = install();
+      const configMeta = await get<{ namespace: string }>(res.otelCollectorConfig, "metadata");
+      const deploymentMeta = await get<{ namespace: string }>(res.otelCollector, "metadata");
+      const serviceMeta = await get<{ namespace: string }>(res.otelCollectorService, "metadata");
+      expect(configMeta.namespace).toBe("temporal");
+      expect(deploymentMeta.namespace).toBe("temporal");
+      expect(serviceMeta.namespace).toBe("temporal");
+    });
+
+    test("carries no GHCR pull secret — the contrib image is public, unlike the worker's", async () => {
+      const spec = await get<DeploymentSpec>(install().otelCollector, "spec");
+      expect(spec.template.spec.imagePullSecrets ?? []).toEqual([]);
+    });
+  });
 });
