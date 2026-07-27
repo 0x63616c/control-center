@@ -707,6 +707,12 @@ export type ControlCenterProductManifest = Readonly<{
   grafana: Readonly<{
     exposure: WebExposure;
   }>;
+  // Home Assistant (#75/#237): runs as the `ha` ExternalName Service in the
+  // control-center namespace (infra/src/services.ts), not a control-center
+  // workload, but gets a hostname on the tunnel behind Access same as Grafana.
+  ha: Readonly<{
+    exposure: WebExposure;
+  }>;
   // The public GitHub webhook host (#126). Served by the api workload, but it
   // is NOT the api's exposure: api stays `internalService` for in-cluster
   // traffic and gains this one public hostname that the tunnel maps to it.
@@ -757,6 +763,11 @@ export function controlCenterProductManifest(): ControlCenterProductManifest {
       // Single label under the zone, so Universal SSL's one-label wildcard
       // covers it (see webHostname).
       exposure: privateWeb(target, { host: "grafana" }),
+    },
+    ha: {
+      // Single label under the zone, so Universal SSL's one-label wildcard
+      // covers it (see webHostname).
+      exposure: privateWeb(target, { host: "ha" }),
     },
     hooks: {
       // PUBLIC on purpose: GitHub posts here from the internet and would be

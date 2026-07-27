@@ -28,6 +28,7 @@ describe("desiredIngressRules", () => {
       "app.worldwidewebb.co",
       "db-ui.worldwidewebb.co",
       "grafana.worldwidewebb.co",
+      "ha.worldwidewebb.co",
       "hooks.worldwidewebb.co",
       "temporal-ui.worldwidewebb.co",
     ]);
@@ -48,6 +49,9 @@ describe("desiredIngressRules", () => {
     expect(byHost["grafana.worldwidewebb.co"]).toBe(
       "http://grafana.observability.svc.cluster.local:3000",
     );
+    // #75/#237: same cross-NAMESPACE rule — the `ha` ExternalName Service lives
+    // in `control-center`, so a bare `ha` origin from `cloudflare` would 502.
+    expect(byHost["ha.worldwidewebb.co"]).toBe("http://ha.control-center.svc.cluster.local:8123");
     expect(byHost["dashboard.worldwidewebb.co"]).toBeUndefined();
     expect(byHost["storybook.worldwidewebb.co"]).toBeUndefined();
     expect(byHost["drizzle.worldwidewebb.co"]).toBeUndefined();
@@ -135,6 +139,7 @@ describe("desiredCnames", () => {
       "app.worldwidewebb.co",
       "db-ui.worldwidewebb.co",
       "grafana.worldwidewebb.co",
+      "ha.worldwidewebb.co",
       "hooks.worldwidewebb.co",
       "temporal-ui.worldwidewebb.co",
     ]);
@@ -162,6 +167,7 @@ describe("desiredCnames", () => {
     expect(byHost["app.worldwidewebb.co"]).toBe("platform:control-center private app route");
     expect(byHost["temporal-ui.worldwidewebb.co"]).toBe("platform:temporal web ui route");
     expect(byHost["grafana.worldwidewebb.co"]).toBe("platform:grafana web ui route");
+    expect(byHost["ha.worldwidewebb.co"]).toBe("platform:home assistant web ui route (#75)");
     expect(byHost["hooks.worldwidewebb.co"]).toBe(
       "platform:github webhook receiver (public, HMAC-authenticated)",
     );

@@ -137,6 +137,15 @@ function productRoutes(): CloudflareRoutes {
       origin: "http://grafana.observability.svc.cluster.local:3000",
       comment: "platform:grafana web ui route",
     },
+    {
+      exposure: cc.ha.exposure,
+      // FQDN, same cross-namespace reason as the others: cloudflared runs in
+      // `cloudflare`, the `ha` ExternalName Service is in `control-center`
+      // (api/worker reach it via the short name `http://ha:8123` from inside
+      // that namespace; cloudflared cannot).
+      origin: "http://ha.control-center.svc.cluster.local:8123",
+      comment: "platform:home assistant web ui route (#75)",
+    },
   ];
 
   return cloudflareRoutesForExposures(sources);
