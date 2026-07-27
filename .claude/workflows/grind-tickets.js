@@ -251,30 +251,38 @@ Return the revised structured plan.`, { label: `revise:#${n}`, phase: 'Revise', 
 
 You are the IMPLEMENTER for GitHub issue #${n}.
 
-You run in an ISOLATED GIT WORKTREE - your own copy of the repo. \`pwd\` to find it and work
-there, never in the user's main checkout.
+Get your own isolated copy of the repo with the project's real worktree tool, not a bare
+\`git worktree add\`:
+  \`cd ${REPO} && wtp add -b ticket-${n}\`
+It prints the new worktree's path - capture it. From then on, address that worktree by its
+ABSOLUTE path in every command (\`git -C <worktree-path> ...\`, \`cd <worktree-path> && ...\` as
+one command, or \`bun --cwd <worktree-path> ...\`). Do not rely on a plain \`cd\` persisting
+across tool calls or on relative paths - cwd is not guaranteed to survive between your
+commands, and the main checkout at ${REPO} must never be touched.
 
 Execute this reviewed plan:
 ${JSON.stringify(rev.plan, null, 2)}
 
 Rules:
-- \`git checkout -b ticket-${n}\` before committing.
+- The \`wtp add -b ticket-${n}\` above already created and checked out branch \`ticket-${n}\`.
 - Follow the plan. If reality contradicts it, follow reality and record the deviation in notes.
 - If the honest outcome is "there was nothing to fix" or "this cannot be fixed", say so with
   evidence and commit nothing. That is a valid result. Never invent a change to look productive.
 - Stage explicit paths. Never \`git add -A\`.
 - DO NOT PUSH. Leave commits on your local branch; a later stage merges them.
 - Before finishing, run \`bun run typecheck\`, tests relevant to your change, and
-  \`bun run apps:check\` if you touched features/. Report REAL results; fix and re-run on failure.
-  Never claim a passing check you did not see pass.
+  \`bun run apps:check\` if you touched features/ - all scoped to the worktree path above.
+  Report REAL results; fix and re-run on failure. Never claim a passing check you did not see pass.
 - If a check fails and you cannot fix it, set status "partial" and quote the failure verbatim.
+- Leave the worktree in place when you finish - do not remove it. It is cleaned up later,
+  automatically, once its branch is merged.
 
 Set \`summary\` to one or two sentences suitable for pasting into the ticket's closing comment.
 Set \`blocker\` to "" if nothing needs the owner. Otherwise put the specific question there -
 it will be posted as a comment on issue #${n}. Use it when you hit a decision only the owner
 can make, an external dependency you cannot change, or a scope call you should not make alone.
 Return the structured report, with \`branch\` = "ticket-${n}" if you committed, else "".`,
-    { label: `impl:#${n}`, phase: 'Implement', model: 'sonnet', schema: IMPL_SCHEMA, isolation: 'worktree' })
+    { label: `impl:#${n}`, phase: 'Implement', model: 'sonnet', schema: IMPL_SCHEMA })
 }
 
 // Rolling pool: at most BATCH_SIZE tickets in flight. Each of the BATCH_SIZE
