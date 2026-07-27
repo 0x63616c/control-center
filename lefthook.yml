@@ -75,8 +75,9 @@ pre-push:
     knip-deadcode:
       # Runs AFTER biome-lint (priority 2). BLOCKING: knip catches unused
       # files, dependencies, exports and types before push. Export-level
-      # detection was previously disabled for Temporal's dynamic registration;
-      # Temporal is gone, so it is on. Tag a deliberate public surface `@public`
+      # detection was previously disabled for the old project-management product's
+      # dynamic Temporal registration; today's Temporal usage (ADR-0008) is statically
+      # referenced, so it is on. Tag a deliberate public surface `@public`
       # rather than reaching for an ignore entry.
       priority: 2
       run: bun run knip
