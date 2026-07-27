@@ -374,7 +374,9 @@ the default, so tests inject the in-memory adapter instead of stubbing drizzle.
 - Backend code uses structured logging through `@www/logger`, not `console.*`.
 - Tiles should use shared UI primitives from `apps/web/src/components/ui`.
 - Component work should be Storybook-first where practical.
-- IDs should default to Stripe-style `prefix_<id>`.
+- IDs should default to Stripe-style `prefix_<id>`, minted via `genId()` from
+  `packages/platform` (never hand-roll `prefix_${crypto.randomUUID()}`); a lefthook guard
+  blocks hand-rolled ids outside `packages/platform/src/index.ts`.
 - Deployment and operations changes should update docs in the same change.
 
 ## Where To Start For A Feature

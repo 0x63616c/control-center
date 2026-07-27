@@ -46,7 +46,9 @@
   via the `PanelVolume` plugin and Sound settings page, never in-app gain.
 - No fake or placeholder data.
 - Storybook-first for new UI.
-- IDs default to `prefix_<id>`.
+- IDs default to `prefix_<id>` — mint them with `genId()` from `packages/platform` (never
+  hand-roll `prefix_${crypto.randomUUID()}`); a lefthook guard blocks hand-rolled ids outside
+  `packages/platform/src/index.ts`.
 - Backend code uses structured logging.
 - **Never read secret values** (e.g. contents of `secret/vault.yaml`). Checking
   key names/presence is fine; do not print or inspect the decrypted values.
