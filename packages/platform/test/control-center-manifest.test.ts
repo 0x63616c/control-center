@@ -45,15 +45,15 @@ describe("Control Center platform representation", () => {
 
     expect(manifest.database).toMatchObject({
       authSecretName: "cc-postgres-auth",
-      clusterName: "control-center",
+      clusterName: "control-center-postgres",
       databaseName: "control_center",
-      rwServiceName: "control-center-rw",
+      rwServiceName: "control-center-postgres-rw",
     });
     expect(manifest.backup).toMatchObject({
       name: backupCron?.name,
       schedule: backupCron?.schedule,
       databaseName: "control_center",
-      serviceHost: "control-center-rw",
+      serviceHost: "control-center-postgres-rw",
       nasSubPath: "backups/postgres",
     });
   });
