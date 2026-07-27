@@ -10,7 +10,7 @@ description: Use when filing a GitHub issue in this repo, or when the user says 
 ## Recipe
 
 1. Search first — don't dupe: `gh issue list --search "<keywords>" --state all --json number,title,labels,state`
-2. Pick exactly one `area/*` and one `type/*` label (list below). No other labels — no priority, no status, no milestone.
+2. Pick exactly one `area/*` and one `type/*` label (list below), plus `auto` if an agent could take it end-to-end unattended. No other labels — no priority, no status, no milestone.
 3. Create:
 
 ```bash
