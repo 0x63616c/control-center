@@ -24,7 +24,14 @@
 //      Temporal namespace once the frontend answers.
 //   5. `temporal-ui`, the web UI, and `temporal-worker`, our TypeScript worker
 //      (apps/temporal-worker) polling the `main` task queue.
+//   6. `temporal-otel-collector` (#233), a small OTLP-in/Prometheus-out relay
+//      for `temporal-worker`'s SDK-internal metrics — the worker's own
+//      Runtime.install({ telemetryOptions }) speaks OTLP to it, and it
+//      re-exports to the existing generic annotation-based scrape job. This
+//      is separate from `temporal-worker`'s app-level @www/platform/metrics
+//      listener and from `temporal-server`'s own Prometheus reporter above.
 //
+
 // HONEST LIMIT on "2 replicas for redundancy": this cluster is a SINGLE node.
 // Two replicas survive a pod crash, an OOM kill, and a rolling restart — they
 // do not survive the node going down, and no arrangement of replicas can while
@@ -70,6 +77,51 @@ const TEMPORAL_VERSION = "1.31.2";
 const SERVER_IMAGE = `temporalio/server:${TEMPORAL_VERSION}`;
 const ADMIN_TOOLS_IMAGE = `temporalio/admin-tools:${TEMPORAL_VERSION}`;
 const UI_IMAGE = "temporalio/ui:2.52.1";
+
+// The OTel collector `temporal-worker`'s SDK-internal metrics (#233) go
+// through: Runtime.install({ telemetryOptions: { metrics: { otel } } })
+// speaks OTLP/gRPC to this pod, which re-exports to its own Prometheus
+// exposition port for the existing generic `kubernetes-pods` scrape job to
+// pick up — see infra/src/observability/scrape-config.ts, which already
+// discovers any annotated pod in any namespace, so no dedicated scrape job is
+// added for this. `-contrib` (not the core distribution) because the
+// Prometheus exporter component ships only in contrib.
+const OTEL_COLLECTOR_IMAGE = "otel/opentelemetry-collector-contrib:0.157.0";
+const OTEL_COLLECTOR_OTLP_GRPC_PORT = 4317;
+// Where the collector's OWN Prometheus exporter listens — distinct from
+// METRICS_PORT (the Temporal server's reporter) and DEFAULT_METRICS_PORT (the
+// worker's app-level @www/platform/metrics listener). 9464 is the
+// OpenTelemetry Prometheus exporter's conventional default, same rationale as
+// packages/platform/metrics/port.ts's DEFAULT_METRICS_PORT.
+const OTEL_COLLECTOR_PROMETHEUS_PORT = 9464;
+const OTEL_COLLECTOR_CONFIG_MAP_NAME = "temporal-otel-collector-config";
+const OTEL_COLLECTOR_CONFIG_MOUNT = "/etc/otelcol";
+const OTEL_COLLECTOR_CONFIG_FILE = `${OTEL_COLLECTOR_CONFIG_MOUNT}/config.yaml`;
+
+/**
+ * A single OTLP-in, Prometheus-out pipeline — nothing else. `resource`
+ * processor is skipped: the worker's Runtime.install `attachServiceName`
+ * default already stamps `service_name`, and this collector serves exactly
+ * one client so there is nothing to disambiguate.
+ */
+function otelCollectorConfigYaml(): string {
+  return [
+    "receivers:",
+    "  otlp:",
+    "    protocols:",
+    "      grpc:",
+    `        endpoint: 0.0.0.0:${OTEL_COLLECTOR_OTLP_GRPC_PORT}`,
+    "exporters:",
+    "  prometheus:",
+    `    endpoint: 0.0.0.0:${OTEL_COLLECTOR_PROMETHEUS_PORT}`,
+    "service:",
+    "  pipelines:",
+    "    metrics:",
+    "      receivers: [otlp]",
+    "      exporters: [prometheus]",
+    "",
+  ].join("\n");
+}
 
 // Postgres. `postgres12` is Temporal's plugin name for "PostgreSQL 12 or
 // newer", not a pin to 12 — CNPG runs 17.
@@ -140,6 +192,9 @@ export interface TemporalResources {
   ui: k8s.apps.v1.Deployment;
   uiService: k8s.core.v1.Service;
   worker: k8s.apps.v1.Deployment;
+  otelCollectorConfig: k8s.core.v1.ConfigMap;
+  otelCollector: k8s.apps.v1.Deployment;
+  otelCollectorService: k8s.core.v1.Service;
 }
 
 /** The DB password, read from the CNPG-managed Secret rather than any env dump. */
@@ -310,6 +365,7 @@ function createWorkerSecret(
 const serverLabels = { app: TEMPORAL_FRONTEND_SERVICE };
 const uiLabels = { app: "temporal-ui" };
 const workerLabels = { app: "temporal-worker" };
+const otelCollectorLabels = { app: "temporal-otel-collector" };
 
 /**
  * @public - installs the temporal namespace, its Postgres, the hand-written
@@ -702,6 +758,92 @@ export function installTemporal(args: TemporalArgs): TemporalResources {
     { ...inNamespace, dependsOn: [namespaceJob, workerSecret] },
   );
 
+  const otelCollectorConfig = new k8s.core.v1.ConfigMap(
+    OTEL_COLLECTOR_CONFIG_MAP_NAME,
+    {
+      metadata: { name: OTEL_COLLECTOR_CONFIG_MAP_NAME, namespace: namespaceName },
+      data: { "config.yaml": otelCollectorConfigYaml() },
+    },
+    inNamespace,
+  );
+
+  const otelCollector = new k8s.apps.v1.Deployment(
+    "temporal-otel-collector",
+    {
+      metadata: {
+        name: "temporal-otel-collector",
+        namespace: namespaceName,
+        labels: otelCollectorLabels,
+      },
+      spec: {
+        // Single replica: this collector holds no state across restarts worth
+        // preserving, and the worker's OTLP export is fire-and-forget.
+        replicas: 1,
+        selector: { matchLabels: otelCollectorLabels },
+        template: {
+          metadata: {
+            labels: otelCollectorLabels,
+            // On the POD template, same reasoning as the worker's own
+            // annotations above: `role: pod` discovery only ever sees Pods.
+            // This is the collector's OWN Prometheus-exporter port — not
+            // METRICS_PORT (server) and not DEFAULT_METRICS_PORT (worker
+            // app-level metrics) — so the existing generic `kubernetes-pods`
+            // job picks it up with no dedicated scrape job of its own.
+            annotations: {
+              "prometheus.io/scrape": "true",
+              "prometheus.io/port": String(OTEL_COLLECTOR_PROMETHEUS_PORT),
+              "prometheus.io/path": METRICS_PATH,
+            },
+          },
+          spec: {
+            automountServiceAccountToken: false,
+            containers: [
+              {
+                name: "otel-collector",
+                image: OTEL_COLLECTOR_IMAGE,
+                args: [`--config=${OTEL_COLLECTOR_CONFIG_FILE}`],
+                ports: [
+                  { name: "otlp-grpc", containerPort: OTEL_COLLECTOR_OTLP_GRPC_PORT },
+                  { name: "metrics", containerPort: OTEL_COLLECTOR_PROMETHEUS_PORT },
+                ],
+                volumeMounts: [{ name: "config", mountPath: OTEL_COLLECTOR_CONFIG_MOUNT }],
+                resources: {
+                  limits: { memory: "256Mi" },
+                  requests: { cpu: "50m", memory: "128Mi" },
+                },
+              },
+            ],
+            volumes: [{ name: "config", configMap: { name: OTEL_COLLECTOR_CONFIG_MAP_NAME } }],
+          },
+        },
+      },
+    },
+    { ...inNamespace, dependsOn: [otelCollectorConfig] },
+  );
+
+  const otelCollectorService = new k8s.core.v1.Service(
+    "temporal-otel-collector",
+    {
+      metadata: {
+        name: "temporal-otel-collector",
+        namespace: namespaceName,
+        labels: otelCollectorLabels,
+      },
+      spec: {
+        type: "ClusterIP",
+        selector: otelCollectorLabels,
+        ports: [
+          {
+            name: "otlp-grpc",
+            port: OTEL_COLLECTOR_OTLP_GRPC_PORT,
+            targetPort: OTEL_COLLECTOR_OTLP_GRPC_PORT,
+          },
+        ],
+      },
+    },
+    { ...inNamespace, dependsOn: [otelCollector] },
+  );
+
   return {
     namespace,
     ghcrPullSecret,
@@ -716,5 +858,8 @@ export function installTemporal(args: TemporalArgs): TemporalResources {
     ui,
     uiService,
     worker,
+    otelCollectorConfig,
+    otelCollector,
+    otelCollectorService,
   };
 }
