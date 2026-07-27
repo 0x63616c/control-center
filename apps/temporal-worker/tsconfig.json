@@ -6,10 +6,18 @@
     // binaries for glibc Node only, and its Workflow sandbox is built on node's
     // `vm` module — so both the image (node:22-slim) and the types are node's.
     "types": ["node"],
-    // Imports stay extensionless (`./pacing`, not `./pacing.ts`): workflows.ts is
+    // Imports stay extensionless (`./pacing`, not `./pacing.ts`): workflow code is
     // NOT bundled by us — the Worker feeds it to its own webpack+swc pipeline at
     // boot, and that resolver is extension-based.
-    "allowImportingTsExtensions": true
+    "allowImportingTsExtensions": true,
+    // The worker's program reaches feature facet files through the generated
+    // barrels (features/_generated/*.gen.ts), whose feature imports pull in
+    // `@app-kit` transitively (ADR-0008) — same reason apps/worker restates it.
+    "paths": {
+      "@app-kit": ["../../app-kit/index.ts"],
+      "@app-kit/server": ["../../app-kit/server.ts"],
+      "@features/*": ["../../features/*"]
+    }
   },
   "include": ["src"]
 }

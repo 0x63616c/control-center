@@ -12,7 +12,6 @@
   "dependencies": {
     "@temporalio/client": "^1.21.1",
     "@temporalio/worker": "^1.21.1",
-    "@temporalio/workflow": "^1.21.1",
     "@www/logger": "workspace:*",
     "@www/platform": "workspace:*"
   },

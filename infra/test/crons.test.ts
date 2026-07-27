@@ -53,7 +53,9 @@ type CronSpec = ReturnType<typeof crons.cronSpecs>[number];
 const byName = (specs: CronSpec[], name: string) => specs.find((s) => s.name === name);
 
 describe("cronSpecs: the declared CronJob set", () => {
-  test("declares product backups plus deploys-purge, guest-wifi-purge, weather-purge, felogs-purge, hooks-purge, wake-photo-purge and map-extract (no image-prune, no cert-renew)", () => {
+  // weather-purge is deliberately ABSENT: it migrated to a Temporal Schedule
+  // (ADR-0008, issue #260) and no longer renders a k8s CronJob.
+  test("declares product backups plus deploys-purge, guest-wifi-purge, felogs-purge, hooks-purge, wake-photo-purge and map-extract (no image-prune, no cert-renew, no weather-purge)", () => {
     const names = crons
       .cronSpecs(NAS)
       .map((c) => c.name)
@@ -66,7 +68,6 @@ describe("cronSpecs: the declared CronJob set", () => {
       "map-extract",
       "pg-backup",
       "wake-photo-purge",
-      "weather-purge",
     ]);
   });
 
@@ -294,7 +295,6 @@ describe("cronSpecs image digest pinning", () => {
       "guest-wifi-purge",
       "hooks-purge",
       "wake-photo-purge",
-      "weather-purge",
     ]) {
       expect(byName(specs, name)?.image).toBe(`ghcr.io/0x63616c/www-control-center-api@${VALID}`);
     }

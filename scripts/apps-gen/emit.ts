@@ -277,6 +277,104 @@ export const GENERATED_ROUTES: readonly HttpRoute[] = [
 `;
 }
 
+/**
+ * The generated Temporal WORKFLOWS barrel (ADR-0008). This file is the
+ * `workflowsPath` bundler ENTRY the temporal-worker hands to the SDK — it is
+ * loaded only inside the workflow determinism sandbox, so its import graph may
+ * reach `@temporalio/workflow` and pure modules ONLY. `export *` is safe
+ * because validate() rejects duplicate workflow types before emit.
+ */
+export function renderWorkflows(model: AppModel): string {
+  const withTemporal = sortedFeatures(model).filter((f) => f.hasTemporal);
+  if (withTemporal.length === 0) {
+    return `${GEN_HEADER}
+
+export {};
+`;
+  }
+  const exports = withTemporal.map((f) => `export * from "../${f.dir}/workflows";`).join("\n");
+  return `${GEN_HEADER}
+
+${exports}
+`;
+}
+
+/**
+ * The generated Temporal ACTIVITIES barrel (ADR-0008): real imports of each
+ * feature's activities.ts, merged into the one object handed to
+ * `Worker.create({ activities })`. Runs in the worker MAIN thread (node), so
+ * activities may use the db / `@www/core`. validate() rejects duplicate
+ * activity export names, so the spread merge cannot silently drop one.
+ */
+export function renderActivities(model: AppModel): string {
+  const withActivities = sortedFeatures(model).filter((f) => f.hasActivities);
+  if (withActivities.length === 0) {
+    return `${GEN_HEADER}
+
+export const GENERATED_ACTIVITIES = {};
+`;
+  }
+  const imports = withActivities
+    .map((f) => `import * as ${ident(f.dir)}Activities from "../${f.dir}/activities";`)
+    .join("\n");
+  const spread = withActivities.map((f) => `...${ident(f.dir)}Activities`).join(",\n  ");
+  return `${GEN_HEADER}
+
+${imports}
+
+export const GENERATED_ACTIVITIES = {
+  ${spread},
+};
+`;
+}
+
+/**
+ * The generated Temporal SCHEDULES listing (ADR-0008): pure data consumed by
+ * the temporal-worker's boot-time reconciler, which upserts every entry and
+ * deletes any `app_`-prefixed schedule no longer present. `scheduleId` is
+ * already fully composed (`app_<dir>_<localId>`) by collect().
+ */
+export function renderSchedules(model: AppModel): string {
+  const sorted = [...model.temporalSchedules].sort((a, b) =>
+    a.scheduleId < b.scheduleId ? -1 : a.scheduleId > b.scheduleId ? 1 : 0,
+  );
+  const body = sorted
+    .map((s) =>
+      [
+        "  {",
+        `    scheduleId: ${JSON.stringify(s.scheduleId)},`,
+        `    workflowType: ${JSON.stringify(s.workflowType)},`,
+        `    cron: ${JSON.stringify(s.cron)},`,
+        `    timezone: ${s.timezone === undefined ? "undefined" : JSON.stringify(s.timezone)},`,
+        `    argsJson: ${s.argsJson === undefined ? "undefined" : JSON.stringify(s.argsJson)},`,
+        `    timeout: ${s.timeout === undefined ? "undefined" : JSON.stringify(s.timeout)},`,
+        `    catchupWindow: ${s.catchupWindow === undefined ? "undefined" : JSON.stringify(s.catchupWindow)},`,
+        `    source: ${JSON.stringify(s.source)},`,
+        "  },",
+      ].join("\n"),
+    )
+    .join("\n");
+  return `${GEN_HEADER}
+
+export interface GeneratedSchedule {
+  /** Full Temporal schedule ID (\`app_<feature-dir>_<localId>\`) — the managed-by marker. */
+  scheduleId: string;
+  workflowType: string;
+  cron: string;
+  timezone: string | undefined;
+  /** The workflow's single argument, JSON-encoded (one-arg convention). */
+  argsJson: string | undefined;
+  timeout: string | undefined;
+  catchupWindow: string | undefined;
+  source: string;
+}
+
+export const GENERATED_SCHEDULES: readonly GeneratedSchedule[] = [
+${body}
+];
+`;
+}
+
 export function renderCrons(model: AppModel): string {
   const sorted = [...model.crons].sort((a, b) =>
     a.name !== b.name

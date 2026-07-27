@@ -42,11 +42,19 @@ COPY infra/unifi/package.json infra/unifi/
 RUN bun install --frozen-lockfile --production --ignore-scripts
 
 COPY apps/temporal-worker apps/temporal-worker
-COPY packages/logger packages/logger
-COPY packages/platform packages/platform
+COPY packages packages
+# ADR-0008 authoring surface: workflows/activities live in-feature and reach the
+# worker through the generated barrels in features/_generated/.
+COPY app-kit app-kit
+COPY features features
 
 # Bundle only the NON-workflow entrypoint (--target=node: it runs under node).
-# workflows.ts is deliberately excluded from this bundle — see the header.
+# Workflow code (features/*/workflows.ts via the generated barrel) is
+# deliberately excluded from this bundle — see the header.
+#
+# `cd apps/temporal-worker` first: bun build resolves the `@app-kit` alias via
+# the nearest tsconfig's `paths`, and the ROOT tsconfig is deliberately
+# paths-free (mirrors apps/worker/Dockerfile).
 #
 # `--external '@temporalio/*'`: the SDK is NOT bundleable. @temporalio/worker
 # pulls in webpack + swc-loader, whose lazy `require("loader-utils")` /
@@ -68,12 +76,15 @@ WORKDIR /app
 # node_modules is needed at RUNTIME, not just build: the SDK bundles workflow
 # code on boot (webpack + swc + the native bridge all load from here).
 COPY --from=build /app/node_modules node_modules
-# The image mirrors the source layout — bundle and workflow source share a
-# directory — so `new URL("./workflows.ts", import.meta.url)` in index.ts
-# resolves identically here and in local dev.
-COPY --from=build /app/apps/temporal-worker/src src
-COPY --from=build /app/dist/index.mjs src/index.mjs
+# The image mirrors the REPO layout — apps/temporal-worker/src next to
+# features/ — so index.ts's relative `../../../features/_generated/…` hops
+# (the workflowsPath handed to the SDK bundler) resolve identically here and
+# in local dev. The workflow import graph ships as SOURCE: the SDK's own
+# webpack+swc pipeline compiles it at boot.
+COPY --from=build /app/features features
+COPY --from=build /app/apps/temporal-worker/src apps/temporal-worker/src
+COPY --from=build /app/dist/index.mjs apps/temporal-worker/src/index.mjs
 
 # The worker dials OUT to temporal-server:7233; its only listener is the
 # Prometheus exposition on :9464 (#214), scraped by pod IP in-cluster.
-CMD ["node", "src/index.mjs"]
+CMD ["node", "apps/temporal-worker/src/index.mjs"]

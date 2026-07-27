@@ -130,6 +130,7 @@ export interface TemporalResources {
   namespace: k8s.core.v1.Namespace;
   ghcrPullSecret: k8s.core.v1.Secret;
   authSecret: k8s.core.v1.Secret;
+  workerSecret: k8s.core.v1.Secret;
   cluster: k8s.apiextensions.CustomResource;
   dynamicConfig: k8s.core.v1.ConfigMap;
   schemaJob: k8s.batch.v1.Job;
@@ -277,6 +278,35 @@ function createAuthSecret(
   );
 }
 
+/**
+ * The temporal-worker's app-secret (ADR-0008): the control-center Postgres
+ * password, mounted at /run/secrets/POSTGRES_PASSWORD exactly like the api and
+ * worker pods, so the worker's boot-env derives DATABASE_URL for db-touching
+ * activities (e.g. the weather purge). Created here — not in eso.ts — because
+ * that module's targets are typed to the product namespaces and everything in
+ * the `temporal` k8s namespace is owned by this file.
+ */
+const WORKER_SECRET_NAME = "temporal-worker-secrets";
+
+function createWorkerSecret(
+  vault: Record<string, string>,
+  namespace: pulumi.Input<string>,
+  opts: pulumi.CustomResourceOptions,
+): k8s.core.v1.Secret {
+  const password = vault.CONTROL_CENTER_POSTGRES__PASSWORD;
+  if (password === undefined) {
+    throw new Error("temporal: vault key CONTROL_CENTER_POSTGRES__PASSWORD not found");
+  }
+  return new k8s.core.v1.Secret(
+    WORKER_SECRET_NAME,
+    {
+      metadata: { name: WORKER_SECRET_NAME, namespace },
+      stringData: { POSTGRES_PASSWORD: pulumi.secret(password) },
+    },
+    opts,
+  );
+}
+
 const serverLabels = { app: TEMPORAL_FRONTEND_SERVICE };
 const uiLabels = { app: "temporal-ui" };
 const workerLabels = { app: "temporal-worker" };
@@ -313,6 +343,11 @@ export function installTemporal(args: TemporalArgs): TemporalResources {
   );
 
   const authSecret = createAuthSecret(vault, namespaceName, {
+    ...inNamespace,
+    dependsOn: [namespace],
+  });
+
+  const workerSecret = createWorkerSecret(vault, namespaceName, {
     ...inNamespace,
     dependsOn: [namespace],
   });
@@ -634,31 +669,44 @@ export function installTemporal(args: TemporalArgs): TemporalResources {
               {
                 name: "temporal-worker",
                 image: ghcrImage("temporal-worker", imageDigests),
-                // Only APP_ENV: every other knob (address, namespace, task
-                // queue, N) has an in-cluster default in the env manifest, and
-                // overrides belong here only when they stop matching. APP_ENV
-                // is not one of those knobs — @www/logger reads it LIVE (never
-                // NODE_ENV, which bundlers bake in) and falls back to
-                // "development", so without it every prod log line from this
-                // worker is stamped with the wrong environment.
-                env: [{ name: "APP_ENV", value: "production" }],
+                // Every Temporal knob (address, namespace, task queue) has an
+                // in-cluster default in the env manifest; overrides belong
+                // here only when they stop matching. APP_ENV is not one of
+                // those knobs — @www/logger reads it LIVE (never NODE_ENV,
+                // which bundlers bake in) and falls back to "development", so
+                // without it every prod log line from this worker is stamped
+                // with the wrong environment. POSTGRES_HOST is the
+                // cross-namespace FQDN of the control-center database's rw
+                // Service: db-touching activities (ADR-0008) derive
+                // DATABASE_URL from it plus the mounted POSTGRES_PASSWORD,
+                // exactly like the api/worker pods do in their own namespace.
+                env: [
+                  { name: "APP_ENV", value: "production" },
+                  {
+                    name: "POSTGRES_HOST",
+                    value: `${controlCenterProductManifest().database.rwServiceName}.control-center.svc.cluster.local`,
+                  },
+                ],
+                volumeMounts: [{ name: "secrets", mountPath: "/run/secrets", readOnly: true }],
                 resources: {
                   limits: { memory: "512Mi" },
                   requests: { cpu: "100m", memory: "256Mi" },
                 },
               },
             ],
+            volumes: [{ name: "secrets", secret: { secretName: WORKER_SECRET_NAME } }],
           },
         },
       },
     },
-    { ...inNamespace, dependsOn: [namespaceJob] },
+    { ...inNamespace, dependsOn: [namespaceJob, workerSecret] },
   );
 
   return {
     namespace,
     ghcrPullSecret,
     authSecret,
+    workerSecret,
     cluster,
     dynamicConfig,
     schemaJob,

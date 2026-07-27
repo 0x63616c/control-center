@@ -17,7 +17,7 @@
  */
 import { z } from "zod";
 
-export type Runtime = "api" | "worker" | "web" | "cron" | "all";
+export type Runtime = "api" | "worker" | "web" | "cron" | "temporal-worker" | "all";
 
 /** Raw parser: turns a present (non-empty) env string into the typed value. */
 type RawParse = (raw: string) => unknown;
