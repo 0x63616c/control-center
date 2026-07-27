@@ -18,6 +18,7 @@ describe("desiredAccessApps", () => {
       "app.worldwidewebb.co",
       "db-ui.worldwidewebb.co",
       "grafana.worldwidewebb.co",
+      "ha.worldwidewebb.co",
       "temporal-ui.worldwidewebb.co",
     ]);
     expect(domains).not.toContain("*.worldwidewebb.co");
@@ -36,6 +37,7 @@ describe("desiredAccessApps", () => {
       "app.worldwidewebb.co",
       "db-ui.worldwidewebb.co",
       "grafana.worldwidewebb.co",
+      "ha.worldwidewebb.co",
       "hooks.worldwidewebb.co",
       "temporal-ui.worldwidewebb.co",
     ]);
@@ -94,6 +96,23 @@ describe("desiredAccessApps", () => {
     );
 
     expect(grafana?.policies).toEqual([
+      {
+        decision: "allow",
+        include: { configKey: "allowedEmail", kind: "email-config" },
+        name: "email-otp",
+        precedence: 1,
+      },
+    ]);
+  });
+
+  test("ha is human-login only — NEVER reachable with the kiosk token", () => {
+    // #75/#237: full HA admin surface, no kiosk business reaching it over this
+    // route, same reasoning as Grafana above.
+    const ha = desiredAccessApps(ZONE, true).find(
+      (entry) => entry.domain === "ha.worldwidewebb.co",
+    );
+
+    expect(ha?.policies).toEqual([
       {
         decision: "allow",
         include: { configKey: "allowedEmail", kind: "email-config" },

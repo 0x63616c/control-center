@@ -156,6 +156,9 @@ export function desiredAccessApps(zone: string, includeGate = false): DesiredAcc
       // panel never calls Grafana, so it gets no kiosk service token, and the
       // UI can edit datasources and dashboards — a human login only.
       { exposure: ccManifest.grafana.exposure, policies: ["email-otp"] },
+      // Home Assistant (#75/#237): email-OTP ONLY, same reasoning as Grafana —
+      // full admin surface, no kiosk business reaching it over this route.
+      { exposure: ccManifest.ha.exposure, policies: ["email-otp"] },
     ]),
   ];
 
