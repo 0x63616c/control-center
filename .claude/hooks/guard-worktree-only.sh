@@ -46,6 +46,10 @@ common_dir=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/
 
 case "$tool_name" in
   Edit|Write|NotebookEdit|apply_patch)
+    file_path=$(printf '%s' "$input" | jq -r '.tool_input.file_path // .tool_input.path // empty' 2>/dev/null)
+    case "$file_path" in
+      /tmp/*|/private/tmp/*) exit 0 ;;
+    esac
     deny "Edits blocked in the main checkout of a wtp-managed repo. Run 'wtp add <branch>' (or 'wtp cd <branch>' for an existing one) and work there instead."
     ;;
   EnterWorktree)
