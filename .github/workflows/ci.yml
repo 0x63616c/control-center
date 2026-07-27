@@ -186,11 +186,10 @@ jobs:
         run: bash scripts/test-map-provision.sh
       - name: Dockerfile manifest coverage guard
         run: bun run test:dockerfile-manifests
-      - name: Multi-arch build matrix guard
-        # SDD homelab-migration Task 1: asserts ci.yml still carries a native
-        # arm64 leg (the mini stays live), a native amd64 leg (the new Talos
-        # node), and a manifest-merge step, so a future edit can't silently
-        # drop either arch or fall back to QEMU emulation.
+      - name: Build matrix guard
+        # Asserts every product image builds on a NATIVE amd64 runner and that
+        # no arm64 leg or QEMU emulation creeps back in. The home-server Talos
+        # node is the only deploy target and is x86.
         run: bash scripts/test-build-matrix.sh
       - name: Control Center cutover tooling tests
         # Hermetic self-tests of the M7 production-cutover tooling (www-jtp0.7):
@@ -281,21 +280,16 @@ jobs:
   # in its own `needs:`, so an image built for a commit that fails tests is
   # simply never deployed. The only cost is building images for the ~9% of
   # pushes that fail — they are content-addressed and otherwise inert.
-  # Talos migration (SDD homelab-migration Task 1): each build-* job now runs
-  # its Dockerfile build TWICE, once per native runner arch, and pushes only
-  # a per-arch child tag (…:<sha>-<arch>). A dependent merge-* job composes
-  # the two children into a multi-arch manifest INDEX at …:main / …:<sha>
-  # via `docker buildx imagetools create`. No setup-qemu-action anywhere:
-  # both legs are native, so bun builds never emulate (the arm64 mini stays
-  # live and must not regress into an emulated, OOM/timeout-prone build).
+  # Each build-* job builds its Dockerfile ONCE, linux/amd64 only, on a native
+  # ubuntu-24.04 runner, and pushes the final tags directly (…:<sha>, plus
+  # …:main on main). The arm64 leg and the merge-* manifest-index jobs were
+  # dropped when the arm64 Mac mini was retired (2026-07-25) — the home-server
+  # Talos node is x86 and is the only deploy target. No setup-qemu-action
+  # anywhere: the runner is native, so bun builds never emulate.
   build-web:
     needs: [changes]
     if: needs.changes.outputs.web == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [amd64, arm64]
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     environment: prod
     steps:
@@ -308,227 +302,96 @@ jobs:
       - name: Resolve commit timestamp (unix-ms)
         run: echo "BUILD_TIME=$(( $(git show -s --format=%ct HEAD) * 1000 ))" >> "$GITHUB_ENV"
 
-      - name: Build and push web image (${{ matrix.arch }})
+      - name: Build and push web image
         uses: ./.github/actions/build-product-image
         env:
           SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
         with:
           image: www-control-center-web
           dockerfile: apps/web/Dockerfile
-          arch: ${{ matrix.arch }}
           cache-scope: web
           build-args: |
             BUILD_HASH=${{ github.sha }}
             BUILD_TIME=${{ env.BUILD_TIME }}
 
-  merge-web:
-    needs: [changes, build-web]
-    if: needs.changes.outputs.web == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    environment: prod
-    steps:
-      - uses: actions/checkout@v4
-      - name: Log in to GHCR
-        uses: ./.github/actions/ghcr-login
-        env:
-          SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
-      - name: Create multi-arch manifest index
-        run: |
-          IMAGE=ghcr.io/0x63616c/www-control-center-web
-          tags=(-t "$IMAGE:${{ github.sha }}")
-          if [ "${{ github.ref_name }}" = "main" ]; then
-            tags+=(-t "$IMAGE:main")
-          fi
-          docker buildx imagetools create "${tags[@]}" \
-            "$IMAGE:${{ github.sha }}-amd64" \
-            "$IMAGE:${{ github.sha }}-arm64"
 
   build-api:
     needs: [changes]
     if: needs.changes.outputs.api == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [amd64, arm64]
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     environment: prod
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build and push api image (${{ matrix.arch }})
+      - name: Build and push api image
         uses: ./.github/actions/build-product-image
         env:
           SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
         with:
           image: www-control-center-api
           dockerfile: apps/api/Dockerfile
-          arch: ${{ matrix.arch }}
           cache-scope: api
           build-args: |
             BUILD_HASH=${{ github.sha }}
 
-  merge-api:
-    needs: [changes, build-api]
-    if: needs.changes.outputs.api == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    environment: prod
-    steps:
-      - uses: actions/checkout@v4
-      - name: Log in to GHCR
-        uses: ./.github/actions/ghcr-login
-        env:
-          SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
-      - name: Create multi-arch manifest index
-        run: |
-          IMAGE=ghcr.io/0x63616c/www-control-center-api
-          tags=(-t "$IMAGE:${{ github.sha }}")
-          if [ "${{ github.ref_name }}" = "main" ]; then
-            tags+=(-t "$IMAGE:main")
-          fi
-          docker buildx imagetools create "${tags[@]}" \
-            "$IMAGE:${{ github.sha }}-amd64" \
-            "$IMAGE:${{ github.sha }}-arm64"
 
   build-worker:
     needs: [changes]
     if: needs.changes.outputs.worker == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [amd64, arm64]
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     environment: prod
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build and push worker image (${{ matrix.arch }})
+      - name: Build and push worker image
         uses: ./.github/actions/build-product-image
         env:
           SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
         with:
           image: www-control-center-worker
           dockerfile: apps/worker/Dockerfile
-          arch: ${{ matrix.arch }}
           cache-scope: worker
 
-  merge-worker:
-    needs: [changes, build-worker]
-    if: needs.changes.outputs.worker == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    environment: prod
-    steps:
-      - uses: actions/checkout@v4
-      - name: Log in to GHCR
-        uses: ./.github/actions/ghcr-login
-        env:
-          SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
-      - name: Create multi-arch manifest index
-        run: |
-          IMAGE=ghcr.io/0x63616c/www-control-center-worker
-          tags=(-t "$IMAGE:${{ github.sha }}")
-          if [ "${{ github.ref_name }}" = "main" ]; then
-            tags+=(-t "$IMAGE:main")
-          fi
-          docker buildx imagetools create "${tags[@]}" \
-            "$IMAGE:${{ github.sha }}-amd64" \
-            "$IMAGE:${{ github.sha }}-arm64"
 
   build-temporal-worker:
     needs: [changes]
     if: needs.changes.outputs.temporalworker == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [amd64, arm64]
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     environment: prod
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build and push temporal-worker image (${{ matrix.arch }})
+      - name: Build and push temporal-worker image
         uses: ./.github/actions/build-product-image
         env:
           SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
         with:
           image: www-control-center-temporal-worker
           dockerfile: apps/temporal-worker/Dockerfile
-          arch: ${{ matrix.arch }}
           cache-scope: temporal-worker
 
-  merge-temporal-worker:
-    needs: [changes, build-temporal-worker]
-    if: needs.changes.outputs.temporalworker == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    environment: prod
-    steps:
-      - uses: actions/checkout@v4
-      - name: Log in to GHCR
-        uses: ./.github/actions/ghcr-login
-        env:
-          SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
-      - name: Create multi-arch manifest index
-        run: |
-          IMAGE=ghcr.io/0x63616c/www-control-center-temporal-worker
-          tags=(-t "$IMAGE:${{ github.sha }}")
-          if [ "${{ github.ref_name }}" = "main" ]; then
-            tags+=(-t "$IMAGE:main")
-          fi
-          docker buildx imagetools create "${tags[@]}" \
-            "$IMAGE:${{ github.sha }}-amd64" \
-            "$IMAGE:${{ github.sha }}-arm64"
 
   build-map-provision:
     needs: [changes]
     if: needs.changes.outputs.mapprovision == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [amd64, arm64]
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     environment: prod
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build and push map-provision image (${{ matrix.arch }})
+      - name: Build and push map-provision image
         uses: ./.github/actions/build-product-image
         env:
           SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
         with:
           image: www-control-center-map-provision
           dockerfile: apps/map-provision/Dockerfile
-          arch: ${{ matrix.arch }}
           cache-scope: map-provision
 
-  merge-map-provision:
-    needs: [changes, build-map-provision]
-    if: needs.changes.outputs.mapprovision == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    environment: prod
-    steps:
-      - uses: actions/checkout@v4
-      - name: Log in to GHCR
-        uses: ./.github/actions/ghcr-login
-        env:
-          SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
-      - name: Create multi-arch manifest index
-        run: |
-          IMAGE=ghcr.io/0x63616c/www-control-center-map-provision
-          tags=(-t "$IMAGE:${{ github.sha }}")
-          if [ "${{ github.ref_name }}" = "main" ]; then
-            tags+=(-t "$IMAGE:main")
-          fi
-          docker buildx imagetools create "${tags[@]}" \
-            "$IMAGE:${{ github.sha }}-amd64" \
-            "$IMAGE:${{ github.sha }}-arm64"
 
   # After the images build on main, deploy to the home-server Talos cluster with
   # `pulumi up` (www-j934.14). The runner joins the tailnet with an EPHEMERAL
@@ -551,11 +414,6 @@ jobs:
         build-worker,
         build-temporal-worker,
         build-map-provision,
-        merge-web,
-        merge-api,
-        merge-worker,
-        merge-temporal-worker,
-        merge-map-provision,
       ]
     # always() lets us run even when some build jobs were skipped (no changes).
     # We proceed when: on main, an app OR infra changed, and no build failed.
@@ -831,10 +689,6 @@ jobs:
         build-api,
         build-worker,
         build-map-provision,
-        merge-web,
-        merge-api,
-        merge-worker,
-        merge-map-provision,
         deploy-home-server,
         deploy-cloudflare,
       ]
