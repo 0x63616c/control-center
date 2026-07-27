@@ -2,11 +2,11 @@ import { expect, it } from "vitest";
 import { APP_BRAND, defineApp } from "./define-app";
 import {
   API_FACET_BRAND,
-  CRON_BRAND,
   defineApi,
-  defineCron,
   defineJobs,
+  defineTemporal,
   JOBS_FACET_BRAND,
+  TEMPORAL_FACET_BRAND,
 } from "./define-facets";
 
 const Dummy = () => null;
@@ -55,11 +55,8 @@ it("facet wrappers brand their payload", () => {
     )[JOBS_FACET_BRAND],
   ).toBe(true);
   expect(
-    (
-      defineCron({ name: "c", schedule: "* * * * *", run: async () => {} }) as Record<
-        symbol,
-        unknown
-      >
-    )[CRON_BRAND],
+    (defineTemporal({ workflowTypes: ["DemoWorkflow"], schedules: [] }) as Record<symbol, unknown>)[
+      TEMPORAL_FACET_BRAND
+    ],
   ).toBe(true);
 });

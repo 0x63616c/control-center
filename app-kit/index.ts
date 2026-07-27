@@ -4,7 +4,6 @@ export type { AppManifest, TileSpec } from "./define-app";
 export { APP_BRAND, defineApp } from "./define-app";
 /** @public , authoring surface consumed by future feature api.ts/jobs.ts files (Task 3.2+). */
 export type {
-  CronSpec,
   HttpRoute,
   JobSpec,
   TemporalFacet,
@@ -13,9 +12,7 @@ export type {
 /** @public , authoring surface consumed by future feature api.ts/jobs.ts files (Task 3.2+). */
 export {
   API_FACET_BRAND,
-  CRON_BRAND,
   defineApi,
-  defineCron,
   defineHttp,
   defineJobs,
   defineTemporal,

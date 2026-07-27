@@ -66,10 +66,13 @@ that run/deploy, `packages/` = things you import); product features live under
   `dogcam`, `events`, `felogs`, `guest-wifi`, `network`, `notif`, `sound`, `tesla`, `tv`,
   `wakes`, `weather`, `weight` today). Each has a `manifest.ts` (tile placement, id) plus
   whichever convention facets it needs: `web.tsx` (tile + detail view), `api.ts` (tRPC
-  router slice), `jobs.ts` (queue job handlers), `schema.ts` (owned tables).
+  router slice), `jobs.ts` (queue job handlers), `schema.ts` (owned tables),
+  `temporal.ts` (Temporal workflow types + schedules, ADR-0008) with its
+  implementation siblings `workflows.ts` (sandboxed) and `activities.ts`.
 - `features/_generated/*.gen.ts` - committed codegen output (`bun run apps:gen`):
-  `tiles.gen.ts`, `router.gen.ts`, `guest-router.gen.ts`, `jobs.gen.ts`, `crons.gen.ts`,
-  `cron-handlers.gen.ts`, `http.gen.ts`, `schema.gen.ts`. Never hand-edit.
+  `tiles.gen.ts`, `router.gen.ts`, `guest-router.gen.ts`, `jobs.gen.ts`, `http.gen.ts`,
+  `schema.gen.ts`, `workflows.gen.ts`, `activities.gen.ts`, `schedules.gen.ts`.
+  Never hand-edit.
 - `app-kit` - the `defineApp`/manifest types and server-side router-merging helpers
   every feature's `manifest.ts`/`api.ts` import.
 - `apps/web` - React dashboard, Storybook, and Capacitor iOS shell (`apps/web/ios`).
@@ -225,10 +228,10 @@ Registered workers currently include:
 - `weight-ingest` every 1m (HA Renpho BLE weight sensor → `weight_measurement`).
 - `asc-version-poll` every 1m (latest TestFlight build of the iOS shell, powering the board's update-available banner).
 - Any feature-owned queue job types are aggregated into
-  `features/_generated/jobs.gen.ts` and CronJob-driven cycles into
-  `features/_generated/crons.gen.ts`/`cron-handlers.gen.ts`; a feature adds a job or a
-  cron by writing `jobs.ts` and re-running `bun run apps:gen`, not editing worker code
-  directly.
+  `features/_generated/jobs.gen.ts`; a feature adds a job by writing `jobs.ts` and
+  re-running `bun run apps:gen`, not editing worker code directly. Scheduled work is
+  declared in the `temporal.ts` facet and runs on Temporal (ADR-0008), not as
+  CronJobs.
 
 The shared runtime in `packages/worker-runtime` prevents overlapping cycles per worker, isolates failures, logs failure and recovery transitions, warns on slow cycles, and exposes stats.
 
@@ -256,10 +259,13 @@ and no operator owning the cluster:
 - `temporal-ui` — ClusterIP only; reach it with
   `kubectl -n temporal port-forward svc/temporal-ui 8080:8080`.
 - `temporal-worker` — our worker (`apps/temporal-worker`), namespace
-  `control-center`, task queue `main`.
+  `control-center`, task queue `main`. It registers every feature-declared
+  workflow/activity from `features/_generated/` and RECONCILES the schedule set
+  on each boot (ADR-0008): declared schedules are upserted, managed
+  (`app_`-prefixed) schedules no longer declared are deleted.
 
-`HealthCheckWorkflow` is the liveness proof: a cron Schedule (`* * * * *`)
-upserted by the worker on every boot, firing `N` (default 5) `HealthCheckActivity`
+`HealthCheckWorkflow` (owned by `features/temporal-health`) is the liveness
+proof: a cron Schedule (`* * * * *`) firing 5 `HealthCheckActivity`
 calls spread evenly across the minute. Each iteration sleeps against an absolute
 deadline (`i * 60s/N` from workflow start) rather than a fixed gap, so activity
 latency is absorbed by its own slot instead of accumulating.
@@ -309,14 +315,18 @@ GitHub Actions builds **multi-arch** images in `.github/workflows/ci.yml`: each 
 
 The image digest config key must be namespaced as `wwwinfra:imageDigests.<svc>`. Without `wwwinfra:`, the Pulumi program does not read the values correctly.
 
-## Cron Jobs
+## Scheduled Work
 
-Scheduled work is Kubernetes-native in `infra/src/crons.ts`, plus any feature-owned
-crons aggregated into `features/_generated/crons.gen.ts`:
+App-level scheduled work (every retention purge, plus health-check) runs as
+Temporal Schedules declared from each feature's `temporal.ts` facet (ADR-0008,
+issue #260) — per-run history in the Temporal UI, retries, SKIP overlap, and
+boot-time reconciliation from `features/_generated/schedules.gen.ts`.
 
-- `portal-data-purge` - daily portal cleanup.
-- `map-extract` - monthly basemap refresh.
+Only infra-level jobs remain Kubernetes CronJobs in `infra/src/crons.ts`:
+
+- `map-extract` - monthly basemap refresh (separate `map-provision` image).
 - `pg-backup` - daily Postgres dump to the NAS.
+- Home Assistant config + Postgres backups (declared in `homeassistant.ts`).
 
 Do not add a third-party scheduler for new cron-style tasks.
 
@@ -398,8 +408,9 @@ Persistent state
   -> features/<id>/schema.ts, if needed
 
 Background work
-  -> features/<id>/jobs.ts (queue jobs/crons via codegen), or apps/worker for a
-     still-hand-wired interval enforcer (see `## Domain Services`)
+  -> features/<id>/jobs.ts (queue jobs via codegen), features/<id>/temporal.ts
+     (scheduled workflows, ADR-0008), or apps/worker for a still-hand-wired
+     interval enforcer (see `## Domain Services`)
 
 Deploy shape
   -> infra/src/services.ts or infra/src/crons.ts, if needed

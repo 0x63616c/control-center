@@ -10,14 +10,12 @@
  * old would leave the tile unable to say what is deployed at all. Purge the
  * history, keep the pointer.
  *
- * Runs from the S2 cron seam (a daily one-shot k8s CronJob), never a worker
+ * Runs as a daily Temporal Schedule (ADR-0008, see temporal.ts), never a worker
  * loop (PRD Backend rule 7). Volume is trivial (a few hundred rows a month),
  * so a single bounded DELETE per table is enough, no batching.
  */
-import { defineCron } from "@app-kit";
 import { sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { db } from "./db";
 import type * as schema from "./schema";
 
 /** GitHub run history is retained for 30 days, then purged. */
@@ -54,21 +52,3 @@ export async function purgeGithubRuns(
   `);
   return { runs: runRes.rowCount ?? 0, logTails: tailRes.rowCount ?? 0 };
 }
-
-/**
- * The scheduled purge as a branded {@link defineCron} facet (Track C, S2). The
- * codegen collects every exported `defineCron` into `features/_generated/crons.gen.ts`,
- * run by the generated `deploys-purge` k8s CronJob via `bun cron.js deploys-purge`.
- * Staggered off the other generated purges (guest-wifi/weather at 02:00/03:00,
- * felogs/wakes at 04:00).
- *
- * @public collected by the codegen (dynamic import in scripts/apps-gen/collect.ts,
- * an edge knip can't see) into features/_generated/crons.gen.ts; no static import.
- */
-export const purgeCron = defineCron({
-  name: "deploys-purge",
-  schedule: "0 5 * * *",
-  run: async () => {
-    await purgeGithubRuns(db);
-  },
-});

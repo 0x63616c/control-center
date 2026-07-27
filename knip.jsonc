@@ -113,13 +113,13 @@
       "entry": ["scripts/*.ts", "scripts/*.mjs", "app-kit/index.ts", "app-kit/server.ts"]
     },
     "apps/api": {
-      // server.ts = Docker CMD; cron-run.ts = the generic S2 cron dispatcher
+      // server.ts = Docker CMD
       // (bundled to cron.js, run via `bun cron.js <name>`) — every retention
       // purge (portal/weather/felogs/wakes/github) now runs through this,
       // purge.ts is gone; seed.ts = db:seed script.
       // drizzle.config.ts + the exports map (., ./trpc, ./worker) are
       // auto-detected.
-      "entry": ["src/server.ts", "src/cron-run.ts", "src/db/seed.ts"]
+      "entry": ["src/server.ts", "src/db/seed.ts"]
     },
     "infra": {
       // program.ts = the Pulumi program (Pulumi.yaml `main`, run by the pulumi

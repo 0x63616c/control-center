@@ -37,9 +37,6 @@ interface Model {
   /** Collected `defineJobs` facet entries; a duplicate job type would let two
    *  features both claim the same queue rows. */
   jobs?: { type: string; source: string }[];
-  /** Collected `defineCron` facets; a duplicate cron name would collide as one
-   *  k8s CronJob object AND overwrite each other in CRON_HANDLERS. */
-  crons?: { name: string; source: string }[];
   /** Collected `defineHttp` routes; two routes with the same method+match+path
    *  would shadow each other in the generated route table. */
   httpRoutes?: { method?: string; path: string; match: string; source: string }[];
@@ -122,26 +119,10 @@ export function validate(model: Model, guestExposed: readonly string[]): void {
     }
   }
 
-  // Duplicate cron name across features. Two features declaring the same
-  // `defineCron` name would collide as one k8s CronJob object AND overwrite
-  // each other's entry in the generated CRON_HANDLERS map.
-  if (model.crons) {
-    const seenCron = new Map<string, string>();
-    for (const c of model.crons) {
-      const prev = seenCron.get(c.name);
-      if (prev) {
-        throw new CodegenError(
-          `duplicate cron name '${c.name}' (declared by ${prev} and ${c.source}) — two features cannot register the same cron`,
-        );
-      }
-      seenCron.set(c.name, c.source);
-    }
-  }
-
   // Duplicate HTTP route across features/the interim apps/api list. Two routes
   // with the same method+match+path would shadow each other in the generated
   // route table (findRoute returns whichever happens to sort first), so this is
-  // a hard fold error (mirrors the dup table/router-key/job/cron checks).
+  // a hard fold error (mirrors the dup table/router-key/job checks).
   if (model.httpRoutes) {
     const seenRoute = new Map<string, string>();
     for (const r of model.httpRoutes) {
@@ -208,7 +189,7 @@ export function validate(model: Model, guestExposed: readonly string[]): void {
   // schema.gen.ts is a flat `export *` barrel across all of these, so two
   // schema.ts files exporting the same symbol name would silently
   // last-write-win in the generated barrel — a hard fold error (mirrors the
-  // dup table/router-key/job/cron/http-route checks).
+  // dup table/router-key/job/http-route checks).
   if (model.schemaExports) {
     const seenExport = new Map<string, string>();
     for (const e of model.schemaExports) {

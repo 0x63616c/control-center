@@ -6,9 +6,8 @@
  * would hold a long transaction and bloat WAL. Whatever a run does not finish is
  * picked up by the next day's.
  *
- * Runs from the cron seam (a daily one-shot k8s CronJob), never a worker loop.
+ * Runs as a daily Temporal Schedule (ADR-0008, see temporal.ts), never a worker loop.
  */
-import { defineCron } from "@app-kit";
 import { sql } from "drizzle-orm";
 import { db } from "./db";
 
@@ -21,7 +20,7 @@ const PURGE_BATCH_SIZE = 20_000;
 /** Upper bound on batches per run, so one job can never run unbounded. */
 const MAX_BATCHES = 500;
 
-async function purgeIncomingWebhooks(now = new Date()): Promise<number> {
+export async function purgeIncomingWebhooks(now = new Date()): Promise<number> {
   const cutoff = new Date(now.getTime() - INCOMING_WEBHOOK_RETENTION_MS);
   let deleted = 0;
 
@@ -41,12 +40,3 @@ async function purgeIncomingWebhooks(now = new Date()): Promise<number> {
 
   return deleted;
 }
-
-export const purgeCron = defineCron({
-  name: "hooks-purge",
-  // 06:00, off the hour every other purge already uses.
-  schedule: "0 6 * * *",
-  run: async () => {
-    await purgeIncomingWebhooks();
-  },
-});

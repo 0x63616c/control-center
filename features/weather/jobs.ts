@@ -95,8 +95,8 @@ async function purgeTable(
 }
 
 /**
- * Run one weather purge pass. Pure of any scheduling; the CronJob's purge
- * entrypoint calls this once and exits.
+ * Run one weather purge pass. Pure of any scheduling; the purge activity calls
+ * this once per scheduled run.
  */
 export async function purgeWeatherData(
   db: NodePgDatabase<typeof schema>,

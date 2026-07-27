@@ -11,19 +11,18 @@
  *    ever moves backward relative to now, so a ts cutoff can never delete a row
  *    a live query still wants (reads are always "recent" windows).
  *
- * Runs from the S2 cron seam (a daily one-shot k8s CronJob), never a worker
+ * Runs as a daily Temporal Schedule (ADR-0008, see temporal.ts), never a worker
  * loop (PRD Backend rule 7). Deletes are BATCHED: a single unbounded DELETE
  * would hold one long transaction and bloat WAL. Whatever a run doesn't finish
  * is picked up by the next day's run.
  *
- * jobs.ts exports ONLY this `defineCron` facet — felogs ingest is a tRPC
+ * jobs.ts now carries only the purge implementation (consumed by
+ * activities.ts, ADR-0008) — felogs ingest is a tRPC
  * mutation, not a queue job or worker interval, so this feature has no
  * `defineJobs` facet.
  */
-import { defineCron } from "@app-kit";
 import { sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { db } from "./db";
 import type * as schema from "./schema";
 
 /** Frontend logs are retained for 30 days, then purged. */
@@ -61,8 +60,8 @@ function rows(res: { rowCount?: number | null }): number {
 }
 
 /**
- * Run one frontend-log purge pass. Pure of any scheduling; the CronJob's purge
- * entrypoint calls this once and exits. `ctid` is the physical row address, so
+ * Run one frontend-log purge pass. Pure of any scheduling; the purge activity calls
+ * this once per scheduled run. `ctid` is the physical row address, so
  * the LIMIT subquery picks a cheap arbitrary set of matching rows without a sort.
  */
 export async function purgeFrontendLogs(
@@ -88,21 +87,3 @@ export async function purgeFrontendLogs(
 
   return { logs: deleted, truncated: true };
 }
-
-/**
- * The scheduled purge as a branded {@link defineCron} facet (Track C, S2). The
- * codegen collects every exported `defineCron` into
- * features/_generated/crons.gen.ts, run by the generated `felogs-purge` k8s
- * CronJob via `bun cron.js felogs-purge`. Staggered off guest-wifi's
- * `0 2 * * *` / weather's `0 3 * * *`.
- *
- * @public collected by the codegen (dynamic import in scripts/apps-gen/collect.ts,
- * an edge knip can't see) into features/_generated/crons.gen.ts; no static import.
- */
-export const purgeCron = defineCron({
-  name: "felogs-purge",
-  schedule: "0 4 * * *",
-  run: async () => {
-    await purgeFrontendLogs(db);
-  },
-});

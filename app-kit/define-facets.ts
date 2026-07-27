@@ -7,15 +7,9 @@ import type { JobSpec } from "@www/core";
 
 export const API_FACET_BRAND = Symbol.for("app-kit.api");
 export const JOBS_FACET_BRAND = Symbol.for("app-kit.jobs");
-export const CRON_BRAND = Symbol.for("app-kit.cron");
 export const HTTP_FACET_BRAND = Symbol.for("app-kit.http");
 export const TEMPORAL_FACET_BRAND = Symbol.for("app-kit.temporal");
 
-export interface CronSpec {
-  name: string;
-  schedule: string;
-  run: () => Promise<void>;
-}
 export type { JobSpec };
 
 /**
@@ -85,9 +79,6 @@ export function defineApi<T>(router: T): T {
 }
 export function defineJobs(jobs: JobSpec[]): JobSpec[] {
   return brand(jobs, JOBS_FACET_BRAND);
-}
-export function defineCron(spec: CronSpec): CronSpec {
-  return brand(spec, CRON_BRAND);
 }
 export function defineHttp(routes: HttpRoute[]): HttpRoute[] {
   return brand(routes, HTTP_FACET_BRAND);

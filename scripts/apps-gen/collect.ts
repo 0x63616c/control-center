@@ -7,7 +7,6 @@ import { getTableConfig } from "drizzle-orm/pg-core";
 // tsconfig nearest each file), so reach the authoring surface by relative path.
 import {
   type AppManifest,
-  CRON_BRAND,
   HTTP_FACET_BRAND,
   JOBS_FACET_BRAND,
   TEMPORAL_FACET_BRAND,
@@ -62,20 +61,6 @@ interface CollectedSchemaExport {
 interface CollectedRouterKey {
   key: string;
   source: string;
-}
-
-/**
- * A collected `defineCron` facet (S2). `dir` + `exportName` let the emitter
- * render a static named import into the generated handler barrel
- * (cron-handlers.gen.ts); `renderCrons` (the data listing infra consumes)
- * ignores both, so crons.gen.ts stays a pure {name, schedule, source} shape.
- */
-interface CollectedCron {
-  name: string;
-  schedule: string;
-  source: string;
-  dir: string;
-  exportName: string;
 }
 
 /** A collected `defineJobs` facet entry , the worker folds these generically. */
@@ -145,7 +130,7 @@ interface CollectedActivity {
 
 /**
  * Per-feature emit metadata — everything the emitter needs to render the
- * generated router/guest-router/schema/crons aggregates as deterministic import
+ * generated router/guest-router/schema aggregates as deterministic import
  * barrels. `dir` is the feature folder name (relative import base from
  * features/_generated/).
  */
@@ -169,7 +154,6 @@ export interface AppModel {
   tables: CollectedTable[];
   schemaExports: CollectedSchemaExport[];
   routerKeys: CollectedRouterKey[];
-  crons: CollectedCron[];
   jobs: CollectedJob[];
   httpRoutes: CollectedHttpRoute[];
   httpModules: CollectedHttpModule[];
@@ -241,7 +225,7 @@ function tableNames(mod: Record<string, unknown>): string[] {
  * tile-registry leftovers (source "registry") — a registry entry whose id is
  * already owned by a feature is deduped, so each tile has exactly one source.
  * The schema union (feature tables + base apps/api tables), the feature router
- * keys, and the collected crons ride alongside so validate() can reject
+ * keys, and the collected facets ride alongside so validate() can reject
  * duplicate table names / router keys and the emitter can render the aggregates.
  */
 export async function collect(): Promise<AppModel> {
@@ -252,7 +236,6 @@ export async function collect(): Promise<AppModel> {
   const tables: CollectedTable[] = [];
   const schemaExports: CollectedSchemaExport[] = [];
   const routerKeys: CollectedRouterKey[] = [];
-  const crons: CollectedCron[] = [];
   const jobs: CollectedJob[] = [];
   const httpRoutes: CollectedHttpRoute[] = [];
   const httpModules: CollectedHttpModule[] = [];
@@ -305,17 +288,7 @@ export async function collect(): Promise<AppModel> {
     let hasJobs = false;
     if (existsSync(join(base, "jobs.ts"))) {
       const jobsMod = (await import(join(base, "jobs.ts"))) as Record<string, unknown>;
-      for (const [exportName, v] of Object.entries(jobsMod)) {
-        if (v && typeof v === "object" && (v as Record<symbol, unknown>)[CRON_BRAND]) {
-          const c = v as { name: string; schedule: string };
-          crons.push({
-            name: c.name,
-            schedule: c.schedule,
-            source: `feature:${dir}`,
-            dir,
-            exportName,
-          });
-        }
+      for (const v of Object.values(jobsMod)) {
         // A `defineJobs([...])` facet: an array branded with JOBS_FACET_BRAND.
         // Read only `type` + `maxMs` off each spec , never invoke the handler.
         if (Array.isArray(v) && (v as Record<symbol, unknown>)[JOBS_FACET_BRAND]) {
@@ -477,7 +450,6 @@ export async function collect(): Promise<AppModel> {
     tables,
     schemaExports,
     routerKeys,
-    crons,
     jobs,
     httpRoutes,
     httpModules,

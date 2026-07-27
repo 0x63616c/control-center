@@ -1,8 +1,9 @@
 // The scheduled jobs for the control-center k3s stack (www-j934.7): the cronJob()
-// declarations for the cluster. map-extract is re-homed verbatim and pg-backup
-// is NEW; every retention purge (portal/weather/felogs/wakes/github) now runs
-// through the generated S2 seam (generatedCronSpecs() below) — the legacy
-// hand-wired "portal-data-purge" CronJob (bundled purge.js one-shot) is retired.
+// declarations for the cluster. Only infra-level work remains here: map-extract
+// (separate map-provision image) and the pg/HA backups. Every retention purge
+// migrated to Temporal Schedules declared from feature facets (ADR-0008, issue
+// #260) — the whole generated-cron seam (crons.gen.ts + `bun cron.js <name>`)
+// is deleted.
 //
 // Deliberately ABSENT vs the prior scheduler set (DESIGN.md §2):
 //  - docker-image-prune: kubelet image GC replaces it (high 85% / low 80%); an
@@ -18,12 +19,10 @@
 import type * as k8s from "@pulumi/kubernetes";
 import type * as pulumi from "@pulumi/pulumi";
 import { controlCenterProductManifest, type DatabaseBackup, defineProduct } from "@www/platform";
-import { GENERATED_CRONS } from "../../features/_generated/crons.gen.ts";
 import type { InfraNamespaceName } from "./cluster.ts";
 import type { CronJobSpec } from "./component.ts";
 import { ScheduledJob } from "./component.ts";
 import { GHCR_PULL_SECRET_NAME } from "./ghcr-pull-secrets.ts";
-import { SERVICE_SECRET_TARGETS } from "./secrets-map.ts";
 
 export type OwnedCronJobSpec = CronJobSpec & { namespaceName: InfraNamespaceName };
 
@@ -207,40 +206,9 @@ export function homeAssistantPgBackupCronSpec(args: {
 
 const controlCenterManifest = controlCenterProductManifest();
 const controlCenterBackup = controlCenterManifest.backup;
-const controlCenterPostgresHost = controlCenterManifest.database.rwServiceName;
 // captive-portal's backup CronJob REMOVED (SDD track 0, Task 6) along with
 // its CNPG clusters + namespace; a final pg_dump was taken to the NAS first
 // (captive-portal-final-20260721.dump).
-
-// One k8s CronJob per collected defineCron facet (S2 seam). Each runs the api
-// image's generic cron dispatcher (`bun cron.js <name>`), which invokes the
-// feature's run() via cron-handlers.gen.ts. Replaces per-cron hand-wiring: a new
-// purge-bearing feature declares defineCron and appears here automatically.
-function generatedCronSpecs(digests: ImageDigests): OwnedCronJobSpec[] {
-  return GENERATED_CRONS.map((c) => ({
-    name: c.name,
-    namespaceName: "control-center",
-    image: ghcr("api", digests),
-    schedule: c.schedule,
-    command: ["bun", "cron.js", c.name],
-    secrets: [{ name: "POSTGRES_PASSWORD", ref: "eso" }],
-    // "portal-data-purge" is now a pure secret-name label (its CronJob was
-    // retired) — kept as the shared POSTGRES_PASSWORD secret-target key for
-    // every generated cron. Do NOT rename/remove this key: secrets-map.ts is
-    // out of scope for this fold, and every generated cron's secret depends on it.
-    secretName: SERVICE_SECRET_TARGETS["portal-data-purge"].secretName,
-    // NODE_ENV/APP_ENV must be "production" here (mirrors haEnv in services.ts):
-    // the env registry's DATABASE_URL devDefault (localhost) only yields to the
-    // secret-derived DATABASE_URL when APP_ENV === "production" — see issue #27.
-    env: {
-      TZ,
-      POSTGRES_HOST: controlCenterPostgresHost,
-      NODE_ENV: "production",
-      APP_ENV: "production",
-    },
-    imagePullSecrets: [GHCR_PULL_SECRET_NAME],
-  }));
-}
 
 /**
  * @public - the declared CronJob set (pure data). nasNfsServer is threaded into
@@ -255,12 +223,6 @@ export function cronSpecs(
   imageDigests: ImageDigests = {},
 ): OwnedCronJobSpec[] {
   return [
-    // One CronJob per collected defineCron facet (S2 seam), e.g. guest-wifi's
-    // guest-wifi-purge. Runs the api image's generic `bun cron.js <name>`
-    // dispatcher. New purge-bearing features appear here automatically with
-    // zero hand-wiring.
-    ...generatedCronSpecs(imageDigests),
-
     // Tesla-map basemap refresher (www-gma → www-hn1i). Runs the in-repo
     // map-provision image in FORCE mode: resolve the newest Protomaps planet
     // build at runtime (their daily builds are deleted after ~7 days, so any
