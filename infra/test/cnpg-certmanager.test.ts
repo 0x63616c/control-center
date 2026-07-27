@@ -98,11 +98,10 @@ describe("installCnpg", () => {
       vault: mockVault,
     });
 
-    // Two clusters during the #111 rename migration: the live
-    // "control-center-postgres" the workloads now point at, and the drained
-    // legacy "control-center", both control_center. Collapses back to 1 when
-    // the legacy Cluster CR is deleted as the migration's final step.
-    expect(res.clusters).toHaveLength(2);
+    // One cluster again now #111 is finished: the manifest names it
+    // "control-center-postgres" and the drained legacy "control-center"
+    // Cluster CR was deleted as the migration's final step.
+    expect(res.clusters).toHaveLength(1);
     expect(res.authSecrets).toHaveLength(1);
 
     const clusterSpecs = await Promise.all(
@@ -110,10 +109,7 @@ describe("installCnpg", () => {
         get<{ bootstrap: { initdb: { database: string } } }>(cluster, "spec"),
       ),
     );
-    expect(clusterSpecs.map((spec) => spec.bootstrap.initdb.database)).toEqual([
-      "control_center",
-      "control_center",
-    ]);
+    expect(clusterSpecs.map((spec) => spec.bootstrap.initdb.database)).toEqual(["control_center"]);
   });
 
   test("creates the control-center database resources in its owning namespace", async () => {
@@ -131,9 +127,6 @@ describe("installCnpg", () => {
       res.authSecrets.map((secret) => get<{ name: string; namespace: string }>(secret, "metadata")),
     );
 
-    expect(clusterMetadata.find((m) => m.name === "control-center")?.namespace).toBe(
-      "control-center",
-    );
     expect(clusterMetadata.find((m) => m.name === "control-center-postgres")?.namespace).toBe(
       "control-center",
     );
