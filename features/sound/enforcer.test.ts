@@ -13,6 +13,7 @@
  * else uses the injectable in-memory store.
  */
 import { createInMemoryDeviceStateStore, DeviceKind } from "@www/core";
+import { getLogger } from "@www/logger";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ─── mock the feature's own deviceStateStore (only backs setSpeakerDesiredVolume's
@@ -365,6 +366,7 @@ describe("runSonosVolumeEnforcerCycle", () => {
       reportedState: { volume: 55 },
       available: true,
     });
+    const warnSpy = vi.spyOn(getLogger(), "warn");
 
     await runSonosVolumeEnforcerCycle(store);
 
@@ -373,6 +375,13 @@ describe("runSonosVolumeEnforcerCycle", () => {
     expect(row?.available).toBe(false);
     // Desired must survive the outage , intent is never wiped by unreachability.
     expect(row?.desiredState).toEqual({ volume: 55 });
+    // The failed probe is still a real signal (unreachable speaker) , it must
+    // not be silently swallowed by the per-player try/catch in fetchPlayers().
+    expect(warnSpy).toHaveBeenCalledWith(
+      { ip: LIVING_IP, zoneName: "Living Room" },
+      "sonos volume probe failed, marking unavailable",
+    );
+    warnSpy.mockRestore();
   });
 
   it("marks a vanished-from-topology speaker unavailable without touching reportedState", async () => {

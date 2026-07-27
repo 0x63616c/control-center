@@ -8,7 +8,8 @@
  * drift, and writes real ambient/hvac_action into reportedState every cycle.
  */
 import { createInMemoryDeviceStateStore, DeviceKind } from "@www/core";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getLogger, resetChangeLog } from "@www/logger";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // ─── mock DB (climate-enforcer no longer touches device_state directly , that
 // goes through the DeviceStateStore. `db` is still used by the shared
@@ -298,6 +299,14 @@ function haClimate(attributes: Record<string, unknown>, state = "cool") {
   return { entity_id: "climate.home", state, attributes };
 }
 
+// logChange suppresses a repeated identical signature for the same key within
+// its window (docs/logging.md §3), which would silently swallow assertions
+// across tests that reuse "climate.home" as the entity id. Reset before every
+// test so each one observes a fresh emission, and spy on info so the
+// push/adopt/unreachable lines below can be asserted without depending on log
+// output (the root logger is seeded silent by setup-logger.ts).
+let infoSpy: ReturnType<typeof vi.spyOn>;
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockCallService.mockResolvedValue(undefined);
@@ -307,6 +316,12 @@ beforeEach(() => {
   mockDbInsert.mockReturnValue({
     values: vi.fn().mockReturnValue({ onConflictDoUpdate: vi.fn().mockResolvedValue(undefined) }),
   });
+  resetChangeLog();
+  infoSpy = vi.spyOn(getLogger(), "info");
+});
+
+afterEach(() => {
+  infoSpy.mockRestore();
 });
 
 describe("runClimateEnforcerCycle", () => {
@@ -429,6 +444,10 @@ describe("runClimateEnforcerCycle", () => {
       entity_id: "climate.home",
       fan_mode: "on",
     });
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ entityId: "climate.home", mode: "cool", target: 68 }),
+      "climate enforcer pushing desired state to HA",
+    );
   });
 
   it("turning OFF pushes the mode only , a remembered setpoint is never actuated", async () => {
@@ -489,6 +508,14 @@ describe("runClimateEnforcerCycle", () => {
     expect(mockCallService).not.toHaveBeenCalled();
     const row = await store.read(CLIMATE_DEVICE_ID);
     expect(row?.desiredState).toEqual({ mode: "cool", target: 75 });
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityId: "climate.home",
+        adoptedMode: "cool",
+        adoptedTarget: 75,
+      }),
+      "climate enforcer adopted reported state",
+    );
   });
 
   it("writes FRESH reportedState (incl. real ambient/action) every cycle, no push when converged", async () => {
@@ -568,5 +595,9 @@ describe("runClimateEnforcerCycle", () => {
     expect(mockCallService).not.toHaveBeenCalled();
     const row = await store.read(CLIMATE_DEVICE_ID);
     expect(row?.available).toBe(false);
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ entityId: "climate.home" }),
+      "climate enforcer lost the thermostat",
+    );
   });
 });
