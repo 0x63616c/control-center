@@ -1,25 +1,29 @@
 export const meta = {
   name: 'grind-tickets',
-  description: 'Work a caller-specified set of GitHub issues: plan -> adversarial review -> revise -> implement in isolated worktrees, then open one draft PR per ticket. It never pushes to main, never merges, and never closes a ticket. Anything blocked is posted as a question on its own issue.',
+  description: 'Work a caller-specified set of GitHub issues: plan -> adversarial review -> revise -> implement in isolated worktrees, then open one ready-for-review PR per ticket. It never pushes to main, never merges, and never closes a ticket. Anything blocked is posted as a question on its own issue.',
   whenToUse:
-    'Batch-clearing backlog tickets unattended. REQUIRES an explicit ticket list: {tickets:[108,99,...]}. It never chooses its own work. Output is draft PRs for you to review - merging, and therefore deploying, stays yours. Add {dryRun:true} to plan and implement without pushing.',
+    'Batch-clearing backlog tickets unattended. REQUIRES an explicit ticket list: {tickets:[108,99,...]}. It never chooses its own work. Output is open PRs for you to review - merging, and therefore deploying, stays yours. Add {dryRun:true} to plan and implement without pushing.',
   phases: [
     { title: 'Plan', detail: 'explore the codebase, draft a full plan per ticket', model: 'sonnet' },
     { title: 'Review', detail: 'a distinct agent attacks each plan', model: 'sonnet' },
     { title: 'Revise', detail: 'planner answers every finding', model: 'sonnet' },
     { title: 'Implement', detail: 'fresh agent executes in an isolated worktree', model: 'sonnet' },
     { title: 'Blocked', detail: 'post questions and blockers onto their own issues', model: 'sonnet' },
-    { title: 'Propose', detail: 'serialized rebase + push branch + open a draft PR, one at a time', model: 'sonnet' },
+    { title: 'Propose', detail: 'serialized rebase + push branch + open a PR, one at a time', model: 'sonnet' },
   ],
 }
 
 // ---------------------------------------------------------------------------
 // Inputs
-//   args.tickets  number[]  REQUIRED - the exact issue numbers to work. This
-//                           workflow never selects its own work: picking what to
-//                           spend effort on is the owner's call, not an agent's.
-//   args.repoDir  string    override the checkout path
-//   args.dryRun   boolean   plan/review/revise/implement but never push or open a PR
+//   args.tickets    number[]  REQUIRED - the exact issue numbers to work. This
+//                             workflow never selects its own work: picking what to
+//                             spend effort on is the owner's call, not an agent's.
+//   args.repoDir    string    override the checkout path
+//   args.dryRun     boolean   plan/review/revise/implement but never push or open a PR
+//   args.batchSize  number    max tickets in flight at once through the
+//                             plan->review->revise->implement pipeline. Batches
+//                             run one after another, never concurrently with each
+//                             other. Default 5.
 // ---------------------------------------------------------------------------
 
 // `args` can arrive as a JSON STRING rather than an object , the Skill wrapper
@@ -44,6 +48,8 @@ if (tickets.length === 0) {
   )
 }
 if (tickets.length > 4096) throw new Error('too many tickets')
+
+const BATCH_SIZE = Number.isInteger(ARGS.batchSize) && ARGS.batchSize > 0 ? ARGS.batchSize : 5
 
 const HOUSE_RULES = `
 REPO: ${REPO} (branch main). Read AGENTS.md + CODEBASE_OVERVIEW.md before anything.
@@ -139,13 +145,16 @@ const PROPOSE_SCHEMA = {
   properties: {
     ticket: { type: 'number' },
     status: { type: 'string', enum: ['proposed', 'skipped', 'conflict-abandoned'] },
-    pr: { type: 'number', description: 'The draft PR number opened for this ticket, if any.' },
+    pr: { type: 'number', description: 'The PR number opened for this ticket, if any.' },
     sha: { type: 'string', description: 'Final sha on the pushed branch. Never a sha on main.' },
     notes: { type: 'string' },
   },
 }
 
-log(`Working ${tickets.length} tickets${DRY_RUN ? ' (DRY RUN - nothing will be pushed)' : ''}`)
+log(
+  `Working ${tickets.length} tickets, up to ${BATCH_SIZE} in flight at once` +
+    `${DRY_RUN ? ' (DRY RUN - nothing will be pushed)' : ''}`,
+)
 
 // Blockers accumulated across every phase. Each entry becomes a comment on its
 // own issue, so a question an agent could not answer lands where the owner will
@@ -153,15 +162,17 @@ log(`Working ${tickets.length} tickets${DRY_RUN ? ' (DRY RUN - nothing will be p
 const blockers = []
 
 // ---------------------------------------------------------------------------
-// Phases 1-4 - plan -> review -> revise -> implement, pipelined per ticket
+// Phases 1-4 - plan -> review -> revise -> implement, one chain per ticket,
+// run through a rolling pool capped at BATCH_SIZE concurrent tickets. A slot
+// frees the moment ANY ticket finishes its whole chain, so a slow ticket
+// never blocks the others queued behind it - unlike fixed batches, where the
+// next group can't start until every ticket in the current group is done.
 // ---------------------------------------------------------------------------
 
 phase('Plan')
 
-const results = await pipeline(
-  tickets,
-
-  (n) => agent(`${HOUSE_RULES}
+async function runTicket(n) {
+  const plan = await agent(`${HOUSE_RULES}
 
 You are the PLANNER for GitHub issue #${n}. Change NO files - this is read-and-think only.
 
@@ -176,9 +187,9 @@ You are the PLANNER for GitHub issue #${n}. Change NO files - this is read-and-t
 5. Verification must genuinely prove it: \`bun run typecheck\`, relevant tests, plus
    \`bun run apps:check\` if features/ is touched, plus a browser screenshot for UI tickets.
 
-Return the structured plan.`, { label: `plan:#${n}`, phase: 'Plan', model: 'sonnet', schema: PLAN_SCHEMA }),
+Return the structured plan.`, { label: `plan:#${n}`, phase: 'Plan', model: 'sonnet', schema: PLAN_SCHEMA })
 
-  (plan, n) => agent(`${HOUSE_RULES}
+  const review = await agent(`${HOUSE_RULES}
 
 You are an adversarial PLAN REVIEWER for GitHub issue #${n}. You did NOT write this plan.
 Find what is wrong with it. Do not praise it. Change no files.
@@ -199,21 +210,21 @@ A plan with no findings is suspicious; look harder before returning "sound".
 Return "ticket-not-actionable" ONLY if closing it genuinely requires a human decision,
 a physical action, or a credential.
 
-Return the structured review.`, { label: `review:#${n}`, phase: 'Review', model: 'sonnet', schema: REVIEW_SCHEMA }),
+Return the structured review.`, { label: `review:#${n}`, phase: 'Review', model: 'sonnet', schema: REVIEW_SCHEMA })
 
-  async (review, n) => {
-    if (review && review.verdict === 'ticket-not-actionable') {
-      const reason = review.findings
-        .map((f) => `- **${f.severity}:** ${f.problem}\n  - suggested: ${f.fix}`)
-        .join('\n')
-      log(`#${n} not actionable - will post the blocker to the issue`)
-      blockers.push({
-        ticket: n,
-        stage: 'review',
-        body: `A plan review concluded this cannot be closed without a decision from you.\n\n${reason}`,
-      })
-      return { skip: true, ticket: n, reason }
-    }
+  let rev
+  if (review && review.verdict === 'ticket-not-actionable') {
+    const reason = review.findings
+      .map((f) => `- **${f.severity}:** ${f.problem}\n  - suggested: ${f.fix}`)
+      .join('\n')
+    log(`#${n} not actionable - will post the blocker to the issue`)
+    blockers.push({
+      ticket: n,
+      stage: 'review',
+      body: `A plan review concluded this cannot be closed without a decision from you.\n\n${reason}`,
+    })
+    rev = { skip: true, ticket: n, reason }
+  } else {
     const revised = await agent(`${HOUSE_RULES}
 
 You are the PLANNER for issue #${n}, revising after review. Address EVERY finding.
@@ -225,18 +236,18 @@ ${JSON.stringify(review, null, 2)}
 
 Re-verify any path the reviewer questioned by actually opening it. Change no files.
 Return the revised structured plan.`, { label: `revise:#${n}`, phase: 'Revise', model: 'sonnet', schema: PLAN_SCHEMA })
-    return { skip: false, ticket: n, plan: revised }
-  },
+    rev = { skip: false, ticket: n, plan: revised }
+  }
 
-  (rev, n) => {
-    if (!rev || rev.skip) {
-      return {
-        ticket: n, status: 'abandoned', branch: '', commits: [], filesChanged: [],
-        verification: 'not attempted', summary: '', blocker: '',
-        notes: rev ? `skipped: ${rev.reason}` : 'planning failed',
-      }
+  if (!rev || rev.skip) {
+    return {
+      ticket: n, status: 'abandoned', branch: '', commits: [], filesChanged: [],
+      verification: 'not attempted', summary: '', blocker: '',
+      notes: rev ? `skipped: ${rev.reason}` : 'planning failed',
     }
-    return agent(`${HOUSE_RULES}
+  }
+
+  return agent(`${HOUSE_RULES}
 
 You are the IMPLEMENTER for GitHub issue #${n}.
 
@@ -263,9 +274,26 @@ Set \`blocker\` to "" if nothing needs the owner. Otherwise put the specific que
 it will be posted as a comment on issue #${n}. Use it when you hit a decision only the owner
 can make, an external dependency you cannot change, or a scope call you should not make alone.
 Return the structured report, with \`branch\` = "ticket-${n}" if you committed, else "".`,
-      { label: `impl:#${n}`, phase: 'Implement', model: 'sonnet', schema: IMPL_SCHEMA, isolation: 'worktree' })
-  },
+    { label: `impl:#${n}`, phase: 'Implement', model: 'sonnet', schema: IMPL_SCHEMA, isolation: 'worktree' })
+}
+
+// Rolling pool: at most BATCH_SIZE tickets in flight. Each of the BATCH_SIZE
+// "lanes" below pulls the next unclaimed ticket off `tickets` as soon as it
+// finishes its own chain, instead of waiting for sibling tickets in a fixed
+// group - a slow ticket only ever occupies its own lane.
+let nextIndex = 0
+async function lane() {
+  const out = []
+  while (nextIndex < tickets.length) {
+    const n = tickets[nextIndex++]
+    out.push(await runTicket(n))
+  }
+  return out
+}
+const laneResults = await Promise.all(
+  Array.from({ length: Math.min(BATCH_SIZE, tickets.length) }, () => lane()),
 )
+const results = laneResults.flat()
 
 const impls = results.filter(Boolean)
 const ready = impls.filter((r) => r.branch && r.commits && r.commits.length > 0)
@@ -339,7 +367,7 @@ if (ready.length === 0) {
   return { implemented: impls, proposed: [], summary: 'nothing to propose' }
 }
 // ---------------------------------------------------------------------------
-// Phase 5 - PROPOSE. One draft PR per ticket.
+// Phase 5 - PROPOSE. One PR per ticket, open (not draft) - ready for review.
 //
 // This used to cherry-pick onto main and push. It no longer does: main is now
 // branch-and-PR by default (#120), so an unattended workflow must not be the one
@@ -372,12 +400,16 @@ worktree - \`git -C ${REPO} worktree list\` and \`git -C ${REPO} branch --list $
 3. Push the BRANCH, never main: \`git -C ${REPO} push -u origin ${r.branch}\`.
    If the pre-push hook fails because the worktree has no node_modules, run \`bun install\`
    there - do NOT reach for --no-verify.
-4. Open a DRAFT pull request:
-   \`gh pr create --draft --base main --head ${r.branch} --title "<conventional commit title>" --body-file <file>\`
+4. Open the pull request OPEN, not draft:
+   \`gh pr create --base main --head ${r.branch} --title "<conventional commit title>" --body-file <file>\`
    The body states what changed and how it was verified, with real pasted output, and
    references the issue as \`Refs #${r.ticket}\`. NEVER \`Fixes\`/\`Closes\` - that auto-closes an
    unvalidated ticket the moment somebody merges.
-5. Report the PR number and the final sha on the branch.
+5. Watch CI on the PR to a real conclusion: \`gh pr checks <pr-number> --watch\`. Record the
+   final status in notes ("CI green" / "CI failed: <check name>" / etc) - do not guess, wait for
+   the real result. Do not attempt to fix unrelated pre-existing CI failures; only fix ones your
+   own commits caused, then push and re-watch.
+6. Report the PR number and the final sha on the branch.
 
 Return the structured report.`, { label: `propose:#${r.ticket}`, phase: 'Propose', model: 'sonnet', schema: PROPOSE_SCHEMA })
   if (p) proposed.push(p)
@@ -396,11 +428,11 @@ for (const p of proposed) {
 await postBlockers(blockers)
 
 const opened = proposed.filter((p) => p.status === 'proposed')
-log(`${opened.length} draft PR(s) opened - none merged. Review and merge them yourself.`)
+log(`${opened.length} PR(s) opened - none merged. Review and merge them yourself.`)
 
 return {
   implemented: impls.map((r) => ({ ticket: r.ticket, status: r.status, files: r.filesChanged, notes: r.notes })),
   notLanded: notLanded.map((r) => ({ ticket: r.ticket, why: r.notes })),
   proposed,
-  summary: `${opened.length} draft PR(s) opened for review. Nothing merged, nothing deployed, no ticket closed.`,
+  summary: `${opened.length} PR(s) opened for review. Nothing merged, nothing deployed, no ticket closed.`,
 }
