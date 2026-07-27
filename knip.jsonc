@@ -2,8 +2,10 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   // Dead-code detector (www-k6p1). `bun run knip` runs in lefthook pre-push and
   // CI for unused files, dependencies, exports and types. Export-level detection
-  // used to be disabled because Temporal exported activities/workflows by runtime
-  // name; Temporal left with products/project-management, so it is on now.
+  // used to be disabled because the old project-management product's Temporal setup
+  // exported activities/workflows by runtime name; that product is gone, so it is on
+  // now. Today's Temporal usage (apps/temporal-worker, ADR-0008) references workflow
+  // and activity exports statically via bundler entry files, so detection stays on.
   //
   // An export that is deliberately part of a public surface with no internal
   // consumer yet (the shared tile-author UI primitives, infra component props)

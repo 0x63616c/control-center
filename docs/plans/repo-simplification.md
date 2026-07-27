@@ -1,5 +1,11 @@
 # Repo Simplification Implementation Plan
 
+> **Historical note (2026-07-27):** "Temporal is OUT" below meant the old
+> `products/project-management` consumer, which this plan deleted. Temporal has since
+> returned as live infrastructure (`infra/src/temporal.ts`, `apps/temporal-worker/`) and
+> now owns scheduled app work — see ADR-0008. Read this plan's Temporal statements as
+> scoped to that dead product, not the repo today.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan slice-by-slice. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Shrink the monorepo to what is actually load-bearing — delete two products, fix a stale-doc drift, retire a folklore `git push --no-verify` habit, and record honest verdicts on the "collapse `control-center/*`" and shared-package questions — without ever shipping a red push to `main`.

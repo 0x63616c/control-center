@@ -1,5 +1,10 @@
 # App Construct Implementation Plan
 
+> **Historical note (2026-07-27):** "Temporal is OUT" below was true when this plan
+> executed — it introduced no workflow engine. Temporal has since been self-hosted
+> (`infra/src/temporal.ts`, `apps/temporal-worker/`) and now owns scheduled app work via a
+> `workflows.ts` facet built on this plan's codegen — see ADR-0008.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Slices use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Consolidate the 19 scattered Tiles + their routers, Worker Cycles, Queue Jobs, Chrome, and tables into self-contained **Apps** — one folder per App under `products/control-center/apps/<id>/` — wired by a committed **codegen** step, migrating one deployable green push at a time with zero behaviour change per slice.
