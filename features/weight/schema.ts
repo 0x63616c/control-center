@@ -8,6 +8,12 @@
 // ever deleted or collapsed. Display-layer reduces to a daily median and
 // hides rows with excluded_reason set (auto sanity-band or manual toggle from
 // the panel).
+//
+// One named exception: the ha_ble-sourced rows (Renpho scale over a BLE
+// proxy, polled via Home Assistant) were hard-deleted in migration 0033 (#251)
+// once that ingest path was retired (#245) and could no longer re-insert them.
+// That was a one-time purge of a decommissioned source's historical data, not
+// a reversal of append-only for the live withings_api path.
 import {
   doublePrecision,
   index,
@@ -28,10 +34,11 @@ export const weightMeasurement = pgTable(
     // Canonical metric. lb is presentation-only.
     weightKg: doublePrecision("weight_kg").notNull(),
     // Body composition as reported (fat/muscle/hydration/bone/fat-free), keyed
-    // by the names in WEIGHT_METRICS. Null for the retired ha_ble-era rows,
-    // which carried a weight and nothing else.
+    // by the names in WEIGHT_METRICS. Null whenever a Withings sync didn't
+    // include bio-impedance (e.g. socks/shoes on, or a failed impedance read) ,
+    // a weight-only sync is a real, expected shape, not an error.
     bodyMetrics: jsonb("body_metrics").$type<Record<string, number>>(),
-    source: text("source").notNull(), // 'withings_api' (legacy rows may still say 'ha_ble')
+    source: text("source").notNull(), // always 'withings_api'; the ha_ble rows were purged in #251
     // Withings' own measurement-group id (direct-API ingest only; null for
     // HA-sourced rows). Unique so a correction Calum makes in the Health Mate
     // app , same grpid, edited value , updates the row via onConflictDoUpdate
@@ -39,9 +46,14 @@ export const weightMeasurement = pgTable(
     withingsGrpid: text("withings_grpid").unique(),
     // Non-null = hidden from all reads. 'sanity_band' (auto) | 'manual'.
     excludedReason: text("excluded_reason"),
-    // Tombstone. A hard DELETE is not safe: ingest re-sees the same HA sensor
-    // state on its next poll and re-inserts the row, because the measured_at
-    // unique index is the only thing stopping it.
+    // Tombstone for reads that need a reversible hide (e.g. a manual/
+    // sanity-band exclusion review flow). This is distinct from a hard
+    // DELETE: with a live poller in front of a row, a hard DELETE isn't safe
+    // because ingest can re-see the same source state on its next cycle and
+    // re-insert it, with only the measured_at unique index stopping it. That
+    // specific hazard is what made deletedAt necessary for the old ha_ble
+    // poller; migration 0033 (#251) hard-deletes those rows directly instead,
+    // which is safe now that the ha_ble writer itself is gone (#245).
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

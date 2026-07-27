@@ -144,24 +144,6 @@ export function metricExpr(metric: WeightMetric): SQL<number> {
   return sql<number>`(${weightMeasurement.bodyMetrics} ->> ${metric})::double precision`;
 }
 
-/**
- * Trend reads are Withings-only, on purpose, and for EVERY metric including
- * weight.
- *
- * The retired ha_ble ingest (Renpho scale over a BLE proxy) recorded a weight
- * and nothing else — no body composition at all. Including those rows would
- * start the weight series months before every other metric could possibly
- * start, so switching from Weight to Fat would jump the window to a different
- * date range and read as data loss. Pinning all series to the same source
- * keeps their start dates identical, which is the whole point of the picker.
- *
- * The Readings list deliberately does NOT apply this: it is the audit trail,
- * and hiding real historical weigh-ins there would be a lie.
- */
-function withingsOnly() {
-  return eq(weightMeasurement.source, "withings_api");
-}
-
 const RANGE_DAYS = { "7d": 7, "30d": 30, all: null } as const;
 
 interface DayRow {
@@ -170,7 +152,7 @@ interface DayRow {
   measuredAt: Date;
   weightKg: number;
   excludedReason: string | null;
-  /** Withings body composition; absent/null for the retired ha_ble-era rows. */
+  /** Withings body composition; absent/null for a weight-only sync. */
   bodyMetrics?: Record<string, number> | null;
 }
 
@@ -236,8 +218,13 @@ export function assembleDays(rows: DayRow[]) {
 
 // Daily-median series + window stats for the tile and Trend page. Null until
 // the first included reading exists (day-one skeleton). `metric` selects which
-// series is plotted; every metric reads the same Withings-only rows, so the
-// window start never moves when the picker changes (see withingsOnly).
+// series is plotted. The ha_ble rows that used to force a Withings-only
+// filter here (so switching metrics didn't jump the window's start date) were
+// purged in migration 0033 (#251); `source` is now always 'withings_api', so
+// there is nothing left to filter out. This is an implicit property of the
+// data rather than an enforced invariant , nothing currently guards against a
+// future non-withings source re-entering these rows with a different start
+// date than the rest.
 export async function getSummary(
   range: "7d" | "30d" | "all",
   tz: string,
@@ -256,7 +243,6 @@ export async function getSummary(
       and(
         isNull(weightMeasurement.excludedReason),
         notDeleted(),
-        withingsOnly(),
         // A Withings row can still lack a given body-composition key (a
         // weight-only sync, or a metric the scale didn't report that session).
         // Those must drop out of the series rather than land as nulls that
