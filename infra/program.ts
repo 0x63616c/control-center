@@ -15,7 +15,7 @@ import { installDbUi } from "./src/db-ui.ts";
 import { installEso } from "./src/eso.ts";
 import { verifyLiveGhcrPullSecrets } from "./src/ghcr-pull-secret-preflight.ts";
 import { installHomeAssistant } from "./src/homeassistant.ts";
-import { installLocalPath } from "./src/local-path.ts";
+import { installLvmLocalPv } from "./src/lvm-localpv.ts";
 import { installMetallb } from "./src/metallb.ts";
 import { installMetricsServer } from "./src/metrics-server.ts";
 import { installNvidiaDevicePlugin, installNvidiaRuntimeClass } from "./src/nvidia.ts";
@@ -176,7 +176,10 @@ const crons = deployCrons({
 // neither a storage provisioner (OrbStack ships one) nor a LoadBalancer
 // implementation (OrbStack's expose_services), and has no GPU passthrough.
 if (target.substrate === "talos") {
-  installLocalPath({ provider: cluster.provider, version: "v0.0.31" });
+  // Enforced local storage (ADR-0009): OpenEBS LocalPV-LVM replaces
+  // local-path-provisioner. `local-lvm` is the cluster's only/default
+  // StorageClass; PVC sizes are real LVM reservations in VG `storage`.
+  installLvmLocalPv({ provider: cluster.provider });
   installMetallb({ provider: cluster.provider, version: "v0.14.9" });
   installNvidiaRuntimeClass({ provider: cluster.provider });
   // The device plugin advertises nvidia.com/gpu so GPU workloads (Plex) can be
