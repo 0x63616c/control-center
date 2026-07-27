@@ -51,6 +51,7 @@ import { SettingsButton } from "./SettingsButton";
 import { TimeSuiteBanner } from "./TimeSuiteBanner";
 import { getTileDetailEntry } from "./tiles/detail/registry";
 import { TileDetailHost } from "./tiles/detail/TileDetailHost";
+import { UpdateReloadBanner } from "./UpdateReloadBanner";
 import { NotificationBanner, NotificationBannerStack } from "./ui/NotificationBanner";
 import { TileBoundary } from "./ui/TileBoundary";
 
@@ -759,6 +760,7 @@ export function Board() {
         <NotificationBannerStack>
           <DeviceNameBanner />
           <ConnectionLostBanner />
+          <UpdateReloadBanner />
           <AppUpdateBanner />
           <UnplacedTilesBanner count={layout.unplaced.length} />
           <NotChargingBanner />

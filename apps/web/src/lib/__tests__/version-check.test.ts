@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { startVersionCheck, VERSION_POLL_MS } from "../version-check";
+import { RELOAD_GRACE_MS, startVersionCheck, VERSION_POLL_MS } from "../version-check";
+
+// Tests below pass reloadDelay: 0 wherever the grace period itself isn't
+// under test, so the existing "reload fires on this tick" assertions don't
+// all need to grow an extra advance.
 
 // Builds a fetch mock that resolves to a version.json carrying `hash`.
 function fetchReturning(hash: string) {
@@ -24,9 +28,9 @@ describe("startVersionCheck", () => {
     const fetchMock = fetchReturning("new-sha");
     vi.stubGlobal("fetch", fetchMock);
 
-    startVersionCheck({ currentHash: "old-sha", reload });
+    startVersionCheck({ currentHash: "old-sha", reload, reloadDelay: 0 });
 
-    await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
+    await vi.advanceTimersByTimeAsync(VERSION_POLL_MS + 1);
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
@@ -34,7 +38,7 @@ describe("startVersionCheck", () => {
     const reload = vi.fn();
     vi.stubGlobal("fetch", fetchReturning("same-sha"));
 
-    startVersionCheck({ currentHash: "same-sha", reload });
+    startVersionCheck({ currentHash: "same-sha", reload, reloadDelay: 0 });
 
     await vi.advanceTimersByTimeAsync(VERSION_POLL_MS * 3);
     expect(reload).not.toHaveBeenCalled();
@@ -44,7 +48,7 @@ describe("startVersionCheck", () => {
     const reload = vi.fn();
     vi.stubGlobal("fetch", fetchReturning("new-sha"));
 
-    startVersionCheck({ currentHash: "old-sha", reload });
+    startVersionCheck({ currentHash: "old-sha", reload, reloadDelay: 0 });
 
     // Several ticks elapse before the slow reload navigates away.
     await vi.advanceTimersByTimeAsync(VERSION_POLL_MS * 4);
@@ -59,14 +63,14 @@ describe("startVersionCheck", () => {
       .mockResolvedValue({ ok: true, json: async () => ({ hash: "new-sha" }) });
     vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
 
-    startVersionCheck({ currentHash: "old-sha", reload });
+    startVersionCheck({ currentHash: "old-sha", reload, reloadDelay: 0 });
 
     // First tick rejects (no throw, no reload).
     await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
     expect(reload).not.toHaveBeenCalled();
 
     // Next tick succeeds with a mismatch and reloads.
-    await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
+    await vi.advanceTimersByTimeAsync(VERSION_POLL_MS + 1);
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
@@ -81,7 +85,7 @@ describe("startVersionCheck", () => {
       })) as unknown as typeof fetch,
     );
 
-    startVersionCheck({ currentHash: "old-sha", reload });
+    startVersionCheck({ currentHash: "old-sha", reload, reloadDelay: 0 });
 
     await vi.advanceTimersByTimeAsync(VERSION_POLL_MS * 2);
     expect(reload).not.toHaveBeenCalled();
@@ -97,7 +101,7 @@ describe("startVersionCheck", () => {
       })) as unknown as typeof fetch,
     );
 
-    startVersionCheck({ currentHash: "old-sha", reload });
+    startVersionCheck({ currentHash: "old-sha", reload, reloadDelay: 0 });
 
     await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
     expect(reload).not.toHaveBeenCalled();
@@ -108,7 +112,7 @@ describe("startVersionCheck", () => {
     const fetchMock = fetchReturning("new-sha");
     vi.stubGlobal("fetch", fetchMock);
 
-    const stop = startVersionCheck({ currentHash: "dev", reload });
+    const stop = startVersionCheck({ currentHash: "dev", reload, reloadDelay: 0 });
 
     await vi.advanceTimersByTimeAsync(VERSION_POLL_MS * 3);
     expect(fetchMock).not.toHaveBeenCalled();
@@ -120,7 +124,7 @@ describe("startVersionCheck", () => {
     const reload = vi.fn();
     vi.stubGlobal("fetch", fetchReturning("new-sha"));
 
-    startVersionCheck({ currentHash: "old-sha", reload });
+    startVersionCheck({ currentHash: "old-sha", reload, reloadDelay: 0 });
 
     // Fire visibilitychange without advancing the poll timer.
     Object.defineProperty(document, "visibilityState", {
@@ -137,7 +141,7 @@ describe("startVersionCheck", () => {
     const reload = vi.fn();
     vi.stubGlobal("fetch", fetchReturning("new-sha"));
 
-    startVersionCheck({ currentHash: "old-sha", reload });
+    startVersionCheck({ currentHash: "old-sha", reload, reloadDelay: 0 });
 
     window.dispatchEvent(new Event("online"));
     await vi.advanceTimersByTimeAsync(0);
@@ -150,7 +154,7 @@ describe("startVersionCheck", () => {
     const fetchMock = fetchReturning("new-sha");
     vi.stubGlobal("fetch", fetchMock);
 
-    const stop = startVersionCheck({ currentHash: "old-sha", reload });
+    const stop = startVersionCheck({ currentHash: "old-sha", reload, reloadDelay: 0 });
     stop();
 
     await vi.advanceTimersByTimeAsync(VERSION_POLL_MS * 3);
@@ -158,5 +162,25 @@ describe("startVersionCheck", () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("waits reloadDelay before reloading, so a return-from-modal visibility check doesn't reload instantly", async () => {
+    const reload = vi.fn();
+    vi.stubGlobal("fetch", fetchReturning("new-sha"));
+
+    startVersionCheck({ currentHash: "old-sha", reload, reloadDelay: RELOAD_GRACE_MS });
+
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "visible",
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Mismatch detected, but the grace period hasn't elapsed yet.
+    expect(reload).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(RELOAD_GRACE_MS);
+    expect(reload).toHaveBeenCalledTimes(1);
   });
 });
