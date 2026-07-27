@@ -10,7 +10,7 @@ import { databaseUrlFromSecret, hydrateSecretFiles } from "./hydrate";
 import { ENV } from "./manifest";
 import { registrySpec } from "./registry";
 
-export type BootRuntime = "api" | "worker" | "cron" | "temporal-worker";
+export type BootRuntime = "api" | "worker" | "temporal-worker";
 
 /**
  * Fail-fast validation of required env for `runtime`. No-op unless

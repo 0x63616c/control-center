@@ -15,19 +15,18 @@
  * (nothing lists from disk any more) and is re-indexed by the boot backfill then
  * purged again next run, whereas an orphaned row 404s in the viewer.
  *
- * Runs from the S2 cron seam (a daily one-shot k8s CronJob), never a worker
+ * Runs as a daily Temporal Schedule (ADR-0008, see temporal.ts), never a worker
  * loop (PRD Backend rule 7). Staggered off guest-wifi (0 2) + weather (0 3) +
  * felogs.
  *
- * jobs.ts exports ONLY this `defineCron` facet , wake capture is a browser-side
+ * jobs.ts now carries only the purge implementation (consumed by
+ * activities.ts, ADR-0008) , wake capture is a browser-side
  * best-effort burst, not a worker job, so this feature has no `defineJobs`
  * facet.
  */
-import { defineCron } from "@app-kit";
 import { getLogger } from "@www/logger";
 import { asc, eq, lt } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { db } from "./db";
 import { defaultWakePhotoRoot, deleteWakePhotoFile } from "./photos";
 import type * as schema from "./schema";
 import { wakePhoto } from "./schema";
@@ -48,7 +47,7 @@ export function wakePhotoCutoff(now: Date): Date {
 
 /**
  * Run one wake-photo purge pass: delete index rows past the cutoff and unlink
- * their files. Pure of any scheduling; the CronJob's purge entrypoint calls
+ * their files. Pure of any scheduling; the purge activity calls
  * this once and exits.
  */
 export async function purgeWakePhotos(
@@ -80,20 +79,3 @@ export async function purgeWakePhotos(
   getLogger().info({ deleted }, "wake photo purge hit its batch cap");
   return { photos: deleted, truncated: true };
 }
-
-/**
- * The scheduled purge as a branded {@link defineCron} facet (Track C, S2). The
- * codegen collects every exported `defineCron` into `features/_generated/crons.gen.ts`,
- * run by the generated `wake-photo-purge` k8s CronJob via `bun cron.js wake-photo-purge`.
- * Staggered off guest-wifi's `0 2 * * *` + weather's `0 3 * * *`.
- *
- * @public collected by the codegen (dynamic import in scripts/apps-gen/collect.ts,
- * an edge knip can't see) into features/_generated/crons.gen.ts; no static import.
- */
-export const purgeCron = defineCron({
-  name: "wake-photo-purge",
-  schedule: "0 4 * * *",
-  run: async () => {
-    await purgeWakePhotos(db);
-  },
-});

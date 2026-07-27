@@ -55,20 +55,14 @@ const byName = (specs: CronSpec[], name: string) => specs.find((s) => s.name ===
 describe("cronSpecs: the declared CronJob set", () => {
   // weather-purge is deliberately ABSENT: it migrated to a Temporal Schedule
   // (ADR-0008, issue #260) and no longer renders a k8s CronJob.
-  test("declares product backups plus deploys-purge, guest-wifi-purge, felogs-purge, hooks-purge, wake-photo-purge and map-extract (no image-prune, no cert-renew, no weather-purge)", () => {
+  // Every retention purge is deliberately ABSENT: they migrated to Temporal
+  // Schedules (ADR-0008, issue #260); only infra-level crons render CronJobs.
+  test("declares exactly map-extract and the product pg-backup (no purges, no image-prune, no cert-renew)", () => {
     const names = crons
       .cronSpecs(NAS)
       .map((c) => c.name)
       .sort();
-    expect(names).toEqual([
-      "deploys-purge",
-      "felogs-purge",
-      "guest-wifi-purge",
-      "hooks-purge",
-      "map-extract",
-      "pg-backup",
-      "wake-photo-purge",
-    ]);
+    expect(names).toEqual(["map-extract", "pg-backup"]);
   });
 
   test("docker-image-prune does NOT exist (kubelet image GC replaces it)", () => {
@@ -77,67 +71,6 @@ describe("cronSpecs: the declared CronJob set", () => {
 
   test("portal-cert-renew does NOT exist (cert-manager owns TLS renewal)", () => {
     expect(byName(crons.cronSpecs(NAS), "portal-cert-renew")).toBeUndefined();
-  });
-});
-
-describe("deploys-purge (S2 generated-cron seam)", () => {
-  const purge = () => byName(crons.cronSpecs(NAS), "deploys-purge");
-
-  test("runs the api image's generic cron dispatcher nightly at 05:00 LA", () => {
-    const c = purge();
-    expect(c?.image).toBe("ghcr.io/0x63616c/www-control-center-api:main");
-    expect(c?.schedule).toBe("0 5 * * *");
-    expect(c?.command).toEqual(["bun", "cron.js", "deploys-purge"]);
-    expect(c?.env?.TZ).toBe("America/Los_Angeles");
-  });
-
-  test("points DATABASE at the CNPG rw Service and mounts only POSTGRES_PASSWORD", () => {
-    const c = purge();
-    // In k3s the api default host "postgres" does not resolve; the CNPG Service does.
-    expect(c?.env?.POSTGRES_HOST).toBe("control-center-postgres-rw");
-    expect(c?.namespaceName).toBe("control-center");
-    expect(c?.secrets?.map((s) => s.name)).toEqual(["POSTGRES_PASSWORD"]);
-  });
-
-  test("renders one-shot semantics (Forbid + restartPolicy Never), not suspended", () => {
-    const r = renderCronJob(purge() as CronJobSpec);
-    expect(r.cronJob.spec.concurrencyPolicy).toBe("Forbid");
-    expect(r.cronJob.spec.suspend).toBe(false);
-    expect(r.cronJob.spec.jobTemplate.spec.template.spec.restartPolicy).toBe("Never");
-  });
-
-  // Regression (www-j934.7): the SA token automount must be OFF, else its
-  // projection at /var/run/secrets/kubernetes.io collides with the read-only
-  // /run/secrets mount and the container can't start (ContainerCannotRun).
-  test("disables the serviceaccount token automount", () => {
-    const r = renderCronJob(purge() as CronJobSpec);
-    expect(r.cronJob.spec.jobTemplate.spec.template.spec.automountServiceAccountToken).toBe(false);
-  });
-});
-
-describe("guest-wifi-purge (S2 generated-cron seam, first consumer)", () => {
-  const purge = () => byName(crons.cronSpecs(NAS), "guest-wifi-purge");
-
-  test("runs the api image's generic cron dispatcher nightly at 02:00 LA", () => {
-    const c = purge();
-    expect(c?.image).toBe("ghcr.io/0x63616c/www-control-center-api:main");
-    expect(c?.schedule).toBe("0 2 * * *");
-    expect(c?.command).toEqual(["bun", "cron.js", "guest-wifi-purge"]);
-    expect(c?.env?.TZ).toBe("America/Los_Angeles");
-  });
-
-  test("points DATABASE at the CNPG rw Service and mounts only POSTGRES_PASSWORD", () => {
-    const c = purge();
-    expect(c?.env?.POSTGRES_HOST).toBe("control-center-postgres-rw");
-    expect(c?.namespaceName).toBe("control-center");
-    expect(c?.secrets?.map((s) => s.name)).toEqual(["POSTGRES_PASSWORD"]);
-  });
-
-  test("renders one-shot semantics (Forbid + restartPolicy Never), not suspended", () => {
-    const r = renderCronJob(purge() as CronJobSpec);
-    expect(r.cronJob.spec.concurrencyPolicy).toBe("Forbid");
-    expect(r.cronJob.spec.suspend).toBe(false);
-    expect(r.cronJob.spec.jobTemplate.spec.template.spec.restartPolicy).toBe("Never");
   });
 });
 
@@ -279,45 +212,26 @@ describe("cronSpecs image digest pinning", () => {
   const VALID = `sha256:${"a".repeat(64)}`;
 
   test("falls back to the :main tag when no digest is supplied", () => {
-    expect(byName(crons.cronSpecs(NAS), "deploys-purge")?.image).toBe(
-      "ghcr.io/0x63616c/www-control-center-api:main",
-    );
     expect(byName(crons.cronSpecs(NAS), "map-extract")?.image).toBe(
       "ghcr.io/0x63616c/www-control-center-map-provision:main",
     );
   });
 
-  test("pins every generated-cron's api image by digest when one is supplied", () => {
-    const specs = crons.cronSpecs(NAS, { "control-center-api": VALID });
-    for (const name of [
-      "deploys-purge",
-      "felogs-purge",
-      "guest-wifi-purge",
-      "hooks-purge",
-      "wake-photo-purge",
-    ]) {
-      expect(byName(specs, name)?.image).toBe(`ghcr.io/0x63616c/www-control-center-api@${VALID}`);
-    }
-  });
-
-  test("pins map-extract's image independently of the api digest", () => {
+  test("pins map-extract's image by digest when one is supplied", () => {
     const specs = crons.cronSpecs(NAS, { "control-center-map-provision": VALID });
     expect(byName(specs, "map-extract")?.image).toBe(
       `ghcr.io/0x63616c/www-control-center-map-provision@${VALID}`,
-    );
-    expect(byName(specs, "deploys-purge")?.image).toBe(
-      "ghcr.io/0x63616c/www-control-center-api:main",
     );
   });
 
   test("deployCrons's imageDigests param reaches cronSpecs (rendered container image)", () => {
     const spec = byName(
-      crons.cronSpecs(NAS, { "control-center-api": VALID }),
-      "deploys-purge",
+      crons.cronSpecs(NAS, { "control-center-map-provision": VALID }),
+      "map-extract",
     ) as CronJobSpec;
     const rendered = renderCronJob(spec);
     const image = rendered.cronJob.spec.jobTemplate.spec.template.spec.containers[0]?.image;
-    expect(image).toBe(`ghcr.io/0x63616c/www-control-center-api@${VALID}`);
+    expect(image).toBe(`ghcr.io/0x63616c/www-control-center-map-provision@${VALID}`);
   });
 });
 

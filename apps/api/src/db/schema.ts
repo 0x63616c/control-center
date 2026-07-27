@@ -128,7 +128,7 @@ export const ascBuildStatus = pgTable("asc_build_status", {
 // barrel (features/_generated/schema.gen.ts, which unions this file with every
 // feature's schema.ts). The retention purge folded too (Track C shell-cleanup):
 // features/deploys/jobs.ts now purges the physical github_run/github_run_log_tail
-// tables via raw SQL as a defineCron facet (deploys-purge, the S2 seam).
+// tables via raw SQL from its Temporal purge activity (ADR-0008).
 
 // notification + devicePushToken (Notification Center) were FOLDED into the
 // notif feature (Track C, S1): they now live in features/notif/schema.ts and

@@ -29,8 +29,6 @@ import { GUEST_EXPOSED } from "../features/guest-exposed";
 import { collect } from "./apps-gen/collect";
 import {
   renderActivities,
-  renderCronHandlers,
-  renderCrons,
   renderGuestRouter,
   renderHttp,
   renderJobs,
@@ -53,8 +51,6 @@ async function main(): Promise<void> {
   writeFileSync(join(GEN_DIR, "router.gen.ts"), renderRouter(model));
   writeFileSync(join(GEN_DIR, "guest-router.gen.ts"), renderGuestRouter(model, GUEST_EXPOSED));
   writeFileSync(join(GEN_DIR, "schema.gen.ts"), renderSchema(model));
-  writeFileSync(join(GEN_DIR, "crons.gen.ts"), renderCrons(model));
-  writeFileSync(join(GEN_DIR, "cron-handlers.gen.ts"), renderCronHandlers(model));
   writeFileSync(join(GEN_DIR, "jobs.gen.ts"), renderJobs(model));
   writeFileSync(join(GEN_DIR, "http.gen.ts"), renderHttp(model));
   writeFileSync(join(GEN_DIR, "workflows.gen.ts"), renderWorkflows(model));

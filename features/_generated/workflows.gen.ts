@@ -2,5 +2,10 @@
 // Source of truth: features/*/{manifest,api,schema,jobs}.ts + apps/api/src/db/schema.ts.
 // Re-run `bun run apps:gen` after changing a feature facet; commit the result.
 
+export * from "../deploys/workflows";
+export * from "../felogs/workflows";
+export * from "../guest-wifi/workflows";
+export * from "../hooks/workflows";
 export * from "../temporal-health/workflows";
+export * from "../wakes/workflows";
 export * from "../weather/workflows";

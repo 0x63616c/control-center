@@ -27,8 +27,6 @@ import { GUEST_EXPOSED } from "../features/guest-exposed";
 import { collect } from "./apps-gen/collect";
 import {
   renderActivities,
-  renderCronHandlers,
-  renderCrons,
   renderGuestRouter,
   renderHttp,
   renderJobs,
@@ -71,17 +69,9 @@ const AGGREGATES: readonly Aggregate[] = [
     file: "schema.gen.ts",
     render: async () => renderSchema(await collect()),
   },
-  {
-    file: "crons.gen.ts",
-    render: async () => renderCrons(await collect()),
-  },
-  // Backfill (issue #260): these three predate this entry but were never
+  // Backfill (issue #260): these predate this entry but were never
   // drift-checked — the natural mistake is emitting in apps-gen.ts and
   // forgetting this list.
-  {
-    file: "cron-handlers.gen.ts",
-    render: async () => renderCronHandlers(await collect()),
-  },
   {
     file: "jobs.gen.ts",
     render: async () => renderJobs(await collect()),

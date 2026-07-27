@@ -2,10 +2,20 @@
 // Source of truth: features/*/{manifest,api,schema,jobs}.ts + apps/api/src/db/schema.ts.
 // Re-run `bun run apps:gen` after changing a feature facet; commit the result.
 
+import * as deploysActivities from "../deploys/activities";
+import * as felogsActivities from "../felogs/activities";
+import * as guestWifiActivities from "../guest-wifi/activities";
+import * as hooksActivities from "../hooks/activities";
 import * as temporalHealthActivities from "../temporal-health/activities";
+import * as wakesActivities from "../wakes/activities";
 import * as weatherActivities from "../weather/activities";
 
 export const GENERATED_ACTIVITIES = {
+  ...deploysActivities,
+  ...felogsActivities,
+  ...guestWifiActivities,
+  ...hooksActivities,
   ...temporalHealthActivities,
+  ...wakesActivities,
   ...weatherActivities,
 };

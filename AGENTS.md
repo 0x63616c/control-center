@@ -27,7 +27,7 @@
   is a no-op passthrough on native, so this never touches the panel/native
   behavior above.
 - Features are self-contained Apps under `features/<id>/` (manifest + facets:
-  `web.tsx`, `api.ts`, `jobs.ts`, `schema.ts`); the folder existing is the App's
+  `web.tsx`, `api.ts`, `jobs.ts`, `schema.ts`, `temporal.ts`); the folder existing is the App's
   registration (ADR-0001). Tile placement is declared as registry coords in the
   App's `manifest.ts`, glob-collected and emitted to checked-in
   `features/_generated/*.gen.ts` by `bun run apps:gen` (ADR-0002); never hand-edit
@@ -86,7 +86,8 @@
 - CI/deploy is product-aware: per-product path filters build only changed product
   images plus shared-package dependents.
 - Pulumi digest pins use `wwwinfra:imageDigests.*`.
-- Cron jobs live in `infra/src/crons.ts`.
+- Infra-level cron jobs (backups, map-extract) live in `infra/src/crons.ts`; app-level
+  scheduled work is Temporal Schedules declared in `features/<id>/temporal.ts` (ADR-0008).
 
 ## Issue tracking
 
