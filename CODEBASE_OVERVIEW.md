@@ -376,7 +376,7 @@ the default, so tests inject the in-memory adapter instead of stubbing drizzle.
 - Component work should be Storybook-first where practical.
 - IDs should default to Stripe-style `prefix_<id>`, minted via `genId()` from
   `packages/platform` (never hand-roll `prefix_${crypto.randomUUID()}`); a lefthook guard
-  blocks hand-rolled ids outside `packages/platform/src/id.ts`.
+  blocks hand-rolled ids outside `packages/platform/src/index.ts`.
 - Deployment and operations changes should update docs in the same change.
 
 ## Where To Start For A Feature
