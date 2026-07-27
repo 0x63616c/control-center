@@ -53,8 +53,6 @@ type CronSpec = ReturnType<typeof crons.cronSpecs>[number];
 const byName = (specs: CronSpec[], name: string) => specs.find((s) => s.name === name);
 
 describe("cronSpecs: the declared CronJob set", () => {
-  // weather-purge is deliberately ABSENT: it migrated to a Temporal Schedule
-  // (ADR-0008, issue #260) and no longer renders a k8s CronJob.
   // Every retention purge is deliberately ABSENT: they migrated to Temporal
   // Schedules (ADR-0008, issue #260); only infra-level crons render CronJobs.
   test("declares exactly map-extract and the product pg-backup (no purges, no image-prune, no cert-renew)", () => {
