@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { nextFreeName, parsePhotoFileName } from "@www/core";
 import { getLogger } from "@www/logger";
@@ -234,9 +234,4 @@ export async function readWakePhoto(
   } catch {
     return null;
   }
-}
-
-/** Delete one stored photo's bytes. Missing files are fine (see purge). */
-export async function deleteWakePhotoFile(relPath: string, root = defaultWakePhotoRoot()) {
-  await unlink(join(root, relPath)).catch(() => {});
 }
