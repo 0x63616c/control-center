@@ -8,7 +8,7 @@
 //
 // Namespace `metallb-system` is created BY the pinned upstream manifest itself
 // (L1: not threaded through cluster.ts's closed InfraNamespaceName map, same
-// pattern as local-path.ts/homeassistant.ts).
+// pattern as lvm-localpv.ts/homeassistant.ts).
 //
 // TALOS-ONLY: never installed on "orbstack" (the mini's LoadBalancers are
 // already satisfied by OrbStack itself; MetalLB would double-advertise the
@@ -86,7 +86,7 @@ export function installMetallb(args: MetallbArgs): MetallbResources {
   const opts = { provider };
 
   // controller + speaker DaemonSet + CRDs + the metallb-system namespace, one
-  // manifest (mirrors cert-manager's/local-path's single-ConfigFile install).
+  // manifest (mirrors cert-manager's/lvm-localpv's single-ConfigFile install).
   const operator = new k8s.yaml.ConfigFile(
     "metallb-operator",
     {

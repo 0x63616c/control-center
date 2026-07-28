@@ -440,7 +440,7 @@ export function installTemporal(args: TemporalArgs): TemporalResources {
             postInitSQL: [`CREATE DATABASE ${VISIBILITY_DATABASE_NAME} OWNER ${DATABASE_OWNER}`],
           },
         },
-        storage: { storageClass: "local-path", size: "10Gi" },
+        storage: { storageClass: "local-lvm", size: "10Gi" },
         resources: {
           limits: { memory: "1Gi" },
           requests: { cpu: "250m", memory: "512Mi" },

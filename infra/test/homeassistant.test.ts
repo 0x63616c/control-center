@@ -65,7 +65,7 @@ describe("installHomeAssistant (Task 4, §0.1-§0.4, talos-only)", () => {
     }>(res.cluster, "spec");
     expect(spec.instances).toBe(1);
     expect(spec.bootstrap.initdb.database).toBe("home_assistant");
-    expect(spec.storage.storageClass).toBe("local-path");
+    expect(spec.storage.storageClass).toBe("local-lvm");
   });
 
   test("the CNPG cluster lives in the home-assistant namespace, not control-center", async () => {
@@ -93,13 +93,13 @@ describe("installHomeAssistant (Task 4, §0.1-§0.4, talos-only)", () => {
     ).toThrow(/HOME_ASSISTANT_POSTGRES__PASSWORD/);
   });
 
-  test("§0.3: the ha-config PVC is a small (5Gi) local-path claim", async () => {
+  test("§0.3: the ha-config PVC is a small (5Gi) local-lvm claim", async () => {
     const res = install();
     const spec = await get<{
       storageClassName: string;
       resources: { requests: { storage: string } };
     }>(res.configClaim, "spec");
-    expect(spec.storageClassName).toBe("local-path");
+    expect(spec.storageClassName).toBe("local-lvm");
     expect(spec.resources.requests.storage).toBe("5Gi");
   });
 

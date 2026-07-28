@@ -42,8 +42,8 @@ export {
   installHomeAssistant,
   RECORDER_PURGE_KEEP_DAYS as HOME_ASSISTANT_RECORDER_PURGE_KEEP_DAYS,
 } from "./homeassistant.ts";
-export type { LocalPathArgs, LocalPathResources } from "./local-path.ts";
-export { installLocalPath } from "./local-path.ts";
+export type { LvmLocalPvArgs } from "./lvm-localpv.ts";
+export { installLvmLocalPv, STORAGE_CLASS_NAME, VOLUME_GROUP } from "./lvm-localpv.ts";
 export type { MetallbArgs, MetallbResources } from "./metallb.ts";
 export { installMetallb, METALLB_ADDRESS_POOL_RANGE } from "./metallb.ts";
 export type { NvidiaArgs, NvidiaResources } from "./nvidia.ts";
