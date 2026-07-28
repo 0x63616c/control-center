@@ -24,9 +24,9 @@ export interface TeslaData {
   chargingState: string;
   /**
    * True when the cabin HVAC is actively heating/cooling (preconditioning),
-   * derived from the `climate.<prefix>_hvac_climate_system` entity , anything
-   * other than "off" (and not a dead state) counts as on. False when the
-   * climate entity is absent/dead.
+   * derived from the `climate.<prefix>_climate` entity , anything other than
+   * "off" (and not a dead state) counts as on. False when the climate entity
+   * is absent/dead.
    */
   preconditioning: boolean;
   rate: number;
@@ -37,9 +37,10 @@ export interface TeslaData {
 }
 
 /**
- * Resolve the exact HA entity ids for the car. The Tesla Fleet / tesla_custom
- * integration names every entity `<prefix>_*` (prefix is the car nickname,
- * "evee"). Overridable via TESLA_ENTITY_PREFIX.
+ * Resolve the exact HA entity ids for the car. The Tesla Fleet integration names
+ * every entity `<prefix>_*` (prefix is the car nickname, "evee"). Overridable
+ * via TESLA_ENTITY_PREFIX. Verified against live HA, #304: the old
+ * `_hvac_climate_system` / `_charger` ids are tesla_custom names and 404 here.
  */
 function teslaEntityIds(prefix = config.TESLA_ENTITY_PREFIX) {
   return {
@@ -51,11 +52,11 @@ function teslaEntityIds(prefix = config.TESLA_ENTITY_PREFIX) {
     cabin: `sensor.${prefix}_inside_temperature`,
     lock: `lock.${prefix}_lock`,
     tracker: `device_tracker.${prefix}_location`,
-    // tesla_custom exposes the cabin HVAC as a climate entity; its hvac state
+    // The integration exposes the cabin HVAC as a climate entity; its hvac state
     // (heat/cool/heat_cool vs off) tells us whether the car is preconditioning.
-    hvac: `climate.${prefix}_hvac_climate_system`,
-    // The charger switch , toggled to start/stop a charge session.
-    chargeSwitch: `switch.${prefix}_charger`,
+    hvac: `climate.${prefix}_climate`,
+    // The charge switch , toggled to start/stop a charge session.
+    chargeSwitch: `switch.${prefix}_charge`,
   };
 }
 
@@ -187,7 +188,7 @@ export async function setTeslaLock(locked: boolean): Promise<void> {
   await ha.callService("lock", locked ? "lock" : "unlock", { entity_id: ids.lock });
 }
 
-/** Start or stop a charge session via the `switch.<prefix>_charger` entity. */
+/** Start or stop a charge session via the `switch.<prefix>_charge` entity. */
 export async function setTeslaCharging(on: boolean): Promise<void> {
   if (!ha.isConfigured()) throw new Error("Home Assistant is not configured");
   const ids = teslaEntityIds();

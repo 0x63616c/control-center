@@ -65,7 +65,7 @@ const fullCar: Record<string, HaEntity> = {
     longitude: -118.2428,
     source_type: "gps",
   }),
-  "climate.evee_hvac_climate_system": makeEntity("climate.evee_hvac_climate_system", "heat_cool"),
+  "climate.evee_climate": makeEntity("climate.evee_climate", "heat_cool"),
 };
 
 describe("getTeslaData", () => {
@@ -204,7 +204,7 @@ describe("getTeslaData", () => {
     mockHa.isConfigured.mockReturnValue(true);
     mockStates({
       ...fullCar,
-      "climate.evee_hvac_climate_system": makeEntity("climate.evee_hvac_climate_system", "off"),
+      "climate.evee_climate": makeEntity("climate.evee_climate", "off"),
     });
     expect((await getTeslaData()).preconditioning).toBe(false);
   });
@@ -213,10 +213,7 @@ describe("getTeslaData", () => {
     mockHa.isConfigured.mockReturnValue(true);
     mockStates({
       ...fullCar,
-      "climate.evee_hvac_climate_system": makeEntity(
-        "climate.evee_hvac_climate_system",
-        "unavailable",
-      ),
+      "climate.evee_climate": makeEntity("climate.evee_climate", "unavailable"),
     });
     expect((await getTeslaData()).preconditioning).toBe(false);
   });
@@ -242,22 +239,22 @@ describe("tesla mutations", () => {
   it("setTeslaCharging toggles the charger switch", async () => {
     await setTeslaCharging(true);
     expect(mockHa.callService).toHaveBeenCalledWith("switch", "turn_on", {
-      entity_id: "switch.evee_charger",
+      entity_id: "switch.evee_charge",
     });
     await setTeslaCharging(false);
     expect(mockHa.callService).toHaveBeenCalledWith("switch", "turn_off", {
-      entity_id: "switch.evee_charger",
+      entity_id: "switch.evee_charge",
     });
   });
 
   it("setTeslaPreconditioning turns the hvac climate entity on/off", async () => {
     await setTeslaPreconditioning(true);
     expect(mockHa.callService).toHaveBeenCalledWith("climate", "turn_on", {
-      entity_id: "climate.evee_hvac_climate_system",
+      entity_id: "climate.evee_climate",
     });
     await setTeslaPreconditioning(false);
     expect(mockHa.callService).toHaveBeenCalledWith("climate", "turn_off", {
-      entity_id: "climate.evee_hvac_climate_system",
+      entity_id: "climate.evee_climate",
     });
   });
 

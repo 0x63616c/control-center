@@ -59,7 +59,7 @@ const teslaRouter = router({
       }
     }),
 
-  /** Start or stop a charge session (switch.<prefix>_charger). */
+  /** Start or stop a charge session (switch.<prefix>_charge). */
   setCharging: publicProcedure
     .input(z.object({ on: z.boolean().describe("true = start charge, false = stop") }))
     .mutation(async ({ input }) => {
