@@ -7,14 +7,13 @@
  */
 import * as k8s from "@pulumi/kubernetes";
 
-const LVM_LOCALPV_VERSION = "v1.9.1"; // pin; bump deliberately
-const OPERATOR_URL = `https://raw.githubusercontent.com/openebs/lvm-localpv/${LVM_LOCALPV_VERSION}/deploy/lvm-operator.yaml`;
-// The tagged deploy manifest ships the MUTABLE `openebs/lvm-driver:ci` image
-// (upstream oversight — the :ci build even renames env vars and crashloops,
-// seen live 2026-07-27: `LVM_NAMESPACE environment variable not set`). The
-// patches below pin the real release image; keep in lockstep with
-// LVM_LOCALPV_VERSION.
-const LVM_DRIVER_IMAGE = "openebs/lvm-driver:1.9.1";
+// VENDORED manifest (infra/manifests/), not the upstream URL: the tagged
+// deploy manifest ships the MUTABLE `openebs/lvm-driver:ci` image (upstream
+// oversight — the :ci build renames env vars and crashloops, seen live
+// 2026-07-27: `LVM_NAMESPACE environment variable not set`). The vendored copy
+// is the upstream v1.9.1 file with images rewritten to the release tag. To
+// bump: curl the new tag, re-apply the image sed, update the filename.
+const OPERATOR_MANIFEST = "manifests/lvm-operator-v1.9.1.yaml";
 
 /** The VG name the cutover's vg-bootstrap pod creates; also in the SC params. */
 export const VOLUME_GROUP = "storage";
@@ -27,42 +26,10 @@ export interface LvmLocalPvArgs {
 export function installLvmLocalPv(args: LvmLocalPvArgs) {
   const opts = { provider: args.provider };
 
-  const operator = new k8s.yaml.v2.ConfigFile("lvm-localpv-operator", { file: OPERATOR_URL }, opts);
-
-  // See LVM_DRIVER_IMAGE: pin the plugin image the manifest leaves as :ci.
-  const controllerImagePin = new k8s.apps.v1.DeploymentPatch(
-    "openebs-lvm-controller-image-pin",
-    {
-      metadata: {
-        name: "openebs-lvm-controller",
-        namespace: "kube-system",
-        // Take ownership of the image field even if a manual `kubectl set
-        // image` (the live hotfix during the cutover) owns it.
-        annotations: { "pulumi.com/patchForce": "true" },
-      },
-      spec: {
-        template: {
-          spec: { containers: [{ name: "openebs-lvm-plugin", image: LVM_DRIVER_IMAGE }] },
-        },
-      },
-    },
-    { ...opts, dependsOn: [operator] },
-  );
-  const nodeImagePin = new k8s.apps.v1.DaemonSetPatch(
-    "openebs-lvm-node-image-pin",
-    {
-      metadata: {
-        name: "openebs-lvm-node",
-        namespace: "kube-system",
-        annotations: { "pulumi.com/patchForce": "true" },
-      },
-      spec: {
-        template: {
-          spec: { containers: [{ name: "openebs-lvm-plugin", image: LVM_DRIVER_IMAGE }] },
-        },
-      },
-    },
-    { ...opts, dependsOn: [operator] },
+  const operator = new k8s.yaml.v2.ConfigFile(
+    "lvm-localpv-operator",
+    { file: OPERATOR_MANIFEST },
+    opts,
   );
 
   const storageClass = new k8s.storage.v1.StorageClass(
@@ -85,5 +52,5 @@ export function installLvmLocalPv(args: LvmLocalPvArgs) {
     { ...opts, dependsOn: [operator] },
   );
 
-  return { operator, storageClass, controllerImagePin, nodeImagePin };
+  return { operator, storageClass };
 }
