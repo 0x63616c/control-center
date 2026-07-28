@@ -87,6 +87,7 @@
         "@trpc/react-query": "^11.17.0",
         "@trpc/server": "^11.17.0",
         "@www/platform": "workspace:*",
+        "@www/theme": "workspace:*",
         "gifenc": "^1.0.3",
         "lucide-react": "^1.17.0",
         "maplibre-gl": "^5.24.0",
@@ -235,6 +236,13 @@
         "@types/bun": "^1.3.13",
         "typescript": "^5.9.3",
         "vitest": "^3.2.4",
+      },
+    },
+    "packages/theme": {
+      "name": "@www/theme",
+      "version": "0.0.0",
+      "devDependencies": {
+        "typescript": "^5.9.3",
       },
     },
     "packages/worker-runtime": {
@@ -1210,6 +1218,8 @@
     "@www/logger": ["@www/logger@workspace:packages/logger"],
 
     "@www/platform": ["@www/platform@workspace:packages/platform"],
+
+    "@www/theme": ["@www/theme@workspace:packages/theme"],
 
     "@www/worker-runtime": ["@www/worker-runtime@workspace:packages/worker-runtime"],
 

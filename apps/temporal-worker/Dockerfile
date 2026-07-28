@@ -31,6 +31,7 @@ COPY packages/api/package.json packages/api/
 COPY packages/core/package.json packages/core/
 COPY packages/logger/package.json packages/logger/
 COPY packages/platform/package.json packages/platform/
+COPY packages/theme/package.json packages/theme/
 COPY packages/worker-runtime/package.json packages/worker-runtime/
 COPY infra/package.json infra/
 COPY infra/cloudflare/package.json infra/cloudflare/

@@ -21,6 +21,7 @@ COPY packages/api/package.json packages/api/
 COPY packages/core/package.json packages/core/
 COPY packages/logger/package.json packages/logger/
 COPY packages/platform/package.json packages/platform/
+COPY packages/theme/package.json packages/theme/
 COPY packages/worker-runtime/package.json packages/worker-runtime/
 # Infra Pulumi workspaces (www-j934.1/.2/.3): root package.json declares these, so
 # bun install needs their manifests in the build context (www-272b).

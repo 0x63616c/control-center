@@ -1,5 +1,12 @@
 /* ===== Evee , hi-fi dashboard tokens (ported verbatim from design evee.css) ===== */
 
+/* The colour/radius palette lives in packages/theme so apps/manage renders in
+   the same black theme without forking the values. MUST stay the first rule in
+   this file , CSS @import is only legal before any other rule, and the imported
+   :root block must land before the overrides further down (accent profiles,
+   typeface profiles) that are meant to win over it. */
+@import "@www/theme/palette.css";
+
 /* Fonts , SF Pro + SF Mono by default (the OS's own, shipped as zero bytes);
    Space Grotesk / Space Mono and Geist / Geist Mono are the two self-hosted
    alternatives, served from /fonts with stable paths so index.html can preload
@@ -81,63 +88,8 @@
     U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
-:root {
-  /* Vercel-black: pure neutral grayscale surfaces (R=G=B, no blue tint) +
-     Geist-style foreground ramp. Accent is Vercel blue (#0070f3). */
-  --bg: #000000;
-  --tile: #0a0a0a;
-  --tile-2: #111111;
-  --nest: #181818;
-  --hair: rgba(255, 255, 255, 0.07);
-  --hair-2: rgba(255, 255, 255, 0.12);
-  /* Brighter hairline for the tile currently under the viewport crosshair. */
-  --hair-3: rgba(255, 255, 255, 0.28);
-  --ink: #ededed;
-  --ink-2: #a1a1a1;
-  --ink-3: #6e6e6e;
-  /* Accent , the ONE highlight colour, switchable in Settings > Display.
-     lib/accent.ts restates only the three primitives (--acc, --acc-2,
-     --acc-rgb) on :root; every tint below derives from --acc-rgb, so a new
-     accent needs no CSS change at all. The literals here are the blue default,
-     used before the store has applied anything (and in Storybook). */
-  --acc: #0070f3;
-  --acc-2: #0061d5;
-  --acc-rgb: 0 112 243;
-  --acc-muted: #3a4049;
-  --acc-dim: rgb(var(--acc-rgb) / 0.14);
-  --acc-line: rgb(var(--acc-rgb) / 0.45);
-  --acc-soft: rgb(var(--acc-rgb) / 0.25);
-  --acc-glow: 0 0 0 1px rgb(var(--acc-rgb) / 0.4), 0 0 26px -6px rgb(var(--acc-rgb) / 0.5);
-  --amber: #f4c063;
-  --teal: #6fdbcb;
-  /* Danger/destructive red , the one error tint (many components previously
-     hardcoded #e5484d as a var(--red, …) fallback; the token now resolves). */
-  --red: #e5484d;
-  --red-rgb: 229 72 77;
-  /* Positive/"good" green. Same story as --red above: NotificationBanner and
-     others carried #7ac48f as a var(--green, …) fallback against a token that
-     was never declared; the token now resolves. */
-  --green: #7ac48f;
-  --r: 20px;
-  /* --ui / --mono / --w-* / --track-* are NOT here , they belong to a typeface
-     profile (see "typeface profiles" below, where the grotesk one doubles as
-     the :root default). Never hardcode a family in a component. */
-
-  /* Aliases , the design JSX (wf-kit.jsx / evee-tiles.jsx) references a second
-     naming scheme. Map them onto the canonical tokens above so tiles ported
-     from either source render identically. */
-  --ink2: var(--ink-2);
-  --ink3: var(--ink-3);
-  /* Several media components reference --ink-1; without this alias the var
-     resolved to nothing and e.g. the scrub fill rendered invisible. */
-  --ink-1: var(--ink);
-  --bg3: var(--nest);
-  --line: var(--hair);
-  --line2: var(--hair-2);
-  /* Overflow panel surface tokens , layered above the tile surface */
-  --bg-2: var(--tile-2);
-  --bg-3: var(--nest);
-}
+/* The :root palette that used to sit here now lives in
+   packages/theme/palette.css, @imported at the top of this file. */
 
 /* ─── typeface profiles ──────────────────────────────────────────────────────
    One block per pair. Keyed off a `data-typeface` ATTRIBUTE rather than written
