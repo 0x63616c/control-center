@@ -25,6 +25,7 @@ import {
   parseSubstrateTarget,
   shouldRequireImageDigestPins,
 } from "./src/services.ts";
+import { installSoftwareFactory } from "./src/software-factory.ts";
 import { installTemporal } from "./src/temporal.ts";
 import { loadVault } from "./src/vault.ts";
 
@@ -194,6 +195,10 @@ if (target.substrate === "talos") {
     vault,
     imageDigests,
   });
+  // The software factory's k8s namespace (ADR-0011, #325). Empty until the Go
+  // worker's images exist; created now because its Temporal namespace is
+  // created above and ADR-0011 assumed BOTH without naming a provisioner.
+  installSoftwareFactory({ provider: cluster.provider });
   // Observability (#33): Prometheus/Grafana/Loki, hand-written like Temporal
   // above — no Helm, no operator, no CRDs (ADR #207). Grafana is reached ONLY
   // through the Cloudflare tunnel; nothing here takes a LoadBalancer address.
