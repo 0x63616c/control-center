@@ -166,6 +166,7 @@ interface DeploymentArgs {
   spec: {
     replicas: number;
     selector: { matchLabels: Record<string, string> };
+    strategy?: { type: "Recreate" };
     template: {
       metadata: { labels: Record<string, string>; annotations?: Record<string, string> };
       spec: {
@@ -475,6 +476,22 @@ function scrapeAnnotations(scrape: WorkloadSpec["scrape"]): Record<string, strin
   };
 }
 
+/**
+ * A workload that mounts a pre-existing `claim:` PVC cannot roll: those claims
+ * are block volumes on the local-lvm CSI (ReadWriteOnce), so the surge pod's
+ * mount is refused while the outgoing pod still holds the device and the
+ * rollout deadlocks until the deploy times out (#300 broke prod this way — the
+ * `maps` claim under web's map-provision init). Volumes this module generates
+ * itself are NFS/ReadWriteMany and roll fine, so only declared claims count.
+ */
+function mountsExistingClaim(w: WorkloadSpec): boolean {
+  const declared = [
+    ...(w.volumes ?? []),
+    ...(w.initContainers ?? []).flatMap((i) => i.volumes ?? []),
+  ];
+  return declared.some((v) => v.claim && !v.nfs);
+}
+
 function legacyAliases(name: string | undefined): pulumi.Alias[] | undefined {
   return name ? [{ name }] : undefined;
 }
@@ -503,6 +520,7 @@ export function renderWorkload(w: WorkloadSpec): RenderedWorkload {
     spec: {
       replicas: w.replicas,
       selector: { matchLabels: labels },
+      ...(mountsExistingClaim(w) ? { strategy: { type: "Recreate" as const } } : {}),
       template: {
         metadata: { labels, ...(podAnnotations ? { annotations: podAnnotations } : {}) },
         spec: {

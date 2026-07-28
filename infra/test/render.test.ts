@@ -377,6 +377,52 @@ describe("renderWorkload: initContainers (www-hn1i)", () => {
   });
 });
 
+// A `claim:` volume is a ReadWriteOnce local-lvm PVC: the default RollingUpdate
+// surge pod cannot mount it while the outgoing pod holds the device, so the
+// rollout deadlocks (this is exactly how #300 wedged the prod deploy).
+describe("renderWorkload: rollout strategy for ReadWriteOnce claims", () => {
+  const base: WorkloadSpec = {
+    name: "web",
+    image: "ghcr.io/0x63616c/www-control-center-web:main",
+    replicas: 1,
+    ports: [{ containerPort: 80, expose: "cluster" }],
+  };
+
+  test("a workload mounting a pre-existing claim deploys with Recreate", () => {
+    const r = renderWorkload({
+      ...base,
+      volumes: [{ mountPath: "/usr/share/nginx/html/maps", claim: "maps", readOnly: true }],
+    });
+    expect(r.deployment.spec.strategy).toEqual({ type: "Recreate" });
+  });
+
+  test("a claim reachable only through an initContainer still forces Recreate", () => {
+    const r = renderWorkload({
+      ...base,
+      initContainers: [
+        {
+          name: "map-provision",
+          image: "ghcr.io/0x63616c/www-control-center-map-provision:main",
+          volumes: [{ mountPath: "/out", claim: "maps" }],
+        },
+      ],
+    });
+    expect(r.deployment.spec.strategy).toEqual({ type: "Recreate" });
+  });
+
+  test("a claim-free workload keeps the default rolling update", () => {
+    expect(renderWorkload(base).deployment.spec.strategy).toBeUndefined();
+  });
+
+  test("generated NFS volumes are ReadWriteMany, so they keep rolling", () => {
+    const r = renderWorkload({
+      ...base,
+      volumes: [{ mountPath: "/media", nfs: { server: "192.168.0.218", path: "/volume1/media" } }],
+    });
+    expect(r.deployment.spec.strategy).toBeUndefined();
+  });
+});
+
 // www-hn1i: the production web spec ships the map-provision init container so a
 // fresh stack serves the Tesla basemap with ZERO manual steps.
 describe("serviceSpecs: web map-provision initContainer (www-hn1i)", () => {
