@@ -31,6 +31,10 @@ export function tunnelCnameTarget(tunnelId: string): string {
  * cloudflared refuses them unless verification is disabled. That is required,
  * not cosmetic — an iframe cannot click through a certificate warning, so
  * without it the pane is permanently blank.
+ *
+ * @public part of the ingress declaration surface — named so a rule's options
+ * can be typed at the call site even though every current consumer reaches it
+ * structurally through DesiredIngressRule.
  */
 export interface DesiredOriginRequest {
   /** Skip origin certificate verification. Self-signed LAN appliances only. */
