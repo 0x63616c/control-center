@@ -76,6 +76,7 @@
       "!**/experiments",
       "!**/docs/media-tiles",
       "!**/docs/captive-portal/design",
+      "!**/docs/design",
       "!**/DerivedData",
       "!**/ios/App/App/public",
       "!**/ios/App/App/capacitor.config.json"
