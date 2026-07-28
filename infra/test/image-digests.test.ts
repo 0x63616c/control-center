@@ -28,6 +28,7 @@ const ALL_IMAGE_DIGESTS = {
   "control-center-api": VALID,
   "control-center-worker": VALID,
   "control-center-web": VALID,
+  "control-center-manage": VALID,
   "control-center-map-provision": VALID,
   // Deployed by temporal.ts, not deployServices, but it pins through the same
   // required-digest map — so prod still refuses to render on a missing pin.

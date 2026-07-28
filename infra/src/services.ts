@@ -42,6 +42,11 @@ const IMAGE_REPOSITORIES = {
     digestKey: controlCenterProduct.imageDigestKey("web"),
     repository: controlCenterProduct.imageRepository("web"),
   },
+  // manage (apps/manage, ADR-0010): a static nginx bundle, same shape as web.
+  manage: {
+    digestKey: controlCenterProduct.imageDigestKey("manage"),
+    repository: controlCenterProduct.imageRepository("manage"),
+  },
   "map-provision": {
     digestKey: controlCenterProduct.imageDigestKey("map-provision"),
     repository: controlCenterProduct.imageRepository("map-provision"),
@@ -441,6 +446,20 @@ export function serviceSpecs(opts: ServiceSpecOptions): OwnedWorkloadSpec[] {
           volumes: [{ mountPath: "/out", claim: "maps" }],
         },
       ],
+      imagePullSecrets: [GHCR_PULL_SECRET_NAME],
+    },
+    {
+      // manage (ADR-0010): the management plane at manage.worldwidewebb.co.
+      // Static bundle behind nginx, no api and no database — it holds no
+      // credentials of its own, and Cloudflare Access is the only gate.
+      logicalName: "control-center-manage",
+      name: "manage",
+      namespaceName: "control-center",
+      image: ghcrImage("manage", digests),
+      replicas: 1,
+      resources: { memory: "64M" },
+      env: { TZ },
+      ports: [{ containerPort: 80, expose: "cluster" }],
       imagePullSecrets: [GHCR_PULL_SECRET_NAME],
     },
     // control-center-storybook workload DELETED (Track B, Task 10a): storybook

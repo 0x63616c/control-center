@@ -42,6 +42,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       web: ${{ steps.filter.outputs.web }}
+      manage: ${{ steps.filter.outputs.manage }}
       api: ${{ steps.filter.outputs.api }}
       worker: ${{ steps.filter.outputs.worker }}
       temporalworker: ${{ steps.filter.outputs.temporalworker }}
@@ -78,6 +79,13 @@ jobs:
               - 'packages/**'
               - 'app-kit/**'
               - 'features/**'
+              - 'bun.lock'
+            # manage (ADR-0010) shares only packages/theme with the rest of the
+            # repo — no app-kit, no features, no api surface — so its lane is
+            # its own tree plus packages/ and the lockfile.
+            manage:
+              - 'apps/manage/**'
+              - 'packages/**'
               - 'bun.lock'
             api:
               - 'apps/api/**'
@@ -127,6 +135,7 @@ jobs:
             # the deploy job fires on `any_app || infra`.
             any_app:
               - 'apps/web/**'
+              - 'apps/manage/**'
               - 'apps/api/**'
               - 'apps/worker/**'
               - 'apps/temporal-worker/**'
@@ -316,6 +325,25 @@ jobs:
             BUILD_TIME=${{ env.BUILD_TIME }}
 
 
+  build-manage:
+    needs: [changes]
+    if: needs.changes.outputs.manage == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: prod
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and push manage image
+        uses: ./.github/actions/build-product-image
+        env:
+          SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
+        with:
+          image: www-control-center-manage
+          dockerfile: apps/manage/Dockerfile
+          cache-scope: manage
+
+
   build-api:
     needs: [changes]
     if: needs.changes.outputs.api == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
@@ -411,6 +439,7 @@ jobs:
         test-storybook,
         typecheck,
         build-web,
+        build-manage,
         build-api,
         build-worker,
         build-temporal-worker,
@@ -506,7 +535,7 @@ jobs:
           # KEY is product-component scoped and matches the Pulumi imageDigests
           # config key, while repo names use full product slugs.
           declare -A out=()
-          for entry in www-control-center-web:control-center-web www-control-center-api:control-center-api www-control-center-worker:control-center-worker www-control-center-temporal-worker:control-center-temporal-worker www-control-center-map-provision:control-center-map-provision; do
+          for entry in www-control-center-web:control-center-web www-control-center-manage:control-center-manage www-control-center-api:control-center-api www-control-center-worker:control-center-worker www-control-center-temporal-worker:control-center-temporal-worker www-control-center-map-provision:control-center-map-provision; do
             repo="${entry%%:*}"
             name="${entry#*:}"
             d=$(docker buildx imagetools inspect "ghcr.io/0x63616c/$repo:main" --format '{{.Manifest.Digest}}' 2>/dev/null || true)
@@ -687,6 +716,7 @@ jobs:
         test-storybook,
         typecheck,
         build-web,
+        build-manage,
         build-api,
         build-worker,
         build-map-provision,

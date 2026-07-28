@@ -1,0 +1,384 @@
+/* manage — ported from the locked prototype at docs/design/manage-prototype.html.
+   The prototype is the spec, not inspiration: geometry, type sizes and tracking
+   below are its values verbatim. Colours come from the shared palette so manage
+   and the control center never drift apart. */
+@import "@www/theme/palette.css";
+
+:root {
+  /* Type is manage's own: this is a desktop tool at 13px, not the 1366x1024
+     kiosk, so it does not ride the panel's typeface profiles. */
+  --ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  --mono: "SF Mono", ui-monospace, Menlo, monospace;
+  --sidebar-w: 248px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--ui);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) 1fr;
+  height: 100vh;
+  gap: 8px;
+  padding: 8px;
+}
+
+/* ---------- sidebar ---------- */
+.side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--tile);
+  border: 1px solid var(--hair);
+  border-radius: var(--r);
+  padding: 14px 10px 10px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 2px 8px 14px;
+}
+
+.brand .mark {
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  background: linear-gradient(140deg, var(--acc), #7c3aed);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.brand h1 {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.scroll {
+  flex: 1;
+  overflow-y: auto;
+  /* The active row's accent bar bleeds 10px to the LEFT of its row, into the
+     sidebar's own padding — which `overflow-y: auto` would clip away, taking the
+     most legible "you are here" signal in the UI with it (the prototype has this
+     bug; it is the one place the port improves on it). Widening the scroll box
+     by exactly that 10px and paying it back as padding keeps every child in
+     place and brings the bar inside the clip rect. */
+  margin-left: -10px;
+  padding-left: 10px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-bottom: 6px;
+}
+
+.scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scroll::-webkit-scrollbar-thumb {
+  background: var(--nest);
+  border-radius: 3px;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.group > h2 {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  padding: 0 8px 6px;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px;
+  border-radius: 10px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  user-select: none;
+  position: relative;
+  background: none;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+}
+
+.item:hover {
+  background: var(--tile-2);
+}
+
+.item.on {
+  background: var(--nest);
+  border-color: var(--hair-2);
+}
+
+/* The 3px accent bar bleeds off the left edge of the row, past the sidebar's
+   own 10px padding. */
+.item.on::before {
+  content: "";
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 16px;
+  border-radius: 0 3px 3px 0;
+  background: var(--acc);
+}
+
+.logo {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  flex: none;
+  letter-spacing: -0.02em;
+}
+
+.label {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.item.on .label {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.dot {
+  margin-left: auto;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.dot.ok {
+  background: var(--green);
+}
+
+.dot.warn {
+  background: var(--amber);
+}
+
+.dot.err {
+  background: var(--red);
+}
+
+.dot.idle {
+  background: var(--ink-3);
+}
+
+.foot {
+  border-top: 1px solid var(--hair);
+  padding: 10px 8px 2px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.foot .who {
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+
+.foot .out {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ink-3);
+  cursor: pointer;
+  background: none;
+  border: 0;
+  font-family: inherit;
+  text-decoration: none;
+}
+
+.foot .out:hover {
+  color: var(--ink);
+}
+
+/* ---------- main ---------- */
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--tile);
+  border: 1px solid var(--hair);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--hair);
+  flex: none;
+}
+
+.bar .t {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.bar .url {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  background: var(--bg);
+  border: 1px solid var(--hair);
+  padding: 3px 8px;
+  border-radius: 7px;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar .sp {
+  flex: 1;
+}
+
+.btn {
+  font-size: 11px;
+  color: var(--ink-2);
+  border: 1px solid var(--hair);
+  background: var(--tile-2);
+  padding: 4px 9px;
+  border-radius: 7px;
+  cursor: pointer;
+  font-family: var(--ui);
+}
+
+.btn:hover {
+  color: var(--ink);
+  border-color: var(--hair-2);
+}
+
+.stage {
+  flex: 1;
+  position: relative;
+  background: var(--bg);
+  min-height: 0;
+}
+
+/* Every mounted pane occupies the whole stage; only the active one is displayed.
+   Hidden, NOT unmounted — unmounting throws away the scroll position, the open
+   dashboard and the half-typed query that this whole design exists to keep. */
+.pane {
+  position: absolute;
+  inset: 0;
+}
+
+.pane[hidden] {
+  display: none;
+}
+
+.pane iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  /* Black, and declared dark, so a pane never flashes white before the tool's
+     own stylesheet lands. */
+  background: var(--bg);
+  color-scheme: dark;
+}
+
+/* ---------- launcher card (extension absent) ---------- */
+.launcher {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: var(--bg);
+  text-align: center;
+  padding: 40px;
+}
+
+.launcher .big {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  font-size: 17px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.launcher h3 {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.launcher p {
+  font-size: 12px;
+  color: var(--ink-2);
+  max-width: 420px;
+  line-height: 1.55;
+}
+
+.launcher code {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--amber);
+  background: var(--tile-2);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.cta {
+  margin-top: 4px;
+  background: var(--acc-dim);
+  border: 1px solid var(--acc-line);
+  color: var(--ink);
+  padding: 7px 14px;
+  border-radius: 9px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: var(--ui);
+  text-decoration: none;
+}

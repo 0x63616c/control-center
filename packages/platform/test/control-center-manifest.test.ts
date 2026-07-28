@@ -21,6 +21,7 @@ describe("Control Center platform representation", () => {
       "api",
       "captive-portal",
       "cloudflared",
+      "manage",
       "storybook",
       "web",
       "worker",

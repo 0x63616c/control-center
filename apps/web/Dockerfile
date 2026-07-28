@@ -10,6 +10,7 @@ WORKDIR /app
 # workspace packages before copying source, keeps the layer cache effective.
 COPY package.json bun.lock ./
 COPY apps/web/package.json ./apps/web/package.json
+COPY apps/manage/package.json ./apps/manage/package.json
 COPY apps/api/package.json ./apps/api/package.json
 COPY apps/worker/package.json ./apps/worker/package.json
 COPY apps/temporal-worker/package.json ./apps/temporal-worker/package.json
@@ -19,6 +20,7 @@ COPY packages/api/package.json ./packages/api/package.json
 COPY packages/core/package.json ./packages/core/package.json
 COPY packages/logger/package.json ./packages/logger/package.json
 COPY packages/platform/package.json ./packages/platform/package.json
+COPY packages/theme/package.json ./packages/theme/package.json
 COPY packages/worker-runtime/package.json ./packages/worker-runtime/package.json
 # Infra Pulumi workspaces (www-j934.1/.2/.3): root package.json declares these, so
 # bun install needs their manifests in the build context (www-272b).

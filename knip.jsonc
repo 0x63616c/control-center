@@ -163,6 +163,15 @@
       // Tests are in test/ - declare explicitly so knip registers them as entries.
       "entry": ["test/**/*.test.ts"]
     },
+    "apps/manage": {
+      // extension/content.js is loaded by Chrome from the unpacked extension,
+      // never imported — knip sees no edge to it, and the same goes for the
+      // generated manifest/rules it sits beside.
+      // playwright.config.ts is auto-detected at the package root; the e2e specs
+      // are declared so the generator exports they exercise aren't read as dead.
+      "entry": ["e2e/**/*.spec.ts", "test/**/*.test.ts"],
+      "ignore": ["extension/**"]
+    },
     "apps/web": {
       // Guest portal entry (vite.portal.config.ts -> portal.html -> this file)
       // is a second build knip's vite-plugin auto-detection doesn't see (it

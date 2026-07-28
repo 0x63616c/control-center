@@ -21,8 +21,9 @@
  * appending entries, not restructuring this module.
  */
 import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { renderManifest, renderRules } from "../apps/manage/src/extension-rules";
 import { GUEST_EXPOSED } from "../features/guest-exposed";
 import { collect } from "./apps-gen/collect";
 import {
@@ -41,10 +42,17 @@ import { validate } from "./apps-gen/validate";
 // scripts/apps-check.ts -> repo root is one directory up from scripts/.
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const GEN_DIR = join(REPO_ROOT, "features", "_generated");
+const MANAGE_EXT_DIR = join(REPO_ROOT, "apps", "manage", "extension");
 
 interface Aggregate {
-  /** Path relative to features/_generated/, also used as the drift report label. */
+  /** Path relative to `dir` (features/_generated/ by default), also the drift label. */
   file: string;
+  /**
+   * Absolute directory holding the committed artifact. Defaults to
+   * features/_generated/; the manage extension's generated files live under
+   * apps/manage/extension/ instead, since Chrome dictates their filenames.
+   */
+  dir?: string;
   render: () => Promise<string>;
 }
 
@@ -93,6 +101,20 @@ const AGGREGATES: readonly Aggregate[] = [
     file: "schedules.gen.ts",
     render: async () => renderSchedules(await collect()),
   },
+  // manage's browser-extension allowlist (ADR-0010). Drift here means a tool is
+  // in the sidebar but not in the extension's allowlist — a pane that renders
+  // blank with nothing in any log, which is exactly the bug class this check
+  // exists to turn into a build failure.
+  {
+    file: "rules.gen.json",
+    dir: MANAGE_EXT_DIR,
+    render: async () => renderRules(),
+  },
+  {
+    file: "manifest.json",
+    dir: MANAGE_EXT_DIR,
+    render: async () => renderManifest(),
+  },
 ];
 
 /** @public consumed by scripts/apps-check.test.ts and this module's CLI wrapper. */
@@ -100,16 +122,16 @@ export async function checkDrift(): Promise<{ drifted: boolean; files: string[] 
   const drifted: string[] = [];
   for (const aggregate of AGGREGATES) {
     const fresh = await aggregate.render();
-    const committedPath = join(GEN_DIR, aggregate.file);
+    const committedPath = join(aggregate.dir ?? GEN_DIR, aggregate.file);
     let committed: string;
     try {
       committed = readFileSync(committedPath, "utf8");
     } catch {
-      drifted.push(aggregate.file);
+      drifted.push(relative(REPO_ROOT, committedPath));
       continue;
     }
     if (committed !== fresh) {
-      drifted.push(aggregate.file);
+      drifted.push(relative(REPO_ROOT, committedPath));
     }
   }
   return { drifted: drifted.length > 0, files: drifted };
@@ -120,7 +142,7 @@ async function main(): Promise<void> {
   if (result.drifted) {
     console.error("apps:check: drift detected in generated files:");
     for (const file of result.files) {
-      console.error(`  - features/_generated/${file}`);
+      console.error(`  - ${file}`);
     }
     console.error("\nRun `bun run apps:gen` to regenerate, then commit the result.");
     process.exit(1);

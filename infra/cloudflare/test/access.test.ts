@@ -17,9 +17,15 @@ describe("desiredAccessApps", () => {
     expect(domains).toEqual([
       "app.worldwidewebb.co",
       "db-ui.worldwidewebb.co",
+      // The two LAN appliances (#292): putting them on the tunnel gives them an
+      // internet-facing hostname, so their Access app is not optional.
+      "dsm.worldwidewebb.co",
       "grafana.worldwidewebb.co",
       "ha.worldwidewebb.co",
+      // manage has no login of its own — this app IS its authentication.
+      "manage.worldwidewebb.co",
       "temporal-ui.worldwidewebb.co",
+      "unifi.worldwidewebb.co",
     ]);
     expect(domains).not.toContain("*.worldwidewebb.co");
     expect(domains).not.toContain("hooks.worldwidewebb.co");
@@ -36,10 +42,13 @@ describe("desiredAccessApps", () => {
       "*.worldwidewebb.co",
       "app.worldwidewebb.co",
       "db-ui.worldwidewebb.co",
+      "dsm.worldwidewebb.co",
       "grafana.worldwidewebb.co",
       "ha.worldwidewebb.co",
       "hooks.worldwidewebb.co",
+      "manage.worldwidewebb.co",
       "temporal-ui.worldwidewebb.co",
+      "unifi.worldwidewebb.co",
     ]);
     expect(domains).not.toContain("app--cc.worldwidewebb.co");
     expect(domains).not.toContain("drizzle.worldwidewebb.co");

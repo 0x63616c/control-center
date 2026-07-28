@@ -45,6 +45,7 @@ if (workspaceManifests.length === 0) {
 // relative paths (apps/*), so it is intentionally excluded.
 
 const FULL_INSTALL_DOCKERFILES = [
+  "apps/manage/Dockerfile",
   "apps/api/Dockerfile",
   "apps/worker/Dockerfile",
   "apps/temporal-worker/Dockerfile",

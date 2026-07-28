@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "manage — frame unlock",
+  "version": "1.0.0",
+  "description": "Strips frame-deny response headers from manage's tool allowlist, for framed sub-documents only.",
+  "permissions": [
+    "declarativeNetRequest"
+  ],
+  "host_permissions": [
+    "https://app.plex.tv/*",
+    "https://app.pulumi.com/*",
+    "https://dash.cloudflare.com/*",
+    "https://db-ui.worldwidewebb.co/*",
+    "https://dsm.worldwidewebb.co/*",
+    "https://github.com/*",
+    "https://grafana.worldwidewebb.co/*",
+    "https://ha.worldwidewebb.co/*",
+    "https://login.tailscale.com/*",
+    "https://one.dash.cloudflare.com/*",
+    "https://temporal-ui.worldwidewebb.co/*",
+    "https://unifi.worldwidewebb.co/*"
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "manage-frame-unlock",
+        "enabled": true,
+        "path": "rules.gen.json"
+      }
+    ]
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://manage.worldwidewebb.co/*",
+        "http://localhost/*",
+        "http://127.0.0.1/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start"
+    }
+  ]
+}

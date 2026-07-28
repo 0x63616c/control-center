@@ -67,6 +67,8 @@
       "!**/dist",
       "!**/storybook-static",
       "!**/*.gen.ts",
+      "!**/*.gen.json",
+      "!apps/manage/extension/manifest.json",
       "!**/.tilt",
       "!.worktrees",
       "!**/coverage",

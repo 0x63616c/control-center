@@ -9,6 +9,7 @@ export default defineConfig({
     projects: [
       "apps/api",
       "apps/web",
+      "apps/manage",
       "apps/worker",
       "packages/core",
       "packages/logger",
