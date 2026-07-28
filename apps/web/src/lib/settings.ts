@@ -18,6 +18,8 @@ import {
   BRIGHTNESS_MIN,
   DIM_MAX,
   DIM_MIN,
+  PIN_PAD_LAYOUTS,
+  type PinPadLayout,
   SETTINGS_DEFAULTS,
   SNAP_MODES,
   type SnapMode,
@@ -50,6 +52,16 @@ export const SNAP_MODE_LABEL: Record<SnapMode, string> = {
   spring: "spring (old)",
 };
 
+// ─── PIN-pad layout vocabulary ────────────────────────────────────────────────
+// Same split as snap modes: the KEY list is wire contract (@cc/api/settings), the
+// human labels are UI vocabulary and live here.
+export { PIN_PAD_LAYOUTS, type PinPadLayout };
+export const PIN_PAD_LAYOUT_LABEL: Record<PinPadLayout, string> = {
+  fixed: "fixed",
+  rotated: "rotated",
+  scrambled: "scrambled",
+};
+
 // ─── settings shape + bounds ──────────────────────────────────────────────────
 
 export interface Settings {
@@ -78,11 +90,12 @@ export interface Settings {
    *  Activity); the gates are always on.
    *  NOT auth , purely a frontend soft-lock. Exactly 6 digits; default "000000". */
   pinCode: string;
-  /** Scramble the PIN pad's digit positions on every prompt (#287). A fixed pad
-   *  wears grease into the same four keys, which narrows a 6-digit PIN to the
-   *  permutations of whichever digits are smudged; reshuffling spreads the wear
-   *  across all ten. Costs muscle memory, hence the toggle. */
-  scramblePin: boolean;
+  /** How the PIN pad arranges its digits (#287, #291). A `fixed` pad wears
+   *  grease into the same four keys, which narrows a 6-digit PIN to the orderings
+   *  of whichever digits are smudged; `rotated` and `scrambled` both move the
+   *  digits per prompt so the wear spreads across all ten. See PIN_PAD_LAYOUTS
+   *  for what each costs. */
+  pinPadLayout: PinPadLayout;
   /** The single highlight colour the board is built around (see lib/accent.ts).
    *  Synced, not device-local: the accent is how the installation looks, not a
    *  property of one panel. */
@@ -131,7 +144,7 @@ const KEYS = {
   snapMode: "cc-board-snap-mode",
   showMinimap: "cc-show-minimap",
   pinCode: "cc-pin-code",
-  scramblePin: "cc-scramble-pin",
+  pinPadLayout: "cc-pin-pad-layout",
   accent: "cc-accent",
   typeface: "cc-typeface",
   pushEnabled: "cc-push-enabled",
@@ -205,7 +218,11 @@ function loadInitial(): Settings {
   const buildNumber = readRaw(KEYS.showBuildNumber);
   const minimap = readRaw(KEYS.showMinimap);
   const pin = readRaw(KEYS.pinCode);
-  const scramblePin = readRaw(KEYS.scramblePin);
+  const pinPadLayout = readRaw(KEYS.pinPadLayout);
+  // `cc-scramble-pin` was this setting's boolean ancestor (#287, one release).
+  // A panel that had deliberately turned scrambling OFF must not silently get
+  // the new default back; read the old key when the new one is absent.
+  const legacyScramble = readRaw("cc-scramble-pin");
   const accent = readRaw(KEYS.accent);
   const typeface = readRaw(KEYS.typeface);
   const push = readRaw(KEYS.pushEnabled);
@@ -225,7 +242,12 @@ function loadInitial(): Settings {
         : DEFAULTS.snapMode,
     showMinimap: minimap === null ? DEFAULTS.showMinimap : minimap === "true",
     pinCode: pin && /^\d{6}$/.test(pin) ? pin : DEFAULTS.pinCode,
-    scramblePin: scramblePin === null ? DEFAULTS.scramblePin : scramblePin === "true",
+    pinPadLayout:
+      pinPadLayout && (PIN_PAD_LAYOUTS as readonly string[]).includes(pinPadLayout)
+        ? (pinPadLayout as PinPadLayout)
+        : legacyScramble === "false"
+          ? "fixed"
+          : DEFAULTS.pinPadLayout,
     accent:
       accent && (ACCENTS as readonly string[]).includes(accent)
         ? (accent as Accent)
@@ -399,11 +421,11 @@ export function setPinCode(pin: string): void {
   patch("pinCode", pin, pin);
 }
 
-/** Turn PIN-pad scrambling on/off (see Settings.scramblePin). Synced, not
- *  device-local: it is a property of how the installation is locked, not of one
- *  panel's screen. */
-export function setScramblePin(v: boolean): void {
-  patch("scramblePin", v, String(v));
+/** Choose how the PIN pad arranges its digits (see Settings.pinPadLayout).
+ *  Synced, not device-local: it is a property of how the installation is locked,
+ *  not of one panel's screen. */
+export function setPinPadLayout(layout: PinPadLayout): void {
+  patch("pinPadLayout", layout, layout);
 }
 
 /** Set the board's highlight colour. The vars it drives are applied by

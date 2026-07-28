@@ -1,5 +1,5 @@
 /**
- * Security settings page , the scrambled-pad toggle plus the change-PIN flow.
+ * Security settings page , the keypad-layout picker plus the change-PIN flow.
  * The latter is a three-stage machine (verify the current PIN, enter a new one,
  * confirm it) framed in a single Concept-A card. The current PIN is checked
  * against the live synced settings store, and a successful confirm writes the
@@ -9,11 +9,18 @@
  */
 
 import { useState } from "react";
-import { PIN_LENGTH, setPinCode, setScramblePin, useSettings } from "../../../lib/settings";
+import {
+  PIN_LENGTH,
+  PIN_PAD_LAYOUT_LABEL,
+  PIN_PAD_LAYOUTS,
+  setPinCode,
+  setPinPadLayout,
+  useSettings,
+} from "../../../lib/settings";
 import { Icon } from "../../Icon";
 import { PinPadView } from "../../pin/PinPad";
-import { Switch } from "../../ui/Switch";
-import { ActionButton, RowShell, SectionCard } from "../blocks";
+import { Segmented } from "../../ui/Segmented";
+import { ActionButton, SectionCard } from "../blocks";
 
 type ChangeStage = "current" | "new" | "confirm" | "done";
 
@@ -24,8 +31,24 @@ const STAGE_COPY: Record<ChangeStage, { title: string; sub: string }> = {
   done: { title: "PIN changed", sub: "Synced to all panels." },
 };
 
+const LAYOUT_OPTIONS = PIN_PAD_LAYOUTS.map((value) => ({
+  value,
+  label: PIN_PAD_LAYOUT_LABEL[value],
+}));
+
+/** What each choice actually buys, in the person's terms rather than the threat
+ *  model's , the sub-line swaps as you move between them. */
+const LAYOUT_BLURB: Record<(typeof PIN_PAD_LAYOUTS)[number], string> = {
+  fixed:
+    "Always the same keypad. Fastest to type, but fingerprints build up on your four digits and give them away.",
+  rotated:
+    "Digits stay in order but start somewhere new each time. Still easy to read, and the wear spreads over every key.",
+  scrambled:
+    "Every digit somewhere new each time. Hides the most, and you'll have to look for each key.",
+};
+
 export function SecurityPage() {
-  const { pinCode, scramblePin } = useSettings();
+  const { pinCode, pinPadLayout } = useSettings();
   const [stage, setStage] = useState<ChangeStage>("current");
   const [pin, setPin] = useState("");
   const [error, setError] = useState(false);
@@ -71,14 +94,20 @@ export function SecurityPage() {
     <>
       <SectionCard title="Keypad">
         {[
-          <RowShell
-            key="scramble"
-            label="Scramble the keypad"
-            sub="Shuffle the digits on every prompt, so fingerprints on the glass don't give away which keys your PIN uses."
-            control={
-              <Switch label="Scramble the keypad" checked={scramblePin} onChange={setScramblePin} />
-            }
-          />,
+          <div key="layout" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <span style={{ fontFamily: "var(--ui)", fontSize: 15, color: "var(--ink)" }}>
+              Keypad layout
+            </span>
+            <span style={{ fontFamily: "var(--ui)", fontSize: 12, color: "var(--ink-3)" }}>
+              {LAYOUT_BLURB[pinPadLayout]}
+            </span>
+            <Segmented
+              label="Keypad layout"
+              options={LAYOUT_OPTIONS}
+              value={pinPadLayout}
+              onChange={setPinPadLayout}
+            />
+          </div>,
         ]}
       </SectionCard>
       <SectionCard title="Change PIN">
@@ -116,7 +145,7 @@ export function SecurityPage() {
                 <PinPadView
                   entered={pin.length}
                   error={error}
-                  scramble={scramblePin}
+                  layout={pinPadLayout}
                   // Each stage is its own PIN entry, so each gets its own layout.
                   shuffleKey={stage}
                   onDigit={digit}

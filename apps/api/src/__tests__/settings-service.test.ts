@@ -23,11 +23,39 @@ describe("settings-service DEFAULTS", () => {
     expect(DEFAULTS.showBuildNumber).toBe(false);
   });
 
-  // Scrambling ships ON (#287): the feature exists because a fixed pad leaks the
+  // The pad ships MOVING (#287): the feature exists because a fixed pad leaks the
   // PIN's digit set through fingerprints, and a security default that has to be
-  // discovered in Settings protects nobody.
-  it("defaults scramblePin to true", () => {
-    expect(DEFAULTS.scramblePin).toBe(true);
+  // discovered in Settings protects nobody. `scrambled` rather than `rotated`
+  // because that is what the boolean this field replaced already shipped as.
+  it("defaults pinPadLayout to scrambled", () => {
+    expect(DEFAULTS.pinPadLayout).toBe("scrambled");
+  });
+});
+
+describe("legacy scramblePin migration", () => {
+  // #287 shipped a boolean; #291 replaced it with the three-way layout. zod drops
+  // the retired key, so without an explicit carry-over the DEFAULTS merge would
+  // turn a deliberate "off" back ON at the next read , the one direction of
+  // silent change that actually matters here.
+  it("maps a stored scramblePin=false onto the fixed layout", async () => {
+    const s = await getSettings(
+      fakeDb({ ...DEFAULTS, pinPadLayout: undefined, scramblePin: false }),
+    );
+    expect(s.pinPadLayout).toBe("fixed");
+  });
+
+  it("maps a stored scramblePin=true onto the scrambled layout", async () => {
+    const s = await getSettings(
+      fakeDb({ ...DEFAULTS, pinPadLayout: undefined, scramblePin: true }),
+    );
+    expect(s.pinPadLayout).toBe("scrambled");
+  });
+
+  it("prefers an explicit pinPadLayout over the legacy boolean", async () => {
+    const s = await getSettings(
+      fakeDb({ ...DEFAULTS, pinPadLayout: "rotated", scramblePin: true }),
+    );
+    expect(s.pinPadLayout).toBe("rotated");
   });
 });
 

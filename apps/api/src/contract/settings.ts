@@ -39,6 +39,22 @@ export type Accent = (typeof ACCENTS)[number];
 export const TYPEFACES = ["grotesk", "sf", "geist"] as const;
 export type Typeface = (typeof TYPEFACES)[number];
 
+// ─── PIN-pad layout vocabulary ────────────────────────────────────────────────
+// How the PIN pad arranges its ten digits (#287, #291). Only the KEY is wire
+// contract; what each one draws is web's business (components/pin/PinPad.tsx),
+// as are the human labels.
+//
+//   fixed     , the familiar phone pad, every prompt. Fastest to type and the
+//               only one that leaks the PIN's digit SET through finger grease.
+//   rotated   , ascending order preserved, random starting digit each prompt.
+//               Wear still spreads over all ten keys, but the pad stays scannable
+//               (find one digit, the rest follow) instead of forcing ten lookups.
+//               Weaker than `scrambled`: only 10 layouts exist, and a single
+//               session's fresh smudges give the PIN up to a rotation.
+//   scrambled , a fresh uniform permutation each prompt. Strongest, slowest.
+export const PIN_PAD_LAYOUTS = ["fixed", "rotated", "scrambled"] as const;
+export type PinPadLayout = (typeof PIN_PAD_LAYOUTS)[number];
+
 // ─── bounds ───────────────────────────────────────────────────────────────────
 
 /** Idle-dim timeout's valid window: 1 min .. 10 min. The ceiling matches what
@@ -75,7 +91,10 @@ export const SETTINGS_DEFAULTS = {
   snapMode: "mandatory-settle",
   showMinimap: true,
   pinCode: "000000",
-  scramblePin: true,
+  // Stays `scrambled` , what the boolean this field replaces already shipped as.
+  // `rotated` is the better everyday trade, but picking it here would quietly
+  // weaken a panel that is already locked the stronger way.
+  pinPadLayout: "scrambled",
   accent: "white",
   typeface: "sf",
 } as const satisfies Record<string, unknown>;

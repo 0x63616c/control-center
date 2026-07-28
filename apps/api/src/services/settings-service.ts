@@ -9,6 +9,7 @@ import {
   BRIGHTNESS_MIN,
   DIM_MAX,
   DIM_MIN,
+  PIN_PAD_LAYOUTS,
   SETTINGS_DEFAULTS,
   SNAP_MODES,
   TIMEOUT_MAX_MS,
@@ -44,9 +45,10 @@ export const settingsSchema = z.object({
   // The synced soft-lock PIN. NOT auth , the API only enforces the 6-digit shape
   // and never validates or logs the value.
   pinCode: z.string().regex(/^\d{6}$/),
-  // Randomize the PIN pad's digit positions on every prompt, so finger grease on
-  // the panel glass stops advertising which four digits the PIN uses (#287).
-  scramblePin: z.boolean(),
+  // How the PIN pad arranges its digits, so finger grease on the panel glass
+  // stops advertising which four digits the PIN uses (#287, #291). See
+  // PIN_PAD_LAYOUTS for what each key means and what it costs.
+  pinPadLayout: z.enum(PIN_PAD_LAYOUTS),
   // The board's highlight colour. Only the KEY is contract , the hex ramp each
   // key maps to is web's business (lib/accent.ts).
   accent: z.enum(ACCENTS),
@@ -69,6 +71,29 @@ export const DEFAULTS: Settings = SETTINGS_DEFAULTS;
 
 type Database = NodePgDatabase<typeof schema>;
 
+/**
+ * Carry a stored blob's retired fields onto their replacements before validation
+ * strips them.
+ *
+ * `scramblePin` (a boolean, shipped in #287) became the three-way
+ * `pinPadLayout` in #291, because "rotated" , ascending order with a random
+ * starting digit , is a third option a boolean cannot express. Without this
+ * mapping a panel that had deliberately turned scrambling OFF would silently get
+ * the default (`scrambled`) back on the next read, since zod drops the key it no
+ * longer knows and the DEFAULTS merge fills the gap.
+ *
+ * The blob is jsonb, so `stored` is genuinely unknown-shaped here; the guards
+ * are load-bearing rather than ceremony.
+ */
+function migrateLegacy(stored: unknown): Record<string, unknown> {
+  if (typeof stored !== "object" || stored === null) return {};
+  const blob = { ...(stored as Record<string, unknown>) };
+  if (blob.pinPadLayout === undefined && typeof blob.scramblePin === "boolean") {
+    blob.pinPadLayout = blob.scramblePin ? "scrambled" : "fixed";
+  }
+  return blob;
+}
+
 // ─── public API ──────────────────────────────────────────────────────────────
 
 /**
@@ -86,7 +111,7 @@ export async function getSettings(db: Database): Promise<Settings> {
       .limit(1);
     const stored = rows[0]?.value;
     if (!stored) return DEFAULTS;
-    return settingsSchema.parse({ ...DEFAULTS, ...stored });
+    return settingsSchema.parse({ ...DEFAULTS, ...migrateLegacy(stored) });
   } catch (err) {
     getLogger().warn({ err }, "getSettings: read failed, returning defaults");
     return DEFAULTS;
