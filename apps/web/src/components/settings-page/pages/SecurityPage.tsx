@@ -39,16 +39,19 @@ const LAYOUT_OPTIONS = PIN_PAD_LAYOUTS.map((value) => ({
 }));
 
 /** What each choice actually buys, in the person's terms rather than the threat
- *  model's , the sub-line swaps as you move between them. */
+ *  model's , the sub-line swaps as you move between them.
+ *
+ *  Kept to ONE SHORT LINE each, deliberately. These strings swap under a control
+ *  you are actively tapping, so a blurb long enough to wrap makes the card grow
+ *  a line and shove the keypad below it down mid-interaction. Length parity
+ *  matters more than completeness here , the full trade-off for each mode is
+ *  documented in PIN_PAD_LAYOUTS, which is where someone reading the code will
+ *  look for it anyway. */
 const LAYOUT_BLURB: Record<(typeof PIN_PAD_LAYOUTS)[number], string> = {
-  fixed:
-    "Always the same keypad. Fastest to type, but fingerprints build up on your four digits and give them away.",
-  rotated:
-    "Digits stay in order but start somewhere new each time. Still easy to read, and the wear spreads over every key.",
-  scrambled:
-    "Every digit somewhere new each time. Hides the most, and you'll have to look for each key.",
-  "scrambled-per-key":
-    "The keypad reshuffles after every digit, so anyone watching your hand learns nothing. You'll re-read the pad six times per unlock.",
+  fixed: "Same layout every time. Fingerprints give your digits away.",
+  rotated: "In order, but starting somewhere new each time.",
+  scrambled: "A new arrangement for every unlock.",
+  "scrambled-per-key": "A new arrangement after every digit you press.",
 };
 
 /** The row is in exactly one of three states, so it is spelled as one value.
@@ -77,7 +80,23 @@ export function SecurityPage() {
             <span style={{ fontFamily: "var(--ui)", fontSize: 15, color: "var(--ink)" }}>
               Keypad layout
             </span>
-            <span style={{ fontFamily: "var(--ui)", fontSize: 12, color: "var(--ink-3)" }}>
+            {/* Fixed single-line box: the blurb swaps as you tap through the
+                segments, and letting it size itself would jog everything below
+                it by a line the moment one wrapped. Belt and braces with the
+                short copy above , if a future blurb outgrows the line, it gets
+                clipped here rather than silently shifting the card. */}
+            <span
+              style={{
+                fontFamily: "var(--ui)",
+                fontSize: 12,
+                color: "var(--ink-3)",
+                height: 16,
+                lineHeight: "16px",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
               {LAYOUT_BLURB[pinPadLayout]}
             </span>
             <Segmented
