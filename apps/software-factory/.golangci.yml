@@ -12,6 +12,10 @@
 version: "2"
 
 linters:
+  # `enable` ADDS to golangci-lint's default set (errcheck, govet, ineffassign,
+  # staticcheck, unused), it does not replace it — there is no `default: none`
+  # here deliberately. The wall is therefore wider than this list reads;
+  # staticcheck in particular fires on code none of the rules below mention.
   enable:
     - depguard        # architectural import boundaries (workflow purity, SDK sealing)
     - forbidigo       # banned calls (os.Getenv, time.Now, nondeterminism in workflows)
