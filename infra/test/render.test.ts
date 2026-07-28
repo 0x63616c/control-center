@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { WorkloadSpec } from "../src/component.ts";
 import { renderExternalService, renderWorkload } from "../src/component.ts";
+import { LAN_SERVICE_IPS } from "../src/metallb.ts";
 import { serviceSpecs } from "../src/services.ts";
 
 // The mapping layer is pure: a WorkloadSpec -> the kubernetes resource ARG
@@ -80,6 +81,30 @@ describe("renderWorkload", () => {
       .map((p: { port: number }) => p.port)
       .sort((a, b) => a - b);
     expect(ports).toEqual([80, 443]);
+  });
+
+  test("loadBalancerIp pins the LoadBalancer address", () => {
+    const plex: WorkloadSpec = {
+      name: "plex",
+      image: "plexinc/pms-docker:1.43.2.10687-563d026ea",
+      replicas: 1,
+      ports: [{ containerPort: 32400, expose: "lan" }],
+      loadBalancerIp: "192.168.0.4",
+    };
+    expect(renderWorkload(plex).services[0].spec.loadBalancerIP).toBe("192.168.0.4");
+  });
+
+  test("loadBalancerIp is dropped on a ClusterIP Service (the field is invalid there)", () => {
+    const internal: WorkloadSpec = {
+      name: "api",
+      image: "ghcr.io/0x63616c/www-control-center-api:main",
+      replicas: 1,
+      ports: [{ containerPort: 4201, expose: "cluster" }],
+      loadBalancerIp: "192.168.0.4",
+    };
+    const svc = renderWorkload(internal).services[0];
+    expect(svc.spec.type).toBe("ClusterIP");
+    expect(svc.spec.loadBalancerIP).toBeUndefined();
   });
 
   test("expose:none yields no Service", () => {
@@ -498,12 +523,23 @@ describe("serviceSpecs: Plex GPU transcode is talos-only (Task 4)", () => {
     expect(orbstack?.annotations).toBeUndefined();
   });
 
-  test("talos ADVERTISE_IP uses the node LAN IP + MetalLB port, not the mini's frozen IP", () => {
+  test("talos ADVERTISE_IP matches the pinned LoadBalancer address on the same workload", () => {
+    // The advertised URL and the Service address are two independent
+    // declarations of the same fact; if they drift, Plex is healthy and
+    // unreachable at once. Assert them against each other, not against a
+    // literal that would be updated in lockstep with the bug.
     const plex = plexOf({
       ...baseOpts,
       target: { substrate: "talos", nodeIp: "192.168.0.5" },
     });
-    expect(plex?.env?.ADVERTISE_IP).toBe("http://192.168.0.5:32400");
+    expect(plex?.loadBalancerIp).toBe(LAN_SERVICE_IPS.plex);
+    expect(plex?.env?.ADVERTISE_IP).toBe(`http://${plex?.loadBalancerIp}:32400`);
+    // The node IP is NOT a listener for :32400 - it was the old, broken value.
+    expect(plex?.env?.ADVERTISE_IP).not.toContain("192.168.0.5");
+  });
+
+  test("orbstack pins no LoadBalancer address (OrbStack has no MetalLB pool)", () => {
+    expect(plexOf(baseOpts)?.loadBalancerIp).toBeUndefined();
   });
 
   test("orbstack ADVERTISE_IP is still the mini's frozen LAN IP", () => {

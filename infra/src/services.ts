@@ -16,6 +16,7 @@ import type { InfraNamespaceName } from "./cluster.ts";
 import type { WorkloadSpec } from "./component.ts";
 import { ExternalService, HostBackedService, Workload } from "./component.ts";
 import { GHCR_PULL_SECRET_NAME, GHCR_PULL_SECRET_NAMESPACES } from "./ghcr-pull-secrets.ts";
+import { LAN_SERVICE_IPS } from "./metallb.ts";
 import { NVIDIA_RUNTIME_CLASS_NAME } from "./nvidia.ts";
 import { SERVICE_SECRET_TARGETS, SERVICE_SECRETS, type ServiceSecretName } from "./secrets-map.ts";
 
@@ -206,15 +207,17 @@ export function haTarget(target: SubstrateTarget): string {
  * Plex's `ADVERTISE_IP` env var: the externally-reachable URL Plex advertises
  * to clients (e.g. the Apple TV). On "orbstack" (the mini, default) this is
  * the Mac's LAN IP, republished on the host by OrbStack's expose_services. On
- * "talos" this is the node's LAN IP with the MetalLB-published :32400
- * LoadBalancer port.
+ * "talos" this is Plex's own MetalLB LoadBalancer address (LAN_SERVICE_IPS),
+ * NOT the node IP: nothing listens on :32400 in the node's netns, so a node-IP
+ * URL advertises a refused connection and every client that trusts it (the
+ * Apple TV) fails to reach the server even though it is healthy.
  *
  * @public - unit-tested in infra/test/services.test.ts; consumed by
  * serviceSpecs below and by Task 4.
  */
 export function plexAdvertiseIp(target: SubstrateTarget): string {
   return target.substrate === "talos"
-    ? `http://${target.nodeIp}:${PLEX_PORT}`
+    ? `http://${LAN_SERVICE_IPS.plex}:${PLEX_PORT}`
     : MINI_PLEX_ADVERTISE_IP;
 }
 
@@ -365,6 +368,9 @@ export function serviceSpecs(opts: ServiceSpecOptions): OwnedWorkloadSpec[] {
         { containerPort: 443, expose: "lan" },
         { containerPort: 80, expose: "lan" },
       ],
+      // Pinned on talos: the guest portal is reached by address, and it shares
+      // a 2-address MetalLB pool with plex (see LAN_SERVICE_IPS).
+      ...(target.substrate === "talos" ? { loadBalancerIp: LAN_SERVICE_IPS.api } : {}),
       // The control-center copy of the portal TLS cert (issuePortalCertificate
       // in certmanager.ts), same rename convention as the old captive-portal
       // workload below (tls.crt/tls.key -> fullchain.pem/key.pem, the acme.sh
@@ -535,8 +541,10 @@ export function serviceSpecs(opts: ServiceSpecOptions): OwnedWorkloadSpec[] {
       ],
       // LAN LoadBalancer on :32400 (republished on the Mac host by OrbStack
       // expose_services, same mechanism as the captive-portal LB), so the Apple
-      // TV on 192.168.0.0/24 reaches Plex directly.
+      // TV on 192.168.0.0/24 reaches Plex directly. On talos the address is
+      // pinned, because ADVERTISE_IP above hardcodes it.
       ports: [{ containerPort: 32400, expose: "lan" }],
+      ...(target.substrate === "talos" ? { loadBalancerIp: LAN_SERVICE_IPS.plex } : {}),
     },
     {
       // go2rtc restreams the bedroom camera's RTSP feed as MJPEG for the web

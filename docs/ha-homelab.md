@@ -176,7 +176,7 @@ a decision to take deliberately.
   fully committed. Raising `HAOS_MEM` means lowering `TARGET_MEM_MIB` in
   `scripts/provision-orbstack.sh` by the same amount. See
   [`homelab-host.md`](./homelab-host.md).
-- Plex was deployed to the same homelab k3s cluster on the same day — see
-  [`plex.md`](./plex.md) (note the `ADVERTISE_IP` LAN-reachability caveat, which
-  is the same class of Mac-LAN-IP dependency as the HA socat proxy here).
+- Plex was deployed to the same homelab k3s cluster on the same day. It has
+  since moved to `home-server` and its `ADVERTISE_IP` is now a pinned MetalLB
+  address, not a Mac LAN IP — see [`plex.md`](./plex.md).
 
