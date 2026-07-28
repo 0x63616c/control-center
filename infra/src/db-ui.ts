@@ -278,6 +278,13 @@ export function installDbUi(args: DbUiArgs): DbUiResources {
       spec: {
         replicas: 1,
         selector: { matchLabels: labels },
+        // pgadmin-data is a ReadWriteOnce local-lvm volume, so a rolling
+        // update deadlocks: the CSI refuses the surge pod's mount while the
+        // outgoing pod still holds the device, and neither side can finish
+        // (this is how #300 wedged the prod deploy for web). This Deployment is
+        // hand-built rather than going through renderWorkload, so it needs the
+        // same treatment separately.
+        strategy: { type: "Recreate", rollingUpdate: undefined },
         template: {
           metadata: { labels, annotations: { "checksum/config": configChecksum } },
           spec: {
