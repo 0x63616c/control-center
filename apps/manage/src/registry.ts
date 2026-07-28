@@ -7,7 +7,7 @@
  * the variance in a table. Adding a tool must never mean adding an `if`.
  *
  * The extension's rule file is GENERATED from this table
- * (scripts/manage-extension/emit.ts, checked by `bun run apps:check`), so
+ * (apps/manage/src/extension-rules.ts, checked by `bun run apps:check`), so
  * "added a tool, forgot the allowlist" is a build failure rather than a pane
  * that mysteriously renders blank months later.
  */
@@ -196,7 +196,7 @@ export function toolHost(tool: Tool): string {
 /**
  * Hosts the extension must strip frame-deny headers for: exactly the
  * `needsExtension` tools, deduplicated, sorted for a stable generated file.
- * Never a wildcard — see scripts/manage-extension/emit.ts.
+ * Never a wildcard — see apps/manage/src/extension-rules.ts.
  */
 export function extensionHosts(): readonly string[] {
   return [...new Set(TOOLS.filter((tool) => tool.needsExtension).map(toolHost))].sort();

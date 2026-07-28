@@ -20,7 +20,7 @@
  *     this file, and that is the property that made a local extension
  *     preferable to a Cloudflare transform rule at the edge.
  */
-import { extensionHosts } from "../../apps/manage/src/registry";
+import { extensionHosts } from "./registry";
 
 /** Bumped by hand; the content script reports it as manage's "extension active" version. */
 export const EXTENSION_VERSION = "1.0.0";
@@ -35,13 +35,27 @@ export const MANAGE_ORIGINS = [
   "http://127.0.0.1/*",
 ];
 
-function hostPatterns(hosts: readonly string[]): string[] {
-  return hosts.map((host) => `https://${host}/*`);
+/**
+ * What an extension build is parameterised by. Production passes nothing and
+ * gets the registry's hosts; the Playwright spec passes its own throwaway
+ * origins so it exercises THIS generator rather than a hand-written stand-in —
+ * the mechanism under test is the rule shape, so a test that rewrote the rules
+ * by hand would prove nothing about what ships.
+ */
+export interface ExtensionInput {
+  hosts?: readonly string[];
+  origins?: readonly string[];
+  /** URL scheme for host_permissions. `http` only for the local test harness. */
+  scheme?: "https" | "http";
+}
+
+function hostPatterns(hosts: readonly string[], scheme: string): string[] {
+  return hosts.map((host) => `${scheme}://${host}/*`);
 }
 
 /** apps/manage/extension/rules.gen.json */
-export function renderRules(): string {
-  const hosts = extensionHosts();
+export function renderRules(input: ExtensionInput = {}): string {
+  const hosts = input.hosts ?? extensionHosts();
   const rules = [
     {
       id: 1,
@@ -68,8 +82,10 @@ export function renderRules(): string {
 }
 
 /** apps/manage/extension/manifest.json */
-export function renderManifest(): string {
-  const hosts = extensionHosts();
+export function renderManifest(input: ExtensionInput = {}): string {
+  const hosts = input.hosts ?? extensionHosts();
+  const origins = input.origins ?? MANAGE_ORIGINS;
+  const scheme = input.scheme ?? "https";
   const manifest = {
     manifest_version: 3,
     name: "manage — frame unlock",
@@ -77,7 +93,7 @@ export function renderManifest(): string {
     description:
       "Strips frame-deny response headers from manage's tool allowlist, for framed sub-documents only.",
     permissions: ["declarativeNetRequest"],
-    host_permissions: hostPatterns(hosts),
+    host_permissions: hostPatterns(hosts, scheme),
     declarative_net_request: {
       rule_resources: [
         {
@@ -89,7 +105,7 @@ export function renderManifest(): string {
     },
     content_scripts: [
       {
-        matches: MANAGE_ORIGINS,
+        matches: [...origins],
         js: ["content.js"],
         // document_start so the flag is on <html> before React's first render
         // reads it — otherwise manage paints launcher cards for one frame.

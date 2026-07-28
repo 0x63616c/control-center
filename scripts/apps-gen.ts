@@ -25,6 +25,7 @@
 import { writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { renderManifest, renderRules } from "../apps/manage/src/extension-rules";
 import { GUEST_EXPOSED } from "../features/guest-exposed";
 import { collect } from "./apps-gen/collect";
 import {
@@ -39,7 +40,6 @@ import {
   renderWorkflows,
 } from "./apps-gen/emit";
 import { validate } from "./apps-gen/validate";
-import { renderManifest, renderRules } from "./manage-extension/emit";
 
 // scripts/apps-gen.ts -> repo root is one directory up from scripts/.
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");

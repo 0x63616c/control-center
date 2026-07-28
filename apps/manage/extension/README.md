@@ -14,7 +14,7 @@ sub-path (Home Assistant, DSM and UniFi all emit `/`-rooted URLs). See
 ## `manifest.json` and `rules.gen.json` are GENERATED
 
 Do not hand-edit them. They are rendered from `apps/manage/src/registry.ts` by
-`scripts/manage-extension/emit.ts`:
+`apps/manage/src/extension-rules.ts`:
 
 ```
 bun run apps:gen     # regenerate
