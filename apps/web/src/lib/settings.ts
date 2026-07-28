@@ -78,6 +78,11 @@ export interface Settings {
    *  Activity); the gates are always on.
    *  NOT auth , purely a frontend soft-lock. Exactly 6 digits; default "000000". */
   pinCode: string;
+  /** Scramble the PIN pad's digit positions on every prompt (#287). A fixed pad
+   *  wears grease into the same four keys, which narrows a 6-digit PIN to the
+   *  permutations of whichever digits are smudged; reshuffling spreads the wear
+   *  across all ten. Costs muscle memory, hence the toggle. */
+  scramblePin: boolean;
   /** The single highlight colour the board is built around (see lib/accent.ts).
    *  Synced, not device-local: the accent is how the installation looks, not a
    *  property of one panel. */
@@ -126,6 +131,7 @@ const KEYS = {
   snapMode: "cc-board-snap-mode",
   showMinimap: "cc-show-minimap",
   pinCode: "cc-pin-code",
+  scramblePin: "cc-scramble-pin",
   accent: "cc-accent",
   typeface: "cc-typeface",
   pushEnabled: "cc-push-enabled",
@@ -199,6 +205,7 @@ function loadInitial(): Settings {
   const buildNumber = readRaw(KEYS.showBuildNumber);
   const minimap = readRaw(KEYS.showMinimap);
   const pin = readRaw(KEYS.pinCode);
+  const scramblePin = readRaw(KEYS.scramblePin);
   const accent = readRaw(KEYS.accent);
   const typeface = readRaw(KEYS.typeface);
   const push = readRaw(KEYS.pushEnabled);
@@ -218,6 +225,7 @@ function loadInitial(): Settings {
         : DEFAULTS.snapMode,
     showMinimap: minimap === null ? DEFAULTS.showMinimap : minimap === "true",
     pinCode: pin && /^\d{6}$/.test(pin) ? pin : DEFAULTS.pinCode,
+    scramblePin: scramblePin === null ? DEFAULTS.scramblePin : scramblePin === "true",
     accent:
       accent && (ACCENTS as readonly string[]).includes(accent)
         ? (accent as Accent)
@@ -389,6 +397,13 @@ export function setShowMinimap(v: boolean): void {
 export function setPinCode(pin: string): void {
   if (!/^\d{6}$/.test(pin)) return;
   patch("pinCode", pin, pin);
+}
+
+/** Turn PIN-pad scrambling on/off (see Settings.scramblePin). Synced, not
+ *  device-local: it is a property of how the installation is locked, not of one
+ *  panel's screen. */
+export function setScramblePin(v: boolean): void {
+  patch("scramblePin", v, String(v));
 }
 
 /** Set the board's highlight colour. The vars it drives are applied by

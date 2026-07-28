@@ -35,10 +35,14 @@ export function PinGateModal({
   onClose: () => void;
   onSuccess: () => void;
 }) {
-  const { pinCode } = useSettings();
+  const { pinCode, scramblePin } = useSettings();
   const [pin, setPin] = useState("");
   const [error, setError] = useState(false);
   const [unlocked, setUnlocked] = useState(false);
+  // Bumped after every rejected entry so the scrambled pad reshuffles between
+  // attempts , a fixed layout across retries would hand a shoulder-surfer the
+  // same positional trace twice.
+  const [attempt, setAttempt] = useState(0);
 
   // Reset all internal state whenever the gate is (re)opened or closed so a
   // second open never inherits the last attempt's dots/error/unlocked flags.
@@ -48,6 +52,7 @@ export function PinGateModal({
     setPin("");
     setError(false);
     setUnlocked(false);
+    setAttempt(0);
   }, [open]);
 
   // Register in the global modal-open count while open (freezes board pan, lets
@@ -109,6 +114,7 @@ export function PinGateModal({
     } else {
       setPin("");
       setError(true);
+      setAttempt((n) => n + 1);
     }
   }
 
@@ -192,6 +198,8 @@ export function PinGateModal({
         <PinPadView
           entered={pin.length}
           error={error}
+          scramble={scramblePin}
+          shuffleKey={attempt}
           onDigit={digit}
           onBackspace={() => {
             setError(false);
