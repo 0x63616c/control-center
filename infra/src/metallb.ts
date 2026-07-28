@@ -24,6 +24,19 @@ const ADDRESS_POOL_NAME = "homelab-pool";
 // suffices with headroom for one more before this needs revisiting).
 export const METALLB_ADDRESS_POOL_RANGE = "192.168.0.3-192.168.0.4";
 
+// Which address each LAN Service gets, pinned rather than allocator-assigned.
+// The pool is small and shared, so an unpinned Service just takes whatever is
+// free when it is created: the two below happened to land this way, and a
+// recreate in the other order would silently swap them. Both addresses are
+// baked into things outside this repo's control (the guest portal's DNS
+// record; Plex's ADVERTISE_IP, which is what the Apple TV dials), so they are
+// assignments, not observations. Values match the live cluster - changing one
+// moves a service the LAN already knows by address.
+export const LAN_SERVICE_IPS = {
+  api: "192.168.0.3",
+  plex: "192.168.0.4",
+} as const;
+
 export interface MetallbArgs {
   provider: k8s.Provider;
   // Pinned operator manifest version (a git tag in the upstream repo, e.g. "v0.14.9").

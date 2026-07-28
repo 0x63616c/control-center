@@ -65,6 +65,13 @@ export interface WorkloadSpec {
   env?: Record<string, string>;
   command?: string[];
   ports?: PortSpec[];
+  // Pin the LoadBalancer Service to a fixed LAN address instead of letting the
+  // allocator pick. MetalLB's pool is a small shared range, so an unpinned
+  // Service silently takes whichever address is free at create time - fine
+  // until two Services are recreated in a different order and swap addresses,
+  // which breaks anything that hardcodes one of them (Plex's ADVERTISE_IP, the
+  // guest DNS record). Ignored unless a port is exposed "lan".
+  loadBalancerIp?: string;
   volumes?: VolumeSpec[];
   secretName?: string;
   imagePullSecrets?: string[];
@@ -188,6 +195,7 @@ interface ServiceArgs {
   spec: {
     type: "ClusterIP" | "LoadBalancer";
     selector?: Record<string, string>;
+    loadBalancerIP?: string;
     ports: { name: string; port: number; targetPort: number }[];
   };
 }
@@ -555,6 +563,10 @@ export function renderWorkload(w: WorkloadSpec): RenderedWorkload {
       spec: {
         type,
         selector: labels,
+        // Only meaningful on a LoadBalancer; a ClusterIP Service rejects it.
+        ...(type === "LoadBalancer" && w.loadBalancerIp
+          ? { loadBalancerIP: w.loadBalancerIp }
+          : {}),
         ports: exposed.map((p) => ({
           name: `p${p.containerPort}`,
           port: p.containerPort,
