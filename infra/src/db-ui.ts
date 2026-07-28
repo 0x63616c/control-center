@@ -303,7 +303,17 @@ export function installDbUi(args: DbUiArgs): DbUiResources {
               {
                 name: "data-init",
                 image: "busybox:1.36",
-                command: ["sh", "-c", "chown -R 5050:5050 /var/lib/pgadmin"],
+                // mkdir BEFORE chown: the pgpass emptyDir mounts at a path
+                // INSIDE this PVC, and if the mountpoint chain doesn't exist
+                // yet, kubelet creates it root-owned at container start —
+                // AFTER this init ran — leaving storage/<user>/ unwritable to
+                // uid 5050 (worker boot loop, seen live at the ADR-0009
+                // cutover).
+                command: [
+                  "sh",
+                  "-c",
+                  `mkdir -p ${PGPASS_MOUNT_DIR} && chown -R 5050:5050 /var/lib/pgadmin`,
+                ],
                 volumeMounts: [{ name: "data", mountPath: "/var/lib/pgadmin" }],
               },
               {
