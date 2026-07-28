@@ -4,6 +4,7 @@
   "license": "MIT",
   "workspaces": [
     "apps/web",
+    "apps/manage",
     "apps/api",
     "apps/worker",
     "apps/temporal-worker",
@@ -20,6 +21,7 @@
     "dev:api": "bun run --filter @control-center/api dev",
     "dev:worker": "bun run --filter @control-center/worker dev",
     "dev:storybook": "bun run --filter @control-center/storybook dev",
+    "dev:manage": "bun run --filter @control-center/manage dev",
     "dev:db": "docker compose -f docker-compose.yml up postgres",
     "ios:sync": "bun run --cwd apps/web cap:sync",
     "ios:open": "bun run --cwd apps/web cap:open",

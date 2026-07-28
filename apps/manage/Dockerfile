@@ -1,6 +1,6 @@
-# Multi-stage build for the web app (React/Vite static bundle).
+# Multi-stage build for manage (React/Vite static bundle).
 # Stage 1 builds the bundle with bun; stage 2 serves it via nginx.
-# nginx also reverse-proxies /trpc → api:4201 so there is no CORS surface.
+# No API proxy block, unlike apps/web: manage has no backend.
 
 FROM oven/bun:1.2-alpine AS builder
 
@@ -34,43 +34,22 @@ RUN bun install --frozen-lockfile --ignore-scripts
 # Root tsconfig must be present so workspace tsconfigs can extend it.
 COPY tsconfig.json ./tsconfig.json
 
-# Copy workspace source. packages/api provides the @cc/api type export.
-COPY apps/api/src ./apps/api/src
-COPY apps/api/tsconfig.json ./apps/api/tsconfig.json
-COPY apps/web ./apps/web
-COPY packages ./packages
-# C7 authoring surface: web bundles feature tiles + the app-kit surface.
-COPY app-kit ./app-kit
-COPY features ./features
+COPY apps/manage ./apps/manage
+# The shared palette (packages/theme) is @imported by manage's stylesheet.
+COPY packages/theme ./packages/theme
 
-# Commit SHA baked into the bundle (vite `define`) so the running panel reports
-# its build. CI passes --build-arg BUILD_HASH=${github.sha}; absent (local docker
-# build) it falls back to "dev" since the builder image has no .git.
-ARG BUILD_HASH=dev
-ENV BUILD_HASH=$BUILD_HASH
-
-# Commit timestamp (unix-ms) baked alongside the SHA so the bottom-left badge can
-# render "time since commit". CI passes --build-arg BUILD_TIME=<commit ms>; absent
-# (local docker build) vite emits "NaN" since the builder image has no .git, and
-# the badge omits the age. Without this the age never appears in a prod build.
-ARG BUILD_TIME
-ENV BUILD_TIME=$BUILD_TIME
-
-# Build the static bundle. Output lands at apps/web/dist.
-RUN bun run --cwd apps/web build
+RUN bun run --cwd apps/manage build
 
 
-# Stage 2: nginx serves the static bundle and proxies /trpc to the api.
+# Stage 2: nginx serves the static bundle.
 FROM nginx:1.27-alpine AS runtime
 
-# Remove the default nginx config and replace it with ours.
 RUN rm /etc/nginx/conf.d/default.conf
 
-COPY apps/web/nginx.conf /etc/nginx/conf.d/app.conf
+COPY apps/manage/nginx.conf /etc/nginx/conf.d/app.conf
 
-COPY --from=builder /app/apps/web/dist /usr/share/nginx/html
+COPY --from=builder /app/apps/manage/dist /usr/share/nginx/html
 
 EXPOSE 80
 
-# nginx runs as PID 1; no shell wrapper needed.
 CMD ["nginx", "-g", "daemon off;"]

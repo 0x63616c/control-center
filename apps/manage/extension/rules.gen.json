@@ -1,0 +1,42 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "responseHeaders": [
+        {
+          "header": "x-frame-options",
+          "operation": "remove"
+        },
+        {
+          "header": "content-security-policy",
+          "operation": "remove"
+        },
+        {
+          "header": "content-security-policy-report-only",
+          "operation": "remove"
+        }
+      ]
+    },
+    "condition": {
+      "requestDomains": [
+        "app.plex.tv",
+        "app.pulumi.com",
+        "dash.cloudflare.com",
+        "db-ui.worldwidewebb.co",
+        "dsm.worldwidewebb.co",
+        "github.com",
+        "grafana.worldwidewebb.co",
+        "ha.worldwidewebb.co",
+        "login.tailscale.com",
+        "one.dash.cloudflare.com",
+        "temporal-ui.worldwidewebb.co",
+        "unifi.worldwidewebb.co"
+      ],
+      "resourceTypes": [
+        "sub_frame"
+      ]
+    }
+  }
+]
