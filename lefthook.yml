@@ -47,6 +47,12 @@ pre-commit:
       # (actually decrypts; a raw-editor edit leaves the block intact but breaks
       # the MAC and silently kills decryption). See the script header.
       run: bash scripts/check-sops-encrypted.sh {staged_files}
+    worktree-guard:
+      glob: ".claude/hooks/guard-worktree-only*.sh"
+      # BLOCKING: this guard is the only thing keeping concurrent agent sessions
+      # out of each other's working trees, so its table test must pass before a
+      # change to it lands. Builds a throwaway repo + worktree; no network.
+      run: bash .claude/hooks/guard-worktree-only.test.sh
     gitleaks:
       # BLOCKING: scans the staged diff for secrets (prefixed tokens, private
       # keys, high-entropy strings). Config + allowlist live in .gitleaks.toml.
