@@ -104,3 +104,26 @@ button that opens its own Access-gated host.
   regardless of headers.
 - Not open source. It is a curated shell for our tools, and the registry is a checked-in list, not
   a plugin API.
+
+## As built (#292)
+
+Shipped as designed. Four things worth recording because they are not derivable from the decision
+above:
+
+- **No Storybook row.** The design listed 14 tools; 13 shipped. The `control-center-storybook`
+  workload was deleted in Track B and its tunnel route pruned, so a `storybook.worldwidewebb.co`
+  pane would 502 forever. Storybook is a local-dev tool now.
+- **The palette moved to `packages/theme`.** manage renders in the same black theme as the control
+  center, and the only honest way to do that across two apps is one file both `@import`. Copying the
+  `:root` block would have forked it.
+- **The rule generator lives in `apps/manage/src/extension-rules.ts`, not `scripts/`.** It belongs
+  beside the registry it renders from, and `scripts/` resolves as CommonJS under Playwright's
+  loader, which the frame-unlock spec has to import through.
+- **The accent bar on the active sidebar row is the one intentional deviation from the prototype.**
+  The prototype's bar is drawn 10px to the left of its row, inside the scroll container's clip rect,
+  so it never actually paints. manage widens the scroll box by exactly that 10px and pays it back as
+  padding.
+
+`unifi.worldwidewebb.co` and `dsm.worldwidewebb.co` exist as predicted, and needed the ingress-model
+extension the decision anticipated (`DesiredOriginRequest`, rendered only for the rules that declare
+it so every pre-existing rule stays byte-identical to live).

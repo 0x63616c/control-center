@@ -80,6 +80,14 @@ body {
 .scroll {
   flex: 1;
   overflow-y: auto;
+  /* The active row's accent bar bleeds 10px to the LEFT of its row, into the
+     sidebar's own padding — which `overflow-y: auto` would clip away, taking the
+     most legible "you are here" signal in the UI with it (the prototype has this
+     bug; it is the one place the port improves on it). Widening the scroll box
+     by exactly that 10px and paying it back as padding keeps every child in
+     place and brings the bar inside the clip rect. */
+  margin-left: -10px;
+  padding-left: 10px;
   min-height: 0;
   display: flex;
   flex-direction: column;
