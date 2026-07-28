@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>manage — rough prototype</title>
+<style>
+:root{
+  --bg:#000; --tile:#0a0a0a; --tile-2:#111; --nest:#181818;
+  --hair:rgba(255,255,255,.07); --hair-2:rgba(255,255,255,.12); --hair-3:rgba(255,255,255,.28);
+  --ink:#ededed; --ink-2:#a1a1a1; --ink-3:#6e6e6e;
+  --acc:#0070f3; --acc-rgb:0 112 243;
+  --acc-dim:rgb(var(--acc-rgb)/.14); --acc-line:rgb(var(--acc-rgb)/.45);
+  --amber:#f4c063; --red:#e5484d; --green:#7ac48f;
+  --r:20px;
+  --ui:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;
+  --mono:"SF Mono",ui-monospace,Menlo,monospace;
+  --sidebar-w:248px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--ui);font-size:13px;-webkit-font-smoothing:antialiased;overflow:hidden}
+
+.app{display:grid;grid-template-columns:var(--sidebar-w) 1fr;height:100vh;gap:8px;padding:8px}
+
+/* ---------- sidebar ---------- */
+.side{display:flex;flex-direction:column;min-height:0;background:var(--tile);border:1px solid var(--hair);border-radius:var(--r);padding:14px 10px 10px}
+.brand{display:flex;align-items:center;gap:9px;padding:2px 8px 14px}
+.brand .mark{width:22px;height:22px;border-radius:7px;background:linear-gradient(140deg,var(--acc),#7c3aed);display:grid;place-items:center;font-size:11px;font-weight:700;color:#fff}
+.brand h1{font-size:13px;font-weight:600;letter-spacing:-.01em}
+.brand .env{margin-left:auto;font-family:var(--mono);font-size:9px;color:var(--ink-3);border:1px solid var(--hair);padding:2px 5px;border-radius:5px}
+
+.scroll{flex:1;overflow-y:auto;min-height:0;display:flex;flex-direction:column;gap:16px;padding-bottom:6px}
+.scroll::-webkit-scrollbar{width:6px}
+.scroll::-webkit-scrollbar-thumb{background:var(--nest);border-radius:3px}
+
+.group{display:flex;flex-direction:column;gap:1px}
+.group > h2{font-size:9.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3);padding:0 8px 6px}
+
+.item{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:10px;cursor:pointer;border:1px solid transparent;user-select:none;position:relative}
+.item:hover{background:var(--tile-2)}
+.item.on{background:var(--nest);border-color:var(--hair-2)}
+.item.on::before{content:"";position:absolute;left:-10px;top:50%;transform:translateY(-50%);width:3px;height:16px;border-radius:0 3px 3px 0;background:var(--acc)}
+.logo{width:20px;height:20px;border-radius:6px;display:grid;place-items:center;font-size:10px;font-weight:700;color:#fff;flex:none;letter-spacing:-.02em}
+.label{font-size:12.5px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item.on .label{color:var(--ink);font-weight:500}
+.badge{margin-left:auto;font-family:var(--mono);font-size:9px;color:var(--ink-3)}
+.dot{margin-left:auto;width:5px;height:5px;border-radius:50%;flex:none}
+.dot.ok{background:var(--green)} .dot.warn{background:var(--amber)} .dot.err{background:var(--red)}
+
+.foot{border-top:1px solid var(--hair);padding:10px 8px 2px;display:flex;align-items:center;gap:9px}
+.avatar{width:22px;height:22px;border-radius:50%;background:var(--nest);border:1px solid var(--hair-2);display:grid;place-items:center;font-size:10px;color:var(--ink-2)}
+.foot .who{font-size:11.5px;color:var(--ink-2)}
+.foot .out{margin-left:auto;font-size:11px;color:var(--ink-3);cursor:pointer}
+.foot .out:hover{color:var(--ink)}
+
+/* ---------- main ---------- */
+.main{display:flex;flex-direction:column;min-width:0;background:var(--tile);border:1px solid var(--hair);border-radius:var(--r);overflow:hidden}
+.bar{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--hair);flex:none}
+.bar .t{font-size:12.5px;font-weight:500}
+.bar .url{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);background:var(--bg);border:1px solid var(--hair);padding:3px 8px;border-radius:7px;max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar .sp{flex:1}
+.btn{font-size:11px;color:var(--ink-2);border:1px solid var(--hair);background:var(--tile-2);padding:4px 9px;border-radius:7px;cursor:pointer;font-family:var(--ui)}
+.btn:hover{color:var(--ink);border-color:var(--hair-2)}
+
+.stage{flex:1;position:relative;background:var(--bg);min-height:0}
+iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:var(--bg);color-scheme:dark}
+
+.overlay{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:var(--bg);text-align:center;padding:40px}
+.overlay.show{display:flex}
+.overlay .big{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;font-size:17px;font-weight:700;color:#fff}
+.overlay h3{font-size:15px;font-weight:600}
+.overlay p{font-size:12px;color:var(--ink-2);max-width:420px;line-height:1.55}
+.overlay code{font-family:var(--mono);font-size:11px;color:var(--amber);background:var(--tile-2);padding:1px 5px;border-radius:4px}
+.cta{margin-top:4px;background:var(--acc-dim);border:1px solid var(--acc-line);color:var(--ink);padding:7px 14px;border-radius:9px;font-size:12px;cursor:pointer;font-family:var(--ui)}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand"><div class="mark">M</div><h1>manage</h1></div>
+    <div class="scroll" id="nav"></div>
+    <div class="foot">
+      <div class="dot ok" style="margin:0"></div>
+      <div class="who">extension active</div>
+      <div class="out">setup</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="bar">
+      <span class="t" id="title">—</span>
+      <span class="url" id="url">—</span>
+      <span class="sp"></span>
+      <button class="btn" id="reload">reload</button>
+      <button class="btn" id="pop">open ↗</button>
+    </div>
+    <div class="stage">
+      <iframe id="frame" title="tool"></iframe>
+      <div class="overlay" id="ov">
+        <div class="big" id="ovLogo">?</div>
+        <h3 id="ovTitle">—</h3>
+        <p id="ovBody">—</p>
+        <button class="cta" id="ovCta">open in new tab ↗</button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+// ---- registry: the whole "config" of manage. data only, no branches. ----
+const TOOLS = [
+  { g:"House", items:[
+    { id:"cc",   label:"Control Center", url:"https://app.worldwidewebb.co",         c:"#0070f3", i:"CC", state:"ok" },
+    { id:"ha",   label:"Home Assistant", url:"https://ha.worldwidewebb.co",          c:"#41bdf5", i:"HA", state:"ok" },
+    { id:"plex", label:"Plex",           url:"https://app.plex.tv/desktop",          c:"#e5a00d", i:"PX", state:"ok" },
+  ]},
+  { g:"Platform", items:[
+    { id:"graf", label:"Grafana",        url:"https://grafana.worldwidewebb.co",     c:"#f46800", i:"G",  state:"ok" },
+    { id:"tmp",  label:"Temporal",       url:"https://temporal-ui.worldwidewebb.co", c:"#7c3aed", i:"T",  state:"ok" },
+    { id:"db",   label:"pgAdmin",        url:"https://db-ui.worldwidewebb.co",       c:"#336791", i:"PG", state:"ok" },
+    { id:"sb",   label:"Storybook",      url:"https://storybook.worldwidewebb.co",   c:"#ff4785", i:"SB", state:"ok" },
+  ]},
+  { g:"Infra", items:[
+    { id:"cf",   label:"Cloudflare",     url:"https://dash.cloudflare.com",          c:"#f6821f", i:"CF", state:"ok" },
+    { id:"zt",   label:"Zero Trust",     url:"https://one.dash.cloudflare.com",      c:"#b45309", i:"ZT", state:"ok" },
+    { id:"pul",  label:"Pulumi",         url:"https://app.pulumi.com",               c:"#8a3391", i:"PU", state:"ok" },
+    { id:"ts",   label:"Tailscale",      url:"https://login.tailscale.com/admin",    c:"#4b5563", i:"TS", state:"ok" },
+  ]},
+  { g:"Network", items:[
+    { id:"uni",  label:"UniFi",          url:"https://unifi.worldwidewebb.co",       c:"#1c6fd6", i:"U",  state:"warn", note:"tunnel host not created yet — <code>routes.ts</code> entry pending" },
+    { id:"dsm",  label:"Synology",       url:"https://dsm.worldwidewebb.co",         c:"#88c04f", i:"DS", state:"warn", note:"tunnel host not created yet — <code>routes.ts</code> entry pending" },
+  ]},
+  { g:"Code", items:[
+    { id:"gh",   label:"GitHub",         url:"https://github.com/0x63616c/world-wide-webb", c:"#6e7681", i:"GH", state:"ok" },
+  ]},
+];
+
+const flat = TOOLS.flatMap(s=>s.items);
+const nav=document.getElementById("nav");
+for(const sec of TOOLS){
+  const g=document.createElement("div"); g.className="group";
+  g.innerHTML=`<h2>${sec.g}</h2>`;
+  for(const t of sec.items){
+    const el=document.createElement("div");
+    el.className="item"; el.dataset.id=t.id;
+    el.innerHTML=`<div class="logo" style="background:${t.c}">${t.i}</div>
+      <div class="label">${t.label}</div>
+      ${t.link ? `<div class="badge">↗</div>` : `<div class="dot ${t.state}"></div>`}`;
+    el.onclick=()=>select(t.id);
+    g.appendChild(el);
+  }
+  nav.appendChild(g);
+}
+
+const frame=document.getElementById("frame"), ov=document.getElementById("ov");
+let cur=null, timer=null;
+
+function select(id){
+  const t=flat.find(x=>x.id===id); cur=t;
+  document.querySelectorAll(".item").forEach(e=>e.classList.toggle("on", e.dataset.id===id));
+  document.getElementById("title").textContent=t.label;
+  document.getElementById("url").textContent=t.url;
+  clearTimeout(timer);
+
+  if(t.link){ return blocked(t, "External tool — not framed on purpose.",
+    "GitHub sends <code>x-frame-options: deny</code>, and its passkey login is origin-bound, so it can never be a pane. It gets a launcher instead."); }
+
+  ov.classList.remove("show");
+  frame.src=t.url;
+  // crude blocked-detection: cross-origin frames that get refused never fire load
+  timer=setTimeout(()=>{
+    blocked(t, "Nothing rendered.", t.note ? t.note : "Either frame-deny, an Access redirect, or the host is unreachable from this browser.");
+  }, 4000);
+}
+frame.addEventListener("load",()=>clearTimeout(timer));
+
+function blocked(t,h,b){
+  frame.src="about:blank";
+  document.getElementById("ovLogo").textContent=t.i;
+  document.getElementById("ovLogo").style.background=t.c;
+  document.getElementById("ovTitle").textContent=h;
+  document.getElementById("ovBody").innerHTML=b;
+  ov.classList.add("show");
+}
+document.getElementById("ovCta").onclick=()=>window.open(cur.url,"_blank");
+document.getElementById("pop").onclick=()=>window.open(cur.url,"_blank");
+document.getElementById("reload").onclick=()=>select(cur.id);
+
+select("cc");
+</script>
+</body>
+</html>
