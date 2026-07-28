@@ -9,6 +9,7 @@ import {
   resetSettings,
   setAccent,
   setPinCode,
+  setScramblePin,
   setShowMinimap,
   setTypeface,
   useSettings,
@@ -30,6 +31,8 @@ describe("settings defaults", () => {
     const s = read().current;
     expect(s.showMinimap).toBe(true);
     expect(s.pinCode).toBe("000000");
+    // Scrambling is on out of the box (#287) , see the api-side default.
+    expect(s.scramblePin).toBe(true);
   });
 
   it("defaults showBuildNumber to false (opt-in, native-only)", () => {
@@ -84,6 +87,20 @@ describe("minimap setter", () => {
   it("toggles showMinimap", () => {
     act(() => setShowMinimap(false));
     expect(read().current.showMinimap).toBe(false);
+  });
+});
+
+describe("scramble-pin setter", () => {
+  it("toggles scramblePin", () => {
+    act(() => setScramblePin(false));
+    expect(read().current.scramblePin).toBe(false);
+  });
+
+  // It is a SYNCED setting, not device-local: how the installation is locked is
+  // one decision, not a per-panel one. Hydration must therefore reach it.
+  it("accepts scramblePin from the server", () => {
+    act(() => hydrateSettings({ scramblePin: false }));
+    expect(read().current.scramblePin).toBe(false);
   });
 });
 

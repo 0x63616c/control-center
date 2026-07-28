@@ -9,15 +9,28 @@ import { PinPadView } from "./PinPad";
  * 3x4 keypad. State lives in the parent; this story wires a tiny local model so
  * you can tap digits and watch the dots fill (and backspace to clear them).
  */
-function PinPadHarness() {
+function PinPadHarness({ scramble = false }: { scramble?: boolean }) {
   const [pin, setPin] = useState("");
+  // Each full-length entry counts as one prompt, so the scrambled pad reshuffles
+  // exactly where the real gates do , between attempts, never mid-entry.
+  const [prompt, setPrompt] = useState(0);
   return (
     <div
       style={{ display: "flex", justifyContent: "center", padding: 48, background: "var(--bg)" }}
     >
       <PinPadView
         entered={pin.length}
-        onDigit={(d) => setPin((p) => (p.length < PIN_LENGTH ? p + d : p))}
+        scramble={scramble}
+        shuffleKey={prompt}
+        onDigit={(d) => {
+          if (pin.length < PIN_LENGTH - 1) {
+            setPin(pin + d);
+            return;
+          }
+          // Sixth digit: the entry is complete, so this prompt is over.
+          setPin("");
+          setPrompt((n) => n + 1);
+        }}
         onBackspace={() => setPin((p) => p.slice(0, -1))}
       />
     </div>
@@ -59,6 +72,35 @@ export const Interactive: Story = {
       (el) => el.style.width === "14px" && el.style.background !== "transparent",
     );
     await expect(solid).toHaveLength(3);
+  },
+};
+
+/**
+ * Scrambled pad (#287) , the `scramblePin` setting on. The digits sit in a
+ * random order and land somewhere else on the next prompt, so the grease trail
+ * on the panel glass stops spelling out which four keys the PIN uses. Reload the
+ * story to draw a new layout.
+ */
+export const Scrambled: Story = {
+  args: { entered: 0, onDigit: () => {}, onBackspace: () => {} },
+  render: () => <PinPadHarness scramble />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const digitOrder = () =>
+      Array.from(canvasElement.querySelectorAll<HTMLElement>("button[aria-label]"))
+        .map((el) => el.getAttribute("aria-label") ?? "")
+        .filter((label) => /^\d$/.test(label));
+
+    // Scrambling must never cost a key: all ten digits, exactly once each.
+    const before = digitOrder();
+    await expect(before).toHaveLength(10);
+    await expect([...before].sort().join("")).toBe("0123456789");
+    await expect(canvas.getByRole("button", { name: "backspace" })).toBeInTheDocument();
+
+    // Mid-entry the layout must hold still , keys moving under a half-typed PIN
+    // is how you mistype it.
+    await userEvent.click(canvas.getByRole("button", { name: before[0] ?? "1" }));
+    await expect(digitOrder()).toEqual(before);
   },
 };
 

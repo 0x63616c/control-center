@@ -22,6 +22,13 @@ describe("settings-service DEFAULTS", () => {
     expect(DEFAULTS.pinCode).toBe("000000");
     expect(DEFAULTS.showBuildNumber).toBe(false);
   });
+
+  // Scrambling ships ON (#287): the feature exists because a fixed pad leaks the
+  // PIN's digit set through fingerprints, and a security default that has to be
+  // discovered in Settings protects nobody.
+  it("defaults scramblePin to true", () => {
+    expect(DEFAULTS.scramblePin).toBe(true);
+  });
 });
 
 describe("getSettings", () => {
