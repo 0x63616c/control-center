@@ -219,13 +219,77 @@ describe("installTemporal (issue #124, talos-only)", () => {
     expect(cors?.value).toBe("https://temporal-ui.worldwidewebb.co,http://localhost:8080");
   });
 
-  test("registers the control-center Temporal namespace, and fails the Job if it is absent", async () => {
-    const spec = await get<{ template: { spec: PodSpec } }>(install().namespaceJob, "spec");
-    const script = spec.template.spec.containers[0].command?.join("\n") ?? "";
-    expect(script).toContain("namespace create --namespace control-center");
-    // `describe` is the assertion: create may legitimately say AlreadyExists.
-    expect(script).toMatch(/namespace describe --namespace control-center\s*$/);
-    expect(temporal.TEMPORAL_CLUSTER_NAMESPACE).toBe("control-center");
+  // Issue #325. Namespace registration is a list, not a hardcoded pair: adding
+  // a Temporal namespace is one entry in TEMPORAL_NAMESPACES, and each entry
+  // gets its OWN Job so a new namespace never mutates (and so never forces
+  // Pulumi to replace) an existing one's.
+  describe("temporal namespace registration (issue #325)", () => {
+    const scriptOf = async (job: k8s.batch.v1.Job) => {
+      const spec = await get<{ template: { spec: PodSpec } }>(job, "spec");
+      return spec.template.spec.containers[0].command?.join("\n") ?? "";
+    };
+
+    test("registers control-center AND software-factory", () => {
+      expect(temporal.TEMPORAL_NAMESPACES.map((n) => n.name)).toEqual([
+        "control-center",
+        "software-factory",
+      ]);
+      // The control-center name stays exported on its own: it is the contract
+      // with apps/temporal-worker's env defaults, not just a list entry.
+      expect(temporal.TEMPORAL_CLUSTER_NAMESPACE).toBe("control-center");
+      expect(temporal.SOFTWARE_FACTORY_TEMPORAL_NAMESPACE).toBe("software-factory");
+    });
+
+    test("emits one Job per namespace, keyed by namespace name", async () => {
+      const jobs = install().namespaceJobs;
+      expect(Object.keys(jobs).sort()).toEqual(["control-center", "software-factory"]);
+      const names = await Promise.all(
+        Object.values(jobs).map((j) => get<{ name: string }>(j, "metadata")),
+      );
+      expect(names.map((m) => m.name).sort()).toEqual([
+        "temporal-namespace-control-center",
+        "temporal-namespace-software-factory",
+      ]);
+    });
+
+    test("each Job registers its OWN namespace, and fails if that namespace is absent", async () => {
+      const jobs = install().namespaceJobs;
+      for (const ns of temporal.TEMPORAL_NAMESPACES) {
+        const script = await scriptOf(jobs[ns.name]);
+        expect(script).toContain(`namespace create --namespace ${ns.name}`);
+        // `describe` is the assertion: create may legitimately say AlreadyExists.
+        expect(script).toMatch(new RegExp(`namespace describe --namespace ${ns.name}\\s*$`));
+        // …and it must be the one command NOT tolerated failing.
+        expect(script).not.toMatch(/namespace describe[^\n]*\|\| true/);
+      }
+    });
+
+    test("no Job mentions a namespace other than its own", async () => {
+      const jobs = install().namespaceJobs;
+      for (const ns of temporal.TEMPORAL_NAMESPACES) {
+        const script = await scriptOf(jobs[ns.name]);
+        for (const other of temporal.TEMPORAL_NAMESPACES) {
+          if (other.name === ns.name) continue;
+          expect(script).not.toContain(other.name);
+        }
+      }
+    });
+
+    test("retention is per-namespace, and both are 87600h (10y) today", async () => {
+      // Decided on #325: software-factory matches control-center's 10 years
+      // rather than the 90d originally proposed. Storage impact deliberately
+      // deferred — revisit ~2027-01. Retention is a per-entry field so that
+      // revisit is a one-word edit, not a refactor.
+      expect(temporal.TEMPORAL_NAMESPACES.map((n) => n.retention)).toEqual(["87600h", "87600h"]);
+      const jobs = install().namespaceJobs;
+      for (const ns of temporal.TEMPORAL_NAMESPACES) {
+        const script = await scriptOf(jobs[ns.name]);
+        expect(script).toContain(`--retention ${ns.retention}`);
+        // update runs unconditionally after create, so a retention change to an
+        // already-existing namespace still takes effect on redeploy.
+        expect(script).toContain(`namespace update --namespace ${ns.name} --retention`);
+      }
+    });
   });
 
   test("the worker image is digest-pinned through the shared imageDigests map", async () => {
