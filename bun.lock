@@ -267,9 +267,6 @@
     "packages/theme": {
       "name": "@www/theme",
       "version": "0.0.0",
-      "devDependencies": {
-        "typescript": "^5.9.3",
-      },
     },
     "packages/worker-runtime": {
       "name": "@www/worker-runtime",
