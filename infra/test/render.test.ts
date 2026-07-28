@@ -515,7 +515,7 @@ describe("renderWorkload: Task 4's GPU/hostNetwork fields are opt-in", () => {
 // guarantee is ever loosened and a workload starts carrying limits.cpu.
 describe("renderWorkload: no workload ever sets limits.cpu (#87)", () => {
   test("every serviceSpecs() workload renders with resources.limits.cpu absent", () => {
-    const specs = serviceSpecs({ cloudflaredReplicas: 2, nasNfsServer: "192.168.0.219" });
+    const specs = serviceSpecs({ cloudflaredReplicas: 2, nasNfsServer: "192.168.0.218" });
     for (const spec of specs) {
       const container = renderWorkload(spec).deployment.spec.template.spec.containers[0];
       expect(
