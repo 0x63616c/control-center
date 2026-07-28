@@ -70,7 +70,12 @@ patches:
         # tailscale0); it only changes if the node is removed from the tailnet
         # and re-registered, which also invalidates `endpoint` anyway.
         extraHostEntries:
-          - ip: 100.88.154.126
+          # NOTE: this is the node's tailnet IPv4 and CHANGES whenever the
+          # node re-registers (e.g. a STATE wipe re-auths with TS_AUTHKEY and
+          # mints a NEW tailscale identity — happened at the ADR-0009 cutover:
+          # old node left an offline corpse holding the name; delete it in the
+          # admin console, rename the new one back, and update this IP).
+          - ip: 100.76.3.102
             aliases:
               - home-server.tail8c014d.ts.net
               - home-server
