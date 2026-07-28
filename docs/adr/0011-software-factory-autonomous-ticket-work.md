@@ -263,6 +263,48 @@ that reaches the sandbox as prompts and argv, so every `codex` invocation is bui
 explicit `[]string` and never interpolated into a shell string — end to end, including the
 sandbox's own entrypoint.
 
+## Who provisions the two namespaces
+
+This ADR names two namespaces of two different kinds, both called
+`software-factory`, and originally named a provisioner for neither (#325).
+
+The **Temporal namespace** is an entry in `TEMPORAL_NAMESPACES` in
+`infra/src/temporal.ts`. That list holds a `{ name, retention }` per namespace and emits one
+Job — `temporal-namespace-<name>` — for each. One Job per namespace rather than one Job
+looping the list, so adding a namespace never mutates an existing namespace's Job and so
+never forces Pulumi to replace it; the returned record is keyed by name so a consumer can
+depend on one specific registration rather than on all of them succeeding.
+
+Retention is `87600h` (10 years), matching `control-center`'s #157 decision. History is the
+record of why a PR was proposed, and transcripts on the NFS volume are a separate record
+rather than a substitute. The storage cost of that choice is deliberately deferred —
+revisit ~2027-01. Retention is a per-entry field, so changing it for one namespace is a
+one-word edit.
+
+The **k8s namespace** is `infra/src/software-factory.ts`, a module owning its own namespace
+the way `homeassistant.ts` and `temporal.ts` do, rather than an entry in `cluster.ts`'s
+closed `InfraNamespaceName` map. That map derives from `ProductSlug`, and the software
+factory is not a `@www/platform` product: no web/api image, no CNPG database, no part in the
+control-center deploy. Widening `ProductSlug` to reach it would force an entry in every
+`Record<InfraNamespaceName, …>` consumer — ESO, CNPG, crons, GHCR pull secrets — for a
+namespace that needs none of them.
+
+It carries no Pod Security label, so the cluster-default `baseline` applies. The sandbox
+needs hardening, not privilege; anything wanting `privileged` argues for it where it lands,
+as `homeassistant.ts` does.
+
+Both namespaces exist before the workloads that use them. That is deliberate: an
+unprovisioned half is exactly the gap this section closes.
+
+**Not the community Temporal operator.** `alexandrevilain/temporal-operator` would make
+namespaces declarative CRs with continuous reconciliation, which our deploy-time Jobs do not
+give. It supports Temporal up to 1.28.x and Kubernetes to roughly 1.33; we run 1.31.2 on
+1.36.2. Adopting it means downgrading Temporal three minor versions and staying pinned
+behind a project shipping about two releases a year — and the biggest thing it would buy,
+schema migration on version upgrade, `temporal.ts` already does by keying the schema Job
+name on `TEMPORAL_VERSION`. Writing our own is #326; generalising the factory beyond this
+cluster is #327.
+
 ## One nested directory, one Go module
 
 `apps/software-factory/` holds the whole product: the Go module at its root and both images
