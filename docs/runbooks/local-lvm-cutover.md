@@ -1,5 +1,21 @@
 # Runbook: local-lvm cutover (ADR-0009)
 
+> **EXECUTED 2026-07-27.** Kept for the record and for any future
+> re-provision. Reality diverged from the plan in ways now folded into the
+> steps below, the scripts, and the code — the biggest: `talosctl reset
+> --system-labels-to-wipe EPHEMERAL` only REFORMATS the partition (Talos
+> adopts the existing 998GB partition; maxSize applies at provision only).
+> The working path: wipe STATE+EPHEMERAL → node boots MAINTENANCE MODE (boot
+> partitions intact, DHCP reservation keeps .5) → both partitions are gone →
+> `talosctl apply-config --insecure` → Talos provisions EPHEMERAL at the cap
+> + the raw volume (partition label is `r-storage`: Talos prefixes raw
+> volumes with `r-`). Post-restore: `DROP SCHEMA public CASCADE` +
+> restore-as-superuser leaves the new schema unreadable to the app user —
+> `ALTER SCHEMA public OWNER TO <appuser>; GRANT ALL ON SCHEMA public TO
+> <appuser>;` afterwards (temporal + temporal_visibility). Never stream
+> dumps through `kubectl exec -i` (silent truncation ~100MB); restores run
+> psql over the cluster network from an NFS-mounted pod.
+
 One-time full-cluster rebuild that replaces local-path with OpenEBS LocalPV-LVM.
 etcd lives on EPHEMERAL and the EPHEMERAL cap only applies at re-provision, so
 this wipes ALL cluster state and rebuilds from `pulumi up` + backups — the same

@@ -7,8 +7,13 @@
  */
 import * as k8s from "@pulumi/kubernetes";
 
-const LVM_LOCALPV_VERSION = "v1.9.1"; // pin; bump deliberately
-const OPERATOR_URL = `https://raw.githubusercontent.com/openebs/lvm-localpv/${LVM_LOCALPV_VERSION}/deploy/lvm-operator.yaml`;
+// VENDORED manifest (infra/manifests/), not the upstream URL: the tagged
+// deploy manifest ships the MUTABLE `openebs/lvm-driver:ci` image (upstream
+// oversight — the :ci build renames env vars and crashloops, seen live
+// 2026-07-27: `LVM_NAMESPACE environment variable not set`). The vendored copy
+// is the upstream v1.9.1 file with images rewritten to the release tag. To
+// bump: curl the new tag, re-apply the image sed, update the filename.
+const OPERATOR_MANIFEST = "manifests/lvm-operator-v1.9.1.yaml";
 
 /** The VG name the cutover's vg-bootstrap pod creates; also in the SC params. */
 export const VOLUME_GROUP = "storage";
@@ -21,7 +26,11 @@ export interface LvmLocalPvArgs {
 export function installLvmLocalPv(args: LvmLocalPvArgs) {
   const opts = { provider: args.provider };
 
-  const operator = new k8s.yaml.v2.ConfigFile("lvm-localpv-operator", { file: OPERATOR_URL }, opts);
+  const operator = new k8s.yaml.v2.ConfigFile(
+    "lvm-localpv-operator",
+    { file: OPERATOR_MANIFEST },
+    opts,
+  );
 
   const storageClass = new k8s.storage.v1.StorageClass(
     STORAGE_CLASS_NAME,

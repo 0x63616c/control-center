@@ -32,7 +32,8 @@ spec:
         - -ec
         - |
           apk add --no-cache lvm2 >/dev/null
-          PART=/dev/disk/by-partlabel/storage
+          # Talos names a RawVolumeConfig partition `r-<name>` on disk.
+          PART=/dev/disk/by-partlabel/r-storage
           [ -e "$PART" ] || { echo "ERROR: $PART missing — did the RawVolumeConfig provision? (talosctl get discoveredvolumes)" >&2; exit 1; }
           pvcreate "$PART"
           vgcreate storage "$PART"
