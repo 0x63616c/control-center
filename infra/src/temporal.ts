@@ -20,8 +20,12 @@
 //      worker process. Replicas find each other through the `cluster_membership`
 //      table in Postgres, each broadcasting the pod IP the image's entrypoint
 //      derives from its own hostname.
-//   4. `temporal-namespace-setup`, a Job registering the `control-center`
-//      Temporal namespace once the frontend answers.
+//   4. `temporal-namespace-<name>`, ONE Job per entry in TEMPORAL_NAMESPACES,
+//      each registering its own Temporal namespace once the frontend answers.
+//      Today: `control-center` (the house's workflows) and `software-factory`
+//      (ADR-0011's ticket work). One Job each rather than one looping Job, so
+//      adding a namespace never mutates — and so never replaces — an existing
+//      one's Job (#325).
 //   5. `temporal-ui`, the web UI, and `temporal-worker`, our TypeScript worker
 //      (apps/temporal-worker) polling the `main` task queue.
 //   6. `temporal-otel-collector` (#233), a small OTLP-in/Prometheus-out relay
@@ -58,6 +62,13 @@ export const TEMPORAL_NAMESPACE = "temporal";
  */
 export const TEMPORAL_CLUSTER_NAMESPACE = "control-center";
 export const TEMPORAL_TASK_QUEUE = "main";
+
+/**
+ * The Temporal namespace `apps/software-factory` runs ticket work in (ADR-0011).
+ * Isolated from control-center's so a runaway ticket workflow cannot exhaust the
+ * task-queue or history budget the house's own workflows depend on.
+ */
+export const SOFTWARE_FACTORY_TEMPORAL_NAMESPACE = "software-factory";
 
 /** In-cluster address of the frontend's gRPC port. */
 export const TEMPORAL_FRONTEND_SERVICE = "temporal-server";
@@ -163,10 +174,41 @@ const DYNAMIC_CONFIG_MAP_NAME = "temporal-dynamic-config";
 const DYNAMIC_CONFIG_MOUNT = "/etc/temporal/dynamicconfig";
 const DYNAMIC_CONFIG_FILE = `${DYNAMIC_CONFIG_MOUNT}/docker.yaml`;
 
-// Retention for the control-center namespace: how long a CLOSED workflow's
-// history is queryable. Set to 10 years per explicit request (issue #157) —
-// long-term workflow history over storage economy.
-const NAMESPACE_RETENTION = "87600h";
+// How long a CLOSED workflow's history stays queryable. 10 years, per explicit
+// request on #157 (control-center) and #325 (software-factory): long-term
+// workflow history over storage economy, with the storage cost of that choice
+// deliberately deferred — revisit ~2027-01.
+//
+// Named once and referenced twice rather than defaulted, so the two namespaces
+// diverging later is a one-word edit at the call site instead of a refactor.
+const TEN_YEAR_RETENTION = "87600h";
+
+/**
+ * A Temporal-level namespace (NOT a k8s one) this cluster registers, and how
+ * long closed workflow history survives in it.
+ */
+export interface TemporalNamespaceSpec {
+  readonly name: string;
+  readonly retention: string;
+}
+
+/**
+ * Every Temporal namespace registered on this cluster. Adding one is an entry
+ * here and nothing else: each gets its OWN Job (`temporal-namespace-<name>`),
+ * so a new namespace never mutates an existing namespace's Job and therefore
+ * never makes Pulumi replace it.
+ *
+ * Isolation is the point of more than one — a runaway software-factory workflow
+ * must not be able to exhaust the history budget the house's own workflows in
+ * control-center depend on.
+ */
+export const TEMPORAL_NAMESPACES = [
+  { name: TEMPORAL_CLUSTER_NAMESPACE, retention: TEN_YEAR_RETENTION },
+  { name: SOFTWARE_FACTORY_TEMPORAL_NAMESPACE, retention: TEN_YEAR_RETENTION },
+] as const satisfies readonly TemporalNamespaceSpec[];
+
+/** The name of a namespace in {@link TEMPORAL_NAMESPACES}. */
+export type TemporalNamespaceName = (typeof TEMPORAL_NAMESPACES)[number]["name"];
 
 export interface TemporalArgs {
   provider: k8s.Provider;
@@ -193,7 +235,8 @@ export interface TemporalResources {
   schemaJob: k8s.batch.v1.Job;
   server: k8s.apps.v1.Deployment;
   serverService: k8s.core.v1.Service;
-  namespaceJob: k8s.batch.v1.Job;
+  // One registration Job per Temporal namespace, keyed by namespace name.
+  namespaceJobs: Record<TemporalNamespaceName, k8s.batch.v1.Job>;
   ui: k8s.apps.v1.Deployment;
   uiService: k8s.core.v1.Service;
   worker: k8s.apps.v1.Deployment;
@@ -298,23 +341,23 @@ function schemaSetupScript(): string {
 }
 
 /**
- * Register the Temporal namespace our workflows run in. `namespace create`
+ * Register one Temporal namespace from {@link TEMPORAL_NAMESPACES}. `namespace create`
  * returns AlreadyExists on every deploy after the first, which is a success for
  * our purposes — but the `describe` that follows is NOT tolerated failing, so a
  * genuinely absent namespace still fails the Job instead of passing silently.
  * `namespace update` runs unconditionally after, so a retention change to an
  * already-existing namespace still takes effect on redeploy.
  */
-function namespaceSetupScript(): string {
+function namespaceSetupScript(ns: TemporalNamespaceSpec): string {
   const address = `${TEMPORAL_FRONTEND_SERVICE}:${FRONTEND_GRPC_PORT}`;
   return [
     "set -eu",
     `export TEMPORAL_ADDRESS=${address}`,
     'echo "waiting for temporal frontend…"',
     "until temporal operator cluster health >/dev/null 2>&1; do sleep 2; done",
-    `temporal operator namespace create --namespace ${TEMPORAL_CLUSTER_NAMESPACE} --retention ${NAMESPACE_RETENTION} || true`,
-    `temporal operator namespace update --namespace ${TEMPORAL_CLUSTER_NAMESPACE} --retention ${NAMESPACE_RETENTION}`,
-    `temporal operator namespace describe --namespace ${TEMPORAL_CLUSTER_NAMESPACE}`,
+    `temporal operator namespace create --namespace ${ns.name} --retention ${ns.retention} || true`,
+    `temporal operator namespace update --namespace ${ns.name} --retention ${ns.retention}`,
+    `temporal operator namespace describe --namespace ${ns.name}`,
   ].join("\n");
 }
 
@@ -601,37 +644,47 @@ export function installTemporal(args: TemporalArgs): TemporalResources {
     inNamespace,
   );
 
-  // Named for the namespace it registers, not the version: re-running it is
-  // only needed when THAT changes.
-  const namespaceJobName = `temporal-namespace-${TEMPORAL_CLUSTER_NAMESPACE}`;
-  const namespaceJob = new k8s.batch.v1.Job(
-    namespaceJobName,
-    {
-      metadata: { name: namespaceJobName, namespace: namespaceName },
-      spec: {
-        backoffLimit: 6,
-        template: {
-          metadata: { labels: { app: "temporal-namespace-setup" } },
-          spec: {
-            restartPolicy: "Never",
-            automountServiceAccountToken: false,
-            containers: [
-              {
-                name: "namespace",
-                image: ADMIN_TOOLS_IMAGE,
-                command: ["/bin/sh", "-c", namespaceSetupScript()],
-                resources: {
-                  limits: { memory: "512Mi" },
-                  requests: { cpu: "100m", memory: "128Mi" },
+  // One Job per Temporal namespace, keyed by namespace name. Each Job is named
+  // for the namespace it registers, not the Temporal version: re-running it is
+  // only needed when THAT changes. Keying the record by name (rather than
+  // returning an array) is what lets a consumer depend on one specific
+  // namespace's registration — see the worker's dependsOn below.
+  const namespaceJobs = Object.fromEntries(
+    TEMPORAL_NAMESPACES.map((ns) => {
+      const jobName = `temporal-namespace-${ns.name}`;
+      return [
+        ns.name,
+        new k8s.batch.v1.Job(
+          jobName,
+          {
+            metadata: { name: jobName, namespace: namespaceName },
+            spec: {
+              backoffLimit: 6,
+              template: {
+                metadata: { labels: { app: "temporal-namespace-setup" } },
+                spec: {
+                  restartPolicy: "Never",
+                  automountServiceAccountToken: false,
+                  containers: [
+                    {
+                      name: "namespace",
+                      image: ADMIN_TOOLS_IMAGE,
+                      command: ["/bin/sh", "-c", namespaceSetupScript(ns)],
+                      resources: {
+                        limits: { memory: "512Mi" },
+                        requests: { cpu: "100m", memory: "128Mi" },
+                      },
+                    },
+                  ],
                 },
               },
-            ],
+            },
           },
-        },
-      },
-    },
-    { ...inNamespace, dependsOn: [server, serverService] },
-  );
+          { ...inNamespace, dependsOn: [server, serverService] },
+        ),
+      ];
+    }),
+  ) as Record<TemporalNamespaceName, k8s.batch.v1.Job>;
 
   const ui = new k8s.apps.v1.Deployment(
     "temporal-ui",
@@ -760,7 +813,13 @@ export function installTemporal(args: TemporalArgs): TemporalResources {
         },
       },
     },
-    { ...inNamespace, dependsOn: [namespaceJob, workerSecret] },
+    // Depends on ITS OWN namespace's registration, not all of them: this worker
+    // polls control-center, so a future namespace failing to register is not a
+    // reason to hold back a worker that never touches it.
+    {
+      ...inNamespace,
+      dependsOn: [namespaceJobs[TEMPORAL_CLUSTER_NAMESPACE], workerSecret],
+    },
   );
 
   const otelCollectorConfig = new k8s.core.v1.ConfigMap(
@@ -859,7 +918,7 @@ export function installTemporal(args: TemporalArgs): TemporalResources {
     schemaJob,
     server,
     serverService,
-    namespaceJob,
+    namespaceJobs,
     ui,
     uiService,
     worker,
