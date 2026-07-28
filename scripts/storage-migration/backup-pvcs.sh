@@ -58,7 +58,11 @@ kubectl -n "$NS" wait --for=condition=Ready "pod/${POD}" --timeout=120s
 kubectl -n "$NS" exec "$POD" -- sh -ec "
   mkdir -p /nas/${STAGING_SUBDIR}/pvc-files
   ls -d /data/pvc-* >/dev/null 2>&1 || { echo 'ERROR: no pvc-* dirs under ${LOCAL_PATH_DIR}' >&2; exit 1; }
-  rsync -a --delete --stats /data/ /nas/${STAGING_SUBDIR}/pvc-files/
+  # --no-owner/--no-group: the NAS export squashes ownership (chown EPERM), so
+  # ownership deliberately does not survive staging; restore relies on the
+  # consuming pods' fsGroup to re-chown on mount (postgres PVCs restore via
+  # pg_dump, never these files).
+  rsync -a --no-owner --no-group --delete --stats /data/ /nas/${STAGING_SUBDIR}/pvc-files/
   echo '--- synced PVC dirs:'
   du -sh /nas/${STAGING_SUBDIR}/pvc-files/pvc-* | sed 's|.*/||;s|^|  |' || true
   du -sh /nas/${STAGING_SUBDIR}/pvc-files/pvc-*
