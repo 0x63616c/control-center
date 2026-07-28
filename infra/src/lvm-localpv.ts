@@ -33,7 +33,13 @@ export function installLvmLocalPv(args: LvmLocalPvArgs) {
   const controllerImagePin = new k8s.apps.v1.DeploymentPatch(
     "openebs-lvm-controller-image-pin",
     {
-      metadata: { name: "openebs-lvm-controller", namespace: "kube-system" },
+      metadata: {
+        name: "openebs-lvm-controller",
+        namespace: "kube-system",
+        // Take ownership of the image field even if a manual `kubectl set
+        // image` (the live hotfix during the cutover) owns it.
+        annotations: { "pulumi.com/patchForce": "true" },
+      },
       spec: {
         template: {
           spec: { containers: [{ name: "openebs-lvm-plugin", image: LVM_DRIVER_IMAGE }] },
@@ -45,7 +51,11 @@ export function installLvmLocalPv(args: LvmLocalPvArgs) {
   const nodeImagePin = new k8s.apps.v1.DaemonSetPatch(
     "openebs-lvm-node-image-pin",
     {
-      metadata: { name: "openebs-lvm-node", namespace: "kube-system" },
+      metadata: {
+        name: "openebs-lvm-node",
+        namespace: "kube-system",
+        annotations: { "pulumi.com/patchForce": "true" },
+      },
       spec: {
         template: {
           spec: { containers: [{ name: "openebs-lvm-plugin", image: LVM_DRIVER_IMAGE }] },
