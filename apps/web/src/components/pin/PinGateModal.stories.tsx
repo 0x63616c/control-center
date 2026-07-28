@@ -47,9 +47,16 @@ export const Open: Story = {
     await expect(doc.getByText("Enter PIN")).toBeInTheDocument();
     await expect(doc.getByText("Enter your PIN to continue")).toBeInTheDocument();
 
-    // Tap the default PIN (000000).
-    const zero = doc.getByRole("button", { name: "0" });
-    for (let i = 0; i < 6; i++) await userEvent.click(zero);
+    // Tap the default PIN (000000). Re-query the 0 key before EVERY tap rather
+    // than holding a reference: the default layout is `scrambled-per-key`
+    // (#302), so the pad reshuffles after each digit and the cell that held 0 a
+    // moment ago now holds something else. Keys are keyed by position, so the
+    // stale element stays mounted and clicking it would silently enter the
+    // wrong digit. Re-scanning per digit is exactly what the mode costs a
+    // person, so the story paying it is the honest test.
+    for (let i = 0; i < 6; i++) {
+      await userEvent.click(doc.getByRole("button", { name: "0" }));
+    }
 
     // Correct entry flips the dialog to the unlocked state. Generous timeouts:
     // CI runs this under coverage instrumentation, which is slow enough that

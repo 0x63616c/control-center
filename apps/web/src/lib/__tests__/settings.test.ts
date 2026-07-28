@@ -31,8 +31,9 @@ describe("settings defaults", () => {
     const s = read().current;
     expect(s.showMinimap).toBe(true);
     expect(s.pinCode).toBe("000000");
-    // The pad moves out of the box (#287/#291) , see the api-side default.
-    expect(s.pinPadLayout).toBe("scrambled");
+    // The pad moves out of the box (#287/#291), and since #302 it moves per
+    // keypress , see the api-side default for why.
+    expect(s.pinPadLayout).toBe("scrambled-per-key");
   });
 
   it("defaults showBuildNumber to false (opt-in, native-only)", () => {

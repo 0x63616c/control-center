@@ -51,8 +51,14 @@ export type Typeface = (typeof TYPEFACES)[number];
 //               (find one digit, the rest follow) instead of forcing ten lookups.
 //               Weaker than `scrambled`: only 10 layouts exist, and a single
 //               session's fresh smudges give the PIN up to a rotation.
-//   scrambled , a fresh uniform permutation each prompt. Strongest, slowest.
-export const PIN_PAD_LAYOUTS = ["fixed", "rotated", "scrambled"] as const;
+//   scrambled , a fresh uniform permutation each prompt. Strongest against wear,
+//               slowest to read.
+//   scrambled-per-key , a fresh uniform permutation after EVERY digit entered
+//               (#302). The only key that also defeats shoulder-surfing: an
+//               observer who watches finger POSITIONS learns nothing, because
+//               each position means a different digit by the next press. Costs a
+//               full visual re-scan per digit , six scans per unlock, not one.
+export const PIN_PAD_LAYOUTS = ["fixed", "rotated", "scrambled", "scrambled-per-key"] as const;
 export type PinPadLayout = (typeof PIN_PAD_LAYOUTS)[number];
 
 // ─── bounds ───────────────────────────────────────────────────────────────────
@@ -91,10 +97,12 @@ export const SETTINGS_DEFAULTS = {
   snapMode: "mandatory-settle",
   showMinimap: true,
   pinCode: "000000",
-  // Stays `scrambled` , what the boolean this field replaces already shipped as.
-  // `rotated` is the better everyday trade, but picking it here would quietly
-  // weaken a panel that is already locked the stronger way.
-  pinPadLayout: "scrambled",
+  // Ships at the strongest key (#302). Every earlier default moved the pad at
+  // most once per prompt, which leaves the shoulder-surfing channel wide open;
+  // this one closes it, at the cost of a re-scan per digit. That trade was asked
+  // for explicitly. Raising a default is only safe in this direction , a panel
+  // already locked the stronger way must never be quietly weakened by a deploy.
+  pinPadLayout: "scrambled-per-key",
   accent: "white",
   typeface: "sf",
 } as const satisfies Record<string, unknown>;

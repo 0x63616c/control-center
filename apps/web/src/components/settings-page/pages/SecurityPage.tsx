@@ -47,6 +47,8 @@ const LAYOUT_BLURB: Record<(typeof PIN_PAD_LAYOUTS)[number], string> = {
     "Digits stay in order but start somewhere new each time. Still easy to read, and the wear spreads over every key.",
   scrambled:
     "Every digit somewhere new each time. Hides the most, and you'll have to look for each key.",
+  "scrambled-per-key":
+    "The keypad reshuffles after every digit, so anyone watching your hand learns nothing. You'll re-read the pad six times per unlock.",
 };
 
 /** The row is in exactly one of three states, so it is spelled as one value.
