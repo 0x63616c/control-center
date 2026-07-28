@@ -1,6 +1,6 @@
-# SoftwareStyle — software-factory-worker
+# SoftwareStyle — software-factory
 
-> **Scope: `apps/software-factory-worker/` only.** Adapted from the `software-factory`
+> **Scope: `apps/software-factory/` only.** Adapted from the `software-factory`
 > repo's style guide, which took the *idea* of a house style from TigerBeetle's TigerStyle
 > and made the content its own. Nothing here governs any other part of world-wide-webb.
 > What was adopted, translated and dropped is recorded in
@@ -100,7 +100,7 @@ This is *why* construction is manual: a test hands a fake to a constructor with 
 7. **Fail fast, fail *helpful*.** Config failure at startup → clear message and non-zero
    exit, never a panic dump. A missing credential is a user error, not a programmer bug.
 
-8. **Failures never escape their ticket.** A bad ticket fails its own GrindTicket workflow,
+8. **Failures never escape their ticket.** A bad ticket fails its own WorkTicket workflow,
    visibly, and never takes down the worker or another ticket. Temporal converts an
    activity panic into a failure for free — don't defeat it with a bare `recover`.
 
@@ -207,7 +207,7 @@ because issue titles and bodies are **attacker-controllable text**:
 
 Do not mint IDs. GitHub issue numbers and Temporal workflow and run IDs already exist and
 are already authoritative. Workflow IDs are self-describing by construction
-(`grind-ticket-<n>`). Add a generator seam only if something needs an identity Temporal
+(`work-ticket-<n>`). Add a generator seam only if something needs an identity Temporal
 does not already give it.
 
 ## Time and units

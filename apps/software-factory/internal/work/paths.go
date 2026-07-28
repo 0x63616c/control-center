@@ -1,0 +1,96 @@
+package work
+
+import (
+	"fmt"
+	"path"
+)
+
+// SandboxRoot is where a stage's working files live inside the sandbox.
+//
+// It is part of the contract with the sandbox image rather than a private
+// detail of whatever runs the stage: the image's entrypoint creates it, and the
+// worker writes into it. Changing it means changing both.
+const SandboxRoot = "/work"
+
+// StageKey identifies one stage attempt, and is the whole of that identity.
+//
+// Every deterministic path a stage keys off is derived from these three fields
+// and nothing else. That is what makes a stage idempotent under activity retry:
+// a rescheduled activity computes the same paths, finds what the previous
+// attempt left behind, and resumes instead of restarting.
+//
+// None of the three can carry attacker-controlled text — a ticket number is an
+// integer, a Temporal RunID is a UUID, and a Stage is one of five constants —
+// so the paths below cannot be steered by anything an issue author writes.
+type StageKey struct {
+	// Ticket is the GitHub issue number.
+	Ticket int
+	// RunID is Temporal's RunID for the enclosing workflow run. It scopes the
+	// attempt so a retried or re-run ticket stays separately inspectable rather
+	// than overwriting its own history.
+	RunID string
+	Stage Stage
+}
+
+// String names the attempt for logs and errors.
+func (k StageKey) String() string {
+	return fmt.Sprintf("ticket #%d stage %s run %s", k.Ticket, k.Stage, k.RunID)
+}
+
+// WorkflowID is the Temporal workflow ID for a ticket's run.
+//
+// Starting a workflow with this ID *is* the claim on the ticket: Temporal
+// refuses a second execution with an open run under the same ID, so uniqueness
+// here replaces a lease table or an advisory lock. Nothing else may construct
+// this string — a second spelling would be a second claim.
+//
+// It assumes one repository. Working tickets from more than one would need the
+// repository in the ID, and changing the scheme once runs are in flight would
+// orphan open workflows and let their tickets be claimed twice, so that change
+// costs a drain rather than a deploy.
+func WorkflowID(ticketNumber int) string {
+	return fmt.Sprintf("work-ticket-%d", ticketNumber)
+}
+
+// StagePaths are the files one stage attempt reads and writes in the sandbox.
+type StagePaths struct {
+	// Dir holds everything belonging to this attempt.
+	Dir string
+	// Prompt is the rendered stage prompt, written before the stage starts.
+	// Passing it as a file rather than an argument is what keeps issue text out
+	// of argv.
+	Prompt string
+	// Schema constrains the stage's final message.
+	Schema string
+	// Result is the schema-conforming final message. Its existence is the
+	// stage's completion record: present means done, and the stage must be read
+	// from it rather than re-run.
+	Result string
+	// PID holds the process ID of a running attempt. Present with a live
+	// process means attach and wait; present with a dead one means the attempt
+	// died and must be redone.
+	PID string
+}
+
+// Paths returns where this attempt's files live inside the sandbox.
+func (k StageKey) Paths() StagePaths {
+	dir := path.Join(SandboxRoot, k.RunID, string(k.Stage))
+	return StagePaths{
+		Dir:    dir,
+		Prompt: path.Join(dir, "prompt.md"),
+		Schema: path.Join(dir, "schema.json"),
+		Result: path.Join(dir, "result.json"),
+		PID:    path.Join(dir, "codex.pid"),
+	}
+}
+
+// TranscriptPath is where this attempt's raw event stream is stored, relative
+// to the transcript volume's root.
+//
+// The volume is mounted on the worker, never on the sandbox: the worker pulls
+// the stream out, so a sandbox holds nothing worth keeping and reaches nothing
+// worth stealing. Keyed by RunID so a retry stays separately inspectable from
+// the attempt it replaced.
+func (k StageKey) TranscriptPath() string {
+	return path.Join(fmt.Sprintf("%d", k.Ticket), k.RunID, string(k.Stage)+".jsonl")
+}
