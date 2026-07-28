@@ -1,6 +1,6 @@
 # What we took from `software-factory`, and what we didn't
 
-> **Scope: `apps/software-factory-worker/` only.** None of this applies to the rest of
+> **Scope: `apps/software-factory/` only.** None of this applies to the rest of
 > world-wide-webb.
 
 The `software-factory` repo (separate, privately owned) spent its foundation phase writing
@@ -49,7 +49,7 @@ of env plus a mounted ConfigMap is enough.
 
 **Identifiers** (their ADR-0017). Self-describing IDs are a good idea, but GitHub issue
 numbers and Temporal workflow/run IDs already exist and are already authoritative. We make
-workflow IDs self-describing (`grind-ticket-<n>`) and skip minting anything.
+workflow IDs self-describing (`work-ticket-<n>`) and skip minting anything.
 
 **Secret redaction** (their ADR-0020). We hold a GitHub App private key and a codex OAuth
 refresh token, and the repo has a standing never-print-secrets rule — but a general

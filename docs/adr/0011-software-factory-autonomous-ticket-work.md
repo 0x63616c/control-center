@@ -1,4 +1,4 @@
-# Software factory: autonomous ticket grinding in sandboxed pods
+# Software factory: autonomous ticket work in sandboxed pods
 
 Tickets labelled `auto` are picked up, planned, reviewed, implemented and turned into open
 PRs by a self-hosted service — no human in the loop until the PR exists. It runs as a Go
@@ -15,7 +15,7 @@ one slow ticket delay every other ticket's PR.
 ## Why not the existing Temporal worker
 
 `apps/temporal-worker` is deliberately single-namespace, single-task-queue (ADR-0008), and
-its workflow set is glob-collected from `features/<id>/temporal.ts` facets. Ticket grinding
+its workflow set is glob-collected from `features/<id>/temporal.ts` facets. Working tickets
 is not app work: no feature, no tile, no place in the `control-center` namespace, and its
 activities need the Kubernetes API rather than the product database. It gets its own
 worker, namespace and hand-registered workflows. `infra/src/temporal.ts` is the precedent —
@@ -50,12 +50,12 @@ returning exactly one struct so fields can be added compatibly:
   config and a human pausing the system by hand.
 - `GetStatus` — in-flight tickets, paused state, breaker state.
 
-`Pause`/`Resume` collapse into a config field; a `GrindNow` signal buys at most 30s and was
+`Pause`/`Resume` collapse into a config field; a `WorkNow` signal buys at most 30s and was
 dropped.
 
 ## Claim semantics come from Temporal
 
-Each ticket's workflow ID is `grind-ticket-<n>`. Temporal refuses to start a second
+Each ticket's workflow ID is `work-ticket-<n>`. Temporal refuses to start a second
 workflow with an open run under the same ID, so starting one unconditionally *is* the
 claim — no lease table, no advisory lock.
 
@@ -142,7 +142,7 @@ and it makes GitHub the durable state between stages. A pod lost between `implem
 persistent volume.
 
 **`propose` opens the PR and stops.** It does not watch CI to a conclusion: a burst of
-grind PRs queues behind each other in Actions, and an activity blocked for hours on
+these PRs queues behind each other in Actions, and an activity blocked for hours on
 external capacity couples this system to CI throughput while buying nothing a reviewer
 can't see on the PR.
 
@@ -201,7 +201,7 @@ If the refresh token is revoked or expires, the service stops and says so. Recov
 
 ## Rate limits are the throughput constraint, not concurrency
 
-The grinder draws on the same Pro-plan window as the owner's interactive sessions. Five
+The service draws on the same Pro-plan window as the owner's interactive sessions. Five
 concurrent tickets do not finish more work than two; they reach the ceiling faster and then
 contend with the human. Concurrency starts at 2 and moves only on measurement.
 
@@ -263,11 +263,29 @@ that reaches the sandbox as prompts and argv, so every `codex` invocation is bui
 explicit `[]string` and never interpolated into a shell string — end to end, including the
 sandbox's own entrypoint.
 
+## One nested directory, one Go module
+
+`apps/software-factory/` holds the whole product: the Go module at its root and both images
+under `images/`. This nests where every other `apps/*` entry is flat, and one module serves
+what will be several binaries — both chosen for the same reason, that more components are
+expected here and the alternatives are worse under growth. Flat siblings would spread
+`software-factory-*` across `apps/`, and a module per component would fragment `internal/`
+and the lint config before there is anything to fragment. Splitting a module later is
+cheap; unsplitting is not.
+
+The nesting is free because nothing in this repo globs `apps/*` — every CI path filter,
+Dockerfile path and bun workspace is enumerated by name. It costs one thing: both images
+sit behind the single path filter `apps/software-factory/**`, so a worker-only change
+rebuilds the sandbox. Per-image filters were rejected as the expensive direction to be
+wrong in — the two share the argv contract, and this repo has already shipped stale images
+from digests that a filter did not catch.
+
 ## Go standards are scoped to this directory
 
-`apps/software-factory-worker/` carries its own `AGENTS.md`, `docs/SoftwareStyle.md` and
+`apps/software-factory/` carries its own `AGENTS.md`, `docs/SoftwareStyle.md` and
 `.golangci.yml`, adapted from the separate `software-factory` repo's style guide. They
-govern that directory and nothing else; the TypeScript side of this repo is untouched and
+govern that tree — the Go module *and* the sandbox image, because the argv-only guarantee
+spans both — and nothing else; the TypeScript side of this repo is untouched and
 keeps following the root `AGENTS.md`. `docs/style-adoption.md` there records what was
 adopted, what was translated (their logging targets a file because a TUI owns their
 terminal; ours targets stdout for Loki) and what was skipped (their supervised-worker
@@ -276,7 +294,7 @@ separate decision.
 
 ## Rejected
 
-**API-key auth.** Sanctioned and simpler, and it would isolate the grinder's usage from the
+**API-key auth.** Sanctioned and simpler, and it would isolate this service's usage from the
 owner's interactive quota entirely — but it moves spend from a flat subscription to metered
 billing, which the owner declined.
 

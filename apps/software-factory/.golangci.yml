@@ -1,4 +1,4 @@
-# Mechanical enforcement for apps/software-factory-worker. This file IS the wall.
+# Mechanical enforcement for apps/software-factory. This file IS the wall.
 #
 # SCOPE: this directory only. Go tooling is directory-rooted, so this config governs
 # exactly this module and nothing else in world-wide-webb.
@@ -57,7 +57,7 @@ linters:
               desc: "workflow code calls no clients — invoke an activity instead"
             - pkg: github.com/google/go-github
               desc: "workflow code calls no clients — invoke an activity instead"
-            - pkg: github.com/0x63616c/world-wide-webb/apps/software-factory-worker/internal/clients
+            - pkg: github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients
               desc: "workflow code calls no clients — invoke an activity instead (SoftwareStyle: workflows are deterministic)"
 
         # Tenet 4: no leaky abstractions. Each SDK stays sealed in its own client package;
@@ -71,6 +71,8 @@ linters:
               desc: "Kubernetes types are sealed in internal/clients/k8s (SoftwareStyle: no leaky abstractions)"
             - pkg: k8s.io/api
               desc: "Kubernetes types are sealed in internal/clients/k8s"
+            - pkg: k8s.io/apimachinery
+              desc: "Kubernetes types are sealed in internal/clients/k8s — pod specs pull metav1/corev1 from here, so omitting it leaves the seal open"
 
         github-sdk-is-sealed:
           files:
