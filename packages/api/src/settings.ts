@@ -9,6 +9,8 @@ export {
   BRIGHTNESS_MIN,
   DIM_MAX,
   DIM_MIN,
+  PIN_PAD_LAYOUTS,
+  type PinPadLayout,
   SETTINGS_DEFAULTS,
   SNAP_MODES,
   type SnapMode,

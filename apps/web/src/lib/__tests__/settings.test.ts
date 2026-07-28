@@ -9,7 +9,7 @@ import {
   resetSettings,
   setAccent,
   setPinCode,
-  setScramblePin,
+  setPinPadLayout,
   setShowMinimap,
   setTypeface,
   useSettings,
@@ -31,8 +31,8 @@ describe("settings defaults", () => {
     const s = read().current;
     expect(s.showMinimap).toBe(true);
     expect(s.pinCode).toBe("000000");
-    // Scrambling is on out of the box (#287) , see the api-side default.
-    expect(s.scramblePin).toBe(true);
+    // The pad moves out of the box (#287/#291) , see the api-side default.
+    expect(s.pinPadLayout).toBe("scrambled");
   });
 
   it("defaults showBuildNumber to false (opt-in, native-only)", () => {
@@ -90,17 +90,17 @@ describe("minimap setter", () => {
   });
 });
 
-describe("scramble-pin setter", () => {
-  it("toggles scramblePin", () => {
-    act(() => setScramblePin(false));
-    expect(read().current.scramblePin).toBe(false);
+describe("pin-pad-layout setter", () => {
+  it("stores a chosen layout", () => {
+    act(() => setPinPadLayout("rotated"));
+    expect(read().current.pinPadLayout).toBe("rotated");
   });
 
   // It is a SYNCED setting, not device-local: how the installation is locked is
   // one decision, not a per-panel one. Hydration must therefore reach it.
-  it("accepts scramblePin from the server", () => {
-    act(() => hydrateSettings({ scramblePin: false }));
-    expect(read().current.scramblePin).toBe(false);
+  it("accepts pinPadLayout from the server", () => {
+    act(() => hydrateSettings({ pinPadLayout: "fixed" }));
+    expect(read().current.pinPadLayout).toBe("fixed");
   });
 });
 

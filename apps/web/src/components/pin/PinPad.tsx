@@ -4,21 +4,32 @@
  * onDigit/onBackspace , this component never sees or stores the PIN itself.
  * Copied from the approved PinConcepts visual reference.
  *
- * The digit LAYOUT is optionally scrambled (#287). On a fixed layout the same
- * four keys are touched at every unlock, so grease/smudge wear on the panel
- * glass leaks which digits the PIN is made of , that collapses the search space
- * from 10^4 to at most 24 permutations. Reshuffling per prompt spreads wear
- * evenly across all ten keys. Whether to do it is the caller's call (it costs
- * muscle memory), driven by the `scramblePin` setting.
+ * The digit LAYOUT moves per prompt (#287, #291). On a `fixed` pad the same four
+ * keys are touched at every unlock, so grease/smudge wear on the panel glass
+ * leaks which digits the PIN is made of , that collapses the search space from
+ * 10^4 to at most 24 orderings. Both moving layouts spread that wear across all
+ * ten keys; they differ in what they cost the person typing:
+ *
+ *   `scrambled` , a fresh uniform permutation. Strongest, and the most
+ *     expensive to read: ten independent lookups, every prompt, forever.
+ *   `rotated` , ascending order kept, random starting digit. Find one digit and
+ *     the rest follow, so it reads far faster than a permutation. Weaker: there
+ *     are only ten layouts, and a SINGLE session's fresh smudges (on clean
+ *     glass) still give the PIN up to a rotation, because rotation preserves the
+ *     gaps between the keys pressed. Against accumulated wear , the actual
+ *     threat on a panel used daily , it is as good as scrambling.
+ *
+ * Which one is the caller's call, driven by the `pinPadLayout` setting.
  */
 
+import type { PinPadLayout } from "@cc/api/settings";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { PIN_LENGTH } from "../../lib/settings";
 import { Icon } from "../Icon";
 
 /** Pad order as positions, not as values: the first nine fill the 3x3 block and
  *  the tenth sits in the bottom-centre cell. In standard order that is the
- *  familiar phone pad; scrambled, the same ten cells hold a random permutation. */
+ *  familiar phone pad; the moving layouts fill the same ten cells differently. */
 const STANDARD_DIGITS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"] as const;
 
 /** Uniform random integer in [0, n). Rejection-sampled off getRandomValues , a
@@ -48,14 +59,31 @@ export function scrambledDigits(): string[] {
   return out;
 }
 
-function layoutFor(scramble: boolean): string[] {
-  return scramble ? scrambledDigits() : [...STANDARD_DIGITS];
+/**
+ * The standard order, cyclically shifted by a random amount: 4 5 6 / 7 8 9 /
+ * 0 1 2 / 3, say. Every digit is equally likely to land in any cell (uniform k
+ * over ten shifts), so wear spreads exactly as evenly as a full shuffle does ,
+ * but the sequence stays ascending, which is what makes it scannable.
+ *
+ * k = 0 (the standard pad) is left in the draw: excluding it would make "no
+ * shift" the one outcome an observer could rule out, and it costs nothing to
+ * allow. Exported for tests and Storybook.
+ */
+export function rotatedDigits(): string[] {
+  const k = randomBelow(STANDARD_DIGITS.length);
+  return [...STANDARD_DIGITS.slice(k), ...STANDARD_DIGITS.slice(0, k)];
+}
+
+function layoutFor(layout: PinPadLayout): string[] {
+  if (layout === "scrambled") return scrambledDigits();
+  if (layout === "rotated") return rotatedDigits();
+  return [...STANDARD_DIGITS];
 }
 
 export function PinPadView({
   entered,
   error,
-  scramble = false,
+  layout = "fixed",
   shuffleKey,
   onDigit,
   onBackspace,
@@ -63,8 +91,8 @@ export function PinPadView({
   entered: number;
   /** Paints the dots red (wrong PIN) until the next digit. */
   error?: boolean;
-  /** Randomize the digit positions (see the module header). */
-  scramble?: boolean;
+  /** How to arrange the digits (see the module header). */
+  layout?: PinPadLayout;
   /** Change this to force a reshuffle without remounting , one prompt per
    *  value. Callers that unmount the pad between prompts can skip it. */
   shuffleKey?: string | number;
@@ -74,13 +102,13 @@ export function PinPadView({
   // The live layout. Seeded on mount and replaced whenever the caller starts a
   // new prompt (shuffleKey) or flips the setting , never mid-entry, since
   // moving keys under a half-typed PIN is how you mistype it.
-  const [digits, setDigits] = useState<string[]>(() => layoutFor(scramble));
+  const [digits, setDigits] = useState<string[]>(() => layoutFor(layout));
   // `shuffleKey` is the intended trigger even though the body only reads
-  // `scramble`; that is the whole point of the prop.
+  // `layout`; that is the whole point of the prop.
   // biome-ignore lint/correctness/useExhaustiveDependencies: reshuffle per prompt
   useEffect(() => {
-    setDigits(layoutFor(scramble));
-  }, [scramble, shuffleKey]);
+    setDigits(layoutFor(layout));
+  }, [layout, shuffleKey]);
 
   // Keyboard support: digit keys append, Backspace/Delete remove. Routed
   // through refs (same pattern as PinGateModal's onCloseRef/onSuccessRef) so
