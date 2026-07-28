@@ -317,7 +317,11 @@ export function serviceSpecs(opts: ServiceSpecOptions): OwnedWorkloadSpec[] {
       namespaceName: "control-center",
       image: ghcrImage("api", digests),
       replicas: 1,
-      resources: { memory: "512M", reserveCpus: "0.5" },
+      // 1G, not 512M: the api sits at ~70 MiB steady state but bursts to ~405 MiB
+      // for 3-16 minutes at a time (~83% of a 512M limit), so a slightly larger
+      // burst would OOM-kill it and take the panel down. Interim headroom while
+      // #306 chases the retention that drives the burst , not a fix.
+      resources: { memory: "1G", reserveCpus: "0.5" },
       secrets: mountSecrets("api"),
       secretName: SERVICE_SECRET_TARGETS.api.secretName,
       // Wake photos persist on the NAS media share (same NFS export + subPath
