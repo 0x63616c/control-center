@@ -53,6 +53,11 @@ jobs:
       # infra/cloudflare is a separate Pulumi project (ticket #52): its own
       # filter so it deploys independently of the home-server `infra` stack.
       cloudflareinfra: ${{ steps.filter.outputs.cloudflareinfra }}
+      # The Go tree (ADR-0011). One filter for both of its images, not two:
+      # they share the argv-only contract between the worker and the sandbox
+      # entrypoint, so "changed together" is closer to true than false, and a
+      # missed shared file ships a stale image on green CI.
+      softwarefactory: ${{ steps.filter.outputs.softwarefactory }}
       any_app: ${{ steps.filter.outputs.any_app }}
     steps:
       - uses: actions/checkout@v4
@@ -130,6 +135,11 @@ jobs:
             # own tree.
             mapprovision:
               - 'apps/map-provision/**'
+            # Software factory (ADR-0011): a self-contained Go module sharing no
+            # code with the TypeScript workspace, so it rebuilds solely on its
+            # own tree. Deliberately NOT split per image — see the output above.
+            softwarefactory:
+              - 'apps/software-factory/**'
             # any_app is true when at least one image needs to be built. An
             # infra-only change is handled by the separate `infra` filter above,
             # the deploy job fires on `any_app || infra`.
@@ -281,6 +291,56 @@ jobs:
         # activity/workflow exports dynamically by name.
         # `deploy-home-server` needs `typecheck`, so a regression blocks the prod deploy (www-k6p1).
         run: bun run knip
+
+  # Software factory (ADR-0011): a second language toolchain, deliberately
+  # scoped. It shares no code with the TypeScript workspace, so it needs no bun
+  # install and gates on its own path filter alone.
+  #
+  # This job exists BEFORE either of its images does. The tree carries its own
+  # .golangci.yml whose depguard and forbidigo rules are the mechanical half of
+  # its standards — workflow determinism, SDK sealing, one door for config and
+  # for the clock. A wall nothing runs is not a wall, and the hook that runs it
+  # locally is bypassable with --no-verify, so this is the authoritative gate.
+  #
+  # NOT in `deploy-home-server`'s needs, because nothing here is deployed yet:
+  # the build jobs, digest collection and IMAGE_REPOSITORIES entries land with
+  # the Dockerfiles. Until then a red result blocks the PR, not the deploy.
+  test-software-factory:
+    needs: [changes]
+    if: needs.changes.outputs.softwarefactory == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/software-factory
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v7
+        with:
+          # Read from go.mod so the toolchain has exactly one declared version,
+          # rather than a second one here to drift against it.
+          go-version-file: apps/software-factory/go.mod
+          # TODO(software-factory): enable once there is a go.sum to key on.
+          # The module currently has zero dependencies, and setup-go's default
+          # cache globs for go.sum — pointing it at a file that does not exist
+          # fails the step outright.
+          cache: false
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Test (race detector)
+        # -race because the stage runner streams output while the activity
+        # heartbeats on it, so concurrency is inherent rather than incidental.
+        run: go test -race ./...
+      - name: Lint (golangci-lint)
+        uses: golangci/golangci-lint-action@v9
+        with:
+          # Pinned, and pinned to what runs locally: an unpinned wall moves
+          # under you, and a rule that fires on a laptop but not in CI (or the
+          # reverse) teaches people to distrust it.
+          version: v2.12.2
+          working-directory: apps/software-factory
 
   # Build jobs depend on `changes` ONLY, not on test/typecheck. They run
   # concurrently with the test suite instead of queueing behind it (measured

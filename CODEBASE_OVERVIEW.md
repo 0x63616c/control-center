@@ -83,6 +83,14 @@ that run/deploy, `packages/` = things you import); product features live under
 - `apps/temporal-worker` - Temporal worker (Node, not bun) serving `HealthCheckWorkflow` on the `main` task queue.
 - `apps/storybook` - Thin wrapper delegating to the web Storybook.
 - `apps/map-provision` - Basemap tile provisioner image.
+- `apps/software-factory` - **Go**, not TypeScript, and the only Go in the repo (ADR-0011).
+  A Temporal worker that autonomously works issues labelled `auto` through
+  `plan → review → revise → implement → propose`, each stage an agent CLI invocation in a
+  disposable per-ticket pod. It opens a PR and stops; merging stays human. Carries its own
+  `AGENTS.md`, `docs/SoftwareStyle.md` and `.golangci.yml`, scoped to that tree and binding
+  on nothing else — do not cite them in a review of TypeScript. Nests (`cmd/`, `internal/`,
+  `images/{worker,sandbox}/`) where the rest of `apps/*` is flat, deliberately: it is one
+  product with several components and one Go module.
 - `packages/api` - Browser-safe type bridge that re-exports the API router type only.
 - `packages/core` - Owns the `device_state` table: schema, the `DeviceStateStore` interface, pg + in-memory adapters, and the desired/reported merge logic.
 - `packages/logger` - Shared pino logger with centralized redaction and runtime-safe config.
@@ -354,7 +362,9 @@ authoritative over it.
 
 CI path filters are now scoped per app directory (`apps/web/**`, `apps/api/**`,
 `apps/worker/**`, `apps/map-provision/**`), all rebuilding
-on `packages/**`, `features/**`, or `bun.lock` changes too. The Tiltfile lives at the repo
+on `packages/**`, `features/**`, or `bun.lock` changes too. `apps/software-factory/**` is
+the exception: it shares no code with the workspace, so it gates only on its own tree, and
+its `test-software-factory` job runs the Go toolchain rather than bun. The Tiltfile lives at the repo
 root; root `bun run dev` runs `tilt up` directly. Local dev commands
 (`dev:web`, `dev:api`, `dev:worker`, `dev:storybook`, `dev:db`, `ios:*`) live
 on the root `package.json`.
