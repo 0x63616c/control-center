@@ -663,6 +663,7 @@ export type ControlCenterServiceName =
   | "api"
   | "worker"
   | "web"
+  | "manage"
   | "storybook"
   | "captive-portal"
   | "cloudflared";
@@ -711,6 +712,19 @@ export type ControlCenterProductManifest = Readonly<{
   // control-center namespace (infra/src/services.ts), not a control-center
   // workload, but gets a hostname on the tunnel behind Access same as Grafana.
   ha: Readonly<{
+    exposure: WebExposure;
+  }>;
+  // The two LAN appliances manage frames (ADR-0010): the UniFi controller and
+  // the Synology DSM. Neither is a workload of ours at all — they are boxes on
+  // the LAN — but each gets a tunnel hostname behind Access, and hostnames are
+  // owned here. Their origins are HTTPS with self-signed certs, so the ingress
+  // rules that point at them carry `noTlsVerify` (infra/cloudflare/src/routes.ts):
+  // an iframe cannot click through a certificate warning, so that is required
+  // rather than cosmetic.
+  unifi: Readonly<{
+    exposure: WebExposure;
+  }>;
+  dsm: Readonly<{
     exposure: WebExposure;
   }>;
   // The public GitHub webhook host (#126). Served by the api workload, but it
@@ -768,6 +782,12 @@ export function controlCenterProductManifest(): ControlCenterProductManifest {
       // covers it (see webHostname).
       exposure: privateWeb(target, { host: "ha" }),
     },
+    unifi: {
+      exposure: privateWeb(target, { host: "unifi" }),
+    },
+    dsm: {
+      exposure: privateWeb(target, { host: "dsm" }),
+    },
     hooks: {
       // PUBLIC on purpose: GitHub posts here from the internet and would be
       // 403'd by Access. Auth is the HMAC in features/hooks/service.ts.
@@ -787,6 +807,15 @@ export function controlCenterProductManifest(): ControlCenterProductManifest {
       web: {
         service: "web",
         exposure: privateWeb(target, { host: "app" }),
+      },
+      // The management plane (ADR-0010). A static nginx bundle like `web`, with
+      // no api, no database and no secrets — Cloudflare Access is its only gate,
+      // and every tool it frames authenticates for itself.
+      manage: {
+        service: "manage",
+        // Single label under the zone, so Universal SSL's one-label wildcard
+        // covers it (see webHostname).
+        exposure: privateWeb(target, { host: "manage" }),
       },
       storybook: {
         service: "storybook",

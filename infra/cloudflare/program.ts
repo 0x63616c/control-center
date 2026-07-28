@@ -163,7 +163,14 @@ new cloudflare.ZeroTrustTunnelCloudflaredConfig(
     tunnelId: managedTunnel.id,
     config: {
       ingressRules: [
-        ...desiredIngressRules(zoneName).map((r) => ({ hostname: r.hostname, service: r.service })),
+        ...desiredIngressRules(zoneName).map((r) => ({
+          hostname: r.hostname,
+          service: r.service,
+          // Only rendered for the origins that declare it (the self-signed LAN
+          // appliances); omitted entirely elsewhere so existing rules stay a
+          // zero-diff against live.
+          ...(r.originRequest ? { originRequest: r.originRequest } : {}),
+        })),
         { service: "http_status:404" },
       ],
     },

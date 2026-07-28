@@ -22,11 +22,30 @@ export function tunnelCnameTarget(tunnelId: string): string {
   return `${tunnelId}.cfargotunnel.com`;
 }
 
+/**
+ * Per-origin connection options for an ingress rule.
+ *
+ * Everything routed here used to be a plaintext in-cluster Service, so the
+ * origin was fully described by a `http://host:port` string. The LAN appliances
+ * manage frames (ADR-0010) are not: they answer HTTPS with self-signed certs, so
+ * cloudflared refuses them unless verification is disabled. That is required,
+ * not cosmetic — an iframe cannot click through a certificate warning, so
+ * without it the pane is permanently blank.
+ */
+export interface DesiredOriginRequest {
+  /** Skip origin certificate verification. Self-signed LAN appliances only. */
+  noTlsVerify?: boolean;
+  /** SNI to present to the origin, when its cert names something else. */
+  originServerName?: string;
+}
+
 /** A live tunnel ingress rule: hostname -> in-cluster origin. */
 export interface DesiredIngressRule {
   hostname: string;
-  // The origin the tunnel forwards to (`http://<service>:<port>`).
+  // The origin the tunnel forwards to (`http://<service>:<port>`, or an
+  // `https://<ip>:<port>` LAN appliance paired with `originRequest` below).
   service: string;
+  originRequest?: DesiredOriginRequest;
 }
 
 /** A live proxied CNAME for a tunnel-routed hostname. */
@@ -41,6 +60,7 @@ export interface DesiredCname {
 export type CloudflareExposureSource = Readonly<{
   exposure: ProductServiceDeclaration["exposure"];
   origin: string;
+  originRequest?: DesiredOriginRequest;
   comment?: string;
 }>;
 
@@ -83,6 +103,7 @@ export function cloudflareRoutesForExposures(
     ingressRules: exposed.map((source) => ({
       hostname: source.exposure.hostname,
       service: source.origin,
+      ...(source.originRequest ? { originRequest: source.originRequest } : {}),
     })),
     cnames: exposed.map((source) => ({
       hostname: source.exposure.hostname,
@@ -136,6 +157,30 @@ function productRoutes(): CloudflareRoutes {
       // `observability` namespace.
       origin: "http://grafana.observability.svc.cluster.local:3000",
       comment: "platform:grafana web ui route",
+    },
+    {
+      exposure: cc.services.manage.exposure,
+      // manage (ADR-0010). Same shape as the app route above: a static nginx
+      // bundle in the control-center namespace, cross-namespace from
+      // cloudflared, so the FQDN is required.
+      origin: "http://manage.control-center.svc.cluster.local:80",
+      comment: "platform:manage management plane route (#292)",
+    },
+    {
+      exposure: cc.unifi.exposure,
+      // LAN appliance, not a cluster Service: the UniFi controller on the house
+      // network. Self-signed cert, hence noTlsVerify.
+      origin: "https://192.168.0.1",
+      originRequest: { noTlsVerify: true },
+      comment: "platform:unifi controller route (#292)",
+    },
+    {
+      exposure: cc.dsm.exposure,
+      // Synology DSM. .218 — NOT .219, which is a long-running
+      // mis-transcription in this repo's history.
+      origin: "https://192.168.0.218:5001",
+      originRequest: { noTlsVerify: true },
+      comment: "platform:synology dsm route (#292)",
     },
     {
       exposure: cc.ha.exposure,

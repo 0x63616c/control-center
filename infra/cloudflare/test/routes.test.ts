@@ -27,10 +27,13 @@ describe("desiredIngressRules", () => {
     expect(Object.keys(byHost).sort()).toEqual([
       "app.worldwidewebb.co",
       "db-ui.worldwidewebb.co",
+      "dsm.worldwidewebb.co",
       "grafana.worldwidewebb.co",
       "ha.worldwidewebb.co",
       "hooks.worldwidewebb.co",
+      "manage.worldwidewebb.co",
       "temporal-ui.worldwidewebb.co",
+      "unifi.worldwidewebb.co",
     ]);
     // #126: the public webhook receiver, served by the in-cluster api.
     // Cross-namespace: cloudflared runs in `cloudflare`, the api Service lives in
@@ -52,6 +55,10 @@ describe("desiredIngressRules", () => {
     // #75/#237: same cross-NAMESPACE rule — the `ha` ExternalName Service lives
     // in `control-center`, so a bare `ha` origin from `cloudflare` would 502.
     expect(byHost["ha.worldwidewebb.co"]).toBe("http://ha.control-center.svc.cluster.local:8123");
+    // #292: manage, same cross-namespace FQDN rule as the app route.
+    expect(byHost["manage.worldwidewebb.co"]).toBe(
+      "http://manage.control-center.svc.cluster.local:80",
+    );
     expect(byHost["dashboard.worldwidewebb.co"]).toBeUndefined();
     expect(byHost["storybook.worldwidewebb.co"]).toBeUndefined();
     expect(byHost["drizzle.worldwidewebb.co"]).toBeUndefined();
@@ -59,6 +66,31 @@ describe("desiredIngressRules", () => {
     expect(byHost["app--cc.worldwidewebb.co"]).toBeUndefined();
     expect(byHost["app.worldwidewebb.co"]).toBe("http://web.control-center.svc.cluster.local:80");
     expect(byHost["portainer.worldwidewebb.co"]).toBeUndefined();
+  });
+
+  // #292/ADR-0010: the two LAN appliances manage frames are the first origins
+  // that are not plaintext in-cluster Services. Both answer HTTPS with a
+  // self-signed cert, so cloudflared refuses them without noTlsVerify — and an
+  // iframe cannot click through a cert warning, so the pane would be
+  // permanently blank rather than merely ugly.
+  test("the LAN appliances route over https with origin verification disabled", () => {
+    const byHost = Object.fromEntries(desiredIngressRules(ZONE).map((r) => [r.hostname, r]));
+
+    expect(byHost["unifi.worldwidewebb.co"].service).toBe("https://192.168.0.1");
+    expect(byHost["unifi.worldwidewebb.co"].originRequest).toEqual({ noTlsVerify: true });
+    // .218, NOT .219 — a recurring mis-transcription in this repo's history.
+    expect(byHost["dsm.worldwidewebb.co"].service).toBe("https://192.168.0.218:5001");
+    expect(byHost["dsm.worldwidewebb.co"].originRequest).toEqual({ noTlsVerify: true });
+  });
+
+  // Every other rule must stay byte-identical to live, so originRequest is
+  // OMITTED rather than rendered empty — an added key is a real tunnel-config diff.
+  test("origins that need no options declare none", () => {
+    for (const rule of desiredIngressRules(ZONE)) {
+      if (rule.service.startsWith("http://")) {
+        expect(rule.originRequest, rule.hostname).toBeUndefined();
+      }
+    }
   });
 
   test("captive-portal is NEVER tunneled (LAN-only)", () => {
@@ -138,10 +170,13 @@ describe("desiredCnames", () => {
     expect(hosts).toEqual([
       "app.worldwidewebb.co",
       "db-ui.worldwidewebb.co",
+      "dsm.worldwidewebb.co",
       "grafana.worldwidewebb.co",
       "ha.worldwidewebb.co",
       "hooks.worldwidewebb.co",
+      "manage.worldwidewebb.co",
       "temporal-ui.worldwidewebb.co",
+      "unifi.worldwidewebb.co",
     ]);
     // #127: the EVEE-218 hooks-test leftover was deleted with the old tunnel.
     expect(hosts).not.toContain("hooks-test.worldwidewebb.co");

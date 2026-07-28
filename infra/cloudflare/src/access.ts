@@ -159,6 +159,16 @@ export function desiredAccessApps(zone: string, includeGate = false): DesiredAcc
       // Home Assistant (#75/#237): email-OTP ONLY, same reasoning as Grafana —
       // full admin surface, no kiosk business reaching it over this route.
       { exposure: ccManifest.ha.exposure, policies: ["email-otp"] },
+      // manage (#292/ADR-0010): email-OTP ONLY. manage has no login of its own
+      // and no session store — this app IS its authentication, so it is not
+      // optional and it never gets a service token.
+      { exposure: ccManifest.services.manage.exposure, policies: ["email-otp"] },
+      // The two LAN appliances manage frames. Both were previously reachable
+      // only on the LAN; putting them on the tunnel gives them an internet-facing
+      // hostname, so the Access app is what keeps that from meaning
+      // internet-facing UniFi and DSM logins. email-OTP only, never a token.
+      { exposure: ccManifest.unifi.exposure, policies: ["email-otp"] },
+      { exposure: ccManifest.dsm.exposure, policies: ["email-otp"] },
     ]),
   ];
 
