@@ -128,24 +128,31 @@ means a GitHub issue - same thing, one vocabulary.
 ## Workflow
 
 - **Never edit in the main checkout - always `wtp add` a worktree first.**
-  `wtp add <branch>` (or `wtp add -b <new-branch>`) for a new branch, `wtp cd
-  <branch>` to jump back into an existing one. `.wtp.yml` puts every worktree
-  under `~/.worktrees/world-wide-webb/` (never nested in `.claude/worktrees/`
-  or any repo subfolder - that's what caused lefthook/env setup to be flaky)
-  and its `post_create` hooks run `bun install` + `lefthook install`
-  automatically, so a fresh worktree is immediately usable. A `PreToolUse`
-  hook blocks Edit/Write/`apply_patch` and branch-switching Bash commands
-  (`git checkout`, `git switch`, etc.) in the main checkout for both Claude
-  Code and Codex - if you hit that, you're in the wrong directory, not
-  wrongly permissioned. See #182.
-  - **Agents (Claude Code):** `wtp cd` only moves a shell subprocess, not the
-    agent's own session - it does nothing for you. After `wtp add`, call
-    `EnterWorktree({path: <path wtp printed>})` to actually relocate the
-    session into the worktree wtp created (this does not create a new nested
-    `.claude/worktrees/` checkout - it just points the existing session at an
-    already-wtp-created directory). Skipping this step means every Edit/Write
-    still targets the main checkout and gets denied by the guard above, even
-    if the file path you pass looks like it's inside a worktree.
+  `wtp add <branch>` for an existing branch, `wtp add -b <new-branch>
+  origin/main` for a new one - base new work on `origin/main`, since the local
+  main checkout is usually well behind. `.wtp.yml` puts every worktree under
+  `~/.worktrees/world-wide-webb/` (never nested in `.claude/worktrees/` or any
+  repo subfolder - that's what caused lefthook/env setup to be flaky) and its
+  `post_create` hooks run `bun install` + `lefthook install` automatically, so a
+  fresh worktree is immediately usable. See #182.
+  - A `PreToolUse` guard (`.claude/hooks/guard-worktree-only.sh`, shared by
+    Claude Code and Codex) enforces this. It judges Edit/Write/`apply_patch` by
+    the **target file's** path, not by your cwd, so writing into a worktree from
+    a main-checkout session is allowed and writing into the main checkout never
+    is. If you hit it you're pointed at the wrong directory, not wrongly
+    permissioned. Table test: `bash .claude/hooks/guard-worktree-only.test.sh`.
+  - **Agents (Claude Code): do not try to relocate the session.** `wtp cd` only
+    moves a shell subprocess, and `EnterWorktree` is unusable here - it accepts
+    only worktrees it created under `.claude/worktrees/`, so `{path: ...}` to a
+    wtp worktree is rejected by the harness, and `{name: ...}` would create a
+    nested checkout that skips wtp's hooks. Both forms are guard-denied. Stay
+    where you are and drive the worktree by absolute path instead: `git -C
+    <worktree> ...`, and absolute `<worktree>/...` paths for Edit/Write.
+  - **Never `git worktree remove` or `git branch -D`.** Other sessions own
+    worktrees and branches you cannot see, and an idle-looking worktree is
+    usually someone's live work - hand-cleanup has already destroyed a peer
+    session's branch. Guard-denied from every directory, main or worktree.
+    Stale worktrees are reaped by an hourly prune job.
 - **Branch -> PR -> merge is the default for all work, including agent work.**
   Create a worktree/branch named after the task, commit there, and open a PR
   against `main` (`gh pr create`, using the PR template). Use the
