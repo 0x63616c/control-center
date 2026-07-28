@@ -295,6 +295,17 @@ export function installDbUi(args: DbUiArgs): DbUiResources {
             // and chmod-ing it there, where we control the exact bits and can
             // chown straight to uid 5050 instead of relying on group access.
             initContainers: [
+              // No fsGroup on this pod (see pgpass-init below), so nothing
+              // re-chowns the data PVC for uid 5050 — a freshly provisioned or
+              // restored volume arrives root-owned and pgadmin's worker fails
+              // to boot (seen live at the ADR-0009 storage cutover). Explicit
+              // chown, idempotent.
+              {
+                name: "data-init",
+                image: "busybox:1.36",
+                command: ["sh", "-c", "chown -R 5050:5050 /var/lib/pgadmin"],
+                volumeMounts: [{ name: "data", mountPath: "/var/lib/pgadmin" }],
+              },
               {
                 name: "pgpass-init",
                 image: "busybox:1.36",
