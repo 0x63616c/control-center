@@ -114,6 +114,11 @@ function otelCollectorConfigYaml(): string {
     "exporters:",
     "  prometheus:",
     `    endpoint: 0.0.0.0:${OTEL_COLLECTOR_PROMETHEUS_PORT}`,
+    // Default true: otelcol appends unit/type suffixes (`_milliseconds`,
+    // `_total`) that don't match the vendored SDK dashboard's PromQL, which
+    // expects raw Temporal SDK metric names (e.g. `..._latency_bucket`, not
+    // `..._latency_milliseconds_bucket`). Off so names match exactly.
+    "    add_metric_suffixes: false",
     "service:",
     "  pipelines:",
     "    metrics:",
