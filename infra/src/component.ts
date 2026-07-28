@@ -166,7 +166,7 @@ interface DeploymentArgs {
   spec: {
     replicas: number;
     selector: { matchLabels: Record<string, string> };
-    strategy?: { type: "Recreate" };
+    strategy?: { type: "Recreate"; rollingUpdate: null };
     template: {
       metadata: { labels: Record<string, string>; annotations?: Record<string, string> };
       spec: {
@@ -520,7 +520,14 @@ export function renderWorkload(w: WorkloadSpec): RenderedWorkload {
     spec: {
       replicas: w.replicas,
       selector: { matchLabels: labels },
-      ...(mountsExistingClaim(w) ? { strategy: { type: "Recreate" as const } } : {}),
+      // rollingUpdate is explicitly null, not omitted: the API server defaults
+      // that block onto every existing Deployment, and it survives the patch —
+      // leaving `type: Recreate` alongside a rollingUpdate stanza, which the
+      // API server rejects ("may not be specified when strategy `type` is
+      // 'Recreate'"). Null deletes it in the same apply.
+      ...(mountsExistingClaim(w)
+        ? { strategy: { type: "Recreate" as const, rollingUpdate: null } }
+        : {}),
       template: {
         metadata: { labels, ...(podAnnotations ? { annotations: podAnnotations } : {}) },
         spec: {

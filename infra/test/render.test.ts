@@ -393,7 +393,7 @@ describe("renderWorkload: rollout strategy for ReadWriteOnce claims", () => {
       ...base,
       volumes: [{ mountPath: "/usr/share/nginx/html/maps", claim: "maps", readOnly: true }],
     });
-    expect(r.deployment.spec.strategy).toEqual({ type: "Recreate" });
+    expect(r.deployment.spec.strategy).toEqual({ type: "Recreate", rollingUpdate: null });
   });
 
   test("a claim reachable only through an initContainer still forces Recreate", () => {
@@ -407,7 +407,7 @@ describe("renderWorkload: rollout strategy for ReadWriteOnce claims", () => {
         },
       ],
     });
-    expect(r.deployment.spec.strategy).toEqual({ type: "Recreate" });
+    expect(r.deployment.spec.strategy).toEqual({ type: "Recreate", rollingUpdate: null });
   });
 
   test("a claim-free workload keeps the default rolling update", () => {
