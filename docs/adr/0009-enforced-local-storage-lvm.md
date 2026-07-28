@@ -64,3 +64,9 @@ outage.
 **Volume metrics finally exist.** `kubelet_volume_stats_capacity_bytes` /
 `_used_bytes` cover every local PVC, closing the local-path gap noted in #212's storage
 dashboards. Alerting on them remains out of scope, per ADR-0007.
+
+---
+
+*Executed 2026-07-27 (#282): wipe + rebuild + restore verified live — enforcement proven by
+ENOSPC at ~1Gi on a 1Gi scratch volume; cc-postgres `df` shows 9.9G, not 929G. Operative
+divergences from the plan are recorded in `docs/runbooks/local-lvm-cutover.md`.*

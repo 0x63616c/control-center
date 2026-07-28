@@ -72,9 +72,9 @@ one tier of user here.
 
 ## 3. Retention and volume sizing
 
-Both stores are bounded on purpose: `local-path` carves out of the node's root
-disk, and a full root disk takes the **cluster** down, not just the store that
-filled it.
+Both stores are bounded on purpose, and since ADR-0009 the bound is real: each
+PVC is a thick-provisioned `local-lvm` volume, so a store that fills its PVC
+gets ENOSPC — it can no longer take the node's disk (or the cluster) with it.
 
 | | retention | PVC | why bounded |
 |---|-----------|-----|-------------|
@@ -429,15 +429,11 @@ volume, means a gap in scraping).
 - `packages/platform/metrics/` — the `@www/platform/metrics` primitive.
 - `docs/logging.md` — the pino logging contract and the frontend log pipeline.
 
-## Known gap: local-path volumes report no PVC usage
+## PVC usage metrics (gap closed by ADR-0009)
 
-`kubelet_volume_stats_*` — what the Kubernetes / Persistent Volumes dashboard is built on — is
-only emitted for volumes the kubelet tracks that way. On this cluster that means the three
-NFS-backed PVCs in `control-center`; the `local-path` PVCs (`maps`, `plex-config`, `ha-config`
-and the three CNPG data volumes) report nothing, because local-path is a hostPath directory
-rather than a real volume plugin.
-
-So that dashboard covers NFS only. Headroom for everything on local-path is the node filesystem
-panels on Node Exporter / Nodes instead — which is the number that actually matters here, since
-every local-path PVC shares the node's single disk and none of them are quota-enforced. A PVC's
-declared size is documentation, not a limit.
+`kubelet_volume_stats_*` — what the Kubernetes / Persistent Volumes dashboard is built on — now
+covers every PVC: the NFS statics and all `local-lvm` volumes (local-lvm is a real CSI plugin,
+unlike the hostPath-based local-path it replaced, which emitted nothing — the old #212 gap).
+A PVC's declared size is a hard LVM reservation; usage vs. capacity on that dashboard is the
+real headroom number per volume, and VG-level headroom (`vgs` — ~730GiB total) bounds the sum
+of all reservations.
