@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, userEvent, within } from "storybook/test";
+import { expect, userEvent, waitFor, within } from "storybook/test";
 import { setPinCode } from "../../../lib/settings";
 import { SecurityPage } from "./SecurityPage";
 
@@ -48,27 +48,61 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-async function tap(canvas: ReturnType<typeof within>, digits: string) {
+/** The change-PIN surface portals into document.body, so it lives OUTSIDE
+ *  canvasElement , everything past the row has to be queried from the document. */
+async function tap(digits: string) {
+  const doc = within(document.body);
   for (const d of digits) {
-    await userEvent.click(canvas.getByRole("button", { name: d }));
+    await userEvent.click(doc.getByRole("button", { name: d }));
   }
 }
 
+/** The page at rest: keypad layout picker, then Change PIN as a plain row. */
 export const Default: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
+    await expect(canvas.getByText("Change PIN")).toBeInTheDocument();
+    // No flow on screen until the row is tapped , that is the whole point of
+    // #298 (it used to be permanently mounted here).
+    await expect(within(document.body).queryByText("Enter current PIN")).not.toBeInTheDocument();
+  },
+};
+
+/** Tapping the row opens the three-stage flow on its own surface. */
+export const ChangingPin: Story = {
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: "Change PIN" }));
+    await expect(within(document.body).getByText("Enter current PIN")).toBeInTheDocument();
+  },
+};
+
+/**
+ * The full walkthrough. A matching confirm dismisses the surface and leaves the
+ * row saying "Changed" , success is the flow disappearing, not a screen about it.
+ */
+export const Changed: Story = {
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const doc = within(document.body);
+    await userEvent.click(canvas.getByRole("button", { name: "Change PIN" }));
+
     // Stage 1: current PIN (default 000000) unlocks the change.
-    await expect(canvas.getByText("Enter current PIN")).toBeInTheDocument();
-    await tap(canvas, "000000");
+    await expect(doc.getByText("Enter current PIN")).toBeInTheDocument();
+    await tap("000000");
     // Stage 2: new PIN.
-    await expect(canvas.getByText("Enter new PIN")).toBeInTheDocument();
-    await tap(canvas, "123456");
+    await expect(doc.getByText("Enter new PIN")).toBeInTheDocument();
+    await tap("123456");
     // Stage 3: confirm the new PIN.
-    await expect(canvas.getByText("Confirm new PIN")).toBeInTheDocument();
-    await tap(canvas, "123456");
-    // Done.
-    await expect(canvas.getByText("PIN changed")).toBeInTheDocument();
-    await expect(canvas.getByText("Synced to all panels.")).toBeInTheDocument();
-    await expect(canvas.getByRole("button", { name: "Change again" })).toBeInTheDocument();
+    await expect(doc.getByText("Confirm new PIN")).toBeInTheDocument();
+    await tap("123456");
+
+    // Dismissed, with the confirmation on the row itself. Generous timeout: CI
+    // runs this under coverage instrumentation (same reason the PinGateModal
+    // and Board stories carry long ones).
+    await waitFor(() => expect(doc.queryByText("Confirm new PIN")).not.toBeInTheDocument(), {
+      timeout: 10_000,
+    });
+    await expect(canvas.getByText("Changed")).toBeInTheDocument();
   },
 };

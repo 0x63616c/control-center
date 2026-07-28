@@ -128,8 +128,23 @@ export function SliderRow({ children }: { children: ReactNode }) {
   return <div style={{ padding: "2px 0 6px" }}>{children}</div>;
 }
 
-/** A mono value with a trailing chevron; a plain span, or a button when onClick. */
-export function ChevronValue({ value, onClick }: { value: string; onClick?: () => void }) {
+/**
+ * A mono value with a trailing chevron; a plain span, or a button when onClick.
+ *
+ * `label` names the button for screen readers and tests when the value alone
+ * doesn't (the Change PIN row's value is a row of mask dots, which says nothing
+ * about what tapping it does); the row's own label text is not associated with
+ * the control, so it can't stand in.
+ */
+export function ChevronValue({
+  value,
+  label,
+  onClick,
+}: {
+  value: string;
+  label?: string;
+  onClick?: () => void;
+}) {
   const inner = (
     <>
       {value}
@@ -148,6 +163,7 @@ export function ChevronValue({ value, onClick }: { value: string; onClick?: () =
     return (
       <button
         type="button"
+        aria-label={label}
         onClick={onClick}
         style={{ ...style, background: "none", border: "none", padding: 0, cursor: "pointer" }}
       >
