@@ -401,6 +401,160 @@
       ],
       "title": "Replication lag",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "www-prometheus"
+      },
+      "description": "How much of each instance's PGDATA (and WAL, when it is a separate volume) is in use against the PVC's provisioned size. The dashed capacity series is the hard ceiling: local-lvm enforces it, so hitting it means ENOSPC in Postgres, not a silent grow. Sourced from kubelet volume stats, so it is filesystem usage, not pg_database_size().",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "min": 0,
+          "unit": "bytes"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [10, 10],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull", "max"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "www-prometheus"
+          },
+          "expr": "max by (persistentvolumeclaim) (kubelet_volume_stats_used_bytes{persistentvolumeclaim=~\"$cluster_name-[0-9]+(-wal)?\"})",
+          "legendFormat": "{{persistentvolumeclaim}} used",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "www-prometheus"
+          },
+          "expr": "max by (persistentvolumeclaim) (kubelet_volume_stats_capacity_bytes{persistentvolumeclaim=~\"$cluster_name-[0-9]+(-wal)?\"})",
+          "legendFormat": "{{persistentvolumeclaim}} capacity",
+          "refId": "B"
+        }
+      ],
+      "title": "Volume usage vs capacity",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "www-prometheus"
+      },
+      "description": "Percentage of each PVC's provisioned size in use. Amber at 75%, red at 90% - there is no expansion headroom on local-lvm without editing the PVC and restarting the instance.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 75
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "id": 8,
+      "options": {
+        "displayMode": "gradient",
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "namePlacement": "left",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true,
+        "valueMode": "text"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "www-prometheus"
+          },
+          "expr": "100 * max by (persistentvolumeclaim) (kubelet_volume_stats_used_bytes{persistentvolumeclaim=~\"$cluster_name-[0-9]+(-wal)?\"}) / max by (persistentvolumeclaim) (kubelet_volume_stats_capacity_bytes{persistentvolumeclaim=~\"$cluster_name-[0-9]+(-wal)?\"})",
+          "instant": true,
+          "legendFormat": "{{persistentvolumeclaim}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Volume used %",
+      "type": "bargauge"
     }
   ],
   "refresh": "1m",
