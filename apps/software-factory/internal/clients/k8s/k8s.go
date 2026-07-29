@@ -122,6 +122,11 @@ func resolveOptions(opts []Option) (options, error) {
 	if o.killGrace <= 0 {
 		return options{}, fmt.Errorf("constructing a Sandboxes: the kill grace is %s, leaving no window between SIGTERM and SIGKILL", o.killGrace)
 	}
+	if o.imagePullSecretName != "" {
+		if problems := validation.IsDNS1123Subdomain(o.imagePullSecretName); len(problems) > 0 {
+			return options{}, fmt.Errorf("constructing a Sandboxes: image pull secret name %q is not a valid Kubernetes name: %s", o.imagePullSecretName, problems[0])
+		}
+	}
 	return o, nil
 }
 

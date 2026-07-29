@@ -278,7 +278,7 @@ func newActivities(
 		return nil, fmt.Errorf("building the GitHub client: %w", err)
 	}
 
-	sandboxes, err := k8s.NewInCluster(cfg.SandboxNamespace, logger, clk)
+	sandboxes, err := k8s.NewInCluster(cfg.SandboxNamespace, logger, clk, k8s.WithImagePullSecret(cfg.SandboxImagePullSecretName))
 	if err != nil {
 		return nil, fmt.Errorf("building the Kubernetes sandbox client: %w", err)
 	}

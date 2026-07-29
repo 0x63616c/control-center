@@ -10,15 +10,16 @@ import (
 // replaces the one variable it is about.
 func completeEnv() map[string]string {
 	return map[string]string{
-		"TEMPORAL_HOST_PORT":     "temporal-frontend.temporal:7233",
-		"TEMPORAL_NAMESPACE":     "software-factory",
-		"SANDBOX_NAMESPACE":      "software-factory",
-		"SANDBOX_IMAGE":          "ghcr.io/0x63616c/www-software-factory-sandbox@sha256:abc",
-		"METRICS_ADDR":           ":9090",
-		"POD_NAME":               "software-factory-worker-7d9f8c-abcde",
-		"TRANSCRIPTS_ROOT":       "/transcripts",
-		"TEMPORAL_UI_BASE_URL":   "https://temporal.worldwidewebb.co",
-		"CODEX_AUTH_SECRET_NAME": "codex-auth",
+		"TEMPORAL_HOST_PORT":             "temporal-frontend.temporal:7233",
+		"TEMPORAL_NAMESPACE":             "software-factory",
+		"SANDBOX_NAMESPACE":              "software-factory",
+		"SANDBOX_IMAGE":                  "ghcr.io/0x63616c/www-software-factory-sandbox@sha256:abc",
+		"METRICS_ADDR":                   ":9090",
+		"POD_NAME":                       "software-factory-worker-7d9f8c-abcde",
+		"TRANSCRIPTS_ROOT":               "/transcripts",
+		"TEMPORAL_UI_BASE_URL":           "https://temporal.worldwidewebb.co",
+		"CODEX_AUTH_SECRET_NAME":         "codex-auth",
+		"SANDBOX_IMAGE_PULL_SECRET_NAME": "ghcr-pull",
 	}
 }
 
@@ -98,6 +99,8 @@ func TestLoadWorkerReadsTheWholeEnvironment(t *testing.T) {
 		t.Errorf("TemporalUIBaseURL = %q", got.TemporalUIBaseURL)
 	case got.CodexAuthSecretName != "codex-auth":
 		t.Errorf("CodexAuthSecretName = %q", got.CodexAuthSecretName)
+	case got.SandboxImagePullSecretName != "ghcr-pull":
+		t.Errorf("SandboxImagePullSecretName = %q", got.SandboxImagePullSecretName)
 	case got.LogLevel != slog.LevelInfo:
 		t.Errorf("LogLevel = %v, want the default %v", got.LogLevel, slog.LevelInfo)
 	case got.SandboxCPULimit != defaultSandboxCPULimit:

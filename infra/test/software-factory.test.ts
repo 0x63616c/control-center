@@ -207,6 +207,15 @@ describe("the worker Deployment (#343)", () => {
     );
   });
 
+  test("hands the worker the pull secret name every sandbox pod authenticates its image pull with", async () => {
+    // #404: podspec.go sets imagePullSecrets on every sandbox pod itself, from
+    // this env var — there is no namespace-default ServiceAccount fallback.
+    // Same secret name the worker's own imagePullSecrets uses, below.
+    const [container] = (await deploymentSpec()).template.spec.containers;
+    const pullSecret = container.env.find((e) => e.name === "SANDBOX_IMAGE_PULL_SECRET_NAME");
+    expect(pullSecret?.value).toBe("ghcr-pull");
+  });
+
   test("mounts transcripts on the worker, under its own directory in the export", async () => {
     const [container] = (await deploymentSpec()).template.spec.containers;
     const transcripts = container.volumeMounts.find((m) => m.name === "transcripts");

@@ -246,8 +246,16 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
   // Both images are private on GHCR, so this namespace needs its own copy of
   // the pull secret (a Secret is always namespace-local). The SANDBOX image is
   // pulled with this same Secret by pods the worker creates — podspec.go sets
-  // no imagePullSecrets, so those pods fall back to this namespace's default
-  // ServiceAccount, which is why the name is the shared GHCR_PULL_SECRET_NAME.
+  // `imagePullSecrets` on every sandbox pod EXPLICITLY, from
+  // `SANDBOX_IMAGE_PULL_SECRET_NAME` below, which is why the name is the
+  // shared GHCR_PULL_SECRET_NAME.
+  //
+  // There is deliberately no namespace `default`-ServiceAccount fallback:
+  // #404 found the first live run failing ErrImagePull because an earlier
+  // version of this comment claimed that fallback existed when it never had
+  // been wired, and Kubernetes has no such default at all — a
+  // `default`-ServiceAccount's `imagePullSecrets` is exactly as empty as any
+  // other ServiceAccount's until something sets it.
   const pat = vault.GITHUB_PERSONAL_ACCESS_TOKEN__TOKEN;
   if (!pat) {
     throw new Error("software-factory: vault key GITHUB_PERSONAL_ACCESS_TOKEN__TOKEN not found");
@@ -489,6 +497,11 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
                   },
                   { name: "SANDBOX_NAMESPACE", value: SOFTWARE_FACTORY_NAMESPACE },
                   { name: "CODEX_AUTH_SECRET_NAME", value: CODEX_AUTH_SECRET_NAME },
+                  // The Secret podspec.go sets as `imagePullSecrets` on every
+                  // sandbox pod it creates (#404). Same name this Deployment's
+                  // own `imagePullSecrets` above uses, because both pull the
+                  // same private GHCR images with the same token.
+                  { name: "SANDBOX_IMAGE_PULL_SECRET_NAME", value: GHCR_PULL_SECRET_NAME },
                   { name: "TRANSCRIPTS_ROOT", value: TRANSCRIPTS_MOUNT_PATH },
                   { name: "TEMPORAL_UI_BASE_URL", value: temporalUiBaseUrl() },
                 ],

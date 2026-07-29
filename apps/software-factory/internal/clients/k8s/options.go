@@ -6,9 +6,10 @@ import "time"
 // that is correct for this cluster; an Option exists only where a test or a
 // future configuration needs to say otherwise.
 type options struct {
-	containerName string
-	maxReadBytes  int64
-	killGrace     time.Duration
+	containerName       string
+	maxReadBytes        int64
+	killGrace           time.Duration
+	imagePullSecretName string
 }
 
 // Option configures a Sandboxes at construction.
@@ -45,4 +46,18 @@ func WithContainerName(name string) Option {
 // between SIGTERM and SIGKILL.
 func WithKillGrace(d time.Duration) Option {
 	return func(o *options) { o.killGrace = d }
+}
+
+// WithImagePullSecret names the Secret every sandbox pod authenticates its
+// image pull with. The sandbox image is private on GHCR (like the worker's
+// own), and unlike the worker's Deployment — which sets imagePullSecrets
+// explicitly in its Pulumi spec — a pod built by buildPod has no spec of its
+// own to edit by hand; this Option is how that same name reaches it.
+//
+// There is no cluster-side fallback: an empty value here means the pod is
+// built with no imagePullSecrets at all, which is a 401 on GHCR's anonymous
+// pull path, not a namespace default silently taking over. #404 was exactly
+// that assumption turning out false.
+func WithImagePullSecret(name string) Option {
+	return func(o *options) { o.imagePullSecretName = name }
 }
