@@ -76,6 +76,11 @@ type Refreshed struct {
 // String redacts the whole struct, so a wrapped error carrying one cannot leak.
 func (r Refreshed) String() string { return "[redacted codex token pair]" }
 
+// Refreshed must satisfy slog.LogValuer — see the assertion on credentialFile
+// in authfile.go for why this is enforced at package scope rather than in a
+// test.
+var _ slog.LogValuer = Refreshed{}
+
 // LogValue redacts the whole struct in structured logs.
 func (r Refreshed) LogValue() slog.Value { return slog.StringValue(r.String()) }
 

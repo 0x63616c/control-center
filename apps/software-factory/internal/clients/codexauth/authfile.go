@@ -236,6 +236,12 @@ func (f credentialFile) forSandbox() (work.CredentialFile, error) {
 // raw maps are not, so without this a %v would print the stored token bytes.
 func (f credentialFile) String() string { return "[redacted codex credential file]" }
 
+// credentialFile must satisfy slog.LogValuer, enforced here at package scope so
+// a signature that drifts off the interface fails `go build` rather than only
+// `go test`. LogValue() any compiles, reads exactly like the method below, and
+// is never called by slog at all — see work.Credential.LogValue (#362).
+var _ slog.LogValuer = credentialFile{}
+
 // LogValue redacts the file in structured logs.
 func (f credentialFile) LogValue() slog.Value { return slog.StringValue(f.String()) }
 

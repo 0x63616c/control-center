@@ -138,6 +138,11 @@ func TestCredentialStaysOutOfFormattedOutput(t *testing.T) {
 // file reads as though the credential is handled, so an audit ticks it off.
 // Asserting the INTERFACE is what catches that — a test that calls LogValue()
 // directly passes just as happily when nothing else ever does.
+//
+// The load-bearing assertion now lives at package scope in work.go, so the
+// regression fails `go build` rather than only `go test`. It is restated here
+// because a bare `var _` with nothing beside it reads as dead code to someone
+// tidying up, and deleting it silently removes the guard.
 func TestCredentialSatisfiesTheInterfaceSlogActuallyUses(t *testing.T) {
 	t.Parallel()
 
@@ -165,14 +170,17 @@ func TestSlogResolvesACredentialThroughLogValue(t *testing.T) {
 }
 
 // The property that actually matters, through a real handler rather than a
-// method call.
+// method call — and named for what it is NOT, because the name is what a reader
+// auditing "is the credential covered?" sees first, and the name wins at 2am.
 //
-// NOTE this test PASSES on the bug: with LogValue() returning any, slog falls
-// through to fmt, fmt finds String(), and String() redacts. It is kept because
-// it guards the outcome rather than the mechanism — it is what fails if
-// String() ever stops redacting — but it is emphatically NOT the regression
-// test for this issue. Only the two above are.
-func TestSlogNeverWritesACredentialsValue(t *testing.T) {
+// NOTE this test PASSES on the bug. With LogValue() returning any, slog falls
+// through: to fmt, which finds String(), under a text handler; to
+// encoding/json, which MarshalJSON refuses, under a JSON one. Either way no
+// secret appears, so grepping handler output cannot tell fixed code from
+// broken. It is kept because it guards the outcome rather than the mechanism —
+// it is what fails if String() ever stops redacting — but it is emphatically
+// NOT the regression test for this issue. Only the two above are.
+func TestSlogNeverWritesACredentialsValueThoughThisIsNotTheGuard(t *testing.T) {
 	t.Parallel()
 
 	for name, newHandler := range map[string]func(*bytes.Buffer) slog.Handler{
@@ -237,11 +245,17 @@ func TestCredentialFileStaysOutOfFormattedOutput(t *testing.T) {
 	}
 }
 
-// Credential.LogValue returns `any`, which does NOT satisfy slog.LogValuer, so
-// slog never calls it — nothing leaks today only because slog falls through to
-// String(). CredentialFile must not inherit that: a document is exactly the
-// shape somebody logs whole, so the protection has to be real rather than
-// incidental. Asserting the interface is what makes it so.
+// A document is exactly the shape somebody logs whole, so its redaction has to
+// be a property of the type rather than an accident of how a handler happens to
+// render an unrecognised value. Asserting the interface is what makes it one.
+//
+// The load-bearing assertion now lives at package scope in work.go, so the
+// regression fails `go build` rather than only `go test`. It is restated here
+// for the reason the Credential one is: a bare `var _` with nothing beside it
+// reads as dead code, and deleting it silently removes the guard.
+//
+// What follows it is the run-time half — that a real handler writes nothing of
+// the document.
 func TestCredentialFileRedactsItselfThroughTheInterfaceSlogActuallyUses(t *testing.T) {
 	t.Parallel()
 
