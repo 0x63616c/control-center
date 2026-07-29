@@ -19,8 +19,25 @@ import (
 // like a system with no work to do.
 //
 // Asserted against the source rather than by running a worker, because the
-// alternative is a live Temporal. That is a real limit of this test: it proves
-// the call site names the constant, not that the SDK received it.
+// alternative is a live Temporal. Two limits follow from that, and both are
+// real:
+//
+//   - It proves the call site names the constant, not that the SDK received it.
+//   - It can only see registrations spelled as a literal `worker.New(` call in
+//     this file. One built through a helper, or moved elsewhere, is invisible —
+//     which is why a missing match is a Fatal rather than a pass.
+//
+// EVERY match is checked, not the first. FindSubmatch would stop at the
+// earliest `worker.New`, so a second registration appended below it — a worker
+// on an experimental queue, say, which the constant's own doc comment
+// contemplates — would sit there on a literal with this test green. Confirmed
+// by mutation, in both orders: inserted first it was caught, appended after it
+// was invisible.
+//
+// The count is asserted for the same reason. "All matches are correct" is
+// vacuously true of no matches, and a refactor that moves registration out of
+// this file would otherwise turn this test into one that asserts nothing while
+// still passing.
 func TestTheWorkerPollsTheQueueTheWorkflowsScheduleOnto(t *testing.T) {
 	t.Parallel()
 
@@ -32,12 +49,21 @@ func TestTheWorkerPollsTheQueueTheWorkflowsScheduleOnto(t *testing.T) {
 	// worker.New's second argument is the queue polled. Anything but the
 	// shared constant there is a second spelling of a name that must have one.
 	registration := regexp.MustCompile(`worker\.New\([^,]+,\s*([^,]+),`)
-	found := registration.FindSubmatch(source)
-	if found == nil {
-		t.Fatal("no worker.New call found in main.go; this test cannot see what queue the worker polls")
+	found := registration.FindAllSubmatch(source, -1)
+
+	// One worker, one queue. If a second is ever registered deliberately, this
+	// is the line to change — and changing it means saying which queue the new
+	// one polls, which is the whole point.
+	const wantRegistrations = 1
+	if len(found) != wantRegistrations {
+		t.Fatalf("main.go makes %d worker.New calls, want %d; this test can only vouch for the registrations it can see",
+			len(found), wantRegistrations)
 	}
-	if got := string(found[1]); got != "work.TaskQueue" {
-		t.Errorf("the worker registers on %s, want work.TaskQueue; a worker polling a queue nothing schedules onto reports no error at either end and looks like an idle system", got)
+
+	for _, match := range found {
+		if got := string(match[1]); got != "work.TaskQueue" {
+			t.Errorf("the worker registers on %s, want work.TaskQueue; a worker polling a queue nothing schedules onto reports no error at either end and looks like an idle system", got)
+		}
 	}
 }
 

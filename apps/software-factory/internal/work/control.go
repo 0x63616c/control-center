@@ -64,10 +64,6 @@ type Config struct {
 	StageModels StageModels `json:"stageModels"`
 }
 
-// Default configuration. The cap comes from ADR-0011; the cooldown does not,
-// and is a first guess to be moved on measurement. It is deliberately long:
-// the plan's limit window is measured in hours, so a cooldown of a minute
-// spends the retry budget re-hitting the same wall.
 // maxAllowedInFlight is the ceiling on concurrent tickets.
 //
 // It is a guard against a typo, not a capacity plan: the default is 2, and the
@@ -81,6 +77,10 @@ type Config struct {
 // wants more, this line and its justification are what should be argued with.
 const maxAllowedInFlight = 10
 
+// Default configuration. The cap comes from ADR-0011; the cooldown does not,
+// and is a first guess to be moved on measurement. It is deliberately long:
+// the plan's limit window is measured in hours, so a cooldown of a minute
+// spends the retry budget re-hitting the same wall.
 const (
 	defaultMaxInFlight            = 2
 	defaultBreakerCooldownSeconds = 15 * 60
