@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
@@ -340,4 +341,92 @@ func fencedText(t *testing.T, rendered string) (string, bool) {
 	}
 	body, _, ok = strings.Cut(body, "</"+fenceTag)
 	return body, ok
+}
+
+func TestRenderCapsHowMuchIssueTextOnePromptCarries(t *testing.T) {
+	t.Parallel()
+
+	r := newTestRenderer(t)
+
+	// Fillers no template contains, so what is counted below is the issue's
+	// text and nothing else.
+	const (
+		bodyFiller    = "qx"
+		commentFiller = "zj"
+	)
+
+	// A GitHub issue body runs to 65536 characters and the seam carries 40
+	// comments, so "the issue as its authors wrote it" is megabytes in the
+	// worst case: an unbounded token spend, and a prompt that overflows the
+	// context window before the stage's own instructions are read.
+	comments := make([]work.TicketComment, 40)
+	for i := range comments {
+		comments[i] = work.TicketComment{Author: "drive-by", Body: strings.Repeat(commentFiller, 25_000)}
+	}
+	rendered, err := r.Render(Input{Stage: work.StagePlan, Ticket: work.TicketDetail{
+		Ticket:   work.Ticket{Number: 1, Title: "t", Body: strings.Repeat(bodyFiller, 100_000)},
+		Comments: comments,
+	}})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	// Counted in units of the filler rather than in bytes of the whole prompt,
+	// so the assertion is about the issue's text and not about how long the
+	// templates happen to be.
+	if got := len(bodyFiller) * strings.Count(rendered, bodyFiller); got > maxUntrustedBytes {
+		t.Errorf("the prompt carries %d bytes of issue body, want at most %d", got, maxUntrustedBytes)
+	}
+	if got := len(commentFiller) * strings.Count(rendered, commentFiller); got > maxUntrustedBytes {
+		t.Errorf("the prompt carries %d bytes of comment thread, want at most %d", got, maxUntrustedBytes)
+	}
+	// Cutting text out silently is the failure mode the trimmed-thread notice
+	// already exists to avoid: a stage that does not know it was given part of
+	// the issue will plan as though it had all of it.
+	for _, want := range []string{"truncated", "not shown"} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("the prompt does not say text was cut (looked for %q)", want)
+		}
+	}
+}
+
+func TestRenderCarriesAnOrdinaryIssueWhole(t *testing.T) {
+	t.Parallel()
+
+	r := newTestRenderer(t)
+
+	// The cap is a bound on the pathological case, not a budget every issue is
+	// spent against. A normal ticket arrives intact and says nothing about
+	// truncation.
+	detail := ticket()
+	rendered, err := r.Render(Input{Stage: work.StagePlan, Ticket: detail})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(rendered, detail.Body) {
+		t.Error("an ordinary issue body did not reach the prompt whole")
+	}
+	if strings.Contains(rendered, "truncated") {
+		t.Error("the prompt claims an ordinary issue was truncated")
+	}
+}
+
+func TestTruncateCutsOnARuneBoundary(t *testing.T) {
+	t.Parallel()
+
+	// Cutting mid-rune would put invalid UTF-8 into the prompt and, in a body
+	// that is mostly non-ASCII, at the exact point a reader is looking.
+	got, cut := truncate(strings.Repeat("é", 100), 51)
+	if !cut {
+		t.Fatal("truncate did not cut text over the limit")
+	}
+	if !utf8.ValidString(got) {
+		t.Errorf("truncate produced invalid UTF-8: %q", got)
+	}
+	if len(got) > 51 {
+		t.Errorf("truncate kept %d bytes, want at most 51", len(got))
+	}
+	if whole, cut := truncate("short", 51); cut || whole != "short" {
+		t.Errorf("truncate(%q, 51) = %q, %t; want it left alone", "short", whole, cut)
+	}
 }

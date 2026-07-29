@@ -3,8 +3,10 @@
 Six files: `base.md` plus one per stage. `base.md` is prefixed to every stage prompt; the
 stage file is the suffix.
 
-Revised once against `SET-REVIEW.md`; the finding-by-finding disposition is in
-`CHANGES-FROM-REVIEW.md`.
+Revised twice against adversarial reviews. The first review's findings and their
+disposition were scratchpad files that lived here; they quoted lines the prompts no longer
+have, so they were deleted rather than left in the directory the sandbox agents read. The
+second review's two MAJORs are what the fence sections below now describe.
 
 ## Assembly order
 
@@ -13,10 +15,13 @@ base.md                      role, contract, "nobody to ask", the untrusted issu
 <stage>.md                   objective, reader, failure modes, then the handoff document(s)
 ```
 
-The untrusted fence sits at the **end of the base**, so the stage's own instructions come
-after it and the base closes with "Your instructions for this stage follow." Untrusted text
-never has the last word, and the model reads its actual task after the thing it is meant to
-treat as data.
+The issue fence sits at the **end of the base**, so the stage's own instructions come after
+it and the base closes with "Your instructions for this stage follow." The model reads its
+actual task after the thing it is meant to treat as data.
+
+A stage that reads a handoff document does have untrusted text last — a handoff has to come
+after the instructions saying what to do with it — so those documents carry a fence of their
+own, and the base says what a fenced region is worth before any of them appear.
 
 Handoff documents are appended at the end of each stage file under an `###` heading. They
 are prior-stage output, so they are semi-trusted at best — the base's fence covers the
@@ -156,19 +161,30 @@ that an override at one site is not read as licence to ignore the rest.
 
 ## Risks a human should decide on
 
-1. **Prior-stage documents are not fenced.** Only the issue text is. If a planner quotes a
-   malicious issue body into its plan, the fence's protection does not travel with it to
-   `review`/`revise`/`implement`. Fencing handoffs with the same nonce is one line each and
-   would cost some readability — worth doing if `auto` ever becomes filable by anyone but the
-   owner, which ADR-0011 already names as the trigger for revisiting the threat model. The
-   renderer does strip the nonce from handoff documents as well, so an unfenced quote cannot
-   forge the fence; what it cannot do is mark where the quote begins.
+1. **Handoff documents are fenced, and the fence is bytes rather than judgement.** Both
+   halves were findings of the second review. `strip` and `checkFence` compare under ASCII
+   case folding and remove the tag names as well as the nonce, so neither a case-flipped
+   leaked nonce nor a bare `</untrusted-issue-text-…>` written into an issue body reaches a
+   model as a second tag-shaped string. Handoff documents get a fence of their own
+   (`untrusted-prior-document-…`), because a planner that quotes a malicious issue body
+   otherwise carries that quote into `implement` — the one stage holding a GitHub App token —
+   as the last un-marked bytes of its prompt. What the fence still cannot reach is a string
+   that only *resembles* a tag: Unicode confusables, or whitespace broken into the tag name.
+   Those never match the opening tag the model was shown, and folding them away would mean
+   normalising arbitrary issue text; the base's guard paragraph is what covers them.
 2. **`implement` is asked to paste real test output into its document.** On a large test
    suite that could be long, and the document is interpolated into `propose`'s prompt and
    surfaced to reviewers. No truncation guidance is given, deliberately — truncation
    instructions are how "show the failing output" degrades back into "claim you ran it". If
    documents come back enormous in practice, cap it in the prompt with evidence rather than
    pre-emptively.
+
+   Issue text *is* capped, at 20000 bytes for the description and 20000 for the whole
+   comment thread, with what was cut declared in the prompt. The asymmetry is deliberate:
+   the length of a handoff is chosen by a stage of this pipeline, while the length of an
+   issue body is chosen by whoever filed it, and an unbounded prompt on that side is both
+   an unbounded token spend and a context window an attacker can push the stage's own
+   instructions out of.
 3. **`revise`'s licence to reject is the most abusable line in the set.** It is the correct
    instruction — a reviewer can be wrong, and a `revise` stage that capitulates to a bad
    finding damages a working plan — but it is also the sentence a lazy stage would use to

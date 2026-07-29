@@ -51,7 +51,13 @@ func Schema() []byte {
 // disagree quietly.
 func Document(result []byte) (string, error) {
 	var envelope struct {
-		Document *string `json:"document"`
+		// Raw rather than *string, so an absent field and a present-but-null
+		// one are told apart. They are different failures — a stage that
+		// answered in some other shape, and a stage that answered in this one
+		// and put nothing in it — and an error naming the wrong one sends
+		// whoever is debugging the run after a schema mismatch that is not
+		// there.
+		Document json.RawMessage `json:"document"`
 	}
 
 	decoder := json.NewDecoder(bytes.NewReader(result))
@@ -67,8 +73,16 @@ func Document(result []byte) (string, error) {
 	if envelope.Document == nil {
 		return "", fmt.Errorf("the stage's result has no document field: it returned something other than the envelope it was given")
 	}
-	if strings.TrimSpace(*envelope.Document) == "" {
+	if string(envelope.Document) == "null" {
+		return "", fmt.Errorf("the stage's result sets document to null: it answered in the envelope and put nothing in it")
+	}
+
+	var document string
+	if err := json.Unmarshal(envelope.Document, &document); err != nil {
+		return "", fmt.Errorf("reading the stage's document out of its result envelope: %w", err)
+	}
+	if strings.TrimSpace(document) == "" {
 		return "", fmt.Errorf("the stage returned an empty document: it produced no handoff at all")
 	}
-	return *envelope.Document, nil
+	return document, nil
 }

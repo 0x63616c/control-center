@@ -21,6 +21,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
@@ -172,7 +173,50 @@ func body(detail work.TicketDetail) string {
 	if strings.TrimSpace(detail.Body) == "" {
 		return "(This issue was filed with no description.)"
 	}
-	return detail.Body
+	text, cut := truncate(detail.Body, maxUntrustedBytes)
+	if !cut {
+		return text
+	}
+	return text + truncationNotice(len(detail.Body), len(text))
+}
+
+// maxUntrustedBytes is the most issue text one prompt carries, applied once to
+// the description and once to the whole comment thread.
+//
+// GitHub takes an issue body of 65536 characters and the seam carries up to 40
+// comments, so "the issue as its authors wrote it" is megabytes in the worst
+// case. Unbounded, that is an unbounded token spend on every stage of the run,
+// and a prompt whose own instructions fall out of the context window behind
+// text the issue's author chose the length of. The number is a bound on the
+// pathological case rather than a budget an ordinary ticket is spent against:
+// twenty thousand bytes is several times the longest issue in this repository.
+const maxUntrustedBytes = 20_000
+
+// truncate cuts text to at most limit bytes, on a rune boundary, and reports
+// whether it cut anything.
+//
+// The boundary matters: half a rune is invalid UTF-8 in the prompt, and in a
+// body that is mostly non-ASCII it lands at exactly the point a reader is
+// looking.
+func truncate(text string, limit int) (string, bool) {
+	if len(text) <= limit {
+		return text, false
+	}
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut], true
+}
+
+// truncationNotice says what was cut, in the prompt, where the model reads it.
+//
+// Cutting text out silently is the failure the trimmed-thread notice already
+// exists to avoid: a stage that does not know it was handed part of the issue
+// plans as though it had all of it, and a human reading the plan cannot tell
+// which happened.
+func truncationNotice(was, kept int) string {
+	return fmt.Sprintf("\n\n(This text was truncated here: it is %d bytes and this prompt carries the first %d.)", was, kept)
 }
 
 // comments renders the issue's thread, oldest first.
@@ -193,8 +237,20 @@ func comments(detail work.TicketDetail) string {
 		// part of it. A model that does not, cannot.
 		fmt.Fprintf(&out, "\n(%d comments from the middle of this thread are not shown.)\n", detail.CommentsOmitted)
 	}
-	for _, comment := range detail.Comments {
-		fmt.Fprintf(&out, "\n@%s wrote:\n\n%s\n", comment.Author, comment.Body)
+	remaining := maxUntrustedBytes
+	for i, comment := range detail.Comments {
+		if remaining <= 0 {
+			// The thread ran past what a prompt carries. Say how much is
+			// missing rather than ending mid-conversation.
+			fmt.Fprintf(&out, "\n(%d further comments are not shown: the thread is longer than one prompt carries.)\n", len(detail.Comments)-i)
+			break
+		}
+		text, cut := truncate(comment.Body, remaining)
+		remaining -= len(text)
+		if cut {
+			text += truncationNotice(len(comment.Body), len(text))
+		}
+		fmt.Fprintf(&out, "\n@%s wrote:\n\n%s\n", comment.Author, text)
 	}
 	return out.String()
 }

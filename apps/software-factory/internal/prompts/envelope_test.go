@@ -98,7 +98,14 @@ func TestDocumentSaysWhatItWasGivenWhenItCannotReadIt(t *testing.T) {
 		result string
 		want   string
 	}{
-		{name: "an envelope with no document", result: `{}`, want: "document"},
+		{name: "an envelope with no document", result: `{}`, want: "no document field"},
+		{
+			// It has the field. Saying otherwise sends whoever is debugging
+			// the run looking for a schema mismatch that is not there.
+			name:   "an envelope whose document is null",
+			result: `{"document":null}`,
+			want:   "null",
+		},
 		{name: "an envelope with a field nothing reads", result: `{"document":"d","verdict":"approve"}`, want: "verdict"},
 		{name: "a document with nothing in it", result: `{"document":" "}`, want: "empty document"},
 	}
