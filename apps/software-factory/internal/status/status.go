@@ -267,8 +267,8 @@ func runRef(runID, runURL string) string {
 //
 // This is a backstop, not the real fix. The real fix is that the propose stage
 // records the URL the GitHub API returned when it created the pull request,
-// rather than the one the model wrote; see the ticket referenced from the
-// package's PR. Until then this fails closed to the inert rendering below.
+// rather than the one the model wrote — #371. Until then this fails closed to
+// the inert rendering below.
 const pullRequestHost = "github.com"
 
 // pullRequestRef renders the pull request a run opened.
