@@ -55,10 +55,10 @@ func TestMintsAnAppJWTWithTheIssuerBackdatedIssuedAtAndTenMinuteExpiryGitHubRequ
 	}
 	// GitHub rejects a jwt whose iat is in ITS future, and pod clock skew is
 	// real, so the claim is deliberately backdated.
-	if want := clk.Now().Add(-60 * time.Second); !claims.IssuedAt.Time.Equal(want) {
+	if want := clk.Now().Add(-60 * time.Second); !claims.IssuedAt.Equal(want) {
 		t.Errorf("app jwt iat = %s, want %s", claims.IssuedAt, want)
 	}
-	if want := clk.Now().Add(10 * time.Minute); !claims.ExpiresAt.Time.Equal(want) {
+	if want := clk.Now().Add(10 * time.Minute); !claims.ExpiresAt.Equal(want) {
 		t.Errorf("app jwt exp = %s, want %s (github's hard maximum)", claims.ExpiresAt, want)
 	}
 }

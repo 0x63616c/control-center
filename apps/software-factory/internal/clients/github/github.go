@@ -291,7 +291,7 @@ func (c *Client) threadOf(ctx context.Context, op string, number int) ([]work.Ti
 		if resp.NextPage == 0 {
 			return thread, nil
 		}
-		opts.ListOptions.Page = resp.NextPage
+		opts.Page = resp.NextPage
 	}
 }
 
@@ -380,7 +380,7 @@ func (c *Client) findOwnComment(ctx context.Context, op string, issue int, marke
 		if resp.NextPage == 0 {
 			return 0, false, nil
 		}
-		opts.ListOptions.Page = resp.NextPage
+		opts.Page = resp.NextPage
 	}
 }
 
