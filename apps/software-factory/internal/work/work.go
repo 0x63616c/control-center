@@ -130,6 +130,11 @@ type StageResult struct {
 
 // StageEventSink receives each raw event line as a stage streams it.
 //
+// Each call carries exactly one whole event, verbatim and without a terminator.
+// Framing has one owner: whoever stores the stream adds the terminator, so a
+// producer that pre-terminated its lines would be visible rather than silently
+// tolerated.
+//
 // One callback serves both consumers of that stream: the transcript, which
 // needs the bytes verbatim, and the enclosing activity's heartbeat, which needs
 // only to know that something happened. A stage that emits nothing for the
