@@ -113,6 +113,33 @@ type GitHub interface {
 	InstallationToken(ctx context.Context) (work.Credential, error)
 }
 
+// RepoCloner checks the ticket's repository out inside its sandbox, on the
+// branch this run named, and pushes it. Nothing else in this service puts a
+// repository in the sandbox, so every stage depends on this running first:
+// codex refuses to run outside a git repository and exits before making any
+// model call, which without a checkout would fail every stage identically and
+// read as the model failing the ticket rather than as a missing repository.
+//
+// The branch it checks out is read from the sandbox's own environment, never
+// recomputed: work.SandboxTemplate.Spec baked SF_BRANCH into the pod at create
+// time, and an implementation that asked the sandbox for that value rather
+// than calling work.BranchName a second time is the one that notices if those
+// two ever disagree.
+//
+// It is idempotent under activity retry, in the same shape as StageRunner: an
+// existing checkout already on this run's branch is left alone, and a push is
+// issued regardless, which is a no-op against a branch already at that state.
+type RepoCloner interface {
+	// CloneRepo clones cloneURL into the sandbox, authenticating with
+	// credential, and pushes the branch the sandbox's own environment names.
+	//
+	// credential is never returned or logged — it is used only to authenticate
+	// the clone and the push, for the same reason InstallationToken's result
+	// must not reach a workflow: Temporal would persist it to history for the
+	// namespace's whole retention.
+	CloneRepo(ctx context.Context, sandbox work.SandboxID, cloneURL string, credential work.Credential) error
+}
+
 // TokenSource yields the credential document to write into a sandbox.
 //
 // One method hides the whole of the credential problem: expiry, the OAuth

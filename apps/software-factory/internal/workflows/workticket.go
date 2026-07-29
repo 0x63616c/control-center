@@ -167,6 +167,15 @@ func (r *ticketRun) execute(ctx workflow.Context) (WorkTicketResult, error) {
 		return WorkTicketResult{Outcome: work.OutcomeFailed}, err
 	}
 
+	// The clone has to happen before the first stage, not merely before it is
+	// used: codex refuses to run outside a git repository and exits before any
+	// model call, so a blank caught inside `plan` would be a run that already
+	// paid for a stage against a sandbox that could never have worked (#383).
+	clone := workflow.WithActivityOptions(ctx, r.cloneOptions())
+	if err := workflow.ExecuteActivity(clone, acts.CloneRepo, r.sandbox).Get(ctx, nil); err != nil {
+		return WorkTicketResult{Outcome: work.OutcomeFailed}, err
+	}
+
 	// Every completed stage's document, not just the last. revise reads the
 	// plan and the review, and the plan is two stages behind it by then — a
 	// single rolling handoff would have discarded it, and the run would die at
@@ -373,6 +382,18 @@ func (r *ticketRun) report(ctx workflow.Context, report work.StatusReport) {
 func (r *ticketRun) controlOptions() workflow.ActivityOptions {
 	return workflow.ActivityOptions{
 		StartToCloseTimeout: r.in.Policy.ControlTimeout,
+		RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: r.in.Policy.ControlAttempts},
+	}
+}
+
+// cloneOptions govern the clone: no model tokens are at stake and it is
+// idempotent by construction (see k8s.Sandboxes.CloneRepo), so it is retried
+// as freely as the control activities — but on a stage's own timeout rather
+// than the control one, because a git clone of this repository is not bounded
+// by "a status comment can always be posted in two minutes".
+func (r *ticketRun) cloneOptions() workflow.ActivityOptions {
+	return workflow.ActivityOptions{
+		StartToCloseTimeout: r.in.Policy.StageTimeout,
 		RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: r.in.Policy.ControlAttempts},
 	}
 }

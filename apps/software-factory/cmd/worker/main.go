@@ -288,6 +288,36 @@ func newActivities(
 		return nil, fmt.Errorf("building the transcript sink at %s (TRANSCRIPTS_ROOT): %w", cfg.TranscriptsRoot, err)
 	}
 
+	return activities.New(buildDeps(cfg, ghCfg, ghClient, sandboxes, transcriptSink, renderer, metrics, temporal, clk, logger))
+}
+
+// buildDeps assembles activities.Deps from clients newActivities already
+// built. It is pulled out of newActivities, rather than inlined at its one
+// call site, so it can be exercised without dialling Temporal, the in-cluster
+// Kubernetes API or a real GitHub App key — every one of which newActivities
+// itself needs just to get this far. TestBuildDepsSatisfiesActivitiesNew is
+// what that buys: it hands buildDeps a stand-in for every client and asserts
+// the result is a Deps activities.New accepts, which is the whole of what
+// "this seam is wired into the composition root" means. #395 shipped a new
+// Deps field, Repo, that this file did not yet populate; activities.New
+// caught it loudly in a pod's crash loop rather than here, in a test, because
+// this function did not exist to catch it first.
+//
+// One *k8s.Sandboxes is threaded through Pods, Repo, Sweeper and — via
+// codex.NewRunner — the stage runner's exec and file transfer, deliberately:
+// see the doc on newActivities for why a second instance would be wrong.
+func buildDeps(
+	cfg config.Worker,
+	ghCfg config.GitHub,
+	ghClient activities.GitHub,
+	sandboxes *k8s.Sandboxes,
+	transcriptSink activities.TranscriptSink,
+	renderer *prompts.Renderer,
+	metrics *telemetry.Metrics,
+	temporal client.Client,
+	clk clock.Clock,
+	logger *slog.Logger,
+) activities.Deps {
 	sandboxTemplate := work.SandboxTemplate{
 		Image:           cfg.SandboxImage,
 		CPULimit:        cfg.SandboxCPULimit,
@@ -295,9 +325,10 @@ func newActivities(
 		DeadlineSeconds: work.SandboxDeadlineSeconds,
 	}
 
-	return activities.New(activities.Deps{
+	return activities.Deps{
 		GitHub:      ghClient,
 		Pods:        sandboxes,
+		Repo:        sandboxes,
 		Stages:      codex.NewRunner(sandboxes, sandboxes, clk, logger),
 		Transcripts: transcriptSink,
 		Prompts:     prompts.NewActivityRenderer(renderer),
@@ -308,7 +339,18 @@ func newActivities(
 		Log:         logger,
 		Clock:       clk,
 		Sandbox:     sandboxTemplate,
-	})
+		RepoURL:     cloneURL(ghCfg),
+	}
+}
+
+// cloneURL is the HTTPS clone URL for the one repository this service works
+// tickets against, built from the same GITHUB_OWNER/GITHUB_REPO config.LoadGitHub
+// already reads and every worker already has set — CloneRepo's credential and
+// this URL both describe the App's own installation, so there is no new
+// required environment variable here, only a second use of two that already
+// are.
+func cloneURL(cfg config.GitHub) string {
+	return fmt.Sprintf("https://github.com/%s/%s.git", cfg.Owner, cfg.Repo)
 }
 
 // stopServer gives in-flight scrapes a moment to finish. Its failure is logged

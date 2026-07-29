@@ -23,6 +23,7 @@ import (
 type Deps struct {
 	GitHub      GitHub
 	Pods        PodLifecycle
+	Repo        RepoCloner
 	Stages      StageRunner
 	Transcripts TranscriptSink
 	Prompts     PromptRenderer
@@ -30,6 +31,13 @@ type Deps struct {
 	Runs        RunLookup
 	Sweeper     SandboxSweeper
 	Metrics     Metrics
+
+	// RepoURL is the ticket repository's clone URL. It is deploy-time config,
+	// like Sandbox: built once from the App's own owner/repo at the composition
+	// root, never attacker-influenced, and handed to CloneRepo rather than
+	// assembled inside it so that this package has exactly one seam that reads
+	// deploy config as opposed to a live dependency.
+	RepoURL string
 
 	// Log is the injected logger. Clients and activities log themselves, so
 	// leaf code rarely logs by hand and nobody can forget.
@@ -64,6 +72,9 @@ func New(deps Deps) (*Activities, error) {
 	if deps.Pods == nil {
 		missing = append(missing, "Pods")
 	}
+	if deps.Repo == nil {
+		missing = append(missing, "Repo")
+	}
 	if deps.Stages == nil {
 		missing = append(missing, "Stages")
 	}
@@ -90,6 +101,9 @@ func New(deps Deps) (*Activities, error) {
 	}
 	if deps.Clock == nil {
 		missing = append(missing, "Clock")
+	}
+	if deps.RepoURL == "" {
+		missing = append(missing, "RepoURL")
 	}
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("activities need %v", missing)
@@ -195,6 +209,29 @@ func (a *Activities) CreateSandbox(ctx context.Context, in CreateSandboxInput) (
 func (a *Activities) WaitSandboxReady(ctx context.Context, sandbox work.SandboxID) error {
 	if err := a.deps.Pods.WaitReady(ctx, sandbox); err != nil {
 		return fail(ctx, fmt.Sprintf("waiting for sandbox %s", sandbox), err)
+	}
+	return nil
+}
+
+// CloneRepo checks the ticket's repository out inside the sandbox and pushes
+// this run's branch. It must run once the sandbox is ready and before the
+// first stage: codex refuses to run outside a git repository and exits before
+// any model call, so a run that discovered a missing checkout inside `plan`
+// would already have paid for that stage against a sandbox that could never
+// have worked.
+//
+// The credential is minted here, inside the activity that uses it, and never
+// returned: like InstallationToken's own doc says, Temporal persists an
+// activity's result to workflow history for the namespace's whole retention,
+// and a token that crossed that boundary would sit there for as long as the
+// history does.
+func (a *Activities) CloneRepo(ctx context.Context, sandbox work.SandboxID) error {
+	credential, err := a.deps.GitHub.InstallationToken(ctx)
+	if err != nil {
+		return fail(ctx, fmt.Sprintf("minting a credential to clone into sandbox %s", sandbox), err)
+	}
+	if err := a.deps.Repo.CloneRepo(ctx, sandbox, a.deps.RepoURL, credential); err != nil {
+		return fail(ctx, fmt.Sprintf("cloning the repository into sandbox %s", sandbox), err)
 	}
 	return nil
 }
