@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/workflows"
 	"github.com/stretchr/testify/mock"
@@ -319,8 +318,11 @@ func TestWorkTicketTellsItsDispatcherWhenTheFailureWasAuth(t *testing.T) {
 	t.Parallel()
 
 	h := newTicketHarness(t)
+	// The type is the whole of what a workflow sees: an activity failure crosses
+	// a process boundary, so the client's own sentinel does not survive the trip
+	// and workflow code has no business importing it.
 	h.labelErr = temporal.NewNonRetryableApplicationError(
-		fmt.Sprintf("clearing the auto label: %v", github.ErrAuth), activities.ErrTypeAuth, nil)
+		"clearing the auto label: github refused this app's credentials", activities.ErrTypeAuth, nil)
 	h.run()
 
 	if h.done.Failure != work.FailureAuth {
