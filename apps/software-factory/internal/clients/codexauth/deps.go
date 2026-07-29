@@ -1,13 +1,3 @@
-// Package codexauth owns the model provider's OAuth credential: it is the only
-// thing in this service that holds a refresh token, and the only thing that
-// refreshes one.
-//
-// That exclusivity is the design. The refresh token is single-use and rotating,
-// and the CLI holds no cross-process lock around its credential file, so two
-// processes sharing one credential eventually invalidate each other. The worker
-// runs single-replica, which makes "one writer" structural rather than a rule
-// somebody has to remember; sandboxes are handed an access token only, with the
-// refresh token blanked.
 package codexauth
 
 import (
