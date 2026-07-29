@@ -269,7 +269,38 @@ func runRef(runID, runURL string) string {
 // records the URL the GitHub API returned when it created the pull request,
 // rather than the one the model wrote — #371. Until then this fails closed to
 // the inert rendering below.
+//
+// The literal is deliberate. A backstop that reads its bound from config is not
+// a backstop: its whole job is to hold when the layer above it is wrong, and an
+// injectable host adds a path where the injected value is wrong or empty and the
+// guard degrades in silence. A literal cannot be misconfigured.
+//
+// The cost of the literal, stated so it is not discovered: against a GitHub
+// Enterprise Server install every pull request link would render inert, with no
+// error anywhere — a silent degradation, which is the exact failure mode the
+// rest of this file exists to avoid. Not a risk for this deployment, and #371
+// removes the question rather than answering it.
 const pullRequestHost = "github.com"
+
+// asciiLower lowercases A-Z and nothing else.
+//
+// Hosts are case-insensitive, so `https://GitHub.com/…` is the same place as
+// `https://github.com/…` and must link. The obvious tools for that are wrong
+// here: strings.EqualFold and strings.ToLower both fold Unicode, which is safe
+// against the literal "github.com" only because it happens to contain no k and
+// no s — U+212A (Kelvin sign) folds to k and U+017F (long s) folds to s, and
+// neither has anywhere to land. That is a property of today's constant, not of
+// the approach, and a future host carrying either letter would silently
+// reacquire the homograph. Restricting the fold to ASCII makes the guarantee
+// belong to the code instead of to the spelling of one string.
+func asciiLower(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= 'A' && r <= 'Z' {
+			return r + ('a' - 'A')
+		}
+		return r
+	}, s)
+}
 
 // pullRequestRef renders the pull request a run opened.
 //
@@ -283,7 +314,7 @@ const pullRequestHost = "github.com"
 // truncated: the reader gets a lead on what propose produced, not a verbatim
 // copy of it.
 func pullRequestRef(rawURL string) string {
-	if parsed, ok := linkedURL(rawURL); ok && parsed.Host == pullRequestHost {
+	if parsed, ok := linkedURL(rawURL); ok && asciiLower(parsed.Host) == pullRequestHost {
 		return rawURL
 	}
 	return inert(rawURL, "_no pull request URL was recorded_")
@@ -320,9 +351,20 @@ func linkedURL(rawURL string) (*url.URL, bool) {
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return nil, false
 	}
+	// Any userinfo at all, not merely a non-empty one. Narrowing this to
+	// `parsed.User.String() != ""` is an EQUIVALENT mutation, already checked:
+	// it would additionally admit `https://@github.com/x`, which still has
+	// github.com as its host and still goes to GitHub, so there is no exploit
+	// behind it and no test that could distinguish the two. Recorded so the next
+	// reader does not spend an afternoon re-deriving that.
 	if parsed.User != nil {
 		return nil, false
 	}
+	// unicode.IsControl is load-bearing despite url.Parse rejecting every ASCII
+	// control character before this runs: the C1 range (U+0080–U+009F) parses
+	// cleanly and reaches here, and U+009F is not unicode.IsSpace either. That
+	// is the gap this clause covers, and status_test.go pins it with exactly
+	// that character.
 	if strings.ContainsFunc(rawURL, func(r rune) bool {
 		return unicode.IsSpace(r) || unicode.IsControl(r) || strings.ContainsRune("()<>[]`\"'", r)
 	}) {
