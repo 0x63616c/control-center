@@ -61,7 +61,8 @@ func (s *Sandboxes) Write(ctx context.Context, sandbox work.SandboxID, filePath 
 }
 
 // tarStream builds the archive Write extracts, with one directory entry per
-// parent in root-to-leaf order so no caller needs a mkdir seam.
+// parent in root-to-leaf order so no caller needs a mkdir seam. The sandbox
+// root is the one parent it never describes; it is already there.
 //
 // Modification times come from the injected clock, which makes the stream
 // byte-deterministic — a test can compare two of them — and keeps time.Now out
@@ -72,6 +73,12 @@ func tarStream(filePath string, content []byte, mode fs.FileMode, modTime time.T
 	var out bytes.Buffer
 	w := tar.NewWriter(&out)
 	for _, dir := range ancestors(path.Dir(rel)) {
+		if "/"+dir == work.SandboxRoot {
+			// The mount point, never ours to chmod: under fsGroup the kubelet
+			// leaves it root-owned, and an entry for it makes GNU tar's delayed
+			// set-stat fail with EPERM and exit 2 on every Write.
+			continue
+		}
 		if err := w.WriteHeader(&tar.Header{
 			Typeflag: tar.TypeDir,
 			Name:     dir + "/",

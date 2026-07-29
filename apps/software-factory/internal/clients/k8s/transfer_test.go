@@ -123,9 +123,31 @@ func TestWriteCreatesTheParentDirectoriesTraversable(t *testing.T) {
 		}
 		dirs = append(dirs, e.name)
 	}
-	want := []string{"work/", "work/3f1c2a7e/", "work/3f1c2a7e/plan/"}
+	// The sandbox root is absent deliberately — see
+	// TestWriteNeverEmitsATarEntryForTheSandboxRoot.
+	want := []string{"work/3f1c2a7e/", "work/3f1c2a7e/plan/"}
 	if !reflect.DeepEqual(dirs, want) {
 		t.Errorf("directory entries = %v, want %v in root-to-leaf order", dirs, want)
+	}
+}
+
+func TestWriteNeverEmitsATarEntryForTheSandboxRoot(t *testing.T) {
+	t.Parallel()
+
+	str := &scriptedStreamer{answers: []answer{{}}}
+	s, _ := newTestSandboxes(t, str, runningPod())
+	if err := s.Write(context.Background(), testSandbox, testPath, []byte("hello"), 0o600); err != nil {
+		t.Fatalf("Write returned an unexpected error: %v", err)
+	}
+
+	// The sandbox root is an emptyDir mount point. Under fsGroup the kubelet
+	// leaves it root-owned, so GNU tar's delayed set-stat chmods it at the end
+	// of extraction, gets EPERM and exits 2 — failing every single Write.
+	root := strings.TrimPrefix(work.SandboxRoot, "/") + "/"
+	for _, e := range decodeTar(t, str.observed()[0].stdin) {
+		if e.name == root {
+			t.Errorf("the tar stream carries an entry for the sandbox root %q, which the sandbox uid does not own", e.name)
+		}
 	}
 }
 
