@@ -1,9 +1,11 @@
 package work_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -129,6 +131,69 @@ func TestCredentialStaysOutOfFormattedOutput(t *testing.T) {
 		if strings.Contains(r, secret) {
 			t.Errorf("rendered credential contains the secret: %q", r)
 		}
+	}
+}
+
+// A LogValue method that slog never calls is worse than no method at all: the
+// file reads as though the credential is handled, so an audit ticks it off.
+// Asserting the INTERFACE is what catches that — a test that calls LogValue()
+// directly passes just as happily when nothing else ever does.
+func TestCredentialSatisfiesTheInterfaceSlogActuallyUses(t *testing.T) {
+	t.Parallel()
+
+	var _ slog.LogValuer = work.Credential{}
+}
+
+// The assertion above is compile-time, so this one proves slog reaches the
+// method at run time. Resolve is how slog itself unwraps an attribute: it
+// invokes LogValue on a LogValuer and leaves anything else as KindAny. A
+// Credential that stays KindAny is one slog is treating as an opaque struct.
+//
+// This is the test that fails on the bug. The handler test below does not —
+// see its comment.
+func TestSlogResolvesACredentialThroughLogValue(t *testing.T) {
+	t.Parallel()
+
+	resolved := slog.AnyValue(work.NewCredential(secret)).Resolve()
+
+	if resolved.Kind() == slog.KindAny {
+		t.Errorf("slog left the credential unresolved (kind %s); LogValue is never called, so redaction rests entirely on fmt falling through to String()", resolved.Kind())
+	}
+	if strings.Contains(resolved.String(), secret) {
+		t.Errorf("the resolved value contains the secret: %q", resolved.String())
+	}
+}
+
+// The property that actually matters, through a real handler rather than a
+// method call.
+//
+// NOTE this test PASSES on the bug: with LogValue() returning any, slog falls
+// through to fmt, fmt finds String(), and String() redacts. It is kept because
+// it guards the outcome rather than the mechanism — it is what fails if
+// String() ever stops redacting — but it is emphatically NOT the regression
+// test for this issue. Only the two above are.
+func TestSlogNeverWritesACredentialsValue(t *testing.T) {
+	t.Parallel()
+
+	for name, newHandler := range map[string]func(*bytes.Buffer) slog.Handler{
+		"text": func(b *bytes.Buffer) slog.Handler { return slog.NewTextHandler(b, nil) },
+		"json": func(b *bytes.Buffer) slog.Handler { return slog.NewJSONHandler(b, nil) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			log := slog.New(newHandler(&buf))
+
+			c := work.NewCredential(secret)
+			log.Info("using a credential", "token", c)
+			// Nested in a struct too: nobody logs the credential deliberately,
+			// they log the thing that holds one.
+			log.Info("using a credential", "wrapper", struct{ Token work.Credential }{Token: c})
+
+			if strings.Contains(buf.String(), secret) {
+				t.Errorf("slog wrote the secret: %q", buf.String())
+			}
+		})
 	}
 }
 

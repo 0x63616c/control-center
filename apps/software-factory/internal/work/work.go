@@ -7,6 +7,7 @@ package work
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 )
 
 // ErrFileNotFound reports that a path does not exist inside a sandbox.
@@ -347,10 +348,17 @@ func (c Credential) String() string {
 	return "[redacted]"
 }
 
-// LogValue redacts the credential in structured logs. slog prefers this over
-// String, so without it a credential passed as a log attribute would print.
-func (c Credential) LogValue() any {
-	return "[redacted]"
+// LogValue redacts the credential in structured logs.
+//
+// It returns slog.Value, NOT any. slog only calls this method on a value that
+// satisfies slog.LogValuer, and that interface requires exactly this signature
+// — returning any means slog never calls it at all, and redaction falls back
+// on slog handing the value to fmt, which finds String(). That fallback does
+// redact, so nothing leaked while this method had the wrong signature, but it
+// made the protection an accident of fmt's lookup order rather than a property
+// of this type. See TestCredentialSatisfiesTheInterfaceSlogActuallyUses.
+func (c Credential) LogValue() slog.Value {
+	return slog.StringValue(c.String())
 }
 
 // MarshalJSON always fails, and that is the point. Redacting instead would let
