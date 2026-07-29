@@ -40,10 +40,29 @@ func sandboxSelector() string {
 //     still open.
 //   - It is younger than minAge. A pod is created before its run is recorded as
 //     live, so without a floor this sweep races the very run that owns the pod
-//     it is about to delete. The floor is also the only defence against a
-//     caller that computed live wrongly — an empty live set is legitimate on an
-//     idle system and cannot be rejected, so age is what stands between a bug
-//     upstream and every sandbox in the namespace.
+//     it is about to delete.
+//
+// How much the floor protects depends on a relationship this function cannot
+// see, and it is worth being exact about, because the tempting claim — that the
+// floor is a backstop against a caller that computed live wrongly — is only
+// true under one condition:
+//
+//	minAge > the pod's ActiveDeadlineSeconds
+//
+// A pod past its own ActiveDeadlineSeconds has been failed by Kubernetes, so it
+// cannot still be running. Only when the floor exceeds that ceiling does "older
+// than minAge" imply "not live", and only then is the floor a backstop rather
+// than a head start. That relationship is enforced where the two values meet,
+// in the dispatcher config's own Validate, because neither of them is this
+// client's to choose (#374).
+//
+// Until it holds, be clear about what this does and does not buy: with an
+// OrphanGrace of 30 minutes against a pod deadline measured in hours, the floor
+// protects a run's first 30 minutes and nothing after that. A live set that
+// wrongly omits a running ticket will have its sandbox deleted mid-stage, and
+// the stage will look like it stopped for no reason. The floor is a guard
+// against the create-then-record race it was written for; the backstop is the
+// invariant above.
 //
 // minAge is therefore required, and a non-positive one is refused permanently
 // rather than transiently: a retry of a sweep with no floor does the same wrong
@@ -81,7 +100,24 @@ func (s *Sandboxes) SweepOrphans(ctx context.Context, live []string, minAge time
 	var failures []error
 
 	for _, pod := range pods.Items {
-		if stillLive[pod.Labels[labelRunID]] {
+		// Two anomalies below, and both keep the pod. Neither is reachable
+		// through Create — podName rejects an empty run id, and the apiserver
+		// stamps a creation timestamp — but each would otherwise be a silent
+		// path to deleting something this sweep could not reason about, and
+		// every other decision here fails towards keeping a pod.
+		runID := pod.Labels[labelRunID]
+		if runID == "" {
+			s.logger.WarnContext(ctx, "keeping a sandbox pod with no run id: it cannot be matched against the live set",
+				"sandbox", pod.Name)
+			continue
+		}
+		if pod.CreationTimestamp.IsZero() {
+			s.logger.WarnContext(ctx, "keeping a sandbox pod with no creation timestamp: it cannot be aged against the floor",
+				"sandbox", pod.Name)
+			continue
+		}
+
+		if stillLive[runID] {
 			continue
 		}
 		if age := now.Sub(pod.CreationTimestamp.Time); age < minAge {
@@ -99,7 +135,7 @@ func (s *Sandboxes) SweepOrphans(ctx context.Context, live []string, minAge time
 		s.logger.WarnContext(ctx, "swept an orphaned sandbox",
 			"sandbox", pod.Name,
 			"ticket", pod.Labels[labelTicket],
-			"run_id", pod.Labels[labelRunID],
+			"run_id", runID,
 			"age_seconds", int64(now.Sub(pod.CreationTimestamp.Time).Seconds()),
 		)
 	}

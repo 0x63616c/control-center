@@ -290,3 +290,52 @@ func TestSweepAsksTheApiserverForItsOwnPodsOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestSweepKeepsAPodItCannotAttributeOrAge(t *testing.T) {
+	t.Parallel()
+
+	// Both of these are pods Create cannot produce — podName rejects an empty
+	// run id, and the apiserver stamps a creation timestamp. They are here
+	// because every other decision in this file fails towards keeping a pod,
+	// and these two were the only ones that failed towards deleting one.
+	unattributable := sandboxPod(101, "run-a", 4*time.Hour)
+	delete(unattributable.Labels, labelRunID)
+	unattributable.Name = "sandbox-ticket-101-unlabelled"
+
+	undateable := sandboxPod(102, "run-b", 4*time.Hour)
+	undateable.CreationTimestamp = metav1.Time{}
+
+	orphan := sandboxPod(103, "run-c", 4*time.Hour)
+
+	s, cs := newSweeper(t, unattributable, undateable, orphan)
+
+	deleted, err := s.SweepOrphans(t.Context(), nil, 15*time.Minute)
+	if err != nil {
+		t.Fatalf("SweepOrphans: %v", err)
+	}
+	if deleted != 1 {
+		t.Errorf("deleted = %d, want 1", deleted)
+	}
+
+	left := survivors(t, cs)
+	cases := []struct {
+		pod  string
+		want bool
+		why  string
+	}{
+		{
+			pod: unattributable.Name, want: true,
+			why: "no run id means it cannot be matched against the live set, and an unattributable pod is not the same as an unowned one",
+		},
+		{
+			pod: undateable.Name, want: true,
+			why: "a zero creation timestamp reads as the zero time, which is older than every floor — the one case where an anomaly would age a pod into deletion",
+		},
+		{pod: orphan.Name, want: false, why: "attributable, dateable, old and unowned"},
+	}
+	for _, tc := range cases {
+		if left[tc.pod] != tc.want {
+			t.Errorf("pod %s present = %t, want %t: %s", tc.pod, left[tc.pod], tc.want, tc.why)
+		}
+	}
+}
