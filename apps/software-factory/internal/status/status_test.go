@@ -695,9 +695,17 @@ func TestRefusesEachKindOfURLItCannotVouchFor(t *testing.T) {
 		{"an angle bracket, which opens an HTML comment", "https://example.com/a<b>c"},
 		{"a square bracket, which opens a markdown link", "https://example.com/a[b]c"},
 		{"a backtick, which closes the code span it may sit in", "https://example.com/a`b"},
-		{"a quote, which closes an HTML attribute", "https://example.com/a\"b"},
+		{"a double quote, which closes an HTML attribute", "https://example.com/a\"b"},
+		{"a single quote, which closes an HTML attribute just as well", "https://example.com/a'b"},
 		{"whitespace, which splits the value across the line", "https://example.com/a b"},
-		{"a control character", "https://example.com/a\x00b"},
+		// U+009F and not \x00, deliberately. url.Parse REJECTS every ASCII
+		// control character, so \x00 never reaches the character blocklist —
+		// it is stopped by the parse-error clause, and unicode.IsControl could
+		// be deleted with this row still green. The C1 range is the only
+		// control that survives url.Parse, and U+009F is the only member of it
+		// that is not ALSO unicode.IsSpace, so it is the one input that pins
+		// this clause and nothing else. Do not "simplify" it back.
+		{"a control character", "https://example.com/a\u009fb"},
 		{"a newline, which puts chosen text on a line of its own", "https://example.com/a\nb"},
 	} {
 		for _, renderer := range urlRenderers() {
@@ -752,5 +760,62 @@ func TestLinksOnlyAPullRequestOnGitHub(t *testing.T) {
 
 	if !strings.Contains(pickup().Body(), "]("+runURL+")") {
 		t.Error("the run URL is being held to the pull request host allowlist")
+	}
+}
+
+func TestLinksAPullRequestWhateverCaseTheHostIsWrittenIn(t *testing.T) {
+	t.Parallel()
+
+	// PullRequestURL is model output, and a model writing the brand's own
+	// capitalisation is an ordinary thing for it to do. Hosts are
+	// case-insensitive, so demoting one to a dead code span would be a correct
+	// pull request link silently lost — on a comment whose whole job is to say
+	// where the pull request is.
+	//
+	// Pinned in both directions on purpose. Before this the comparison was a
+	// plain ==, and swapping it for a case-insensitive one passed the suite
+	// untouched: neither behaviour was asserted, so either could be introduced
+	// by accident. The rejection half lives in TestLinksOnlyAPullRequestOnGitHub.
+	for _, raw := range []string{
+		"https://GitHub.com/0x63616c/world-wide-webb/pull/999",
+		"https://GITHUB.COM/0x63616c/world-wide-webb/pull/999",
+		"https://gitHUB.CoM/0x63616c/world-wide-webb/pull/999",
+	} {
+		p := proposed()
+		p.PullRequestURL = raw
+		if !strings.Contains(p.Body(), "\n"+raw+"\n") {
+			t.Errorf("%q is a github.com pull request URL but was not rendered as a link:\n%s", raw, p.Body())
+		}
+	}
+}
+
+func TestDoesNotFoldANonASCIIHostOntoGitHub(t *testing.T) {
+	t.Parallel()
+
+	// The companion to the case-insensitivity above: widening the comparison
+	// must not have widened it as far as a lookalike host.
+	//
+	// Be clear about what these rows do NOT pin. Swapping asciiLower for
+	// strings.EqualFold or strings.ToLower survives them — checked by mutation,
+	// both survive — because for the literal "github.com" the three are
+	// genuinely equivalent: Unicode folding only endangers a constant containing
+	// k or s (U+212A folds to k, U+017F to s) and this one has neither. No test
+	// can separate them today.
+	//
+	// ASCII-only lowering is still the right choice, for a reason that lives
+	// outside the test suite: that equivalence is a property of how this
+	// constant happens to be spelled, not of the approach, so a future host
+	// carrying a k or an s would silently reacquire the homograph with every
+	// test still green. See asciiLower's own comment.
+	for _, raw := range []string{
+		"https://gіthub.com/0x63616c/world-wide-webb/pull/999", // U+0456 Cyrillic і
+		"https://github。com/0x63616c/world-wide-webb/pull/999", // U+3002 ideographic full stop
+		"https://xn--githb-5wa.com/0x63616c/world-wide-webb/pull/999",
+	} {
+		p := proposed()
+		p.PullRequestURL = raw
+		if strings.Contains(p.Body(), "\n"+raw+"\n") {
+			t.Errorf("%q is not github.com but was rendered as a link", raw)
+		}
 	}
 }
