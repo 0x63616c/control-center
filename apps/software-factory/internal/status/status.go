@@ -246,13 +246,30 @@ func pipeline() string {
 }
 
 // runRef names the Temporal run, linked when there is somewhere to link to.
+//
+// The run URL is not held to pullRequestHost: it is operator config, and its
+// host is whatever the Temporal UI is eventually published on.
 func runRef(runID, runURL string) string {
-	link := linkedURL(runURL)
-	if link == "" {
+	if _, ok := linkedURL(runURL); !ok {
 		return code(runID)
 	}
-	return "[" + code(runID) + "](" + link + ")"
+	return "[" + code(runID) + "](" + runURL + ")"
 }
+
+// pullRequestHost is the only host this renderer will emit a pull request link
+// for.
+//
+// PullRequestURL is model output — the propose stage lifts it from the agent's
+// own result file, and that agent read issue text an attacker chose — so a
+// well-formed URL is not enough. Without this, `https://evil.example/pull/999`
+// is a working link on a comment carrying this service's name, and a reader has
+// been handed it by something they have reason to trust.
+//
+// This is a backstop, not the real fix. The real fix is that the propose stage
+// records the URL the GitHub API returned when it created the pull request,
+// rather than the one the model wrote; see the ticket referenced from the
+// package's PR. Until then this fails closed to the inert rendering below.
+const pullRequestHost = "github.com"
 
 // pullRequestRef renders the pull request a run opened.
 //
@@ -260,42 +277,58 @@ func runRef(runID, runURL string) string {
 // is the one thing a reader needs in order to work out what the propose stage
 // actually produced, and dropping it would leave a comment announcing a pull
 // request with no way to find out which one it meant or why it is missing.
+//
+// Inertly means inside a code span, via inert, which collapses whitespace and
+// caps the text at maxReasonRunes. A pathological value is therefore shown
+// truncated: the reader gets a lead on what propose produced, not a verbatim
+// copy of it.
 func pullRequestRef(rawURL string) string {
-	if link := linkedURL(rawURL); link != "" {
-		return link
+	if parsed, ok := linkedURL(rawURL); ok && parsed.Host == pullRequestHost {
+		return rawURL
 	}
 	return inert(rawURL, "_no pull request URL was recorded_")
 }
 
-// linkedURL is rawURL if it is a URL this renderer will emit as markup, and ""
-// if it is not.
+// linkedURL parses rawURL and reports whether it is a URL this renderer will
+// emit as markup at all. The parsed form is returned so a caller can hold it to
+// more than syntax — see pullRequestHost.
 //
-// Two separate things are being refused. A scheme other than http or https is a
-// link a reader should not be handed at all — `javascript:` most obviously, but
-// the point is the allowlist and not the example. And any of the characters
-// below breaks the markup the URL is about to sit inside: a single `)` closes
-// the markdown link early and hands the rest of the value to the renderer, a
-// newline puts attacker-chosen text on a line of its own where it reads as the
-// run's own words, and `<` opens an HTML comment beside the marker that says
-// which run a comment belongs to. None of them appear in a GitHub pull request
-// URL or a Temporal history URL, so refusing all of them costs nothing real.
+// Three separate things are refused, and each is refused on its own so that
+// none of them can be deleted without a test noticing.
+//
+// A scheme other than http or https is a link a reader should not be handed —
+// `javascript:` most obviously, but the point is the allowlist and not the
+// example. Userinfo is refused outright rather than tolerated: in
+// `https://github.com@evil.example/x` the part before the `@` is what a human
+// reads as the host and the part after it is where the link goes, so a URL
+// carrying any is either an attack or a mistake, and neither belongs in a
+// comment this service signs. And any of the characters below breaks the markup
+// the URL is about to sit inside: a single `)` closes the markdown link early
+// and hands the rest of the value to the renderer, a newline puts
+// attacker-chosen text on a line of its own where it reads as the run's own
+// words, and `<` opens an HTML comment beside the marker that says which run a
+// comment belongs to. None of them appear in a GitHub pull request URL or a
+// Temporal history URL, so refusing all of them costs nothing real.
 //
 // A refusal is not an error. The caller decides what to show instead, because
 // what a reader should see when a URL is unusable differs by which URL it was.
-func linkedURL(rawURL string) string {
+func linkedURL(rawURL string) (*url.URL, bool) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil || parsed.Host == "" {
-		return ""
+		return nil, false
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return ""
+		return nil, false
+	}
+	if parsed.User != nil {
+		return nil, false
 	}
 	if strings.ContainsFunc(rawURL, func(r rune) bool {
 		return unicode.IsSpace(r) || unicode.IsControl(r) || strings.ContainsRune("()<>[]`\"'", r)
 	}) {
-		return ""
+		return nil, false
 	}
-	return rawURL
+	return parsed, true
 }
 
 // inert renders untrusted text inside a code span, and falls back to absent
