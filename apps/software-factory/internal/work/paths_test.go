@@ -1,6 +1,9 @@
 package work
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestStatusMarkerBuildsARunAndStepScopedMarker(t *testing.T) {
 	t.Parallel()
@@ -100,5 +103,27 @@ func TestStatusMarkerInFindsAMarkerOnlyOnTheFirstLine(t *testing.T) {
 				t.Errorf("StatusMarkerIn = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestRepoDirIsInsideTheSandboxRootWithoutBeingIt(t *testing.T) {
+	// Inside, because transfer.go confines every write to the sandbox root.
+	// Not equal to it, because the run's own scaffolding lives at the root and
+	// a checkout over the top of that puts prompts inside the git working tree.
+	if !strings.HasPrefix(RepoDir, SandboxRoot+"/") {
+		t.Errorf("RepoDir = %q, want a path under %q", RepoDir, SandboxRoot)
+	}
+	if RepoDir == SandboxRoot {
+		t.Errorf("RepoDir must not be the sandbox root itself: %q", RepoDir)
+	}
+}
+
+func TestStageScaffoldingIsNotInsideTheCheckout(t *testing.T) {
+	// The reason RepoDir is a sibling of the scaffolding rather than its parent:
+	// anything under the checkout is untracked content in the working tree that
+	// `implement` could commit into the branch it pushes.
+	paths := StageKey{Ticket: 1, RunID: "run", Stage: StagePlan}.Paths()
+	if strings.HasPrefix(paths.Dir, RepoDir+"/") {
+		t.Errorf("stage dir %q is inside the checkout %q", paths.Dir, RepoDir)
 	}
 }

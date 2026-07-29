@@ -13,6 +13,24 @@ import (
 // worker writes into it. Changing it means changing both.
 const SandboxRoot = "/work"
 
+// RepoDir is where the ticket's repository is checked out inside the sandbox,
+// and the directory a stage's `codex exec` must run in.
+//
+// It is a subdirectory of SandboxRoot rather than SandboxRoot itself, because
+// the sandbox root also holds this run's scaffolding — .exec/ and the per-stage
+// prompt, schema and result files. Checking the repository out over the top of
+// those would put them inside the git working tree, where `implement` is one
+// `git add -A` away from committing a prompt into the branch it pushes.
+//
+// **Nothing creates this directory ahead of the clone, deliberately.** The
+// image cannot: /work is an emptyDir, which masks anything baked under it. The
+// container runtime must not: a WORKDIR it has to create inside that emptyDir
+// is created as root with mode 0755, and the sandbox uid then cannot write its
+// own checkout — a permission error that reads as a broken tool. A directory
+// the cloning process creates is owned by that process, so the clone creates
+// it, and the image's WORKDIR stays at the group-writable SandboxRoot.
+const RepoDir = SandboxRoot + "/repo"
+
 // StageKey identifies one stage attempt, and is the whole of that identity.
 //
 // Every deterministic path a stage keys off is derived from these three fields

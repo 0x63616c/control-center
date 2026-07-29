@@ -32,6 +32,7 @@ another `cmd/<name>/` sharing `internal/`.
 
 ```
 cmd/worker/        composition root: manual DI, graceful shutdown
+cmd/sandbox-exec/  the sandbox image's pidfile shim — what makes a stage killable
 internal/
   work/            domain vocabulary — every seam is expressed in these types
   config/          the only place os.Getenv is legal
