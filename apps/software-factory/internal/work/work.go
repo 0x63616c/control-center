@@ -43,6 +43,15 @@ var ErrPermanent = errors.New("permanent failure")
 // already spent its single-use refresh token cannot.
 var ErrVersionConflict = errors.New("stored object changed since it was read")
 
+// ErrNoPrecondition reports that a write named no precondition at all: the
+// version handed to it was never set, or was dropped on the way.
+//
+// It is separate from ErrVersionConflict because the two are opposite
+// instructions. A conflict is news about another writer and may be worth
+// retrying; this is the caller's own bug, and retrying it changes nothing.
+// Compare with errors.Is.
+var ErrNoPrecondition = errors.New("write names no precondition")
+
 // SecretVersion is the state a read of a stored object observed, and the
 // precondition a write derived from that read applies to it.
 //
@@ -50,9 +59,9 @@ var ErrVersionConflict = errors.New("stored object changed since it was read")
 // Kubernetes treats an empty resourceVersion on an update as an unconditional
 // overwrite that never conflicts, so with a bare string a dropped return value
 // or an unset field disarms a compare-and-swap silently, leaving code that
-// reads exactly like a lease and enforces nothing. Here the zero value is a
-// precondition no store can satisfy, and a blind write is something a caller
-// says out loud with Unconditional.
+// reads exactly like a lease and enforces nothing. Here the empty string is
+// reachable only through Unconditional, and the zero value has no way to
+// produce one at all — see Precondition.
 type SecretVersion struct {
 	token         string
 	unconditional bool
@@ -73,19 +82,26 @@ func Unconditional() SecretVersion {
 	return SecretVersion{unconditional: true}
 }
 
-// Token returns the store's own version string, empty unless this is an
-// observed version.
-func (v SecretVersion) Token() string { return v.token }
-
-// IsUnconditional reports whether the write may proceed regardless of what is
-// stored.
-func (v SecretVersion) IsUnconditional() bool { return v.unconditional }
-
-// IsZero reports that this names no precondition at all, which a store must
-// refuse rather than translate into a blind write. It is one call so that no
-// implementation has to remember that "no token" and "no precondition" are
-// different things.
-func (v SecretVersion) IsZero() bool { return v.token == "" && !v.unconditional }
+// Precondition returns the store's own version string for a write to apply,
+// and ErrNoPrecondition if this version names none.
+//
+// It is the only way out of the type, and it returns an error so that the
+// refusal is mechanical rather than remembered. The natural implementation
+// assigns whatever it is given straight onto the write it is about to make; if
+// the zero value could answer that question at all it would answer "", which
+// Kubernetes reads as an unconditional overwrite, and the compare-and-swap
+// would be gone with nothing to see at the call site. Ignoring the error here
+// fails errcheck, so the mistake stops at lint rather than at a spent refresh
+// token.
+//
+// An empty string is therefore a deliberate blind write and nothing else: only
+// Unconditional can produce one.
+func (v SecretVersion) Precondition() (resourceVersion string, err error) {
+	if v.token == "" && !v.unconditional {
+		return "", ErrNoPrecondition
+	}
+	return v.token, nil
+}
 
 // Stage is one step of the pipeline.
 type Stage string

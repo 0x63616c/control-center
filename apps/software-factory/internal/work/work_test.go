@@ -175,15 +175,15 @@ func TestSandboxSpecCarriesTheRunIDInTheSameFormAsAStageKey(t *testing.T) {
 	}
 }
 
-func TestAnObservedVersionIsAPrecondition(t *testing.T) {
+func TestAnObservedVersionAppliesItselfToTheWrite(t *testing.T) {
 	t.Parallel()
 
-	v := work.ObservedVersion("41208")
-	if v.Token() != "41208" {
-		t.Errorf("Token() = %q, want the observed token", v.Token())
+	got, err := work.ObservedVersion("41208").Precondition()
+	if err != nil {
+		t.Fatalf("Precondition() on an observed version: %v", err)
 	}
-	if v.IsUnconditional() || v.IsZero() {
-		t.Error("an observed version does not constrain the write it is handed to")
+	if got != "41208" {
+		t.Errorf("Precondition() = %q, want the observed token", got)
 	}
 }
 
@@ -192,33 +192,44 @@ func TestAnEmptyTokenNeverBecomesAPrecondition(t *testing.T) {
 
 	// An empty resourceVersion is an unconditional overwrite to the Kubernetes
 	// apiserver, so a store that read "" and passed it on would silently write
-	// blind. It has to arrive as the zero value a store must refuse instead.
-	v := work.ObservedVersion("")
-	if !v.IsZero() || v.IsUnconditional() {
-		t.Error("an empty token produced a usable version; a lease would be silently disarmed")
+	// blind. It has to arrive as a refusal instead.
+	if _, err := work.ObservedVersion("").Precondition(); !errors.Is(err, work.ErrNoPrecondition) {
+		t.Errorf("Precondition() on an empty token = %v, want a refusal; a lease would be silently disarmed", err)
 	}
 }
 
-func TestTheZeroVersionIsAPreconditionNoStoreCanSatisfy(t *testing.T) {
+func TestAForgottenVersionCannotYieldAUsablePrecondition(t *testing.T) {
 	t.Parallel()
 
-	var v work.SecretVersion
-	if !v.IsZero() {
-		t.Error("the zero SecretVersion does not report itself as one")
+	// The whole point of the type: the natural implementation assigns what it
+	// gets straight onto the write, so a dropped or unset version must not be
+	// able to hand back the empty string that means "overwrite blindly".
+	var forgotten work.SecretVersion
+	if _, err := forgotten.Precondition(); !errors.Is(err, work.ErrNoPrecondition) {
+		t.Errorf("Precondition() on the zero version = %v, want a refusal", err)
 	}
-	if v.IsUnconditional() {
-		t.Error("a forgotten version reads as an unconditional overwrite")
+}
+
+func TestAForgottenVersionIsDistinguishableFromContention(t *testing.T) {
+	t.Parallel()
+
+	// A store refusing a caller's mistake and a store reporting someone else's
+	// write are opposite instructions: one is a bug to fix, the other is a
+	// conflict to handle.
+	_, err := work.SecretVersion{}.Precondition()
+	if errors.Is(err, work.ErrVersionConflict) {
+		t.Error("a missing precondition reports as a version conflict; a caller would retry its own bug")
 	}
 }
 
 func TestAnUnconditionalWriteMustBeAskedForByName(t *testing.T) {
 	t.Parallel()
 
-	v := work.Unconditional()
-	if !v.IsUnconditional() {
-		t.Error("Unconditional() does not report itself as unconditional")
+	got, err := work.Unconditional().Precondition()
+	if err != nil {
+		t.Fatalf("Precondition() on a deliberate blind write: %v", err)
 	}
-	if v.IsZero() {
-		t.Error("Unconditional() reads as a forgotten version; a store would refuse a deliberate blind write")
+	if got != "" {
+		t.Errorf("Precondition() = %q, want the empty precondition that constrains nothing", got)
 	}
 }
