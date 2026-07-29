@@ -50,6 +50,15 @@ type Source struct {
 	gate chan struct{}
 }
 
+// sandboxRefreshWindow is how close to expiry the CLI begins refreshing on its
+// own — CHATGPT_ACCESS_TOKEN_REFRESH_WINDOW_MINUTES, codex-rs
+// login/src/auth/manager.rs:181 @ rust-v0.145.0.
+//
+// A sandbox's copy has a blanked refresh token and cannot refresh, so a token
+// that reaches this window mid-stage does not degrade: verified live, codex
+// exec exits 1 having made 104 requests to the auth endpoint in 35 seconds.
+const sandboxRefreshWindow = 5 * time.Minute
+
 // New constructs a Source. Required dependencies are positional; everything
 // tunable is an option with a default that is correct for this service.
 //
@@ -57,7 +66,11 @@ type Source struct {
 // empty holder identity cannot be attributed at 3am, which is the only hour
 // anyone reads one. The composition root passes `<pod name>/<short random>`;
 // the suffix distinguishes two runs of the same pod name.
-func New(store SecretStore, refresher TokenRefresher, clk clock.Clock, log *slog.Logger, holder string, opts ...Option) (*Source, error) {
+//
+// maxStageDuration is the longest a stage may run. It is positional because
+// the refresh margin is meaningless without it: a sandbox cannot refresh the
+// copy it is handed, so the margin has to outlast a whole stage (INV-3).
+func New(store SecretStore, refresher TokenRefresher, clk clock.Clock, log *slog.Logger, holder string, maxStageDuration time.Duration, opts ...Option) (*Source, error) {
 	o := options{
 		metrics:        noMetrics{},
 		margin:         defaultRefreshMargin,
@@ -89,6 +102,18 @@ func New(store SecretStore, refresher TokenRefresher, clk clock.Clock, log *slog
 		return nil, fmt.Errorf("a codex token source needs positive durations")
 	case o.waitRounds < 1 || o.storeAttempts < 1 || o.storeBackoff <= 0:
 		return nil, fmt.Errorf("a codex token source needs at least one wait round and one store attempt")
+	case maxStageDuration <= 0:
+		return nil, fmt.Errorf("a codex token source needs the longest a stage may run, to size the refresh margin against")
+	case o.margin <= maxStageDuration+sandboxRefreshWindow:
+		// INV-3. A sandbox is handed a copy it cannot refresh, so the token it
+		// carries must outlive the whole stage plus the window in which the
+		// CLI would try to refresh it. Checked here for the same reason the
+		// lease TTL is: it is a relationship between two tunables, and prose
+		// does not survive somebody tuning one of them.
+		return nil, fmt.Errorf(
+			"the refresh margin (%s) must exceed the longest stage (%s) plus the window in which a sandbox refreshes itself (%s): "+
+				"a sandbox cannot refresh, so a shorter margin hands out a token that dies mid-stage",
+			o.margin, maxStageDuration, sandboxRefreshWindow)
 	case o.leaseTTL <= o.refreshTimeout:
 		// The takeover policy rests on the lease outlasting the presentation
 		// it bounds. Equal or shorter, an expired lease no longer means "the
@@ -313,7 +338,7 @@ func (s *Source) refresh(ctx context.Context, cred credentialFile, state refresh
 
 	// A worker draining on SIGTERM must not begin something it cannot finish.
 	if err := ctx.Err(); err != nil {
-		s.releaseLease(ctx, leaseState, leaseVersion)
+		s.releaseLease(ctx, state, leaseState, leaseVersion)
 		return roundResult{done: true}, fmt.Errorf("cancelled before presenting the codex refresh token: %w", err)
 	}
 
@@ -339,7 +364,7 @@ func (s *Source) present(ctx context.Context, cred credentialFile, state, leaseS
 		// was definitely not presented, so this stays an ordinary blip rather
 		// than a manual browser login — which is what makes the strictness
 		// everywhere else affordable.
-		s.releaseLease(ctx, leaseState, leaseVersion)
+		s.releaseLease(ctx, state, leaseState, leaseVersion)
 		return roundResult{done: true}, fmt.Errorf("the codex refresh request never reached the provider: %w", err)
 
 	case RefreshUnknown:
@@ -356,8 +381,18 @@ func (s *Source) present(ctx context.Context, cred credentialFile, state, leaseS
 		s.settleRejected(ctx, state, leaseState, leaseVersion)
 		return roundResult{done: true}, s.unusable(fmt.Errorf("%w: %w", ErrRefreshRejected, err))
 
+	case RefreshReused:
+		// Something else presented this token. Re-seeding without finding it
+		// first just hands the second holder a fresh credential to spend, so
+		// this reports the violation rather than the refusal.
+		s.metrics.CredentialDead(DeathSingleWriterViolated)
+		s.settleRejected(ctx, state, leaseState, leaseVersion)
+		s.log.ErrorContext(ctx, "INV-1 violated: the provider reports this refresh token was already presented elsewhere",
+			"holder", s.holder, "serial", state.Serial, "remedy", "find the other holder before re-seeding, or it will spend the replacement too")
+		return roundResult{done: true}, s.unusable(fmt.Errorf("%w: %w", ErrSingleWriterViolated, err))
+
 	case RefreshRotated:
-		token, err := s.settle(ctx, cred, state, leaseVersion, res)
+		token, err := s.settle(ctx, cred, state, leaseState, leaseVersion, res)
 		return roundResult{token: token, done: true}, err
 	}
 	// Unreachable: the switch is exhaustive and the linter enforces it. An
@@ -368,7 +403,21 @@ func (s *Source) present(ctx context.Context, cred credentialFile, state, leaseS
 }
 
 // settle stores the rotated pair and clears the lease, in one write.
-func (s *Source) settle(ctx context.Context, cred credentialFile, state refreshState, leaseVersion work.SecretVersion, res Refreshed) (work.Credential, error) {
+func (s *Source) settle(ctx context.Context, cred credentialFile, state, leaseState refreshState, leaseVersion work.SecretVersion, res Refreshed) (work.Credential, error) {
+	// Everything after a presentation runs under a deadline derived from the
+	// lease we hold. Without one, an Update against a wedged apiserver hangs
+	// at TCP level, our lease expires under us, and another holder concludes
+	// we are dead and presents the token we already spent. Floored at one
+	// presentation's worth of time, because a rotated pair that is not yet
+	// durable must still get a fair attempt even if the lease has run out —
+	// losing it is worse than writing late.
+	budget := leaseState.Attempt.LeaseExpiresAt.Sub(s.clock.Now())
+	if budget < s.refreshTimeout {
+		budget = s.refreshTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+
 	ourSerial := state.Serial + 1
 	authBytes, err := cred.withRotation(res, s.clock.Now())
 	if err != nil {
@@ -440,6 +489,15 @@ func (s *Source) recoverSettle(
 			s.log.InfoContext(ctx, "rotated the codex credential", "holder", s.holder, "serial", ourSerial)
 			return s.usable(res)
 
+		case state.Serial == prev.Serial && state.Attempt != nil && state.Attempt.TakeoverOf == s.holder:
+			// Our lease expired mid-settle and somebody took it over. That is
+			// not a foreign writer, and sending an operator hunting one wastes
+			// the only person who can fix this.
+			s.metrics.CredentialDead(DeathCredentialLost)
+			s.log.ErrorContext(ctx, "a rotated codex credential could not be stored before another holder took the lease over",
+				"holder", s.holder, "serial", ourSerial, "taken_over_by", state.Attempt.Holder, "remedy", remedy)
+			return work.Credential{}, s.credentialLost(fmt.Errorf("%s took the lease over before the rotation could be stored", state.Attempt.Holder))
+
 		default:
 			s.metrics.CredentialDead(DeathSingleWriterViolated)
 			s.log.ErrorContext(ctx, "INV-1 violated: something other than this source rotated the codex credential",
@@ -460,6 +518,15 @@ func (s *Source) recoverSettle(
 // usable checks that a rotated token is worth handing out, having already
 // stored it.
 func (s *Source) usable(res Refreshed) (work.Credential, error) {
+	if res.AccessToken.Reveal() == "" {
+		// The rotation is stored by the time we get here, so the credential
+		// chain is intact and this is emphatically not a re-seed. There is
+		// simply nothing to hand out, and looping to ask again would spend the
+		// chain a link at a time.
+		s.metrics.CredentialDead(DeathNoAccessToken)
+		return work.Credential{}, fmt.Errorf(
+			"the codex credential rotated and was stored, but the provider returned no access token to use: %w", work.ErrPermanent)
+	}
 	exp, err := expiryOf(res.AccessToken)
 	if err != nil {
 		s.metrics.CredentialDead(DeathUnseeded)
@@ -487,8 +554,17 @@ func (s *Source) credentialLost(cause error) error {
 // the call over a failed cleanup would report a problem that does not exist. It
 // detaches from the caller's context because releasing is exactly what must
 // still happen when that context is what cancelled us.
-func (s *Source) releaseLease(ctx context.Context, leaseState refreshState, version work.SecretVersion) {
-	cleared, err := encodeRefreshState(refreshState{Serial: leaseState.Serial, LastWriter: leaseState.LastWriter})
+func (s *Source) releaseLease(ctx context.Context, prior, leaseState refreshState, version work.SecretVersion) {
+	// Releasing clears OUR attempt. It must not clear the one we took over
+	// from: that holder's outcome is still unknown, and its marker is the only
+	// thing bounding takeover at a single presentation. We reached here having
+	// presented nothing, so restoring it hands the unspent takeover to whoever
+	// comes next rather than erasing the budget and letting everyone have one.
+	release := refreshState{Serial: leaseState.Serial, LastWriter: leaseState.LastWriter}
+	if leaseState.Attempt != nil && leaseState.Attempt.TakeoverOf != "" {
+		release = prior
+	}
+	cleared, err := encodeRefreshState(release)
 	if err != nil {
 		s.log.WarnContext(ctx, "could not encode a released codex refresh lease", "holder", s.holder, "error", err)
 		return

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"net/url"
+	"strings"
 	"sync/atomic"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
@@ -69,7 +70,19 @@ func NewHTTPRefresher(client *http.Client, tokenURL, clientID string) (*HTTPRefr
 	if parsed.Scheme != "https" && (parsed.Scheme != "http" || !isLoopback(parsed.Host)) {
 		return nil, fmt.Errorf("the codex token endpoint %q must be https, or http to loopback for tests", tokenURL)
 	}
-	return &HTTPRefresher{client: client, tokenURL: tokenURL, clientID: clientID}, nil
+	// Go replays a POST body on 307/308 — NewRequestWithContext sets GetBody
+	// for a *bytes.Reader — so a redirect would hand the refresh token to
+	// whatever host the response names, including a plaintext one. That would
+	// defeat the scheme check above, which only ever sees the initial URL.
+	//
+	// The client is copied rather than mutated: the caller may share it, and
+	// silently changing its redirect policy would be a side effect nobody
+	// asked for.
+	bounded := *client
+	bounded.CheckRedirect = func(req *http.Request, _ []*http.Request) error {
+		return fmt.Errorf("refusing to follow a redirect to %s: the refresh token travels in the request body and must reach only the configured endpoint", req.URL.Host)
+	}
+	return &HTTPRefresher{client: &bounded, tokenURL: tokenURL, clientID: clientID}, nil
 }
 
 func isLoopback(host string) bool {
@@ -160,30 +173,38 @@ type tokenResponse struct {
 func (r tokenResponse) errorCode() string {
 	var bare string
 	if err := json.Unmarshal(r.Error, &bare); err == nil && bare != "" {
-		return bare
+		return strings.ToLower(bare)
 	}
 	var object struct {
 		Code string `json:"code"`
 	}
 	if err := json.Unmarshal(r.Error, &object); err == nil && object.Code != "" {
-		return object.Code
+		return strings.ToLower(object.Code)
 	}
-	return r.Code
+	return strings.ToLower(r.Code)
 }
 
-// refusals are the codes that mean the refresh token itself is finished, taken
-// from the CLI's own permanent-failure set rather than from RFC 6749 — which
-// names only invalid_grant and would miss every reuse case.
+// refusals are the codes that mean the refresh token itself is finished.
 //
-// refresh_token_reused is the interesting one: it is the provider telling us
-// that something else already presented this token, which is INV-1 violated
-// somewhere outside this process.
+// The first three are the CLI's own permanent-failure set. invalid_grant is
+// NOT — the CLI maps it to a transient error and retries. That divergence is
+// deliberate and must not be "corrected" back: retrying a single-use grant is
+// how a live credential becomes a dead one, and this package's whole asymmetry
+// says an unrecoverable mistake beats an unnecessary halt.
+//
+// Matched lowercased, as the CLI does, so a provider that changes the case of
+// a code cannot silently demote a refusal to an unknown outcome — which would
+// route an operator to the runbook row offering one more presentation.
 var refusals = map[string]bool{
 	"refresh_token_expired":     true,
 	"refresh_token_reused":      true,
 	"refresh_token_invalidated": true,
 	"invalid_grant":             true,
 }
+
+// reusedCode is the one refusal with a different recovery: something else
+// already presented this token.
+const reusedCode = "refresh_token_reused"
 
 // classify turns one HTTP answer into an outcome.
 //
@@ -203,21 +224,27 @@ func classify(status int, body []byte) (Refreshed, RefreshOutcome, error) {
 		if parseErr != nil {
 			return Refreshed{}, RefreshUnknown, fmt.Errorf("the codex token endpoint answered 200 with a body that is not JSON: %w", parseErr)
 		}
-		if parsed.AccessToken == "" {
-			// Without one there is nothing to use, and the grant was consumed
-			// getting here. An absent refresh_token or id_token is different:
-			// it means unchanged, and the stored one stays.
-			return Refreshed{}, RefreshUnknown, fmt.Errorf("the codex token endpoint answered 200 without an access token")
-		}
+		// Every field is optional, access_token included, and an absent one
+		// means unchanged. So a 200 is a successful rotation whatever subset
+		// it carries, and everything it did return must be handed back to be
+		// stored — the grant is spent either way, and dropping its replacement
+		// is what kills the credential. Whether what came back is usable is
+		// the caller's decision, made after it is durable.
 		return Refreshed{
 			AccessToken:  work.NewCredential(parsed.AccessToken),
 			RefreshToken: work.NewCredential(parsed.RefreshToken),
 			IDToken:      work.NewCredential(parsed.IDToken),
 		}, RefreshRotated, nil
 
+	case parsed.errorCode() == reusedCode:
+		return Refreshed{}, RefreshReused, fmt.Errorf("the codex token endpoint reports this refresh token was already presented (%d %s)", status, parsed.errorCode())
+
 	// 401 is a refusal whatever it says: the credential was not accepted.
 	case status == http.StatusUnauthorized || refusals[parsed.errorCode()]:
-		return Refreshed{}, RefreshRejected, fmt.Errorf("the codex token endpoint refused the refresh token (%d %s: %s)", status, parsed.errorCode(), parsed.Description)
+		// The provider's error_description is free text under its control and
+		// is deliberately not interpolated — an error string here reaches the
+		// cluster's log pipeline, and the code alone identifies the condition.
+		return Refreshed{}, RefreshRejected, fmt.Errorf("the codex token endpoint refused the refresh token (%d %s)", status, parsed.errorCode())
 
 	default:
 		return Refreshed{}, RefreshUnknown, fmt.Errorf("the codex token endpoint answered %d (%s), so whether it consumed the refresh token is unknown", status, parsed.errorCode())

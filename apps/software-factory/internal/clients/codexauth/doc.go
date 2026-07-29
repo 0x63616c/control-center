@@ -66,8 +66,18 @@
 // the provider never consumed A's grant, in which case B recovers fully, or it
 // did, in which case B is refused and the operator learns the cause by name —
 // the dead holder and when it started — rather than a bare refusal code from
-// the provider. A second unresolved takeover halts, so no crash-loop can
-// present repeatedly.
+// the provider.
+//
+// The bound is one PRESENTATION beyond an unknown outcome, per credential
+// generation, and it is enforced by the marker rather than by a counter. B's
+// takeover leaves takeover_of set, so a third actor finding that attempt still
+// unresolved halts instead of presenting: no crash-loop can present
+// repeatedly. If B releases without presenting — its request never reached the
+// wire, or it was cancelled while draining — it restores the attempt it took
+// over rather than clearing it, so the unspent takeover passes to whoever
+// comes next instead of the record of A's unknown outcome being erased. That
+// asymmetry is the whole of the bound: clearing on release would give every
+// subsequent actor a fresh takeover.
 //
 // Why one takeover is safe: A is dead or definitively failed (its lease TTL is
 // ten times the hard bound on one presentation); if A got a pair and died, that
@@ -99,6 +109,7 @@
 //	codex_auth_credential_dead{outcome_unknown} a result was lost         see below
 //	codex_auth_credential_dead{single_writer_violated} a foreign writer   find who first
 //	codex_auth_credential_dead{credential_lost} rotated, not stored       re-seed
+//	codex_auth_credential_dead{no_access_token} rotated, none to use      chain intact; investigate
 //	codex_auth_refresh_total{takeover} non-zero a holder died mid-refresh nothing; it recovered
 //
 // For outcome_unknown the operator has a choice, and it is a real one: re-seed,
@@ -154,7 +165,14 @@
 //     resourceVersion. Never a value, and never a length: a length is a
 //     fingerprint.
 //   - Every wrapped error names a Secret, a key or a step. No token value is
-//     interpolated into one, including the OAuth error path.
+//     interpolated into one, including the OAuth error path — and nothing
+//     provider-controlled either: the token endpoint's free-text
+//     error_description is deliberately dropped, since an error string here
+//     reaches the cluster's log pipeline and the machine-readable code alone
+//     identifies the condition.
+//   - The refresh request is never redirected. Go replays a POST body on
+//     307/308, so following one would hand the refresh token to a host the
+//     response chose, defeating the endpoint's scheme check.
 //   - The refresh token travels in a JSON request body, never in a URL or a
 //     query string; only the provider's own error code is logged from a
 //     response, never the body that carries the new pair.

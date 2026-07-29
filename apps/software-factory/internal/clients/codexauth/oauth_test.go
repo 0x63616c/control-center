@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -116,20 +117,90 @@ func TestHTTPRefresherLeavesAnOmittedTokenUnchanged(t *testing.T) {
 	}
 }
 
-func TestHTTPRefresherRefusesAResponseWithNoAccessToken(t *testing.T) {
+func TestHTTPRefresherReturnsARotatedRefreshTokenEvenWithNoAccessToken(t *testing.T) {
 	t.Parallel()
-	// Without an access token there is nothing to use, and the grant was
-	// consumed getting here.
+	// Every field of the response is optional, access_token included, and the
+	// CLI keeps the stored value for each absent one. So a 200 carrying only a
+	// rotated refresh token is a successful, non-destructive refresh — and
+	// discarding it would spend the old token and drop its replacement, which
+	// is the dead credential this package exists to prevent.
 	refresher := newTestRefresher(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"refresh_token":"new-r"}`))
 	})
 
-	_, outcome, err := refresher.Refresh(context.Background(), work.NewCredential(testToken))
-	if err == nil {
-		t.Fatal("Refresh accepted a response carrying no access token")
+	res, outcome, err := refresher.Refresh(context.Background(), work.NewCredential(testToken))
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
 	}
-	if outcome != RefreshUnknown {
-		t.Errorf("outcome = %s, want %s", outcome, RefreshUnknown)
+	if outcome != RefreshRotated {
+		t.Fatalf("outcome = %s, want %s — the grant was spent and its replacement arrived", outcome, RefreshRotated)
+	}
+	if res.RefreshToken.Reveal() != "new-r" {
+		t.Fatal("the rotated refresh token was discarded; the old one is spent and nothing stores its replacement")
+	}
+}
+
+func TestHTTPRefresherReportsAReusedRefreshTokenDistinctlyFromARefusal(t *testing.T) {
+	t.Parallel()
+	// "Reused" is the provider telling us something else already presented
+	// this token. That is INV-1 violated outside this process, and its
+	// recovery is to find the other holder — not to re-seed, which would just
+	// feed the second holder a fresh credential to eat.
+	refresher := newTestRefresher(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"code":"refresh_token_reused"}}`))
+	})
+
+	_, outcome, err := refresher.Refresh(context.Background(), work.NewCredential(testToken))
+	if outcome != RefreshReused {
+		t.Fatalf("outcome = %s, want %s", outcome, RefreshReused)
+	}
+	if err == nil {
+		t.Fatal("Refresh succeeded on a reused token")
+	}
+}
+
+func TestHTTPRefresherMatchesRefusalCodesRegardlessOfCase(t *testing.T) {
+	t.Parallel()
+	// The CLI lowercases before matching. Mislabelling a refusal as unknown
+	// routes the operator to the runbook row that offers one more presentation
+	// of a possibly-spent token.
+	for _, body := range []string{`{"error":"Refresh_Token_Reused"}`, `{"error":{"code":"REFRESH_TOKEN_REUSED"}}`} {
+		refresher := newTestRefresher(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(body))
+		})
+		if _, outcome, _ := refresher.Refresh(context.Background(), work.NewCredential(testToken)); outcome != RefreshReused {
+			t.Errorf("%s gave outcome %s, want %s", body, outcome, RefreshReused)
+		}
+	}
+}
+
+func TestHTTPRefresherRefusesToFollowARedirect(t *testing.T) {
+	t.Parallel()
+	// Go replays a POST body on 307/308, GetBody and all, so a redirect would
+	// hand the refresh token to another host — including a plaintext one,
+	// defeating the https check the constructor performs on the initial URL.
+	var landed atomic.Bool
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), testToken) {
+			landed.Store(true)
+		}
+		_, _ = w.Write([]byte(`{"access_token":"a","refresh_token":"r"}`))
+	}))
+	t.Cleanup(elsewhere.Close)
+
+	refresher := newTestRefresher(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, elsewhere.URL, http.StatusTemporaryRedirect)
+	})
+
+	_, _, err := refresher.Refresh(context.Background(), work.NewCredential(testToken))
+	if landed.Load() {
+		t.Fatal("the refresh token was replayed to a second host by a redirect")
+	}
+	if err == nil {
+		t.Error("Refresh followed a redirect instead of refusing it")
 	}
 }
 
@@ -144,7 +215,7 @@ func TestHTTPRefresherReportsARefusedTokenAsARejection(t *testing.T) {
 		want   string
 	}{
 		"a bare error string":         {400, `{"error":"refresh_token_expired"}`, "refresh_token_expired"},
-		"an error object with a code": {400, `{"error":{"code":"refresh_token_reused"}}`, "refresh_token_reused"},
+		"an error object with a code": {400, `{"error":{"code":"refresh_token_invalidated"}}`, "refresh_token_invalidated"},
 		"a top-level code":            {400, `{"code":"refresh_token_invalidated"}`, "refresh_token_invalidated"},
 		"a standard invalid grant":    {400, `{"error":"invalid_grant"}`, "invalid_grant"},
 		// 401 is permanent whatever it says: the credential is not accepted.

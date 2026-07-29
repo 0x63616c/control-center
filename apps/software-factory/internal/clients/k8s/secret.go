@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -27,12 +28,22 @@ type API struct {
 	clientset kubernetes.Interface
 }
 
+// apiTimeout bounds a single request to the API server.
+//
+// Without it client-go waits indefinitely, so a wedged apiserver hangs a call
+// at TCP level rather than failing it. That matters more here than the latency
+// suggests: the caller holds a time-bounded lease while it writes, and a write
+// that hangs past the lease lets another holder conclude it is dead and
+// present a refresh token it has already spent.
+const apiTimeout = 30 * time.Second
+
 // NewInClusterAPI connects using the pod's own service account.
 func NewInClusterAPI() (*API, error) {
 	config, err := rest.InClusterConfig()
 	if err != nil {
 		return nil, fmt.Errorf("reading this pod's Kubernetes credentials: %w", err)
 	}
+	config.Timeout = apiTimeout
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return nil, fmt.Errorf("building a Kubernetes client: %w", err)

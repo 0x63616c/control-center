@@ -30,8 +30,15 @@ const (
 	// RefreshNotSent means no part of the request reached the wire: the token
 	// was definitely not presented and may safely be presented again.
 	RefreshNotSent
-	// RefreshRejected means the provider refused the token: spent or revoked.
+	// RefreshRejected means the provider refused the token: expired, revoked,
+	// or otherwise finished.
 	RefreshRejected
+	// RefreshReused means the provider refused the token because it had
+	// already been presented. That is not our credential going stale — it is
+	// INV-1 violated by something outside this process, and it has a different
+	// recovery: find the other holder before re-seeding, or the replacement
+	// gets eaten too.
+	RefreshReused
 	// RefreshRotated means a new pair was issued.
 	RefreshRotated
 )
@@ -45,6 +52,8 @@ func (o RefreshOutcome) String() string {
 		return "not_sent"
 	case RefreshRejected:
 		return "rejected"
+	case RefreshReused:
+		return "reused"
 	case RefreshRotated:
 		return "rotated"
 	default:
@@ -100,6 +109,10 @@ const (
 	DeathSingleWriterViolated DeathReason = "single_writer_violated"
 	// DeathCredentialLost means a rotation could not be stored.
 	DeathCredentialLost DeathReason = "credential_lost"
+	// DeathNoAccessToken means a refresh rotated the credential but returned
+	// no access token to use. The chain is intact and stored; there is simply
+	// nothing to hand out.
+	DeathNoAccessToken DeathReason = "no_access_token"
 )
 
 // Metrics records credential outcomes.

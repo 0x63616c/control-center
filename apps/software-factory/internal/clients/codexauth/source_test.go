@@ -17,7 +17,13 @@ import (
 // testNow anchors every test's fake clock. Nothing here reads the real one.
 var testNow = time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)
 
-const testHolder = "worker-6c9f/1a2b"
+const (
+	testHolder        = "worker-6c9f/1a2b"
+	testStageDuration = time.Hour
+)
+
+// newFakeStore is a bare store for construction tests.
+func newFakeStore(t *testing.T) *storefake.Store { t.Helper(); return storefake.New(nil) }
 
 type harness struct {
 	store     *storefake.Store
@@ -56,7 +62,7 @@ func newHarnessOver(t *testing.T, store *storefake.Store, opts ...Option) *harne
 		logs:      &strings.Builder{},
 	}
 	log := slog.New(slog.NewJSONHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	source, err := New(h.store, h.refresher, h.clock, log, testHolder, append([]Option{WithMetrics(h.metrics)}, opts...)...)
+	source, err := New(h.store, h.refresher, h.clock, log, testHolder, testStageDuration, append([]Option{WithMetrics(h.metrics)}, opts...)...)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -814,7 +820,7 @@ func TestSourceReportsTheCredentialUnseededWhenTheSecretIsAbsent(t *testing.T) {
 	// The store reports absence with the domain sentinel; the Source turns
 	// that into the one message whose remedy is a human with a browser.
 	missing := &notFoundStore{}
-	source, err := New(missing, h.refresher, h.clock, slog.New(slog.NewJSONHandler(h.logs, nil)), testHolder)
+	source, err := New(missing, h.refresher, h.clock, slog.New(slog.NewJSONHandler(h.logs, nil)), testHolder, testStageDuration)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -847,7 +853,7 @@ func TestSourceTreatsAnUnreadableSecretAsRetryable(t *testing.T) {
 	h := newHarness(t, 72*time.Hour, refreshState{})
 	h.store.BeforeGet = func(int) {}
 
-	source, err := New(unreadableStore{}, h.refresher, h.clock, slog.New(slog.NewJSONHandler(h.logs, nil)), testHolder)
+	source, err := New(unreadableStore{}, h.refresher, h.clock, slog.New(slog.NewJSONHandler(h.logs, nil)), testHolder, testStageDuration)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -949,18 +955,18 @@ func TestNewRefusesAnIncompleteSource(t *testing.T) {
 		log       = slog.New(slog.NewJSONHandler(&strings.Builder{}, nil))
 	)
 	cases := map[string]func() (*Source, error){
-		"no store":     func() (*Source, error) { return New(nil, refresher, clk, log, testHolder) },
-		"no refresher": func() (*Source, error) { return New(store, nil, clk, log, testHolder) },
-		"no clock":     func() (*Source, error) { return New(store, refresher, nil, log, testHolder) },
-		"no logger":    func() (*Source, error) { return New(store, refresher, clk, nil, testHolder) },
+		"no store":     func() (*Source, error) { return New(nil, refresher, clk, log, testHolder, testStageDuration) },
+		"no refresher": func() (*Source, error) { return New(store, nil, clk, log, testHolder, testStageDuration) },
+		"no clock":     func() (*Source, error) { return New(store, refresher, nil, log, testHolder, testStageDuration) },
+		"no logger":    func() (*Source, error) { return New(store, refresher, clk, nil, testHolder, testStageDuration) },
 		// A lease with an unattributable holder cannot be investigated at 3am,
 		// which is the only moment anyone reads it.
-		"no holder": func() (*Source, error) { return New(store, refresher, clk, log, "") },
+		"no holder": func() (*Source, error) { return New(store, refresher, clk, log, "", testStageDuration) },
 		"a margin that is not positive": func() (*Source, error) {
-			return New(store, refresher, clk, log, testHolder, WithRefreshMargin(0))
+			return New(store, refresher, clk, log, testHolder, testStageDuration, WithRefreshMargin(0))
 		},
 		"a lease TTL shorter than the presentation it bounds": func() (*Source, error) {
-			return New(store, refresher, clk, log, testHolder, WithLeaseTTL(time.Second), WithRefreshTimeout(time.Minute))
+			return New(store, refresher, clk, log, testHolder, testStageDuration, WithLeaseTTL(time.Second), WithRefreshTimeout(time.Minute))
 		},
 	}
 	for name, construct := range cases {
@@ -1002,5 +1008,213 @@ func TestNewDefaultsTheTuningItsSafetyArgumentDependsOn(t *testing.T) {
 	// one presentation. If that stops holding, the argument stops holding.
 	if s.leaseTTL <= s.refreshTimeout {
 		t.Error("the lease TTL must outlast the presentation it bounds")
+	}
+}
+
+// --- review findings -----------------------------------------------------
+
+func TestSourceStoresARotatedRefreshTokenThatArrivedWithoutAnAccessToken(t *testing.T) {
+	t.Parallel()
+	// A 200 carrying only a rotated refresh token is a successful,
+	// non-destructive refresh per the provider's own client. The old token is
+	// spent; dropping its replacement is what kills the credential.
+	h := newHarness(t, 30*time.Minute, refreshState{Serial: 4})
+	h.scripts(reply{res: Refreshed{RefreshToken: work.NewCredential("rotated-refresh")}, outcome: RefreshRotated})
+
+	_, err := h.source.AccessToken(context.Background())
+	if err == nil {
+		t.Fatal("AccessToken returned a token when none came back")
+	}
+	if !errors.Is(err, work.ErrPermanent) {
+		t.Error("a rotation with no usable access token must halt rather than loop")
+	}
+
+	stored, perr := parseCredentialFile(h.store.Read(CredentialKey))
+	if perr != nil {
+		t.Fatalf("the stored credential no longer parses: %v", perr)
+	}
+	if stored.refresh.Reveal() != "rotated-refresh" {
+		t.Fatal("the rotated refresh token was not stored; the old one is spent and its replacement is gone")
+	}
+	if state := storedState(t, h.store); state.Serial != 5 {
+		t.Errorf("serial = %d, want the rotation counted", state.Serial)
+	}
+	if _, _, deaths := h.metrics.snapshot(); len(deaths) != 1 || deaths[0] != DeathNoAccessToken {
+		t.Errorf("recorded deaths = %v, want one %s", deaths, DeathNoAccessToken)
+	}
+}
+
+func TestSourceReportsAReusedRefreshTokenAsASingleWriterViolation(t *testing.T) {
+	t.Parallel()
+	// "Already presented" is a second holder, not a stale credential. Routing
+	// it to "re-seed" hands the second holder a fresh credential to eat too.
+	h := newHarness(t, 30*time.Minute, refreshState{Serial: 4})
+	h.scripts(reply{outcome: RefreshReused, err: errors.New("refresh_token_reused")})
+
+	_, err := h.source.AccessToken(context.Background())
+	if !errors.Is(err, ErrSingleWriterViolated) {
+		t.Fatalf("AccessToken returned %v, want ErrSingleWriterViolated", err)
+	}
+	if _, _, deaths := h.metrics.snapshot(); len(deaths) != 1 || deaths[0] != DeathSingleWriterViolated {
+		t.Errorf("recorded deaths = %v, want one %s — the operator must be told to find who, not to re-seed", deaths, DeathSingleWriterViolated)
+	}
+}
+
+func TestSourcePreservesTheTakeoverBudgetWhenItReleasesWithoutPresenting(t *testing.T) {
+	t.Parallel()
+	const dead = "worker-dead/0000"
+	prior := &attempt{
+		Holder:         dead,
+		StartedAt:      testNow.Add(-time.Hour),
+		LeaseExpiresAt: testNow.Add(-55 * time.Minute),
+		Serial:         4,
+	}
+	h := newHarness(t, 30*time.Minute, refreshState{Serial: 4, Attempt: prior})
+	h.scripts(reply{outcome: RefreshNotSent, err: errors.New("dial tcp: connection refused")})
+
+	if _, err := h.source.AccessToken(context.Background()); err == nil {
+		t.Fatal("AccessToken succeeded after a failed presentation")
+	}
+
+	// Clearing the attempt here would erase the record that the dead holder's
+	// outcome is unknown — which is the only thing bounding takeover at one,
+	// and the bound the policy was signed off on.
+	state := storedState(t, h.store)
+	if state.Attempt == nil {
+		t.Fatal("the release erased the record that the dead holder's outcome is unknown; takeover is now unbounded")
+	}
+	if state.Attempt.Holder != dead {
+		t.Errorf("attempt holder = %q, want the dead holder %q restored", state.Attempt.Holder, dead)
+	}
+	if state.Attempt.TakeoverOf != "" {
+		t.Errorf("takeover_of = %q, want it clear — this actor never presented, so the one takeover is unspent", state.Attempt.TakeoverOf)
+	}
+}
+
+func TestSourceRefusesAThirdPresentationAfterATakeoverThatWasUsed(t *testing.T) {
+	t.Parallel()
+	const dead = "worker-dead/0000"
+	h := newHarness(t, 30*time.Minute, refreshState{Serial: 4, Attempt: &attempt{
+		Holder:         dead,
+		StartedAt:      testNow.Add(-time.Hour),
+		LeaseExpiresAt: testNow.Add(-55 * time.Minute),
+		Serial:         4,
+	}})
+	// The takeover presents and its outcome is unknown, so the budget is spent.
+	h.scripts(reply{outcome: RefreshUnknown, err: errors.New("context deadline exceeded")})
+
+	if _, err := h.source.AccessToken(context.Background()); !errors.Is(err, ErrRefreshOutcomeUnknown) {
+		t.Fatalf("the takeover returned %v, want ErrRefreshOutcomeUnknown", err)
+	}
+	presentedByTakeover := h.refresher.Calls()
+
+	// A later actor, at the same generation, must not present again: two
+	// unknown outcomes in a row is exactly the crash-loop the bound prevents.
+	h.clock.Advance(2 * time.Hour)
+	if _, err := h.source.AccessToken(context.Background()); !errors.Is(err, ErrRefreshOutcomeUnknown) {
+		t.Fatalf("the follow-up returned %v, want ErrRefreshOutcomeUnknown", err)
+	}
+	if h.refresher.Calls() != presentedByTakeover {
+		t.Fatalf("presented %d times total, want %d — the one takeover was already spent",
+			h.refresher.Calls(), presentedByTakeover)
+	}
+}
+
+func TestSourceReportsBeingTakenOverAsALostCredentialRatherThanAForeignWriter(t *testing.T) {
+	t.Parallel()
+	// Our settle failed and another holder took our expired lease over. That
+	// is not a foreign writer, and sending an operator hunting one wastes the
+	// only person who can fix it.
+	h := newHarness(t, 30*time.Minute, refreshState{Serial: 4})
+	h.rotatesTo(t, 72*time.Hour)
+	h.store.PutErr = func(n int) error {
+		if n >= 2 {
+			return errors.New("etcdserver: request timed out")
+		}
+		return nil
+	}
+	h.store.BeforePut = func(n int) {
+		if n != 3 {
+			return
+		}
+		taken, err := encodeRefreshState(refreshState{Serial: 4, Attempt: &attempt{
+			Holder: "worker-later/9999", StartedAt: testNow, LeaseExpiresAt: testNow.Add(5 * time.Minute),
+			Serial: 4, TakeoverOf: testHolder,
+		}})
+		if err != nil {
+			t.Errorf("encoding the taker-over's state: %v", err)
+			return
+		}
+		h.store.ForceWrite(map[string][]byte{StateKey: taken})
+	}
+
+	_, err := h.source.AccessToken(context.Background())
+	if errors.Is(err, ErrSingleWriterViolated) {
+		t.Fatal("a holder taking over our own expired lease was reported as a foreign writer")
+	}
+	if !errors.Is(err, ErrCredentialLost) {
+		t.Fatalf("AccessToken returned %v, want ErrCredentialLost", err)
+	}
+	if !strings.Contains(h.logs.String(), "worker-later/9999") {
+		t.Error("the holder that took over was not named")
+	}
+}
+
+// deadlineStore records whether the writes it served carried a deadline.
+type deadlineStore struct {
+	*storefake.Store
+	mu        sync.Mutex
+	deadlines []bool
+}
+
+func (d *deadlineStore) Put(ctx context.Context, values map[string][]byte, pre work.SecretVersion) (work.SecretVersion, error) {
+	_, ok := ctx.Deadline()
+	d.mu.Lock()
+	d.deadlines = append(d.deadlines, ok)
+	d.mu.Unlock()
+	return d.Store.Put(ctx, values, pre)
+}
+
+func TestSourceBoundsTheWritesThatFollowAPresentation(t *testing.T) {
+	t.Parallel()
+	// Nothing bounds lease-write to settle-write, so an Update against a
+	// wedged apiserver hangs at TCP level, the lease expires under us, and
+	// another holder takes over and presents a token we already spent.
+	h := newHarness(t, 30*time.Minute, refreshState{Serial: 4})
+	h.rotatesTo(t, 72*time.Hour)
+	bounded := &deadlineStore{Store: h.store}
+	source, err := New(bounded, h.refresher, h.clock, slog.New(slog.NewJSONHandler(h.logs, nil)), testHolder, testStageDuration)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if _, err := source.AccessToken(context.Background()); err != nil {
+		t.Fatalf("AccessToken: %v", err)
+	}
+	bounded.mu.Lock()
+	defer bounded.mu.Unlock()
+	if len(bounded.deadlines) < 2 {
+		t.Fatalf("saw %d writes, want at least the lease and the settle", len(bounded.deadlines))
+	}
+	if !bounded.deadlines[len(bounded.deadlines)-1] {
+		t.Error("the settle write carried no deadline; a wedged apiserver hangs it past the lease it holds")
+	}
+}
+
+func TestNewRefusesARefreshMarginAStageCanOutlive(t *testing.T) {
+	t.Parallel()
+	// A sandbox cannot refresh itself, so a token that reaches the CLI's own
+	// 5-minute window mid-stage fails the stage AND hammers the provider's
+	// auth endpoint — verified live: exit 1 after 104 requests in 35s.
+	_, err := New(newFakeStore(t), &fakeRefresher{}, clocktest.NewFake(testNow),
+		slog.New(slog.NewJSONHandler(&strings.Builder{}, nil)), testHolder, time.Hour,
+		WithRefreshMargin(30*time.Minute))
+	if err == nil {
+		t.Fatal("New accepted a refresh margin shorter than a stage; a sandbox's token would die mid-stage")
+	}
+	if _, err := New(newFakeStore(t), &fakeRefresher{}, clocktest.NewFake(testNow),
+		slog.New(slog.NewJSONHandler(&strings.Builder{}, nil)), testHolder, time.Hour,
+		WithRefreshMargin(time.Hour+sandboxRefreshWindow+time.Minute)); err != nil {
+		t.Fatalf("New refused a margin that does outlast a stage: %v", err)
 	}
 }
