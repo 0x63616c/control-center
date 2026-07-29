@@ -22,14 +22,19 @@
 #                                 so CloneRepo notices if this pod's branch ever
 #                                 disagrees with what SandboxTemplate.Spec baked
 #                                 into it (clone.go: sandboxBranch, #383).
-#   git                           clone, checkout -b and push work.RepoDir on
+#   git                           clone, checkout -b, `config --local
+#                                 credential.helper` and push work.RepoDir on
 #                                 the branch above (clone.go). A credential file
-#                                 is written first with Write/tar, never argv, so
-#                                 the token this reads via `-c credential.helper`
-#                                 never appears in a command line or a log line.
+#                                 is written first with Write/tar, never argv,
+#                                 so the token never appears in a command line
+#                                 or a log line. It is never removed either:
+#                                 `implement` pushes as the model, from inside
+#                                 this pod, long after CloneRepo has returned,
+#                                 and the local credential.helper config this
+#                                 sets is what its BARE `git push` — no `-c` of
+#                                 its own — authenticates through.
 #   rm                            clears a partial checkout before a retried
-#                                 clone, and removes the credential file
-#                                 afterwards (clone.go).
+#                                 clone (clone.go).
 #
 # A shell IS present, because `codex exec`'s own job is running shell commands
 # on the agent's behalf. "No shell" is a rule about how the WORKER invokes this

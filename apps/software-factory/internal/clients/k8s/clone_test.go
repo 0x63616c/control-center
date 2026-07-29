@@ -1,8 +1,12 @@
 package k8s
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -92,8 +96,8 @@ func TestCloneRepoClonesChecksOutAndPushesAFreshSandbox(t *testing.T) {
 		{},                          // rm -rf (clear whatever is there)
 		{},                          // git clone
 		{},                          // git checkout -b
+		{},                          // git config --local credential.helper
 		{},                          // git push -u origin
-		{},                          // rm -f (remove credentials)
 	}}
 	s, _ := newTestSandboxes(t, str, runningPod())
 
@@ -148,16 +152,30 @@ func TestCloneRepoClonesChecksOutAndPushesAFreshSandbox(t *testing.T) {
 		t.Fatalf("checkout argv = %v, want checkout -b %s", checkout, testBranch)
 	}
 
-	push := realArgv(calls[6].argv)
-	if push[len(push)-2] != "origin" || push[len(push)-1] != testBranch {
-		t.Fatalf("push argv = %v, want push -u origin %s", push, testBranch)
-	}
-	if !containsArg(push, credentialHelper) {
-		t.Fatalf("push argv = %v, did not configure the credential helper", push)
+	// This is the fix: the checkout's own git config, not just this package's
+	// own commands, is what implement's later BARE `git push` — no -c of its
+	// own — resolves a credential through.
+	config := realArgv(calls[6].argv)
+	if want := []string{"git", "-C", work.RepoDir, "config", "--local", "credential.helper", credentialHelperValue}; !equalArgv(config, want) {
+		t.Fatalf("config argv = %v, want %v", config, want)
 	}
 
-	if got := realArgv(calls[7].argv); len(got) != 4 || got[0] != "rm" || got[1] != "-f" {
-		t.Fatalf("call 7 = %v, want the credential file removed", got)
+	// And the proof that it worked: this package's OWN push, issued after
+	// configureCredentialHelper, carries no `-c` of its own — the same shape
+	// implement's bare `git push -u origin HEAD` takes.
+	push := realArgv(calls[7].argv)
+	if want := []string{"git", "-C", work.RepoDir, "push", "-u", "origin", testBranch}; !equalArgv(push, want) {
+		t.Fatalf("push argv = %v, want %v (no -c: it must authenticate through the checkout's own config)", push, want)
+	}
+
+	// The credential file must never be removed: implement pushes from inside
+	// the sandbox, as the model, long after CloneRepo has returned, and it has
+	// nothing else to authenticate with.
+	for _, c := range calls {
+		argv := realArgv(c.argv)
+		if len(argv) >= 2 && argv[0] == "rm" && containsArg(argv, credentialsPath) {
+			t.Fatalf("removed the credential file: %v — implement's own push has nothing left to authenticate with", argv)
+		}
 	}
 }
 
@@ -168,8 +186,8 @@ func TestCloneRepoLeavesAnExistingCheckoutOnTheRunsBranchAloneButPushesAnyway(t 
 		{stdout: testBranch + "\n"}, // printenv SF_BRANCH
 		{},                          // tar -xf (writeCredentials)
 		{stdout: testBranch + "\n"}, // git rev-parse: already on this run's branch
+		{},                          // git config --local credential.helper
 		{},                          // git push -u origin
-		{},                          // rm -f (remove credentials)
 	}}
 	s, _ := newTestSandboxes(t, str, runningPod())
 
@@ -187,7 +205,14 @@ func TestCloneRepoLeavesAnExistingCheckoutOnTheRunsBranchAloneButPushesAnyway(t 
 			t.Fatalf("re-cloned an existing checkout: %v", argv)
 		}
 	}
-	push := realArgv(calls[3].argv)
+	// The credential helper is reconfigured even when the checkout is reused,
+	// so a retry that resumes an old attempt's checkout is not depending on
+	// that attempt having got as far as configuring it.
+	config := realArgv(calls[3].argv)
+	if config[len(config)-1] != credentialHelperValue {
+		t.Fatalf("config argv = %v, want it to (re)configure the credential helper", config)
+	}
+	push := realArgv(calls[4].argv)
 	if push[len(push)-1] != testBranch {
 		t.Fatalf("push argv = %v, want it to still push the branch", push)
 	}
@@ -200,7 +225,6 @@ func TestCloneRepoRefusesAnExistingCheckoutOnTheWrongBranch(t *testing.T) {
 		{stdout: testBranch + "\n"},         // printenv SF_BRANCH
 		{},                                  // tar -xf (writeCredentials)
 		{stdout: "somebody-elses-branch\n"}, // git rev-parse: a DIFFERENT checkout
-		{},                                  // rm -f (removeCredentials still runs, deferred)
 	}}
 	s, _ := newTestSandboxes(t, str, runningPod())
 
@@ -216,8 +240,8 @@ func TestCloneRepoRefusesAnExistingCheckoutOnTheWrongBranch(t *testing.T) {
 	}
 
 	calls := str.observed()
-	if len(calls) != 4 {
-		t.Fatalf("issued %d exec calls, want exactly 4 (no clone, no checkout, no push): %+v", len(calls), calls)
+	if len(calls) != 3 {
+		t.Fatalf("issued %d exec calls, want exactly 3 (no clone, no checkout, no config, no push): %+v", len(calls), calls)
 	}
 }
 
@@ -230,7 +254,6 @@ func TestCloneRepoSurfacesAGitFailureWithoutMarkingItPermanent(t *testing.T) {
 		notARepo,                    // git rev-parse (no existing checkout)
 		{},                          // rm -rf
 		{err: utilexec.CodeExitError{Err: errors.New("fatal: unable to access"), Code: 128}}, // git clone fails
-		{}, // rm -f (removeCredentials, deferred)
 	}}
 	s, _ := newTestSandboxes(t, str, runningPod())
 
@@ -241,6 +264,160 @@ func TestCloneRepoSurfacesAGitFailureWithoutMarkingItPermanent(t *testing.T) {
 	if errors.Is(err, work.ErrPermanent) {
 		t.Fatalf("a clone that failed with an ordinary git exit code was marked permanent, which stops it ever being retried: %v", err)
 	}
+}
+
+// TestCloneRepoLeavesTheCredentialFileAndItsCheckoutConfigInPlaceOnFailure
+// pins the "never remove it" half of the fix independently of the happy-path
+// assertion above: even a run that never gets as far as a working checkout
+// must not have deleted a credential file a RETRY, or a human debugging the
+// pod, could still use.
+func TestCloneRepoLeavesTheCredentialFileAndItsCheckoutConfigInPlaceOnFailure(t *testing.T) {
+	t.Parallel()
+
+	str := &scriptedStreamer{answers: []answer{
+		{stdout: testBranch + "\n"},         // printenv SF_BRANCH
+		{},                                  // tar -xf (writeCredentials)
+		{stdout: "somebody-elses-branch\n"}, // git rev-parse: a DIFFERENT checkout — CloneRepo refuses
+	}}
+	s, _ := newTestSandboxes(t, str, runningPod())
+
+	if err := s.CloneRepo(context.Background(), testSandbox, testCloneURL, work.NewCredential("t")); err == nil {
+		t.Fatal("expected the wrong-branch refusal")
+	}
+
+	for _, c := range str.observed() {
+		argv := realArgv(c.argv)
+		if len(argv) > 0 && argv[0] == "rm" {
+			t.Fatalf("a failed CloneRepo removed something: %v — nothing here may clean up the credential file", argv)
+		}
+	}
+}
+
+// TestACheckoutConfiguredThisWayResolvesACredentialForABarePush is the test
+// the coordinator's review asked for: a version of this package that wrote
+// the credential file but never persisted `credential.helper` into the
+// checkout — the original bug — would pass every scripted test above if they
+// only inspected argv, because CloneRepo's OWN push always carried its own
+// `-c`. What implement's later push actually depends on is not that argv; it
+// is whether a BARE git command, run from inside the checkout with no `-c` of
+// its own, can still resolve a credential. This proves that against a real
+// git binary and a real local checkout — no k8s, no fakes — using exactly the
+// file format writeCredentials produces (credentialLine) and exactly the
+// config value configureCredentialHelper writes (credentialHelperValue's
+// format, "store --file=<path>").
+//
+// It is why this test could not have been satisfied by inspecting this
+// package's own argv, which is what the earlier version of this fix got
+// wrong: nothing here cares what CloneRepo passed on its own command line,
+// only what the checkout's config resolves to for a command that passes
+// nothing at all.
+func TestACheckoutConfiguredThisWayResolvesACredentialForABarePush(t *testing.T) {
+	t.Parallel()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on this machine")
+	}
+
+	dir := t.TempDir()
+	credPath := filepath.Join(dir, "git-credentials")
+	repoDir := filepath.Join(dir, "repo")
+
+	const token = "ghs_realproof"
+	if err := os.WriteFile(credPath, []byte(credentialLine(work.NewCredential(token))), 0o600); err != nil {
+		t.Fatalf("writing the credential file: %v", err)
+	}
+
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatalf("making the checkout dir: %v", err)
+	}
+	runGit(t, repoDir, "init")
+
+	// The exact value configureCredentialHelper writes, just against a real
+	// temp path instead of work.RepoDir's production one — "store
+	// --file=<path>" is git-credential-store(1)'s own config grammar, the same
+	// grammar credentialHelperValue is built from.
+	runGit(t, repoDir, "config", "--local", "credential.helper", "store --file="+credPath)
+
+	// A BARE `git credential fill`: no -c, nothing on this command line at all
+	// beyond the subcommand itself — the same shape implement.md's `git push
+	// -u origin HEAD` takes. If it resolves the credential, so would that push.
+	cmd := hermeticGit(dir, "credential", "fill")
+	cmd.Dir = repoDir
+	cmd.Stdin = strings.NewReader("protocol=https\nhost=github.com\n\n")
+	var out, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git credential fill (bare, no -c): %v\nstderr: %s", err, stderr.String())
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "username=x-access-token") {
+		t.Fatal("bare credential fill did not resolve the expected username — implement's own push would not authenticate")
+	}
+	if !strings.Contains(got, "password="+token) {
+		t.Fatal("bare credential fill did not resolve the expected password — implement's own push would not authenticate")
+	}
+	// Deliberately not logging `got` on failure above: it is exactly a
+	// git-credential-fill response, which on a developer machine with its own
+	// ambient credential helpers configured can resolve to a REAL, live
+	// credential rather than this test's fixture — see hermeticGit's doc for
+	// why every invocation in this test is isolated from that ambient config,
+	// and why this assertion still checks contents without ever printing them.
+}
+
+// runGit runs a hermetic git invocation in dir and fails the test with
+// stderr on a non-zero exit.
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := hermeticGit(dir, args...)
+	cmd.Dir = dir
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git %v: %v\nstderr: %s", args, err, stderr.String())
+	}
+}
+
+// hermeticGit builds a git invocation that cannot see this machine's own git
+// configuration or credential helpers.
+//
+// This test proves a REAL git resolves a credential through nothing but the
+// checkout's own --local config — but "real git" on a developer's machine
+// also has its own global/system config, which routinely names a real
+// credential helper (a keychain, gh's own helper, a cached token) for
+// github.com. Without this isolation, `git credential fill` for
+// protocol=https host=github.com does not necessarily answer from this test's
+// fixture at all: git merges every configured helper and the last one to
+// answer wins, so it can just as easily hand back whatever real credential is
+// sitting in the machine running the test — which happened during this fix's
+// own development and is why this function exists. GIT_CONFIG_GLOBAL and
+// GIT_CONFIG_SYSTEM pointed at nothing, plus a HOME confined to the test's
+// own temp dir, are what make the --local config this test wrote the only
+// place git can look.
+func hermeticGit(home string, args ...string) *exec.Cmd {
+	cmd := exec.Command("git", args...)
+	cmd.Env = append(os.Environ(),
+		"HOME="+home,
+		"XDG_CONFIG_HOME="+home,
+		"GIT_CONFIG_GLOBAL="+os.DevNull,
+		"GIT_CONFIG_SYSTEM="+os.DevNull,
+		"GIT_TERMINAL_PROMPT=0",
+	)
+	return cmd
+}
+
+// equalArgv compares two argv slices element-wise, so a mismatch fails with
+// the whole of both sides rather than reflect.DeepEqual's opaque bool.
+func equalArgv(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // realArgv strips the sandbox-exec shim prefix ("sandbox-exec --pidfile P
