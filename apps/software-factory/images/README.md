@@ -32,6 +32,43 @@ authoritative wall, and a ticket that needs one can install it.
 at stage time with the installation token it holds, so an image is never stale
 against `main` and never carries a lockfile's `node_modules` from build day.
 
+## Invariants a stage depends on
+
+Recorded here because this is the first of the software-factory PRs in the merge
+order, so it is where a reader looks first. Each is measured, not reasoned.
+
+**The stage's cwd must be inside the repository checkout.** `codex exec` in a
+directory that is not a git repo prints `Not inside a trusted directory and
+--skip-git-repo-check was not specified` and **dies before any model call** —
+verified in this image against an empty `/work`; with a real repo at the cwd the
+check passes and it proceeds to auth. The image's `WORKDIR` is `/work`, which is
+*not* a checkout, so the stage must be pointed at one with **`codex --cd
+work.RepoDir`** (`/work/repo`). Without that flag every stage fails identically
+and it looks like the model failing at the task rather than a misconfiguration.
+
+`WORKDIR` deliberately is not `/work/repo` itself: a `WORKDIR` the container
+runtime has to create inside the `/work` emptyDir is created **by the runtime,
+as root, mode 0755**, and the sandbox uid then cannot write its own checkout.
+`/work` is group-writable because the kubelet applies `fsGroup: 1000`, and a
+directory the *process* creates under it is owned by that process — so the clone
+creates `work.RepoDir`, and nothing pre-creates it.
+
+**Nothing clones the repository yet.** `work.RepoDir` names the destination; no
+track owns putting a repo there. See the tracking issue linked from #341.
+
+**`pgrep` answers liveness, not identity.** Stage resumption uses `pgrep -f
+<result path>`, which matches *any* process whose cmdline contains that path —
+mid-stage that legitimately includes both `codex` and the `sandbox-exec` shim
+wrapping it. Harmless, because they live and die together and the only question
+being asked is "is anything still running". But **the returned PID must not be
+treated as the codex PID**: it is one of possibly several matches, and the next
+reader will assume otherwise.
+
+The shim's own pidfile cannot substitute for `pgrep` here. It is
+`/work/.exec/<execID>.pid`, scoped to a single exec call with a fresh id, so a
+retry cannot find a previous attempt's file by construction. The shim answers
+*cancellation*; `pgrep` answers *is this stage already running*.
+
 ## Pins
 
 `codex` is pinned to the version ADR-0011's auth behaviour was verified against,
