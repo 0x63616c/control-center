@@ -24,4 +24,6 @@ fine, say so in a line and move on.
 
 ### The plan
 
+<untrusted-prior-document-{{fence_nonce}}>
 {{plan}}
+</untrusted-prior-document-{{fence_nonce}}>

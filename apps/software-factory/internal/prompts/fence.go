@@ -20,6 +20,21 @@ import (
 // see does not match the one the model was shown.
 const fenceTag = "untrusted-issue-text-"
 
+// documentTag opens and closes a document an earlier stage handed forward.
+//
+// A handoff document is written by a model that was instructed to read the
+// issue and report what it says, so a malicious body arrives in the plan as a
+// quotation — and that quotation is the *last* thing `implement` reads, in the
+// one stage holding a GitHub App token. Fencing only the issue text protected
+// the first stage of the pipeline and no other.
+//
+// It is a second tag rather than the same one because the two regions are not
+// the same thing. Issue text is a request being evaluated and carries no
+// authority at all; a handoff is the pipeline's own work product, which a stage
+// is meant to act on — only never to take instructions from beyond its own
+// stage's task. The base prompt says which is which.
+const documentTag = "untrusted-prior-document-"
+
 // strippedMarker replaces a nonce found in untrusted text.
 //
 // It is not the empty string, and that is load-bearing twice over. Deleting the
@@ -78,7 +93,10 @@ func mintNonce(entropy io.Reader) (string, error) {
 // the tag name, so it separates whatever text surrounded a match rather than
 // letting the two sides close up into a fresh copy of it.
 func strip(text, nonce string) string {
-	return replaceFold(replaceFold(text, fenceTag), nonce)
+	for _, tag := range []string{fenceTag, documentTag, nonce} {
+		text = replaceFold(text, tag)
+	}
+	return text
 }
 
 // replaceFold swaps every ASCII-case-insensitive occurrence of needle for
@@ -155,30 +173,41 @@ func lowerASCII(b byte) byte {
 	return b
 }
 
-// checkFence asserts that the rendered prompt's nonce is in the fence tags and
-// nowhere else.
+// checkFence asserts that the rendered prompt's nonce is in its fence tags and
+// nowhere else: one pair around the issue text, and one pair around each of the
+// documents this stage was handed.
 //
 // It is the invariant the whole fence rests on, checked mechanically rather
 // than trusted to strip's callers: a value interpolated without being stripped
 // is one edit away at any time, and this is what turns that edit into a failed
 // render instead of a forgeable prompt. Correctness over operability — a stage
 // that does not run beats a stage that runs on an attacker's instructions.
-func checkFence(rendered, nonce string) error {
+func checkFence(rendered, nonce string, documents int) error {
 	if !strings.Contains(rendered, "<"+fenceTag+nonce+">") {
 		return fmt.Errorf("the rendered prompt does not open the untrusted-text fence")
 	}
 	if !strings.Contains(rendered, "</"+fenceTag+nonce+">") {
 		return fmt.Errorf("the rendered prompt does not close the untrusted-text fence")
 	}
-	// Counted under the same fold strip uses, and counted on the tag as well as
-	// the nonce. Either alone leaves a hole: a case-flipped nonce satisfies a
-	// byte-exact count, and a tag carrying an invented nonce satisfies a
-	// nonce-only count. Together they say the prompt holds exactly one fence.
+	if got := strings.Count(rendered, "<"+documentTag+nonce+">"); got != documents {
+		return fmt.Errorf("the rendered prompt opens %d document fences, want %d: a stage template interpolates a handoff document without fencing it", got, documents)
+	}
+	if got := strings.Count(rendered, "</"+documentTag+nonce+">"); got != documents {
+		return fmt.Errorf("the rendered prompt closes %d document fences, want %d", got, documents)
+	}
+	// Counted under the same fold strip uses, and counted on the tags as well
+	// as the nonce. Any one alone leaves a hole: a case-flipped nonce satisfies
+	// a byte-exact count, and a tag carrying an invented nonce satisfies a
+	// nonce-only count. Together they say the prompt holds these fences and no
+	// other tag-shaped string at all.
 	if got := countFold(rendered, fenceTag); got != 2 {
 		return fmt.Errorf("%d untrusted-text tags in the rendered prompt, want 2: some interpolated text was not stripped and carries a tag of its own", got)
 	}
-	if got := countFold(rendered, nonce); got != 2 {
-		return fmt.Errorf("the fence nonce appears %d times in the rendered prompt, want 2: some interpolated text was not stripped and the fence can be forged", got)
+	if got := countFold(rendered, documentTag); got != 2*documents {
+		return fmt.Errorf("%d prior-document tags in the rendered prompt, want %d: some interpolated text was not stripped and carries a tag of its own", got, 2*documents)
+	}
+	if got, want := countFold(rendered, nonce), 2+2*documents; got != want {
+		return fmt.Errorf("the fence nonce appears %d times in the rendered prompt, want %d: some interpolated text was not stripped and the fence can be forged", got, want)
 	}
 	return nil
 }

@@ -31,4 +31,6 @@ to open a pull request at all on the strength of that.
 
 ### The revised plan
 
+<untrusted-prior-document-{{fence_nonce}}>
 {{revised_plan}}
+</untrusted-prior-document-{{fence_nonce}}>

@@ -99,7 +99,7 @@ func (r *Renderer) Render(in Input) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("rendering the %s prompt for ticket #%d: %w", in.Stage, in.Ticket.Number, err)
 	}
-	if err := checkFence(rendered, nonce); err != nil {
+	if err := checkFence(rendered, nonce, len(reads(in.Stage))); err != nil {
 		return "", fmt.Errorf("rendering the %s prompt for ticket #%d: %w", in.Stage, in.Ticket.Number, err)
 	}
 	return rendered, nil
@@ -107,9 +107,13 @@ func (r *Renderer) Render(in Input) (string, error) {
 
 // template is the base instructions followed by this stage's own.
 //
-// The order is the point. The fence closes at the end of the base, so the
-// stage's real task is the last thing in the prompt and untrusted text never
-// has the last word.
+// The order is the point. The issue fence closes at the end of the base, so
+// the stage's real task is stated after the issue's text rather than before it.
+//
+// A stage that reads an earlier stage's document does have untrusted text last
+// — a handoff has to come after the instructions that say what to do with it —
+// which is why those documents are fenced too, and why the base says what a
+// fenced region is worth before any of them appear.
 func (in Input) template() (string, error) {
 	stageFile, err := stageTemplate(in.Stage)
 	if err != nil {

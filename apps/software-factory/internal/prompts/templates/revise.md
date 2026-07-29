@@ -21,8 +21,12 @@ original, and that is the expected outcome, not a sign you did too little.
 
 ### The plan
 
+<untrusted-prior-document-{{fence_nonce}}>
 {{plan}}
+</untrusted-prior-document-{{fence_nonce}}>
 
 ### The review
 
+<untrusted-prior-document-{{fence_nonce}}>
 {{review}}
+</untrusted-prior-document-{{fence_nonce}}>

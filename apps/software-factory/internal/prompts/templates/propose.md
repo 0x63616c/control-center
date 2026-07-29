@@ -32,4 +32,6 @@ happened and what state the branch is in.
 
 ### The implementation report
 
+<untrusted-prior-document-{{fence_nonce}}>
 {{implementation_report}}
+</untrusted-prior-document-{{fence_nonce}}>
