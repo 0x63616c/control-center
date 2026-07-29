@@ -43,6 +43,16 @@ type Worker struct {
 	// a lease nobody can attribute cannot be investigated at 3am.
 	PodName string
 
+	// CodexAuthSecretName is the Kubernetes Secret holding the codex
+	// credential.
+	//
+	// It is read rather than hardcoded because the deploy pins the worker's
+	// Role to this exact name with `resourceNames` (infra/src/software-factory.ts).
+	// A second spelling in Go would be a grant that covers nothing, and it
+	// fails as Forbidden rather than as a bad credential — which sends whoever
+	// debugs it to the credential layer instead of to RBAC.
+	CodexAuthSecretName string
+
 	// LogLevel is the level everything below this process logs at.
 	LogLevel slog.Level
 }
@@ -58,6 +68,7 @@ const (
 	envSandboxImage      = "SANDBOX_IMAGE"
 	envMetricsAddr       = "METRICS_ADDR"
 	envPodName           = "POD_NAME"
+	envCodexAuthSecret   = "CODEX_AUTH_SECRET_NAME"
 	envLogLevel          = "LOG_LEVEL"
 )
 
@@ -72,6 +83,7 @@ func workerEnvNames() []string {
 		envSandboxImage,
 		envMetricsAddr,
 		envPodName,
+		envCodexAuthSecret,
 	}
 }
 
@@ -89,6 +101,7 @@ func (w Worker) Validate() error {
 		envSandboxImage:      w.SandboxImage,
 		envMetricsAddr:       w.MetricsAddr,
 		envPodName:           w.PodName,
+		envCodexAuthSecret:   w.CodexAuthSecretName,
 	}
 	for _, name := range workerEnvNames() {
 		if strings.TrimSpace(required[name]) == "" {
@@ -113,6 +126,8 @@ func LoadWorker() (Worker, error) {
 		SandboxImage:      os.Getenv(envSandboxImage),
 		MetricsAddr:       os.Getenv(envMetricsAddr),
 		PodName:           os.Getenv(envPodName),
+
+		CodexAuthSecretName: os.Getenv(envCodexAuthSecret),
 	}
 	if err := cfg.Validate(); err != nil {
 		return Worker{}, describeWorkerRequirement(err)
@@ -138,6 +153,7 @@ func describeWorkerRequirement(err error) error {
 		envSandboxImage:      "the per-ticket sandbox image, pinned by digest",
 		envMetricsAddr:       "the address the metrics and health server listens on",
 		envPodName:           "this pod's own name, from the downward API; it identifies the credential lease holder",
+		envCodexAuthSecret:   "the Kubernetes Secret holding the codex credential; the worker's Role is pinned to this exact name",
 	}
 	for name, purpose := range purposes {
 		if strings.Contains(err.Error(), name) {

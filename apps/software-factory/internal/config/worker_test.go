@@ -10,13 +10,50 @@ import (
 // replaces the one variable it is about.
 func completeEnv() map[string]string {
 	return map[string]string{
-		"TEMPORAL_HOST_PORT":  "temporal-frontend.temporal:7233",
-		"TEMPORAL_NAMESPACE":  "software-factory",
-		"TEMPORAL_TASK_QUEUE": "software-factory",
-		"SANDBOX_NAMESPACE":   "software-factory",
-		"SANDBOX_IMAGE":       "ghcr.io/0x63616c/www-software-factory-sandbox@sha256:abc",
-		"METRICS_ADDR":        ":9090",
-		"POD_NAME":            "software-factory-worker-7d9f8c-abcde",
+		"TEMPORAL_HOST_PORT":     "temporal-frontend.temporal:7233",
+		"TEMPORAL_NAMESPACE":     "software-factory",
+		"TEMPORAL_TASK_QUEUE":    "software-factory",
+		"SANDBOX_NAMESPACE":      "software-factory",
+		"SANDBOX_IMAGE":          "ghcr.io/0x63616c/www-software-factory-sandbox@sha256:abc",
+		"METRICS_ADDR":           ":9090",
+		"POD_NAME":               "software-factory-worker-7d9f8c-abcde",
+		"CODEX_AUTH_SECRET_NAME": "codex-auth",
+	}
+}
+
+// TestTheRequiredEnvironmentIsExactlyWhatTheTestsSupply pins the required set
+// against literals, because every other test here is generated from it.
+//
+// TestLoadWorkerNamesTheVariableThatIsMissing iterates workerEnvNames(), which
+// is the thing under test: drop a name from it and the requirement and the case
+// that would have caught it disappear together, compiling and green. The map
+// above is hand-written, so this comparison is the one assertion in the file
+// that is not the code checking itself.
+//
+// What it stops: SANDBOX_IMAGE tidied out of the required list, after which the
+// worker starts with SandboxImage: "" and creates its first sandbox pod with an
+// empty image — healthy-looking, polling, doing nothing. Or POD_NAME, where the
+// credential lease holder becomes "" and no lease can be attributed at 3am,
+// which is the only reason that variable is required at all.
+func TestTheRequiredEnvironmentIsExactlyWhatTheTestsSupply(t *testing.T) {
+	required := make(map[string]bool, len(workerEnvNames()))
+	for _, name := range workerEnvNames() {
+		required[name] = true
+	}
+	supplied := make(map[string]bool, len(completeEnv()))
+	for name := range completeEnv() {
+		supplied[name] = true
+	}
+
+	for name := range supplied {
+		if !required[name] {
+			t.Errorf("%s is supplied by completeEnv but is not required; either require it or stop supplying it", name)
+		}
+	}
+	for name := range required {
+		if !supplied[name] {
+			t.Errorf("%s is required but completeEnv does not supply it, so no missing-variable case covers it", name)
+		}
 	}
 }
 
@@ -56,6 +93,8 @@ func TestLoadWorkerReadsTheWholeEnvironment(t *testing.T) {
 		t.Errorf("MetricsAddr = %q", got.MetricsAddr)
 	case got.PodName != "software-factory-worker-7d9f8c-abcde":
 		t.Errorf("PodName = %q", got.PodName)
+	case got.CodexAuthSecretName != "codex-auth":
+		t.Errorf("CodexAuthSecretName = %q", got.CodexAuthSecretName)
 	case got.LogLevel != slog.LevelInfo:
 		t.Errorf("LogLevel = %v, want the default %v", got.LogLevel, slog.LevelInfo)
 	}
