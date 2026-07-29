@@ -323,8 +323,27 @@ func trimThread(thread []work.TicketComment) ([]work.TicketComment, int) {
 // conditional create, so two overlapping attempts can both list, both miss and
 // both post. What it buys is that the common case — an activity that succeeded
 // and was retried after dying before it could record that — produces one
-// comment rather than a second, and that a long-running ticket cannot
-// accumulate five.
+// comment rather than a second, and that a run cannot accumulate a comment per
+// attempt on top of the seven it means to post.
+//
+// Two things about that race got worse when the format moved from one comment
+// per run to one per step, and neither is fixed here.
+//
+// It now runs about seven times per run rather than once, so its odds scale
+// with the number of steps and, once the dispatcher works several tickets at
+// a time, with concurrency as well.
+//
+// And a duplicate is no longer self-evident. When a run edited a single
+// comment, two comments carrying this service's marker were visibly wrong. Now
+// comments are meant to repeat, so a duplicate reads as ordinary — and because
+// EditStatus takes one CommentID, the run edits whichever it adopted and the
+// loser keeps its "### plan — running" body on the ticket for good, claiming a
+// stage is still running long after the run finished.
+//
+// Fixing it means deciding what to do with the loser, and deleting a comment
+// this service posted is an open policy question on #331 rather than something
+// to settle in a doc comment. Until it is settled, this is the failure mode to
+// recognise: a stage comment stuck at "running" with a sibling that completed.
 func (c *Client) PostStatus(ctx context.Context, issue int, body string) (work.CommentID, error) {
 	op := fmt.Sprintf("posting the status comment on issue #%d", issue)
 	body = capBody(body)

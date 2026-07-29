@@ -639,8 +639,3 @@ func TestRendersAModelNameDefensivelyToo(t *testing.T) {
 		t.Errorf("model line %q carries %d backticks, want the 4 of its two code spans", line, got)
 	}
 }
-
-func firstLine(body string) string {
-	line, _, _ := strings.Cut(body, "\n")
-	return line
-}
