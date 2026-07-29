@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock/clocktest"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/converter"
@@ -163,6 +165,22 @@ func (f *fakeRuns) Describe(_ context.Context, workflowID string) (work.RunState
 	return f.state, f.err
 }
 
+// fakeMetrics records what was reported, so a test can assert the expensive
+// case is not the invisible one.
+type fakeMetrics struct {
+	stages   []work.Stage
+	outcomes []telemetry.Outcome
+	usages   []work.Usage
+	tooks    []time.Duration
+}
+
+func (f *fakeMetrics) StageFinished(stage work.Stage, _ work.Model, outcome telemetry.Outcome, usage work.Usage, took time.Duration) {
+	f.stages = append(f.stages, stage)
+	f.outcomes = append(f.outcomes, outcome)
+	f.usages = append(f.usages, usage)
+	f.tooks = append(f.tooks, took)
+}
+
 type fakeSweeper struct {
 	deleted    int
 	err        error
@@ -199,6 +217,8 @@ func deps() Deps {
 		Status:      &fakeStatus{},
 		Runs:        &fakeRuns{},
 		Sweeper:     &fakeSweeper{},
+		Metrics:     &fakeMetrics{},
+		Clock:       clocktest.NewFake(time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)),
 		Sandbox:     template(),
 	}
 }
@@ -229,7 +249,7 @@ func TestNewNamesEveryDependencyItIsMissing(t *testing.T) {
 	if err == nil {
 		t.Fatal("a set of activities with no dependencies must not construct")
 	}
-	for _, name := range []string{"GitHub", "Pods", "Stages", "Transcripts", "Prompts", "Status", "Runs", "Sweeper"} {
+	for _, name := range []string{"GitHub", "Pods", "Stages", "Transcripts", "Prompts", "Status", "Runs", "Sweeper", "Metrics", "Clock"} {
 		if !strings.Contains(err.Error(), name) {
 			t.Fatalf("error %q does not name the missing %s", err, name)
 		}
@@ -619,4 +639,63 @@ func TestSweepPassesTheLiveRunsAndTheFloorThrough(t *testing.T) {
 func errTypeOf(t *testing.T, err error) string {
 	t.Helper()
 	return appErrorOf(t, err).Type()
+}
+
+func TestRunStageRecordsWhatASuccessfulStageSpent(t *testing.T) {
+	t.Parallel()
+
+	metrics := &fakeMetrics{}
+	d := deps()
+	d.Metrics = metrics
+	d.Stages = &fakeStages{result: work.StageResult{
+		Output: []byte(`{"ok":true}`),
+		Usage:  work.Usage{InputTokens: 100, CachedInputTokens: 40, OutputTokens: 20, ReasoningTokens: 5},
+	}}
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.RunStage)
+
+	if _, err := e.ExecuteActivity(a.RunStage, stageInput(work.StagePlan, nil)); err != nil {
+		t.Fatalf("RunStage: %v", err)
+	}
+
+	if len(metrics.outcomes) != 1 || metrics.outcomes[0] != telemetry.OutcomeSuccess {
+		t.Fatalf("recorded %v, want one success", metrics.outcomes)
+	}
+	// The nesting is the provider's and is passed through untouched: input
+	// includes cached, and reasoning is a subset of output. Pre-subtracting here
+	// would double-count every cache hit in the metric that does the split.
+	if got := metrics.usages[0]; got.InputTokens != 100 || got.CachedInputTokens != 40 || got.ReasoningTokens != 5 {
+		t.Fatalf("usage = %+v, want the provider's own nesting preserved", got)
+	}
+}
+
+func TestRunStageRecordsAFailedStageToo(t *testing.T) {
+	t.Parallel()
+
+	metrics := &fakeMetrics{}
+	d := deps()
+	d.Metrics = metrics
+	d.Stages = &fakeStages{
+		result: work.StageResult{Usage: work.Usage{InputTokens: 100}},
+		err:    permanent(github.ErrAuth),
+	}
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.RunStage)
+
+	if _, err := e.ExecuteActivity(a.RunStage, stageInput(work.StagePlan, nil)); err == nil {
+		t.Fatal("a failed stage fails its activity")
+	}
+
+	if len(metrics.outcomes) != 1 {
+		t.Fatalf("recorded %v — a stage that failed spent its tokens too, and a metric that counts only "+
+			"successes makes the expensive case the invisible one", metrics.outcomes)
+	}
+	if metrics.outcomes[0] != telemetry.OutcomeAuthFailed {
+		t.Fatalf("outcome = %q, want %q", metrics.outcomes[0], telemetry.OutcomeAuthFailed)
+	}
+	if metrics.usages[0].InputTokens != 100 {
+		t.Fatalf("usage = %+v, want the tokens the failed attempt spent", metrics.usages[0])
+	}
 }

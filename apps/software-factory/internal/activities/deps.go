@@ -14,6 +14,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
@@ -181,4 +182,20 @@ type SandboxSweeper interface {
 // want to ask why a PR was proposed.
 type TranscriptSink interface {
 	Open(ctx context.Context, key work.StageKey) (io.WriteCloser, error)
+}
+
+// Metrics records what a stage attempt spent and how it ended.
+//
+// It is an interface here, satisfied by *telemetry.Metrics, for one reason
+// beyond testability: telemetry.NewMetrics registers with Prometheus and
+// **panics on duplicate registration**, deliberately — two counter sets each
+// recording half the work is worse than a crash. So there is exactly one
+// construction, in the composition root, and this package accepts what it is
+// handed rather than being able to construct a second.
+//
+// Recording is fire-and-forget: it returns nothing, because failing a stage
+// that has already spent its tokens in order to report that it spent them
+// would be the tail wagging the dog.
+type Metrics interface {
+	StageFinished(stage work.Stage, model work.Model, outcome telemetry.Outcome, usage work.Usage, took time.Duration)
 }

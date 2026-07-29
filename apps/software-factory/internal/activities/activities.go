@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"go.temporal.io/sdk/activity"
 )
@@ -26,6 +28,11 @@ type Deps struct {
 	Status      StatusRenderer
 	Runs        RunLookup
 	Sweeper     SandboxSweeper
+	Metrics     Metrics
+
+	// Clock is how an activity times itself. Wall-clock time is an external
+	// edge like any other, and internal/clock is the one place it is read.
+	Clock clock.Clock
 
 	// Sandbox is the shape every ticket's pod is built to. It is deploy-time
 	// config, not a runtime knob — see work.SandboxTemplate.
@@ -69,6 +76,12 @@ func New(deps Deps) (*Activities, error) {
 	}
 	if deps.Sweeper == nil {
 		missing = append(missing, "Sweeper")
+	}
+	if deps.Metrics == nil {
+		missing = append(missing, "Metrics")
+	}
+	if deps.Clock == nil {
+		missing = append(missing, "Clock")
 	}
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("activities need %v", missing)
@@ -253,6 +266,7 @@ func (a *Activities) RunStage(ctx context.Context, in RunStageInput) (RunStageOu
 		}
 	}
 
+	started := a.deps.Clock.Now()
 	result, err := a.deps.Stages.RunStage(ctx, work.StageRun{
 		Key:     in.Key,
 		Sandbox: in.Sandbox,
@@ -260,9 +274,15 @@ func (a *Activities) RunStage(ctx context.Context, in RunStageInput) (RunStageOu
 		Prompt:  prompt,
 		Schema:  schema,
 	}, events)
+	took := a.deps.Clock.Now().Sub(started)
 	if err != nil {
+		// Recorded before the error is returned, not after: a stage that failed
+		// spent its tokens too, and a metric that only counts successes makes
+		// the expensive case the invisible one.
+		a.deps.Metrics.StageFinished(in.Key.Stage, in.Model, outcomeOf(err), result.Usage, took)
 		return RunStageOutput{}, fail(ctx, fmt.Sprintf("running %s", in.Key), err)
 	}
+	a.deps.Metrics.StageFinished(in.Key.Stage, in.Model, telemetry.OutcomeSuccess, result.Usage, took)
 
 	log.Info("stage finished",
 		"stage", string(in.Key.Stage),

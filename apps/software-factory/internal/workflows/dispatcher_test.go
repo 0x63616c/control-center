@@ -3,6 +3,7 @@ package workflows_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,6 +27,7 @@ type dispatcherHarness struct {
 	tuning        work.DispatcherTuning
 	inFlight      []work.InFlightTicket
 	breaker       work.Breaker
+	pauseReason   string
 	tickets       []work.Ticket
 	listErr       error
 	runs          map[string]work.RunState
@@ -112,11 +114,12 @@ func (h *dispatcherHarness) run() {
 	}
 
 	env.ExecuteWorkflow(workflows.Dispatcher, workflows.DispatcherInput{
-		Config:   h.config,
-		Tuning:   h.tuning,
-		Run:      work.DefaultRunPolicy(),
-		InFlight: h.inFlight,
-		Breaker:  h.breaker,
+		Config:      h.config,
+		Tuning:      h.tuning,
+		Run:         work.DefaultRunPolicy(),
+		InFlight:    h.inFlight,
+		Breaker:     h.breaker,
+		PauseReason: h.pauseReason,
 	})
 }
 
@@ -559,5 +562,103 @@ func TestDispatcherRefusesAConfigItCannotRunOn(t *testing.T) {
 	var app *temporal.ApplicationError
 	if !errors.As(err, &app) || !app.NonRetryable() {
 		t.Fatalf("a dispatcher with no poll interval must fail loudly at start, got %v", err)
+	}
+}
+
+func TestDispatcherReportsARejectedConfigUpdateBackThroughItsStatus(t *testing.T) {
+	t.Parallel()
+
+	h := newDispatcherHarness(t)
+	h.at(45*time.Second, func() {
+		zero := 0
+		h.env.SignalWorkflow(workflows.SignalUpdateConfig, work.ConfigUpdate{MaxInFlight: &zero})
+	})
+	h.run()
+
+	status := h.status(t)
+	if status.ConfigError == "" {
+		t.Fatal("a Temporal signal cannot fail back to its sender, so an update that was rejected and one that " +
+			"was applied are indistinguishable unless the dispatcher says so through GetStatus")
+	}
+	if !strings.Contains(status.ConfigError, "MaxInFlight") {
+		t.Fatalf("ConfigError = %q — it must name what was wrong, not merely that something was", status.ConfigError)
+	}
+}
+
+func TestDispatcherClearsTheConfigErrorOnceAGoodUpdateLands(t *testing.T) {
+	t.Parallel()
+
+	h := newDispatcherHarness(t)
+	h.at(30*time.Second, func() {
+		zero := 0
+		h.env.SignalWorkflow(workflows.SignalUpdateConfig, work.ConfigUpdate{MaxInFlight: &zero})
+	})
+	h.at(60*time.Second, func() {
+		three := 3
+		h.env.SignalWorkflow(workflows.SignalUpdateConfig, work.ConfigUpdate{MaxInFlight: &three})
+	})
+	h.run()
+
+	status := h.status(t)
+	if status.ConfigError != "" {
+		t.Fatalf("ConfigError = %q — a stale complaint outliving the mistake sends an operator after a "+
+			"problem they already fixed", status.ConfigError)
+	}
+	if status.Config.MaxInFlight != 3 {
+		t.Fatalf("max in flight = %d, want the update that succeeded", status.Config.MaxInFlight)
+	}
+}
+
+func TestDispatcherCarriesARejectedUpdateAcrossAContinueAsNew(t *testing.T) {
+	t.Parallel()
+
+	h := newDispatcherHarness(t)
+	h.tuning.MaxHistoryEvents = 1
+	h.historyLength = 100
+	h.runFor = 0
+	h.at(time.Nanosecond, func() {
+		zero := 0
+		h.env.SignalWorkflow(workflows.SignalUpdateConfig, work.ConfigUpdate{MaxInFlight: &zero})
+	})
+	h.run()
+
+	if in := h.continuedInput(t); in.ConfigError == "" {
+		t.Fatal("an operator reading GetStatus after a run boundary would see their rejected update turn into silence")
+	}
+}
+
+func TestDispatcherSaysWhyItPausedItself(t *testing.T) {
+	t.Parallel()
+
+	h := newDispatcherHarness(t)
+	h.tickets = tickets(1)
+	h.listErr = temporal.NewNonRetryableApplicationError("installation revoked", activities.ErrTypeAuth, nil)
+	h.run()
+
+	status := h.status(t)
+	if !status.Config.Paused {
+		t.Fatal("a revoked credential must pause the dispatcher")
+	}
+	if status.PauseReason == "" {
+		t.Fatal("Paused alone cannot tell a dispatcher that stopped itself on a dead credential from a human " +
+			"pausing it deliberately — opposite responses, and the difference is invisible without a reason")
+	}
+}
+
+func TestDispatcherForgetsWhyItPausedWhenAHumanResumesIt(t *testing.T) {
+	t.Parallel()
+
+	h := newDispatcherHarness(t)
+	h.config.Paused = true
+	h.pauseReason = "github refused this app's credentials"
+	h.tickets = tickets(1)
+	h.at(45*time.Second, func() {
+		resumed := false
+		h.env.SignalWorkflow(workflows.SignalUpdateConfig, work.ConfigUpdate{Paused: &resumed})
+	})
+	h.run()
+
+	if reason := h.status(t).PauseReason; reason != "" {
+		t.Fatalf("PauseReason = %q — GetStatus must not explain a pause that is over", reason)
 	}
 }
