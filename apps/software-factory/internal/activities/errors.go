@@ -81,6 +81,12 @@ func fail(ctx context.Context, op string, err error) error {
 	// Cancellation is not a failure. Temporal must see it as cancellation — an
 	// activity that reported it as an application error would be retried into a
 	// context that is already dead.
+	//
+	// This is checked BEFORE permanence, which is what makes a cancellation
+	// wrapped inside a permanent error still a cancellation. A draining worker
+	// cancels its activities on SIGTERM, and a clean drain reported as a
+	// permanent application failure is a ticket that fails on every deploy and
+	// is never picked up again.
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return fmt.Errorf("%s: %w", op, ctxErr)
 	}

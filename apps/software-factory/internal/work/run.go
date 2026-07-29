@@ -56,15 +56,14 @@ type RunPolicy struct {
 
 // DefaultRunPolicy is the single source of ADR-0011's per-run numbers.
 func DefaultRunPolicy() RunPolicy {
-	// These are the deadline ladder D1 (#340) declares as MaxStageDuration,
-	// StageHeartbeatTimeout and MaxRunDuration in internal/work/durations.go.
-	// That file is not merged yet, so the values are written here rather than
-	// referenced; when it lands these become references to it, and Validate's
-	// inequality below is what stops the two disagreeing in the meantime.
+	// The ladder itself lives in durations.go and is referenced, not copied:
+	// the inequalities between these three and SandboxDeadline are the
+	// invariant, and a second set of literals is how two of them drift apart
+	// without anything failing.
 	return RunPolicy{
-		StageTimeout:          60 * time.Minute,
-		StageHeartbeatTimeout: time.Minute,
-		RunTimeout:            6 * time.Hour,
+		StageTimeout:          MaxStageDuration,
+		StageHeartbeatTimeout: StageHeartbeatTimeout,
+		RunTimeout:            MaxRunDuration,
 		StageAttempts:         2,
 		ControlTimeout:        2 * time.Minute,
 		ControlAttempts:       5,

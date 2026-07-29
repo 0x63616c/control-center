@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"strings"
 	"sync/atomic"
@@ -234,6 +235,7 @@ func deps() Deps {
 		Runs:        &fakeRuns{},
 		Sweeper:     &fakeSweeper{},
 		Metrics:     &fakeMetrics{},
+		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Clock:       clocktest.NewFake(time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)),
 		Sandbox:     template(),
 	}
@@ -265,7 +267,7 @@ func TestNewNamesEveryDependencyItIsMissing(t *testing.T) {
 	if err == nil {
 		t.Fatal("a set of activities with no dependencies must not construct")
 	}
-	for _, name := range []string{"GitHub", "Pods", "Stages", "Transcripts", "Prompts", "Status", "Runs", "Sweeper", "Metrics", "Clock"} {
+	for _, name := range []string{"GitHub", "Pods", "Stages", "Transcripts", "Prompts", "Status", "Runs", "Sweeper", "Metrics", "Clock", "Log"} {
 		if !strings.Contains(err.Error(), name) {
 			t.Fatalf("error %q does not name the missing %s", err, name)
 		}

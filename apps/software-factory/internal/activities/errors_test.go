@@ -243,3 +243,23 @@ func TestThePermanentTypeStringIsTheOneWorkflowRetryPoliciesArePinnedTo(t *testi
 		t.Fatalf("ErrTypePermanent = %q, want %q", ErrTypePermanent, "PermanentFailure")
 	}
 }
+
+func TestFailTreatsACancellationWrappedInAPermanentErrorAsCancellation(t *testing.T) {
+	t.Parallel()
+
+	// A draining worker cancels its activities on SIGTERM, and a client may
+	// well wrap that cancellation in its own permanent error on the way out.
+	// Reported as a permanent application failure, the ticket fails on every
+	// deploy and is never picked up again.
+	wrapped := fmt.Errorf("running the plan stage: %w: %w", work.ErrPermanent, context.Canceled)
+
+	err := fail(t.Context(), "op", wrapped)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("a cancelled drain must surface as cancellation, got %v", err)
+	}
+	var app *temporal.ApplicationError
+	if errors.As(err, &app) {
+		t.Fatal("and never as a non-retryable application error")
+	}
+}

@@ -3,6 +3,7 @@ package activities
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock"
@@ -29,6 +30,10 @@ type Deps struct {
 	Runs        RunLookup
 	Sweeper     SandboxSweeper
 	Metrics     Metrics
+
+	// Log is the injected logger. Clients and activities log themselves, so
+	// leaf code rarely logs by hand and nobody can forget.
+	Log *slog.Logger
 
 	// Clock is how an activity times itself. Wall-clock time is an external
 	// edge like any other, and internal/clock is the one place it is read.
@@ -79,6 +84,9 @@ func New(deps Deps) (*Activities, error) {
 	}
 	if deps.Metrics == nil {
 		missing = append(missing, "Metrics")
+	}
+	if deps.Log == nil {
+		missing = append(missing, "Log")
 	}
 	if deps.Clock == nil {
 		missing = append(missing, "Clock")
@@ -262,12 +270,12 @@ func (a *Activities) RunStage(ctx context.Context, in RunStageInput) (RunStageOu
 		}
 	}()
 
-	events := func(rawEvent []byte) {
-		activity.RecordHeartbeat(ctx)
-		if _, writeErr := transcript.Write(append(rawEvent, '\n')); writeErr != nil {
-			log.Error("writing to the transcript failed", "stage", in.Key.String(), "error", writeErr)
-		}
-	}
+	// StageEvents rather than a sink assembled here: framing belongs to
+	// transcripts.EventSink, which owns the format, and heartbeat-before-write
+	// belongs with it so a blocking transcript writer cannot silence liveness.
+	// A second assembly of the same two consumers is a second place for one of
+	// them to be left out.
+	events := StageEvents(ctx, in.Key, transcript, a.deps.Log)
 
 	started := a.deps.Clock.Now()
 	result, err := a.deps.Stages.RunStage(ctx, work.StageRun{
