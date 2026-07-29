@@ -4,8 +4,10 @@
 //
 // That exclusivity is the design. The refresh token is single-use and
 // rotating, and the CLI holds no cross-process lock around its credential file,
-// so two processes sharing one credential eventually invalidate each other.
-// Sandboxes are handed an access token only, with the refresh token blanked.
+// so two processes sharing one credential eventually invalidate each other. A
+// sandbox is therefore handed a credential file whose refresh token is blank —
+// but NOT one carrying only an access token, which will not load at all. See
+// "What the CLI needs in the file it is handed" below before composing one.
 //
 // # The invariants
 //
@@ -62,9 +64,10 @@
 // construction, and its attempt marker survives. B finds an expired,
 // unresolved attempt and takes it over ONCE, recording takeover_of: A. Either
 // the provider never consumed A's grant, in which case B recovers fully, or it
-// did, in which case B is refused and the operator learns the cause by name
-// instead of a bare invalid_grant. A second unresolved takeover halts: no
-// crash-loop can present repeatedly.
+// did, in which case B is refused and the operator learns the cause by name —
+// the dead holder and when it started — rather than a bare refusal code from
+// the provider. A second unresolved takeover halts, so no crash-loop can
+// present repeatedly.
 //
 // Why one takeover is safe: A is dead or definitively failed (its lease TTL is
 // ten times the hard bound on one presentation); if A got a pair and died, that
@@ -152,8 +155,9 @@
 //     fingerprint.
 //   - Every wrapped error names a Secret, a key or a step. No token value is
 //     interpolated into one, including the OAuth error path.
-//   - The refresh token travels in a form body, never in a URL; only the
-//     provider's own error field is logged from a response.
+//   - The refresh token travels in a JSON request body, never in a URL or a
+//     query string; only the provider's own error code is logged from a
+//     response, never the body that carries the new pair.
 //   - AccessToken returns a work.Credential, whose MarshalJSON refuses, so an
 //     activity that tried to return one to a workflow fails loudly rather than
 //     writing it to Temporal history.
