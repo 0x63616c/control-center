@@ -60,6 +60,9 @@ apps/web/public/maps/*.pmtiles
 *storybook.log
 storybook-static
 
+# Chrome unpacked-extension local metadata
+apps/manage/extension/_metadata/
+
 # ship workflow scratch + build worktrees
 .claude/worktrees/
 .claire/
