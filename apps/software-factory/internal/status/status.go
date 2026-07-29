@@ -148,6 +148,10 @@ type Proposed struct {
 	// PullRequestURL is the pull request the run opened, as GitHub reported it
 	// for the branch the worker named — not as the propose stage described it.
 	//
+	// That stage does not exist yet, so this is the contract for the field
+	// rather than a description of running code; #371 is what will make it hold
+	// at the source.
+	//
 	// An earlier draft of this comment said the stage lifts it from its own
 	// result file. That design was declined on #329, and #371 is why: a URL
 	// taken from model output is attacker-influenced, and
@@ -155,9 +159,15 @@ type Proposed struct {
 	// evil.example. It is asked of GitHub instead, which cannot be forged by
 	// anyone who can file an issue.
 	//
-	// It is still rendered as markup only if it survives linkedURL, and inertly
-	// otherwise. Defence in depth: the guard costs nothing and the day this
-	// field is filled from somewhere else it is the only thing standing there.
+	// It will not be a URL taken from model output by a second route as well:
+	// the envelope every stage answers in is `{"document": string}` with
+	// additionalProperties false, so there is nowhere for a stage to put one.
+	//
+	// It is still rendered as markup only if it survives linkedURL and
+	// pullRequestHost, and inertly otherwise. Defence in depth: the guard costs
+	// nothing, it does not stop being worth doing once #371 lands, and the day
+	// this field is filled from somewhere else it is the only thing standing
+	// there.
 	PullRequestURL string
 
 	EndedAt time.Time
@@ -268,16 +278,21 @@ func runRef(runID, runURL string) string {
 // pullRequestHost is the only host this renderer will emit a pull request link
 // for.
 //
-// PullRequestURL is model output — the propose stage lifts it from the agent's
-// own result file, and that agent read issue text an attacker chose — so a
-// well-formed URL is not enough. Without this, `https://evil.example/pull/999`
-// is a working link on a comment carrying this service's name, and a reader has
-// been handed it by something they have reason to trust.
+// A well-formed URL is not enough on its own. Without this,
+// `https://evil.example/pull/999` is a working link on a comment carrying this
+// service's name, and a reader has been handed it by something they have reason
+// to trust.
 //
 // This is a backstop, not the real fix. The real fix is that the propose stage
 // records the URL the GitHub API returned when it created the pull request,
 // rather than the one the model wrote — #371. Until then this fails closed to
 // the inert rendering below.
+//
+// #371 removes the ORIGINAL reason for this constant; it does not on its own
+// make it deletable. Whether a renderer that cannot see where its input came
+// from should still pin the host it will link to is a separate question, and
+// the reason a backstop is warranted at all — that it holds precisely when the
+// layer above it is wrong — does not depend on #371.
 //
 // The literal is deliberate. A backstop that reads its bound from config is not
 // a backstop: its whole job is to hold when the layer above it is wrong, and an

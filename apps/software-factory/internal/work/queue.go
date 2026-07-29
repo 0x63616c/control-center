@@ -3,21 +3,36 @@ package work
 // TaskQueue is the Temporal task queue this service's workflows and activities
 // are scheduled on, and the only place its name is written.
 //
-// It belongs here because two sides need it and neither can own it. The
-// composition root registers a worker that polls this queue; workflow code
-// names it again in the child-workflow and activity options it builds, because
-// Temporal has no notion of "the queue I am already on" for work it schedules
-// elsewhere. Written twice, the two spellings would agree until one of them was
-// changed, and then the system would be a worker polling a queue nobody sends
-// to — which looks exactly like nothing happening, and reports no error at
-// either end.
+// It is here because the name is PUBLISHED. An operator types it into
+// `temporal task-queue describe`, the first-run runbook names it, and the
+// composition root needs it in Go to register a worker that polls it. A name
+// that leaves the process has one home; that is the whole reason, and it does
+// not need a second consumer inside the codebase to earn it.
 //
-// It is a constant rather than configuration for the same reason. A queue name
-// that could be set per environment would let the worker and the workflows that
-// schedule onto it disagree at runtime, which is the failure above with an
-// environment variable in front of it. Pointing a worker at an experimental
-// queue is a change to this line and a deploy — deliberate, reviewable, and
-// impossible to do to one side only.
+// It is deliberately NOT read by workflow code. Temporal schedules a child
+// workflow or an activity onto the queue its parent workflow is already on
+// unless told otherwise — verified against go.temporal.io/sdk v1.47.0's source
+// rather than its documentation. Starting a workflow seeds the context with the
+// workflow's own queue (internal/internal_workflow.go:505 for children, :509
+// for activities), and the option setters overwrite it only when the caller
+// passes a non-empty value (internal/workflow.go:2052-2054 and :2710-2712). The
+// field docs say the same (internal/workflow.go:462, internal/activity.go:109).
+//
+// That is why the option builders in internal/workflows omit TaskQueue, and why
+// naming it there would be a mistake rather than a belt-and-braces: it turns one
+// written name into five, which is the precondition for the divergence a single
+// home exists to prevent.
+//
+// It is a constant rather than configuration for a related reason. A queue name
+// settable per environment would let the worker and whatever schedules onto it
+// disagree at runtime, and that failure is silent at both ends — a worker
+// polling a queue nobody sends to looks exactly like a system with nothing to
+// do. Pointing a worker at an experimental queue is a change to this line and a
+// deploy: deliberate, reviewable, and impossible to do to one side only.
+//
+// One string, two concepts: the Temporal NAMESPACE is also "software-factory"
+// (infra/src/temporal.ts). They are passed on the same command lines, so a
+// transposed --namespace and --task-queue is invisible.
 //
 // The same fact by the same rule as WorkflowID in paths.go: one name, one home,
 // nothing else may construct it.
