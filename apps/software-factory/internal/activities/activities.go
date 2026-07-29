@@ -22,7 +22,7 @@ type Deps struct {
 	Pods        PodLifecycle
 	Stages      StageRunner
 	Transcripts TranscriptSink
-	Prompts     PromptRenderer
+	Prompts     StageContract
 	Status      StatusRenderer
 	Runs        RunLookup
 	Sweeper     SandboxSweeper
@@ -212,6 +212,11 @@ type RunStageOutput struct {
 	Output   []byte
 	ThreadID string
 	Usage    work.Usage
+
+	// Verdict is the part of Output the pipeline itself reads: whether the run
+	// is blocked, and what propose opened. Read here, once, rather than in the
+	// workflow, so that workflow code never parses a schema.
+	Verdict work.StageVerdict
 }
 
 // RunStage renders a stage's prompt, runs it in the sandbox, and stores its
@@ -266,7 +271,17 @@ func (a *Activities) RunStage(ctx context.Context, in RunStageInput) (RunStageOu
 		"input_tokens", result.Usage.InputTokens,
 		"output_tokens", result.Usage.OutputTokens)
 
-	return RunStageOutput{Output: result.Output, ThreadID: result.ThreadID, Usage: result.Usage}, nil
+	verdict, err := a.deps.Prompts.Verdict(in.Key.Stage, result.Output)
+	if err != nil {
+		return RunStageOutput{}, fail(ctx, fmt.Sprintf("reading the verdict of %s", in.Key), err)
+	}
+
+	return RunStageOutput{
+		Output:   result.Output,
+		ThreadID: result.ThreadID,
+		Usage:    result.Usage,
+		Verdict:  verdict,
+	}, nil
 }
 
 // DescribeRun reports whether a ticket's workflow is still open, and which run

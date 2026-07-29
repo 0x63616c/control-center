@@ -125,12 +125,17 @@ func (f *fakeTranscript) Close() error {
 }
 
 type fakePrompts struct {
-	prompt string
-	schema []byte
-	err    error
+	prompt  string
+	schema  []byte
+	err     error
+	verdict work.StageVerdict
 
 	sawStage   work.Stage
 	sawHandoff []byte
+}
+
+func (f *fakePrompts) Verdict(work.Stage, []byte) (work.StageVerdict, error) {
+	return f.verdict, nil
 }
 
 func (f *fakePrompts) Render(stage work.Stage, _ work.TicketDetail, handoff []byte) (string, []byte, error) {

@@ -120,3 +120,28 @@ func (t SandboxTemplate) Spec(ticketNumber int, runID string) SandboxSpec {
 		Env:             env,
 	}
 }
+
+// StageVerdict is the part of a stage's structured output the pipeline itself
+// acts on, and the only part of it any workflow reads.
+//
+// Everything else a stage produces is the next stage's business and travels
+// through untouched — a plan's file paths and findings mean nothing to an
+// orchestrator. These three fields mean something to it and nothing to a model,
+// which is why they are lifted out rather than left for workflow code to go
+// looking for in a JSON blob.
+type StageVerdict struct {
+	// Blocked is a stage declining the ticket. The pipeline stops there: the
+	// remaining stages would spend tokens elaborating a plan that has already
+	// been abandoned.
+	Blocked bool
+
+	// Reason is why, and is what the status comment tells the human. A blocked
+	// run with no reason is worse than a failure, because it looks handled.
+	Reason string
+
+	// PullRequest is the URL propose opened, and is empty for every other
+	// stage. A run that reports success without one has not done the only thing
+	// this system exists to do, so its absence is a failure rather than a
+	// detail.
+	PullRequest string
+}

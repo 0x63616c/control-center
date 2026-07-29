@@ -120,19 +120,28 @@ type TokenSource interface {
 	SandboxCredentialFile(ctx context.Context) (work.CredentialFile, error)
 }
 
-// PromptRenderer turns a ticket and the preceding stage's output into the
-// prompt and schema one stage runs on.
+// StageContract owns what a stage is asked and what its answer means: the
+// prompt, the schema that constrains the answer, and the reading of the answer
+// back into the two facts the pipeline itself acts on.
+//
+// Both halves are one interface because they are one decision. A schema and the
+// code that reads it are the same fact seen twice, and splitting them across
+// modules is how they drift.
 //
 // It is a seam rather than a call into a prompt package because prompts are the
 // highest-churn part of this service and orchestration is the lowest: a wording
 // change must not be a workflow change, and a test of the pipeline must not
 // need the real prompts to exist.
-//
-// handoff is the previous stage's schema-conforming output, verbatim and
-// unparsed, or nil for the first stage. Only the renderer knows which stage's
-// schema it satisfies.
-type PromptRenderer interface {
+type StageContract interface {
+	// Render returns the prompt a stage runs on and the schema its final
+	// message must satisfy. handoff is the preceding stage's output, verbatim
+	// and unparsed, or nil for the first stage.
 	Render(stage work.Stage, detail work.TicketDetail, handoff []byte) (prompt string, schema []byte, err error)
+
+	// Verdict reads back the part of a stage's output the pipeline acts on.
+	// Everything else in that output is the next stage's business, and travels
+	// on untouched.
+	Verdict(stage work.Stage, output []byte) (work.StageVerdict, error)
 }
 
 // StatusRenderer turns a run's state into the body of its status comment.
