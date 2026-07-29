@@ -26,6 +26,7 @@ import (
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/config"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/prompts"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
@@ -95,11 +96,7 @@ func run() error {
 	// duplicate registration, deliberately, so a second registry or a second
 	// construction of the metrics that record into it is a crash in
 	// production; that is why both live here and are passed down.
-	registry := prometheus.NewRegistry()
-	registry.MustRegister(
-		collectors.NewGoCollector(),
-		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
-	)
+	registry, metrics := newObservability()
 
 	// Bound before the worker starts, so a port already in use is a startup
 	// failure with a clear message rather than a worker that runs unmonitored.
@@ -141,7 +138,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	register(w, renderer, dispatcher, logger)
+	register(w, renderer, metrics, dispatcher, logger)
 
 	logger.Info("worker starting",
 		slog.String("task_queue", cfg.TaskQueue),
@@ -171,6 +168,28 @@ func run() error {
 	return nil
 }
 
+// newObservability builds the process's one metrics registry and the one set of
+// stage metrics recording into it.
+//
+// Both are singletons and both are here for the same reason: Prometheus panics
+// on a duplicate registration, deliberately. A second registry or a second
+// construction of the metrics is a crash in production — and the quieter half
+// of that is worse. A track that built its own Metrics against its own registry
+// would not panic at all; its counters would increment into a registry nothing
+// serves, and /metrics would stay empty while every call site looked correct.
+//
+// The stage metrics are built even though nothing records into them yet,
+// because "construct it where it can only happen once" is the property, and a
+// gap here is what the next track fills with its own copy.
+func newObservability() (*prometheus.Registry, *telemetry.Metrics) {
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(
+		collectors.NewGoCollector(),
+		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+	)
+	return registry, telemetry.NewMetrics(registry)
+}
+
 // register puts this worker's workflows and activities on its task queue.
 //
 // One function, one call site: a registration list that grew in two places
@@ -178,12 +197,17 @@ func run() error {
 // registered yet — C1's WorkTicket and C2's dispatcher, and the activities they
 // call, land here.
 //
+// The renderer and the metrics are parameters rather than things this builds:
+// both are process-wide singletons whose whole point is that exactly one exists
+// (see their construction in run), and an activity that built its own would get
+// a fresh nonce source or a second set of collectors.
+//
 // The renderer is a parameter rather than something this builds, because it
 // belongs to the activity that runs a stage and must never reach workflow code:
 // a replayed workflow that re-rendered a prompt would mint a fresh fence nonce
 // and diverge from its own history. That is what internal/prompts' place on the
 // workflows-are-deterministic deny list enforces, and what this signature says.
-func register(w worker.Worker, renderer *prompts.Renderer, dispatcher work.Config, logger *slog.Logger) {
+func register(w worker.Worker, renderer *prompts.Renderer, metrics *telemetry.Metrics, dispatcher work.Config, logger *slog.Logger) {
 	logger.Info("registrations",
 		slog.Int("workflows", 0),
 		slog.Int("activities", 0),
