@@ -62,7 +62,27 @@ type Worker struct {
 
 	// LogLevel is the level everything below this process logs at.
 	LogLevel slog.Level
+
+	// SandboxCPULimit and SandboxMemoryLimit are the per-ticket sandbox pod's
+	// resource limits, as Kubernetes quantity strings ("2", "4Gi").
+	//
+	// Optional, like LogLevel: nothing deploys them today (#340 landed the
+	// worker's own composition ahead of a resourced deploy for the sandbox
+	// pods it creates), and a default that lets a first deploy create a
+	// working pod is worth more here than a crashloop over a number nobody
+	// has decided is wrong yet. Once infra sets these explicitly the default
+	// stops mattering; until then it is a real limit, not a placeholder that
+	// skips enforcement.
+	SandboxCPULimit    string
+	SandboxMemoryLimit string
 }
+
+// Defaults for the two optional sandbox resource limits. See their fields'
+// doc comment on Worker for why they default rather than fail.
+const (
+	defaultSandboxCPULimit    = "2"
+	defaultSandboxMemoryLimit = "4Gi"
+)
 
 // Environment variables LoadWorker reads. They are constants because the errors
 // quote them, and an error naming an input that does not exist is worse than no
@@ -78,6 +98,9 @@ const (
 	envTemporalUIBaseURL = "TEMPORAL_UI_BASE_URL"
 	envCodexAuthSecret   = "CODEX_AUTH_SECRET_NAME"
 	envLogLevel          = "LOG_LEVEL"
+
+	envSandboxCPULimit    = "SANDBOX_CPU_LIMIT"
+	envSandboxMemoryLimit = "SANDBOX_MEMORY_LIMIT"
 )
 
 // workerEnvNames are the variables that must be set. LOG_LEVEL is absent
@@ -149,7 +172,19 @@ func LoadWorker() (Worker, error) {
 		return Worker{}, err
 	}
 	cfg.LogLevel = level
+
+	cfg.SandboxCPULimit = orDefault(envSandboxCPULimit, defaultSandboxCPULimit)
+	cfg.SandboxMemoryLimit = orDefault(envSandboxMemoryLimit, defaultSandboxMemoryLimit)
 	return cfg, nil
+}
+
+// orDefault reads an optional environment variable, or returns fallback if it
+// is unset or blank.
+func orDefault(name, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(name)); v != "" {
+		return v
+	}
+	return fallback
 }
 
 // describeWorkerRequirement adds to a missing-variable error what the variable

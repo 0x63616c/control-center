@@ -100,6 +100,31 @@ func TestLoadWorkerReadsTheWholeEnvironment(t *testing.T) {
 		t.Errorf("CodexAuthSecretName = %q", got.CodexAuthSecretName)
 	case got.LogLevel != slog.LevelInfo:
 		t.Errorf("LogLevel = %v, want the default %v", got.LogLevel, slog.LevelInfo)
+	case got.SandboxCPULimit != defaultSandboxCPULimit:
+		t.Errorf("SandboxCPULimit = %q, want the default %q", got.SandboxCPULimit, defaultSandboxCPULimit)
+	case got.SandboxMemoryLimit != defaultSandboxMemoryLimit:
+		t.Errorf("SandboxMemoryLimit = %q, want the default %q", got.SandboxMemoryLimit, defaultSandboxMemoryLimit)
+	}
+}
+
+// TestLoadWorkerTakesTheSandboxLimitsItIsGiven proves the two optional
+// resource limits are read like every other input when set, and only fall
+// back to their defaults when absent — the same contract LogLevel has.
+func TestLoadWorkerTakesTheSandboxLimitsItIsGiven(t *testing.T) {
+	env := completeEnv()
+	env["SANDBOX_CPU_LIMIT"] = "4"
+	env["SANDBOX_MEMORY_LIMIT"] = "8Gi"
+	setEnv(t, env)
+
+	got, err := LoadWorker()
+	if err != nil {
+		t.Fatalf("LoadWorker: %v", err)
+	}
+	if got.SandboxCPULimit != "4" {
+		t.Errorf("SandboxCPULimit = %q, want %q", got.SandboxCPULimit, "4")
+	}
+	if got.SandboxMemoryLimit != "8Gi" {
+		t.Errorf("SandboxMemoryLimit = %q, want %q", got.SandboxMemoryLimit, "8Gi")
 	}
 }
 
