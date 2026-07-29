@@ -799,3 +799,50 @@ func TestFindPullRequestReportsAbsenceAsAnAnswerNotAnError(t *testing.T) {
 		t.Fatal("nothing was found")
 	}
 }
+
+func TestRunStageReturnsTheDocumentInsideTheEnvelopeNotTheEnvelope(t *testing.T) {
+	t.Parallel()
+
+	// The next stage's prompt is rendered from the document, and A1's envelope
+	// is `{"document": ...}`. Handing the raw envelope on would interpolate
+	// JSON into a prompt where prose belongs, and every downstream stage would
+	// read a wrapper it was never shown the shape of.
+	envelope := []byte(`{"document":"the plan itself"}`)
+	d := deps()
+	d.Stages = &fakeStages{result: work.StageResult{Output: envelope}}
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.RunStage)
+
+	val, err := e.ExecuteActivity(a.RunStage, stageInput(work.StagePlan, nil))
+	if err != nil {
+		t.Fatalf("RunStage: %v", err)
+	}
+
+	var out RunStageOutput
+	if err := val.Get(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Document != "document of "+string(envelope) {
+		t.Fatalf("Document = %q — it must come from the seam that owns the envelope format", out.Document)
+	}
+	if string(out.Output) != string(envelope) {
+		t.Fatalf("Output = %q, want the raw envelope kept for the transcript", out.Output)
+	}
+}
+
+func TestRunStageFailsWhenTheEnvelopeCannotBeRead(t *testing.T) {
+	t.Parallel()
+
+	d := deps()
+	d.Prompts = &fakePrompts{documentErr: errors.New("no document field")}
+	d.Stages = &fakeStages{result: work.StageResult{Output: []byte(`{"nonsense":1}`)}}
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.RunStage)
+
+	if _, err := e.ExecuteActivity(a.RunStage, stageInput(work.StagePlan, nil)); err == nil {
+		t.Fatal("a stage that answered in some other shape has not done its job; carrying an empty document " +
+			"into the next prompt would hide that")
+	}
+}
