@@ -388,6 +388,13 @@ type fakePods struct {
 }
 
 func (f *fakePods) Exec(_ context.Context, _ work.SandboxID, argv []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	if len(argv) > 0 && argv[0] == "pgrep" {
+		// A regression guard for #411: AttemptRunning's liveness check must
+		// go through Probe, which bypasses the shim, never through Exec,
+		// which wraps it — and would make the probe self-match its own
+		// wrapper process's command line.
+		return 0, fmt.Errorf("pgrep reached Exec instead of Probe; this is the #411 self-match bug")
+	}
 	call := execCall{argv: argv, stdout: stdout, stderr: stderr}
 	if stdin != nil {
 		read, err := io.ReadAll(stdin)
@@ -399,42 +406,6 @@ func (f *fakePods) Exec(_ context.Context, _ work.SandboxID, argv []string, stdi
 
 	f.mu.Lock()
 	f.calls = append(f.calls, call)
-	if argv[0] == "pgrep" {
-		f.pgrepCalls++
-		if f.pollBudget > 0 && f.pgrepCalls > f.pollBudget {
-			f.mu.Unlock()
-			return 0, errPollBudget
-		}
-		if f.pgrepExit != nil {
-			code := *f.pgrepExit
-			f.mu.Unlock()
-			return code, nil
-		}
-		calls, hook := f.pgrepCalls, f.onPgrepPoll
-		f.mu.Unlock()
-		if hook != nil {
-			hook(calls)
-		}
-		f.mu.Lock()
-		pid := f.alivePID
-		f.mu.Unlock()
-		f.mu.Lock()
-		override := f.aliveOutput
-		f.mu.Unlock()
-		if override != nil {
-			if _, err := io.WriteString(stdout, *override); err != nil {
-				return 0, err
-			}
-			return 0, nil
-		}
-		if pid == 0 {
-			return 1, nil
-		}
-		if _, err := fmt.Fprintf(stdout, "%d\n", pid); err != nil {
-			return 0, err
-		}
-		return 0, nil
-	}
 	handler := f.onCodex
 	f.mu.Unlock()
 
@@ -442,6 +413,51 @@ func (f *fakePods) Exec(_ context.Context, _ work.SandboxID, argv []string, stdi
 		return 0, nil
 	}
 	return handler(&call)
+}
+
+// Probe answers AttemptRunning's pgrep, and only pgrep: production code
+// never routes anything else through it, and a fake that accepted more would
+// hide a regression back to routing the liveness check through Exec (#411).
+func (f *fakePods) Probe(_ context.Context, _ work.SandboxID, argv []string, stdout, _ io.Writer) (int, error) {
+	if len(argv) == 0 || argv[0] != "pgrep" {
+		return 0, fmt.Errorf("fakePods.Probe called with unexpected argv %v; only pgrep is expected here", argv)
+	}
+
+	call := execCall{argv: argv, stdout: stdout}
+	f.mu.Lock()
+	f.calls = append(f.calls, call)
+	f.pgrepCalls++
+	if f.pollBudget > 0 && f.pgrepCalls > f.pollBudget {
+		f.mu.Unlock()
+		return 0, errPollBudget
+	}
+	if f.pgrepExit != nil {
+		code := *f.pgrepExit
+		f.mu.Unlock()
+		return code, nil
+	}
+	calls, hook := f.pgrepCalls, f.onPgrepPoll
+	f.mu.Unlock()
+	if hook != nil {
+		hook(calls)
+	}
+	f.mu.Lock()
+	pid := f.alivePID
+	override := f.aliveOutput
+	f.mu.Unlock()
+	if override != nil {
+		if _, err := io.WriteString(stdout, *override); err != nil {
+			return 0, err
+		}
+		return 0, nil
+	}
+	if pid == 0 {
+		return 1, nil
+	}
+	if _, err := fmt.Fprintf(stdout, "%d\n", pid); err != nil {
+		return 0, err
+	}
+	return 0, nil
 }
 
 func (f *fakePods) codexCalls() int {
