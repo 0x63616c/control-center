@@ -199,13 +199,19 @@ type cappedWriter struct {
 }
 
 // Write appends p, or fails if that would pass the cap.
+//
+// The count it returns on failure is what it actually kept, not zero: io.Writer
+// requires n to describe the bytes written, and an io.Copy over this would
+// otherwise mis-account the transfer.
 func (w *cappedWriter) Write(p []byte) (int, error) {
 	if int64(w.buf.Len())+int64(len(p)) > w.limit {
 		room := w.limit - int64(w.buf.Len())
 		if room > 0 {
 			w.buf.Write(p[:room])
+		} else {
+			room = 0
 		}
-		return 0, fmt.Errorf("the file is larger than the %d-byte read limit", w.limit)
+		return int(room), fmt.Errorf("the file is larger than the %d-byte read limit", w.limit)
 	}
 	return w.buf.Write(p)
 }

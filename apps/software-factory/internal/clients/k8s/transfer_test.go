@@ -151,6 +151,30 @@ func TestWriteNeverEmitsATarEntryForTheSandboxRoot(t *testing.T) {
 	}
 }
 
+func TestCappedWriterReportsTheBytesItKept(t *testing.T) {
+	t.Parallel()
+
+	// io.Writer requires n to describe what was written, error or not.
+	// Returning 0 after keeping bytes mis-accounts any io.Copy over this.
+	w := &cappedWriter{limit: 4}
+	if n, err := w.Write([]byte("ab")); n != 2 || err != nil {
+		t.Fatalf("Write under the cap = (%d, %v), want (2, nil)", n, err)
+	}
+	n, err := w.Write([]byte("cdef"))
+	if err == nil {
+		t.Fatal("Write past the cap returned nil; a truncated result must abort the stream, not pass as complete")
+	}
+	if n != 2 {
+		t.Errorf("Write past the cap = %d, want 2: it kept two bytes", n)
+	}
+	if got := w.buf.String(); got != "abcd" {
+		t.Errorf("buffer = %q, want %q", got, "abcd")
+	}
+	if n, err := w.Write([]byte("g")); n != 0 || err == nil {
+		t.Errorf("Write with no room = (%d, %v), want (0, an error)", n, err)
+	}
+}
+
 func TestWriteStampsTarEntriesFromTheInjectedClock(t *testing.T) {
 	t.Parallel()
 
