@@ -400,6 +400,34 @@ func TestCreateSandboxNamesThePodForTheRunAndTheTicket(t *testing.T) {
 	}
 }
 
+func TestCreateSandboxTellsTheSandboxWhichBranchToPush(t *testing.T) {
+	t.Parallel()
+
+	pods := &fakePods{}
+	d := deps()
+	d.Pods = pods
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.CreateSandbox)
+
+	if _, err := e.ExecuteActivity(a.CreateSandbox, CreateSandboxInput{
+		TicketNumber: 328, RunID: "run-1", RunTimeout: 5 * time.Hour,
+	}); err != nil {
+		t.Fatalf("CreateSandbox: %v", err)
+	}
+
+	// The same branch the worker will later ask GitHub about. A sandbox that
+	// pushed somewhere else would produce a pull request nothing can find, and
+	// every run would report itself blocked having done the work.
+	want := work.BranchName(328, "run-1")
+	if got := pods.created[0].Env[work.SandboxBranchEnv]; got != want {
+		t.Fatalf("%s = %q, want %q", work.SandboxBranchEnv, got, want)
+	}
+	if _, kept := pods.created[0].Env["CODEX_HOME"]; !kept {
+		t.Fatal("the template's own environment must survive")
+	}
+}
+
 // --- stages ----------------------------------------------------------------
 
 func stageInput(stage work.Stage, handoff []byte) RunStageInput {
