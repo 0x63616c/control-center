@@ -113,14 +113,15 @@ export function PinPadView({
   // Keyboard support: digit keys append, Backspace/Delete remove. Routed
   // through refs (same pattern as PinGateModal's onCloseRef/onSuccessRef) so
   // the listener attaches once on mount rather than detaching/reattaching on
-  // every keystroke , both real callers (PinGateModal, SecurityPage) pass a
+  // every keystroke , both real callers (PinGateModal, PinChangeModal) pass a
   // fresh onDigit/onBackspace identity every render.
   //
   // NB: this listener is per-mounted-instance. Today only one PinPadView is
-  // ever mounted at a time (PinGateModal is exclusive-open; SecurityPage is a
-  // single settings sub-page), so a single global listener is safe. If a
-  // future screen ever renders two PinPadViews simultaneously, both would
-  // receive every keydown , worth revisiting then.
+  // ever mounted at a time: both callers are PIN dialogs, each renders its pad
+  // only while open, and the gate runs before Settings exists rather than over
+  // it. So a single global listener is safe. If a future screen ever renders
+  // two PinPadViews simultaneously, both would receive every keydown , worth
+  // revisiting then.
   const onDigitRef = useRef(onDigit);
   onDigitRef.current = onDigit;
   const onBackspaceRef = useRef(onBackspace);

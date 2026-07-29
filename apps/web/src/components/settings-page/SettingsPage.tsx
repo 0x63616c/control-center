@@ -13,9 +13,11 @@
 import type { ComponentType } from "react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useEscapeToClose } from "../../lib/escape-stack";
 import { interaction } from "../../lib/log/interaction";
 import { registerOpenModal } from "../../lib/modal-open-store";
 import { useIsNarrow } from "../../lib/useIsNarrow";
+import { Z_LAYER } from "../../lib/z-layers";
 import { Icon } from "../Icon";
 import { BackButton, PageHeader } from "./blocks";
 import { PAGE_BY_KEY, PAGES, type PageKey } from "./pages";
@@ -112,15 +114,9 @@ export function SettingsPage({
     return () => interaction("modal", "close", target);
   }, [open]);
 
-  // Escape-to-close, only while open.
-  useEffect(() => {
-    if (!open) return;
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, onClose]);
+  // Escape-to-close, only while open AND only while nothing is open on top of
+  // us , a PIN dialog over Settings owns Escape until it closes (#298).
+  useEscapeToClose(open, onClose);
 
   if (!open) return null;
 
@@ -136,7 +132,7 @@ export function SettingsPage({
       style={{
         position: "fixed",
         inset: 0,
-        zIndex: 100,
+        zIndex: Z_LAYER.pageOverlay,
         display: "flex",
         background: "var(--bg)",
         color: "var(--ink)",

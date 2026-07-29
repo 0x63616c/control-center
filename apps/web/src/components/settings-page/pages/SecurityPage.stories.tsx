@@ -78,8 +78,9 @@ export const ChangingPin: Story = {
 };
 
 /**
- * The full walkthrough. A matching confirm dismisses the surface and leaves the
- * row saying "Changed" , success is the flow disappearing, not a screen about it.
+ * The full walkthrough. A matching confirm confirms itself on the surface the
+ * person is looking at, then dismisses , the row's "Changed" is the echo, not
+ * the confirmation, and the old "Change again" dead end stays gone.
  */
 export const Changed: Story = {
   play: async ({ canvasElement }) => {
@@ -97,12 +98,18 @@ export const Changed: Story = {
     await expect(doc.getByText("Confirm new PIN")).toBeInTheDocument();
     await tap("123456");
 
-    // Dismissed, with the confirmation on the row itself. Generous timeout: CI
+    // The success beat, on the surface itself , and still nothing to dismiss.
+    await expect(doc.getByText("PIN changed")).toBeInTheDocument();
+    await expect(doc.queryByRole("button", { name: "Change again" })).not.toBeInTheDocument();
+
+    // Then it leaves on its own, and the row echoes it. Generous timeout: CI
     // runs this under coverage instrumentation (same reason the PinGateModal
     // and Board stories carry long ones).
     await waitFor(() => expect(doc.queryByText("Confirm new PIN")).not.toBeInTheDocument(), {
       timeout: 10_000,
     });
-    await expect(canvas.getByText("Changed")).toBeInTheDocument();
+    await waitFor(() => expect(canvas.getByText("Changed")).toBeInTheDocument(), {
+      timeout: 10_000,
+    });
   },
 };

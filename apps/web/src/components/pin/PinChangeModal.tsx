@@ -8,6 +8,14 @@
  * offered was doing the whole thing over. On its own surface success is simply
  * the flow disappearing (#298) , the caller closes us and confirms on the row.
  *
+ * Success is a beat, not a screen. A matching confirm holds the dialog on an
+ * explicit "PIN changed" state , green chip, same success language the gate
+ * uses when it unlocks , and only then dismisses itself. The dead-end *Change
+ * again* button does not come back: the surface still leaves on its own. The
+ * beat exists because the confirmation this replaced could be missed entirely,
+ * appearing in the row's value slot AFTER the surface a person was looking at
+ * had already vanished.
+ *
  * The machine itself is unchanged from the Security page version: each stage is
  * its own PIN entry, so each gets its own pad layout (`shuffleKey={stage}`); a
  * mismatched confirm restarts the new/confirm PAIR rather than the whole flow
@@ -17,13 +25,19 @@
  * NEVER log or persist the entered digits , see PinModalShell's header.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PIN_LENGTH, setPinCode, useSettings } from "../../lib/settings";
 import { Icon } from "../Icon";
 import { PinModalCancel, PinModalHeader, PinModalShell } from "./PinModalShell";
 import { PinPadView } from "./PinPad";
 
 type ChangeStage = "current" | "new" | "confirm";
+
+/** How long the dialog holds its success state before dismissing itself. Long
+ *  enough to read and to register as a distinct event , the gate's 250ms
+ *  handoff is a different job, hiding a transition rather than confirming a
+ *  security-critical change. */
+const CHANGED_BEAT_MS = 1200;
 
 /** The three steps, in order , also the progress indicator's source of truth. */
 const STAGES: readonly ChangeStage[] = ["current", "new", "confirm"];
@@ -52,6 +66,9 @@ export function PinChangeModal({
   // The candidate PIN between stage 2 and stage 3. Lives here only, dies with
   // the surface, and is cleared on every open/close flip below.
   const [newPin, setNewPin] = useState("");
+  // The success beat. The PIN is already saved when this flips; all that is
+  // left is letting the person see that it happened.
+  const [changed, setChanged] = useState(false);
 
   // Reset on every open/close flip so a reopened flow always starts at stage one
   // with no half-typed candidate behind it , same guarantee PinGateModal makes.
@@ -62,9 +79,21 @@ export function PinChangeModal({
     setPin("");
     setError(false);
     setNewPin("");
+    setChanged(false);
   }, [open]);
 
+  // Hand back once the beat has played. Cleared on unmount and on a reopen, so
+  // a late timer can never dismiss a flow that has started over.
+  const onChangedRef = useRef(onChanged);
+  onChangedRef.current = onChanged;
+  useEffect(() => {
+    if (!changed) return;
+    const beat = setTimeout(() => onChangedRef.current(), CHANGED_BEAT_MS);
+    return () => clearTimeout(beat);
+  }, [changed]);
+
   function digit(d: string) {
+    if (changed) return; // the flow is over; the beat is playing
     setError(false);
     const next = pin + d;
     if (next.length < PIN_LENGTH) {
@@ -81,7 +110,7 @@ export function PinChangeModal({
       setStage("confirm");
     } else if (next === newPin) {
       setPinCode(next);
-      onChanged();
+      setChanged(true);
     } else {
       // Mismatch , restart the new/confirm pair.
       setError(true);
@@ -96,20 +125,24 @@ export function PinChangeModal({
     <PinModalShell
       open={open}
       logTitle="Change PIN"
+      label="Change PIN"
       backdropTestId="pin-change-backdrop"
       onClose={onClose}
     >
       <PinModalHeader
-        icon={<Icon name="lock" s={22} />}
-        title={copy.title}
+        icon={<Icon name={changed ? "unlock" : "lock"} s={22} />}
+        title={changed ? "PIN changed" : copy.title}
         sub={
-          error
-            ? stage === "current"
-              ? "Wrong PIN, try again"
-              : "PINs didn't match, start over"
-            : copy.sub
+          changed
+            ? "Synced to all panels."
+            : error
+              ? stage === "current"
+                ? "Wrong PIN, try again"
+                : "PINs didn't match, start over"
+              : copy.sub
         }
-        error={error}
+        error={error && !changed}
+        good={changed}
       />
       <PinPadView
         entered={pin.length}
@@ -132,7 +165,7 @@ export function PinChangeModal({
               width: 24,
               height: 4,
               borderRadius: 2,
-              background: s === stage ? "var(--ink-2)" : "var(--nest)",
+              background: changed || s === stage ? "var(--ink-2)" : "var(--nest)",
             }}
           />
         ))}

@@ -139,10 +139,15 @@ export function SliderRow({ children }: { children: ReactNode }) {
 export function ChevronValue({
   value,
   label,
+  tone,
   onClick,
 }: {
   value: string;
   label?: string;
+  /** `good` paints the value in the success green every other confirmation on
+   *  the panel uses. The chevron deliberately stays put , dropping it would
+   *  jog the row's width in the middle of the confirmation it is showing. */
+  tone?: "good";
   onClick?: () => void;
 }) {
   const inner = (
@@ -155,6 +160,7 @@ export function ChevronValue({
   );
   const style: CSSProperties = {
     ...VALUE_TEXT,
+    ...(tone === "good" ? { color: "#43a56c" } : null),
     display: "inline-flex",
     alignItems: "center",
     gap: 8,

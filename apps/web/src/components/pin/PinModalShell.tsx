@@ -15,12 +15,15 @@
 
 import { type ReactNode, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import { useEscapeToClose } from "../../lib/escape-stack";
 import { interaction } from "../../lib/log/interaction";
 import { registerOpenModal } from "../../lib/modal-open-store";
+import { Z_LAYER } from "../../lib/z-layers";
 
 export function PinModalShell({
   open,
   logTitle,
+  label,
   backdropTestId,
   onClose,
   children,
@@ -28,6 +31,11 @@ export function PinModalShell({
   open: boolean;
   /** Distinguishes the surfaces in the interaction log (`modal.pin.<title>`). */
   logTitle: string;
+  /** The dialog's accessible name. Separate from logTitle because they answer
+   *  to different readers: renaming a log key must not rename what a screen
+   *  reader announces. The visible title changes per stage, so naming the
+   *  SURFACE is the stable choice. */
+  label: string;
   backdropTestId: string;
   onClose: () => void;
   children: ReactNode;
@@ -51,15 +59,9 @@ export function PinModalShell({
     return () => interaction("modal", "close", target);
   }, [open]);
 
-  // Escape-to-close, attached only while open.
-  useEffect(() => {
-    if (!open) return;
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onCloseRef.current();
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open]);
+  // Escape-to-close, arbitrated so ONLY the topmost surface closes. A dialog
+  // opened over Settings must not take Settings down with it (#298).
+  useEscapeToClose(open, () => onCloseRef.current());
 
   if (!open) return null;
 
@@ -68,7 +70,7 @@ export function PinModalShell({
       style={{
         position: "fixed",
         inset: 0,
-        zIndex: 100,
+        zIndex: Z_LAYER.pinDialog,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -98,6 +100,7 @@ export function PinModalShell({
       <div
         role="dialog"
         aria-modal="true"
+        aria-label={label}
         style={{
           position: "relative",
           background: "var(--tile)",

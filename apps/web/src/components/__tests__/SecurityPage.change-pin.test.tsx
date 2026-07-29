@@ -2,9 +2,10 @@
  * The Change PIN row and the surface it opens (#298).
  *
  * What matters here is the CONTAINER change: the flow is not on screen until
- * you ask for it, a successful change makes it disappear (rather than landing
- * on a "PIN changed / Change again" dead end), and a mismatch keeps you in the
- * flow instead of committing anything. The stage machine's own rules , verify
+ * you ask for it, a successful change confirms itself and then leaves on its
+ * own (rather than landing on a "PIN changed / Change again" dead end you have
+ * to dismiss), and a mismatch keeps you in the flow instead of committing
+ * anything. The stage machine's own rules , verify
  * against the live PIN, mismatch restarts the new/confirm pair, write only on a
  * matching confirm , moved across unchanged, so they are pinned too.
  *
@@ -12,7 +13,7 @@
  * `screen` rather than the render result's container.
  */
 
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 import { resetSettings, setPinCode } from "../../lib/settings";
@@ -47,7 +48,7 @@ describe("SecurityPage change-PIN row", () => {
     expect(screen.getByText("Enter current PIN")).toBeTruthy();
   });
 
-  it("dismisses the flow and confirms on the row after a matching confirm", async () => {
+  it("confirms on the surface, then dismisses itself and echoes on the row", async () => {
     const user = openFlow();
     await user.click(screen.getByRole("button", { name: "Change PIN" }));
 
@@ -57,12 +58,17 @@ describe("SecurityPage change-PIN row", () => {
     expect(screen.getByText("Confirm new PIN")).toBeTruthy();
     await tap(user, "123456"); // confirm , matches
 
-    // Gone, not replaced by a terminal screen: no "PIN changed", no "Change
-    // again" button anywhere.
-    expect(screen.queryByText("Confirm new PIN")).toBeNull();
-    expect(screen.queryByText("PIN changed")).toBeNull();
+    // The confirmation lands where the person is already looking, instead of
+    // appearing in the row after the surface they were watching vanished.
+    expect(screen.getByText("PIN changed")).toBeTruthy();
+    expect(screen.getByText("Synced to all panels.")).toBeTruthy();
+    // Still not a dead end: nothing to dismiss, and no way back into the flow.
     expect(screen.queryByRole("button", { name: "Change again" })).toBeNull();
-    // The row itself carries the confirmation.
+
+    // It leaves on its own.
+    await waitFor(() => expect(screen.queryByText("PIN changed")).toBeNull(), { timeout: 3000 });
+    expect(screen.queryByText("Confirm new PIN")).toBeNull();
+    // The row keeps a quieter echo for anyone who looked away as it went.
     expect(screen.getByText("Changed")).toBeTruthy();
   });
 

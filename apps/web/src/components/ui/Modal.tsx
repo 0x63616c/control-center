@@ -10,8 +10,10 @@
 import type { ReactNode } from "react";
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import { useEscapeToClose } from "../../lib/escape-stack";
 import { interaction } from "../../lib/log/interaction";
 import { registerOpenModal } from "../../lib/modal-open-store";
+import { Z_LAYER } from "../../lib/z-layers";
 
 export interface ModalProps {
   open: boolean;
@@ -97,16 +99,9 @@ export function Modal({
     return () => interaction("modal", "close", target);
   }, [open]);
 
-  // Escape-to-close. Listener is only attached while open so a background
-  // (closed) modal never swallows Escape meant for something else.
-  useEffect(() => {
-    if (!open) return;
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, onClose]);
+  // Escape-to-close, arbitrated by escape-stack: only while open, and only
+  // while this is the topmost open surface.
+  useEscapeToClose(open, onClose);
 
   if (!open) return null;
 
@@ -125,7 +120,7 @@ export function Modal({
       style={{
         position: "fixed",
         inset: 0,
-        zIndex: 100,
+        zIndex: Z_LAYER.pageOverlay,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
