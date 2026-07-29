@@ -53,9 +53,13 @@ const (
 
 // stageLabels are the dimensions every stage metric carries. Model and effort
 // are separate labels rather than one composite so a query can aggregate over
-// effort while comparing models, and neither is attacker-controlled: both come
-// from this service's own config, so the cardinality is bounded by what an
-// operator has configured.
+// effort while comparing models.
+//
+// None of them is attacker-controlled — they come from this service's own
+// config and its own Stage and Outcome types. That is not the same as bounded:
+// model and effort are free strings an operator hand-writes into an
+// UpdateConfig signal, so every typo is a series that never goes away. Values
+// are passed through boundedLabels for that reason; see bounded.go.
 var stageLabels = []string{labelStage, labelModel, labelEffort}
 
 // durationBuckets span a whole stage timeout. ADR-0011 gives each stage 60
@@ -77,6 +81,9 @@ type Metrics struct {
 	reasoningTokens     *prometheus.CounterVec
 	stages              *prometheus.CounterVec
 	stageDuration       *prometheus.HistogramVec
+
+	// bounded caps how many distinct values each label key can export.
+	bounded *boundedLabels
 }
 
 // NewMetrics registers this service's metrics on reg.
@@ -103,6 +110,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help:      "Wall-clock time one stage attempt took.",
 			Buckets:   durationBuckets,
 		}, stageLabels),
+		bounded: newBoundedLabels(LabelValueLimit),
 	}
 	reg.MustRegister(m.stageDuration)
 	return m
@@ -116,10 +124,13 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 // the same arithmetic, and there is one place to correct if the provider's
 // accounting changes.
 func (m *Metrics) StageFinished(stage work.Stage, model work.Model, outcome Outcome, usage work.Usage, took time.Duration) {
+	// Every label goes through the cardinality guard, not only the two that are
+	// hand-written today: Stage and Outcome are Go types but neither is a closed
+	// set the compiler enforces, and the guard is free for a set of five.
 	labels := prometheus.Labels{
-		labelStage:  string(stage),
-		labelModel:  model.Name,
-		labelEffort: model.Effort,
+		labelStage:  m.bounded.fold(labelStage, string(stage)),
+		labelModel:  m.bounded.fold(labelModel, model.Name),
+		labelEffort: m.bounded.fold(labelEffort, model.Effort),
 	}
 
 	m.uncachedInputTokens.With(labels).Add(float64(uncachedInput(usage)))
@@ -128,7 +139,7 @@ func (m *Metrics) StageFinished(stage work.Stage, model work.Model, outcome Outc
 	m.reasoningTokens.With(labels).Add(float64(max(usage.ReasoningTokens, 0)))
 	m.stageDuration.With(labels).Observe(took.Seconds())
 
-	outcomeLabels := prometheus.Labels{labelOutcome: string(outcome)}
+	outcomeLabels := prometheus.Labels{labelOutcome: m.bounded.fold(labelOutcome, string(outcome))}
 	for name, value := range labels {
 		outcomeLabels[name] = value
 	}

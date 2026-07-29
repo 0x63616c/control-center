@@ -1,12 +1,14 @@
 package telemetry_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
@@ -220,5 +222,88 @@ func mustGather(t *testing.T, reg *prometheus.Registry, name string) prometheus.
 		}
 	}
 	t.Fatalf("%s was not registered", name)
+	return nil
+}
+
+func TestOperatorTypoesInAModelNameCannotGrowTheSeriesSetWithoutBound(t *testing.T) {
+	t.Parallel()
+
+	// model and effort are config, not user input, but config is edited by hand
+	// in an UpdateConfig signal and a typo is permanent: every distinct value is
+	// a series the server stores forever. The backstop is the same one
+	// packages/platform/metrics/bounded.ts applies to every label on the TS
+	// side — the first values through are exported as written, the rest fold
+	// into `other`, so a leak shows up as a large `other` bucket instead of an
+	// unbounded /metrics endpoint.
+	reg := prometheus.NewRegistry()
+	m := telemetry.NewMetrics(reg)
+
+	for i := range telemetry.LabelValueLimit {
+		m.StageFinished(work.StagePlan, work.Model{Name: fmt.Sprintf("model-%d", i), Effort: "medium"},
+			telemetry.OutcomeSuccess, usage, time.Second)
+	}
+	if got := countSeries(t, reg, "software_factory_stage_output_tokens_total"); got != telemetry.LabelValueLimit {
+		t.Fatalf("%d series after %d distinct models, want one each", got, telemetry.LabelValueLimit)
+	}
+
+	for i := range 50 {
+		m.StageFinished(work.StagePlan, work.Model{Name: fmt.Sprintf("typo-%d", i), Effort: "medium"},
+			telemetry.OutcomeSuccess, usage, time.Second)
+	}
+
+	if got, want := countSeries(t, reg, "software_factory_stage_output_tokens_total"), telemetry.LabelValueLimit+1; got != want {
+		t.Errorf("%d series after 50 further models, want %d — everything past the limit belongs in one bucket", got, want)
+	}
+	if got := seriesValue(t, reg, "software_factory_stage_output_tokens_total", telemetry.OtherLabelValue); got != 50*float64(usage.OutputTokens) {
+		t.Errorf("model=%q counter = %v, want the 50 folded attempts' output tokens; a dropped attempt is worse than a coarse label", telemetry.OtherLabelValue, got)
+	}
+}
+
+func TestAnEmptyModelNameIsLabelledRatherThanLeftBlank(t *testing.T) {
+	t.Parallel()
+
+	// A blank label is indistinguishable from a missing dimension in a query,
+	// and the zero Config can reach here (ModelFor on an unvalidated config
+	// returns Model{}). Name it instead.
+	reg := prometheus.NewRegistry()
+	telemetry.NewMetrics(reg).StageFinished(work.StagePlan, work.Model{}, telemetry.OutcomeSuccess, usage, time.Second)
+
+	if got := seriesValue(t, reg, "software_factory_stage_output_tokens_total", telemetry.OtherLabelValue); got != float64(usage.OutputTokens) {
+		t.Errorf("model=%q counter = %v, want %d", telemetry.OtherLabelValue, got, usage.OutputTokens)
+	}
+}
+
+// countSeries is how many label combinations a metric currently has.
+func countSeries(t *testing.T, reg *prometheus.Registry, name string) int {
+	t.Helper()
+	return len(gatherFamily(t, reg, name).GetMetric())
+}
+
+// seriesValue is the counter value carried by the series whose model label is
+// model, or 0 if there is none.
+func seriesValue(t *testing.T, reg *prometheus.Registry, name, model string) float64 {
+	t.Helper()
+	for _, metric := range gatherFamily(t, reg, name).GetMetric() {
+		for _, label := range metric.GetLabel() {
+			if label.GetName() == "model" && label.GetValue() == model {
+				return metric.GetCounter().GetValue()
+			}
+		}
+	}
+	return 0
+}
+
+func gatherFamily(t *testing.T, reg *prometheus.Registry, name string) *dto.MetricFamily {
+	t.Helper()
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("Gather() = %v", err)
+	}
+	for _, family := range families {
+		if family.GetName() == name {
+			return family
+		}
+	}
+	t.Fatalf("no metric family %q was registered", name)
 	return nil
 }
