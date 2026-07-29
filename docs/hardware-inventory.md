@@ -1,15 +1,19 @@
-# home-server hardware
+# Hardware inventory
 
-Physical parts list for the `home-server` Talos node (`192.168.0.5`, the sole
-production machine — see `AGENTS.md` "Infra"). This doc exists so #46 (cooler
-fan reporting) and #45 (quieter fans) have a concrete parts list to work from
-instead of guesswork.
+Physical parts list for the house: the `home-server` Talos node, the network, the
+NAS, and the desk. It exists so tickets stop reasoning from unnamed parts — #46
+(cooler fan reporting) and #45 (quieter fans) both needed a concrete cooler model.
 
-Gathered read-only via `talosctl get <resource>` and `kubectl get nodes -o wide`
-against the live node on 2026-07-25. Commands are listed per section so this can
-be re-verified or extended later.
+Server rows were gathered read-only via `talosctl get <resource>` and
+`kubectl get nodes -o wide` against the live node on 2026-07-25 (commands at the
+bottom). Everything else is Calum's own record of what was bought — model numbers
+verbatim, not probed.
 
-## Confirmed remotely
+## home-server (`192.168.0.5`)
+
+The sole production machine — see `AGENTS.md` "Infra".
+
+### Confirmed remotely
 
 | Component | Value | Source |
 | --- | --- | --- |
@@ -25,9 +29,9 @@ be re-verified or extended later.
 
 Only one NVMe drive is visible to Talos (`nvme0n1`, 1TB) — no second data/storage
 drive is installed in this machine itself; bulk media storage lives on the NAS
-(see `AGENTS.md` DSM IP, not this doc).
+(below).
 
-## Could not determine remotely — needs Calum to read off the physical parts
+### Could not determine remotely — needs Calum to read off the physical parts
 
 Talos does not expose any of these to `talosctl`/`kubectl`, and there is no SSH
 path to run vendor tools (`lm-sensors`, `dmidecode` for these fields specifically,
@@ -43,8 +47,49 @@ etc.) — see `AGENTS.md` "no SSH into home-server":
   kit needs sourcing for the empty slots.
 
 If any of these are printed on a receipt, box, or visible on the physical
-hardware, the fastest way to close this doc out is a phone photo of the case
+hardware, the fastest way to close this section out is a phone photo of the case
 interior and the PSU label.
+
+## Network
+
+| Component | Value | Notes |
+| --- | --- | --- |
+| Router / gateway | UniFi Cloud Gateway Fiber | Runs the UniFi network the `guest-wifi` and device-state features talk to |
+| WAN | AT&T Fiber, 5 Gbps | Fastest tier AT&T sells at this address |
+
+The onboard NIC on `home-server` is 2.5GbE (see above), so a single host cannot
+saturate the 5 Gbps WAN on its own.
+
+## NAS
+
+| Component | Value | Notes |
+| --- | --- | --- |
+| Enclosure | Synology DiskStation DS420+, 4-bay (B&H `SYDS420P`) | `192.168.0.218` — never `.219`; see `AGENTS.md` |
+| Drives | 4× WD Red 4TB `WD40EFAX` — 5400 RPM, SATA 6 Gb/s, 256 MB cache, 3.5" | **SMR**, not CMR |
+
+`WD40EFAX` is the SMR revision of WD Red. SMR rewrites whole shingled zones, so
+sustained random writes and RAID rebuilds are markedly slower than the CMR
+`WD40EFRX`. Assume slow resilver on any drive replacement, and don't put
+write-heavy workloads (databases, Temporal state) on the NAS — those belong on
+the node's NVMe via `local-lvm`.
+
+Bulk media storage lives here. Backups and map-extract crons write here too
+(`infra/src/crons.ts`).
+
+## Desk
+
+Not part of the cluster — recorded so screenshot/resolution assumptions are
+grounded, and so peripherals aren't confused with the wall panel.
+
+| Component | Value |
+| --- | --- |
+| Dock | OWC Thunderbolt 4 dock — drives the main monitor |
+| Monitor | LG 45GX950A-B, 45" UltraGear, 5K2K (5120×2160) |
+| Mouse | Logitech MX Master 4 |
+| Keyboard | Keychron Q6 Max (QMK configs live in the dotfiles repo) |
+
+The `1366x1024` fixed-size invariant in `AGENTS.md` is the **wall panel**, not this
+monitor.
 
 ## Commands used
 
