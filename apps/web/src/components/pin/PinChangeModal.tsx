@@ -16,6 +16,11 @@
  * appearing in the row's value slot AFTER the surface a person was looking at
  * had already vanished.
  *
+ * The beat drops the pad, the stage dots and Cancel. They are inert by then ,
+ * `digit` refuses input once it flips , but inert is not the same as looking
+ * inert: a keypad and a *Cancel* under the words "PIN changed" read as a screen
+ * still waiting for something. What is left is the sentence and nothing else.
+ *
  * The machine itself is unchanged from the Security page version: each stage is
  * its own PIN entry, so each gets its own pad layout (`shuffleKey={stage}`); a
  * mismatched confirm restarts the new/confirm PAIR rather than the whole flow
@@ -144,33 +149,37 @@ export function PinChangeModal({
         error={error && !changed}
         good={changed}
       />
-      <PinPadView
-        entered={pin.length}
-        error={error}
-        layout={pinPadLayout}
-        // Each stage is its own PIN entry, so each gets its own layout.
-        shuffleKey={stage}
-        onDigit={digit}
-        onBackspace={() => {
-          setError(false);
-          setPin((p) => p.slice(0, -1));
-        }}
-      />
-      {/* Stage progress , which of the three steps you're on. */}
-      <div style={{ display: "flex", gap: 8 }}>
-        {STAGES.map((s) => (
-          <div
-            key={s}
-            style={{
-              width: 24,
-              height: 4,
-              borderRadius: 2,
-              background: changed || s === stage ? "var(--ink-2)" : "var(--nest)",
+      {!changed && (
+        <>
+          <PinPadView
+            entered={pin.length}
+            error={error}
+            layout={pinPadLayout}
+            // Each stage is its own PIN entry, so each gets its own layout.
+            shuffleKey={stage}
+            onDigit={digit}
+            onBackspace={() => {
+              setError(false);
+              setPin((p) => p.slice(0, -1));
             }}
           />
-        ))}
-      </div>
-      <PinModalCancel onClick={onClose} />
+          {/* Stage progress , which of the three steps you're on. */}
+          <div style={{ display: "flex", gap: 8 }}>
+            {STAGES.map((s) => (
+              <div
+                key={s}
+                style={{
+                  width: 24,
+                  height: 4,
+                  borderRadius: 2,
+                  background: s === stage ? "var(--ink-2)" : "var(--nest)",
+                }}
+              />
+            ))}
+          </div>
+          <PinModalCancel onClick={onClose} />
+        </>
+      )}
     </PinModalShell>
   );
 }
