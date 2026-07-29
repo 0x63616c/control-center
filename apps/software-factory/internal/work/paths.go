@@ -31,6 +31,27 @@ const SandboxRoot = "/work"
 // it, and the image's WORKDIR stays at the group-writable SandboxRoot.
 const RepoDir = SandboxRoot + "/repo"
 
+// CodexHomeDir is the ephemeral CODEX_HOME inside the sandbox: where the codex
+// CLI reads its auth.json from, and the only place a sandbox's codex
+// credential is ever written.
+//
+// It is a sibling of RepoDir under SandboxRoot, for the reason RepoDir gives
+// for the git credential file: RepoDir becomes the run's git working tree the
+// moment it is cloned, and a credential file living inside one is one
+// `git add -A` away from being committed into the branch the run pushes.
+const CodexHomeDir = SandboxRoot + "/.codex"
+
+// CodexHomeEnv is the environment variable that tells the codex CLI where to
+// find CodexHomeDir. Like SandboxBranchEnv, it is part of the contract with
+// the sandbox image — the composition root sets it on every sandbox's
+// template, and this is the one place that names it.
+const CodexHomeEnv = "CODEX_HOME"
+
+// CodexAuthFile is where the codex CLI's auth.json lives inside CodexHomeDir —
+// the file codex exec reads on every invocation to authenticate, and the file
+// a sandbox's TokenSource-fetched credential document is written to.
+const CodexAuthFile = CodexHomeDir + "/auth.json"
+
 // StageKey identifies one stage attempt, and is the whole of that identity.
 //
 // Every deterministic path a stage keys off is derived from these three fields

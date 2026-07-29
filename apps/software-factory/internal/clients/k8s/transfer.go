@@ -20,6 +20,24 @@ import (
 // fails with a permission error that looks nothing like its cause.
 const dirMode = 0o755
 
+// credentialFileMode is the mode every credential file this package writes
+// into a sandbox is written with — CloneRepo's git credential file and
+// WriteCodexCredential's codex auth.json. One constant rather than one per
+// caller, so #363 ("the sandbox credential file's 0600 mode is unowned and
+// unenforced") has exactly one place to hold the line: a caller cannot drift
+// to a wider mode by copying a literal instead of this name, and Write's own
+// mode check (mode&^fs.ModePerm) rejects anything that is not a plain
+// permission bit regardless.
+//
+// That is a check on the requested mode, not a guarantee about the mode a
+// file ends up with: this is written into a tar header and extracted by the
+// sandbox's own `tar -xf`, and GNU tar's delayed set-stat applies a
+// directory's final mode only after every entry under it is written, which
+// is best-effort rather than verified here. #363 is open on exactly that gap
+// — one owned constant closes the "which mode" half of it, not the "was it
+// actually applied" half.
+const credentialFileMode fs.FileMode = 0o600
+
 // Write puts content into the sandbox at path, with the requested mode,
 // creating any parent directories it needs.
 //

@@ -47,3 +47,15 @@ func TestTheSandboxesClientSatisfiesTheRepoClonerSeam(t *testing.T) {
 	var sandboxes *k8s.Sandboxes
 	var _ RepoCloner = sandboxes
 }
+
+// TestTheSandboxesClientSatisfiesTheCredentialWriterSeam pins the write half
+// of the credential seam, for the same reason the pins above do: nothing
+// else in this service binds CredentialWriter to *k8s.Sandboxes, so a
+// signature drifting on either side would otherwise leave `go build ./...`
+// green while the composition root failed to wire them together.
+func TestTheSandboxesClientSatisfiesTheCredentialWriterSeam(t *testing.T) {
+	t.Parallel()
+
+	var sandboxes *k8s.Sandboxes
+	var _ CredentialWriter = sandboxes
+}

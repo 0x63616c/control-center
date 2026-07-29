@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codex"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codexauth"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
@@ -120,6 +121,12 @@ func errorTypeOf(err error) string {
 	case errors.Is(err, codex.ErrRateLimited):
 		return ErrTypeRateLimit
 	case errors.Is(err, codex.ErrAuth):
+		return ErrTypeAuth
+	// codexauth.ErrUnseeded means the codex-auth Secret does not exist or does
+	// not parse (#344/#398): every ticket fails identically until a human
+	// seeds it, which is exactly the "stop and page a human" case ErrTypeAuth
+	// exists for, not an ordinary permanent failure this one ticket alone hit.
+	case errors.Is(err, codexauth.ErrUnseeded):
 		return ErrTypeAuth
 	case errors.Is(err, github.ErrAuth):
 		return ErrTypeAuth

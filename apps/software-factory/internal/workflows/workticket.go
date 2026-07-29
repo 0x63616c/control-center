@@ -167,10 +167,19 @@ func (r *ticketRun) execute(ctx workflow.Context) (WorkTicketResult, error) {
 		return WorkTicketResult{Outcome: work.OutcomeFailed}, err
 	}
 
-	// The clone has to happen before the first stage, not merely before it is
-	// used: codex refuses to run outside a git repository and exits before any
-	// model call, so a blank caught inside `plan` would be a run that already
-	// paid for a stage against a sandbox that could never have worked (#383).
+	// Both of the next two must happen before the first stage — codex refuses
+	// to run outside a git repository, and it refuses to run unauthenticated,
+	// and either failure caught inside `plan` would be a run that already paid
+	// for a stage against a sandbox that could never have worked. Neither
+	// depends on the other: CodexHomeDir and RepoDir are independent siblings
+	// of SandboxRoot. Credential first anyway (#398) — the codex-auth Secret
+	// does not exist in the cluster yet (#344), so until it is seeded every
+	// run fails here, and failing on that before CloneRepo means a run that
+	// cannot possibly proceed never also pays for CloneRepo's round trip to
+	// GitHub: minting an installation token, cloning, and pushing (#383).
+	if err := workflow.ExecuteActivity(control, acts.WriteCodexCredential, r.sandbox).Get(ctx, nil); err != nil {
+		return WorkTicketResult{Outcome: work.OutcomeFailed}, err
+	}
 	clone := workflow.WithActivityOptions(ctx, r.cloneOptions())
 	if err := workflow.ExecuteActivity(clone, acts.CloneRepo, r.sandbox).Get(ctx, nil); err != nil {
 		return WorkTicketResult{Outcome: work.OutcomeFailed}, err

@@ -40,28 +40,30 @@ type ticketHarness struct {
 	env *testsuite.TestWorkflowEnvironment
 
 	// knobs.
-	policy     work.RunPolicy
-	config     work.Config
-	stage      func(in activities.RunStageInput) (activities.RunStageOutput, error)
-	stageDelay time.Duration
-	labelErr   error
-	noPR       bool
-	prErr      error
-	cancelAt   time.Duration
-	cloneErr   error
+	policy        work.RunPolicy
+	config        work.Config
+	stage         func(in activities.RunStageInput) (activities.RunStageOutput, error)
+	stageDelay    time.Duration
+	labelErr      error
+	noPR          bool
+	prErr         error
+	cancelAt      time.Duration
+	cloneErr      error
+	credentialErr error
 
 	// what the run did.
-	ran      []work.Stage
-	priors   map[work.Stage]map[work.Stage]string
-	models   map[work.Stage]work.Model
-	keys     map[work.Stage]work.StageKey
-	created  int
-	cloned   []work.SandboxID
-	deleted  []work.SandboxID
-	cleared  int
-	reports  []work.StatusReport
-	done     work.TicketDone
-	prBranch string
+	ran               []work.Stage
+	priors            map[work.Stage]map[work.Stage]string
+	models            map[work.Stage]work.Model
+	keys              map[work.Stage]work.StageKey
+	created           int
+	cloned            []work.SandboxID
+	deleted           []work.SandboxID
+	cleared           int
+	reports           []work.StatusReport
+	done              work.TicketDone
+	prBranch          string
+	credentialWritten []work.SandboxID
 }
 
 func newTicketHarness(t *testing.T) *ticketHarness {
@@ -96,6 +98,12 @@ func (h *ticketHarness) run() {
 		})
 
 	env.OnActivity(acts.WaitSandboxReady, mock.Anything, mock.Anything).Return(nil)
+
+	env.OnActivity(acts.WriteCodexCredential, mock.Anything, mock.Anything).
+		Return(func(_ context.Context, sandbox work.SandboxID) error {
+			h.credentialWritten = append(h.credentialWritten, sandbox)
+			return h.credentialErr
+		})
 
 	env.OnActivity(acts.CloneRepo, mock.Anything, mock.Anything).
 		Return(func(_ context.Context, sandbox work.SandboxID) error {
@@ -373,6 +381,42 @@ func TestWorkTicketDeletesTheSandboxWhenAStageFails(t *testing.T) {
 	}
 	if len(h.deleted) != 1 || h.deleted[0] != "sandbox-328" {
 		t.Fatalf("deleted %v, want the sandbox — a pod outliving its run is the leak the sweep exists to catch", h.deleted)
+	}
+}
+
+func TestWorkTicketWritesTheCodexCredentialIntoItsOwnSandboxBeforeTheFirstStage(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+	if len(h.credentialWritten) != 1 || h.credentialWritten[0] != "sandbox-328" {
+		t.Fatalf("wrote the codex credential to %v, want exactly [sandbox-328]", h.credentialWritten)
+	}
+	if len(h.ran) == 0 {
+		t.Fatal("no stage ran at all")
+	}
+}
+
+func TestWorkTicketRunsNoStageAndDeletesTheSandboxWhenTheCodexCredentialCannotBeWritten(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.credentialErr = temporal.NewNonRetryableApplicationError(
+		"codex credential is not seeded", activities.ErrTypeAuth, nil)
+	h.run()
+
+	if h.env.GetWorkflowError() == nil {
+		t.Fatal("a run whose sandbox has no codex credential must not proceed to any stage")
+	}
+	if len(h.ran) != 0 {
+		t.Fatalf("ran %v — codex exec cannot authenticate without the credential, so no stage should have started", h.ran)
+	}
+	if len(h.deleted) != 1 || h.deleted[0] != "sandbox-328" {
+		t.Fatalf("deleted %v, want the sandbox cleaned up even though no stage ran", h.deleted)
 	}
 }
 

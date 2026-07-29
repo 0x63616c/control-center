@@ -8,6 +8,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codexauth"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/k8s"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock/clocktest"
@@ -34,10 +35,11 @@ import (
 //
 // Every client is a nil-typed concrete pointer rather than a hand-rolled
 // fake: each type already satisfies its activities interface (pinned in
-// internal/activities/deps_test.go for GitHub, TokenSource and RepoCloner),
-// and a nil pointer wrapped in an interface is a non-nil interface value —
-// exactly what activities.New's presence checks look for. None of their
-// methods are called here; this test is about wiring, not behaviour.
+// internal/activities/deps_test.go for GitHub, TokenSource, RepoCloner and
+// CredentialWriter), and a nil pointer wrapped in an interface is a non-nil
+// interface value — exactly what activities.New's presence checks look for.
+// None of their methods are called here; this test is about wiring, not
+// behaviour.
 func TestBuildDepsSatisfiesActivitiesNew(t *testing.T) {
 	t.Parallel()
 
@@ -66,6 +68,7 @@ func TestBuildDepsSatisfiesActivitiesNew(t *testing.T) {
 		renderer,
 		telemetry.NewMetrics(prometheus.NewRegistry()),
 		nil, // client.Client: runs.New only stores it, it is never dialled here
+		(*codexauth.Source)(nil),
 		clocktest.NewFake(time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)),
 		discardLogger(),
 	)

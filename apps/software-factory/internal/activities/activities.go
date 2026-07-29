@@ -39,6 +39,20 @@ type Deps struct {
 	// deploy config as opposed to a live dependency.
 	RepoURL string
 
+	// TokenSource yields the codex credential document a sandbox needs to
+	// authenticate. WriteCodexCredential fetches from it and writes what it
+	// returns through CredentialWriter, inside the one activity that does
+	// both — never returning the document, because Temporal would persist it
+	// to workflow history for the namespace's whole retention.
+	TokenSource TokenSource
+
+	// CredentialWriter puts the document TokenSource yields onto the
+	// sandbox's filesystem. A separate field from TokenSource because they
+	// are two different capabilities satisfied by two different concrete
+	// clients — codexauth.Source reads and refreshes the credential;
+	// *k8s.Sandboxes writes it into a pod.
+	CredentialWriter CredentialWriter
+
 	// Log is the injected logger. Clients and activities log themselves, so
 	// leaf code rarely logs by hand and nobody can forget.
 	Log *slog.Logger
@@ -95,6 +109,12 @@ func New(deps Deps) (*Activities, error) {
 	}
 	if deps.Metrics == nil {
 		missing = append(missing, "Metrics")
+	}
+	if deps.TokenSource == nil {
+		missing = append(missing, "TokenSource")
+	}
+	if deps.CredentialWriter == nil {
+		missing = append(missing, "CredentialWriter")
 	}
 	if deps.Log == nil {
 		missing = append(missing, "Log")
@@ -213,12 +233,47 @@ func (a *Activities) WaitSandboxReady(ctx context.Context, sandbox work.SandboxI
 	return nil
 }
 
+// WriteCodexCredential puts the codex CLI's auth.json into the sandbox at
+// work.CodexHomeDir, so codex exec can authenticate.
+//
+// It fetches from TokenSource and writes through CredentialWriter inside this
+// one activity, and returns nothing but an error: the document must never
+// cross the activity/workflow boundary, because Temporal persists an
+// activity's result to workflow history for the namespace's whole retention,
+// and a credential written there would live as long as the history does.
+//
+// Called once per run, before the first stage, and before CloneRepo: both
+// must run once the sandbox is ready and before the first stage, and either
+// order satisfies that on its own — CodexHomeDir and RepoDir are independent
+// siblings of SandboxRoot, so neither activity touches what the other
+// writes. Credential first anyway, deliberately: the codex-auth Secret does
+// not exist in the cluster yet (#344) and every run attempted before it is
+// seeded fails here, so failing on the cheaper, more-likely-broken
+// precondition first means a run that cannot possibly proceed never also
+// pays for CloneRepo's network round trip to GitHub — a mint, a clone and a
+// push — for nothing.
+//
+// codex.NewRunner's stage runner never touches this: it execs codex inside
+// the checkout and reads CODEX_HOME from the sandbox's own environment,
+// exactly as CloneRepo reads SF_BRANCH — this activity's job ends the moment
+// the file exists.
+func (a *Activities) WriteCodexCredential(ctx context.Context, sandbox work.SandboxID) error {
+	file, err := a.deps.TokenSource.SandboxCredentialFile(ctx)
+	if err != nil {
+		return fail(ctx, "fetching the codex credential", err)
+	}
+	if err := a.deps.CredentialWriter.WriteCodexCredential(ctx, sandbox, file); err != nil {
+		return fail(ctx, fmt.Sprintf("writing the codex credential into sandbox %s", sandbox), err)
+	}
+	return nil
+}
+
 // CloneRepo checks the ticket's repository out inside the sandbox and pushes
 // this run's branch. It must run once the sandbox is ready and before the
 // first stage: codex refuses to run outside a git repository and exits before
 // any model call, so a run that discovered a missing checkout inside `plan`
 // would already have paid for that stage against a sandbox that could never
-// have worked.
+// have worked. See WriteCodexCredential's doc comment for why it runs first.
 //
 // The credential is minted here, inside the activity that uses it, and never
 // returned: like InstallationToken's own doc says, Temporal persists an
