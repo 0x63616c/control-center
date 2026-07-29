@@ -19,6 +19,23 @@ import (
 // on the first look.
 const deletePoll = 200 * time.Millisecond
 
+// watchBackoffMin and watchBackoffMax bound how fast WaitReady re-establishes a
+// watch that ended without a verdict.
+//
+// Without a wait the loop is a hot spin — measured at ~28k watches in 200ms —
+// and client-go's throttling is what caps it, which is the harm rather than the
+// remedy: rest.InClusterConfig leaves QPS at 0, so Get, Watch, Create and
+// Delete all share one 5 QPS bucket, and one wedged WaitReady starves a
+// concurrent ticket's pod operations for its whole activity timeout.
+//
+// It grows monotonically rather than resetting on progress: readiness arrives
+// as an event inside a watch window, so only a reconnect pays the wait at all,
+// and the cap keeps the worst case shorter than a single image pull.
+const (
+	watchBackoffMin = 200 * time.Millisecond
+	watchBackoffMax = 5 * time.Second
+)
+
 // Create makes the sandbox pod for one run and returns before it is usable.
 //
 // It is idempotent, which matters because it runs inside a retrying activity.
@@ -190,6 +207,7 @@ func equalInt64Ptr(got, want *int64) bool {
 // detected rather than waited out — an unpullable image or an expired deadline
 // fails here, loudly, instead of at the activity's hour-long timeout.
 func (s *Sandboxes) WaitReady(ctx context.Context, sandbox work.SandboxID) error {
+	backoff := watchBackoffMin
 	for {
 		pod, err := s.cs.CoreV1().Pods(s.ns).Get(ctx, string(sandbox), metav1.GetOptions{})
 		if err != nil {
@@ -219,7 +237,12 @@ func (s *Sandboxes) WaitReady(ctx context.Context, sandbox work.SandboxID) error
 		// A plain Watch is used rather than an informer because the resync
 		// behaviour an informer buys is exactly this loop, and an informer is
 		// far harder to drive deterministically in a test.
-		s.logger.DebugContext(ctx, "re-establishing the sandbox pod watch", "sandbox", sandbox, "cause", cause)
+		s.logger.DebugContext(ctx, "re-establishing the sandbox pod watch",
+			"sandbox", sandbox, "cause", cause, "backoff_ms", backoff.Milliseconds())
+		if err := s.clk.Sleep(ctx, backoff); err != nil {
+			return fmt.Errorf("waiting for sandbox %s to become ready: %w", sandbox, err)
+		}
+		backoff = min(2*backoff, watchBackoffMax)
 	}
 }
 

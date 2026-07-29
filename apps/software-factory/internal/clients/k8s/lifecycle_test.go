@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -17,6 +19,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock/clocktest"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
@@ -45,14 +48,23 @@ func verbs(cs *fake.Clientset) []string {
 
 func newLifecycleSandboxes(t *testing.T, objects ...runtime.Object) (*Sandboxes, *fake.Clientset, *strings.Builder) {
 	t.Helper()
+	s, cs, logs, _ := newLifecycleSandboxesWithClock(t, objects...)
+	return s, cs, logs
+}
+
+// newLifecycleSandboxesWithClock also hands back the fake clock, so a test can
+// assert on what the code waited for rather than waiting for it.
+func newLifecycleSandboxesWithClock(t *testing.T, objects ...runtime.Object) (*Sandboxes, *fake.Clientset, *strings.Builder, *clocktest.Fake) {
+	t.Helper()
 	cs := fake.NewSimpleClientset(objects...)
 	logs := &strings.Builder{}
 	logger := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	s, err := newSandboxes(cs, &scriptedStreamer{}, "software-factory", logger, testClock())
+	clk := testClock()
+	s, err := newSandboxes(cs, &scriptedStreamer{}, "software-factory", logger, clk)
 	if err != nil {
 		t.Fatalf("newSandboxes returned an unexpected error: %v", err)
 	}
-	return s, cs, logs
+	return s, cs, logs, clk
 }
 
 func TestCreateCreatesThePodAndReturnsItsSandboxID(t *testing.T) {
@@ -536,6 +548,53 @@ func TestWaitReadyReEstablishesTheWatchWhenTheServerClosesIt(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "closed") {
 		t.Errorf("logs %q do not say why the watch was re-established", logs.String())
+	}
+}
+
+func TestWaitReadyBacksOffExponentiallyBetweenWatchReconnects(t *testing.T) {
+	t.Parallel()
+
+	s, cs, _, clk := newLifecycleSandboxesWithClock(t, readyPod(t, corev1.PodPending, false))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Every watch ends at once with the pod still Pending — what an apiserver
+	// rolling restart, or an APF-shed watch during a slow image pull, looks
+	// like. With no wait between attempts the loop re-Gets and re-Watches as
+	// fast as the shared 5 QPS client bucket allows, starving the Create and
+	// Delete of every concurrent ticket for the whole activity timeout.
+	const reconnects = 8
+	watches := 0
+	cs.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+		watches++
+		if watches >= reconnects {
+			cancel()
+		}
+		w := watch.NewRaceFreeFake()
+		w.Stop()
+		return true, w, nil
+	})
+
+	if err := s.WaitReady(ctx, readySandbox); !errors.Is(err, context.Canceled) {
+		t.Fatalf("WaitReady error = %v, want context.Canceled", err)
+	}
+
+	slept := clk.Slept()
+	if len(slept) == 0 {
+		t.Fatalf("WaitReady re-established the watch %d times without waiting once; it spins at the client's rate limit", watches)
+	}
+	want := []time.Duration{
+		200 * time.Millisecond,
+		400 * time.Millisecond,
+		800 * time.Millisecond,
+		1600 * time.Millisecond,
+		3200 * time.Millisecond,
+		5 * time.Second,
+		5 * time.Second,
+	}
+	if !reflect.DeepEqual(slept, want) {
+		t.Errorf("backoff schedule = %v, want %v: doubling from %s and capped at %s", slept, want, watchBackoffMin, watchBackoffMax)
 	}
 }
 
