@@ -15,8 +15,12 @@
 set -euo pipefail
 
 IMG="${1:-sf-sandbox:local}"
+# /work is mounted the way a kubelet mounts an emptyDir under `fsGroup: 1000`:
+# owned root:1000, setgid, GROUP-writable — NOT owned by the sandbox uid. The
+# difference is load-bearing. A uid-owned tmpfs passes checks that the real pod
+# fails, which is exactly how a permission bug reaches the first live ticket.
 RUN=(docker run --rm --platform linux/amd64
-  --tmpfs "/work:uid=1000,gid=1000,mode=0755")
+  --tmpfs "/work:uid=0,gid=1000,mode=2775")
 
 fail=0
 check() { # check <name> <expected-exit> <cmd...>
@@ -40,7 +44,14 @@ check() { # check <name> <expected-exit> <cmd...>
 # The four argv-only contracts, plus the toolchains a ticket needs to build and
 # test this repo.
 check "the worker's argv is all on PATH" 0 \
-  /usr/bin/env sh -c 'command -v tar test cat git bun go codex sandbox-exec >/dev/null'
+  /usr/bin/env sh -c 'command -v tar test cat git bun go codex sandbox-exec pgrep >/dev/null'
+
+# Stage liveness is `pgrep -f <result path>` (B5). If pgrep is absent the runner
+# does not error — it reports "nothing running" and the retry starts a SECOND
+# copy of a stage that never stopped. `-f` specifically, since the match is
+# against codex's full argv rather than its process name.
+check "pgrep matches against a full argv, which is how stage liveness works" 0 \
+  /usr/bin/env sh -c 'sleep 30 & sleep 0.2; pgrep -f "sleep 30" >/dev/null'
 
 # GNU tar specifically: transfer.go extracts relative names with -C /, and the
 # two tars differ on leading-slash handling and on delayed set-stat failures.
@@ -79,6 +90,19 @@ check "--kill stops the process group, not just the child" 0 \
     sandbox-exec --kill /work/.exec/k.pid
     for _ in $(seq 100); do kill -0 "$gc" 2>/dev/null || exit 0; sleep 0.1; done
     echo "grandchild $gc survived"; exit 1'
+
+# WORKDIR is the cwd every `codex exec` inherits — pods/exec runs with the
+# container's cwd and podspec.go sets no WorkingDir. It must be writable BY THE
+# SANDBOX UID under a kubelet-shaped mount, which is the whole reason it is
+# /work and not the checkout: a WORKDIR the runtime has to create inside the
+# emptyDir is created as root, mode 0755, and the sandbox cannot write it.
+check "the stage cwd is the sandbox root and the sandbox uid can write it" 0 \
+  /usr/bin/env sh -c '[ "$(pwd)" = /work ] && touch ./cwd-probe'
+
+# The other half of that contract: a directory the PROCESS creates under /work
+# is owned by the process, which is why the clone can create its own checkout.
+check "a directory the process creates under /work is writable by it" 0 \
+  /usr/bin/env sh -c 'mkdir -p /work/repo && touch /work/repo/probe'
 
 # The pinned versions, echoed so a bump is visible in the run log rather than
 # only in a diff.
