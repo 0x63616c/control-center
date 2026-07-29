@@ -2,8 +2,21 @@ import { describe, expect, test } from "vitest";
 import { defineProduct, productSlugs } from "../src/index.ts";
 
 describe("product identity", () => {
-  test("defines the two platform products", () => {
-    expect(productSlugs).toEqual(["control-center", "captive-portal"]);
+  test("defines the platform products", () => {
+    expect(productSlugs).toEqual(["control-center", "captive-portal", "software-factory"]);
+  });
+
+  // Image naming is the ONLY thing software-factory's product identity is for
+  // (ADR-0011): it has no namespace here, no database and no deploy of its own.
+  test("derives software-factory image identity from the product slug", () => {
+    const factory = defineProduct("software-factory");
+
+    expect(factory.imageRepository("worker")).toBe("ghcr.io/0x63616c/www-software-factory-worker");
+    expect(factory.imageRepository("sandbox")).toBe(
+      "ghcr.io/0x63616c/www-software-factory-sandbox",
+    );
+    expect(factory.imageDigestKey("worker")).toBe("software-factory-worker");
+    expect(factory.imageDigestKey("sandbox")).toBe("software-factory-sandbox");
   });
 
   test("derives Control Center identity from the product slug", () => {

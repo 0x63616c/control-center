@@ -10,7 +10,7 @@
 
 import * as k8s from "@pulumi/kubernetes";
 import * as pulumi from "@pulumi/pulumi";
-import { controlCenterProductManifest, defineProduct } from "@www/platform";
+import { controlCenterProductManifest, defineProduct, type ProductSlug } from "@www/platform";
 import { DEFAULT_METRICS_PORT } from "@www/platform/metrics/port";
 import type { InfraNamespaceName } from "./cluster.ts";
 import type { WorkloadSpec } from "./component.ts";
@@ -29,26 +29,32 @@ export type ImageDigests = Record<string, string>;
 export type OwnedWorkloadSpec = WorkloadSpec & { namespaceName: InfraNamespaceName };
 
 const controlCenterProduct = defineProduct("control-center");
+const softwareFactoryProduct = defineProduct("software-factory");
 
 const IMAGE_REPOSITORIES = {
   api: {
+    product: "control-center",
     digestKey: controlCenterProduct.imageDigestKey("api"),
     repository: controlCenterProduct.imageRepository("api"),
   },
   worker: {
+    product: "control-center",
     digestKey: controlCenterProduct.imageDigestKey("worker"),
     repository: controlCenterProduct.imageRepository("worker"),
   },
   web: {
+    product: "control-center",
     digestKey: controlCenterProduct.imageDigestKey("web"),
     repository: controlCenterProduct.imageRepository("web"),
   },
   // manage (apps/manage, ADR-0010): a static nginx bundle, same shape as web.
   manage: {
+    product: "control-center",
     digestKey: controlCenterProduct.imageDigestKey("manage"),
     repository: controlCenterProduct.imageRepository("manage"),
   },
   "map-provision": {
+    product: "control-center",
     digestKey: controlCenterProduct.imageDigestKey("map-provision"),
     repository: controlCenterProduct.imageRepository("map-provision"),
   },
@@ -57,17 +63,89 @@ const IMAGE_REPOSITORIES = {
   // any other, so it pins through the SAME digest map — one place where "what
   // does CI build and pin" is answered.
   "temporal-worker": {
+    product: "control-center",
     digestKey: controlCenterProduct.imageDigestKey("temporal-worker"),
     repository: controlCenterProduct.imageRepository("temporal-worker"),
   },
-} as const satisfies Record<string, { digestKey: string; repository: string }>;
+  // The software factory's two images (ADR-0011). A DIFFERENT product, so the
+  // keys carry the product prefix and cannot collide with control-center's own
+  // `worker` above — `www-software-factory-worker` is not a control-center
+  // component.
+  //
+  // `sandbox` is here even though no workload runs it: the worker CREATES those
+  // pods at runtime and is handed the digest-pinned ref as env. Same map, same
+  // shape validation, same CI collection — so a sandbox is as reproducible as
+  // the worker that created it, rather than resolving `:main` at 3am.
+  "software-factory-worker": {
+    product: "software-factory",
+    digestKey: softwareFactoryProduct.imageDigestKey("worker"),
+    repository: softwareFactoryProduct.imageRepository("worker"),
+  },
+  "software-factory-sandbox": {
+    product: "software-factory",
+    digestKey: softwareFactoryProduct.imageDigestKey("sandbox"),
+    repository: softwareFactoryProduct.imageRepository("sandbox"),
+  },
+} as const satisfies Record<
+  string,
+  { product: ProductSlug; digestKey: string; repository: string }
+>;
 
 const IMAGE_DIGEST_KEYS = new Set(
   Object.values(IMAGE_REPOSITORIES).map((image) => image.digestKey),
 );
-const REQUIRED_IMAGE_DIGEST_KEYS = Object.values(IMAGE_REPOSITORIES).map(
-  (image) => image.digestKey,
-);
+/**
+ * The digest keys belonging to one product.
+ *
+ * Required pins are asked for PER PRODUCT, not across the whole map. serviceSpecs
+ * renders control-center's workloads and nothing else, so demanding
+ * software-factory's pins there would let a broken sandbox build block the
+ * house's own deploy — a coupling between two products that share nothing but a
+ * registry. Each renderer asserts the pins it actually needs.
+ *
+ * `imageDigestKey` is `${slug}-${component}`, so the prefix is the product.
+ */
+/**
+ * @public - the digest keys one product owns, from a table of images.
+ *
+ * Ownership is DECLARED on each entry, never inferred from a key's spelling. A
+ * `startsWith(`${slug}-`)` test reads as exact and silently over-matches the
+ * day one slug prefixes another — "control-center" would swallow a future
+ * "control-center-edge" and quietly widen what a prod deploy demands. Putting
+ * the prefix on the repository name instead has the identical bug.
+ *
+ * It takes the table as an argument rather than closing over IMAGE_REPOSITORIES
+ * so the difference is TESTABLE: with only today's mutually non-prefixing
+ * slugs, an equality filter and a prefix filter behave identically, and the
+ * improvement would be unfalsifiable closed over the live table.
+ */
+export function keysOwnedBy<T extends { product: string; digestKey: string }>(
+  images: readonly T[],
+  slug: string,
+): string[] {
+  return images.filter((image) => image.product === slug).map((image) => image.digestKey);
+}
+
+function digestKeysFor(slug: ProductSlug): string[] {
+  return keysOwnedBy(Object.values(IMAGE_REPOSITORIES), slug);
+}
+
+const REQUIRED_IMAGE_DIGEST_KEYS = digestKeysFor("control-center");
+
+/**
+ * @public - asserts that every image this product ships is digest-pinned.
+ *
+ * For renderers outside serviceSpecs (software-factory.ts) that must not render
+ * a mutable `:main` ref on a production cluster either.
+ */
+export function assertImageDigestPins(slug: ProductSlug, digests: ImageDigests): void {
+  const missing = digestKeysFor(slug).filter((key) => !digests[key]);
+  if (missing.length > 0) {
+    throw new Error(
+      `prod stack requires wwwinfra:imageDigests pins for ${slug} images; missing: ${missing.join(", ")}`,
+    );
+  }
+}
 
 function validateImageDigests(digests: ImageDigests): void {
   for (const key of Object.keys(digests)) {

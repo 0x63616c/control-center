@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { type ImageDigests, serviceSpecs, shouldRequireImageDigestPins } from "../src/services.ts";
+import {
+  type ImageDigests,
+  keysOwnedBy,
+  serviceSpecs,
+  shouldRequireImageDigestPins,
+} from "../src/services.ts";
 
 // The digest-pinning seam (www-j934.14): the CI deploy job sets a per-service
 // digest map as Pulumi config (`imageDigests.<svc>`), serviceSpecs renders each
@@ -91,6 +96,21 @@ describe("serviceSpecs image digest pinning", () => {
     ).toThrow(/prod stack requires wwwinfra:imageDigests pins/);
   });
 
+  test("does not demand another product's pins", () => {
+    // serviceSpecs renders control-center's workloads and nothing else.
+    // Requiring software-factory's pins here would let a broken sandbox build
+    // block the house's own deploy — two products coupled by nothing but a
+    // shared registry. software-factory.ts asserts its own.
+    expect(() =>
+      serviceSpecs({
+        cloudflaredReplicas: 2,
+        nasNfsServer: "192.168.0.218",
+        imageDigests: ALL_IMAGE_DIGESTS,
+        requireImageDigestPins: shouldRequireImageDigestPins("prod"),
+      }),
+    ).not.toThrow();
+  });
+
   test("allows prod app Deployment rendering when every digest pin is present", () => {
     const specs = serviceSpecs({
       cloudflaredReplicas: 2,
@@ -114,5 +134,30 @@ describe("serviceSpecs image digest pinning", () => {
     // than silently render mutable :main images.
     expect(shouldRequireImageDigestPins("prod")).toBe(true);
     expect(shouldRequireImageDigestPins("home-server")).toBe(true);
+  });
+});
+
+describe("keysOwnedBy (product ownership is declared, not inferred)", () => {
+  // A fixture, not the live table: today's slugs are mutually non-prefixing, so
+  // a prefix filter and an equality filter agree on every real input and the
+  // distinction cannot be observed through IMAGE_REPOSITORIES at all.
+  const images = [
+    { product: "cc", digestKey: "cc-api" },
+    { product: "cc", digestKey: "cc-web" },
+    { product: "cc-edge", digestKey: "cc-edge-api" },
+  ] as const;
+
+  test("does not swallow a product whose slug it prefixes", () => {
+    // `startsWith("cc-")` matches "cc-edge-api" too, which would silently widen
+    // what a prod deploy demands of an unrelated product.
+    expect(keysOwnedBy(images, "cc")).toEqual(["cc-api", "cc-web"]);
+  });
+
+  test("does not miss a product whose slug is prefixed by another", () => {
+    expect(keysOwnedBy(images, "cc-edge")).toEqual(["cc-edge-api"]);
+  });
+
+  test("returns nothing for a product with no images", () => {
+    expect(keysOwnedBy(images, "nope")).toEqual([]);
   });
 });

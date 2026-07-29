@@ -31,6 +31,18 @@ authoritative wall, and a ticket that needs one can install it.
 **The repo is not baked in, and neither is `bun install`.** The sandbox clones
 at stage time with the installation token it holds, so an image is never stale
 against `main` and never carries a lockfile's `node_modules` from build day.
+Nothing performs that clone yet — #383 owns it, and `work.RepoDir` is the agreed
+destination.
+
+**The image cannot consume per-run values, and that is structural.** The pod's
+command is `sleep infinity` (`podspec.go`) and this image sets no `ENTRYPOINT`,
+so no process of ours starts at container start and nothing in the image ever
+reads its environment. Per-run values — which branch to push, the ticket, the
+run id — reach the sandbox as env on the *pod* (`SandboxSpec.Env`, set by
+whoever creates the sandbox) and are consumed by the process that acts on them,
+which is the clone/branch step in #383. Asking the image to read one has no
+implementation site: the request means "the thing that runs inside it", and that
+thing does not exist yet.
 
 ## Invariants a stage depends on
 
