@@ -166,14 +166,37 @@ same file across concurrent jobs or multiple machines."
 The design avoids the race by ensuring **nothing but the worker ever holds a refresh
 token**:
 
-- The worker owns the real credential and is the only thing that refreshes it. It runs
-  single-replica, so "single writer" is structural rather than enforced.
-- Each sandbox gets its own ephemeral `CODEX_HOME` seeded with an `auth.json` carrying the
-  current access token and an **empty** `refresh_token`.
-- Codex only refreshes within five minutes of the access token's `exp`; measured tokens
-  carry multi-day lifetimes, so a minutes-long ticket never approaches that window.
-  Verified against v0.145.0: `codex exec` with a blanked `refresh_token` exits 0 and leaves
-  the file byte-identical.
+- The worker owns the real credential and is the only thing that refreshes it. Single-writer
+  is enforced by a compare-and-swap lease on the credential Secret's `resourceVersion`,
+  acquired *before* the refresh token is presented — **`replicas: 1` buys none of this.** It
+  lowers the frequency of contention and nothing more; a `kubectl debug` pod, a one-off Job
+  and a terminating pod mid-`Recreate` are all defeated by the lease and by nothing else.
+  (This bullet originally claimed the property was structural from single-replica. It is not,
+  and B3 does not rely on it being so.)
+- Each sandbox gets its own ephemeral `CODEX_HOME` seeded with an `auth.json` whose
+  `tokens.refresh_token` is set to the **empty string**. Set, not removed: `refresh_token` is
+  a bare `String` in the CLI's `token_data.rs`, so `""` parses while an absent or null key
+  fails the whole file. The distinction matters because "blank the refresh token" reads
+  equally as *remove it*, and the natural JSON-pointer idiom is `op: remove`.
+- Codex only refreshes within five minutes of the access token's `exp`
+  (`CHATGPT_ACCESS_TOKEN_REFRESH_WINDOW_MINUTES`, `manager.rs:181`); measured tokens carry
+  multi-day lifetimes, so a minutes-long ticket never approaches that window.
+
+  **Correction (#335).** This ADR previously claimed `codex exec` with a blanked
+  `refresh_token` "exits 0 and leaves the file byte-identical". That holds only for the case
+  where **no refresh is attempted** — which is what it was observed on, and which is the
+  ordinary sandbox run. It does not hold once the window is entered. Verified against
+  v0.145.0 on a synthetic `CODEX_HOME`: the run exits **1** with empty stdout, the provider
+  answering `400` with `error.code = "empty_string"`. Worse, the CLI does not fail once — it
+  retries **104 times in ~35 seconds** against `auth.openai.com` before giving up, per stage
+  and multiplied by concurrent tickets.
+
+  So staying outside the window is a **hard invariant, not a comfortable margin**, and it is
+  what prevents a retry storm against the provider's auth endpoint rather than merely a
+  confusing stage failure. It is asserted at construction as
+  `refreshMargin > maxStageDuration + 5m`. A stage that does reach this path sees exit 1 and
+  empty stdout, which reads as a tooling failure; the cause appears only on stderr, so the
+  stage runner retaining stderr is load-bearing (#340).
 
 Because the CLI only refreshes inside that five-minute window and cannot be asked to do so
 on demand, the worker performs the OAuth refresh itself.
