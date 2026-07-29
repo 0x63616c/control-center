@@ -143,9 +143,16 @@ func (r *remoteStreamer) stream(ctx context.Context, target execTarget, o stream
 // carries no meaning, and whatever reached stdout is a truncated prefix that
 // must not be read as completion.
 //
+// stdin is the command's standard input, and may be nil for a command that
+// reads none. It is a parameter rather than an absent capability because a
+// stage's prompt is issue text: it travels on stdin and as a file so that it is
+// never a command argument, which is the whole of the argv-only guarantee — and
+// this exec path summarises argv into its own errors, so a prompt in argv would
+// copy attacker-chosen text into the logs as well.
+//
 // Cancelling the context kills the remote process, not just this call.
-func (s *Sandboxes) Exec(ctx context.Context, sandbox work.SandboxID, argv []string, stdout, stderr io.Writer) (int, error) {
-	return s.exec(ctx, sandbox, argv, nil, stdout, stderr)
+func (s *Sandboxes) Exec(ctx context.Context, sandbox work.SandboxID, argv []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	return s.exec(ctx, sandbox, argv, stdin, stdout, stderr)
 }
 
 // exec is the one path every remote command takes, so exit-code extraction, the

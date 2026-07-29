@@ -342,11 +342,11 @@ jobs:
           # Read from go.mod so the toolchain has exactly one declared version,
           # rather than a second one here to drift against it.
           go-version-file: apps/software-factory/go.mod
-          # TODO(software-factory): enable once there is a go.sum to key on.
-          # The module currently has zero dependencies, and setup-go's default
-          # cache globs for go.sum — pointing it at a file that does not exist
-          # fails the step outright.
-          cache: false
+          # The module now depends on client-go, so there is a go.sum to key
+          # the cache on. Named explicitly rather than left to the default
+          # glob, which searches from the repository root and would key on
+          # nothing in this nested module.
+          cache-dependency-path: apps/software-factory/go.sum
       - name: Build
         run: go build ./...
       - name: Vet

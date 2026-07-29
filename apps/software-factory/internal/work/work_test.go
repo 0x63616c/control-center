@@ -1,9 +1,11 @@
 package work_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -132,6 +134,69 @@ func TestCredentialStaysOutOfFormattedOutput(t *testing.T) {
 	}
 }
 
+// A LogValue method that slog never calls is worse than no method at all: the
+// file reads as though the credential is handled, so an audit ticks it off.
+// Asserting the INTERFACE is what catches that — a test that calls LogValue()
+// directly passes just as happily when nothing else ever does.
+func TestCredentialSatisfiesTheInterfaceSlogActuallyUses(t *testing.T) {
+	t.Parallel()
+
+	var _ slog.LogValuer = work.Credential{}
+}
+
+// The assertion above is compile-time, so this one proves slog reaches the
+// method at run time. Resolve is how slog itself unwraps an attribute: it
+// invokes LogValue on a LogValuer and leaves anything else as KindAny. A
+// Credential that stays KindAny is one slog is treating as an opaque struct.
+//
+// This is the test that fails on the bug. The handler test below does not —
+// see its comment.
+func TestSlogResolvesACredentialThroughLogValue(t *testing.T) {
+	t.Parallel()
+
+	resolved := slog.AnyValue(work.NewCredential(secret)).Resolve()
+
+	if resolved.Kind() == slog.KindAny {
+		t.Errorf("slog left the credential unresolved (kind %s); LogValue is never called, so redaction rests entirely on fmt falling through to String()", resolved.Kind())
+	}
+	if strings.Contains(resolved.String(), secret) {
+		t.Errorf("the resolved value contains the secret: %q", resolved.String())
+	}
+}
+
+// The property that actually matters, through a real handler rather than a
+// method call.
+//
+// NOTE this test PASSES on the bug: with LogValue() returning any, slog falls
+// through to fmt, fmt finds String(), and String() redacts. It is kept because
+// it guards the outcome rather than the mechanism — it is what fails if
+// String() ever stops redacting — but it is emphatically NOT the regression
+// test for this issue. Only the two above are.
+func TestSlogNeverWritesACredentialsValue(t *testing.T) {
+	t.Parallel()
+
+	for name, newHandler := range map[string]func(*bytes.Buffer) slog.Handler{
+		"text": func(b *bytes.Buffer) slog.Handler { return slog.NewTextHandler(b, nil) },
+		"json": func(b *bytes.Buffer) slog.Handler { return slog.NewJSONHandler(b, nil) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			log := slog.New(newHandler(&buf))
+
+			c := work.NewCredential(secret)
+			log.Info("using a credential", "token", c)
+			// Nested in a struct too: nobody logs the credential deliberately,
+			// they log the thing that holds one.
+			log.Info("using a credential", "wrapper", struct{ Token work.Credential }{Token: c})
+
+			if strings.Contains(buf.String(), secret) {
+				t.Errorf("slog wrote the secret: %q", buf.String())
+			}
+		})
+	}
+}
+
 func TestCredentialRefusesToBeSerialised(t *testing.T) {
 	t.Parallel()
 
@@ -140,6 +205,79 @@ func TestCredentialRefusesToBeSerialised(t *testing.T) {
 	// beats silently writing "[redacted]" where a token was expected.
 	if _, err := json.Marshal(work.NewCredential(secret)); err == nil {
 		t.Error("json.Marshal accepted a Credential; a token could be persisted to workflow history")
+	}
+}
+
+func TestCredentialFileRevealsItsBytesOnlyWhenAsked(t *testing.T) {
+	t.Parallel()
+
+	doc := []byte(`{"tokens":{"access_token":"` + secret + `"}}`)
+
+	if got := work.NewCredentialFile(doc).Reveal(); string(got) != string(doc) {
+		t.Errorf("Reveal() = %q, want the wrapped document", got)
+	}
+}
+
+func TestCredentialFileStaysOutOfFormattedOutput(t *testing.T) {
+	t.Parallel()
+
+	f := work.NewCredentialFile([]byte(`{"tokens":{"access_token":"` + secret + `"}}`))
+
+	wrapper := struct{ File work.CredentialFile }{File: f}
+	rendered := []string{
+		f.String(),
+		fmt.Sprintf("%v", f.LogValue()),
+		fmt.Sprintf("%v", wrapper),
+		fmt.Sprintf("%+v", wrapper),
+	}
+	for _, r := range rendered {
+		if strings.Contains(r, secret) {
+			t.Errorf("rendered credential file contains the secret: %q", r)
+		}
+	}
+}
+
+// Credential.LogValue returns `any`, which does NOT satisfy slog.LogValuer, so
+// slog never calls it — nothing leaks today only because slog falls through to
+// String(). CredentialFile must not inherit that: a document is exactly the
+// shape somebody logs whole, so the protection has to be real rather than
+// incidental. Asserting the interface is what makes it so.
+func TestCredentialFileRedactsItselfThroughTheInterfaceSlogActuallyUses(t *testing.T) {
+	t.Parallel()
+
+	var _ slog.LogValuer = work.CredentialFile{}
+
+	var buf bytes.Buffer
+	slog.New(slog.NewTextHandler(&buf, nil)).Info("writing the sandbox credential",
+		"file", work.NewCredentialFile([]byte(`{"tokens":{"access_token":"`+secret+`"}}`)))
+
+	if strings.Contains(buf.String(), secret) {
+		t.Errorf("slog wrote the credential document: %q", buf.String())
+	}
+}
+
+func TestCredentialFileRefusesToBeSerialised(t *testing.T) {
+	t.Parallel()
+
+	// A document is the shape somebody would return from an activity, and
+	// Temporal would persist it to workflow history for the whole retention.
+	if _, err := json.Marshal(work.NewCredentialFile([]byte(`{}`))); err == nil {
+		t.Error("json.Marshal accepted a CredentialFile; a credential document could be persisted to workflow history")
+	}
+}
+
+// Reveal hands out the backing array, so a caller that mutates what it is given
+// would edit the file every later caller receives.
+func TestCredentialFileCannotBeMutatedThroughWhatItHandsOut(t *testing.T) {
+	t.Parallel()
+
+	f := work.NewCredentialFile([]byte(`{"a":1}`))
+
+	revealed := f.Reveal()
+	revealed[0] = 'X'
+
+	if got := string(f.Reveal()); got != `{"a":1}` {
+		t.Errorf("mutating a revealed document changed the CredentialFile: %q", got)
 	}
 }
 

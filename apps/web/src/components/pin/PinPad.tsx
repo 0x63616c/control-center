@@ -4,20 +4,27 @@
  * onDigit/onBackspace , this component never sees or stores the PIN itself.
  * Copied from the approved PinConcepts visual reference.
  *
- * The digit LAYOUT moves per prompt (#287, #291). On a `fixed` pad the same four
+ * The digit LAYOUT moves (#287, #291, #302). On a `fixed` pad the same four
  * keys are touched at every unlock, so grease/smudge wear on the panel glass
  * leaks which digits the PIN is made of , that collapses the search space from
- * 10^4 to at most 24 orderings. Both moving layouts spread that wear across all
+ * 10^4 to at most 24 orderings. The moving layouts spread that wear across all
  * ten keys; they differ in what they cost the person typing:
  *
- *   `scrambled` , a fresh uniform permutation. Strongest, and the most
- *     expensive to read: ten independent lookups, every prompt, forever.
+ *   `scrambled` , a fresh uniform permutation. Strongest per-prompt layout, and
+ *     the most expensive to read: ten independent lookups, every prompt, forever.
  *   `rotated` , ascending order kept, random starting digit. Find one digit and
  *     the rest follow, so it reads far faster than a permutation. Weaker: there
  *     are only ten layouts, and a SINGLE session's fresh smudges (on clean
  *     glass) still give the PIN up to a rotation, because rotation preserves the
  *     gaps between the keys pressed. Against accumulated wear , the actual
  *     threat on a panel used daily , it is as good as scrambling.
+ *   `scrambled-per-key` , a fresh permutation after EVERY digit entered. This is
+ *     the one mode that deliberately moves MID-ENTRY, and it is a different
+ *     threat model, not a stronger dial on the same one: smudge wear is about
+ *     what the glass remembers, this is about what a person standing behind you
+ *     sees. Watching the finger yields six positions that each meant a different
+ *     digit, so the observation is worthless. Paid for in re-scans: six per
+ *     unlock instead of one.
  *
  * Which one is the caller's call, driven by the `pinPadLayout` setting.
  */
@@ -75,7 +82,7 @@ export function rotatedDigits(): string[] {
 }
 
 function layoutFor(layout: PinPadLayout): string[] {
-  if (layout === "scrambled") return scrambledDigits();
+  if (layout === "scrambled" || layout === "scrambled-per-key") return scrambledDigits();
   if (layout === "rotated") return rotatedDigits();
   return [...STANDARD_DIGITS];
 }
@@ -100,27 +107,46 @@ export function PinPadView({
   onBackspace: () => void;
 }) {
   // The live layout. Seeded on mount and replaced whenever the caller starts a
-  // new prompt (shuffleKey) or flips the setting , never mid-entry, since
-  // moving keys under a half-typed PIN is how you mistype it.
+  // new prompt (shuffleKey) or flips the setting.
   const [digits, setDigits] = useState<string[]>(() => layoutFor(layout));
-  // `shuffleKey` is the intended trigger even though the body only reads
-  // `layout`; that is the whole point of the prop.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reshuffle per prompt
+
+  // The one deliberate mid-entry redraw, kept to a single expression so the two
+  // behaviours cannot blur into each other.
+  //
+  // Every layout except `scrambled-per-key` must hold still for the whole of one
+  // entry: keys shifting under a half-typed PIN is how you mistype it, and those
+  // modes buy nothing by moving sooner (smudge wear accumulates across sessions,
+  // so one redraw per prompt already spreads it). For them this pins to a
+  // constant, which makes `entered` drop out of the dependency list entirely ,
+  // their redraw timing is bit-identical to before #302.
+  //
+  // `scrambled-per-key` inverts exactly that invariant on purpose: its threat is
+  // the person watching your hand, and the only way to make a watched finger
+  // position meaningless is to reassign it before the next press. The mistype
+  // cost is real and is what the person is choosing when they pick this mode.
+  // Backspace ticks it too (`entered` falls), which is correct , a corrected
+  // digit is still a digit an observer saw pressed.
+  const perKeyRedraw = layout === "scrambled-per-key" ? entered : 0;
+
+  // `shuffleKey`/`perKeyRedraw` are the intended triggers even though the body
+  // only reads `layout`; that is the whole point of those values.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: redraw per prompt (all modes) and per keypress (scrambled-per-key only)
   useEffect(() => {
     setDigits(layoutFor(layout));
-  }, [layout, shuffleKey]);
+  }, [layout, shuffleKey, perKeyRedraw]);
 
   // Keyboard support: digit keys append, Backspace/Delete remove. Routed
   // through refs (same pattern as PinGateModal's onCloseRef/onSuccessRef) so
   // the listener attaches once on mount rather than detaching/reattaching on
-  // every keystroke , both real callers (PinGateModal, SecurityPage) pass a
+  // every keystroke , both real callers (PinGateModal, PinChangeModal) pass a
   // fresh onDigit/onBackspace identity every render.
   //
   // NB: this listener is per-mounted-instance. Today only one PinPadView is
-  // ever mounted at a time (PinGateModal is exclusive-open; SecurityPage is a
-  // single settings sub-page), so a single global listener is safe. If a
-  // future screen ever renders two PinPadViews simultaneously, both would
-  // receive every keydown , worth revisiting then.
+  // ever mounted at a time: both callers are PIN dialogs, each renders its pad
+  // only while open, and the gate runs before Settings exists rather than over
+  // it. So a single global listener is safe. If a future screen ever renders
+  // two PinPadViews simultaneously, both would receive every keydown , worth
+  // revisiting then.
   const onDigitRef = useRef(onDigit);
   onDigitRef.current = onDigit;
   const onBackspaceRef = useRef(onBackspace);

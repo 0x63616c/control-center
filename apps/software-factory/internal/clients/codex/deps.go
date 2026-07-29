@@ -22,11 +22,17 @@ import (
 // and says nothing about the command. Collapsing the two would make a failed
 // stage indistinguishable from an unreachable cluster.
 //
+// stdin is how a stage's prompt reaches codex, and may be nil for a command
+// that reads none. The prompt is issue text chosen by whoever filed the ticket,
+// so it travels on stdin and as a file and is never an argument — and since
+// codex reads its instructions from stdin when given no positional prompt, this
+// is also the only shell-free way to hand it one.
+//
 // Implementations must honour context cancellation by killing the remote
 // process, not merely by returning: an activity timeout that leaves a codex
 // process running in the sandbox burns quota nobody is waiting for.
 type PodExecer interface {
-	Exec(ctx context.Context, sandbox work.SandboxID, argv []string, stdout, stderr io.Writer) (int, error)
+	Exec(ctx context.Context, sandbox work.SandboxID, argv []string, stdin io.Reader, stdout, stderr io.Writer) (int, error)
 }
 
 // FileTransfer moves files between the worker and a sandbox. It is how a

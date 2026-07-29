@@ -15,6 +15,13 @@
  *
  * `rotated` additionally has to KEEP ASCENDING ORDER (that is what makes it
  * readable, and the only reason it exists next to `scrambled`).
+ *
+ * WHEN each mode redraws is the other half of the contract, and #302 split it in
+ * two. `fixed`/`rotated`/`scrambled` must hold still for a whole entry; only
+ * `scrambled-per-key` moves mid-entry, because it answers a different threat (a
+ * person watching the hand, not grease on the glass). Both halves are asserted
+ * separately below , the new mode must not be allowed to erode the guarantee the
+ * others still make.
  */
 
 import { cleanup, render, screen } from "@testing-library/react";
@@ -100,18 +107,29 @@ describe("PinPadView layout", () => {
     expect(renderedOrder()).toEqual(STANDARD);
   });
 
-  it.each(["rotated", "scrambled"] as const)("renders a full permutation when %s", (layout) => {
+  it.each([
+    "rotated",
+    "scrambled",
+    "scrambled-per-key",
+  ] as const)("renders a full permutation when %s", (layout) => {
     render(<PinPadView entered={0} layout={layout} onDigit={() => {}} onBackspace={() => {}} />);
     const order = renderedOrder();
     expect(order).toHaveLength(10);
     expectFullPermutation(order);
   });
 
-  it("redraws when shuffleKey changes, and holds still when it doesn't", () => {
+  // Scoped to the PER-PROMPT modes on purpose (#302). Holding still mid-entry is
+  // still exactly right for these , and it is a real guarantee, so adding a mode
+  // that breaks it must not quietly delete it for the modes that keep it.
+  // `scrambled-per-key` asserts the opposite, below.
+  it.each([
+    "rotated",
+    "scrambled",
+  ] as const)("redraws when shuffleKey changes, and holds still when it doesn't (%s)", (layout) => {
     const { rerender } = render(
       <PinPadView
         entered={0}
-        layout="scrambled"
+        layout={layout}
         shuffleKey={0}
         onDigit={() => {}}
         onBackspace={() => {}}
@@ -124,7 +142,7 @@ describe("PinPadView layout", () => {
     rerender(
       <PinPadView
         entered={3}
-        layout="scrambled"
+        layout={layout}
         shuffleKey={0}
         onDigit={() => {}}
         onBackspace={() => {}}
@@ -139,7 +157,7 @@ describe("PinPadView layout", () => {
       rerender(
         <PinPadView
           entered={0}
-          layout="scrambled"
+          layout={layout}
           shuffleKey={key}
           onDigit={() => {}}
           onBackspace={() => {}}
@@ -148,6 +166,70 @@ describe("PinPadView layout", () => {
       after.add(renderedOrder().join(""));
     }
     expect(after.size).toBeGreaterThan(1);
+  });
+
+  it("reshuffles on every digit entered when scrambled-per-key", () => {
+    // The inverse of the assertion above, and the whole reason this mode exists:
+    // a watched finger position must mean a different digit by the next press.
+    // The prompt (shuffleKey) never changes here , only `entered` does, which is
+    // precisely the mid-entry redraw the other modes forbid.
+    const { rerender } = render(
+      <PinPadView
+        entered={0}
+        layout="scrambled-per-key"
+        shuffleKey={0}
+        onDigit={() => {}}
+        onBackspace={() => {}}
+      />,
+    );
+
+    const seen = [renderedOrder().join("")];
+    for (const entered of [1, 2, 3, 4, 5, 6]) {
+      rerender(
+        <PinPadView
+          entered={entered}
+          layout="scrambled-per-key"
+          shuffleKey={0}
+          onDigit={() => {}}
+          onBackspace={() => {}}
+        />,
+      );
+      const order = renderedOrder();
+      // Still a usable pad after each redraw, not just a different one.
+      expectFullPermutation(order);
+      seen.push(order.join(""));
+    }
+    // Any single redraw can coincidentally repeat (1 in 10!), but seven draws
+    // collapsing to one value means it is not moving at all.
+    expect(new Set(seen).size).toBeGreaterThan(1);
+  });
+
+  it("also reshuffles on backspace when scrambled-per-key", () => {
+    // A corrected digit is still a digit an observer watched being pressed, so
+    // `entered` falling has to redraw just as `entered` rising does.
+    const { rerender } = render(
+      <PinPadView
+        entered={3}
+        layout="scrambled-per-key"
+        shuffleKey={0}
+        onDigit={() => {}}
+        onBackspace={() => {}}
+      />,
+    );
+    const seen = new Set([renderedOrder().join("")]);
+    for (const entered of [2, 1, 0]) {
+      rerender(
+        <PinPadView
+          entered={entered}
+          layout="scrambled-per-key"
+          shuffleKey={0}
+          onDigit={() => {}}
+          onBackspace={() => {}}
+        />,
+      );
+      seen.add(renderedOrder().join(""));
+    }
+    expect(seen.size).toBeGreaterThan(1);
   });
 
   it("snaps back to the standard order when the layout is set to fixed", () => {

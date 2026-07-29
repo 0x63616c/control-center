@@ -41,6 +41,13 @@ linters:
         # and does nothing else — no I/O, no SDK clients, no ambient randomness. A
         # violation here does not fail the build at runtime; it corrupts a replay days
         # later. This rule is the only thing that catches it early.
+        #
+        # It catches an *import*, which is why a package that hides nondeterminism behind
+        # an interface has to be named here explicitly. `internal/prompts` mints a fence
+        # nonce from an injected io.Reader: a workflow calling Render imports no banned
+        # package and reads as pure orchestration at the call site, so nothing but this
+        # entry would stop it. Any future package taking entropy, a clock or a client as
+        # a constructor argument belongs on this list for the same reason.
         workflows-are-deterministic:
           files:
             - "**/internal/workflows/**"
@@ -63,6 +70,8 @@ linters:
               desc: "workflow code calls no clients — invoke an activity instead"
             - pkg: github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients
               desc: "workflow code calls no clients — invoke an activity instead (SoftwareStyle: workflows are deterministic)"
+            - pkg: github.com/0x63616c/world-wide-webb/apps/software-factory/internal/prompts
+              desc: "rendering a prompt mints a fence nonce from an injected entropy source — nondeterministic despite importing nothing banned, so render in an activity"
 
         # Tenet 4: no leaky abstractions. Each SDK stays sealed in its own client package;
         # the rest of the codebase sees domain types.

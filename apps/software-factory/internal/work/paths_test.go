@@ -5,11 +5,11 @@ import (
 	"testing"
 )
 
-func TestStatusMarkerBuildsARunScopedMarker(t *testing.T) {
+func TestStatusMarkerBuildsARunAndStepScopedMarker(t *testing.T) {
 	t.Parallel()
 
-	got := StatusMarker("019a3f2c-7b1e-4f9a-9c2d-3e5f6a7b8c9d")
-	want := "<!-- software-factory:status v1 run=019a3f2c-7b1e-4f9a-9c2d-3e5f6a7b8c9d -->"
+	got := StatusMarker("019a3f2c-7b1e-4f9a-9c2d-3e5f6a7b8c9d", StepPickup)
+	want := "<!-- software-factory:status v1 run=019a3f2c-7b1e-4f9a-9c2d-3e5f6a7b8c9d step=pickup -->"
 	if got != want {
 		t.Errorf("StatusMarker = %q, want %q", got, want)
 	}
@@ -18,15 +18,44 @@ func TestStatusMarkerBuildsARunScopedMarker(t *testing.T) {
 func TestStatusMarkerScopesAMarkerToOneRun(t *testing.T) {
 	t.Parallel()
 
-	if StatusMarker("run-a") == StatusMarker("run-b") {
+	if StatusMarker("run-a", StepPickup) == StatusMarker("run-b", StepPickup) {
 		t.Error("two runs share a status marker; each would adopt the other's comment")
+	}
+}
+
+func TestStatusMarkerGivesEveryStepOfARunItsOwnMarker(t *testing.T) {
+	t.Parallel()
+
+	// A run appends a comment per step, and each post adopts by exact marker
+	// match. Two steps sharing a marker means the second post edits the first
+	// step's comment instead of opening its own.
+	steps := []StatusStep{StepPickup, StepOutcome}
+	for _, stage := range Pipeline() {
+		steps = append(steps, StageStep(stage))
+	}
+
+	seen := make(map[string]StatusStep, len(steps))
+	for _, step := range steps {
+		marker := StatusMarker("run-a", step)
+		if other, clash := seen[marker]; clash {
+			t.Errorf("steps %q and %q share the marker %q", other, step, marker)
+		}
+		seen[marker] = step
+	}
+}
+
+func TestStageStepNamesTheStageItBelongsTo(t *testing.T) {
+	t.Parallel()
+
+	if got, want := StageStep(StageImplement), StatusStep("stage-implement"); got != want {
+		t.Errorf("StageStep(StageImplement) = %q, want %q", got, want)
 	}
 }
 
 func TestStatusMarkerInFindsAMarkerOnlyOnTheFirstLine(t *testing.T) {
 	t.Parallel()
 
-	marker := StatusMarker("019a3f2c")
+	marker := StatusMarker("019a3f2c", StepPickup)
 
 	cases := []struct {
 		name string

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "software-factory stage output",
+  "description": "What every stage of the pipeline returns. One field, because the schema is transport and the prompt is content: what a plan or a review should contain is taught in the stage's prompt, where changing it is an edit to prose.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["document"],
+  "properties": {
+    "document": {
+      "type": "string",
+      "description": "The stage's whole output, as markdown. Its first line is one sentence summarising the outcome."
+    }
+  }
+}

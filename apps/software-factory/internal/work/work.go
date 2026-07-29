@@ -5,8 +5,10 @@
 package work
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"log/slog"
 )
 
 // ErrFileNotFound reports that a path does not exist inside a sandbox.
@@ -33,6 +35,15 @@ var ErrFileNotFound = errors.New("file not found in sandbox")
 // parallel taxonomy this exists to avoid, and would have to be reconciled with
 // Temporal's at the same boundary. Wrap with %w; compare with errors.Is.
 var ErrPermanent = errors.New("permanent failure")
+
+// ErrSecretNotFound reports that a stored secret does not exist.
+//
+// Absence is a signal, never a failure to read: the credential secret is seeded
+// by a human out of band, so "it is not there" means somebody has a job to do,
+// while "I could not tell" means try again shortly. An implementation that
+// collapsed the two would turn a transient apiserver blip into a demand for a
+// browser login. Compare with errors.Is.
+var ErrSecretNotFound = errors.New("secret not found")
 
 // ErrVersionConflict reports that a stored object changed between a read and
 // the write derived from it, and that the write was therefore not applied.
@@ -164,8 +175,9 @@ type TicketComment struct {
 // make the poll either pay for threads nobody asked for, or hand back a Ticket
 // whose empty Comments means "none" and "not fetched" at once.
 //
-// The run's own status comment is not in Comments. It is edited in place all
-// run, and a planner handed it reads our progress updates back as requirements.
+// The run's own status comments are not in Comments. It posts one per step and
+// edits them as it goes, and a planner handed those reads our progress updates
+// back as requirements.
 type TicketDetail struct {
 	Ticket
 
@@ -183,25 +195,60 @@ type TicketDetail struct {
 // SandboxID identifies one ticket's disposable pod.
 type SandboxID string
 
-// CommentID identifies the single status comment a run edits in place.
+// CommentID identifies one status comment of a run, which the run edits in
+// place as that step progresses.
 type CommentID int64
 
 // Model names the model and reasoning effort a stage runs at. Per-stage
 // overrides exist so the adversarial reviewer can be given different blind
 // spots from the planner without touching workflow code.
 type Model struct {
-	Name   string
-	Effort string
+	Name   string `json:"name"`
+	Effort string `json:"effort"`
+}
+
+// Validate reports whether this model can be invoked.
+//
+// It checks that both halves are present and nothing else. Effort in
+// particular is deliberately not checked against a list of known values:
+// codex's own ReasoningEffort carries a Custom(String) arm for "a
+// model-defined effort value that this client does not know yet" (verified
+// against rust-v0.145.0), so an allowlist here would reject efforts codex
+// accepts, and would go stale the first time a model gains one.
+func (m Model) Validate() error {
+	if m.Name == "" {
+		return fmt.Errorf("model name is required")
+	}
+	if m.Effort == "" {
+		return fmt.Errorf("reasoning effort is required for model %q", m.Name)
+	}
+	return nil
 }
 
 // Usage is the token accounting for one stage, as reported by the model's own
 // completion event. Tokens are the only cost this service spends, and they come
 // out of the same subscription window as its owner's interactive sessions.
+//
+// Two of these four are nested inside the other two, which is the fact anyone
+// summing them needs and nothing about the numbers themselves reveals. Both are
+// carried as the provider reports them (verified against codex rust-v0.145.0)
+// rather than pre-subtracted here, so this stays a faithful record of what was
+// said and the arithmetic happens once, where it is used.
 type Usage struct {
-	InputTokens       int64
+	// InputTokens is the whole input, INCLUDING CachedInputTokens.
+	InputTokens int64
+
+	// CachedInputTokens is the part of InputTokens served from the provider's
+	// prompt cache, and priced differently from the rest of it.
 	CachedInputTokens int64
-	OutputTokens      int64
-	ReasoningTokens   int64
+
+	// OutputTokens is the whole output, INCLUDING ReasoningTokens.
+	OutputTokens int64
+
+	// ReasoningTokens is the part of OutputTokens spent on reasoning. It bills
+	// at the output rate and is already counted there, so it is reported beside
+	// the output rather than added to it.
+	ReasoningTokens int64
 }
 
 // Add returns the sum of two usages, so a run can total its stages.
@@ -252,6 +299,18 @@ type StageResult struct {
 	ThreadID string
 
 	Usage Usage
+
+	// UsageMeasured says whether Usage was observed rather than defaulted.
+	//
+	// Zero tokens is a legitimate measurement, so a zero Usage cannot say on
+	// its own whether it means "spent nothing" or "nobody was watching". A
+	// stage resumed from a stored result is the second case: its numbers
+	// arrived on the event stream of a process this worker was never attached
+	// to, and that stream is gone. Recording the difference is what stops an
+	// aggregator adding an unmeasured zero to a total as though it were a
+	// measurement — and the runs that resume are the long ones, which are the
+	// ones that spent most.
+	UsageMeasured bool
 }
 
 // StageEventSink receives each raw event line as a stage streams it.
@@ -338,10 +397,17 @@ func (c Credential) String() string {
 	return "[redacted]"
 }
 
-// LogValue redacts the credential in structured logs. slog prefers this over
-// String, so without it a credential passed as a log attribute would print.
-func (c Credential) LogValue() any {
-	return "[redacted]"
+// LogValue redacts the credential in structured logs.
+//
+// It returns slog.Value, NOT any. slog only calls this method on a value that
+// satisfies slog.LogValuer, and that interface requires exactly this signature
+// — returning any means slog never calls it at all, and redaction falls back
+// on slog handing the value to fmt, which finds String(). That fallback does
+// redact, so nothing leaked while this method had the wrong signature, but it
+// made the protection an accident of fmt's lookup order rather than a property
+// of this type. See TestCredentialSatisfiesTheInterfaceSlogActuallyUses.
+func (c Credential) LogValue() slog.Value {
+	return slog.StringValue(c.String())
 }
 
 // MarshalJSON always fails, and that is the point. Redacting instead would let
@@ -350,4 +416,61 @@ func (c Credential) LogValue() any {
 // cause. Failing here names the mistake at the moment it is made.
 func (c Credential) MarshalJSON() ([]byte, error) {
 	return nil, fmt.Errorf("refusing to serialise a Credential: fetch it inside the activity that uses it")
+}
+
+// CredentialFile is a complete credential document destined for a sandbox's
+// filesystem — the whole of a codex auth.json, not one field of it.
+//
+// Like Credential it is deliberately not a []byte: the type is what stops the
+// value reaching a log line or a durable store. It is a distinct type rather
+// than a Credential holding JSON so that it cannot be passed where a bare token
+// is wanted, and because Reveal returning []byte is what a file write consumes
+// — Credential.Reveal returning a string invites string manipulation of a
+// credential document.
+//
+// The file must be written with mode 0600. That is the writer's to enforce,
+// and because the destination is a pod rather than a local disk it is a
+// property of the transfer's write path, not of a umask.
+//
+// It must never be returned from an activity, for the same reason a Credential
+// must not, only more so: a document is exactly the shape somebody returns from
+// an activity, and Temporal would persist it to workflow history for the
+// namespace's whole retention.
+type CredentialFile struct {
+	content []byte
+}
+
+// NewCredentialFile wraps a credential document.
+func NewCredentialFile(content []byte) CredentialFile {
+	return CredentialFile{content: bytes.Clone(content)}
+}
+
+// Reveal returns the document's bytes. Call it only at the point they are
+// written to their destination.
+//
+// It returns a copy, so a caller that mutates what it is handed cannot edit the
+// document every later caller receives.
+func (f CredentialFile) Reveal() []byte {
+	return bytes.Clone(f.content)
+}
+
+// String redacts the document, so a stray %v cannot leak it.
+func (f CredentialFile) String() string {
+	return "[redacted credential file]"
+}
+
+// LogValue redacts the document in structured logs.
+//
+// It returns slog.Value, NOT any, so that CredentialFile actually satisfies
+// slog.LogValuer and slog genuinely calls it. Credential.LogValue returns any
+// and therefore does not — nothing leaks there only because slog falls through
+// to String. That is incidental protection, and a whole document is too easy to
+// log for incidental to be good enough.
+func (f CredentialFile) LogValue() slog.Value {
+	return slog.StringValue(f.String())
+}
+
+// MarshalJSON always fails, for the reason Credential's does.
+func (f CredentialFile) MarshalJSON() ([]byte, error) {
+	return nil, fmt.Errorf("refusing to serialise a CredentialFile: build it inside the activity that writes it")
 }

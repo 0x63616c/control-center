@@ -25,10 +25,12 @@ describe("settings-service DEFAULTS", () => {
 
   // The pad ships MOVING (#287): the feature exists because a fixed pad leaks the
   // PIN's digit set through fingerprints, and a security default that has to be
-  // discovered in Settings protects nobody. `scrambled` rather than `rotated`
-  // because that is what the boolean this field replaced already shipped as.
-  it("defaults pinPadLayout to scrambled", () => {
-    expect(DEFAULTS.pinPadLayout).toBe("scrambled");
+  // discovered in Settings protects nobody. #302 pushed the default all the way
+  // to the per-keypress mode , the only one that also covers being watched. The
+  // default may be raised, never lowered: a weaker value landing here would
+  // silently downgrade every panel that had never touched the setting.
+  it("defaults pinPadLayout to scrambled-per-key", () => {
+    expect(DEFAULTS.pinPadLayout).toBe("scrambled-per-key");
   });
 });
 
