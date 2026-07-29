@@ -34,6 +34,15 @@ var ErrFileNotFound = errors.New("file not found in sandbox")
 // Temporal's at the same boundary. Wrap with %w; compare with errors.Is.
 var ErrPermanent = errors.New("permanent failure")
 
+// ErrSecretNotFound reports that a stored secret does not exist.
+//
+// Absence is a signal, never a failure to read: the credential secret is seeded
+// by a human out of band, so "it is not there" means somebody has a job to do,
+// while "I could not tell" means try again shortly. An implementation that
+// collapsed the two would turn a transient apiserver blip into a demand for a
+// browser login. Compare with errors.Is.
+var ErrSecretNotFound = errors.New("secret not found")
+
 // ErrVersionConflict reports that a stored object changed between a read and
 // the write derived from it, and that the write was therefore not applied.
 //
