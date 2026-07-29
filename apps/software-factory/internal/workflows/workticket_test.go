@@ -64,6 +64,11 @@ type ticketHarness struct {
 	done              work.TicketDone
 	prBranch          string
 	credentialWritten []work.SandboxID
+
+	// setupOrder records "credential" and "clone" in the order the fakes were
+	// actually called, so a test can pin the relative order deliberately
+	// rather than merely that both ran before the stage loop.
+	setupOrder []string
 }
 
 func newTicketHarness(t *testing.T) *ticketHarness {
@@ -102,12 +107,14 @@ func (h *ticketHarness) run() {
 	env.OnActivity(acts.WriteCodexCredential, mock.Anything, mock.Anything).
 		Return(func(_ context.Context, sandbox work.SandboxID) error {
 			h.credentialWritten = append(h.credentialWritten, sandbox)
+			h.setupOrder = append(h.setupOrder, "credential")
 			return h.credentialErr
 		})
 
 	env.OnActivity(acts.CloneRepo, mock.Anything, mock.Anything).
 		Return(func(_ context.Context, sandbox work.SandboxID) error {
 			h.cloned = append(h.cloned, sandbox)
+			h.setupOrder = append(h.setupOrder, "clone")
 			return h.cloneErr
 		})
 
@@ -398,6 +405,35 @@ func TestWorkTicketWritesTheCodexCredentialIntoItsOwnSandboxBeforeTheFirstStage(
 	}
 	if len(h.ran) == 0 {
 		t.Fatal("no stage ran at all")
+	}
+}
+
+// TestWorkTicketWritesTheCodexCredentialBeforeCloningTheRepository pins the
+// order of the two setup activities that both run between WaitSandboxReady
+// and the stage loop. Neither has a filesystem dependency on the other —
+// CodexHomeDir and RepoDir are independent siblings of SandboxRoot — but the
+// codex-auth Secret does not exist in the cluster yet (#344), so every run
+// attempted before it is seeded fails at WriteCodexCredential. Credential
+// first means that failure is discovered before CloneRepo's round trip to
+// GitHub (minting an installation token, cloning, pushing) is paid for on a
+// run that cannot possibly proceed either way (#398).
+func TestWorkTicketWritesTheCodexCredentialBeforeCloningTheRepository(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+	want := []string{"credential", "clone"}
+	if len(h.setupOrder) != len(want) {
+		t.Fatalf("setup order = %v, want %v", h.setupOrder, want)
+	}
+	for i := range want {
+		if h.setupOrder[i] != want[i] {
+			t.Fatalf("setup order = %v, want %v", h.setupOrder, want)
+		}
 	}
 }
 

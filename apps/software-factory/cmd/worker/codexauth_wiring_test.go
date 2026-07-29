@@ -6,18 +6,18 @@ import (
 	"testing"
 )
 
-// TestNewActivitiesWiresTheCodexCredentialSeam is the source-level assertion
-// that closes #398: TokenSource and CredentialWriter used to be an interface
-// and an implementation with nothing between them, and this is the check that
-// stops a future refactor silently reopening that gap.
+// TestNewActivitiesBuildsTheCodexCredentialSource is the source-level
+// assertion that newActivities still constructs the codex token source and
+// hands it to buildDeps — the half of #398's seam that
+// TestBuildDepsSatisfiesActivitiesNew cannot see, because that test calls
+// buildDeps directly with a hand-supplied TokenSource and would stay green
+// even if newActivities stopped building a real one.
 //
 // It reads main.go's source rather than executing newActivities, for the same
 // reason TestRegisterRegistersBothWorkflowsAndTheActivities does: newActivities
 // dials Kubernetes and reads process configuration, neither of which exists
-// in a unit test, so the composition itself is what this checks — not its
-// runtime behaviour, which activities.TestNewNamesEveryDependencyItIsMissing
-// and the codexauth package's own tests already cover.
-func TestNewActivitiesWiresTheCodexCredentialSeam(t *testing.T) {
+// in a unit test.
+func TestNewActivitiesBuildsTheCodexCredentialSource(t *testing.T) {
 	t.Parallel()
 
 	source, err := os.ReadFile("main.go")
@@ -26,13 +26,33 @@ func TestNewActivitiesWiresTheCodexCredentialSeam(t *testing.T) {
 	}
 	body := extractFuncBody(t, string(source), "func newActivities(")
 
+	if !strings.Contains(body, "newCodexAuthSource(") {
+		t.Error("newActivities()'s body does not call newCodexAuthSource; the codex credential seam is unwired again (#398)")
+	}
+}
+
+// TestBuildDepsWiresTheCodexCredentialSeam is the source-level companion to
+// TestBuildDepsSatisfiesActivitiesNew: that test proves the Deps buildDeps
+// returns is one activities.New accepts, which already fails loudly if
+// TokenSource or CredentialWriter go nil, but it would stay green even if
+// buildDeps silently swapped in the wrong CredentialWriter (Pods, say,
+// instead of sandboxes) — anything non-nil satisfies presence. This checks
+// the actual wiring, not just that something was plugged in.
+func TestBuildDepsWiresTheCodexCredentialSeam(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("reading main.go: %v", err)
+	}
+	body := extractFuncBody(t, string(source), "func buildDeps(")
+
 	for _, want := range []string{
-		"newCodexAuthSource(",
-		"TokenSource:",
+		"TokenSource:      tokenSource",
 		"CredentialWriter: sandboxes",
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("newActivities()'s body does not contain %q; the codex credential seam is unwired again (#398)", want)
+			t.Errorf("buildDeps()'s body does not contain %q; the codex credential seam is unwired again (#398)", want)
 		}
 	}
 }
@@ -40,6 +60,8 @@ func TestNewActivitiesWiresTheCodexCredentialSeam(t *testing.T) {
 // TestSandboxTemplateCarriesCodexHome asserts CODEX_HOME is set on every
 // sandbox's template, not left to the deploy to remember: #398 found this
 // silently absent, with codex exec failing identically to a model failure.
+// TestBuildDepsSatisfiesActivitiesNew does not cover this — SandboxTemplate's
+// own Validate checks Image, the resource limits and the deadline, never Env.
 func TestSandboxTemplateCarriesCodexHome(t *testing.T) {
 	t.Parallel()
 
@@ -47,10 +69,10 @@ func TestSandboxTemplateCarriesCodexHome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading main.go: %v", err)
 	}
-	body := extractFuncBody(t, string(source), "func newActivities(")
+	body := extractFuncBody(t, string(source), "func buildDeps(")
 
 	if !strings.Contains(body, "work.CodexHomeEnv: work.CodexHomeDir") {
-		t.Error("newActivities()'s sandbox template does not set CODEX_HOME; codex exec in the sandbox has nowhere to read its credential from")
+		t.Error("buildDeps()'s sandbox template does not set CODEX_HOME; codex exec in the sandbox has nowhere to read its credential from")
 	}
 }
 
