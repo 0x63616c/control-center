@@ -320,6 +320,113 @@ func TestSinkSharesOneDescriptorBetweenOverlappingAttemptsOfOneStage(t *testing.
 	}
 }
 
+func TestSinkGivesEveryConcurrentOpenOfOneStageTheSameDescriptor(t *testing.T) {
+	t.Parallel()
+
+	// The sequential test above cannot see the window between deciding a path is
+	// unopened and having its descriptor. Racing many Opens at one key does: if
+	// that window ever lets two of them create a file, two attempts write through
+	// independent offsets and the NFS interleaving this design exists to prevent
+	// is back.
+	const holders = 16
+
+	s, _ := newSink(t)
+	key := work.StageKey{Ticket: 7, RunID: "0198c2f1", Stage: work.StageImplement}
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	writers := make([]io.WriteCloser, holders)
+	handles := make([]*handle, holders)
+	for i := range holders {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			w, err := s.Open(context.Background(), key)
+			if err != nil {
+				t.Errorf("Open returned an unexpected error: %v", err)
+				return
+			}
+			writers[i], handles[i] = w, sharedHandle(t, w)
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	for i, h := range handles {
+		if h == nil {
+			t.Fatalf("holder %d never opened the transcript", i)
+		}
+		if h != handles[0] {
+			t.Fatalf("holder %d holds a different descriptor from holder 0; concurrent Opens must share one", i)
+		}
+	}
+	if got := openCount(s); got != 1 {
+		t.Errorf("the sink holds %d open transcripts, want 1", got)
+	}
+	if got := refCount(s, handles[0]); got != holders {
+		t.Errorf("the shared descriptor has %d references, want %d", got, holders)
+	}
+
+	for i, w := range writers {
+		if err := w.Close(); err != nil {
+			t.Errorf("closing holder %d returned an unexpected error: %v", i, err)
+		}
+	}
+	if got := openCount(s); got != 0 {
+		t.Errorf("the sink holds %d open transcripts after every holder closed, want 0", got)
+	}
+}
+
+func TestSinkForgetsATranscriptItFailedToOpen(t *testing.T) {
+	t.Parallel()
+
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions, so the failure cannot be provoked")
+	}
+
+	// A failed Open must leave no entry behind. One stuck there would make every
+	// later attempt at that path inherit the first attempt's failure, and would
+	// be an unbounded leak across a worker's lifetime.
+	root := filepath.Join(t.TempDir(), "read-only")
+	if err := os.Mkdir(root, 0o750); err != nil {
+		t.Fatalf("preparing the fixture failed: %v", err)
+	}
+	if err := os.Chmod(root, 0o500); err != nil {
+		t.Fatalf("preparing the fixture failed: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(root, 0o750); err != nil {
+			t.Errorf("restoring the fixture's mode failed: %v", err)
+		}
+	})
+
+	s, err := New(root)
+	if err != nil {
+		t.Fatalf("New returned an unexpected error: %v", err)
+	}
+	key := work.StageKey{Ticket: 312, RunID: "0198c2f1", Stage: work.StageReview}
+	if _, err := s.Open(context.Background(), key); err == nil {
+		t.Fatal("Open succeeded against a root it cannot write to")
+	}
+	if got := openCount(s); got != 0 {
+		t.Errorf("the sink holds %d open transcripts after a failed Open, want 0", got)
+	}
+
+	// The path must be openable again once the cause is gone, rather than
+	// permanently poisoned by the first failure.
+	if err := os.Chmod(root, 0o750); err != nil {
+		t.Fatalf("restoring the fixture's mode failed: %v", err)
+	}
+	w, err := s.Open(context.Background(), key)
+	if err != nil {
+		t.Fatalf("Open still failed after the cause was removed: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Errorf("Close returned an unexpected error: %v", err)
+	}
+}
+
 func TestSinkToleratesASecondCloseOfTheSameTranscript(t *testing.T) {
 	t.Parallel()
 
@@ -388,6 +495,41 @@ func TestSinkRefusesAStageKeyThatCannotNameATranscript(t *testing.T) {
 			s, _ := newSink(t)
 			if _, err := s.Open(context.Background(), tc.key); !errors.Is(err, ErrInvalidKey) {
 				t.Errorf("Open error = %v, want it to wrap ErrInvalidKey", err)
+			}
+		})
+	}
+}
+
+func TestSinkRefusesAStageKeyThatCouldEscapeTheTranscriptRoot(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		key  work.StageKey
+	}{
+		{name: "run id climbs out", key: work.StageKey{Ticket: 7, RunID: "..", Stage: work.StagePlan}},
+		{name: "run id is a path", key: work.StageKey{Ticket: 7, RunID: "a/b", Stage: work.StagePlan}},
+		{name: "run id is absolute", key: work.StageKey{Ticket: 7, RunID: "/etc", Stage: work.StagePlan}},
+		{name: "stage climbs out", key: work.StageKey{Ticket: 7, RunID: "0198c2f1", Stage: ".."}},
+		{name: "stage is a path", key: work.StageKey{Ticket: 7, RunID: "0198c2f1", Stage: "a/b"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s, root := newSink(t)
+			if _, err := s.Open(context.Background(), tc.key); !errors.Is(err, ErrInvalidKey) {
+				t.Errorf("Open error = %v, want it to wrap ErrInvalidKey", err)
+			}
+			// TranscriptPath joins and cleans, so a separator here does not
+			// merely make an odd filename: it relocates the transcript, and
+			// ".." relocates it outside the volume entirely.
+			entries, err := os.ReadDir(root)
+			if err != nil {
+				t.Fatalf("reading the transcript root returned an unexpected error: %v", err)
+			}
+			if len(entries) != 0 {
+				t.Errorf("the rejected key still created %d entries under the root", len(entries))
 			}
 		})
 	}
