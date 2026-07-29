@@ -11,10 +11,11 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
-// The keys of the codex CLI's own credential file. They are its format, not
+// The keys of the codex CLI's own credential file, as observed on codex-cli
+// 0.145.0 — the version ADR-0011 verified against. They are its format, not
 // ours, which is why the file is patched in place rather than re-marshalled
-// from a struct: anything the CLI adds that this service does not model must
-// survive a rotation untouched.
+// from a struct: the same file also carries OPENAI_API_KEY and auth_mode,
+// which this service does not model and must not drop.
 const (
 	keyTokens       = "tokens"
 	keyAccessToken  = "access_token"
@@ -136,7 +137,11 @@ func (f credentialFile) withRotation(res Refreshed, now time.Time) ([]byte, erro
 		return nil, fmt.Errorf("encoding the rotated %q object: %w", keyTokens, err)
 	}
 	raw[keyTokens] = encodedTokens
-	encodedNow, err := json.Marshal(now.UTC().Format(time.RFC3339))
+	// RFC3339Nano rather than RFC3339, to match what the CLI itself writes:
+	// observed on codex-cli 0.145.0, last_refresh carries subsecond precision.
+	// Whole seconds still render without a fraction, so this only ever adds
+	// digits the CLI would have written anyway.
+	encodedNow, err := json.Marshal(now.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, fmt.Errorf("encoding the refresh timestamp: %w", err)
 	}
