@@ -105,8 +105,10 @@ ARG GH_SHA256=83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60
 # does and does not answer — liveness, never identity — is in ../README.md.
 #
 # The assertions below are the point of failing here rather than at 2am. One
-# call per binary: `command -v a b c` checks only its first argument, so a
-# single line naming several would assert one and imply four.
+# call per binary, because the multi-name form asserts less than it reads as:
+# `RUN` execs `/bin/sh -c`, and in dash `command -v a b c` checks only its FIRST
+# name (in bash it checks all and exits 0 if ANY resolves). Either way a single
+# line naming four would assert one and imply four.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \

@@ -43,12 +43,21 @@ check() { # check <name> <expected-exit> <cmd...>
 
 # The four argv-only contracts, plus the toolchains a ticket needs to build and
 # test this repo.
-# A LOOP, not `command -v a b c`. That form checks only its FIRST argument and
-# exits 0 — verified in this image: `command -v tar definitely-not-a-binary`
-# exits 0, and reversing the arguments exits 127. The one-liner this replaces
-# therefore asserted `tar` and nothing else, so every other binary here could
-# have vanished with the suite still green. A check that cannot fail is worse
-# than no check, because it reads as verified.
+# A LOOP, not `command -v a b c`. That form is vacuous, and HOW it is vacuous
+# depends on the shell — measured, because the wrong mechanism in a comment is
+# how the next person writes the same bug somewhere else:
+#
+#   dash (this check, run via `sh`)  reads the FIRST name and ignores the rest:
+#                                    `command -v tar nope` 0, `nope tar` 127
+#   bash (this FILE's shebang)       reads them all and exits 0 if ANY resolves:
+#                                    both orders 0
+#   zsh                              exits 1 if any is missing — would have
+#                                    caught the original
+#
+# So the one-liner this replaces asserted `tar` and nothing else here, and would
+# have asserted "at least one of nine" in a bash script. Every other binary
+# could have vanished with the suite still green either way. A check that cannot
+# fail is worse than no check, because it reads as verified.
 check "every binary the worker's argv names is on PATH" 0 \
   /usr/bin/env sh -c '
     for b in tar test cat git bun go codex sandbox-exec pgrep; do

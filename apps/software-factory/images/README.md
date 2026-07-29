@@ -54,27 +54,49 @@ directory that is not a git repo prints `Not inside a trusted directory and
 --skip-git-repo-check was not specified` and **dies before any model call** —
 verified in this image against an empty `/work`; with a real repo at the cwd the
 check passes and it proceeds to auth. The image's `WORKDIR` is `/work`, which is
-*not* a checkout, so the stage must be pointed at one with **`codex --cd
-work.RepoDir`** (`/work/repo`). Without that flag every stage fails identically
+*not* a checkout, so the stage has to run with its cwd inside one — B5 does
+that with **`codex --cd work.RepoDir`** (`/work/repo`). The requirement is the
+cwd, not the flag: a plain `cd /work/repo` satisfies the same check, measured. Without that flag every stage fails identically
 and it looks like the model failing at the task rather than a misconfiguration.
 
 `WORKDIR` deliberately is not `/work/repo` itself: a `WORKDIR` the container
 runtime has to create inside the `/work` emptyDir is created **by the runtime,
-as root, mode 0755**, and the sandbox uid then cannot write its own checkout.
+as root**, and the sandbox uid then cannot write its own checkout. Measured
+with `WORKDIR /work/repo` under this mount: `drwxr-sr-x 0 1000` — 2755 rather
+than 0755 because the setgid bit is inherited from `/work`, and `touch` from
+uid 1000 is refused.
 `/work` is group-writable because the kubelet applies `fsGroup: 1000`, and a
 directory the *process* creates under it is owned by that process — so the clone
 creates `work.RepoDir`, and nothing pre-creates it.
 
+Permissions are the reason it works this way; they are not the reason worth
+remembering. `/work` also holds the run's scaffolding — the rendered prompt, the
+schema, the result file, the shim's `.exec` pidfiles. A checkout rooted at
+`/work` would put all of that **inside the git working tree**, one `git add -A`
+away from committing a rendered prompt into the branch `implement` pushes. That
+argument survives any change to how the runtime creates directories.
+
 **Nothing clones the repository yet.** `work.RepoDir` names the destination; no
-track owns putting a repo there. See the tracking issue linked from #341.
+track owns putting a repo there — #383 tracks it.
 
 **`pgrep` answers liveness, not identity.** Stage resumption uses `pgrep -f
-<result path>`, which matches *any* process whose cmdline contains that path —
-mid-stage that legitimately includes both `codex` and the `sandbox-exec` shim
-wrapping it. Harmless, because they live and die together and the only question
-being asked is "is anything still running". But **the returned PID must not be
-treated as the codex PID**: it is one of possibly several matches, and the next
-reader will assume otherwise.
+<result path>`, which matches *any* process whose cmdline contains that path.
+Neither the PIDs nor their number means anything. Measured, one stage, three
+ways:
+
+| what mentions the path | matches |
+|---|---|
+| the shim and its child only | 2 — `sandbox-exec …`, and the process it wraps |
+| plus a shell whose script *text* contains it | 3 |
+| plus the `$(pgrep -f …)` substitution's own forked shell, momentarily | 4 |
+
+So the count is a function of who happens to hold the string in their argv at
+the instant you ask — **including the observer**. Harmless, because the shim and
+its child live and die together and the only question being asked is "is
+anything still running". But the result is a **boolean**: something matched, or
+nothing did. A caller that reads a PID out of it, or counts the matches to learn
+how many stage processes exist, is wrong in a way that will look right in
+testing.
 
 The shim's own pidfile cannot substitute for `pgrep` here. It is
 `/work/.exec/<execID>.pid`, scoped to a single exec call with a fresh id, so a
