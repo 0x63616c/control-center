@@ -338,8 +338,28 @@ func newTestRunner(pods *fakePods, files *fakeFiles) *Runner {
 }
 
 func newFakes() (*fakePods, *fakeFiles) {
-	return &fakePods{}, &fakeFiles{files: map[string][]byte{}}
+	return &fakePods{pollBudget: defaultPollBudget}, &fakeFiles{files: map[string][]byte{}}
 }
+
+// defaultPollBudget bounds how many times a test will let the runner ask
+// whether an attempt is still alive.
+//
+// waitForResult has no iteration bound by design — in production the bound is
+// the activity timeout — but the fake clock returns from Sleep immediately, so
+// a runner that never concludes spins forever and the test HANGS instead of
+// failing. A hang tells whoever is reading CI nothing about what broke, and it
+// costs the whole -timeout to find out. Past the budget the fake refuses,
+// which turns the same defect into a named failure carrying errPollBudget.
+//
+// Every fake gets this without opting in: the mutations it exists to catch are
+// the ones nobody thought to write a test for.
+const defaultPollBudget = 50
+
+// errPollBudget is what an over-polling runner is told, and it says what to
+// conclude rather than only that something stopped.
+var errPollBudget = errors.New(
+	"the runner asked whether the attempt was alive more times than this test allows: " +
+		"it is treating a liveness answer as 'still running' and will never conclude")
 
 // execCall is one exec the runner made.
 type execCall struct {
@@ -356,7 +376,13 @@ type fakePods struct {
 	// can express "pgrep found a process but its output does not parse as a
 	// PID" — a warning line, or nothing at all.
 	aliveOutput *string
-	pgrepCalls  int
+	// pgrepExit overrides pgrep's exit code, so a test can drive the codes
+	// that are neither "matched" nor "nothing matched" — 127 when the binary
+	// is not in the image at all, 2 and 3 for pgrep's own failures.
+	pgrepExit  *int
+	pgrepCalls int
+	// pollBudget caps pgrepCalls; see defaultPollBudget.
+	pollBudget  int
 	onCodex     func(*execCall) (int, error)
 	onPgrepPoll func(calls int)
 }
@@ -375,6 +401,15 @@ func (f *fakePods) Exec(_ context.Context, _ work.SandboxID, argv []string, stdi
 	f.calls = append(f.calls, call)
 	if argv[0] == "pgrep" {
 		f.pgrepCalls++
+		if f.pollBudget > 0 && f.pgrepCalls > f.pollBudget {
+			f.mu.Unlock()
+			return 0, errPollBudget
+		}
+		if f.pgrepExit != nil {
+			code := *f.pgrepExit
+			f.mu.Unlock()
+			return code, nil
+		}
 		calls, hook := f.pgrepCalls, f.onPgrepPoll
 		f.mu.Unlock()
 		if hook != nil {
@@ -419,6 +454,13 @@ func (f *fakePods) codexCalls() int {
 		}
 	}
 	return n
+}
+
+// pgrepPolls is how many times the runner asked whether an attempt was alive.
+func (f *fakePods) pgrepPolls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.pgrepCalls
 }
 
 func (f *fakePods) codexCall(t *testing.T) execCall {
@@ -484,4 +526,88 @@ func (f *fakeFiles) content(path string) []byte {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.files[path]
+}
+
+func TestAPgrepThatCannotAnswerIsNeverReadAsNothingRunning(t *testing.T) {
+	t.Parallel()
+
+	// pgrep has three answers: 0 matched, 1 nothing matched, anything else it
+	// could not tell us. Only the second means "no attempt is running", and
+	// reading the third as the second starts a second codex against a live one
+	// — the same outcome, by a different route, as the exit-0 bug below.
+	//
+	// 127 is the one that will actually happen: it is what a shell reports when
+	// the binary is not in the image, and procps being present in the sandbox
+	// image is an assumption this package makes and cannot check.
+	for _, tc := range []struct {
+		name string
+		code int
+	}{
+		{"pgrep is not in the image", 127},
+		{"pgrep failed for its own reasons", 2},
+		{"pgrep was killed", 137},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			pods, files := newFakes()
+			code := tc.code
+			pods.pgrepExit = &code
+
+			_, err := newTestRunner(pods, files).RunStage(context.Background(), testRun(), func([]byte) {})
+			if err == nil {
+				t.Fatal("RunStage() = nil error; an unanswerable liveness check was read as an answer")
+			}
+			if pods.codexCalls() != 0 {
+				t.Errorf("codex was invoked %d times after pgrep exited %d — a second one may now be racing a live attempt",
+					pods.codexCalls(), tc.code)
+			}
+			if !strings.Contains(err.Error(), "pgrep") {
+				t.Errorf("error %q does not mention pgrep; the operator has to guess what could not be checked", err)
+			}
+		})
+	}
+}
+
+func TestAttachingConcludesRatherThanPollingForever(t *testing.T) {
+	t.Parallel()
+
+	// The companion to the budget in newFakes. waitForResult is bounded in
+	// production by the activity timeout and by nothing at all under a fake
+	// clock, so this asserts the shape the timeout would otherwise hide: an
+	// attached stage stops polling once the attempt is gone, and does it in a
+	// handful of polls rather than "eventually".
+	//
+	// Why this is not the same test as TestAttachingStopsWhenTheAttemptDies-
+	// WithoutAResult, which sets up the same scenario — that one asserts the
+	// OUTCOME, this one asserts the SHAPE of reaching it, and a mutant
+	// separates them: make waitForResult require three consecutive dead
+	// answers before concluding and the outcome test still PASSES while this
+	// one fails with "polled pgrep 4 times to notice an attempt that died on
+	// poll 2". Keeping them apart is what makes the termination assertion
+	// survive someone later changing that test's scenario.
+	//
+	// The bound below is >3 against an honest minimum of 3, so it absorbs
+	// exactly one extra poll and no more: a require-TWO version of that mutant
+	// passes here. That slack is deliberate, and it is one poll rather than
+	// zero so an extra probe added for a good reason is not a test failure.
+	pods, files := newFakes()
+	pods.alivePID = 4321
+	pods.onPgrepPoll = func(calls int) {
+		if calls == 2 {
+			pods.alivePID = 0
+		}
+	}
+
+	_, err := newTestRunner(pods, files).RunStage(context.Background(), testRun(), func([]byte) {})
+	if err == nil {
+		t.Fatal("RunStage() = nil error after the attached attempt died with no result")
+	}
+	if errors.Is(err, errPollBudget) {
+		t.Fatalf("RunStage() never concluded: %v", err)
+	}
+	if got := pods.pgrepPolls(); got > 3 {
+		t.Errorf("the runner polled pgrep %d times to notice an attempt that died on poll 2; "+
+			"it is not acting on the liveness answer it was given", got)
+	}
 }

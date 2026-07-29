@@ -7,39 +7,67 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
-// ErrRateLimited reports that the plan's rate limit, not the work, ended this
-// stage.
+// The failure sentinels — and a decision about them that is now owed.
 //
-// It is a second sentinel beside work.ErrPermanent rather than a rival retry
-// taxonomy, and the distinction matters: both are non-retryable, but a rate
-// limit trips the dispatcher's breaker and clears on its own, while everything
-// else permanent needs a human. Wrapping alone could not express that — by the
-// time an error reaches the dispatcher, "do not retry" and "stop starting new
-// work for a while" are different instructions.
-var ErrRateLimited = fmt.Errorf("the model provider's rate limit was reached: %w", work.ErrPermanent)
+// Both exist so the dispatcher can tell "wait, then carry on" from "stop and
+// fetch a human". As of D1 (#368) it cannot, and this is no longer hypothetical:
+// activities.Translate is the one place a domain error becomes a Temporal one,
+// and it maps EVERY permanent error onto the single type
+// activities.ErrorTypePermanent. Nothing distinguishes a rate limit from an
+// auth failure on the far side.
+//
+// Nor can the dispatcher recover the difference itself. Temporal serialises an
+// activity's error into an ApplicationError carrying a type string and a
+// message; the messages survive, but the reconstructed values are
+// *ApplicationError, not these sentinels, so errors.Is(err, ErrRateLimited) in
+// workflow code is false however carefully the error was wrapped here.
+//
+// So one of two things should happen, and leaving it undecided is the only
+// wrong answer: either Translate grows a distinct type per sentinel and the
+// dispatcher switches on the type, or one of these is deleted rather than left
+// reading as load-bearing when nothing can read it. The tests below pin only
+// that both are permanent and that a rate limit is not an auth failure — true
+// either way, so they will not make this choice for anyone.
+//
+// Where to assert it, for whoever does decide, because the two obvious places
+// disagree and only one of them is honest. A DIRECT call to an activity
+// function proves nothing: nothing is serialised, the Go chain is intact, and
+// errors.Is SUCCEEDS — a green test for a thing that does not hold in
+// production. TestActivityEnvironment does serialise, so it is the boundary and
+// it is the right place to assert. Measured against this tree, with an activity
+// returning Translate(fmt.Errorf("scripted: %w", ErrRateLimited)):
+//
+//	direct call               errors.Is = true    *ApplicationError
+//	TestActivityEnvironment   errors.Is = false   *ActivityError
+//
+// The same measurement shows the recommended mechanism already works: errors.As
+// finds an *ApplicationError carrying (type: PermanentFailure, retryable:
+// false). A dispatcher can switch on that type the moment Translate gives each
+// sentinel one of its own.
+//
+// Translate's own doc says "errors.Is still finds the sentinel on the way out",
+// which is true of the value it returns in-process and not of what a workflow
+// receives.
+var (
+	// ErrRateLimited reports that the plan's rate limit, not the work, ended
+	// this stage.
+	//
+	// It is a second sentinel beside work.ErrPermanent rather than a rival
+	// retry taxonomy, and the distinction matters: both are non-retryable, but
+	// a rate limit trips the dispatcher's breaker and clears on its own, while
+	// everything else permanent needs a human. Wrapping alone could not express
+	// that — by the time an error reaches the dispatcher, "do not retry" and
+	// "stop starting new work for a while" are different instructions.
+	ErrRateLimited = fmt.Errorf("the model provider's rate limit was reached: %w", work.ErrPermanent)
 
-// ErrAuth reports that codex could not authenticate at all.
-//
-// ADR-0011: this is the one failure that stops the service rather than a
-// ticket. The refresh token is single-use and rotating, and once it is spent
-// or revoked no amount of retrying re-mints it — recovery is a human running
-// codex login and re-seeding.
-var ErrAuth = fmt.Errorf("codex could not authenticate: %w", work.ErrPermanent)
-
-// A constraint on whoever wires these into an activity (D1, #340).
-//
-// Both sentinels exist so the dispatcher can tell "wait, then carry on" from
-// "stop and fetch a human". Today it cannot, and not because of anything in
-// this file: there is no activity boundary yet. When one lands, Temporal
-// serialises an activity's error into an ApplicationError carrying a Type
-// string and a message — the Go error chain does NOT cross into workflow code.
-// errors.Is(err, ErrRateLimited) in the dispatcher will be false however
-// carefully the error was wrapped here.
-//
-// So these two buy nothing unless that translation maps each onto a DISTINCT
-// ApplicationError Type, and the dispatcher switches on the Type. If it maps
-// everything permanent onto one Type, delete one of these rather than leave a
-// distinction that reads as load-bearing and is not.
+	// ErrAuth reports that codex could not authenticate at all.
+	//
+	// ADR-0011: this is the one failure that stops the service rather than a
+	// ticket. The refresh token is single-use and rotating, and once it is
+	// spent or revoked no amount of retrying re-mints it — recovery is a human
+	// running codex login and re-seeding.
+	ErrAuth = fmt.Errorf("codex could not authenticate: %w", work.ErrPermanent)
+)
 
 // stderrLimit is how much of stderr an error may carry. The error is written to
 // Temporal history and quoted into a GitHub comment, and neither is the place
