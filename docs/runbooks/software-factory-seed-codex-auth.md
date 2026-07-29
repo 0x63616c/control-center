@@ -14,24 +14,32 @@ empty (`No resources found`) and there is nothing for the Secret to serve.
 
 ---
 
-## 0. The three names, and where they come from
+## 0. The names, and where they come from
 
 Every name below is read off the code that consumes it, not off memory. If you
 change one, change it in the file cited beside it.
 
+**Read the `infra/` rows on `origin/sf/e2-f1`, not on `main`.** That branch is the
+one that defines them and it has not merged: on `main`,
+`infra/src/software-factory.ts` is 58 lines and defines the namespace alone —
+`CODEX_AUTH_SECRET_NAME`, `WORKER_SERVICE_ACCOUNT` and the `resourceNames` pin are
+not there at all. The line numbers below are `sf/e2-f1`'s and **will shift when it
+merges**; the names are what matter, and each was traced to its definition.
+
 | What | Value | Source |
 |---|---|---|
-| Namespace | `software-factory` | `infra/src/software-factory.ts:42` (`SOFTWARE_FACTORY_NAMESPACE`) |
-| Secret name | `codex-auth` | `infra/src/software-factory.ts:60` (`CODEX_AUTH_SECRET_NAME`) |
+| Namespace | `software-factory` | `infra/src/software-factory.ts:42` (`SOFTWARE_FACTORY_NAMESPACE`) — the one row that also exists on `main`, there at `:32` |
+| Secret name | `codex-auth` | `infra/src/software-factory.ts:61` (`CODEX_AUTH_SECRET_NAME`) |
 | Credential key | `auth.json` | `apps/software-factory/internal/clients/codexauth/state.go:18` (`CredentialKey`) |
 | Lease key | `refresh_state.json` | `apps/software-factory/internal/clients/codexauth/state.go:22` (`StateKey`) — **the seed must NOT write this** |
 | Deployment | `software-factory-worker` | `infra/src/software-factory.ts:50` + `:358` (`WORKER_SERVICE_ACCOUNT`, reused as the Deployment name) |
+| Pod label | `app=software-factory-worker` | `infra/src/software-factory.ts:353` (`workerLabels`) — what §1's wait selects on |
 
 The Secret name is load-bearing twice over. The worker's Role pins `secrets`
-`get`/`update` to it by `resourceNames`:
+`get`/`update` to it by `resourceNames` (both on `sf/e2-f1`):
 
 ```
-infra/src/software-factory.ts:272    resourceNames: [CODEX_AUTH_SECRET_NAME],
+infra/src/software-factory.ts:293    resourceNames: [CODEX_AUTH_SECRET_NAME],
 infra/test/software-factory.test.ts:153   expect(rule.resourceNames).toEqual(["codex-auth"]);
 ```
 
@@ -40,10 +48,10 @@ read. It will not fail as "wrong credential" — it will fail as `Forbidden`.
 
 ### Known gap: nothing reads `CODEX_AUTH_SECRET_NAME` yet
 
-F1 injects the name into the worker's environment:
+F1 injects the name into the worker's environment (`sf/e2-f1`):
 
 ```
-infra/src/software-factory.ts:397   { name: "CODEX_AUTH_SECRET_NAME", value: CODEX_AUTH_SECRET_NAME },
+infra/src/software-factory.ts:418   { name: "CODEX_AUTH_SECRET_NAME", value: CODEX_AUTH_SECRET_NAME },
 ```
 
 but as of `sf/d1-composition` **no Go file reads that variable**. It is absent
@@ -56,7 +64,7 @@ This does not block seeding — the RBAC grant and the Secret name are what the
 seed has to match, and those agree. But whoever wires the credential into the
 composition root must read the name from that env var rather than hardcoding it a
 third time. Two spellings of this name is exactly the failure the comment at
-`software-factory.ts:57` warns about.
+`software-factory.ts:58` warns about (`sf/e2-f1`).
 
 ---
 
@@ -76,6 +84,14 @@ Then, from the LAN (there is no SSH to home-server; `kubectl` only):
 # 1. If a previous seed exists, take the worker down first — see §4 on ordering.
 kubectl -n software-factory scale deploy/software-factory-worker --replicas=0
 
+# 1b. WAIT FOR IT TO ACTUALLY GO. `scale` returns as soon as the API server
+#     accepts the change; it does not wait for the pod. The worker's
+#     terminationGracePeriodSeconds is 120 (software-factory.ts:144, sized above
+#     the drain window), so without this there is a two-minute window in which
+#     the next two commands race a worker that is still alive.
+kubectl -n software-factory wait --for=delete pod \
+  -l app=software-factory-worker --timeout=180s
+
 # 2. Replace the Secret WHOLESALE. Delete-then-create is deliberate: it clears
 #    refresh_state.json, which a merge would leave behind to halt the next refresh.
 kubectl -n software-factory delete secret codex-auth --ignore-not-found
@@ -87,7 +103,12 @@ kubectl -n software-factory create secret generic codex-auth \
 kubectl -n software-factory scale deploy/software-factory-worker --replicas=1
 ```
 
-On a **first** seed, skip both `scale` commands — there is nothing running yet.
+On a **first** seed you can skip both `scale` commands — there is nothing running
+yet — and the wait is harmless either way: with no matching pod it exits 0
+immediately (checked against this cluster's empty namespace, 0.2s). The 180s
+timeout is deliberately above the 120s grace period, so a worker that takes the
+full grace to drain still finishes inside it. If the wait ever times out, **stop**:
+something is holding the pod open, and everything below assumes it is gone.
 
 Three properties of that `create` that are not incidental:
 
@@ -126,20 +147,30 @@ Check the length is plausible:
 
 ```sh
 kubectl -n software-factory get secret codex-auth \
-  -o jsonpath='{.data.auth\.json}' | wc -c
+  -o go-template='{{len (index .data "auth.json")}}{{"\n"}}'
 ```
 
 That is the base64 length; it should be exactly `4 * ceil(n/3)` where `n` is
 `wc -c < ~/.codex/auth.json`. Compare the two numbers rather than eyeballing a
 magnitude — matching arithmetic proves the whole file arrived, and a plain "looks
-big enough" does not. `jsonpath` emits no trailing newline, so the count is exact
-rather than one over.
+big enough" does not.
 
-Both commands above were checked against a dummy 107-byte file: the key listing
-printed `auth.json` and nothing else, and the length came back `144`, which is
-`4 * ceil(107/3)`. Note the `\.` escape — the key contains a dot, and the
-unescaped form reads it as a field separator, returning **0 bytes silently**.
-Without the escape this check passes for a Secret that is empty.
+**`len` inside the template, not `| wc -c`.** The obvious form is
+`-o jsonpath='{.data.auth\.json}' | wc -c`, and it gives the same number — but it
+puts the whole base64 credential on stdout and relies on `wc` to swallow it. One
+dropped suffix, one `tee`, one shell that logs pipelines, and it is on your
+terminal. Counting inside the template means the value never leaves `kubectl`;
+only the integer does. That is the same objection §1 makes to piping, applied to
+the check rather than the write.
+
+`index .data "auth.json"` also sidesteps a trap worth knowing if you reach for
+`jsonpath` anyway: the key contains a dot, so it must be written `auth\.json`
+there, and the unescaped form reads the dot as a field separator and returns
+**0 bytes, exit 0, no error** — a check that passes for a Secret that is empty.
+
+Both commands here were checked against a synthetic `DUMMY-NOT-A-SECRET` file with
+`--dry-run=client`, so nothing reached the cluster: the key listing printed
+`auth.json` and nothing else, and the length came back exactly `4 * ceil(n/3)`.
 
 > **Never `-o yaml` and never `describe` on a Secret.** Both print `data` in full.
 > `-o json` likewise. The two commands above are the whole safe surface: key names
@@ -197,13 +228,28 @@ credential on its first stage; if the Secret is absent the stage fails permanent
 (`ErrUnseeded` is not retryable), so a missing seed does not resolve itself when
 you create the Secret a minute later — it burns the ticket. On a first bring-up,
 seed *before* scaling the Deployment up. On a re-seed, §1 scales to 0 first for
-the same reason.
+the same reason — and then *waits for the pod to be gone*, which is the same
+ordering argument one step finer. A worker still draining inside its 120s grace
+period may be mid-refresh, holding a compare-and-swap on the Secret's
+`resourceVersion`. Replace the Secret underneath it and either that refresh fails
+with a cause that points nowhere useful, or it succeeds and writes a rotation
+derived from the *old* token straight over the credential you just seeded. That is
+the same outcome as the Pulumi hazard below, arriving through a different door.
 
-**The staleness clock starts at seed time.** The CLI refreshes proactively once
-`last_refresh` is more than **8 days** old, so a credential seeded and then left
-idle is not indefinitely valid. If the factory sits unused for over a week, expect
-the first run after that to refresh — and if that refresh fails, you are re-running
-`codex login`, not debugging the worker.
+**A credential left idle is not indefinitely valid.** What triggers a refresh is
+the access token's own `exp`: codex refreshes only within five minutes of it
+(`CHATGPT_ACCESS_TOKEN_REFRESH_WINDOW_MINUTES`, `manager.rs:181`, ADR-0011:181-183),
+and measured tokens carry multi-day lifetimes. So the longer the factory sits
+unused, the likelier it is that the first run after the gap is the one that
+refreshes — and if that refresh fails, you are re-running `codex login`, not
+debugging the worker.
+
+Do not reason from `last_refresh`. It is a timestamp this service writes and
+carries forward, and `authfile.go:213-214` records that the CLI does not read it
+for a well-formed file. An earlier draft of this runbook gave an 8-day
+`last_refresh` staleness rule; it is not cited anywhere in this repository and the
+condition above is the one that is, so it has been removed rather than left as the
+only uncited number in the file.
 
 **Mode.** The CLI writes `auth.json` `0600` and whatever composes the file inside a
 sandbox should match. A Kubernetes Secret is not a file mode, but anything that
