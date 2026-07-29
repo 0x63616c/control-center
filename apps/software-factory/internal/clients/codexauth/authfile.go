@@ -153,6 +153,12 @@ func (f credentialFile) withRotation(res Refreshed, now time.Time) (credentialFi
 	}
 	raw[keyLastRefresh] = encodedNow
 
+	// raw[keyTokens] is deliberately STALE here: it still holds the
+	// pre-rotation blob, spent refresh token and all. tokens is the current
+	// one, and encode is what reconciles the two — it re-marshals tokens over
+	// raw[keyTokens] on the way out. Nothing else may read raw[keyTokens] off
+	// this value, and forSandbox does not: it passes raw through and supplies
+	// its own tokens map, so encode reconciles there too.
 	rotated := credentialFile{
 		raw:     raw,
 		tokens:  tokens,

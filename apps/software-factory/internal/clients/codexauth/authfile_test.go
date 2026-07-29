@@ -203,6 +203,43 @@ func TestSandboxFileCarriesTheRefreshTokensBytesNowhereAtAll(t *testing.T) {
 	}
 }
 
+// forSandbox derives; it must not MUTATE what it derives from. The defensive
+// copy of f.tokens is the only thing standing between "derive a sandbox copy"
+// and "blank the worker's own live refresh token", and today its absence would
+// be harmless purely by call ordering — on both paths forSandbox runs after the
+// store.Put. That makes the safety a property of two call sites rather than of
+// this method, and one reordering removes it. Asserting non-mutation here makes
+// the ordering irrelevant: with the map aliased instead of copied, the STORED
+// document gets refresh_token: "", which parseCredentialFile then rejects as
+// ErrUnseeded — a bricked credential that only a human running `codex login`
+// can fix.
+func TestSandboxFileLeavesTheDocumentItDerivedFromUntouched(t *testing.T) {
+	t.Parallel()
+	const distinctive = "zzz-live-refresh-token-the-worker-still-needs-zzz"
+
+	file, err := parseCredentialFile(seedFile(t, "an-access-token", distinctive))
+	if err != nil {
+		t.Fatalf("parseCredentialFile: %v", err)
+	}
+	if _, err := file.forSandbox(); err != nil {
+		t.Fatalf("forSandbox: %v", err)
+	}
+
+	if got := file.refresh.Reveal(); got != distinctive {
+		t.Errorf("file.refresh = %q after deriving the sandbox copy, want the live token untouched", got)
+	}
+	// The document as it would be written back to the store. This is the
+	// assertion that matters: it is the copy of the token the worker refreshes
+	// with next time.
+	stored, err := file.encode()
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if !strings.Contains(string(stored), distinctive) {
+		t.Fatal("deriving the sandbox copy blanked the refresh token in the file it derived from; storing this document would brick the credential")
+	}
+}
+
 // The sandbox file is DERIVED from the stored one, not composed from parts. A
 // composed file is correct only while somebody's list of required fields stays
 // complete and current — and those fields' serde attributes are not uniform

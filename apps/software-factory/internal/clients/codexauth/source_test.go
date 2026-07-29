@@ -150,6 +150,44 @@ func TestSourceNeverYieldsTheRefreshToken(t *testing.T) {
 	}
 }
 
+// The rotation path is the dangerous one, and it is the one every other leak
+// assertion here misses: they run on the fast path, where no refresh fires and
+// the token being kept out of the document is the one already in the store.
+// After a rotation the token in question is live and was minted by this very
+// call. `usable` derives the sandbox copy with `rotated.forSandbox()`; the
+// mistake one keystroke away is `rotated.encode()`, and a sandbox handed that
+// document can rotate the credential out from under the worker, which then
+// reads a spent token and trips ErrSingleWriterViolated hours later with no
+// proximate cause.
+func TestSourceNeverYieldsTheRotatedRefreshToken(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, 30*time.Minute, refreshState{})
+	res := h.rotatesTo(t, 72*time.Hour)
+
+	got, err := h.source.SandboxCredentialFile(context.Background())
+	if err != nil {
+		t.Fatalf("SandboxCredentialFile: %v", err)
+	}
+	// Without this the test would pass on the fast path and assert nothing
+	// about rotation at all.
+	if calls := h.refresher.Calls(); calls != 1 {
+		t.Fatalf("presented the refresh token %d times, want exactly 1; no rotation happened and this test asserts nothing", calls)
+	}
+
+	doc := string(got.Reveal())
+	if strings.Contains(doc, res.RefreshToken.Reveal()) {
+		t.Error("the ROTATED refresh token reached the sandbox document; it is live, and a sandbox holding it can rotate the credential out from under the worker")
+	}
+	if strings.Contains(doc, "stored-refresh") {
+		t.Error("the pre-rotation refresh token reached the sandbox document")
+	}
+	// Blanked, not dropped: an absent or null key fails to deserialize in
+	// codex-cli, so the sandbox would not start at all.
+	if !strings.Contains(doc, `"`+keyRefreshToken+`":""`) {
+		t.Errorf("the rotated sandbox document carries no blanked %s: %s", keyRefreshToken, doc)
+	}
+}
+
 func TestSourceRefreshesWhenTheTokenExpiresInsideTheRefreshMargin(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, 30*time.Minute, refreshState{Serial: 7, LastWriter: "someone-earlier"})

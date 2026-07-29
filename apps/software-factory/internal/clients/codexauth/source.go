@@ -557,7 +557,16 @@ func (s *Source) usable(rotated credentialFile, res Refreshed) (work.CredentialF
 		s.metrics.CredentialDead(DeathCredentialLost)
 		return work.CredentialFile{}, s.unusable(fmt.Errorf("it expires at %s, inside the %s refresh margin: %w", exp.Format(time.RFC3339), s.margin, ErrRefreshTooShortLived))
 	}
-	return rotated.forSandbox()
+	// The same failure as round's, classified the same way. Returning it bare
+	// here made one condition two errors depending on which path reached it,
+	// and this is the path where the rotation is already stored and the old
+	// refresh token already spent — the caller reading it needs the remedy
+	// more, not less.
+	file, err := rotated.forSandbox()
+	if err != nil {
+		return work.CredentialFile{}, s.unusable(err)
+	}
+	return file, nil
 }
 
 func (s *Source) credentialLost(cause error) error {
