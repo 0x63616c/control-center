@@ -645,3 +645,112 @@ func TestRendersAModelNameDefensivelyToo(t *testing.T) {
 		t.Errorf("model line %q carries %d backticks, want the 4 of its two code spans", line, got)
 	}
 }
+
+// urlRenderer is one of the two places a URL reaches a comment, paired with a
+// way to ask whether the rendered body treated that URL as markup.
+//
+// The question is deliberately "did it become markup", not "is it absent": an
+// unusable URL is still shown, inside a code span, because the value is how a
+// reader works out what the propose stage produced.
+type urlRenderer struct {
+	name string
+	// markup renders a comment carrying raw and reports whether raw ended up
+	// as live markup rather than inside a code span.
+	markup func(raw string) bool
+}
+
+func urlRenderers() []urlRenderer {
+	return []urlRenderer{
+		{"pull request URL", func(raw string) bool {
+			p := proposed()
+			p.PullRequestURL = raw
+			// pullRequestRef emits a vouched-for URL as a bare line, which
+			// GitHub autolinks; anything else is wrapped in a code span.
+			return strings.Contains(p.Body(), "\n"+raw+"\n")
+		}},
+		{"run URL", func(raw string) bool {
+			p := pickup()
+			p.RunURL = raw
+			return strings.Contains(p.Body(), "]("+raw+")")
+		}},
+	}
+}
+
+func TestRefusesEachKindOfURLItCannotVouchFor(t *testing.T) {
+	t.Parallel()
+
+	// One input per clause of linkedURL, each chosen to trip that clause and
+	// no other. An earlier version of this test had a single input carrying a
+	// bad scheme, a bad character and no host at once: every clause but the
+	// first was then unreachable, and three of the four could be deleted with
+	// the suite still green. An input that trips two guards tests neither.
+	for _, tc := range []struct {
+		clause string
+		raw    string
+	}{
+		{"no host", "https:pull/999"},
+		{"scheme not http(s)", "ftp://example.com/pull/999"},
+		{"userinfo, which puts a trusted-looking name in front of the real host", "https://github.com@evil.example/pull/999"},
+		{"a parenthesis, which closes a markdown link early", "https://example.com/a(b)c"},
+		{"an angle bracket, which opens an HTML comment", "https://example.com/a<b>c"},
+		{"a square bracket, which opens a markdown link", "https://example.com/a[b]c"},
+		{"a backtick, which closes the code span it may sit in", "https://example.com/a`b"},
+		{"a quote, which closes an HTML attribute", "https://example.com/a\"b"},
+		{"whitespace, which splits the value across the line", "https://example.com/a b"},
+		{"a control character", "https://example.com/a\x00b"},
+		{"a newline, which puts chosen text on a line of its own", "https://example.com/a\nb"},
+	} {
+		for _, renderer := range urlRenderers() {
+			t.Run(renderer.name+"/"+tc.clause, func(t *testing.T) {
+				t.Parallel()
+				if renderer.markup(tc.raw) {
+					t.Errorf("%q was rendered as markup; it carries %s", tc.raw, tc.clause)
+				}
+			})
+		}
+	}
+}
+
+func TestStillLinksAURLItCanVouchFor(t *testing.T) {
+	t.Parallel()
+
+	// The companion to the refusals above: without this, a linkedURL that
+	// refused everything would pass every one of them.
+	if !urlRenderers()[0].markup("https://github.com/0x63616c/world-wide-webb/pull/999") {
+		t.Error("a github.com pull request URL is not rendered as a link")
+	}
+	if !urlRenderers()[1].markup(runURL) {
+		t.Errorf("the Temporal run URL %q is not rendered as a link", runURL)
+	}
+}
+
+func TestLinksOnlyAPullRequestOnGitHub(t *testing.T) {
+	t.Parallel()
+
+	// PullRequestURL is model output: the propose stage lifts it from the
+	// agent's own result file, and that agent read issue text an attacker
+	// chose. A well-formed URL on a host of the attacker's choosing is a
+	// working phishing link posted to a real ticket under this service's name,
+	// so the host is checked and not merely the syntax.
+	//
+	// The run URL is deliberately not held to this: it is operator config and
+	// its host is whatever the Temporal UI is eventually published on.
+	for _, raw := range []string{
+		"https://evil.example/0x63616c/world-wide-webb/pull/999",
+		"https://github.example/0x63616c/world-wide-webb/pull/999",
+		"https://notgithub.com/0x63616c/world-wide-webb/pull/999",
+	} {
+		p := proposed()
+		p.PullRequestURL = raw
+		if strings.Contains(p.Body(), "\n"+raw+"\n") {
+			t.Errorf("%q was rendered as a link from a comment this service signs", raw)
+		}
+		if !strings.Contains(p.Body(), "`"+raw+"`") {
+			t.Errorf("%q was dropped rather than shown inertly:\n%s", raw, p.Body())
+		}
+	}
+
+	if !strings.Contains(pickup().Body(), "]("+runURL+")") {
+		t.Error("the run URL is being held to the pull request host allowlist")
+	}
+}
