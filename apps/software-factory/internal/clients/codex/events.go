@@ -63,6 +63,11 @@ type event struct {
 //
 // cache_write_input_tokens is deliberately absent: nothing prices or reports it
 // yet, and a field carried but never read reads like an output nobody checked.
+//
+// There is no total_tokens here, and its absence is not an oversight. A session
+// file under CODEX_HOME carries one — a different struct, protocol::TokenUsage
+// — so anyone checking these names against a session transcript will find a
+// field this stream never emits, and adding it would silently read zero.
 type usage struct {
 	InputTokens         int64 `json:"input_tokens"`
 	CachedInputTokens   int64 `json:"cached_input_tokens"`
