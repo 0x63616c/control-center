@@ -43,8 +43,17 @@ check() { # check <name> <expected-exit> <cmd...>
 
 # The four argv-only contracts, plus the toolchains a ticket needs to build and
 # test this repo.
-check "the worker's argv is all on PATH" 0 \
-  /usr/bin/env sh -c 'command -v tar test cat git bun go codex sandbox-exec pgrep >/dev/null'
+# A LOOP, not `command -v a b c`. That form checks only its FIRST argument and
+# exits 0 — verified in this image: `command -v tar definitely-not-a-binary`
+# exits 0, and reversing the arguments exits 127. The one-liner this replaces
+# therefore asserted `tar` and nothing else, so every other binary here could
+# have vanished with the suite still green. A check that cannot fail is worse
+# than no check, because it reads as verified.
+check "every binary the worker's argv names is on PATH" 0 \
+  /usr/bin/env sh -c '
+    for b in tar test cat git bun go codex sandbox-exec pgrep; do
+      command -v "$b" >/dev/null || { echo "missing: $b"; exit 1; }
+    done'
 
 # Stage liveness is `pgrep -f <result path>` (B5). If pgrep is absent the runner
 # does not error — it reports "nothing running" and the retry starts a SECOND
