@@ -25,6 +25,8 @@ import (
 	"go.temporal.io/sdk/worker"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/config"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/prompts"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
 // shutdownGrace bounds how long the metrics server is given to finish in-flight
@@ -105,17 +107,21 @@ func run() error {
 	w := worker.New(temporal, cfg.TaskQueue, worker.Options{})
 
 	// Registration site. The dispatcher and WorkTicket workflows (C1, C2) and
-	// the activities that carry out a stage (B5) are registered here, on this
+	// the activities that carry out a stage are registered here, on this
 	// worker, and nowhere else — one queue, one worker, one list. Nothing is
 	// registered yet: this worker polls and finds nothing to do, which is the
 	// honest state of the system until those tracks land.
+	renderer, err := newPromptRenderer()
+	if err != nil {
+		return err
+	}
+	register(w, renderer, dispatcher, logger)
+
 	logger.Info("worker starting",
 		slog.String("task_queue", cfg.TaskQueue),
 		slog.String("temporal_namespace", cfg.TemporalNamespace),
 		slog.String("sandbox_namespace", cfg.SandboxNamespace),
 		slog.String("pod", cfg.PodName),
-		slog.Int("registered_workflows", 0),
-		slog.Int("registered_activities", 0),
 		// What the dispatcher will run under, logged where it was read: the
 		// question asked of a live system is "did my config land", and this is
 		// the first of the two places that can answer it. The other is the
@@ -135,6 +141,27 @@ func run() error {
 	}
 	logger.Info("worker drained")
 	return nil
+}
+
+// register puts this worker's workflows and activities on its task queue.
+//
+// One function, one call site: a registration list that grew in two places
+// would be a queue serving a set of workflows nobody can enumerate. Nothing is
+// registered yet — C1's WorkTicket and C2's dispatcher, and the activities they
+// call, land here.
+//
+// The renderer is a parameter rather than something this builds, because it
+// belongs to the activity that runs a stage and must never reach workflow code:
+// a replayed workflow that re-rendered a prompt would mint a fresh fence nonce
+// and diverge from its own history. That is what internal/prompts' place on the
+// workflows-are-deterministic deny list enforces, and what this signature says.
+func register(w worker.Worker, renderer *prompts.Renderer, dispatcher work.Config, logger *slog.Logger) {
+	logger.Info("registrations",
+		slog.Int("workflows", 0),
+		slog.Int("activities", 0),
+		slog.Int("stages_per_ticket", len(work.Pipeline())),
+		slog.Int("max_in_flight", dispatcher.MaxInFlight),
+	)
 }
 
 // stopServer gives in-flight scrapes a moment to finish. Its failure is logged
