@@ -174,8 +174,12 @@ func (s *Sandboxes) Read(ctx context.Context, sandbox work.SandboxID, filePath s
 		return nil, err
 	}
 
+	// The exec subresource refuses a request that attaches none of
+	// stdin/stdout/stderr, so a discarded stderr buffer is wired up purely to
+	// satisfy that requirement — the probe still reads only the exit code.
+	var probeStderr bytes.Buffer
 	probe := []string{"test", "-e", clean}
-	code, err := s.exec(ctx, sandbox, probe, nil, nil, nil)
+	code, err := s.exec(ctx, sandbox, probe, nil, nil, &probeStderr)
 	if err != nil {
 		return nil, fmt.Errorf("probing for %s in sandbox %s: %w", clean, sandbox, err)
 	}

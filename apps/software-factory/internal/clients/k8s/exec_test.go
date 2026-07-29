@@ -54,7 +54,18 @@ type scriptedStreamer struct {
 	calls   []streamCall
 }
 
+// errNoStreamsAttached mirrors the real exec subresource: it refuses to
+// upgrade a connection that attaches none of stdin/stdout/stderr. #409 was a
+// probe that passed all three as nil and broke every stage in production
+// without a single test noticing, because this fake used to accept it. Any
+// caller of exec must attach at least one stream, even if only to discard it.
+var errNoStreamsAttached = errors.New("unable to upgrade connection: you must specify at least 1 of stdin, stdout, stderr")
+
 func (f *scriptedStreamer) stream(ctx context.Context, target execTarget, o streamOpts) error {
+	if o.stdin == nil && o.stdout == nil && o.stderr == nil {
+		return errNoStreamsAttached
+	}
+
 	f.mu.Lock()
 	i := len(f.calls)
 	var a answer
@@ -238,6 +249,23 @@ func TestExecReportsAStreamFailureAgainstAVanishedPodAsPermanent(t *testing.T) {
 
 	if _, err := s.Exec(context.Background(), testSandbox, []string{"codex"}, nil, io.Discard, io.Discard); !errors.Is(err, work.ErrPermanent) {
 		t.Fatalf("Exec error = %v, want it permanent: the sandbox is gone", err)
+	}
+}
+
+// TestExecRequiresAtLeastOneStream is the regression test for #409: a caller
+// that attaches no stream at all — as Read's existence probe once did — must
+// fail the same way the real exec subresource would, not be silently accepted
+// by the fake. Before the fix, s.exec passed all three streams through as nil
+// and this test failed to see any error at all.
+func TestExecRequiresAtLeastOneStream(t *testing.T) {
+	t.Parallel()
+
+	str := &scriptedStreamer{answers: []answer{{}}}
+	s, _ := newTestSandboxes(t, str, runningPod())
+
+	_, err := s.Exec(context.Background(), testSandbox, []string{"test", "-e", "/work/x"}, nil, nil, nil)
+	if err == nil {
+		t.Fatal("Exec with no streams attached succeeded, want an error: the real exec subresource refuses this")
 	}
 }
 
