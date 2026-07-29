@@ -438,6 +438,17 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
                 name: WORKER_SERVICE_ACCOUNT,
                 image: ghcrImage("software-factory-worker", imageDigests),
                 env: [
+                  // Read ONLY on the dispatcher workflow's first-ever start —
+                  // after that its config lives in workflow state and rides
+                  // ContinueAsNew, so this env var is read, logged, and then
+                  // ignored (see the "dispatcher_starting_config" log in
+                  // cmd/worker/main.go). It exists to make that one first
+                  // start come up paused, not to let a redeploy pause or
+                  // unpause a dispatcher that has already started — that's an
+                  // UpdateConfig signal instead. Flip this only for the
+                  // moment before registration lands; unpausing later is a
+                  // signal, not a value here (see #381).
+                  { name: "DISPATCHER_CONFIG", value: JSON.stringify({ paused: true }) },
                   { name: "GITHUB_OWNER", value: GITHUB_OWNER },
                   { name: "GITHUB_REPO", value: GITHUB_REPO },
                   {
