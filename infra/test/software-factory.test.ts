@@ -205,6 +205,17 @@ describe("the worker Deployment (#343)", () => {
     expect(ctx?.fsGroup).toBe(ctx?.runAsUser);
   });
 
+  test("hands the worker the Temporal UI base URL, so a run id renders as a link", async () => {
+    // A3 (#331) built Pickup.RunURL as pure data and left the base to F1. The
+    // UI is already tunnel-exposed behind an Access email-OTP app, so this is
+    // derived from the platform manifest rather than spelled a second time —
+    // and empty here would silently downgrade every status comment to an
+    // unclickable run id on the first production run.
+    const [container] = (await deploymentSpec()).template.spec.containers;
+    const base = container.env.find((e) => e.name === "TEMPORAL_UI_BASE_URL");
+    expect(base?.value).toBe("https://temporal-ui.worldwidewebb.co");
+  });
+
   test("points the App private key env at the mounted FILE, not at a value", async () => {
     // The key is multi-line and base64-encoded in the vault; internal/config
     // reads it from a path.

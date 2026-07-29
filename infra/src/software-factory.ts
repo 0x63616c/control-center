@@ -21,6 +21,7 @@
 
 import * as k8s from "@pulumi/kubernetes";
 import * as pulumi from "@pulumi/pulumi";
+import { controlCenterProductManifest } from "@www/platform";
 import { GHCR_PULL_SECRET_NAME } from "./ghcr-pull-secrets.ts";
 import {
   assertImageDigestPins,
@@ -141,6 +142,26 @@ const WORKER_UID = 65532;
 
 /** Above the drain window, so `worker.Run(worker.InterruptCh())` finishes. */
 const TERMINATION_GRACE_SECONDS = 120;
+
+/**
+ * The Temporal UI's base URL, for the run link in a ticket's status comment
+ * (A3, #331). A3 built `Pickup.RunURL` as pure data — empty renders the run id
+ * as plain text, non-empty renders a link — and left the base to F1.
+ *
+ * It is DERIVED from the platform manifest, not spelled again: the UI is
+ * already exposed at `temporal-ui.worldwidewebb.co` through the Cloudflare
+ * tunnel and gated by an Access email-OTP app, the same treatment Grafana and
+ * pgAdmin get (`infra/cloudflare/src/{routes,access}.ts`). So no new hostname,
+ * no Access app and no manual `infra/cloudflare` apply is needed here — the
+ * decision this ticket "owed" turns out to have been made and shipped already,
+ * and the only thing missing was handing the worker the address.
+ *
+ * Chosen over leaving it empty because there is no dry-run mode: the first
+ * end-to-end run opens a real PR, and whoever watches it wants the history one
+ * click away rather than a run id to paste into a URL by hand.
+ */
+const temporalUiBaseUrl = (): string =>
+  `https://${controlCenterProductManifest().temporalUi.exposure.hostname}`;
 
 export interface SoftwareFactoryArgs {
   provider: k8s.Provider;
@@ -396,6 +417,7 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
                   { name: "SANDBOX_NAMESPACE", value: SOFTWARE_FACTORY_NAMESPACE },
                   { name: "CODEX_AUTH_SECRET_NAME", value: CODEX_AUTH_SECRET_NAME },
                   { name: "TRANSCRIPTS_ROOT", value: TRANSCRIPTS_MOUNT_PATH },
+                  { name: "TEMPORAL_UI_BASE_URL", value: temporalUiBaseUrl() },
                 ],
                 volumeMounts: [
                   {

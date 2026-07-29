@@ -140,9 +140,14 @@ jobs:
             # own tree. Deliberately NOT split per image — see the output above.
             softwarefactory:
               - 'apps/software-factory/**'
-            # any_app is true when at least one image needs to be built. An
-            # infra-only change is handled by the separate `infra` filter above,
-            # the deploy job fires on `any_app || infra`.
+            # any_app is true when at least one TypeScript-workspace image
+            # needs to be built. An infra-only change is handled by the separate
+            # `infra` filter above, and `apps/software-factory/**` is
+            # deliberately NOT listed here: it shares no code with this
+            # workspace (ADR-0011), so it is tracked by its own
+            # `softwarefactory` output and OR'd into the deploy gate alongside
+            # this one. The deploy job fires on
+            # `any_app || infra || softwarefactory`.
             any_app:
               - 'apps/web/**'
               - 'apps/manage/**'
@@ -150,7 +155,6 @@ jobs:
               - 'apps/worker/**'
               - 'apps/temporal-worker/**'
               - 'apps/map-provision/**'
-              - 'apps/software-factory/**'
               - 'packages/**'
               - 'app-kit/**'
               - 'features/**'
@@ -207,6 +211,14 @@ jobs:
         run: bash scripts/test-map-provision.sh
       - name: Dockerfile manifest coverage guard
         run: bun run test:dockerfile-manifests
+      - name: Deploy gate guard
+        # Everything CI builds, CI must also deploy. Found live on #355: a tree
+        # with its own path filter and its own build jobs, named in no term of
+        # deploy-home-server's `if:` — so it built, tested and merged green and
+        # never reached prod, with nothing red anywhere to say so. Checks by
+        # PATH, not by filter name, since `any_app` legitimately covers several
+        # trees. Fast (grep/awk), sibling of the build matrix guard below.
+        run: bash scripts/test-deploy-gate.sh
       - name: Build matrix guard
         # Asserts every product image builds on a NATIVE amd64 runner and that
         # no arm64 leg or QEMU emulation creeps back in. The home-server Talos
@@ -548,8 +560,12 @@ jobs:
   # Tailscale key (auto-revoked when the job ends), reaches the kube-apiserver
   # over the tailnet, and runs the Pulumi program in infra/. CI is the deployer.
   #
-  # Fires on `any_app || infra`: an image change OR an infra-only change (a spec
-  # tweak with no rebuild) must both converge the declared stack. `pulumi up` is
+  # Fires on `any_app || infra || softwarefactory`: an image change OR an
+  # infra-only change (a spec tweak with no rebuild) must both converge the
+  # declared stack. software-factory is a THIRD term rather than an `any_app`
+  # entry, because that filter tracks the TypeScript workspace and this tree
+  # shares nothing with it (ADR-0011) — a parallel path, not a collapsed one.
+  # Without it the whole tree tested in CI and never deployed. `pulumi up` is
   # declarative-convergent, so the latest green run always reconciles prod to the
   # committed digests, no deploy marker needed (www-bom8 retired).
   deploy-home-server:
@@ -574,7 +590,7 @@ jobs:
     if: |
       always() &&
       github.ref_name == 'main' &&
-      (needs.changes.outputs.any_app == 'true' || needs.changes.outputs.infra == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)) &&
+      (needs.changes.outputs.any_app == 'true' || needs.changes.outputs.infra == 'true' || needs.changes.outputs.softwarefactory == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)) &&
       !contains(needs.*.result, 'failure') &&
       !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-latest
