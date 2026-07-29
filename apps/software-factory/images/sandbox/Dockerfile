@@ -70,11 +70,19 @@ ARG BUN_SHA256=c3d3c14e9a5ec83ff67d0acfe76e4315ad06da9f34f59fc7b13813782caf1f66
 # here: git, because `implement` pushes a branch and GitHub is the durable state
 # between stages; ca-certificates for the OpenAI and GitHub APIs; curl and unzip
 # for the two downloads below; passwd for groupadd/useradd, which trixie-slim
-# omits; procps for pgrep, which stage liveness depends on.
+# omits; procps for pgrep.
 #
-# The `command -v` line is the point of failing here rather than at 2am: a
-# missing pgrep does not error at runtime, it reports "no stage running" and the
-# retry starts a second copy of a stage that never stopped.
+# procps is a DIRECT dependency of this image, not a convenience. B5's stage
+# liveness probe is `pgrep -f <result path>`, and debian:trixie-slim ships no
+# pgrep, no pkill and no ps — measured against the base image, not assumed. Its
+# absence has to fail this build, because it does not fail at runtime: a missing
+# pgrep reports "no stage running", and the retry starts a second copy of a
+# stage that never stopped, two models writing one result file. What that probe
+# does and does not answer — liveness, never identity — is in ../README.md.
+#
+# The assertions below are the point of failing here rather than at 2am. One
+# call per binary: `command -v a b c` checks only its first argument, so a
+# single line naming several would assert one and imply four.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
