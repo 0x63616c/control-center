@@ -184,7 +184,7 @@ func template() work.SandboxTemplate {
 		Image:           "ghcr.io/example/sandbox:v1",
 		CPULimit:        "2",
 		MemoryLimit:     "4Gi",
-		DeadlineSeconds: int64((6 * time.Hour).Seconds()),
+		DeadlineSeconds: int64((12 * time.Hour).Seconds()),
 		Env:             map[string]string{"CODEX_HOME": "/work/.codex"},
 	}
 }
@@ -334,7 +334,7 @@ func TestCreateSandboxRefusesAPodDeadlineTheRunCanOutlive(t *testing.T) {
 	e.RegisterActivity(a.CreateSandbox)
 
 	_, err := e.ExecuteActivity(a.CreateSandbox, CreateSandboxInput{
-		TicketNumber: 1, RunID: "run-1", RunBudget: 5 * time.Hour,
+		TicketNumber: 1, RunID: "run-1", RunTimeout: 5 * time.Hour,
 	})
 	if err == nil {
 		t.Fatal("Kubernetes must never be able to kill a pod Temporal still believes in")
@@ -358,7 +358,7 @@ func TestCreateSandboxNamesThePodForTheRunAndTheTicket(t *testing.T) {
 	e.RegisterActivity(a.CreateSandbox)
 
 	if _, err := e.ExecuteActivity(a.CreateSandbox, CreateSandboxInput{
-		TicketNumber: 328, RunID: "run-1", RunBudget: 5 * time.Hour,
+		TicketNumber: 328, RunID: "run-1", RunTimeout: 5 * time.Hour,
 	}); err != nil {
 		t.Fatalf("CreateSandbox: %v", err)
 	}

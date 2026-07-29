@@ -144,23 +144,23 @@ type CreateSandboxInput struct {
 	// behind". See work.SandboxSpec.
 	RunID string
 
-	// RunBudget is the longest the enclosing run can legitimately take. It is
+	// RunTimeout is the longest the enclosing run can legitimately take. It is
 	// passed rather than derived because the pod's deadline is deploy config
-	// and the budget is run policy, and this is the one place both are known.
-	RunBudget time.Duration
+	// and the timeout is run policy, and this is the one place both are known.
+	RunTimeout time.Duration
 }
 
 // CreateSandbox creates the pod this run's stages execute in.
 func (a *Activities) CreateSandbox(ctx context.Context, in CreateSandboxInput) (work.SandboxID, error) {
 	deadline := time.Duration(a.deps.Sandbox.DeadlineSeconds) * time.Second
-	if deadline <= in.RunBudget {
+	if deadline <= in.RunTimeout {
 		// Kubernetes killing a pod the workflow still believes in produces a
 		// stage that fails for no stated reason, on a timer nobody was watching.
 		// Refuse at the first ticket instead, permanently: no retry changes a
 		// deploy-time number.
 		return "", fail(ctx, "checking the sandbox deadline", fmt.Errorf(
-			"the pod deadline %s must exceed the run budget %s, or Kubernetes kills a pod Temporal still believes in: %w",
-			deadline, in.RunBudget, work.ErrPermanent))
+			"the pod deadline %s must exceed the run timeout %s, or Kubernetes kills a pod Temporal still believes in: %w",
+			deadline, in.RunTimeout, work.ErrPermanent))
 	}
 
 	id, err := a.deps.Pods.Create(ctx, a.deps.Sandbox.Spec(in.TicketNumber, in.RunID))
