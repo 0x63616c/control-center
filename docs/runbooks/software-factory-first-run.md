@@ -11,15 +11,23 @@ throwaway ticket, a watched run and a rehearsed abort — not from a flag.
 Everything below runs from a worktree of this repo. `kubectl` and `talosctl`
 reach prod over the LAN; there is **no SSH to home-server**.
 
+Two kinds of angle bracket. `<n>`, `<ticket>`, `<run-id>`, `<stage>` are values
+you have — substitute them. `<name: track/#issue>` and `<name: unlanded>` are
+names that **do not exist yet**; a step needing one cannot be run until the work
+that defines it lands.
+
 ## 0. What must be true first (hard gate)
 
 - [ ] Every earlier track merged: B5 (#337), C1 (#338), C2 (#339), D1 (#340),
       E1 (#341), E2 (#342), F1 (#343), F2 (#344). G is last by construction.
 - [ ] **Merged ≠ deployed.** `apps/software-factory/**` is its own CI path filter
       and is deliberately absent from `any_app` (`.github/workflows/ci.yml`), and
-      `deploy-home-server` fires on `any_app || infra`. Until E2 wires the build
-      and deploy path, a software-factory-only merge is green with zero effect on
-      prod. Do not infer "running" from "merged" — look:
+      `deploy-home-server` fires on
+      `any_app || infra || (workflow_dispatch && force_all)` (`ci.yml`). Until E2
+      wires the build and deploy path, a software-factory-only *merge* is green
+      with zero effect on prod — but a `force_all` dispatch still deploys, so
+      "nothing can deploy this" is the wrong reading. Do not infer "running"
+      from "merged" — look:
 
       kubectl -n software-factory get deploy,pods
 
@@ -33,7 +41,11 @@ reach prod over the LAN; there is **no SSH to home-server**.
 
 - [ ] The worker is polling its task queue — a Deployment that is `Ready` proves
       the process started, not that it registered. Check the queue has a poller
-      (§3, CLI pod).
+      with `task-queue describe` (§3, CLI pod). **Not executable today:** that
+      subcommand needs `--task-queue <task-queue: unlanded>`, and no track has
+      named the queue yet — A2 (#330) is config structs and D1 (#340) is the
+      worker wiring; neither issue mentions it (checked 2026-07-28). Take the
+      name from the worker's registration when it lands.
 - [ ] The codex credential is seeded (F2) and the GitHub App config Secret is
       wired (F1). Check **presence only**:
 
@@ -61,7 +73,7 @@ it might.
 The dispatcher timer-loops every 30s (ADR-0011), so pickup is within a minute.
 There is no way to make it go sooner; `WorkNow` was dropped deliberately.
 
-## 3. Watch it — three windows
+## 3. Watch it — four windows
 
 **The ticket.** A comment per step, appended as the run goes: pickup, one per
 stage (posted running, edited to done/failed), then the outcome with token
@@ -73,24 +85,58 @@ totals (#331). This is the fastest read on where the run is.
     # http://localhost:8080 → namespace software-factory → work-ticket-<n>
 
 For the CLI, the server image ships **no** `temporal` binary — `/usr/local/bin`
-holds only `temporal-server`. Use a throwaway admin-tools pod; the `temporal`
-namespace enforces PodSecurity `restricted`, so it needs the overrides:
+holds only `temporal-server`. Use a throwaway admin-tools pod:
+
+    kubectl -n temporal run tmp-temporal-cli --rm -i --restart=Never \
+      --image=temporalio/admin-tools:1.31.2 \
+      --command -- temporal --address temporal-server:7233 \
+      --namespace software-factory workflow list
+
+Swap the trailing subcommand for `workflow describe`, `workflow terminate`
+(abort lever 3, §5) or `task-queue describe --task-queue <task-queue: unlanded>`
+— see §0 for why that last one cannot be run yet.
+
+It prints two things that look like failures and are not. Four
+`would violate PodSecurity "restricted"` warnings: neither `temporal` nor
+`software-factory` carries PodSecurity labels (verified 2026-07-28), the cluster
+default warns on `restricted` without enforcing it, and the pod is admitted and
+runs — there is no misconfigured namespace here to go and fix. And sometimes
+`couldn't attach to pod … falling back to streaming logs`, when the command
+finishes before `kubectl` attaches; the output still arrives.
+
+**`workflow list` prints nothing at all and exits 0** until the first run exists,
+because `software-factory` has no workflows yet. Empty is the correct output
+today, not a broken command — verified 2026-07-28. To prove the harness itself
+works, run `operator namespace list` instead: it returns `temporal-system`,
+`control-center`, `software-factory`.
+
+Adding a hardened pod spec silences the four warnings. It is cosmetic, it is not
+required, and it is **not** the form to hand-edit at 2am — use the short form
+above for that:
 
     kubectl -n temporal run tmp-temporal-cli --rm -i --restart=Never \
       --image=temporalio/admin-tools:1.31.2 \
       --overrides='{"spec":{"securityContext":{"runAsNonRoot":true,"runAsUser":1000,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"tmp-temporal-cli","image":"temporalio/admin-tools:1.31.2","securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}},"command":["temporal","--address","temporal-server:7233","--namespace","software-factory","workflow","list"]}]}}'
-
-Verified 2026-07-28 against prod with `operator namespace list`, which returned
-`temporal-system`, `control-center`, `software-factory`. Swap the trailing
-`command` for `task-queue describe`, `workflow describe`, `workflow terminate`.
 
 **Logs.** Grafana → Explore → Loki, 14-day retention:
 
     {namespace="software-factory"}
     {namespace="software-factory", level="error"}
 
-Transcripts outlive Loki and are the record of what the model actually did:
-`/transcripts/<ticket>/<run-id>/<stage>.jsonl` on the worker's volume.
+Transcripts outlive Loki and are the record of what the model actually did.
+The path under the volume is `<ticket>/<run-id>/<stage>.jsonl`
+(`work.StageKey.TranscriptPath`); the volume's **mount path is F1's to define
+(#343) and does not exist yet** — nothing in the Go tree or `infra/` names one.
+Find it from the worker's pod spec on the day, not from this file.
+
+**Pods.** The window the other three miss:
+
+    kubectl -n software-factory get pods -w
+
+A sandbox stuck `Pending` or in `ImagePullBackOff`, or evicted, shows up nowhere
+else promptly: the ticket comment still says the stage is running, Temporal still
+shows an activity in flight, and Loki has nothing because the container never
+started. On a first run this is where the boring failures live.
 
 ## 4. What wrong looks like
 
@@ -98,7 +144,7 @@ Transcripts outlive Loki and are the record of what the model actually did:
 |---|---|---|
 | `codex exec` exits **1 with empty stdout** | a proactive token refresh failed. The diagnosis is on **stderr only**, and the CLI retries ~104 times in ~35s against `auth.openai.com` first | read the stage's stderr, not its stdout. **The most likely first-run failure** (#340) |
 | 403 on pod create / watch / exec | the worker Role is missing a verb — `watch` on `pods`, `get` on `pods/exec` | fix the Role (#343), not the code |
-| worker wedges during startup | `/transcripts` mounted `hard`; an unreachable NFS server hangs inside `New` | must be `soft` with bounded `timeo`/`retrans` (#343) |
+| worker wedges during startup | the transcript volume mounted `hard`; an unreachable NFS server hangs inside `New` | must be `soft` with bounded `timeo`/`retrans` (#343) |
 | run keeps burning quota while rate-limited | detection is a heuristic on error text — ADR-0011 admits no structured event exists | expect false negatives; abort by hand (§5) |
 | status comment edit 404s | someone deleted the comment | policy is **undecided** (open on #331). Note what happened; do not invent one |
 | a plausible but wrong PR | the system working as designed | close it. This is the cost the design accepts |
@@ -113,7 +159,8 @@ Transcripts outlive Loki and are the record of what the model actually did:
 3. **Terminate one ticket.** `workflow terminate --workflow-id work-ticket-<n>`
    from the CLI pod. Its sandbox pod is not reaped by that — check
    `kubectl -n software-factory get pods` and delete it.
-4. **Stop everything.** `kubectl -n software-factory scale deploy/<worker> --replicas=0`.
+4. **Stop everything.**
+   `kubectl -n software-factory scale deploy/<worker-deployment: F1/#343> --replicas=0`.
 
 After 2–4, check whether `implement` had already pushed:
 
