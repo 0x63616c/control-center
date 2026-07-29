@@ -38,6 +38,7 @@ internal/
   workflows/       deterministic only — see the section below
   activities/      all side effects; declares the interfaces it consumes
   clients/         github, k8s, codex, codexauth — each seals its SDK
+  transcripts/     stage event streams on the worker's volume, as JSONL
   prompts/         stage prompts + JSON schemas, go:embed
 images/
   worker/          the worker image
