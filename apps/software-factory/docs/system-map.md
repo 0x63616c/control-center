@@ -141,7 +141,7 @@ ADR-0011 says a plan "travels as data, not as conversation". In the code, all fi
 
 One string field. The schema is transport; content is taught in prose and read back as prose.
 Its first line doubles as the status shown on the issue. So the structure is real at the
-transport layer and absent at the content layer, which is the substance of #415.
+transport layer and absent at the content layer, which is the substance of [#415][415].
 
 `Prior` carries **every** completed stage's document forward, not a rolling handoff
 (`workticket.go:193`), but each prompt injects only what it needs: review gets the plan; revise
@@ -195,16 +195,17 @@ separate pod, and resumption keys off deterministic paths (`work/paths.go:191`):
 | `codex.pid` live | attach and wait |
 | neither | run |
 
-Observed live on ticket #423: the pod survived with 0 restarts, finished stages were not re-run,
-the interrupted stage's codex processes were still alive and the retry reattached. **The observer
-was replaced; the work never stopped.** "Heartbeat timeout" names the watcher going away, not the
-stage dying. This coupling is #424; the reattach machinery (#411, #413) exists to paper over it.
+Observed live on ticket [#423][423]: the pod survived with 0 restarts, finished stages were not
+re-run, the interrupted stage's codex processes were still alive and the retry reattached. **The
+observer was replaced; the work never stopped.** "Heartbeat timeout" names the watcher going
+away, not the stage dying. This coupling is [#424][424]; the reattach machinery ([#411][411],
+[#413][413]) exists to paper over it.
 
 One consequence is already visible in the data: a stage resumed from a stored result reports
 `Usage` zero with `UsageMeasured: false` (`runner.go:170`), and **nothing reads
 `UsageMeasured`** — its only non-test references are its assignment and its declaration. So
 `status.go:431` renders `in 0 (0 cached) · out 0 · reasoning 0`, indistinguishable from a
-measurement, and the run total silently under-reports by a whole stage. That is #426.
+measurement, and the run total silently under-reports by a whole stage. That is [#426][426].
 
 ## What the sandbox is
 
@@ -229,15 +230,15 @@ Layout inside (`work/paths.go`):
 
 **Credentials the agent can read.** `hosts.yml` holds the GitHub App installation token in
 plaintext (`clients/k8s/clone.go:227`) alongside a git credential file. Containment inside the
-pod is not achievable under the current security context; #416 records that and that the
+pod is not achievable under the current security context; [#416][416] records that and that the
 weakest of three options shipped knowingly. The token lives one hour against a run budgeted six,
-and nothing refreshes it (#417).
+and nothing refreshes it ([#417][417]).
 
 **Toolchain gaps.** Final image stage is `debian:trixie-slim` with the Go toolchain copied in
 (`images/sandbox/Dockerfile:70,153`); runtime apt is `ca-certificates curl git passwd procps
 unzip`. No gcc, so `go test -race` cannot link; no `golangci-lint`. Both are what
 `ci.yml:330` calls the authoritative gate for this tree, and factory-authored Go skips both
-(#428).
+([#428][428]).
 
 ## Where a human is required
 
@@ -269,7 +270,7 @@ they are visible in one place.
   from a red result, a review finding, or a changes-requested review to another attempt.
   Re-work means a human re-adds `auto`, which starts a **fresh run from `plan`** with a new run
   ID and a new branch.
-- **No structured stage output.** One markdown string per stage (#415).
+- **No structured stage output.** One markdown string per stage ([#415][415]).
 - **No per-stage capability enforcement.** Read-only is prose.
 - **No network isolation.** Flannel implements no policy engine; the cluster has zero
   NetworkPolicies. An egress allowlist would be a no-op file.
@@ -286,18 +287,32 @@ they are visible in one place.
 | tokens and outcomes | Prometheus counters by stage and model, the workflow result, the outcome comment |
 | worker logs | Loki, 14d — which is why transcripts are stored rather than shipped |
 
-The transcript volume is the whole NFS share, including cluster backups and media (#412).
+The transcript volume is the whole NFS share, including cluster backups and media ([#412][412]).
 
 ## Open tickets this map makes legible
 
-- **#424** — liveness and transcript coupled to a stream from a constantly-redeploying pod.
-- **#425** — every stage shows as `RunStage` in the Temporal UI; stage identity is payload-only.
-- **#426** — a resumed stage reports 0 tokens as though measured.
-- **#428** — sandbox cannot run `-race` or `golangci-lint`.
-- **#415** — stage output the worker acts on should be typed fields.
-- **#416**, **#417** — the sandbox's GitHub token: readable, and expires mid-run.
-- **#412** — transcript mount is the whole share.
-- **#331** — status comment renders `in` as a loop total including the cached part.
+- **[#424][424]** — liveness and transcript coupled to a stream from a constantly-redeploying pod.
+- **[#425][425]** — every stage shows as `RunStage` in the Temporal UI; stage identity is
+  payload-only.
+- **[#426][426]** — a resumed stage reports 0 tokens as though measured.
+- **[#428][428]** — sandbox cannot run `-race` or `golangci-lint`.
+- **[#415][415]** — stage output the worker acts on should be typed fields.
+- **[#416][416]**, **[#417][417]** — the sandbox's GitHub token: readable, and expires mid-run.
+- **[#412][412]** — transcript mount is the whole share.
+- **[#331][331]** — status comment renders `in` as a loop total including the cached part.
 
 Unfiled, and named in *What is absent* above: no diff review, no CI observation, no loop back,
 propose's trust inversion.
+
+[331]: https://github.com/0x63616c/world-wide-webb/issues/331
+[411]: https://github.com/0x63616c/world-wide-webb/issues/411
+[412]: https://github.com/0x63616c/world-wide-webb/issues/412
+[413]: https://github.com/0x63616c/world-wide-webb/issues/413
+[415]: https://github.com/0x63616c/world-wide-webb/issues/415
+[416]: https://github.com/0x63616c/world-wide-webb/issues/416
+[417]: https://github.com/0x63616c/world-wide-webb/issues/417
+[423]: https://github.com/0x63616c/world-wide-webb/issues/423
+[424]: https://github.com/0x63616c/world-wide-webb/issues/424
+[425]: https://github.com/0x63616c/world-wide-webb/issues/425
+[426]: https://github.com/0x63616c/world-wide-webb/issues/426
+[428]: https://github.com/0x63616c/world-wide-webb/issues/428
