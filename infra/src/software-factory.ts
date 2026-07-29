@@ -22,6 +22,7 @@
 import * as k8s from "@pulumi/kubernetes";
 import * as pulumi from "@pulumi/pulumi";
 import { controlCenterProductManifest } from "@www/platform";
+import { DEFAULT_METRICS_PORT, METRICS_PATH } from "@www/platform/metrics/port";
 import { GHCR_PULL_SECRET_NAME } from "./ghcr-pull-secrets.ts";
 import {
   assertImageDigestPins,
@@ -131,17 +132,50 @@ const TRANSCRIPTS_MOUNT_OPTIONS = ["nfsvers=4.0", "nolock", "soft", "timeo=100",
  * The uid/gid the worker image runs as — distroless's `nonroot`, and a contract
  * with images/worker/Dockerfile.
  *
- * It is also the fsGroup on the transcript volume. **NAS-side prerequisite:**
- * the export must map this gid to something that can write the transcript
- * directory. With `root_squash` and no mapping the kubelet's ownership pass
- * fails and every transcript Open returns EACCES — a failure that appears only
- * against a real cluster, which is why it is on the smoke-test list on #343
- * rather than assumed here.
+ * It is also the fsGroup on the transcript volume, where it is **belt and
+ * braces rather than load-bearing**, and an earlier version of this comment
+ * predicted a failure that cannot happen. Measured against the live export:
+ * `root_squash` IS active (a root pod's write lands `1024:100`), but every
+ * directory on it is created `0777`, so the sandbox uid can write regardless.
+ * And `fsGroup` is a **no-op on NFS** — the in-tree plugin does not report the
+ * mount as ownership-managed, so the kubelet never runs the recursive chown,
+ * which means it also cannot fail and block pod start.
+ *
+ * Kept anyway because it costs nothing and is correct the day this volume is
+ * not NFS. Worth knowing: this is the first non-root workload on that export —
+ * no existing consumer sets runAsUser, runAsNonRoot or fsGroup at all.
  */
 const WORKER_UID = 65532;
 
-/** Above the drain window, so `worker.Run(worker.InterruptCh())` finishes. */
+/**
+ * Above the drain window, so `worker.Run(worker.InterruptCh())` finishes.
+ *
+ * PROVISIONAL. D1 found that `worker.Options{}` leaves `WorkerStopTimeout` at
+ * 0, so today there is no drain window at all — the SDK returns immediately and
+ * cancels the activity contexts. Once D1 sets a real stop timeout this must be
+ * sized against it rather than guessed, and 120s is a placeholder chosen to be
+ * comfortably above any plausible value, not a computed one.
+ */
 const TERMINATION_GRACE_SECONDS = 120;
+
+/**
+ * The Temporal task queue this worker polls.
+ *
+ * D1 owns the canonical constant (`work.TaskQueue`) because D1 registers the
+ * worker; this is the deployment side of the same string, and the env-parity
+ * guard is what stops the two drifting.
+ */
+const TEMPORAL_TASK_QUEUE = "software-factory";
+
+/**
+ * What the worker's metrics and health server binds to (`METRICS_ADDR`).
+ *
+ * The port is the house's `DEFAULT_METRICS_PORT` rather than a second number,
+ * so the scrape annotations below and every other workload here agree. D1's
+ * test fixture uses `:9090`, but that is a fixture — `LoadWorker` requires the
+ * variable and defaults nothing, so this value is what actually binds.
+ */
+const METRICS_ADDR = `:${DEFAULT_METRICS_PORT}`;
 
 /**
  * The Temporal UI's base URL, for the run link in a ticket's status comment
@@ -369,7 +403,17 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
         strategy: { type: "Recreate" },
         selector: { matchLabels: workerLabels },
         template: {
-          metadata: { labels: workerLabels },
+          metadata: {
+            labels: workerLabels,
+            // On the POD TEMPLATE, not the Deployment: Prometheus `role: pod`
+            // service discovery only ever sees Pods. Same shape temporal-worker
+            // uses. No Service fronts this — in-cluster scraping only.
+            annotations: {
+              "prometheus.io/scrape": "true",
+              "prometheus.io/port": String(DEFAULT_METRICS_PORT),
+              "prometheus.io/path": METRICS_PATH,
+            },
+          },
           spec: {
             serviceAccountName: WORKER_SERVICE_ACCOUNT,
             // TRUE, and the only workload in this cluster where it is. Every
@@ -405,8 +449,25 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
                     },
                   },
                   { name: "GITHUB_APP_PRIVATE_KEY_PEM_FILE", value: APP_PRIVATE_KEY_MOUNT },
-                  { name: "TEMPORAL_ADDRESS", value: TEMPORAL_FRONTEND_CLUSTER_ADDRESS },
+                  // TEMPORAL_HOST_PORT, not TEMPORAL_ADDRESS: the name is
+                  // config.LoadWorker's, which requires all eight of these and
+                  // defaults none, so a misnamed one is not a degraded worker
+                  // but a CrashLoopBackOff on the first start.
+                  { name: "TEMPORAL_HOST_PORT", value: TEMPORAL_FRONTEND_CLUSTER_ADDRESS },
                   { name: "TEMPORAL_NAMESPACE", value: SOFTWARE_FACTORY_TEMPORAL_NAMESPACE },
+                  { name: "TEMPORAL_TASK_QUEUE", value: TEMPORAL_TASK_QUEUE },
+                  // Binds the /metrics AND /healthz server, so an absent value
+                  // costs observability and liveness together.
+                  { name: "METRICS_ADDR", value: METRICS_ADDR },
+                  // fieldRef, NEVER a literal. D1 uses this as the codexauth
+                  // lease holder: a constant would make every restart claim the
+                  // same identity, and the compare-and-swap lease that is the
+                  // ONLY thing preventing two refreshers would stop
+                  // distinguishing a new pod from the one it replaced.
+                  {
+                    name: "POD_NAME",
+                    valueFrom: { fieldRef: { fieldPath: "metadata.name" } },
+                  },
                   // The sandbox image, digest-pinned by the same CI map that
                   // pins this one, so a sandbox is as reproducible as the
                   // worker that created it.

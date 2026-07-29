@@ -33,23 +33,28 @@ const softwareFactoryProduct = defineProduct("software-factory");
 
 const IMAGE_REPOSITORIES = {
   api: {
+    product: "control-center",
     digestKey: controlCenterProduct.imageDigestKey("api"),
     repository: controlCenterProduct.imageRepository("api"),
   },
   worker: {
+    product: "control-center",
     digestKey: controlCenterProduct.imageDigestKey("worker"),
     repository: controlCenterProduct.imageRepository("worker"),
   },
   web: {
+    product: "control-center",
     digestKey: controlCenterProduct.imageDigestKey("web"),
     repository: controlCenterProduct.imageRepository("web"),
   },
   // manage (apps/manage, ADR-0010): a static nginx bundle, same shape as web.
   manage: {
+    product: "control-center",
     digestKey: controlCenterProduct.imageDigestKey("manage"),
     repository: controlCenterProduct.imageRepository("manage"),
   },
   "map-provision": {
+    product: "control-center",
     digestKey: controlCenterProduct.imageDigestKey("map-provision"),
     repository: controlCenterProduct.imageRepository("map-provision"),
   },
@@ -58,6 +63,7 @@ const IMAGE_REPOSITORIES = {
   // any other, so it pins through the SAME digest map — one place where "what
   // does CI build and pin" is answered.
   "temporal-worker": {
+    product: "control-center",
     digestKey: controlCenterProduct.imageDigestKey("temporal-worker"),
     repository: controlCenterProduct.imageRepository("temporal-worker"),
   },
@@ -71,14 +77,19 @@ const IMAGE_REPOSITORIES = {
   // shape validation, same CI collection — so a sandbox is as reproducible as
   // the worker that created it, rather than resolving `:main` at 3am.
   "software-factory-worker": {
+    product: "software-factory",
     digestKey: softwareFactoryProduct.imageDigestKey("worker"),
     repository: softwareFactoryProduct.imageRepository("worker"),
   },
   "software-factory-sandbox": {
+    product: "software-factory",
     digestKey: softwareFactoryProduct.imageDigestKey("sandbox"),
     repository: softwareFactoryProduct.imageRepository("sandbox"),
   },
-} as const satisfies Record<string, { digestKey: string; repository: string }>;
+} as const satisfies Record<
+  string,
+  { product: ProductSlug; digestKey: string; repository: string }
+>;
 
 const IMAGE_DIGEST_KEYS = new Set(
   Object.values(IMAGE_REPOSITORIES).map((image) => image.digestKey),
@@ -94,10 +105,29 @@ const IMAGE_DIGEST_KEYS = new Set(
  *
  * `imageDigestKey` is `${slug}-${component}`, so the prefix is the product.
  */
+/**
+ * @public - the digest keys one product owns, from a table of images.
+ *
+ * Ownership is DECLARED on each entry, never inferred from a key's spelling. A
+ * `startsWith(`${slug}-`)` test reads as exact and silently over-matches the
+ * day one slug prefixes another — "control-center" would swallow a future
+ * "control-center-edge" and quietly widen what a prod deploy demands. Putting
+ * the prefix on the repository name instead has the identical bug.
+ *
+ * It takes the table as an argument rather than closing over IMAGE_REPOSITORIES
+ * so the difference is TESTABLE: with only today's mutually non-prefixing
+ * slugs, an equality filter and a prefix filter behave identically, and the
+ * improvement would be unfalsifiable closed over the live table.
+ */
+export function keysOwnedBy<T extends { product: string; digestKey: string }>(
+  images: readonly T[],
+  slug: string,
+): string[] {
+  return images.filter((image) => image.product === slug).map((image) => image.digestKey);
+}
+
 function digestKeysFor(slug: ProductSlug): string[] {
-  return Object.values(IMAGE_REPOSITORIES)
-    .map((image) => image.digestKey)
-    .filter((key) => key.startsWith(`${slug}-`));
+  return keysOwnedBy(Object.values(IMAGE_REPOSITORIES), slug);
 }
 
 const REQUIRED_IMAGE_DIGEST_KEYS = digestKeysFor("control-center");

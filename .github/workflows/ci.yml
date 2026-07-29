@@ -211,6 +211,13 @@ jobs:
         run: bash scripts/test-map-provision.sh
       - name: Dockerfile manifest coverage guard
         run: bun run test:dockerfile-manifests
+      - name: Worker env parity guard
+        # config.LoadWorker() requires eight variables and defaults NONE; the
+        # Deployment supplied three, one of them misnamed. Nothing was red —
+        # both sides typechecked, both had passing tests, and the two lists were
+        # simply never compared. Reads the Go side as the source of truth, and
+        # refuses to report parity against an empty parse.
+        run: bash scripts/test-worker-env-parity.sh
       - name: Deploy gate guard
         # Everything CI builds, CI must also deploy. Found live on #355: a tree
         # with its own path filter and its own build jobs, named in no term of

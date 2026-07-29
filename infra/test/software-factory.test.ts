@@ -66,7 +66,11 @@ async function ruleFor(resource: string): Promise<PolicyRule> {
 interface Container {
   name: string;
   image: string;
-  env: { name: string; value?: string }[];
+  env: {
+    name: string;
+    value?: string;
+    valueFrom?: { fieldRef?: { fieldPath?: string } };
+  }[];
   volumeMounts: { name: string; mountPath: string; subPath?: string }[];
 }
 interface PodSpec {
@@ -214,6 +218,36 @@ describe("the worker Deployment (#343)", () => {
     const [container] = (await deploymentSpec()).template.spec.containers;
     const base = container.env.find((e) => e.name === "TEMPORAL_UI_BASE_URL");
     expect(base?.value).toBe("https://temporal-ui.worldwidewebb.co");
+  });
+
+  test("takes POD_NAME from the downward API, never a literal", async () => {
+    // D1 uses POD_NAME as the codexauth lease holder. A literal would make
+    // every restart claim the SAME identity, and the compare-and-swap lease is
+    // the only thing preventing two refreshers from invalidating each other —
+    // replicas:1 buys none of that. So this is a correctness bug, not config
+    // tidiness, and presence alone (which the parity guard checks) is not
+    // enough: it has to be a fieldRef.
+    const [container] = (await deploymentSpec()).template.spec.containers;
+    const pod = container.env.find((e) => e.name === "POD_NAME");
+    expect(pod?.value).toBeUndefined();
+    expect(pod?.valueFrom?.fieldRef?.fieldPath).toBe("metadata.name");
+  });
+
+  test("names the Temporal frontend var the way LoadWorker spells it", async () => {
+    // LoadWorker requires all eight and defaults none, so a misnamed variable
+    // is not a degraded worker — it is a CrashLoopBackOff on first start.
+    // TEMPORAL_ADDRESS was the original mistake and reads perfectly plausibly.
+    const [container] = (await deploymentSpec()).template.spec.containers;
+    const names = container.env.map((e) => e.name);
+    expect(names).toContain("TEMPORAL_HOST_PORT");
+    expect(names).not.toContain("TEMPORAL_ADDRESS");
+  });
+
+  test("binds the metrics and health server, which are one address", async () => {
+    // METRICS_ADDR carries /metrics AND /healthz, so an absent value costs
+    // observability and liveness together.
+    const [container] = (await deploymentSpec()).template.spec.containers;
+    expect(container.env.find((e) => e.name === "METRICS_ADDR")?.value).toBe(":9464");
   });
 
   test("points the App private key env at the mounted FILE, not at a value", async () => {
