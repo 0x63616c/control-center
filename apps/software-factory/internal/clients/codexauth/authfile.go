@@ -120,14 +120,19 @@ func (f credentialFile) withRotation(res Refreshed, now time.Time) ([]byte, erro
 		tokens[key] = encoded
 		return nil
 	}
-	if err := set(keyAccessToken, res.AccessToken); err != nil {
-		return nil, err
-	}
-	if err := set(keyRefreshToken, res.RefreshToken); err != nil {
-		return nil, err
-	}
-	if res.IDToken.Reveal() != "" {
-		if err := set(keyIDToken, res.IDToken); err != nil {
+	// An omitted field means unchanged, never blank. The provider is not
+	// obliged to reissue all three, and blanking the refresh token on the
+	// strength of its absence from one response is how a live credential
+	// becomes a dead one.
+	for key, value := range map[string]work.Credential{
+		keyAccessToken:  res.AccessToken,
+		keyRefreshToken: res.RefreshToken,
+		keyIDToken:      res.IDToken,
+	} {
+		if value.Reveal() == "" {
+			continue
+		}
+		if err := set(key, value); err != nil {
 			return nil, err
 		}
 	}

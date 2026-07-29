@@ -204,6 +204,33 @@ func TestCredentialFileKeepsTheStoredIDTokenWhenARotationOmitsOne(t *testing.T) 
 	}
 }
 
+func TestCredentialFileKeepsTheStoredRefreshTokenWhenARotationOmitsOne(t *testing.T) {
+	t.Parallel()
+	// Every field of the token response is optional and an absent one means
+	// unchanged. Blanking the refresh token on the strength of its absence
+	// would be the dead credential — the stored one is still the live one.
+	file, err := parseCredentialFile(seedFile(t, "old-access", "old-refresh"))
+	if err != nil {
+		t.Fatalf("parseCredentialFile: %v", err)
+	}
+	rotated, err := file.withRotation(Refreshed{AccessToken: work.NewCredential("new-access")},
+		time.Date(2026, 7, 28, 9, 30, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("withRotation: %v", err)
+	}
+
+	next, err := parseCredentialFile(rotated)
+	if err != nil {
+		t.Fatalf("the rotated file no longer parses: %v", err)
+	}
+	if next.access.Reveal() != "new-access" {
+		t.Error("the rotated access token was not written")
+	}
+	if next.refresh.Reveal() != "old-refresh" {
+		t.Error("the stored refresh token was replaced by an omitted one; the credential is now dead")
+	}
+}
+
 func TestCredentialFileRejectsAFileItCannotUse(t *testing.T) {
 	t.Parallel()
 	cases := map[string][]byte{

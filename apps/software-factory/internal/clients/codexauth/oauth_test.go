@@ -2,6 +2,7 @@ package codexauth
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -28,16 +29,16 @@ func newTestRefresher(t *testing.T, handler http.HandlerFunc) *HTTPRefresher {
 	return refresher
 }
 
-func TestHTTPRefresherPostsTheRefreshGrantAsFormEncodedParameters(t *testing.T) {
+func TestHTTPRefresherPostsTheRefreshGrantAsJSON(t *testing.T) {
 	t.Parallel()
 	var (
 		gotURL         string
 		gotContentType string
-		gotForm        string
+		gotBody        []byte
 	)
 	refresher := newTestRefresher(t, func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		gotURL, gotContentType, gotForm = r.URL.String(), r.Header.Get("Content-Type"), string(body)
+		gotBody, _ = io.ReadAll(r.Body)
+		gotURL, gotContentType = r.URL.String(), r.Header.Get("Content-Type")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"access_token":"a","refresh_token":"r","id_token":"i"}`))
 	})
@@ -45,13 +46,24 @@ func TestHTTPRefresherPostsTheRefreshGrantAsFormEncodedParameters(t *testing.T) 
 	if _, _, err := refresher.Refresh(context.Background(), work.NewCredential(testToken)); err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
-	if gotContentType != "application/x-www-form-urlencoded" {
-		t.Errorf("Content-Type = %q, want form encoding", gotContentType)
+	// JSON, not form encoding. Verified against codex-cli's own refresh at
+	// rust-v0.145.0; its authorization_code exchange IS form-encoded, which is
+	// the trap this asserts against.
+	if gotContentType != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", gotContentType)
 	}
-	for _, want := range []string{"grant_type=refresh_token", "client_id=" + testClientID, "refresh_token=" + testToken} {
-		if !strings.Contains(gotForm, want) {
-			t.Errorf("the request body does not carry %q", want)
+	var sent map[string]any
+	if err := json.Unmarshal(gotBody, &sent); err != nil {
+		t.Fatalf("the request body is not JSON: %v", err)
+	}
+	want := map[string]any{"grant_type": "refresh_token", "client_id": testClientID, "refresh_token": testToken}
+	for key, value := range want {
+		if sent[key] != value {
+			t.Errorf("request body %s = %v, want %v", key, sent[key], value)
 		}
+	}
+	if len(sent) != len(want) {
+		t.Errorf("the request body carries %d fields, want exactly %v", len(sent), want)
 	}
 	// A token in a query string is a token in every proxy and access log
 	// between here and the provider.
@@ -79,38 +91,96 @@ func TestHTTPRefresherParsesTheRotatedPairAsARotationOutcome(t *testing.T) {
 	}
 }
 
-func TestHTTPRefresherRefusesAResponseThatRotatesOnlyHalfThePair(t *testing.T) {
+func TestHTTPRefresherLeavesAnOmittedTokenUnchanged(t *testing.T) {
 	t.Parallel()
-	// A response with an access token and no refresh token would store a
-	// blank refresh token over a live one, which is a dead credential the next
-	// time anything needs to rotate.
+	// Every field of the response is optional, and the CLI keeps whatever it
+	// already held for an absent one. An omitted refresh_token means the
+	// provider did not rotate it, so the stored one is still live — blanking
+	// it would be the dead credential, not keeping it.
 	refresher := newTestRefresher(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"access_token":"new-a"}`))
 	})
 
-	_, outcome, err := refresher.Refresh(context.Background(), work.NewCredential(testToken))
-	if err == nil {
-		t.Fatal("Refresh accepted a response carrying no refresh token")
+	res, outcome, err := refresher.Refresh(context.Background(), work.NewCredential(testToken))
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
 	}
-	if outcome != RefreshUnknown {
-		t.Errorf("outcome = %s, want %s — the grant was consumed and we cannot use what came back", outcome, RefreshUnknown)
+	if outcome != RefreshRotated {
+		t.Fatalf("outcome = %s, want %s", outcome, RefreshRotated)
+	}
+	if res.AccessToken.Reveal() != "new-a" {
+		t.Error("the rotated access token was not returned")
+	}
+	if res.RefreshToken.Reveal() != "" || res.IDToken.Reveal() != "" {
+		t.Error("an omitted field must come back empty, meaning unchanged, not invented")
 	}
 }
 
-func TestHTTPRefresherReportsAnInvalidGrantAsARejection(t *testing.T) {
+func TestHTTPRefresherRefusesAResponseWithNoAccessToken(t *testing.T) {
 	t.Parallel()
-	for _, status := range []int{http.StatusBadRequest, http.StatusUnauthorized} {
-		refresher := newTestRefresher(t, func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(status)
-			_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"token expired or revoked"}`))
+	// Without an access token there is nothing to use, and the grant was
+	// consumed getting here.
+	refresher := newTestRefresher(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"refresh_token":"new-r"}`))
+	})
+
+	_, outcome, err := refresher.Refresh(context.Background(), work.NewCredential(testToken))
+	if err == nil {
+		t.Fatal("Refresh accepted a response carrying no access token")
+	}
+	if outcome != RefreshUnknown {
+		t.Errorf("outcome = %s, want %s", outcome, RefreshUnknown)
+	}
+}
+
+func TestHTTPRefresherReportsARefusedTokenAsARejection(t *testing.T) {
+	t.Parallel()
+	// The codes the provider actually uses, and the three shapes it puts them
+	// in. Read from codex-cli rust-v0.145.0 rather than assumed from RFC 6749
+	// — invalid_grant alone would miss every one of the reuse cases.
+	cases := map[string]struct {
+		status int
+		body   string
+		want   string
+	}{
+		"a bare error string":         {400, `{"error":"refresh_token_expired"}`, "refresh_token_expired"},
+		"an error object with a code": {400, `{"error":{"code":"refresh_token_reused"}}`, "refresh_token_reused"},
+		"a top-level code":            {400, `{"code":"refresh_token_invalidated"}`, "refresh_token_invalidated"},
+		"a standard invalid grant":    {400, `{"error":"invalid_grant"}`, "invalid_grant"},
+		// 401 is permanent whatever it says: the credential is not accepted.
+		"an unauthorized response with no code": {401, `{}`, ""},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			refresher := newTestRefresher(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(c.status)
+				_, _ = w.Write([]byte(c.body))
+			})
+			_, outcome, err := refresher.Refresh(context.Background(), work.NewCredential(testToken))
+			if outcome != RefreshRejected {
+				t.Fatalf("outcome = %s, want %s", outcome, RefreshRejected)
+			}
+			if c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)) {
+				t.Errorf("error = %v, want it to name %q", err, c.want)
+			}
 		})
-		_, outcome, err := refresher.Refresh(context.Background(), work.NewCredential(testToken))
-		if outcome != RefreshRejected {
-			t.Errorf("status %d gave outcome %s, want %s", status, outcome, RefreshRejected)
-		}
-		if err == nil || !strings.Contains(err.Error(), "invalid_grant") {
-			t.Errorf("status %d gave %v, want an error naming the provider's reason", status, err)
-		}
+	}
+}
+
+func TestHTTPRefresherReportsAnUnrecognisedRefusalAsUnknown(t *testing.T) {
+	t.Parallel()
+	// A 400 the provider did not explain is not evidence the grant survived.
+	refresher := newTestRefresher(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"something_new"}`))
+	})
+	_, outcome, err := refresher.Refresh(context.Background(), work.NewCredential(testToken))
+	if outcome != RefreshUnknown {
+		t.Fatalf("outcome = %s, want %s", outcome, RefreshUnknown)
+	}
+	if err == nil {
+		t.Fatal("Refresh succeeded on a 400")
 	}
 }
 

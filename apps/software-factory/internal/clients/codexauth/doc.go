@@ -113,6 +113,31 @@
 // restored from a backup; that is benign, because every comparison here is an
 // equality and none is an ordering.
 //
+// # What the CLI needs in the file it is handed
+//
+// Read from codex-cli rust-v0.145.0, and load-bearing for whoever composes a
+// sandbox's credential file — which is not this package, since
+// activities.TokenSource yields an access token and nothing else.
+//
+//   - tokens.id_token is MANDATORY and must be a syntactically valid JWT. It
+//     has no serde default and a deserializer that parses it, and the CLI reads
+//     the whole file in one pass, so a missing or malformed id_token fails the
+//     ENTIRE parse rather than that one field.
+//   - tokens.account_id is what becomes the ChatGPT-Account-ID header. It is
+//     read straight from this field for ChatGPT logins and is NOT derived from
+//     the id_token's claims on that path, and a refresh never repopulates it.
+//     Absent, the header is silently omitted and the request goes unscoped —
+//     so it must be preserved verbatim, which is what the lossless patch here
+//     does.
+//   - The OPENAI_API_KEY key must be PRESENT, though it may be null: it has no
+//     serde default either. A non-null value selects API-key mode and the
+//     ChatGPT tokens are ignored entirely.
+//   - auth_mode wins over that inference when present; "chatgpt" is the value
+//     for a subscription login.
+//
+// All four are keys this service does not model, and all four survive a
+// rotation because the file is patched rather than re-marshalled.
+//
 // # Leak audit
 //
 // Done here rather than assumed, because the repository's rule is that no
