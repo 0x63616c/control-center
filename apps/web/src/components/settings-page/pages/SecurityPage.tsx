@@ -50,8 +50,8 @@ const LAYOUT_OPTIONS = PIN_PAD_LAYOUTS.map((value) => ({
 const LAYOUT_BLURB: Record<(typeof PIN_PAD_LAYOUTS)[number], string> = {
   fixed: "Same layout every time. Fingerprints give your digits away.",
   rotated: "In order, but starting somewhere new each time.",
-  scrambled: "A new arrangement for every unlock.",
-  "scrambled-per-key": "A new arrangement after every digit you press.",
+  scrambled: "New arrangement every unlock. You hunt for each key.",
+  "scrambled-per-key": "New arrangement after every digit. Six hunts per unlock.",
 };
 
 /** The row is in exactly one of three states, so it is spelled as one value.
@@ -86,6 +86,7 @@ export function SecurityPage() {
                 short copy above , if a future blurb outgrows the line, it gets
                 clipped here rather than silently shifting the card. */}
             <span
+              data-testid="layout-blurb"
               style={{
                 fontFamily: "var(--ui)",
                 fontSize: 12,

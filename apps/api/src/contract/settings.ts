@@ -54,10 +54,17 @@ export type Typeface = (typeof TYPEFACES)[number];
 //   scrambled , a fresh uniform permutation each prompt. Strongest against wear,
 //               slowest to read.
 //   scrambled-per-key , a fresh uniform permutation after EVERY digit entered
-//               (#302). The only key that also defeats shoulder-surfing: an
-//               observer who watches finger POSITIONS learns nothing, because
-//               each position means a different digit by the next press. Costs a
-//               full visual re-scan per digit , six scans per unlock, not one.
+//               (#302). What this buys over `scrambled` is narrow, real, and NOT
+//               what it looks like. Against an observer who sees only your hand,
+//               `scrambled` already leaks nothing , the pad is a permutation
+//               they do not know, so watched positions name no digits. The one
+//               it beats is the observer who glimpses the SCREEN once , a camera
+//               frame, a head turning at the wrong moment , and then watches the
+//               hand: under `scrambled` that single glimpse fixes the mapping
+//               for the whole entry and gives up the entire PIN, while here it
+//               gives up one digit. Against an observer watching the screen
+//               throughout, neither helps. Costs a full visual re-scan per digit
+//               , six scans per unlock, not one.
 export const PIN_PAD_LAYOUTS = ["fixed", "rotated", "scrambled", "scrambled-per-key"] as const;
 export type PinPadLayout = (typeof PIN_PAD_LAYOUTS)[number];
 
@@ -97,11 +104,17 @@ export const SETTINGS_DEFAULTS = {
   snapMode: "mandatory-settle",
   showMinimap: true,
   pinCode: "000000",
-  // Ships at the strongest key (#302). Every earlier default moved the pad at
-  // most once per prompt, which leaves the shoulder-surfing channel wide open;
-  // this one closes it, at the cost of a re-scan per digit. That trade was asked
-  // for explicitly. Raising a default is only safe in this direction , a panel
-  // already locked the stronger way must never be quietly weakened by a deploy.
+  // Ships at the strongest key (#302): one glimpsed screen costs a single digit
+  // here and the whole PIN under any layout that holds still for the entry. The
+  // per-unlock cost is a re-scan per digit, and that trade was asked for.
+  //
+  // A default is not a migration. It applies only where no stored value exists ,
+  // the server merges the stored blob OVER this map , so an already-provisioned
+  // panel keeps what it has. Verified 2026-07-28: the live panel reads `rotated`,
+  // so this deploy ships the option and changes nothing it does. Moving an
+  // existing panel is a deliberate write. Raising a default is only safe in this
+  // direction anyway , a panel already locked the stronger way must never be
+  // quietly weakened by a deploy.
   pinPadLayout: "scrambled-per-key",
   accent: "white",
   typeface: "sf",
