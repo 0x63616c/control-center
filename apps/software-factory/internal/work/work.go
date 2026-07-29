@@ -164,7 +164,23 @@ type StageEventSink func(rawEvent []byte)
 // text can reach a Kubernetes object name, label or annotation.
 type SandboxSpec struct {
 	TicketNumber int
-	Image        string
+
+	// RunID is Temporal's RunID for the run this sandbox belongs to, the same
+	// value and the same representation StageKey carries — one run id, not two
+	// spellings of one.
+	//
+	// It belongs in the pod's name. A pod named for the ticket alone is shared
+	// by every run of that ticket, so an AlreadyExists on Create could mean
+	// either "my own Create is being retried" or "an older run left this
+	// behind", and adopting the wrong one gives a run a pod built to a
+	// different spec with someone else's deadline already ticking. Named for
+	// the run too, AlreadyExists can only ever be the first case, and the spec
+	// and deadline are right by construction. It is safe in a name for the same
+	// reason the ticket number is: Temporal mints it, and it is a UUID, so no
+	// issue author can steer it.
+	RunID string
+
+	Image string
 
 	// CPULimit and MemoryLimit are Kubernetes quantity strings ("2", "4Gi").
 	CPULimit    string

@@ -161,3 +161,16 @@ func TestPermanentIsDistinctFromOtherSentinels(t *testing.T) {
 		t.Error("a missing sandbox file reports as permanent; absence is a signal a stage keys off, not a reason to stop retrying")
 	}
 }
+
+func TestSandboxSpecCarriesTheRunIDInTheSameFormAsAStageKey(t *testing.T) {
+	t.Parallel()
+
+	// One representation of a run id, not two: a pod named from the spec and a
+	// path derived from the key have to agree about which run they belong to.
+	key := work.StageKey{Ticket: 312, RunID: "0198c2f1", Stage: work.StagePlan}
+	spec := work.SandboxSpec{TicketNumber: key.Ticket, RunID: key.RunID}
+
+	if spec.RunID != key.RunID {
+		t.Errorf("SandboxSpec.RunID = %q, want %q", spec.RunID, key.RunID)
+	}
+}
