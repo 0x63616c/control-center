@@ -21,6 +21,8 @@ workflow polls for eligible tickets and a WorkTicket workflow per issue runs
 disposable per-ticket Kubernetes pod. It opens a PR and stops. Merging stays human.
 
 Design and rationale: [ADR-0011](../../docs/adr/0011-software-factory-autonomous-ticket-work.md).
+Running it for the first time, and stopping it:
+[first-run runbook](../../docs/runbooks/software-factory-first-run.md).
 
 ## Layout
 
