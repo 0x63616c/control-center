@@ -20,6 +20,7 @@ package status
 
 import (
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -41,7 +42,8 @@ type Pickup struct {
 
 	// RunURL links the Temporal run. It is optional because the Temporal UI has
 	// no public hostname today; empty renders the run ID as plain text, which
-	// is still what a human needs to find the run by hand.
+	// is still what a human needs to find the run by hand. A value that is not
+	// a URL this renderer will emit renders the same way — see linkedURL.
 	RunURL string
 
 	StartedAt time.Time
@@ -136,15 +138,20 @@ func (s StageFailed) Body() string {
 		field("Duration", code(took(s.StartedAt, s.EndedAt))),
 		field("Model", model(s.Model)),
 		field("Tokens", tokens(s.Usage)),
-		field("Reason", code(cell(s.Reason))),
+		field("Reason", inert(s.Reason, "_none given_")),
 	)
 }
 
 // Proposed is the run's last comment when it opened a pull request.
 type Proposed struct {
-	RunID          string
+	RunID string
+	// PullRequestURL is the pull request the run opened. It is untrusted: the
+	// propose stage lifts it from the agent's own result file, which is model
+	// output derived from issue text an attacker chose. It is rendered as
+	// markup only if it survives linkedURL, and inertly otherwise.
 	PullRequestURL string
-	EndedAt        time.Time
+
+	EndedAt time.Time
 
 	// RunUsage is every stage's tokens summed, including stages that failed.
 	RunUsage work.Usage
@@ -156,7 +163,7 @@ func (p Proposed) Body() string {
 		work.StatusMarker(p.RunID, work.StepOutcome),
 		"### software-factory opened a pull request",
 		"",
-		p.PullRequestURL,
+		pullRequestRef(p.PullRequestURL),
 		"",
 		field("Finished", code(stamp(p.EndedAt))),
 		field("Run total", tokens(p.RunUsage)),
@@ -185,7 +192,7 @@ func (a Abandoned) Body() string {
 		work.StatusMarker(a.RunID, work.StepOutcome),
 		"### software-factory stopped without opening a pull request",
 		"",
-		field("Reason", code(cell(a.Reason))),
+		field("Reason", inert(a.Reason, "_none given_")),
 		field("Finished", code(stamp(a.EndedAt))),
 		field("Run total", tokens(a.RunUsage)),
 		"",
@@ -240,20 +247,86 @@ func pipeline() string {
 
 // runRef names the Temporal run, linked when there is somewhere to link to.
 func runRef(runID, runURL string) string {
-	if runURL == "" {
+	link := linkedURL(runURL)
+	if link == "" {
 		return code(runID)
 	}
-	return "[" + code(runID) + "](" + runURL + ")"
+	return "[" + code(runID) + "](" + link + ")"
+}
+
+// pullRequestRef renders the pull request a run opened.
+//
+// A URL that does not survive linkedURL is still shown, but inertly: the value
+// is the one thing a reader needs in order to work out what the propose stage
+// actually produced, and dropping it would leave a comment announcing a pull
+// request with no way to find out which one it meant or why it is missing.
+func pullRequestRef(rawURL string) string {
+	if link := linkedURL(rawURL); link != "" {
+		return link
+	}
+	return inert(rawURL, "_no pull request URL was recorded_")
+}
+
+// linkedURL is rawURL if it is a URL this renderer will emit as markup, and ""
+// if it is not.
+//
+// Two separate things are being refused. A scheme other than http or https is a
+// link a reader should not be handed at all — `javascript:` most obviously, but
+// the point is the allowlist and not the example. And any of the characters
+// below breaks the markup the URL is about to sit inside: a single `)` closes
+// the markdown link early and hands the rest of the value to the renderer, a
+// newline puts attacker-chosen text on a line of its own where it reads as the
+// run's own words, and `<` opens an HTML comment beside the marker that says
+// which run a comment belongs to. None of them appear in a GitHub pull request
+// URL or a Temporal history URL, so refusing all of them costs nothing real.
+//
+// A refusal is not an error. The caller decides what to show instead, because
+// what a reader should see when a URL is unusable differs by which URL it was.
+func linkedURL(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return ""
+	}
+	if strings.ContainsFunc(rawURL, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsControl(r) || strings.ContainsRune("()<>[]`\"'", r)
+	}) {
+		return ""
+	}
+	return rawURL
+}
+
+// inert renders untrusted text inside a code span, and falls back to absent
+// when there is nothing left to render.
+//
+// The fallback is not cosmetic. cell strips whitespace, so a reason that
+// arrived as spaces and a tab comes back empty, and an empty code span shows on
+// GitHub as two literal backticks — which reads as a bug in this renderer
+// rather than as the missing value it is.
+func inert(text, absent string) string {
+	if cleaned := cell(text); cleaned != "" {
+		return code(cleaned)
+	}
+	return absent
 }
 
 // model names the model a stage ran on, and its reasoning effort when one was
 // chosen. An unset effort renders as nothing rather than as empty parentheses,
 // because "effort “" reads as a bug in the renderer.
+//
+// Both halves go through cell for the reason a failure reason does: they are
+// hand-written config arriving over a Temporal signal, and a backtick in either
+// closes the code span it sits in and hands the rest of the line to the
+// markdown renderer.
 func model(m work.Model) string {
-	if m.Effort == "" {
-		return code(m.Name)
+	name := inert(m.Name, "_unnamed_")
+	effort := cell(m.Effort)
+	if effort == "" {
+		return name
 	}
-	return fmt.Sprintf("%s (effort %s)", code(m.Name), code(m.Effort))
+	return fmt.Sprintf("%s (effort %s)", name, code(effort))
 }
 
 // tokens renders one stage's or one run's token accounting.
