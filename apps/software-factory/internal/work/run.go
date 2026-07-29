@@ -106,8 +106,9 @@ func (p RunPolicy) RunBudget() time.Duration {
 // The poll interval and the orphan grace ARE the operator's business and live
 // on Config, where GetStatus and UpdateConfig can reach them — a knob an
 // operator cannot reach from the place they look is a knob that does not exist.
-// What is left here is the one number that is a property of the loop rather
-// than a setting: the history ceiling.
+// What is left here are properties of the loop rather than settings: the
+// history ceiling, and how long a ticket that just finished is protected from
+// a re-claim.
 type DispatcherTuning struct {
 	// MaxHistoryEvents is when the dispatcher ContinueAsNews. A timer loop's
 	// history is unbounded by construction, so this is not a tuning knob but
@@ -115,17 +116,44 @@ type DispatcherTuning struct {
 	// on Config, where an operator could set it to something that stops the
 	// loop bounding its own history.
 	MaxHistoryEvents int
+
+	// ReclaimCooldown is how long a ticket stays protected from being started
+	// again after its run has just finished, even if a list of tickets
+	// labelled `auto` still names it.
+	//
+	// It exists because that list comes from GitHub's issue index, which is
+	// eventually consistent: #405 observed, on this project's own
+	// infrastructure, a label removed a moment earlier still being returned by
+	// a list query for some seconds before settling. Temporal workflow-ID
+	// uniqueness already prevents two *concurrent* runs of one ticket; this is
+	// what prevents a *sequential* re-claim once the first run has ended and
+	// released its ID — a defensive lower bound on a race window this service
+	// does not control, not an operator-tunable pace, which is why it sits
+	// here rather than on Config.
+	ReclaimCooldown time.Duration
 }
 
-// DefaultDispatcherTuning is the single source of these three numbers.
+// DefaultDispatcherTuning is the single source of these numbers.
+//
+// ReclaimCooldown of five minutes is several times the settle time #405
+// observed (a few seconds, up to ~10s), leaving headroom for a slower moment
+// without depending on a bound nobody has ever seen exceeded. It is also far
+// shorter than "a human reads the outcome comment and re-adds the `auto`
+// label to request another pass" ever takes in practice, so that path — the
+// one every outcome comment tells a user to use — keeps working; it merely
+// cannot be exercised in the same few minutes the ticket just finished in.
 func DefaultDispatcherTuning() DispatcherTuning {
-	return DispatcherTuning{MaxHistoryEvents: 2000}
+	return DispatcherTuning{MaxHistoryEvents: 2000, ReclaimCooldown: 5 * time.Minute}
 }
 
 // Validate reports why the dispatcher cannot loop on this tuning.
 func (t DispatcherTuning) Validate() error {
 	if t.MaxHistoryEvents <= 0 {
 		return fmt.Errorf("%w: history ceiling must be positive, or the dispatcher never continues as new", ErrInvalidRun)
+	}
+	if t.ReclaimCooldown <= 0 {
+		return fmt.Errorf("%w: reclaim cooldown must be positive, or a finished ticket is never protected from the "+
+			"eventually-consistent list that named it (#405)", ErrInvalidRun)
 	}
 	return nil
 }
@@ -233,6 +261,19 @@ type InFlightTicket struct {
 	Ticket    int
 	RunID     string
 	StartedAt time.Time
+}
+
+// FinishedTicket is one ticket whose most recent run has just ended, held by
+// the dispatcher so the next tick does not re-claim it before GitHub's issue
+// index has caught up with a label that run just cleared (#405).
+//
+// ExpiresAt is a deadline, not a duration-since: it is stamped once, from
+// DispatcherTuning.ReclaimCooldown, at the moment the ticket finished, so a
+// later tuning change cannot retroactively lengthen or shorten a cooldown
+// already recorded — the same reasoning as Breaker.OpenUntil.
+type FinishedTicket struct {
+	Ticket    int
+	ExpiresAt time.Time
 }
 
 // TrippedAt returns a breaker open for at least cooldown from now.

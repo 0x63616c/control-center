@@ -32,6 +32,13 @@ type DispatcherInput struct {
 	InFlight []work.InFlightTicket
 	Breaker  work.Breaker
 
+	// RecentlyFinished is the tickets whose runs have just ended, each still
+	// protected from a re-claim until its ExpiresAt (#405). It is carried
+	// across ContinueAsNew for the same reason InFlight is: a guard kept only
+	// in the loop and dropped here would reset every few hours, and the bug it
+	// closes would come back intermittently instead of staying fixed.
+	RecentlyFinished []work.FinishedTicket
+
 	// ConfigError is why the last update was rejected. It is carried across
 	// ContinueAsNew because an operator reading GetStatus after a run boundary
 	// would otherwise see their rejected update turn into silence.
@@ -132,6 +139,12 @@ type dispatcher struct {
 	configError string
 	lastSweep   time.Time
 
+	// recentlyFinished is the ticket -> cooldown-expiry map behind
+	// RecentlyFinished (#405). It is keyed the same way inFlight is, for the
+	// same reason: O(1) membership at the point start() decides whether a
+	// listed ticket may be claimed.
+	recentlyFinished map[int]time.Time
+
 	// now is the last tick's time. A query handler runs outside the workflow's
 	// own goroutine and cannot ask for the time, so the breaker state it
 	// reports is as of the last tick — at most one poll interval stale, and
@@ -144,14 +157,19 @@ func newDispatcher(in DispatcherInput) *dispatcher {
 	for _, ticket := range in.InFlight {
 		inFlight[ticket.Ticket] = ticket
 	}
+	recentlyFinished := make(map[int]time.Time, len(in.RecentlyFinished))
+	for _, ticket := range in.RecentlyFinished {
+		recentlyFinished[ticket.Ticket] = ticket.ExpiresAt
+	}
 	return &dispatcher{
-		config:      in.Config,
-		tuning:      in.Tuning,
-		run:         in.Run,
-		inFlight:    inFlight,
-		breaker:     in.Breaker,
-		configError: in.ConfigError,
-		lastSweep:   in.LastSweep,
+		config:           in.Config,
+		tuning:           in.Tuning,
+		run:              in.Run,
+		inFlight:         inFlight,
+		breaker:          in.Breaker,
+		configError:      in.ConfigError,
+		lastSweep:        in.LastSweep,
+		recentlyFinished: recentlyFinished,
 	}
 }
 
@@ -163,6 +181,7 @@ func newDispatcher(in DispatcherInput) *dispatcher {
 func (d *dispatcher) tick(ctx workflow.Context) {
 	d.now = workflow.Now(ctx)
 	d.reconcile(ctx)
+	d.pruneFinished()
 	d.sweep(ctx)
 	d.start(ctx)
 }
@@ -217,6 +236,7 @@ func (d *dispatcher) reconcile(ctx workflow.Context) {
 			workflow.GetLogger(ctx).Info("released a ticket whose run is gone",
 				"ticket", ticket, "run_id", inFlight.RunID)
 			delete(d.inFlight, ticket)
+			d.markFinished(ticket, d.now)
 		case state.RunID != inFlight.RunID:
 			// Someone restarted this ticket. The slot is still taken; it is
 			// taken by a different run, and the sweep must not delete that
@@ -290,6 +310,15 @@ func (d *dispatcher) start(ctx workflow.Context) {
 			return
 		}
 		if _, taken := d.inFlight[ticket.Number]; taken {
+			continue
+		}
+		if d.reclaimBlocked(ticket.Number, workflow.Now(ctx)) {
+			// GitHub's issue index is eventually consistent (#405): a ticket
+			// this dispatcher just finished can still be listed here for a
+			// few seconds after its `auto` label was cleared. Skipping it is
+			// what stops that stale read from starting a second run against
+			// work the system already decided it was done with.
+			log.Debug("skipped a ticket still inside its post-finish cooldown", "ticket", ticket.Number)
 			continue
 		}
 		if d.claim(ctx, ticket) {
@@ -377,6 +406,7 @@ func (d *dispatcher) receiveDone(ctx workflow.Context, c workflow.ReceiveChannel
 	// the current run's slot: the ticket is still being worked, by someone else.
 	if inFlight, ok := d.inFlight[done.Ticket]; ok && inFlight.RunID == done.RunID {
 		delete(d.inFlight, done.Ticket)
+		d.markFinished(done.Ticket, workflow.Now(ctx))
 	} else if ok {
 		log.Warn("ignored a completion report from a superseded run",
 			"ticket", done.Ticket, "reported_run", done.RunID, "current_run", inFlight.RunID)
@@ -437,6 +467,7 @@ func (d *dispatcher) continueAsNew(ctx workflow.Context, updates, dones workflow
 		if dones.ReceiveAsync(&done) {
 			if inFlight, ok := d.inFlight[done.Ticket]; ok && inFlight.RunID == done.RunID {
 				delete(d.inFlight, done.Ticket)
+				d.markFinished(done.Ticket, workflow.Now(ctx))
 			}
 			d.act(ctx, done.Failure, fmt.Sprintf("ticket #%d: %s", done.Ticket, done.Detail))
 			continue
@@ -449,16 +480,20 @@ func (d *dispatcher) continueAsNew(ctx workflow.Context, updates, dones workflow
 // input is the state as it crosses a run boundary.
 func (d *dispatcher) input() DispatcherInput {
 	in := DispatcherInput{
-		Config:      d.config,
-		Tuning:      d.tuning,
-		Run:         d.run,
-		InFlight:    make([]work.InFlightTicket, 0, len(d.inFlight)),
-		Breaker:     d.breaker,
-		ConfigError: d.configError,
-		LastSweep:   d.lastSweep,
+		Config:           d.config,
+		Tuning:           d.tuning,
+		Run:              d.run,
+		InFlight:         make([]work.InFlightTicket, 0, len(d.inFlight)),
+		Breaker:          d.breaker,
+		ConfigError:      d.configError,
+		LastSweep:        d.lastSweep,
+		RecentlyFinished: make([]work.FinishedTicket, 0, len(d.recentlyFinished)),
 	}
 	for _, ticket := range sortedTickets(d.inFlight) {
 		in.InFlight = append(in.InFlight, d.inFlight[ticket])
+	}
+	for _, ticket := range sortedFinished(d.recentlyFinished) {
+		in.RecentlyFinished = append(in.RecentlyFinished, work.FinishedTicket{Ticket: ticket, ExpiresAt: d.recentlyFinished[ticket]})
 	}
 	return in
 }
@@ -493,6 +528,60 @@ func (d *dispatcher) childOptions(ticket int) workflow.ChildWorkflowOptions {
 func sortedTickets(inFlight map[int]work.InFlightTicket) []int {
 	tickets := make([]int, 0, len(inFlight))
 	for ticket := range inFlight {
+		tickets = append(tickets, ticket)
+	}
+	slices.Sort(tickets)
+	return tickets
+}
+
+// markFinished records that ticket's run has just ended, protecting it from a
+// re-claim until now plus the configured cooldown (#405).
+//
+// The deadline is stamped once, at the moment of the call, and never
+// recomputed from now — the same reasoning as Breaker.TrippedAt: a ticket
+// that finishes twice in quick succession (a completion signal racing the
+// reconcile backstop for the same slot) must not have its protection
+// shortened by whichever of the two runs second.
+func (d *dispatcher) markFinished(ticket int, now time.Time) {
+	until := now.Add(d.tuning.ReclaimCooldown)
+	if existing, ok := d.recentlyFinished[ticket]; ok && !until.After(existing) {
+		return
+	}
+	d.recentlyFinished[ticket] = until
+}
+
+// reclaimBlocked reports whether ticket is still inside its post-finish
+// cooldown and must not be started even though ListAutoTickets named it.
+func (d *dispatcher) reclaimBlocked(ticket int, now time.Time) bool {
+	until, ok := d.recentlyFinished[ticket]
+	return ok && now.Before(until)
+}
+
+// pruneFinished drops cooldowns that have already expired.
+//
+// Without this, recentlyFinished would grow by one entry for every ticket
+// this dispatcher ever finishes and never shrink — the dispatcher is meant to
+// run for months across ContinueAsNew, so an unbounded map here is exactly
+// the kind of state this loop exists to avoid. It runs every tick rather than
+// only when a ticket finishes, so a ticket nobody looks at again is still
+// forgotten once its cooldown lapses. Deletion order is unobserved by
+// anything replay-sensitive — no activity is scheduled here — so it does not
+// need sortedTickets' fixed order.
+func (d *dispatcher) pruneFinished() {
+	for ticket, until := range d.recentlyFinished {
+		if !d.now.Before(until) {
+			delete(d.recentlyFinished, ticket)
+		}
+	}
+}
+
+// sortedFinished returns the recently-finished ticket numbers in a fixed
+// order, for the same replay-determinism reason as sortedTickets — this one
+// is walked only when building carried state, but a fixed order costs
+// nothing and keeps the pattern uniform.
+func sortedFinished(recentlyFinished map[int]time.Time) []int {
+	tickets := make([]int, 0, len(recentlyFinished))
+	for ticket := range recentlyFinished {
 		tickets = append(tickets, ticket)
 	}
 	slices.Sort(tickets)
