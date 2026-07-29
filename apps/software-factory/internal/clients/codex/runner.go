@@ -287,7 +287,13 @@ func (p *sandboxProbe) AttemptRunning(ctx context.Context) (bool, error) {
 	var out bytes.Buffer
 	argv := []string{"pgrep", "-f", p.paths.Result}
 
-	code, err := p.runner.pods.Exec(ctx, p.sandbox, argv, nil, &out, io.Discard)
+	// Probe, not Exec: Exec's shim would wrap this into "sandbox-exec
+	// --pidfile P -- pgrep -f <pattern>", a command line that contains
+	// <pattern> itself, so the search would always find its own wrapper
+	// process and report "running" whether or not codex ever started
+	// (#411). Probe runs pgrep bare, with nothing of its own for the
+	// pattern to match.
+	code, err := p.runner.pods.Probe(ctx, p.sandbox, argv, &out, io.Discard)
 	if err != nil {
 		return false, fmt.Errorf("looking for a running attempt in sandbox %s: %w", p.sandbox, err)
 	}

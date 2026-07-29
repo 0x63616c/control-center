@@ -197,6 +197,43 @@ func (s *Sandboxes) exec(ctx context.Context, sandbox work.SandboxID, argv []str
 	return 0, s.classifyExecFailure(ctx, sandbox, argv, err)
 }
 
+// Probe runs argv directly inside sandbox, without the pidfile shim, and
+// reports its exit code.
+//
+// Exec's shim exists to give a command a cancellable, killable identity, but
+// wrapping every exec through it makes a pgrep-based liveness check
+// self-defeating. pgrep -f matches by substring against a process's WHOLE
+// command line, and the shim invoking that pgrep has a command line of its
+// own — "sandbox-exec --pidfile P -- pgrep -f <pattern>" — which trivially
+// contains <pattern>. Route AttemptRunning's probe through Exec and every
+// call finds itself "still running": Decide never returns ResumeRun, codex
+// never starts, and the stage's transcript stays empty while its heartbeat
+// quietly expires (#411, reproduced against the real sandbox image and a real
+// procps pgrep — the shim process itself was the only match).
+//
+// Probe is for exactly that class of call: quick, self-terminating checks
+// that need no recorded PID because there is nothing worth cancelling them
+// for. Unlike Exec it does NOT honour context cancellation by killing the
+// remote process — there is no pidfile to name one by — so it must never be
+// used for anything that can outlive the caller's patience.
+func (s *Sandboxes) Probe(ctx context.Context, sandbox work.SandboxID, argv []string, stdout, stderr io.Writer) (int, error) {
+	if len(argv) == 0 {
+		return 0, fmt.Errorf("probing sandbox %s: argv is empty: %w", sandbox, work.ErrPermanent)
+	}
+	if s.streamer == nil {
+		return 0, fmt.Errorf("probing %s in sandbox %s: this Sandboxes has no exec transport: %w", argvSummary(argv), sandbox, work.ErrPermanent)
+	}
+
+	target := execTarget{pod: sandbox, container: s.opts.containerName}
+	err := s.streamer.stream(ctx, target, streamOpts{argv: argv, stdout: stdout, stderr: stderr})
+
+	code, exited := exitCode(err)
+	if err == nil || exited {
+		return code, nil
+	}
+	return 0, s.classifyExecFailure(ctx, sandbox, argv, err)
+}
+
 // exitCode reports the command's own exit status, and whether the error is one
 // at all.
 //
