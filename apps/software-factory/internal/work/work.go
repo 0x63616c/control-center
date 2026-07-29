@@ -397,15 +397,29 @@ func (c Credential) String() string {
 	return "[redacted]"
 }
 
+// Credential must satisfy slog.LogValuer, and this is where that is enforced:
+// at package scope, so a signature that drifts off the interface fails
+// `go build` rather than only `go test`. LogValue below says why the
+// distinction is not academic.
+var _ slog.LogValuer = Credential{}
+
 // LogValue redacts the credential in structured logs.
 //
 // It returns slog.Value, NOT any. slog only calls this method on a value that
 // satisfies slog.LogValuer, and that interface requires exactly this signature
 // — returning any means slog never calls it at all, and redaction falls back
-// on slog handing the value to fmt, which finds String(). That fallback does
-// redact, so nothing leaked while this method had the wrong signature, but it
-// made the protection an accident of fmt's lookup order rather than a property
-// of this type. See TestCredentialSatisfiesTheInterfaceSlogActuallyUses.
+// on whatever the handler does with an opaque struct. Nothing leaked while this
+// method had the wrong signature, but what saved it differed by handler, and
+// neither fallback was this type's doing (both measured):
+//
+//   - slog.TextHandler hands the value to fmt, which finds String().
+//   - slog.JSONHandler hands it to encoding/json, which never reaches String()
+//     — MarshalJSON below refuses, and the attribute renders as an !ERROR
+//     string. That is the path this service takes: its logs are JSON for Loki.
+//
+// So the protection was an accident of two different lookup orders rather than
+// a property of this type. The assertion above is what makes it a property.
+// See also TestSlogResolvesACredentialThroughLogValue.
 func (c Credential) LogValue() slog.Value {
 	return slog.StringValue(c.String())
 }
@@ -459,13 +473,27 @@ func (f CredentialFile) String() string {
 	return "[redacted credential file]"
 }
 
+// CredentialFile must satisfy slog.LogValuer, enforced here at package scope
+// for the same reason Credential's is: a signature that drifts off the
+// interface fails `go build` rather than only `go test`. It matters at least as
+// much here — this is the type whose own doc argues that incidental protection
+// is not good enough for a whole document.
+var _ slog.LogValuer = CredentialFile{}
+
 // LogValue redacts the document in structured logs.
 //
 // It returns slog.Value, NOT any, so that CredentialFile actually satisfies
-// slog.LogValuer and slog genuinely calls it. Credential.LogValue returns any
-// and therefore does not — nothing leaks there only because slog falls through
-// to String. That is incidental protection, and a whole document is too easy to
-// log for incidental to be good enough.
+// slog.LogValuer and slog genuinely calls it. Credential.LogValue has the same
+// signature and the same guard — see the assertion above it.
+//
+// Were this signature to drift, what happened next would depend on the handler,
+// and neither outcome is this type's doing: a TextHandler falls through to fmt,
+// which finds String(); a JSONHandler reaches encoding/json, which never calls
+// String() — MarshalJSON below refuses and the attribute renders as an !ERROR
+// string. So on this service's real path, whose logs are JSON for Loki, the
+// symptom of a regression is a corrupted field rather than a clean
+// "[redacted]". Protected, but by an accident of lookup order, and visibly
+// broken. The assertion above is what makes redaction a property of this type.
 func (f CredentialFile) LogValue() slog.Value {
 	return slog.StringValue(f.String())
 }

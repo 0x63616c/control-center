@@ -444,3 +444,33 @@ func TestConfigUpdateMarshalsToTheKeysAnOperatorTypes(t *testing.T) {
 		t.Errorf("ConfigUpdate marshalled as\n\t%s\nwant\n\t%s", encoded, want)
 	}
 }
+
+// TestAnAbsurdMaxInFlightIsRefused covers the typo, which is the only way this
+// value gets large. Every ticket in flight runs codex against one
+// subscription, so 20-for-2 validates, deploys and empties the rate-limit
+// window before anyone reads a dashboard.
+//
+// The ceiling lives in Validate rather than in the environment loader so both
+// ways in are covered: the starting DISPATCHER_CONFIG and the UpdateConfig
+// signal a running dispatcher takes. A bound on only one of them is a bound on
+// neither.
+//
+// The number is written out here rather than taken from the constant, because
+// it is a policy choice and this is what makes moving it a deliberate edit
+// instead of a silently widened bound.
+func TestAnAbsurdMaxInFlightIsRefused(t *testing.T) {
+	t.Parallel()
+
+	const ceiling = 10
+
+	cfg := work.DefaultConfig()
+	cfg.MaxInFlight = ceiling + 1
+	if err := cfg.Validate(); err == nil {
+		t.Errorf("MaxInFlight = %d validated; a mistyped cap spends the whole rate-limit window at once", cfg.MaxInFlight)
+	}
+
+	cfg.MaxInFlight = ceiling
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("MaxInFlight = %d was refused, but the ceiling itself must be allowed: %v", cfg.MaxInFlight, err)
+	}
+}

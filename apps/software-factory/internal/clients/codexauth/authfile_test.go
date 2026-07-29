@@ -437,6 +437,16 @@ func TestCredentialFileRejectsAFileItCannotUse(t *testing.T) {
 	}
 }
 
+// This test guards the OUTCOME — no token in a rendered string — across a JSON
+// handler, four fmt verbs and the error-wrapping path. It is the broader of the
+// two guards and it is not going anywhere.
+//
+// It does NOT catch a LogValue whose signature has drifted off slog.LogValuer.
+// Measured: with LogValue() any on both types, this test still passes, because
+// slog falls through to fmt and fmt finds String(). That regression is caught
+// by the package-scope assertions in authfile.go and refresh.go and by
+// TestSlogResolvesTheCredentialHoldersThroughLogValue in redaction_test.go.
+// A reader auditing "is the credential covered?" needs both.
 func TestCredentialFileNeverPrintsATokenWhenFormattedOrLogged(t *testing.T) {
 	t.Parallel()
 	const access, refresh = "SECRET-ACCESS-VALUE", "SECRET-REFRESH-VALUE"
