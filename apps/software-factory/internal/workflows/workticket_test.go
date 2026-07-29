@@ -48,6 +48,7 @@ type ticketHarness struct {
 	noPR       bool
 	prErr      error
 	cancelAt   time.Duration
+	cloneErr   error
 
 	// what the run did.
 	ran      []work.Stage
@@ -55,6 +56,7 @@ type ticketHarness struct {
 	models   map[work.Stage]work.Model
 	keys     map[work.Stage]work.StageKey
 	created  int
+	cloned   []work.SandboxID
 	deleted  []work.SandboxID
 	cleared  int
 	reports  []work.StatusReport
@@ -94,6 +96,12 @@ func (h *ticketHarness) run() {
 		})
 
 	env.OnActivity(acts.WaitSandboxReady, mock.Anything, mock.Anything).Return(nil)
+
+	env.OnActivity(acts.CloneRepo, mock.Anything, mock.Anything).
+		Return(func(_ context.Context, sandbox work.SandboxID) error {
+			h.cloned = append(h.cloned, sandbox)
+			return h.cloneErr
+		})
 
 	env.OnActivity(acts.DeleteSandbox, mock.Anything, mock.Anything).
 		Return(func(_ context.Context, id work.SandboxID) error {
@@ -187,6 +195,47 @@ func TestWorkTicketRunsTheFiveStagesInPipelineOrder(t *testing.T) {
 		if h.ran[i] != want[i] {
 			t.Fatalf("ran %v, want %v", h.ran, want)
 		}
+	}
+}
+
+func TestWorkTicketClonesTheSandboxBeforeAnyStageRuns(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+	if len(h.cloned) != 1 || h.cloned[0] != "sandbox-328" {
+		t.Fatalf("cloned %v, want exactly the one sandbox this run created", h.cloned)
+	}
+	if len(h.ran) == 0 {
+		t.Fatal("no stage ran at all")
+	}
+}
+
+// TestWorkTicketFailsBeforeAnyStageWhenTheCloneFails is #383's whole point:
+// codex refuses to run outside a git repository and exits before any model
+// call, so a run that discovered a missing checkout inside `plan` would
+// already have paid for a stage against a sandbox that could never have
+// worked. The clone must be caught first.
+func TestWorkTicketFailsBeforeAnyStageWhenTheCloneFails(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.cloneErr = temporal.NewNonRetryableApplicationError(
+		"SF_BRANCH is not set in the sandbox's own environment", activities.ErrTypePermanent, nil)
+	h.run()
+
+	if h.env.GetWorkflowError() == nil {
+		t.Fatal("a run whose sandbox could not be cloned into must fail")
+	}
+	if len(h.ran) != 0 {
+		t.Fatalf("ran %v — no stage may run against a sandbox with no repository in it", h.ran)
+	}
+	if len(h.deleted) != 1 || h.deleted[0] != "sandbox-328" {
+		t.Fatalf("deleted %v, want the sandbox cleaned up despite the clone failing", h.deleted)
 	}
 }
 

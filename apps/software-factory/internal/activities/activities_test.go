@@ -41,6 +41,9 @@ type fakeGitHub struct {
 	prFound     bool
 	prErr       error
 	askedBranch string
+
+	token    work.Credential
+	tokenErr error
 }
 
 func (f *fakeGitHub) ListAutoTickets(context.Context) ([]work.Ticket, error) {
@@ -67,7 +70,7 @@ func (f *fakeGitHub) ClearAutoLabel(_ context.Context, issue int) error {
 }
 
 func (f *fakeGitHub) InstallationToken(context.Context) (work.Credential, error) {
-	return work.Credential{}, nil
+	return f.token, f.tokenErr
 }
 
 func (f *fakeGitHub) PullRequestForBranch(_ context.Context, branch string) (work.PullRequest, bool, error) {
@@ -93,6 +96,24 @@ func (f *fakePods) WaitReady(context.Context, work.SandboxID) error { return f.r
 func (f *fakePods) Delete(_ context.Context, id work.SandboxID) error {
 	f.deleted = append(f.deleted, id)
 	return f.deleteErr
+}
+
+// fakeRepo records what CloneRepo asked it to clone and with what, and refuses
+// to be a well-behaved fake that also invents a passing behaviour on its own —
+// callErr is returned untouched, never wrapped in work.ErrPermanent, so a test
+// deciding retryability controls it directly.
+type fakeRepo struct {
+	sawSandbox work.SandboxID
+	sawURL     string
+	sawToken   string
+	called     int
+	err        error
+}
+
+func (f *fakeRepo) CloneRepo(_ context.Context, sandbox work.SandboxID, cloneURL string, credential work.Credential) error {
+	f.called++
+	f.sawSandbox, f.sawURL, f.sawToken = sandbox, cloneURL, credential.Reveal()
+	return f.err
 }
 
 type fakeStages struct {
@@ -228,6 +249,7 @@ func deps() Deps {
 	return Deps{
 		GitHub:      &fakeGitHub{},
 		Pods:        &fakePods{},
+		Repo:        &fakeRepo{},
 		Stages:      &fakeStages{},
 		Transcripts: &fakeTranscript{},
 		Prompts:     &fakePrompts{},
@@ -238,6 +260,7 @@ func deps() Deps {
 		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Clock:       clocktest.NewFake(time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)),
 		Sandbox:     template(),
+		RepoURL:     "https://github.com/0x63616c/world-wide-webb.git",
 	}
 }
 
@@ -267,7 +290,7 @@ func TestNewNamesEveryDependencyItIsMissing(t *testing.T) {
 	if err == nil {
 		t.Fatal("a set of activities with no dependencies must not construct")
 	}
-	for _, name := range []string{"GitHub", "Pods", "Stages", "Transcripts", "Prompts", "Status", "Runs", "Sweeper", "Metrics", "Clock", "Log"} {
+	for _, name := range []string{"GitHub", "Pods", "Repo", "Stages", "Transcripts", "Prompts", "Status", "Runs", "Sweeper", "Metrics", "Clock", "Log"} {
 		if !strings.Contains(err.Error(), name) {
 			t.Fatalf("error %q does not name the missing %s", err, name)
 		}
@@ -282,6 +305,21 @@ func TestNewRefusesASandboxTemplateItCannotBuildAPodFrom(t *testing.T) {
 
 	if _, err := New(d); !errors.Is(err, work.ErrInvalidRun) {
 		t.Fatalf("an imageless template must fail construction, got %v", err)
+	}
+}
+
+func TestNewRefusesToConstructWithNoRepositoryToClone(t *testing.T) {
+	t.Parallel()
+
+	d := deps()
+	d.RepoURL = ""
+
+	_, err := New(d)
+	if err == nil {
+		t.Fatal("a set of activities with no RepoURL must not construct")
+	}
+	if !strings.Contains(err.Error(), "RepoURL") {
+		t.Fatalf("error %q does not name the missing RepoURL", err)
 	}
 }
 
@@ -438,6 +476,76 @@ func TestCreateSandboxTellsTheSandboxWhichBranchToPush(t *testing.T) {
 	}
 	if _, kept := pods.created[0].Env["CODEX_HOME"]; !kept {
 		t.Fatal("the template's own environment must survive")
+	}
+}
+
+// --- clone -------------------------------------------------------------
+
+func TestCloneRepoMintsACredentialAndPassesItToTheCloner(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeRepo{}
+	d := deps()
+	d.Repo = repo
+	d.RepoURL = "https://github.com/0x63616c/world-wide-webb.git"
+	d.GitHub = &fakeGitHub{token: work.NewCredential("ghs_topsecret")}
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.CloneRepo)
+
+	if _, err := e.ExecuteActivity(a.CloneRepo, work.SandboxID("sandbox-328")); err != nil {
+		t.Fatalf("CloneRepo: %v", err)
+	}
+
+	if repo.called != 1 {
+		t.Fatalf("called the cloner %d times, want 1", repo.called)
+	}
+	if repo.sawSandbox != "sandbox-328" {
+		t.Fatalf("cloned into sandbox %q, want sandbox-328", repo.sawSandbox)
+	}
+	if repo.sawURL != d.RepoURL {
+		t.Fatalf("cloned %q, want the configured repository url %q", repo.sawURL, d.RepoURL)
+	}
+	if repo.sawToken != "ghs_topsecret" {
+		t.Fatalf("the cloner did not receive the minted credential")
+	}
+}
+
+func TestCloneRepoFailsLoudlyWhenTheCredentialCannotBeMinted(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeRepo{}
+	d := deps()
+	d.Repo = repo
+	d.GitHub = &fakeGitHub{tokenErr: github.ErrAuth}
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.CloneRepo)
+
+	if _, err := e.ExecuteActivity(a.CloneRepo, work.SandboxID("sandbox-328")); err == nil {
+		t.Fatal("CloneRepo succeeded despite a credential mint failure")
+	}
+	if repo.called != 0 {
+		t.Fatal("the cloner must not be called without a credential to hand it")
+	}
+}
+
+func TestCloneRepoSurfacesTheClonersFailure(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeRepo{err: fmt.Errorf("sandbox does not have SF_BRANCH set: %w", work.ErrPermanent)}
+	d := deps()
+	d.Repo = repo
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.CloneRepo)
+
+	_, err := e.ExecuteActivity(a.CloneRepo, work.SandboxID("sandbox-328"))
+	if err == nil {
+		t.Fatal("CloneRepo succeeded despite the cloner failing")
+	}
+	if !strings.Contains(err.Error(), "SF_BRANCH") {
+		t.Fatalf("error %q lost the cloner's reason", err)
 	}
 }
 

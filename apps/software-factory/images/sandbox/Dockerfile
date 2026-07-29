@@ -18,6 +18,18 @@
 #                                 the runner knows a stage is already running, so
 #                                 without it every retry re-runs a live stage.
 #                                 Asserted at build time below.
+#   printenv                      SF_BRANCH, read back rather than recomputed,
+#                                 so CloneRepo notices if this pod's branch ever
+#                                 disagrees with what SandboxTemplate.Spec baked
+#                                 into it (clone.go: sandboxBranch, #383).
+#   git                           clone, checkout -b and push work.RepoDir on
+#                                 the branch above (clone.go). A credential file
+#                                 is written first with Write/tar, never argv, so
+#                                 the token this reads via `-c credential.helper`
+#                                 never appears in a command line or a log line.
+#   rm                            clears a partial checkout before a retried
+#                                 clone, and removes the credential file
+#                                 afterwards (clone.go).
 #
 # A shell IS present, because `codex exec`'s own job is running shell commands
 # on the agent's behalf. "No shell" is a rule about how the WORKER invokes this
@@ -66,11 +78,12 @@ ARG CODEX_SHA256=bfaf13c9ba34f2ad764e4a916c49cf7177aeba329cf0f719e2227566fc8d662
 ARG BUN_VERSION=1.2.19
 ARG BUN_SHA256=c3d3c14e9a5ec83ff67d0acfe76e4315ad06da9f34f59fc7b13813782caf1f66
 
-# GNU tar, coreutils (test, cat) and a shell come from the base image. Added
-# here: git, because `implement` pushes a branch and GitHub is the durable state
-# between stages; ca-certificates for the OpenAI and GitHub APIs; curl and unzip
-# for the two downloads below; passwd for groupadd/useradd, which trixie-slim
-# omits; procps for pgrep.
+# GNU tar, coreutils (test, cat, printenv, rm) and a shell come from the base
+# image. Added here: git, because CloneRepo checks the ticket's repository out
+# and pushes its branch before any stage runs, and `implement` later commits
+# and pushes to that same checkout; ca-certificates for the OpenAI and GitHub
+# APIs; curl and unzip for the two downloads below; passwd for
+# groupadd/useradd, which trixie-slim omits; procps for pgrep.
 #
 # procps is a DIRECT dependency of this image, not a convenience. B5's stage
 # liveness probe is `pgrep -f <result path>`, and debian:trixie-slim ships no
@@ -95,7 +108,10 @@ RUN apt-get update \
     && command -v pgrep >/dev/null \
     && command -v tar >/dev/null \
     && command -v test >/dev/null \
-    && command -v cat >/dev/null
+    && command -v cat >/dev/null \
+    && command -v git >/dev/null \
+    && command -v printenv >/dev/null \
+    && command -v rm >/dev/null
 
 RUN curl -fsSL -o /tmp/codex.tar.gz \
         "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-x86_64-unknown-linux-musl.tar.gz" \
