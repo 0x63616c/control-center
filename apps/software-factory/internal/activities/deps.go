@@ -12,6 +12,7 @@ package activities
 import (
 	"context"
 	"io"
+	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
@@ -117,6 +118,50 @@ type GitHub interface {
 // guarantee than a documented convention.
 type TokenSource interface {
 	SandboxCredentialFile(ctx context.Context) (work.CredentialFile, error)
+}
+
+// PromptRenderer turns a ticket and the preceding stage's output into the
+// prompt and schema one stage runs on.
+//
+// It is a seam rather than a call into a prompt package because prompts are the
+// highest-churn part of this service and orchestration is the lowest: a wording
+// change must not be a workflow change, and a test of the pipeline must not
+// need the real prompts to exist.
+//
+// handoff is the previous stage's schema-conforming output, verbatim and
+// unparsed, or nil for the first stage. Only the renderer knows which stage's
+// schema it satisfies.
+type PromptRenderer interface {
+	Render(stage work.Stage, detail work.TicketDetail, handoff []byte) (prompt string, schema []byte, err error)
+}
+
+// StatusRenderer turns a run's state into the body of its status comment.
+//
+// Separate from the thing that posts it for the same reason: the wording of a
+// status comment changes far more often than the decision to report one.
+type StatusRenderer interface {
+	Render(report work.StatusReport) string
+}
+
+// RunLookup answers whether a ticket's workflow is still open.
+//
+// It is DescribeWorkflowExecution and nothing else: a point lookup by workflow
+// ID, strongly consistent. Deliberately not a visibility query — visibility is a
+// search index and eventually consistent, and using it to decide whether a slot
+// is free would be a race dressed as a query.
+type RunLookup interface {
+	Describe(ctx context.Context, workflowID string) (work.RunState, error)
+}
+
+// SandboxSweeper deletes sandbox pods no run owns any more.
+//
+// A worker that dies mid-ticket leaves its pod behind, and nothing else in the
+// system is positioned to notice: the workflow that would have cleaned up is
+// the thing that died. live is the set of run IDs the dispatcher believes are
+// working, and minAge is the margin below which a pod is left alone whatever
+// live says — without it the sweep races the run that just created it.
+type SandboxSweeper interface {
+	SweepOrphans(ctx context.Context, live []string, minAge time.Duration) (deleted int, err error)
 }
 
 // TranscriptSink stores one stage attempt's raw event stream.
