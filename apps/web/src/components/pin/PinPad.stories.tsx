@@ -130,6 +130,42 @@ export const Scrambled: Story = {
   },
 };
 
+/**
+ * Per-keypress scramble (#302) , `pinPadLayout: "scrambled-per-key"`, the
+ * shipped default. Unlike every other layout this one redraws MID-ENTRY, after
+ * each digit, which is the only way to make a shoulder-surfer's view of your
+ * finger worthless: the position they watched means a different digit by the
+ * next press. Tap a key and watch the whole pad move.
+ */
+export const ScrambledPerKey: Story = {
+  args: { entered: 0, onDigit: () => {}, onBackspace: () => {} },
+  render: () => <PinPadHarness layout="scrambled-per-key" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const digitOrder = () =>
+      Array.from(canvasElement.querySelectorAll<HTMLElement>("button[aria-label]"))
+        .map((el) => el.getAttribute("aria-label") ?? "")
+        .filter((label) => /^\d$/.test(label));
+
+    const before = digitOrder();
+    await expect(before).toHaveLength(10);
+    await expect([...before].sort().join("")).toBe("0123456789");
+
+    // Three taps, all well inside one entry (PIN_LENGTH is 6), so the prompt
+    // never turns over , any movement here is the per-keypress redraw and
+    // nothing else. Collect the orders rather than asserting each differs: a
+    // single redraw can land on the same permutation, three cannot all collapse.
+    const seen = new Set([before.join("")]);
+    for (let i = 0; i < 3; i++) {
+      await userEvent.click(canvas.getByRole("button", { name: digitOrder()[0] ?? "1" }));
+      const after = digitOrder();
+      await expect([...after].sort().join("")).toBe("0123456789");
+      seen.add(after.join(""));
+    }
+    await expect(seen.size).toBeGreaterThan(1);
+  },
+};
+
 /** Keyboard entry: digit keys append, Backspace/Delete remove, Cmd/Ctrl+digit is ignored. */
 export const KeyboardEntry: Story = {
   args: { entered: 0, onDigit: () => {}, onBackspace: () => {} },

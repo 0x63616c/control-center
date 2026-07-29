@@ -113,3 +113,21 @@ export const Changed: Story = {
     });
   },
 };
+
+// The blurb sits in one fixed 16px line with `nowrap` + `ellipsis`, so a string
+// that outgrows it is clipped in a way that looks exactly like one that fits.
+// This is the wall that makes that length budget enforceable rather than
+// conventional (08-enforceable-guardrails): tap every segment, measure the line
+// it swapped in. Restoring `scrambled`'s usability warning is what made it
+// necessary , the copy had been shortened until the constraint was invisible.
+export const BlurbFitsEverySegment: Story = {
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    for (const segment of ["fixed", "rotated", "scrambled", "per keypress"]) {
+      await userEvent.click(canvas.getByRole("radio", { name: segment }));
+      const blurb = canvas.getByTestId("layout-blurb");
+      await expect(blurb.textContent?.length).toBeGreaterThan(0);
+      await expect(blurb.scrollWidth).toBeLessThanOrEqual(blurb.clientWidth);
+    }
+  },
+};

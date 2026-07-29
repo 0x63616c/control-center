@@ -60,6 +60,10 @@ export const PIN_PAD_LAYOUT_LABEL: Record<PinPadLayout, string> = {
   fixed: "fixed",
   rotated: "rotated",
   scrambled: "scrambled",
+  // Not "scrambled per key" , four segments share one row on a fixed 1366px
+  // panel, and the qualifier is the only part that distinguishes this from its
+  // neighbour. The blurb under the control carries the rest.
+  "scrambled-per-key": "per keypress",
 };
 
 // ─── settings shape + bounds ──────────────────────────────────────────────────
@@ -90,11 +94,12 @@ export interface Settings {
    *  Activity); the gates are always on.
    *  NOT auth , purely a frontend soft-lock. Exactly 6 digits; default "000000". */
   pinCode: string;
-  /** How the PIN pad arranges its digits (#287, #291). A `fixed` pad wears
+  /** How the PIN pad arranges its digits (#287, #291, #302). A `fixed` pad wears
    *  grease into the same four keys, which narrows a 6-digit PIN to the orderings
    *  of whichever digits are smudged; `rotated` and `scrambled` both move the
-   *  digits per prompt so the wear spreads across all ten. See PIN_PAD_LAYOUTS
-   *  for what each costs. */
+   *  digits per prompt so the wear spreads across all ten, and
+   *  `scrambled-per-key` moves them after every digit, which additionally makes
+   *  watching the finger useless. See PIN_PAD_LAYOUTS for what each costs. */
   pinPadLayout: PinPadLayout;
   /** The single highlight colour the board is built around (see lib/accent.ts).
    *  Synced, not device-local: the accent is how the installation looks, not a
