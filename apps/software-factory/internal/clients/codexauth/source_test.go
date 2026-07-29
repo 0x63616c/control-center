@@ -919,6 +919,27 @@ func TestSourceValidateWarnsAboutAnUnresolvedAttemptWithoutFailingBoot(t *testin
 	}
 }
 
+func TestSourceValidateWarnsAboutAnAlreadyRefusedCredential(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, 72*time.Hour, refreshState{Serial: 4, Attempt: &attempt{
+		Holder:         "worker-earlier/0000",
+		StartedAt:      testNow.Add(-time.Hour),
+		LeaseExpiresAt: testNow.Add(-55 * time.Minute),
+		Serial:         4,
+		Outcome:        outcomeRejected,
+	}})
+
+	// The stored access token is the last one this credential will ever have.
+	// Boot must not fail — the worker still works — but it must say so, or the
+	// first anyone hears of it is when a stage dies days later.
+	if err := h.source.Validate(context.Background()); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if _, _, deaths := h.metrics.snapshot(); len(deaths) != 1 || deaths[0] != DeathRejected {
+		t.Errorf("recorded deaths = %v, want one %s", deaths, DeathRejected)
+	}
+}
+
 func TestNewRefusesAnIncompleteSource(t *testing.T) {
 	t.Parallel()
 	var (

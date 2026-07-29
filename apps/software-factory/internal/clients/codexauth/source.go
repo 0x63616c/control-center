@@ -160,7 +160,16 @@ func (s *Source) Validate(ctx context.Context) error {
 		return err
 	}
 
-	if att := state.Attempt; att != nil && att.Serial == state.Serial && att.Outcome == "" && !att.live(s.clock.Now()) {
+	att := state.Attempt
+	if att == nil || att.Serial != state.Serial {
+		return nil
+	}
+	switch {
+	case att.Outcome == outcomeRejected:
+		s.metrics.CredentialDead(DeathRejected)
+		s.log.WarnContext(ctx, "the provider has already refused this codex refresh token, so the stored access token is the last one",
+			"holder", att.Holder, "serial", att.Serial, "remedy", remedy)
+	case !att.live(s.clock.Now()):
 		s.metrics.CredentialDead(DeathOutcomeUnknown)
 		s.log.WarnContext(ctx, "a previous refresh of the codex credential never settled, so its refresh token may already be spent",
 			"holder", att.Holder, "started_at", att.StartedAt, "serial", att.Serial, "remedy", remedy)
