@@ -135,3 +135,36 @@ func TestTranslateLeavesCancellationAlone(t *testing.T) {
 		})
 	}
 }
+
+// TestThePermanentErrorTypeIsTheNamePoliciesQuote pins the wire name against a
+// literal, because every other assertion here compares Translate's output to
+// ErrorTypePermanent — the constant itself — which is a tautology a rename
+// satisfies.
+//
+// This name is not a message. A RetryPolicy names error types as strings in
+// NonRetryableErrorTypes, so C1/C2 are about to write "PermanentFailure" in
+// workflow code that cannot import this constant. Rename it here and every
+// policy quoting the old spelling is disarmed in silence: a permanent auth
+// failure against a spent credential becomes an infinite retry loop, with a
+// green build and green tests. Changing this string is changing a published
+// interface, and it has to be done on both sides at once.
+func TestThePermanentErrorTypeIsTheNamePoliciesQuote(t *testing.T) {
+	t.Parallel()
+
+	const published = "PermanentFailure"
+
+	if ErrorTypePermanent != published {
+		t.Errorf("ErrorTypePermanent = %q, want %q; a RetryPolicy naming the old spelling retries a permanent failure forever",
+			ErrorTypePermanent, published)
+	}
+
+	// End to end, so a rename cannot be hidden behind the constant: this is the
+	// string a workflow's NonRetryableErrorTypes has to match.
+	var appErr *temporal.ApplicationError
+	if !errors.As(Translate(fmt.Errorf("spent: %w", work.ErrPermanent)), &appErr) {
+		t.Fatal("Translate did not produce an ApplicationError")
+	}
+	if appErr.Type() != published {
+		t.Errorf("a permanent failure arrives as type %q, want %q", appErr.Type(), published)
+	}
+}

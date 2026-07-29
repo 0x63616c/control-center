@@ -70,3 +70,27 @@ func get(t *testing.T, handler http.Handler, path string) (body string, status i
 	}
 	return string(raw), resp.StatusCode
 }
+
+// TestTheServedPathsAreTheOnesScrapedAndProbed pins both paths against
+// literals, because every other assertion in this file asks for pathMetrics or
+// pathHealthz — the constants themselves — which a rename satisfies unchanged.
+//
+// Nothing in this repository is the consumer. The scrape config and the
+// Deployment's liveness probe quote these strings, so a rename here is a metric
+// that stops arriving and a probe that starts failing, with nothing in CI to
+// say so. The request below goes through the real handler with the literal in
+// hand, so it fails on a renamed constant and on a mux that stopped routing it.
+func TestTheServedPathsAreTheOnesScrapedAndProbed(t *testing.T) {
+	t.Parallel()
+
+	for path, want := range map[string]int{"/metrics": 200, "/healthz": 200} {
+		if _, status := get(t, observability(prometheus.NewRegistry()), path); status != want {
+			t.Errorf("GET %s = %d, want %d; the scrape config and the liveness probe quote this exact path",
+				path, status, want)
+		}
+	}
+
+	if pathMetrics != "/metrics" || pathHealthz != "/healthz" {
+		t.Errorf("served paths are %q and %q, want /metrics and /healthz", pathMetrics, pathHealthz)
+	}
+}
