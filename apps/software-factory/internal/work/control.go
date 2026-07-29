@@ -18,24 +18,24 @@ import (
 type Config struct {
 	// Paused stops the dispatcher starting new tickets. Work already in flight
 	// runs to completion — pausing is "start nothing more", not "abandon".
-	Paused bool
+	Paused bool `json:"paused"`
 
 	// MaxInFlight is how many tickets may be in flight at once. ADR-0011: the
 	// binding constraint is the plan's rate-limit window, not concurrency, so
 	// this starts small and moves on measurement.
-	MaxInFlight int
+	MaxInFlight int `json:"maxInFlight"`
 
 	// BreakerCooldownSeconds is how long the dispatcher stops starting new work
 	// after a rate limit trips the breaker. Read it through BreakerCooldown;
 	// the unit is in the name because this value is hand-written as JSON by
 	// whoever is signalling a running dispatcher at the time.
-	BreakerCooldownSeconds int64
+	BreakerCooldownSeconds int64 `json:"breakerCooldownSeconds"`
 
 	// DefaultModel runs every stage that has no override.
-	DefaultModel Model
+	DefaultModel Model `json:"defaultModel"`
 
 	// StageModels are the per-stage exceptions to that.
-	StageModels StageModels
+	StageModels StageModels `json:"stageModels"`
 }
 
 // Default configuration. The cap comes from ADR-0011; the cooldown does not,
@@ -154,9 +154,11 @@ type ConfigUpdate struct {
 //
 // A map would accept a key that is not a stage — a typo in a hand-written
 // signal — and do nothing about it, silently, at the one moment somebody is
-// changing configuration under pressure. Here the stages are the type, adding
-// a stage is a compile error in every place that has to care, and there is no
-// unknown-key case to validate because it cannot be written.
+// changing configuration under pressure. Here the stages are the type, so a
+// stage added without being routed is caught by the exhaustive linter that CI
+// runs (not by the compiler — a switch missing an arm still builds), and the
+// unknown-key case is rejected at the JSON boundary by UnmarshalJSON rather
+// than being unwritable.
 type StageModels struct {
 	Plan      *Model `json:"plan,omitempty"`
 	Review    *Model `json:"review,omitempty"`
@@ -205,12 +207,12 @@ func (m StageModels) Validate() error {
 type Breaker struct {
 	// OpenUntil is when the dispatcher may start work again. Zero means the
 	// breaker has never tripped.
-	OpenUntil time.Time
+	OpenUntil time.Time `json:"openUntil"`
 
 	// Reason is the rate-limit message that tripped it, kept so an operator
 	// reading GetStatus learns what the wall was rather than only that one
 	// exists.
-	Reason string
+	Reason string `json:"reason"`
 }
 
 // OpenAt reports whether the breaker is still stopping new work at this

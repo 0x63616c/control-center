@@ -2,6 +2,7 @@ package work_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -291,5 +292,155 @@ func TestStatusAnswersTheQuestionsAskedOfARunningDispatcher(t *testing.T) {
 	}
 	if got.ConfigError != want.ConfigError {
 		t.Errorf("ConfigError = %q, want %q — a rejected signal is otherwise invisible", got.ConfigError, want.ConfigError)
+	}
+}
+
+func TestATypoInAHandWrittenSignalIsRejectedRatherThanIgnored(t *testing.T) {
+	t.Parallel()
+
+	// An UpdateConfig signal is JSON typed by a human at the moment they are
+	// changing configuration under pressure. encoding/json's default is to drop
+	// a key it does not recognise, which turns every misspelling into a signal
+	// that succeeds and does nothing — the exact failure the per-stage struct
+	// was chosen to prevent, reintroduced at the boundary the struct does not
+	// reach.
+	for _, tc := range []struct {
+		name    string
+		payload string
+		want    string
+	}{
+		{"snake_case cap", `{"max_in_flight": 9}`, "max_in_flight"},
+		{"pause for paused", `{"pause": true}`, "pause"},
+		{"abbreviated cooldown", `{"breakerCooldownSecs": 60}`, "breakerCooldownSecs"},
+		//nolint:misspell // the misspellings are the input under test, not prose.
+		{"misspelled stage", `{"stageModels":{"reveiw":{"name":"m","effort":"high"}}}`, "reveiw"},
+		//nolint:misspell // as above.
+		{"misspelled model field", `{"defaultModel":{"nmae":"m","effort":"high"}}`, "nmae"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var update work.ConfigUpdate
+			err := json.Unmarshal([]byte(tc.payload), &update)
+			if err == nil {
+				t.Fatalf("json.Unmarshal(%s) = nil error; the operator is told nothing and the config does not change", tc.payload)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q does not name the offending key %q; the operator has to guess which word was wrong", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestAWellSpelledSignalStillDecodes(t *testing.T) {
+	t.Parallel()
+
+	// The strict decoding above must reject typos without rejecting the payload
+	// a deploy actually sends: every field at once, including a nested override.
+	const payload = `{"paused":true,"maxInFlight":3,"breakerCooldownSeconds":60,` +
+		`"defaultModel":{"name":"other-model","effort":"low"},` +
+		`"stageModels":{"revise":{"name":"revise-model","effort":"high"}}}`
+
+	var update work.ConfigUpdate
+	if err := json.Unmarshal([]byte(payload), &update); err != nil {
+		t.Fatalf("json.Unmarshal(%s) = %v, want nil", payload, err)
+	}
+	applied, err := work.DefaultConfig().Apply(update)
+	if err != nil {
+		t.Fatalf("Apply(decoded) = %v, want nil", err)
+	}
+	if !applied.Paused || applied.MaxInFlight != 3 || applied.BreakerCooldownSeconds != 60 {
+		t.Errorf("applied = %+v, want paused with cap 3 and a 60s cooldown", applied)
+	}
+	if got, want := applied.ModelFor(work.StageRevise), (work.Model{Name: "revise-model", Effort: "high"}); got != want {
+		t.Errorf("ModelFor(revise) = %+v, want %+v", got, want)
+	}
+}
+
+func TestEveryStageOverrideReachesItsOwnStageAndNoOther(t *testing.T) {
+	t.Parallel()
+
+	// One case per stage, driven off Pipeline() so a new stage that nothing
+	// routes shows up here rather than only in the linter. Each override is
+	// distinguishable, so a For that returns a neighbour's model fails.
+	for _, stage := range work.Pipeline() {
+		t.Run(string(stage), func(t *testing.T) {
+			t.Parallel()
+
+			override := work.Model{Name: "model-for-" + string(stage), Effort: "high"}
+			var overrides work.StageModels
+			if err := json.Unmarshal([]byte(`{"`+string(stage)+`":{"name":"`+override.Name+`","effort":"high"}}`), &overrides); err != nil {
+				t.Fatalf("json.Unmarshal(override for %s) = %v — the stage has no JSON key", stage, err)
+			}
+
+			cfg := work.DefaultConfig()
+			cfg.StageModels = overrides
+			if got := cfg.ModelFor(stage); got != override {
+				t.Errorf("ModelFor(%s) = %+v, want %+v — this stage's override is not routed to it", stage, got, override)
+			}
+			for _, other := range work.Pipeline() {
+				if other == stage {
+					continue
+				}
+				if got := cfg.ModelFor(other); got != cfg.DefaultModel {
+					t.Errorf("ModelFor(%s) = %+v with only %s overridden, want the default %+v", other, got, stage, cfg.DefaultModel)
+				}
+			}
+		})
+	}
+}
+
+func TestStatusMarshalsToTheDocumentAnOperatorReads(t *testing.T) {
+	t.Parallel()
+
+	// GetStatus's result is read by hand and by whatever a runbook greps. The
+	// keys are therefore a published interface, and a Go field rename is a wire
+	// change — so the document is asserted literally rather than round-tripped,
+	// which is symmetric and cannot see a key name at all.
+	status := work.Status{
+		Config:      work.DefaultConfig(),
+		InFlight:    []int{312, 330},
+		Breaker:     work.Breaker{OpenUntil: time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC), Reason: "rate limited"},
+		ConfigError: "MaxInFlight must be at least 1",
+	}
+
+	const want = `{"config":{"paused":false,"maxInFlight":2,"breakerCooldownSeconds":900,` +
+		`"defaultModel":{"name":"gpt-5.6-terra","effort":"medium"},"stageModels":{}},` +
+		`"inFlight":[312,330],` +
+		`"breaker":{"openUntil":"2026-07-28T12:00:00Z","reason":"rate limited"},` +
+		`"configError":"MaxInFlight must be at least 1"}`
+
+	encoded, err := json.Marshal(status)
+	if err != nil {
+		t.Fatalf("json.Marshal(Status) = %v", err)
+	}
+	if string(encoded) != want {
+		t.Errorf("Status marshalled as\n\t%s\nwant\n\t%s", encoded, want)
+	}
+}
+
+func TestConfigUpdateMarshalsToTheKeysAnOperatorTypes(t *testing.T) {
+	t.Parallel()
+
+	// The same argument in the other direction: these keys are what a human
+	// writes into an UpdateConfig signal, and are now the only spellings the
+	// decoder accepts, so a rename silently invalidates every runbook.
+	limit := 3
+	cooldown := int64(60)
+	update := work.ConfigUpdate{
+		MaxInFlight:            &limit,
+		BreakerCooldownSeconds: &cooldown,
+		StageModels:            &work.StageModels{Propose: &work.Model{Name: "other-model", Effort: "low"}},
+	}
+
+	const want = `{"maxInFlight":3,"breakerCooldownSeconds":60,` +
+		`"stageModels":{"propose":{"name":"other-model","effort":"low"}}}`
+
+	encoded, err := json.Marshal(update)
+	if err != nil {
+		t.Fatalf("json.Marshal(ConfigUpdate) = %v", err)
+	}
+	if string(encoded) != want {
+		t.Errorf("ConfigUpdate marshalled as\n\t%s\nwant\n\t%s", encoded, want)
 	}
 }
