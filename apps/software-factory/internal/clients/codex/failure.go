@@ -7,32 +7,14 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
-// ErrRateLimited reports that the plan's rate limit, not the work, ended this
-// stage.
+// The failure sentinels, and a constraint on whoever wires them into an
+// activity (D1, #340).
 //
-// It is a second sentinel beside work.ErrPermanent rather than a rival retry
-// taxonomy, and the distinction matters: both are non-retryable, but a rate
-// limit trips the dispatcher's breaker and clears on its own, while everything
-// else permanent needs a human. Wrapping alone could not express that — by the
-// time an error reaches the dispatcher, "do not retry" and "stop starting new
-// work for a while" are different instructions.
-var ErrRateLimited = fmt.Errorf("the model provider's rate limit was reached: %w", work.ErrPermanent)
-
-// ErrAuth reports that codex could not authenticate at all.
-//
-// ADR-0011: this is the one failure that stops the service rather than a
-// ticket. The refresh token is single-use and rotating, and once it is spent
-// or revoked no amount of retrying re-mints it — recovery is a human running
-// codex login and re-seeding.
-var ErrAuth = fmt.Errorf("codex could not authenticate: %w", work.ErrPermanent)
-
-// A constraint on whoever wires these into an activity (D1, #340).
-//
-// Both sentinels exist so the dispatcher can tell "wait, then carry on" from
-// "stop and fetch a human". Today it cannot, and not because of anything in
-// this file: there is no activity boundary yet. When one lands, Temporal
-// serialises an activity's error into an ApplicationError carrying a Type
-// string and a message — the Go error chain does NOT cross into workflow code.
+// Both exist so the dispatcher can tell "wait, then carry on" from "stop and
+// fetch a human". Today it cannot, and not because of anything in this file:
+// there is no activity boundary yet. When one lands, Temporal serialises an
+// activity's error into an ApplicationError carrying a Type string and a
+// message — the Go error chain does NOT cross into workflow code.
 // errors.Is(err, ErrRateLimited) in the dispatcher will be false however
 // carefully the error was wrapped here.
 //
@@ -40,6 +22,34 @@ var ErrAuth = fmt.Errorf("codex could not authenticate: %w", work.ErrPermanent)
 // ApplicationError Type, and the dispatcher switches on the Type. If it maps
 // everything permanent onto one Type, delete one of these rather than leave a
 // distinction that reads as load-bearing and is not.
+//
+// The trap that makes this worth writing down rather than merely true: a test
+// that calls the activity function directly, or drives it through
+// TestActivityEnvironment without going over the wire, keeps the Go error
+// chain intact — so errors.Is SUCCEEDS there and fails only once a real
+// workflow is on the other end. A green test is exactly what would let this
+// ship. Whatever D1 asserts about telling these apart has to assert it on the
+// far side of a serialisation boundary.
+var (
+	// ErrRateLimited reports that the plan's rate limit, not the work, ended
+	// this stage.
+	//
+	// It is a second sentinel beside work.ErrPermanent rather than a rival
+	// retry taxonomy, and the distinction matters: both are non-retryable, but
+	// a rate limit trips the dispatcher's breaker and clears on its own, while
+	// everything else permanent needs a human. Wrapping alone could not express
+	// that — by the time an error reaches the dispatcher, "do not retry" and
+	// "stop starting new work for a while" are different instructions.
+	ErrRateLimited = fmt.Errorf("the model provider's rate limit was reached: %w", work.ErrPermanent)
+
+	// ErrAuth reports that codex could not authenticate at all.
+	//
+	// ADR-0011: this is the one failure that stops the service rather than a
+	// ticket. The refresh token is single-use and rotating, and once it is
+	// spent or revoked no amount of retrying re-mints it — recovery is a human
+	// running codex login and re-seeding.
+	ErrAuth = fmt.Errorf("codex could not authenticate: %w", work.ErrPermanent)
+)
 
 // stderrLimit is how much of stderr an error may carry. The error is written to
 // Temporal history and quoted into a GitHub comment, and neither is the place

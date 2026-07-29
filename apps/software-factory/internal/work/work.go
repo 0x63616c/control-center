@@ -310,6 +310,15 @@ type StageResult struct {
 	// aggregator adding an unmeasured zero to a total as though it were a
 	// measurement — and the runs that resume are the long ones, which are the
 	// ones that spent most.
+	//
+	// It lives here rather than on Usage so that Usage stays a comparable value
+	// type and Add keeps its meaning: "measured plus unmeasured" is not a
+	// question a summing method should have to answer.
+	//
+	// The consequence, for whoever wires the runner to telemetry:
+	// telemetry.StageFinished takes a bare Usage and therefore cannot see this
+	// flag. Deciding not to report an unmeasured Usage has to happen at the
+	// call site, and nothing in either signature forces it.
 	UsageMeasured bool
 }
 

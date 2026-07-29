@@ -155,11 +155,20 @@ func (o *outcome) noteFailure(message string) {
 // ReasoningTokens, and that nesting is codex's own (verified against
 // rust-v0.145.0: non_cached_input() subtracts one from the other, and
 // blended_total() adds output once without adding reasoning). Subtracting
-// either here would be invisible: internal/telemetry reads them as nested —
-// it splits input into disjoint counters by subtracting the cached part
-// (uncachedInput), and records reasoning as a subset of output — so a
-// subtraction here would come out of the same numbers twice, on a dashboard
-// nobody can check against a bill.
+// either here would be invisible, because internal/telemetry reads them as
+// nested — and the two go wrong in different ways, which is why neither is
+// safe to "tidy up" here.
+//
+// Cached: telemetry subtracts it to build a disjoint uncachedInput counter, so
+// subtracting here too removes the same tokens twice.
+//
+// Reasoning: telemetry does NOT subtract it — it records it whole, as a subset
+// of an output counter it also records whole. Subtracting here would not
+// double-subtract; it would make the output counter undercount and quietly
+// break the reasoning ⊆ output relation the two counters are documented to
+// have.
+//
+// Both come out low on a dashboard nobody can check against a bill.
 func (u usage) domain() work.Usage {
 	return work.Usage{
 		InputTokens:       u.InputTokens,
