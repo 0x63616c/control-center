@@ -13,6 +13,11 @@
 #   tar                           file-in, `tar -xf - -C /` (transfer.go)
 #   test                          the file-existence probe (transfer.go)
 #   cat                           file-out (transfer.go)
+#   pgrep                         stage liveness, `pgrep -f <result path>` (B5).
+#                                 LOAD-BEARING, not a nicety: it is the only way
+#                                 the runner knows a stage is already running, so
+#                                 without it every retry re-runs a live stage.
+#                                 Asserted at build time below.
 #
 # A shell IS present, because `codex exec`'s own job is running shell commands
 # on the agent's behalf. "No shell" is a rule about how the WORKER invokes this
@@ -65,15 +70,24 @@ ARG BUN_SHA256=c3d3c14e9a5ec83ff67d0acfe76e4315ad06da9f34f59fc7b13813782caf1f66
 # here: git, because `implement` pushes a branch and GitHub is the durable state
 # between stages; ca-certificates for the OpenAI and GitHub APIs; curl and unzip
 # for the two downloads below; passwd for groupadd/useradd, which trixie-slim
-# omits.
+# omits; procps for pgrep, which stage liveness depends on.
+#
+# The `command -v` line is the point of failing here rather than at 2am: a
+# missing pgrep does not error at runtime, it reports "no stage running" and the
+# retry starts a second copy of a stage that never stopped.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
         git \
         passwd \
+        procps \
         unzip \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && command -v pgrep >/dev/null \
+    && command -v tar >/dev/null \
+    && command -v test >/dev/null \
+    && command -v cat >/dev/null
 
 RUN curl -fsSL -o /tmp/codex.tar.gz \
         "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-x86_64-unknown-linux-musl.tar.gz" \
@@ -115,6 +129,25 @@ RUN groupadd --gid 1000 sandbox \
 RUN install -d -o 1000 -g 1000 -m 0755 /work
 
 ENV HOME=/home/sandbox
+
+# WORKDIR is the working directory every `codex exec` inherits: pods/exec runs
+# with the container's cwd, and podspec.go sets no WorkingDir, so this is it.
+#
+# It is /work — the mount root — and DELIBERATELY NOT the repo checkout, which
+# is the obvious-looking choice and is a trap. A WORKDIR the runtime has to
+# create inside the emptyDir is created by the RUNTIME, as root, mode 0755:
+#
+#   $ docker run --tmpfs '/work:uid=0,gid=1000,mode=2775' <img with WORKDIR /work/repo> \
+#       sh -c 'ls -ldn /work/repo; touch /work/repo/probe'
+#   drwxr-sr-x 2 0 1000 ... /work/repo
+#   touch: cannot touch '/work/repo/probe': Permission denied
+#
+# — so the sandbox uid could not write its own checkout, and every clone, build
+# and test would fail as a permission error dressed up as a broken tool. /work
+# itself is group-writable because the kubelet applies fsGroup 1000 to the
+# emptyDir, and a directory the PROCESS creates under it is owned by the
+# process. So the checkout is created by whatever clones it, at work.RepoDir,
+# and the stage is pointed there with `codex --cd`.
 WORKDIR /work
 USER 1000:1000
 
