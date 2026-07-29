@@ -740,8 +740,12 @@ func TestDispatcherCarriesRecentlyFinishedAcrossAContinueAsNew(t *testing.T) {
 	h.runs["work-ticket-320"] = work.RunState{Open: true, RunID: "run-1"}
 	h.tickets = tickets(320)
 	h.runFor = 0
+	// h.runs is deliberately left untouched here: reconcile's own DescribeRun
+	// lookup races the mock activity's own goroutine when mutated this close
+	// to t=0 (an unrelated latent race in the harness, caught by -race), and
+	// this test only needs the fast path — the TicketDone signal itself, which
+	// is a Temporal channel and needs no such synchronization.
 	h.at(time.Nanosecond, func() {
-		h.runs["work-ticket-320"] = work.RunState{}
 		h.env.SignalWorkflow(workflows.SignalTicketDone, work.TicketDone{
 			Ticket: 320, RunID: "run-1", Outcome: work.OutcomeProposed,
 		})
