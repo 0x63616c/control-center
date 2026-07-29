@@ -166,14 +166,37 @@ same file across concurrent jobs or multiple machines."
 The design avoids the race by ensuring **nothing but the worker ever holds a refresh
 token**:
 
-- The worker owns the real credential and is the only thing that refreshes it. It runs
-  single-replica, so "single writer" is structural rather than enforced.
-- Each sandbox gets its own ephemeral `CODEX_HOME` seeded with an `auth.json` carrying the
-  current access token and an **empty** `refresh_token`.
-- Codex only refreshes within five minutes of the access token's `exp`; measured tokens
-  carry multi-day lifetimes, so a minutes-long ticket never approaches that window.
-  Verified against v0.145.0: `codex exec` with a blanked `refresh_token` exits 0 and leaves
-  the file byte-identical.
+- The worker owns the real credential and is the only thing that refreshes it. Single-writer
+  is enforced by a compare-and-swap lease on the credential Secret's `resourceVersion`,
+  acquired *before* the refresh token is presented — **`replicas: 1` buys none of this.** It
+  lowers the frequency of contention and nothing more; a `kubectl debug` pod, a one-off Job
+  and a terminating pod mid-`Recreate` are all defeated by the lease and by nothing else.
+  (This bullet originally claimed the property was structural from single-replica. It is not,
+  and B3 does not rely on it being so.)
+- Each sandbox gets its own ephemeral `CODEX_HOME` seeded with an `auth.json` whose
+  `tokens.refresh_token` is set to the **empty string**. Set, not removed: `refresh_token` is
+  a bare `String` in the CLI's `token_data.rs`, so `""` parses while an absent or null key
+  fails the whole file. The distinction matters because "blank the refresh token" reads
+  equally as *remove it*, and the natural JSON-pointer idiom is `op: remove`.
+- Codex only refreshes within five minutes of the access token's `exp`
+  (`CHATGPT_ACCESS_TOKEN_REFRESH_WINDOW_MINUTES`, `manager.rs:181`); measured tokens carry
+  multi-day lifetimes, so a minutes-long ticket never approaches that window.
+
+  **Correction (#335).** This ADR previously claimed `codex exec` with a blanked
+  `refresh_token` "exits 0 and leaves the file byte-identical". That holds only for the case
+  where **no refresh is attempted** — which is what it was observed on, and which is the
+  ordinary sandbox run. It does not hold once the window is entered. Verified against
+  v0.145.0 on a synthetic `CODEX_HOME`: the run exits **1** with empty stdout, the provider
+  answering `400` with `error.code = "empty_string"`. Worse, the CLI does not fail once — it
+  retries **104 times in ~35 seconds** against `auth.openai.com` before giving up, per stage
+  and multiplied by concurrent tickets.
+
+  So staying outside the window is a **hard invariant, not a comfortable margin**, and it is
+  what prevents a retry storm against the provider's auth endpoint rather than merely a
+  confusing stage failure. It is asserted at construction as
+  `refreshMargin > maxStageDuration + 5m`. A stage that does reach this path sees exit 1 and
+  empty stdout, which reads as a tooling failure; the cause appears only on stderr, so the
+  stage runner retaining stderr is load-bearing (#340).
 
 Because the CLI only refreshes inside that five-minute window and cannot be asked to do so
 on demand, the worker performs the OAuth refresh itself.
@@ -252,10 +275,40 @@ already hit).
 
 ## Blast radius
 
-The worker holds a namespace-scoped `Role` — pods create/get/list/delete, `pods/exec`
-create, `pods/log` get, secrets get/update — and nothing cluster-scoped. This is the first
+The worker holds a namespace-scoped `Role` — pods create/get/**watch**/delete, `pods/exec`
+get/create, secrets get/update — and nothing cluster-scoped. This is the first
 pod in the cluster with Kubernetes API credentials at all; every existing Deployment sets
 `automountServiceAccountToken: false` deliberately, and sandboxes continue to.
+
+That verb list was wrong in the first draft of this ADR, in three ways, each found by
+enumerating the client's actual calls rather than reasoning about them (#343):
+
+- **`watch` on pods was missing.** `WaitReady` is watch-based, so every sandbox start would
+  have 403'd — the deploy would have failed on its first ticket, not subtly.
+- **`list` on pods is not required** and has been dropped. The authorizer maps
+  `GET .../pods?watch=true` to `watch`, not `list`, and nothing calls `Pods().List`.
+- **`pods/exec` needs `get` as well as `create`**, because the WebSocket executor issues a
+  `GET` and only the deprecated SPDY fallback uses `POST`. With `create` alone every exec
+  either silently takes the deprecated path or fails outright, depending on what
+  `httpstream.IsUpgradeFailure` makes of a 403.
+
+`pods/log` get was also dropped: no code path reads pod logs. Stage output arrives over the
+exec stream, and transcripts are written by the worker.
+
+Scoping is asymmetric between the two rules, and the asymmetry is structural rather than an
+oversight. Kubernetes `resourceNames` **cannot** restrict `list`, `watch`, `create` or
+`deletecollection` — the clause is silently ignored for those verbs. So:
+
+- The credential Secret rule *is* `resourceNames`-scoped to one object, which is possible
+  only because the client needs `get` and `update` and nothing else. `SecretClient` binds
+  namespace and name at construction and exposes no method taking either, so no code path
+  could want `list`. The narrow seam and the tight RBAC are one decision seen from two sides.
+- The pods rule *cannot* be scoped, since `watch` and `create` are unscopable and pod names
+  carry a per-run id unknown at Role-authoring time. **The namespace is the isolation
+  boundary for pods, not the Role.** A `resourceNames` clause must not be added there: it
+  would read as a scoped grant while behaving as a namespace-wide one, which is worse than an
+  honest wide grant. Tighter pod isolation has to come from a dedicated namespace or an
+  admission policy.
 
 Sandboxes hold a GitHub App installation token (one hour, scoped to this repository)
 because `implement` pushes a branch. Issue titles and bodies are attacker-controllable text
