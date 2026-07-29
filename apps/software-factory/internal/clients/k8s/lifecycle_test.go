@@ -117,7 +117,9 @@ func TestCreateRefusesToAdoptAPodThatDriftsFromTheSpec(t *testing.T) {
 			name: "whose image differs", field: "image",
 			// The regression: without this, a sandbox-image digest bump
 			// silently never takes effect for any ticket with a live pod.
-			drift: func(p *corev1.Pod) { p.Spec.Containers[0].Image = "ghcr.io/0x63616c/sandbox@sha256:" + strings.Repeat("b", 64) },
+			drift: func(p *corev1.Pod) {
+				p.Spec.Containers[0].Image = "ghcr.io/0x63616c/sandbox@sha256:" + strings.Repeat("b", 64)
+			},
 		},
 		{
 			name: "whose resource limits differ", field: "resources",
