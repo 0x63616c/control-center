@@ -21,50 +21,56 @@ change one, change it in the file cited beside it.
 
 **Read the `infra/` rows on `origin/sf/e2-f1`, not on `main`.** That branch is the
 one that defines them and it has not merged: on `main`,
-`infra/src/software-factory.ts` is 58 lines and defines the namespace alone —
+`infra/src/software-factory.ts` defines the namespace alone —
 `CODEX_AUTH_SECRET_NAME`, `WORKER_SERVICE_ACCOUNT` and the `resourceNames` pin are
-not there at all. The line numbers below are `sf/e2-f1`'s and **will shift when it
-merges**; the names are what matter, and each was traced to its definition.
+not there at all.
 
-| What | Value | Source |
-|---|---|---|
-| Namespace | `software-factory` | `infra/src/software-factory.ts:42` (`SOFTWARE_FACTORY_NAMESPACE`) — the one row that also exists on `main`, there at `:32` |
-| Secret name | `codex-auth` | `infra/src/software-factory.ts:61` (`CODEX_AUTH_SECRET_NAME`) |
-| Credential key | `auth.json` | `apps/software-factory/internal/clients/codexauth/state.go:18` (`CredentialKey`) |
-| Lease key | `refresh_state.json` | `apps/software-factory/internal/clients/codexauth/state.go:22` (`StateKey`) — **the seed must NOT write this** |
-| Deployment | `software-factory-worker` | `infra/src/software-factory.ts:50` + `:358` (`WORKER_SERVICE_ACCOUNT`, reused as the Deployment name) |
-| Pod label | `app=software-factory-worker` | `infra/src/software-factory.ts:353` (`workerLabels`) — what §1's wait selects on |
+**Constant names, no line numbers, deliberately.** Earlier revisions of this table
+cited `sf/e2-f1` by line and the numbers went stale twice in a single day — both
+times without the branch merging, and both times with every *value* unchanged. A
+line number on an unmerged branch is a coordinate into something still being
+written. The names are stable, greppable, and already the thing that matters:
 
-The Secret name is load-bearing twice over. The worker's Role pins `secrets`
-`get`/`update` to it by `resourceNames` (both on `sf/e2-f1`):
-
-```
-infra/src/software-factory.ts:293    resourceNames: [CODEX_AUTH_SECRET_NAME],
-infra/test/software-factory.test.ts:153   expect(rule.resourceNames).toEqual(["codex-auth"]);
+```sh
+git fetch origin sf/e2-f1
+git grep -n 'CODEX_AUTH_SECRET_NAME\|WORKER_SERVICE_ACCOUNT\|SOFTWARE_FACTORY_NAMESPACE' \
+  origin/sf/e2-f1 -- infra/src/software-factory.ts
 ```
 
-A Secret created under any other name is not a Secret the worker is allowed to
-read. It will not fail as "wrong credential" — it will fail as `Forbidden`.
+The first three hits are the `const` lines; their string literals are the Value
+column above. If a literal has changed, this runbook is wrong and the literal
+wins — it is what the Role and the worker both read.
 
-### Known gap: nothing reads `CODEX_AUTH_SECRET_NAME` yet
+| What | Value | Defined as | In |
+|---|---|---|---|
+| Namespace | `software-factory` | `SOFTWARE_FACTORY_NAMESPACE` | `infra/src/software-factory.ts` (also on `main`) |
+| Secret name | `codex-auth` | `CODEX_AUTH_SECRET_NAME` | `infra/src/software-factory.ts` (`sf/e2-f1` only) |
+| Deployment | `software-factory-worker` | `WORKER_SERVICE_ACCOUNT`, reused as the Deployment's `metadata.name` | `infra/src/software-factory.ts` (`sf/e2-f1` only) |
+| Pod label | `app=software-factory-worker` | `workerLabels` | `infra/src/software-factory.ts` (`sf/e2-f1` only) — what §1's wait selects on |
+| Credential key | `auth.json` | `CredentialKey` | `apps/software-factory/internal/clients/codexauth/state.go` (on `main`) |
+| Lease key | `refresh_state.json` | `StateKey` | same file — **the seed must NOT write this** |
 
-F1 injects the name into the worker's environment (`sf/e2-f1`):
+The Secret name is load-bearing twice over: the worker's Role pins `secrets`
+`get`/`update` to it via `resourceNames: [CODEX_AUTH_SECRET_NAME]`, and
+`infra/test/software-factory.test.ts` asserts that resolves to `["codex-auth"]`.
 
-```
-infra/src/software-factory.ts:418   { name: "CODEX_AUTH_SECRET_NAME", value: CODEX_AUTH_SECRET_NAME },
-```
+### The name now reaches the worker as config
 
-but as of `sf/d1-composition` **no Go file reads that variable**. It is absent
-from `internal/config/worker.go`'s env list, and the only occurrence of the
-literal `codex-auth` in the Go tree is a test constant
-(`internal/clients/k8s/secret_test.go:26`). `cmd/worker/main.go` does not wire
-`codexauth` up at all yet.
+An earlier revision of this runbook recorded a gap here: F1 injected
+`CODEX_AUTH_SECRET_NAME` into the worker's environment but no Go file read it.
+**That has been closed** — D1 merged (`ef18840b1`), and on `main`
+`internal/config/worker.go` declares `envCodexAuthSecret`, lists it in
+`workerEnvNames()`, reads it in `LoadWorker`, and — the part that matters
+operationally — requires it non-empty in `Validate()`.
 
-This does not block seeding — the RBAC grant and the Secret name are what the
-seed has to match, and those agree. But whoever wires the credential into the
-composition root must read the name from that env var rather than hardcoding it a
-third time. Two spellings of this name is exactly the failure the comment at
-`software-factory.ts:58` warns about (`sf/e2-f1`).
+So the name is not spelled twice anywhere. Both the RBAC pin and the worker's env
+value derive from the one `CODEX_AUTH_SECRET_NAME` constant, and a deploy that
+forgets to inject it fails at **worker startup** with `CODEX_AUTH_SECRET_NAME is
+required`, rather than silently at the first stage that needs a credential.
+
+What that does *not* cover, and what is therefore still yours to get right: this
+runbook creating the Secret under a name the constant does not use. Nothing
+validates the operator's typing. §3 says what that looks like.
 
 ---
 
@@ -86,7 +92,7 @@ kubectl -n software-factory scale deploy/software-factory-worker --replicas=0
 
 # 1b. WAIT FOR IT TO ACTUALLY GO. `scale` returns as soon as the API server
 #     accepts the change; it does not wait for the pod. The worker's
-#     terminationGracePeriodSeconds is 120 (software-factory.ts:144, sized above
+#     terminationGracePeriodSeconds is 120 (TERMINATION_GRACE_SECONDS, sized above
 #     the drain window), so without this there is a two-minute window in which
 #     the next two commands race a worker that is still alive.
 kubectl -n software-factory wait --for=delete pod \
@@ -173,8 +179,9 @@ Both commands here were checked against a synthetic `DUMMY-NOT-A-SECRET` file wi
 `auth.json` and nothing else, and the length came back exactly `4 * ceil(n/3)`.
 
 > **Never `-o yaml` and never `describe` on a Secret.** Both print `data` in full.
-> `-o json` likewise. The two commands above are the whole safe surface: key names
-> via `go-template`, one key's length via a single escaped `jsonpath`. This repo
+> `-o json` likewise. The two commands above are the whole safe surface, and both
+> count inside the template: key names via `go-template`, one key's length via
+> `go-template` and `len`. Nothing here pipes a value anywhere. This repo
 > has leaked secrets twice through commands that read as harmless — judge what
 > lands on the terminal, not whether the verb is read-only.
 
@@ -201,7 +208,17 @@ message"). You will see one of:
 | `auth.json's tokens.access_token is absent / not a string / is blank` | required, non-blank |
 | `auth.json's tokens.refresh_token is … is blank` | **you seeded a sandbox copy, not the real one** — see below |
 | `codex refresh token was rejected` | seed parsed, token is spent or revoked. Re-run `codex login` |
-| `Forbidden` on `secrets get` | wrong Secret name — RBAC pins `codex-auth`, §0 |
+| `the secret holding auth.json does not exist` | **you seeded under the wrong name** — the worker looked up `codex-auth` and found nothing. §0 |
+
+Note the last row is `NotFound`, **not** `Forbidden`, and an earlier revision of
+this runbook said the opposite. Since D1 merged, the worker asks for whichever
+name `CODEX_AUTH_SECRET_NAME` carries and its Role is pinned to that same
+constant, so the two cannot disagree — the request is always permitted and simply
+finds nothing (`internal/clients/k8s/secret.go` maps `IsNotFound` to
+`work.ErrSecretNotFound`; `codexauth/source.go` renders it as the message above,
+wrapping `ErrUnseeded`). A `Forbidden` here would mean something has edited the
+Role or the env var independently of the constant, which is a different bug from
+the one you are probably chasing.
 
 The blank-`refresh_token` case is worth naming because it is the plausible mistake:
 the service *derives* the sandbox copy by blanking `tokens.refresh_token` to `""`,
@@ -257,9 +274,9 @@ lands this on disk needs to be `0600`.
 
 **Pulumi must never own this Secret.** The refresh token rotates on first use, so a
 value committed to git or to a stack is a corpse within a day, and a later
-`pulumi up` would seed that corpse over a healthy credential
-(`infra/src/software-factory.ts:52-58`). Out of band is the design, not an
-omission.
+`pulumi up` would seed that corpse over a healthy credential — the reasoning is
+in `CODEX_AUTH_SECRET_NAME`'s own doc comment in `infra/src/software-factory.ts`.
+Out of band is the design, not an omission.
 
 ---
 
