@@ -96,13 +96,19 @@ func stringField(tokens map[string]json.RawMessage, key string) (string, error) 
 	return value, nil
 }
 
-// withRotation returns the stored file with the rotated pair patched into it.
+// withRotation returns the stored file with the rotated pair patched into it,
+// both as a parsed file and as the bytes to store.
 //
 // It patches four fields and copies everything else, so the file the CLI wrote
 // stays the file the CLI wrote. An omitted id_token leaves the stored one
 // alone: the provider is not obliged to reissue one, and blanking a field on
 // the strength of its absence from one response would be inventing a fact.
-func (f credentialFile) withRotation(res Refreshed, now time.Time) ([]byte, error) {
+//
+// The parsed file comes back too because the caller must derive the sandbox's
+// copy from the ROTATED document, not the one that was read. Re-parsing the
+// bytes would work and is what an earlier shape did, but it would also re-run
+// the boundary's rejections against a document this package just built.
+func (f credentialFile) withRotation(res Refreshed, now time.Time) (credentialFile, []byte, error) {
 	raw := make(map[string]json.RawMessage, len(f.raw))
 	for k, v := range f.raw {
 		raw[k] = v
@@ -133,30 +139,91 @@ func (f credentialFile) withRotation(res Refreshed, now time.Time) ([]byte, erro
 			continue
 		}
 		if err := set(key, value); err != nil {
-			return nil, err
+			return credentialFile{}, nil, err
 		}
 	}
 
-	encodedTokens, err := json.Marshal(tokens)
-	if err != nil {
-		return nil, fmt.Errorf("encoding the rotated %q object: %w", keyTokens, err)
-	}
-	raw[keyTokens] = encodedTokens
 	// RFC3339Nano rather than RFC3339, to match what the CLI itself writes:
 	// observed on codex-cli 0.145.0, last_refresh carries subsecond precision.
 	// Whole seconds still render without a fraction, so this only ever adds
 	// digits the CLI would have written anyway.
 	encodedNow, err := json.Marshal(now.UTC().Format(time.RFC3339Nano))
 	if err != nil {
-		return nil, fmt.Errorf("encoding the refresh timestamp: %w", err)
+		return credentialFile{}, nil, fmt.Errorf("encoding the refresh timestamp: %w", err)
 	}
 	raw[keyLastRefresh] = encodedNow
 
+	rotated := credentialFile{
+		raw:     raw,
+		tokens:  tokens,
+		access:  pick(res.AccessToken, f.access),
+		refresh: pick(res.RefreshToken, f.refresh),
+	}
+	out, err := rotated.encode()
+	if err != nil {
+		return credentialFile{}, nil, fmt.Errorf("encoding the rotated credential file: %w", err)
+	}
+	return rotated, out, nil
+}
+
+// pick keeps the stored value when a rotation omitted its replacement, matching
+// the patch rule above so the parsed fields never disagree with the maps.
+func pick(next, stored work.Credential) work.Credential {
+	if next.Reveal() == "" {
+		return stored
+	}
+	return next
+}
+
+// encode renders the file, folding the token map back into the document.
+func (f credentialFile) encode() ([]byte, error) {
+	raw := make(map[string]json.RawMessage, len(f.raw))
+	for k, v := range f.raw {
+		raw[k] = v
+	}
+	encodedTokens, err := json.Marshal(f.tokens)
+	if err != nil {
+		return nil, fmt.Errorf("encoding the %q object: %w", keyTokens, err)
+	}
+	raw[keyTokens] = encodedTokens
+
 	out, err := json.Marshal(raw)
 	if err != nil {
-		return nil, fmt.Errorf("encoding the rotated credential file: %w", err)
+		return nil, fmt.Errorf("encoding the credential file: %w", err)
 	}
 	return out, nil
+}
+
+// forSandbox returns the document to hand a sandbox: this file, with the
+// refresh token blanked.
+//
+// It is a DERIVATION of the stored file rather than a document composed from
+// parts, and that is the safety property. Composition is correct only while
+// somebody's list of required fields stays complete and current — and those
+// fields' serde attributes are not uniform: id_token is mandatory and
+// JWT-parsed, OPENAI_API_KEY must be present but may be null, refresh_token
+// must be present but may be blank, everything else is omissible. Derived,
+// every key survives because nothing enumerated them, so a future codex release
+// adding a mandatory field breaks nothing. last_refresh is carried verbatim for
+// the same reason; the CLI does not read it for a well-formed file.
+//
+// The refresh token is SET TO THE EMPTY STRING. It is never removed and never
+// nulled. On codex-cli rust-v0.145.0, TokenData.refresh_token is a bare String
+// with no Option, no serde(default) and no custom deserializer, so a blank
+// value parses while an absent key or a null fails the ENTIRE document — the
+// sandbox would not start, with an error pointing nowhere near this line.
+func (f credentialFile) forSandbox() (work.CredentialFile, error) {
+	tokens := make(map[string]json.RawMessage, len(f.tokens))
+	for k, v := range f.tokens {
+		tokens[k] = v
+	}
+	tokens[keyRefreshToken] = json.RawMessage(`""`)
+
+	out, err := credentialFile{raw: f.raw, tokens: tokens}.encode()
+	if err != nil {
+		return work.CredentialFile{}, fmt.Errorf("building the sandbox's credential file: %w", err)
+	}
+	return work.NewCredentialFile(out), nil
 }
 
 // String redacts the whole file. Its fields are Credentials already, but the

@@ -15,8 +15,8 @@ import (
 // them the next step is the same and it is a human's.
 const remedy = "run `codex login` locally and re-seed the secret with scripts/seed-codex-auth.sh"
 
-// Source yields a currently-valid model access token, refreshing and rotating
-// the stored credential when one nears expiry. It implements
+// Source yields the credential file a sandbox is handed, refreshing and
+// rotating the stored credential when its token nears expiry. It implements
 // activities.TokenSource.
 //
 // It is the only writer of the credential. Exclusion is a lease taken on the
@@ -135,32 +135,41 @@ func New(store SecretStore, refresher TokenRefresher, clk clock.Clock, log *slog
 	}, nil
 }
 
-// AccessToken returns a token valid for at least the refresh margin.
-func (s *Source) AccessToken(ctx context.Context) (work.Credential, error) {
+// SandboxCredentialFile returns the credential document to write into a
+// sandbox's CODEX_HOME: refreshed if it is inside the refresh margin, with the
+// refresh token blanked, and good for at least that margin.
+//
+// It yields the whole file rather than a token because a sandbox's auth.json
+// built from an access token alone does not merely go unscoped — it fails to
+// parse, and codex exec never starts. The rules that make it parse are facts
+// about a Rust struct's serde attributes, and they belong in the one package
+// that has read that source rather than duplicated into every caller that
+// writes one.
+func (s *Source) SandboxCredentialFile(ctx context.Context) (work.CredentialFile, error) {
 	select {
 	case s.gate <- struct{}{}:
 		defer func() { <-s.gate }()
 	case <-ctx.Done():
-		return work.Credential{}, fmt.Errorf("waiting to read the codex credential: %w", ctx.Err())
+		return work.CredentialFile{}, fmt.Errorf("waiting to read the codex credential: %w", ctx.Err())
 	}
 
 	waitingOn := ""
 	for range s.waitRounds {
 		result, err := s.round(ctx)
 		if result.done || err != nil {
-			return result.token, err
+			return result.file, err
 		}
 		if result.waitingOn != "" {
 			waitingOn = result.waitingOn
 		}
 		if err := s.clock.Sleep(ctx, s.leasePoll); err != nil {
-			return work.Credential{}, fmt.Errorf("waiting for the codex credential to be refreshed: %w", err)
+			return work.CredentialFile{}, fmt.Errorf("waiting for the codex credential to be refreshed: %w", err)
 		}
 	}
 	if waitingOn == "" {
 		waitingOn = "another holder"
 	}
-	return work.Credential{}, fmt.Errorf("%s held the lease for the whole of our wait: %w", waitingOn, ErrRefreshInProgress)
+	return work.CredentialFile{}, fmt.Errorf("%s held the lease for the whole of our wait: %w", waitingOn, ErrRefreshInProgress)
 }
 
 // Validate reports whether a usable credential is stored. It reads and parses
@@ -205,7 +214,7 @@ func (s *Source) Validate(ctx context.Context) error {
 // roundResult is one pass of the read-decide-refresh loop. done means the call
 // is over — with an answer, or with something a re-read cannot change.
 type roundResult struct {
-	token     work.Credential
+	file      work.CredentialFile
 	done      bool
 	waitingOn string
 }
@@ -223,7 +232,11 @@ func (s *Source) round(ctx context.Context) (roundResult, error) {
 	now := s.clock.Now()
 	if now.Add(s.margin).Before(exp) {
 		// The overwhelmingly common path: no write, no network, no lease.
-		return roundResult{token: cred.access, done: true}, nil
+		file, err := cred.forSandbox()
+		if err != nil {
+			return roundResult{done: true}, s.unusable(err)
+		}
+		return roundResult{file: file, done: true}, nil
 	}
 	return s.refresh(ctx, cred, state, version, now)
 }
@@ -392,8 +405,8 @@ func (s *Source) present(ctx context.Context, cred credentialFile, state, leaseS
 		return roundResult{done: true}, s.unusable(fmt.Errorf("%w: %w", ErrSingleWriterViolated, err))
 
 	case RefreshRotated:
-		token, err := s.settle(ctx, cred, state, leaseState, leaseVersion, res)
-		return roundResult{token: token, done: true}, err
+		file, err := s.settle(ctx, cred, state, leaseState, leaseVersion, res)
+		return roundResult{file: file, done: true}, err
 	}
 	// Unreachable: the switch is exhaustive and the linter enforces it. An
 	// outcome from the future is treated as unknown, which is the only safe
@@ -403,7 +416,7 @@ func (s *Source) present(ctx context.Context, cred credentialFile, state, leaseS
 }
 
 // settle stores the rotated pair and clears the lease, in one write.
-func (s *Source) settle(ctx context.Context, cred credentialFile, state, leaseState refreshState, leaseVersion work.SecretVersion, res Refreshed) (work.Credential, error) {
+func (s *Source) settle(ctx context.Context, cred credentialFile, state, leaseState refreshState, leaseVersion work.SecretVersion, res Refreshed) (work.CredentialFile, error) {
 	// Everything after a presentation runs under a deadline derived from the
 	// lease we hold. Without one, an Update against a wedged apiserver hangs
 	// at TCP level, our lease expires under us, and another holder concludes
@@ -419,13 +432,13 @@ func (s *Source) settle(ctx context.Context, cred credentialFile, state, leaseSt
 	defer cancel()
 
 	ourSerial := state.Serial + 1
-	authBytes, err := cred.withRotation(res, s.clock.Now())
+	rotated, authBytes, err := cred.withRotation(res, s.clock.Now())
 	if err != nil {
-		return work.Credential{}, s.credentialLost(err)
+		return work.CredentialFile{}, s.credentialLost(err)
 	}
 	stateBytes, err := encodeRefreshState(refreshState{Serial: ourSerial, LastWriter: s.holder})
 	if err != nil {
-		return work.Credential{}, s.credentialLost(err)
+		return work.CredentialFile{}, s.credentialLost(err)
 	}
 	// One write, so the rotated credential and the cleared lease share a
 	// linearization point. Preconditioned on the version our own lease write
@@ -433,10 +446,10 @@ func (s *Source) settle(ctx context.Context, cred credentialFile, state, leaseSt
 	values := map[string][]byte{CredentialKey: authBytes, StateKey: stateBytes}
 
 	if _, err := s.store.Put(ctx, values, leaseVersion); err != nil {
-		return s.recoverSettle(ctx, values, state, ourSerial, res, err)
+		return s.recoverSettle(ctx, values, state, ourSerial, rotated, res, err)
 	}
 	s.log.InfoContext(ctx, "rotated the codex credential", "holder", s.holder, "serial", ourSerial)
-	return s.usable(res)
+	return s.usable(rotated, res)
 }
 
 // recoverSettle works out whether a failed settle actually landed.
@@ -451,13 +464,14 @@ func (s *Source) recoverSettle(
 	values map[string][]byte,
 	prev refreshState,
 	ourSerial int64,
+	rotated credentialFile,
 	res Refreshed,
 	cause error,
-) (work.Credential, error) {
+) (work.CredentialFile, error) {
 	backoff := s.storeBackoff
 	for range s.storeAttempts - 1 {
 		if err := s.clock.Sleep(ctx, backoff); err != nil {
-			return work.Credential{}, s.credentialLost(fmt.Errorf("cancelled while storing a rotated credential: %w", err))
+			return work.CredentialFile{}, s.credentialLost(fmt.Errorf("cancelled while storing a rotated credential: %w", err))
 		}
 		backoff *= 2
 
@@ -468,14 +482,14 @@ func (s *Source) recoverSettle(
 		}
 		state, err := parseRefreshState(observed[StateKey])
 		if err != nil {
-			return work.Credential{}, s.unusable(err)
+			return work.CredentialFile{}, s.unusable(err)
 		}
 
 		switch {
 		case state.Serial == ourSerial && state.LastWriter == s.holder:
 			s.log.WarnContext(ctx, "a codex rotation was stored but its confirmation was lost; recovered by reading it back",
 				"holder", s.holder, "serial", ourSerial)
-			return s.usable(res)
+			return s.usable(rotated, res)
 
 		case state.Serial == prev.Serial && state.Attempt != nil &&
 			state.Attempt.Holder == s.holder && state.Attempt.Serial == prev.Serial:
@@ -487,7 +501,7 @@ func (s *Source) recoverSettle(
 				continue
 			}
 			s.log.InfoContext(ctx, "rotated the codex credential", "holder", s.holder, "serial", ourSerial)
-			return s.usable(res)
+			return s.usable(rotated, res)
 
 		case state.Serial == prev.Serial && state.Attempt != nil && state.Attempt.TakeoverOf == s.holder:
 			// Our lease expired mid-settle and somebody took it over. That is
@@ -496,14 +510,14 @@ func (s *Source) recoverSettle(
 			s.metrics.CredentialDead(DeathCredentialLost)
 			s.log.ErrorContext(ctx, "a rotated codex credential could not be stored before another holder took the lease over",
 				"holder", s.holder, "serial", ourSerial, "taken_over_by", state.Attempt.Holder, "remedy", remedy)
-			return work.Credential{}, s.credentialLost(fmt.Errorf("%s took the lease over before the rotation could be stored", state.Attempt.Holder))
+			return work.CredentialFile{}, s.credentialLost(fmt.Errorf("%s took the lease over before the rotation could be stored", state.Attempt.Holder))
 
 		default:
 			s.metrics.CredentialDead(DeathSingleWriterViolated)
 			s.log.ErrorContext(ctx, "INV-1 violated: something other than this source rotated the codex credential",
 				"our_holder", s.holder, "our_serial", ourSerial,
 				"observed_writer", state.LastWriter, "observed_serial", state.Serial, "remedy", remedy)
-			return work.Credential{}, s.unusable(fmt.Errorf(
+			return work.CredentialFile{}, s.unusable(fmt.Errorf(
 				"expected serial %d written by %s, found serial %d written by %q: %w",
 				ourSerial, s.holder, state.Serial, state.LastWriter, ErrSingleWriterViolated))
 		}
@@ -512,25 +526,28 @@ func (s *Source) recoverSettle(
 	s.metrics.CredentialDead(DeathCredentialLost)
 	s.log.ErrorContext(ctx, "a rotated codex credential could not be stored; the previous refresh token is already spent",
 		"holder", s.holder, "serial", ourSerial, "cause", cause, "remedy", remedy)
-	return work.Credential{}, s.credentialLost(cause)
+	return work.CredentialFile{}, s.credentialLost(cause)
 }
 
 // usable checks that a rotated token is worth handing out, having already
-// stored it.
-func (s *Source) usable(res Refreshed) (work.Credential, error) {
+// stored it, and derives the sandbox's copy from the rotated file.
+//
+// The derivation runs on the ROTATED document, not the one that was read, so
+// the file a sandbox receives carries the token this rotation just produced.
+func (s *Source) usable(rotated credentialFile, res Refreshed) (work.CredentialFile, error) {
 	if res.AccessToken.Reveal() == "" {
 		// The rotation is stored by the time we get here, so the credential
 		// chain is intact and this is emphatically not a re-seed. There is
 		// simply nothing to hand out, and looping to ask again would spend the
 		// chain a link at a time.
 		s.metrics.CredentialDead(DeathNoAccessToken)
-		return work.Credential{}, fmt.Errorf(
+		return work.CredentialFile{}, fmt.Errorf(
 			"the codex credential rotated and was stored, but the provider returned no access token to use: %w", work.ErrPermanent)
 	}
 	exp, err := expiryOf(res.AccessToken)
 	if err != nil {
 		s.metrics.CredentialDead(DeathUnseeded)
-		return work.Credential{}, s.unusable(fmt.Errorf("%w: %w", err, ErrUnseeded))
+		return work.CredentialFile{}, s.unusable(fmt.Errorf("%w: %w", err, ErrUnseeded))
 	}
 	if !s.clock.Now().Add(s.margin).Before(exp) {
 		// A provider behaviour change, not a bug of ours. The pair is stored
@@ -538,9 +555,9 @@ func (s *Source) usable(res Refreshed) (work.Credential, error) {
 		// — but handing it to a sandbox would hand over a credential the
 		// sandbox will try, and fail, to refresh.
 		s.metrics.CredentialDead(DeathCredentialLost)
-		return work.Credential{}, s.unusable(fmt.Errorf("it expires at %s, inside the %s refresh margin: %w", exp.Format(time.RFC3339), s.margin, ErrRefreshTooShortLived))
+		return work.CredentialFile{}, s.unusable(fmt.Errorf("it expires at %s, inside the %s refresh margin: %w", exp.Format(time.RFC3339), s.margin, ErrRefreshTooShortLived))
 	}
-	return res.AccessToken, nil
+	return rotated.forSandbox()
 }
 
 func (s *Source) credentialLost(cause error) error {

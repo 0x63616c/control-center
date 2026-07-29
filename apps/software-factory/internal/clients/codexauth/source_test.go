@@ -2,6 +2,7 @@ package codexauth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"strings"
@@ -95,18 +96,36 @@ func (h *harness) storedAccess(t *testing.T) string {
 	return file.access.Reveal()
 }
 
+// accessTokenIn reads the access token out of a document handed to a sandbox.
+//
+// The seam yields an opaque file, so a test that wants to know WHICH token was
+// handed over has to parse it. That asymmetry is deliberate and sits here on
+// purpose: this package knows the format, so its tests may assert on it.
+func accessTokenIn(t *testing.T, file work.CredentialFile) string {
+	t.Helper()
+	var doc struct {
+		Tokens struct {
+			AccessToken string `json:"access_token"`
+		} `json:"tokens"`
+	}
+	if err := json.Unmarshal(file.Reveal(), &doc); err != nil {
+		t.Fatalf("the document handed to a sandbox is not JSON: %v", err)
+	}
+	return doc.Tokens.AccessToken
+}
+
 // --- the common path ---------------------------------------------------------
 
 func TestSourceReturnsTheStoredTokenWithoutRefreshingWhenItIsFarFromExpiry(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, 72*time.Hour, refreshState{})
 
-	got, err := h.source.AccessToken(context.Background())
+	got, err := h.source.SandboxCredentialFile(context.Background())
 	if err != nil {
-		t.Fatalf("AccessToken: %v", err)
+		t.Fatalf("SandboxCredentialFile: %v", err)
 	}
-	if got.Reveal() != h.storedAccess(t) {
-		t.Error("AccessToken returned a token other than the stored one")
+	if accessTokenIn(t, got) != h.storedAccess(t) {
+		t.Error("SandboxCredentialFile returned a token other than the stored one")
 	}
 	if calls := h.refresher.Calls(); calls != 0 {
 		t.Errorf("presented the refresh token %d times for a token days from expiry, want 0", calls)
@@ -120,12 +139,14 @@ func TestSourceNeverYieldsTheRefreshToken(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, 72*time.Hour, refreshState{})
 
-	got, err := h.source.AccessToken(context.Background())
+	got, err := h.source.SandboxCredentialFile(context.Background())
 	if err != nil {
-		t.Fatalf("AccessToken: %v", err)
+		t.Fatalf("SandboxCredentialFile: %v", err)
 	}
-	if got.Reveal() == "stored-refresh" {
-		t.Fatal("AccessToken yielded the refresh token; a sandbox handed this could rotate the credential out from under the worker")
+	// Over the whole document, not the field we modelled: the token must not
+	// surface anywhere, including in a key a future codex release adds.
+	if strings.Contains(string(got.Reveal()), "stored-refresh") {
+		t.Fatal("SandboxCredentialFile yielded the refresh token; a sandbox handed this could rotate the credential out from under the worker")
 	}
 }
 
@@ -134,12 +155,12 @@ func TestSourceRefreshesWhenTheTokenExpiresInsideTheRefreshMargin(t *testing.T) 
 	h := newHarness(t, 30*time.Minute, refreshState{Serial: 7, LastWriter: "someone-earlier"})
 	res := h.rotatesTo(t, 72*time.Hour)
 
-	got, err := h.source.AccessToken(context.Background())
+	got, err := h.source.SandboxCredentialFile(context.Background())
 	if err != nil {
-		t.Fatalf("AccessToken: %v", err)
+		t.Fatalf("SandboxCredentialFile: %v", err)
 	}
-	if got.Reveal() != res.AccessToken.Reveal() {
-		t.Error("AccessToken returned a token other than the rotated one")
+	if accessTokenIn(t, got) != res.AccessToken.Reveal() {
+		t.Error("SandboxCredentialFile returned a token other than the rotated one")
 	}
 	if calls := h.refresher.Calls(); calls != 1 {
 		t.Errorf("presented the refresh token %d times, want exactly 1", calls)
@@ -165,8 +186,8 @@ func TestSourceStampsTheRefreshTimeFromTheInjectedClock(t *testing.T) {
 	h := newHarness(t, 30*time.Minute, refreshState{})
 	h.rotatesTo(t, 72*time.Hour)
 
-	if _, err := h.source.AccessToken(context.Background()); err != nil {
-		t.Fatalf("AccessToken: %v", err)
+	if _, err := h.source.SandboxCredentialFile(context.Background()); err != nil {
+		t.Fatalf("SandboxCredentialFile: %v", err)
 	}
 	if got := string(h.store.Read(CredentialKey)); !strings.Contains(got, `"last_refresh":"2026-07-28T00:00:00Z"`) {
 		t.Errorf("the stored file carries no last_refresh from the injected clock")
@@ -183,8 +204,8 @@ func TestSourceTakesTheLeaseBeforeItPresentsTheRefreshToken(t *testing.T) {
 	var atPresentation [][]string
 	h.refresher.storeState = func(int) { atPresentation = h.store.WrittenKeys() }
 
-	if _, err := h.source.AccessToken(context.Background()); err != nil {
-		t.Fatalf("AccessToken: %v", err)
+	if _, err := h.source.SandboxCredentialFile(context.Background()); err != nil {
+		t.Fatalf("SandboxCredentialFile: %v", err)
 	}
 
 	// This is the whole mechanism in one assertion. The lease is a lease only
@@ -276,14 +297,14 @@ func TestSourceLetsOnlyOneOfTwoIndependentSourcesPresentTheToken(t *testing.T) {
 
 	var (
 		wg   sync.WaitGroup
-		got  [2]work.Credential
+		got  [2]work.CredentialFile
 		errs [2]error
 	)
 	wg.Add(2)
 	for i, src := range []*Source{a.source, b.source} {
 		go func() {
 			defer wg.Done()
-			got[i], errs[i] = src.AccessToken(context.Background())
+			got[i], errs[i] = src.SandboxCredentialFile(context.Background())
 		}()
 	}
 	wg.Wait()
@@ -296,7 +317,7 @@ func TestSourceLetsOnlyOneOfTwoIndependentSourcesPresentTheToken(t *testing.T) {
 		if errs[i] != nil {
 			t.Fatalf("caller %d: %v", i, errs[i])
 		}
-		if got[i].Reveal() != rotated.AccessToken.Reveal() {
+		if accessTokenIn(t, got[i]) != rotated.AccessToken.Reveal() {
 			t.Errorf("caller %d received a token other than the single rotation's", i)
 		}
 	}
@@ -330,12 +351,12 @@ func TestSourceWaitsForALiveForeignLeaseRatherThanPresenting(t *testing.T) {
 		})
 	}
 
-	got, err := h.source.AccessToken(context.Background())
+	got, err := h.source.SandboxCredentialFile(context.Background())
 	if err != nil {
-		t.Fatalf("AccessToken: %v", err)
+		t.Fatalf("SandboxCredentialFile: %v", err)
 	}
-	if got.Reveal() != rotated {
-		t.Error("AccessToken did not return the token the lease holder stored")
+	if accessTokenIn(t, got) != rotated {
+		t.Error("SandboxCredentialFile did not return the token the lease holder stored")
 	}
 	if calls := h.refresher.Calls(); calls != 0 {
 		t.Errorf("presented the refresh token %d times while another holder held the lease, want 0", calls)
@@ -354,9 +375,9 @@ func TestSourceReportsARefreshInProgressAsRetryableWhenTheForeignLeaseOutlivesTh
 		Serial:         3,
 	}})
 
-	_, err := h.source.AccessToken(context.Background())
+	_, err := h.source.SandboxCredentialFile(context.Background())
 	if !errors.Is(err, ErrRefreshInProgress) {
-		t.Fatalf("AccessToken returned %v, want ErrRefreshInProgress", err)
+		t.Fatalf("SandboxCredentialFile returned %v, want ErrRefreshInProgress", err)
 	}
 	// Nothing was presented, so this is the one contended case a retry fixes.
 	if errors.Is(err, work.ErrPermanent) {
@@ -380,7 +401,7 @@ func TestSourceHonoursABlockedCallersOwnCancellation(t *testing.T) {
 	}
 	defer close(release)
 
-	go func() { _, _ = h.source.AccessToken(context.Background()) }()
+	go func() { _, _ = h.source.SandboxCredentialFile(context.Background()) }()
 	<-held
 
 	// Caller A's deadline is not caller B's. A mutex has no context-aware
@@ -389,7 +410,7 @@ func TestSourceHonoursABlockedCallersOwnCancellation(t *testing.T) {
 	cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := h.source.AccessToken(ctx)
+		_, err := h.source.SandboxCredentialFile(ctx)
 		done <- err
 	}()
 
@@ -415,8 +436,8 @@ func TestSourceDoesNotRefreshAtAllWhenManyCallersShareAFreshToken(t *testing.T) 
 	for range 64 {
 		go func() {
 			defer wg.Done()
-			if _, err := h.source.AccessToken(context.Background()); err != nil {
-				t.Errorf("AccessToken: %v", err)
+			if _, err := h.source.SandboxCredentialFile(context.Background()); err != nil {
+				t.Errorf("SandboxCredentialFile: %v", err)
 			}
 		}()
 	}
@@ -452,8 +473,8 @@ func TestSourceSerialisesTwoSuccessiveExpiriesIntoTwoRefreshes(t *testing.T) {
 		for range 8 {
 			go func() {
 				defer wg.Done()
-				if _, err := h.source.AccessToken(context.Background()); err != nil {
-					t.Errorf("AccessToken: %v", err)
+				if _, err := h.source.SandboxCredentialFile(context.Background()); err != nil {
+					t.Errorf("SandboxCredentialFile: %v", err)
 				}
 			}()
 		}
@@ -478,9 +499,9 @@ func TestSourceReleasesTheLeaseAndRetriesWhenTheRequestNeverReachedTheWire(t *te
 	h := newHarness(t, 30*time.Minute, refreshState{Serial: 4})
 	h.scripts(reply{outcome: RefreshNotSent, err: errors.New("dial tcp: connection refused")})
 
-	_, err := h.source.AccessToken(context.Background())
+	_, err := h.source.SandboxCredentialFile(context.Background())
 	if err == nil {
-		t.Fatal("AccessToken succeeded after a failed presentation")
+		t.Fatal("SandboxCredentialFile succeeded after a failed presentation")
 	}
 	// A DNS failure or a refused connection must stay an ordinary blip. If it
 	// halted, every network hiccup would demand a browser login.
@@ -500,9 +521,9 @@ func TestSourceHaltsAndLeavesTheAttemptUnresolvedWhenTheOutcomeIsUnknown(t *test
 	h := newHarness(t, 30*time.Minute, refreshState{Serial: 4})
 	h.scripts(reply{outcome: RefreshUnknown, err: errors.New("context deadline exceeded")})
 
-	_, err := h.source.AccessToken(context.Background())
+	_, err := h.source.SandboxCredentialFile(context.Background())
 	if !errors.Is(err, ErrRefreshOutcomeUnknown) {
-		t.Fatalf("AccessToken returned %v, want ErrRefreshOutcomeUnknown", err)
+		t.Fatalf("SandboxCredentialFile returned %v, want ErrRefreshOutcomeUnknown", err)
 	}
 	if !errors.Is(err, work.ErrPermanent) {
 		t.Error("an unknown outcome must be permanent: retrying presents a token that may already be spent")
@@ -532,9 +553,9 @@ func TestSourceRefusesToPresentATokenWhoseUnresolvedAttemptHasAlreadyBeenTakenOv
 		TakeoverOf:     "worker-first/0000",
 	}})
 
-	_, err := h.source.AccessToken(context.Background())
+	_, err := h.source.SandboxCredentialFile(context.Background())
 	if !errors.Is(err, ErrRefreshOutcomeUnknown) {
-		t.Fatalf("AccessToken returned %v, want ErrRefreshOutcomeUnknown", err)
+		t.Fatalf("SandboxCredentialFile returned %v, want ErrRefreshOutcomeUnknown", err)
 	}
 	if calls := h.refresher.Calls(); calls != 0 {
 		t.Errorf("presented %d times, want 0 — one takeover per generation is the bound, and it is used", calls)
@@ -557,11 +578,11 @@ func TestSourceTakesOverExactlyOneExpiredAttemptAndRecordsThePreviousHolder(t *t
 	var takeoverAtPresentation string
 	h.refresher.storeState = func(int) { takeoverAtPresentation = takeoverOf(t, h.store) }
 
-	got, err := h.source.AccessToken(context.Background())
+	got, err := h.source.SandboxCredentialFile(context.Background())
 	if err != nil {
-		t.Fatalf("AccessToken: %v", err)
+		t.Fatalf("SandboxCredentialFile: %v", err)
 	}
-	if got.Reveal() != res.AccessToken.Reveal() {
+	if accessTokenIn(t, got) != res.AccessToken.Reveal() {
 		t.Error("the takeover did not return the rotated token")
 	}
 	if takeoverAtPresentation != dead {
@@ -590,9 +611,9 @@ func TestSourceHaltsNonRetryablyWhenTheProviderRejectsTheRefreshToken(t *testing
 	h.scripts(reply{outcome: RefreshRejected, err: errors.New("invalid_grant")})
 	stored := h.storedAccess(t)
 
-	_, err := h.source.AccessToken(context.Background())
+	_, err := h.source.SandboxCredentialFile(context.Background())
 	if !errors.Is(err, ErrRefreshRejected) {
-		t.Fatalf("AccessToken returned %v, want ErrRefreshRejected", err)
+		t.Fatalf("SandboxCredentialFile returned %v, want ErrRefreshRejected", err)
 	}
 	if !errors.Is(err, work.ErrPermanent) {
 		t.Error("a rejected refresh token must be permanent — asking again cannot un-spend it")
@@ -616,9 +637,9 @@ func TestSourceReportsAPreviouslyRecordedRejectionWithoutPresentingAgain(t *test
 		Outcome:        outcomeRejected,
 	}})
 
-	_, err := h.source.AccessToken(context.Background())
+	_, err := h.source.SandboxCredentialFile(context.Background())
 	if !errors.Is(err, ErrRefreshRejected) {
-		t.Fatalf("AccessToken returned %v, want ErrRefreshRejected", err)
+		t.Fatalf("SandboxCredentialFile returned %v, want ErrRefreshRejected", err)
 	}
 	if calls := h.refresher.Calls(); calls != 0 {
 		t.Errorf("presented %d times against a token already known dead, want 0", calls)
@@ -635,9 +656,9 @@ func TestSourceDoesNotBeginAPresentationOnceTheContextIsCancelled(t *testing.T) 
 	ctx, cancel := context.WithCancel(context.Background())
 	h.store.AfterPut = func(_ int, _ []string, _ error) { cancel() }
 
-	_, err := h.source.AccessToken(ctx)
+	_, err := h.source.SandboxCredentialFile(ctx)
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("AccessToken returned %v, want the context error", err)
+		t.Fatalf("SandboxCredentialFile returned %v, want the context error", err)
 	}
 	if errors.Is(err, work.ErrPermanent) {
 		t.Error("a cancellation before presenting is retryable — nothing was spent")
@@ -664,12 +685,12 @@ func TestSourceSucceedsWhenItsOwnWriteLandedButTheResponseWasLost(t *testing.T) 
 		return nil
 	}
 
-	got, err := h.source.AccessToken(context.Background())
+	got, err := h.source.SandboxCredentialFile(context.Background())
 	if err != nil {
-		t.Fatalf("AccessToken returned %v; a writer that cannot recognise its own landed write turns the commonest blip into a dead credential", err)
+		t.Fatalf("SandboxCredentialFile returned %v; a writer that cannot recognise its own landed write turns the commonest blip into a dead credential", err)
 	}
-	if got.Reveal() != res.AccessToken.Reveal() {
-		t.Error("AccessToken returned a token other than the rotated one")
+	if accessTokenIn(t, got) != res.AccessToken.Reveal() {
+		t.Error("SandboxCredentialFile returned a token other than the rotated one")
 	}
 	if calls := h.refresher.Calls(); calls != 1 {
 		t.Errorf("presented %d times, want 1 — never re-present to recover a lost response", calls)
@@ -689,12 +710,12 @@ func TestSourceRetriesTheSettleWhenOnlyUnrelatedMetadataChanged(t *testing.T) {
 		}
 	}
 
-	got, err := h.source.AccessToken(context.Background())
+	got, err := h.source.SandboxCredentialFile(context.Background())
 	if err != nil {
-		t.Fatalf("AccessToken: %v", err)
+		t.Fatalf("SandboxCredentialFile: %v", err)
 	}
-	if got.Reveal() != res.AccessToken.Reveal() {
-		t.Error("AccessToken returned a token other than the rotated one")
+	if accessTokenIn(t, got) != res.AccessToken.Reveal() {
+		t.Error("SandboxCredentialFile returned a token other than the rotated one")
 	}
 	if h.storedAccess(t) != res.AccessToken.Reveal() {
 		t.Error("the rotated token was not stored after the retry")
@@ -721,9 +742,9 @@ func TestSourceHaltsWhenAForeignWriterChangedTheCredentialGeneration(t *testing.
 		h.store.ForceWrite(map[string][]byte{StateKey: foreign})
 	}
 
-	_, err := h.source.AccessToken(context.Background())
+	_, err := h.source.SandboxCredentialFile(context.Background())
 	if !errors.Is(err, ErrSingleWriterViolated) {
-		t.Fatalf("AccessToken returned %v, want ErrSingleWriterViolated", err)
+		t.Fatalf("SandboxCredentialFile returned %v, want ErrSingleWriterViolated", err)
 	}
 	if !errors.Is(err, work.ErrPermanent) {
 		t.Error("a second writer must halt permanently — retrying races it again")
@@ -748,12 +769,12 @@ func TestSourceRetriesATransientSettleFailureRatherThanLosingARotatedToken(t *te
 		return nil
 	}
 
-	got, err := h.source.AccessToken(context.Background())
+	got, err := h.source.SandboxCredentialFile(context.Background())
 	if err != nil {
-		t.Fatalf("AccessToken: %v", err)
+		t.Fatalf("SandboxCredentialFile: %v", err)
 	}
-	if got.Reveal() != res.AccessToken.Reveal() {
-		t.Error("AccessToken returned a token other than the rotated one")
+	if accessTokenIn(t, got) != res.AccessToken.Reveal() {
+		t.Error("SandboxCredentialFile returned a token other than the rotated one")
 	}
 	if h.storedAccess(t) != res.AccessToken.Reveal() {
 		t.Error("the rotated token was not stored")
@@ -776,9 +797,9 @@ func TestSourceReportsTheCredentialLostWhenARotatedTokenCannotBeStored(t *testin
 		return nil
 	}
 
-	_, err := h.source.AccessToken(context.Background())
+	_, err := h.source.SandboxCredentialFile(context.Background())
 	if !errors.Is(err, ErrCredentialLost) {
-		t.Fatalf("AccessToken returned %v, want ErrCredentialLost", err)
+		t.Fatalf("SandboxCredentialFile returned %v, want ErrCredentialLost", err)
 	}
 	// Returning the in-hand token here would work perfectly, unattended, for
 	// days — and then brick with nobody watching and no proximate cause.
@@ -797,9 +818,9 @@ func TestSourceStoresTheRotatedTokenBeforeFailingOnAShortLivedRefreshResult(t *t
 	// spend a single-use refresh token for nothing.
 	res := h.rotatesTo(t, 20*time.Minute)
 
-	_, err := h.source.AccessToken(context.Background())
+	_, err := h.source.SandboxCredentialFile(context.Background())
 	if !errors.Is(err, ErrRefreshTooShortLived) {
-		t.Fatalf("AccessToken returned %v, want ErrRefreshTooShortLived", err)
+		t.Fatalf("SandboxCredentialFile returned %v, want ErrRefreshTooShortLived", err)
 	}
 	if h.storedAccess(t) != res.AccessToken.Reveal() {
 		t.Fatal("the rotated pair was not stored before failing; the old refresh token is spent and the new one is gone")
@@ -824,9 +845,9 @@ func TestSourceReportsTheCredentialUnseededWhenTheSecretIsAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	_, err = source.AccessToken(context.Background())
+	_, err = source.SandboxCredentialFile(context.Background())
 	if !errors.Is(err, ErrUnseeded) {
-		t.Fatalf("AccessToken returned %v, want ErrUnseeded", err)
+		t.Fatalf("SandboxCredentialFile returned %v, want ErrUnseeded", err)
 	}
 	if !errors.Is(err, work.ErrPermanent) {
 		t.Error("an unseeded credential must be permanent — no retry seeds it")
@@ -857,9 +878,9 @@ func TestSourceTreatsAnUnreadableSecretAsRetryable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	_, err = source.AccessToken(context.Background())
+	_, err = source.SandboxCredentialFile(context.Background())
 	if err == nil {
-		t.Fatal("AccessToken succeeded against an unreadable secret")
+		t.Fatal("SandboxCredentialFile succeeded against an unreadable secret")
 	}
 	// "I could not tell" is not "it is not there". Collapsing the two would
 	// turn an apiserver blip into a demand for a browser login.
@@ -1021,9 +1042,9 @@ func TestSourceStoresARotatedRefreshTokenThatArrivedWithoutAnAccessToken(t *test
 	h := newHarness(t, 30*time.Minute, refreshState{Serial: 4})
 	h.scripts(reply{res: Refreshed{RefreshToken: work.NewCredential("rotated-refresh")}, outcome: RefreshRotated})
 
-	_, err := h.source.AccessToken(context.Background())
+	_, err := h.source.SandboxCredentialFile(context.Background())
 	if err == nil {
-		t.Fatal("AccessToken returned a token when none came back")
+		t.Fatal("SandboxCredentialFile returned a token when none came back")
 	}
 	if !errors.Is(err, work.ErrPermanent) {
 		t.Error("a rotation with no usable access token must halt rather than loop")
@@ -1051,9 +1072,9 @@ func TestSourceReportsAReusedRefreshTokenAsASingleWriterViolation(t *testing.T) 
 	h := newHarness(t, 30*time.Minute, refreshState{Serial: 4})
 	h.scripts(reply{outcome: RefreshReused, err: errors.New("refresh_token_reused")})
 
-	_, err := h.source.AccessToken(context.Background())
+	_, err := h.source.SandboxCredentialFile(context.Background())
 	if !errors.Is(err, ErrSingleWriterViolated) {
-		t.Fatalf("AccessToken returned %v, want ErrSingleWriterViolated", err)
+		t.Fatalf("SandboxCredentialFile returned %v, want ErrSingleWriterViolated", err)
 	}
 	if _, _, deaths := h.metrics.snapshot(); len(deaths) != 1 || deaths[0] != DeathSingleWriterViolated {
 		t.Errorf("recorded deaths = %v, want one %s — the operator must be told to find who, not to re-seed", deaths, DeathSingleWriterViolated)
@@ -1072,8 +1093,8 @@ func TestSourcePreservesTheTakeoverBudgetWhenItReleasesWithoutPresenting(t *test
 	h := newHarness(t, 30*time.Minute, refreshState{Serial: 4, Attempt: prior})
 	h.scripts(reply{outcome: RefreshNotSent, err: errors.New("dial tcp: connection refused")})
 
-	if _, err := h.source.AccessToken(context.Background()); err == nil {
-		t.Fatal("AccessToken succeeded after a failed presentation")
+	if _, err := h.source.SandboxCredentialFile(context.Background()); err == nil {
+		t.Fatal("SandboxCredentialFile succeeded after a failed presentation")
 	}
 
 	// Clearing the attempt here would erase the record that the dead holder's
@@ -1103,7 +1124,7 @@ func TestSourceRefusesAThirdPresentationAfterATakeoverThatWasUsed(t *testing.T) 
 	// The takeover presents and its outcome is unknown, so the budget is spent.
 	h.scripts(reply{outcome: RefreshUnknown, err: errors.New("context deadline exceeded")})
 
-	if _, err := h.source.AccessToken(context.Background()); !errors.Is(err, ErrRefreshOutcomeUnknown) {
+	if _, err := h.source.SandboxCredentialFile(context.Background()); !errors.Is(err, ErrRefreshOutcomeUnknown) {
 		t.Fatalf("the takeover returned %v, want ErrRefreshOutcomeUnknown", err)
 	}
 	presentedByTakeover := h.refresher.Calls()
@@ -1111,7 +1132,7 @@ func TestSourceRefusesAThirdPresentationAfterATakeoverThatWasUsed(t *testing.T) 
 	// A later actor, at the same generation, must not present again: two
 	// unknown outcomes in a row is exactly the crash-loop the bound prevents.
 	h.clock.Advance(2 * time.Hour)
-	if _, err := h.source.AccessToken(context.Background()); !errors.Is(err, ErrRefreshOutcomeUnknown) {
+	if _, err := h.source.SandboxCredentialFile(context.Background()); !errors.Is(err, ErrRefreshOutcomeUnknown) {
 		t.Fatalf("the follow-up returned %v, want ErrRefreshOutcomeUnknown", err)
 	}
 	if h.refresher.Calls() != presentedByTakeover {
@@ -1148,12 +1169,12 @@ func TestSourceReportsBeingTakenOverAsALostCredentialRatherThanAForeignWriter(t 
 		h.store.ForceWrite(map[string][]byte{StateKey: taken})
 	}
 
-	_, err := h.source.AccessToken(context.Background())
+	_, err := h.source.SandboxCredentialFile(context.Background())
 	if errors.Is(err, ErrSingleWriterViolated) {
 		t.Fatal("a holder taking over our own expired lease was reported as a foreign writer")
 	}
 	if !errors.Is(err, ErrCredentialLost) {
-		t.Fatalf("AccessToken returned %v, want ErrCredentialLost", err)
+		t.Fatalf("SandboxCredentialFile returned %v, want ErrCredentialLost", err)
 	}
 	if !strings.Contains(h.logs.String(), "worker-later/9999") {
 		t.Error("the holder that took over was not named")
@@ -1188,8 +1209,8 @@ func TestSourceBoundsTheWritesThatFollowAPresentation(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	if _, err := source.AccessToken(context.Background()); err != nil {
-		t.Fatalf("AccessToken: %v", err)
+	if _, err := source.SandboxCredentialFile(context.Background()); err != nil {
+		t.Fatalf("SandboxCredentialFile: %v", err)
 	}
 	bounded.mu.Lock()
 	defer bounded.mu.Unlock()

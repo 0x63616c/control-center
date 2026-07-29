@@ -129,9 +129,18 @@
 //
 // # What the CLI needs in the file it is handed
 //
-// Read from codex-cli rust-v0.145.0, and load-bearing for whoever composes a
-// sandbox's credential file — which is not this package, since
-// activities.TokenSource yields an access token and nothing else.
+// Read from codex-cli rust-v0.145.0. This package is where these rules live,
+// because it is the one that has read that source: activities.TokenSource
+// yields the sandbox's whole credential file, not a token, precisely so no
+// caller has to know any of the below.
+//
+// Note how little they have in common — id_token mandatory and JWT-parsed,
+// OPENAI_API_KEY present but nullable, refresh_token present but blankable,
+// everything else omissible. There is no rule across these fields, only a list,
+// which is the argument for DERIVING a sandbox's file from the stored one
+// rather than composing a new one: derived, every key survives because nothing
+// enumerated it, and a codex release that adds a mandatory field breaks
+// nothing. See Source.SandboxCredentialFile.
 //
 //   - tokens.id_token is MANDATORY and must be a syntactically valid JWT. It
 //     has no serde default and a deserializer that parses it, and the CLI reads
@@ -148,9 +157,21 @@
 //     ChatGPT tokens are ignored entirely.
 //   - auth_mode wins over that inference when present; "chatgpt" is the value
 //     for a subscription login.
+//   - tokens.refresh_token must be PRESENT, and for a sandbox's copy it must be
+//     the EMPTY STRING. It is a bare String on TokenData with no Option, no
+//     serde default and no custom deserializer, so a blank value parses while
+//     an absent key or a null fails the entire document. "Blank the refresh
+//     token" reads naturally as either blanking or removing, and removing
+//     produces a sandbox that cannot start, so the instruction is the
+//     imperative and not the intent: set it to "", never delete it.
+//   - last_refresh is carried verbatim into a sandbox's copy. codex consults it
+//     only as a fallback — should_refresh_proactively returns inside the
+//     access-token branch whenever tokens parse, so for a well-formed file the
+//     8-day rule is unreachable and the value is never read.
 //
-// All four are keys this service does not model, and all four survive a
-// rotation because the file is patched rather than re-marshalled.
+// All four of the first group are keys this service does not model, and all
+// four survive a rotation because the file is patched rather than
+// re-marshalled.
 //
 // # Leak audit
 //
@@ -176,9 +197,14 @@
 //   - The refresh token travels in a JSON request body, never in a URL or a
 //     query string; only the provider's own error code is logged from a
 //     response, never the body that carries the new pair.
-//   - AccessToken returns a work.Credential, whose MarshalJSON refuses, so an
-//     activity that tried to return one to a workflow fails loudly rather than
-//     writing it to Temporal history.
+//   - SandboxCredentialFile returns a work.CredentialFile, whose MarshalJSON
+//     refuses, so an activity that tried to return one to a workflow fails
+//     loudly rather than writing it to Temporal history. Its LogValue returns
+//     slog.Value rather than any, so slog genuinely calls it.
+//   - No exported method returns the stored document or the refresh token, so
+//     no package outside this one can obtain a refresh token — there is no
+//     function that yields it. Absent API surface is the strongest guarantee
+//     available here, and it is why the seam has one method rather than two.
 //   - Test fixtures are synthetic unsigned JWTs. No credential-shaped value
 //     exists in this repository.
 package codexauth
