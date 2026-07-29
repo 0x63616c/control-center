@@ -23,7 +23,7 @@ func run(pidfilePath string, argv []string, stderr io.Writer) int {
 	// appear, --kill would become a silent no-op, and kill-on-cancel would be
 	// defeated while still logging that a kill was attempted.
 	if err := os.MkdirAll(filepath.Dir(pidfilePath), 0o755); err != nil {
-		fmt.Fprintf(stderr, "sandbox-exec: creating the pidfile directory for %s: %v\n", pidfilePath, err)
+		warn(stderr, "creating the pidfile directory for %s: %v", pidfilePath, err)
 		return exitInternal
 	}
 
@@ -32,7 +32,7 @@ func run(pidfilePath string, argv []string, stderr io.Writer) int {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	if err := cmd.Start(); err != nil {
-		fmt.Fprintf(stderr, "sandbox-exec: starting %s: %v\n", argv[0], err)
+		warn(stderr, "starting %s: %v", argv[0], err)
 		if errors.Is(err, exec.ErrNotFound) || errors.Is(err, syscall.ENOENT) {
 			return exitNotFound
 		}
@@ -44,7 +44,7 @@ func run(pidfilePath string, argv []string, stderr io.Writer) int {
 		// exactly the failure this shim exists to prevent: the caller would
 		// cancel, issue a kill that finds no pidfile, and log a kill it never
 		// performed while the stage kept burning quota.
-		fmt.Fprintf(stderr, "sandbox-exec: recording the child PID in %s: %v; killing the child\n", pidfilePath, err)
+		warn(stderr, "recording the child PID in %s: %v; killing the child", pidfilePath, err)
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		_ = cmd.Wait()
 		return exitInternal
@@ -55,7 +55,7 @@ func run(pidfilePath string, argv []string, stderr io.Writer) int {
 	// Removed on every path, including a signalled child: a stale pidfile would
 	// make a later kill address a PID the kernel has since reused.
 	if err := os.Remove(pidfilePath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		fmt.Fprintf(stderr, "sandbox-exec: removing %s: %v\n", pidfilePath, err)
+		warn(stderr, "removing %s: %v", pidfilePath, err)
 	}
 
 	return exitStatus(waitErr, stderr)
@@ -102,7 +102,7 @@ func exitStatus(waitErr error, stderr io.Writer) int {
 	}
 	var exitErr *exec.ExitError
 	if !errors.As(waitErr, &exitErr) {
-		fmt.Fprintf(stderr, "sandbox-exec: waiting for the child: %v\n", waitErr)
+		warn(stderr, "waiting for the child: %v", waitErr)
 		return exitInternal
 	}
 	status, ok := exitErr.Sys().(syscall.WaitStatus)

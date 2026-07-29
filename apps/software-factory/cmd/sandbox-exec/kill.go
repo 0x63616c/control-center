@@ -25,7 +25,7 @@ const pollInterval = 50 * time.Millisecond
 func kill(pidfilePath string, grace time.Duration, stderr io.Writer) int {
 	pid, err := awaitPID(pidfilePath)
 	if err != nil {
-		fmt.Fprintf(stderr, "sandbox-exec: %v\n", err)
+		warn(stderr, "%v", err)
 		return exitInternal
 	}
 
@@ -34,7 +34,7 @@ func kill(pidfilePath string, grace time.Duration, stderr io.Writer) int {
 		if errors.Is(err, syscall.ESRCH) {
 			return 0 // Already gone. The caller asked for stopped, and it is.
 		}
-		fmt.Fprintf(stderr, "sandbox-exec: sending SIGTERM to process group %d: %v\n", pid, err)
+		warn(stderr, "sending SIGTERM to process group %d: %v", pid, err)
 		return exitInternal
 	}
 
@@ -43,7 +43,7 @@ func kill(pidfilePath string, grace time.Duration, stderr io.Writer) int {
 	}
 
 	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
-		fmt.Fprintf(stderr, "sandbox-exec: sending SIGKILL to process group %d: %v\n", pid, err)
+		warn(stderr, "sending SIGKILL to process group %d: %v", pid, err)
 		return exitInternal
 	}
 	return 0

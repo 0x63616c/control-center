@@ -65,7 +65,7 @@ func dispatch(args []string, stderr io.Writer) int {
 	fs := flag.NewFlagSet("sandbox-exec", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		fmt.Fprint(stderr, "usage:\n"+
+		_, _ = fmt.Fprint(stderr, "usage:\n"+
 			"  sandbox-exec --pidfile P [--grace D] -- ARGV...\n"+
 			"  sandbox-exec --kill P [--grace D]\n")
 	}
@@ -79,18 +79,18 @@ func dispatch(args []string, stderr io.Writer) int {
 
 	switch {
 	case *pidfile != "" && *killPath != "":
-		fmt.Fprintln(stderr, "sandbox-exec: --pidfile and --kill are different modes; pass one")
+		warn(stderr, "--pidfile and --kill are different modes; pass one")
 		return exitUsage
 	case *pidfile != "":
 		argv := fs.Args()
 		if len(argv) == 0 {
-			fmt.Fprintln(stderr, "sandbox-exec: --pidfile needs a command after --")
+			warn(stderr, "--pidfile needs a command after --")
 			return exitUsage
 		}
 		return run(*pidfile, argv, stderr)
 	case *killPath != "":
 		if len(fs.Args()) > 0 {
-			fmt.Fprintln(stderr, "sandbox-exec: --kill takes no command")
+			warn(stderr, "--kill takes no command")
 			return exitUsage
 		}
 		return kill(*killPath, *grace, stderr)
@@ -98,4 +98,14 @@ func dispatch(args []string, stderr io.Writer) int {
 		fs.Usage()
 		return exitUsage
 	}
+}
+
+// warn reports a shim failure on stderr.
+//
+// Every exit status this shim invents is ambiguous with some child's, so this
+// line is the unambiguous half of the signal — which is why the k8s client
+// retains stderr on both the run and the kill path. The write error is
+// discarded deliberately: there is nowhere left to report it.
+func warn(w io.Writer, format string, args ...any) {
+	_, _ = fmt.Fprintf(w, "sandbox-exec: "+format+"\n", args...)
 }
