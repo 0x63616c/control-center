@@ -405,6 +405,7 @@ func TestStatusMarshalsToTheDocumentAnOperatorReads(t *testing.T) {
 	}
 
 	const want = `{"config":{"paused":false,"maxInFlight":2,"breakerCooldownSeconds":900,` +
+		`"pollIntervalSeconds":30,"orphanGraceSeconds":1800,` +
 		`"defaultModel":{"name":"gpt-5.6-terra","effort":"medium"},"stageModels":{}},` +
 		`"inFlight":[312,330],` +
 		`"breaker":{"openUntil":"2026-07-28T12:00:00Z","reason":"rate limited"},` +

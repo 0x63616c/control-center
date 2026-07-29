@@ -7,164 +7,259 @@ import (
 	"strings"
 	"testing"
 
-	"go.temporal.io/sdk/temporal"
-
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codex"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+	"go.temporal.io/sdk/temporal"
 )
 
-// nonRetryable reports what Temporal would make of an error: whether it is an
-// ApplicationError, and whether it has been marked as not worth retrying.
-func nonRetryable(t *testing.T, err error) (marked, isApplication bool) {
+// permanent builds an error shaped the way the github client builds one: a kind
+// and work.ErrPermanent travelling together.
+func permanent(kind error) error {
+	return fmt.Errorf("clearing the auto label on issue #1: %w (%w): %w", kind, work.ErrPermanent, errors.New("403"))
+}
+
+func appErrorOf(t *testing.T, err error) *temporal.ApplicationError {
 	t.Helper()
-
-	var appErr *temporal.ApplicationError
-	if !errors.As(err, &appErr) {
-		return false, false
+	var app *temporal.ApplicationError
+	if !errors.As(err, &app) {
+		t.Fatalf("expected an ApplicationError, got %T: %v", err, err)
 	}
-	return appErr.NonRetryable(), true
+	return app
 }
 
-func TestTranslateMarksAPermanentFailureAsNotWorthRetrying(t *testing.T) {
+func TestFailTypesAPermanentAuthFailureSoTheDispatcherCanPauseOnIt(t *testing.T) {
 	t.Parallel()
 
-	// The shape a client actually produces: a domain sentinel wrapped in the
-	// context of what was being attempted.
-	err := fmt.Errorf("minting an installation token: %w", fmt.Errorf("the App is not installed: %w", work.ErrPermanent))
+	err := fail(t.Context(), "clearing the auto label", permanent(github.ErrAuth))
 
-	got := Translate(err)
-	marked, isApp := nonRetryable(t, got)
-	if !isApp {
-		t.Fatalf("Translate returned %T, want a *temporal.ApplicationError", got)
+	app := appErrorOf(t, err)
+	if app.Type() != ErrTypeAuth {
+		t.Fatalf("type = %q, want %q — the dispatcher pauses on this type and nothing else", app.Type(), ErrTypeAuth)
 	}
-	if !marked {
-		t.Error("a permanent failure was left retryable; Temporal would pay for attempts that cannot succeed")
+	if !app.NonRetryable() {
+		t.Fatal("no number of retries mints a permission the installation does not hold")
 	}
 }
 
-func TestTranslateKeepsTheDiagnosisIntact(t *testing.T) {
-	t.Parallel()
-
-	cause := fmt.Errorf("the App is not installed on this repository: %w", work.ErrPermanent)
-	got := Translate(fmt.Errorf("minting an installation token: %w", cause))
-
-	// The operator reads the failure in Temporal's UI, and the sentinel is the
-	// least interesting part of it. Losing the wrapping leaves "permanent
-	// failure" with no statement of what failed.
-	if msg := got.Error(); !strings.Contains(msg, "minting an installation token") || !strings.Contains(msg, "not installed") {
-		t.Errorf("translated message %q dropped the context it was wrapped in", msg)
-	}
-	// And the domain sentinel survives, so code between the failure and the
-	// activity boundary can still recognise its own error.
-	if !errors.Is(got, work.ErrPermanent) {
-		t.Error("translation severed the cause; errors.Is(err, work.ErrPermanent) no longer holds")
-	}
-}
-
-func TestTranslateNamesOneStableErrorType(t *testing.T) {
-	t.Parallel()
-
-	var appErr *temporal.ApplicationError
-	if !errors.As(Translate(fmt.Errorf("wrapped: %w", work.ErrPermanent)), &appErr) {
-		t.Fatal("Translate did not produce an ApplicationError")
-	}
-	// Retry policies name error types as strings, so this one is a published
-	// identifier: renaming it silently disarms every policy that lists it.
-	if appErr.Type() != ErrorTypePermanent {
-		t.Errorf("error type = %q, want %q", appErr.Type(), ErrorTypePermanent)
-	}
-}
-
-func TestTranslateLeavesEverythingElseRetryable(t *testing.T) {
+func TestFailTypesEachKindTheClientDistinguishes(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name string
-		err  error
+		kind error
+		want string
 	}{
-		{name: "no error at all", err: nil},
-		{name: "a transient GitHub failure", err: errors.New("502 from api.github.com")},
-		{name: "a stored object changed under a write", err: fmt.Errorf("saving: %w", work.ErrVersionConflict)},
-		{name: "a file missing from a sandbox", err: fmt.Errorf("reading the result: %w", work.ErrFileNotFound)},
+		{github.ErrAuth, ErrTypeAuth},
+		{github.ErrRateLimit, ErrTypeRateLimit},
+		{github.ErrNotFound, ErrTypeNotFound},
+		{github.ErrInvalid, ErrTypeInvalid},
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, c := range cases {
+		t.Run(c.want, func(t *testing.T) {
 			t.Parallel()
-
-			got := Translate(tc.err)
-			// Retryable is Temporal's default, and the default is reached by
-			// handing the error back untouched. Anything else here would be a
-			// second taxonomy sitting beside Temporal's own.
-			if !errors.Is(got, tc.err) {
-				t.Errorf("Translate(%v) = %v, want the error unchanged", tc.err, got)
-			}
-			if marked, _ := nonRetryable(t, got); marked {
-				t.Errorf("Translate(%v) marked a retryable failure as permanent", tc.err)
+			app := appErrorOf(t, fail(t.Context(), "op", permanent(c.kind)))
+			if app.Type() != c.want {
+				t.Fatalf("type = %q, want %q", app.Type(), c.want)
 			}
 		})
 	}
 }
 
-func TestTranslateLeavesCancellationAlone(t *testing.T) {
+func TestFailTypesAPermanentFailureWithNoKindAsPermanent(t *testing.T) {
+	t.Parallel()
+
+	app := appErrorOf(t, fail(t.Context(), "op", fmt.Errorf("the sandbox never became ready: %w", work.ErrPermanent)))
+
+	if app.Type() != ErrTypePermanent {
+		t.Fatalf("type = %q, want %q", app.Type(), ErrTypePermanent)
+	}
+	if !app.NonRetryable() {
+		t.Fatal("work.ErrPermanent is the one bit that means stop paying for attempts")
+	}
+}
+
+func TestFailLeavesAnUnmarkedFailureRetryable(t *testing.T) {
+	t.Parallel()
+
+	app := appErrorOf(t, fail(t.Context(), "op", errors.New("502 bad gateway")))
+
+	if app.NonRetryable() {
+		t.Fatal("anything unmarked is retryable — that is Temporal's default and this must not override it")
+	}
+	if app.Type() != ErrTypeTransient {
+		t.Fatalf("type = %q, want %q", app.Type(), ErrTypeTransient)
+	}
+}
+
+func TestFailKeepsARetryableRateLimitRetryable(t *testing.T) {
+	t.Parallel()
+
+	// A secondary limit: the client marks the kind but deliberately not
+	// permanence, because it is typically a minute long and failing the
+	// activity would discard every token the run has already spent.
+	secondary := fmt.Errorf("posting a status comment: %w, github asked us to wait 1m0s", github.ErrRateLimit)
+
+	app := appErrorOf(t, fail(t.Context(), "op", secondary))
+
+	if app.NonRetryable() {
+		t.Fatal("a transient rate limit must stay retryable; only the permanent one is fatal")
+	}
+	if app.Type() != ErrTypeRateLimit {
+		t.Fatalf("type = %q, want %q — the type says why, NonRetryable says whether", app.Type(), ErrTypeRateLimit)
+	}
+}
+
+func TestFailReportsCancellationAsCancellationRatherThanAsAFailure(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	err := fail(ctx, "running the plan stage", errors.New("exec stream closed"))
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("a cancelled activity must surface as cancellation, got %v", err)
+	}
+	var app *temporal.ApplicationError
+	if errors.As(err, &app) {
+		t.Fatal("cancellation must not be dressed up as an application error, or Temporal retries into a dead context")
+	}
+}
+
+func TestFailNamesTheOperationItWasDoing(t *testing.T) {
+	t.Parallel()
+
+	err := fail(t.Context(), "clearing the auto label on issue #328", permanent(github.ErrAuth))
+
+	if got := err.Error(); !strings.Contains(got, "clearing the auto label on issue #328") {
+		t.Fatalf("the message must name the operation, got %q", got)
+	}
+}
+
+func TestFailPassesNilThrough(t *testing.T) {
+	t.Parallel()
+
+	if err := fail(t.Context(), "op", nil); err != nil {
+		t.Fatalf("success is not a failure, got %v", err)
+	}
+}
+
+func TestFailureKindOfReadsBackWhatTheDispatcherActsOn(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
 		name string
 		err  error
+		want work.FailureKind
 	}{
-		{name: "the activity was cancelled", err: context.Canceled},
-		{name: "the activity ran out of time", err: context.DeadlineExceeded},
-		{name: "cancellation reported through a permanent wrapper", err: fmt.Errorf("%w: %w", work.ErrPermanent, context.Canceled)},
+		{"nil", nil, work.FailureNone},
+		{"auth", fail(t.Context(), "op", permanent(github.ErrAuth)), work.FailureAuth},
+		{"rate limit", fail(t.Context(), "op", permanent(github.ErrRateLimit)), work.FailureRateLimit},
+		{"not found", fail(t.Context(), "op", permanent(github.ErrNotFound)), work.FailureOther},
+		{"transient", fail(t.Context(), "op", errors.New("502")), work.FailureOther},
+		{"not an application error", errors.New("plain"), work.FailureOther},
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-
-			// A drained worker cancels its activities. Turning that into an
-			// application failure would make a clean SIGTERM look like a
-			// ticket that failed permanently, and the ticket would not be
-			// picked up again.
-			got := Translate(tc.err)
-			if marked, _ := nonRetryable(t, got); marked {
-				t.Errorf("Translate(%v) turned cancellation into a permanent application failure", tc.err)
-			}
-			if !errors.Is(got, tc.err) {
-				t.Errorf("Translate(%v) = %v, want the error unchanged", tc.err, got)
+			if got := FailureKindOf(c.err); got != c.want {
+				t.Fatalf("FailureKindOf = %q, want %q", got, c.want)
 			}
 		})
 	}
 }
 
-// TestThePermanentErrorTypeIsTheNamePoliciesQuote pins the wire name against a
-// literal, because every other assertion here compares Translate's output to
-// ErrorTypePermanent — the constant itself — which is a tautology a rename
-// satisfies.
-//
-// This name is not a message. A RetryPolicy names error types as strings in
-// NonRetryableErrorTypes, so C1/C2 are about to write "PermanentFailure" in
-// workflow code that cannot import this constant. Rename it here and every
-// policy quoting the old spelling is disarmed in silence: a permanent auth
-// failure against a spent credential becomes an infinite retry loop, with a
-// green build and green tests. Changing this string is changing a published
-// interface, and it has to be done on both sides at once.
-func TestThePermanentErrorTypeIsTheNamePoliciesQuote(t *testing.T) {
+func TestFailureKindOfSeesThroughTheWrappingTemporalAddsOnTheWayToAWorkflow(t *testing.T) {
 	t.Parallel()
 
-	const published = "PermanentFailure"
+	// An activity failure reaches workflow code wrapped in an ActivityError.
+	// Matching only the outermost error would silently classify every auth
+	// failure as ordinary, and the dispatcher would never pause.
+	wrapped := fmt.Errorf("activity error: %w", fail(t.Context(), "op", permanent(github.ErrAuth)))
 
-	if ErrorTypePermanent != published {
-		t.Errorf("ErrorTypePermanent = %q, want %q; a RetryPolicy naming the old spelling retries a permanent failure forever",
-			ErrorTypePermanent, published)
+	if got := FailureKindOf(wrapped); got != work.FailureAuth {
+		t.Fatalf("FailureKindOf = %q, want %q", got, work.FailureAuth)
 	}
+}
 
-	// End to end, so a rename cannot be hidden behind the constant: this is the
-	// string a workflow's NonRetryableErrorTypes has to match.
-	var appErr *temporal.ApplicationError
-	if !errors.As(Translate(fmt.Errorf("spent: %w", work.ErrPermanent)), &appErr) {
-		t.Fatal("Translate did not produce an ApplicationError")
+// The codex sentinels are the ones that reach the dispatcher's two levers. B5
+// wraps work.ErrPermanent into both, so an errorTypeOf that did not name them
+// would classify each as an undifferentiated permanent failure — and the
+// dispatcher would neither trip its breaker nor pause.
+
+func TestFailTypesACodexRateLimitSoTheBreakerCanTrip(t *testing.T) {
+	t.Parallel()
+
+	err := fail(t.Context(), "running the plan stage", fmt.Errorf("stage failed: %w", codex.ErrRateLimited))
+
+	app := appErrorOf(t, err)
+	if app.Type() != ErrTypeRateLimit {
+		t.Fatalf("type = %q, want %q — the dispatcher trips its cooldown breaker on this type and nothing else",
+			app.Type(), ErrTypeRateLimit)
 	}
-	if appErr.Type() != published {
-		t.Errorf("a permanent failure arrives as type %q, want %q", appErr.Type(), published)
+	if got := FailureKindOf(err); got != work.FailureRateLimit {
+		t.Fatalf("FailureKindOf = %q, want %q", got, work.FailureRateLimit)
+	}
+}
+
+func TestFailTypesACodexAuthFailureSoTheDispatcherPauses(t *testing.T) {
+	t.Parallel()
+
+	err := fail(t.Context(), "running the plan stage", fmt.Errorf("stage failed: %w", codex.ErrAuth))
+
+	app := appErrorOf(t, err)
+	if app.Type() != ErrTypeAuth {
+		t.Fatalf("type = %q, want %q — a dead model credential must stop the system, not be retried per ticket",
+			app.Type(), ErrTypeAuth)
+	}
+	if got := FailureKindOf(err); got != work.FailureAuth {
+		t.Fatalf("FailureKindOf = %q, want %q", got, work.FailureAuth)
+	}
+}
+
+func TestTheCodexSentinelsAreDistinguishedFromEachOther(t *testing.T) {
+	t.Parallel()
+
+	// If both collapsed onto one type, one of B5's two sentinels would be
+	// decoration. They earn their keep by leading to different behaviour.
+	rateLimit := appErrorOf(t, fail(t.Context(), "op", codex.ErrRateLimited)).Type()
+	auth := appErrorOf(t, fail(t.Context(), "op", codex.ErrAuth)).Type()
+
+	if rateLimit == auth {
+		t.Fatalf("both codex sentinels type as %q; the dispatcher would wait out a dead credential forever", rateLimit)
+	}
+}
+
+func TestThePermanentTypeStringIsTheOneWorkflowRetryPoliciesArePinnedTo(t *testing.T) {
+	t.Parallel()
+
+	// Asserted as a literal, not against the constant. A rename would otherwise
+	// move both sides together and silently turn every permanent failure into
+	// an infinite retry, because a NonRetryableErrorTypes entry that matches
+	// nothing is a policy that retries everything.
+	if ErrTypePermanent != "PermanentFailure" {
+		t.Fatalf("ErrTypePermanent = %q, want %q", ErrTypePermanent, "PermanentFailure")
+	}
+}
+
+func TestFailTreatsACancellationWrappedInAPermanentErrorAsCancellation(t *testing.T) {
+	t.Parallel()
+
+	// A draining worker cancels its activities on SIGTERM, and a client may
+	// well wrap that cancellation in its own permanent error on the way out.
+	// Reported as a permanent application failure, the ticket fails on every
+	// deploy and is never picked up again.
+	wrapped := fmt.Errorf("running the plan stage: %w: %w", work.ErrPermanent, context.Canceled)
+
+	err := fail(t.Context(), "op", wrapped)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("a cancelled drain must surface as cancellation, got %v", err)
+	}
+	var app *temporal.ApplicationError
+	if errors.As(err, &app) {
+		t.Fatal("and never as a non-retryable application error")
 	}
 }

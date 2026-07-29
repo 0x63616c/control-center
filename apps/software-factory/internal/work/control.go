@@ -31,6 +31,32 @@ type Config struct {
 	// whoever is signalling a running dispatcher at the time.
 	BreakerCooldownSeconds int64 `json:"breakerCooldownSeconds"`
 
+	// PauseReason is why the dispatcher is paused, and empty when it is
+	// running. The dispatcher writes it when it pauses itself on an unusable
+	// credential; a human pausing by hand should set it too.
+	//
+	// It is here rather than on Status because it is part of the pause, not a
+	// separate observation of it: Paused alone cannot tell a system that
+	// stopped itself on a dead credential from a human stopping it
+	// deliberately, and those call for opposite responses.
+	PauseReason string `json:"pauseReason,omitempty"`
+
+	// PollIntervalSeconds is how often the dispatcher wakes to reconcile and
+	// start work. It bounds how stale the in-flight set can be and nothing
+	// else: there is no WorkNow signal, because one would buy at most this
+	// interval. Read it through PollInterval.
+	PollIntervalSeconds int64 `json:"pollIntervalSeconds"`
+
+	// OrphanGraceSeconds is both how often the orphan sweep runs and how old a
+	// sandbox pod must be before the sweep will delete it for having no live
+	// run.
+	//
+	// One value for both because they are the same judgement — how long a pod
+	// may exist unaccounted for — and two would invite a sweep that runs more
+	// often than its own floor, which is a Kubernetes call per poll that can
+	// never delete anything. Read it through OrphanGrace.
+	OrphanGraceSeconds int64 `json:"orphanGraceSeconds"`
+
 	// DefaultModel runs every stage that has no override.
 	DefaultModel Model `json:"defaultModel"`
 
@@ -58,6 +84,8 @@ const maxAllowedInFlight = 10
 const (
 	defaultMaxInFlight            = 2
 	defaultBreakerCooldownSeconds = 15 * 60
+	defaultPollIntervalSeconds    = 30
+	defaultOrphanGraceSeconds     = 30 * 60
 	defaultModelName              = "gpt-5.6-terra"
 	defaultModelEffort            = "medium"
 )
@@ -71,6 +99,8 @@ func DefaultConfig() Config {
 	return Config{
 		MaxInFlight:            defaultMaxInFlight,
 		BreakerCooldownSeconds: defaultBreakerCooldownSeconds,
+		PollIntervalSeconds:    defaultPollIntervalSeconds,
+		OrphanGraceSeconds:     defaultOrphanGraceSeconds,
 		DefaultModel:           Model{Name: defaultModelName, Effort: defaultModelEffort},
 	}
 }
@@ -78,6 +108,17 @@ func DefaultConfig() Config {
 // BreakerCooldown is how long the breaker stays open once tripped.
 func (c Config) BreakerCooldown() time.Duration {
 	return time.Duration(c.BreakerCooldownSeconds) * time.Second
+}
+
+// PollInterval is how often the dispatcher wakes.
+func (c Config) PollInterval() time.Duration {
+	return time.Duration(c.PollIntervalSeconds) * time.Second
+}
+
+// OrphanGrace is how old an unaccounted-for sandbox pod must be before the
+// sweep deletes it, and how often that sweep runs.
+func (c Config) OrphanGrace() time.Duration {
+	return time.Duration(c.OrphanGraceSeconds) * time.Second
 }
 
 // ModelFor is the model a stage runs on: its override, or the default.
@@ -105,6 +146,12 @@ func (c Config) Validate() error {
 	}
 	if c.BreakerCooldownSeconds <= 0 {
 		return fmt.Errorf("BreakerCooldownSeconds must be positive, got %d: a breaker that reopens immediately stops nothing", c.BreakerCooldownSeconds)
+	}
+	if c.PollIntervalSeconds <= 0 {
+		return fmt.Errorf("PollIntervalSeconds must be positive, got %d: a dispatcher that never wakes starts nothing and reconciles nothing", c.PollIntervalSeconds)
+	}
+	if c.OrphanGraceSeconds <= 0 {
+		return fmt.Errorf("OrphanGraceSeconds must be positive, got %d: a zero grace sweeps pods out from under the runs that just created them", c.OrphanGraceSeconds)
 	}
 	if err := c.DefaultModel.Validate(); err != nil {
 		return fmt.Errorf("default model: %w", err)
@@ -134,6 +181,15 @@ func (c Config) Apply(u ConfigUpdate) (Config, error) {
 	if u.BreakerCooldownSeconds != nil {
 		updated.BreakerCooldownSeconds = *u.BreakerCooldownSeconds
 	}
+	if u.PollIntervalSeconds != nil {
+		updated.PollIntervalSeconds = *u.PollIntervalSeconds
+	}
+	if u.OrphanGraceSeconds != nil {
+		updated.OrphanGraceSeconds = *u.OrphanGraceSeconds
+	}
+	if u.PauseReason != nil {
+		updated.PauseReason = *u.PauseReason
+	}
 	if u.DefaultModel != nil {
 		updated.DefaultModel = *u.DefaultModel
 	}
@@ -153,10 +209,13 @@ func (c Config) Apply(u ConfigUpdate) (Config, error) {
 // here is a value someone might legitimately send (`false`, `0`), so absence
 // has to be representable separately from it.
 type ConfigUpdate struct {
-	Paused                 *bool  `json:"paused,omitempty"`
-	MaxInFlight            *int   `json:"maxInFlight,omitempty"`
-	BreakerCooldownSeconds *int64 `json:"breakerCooldownSeconds,omitempty"`
-	DefaultModel           *Model `json:"defaultModel,omitempty"`
+	Paused                 *bool   `json:"paused,omitempty"`
+	PauseReason            *string `json:"pauseReason,omitempty"`
+	MaxInFlight            *int    `json:"maxInFlight,omitempty"`
+	BreakerCooldownSeconds *int64  `json:"breakerCooldownSeconds,omitempty"`
+	PollIntervalSeconds    *int64  `json:"pollIntervalSeconds,omitempty"`
+	OrphanGraceSeconds     *int64  `json:"orphanGraceSeconds,omitempty"`
+	DefaultModel           *Model  `json:"defaultModel,omitempty"`
 
 	// StageModels replaces the whole override set rather than merging into it,
 	// so an update names the overrides that should exist afterwards. Merging

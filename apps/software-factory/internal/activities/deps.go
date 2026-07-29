@@ -12,7 +12,9 @@ package activities
 import (
 	"context"
 	"io"
+	"time"
 
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
@@ -86,6 +88,21 @@ type GitHub interface {
 	// a PR or given up. A human re-adds it to request another pass.
 	ClearAutoLabel(ctx context.Context, issue int) error
 
+	// PullRequestForBranch reports the open pull request on a branch, if there
+	// is one.
+	//
+	// This is how a run learns what it achieved, and the reason it is asked of
+	// GitHub rather than read out of the propose stage's own report: the
+	// stage's report is model output derived from issue text an attacker chose,
+	// and a URL taken from it is a phishing vector rendered as an autolink
+	// (#371). GitHub's answer about a branch we named ourselves cannot be
+	// forged by anyone who can file an issue.
+	//
+	// Absence is a real answer, not an error — a propose stage that declined to
+	// open a pull request is a run that was blocked, which is a decision rather
+	// than a failure.
+	PullRequestForBranch(ctx context.Context, branch string) (pr work.PullRequest, found bool, err error)
+
 	// InstallationToken mints a short-lived token scoped to this repository,
 	// for the sandbox to push with.
 	//
@@ -119,6 +136,71 @@ type TokenSource interface {
 	SandboxCredentialFile(ctx context.Context) (work.CredentialFile, error)
 }
 
+// PromptRenderer turns a ticket and the preceding stage's output into the
+// prompt and schema one stage runs on.
+//
+// It is a seam rather than a call into internal/prompts because prompts are the
+// highest-churn part of this service and orchestration is the lowest: a wording
+// change must not be a workflow change, and a test of the pipeline must not
+// need the real prompts to exist. It is also the rule the linter enforces —
+// workflow code may not import internal/prompts at all, because the nonce a
+// render mints is invisible nondeterminism at the call site.
+//
+// It reads nothing back. An earlier design had a companion Verdict method that
+// parsed a stage's output for "blocked" and a pull request URL; that is gone
+// deliberately. No stage's TEXT may steer control flow — ticket bodies are
+// attacker-chosen and they reach a model — so what a run achieved is asked of
+// GitHub instead. See GitHub.PullRequestForBranch.
+type PromptRenderer interface {
+	// Render returns the prompt a stage runs on and the schema its final
+	// message must satisfy.
+	//
+	// prior holds every completed stage's document, keyed by the stage that
+	// produced it — not just the last one. `revise` reads both the plan and the
+	// review, so a seam carrying only the preceding document cannot render it
+	// at all: the plan is two stages back by the time revise runs. A run may
+	// pass everything it has; a stage is shown only what its own prompt asks
+	// for.
+	Render(stage work.Stage, detail work.TicketDetail, prior map[work.Stage]string) (prompt string, schema []byte, err error)
+
+	// Document unwraps a stage's result envelope into the document inside it.
+	//
+	// It belongs beside Render because they are one format seen from two ends:
+	// whoever defines the envelope a stage answers in is the only one who can
+	// say what its answer means. It is not a verdict — the document is opaque
+	// payload for the next prompt, and nothing branches on its content.
+	Document(result []byte) (string, error)
+}
+
+// StatusRenderer turns a run's state into the body of its status comment.
+//
+// Separate from the thing that posts it for the same reason: the wording of a
+// status comment changes far more often than the decision to report one.
+type StatusRenderer interface {
+	Render(report work.StatusReport) string
+}
+
+// RunLookup answers whether a ticket's workflow is still open.
+//
+// It is DescribeWorkflowExecution and nothing else: a point lookup by workflow
+// ID, strongly consistent. Deliberately not a visibility query — visibility is a
+// search index and eventually consistent, and using it to decide whether a slot
+// is free would be a race dressed as a query.
+type RunLookup interface {
+	Describe(ctx context.Context, workflowID string) (work.RunState, error)
+}
+
+// SandboxSweeper deletes sandbox pods no run owns any more.
+//
+// A worker that dies mid-ticket leaves its pod behind, and nothing else in the
+// system is positioned to notice: the workflow that would have cleaned up is
+// the thing that died. live is the set of run IDs the dispatcher believes are
+// working, and minAge is the margin below which a pod is left alone whatever
+// live says — without it the sweep races the run that just created it.
+type SandboxSweeper interface {
+	SweepOrphans(ctx context.Context, live []string, minAge time.Duration) (deleted int, err error)
+}
+
 // TranscriptSink stores one stage attempt's raw event stream.
 //
 // It takes a StageKey and returns a writer, so the path layout stays in one
@@ -127,4 +209,20 @@ type TokenSource interface {
 // want to ask why a PR was proposed.
 type TranscriptSink interface {
 	Open(ctx context.Context, key work.StageKey) (io.WriteCloser, error)
+}
+
+// Metrics records what a stage attempt spent and how it ended.
+//
+// It is an interface here, satisfied by *telemetry.Metrics, for one reason
+// beyond testability: telemetry.NewMetrics registers with Prometheus and
+// **panics on duplicate registration**, deliberately — two counter sets each
+// recording half the work is worse than a crash. So there is exactly one
+// construction, in the composition root, and this package accepts what it is
+// handed rather than being able to construct a second.
+//
+// Recording is fire-and-forget: it returns nothing, because failing a stage
+// that has already spent its tokens in order to report that it spent them
+// would be the tail wagging the dog.
+type Metrics interface {
+	StageFinished(stage work.Stage, model work.Model, outcome telemetry.Outcome, usage work.Usage, took time.Duration)
 }
