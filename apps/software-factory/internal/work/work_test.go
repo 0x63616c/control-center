@@ -2,6 +2,7 @@ package work_test
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -139,5 +140,24 @@ func TestCredentialRefusesToBeSerialised(t *testing.T) {
 	// beats silently writing "[redacted]" where a token was expected.
 	if _, err := json.Marshal(work.NewCredential(secret)); err == nil {
 		t.Error("json.Marshal accepted a Credential; a token could be persisted to workflow history")
+	}
+}
+
+func TestPermanentSurvivesWrapping(t *testing.T) {
+	t.Parallel()
+
+	// The marker is only useful if it reaches the activity boundary through the
+	// layers of context every error picks up on the way up.
+	wrapped := fmt.Errorf("creating the sandbox for ticket #312: %w", work.ErrPermanent)
+	if !errors.Is(wrapped, work.ErrPermanent) {
+		t.Error("a wrapped ErrPermanent no longer reports as permanent; the retry decision would silently flip to retryable")
+	}
+}
+
+func TestPermanentIsDistinctFromOtherSentinels(t *testing.T) {
+	t.Parallel()
+
+	if errors.Is(work.ErrFileNotFound, work.ErrPermanent) {
+		t.Error("a missing sandbox file reports as permanent; absence is a signal a stage keys off, not a reason to stop retrying")
 	}
 }

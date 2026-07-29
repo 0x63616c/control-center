@@ -17,6 +17,23 @@ import (
 // errors.Is.
 var ErrFileNotFound = errors.New("file not found in sandbox")
 
+// ErrPermanent marks an error that a retry cannot fix, so a caller stops paying
+// for attempts that were never going to work.
+//
+// It is one bit, and it is deliberately the only one. Retry semantics belong to
+// Temporal's taxonomy, not a domain one — but a client cannot import the
+// Temporal SDK without breaking the seal that keeps an SDK's worldview out of
+// the rest of this service. So the single bit Temporal needs travels as domain
+// vocabulary and is translated exactly once, in internal/activities, into a
+// non-retryable ApplicationError. Anything unmarked is retryable, which is
+// Temporal's default.
+//
+// That translation site is the reason not to grow this into a rival scheme. An
+// error-kind enum, a Retryable() method or a second marker would be the
+// parallel taxonomy this exists to avoid, and would have to be reconciled with
+// Temporal's at the same boundary. Wrap with %w; compare with errors.Is.
+var ErrPermanent = errors.New("permanent failure")
+
 // Stage is one step of the pipeline.
 type Stage string
 
