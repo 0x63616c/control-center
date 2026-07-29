@@ -97,7 +97,7 @@ const credentialHelperValue = "store --file=" + credentialsPath
 // limitation of clone-once-at-the-start, not a regression this fix
 // introduces; solving it needs a way to hand the sandbox a fresher credential
 // mid-run, which is out of #383's scope.
-func (s *Sandboxes) CloneRepo(ctx context.Context, sandbox work.SandboxID, cloneURL string, credential work.Credential) error {
+func (s *Sandboxes) CloneRepo(ctx context.Context, sandbox work.SandboxID, cloneURL string, credential work.SandboxCredential) error {
 	if cloneURL == "" {
 		return fmt.Errorf("cloning into sandbox %s: no repository url was configured: %w", sandbox, work.ErrPermanent)
 	}
@@ -181,9 +181,61 @@ func credentialLine(credential work.Credential) string {
 // an argv — the only place the credential's bytes exist outside this call are
 // the file itself and the memory holding this string, never an exec argument
 // and never a log line.
-func (s *Sandboxes) writeCredentials(ctx context.Context, sandbox work.SandboxID, credential work.Credential) error {
-	if err := s.Write(ctx, sandbox, credentialsPath, []byte(credentialLine(credential)), credentialFileMode); err != nil {
+func (s *Sandboxes) writeCredentials(ctx context.Context, sandbox work.SandboxID, credential work.SandboxCredential) error {
+	if err := s.Write(ctx, sandbox, credentialsPath, []byte(credentialLine(credential.Token)), credentialFileMode); err != nil {
 		return fmt.Errorf("writing the sandbox's git credential file: %w", err)
+	}
+	return s.writeGhCredentials(ctx, sandbox, credential)
+}
+
+// ghHostsFile is the gh CLI's own credential file, holding the same
+// installation token the git credential file above carries.
+//
+// The duplication is gh's, not ours: it reads GH_TOKEN or this file and never
+// git's credential store, so a token that only exists in git's format is a
+// token gh cannot see. `propose` opens the pull request with gh (#414), so it
+// has to be in both.
+//
+// Written as a file rather than set as GH_TOKEN in the pod's environment,
+// deliberately. A pod's environment is in its spec, readable by anything with
+// pod-read in the namespace and carried in whatever created it; a file streamed
+// in by Write exists only in this call's memory and on the pod's own
+// filesystem, which is the property the git credential file was given for the
+// same reason.
+//
+// What this does NOT do is keep the token from the model: the sandbox is one
+// container running as one uid, and the stage runs as that uid, so both
+// credential files are readable by the agent. That is #416, and it is a known,
+// accepted gap rather than an oversight of this function.
+//
+// The token also expires an hour after it is minted while a run may last six,
+// and nothing rewrites either file mid-run — #417.
+func ghHostsFile(credential work.SandboxCredential) string {
+	// gh's own on-disk shape. The `user` key is REQUIRED, and its absence is not
+	// a degraded mode — it is total failure. gh runs a config migration before
+	// every command, and that migration resolves the account name by calling
+	// /user, which an installation token cannot answer. Measured against gh
+	// 2.96.0 with the key absent:
+	//
+	//	failed to migrate config: cowardly refusing to continue with multi
+	//	account migration: couldn't get user name for "github.com"
+	//
+	// — emitted for `gh auth status` and `gh api` alike, before either ran. With
+	// the key present, gh names the account from the file and never asks GitHub
+	// who it is.
+	return "github.com:\n" +
+		"  oauth_token: " + credential.Token.Reveal() + "\n" +
+		"  user: " + credential.Login + "\n" +
+		"  git_protocol: https\n"
+}
+
+// writeGhCredentials puts the gh CLI's hosts.yml into the sandbox.
+//
+// Same transport and same mode as the git credential file: streamed as a tar
+// body by Write, never an exec argument, never a log line.
+func (s *Sandboxes) writeGhCredentials(ctx context.Context, sandbox work.SandboxID, credential work.SandboxCredential) error {
+	if err := s.Write(ctx, sandbox, work.GhHostsFile, []byte(ghHostsFile(credential)), credentialFileMode); err != nil {
+		return fmt.Errorf("writing the sandbox's gh credential file: %w", err)
 	}
 	return nil
 }

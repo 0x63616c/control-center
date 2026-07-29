@@ -340,7 +340,10 @@ func buildDeps(
 		CPULimit:        cfg.SandboxCPULimit,
 		MemoryLimit:     cfg.SandboxMemoryLimit,
 		DeadlineSeconds: work.SandboxDeadlineSeconds,
-		Env:             map[string]string{work.CodexHomeEnv: work.CodexHomeDir},
+		Env: map[string]string{
+			work.CodexHomeEnv:   work.CodexHomeDir,
+			work.GhConfigDirEnv: work.GhConfigDir,
+		},
 	}
 
 	return activities.Deps{

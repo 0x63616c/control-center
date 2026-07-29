@@ -26,6 +26,18 @@ const (
 // is non-zero.
 var notARepo = answer{err: utilexec.CodeExitError{Err: errors.New("fatal: not a git repository"), Code: 128}}
 
+// testBotLogin is the shape of what GitHub names a GitHub App's identity: its
+// slug with a "[bot]" suffix. The brackets are the point — they are what a
+// value naively used as a path segment or an unquoted YAML scalar would break
+// on.
+const testBotLogin = "www-software-factory-bot[bot]"
+
+// testCredential is what InstallationToken hands CloneRepo: a token and the
+// login gh must be told to attribute it to.
+func testCredential(token string) work.SandboxCredential {
+	return work.SandboxCredential{Token: work.NewCredential(token), Login: testBotLogin}
+}
+
 func TestCloneRepoFailsLoudlyWhenSFBranchIsNotSet(t *testing.T) {
 	t.Parallel()
 
@@ -35,7 +47,7 @@ func TestCloneRepoFailsLoudlyWhenSFBranchIsNotSet(t *testing.T) {
 	}}
 	s, _ := newTestSandboxes(t, str, runningPod())
 
-	err := s.CloneRepo(context.Background(), testSandbox, testCloneURL, work.NewCredential("t"))
+	err := s.CloneRepo(context.Background(), testSandbox, testCloneURL, testCredential("t"))
 	if err == nil {
 		t.Fatal("CloneRepo succeeded with no SF_BRANCH in the sandbox's environment")
 	}
@@ -59,7 +71,7 @@ func TestCloneRepoFailsLoudlyWhenSFBranchIsEmpty(t *testing.T) {
 	str := &scriptedStreamer{answers: []answer{{stdout: "\n"}}}
 	s, _ := newTestSandboxes(t, str, runningPod())
 
-	err := s.CloneRepo(context.Background(), testSandbox, testCloneURL, work.NewCredential("t"))
+	err := s.CloneRepo(context.Background(), testSandbox, testCloneURL, testCredential("t"))
 	if err == nil {
 		t.Fatal("CloneRepo succeeded with SF_BRANCH set but empty")
 	}
@@ -77,7 +89,7 @@ func TestCloneRepoRefusesWithNoRepositoryURL(t *testing.T) {
 	str := &scriptedStreamer{}
 	s, _ := newTestSandboxes(t, str, runningPod())
 
-	err := s.CloneRepo(context.Background(), testSandbox, "", work.NewCredential("t"))
+	err := s.CloneRepo(context.Background(), testSandbox, "", testCredential("t"))
 	if !errors.Is(err, work.ErrPermanent) {
 		t.Fatalf("CloneRepo with no repository url = %v, want a permanent error", err)
 	}
@@ -92,6 +104,7 @@ func TestCloneRepoClonesChecksOutAndPushesAFreshSandbox(t *testing.T) {
 	str := &scriptedStreamer{answers: []answer{
 		{stdout: testBranch + "\n"}, // printenv SF_BRANCH
 		{},                          // tar -xf (writeCredentials)
+		{},                          // tar -xf (writeGhCredentials)
 		notARepo,                    // git rev-parse (no existing checkout)
 		{},                          // rm -rf (clear whatever is there)
 		{},                          // git clone
@@ -101,13 +114,13 @@ func TestCloneRepoClonesChecksOutAndPushesAFreshSandbox(t *testing.T) {
 	}}
 	s, _ := newTestSandboxes(t, str, runningPod())
 
-	if err := s.CloneRepo(context.Background(), testSandbox, testCloneURL, work.NewCredential("ghs_secret")); err != nil {
+	if err := s.CloneRepo(context.Background(), testSandbox, testCloneURL, testCredential("ghs_secret")); err != nil {
 		t.Fatalf("CloneRepo: %v", err)
 	}
 
 	calls := str.observed()
-	if len(calls) != 8 {
-		t.Fatalf("issued %d exec calls, want 8: %+v", len(calls), calls)
+	if len(calls) != 9 {
+		t.Fatalf("issued %d exec calls, want 9: %+v", len(calls), calls)
 	}
 
 	if got := realArgv(calls[0].argv); len(got) != 2 || got[0] != "printenv" || got[1] != work.SandboxBranchEnv {
@@ -127,14 +140,46 @@ func TestCloneRepoClonesChecksOutAndPushesAFreshSandbox(t *testing.T) {
 		t.Fatalf("credential file body = %q, does not carry the minted token", entries[0].body)
 	}
 
-	if got := realArgv(calls[2].argv); len(got) < 2 || got[0] != "git" || got[len(got)-1] != "HEAD" {
-		t.Fatalf("call 2 = %v, want the rev-parse probe", got)
+	// gh's own credential file, carrying the same token in gh's format because
+	// gh cannot read git's (#414). Same transport, same mode: a token that
+	// reached the pod as an argv word or an environment entry would be readable
+	// from the pod spec and from anything that logged the exec.
+	// Two entries, not one: GhConfigDir does not exist in the pod — /work is an
+	// emptyDir and gh's config directory is not the credential file's parent
+	// the way SandboxRoot is for .git-credentials — so the tar body has to
+	// carry the directory ahead of the file or the extraction fails.
+	ghEntries := decodeTar(t, calls[2].stdin)
+	if len(ghEntries) != 2 {
+		t.Fatalf("gh credential write entries = %+v, want the config directory then the file", ghEntries)
 	}
-	if got := realArgv(calls[3].argv); len(got) != 4 || got[0] != "rm" || got[3] != work.RepoDir {
-		t.Fatalf("call 3 = %v, want rm -rf -- %s", got, work.RepoDir)
+	if ghEntries[0].name != strings.TrimPrefix(work.GhConfigDir, "/")+"/" {
+		t.Fatalf("gh credential write entry 0 = %q, want the %s directory", ghEntries[0].name, work.GhConfigDir)
+	}
+	hosts := ghEntries[1]
+	if hosts.name != strings.TrimPrefix(work.GhHostsFile, "/") {
+		t.Fatalf("gh credential write entry 1 = %q, want %s", hosts.name, work.GhHostsFile)
+	}
+	if hosts.mode != 0o600 {
+		t.Fatalf("gh credential file mode = %o, want 0600", hosts.mode)
+	}
+	if !strings.Contains(hosts.body, "oauth_token: ghs_secret") {
+		t.Fatalf("gh credential file body = %q, does not carry the minted token", hosts.body)
+	}
+	// The `user` key is not decoration. Without it gh fails every command
+	// during config migration, trying to resolve the account by calling /user —
+	// which an installation token cannot answer. See ghHostsFile.
+	if !strings.Contains(hosts.body, "user: "+testBotLogin) {
+		t.Fatalf("gh credential file body = %q, does not name the account; gh will try to resolve it from /user and fail", hosts.body)
 	}
 
-	clone := realArgv(calls[4].argv)
+	if got := realArgv(calls[3].argv); len(got) < 2 || got[0] != "git" || got[len(got)-1] != "HEAD" {
+		t.Fatalf("call 3 = %v, want the rev-parse probe", got)
+	}
+	if got := realArgv(calls[4].argv); len(got) != 4 || got[0] != "rm" || got[3] != work.RepoDir {
+		t.Fatalf("call 4 = %v, want rm -rf -- %s", got, work.RepoDir)
+	}
+
+	clone := realArgv(calls[5].argv)
 	if clone[0] != "git" || clone[len(clone)-2] != testCloneURL || clone[len(clone)-1] != work.RepoDir {
 		t.Fatalf("clone argv = %v, want git ... clone %s %s", clone, testCloneURL, work.RepoDir)
 	}
@@ -147,7 +192,7 @@ func TestCloneRepoClonesChecksOutAndPushesAFreshSandbox(t *testing.T) {
 		}
 	}
 
-	checkout := realArgv(calls[5].argv)
+	checkout := realArgv(calls[6].argv)
 	if checkout[len(checkout)-2] != "-b" || checkout[len(checkout)-1] != testBranch {
 		t.Fatalf("checkout argv = %v, want checkout -b %s", checkout, testBranch)
 	}
@@ -155,7 +200,7 @@ func TestCloneRepoClonesChecksOutAndPushesAFreshSandbox(t *testing.T) {
 	// This is the fix: the checkout's own git config, not just this package's
 	// own commands, is what implement's later BARE `git push` — no -c of its
 	// own — resolves a credential through.
-	config := realArgv(calls[6].argv)
+	config := realArgv(calls[7].argv)
 	if want := []string{"git", "-C", work.RepoDir, "config", "--local", "credential.helper", credentialHelperValue}; !equalArgv(config, want) {
 		t.Fatalf("config argv = %v, want %v", config, want)
 	}
@@ -163,7 +208,7 @@ func TestCloneRepoClonesChecksOutAndPushesAFreshSandbox(t *testing.T) {
 	// And the proof that it worked: this package's OWN push, issued after
 	// configureCredentialHelper, carries no `-c` of its own — the same shape
 	// implement's bare `git push -u origin HEAD` takes.
-	push := realArgv(calls[7].argv)
+	push := realArgv(calls[8].argv)
 	if want := []string{"git", "-C", work.RepoDir, "push", "-u", "origin", testBranch}; !equalArgv(push, want) {
 		t.Fatalf("push argv = %v, want %v (no -c: it must authenticate through the checkout's own config)", push, want)
 	}
@@ -185,19 +230,20 @@ func TestCloneRepoLeavesAnExistingCheckoutOnTheRunsBranchAloneButPushesAnyway(t 
 	str := &scriptedStreamer{answers: []answer{
 		{stdout: testBranch + "\n"}, // printenv SF_BRANCH
 		{},                          // tar -xf (writeCredentials)
+		{},                          // tar -xf (writeGhCredentials)
 		{stdout: testBranch + "\n"}, // git rev-parse: already on this run's branch
 		{},                          // git config --local credential.helper
 		{},                          // git push -u origin
 	}}
 	s, _ := newTestSandboxes(t, str, runningPod())
 
-	if err := s.CloneRepo(context.Background(), testSandbox, testCloneURL, work.NewCredential("t")); err != nil {
+	if err := s.CloneRepo(context.Background(), testSandbox, testCloneURL, testCredential("t")); err != nil {
 		t.Fatalf("CloneRepo: %v", err)
 	}
 
 	calls := str.observed()
-	if len(calls) != 5 {
-		t.Fatalf("issued %d exec calls, want 5 — no clone, no checkout: %+v", len(calls), calls)
+	if len(calls) != 6 {
+		t.Fatalf("issued %d exec calls, want 6 — no clone, no checkout: %+v", len(calls), calls)
 	}
 	for _, c := range calls {
 		argv := realArgv(c.argv)
@@ -208,11 +254,11 @@ func TestCloneRepoLeavesAnExistingCheckoutOnTheRunsBranchAloneButPushesAnyway(t 
 	// The credential helper is reconfigured even when the checkout is reused,
 	// so a retry that resumes an old attempt's checkout is not depending on
 	// that attempt having got as far as configuring it.
-	config := realArgv(calls[3].argv)
+	config := realArgv(calls[4].argv)
 	if config[len(config)-1] != credentialHelperValue {
 		t.Fatalf("config argv = %v, want it to (re)configure the credential helper", config)
 	}
-	push := realArgv(calls[4].argv)
+	push := realArgv(calls[5].argv)
 	if push[len(push)-1] != testBranch {
 		t.Fatalf("push argv = %v, want it to still push the branch", push)
 	}
@@ -224,11 +270,12 @@ func TestCloneRepoRefusesAnExistingCheckoutOnTheWrongBranch(t *testing.T) {
 	str := &scriptedStreamer{answers: []answer{
 		{stdout: testBranch + "\n"},         // printenv SF_BRANCH
 		{},                                  // tar -xf (writeCredentials)
+		{},                                  // tar -xf (writeGhCredentials)
 		{stdout: "somebody-elses-branch\n"}, // git rev-parse: a DIFFERENT checkout
 	}}
 	s, _ := newTestSandboxes(t, str, runningPod())
 
-	err := s.CloneRepo(context.Background(), testSandbox, testCloneURL, work.NewCredential("t"))
+	err := s.CloneRepo(context.Background(), testSandbox, testCloneURL, testCredential("t"))
 	if err == nil {
 		t.Fatal("CloneRepo succeeded despite an existing checkout on a different branch")
 	}
@@ -240,8 +287,8 @@ func TestCloneRepoRefusesAnExistingCheckoutOnTheWrongBranch(t *testing.T) {
 	}
 
 	calls := str.observed()
-	if len(calls) != 3 {
-		t.Fatalf("issued %d exec calls, want exactly 3 (no clone, no checkout, no config, no push): %+v", len(calls), calls)
+	if len(calls) != 4 {
+		t.Fatalf("issued %d exec calls, want exactly 4 (no clone, no checkout, no config, no push): %+v", len(calls), calls)
 	}
 }
 
@@ -251,13 +298,14 @@ func TestCloneRepoSurfacesAGitFailureWithoutMarkingItPermanent(t *testing.T) {
 	str := &scriptedStreamer{answers: []answer{
 		{stdout: testBranch + "\n"}, // printenv SF_BRANCH
 		{},                          // tar -xf (writeCredentials)
+		{},                          // tar -xf (writeGhCredentials)
 		notARepo,                    // git rev-parse (no existing checkout)
 		{},                          // rm -rf
 		{err: utilexec.CodeExitError{Err: errors.New("fatal: unable to access"), Code: 128}}, // git clone fails
 	}}
 	s, _ := newTestSandboxes(t, str, runningPod())
 
-	err := s.CloneRepo(context.Background(), testSandbox, testCloneURL, work.NewCredential("t"))
+	err := s.CloneRepo(context.Background(), testSandbox, testCloneURL, testCredential("t"))
 	if err == nil {
 		t.Fatal("CloneRepo succeeded despite git clone exiting 128")
 	}
@@ -277,11 +325,12 @@ func TestCloneRepoLeavesTheCredentialFileAndItsCheckoutConfigInPlaceOnFailure(t 
 	str := &scriptedStreamer{answers: []answer{
 		{stdout: testBranch + "\n"},         // printenv SF_BRANCH
 		{},                                  // tar -xf (writeCredentials)
+		{},                                  // tar -xf (writeGhCredentials)
 		{stdout: "somebody-elses-branch\n"}, // git rev-parse: a DIFFERENT checkout — CloneRepo refuses
 	}}
 	s, _ := newTestSandboxes(t, str, runningPod())
 
-	if err := s.CloneRepo(context.Background(), testSandbox, testCloneURL, work.NewCredential("t")); err == nil {
+	if err := s.CloneRepo(context.Background(), testSandbox, testCloneURL, testCredential("t")); err == nil {
 		t.Fatal("expected the wrong-branch refusal")
 	}
 

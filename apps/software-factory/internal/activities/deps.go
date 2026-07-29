@@ -110,7 +110,7 @@ type GitHub interface {
 	// results to history, so a token that crosses that boundary is persisted
 	// for the namespace's whole retention. Call this inside the activity that
 	// writes the token into the sandbox.
-	InstallationToken(ctx context.Context) (work.Credential, error)
+	InstallationToken(ctx context.Context) (work.SandboxCredential, error)
 }
 
 // RepoCloner checks the ticket's repository out inside its sandbox, on the
@@ -137,7 +137,7 @@ type RepoCloner interface {
 	// the clone and the push, for the same reason InstallationToken's result
 	// must not reach a workflow: Temporal would persist it to history for the
 	// namespace's whole retention.
-	CloneRepo(ctx context.Context, sandbox work.SandboxID, cloneURL string, credential work.Credential) error
+	CloneRepo(ctx context.Context, sandbox work.SandboxID, cloneURL string, credential work.SandboxCredential) error
 }
 
 // TokenSource yields the credential document to write into a sandbox.

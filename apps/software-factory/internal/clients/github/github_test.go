@@ -629,8 +629,8 @@ func TestMintsARepositoryScopedTokenCarryingEveryPermissionTheSandboxNeeds(t *te
 	if err != nil {
 		t.Fatalf("InstallationToken returned an unexpected error: %v", err)
 	}
-	if cred.Reveal() != "installation-token-1" {
-		t.Errorf("credential = %q, want the exchanged token", cred.Reveal())
+	if cred.Token.Reveal() != "installation-token-1" {
+		t.Errorf("credential = %q, want the exchanged token", cred.Token.Reveal())
 	}
 
 	sent := decodeBody(t, s.first(t, "POST "+exchangePath))
@@ -711,8 +711,8 @@ func TestDoesNotHandTheSandboxTheCachedToken(t *testing.T) {
 	if got := s.count("POST " + exchangePath); got != 2 {
 		t.Errorf("exchanged %d times, want 2 — the sandbox gets a fresh full-hour token", got)
 	}
-	if cred.Reveal() != "installation-token-2" {
-		t.Errorf("the sandbox got %q, want the freshly minted token", cred.Reveal())
+	if cred.Token.Reveal() != "installation-token-2" {
+		t.Errorf("the sandbox got %q, want the freshly minted token", cred.Token.Reveal())
 	}
 }
 

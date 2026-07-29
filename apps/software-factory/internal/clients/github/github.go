@@ -536,8 +536,21 @@ func (c *Client) ClearAutoLabel(ctx context.Context, issue int) error {
 // It deliberately bypasses the cache. The cached token has an arbitrary
 // remaining lifetime — possibly three minutes — while the implement stage
 // pushes a branch up to an hour later.
-func (c *Client) InstallationToken(ctx context.Context) (work.Credential, error) {
+func (c *Client) InstallationToken(ctx context.Context) (work.SandboxCredential, error) {
 	const op = "minting a repository-scoped installation token for the sandbox"
+
+	// Resolved before the token is minted, deliberately: this is a cached read
+	// after the first call, and a failure here must not leave a live token
+	// minted for a sandbox that never receives it. See work.SandboxCredential
+	// for why gh cannot proceed without it.
+	login, err := c.botLogin(ctx)
+	if err != nil {
+		return work.SandboxCredential{}, err
+	}
+	if login == "" {
+		return work.SandboxCredential{}, permanent(op, ErrAuth, fmt.Errorf(
+			"github did not name this app's bot identity, so gh in the sandbox would have no account to attribute its token to"))
+	}
 
 	token, _, err := c.auth.mint(ctx, op, &gh.InstallationTokenOptions{
 		Repositories: []string{c.repo},
@@ -555,15 +568,16 @@ func (c *Client) InstallationToken(ctx context.Context) (work.Credential, error)
 		},
 	})
 	if err != nil {
-		return work.Credential{}, err
+		return work.SandboxCredential{}, err
 	}
 
 	// Note what is absent: issues:write, because the WORKER posts status and
 	// clears the label — the sandbox runs agent-authored code and has no
 	// business writing to the issue — and actions/checks/statuses, because
 	// nothing in this pipeline reruns or watches CI.
-	c.log.InfoContext(ctx, "minted a repository-scoped installation token for a sandbox", "repository", c.repo)
-	return work.NewCredential(token), nil
+	c.log.InfoContext(ctx, "minted a repository-scoped installation token for a sandbox",
+		"repository", c.repo, "login", login)
+	return work.SandboxCredential{Token: work.NewCredential(token), Login: login}, nil
 }
 
 // capBody bounds a comment body at a rune boundary.

@@ -82,6 +82,12 @@ ARG CODEX_SHA256=bfaf13c9ba34f2ad764e4a916c49cf7177aeba329cf0f719e2227566fc8d662
 # resolve the same lockfile the reviewer's machine does.
 ARG BUN_VERSION=1.2.19
 ARG BUN_SHA256=c3d3c14e9a5ec83ff67d0acfe76e4315ad06da9f34f59fc7b13813782caf1f66
+# gh is what `propose` opens the pull request with (#414). It authenticates
+# through a hosts.yml CloneRepo writes into the pod, NOT through git's
+# credential store — gh has no code path that reads one, so the installation
+# token has to reach it in gh's own format. See clone.go: ghHostsPath.
+ARG GH_VERSION=2.96.0
+ARG GH_SHA256=83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60
 
 # GNU tar, coreutils (test, cat, printenv, rm) and a shell come from the base
 # image. Added here: git, because CloneRepo checks the ticket's repository out
@@ -125,6 +131,14 @@ RUN curl -fsSL -o /tmp/codex.tar.gz \
     && install -m 0755 /tmp/codex-x86_64-unknown-linux-musl /usr/local/bin/codex \
     && rm -rf /tmp/codex.tar.gz /tmp/codex-x86_64-unknown-linux-musl \
     && codex --version
+
+RUN curl -fsSL -o /tmp/gh.tar.gz \
+        "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" \
+    && echo "${GH_SHA256}  /tmp/gh.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/gh.tar.gz -C /tmp \
+    && install -m 0755 "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh \
+    && rm -rf /tmp/gh.tar.gz "/tmp/gh_${GH_VERSION}_linux_amd64" \
+    && gh --version
 
 RUN curl -fsSL -o /tmp/bun.zip \
         "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip" \

@@ -57,23 +57,47 @@ func TestBuildDepsWiresTheCodexCredentialSeam(t *testing.T) {
 	}
 }
 
-// TestSandboxTemplateCarriesCodexHome asserts CODEX_HOME is set on every
-// sandbox's template, not left to the deploy to remember: #398 found this
-// silently absent, with codex exec failing identically to a model failure.
+// TestSandboxTemplateCarriesItsPathEnvironment asserts the sandbox template
+// sets every environment variable the image is a contract with, not left to the
+// deploy to remember: #398 found CODEX_HOME silently absent, with codex exec
+// failing identically to a model failure, and GH_CONFIG_DIR fails the same way
+// — gh falls back to $HOME/.config/gh, finds no credential there, and `propose`
+// reports itself blocked (#414).
+//
 // TestBuildDepsSatisfiesActivitiesNew does not cover this — SandboxTemplate's
 // own Validate checks Image, the resource limits and the deadline, never Env.
-func TestSandboxTemplateCarriesCodexHome(t *testing.T) {
+func TestSandboxTemplateCarriesItsPathEnvironment(t *testing.T) {
 	t.Parallel()
 
 	source, err := os.ReadFile("main.go")
 	if err != nil {
 		t.Fatalf("reading main.go: %v", err)
 	}
-	body := extractFuncBody(t, string(source), "func buildDeps(")
+	// Whitespace-collapsed before matching: gofmt aligns the values of a
+	// multi-entry map literal, so an assertion on the exact spacing would fail
+	// the next time an entry with a longer key is added.
+	body := collapseSpace(extractFuncBody(t, string(source), "func buildDeps("))
 
-	if !strings.Contains(body, "work.CodexHomeEnv: work.CodexHomeDir") {
-		t.Error("buildDeps()'s sandbox template does not set CODEX_HOME; codex exec in the sandbox has nowhere to read its credential from")
+	for _, tc := range []struct{ entry, why string }{
+		{
+			"work.CodexHomeEnv: work.CodexHomeDir",
+			"codex exec in the sandbox has nowhere to read its credential from",
+		},
+		{
+			"work.GhConfigDirEnv: work.GhConfigDir",
+			"gh looks in $HOME/.config/gh instead, finds no credential, and propose cannot open the pull request",
+		},
+	} {
+		if !strings.Contains(body, tc.entry) {
+			t.Errorf("buildDeps()'s sandbox template does not set %s; %s", tc.entry, tc.why)
+		}
 	}
+}
+
+// collapseSpace reduces every run of whitespace to a single space, so a match
+// against source text is insensitive to gofmt's alignment.
+func collapseSpace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // extractFuncBody returns the text of the named top-level function, so an

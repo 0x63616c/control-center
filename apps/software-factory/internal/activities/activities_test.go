@@ -43,7 +43,7 @@ type fakeGitHub struct {
 	prErr       error
 	askedBranch string
 
-	token    work.Credential
+	token    work.SandboxCredential
 	tokenErr error
 }
 
@@ -70,7 +70,7 @@ func (f *fakeGitHub) ClearAutoLabel(_ context.Context, issue int) error {
 	return f.labelErr
 }
 
-func (f *fakeGitHub) InstallationToken(context.Context) (work.Credential, error) {
+func (f *fakeGitHub) InstallationToken(context.Context) (work.SandboxCredential, error) {
 	return f.token, f.tokenErr
 }
 
@@ -107,13 +107,15 @@ type fakeRepo struct {
 	sawSandbox work.SandboxID
 	sawURL     string
 	sawToken   string
+	sawLogin   string
 	called     int
 	err        error
 }
 
-func (f *fakeRepo) CloneRepo(_ context.Context, sandbox work.SandboxID, cloneURL string, credential work.Credential) error {
+func (f *fakeRepo) CloneRepo(_ context.Context, sandbox work.SandboxID, cloneURL string, credential work.SandboxCredential) error {
 	f.called++
-	f.sawSandbox, f.sawURL, f.sawToken = sandbox, cloneURL, credential.Reveal()
+	f.sawSandbox, f.sawURL, f.sawToken = sandbox, cloneURL, credential.Token.Reveal()
+	f.sawLogin = credential.Login
 	return f.err
 }
 
@@ -523,7 +525,7 @@ func TestCloneRepoMintsACredentialAndPassesItToTheCloner(t *testing.T) {
 	d := deps()
 	d.Repo = repo
 	d.RepoURL = "https://github.com/0x63616c/world-wide-webb.git"
-	d.GitHub = &fakeGitHub{token: work.NewCredential("ghs_topsecret")}
+	d.GitHub = &fakeGitHub{token: work.SandboxCredential{Token: work.NewCredential("ghs_topsecret"), Login: "www-software-factory-bot[bot]"}}
 	e := env(t)
 	a := mustNew(t, d)
 	e.RegisterActivity(a.CloneRepo)
@@ -543,6 +545,13 @@ func TestCloneRepoMintsACredentialAndPassesItToTheCloner(t *testing.T) {
 	}
 	if repo.sawToken != "ghs_topsecret" {
 		t.Fatalf("the cloner did not receive the minted credential")
+	}
+	// The login travels with the token, because gh in the sandbox cannot ask
+	// GitHub who an installation token belongs to and refuses to run without an
+	// answer (#414). A cloner that received the token alone would write a
+	// hosts.yml gh fails on before every command.
+	if repo.sawLogin != "www-software-factory-bot[bot]" {
+		t.Fatalf("the cloner received login %q, want the bot identity minted alongside the token", repo.sawLogin)
 	}
 }
 

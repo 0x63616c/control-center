@@ -52,6 +52,34 @@ const CodexHomeEnv = "CODEX_HOME"
 // a sandbox's TokenSource-fetched credential document is written to.
 const CodexAuthFile = CodexHomeDir + "/auth.json"
 
+// GhConfigDir is the gh CLI's config directory inside the sandbox, and
+// GhHostsFile the credential file it reads out of it.
+//
+// gh exists in the sandbox because `propose` opens the pull request with it
+// (#414). It needs its own credential file because it has no code path that
+// reads git's: git resolves a token through credential.helper and a
+// git-credential-store file, and gh looks only at GH_TOKEN in the environment
+// or at this file. The same installation token therefore reaches the sandbox
+// twice, in two formats — see clone.go's writeGhCredentials for why the
+// environment is the wrong one of the two.
+//
+// Sibling of RepoDir under SandboxRoot for the reason RepoDir gives: RepoDir is
+// a git working tree, and a credential file inside one is one `git add -A` away
+// from being pushed. NOT $HOME/.config/gh, which is gh's default and would make
+// the image's HOME a silent second contract; GH_CONFIG_DIR names it explicitly,
+// the way CodexHomeEnv does for codex.
+const (
+	GhConfigDir = SandboxRoot + "/.gh"
+
+	// GhConfigDirEnv is the environment variable pointing gh at GhConfigDir. Set
+	// on every sandbox's template by the composition root, beside CodexHomeEnv.
+	GhConfigDirEnv = "GH_CONFIG_DIR"
+
+	// GhHostsFile is the file gh reads a host's token from. The name is gh's,
+	// not ours.
+	GhHostsFile = GhConfigDir + "/hosts.yml"
+)
+
 // StageKey identifies one stage attempt, and is the whole of that identity.
 //
 // Every deterministic path a stage keys off is derived from these three fields
