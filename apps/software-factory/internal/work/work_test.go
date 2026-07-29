@@ -2,6 +2,7 @@ package work_test
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -139,5 +140,96 @@ func TestCredentialRefusesToBeSerialised(t *testing.T) {
 	// beats silently writing "[redacted]" where a token was expected.
 	if _, err := json.Marshal(work.NewCredential(secret)); err == nil {
 		t.Error("json.Marshal accepted a Credential; a token could be persisted to workflow history")
+	}
+}
+
+func TestPermanentSurvivesWrapping(t *testing.T) {
+	t.Parallel()
+
+	// The marker is only useful if it reaches the activity boundary through the
+	// layers of context every error picks up on the way up.
+	wrapped := fmt.Errorf("creating the sandbox for ticket #312: %w", work.ErrPermanent)
+	if !errors.Is(wrapped, work.ErrPermanent) {
+		t.Error("a wrapped ErrPermanent no longer reports as permanent; the retry decision would silently flip to retryable")
+	}
+}
+
+func TestPermanentIsDistinctFromOtherSentinels(t *testing.T) {
+	t.Parallel()
+
+	if errors.Is(work.ErrFileNotFound, work.ErrPermanent) {
+		t.Error("a missing sandbox file reports as permanent; absence is a signal a stage keys off, not a reason to stop retrying")
+	}
+}
+
+func TestSandboxSpecCarriesTheRunIDInTheSameFormAsAStageKey(t *testing.T) {
+	t.Parallel()
+
+	// One representation of a run id, not two: a pod named from the spec and a
+	// path derived from the key have to agree about which run they belong to.
+	key := work.StageKey{Ticket: 312, RunID: "0198c2f1", Stage: work.StagePlan}
+	spec := work.SandboxSpec{TicketNumber: key.Ticket, RunID: key.RunID}
+
+	if spec.RunID != key.RunID {
+		t.Errorf("SandboxSpec.RunID = %q, want %q", spec.RunID, key.RunID)
+	}
+}
+
+func TestAnObservedVersionAppliesItselfToTheWrite(t *testing.T) {
+	t.Parallel()
+
+	got, err := work.ObservedVersion("41208").Precondition()
+	if err != nil {
+		t.Fatalf("Precondition() on an observed version: %v", err)
+	}
+	if got != "41208" {
+		t.Errorf("Precondition() = %q, want the observed token", got)
+	}
+}
+
+func TestAnEmptyTokenNeverBecomesAPrecondition(t *testing.T) {
+	t.Parallel()
+
+	// An empty resourceVersion is an unconditional overwrite to the Kubernetes
+	// apiserver, so a store that read "" and passed it on would silently write
+	// blind. It has to arrive as a refusal instead.
+	if _, err := work.ObservedVersion("").Precondition(); !errors.Is(err, work.ErrNoPrecondition) {
+		t.Errorf("Precondition() on an empty token = %v, want a refusal; a lease would be silently disarmed", err)
+	}
+}
+
+func TestAForgottenVersionCannotYieldAUsablePrecondition(t *testing.T) {
+	t.Parallel()
+
+	// The whole point of the type: the natural implementation assigns what it
+	// gets straight onto the write, so a dropped or unset version must not be
+	// able to hand back the empty string that means "overwrite blindly".
+	var forgotten work.SecretVersion
+	if _, err := forgotten.Precondition(); !errors.Is(err, work.ErrNoPrecondition) {
+		t.Errorf("Precondition() on the zero version = %v, want a refusal", err)
+	}
+}
+
+func TestAForgottenVersionIsDistinguishableFromContention(t *testing.T) {
+	t.Parallel()
+
+	// A store refusing a caller's mistake and a store reporting someone else's
+	// write are opposite instructions: one is a bug to fix, the other is a
+	// conflict to handle.
+	_, err := work.SecretVersion{}.Precondition()
+	if errors.Is(err, work.ErrVersionConflict) {
+		t.Error("a missing precondition reports as a version conflict; a caller would retry its own bug")
+	}
+}
+
+func TestAnUnconditionalWriteMustBeAskedForByName(t *testing.T) {
+	t.Parallel()
+
+	got, err := work.Unconditional().Precondition()
+	if err != nil {
+		t.Fatalf("Precondition() on a deliberate blind write: %v", err)
+	}
+	if got != "" {
+		t.Errorf("Precondition() = %q, want the empty precondition that constrains nothing", got)
 	}
 }

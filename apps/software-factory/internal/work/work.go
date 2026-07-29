@@ -17,6 +17,92 @@ import (
 // errors.Is.
 var ErrFileNotFound = errors.New("file not found in sandbox")
 
+// ErrPermanent marks an error that a retry cannot fix, so a caller stops paying
+// for attempts that were never going to work.
+//
+// It is one bit, and it is deliberately the only one. Retry semantics belong to
+// Temporal's taxonomy, not a domain one — but a client cannot import the
+// Temporal SDK without breaking the seal that keeps an SDK's worldview out of
+// the rest of this service. So the single bit Temporal needs travels as domain
+// vocabulary and is translated exactly once, in internal/activities, into a
+// non-retryable ApplicationError. Anything unmarked is retryable, which is
+// Temporal's default.
+//
+// That translation site is the reason not to grow this into a rival scheme. An
+// error-kind enum, a Retryable() method or a second marker would be the
+// parallel taxonomy this exists to avoid, and would have to be reconciled with
+// Temporal's at the same boundary. Wrap with %w; compare with errors.Is.
+var ErrPermanent = errors.New("permanent failure")
+
+// ErrVersionConflict reports that a stored object changed between a read and
+// the write derived from it, and that the write was therefore not applied.
+//
+// It says only that, deliberately. Whether a conflict is contention worth
+// retrying or an invariant already violated depends entirely on what the caller
+// had done by the time it fired — a lease loser retries, a rotation that has
+// already spent its single-use refresh token cannot.
+var ErrVersionConflict = errors.New("stored object changed since it was read")
+
+// ErrNoPrecondition reports that a write named no precondition at all: the
+// version handed to it was never set, or was dropped on the way.
+//
+// It is separate from ErrVersionConflict because the two are opposite
+// instructions. A conflict is news about another writer and may be worth
+// retrying; this is the caller's own bug, and retrying it changes nothing.
+// Compare with errors.Is.
+var ErrNoPrecondition = errors.New("write names no precondition")
+
+// SecretVersion is the state a read of a stored object observed, and the
+// precondition a write derived from that read applies to it.
+//
+// It is a struct rather than a string because the obvious spelling is unsafe.
+// Kubernetes treats an empty resourceVersion on an update as an unconditional
+// overwrite that never conflicts, so with a bare string a dropped return value
+// or an unset field disarms a compare-and-swap silently, leaving code that
+// reads exactly like a lease and enforces nothing. Here the empty string is
+// reachable only through Unconditional, and the zero value has no way to
+// produce one at all — see Precondition.
+type SecretVersion struct {
+	token         string
+	unconditional bool
+}
+
+// ObservedVersion is the precondition "unchanged since this token was read".
+// Implementations mint one from whatever their store calls a version; an empty
+// token yields the zero value, because a store that cannot say what it read
+// cannot constrain a write.
+func ObservedVersion(token string) SecretVersion {
+	return SecretVersion{token: token}
+}
+
+// Unconditional is the precondition "none": the write overwrites whatever is
+// there. It exists so that overwriting blind is a thing a caller asks for
+// rather than a thing a caller forgets.
+func Unconditional() SecretVersion {
+	return SecretVersion{unconditional: true}
+}
+
+// Precondition returns the store's own version string for a write to apply,
+// and ErrNoPrecondition if this version names none.
+//
+// It is the only way out of the type, and it returns an error so that the
+// refusal is mechanical rather than remembered. The natural implementation
+// assigns whatever it is given straight onto the write it is about to make; if
+// the zero value could answer that question at all it would answer "", which
+// Kubernetes reads as an unconditional overwrite, and the compare-and-swap
+// would be gone with nothing to see at the call site. Ignoring the error here
+// fails errcheck, so the mistake stops at lint rather than at a spent refresh
+// token.
+//
+// An empty string is therefore a deliberate blind write and nothing else: only
+// Unconditional can produce one.
+func (v SecretVersion) Precondition() (resourceVersion string, err error) {
+	if v.token == "" && !v.unconditional {
+		return "", ErrNoPrecondition
+	}
+	return v.token, nil
+}
+
 // Stage is one step of the pipeline.
 type Stage string
 
@@ -147,7 +233,23 @@ type StageEventSink func(rawEvent []byte)
 // text can reach a Kubernetes object name, label or annotation.
 type SandboxSpec struct {
 	TicketNumber int
-	Image        string
+
+	// RunID is Temporal's RunID for the run this sandbox belongs to, the same
+	// value and the same representation StageKey carries — one run id, not two
+	// spellings of one.
+	//
+	// It belongs in the pod's name. A pod named for the ticket alone is shared
+	// by every run of that ticket, so an AlreadyExists on Create could mean
+	// either "my own Create is being retried" or "an older run left this
+	// behind", and adopting the wrong one gives a run a pod built to a
+	// different spec with someone else's deadline already ticking. Named for
+	// the run too, AlreadyExists can only ever be the first case, and the spec
+	// and deadline are right by construction. It is safe in a name for the same
+	// reason the ticket number is: Temporal mints it, and it is a UUID, so no
+	// issue author can steer it.
+	RunID string
+
+	Image string
 
 	// CPULimit and MemoryLimit are Kubernetes quantity strings ("2", "4Gi").
 	CPULimit    string
