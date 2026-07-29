@@ -89,6 +89,15 @@ func (r *Renderer) Render(in Input) (string, error) {
 		return "", fmt.Errorf("rendering the %s prompt for ticket #%d: %w", in.Stage, in.Ticket.Number, err)
 	}
 	values["fence_nonce"] = nonce
+	// Each value is stripped on its own, which is sound only because no two
+	// placeholders in a template are separated by nothing but hex digits: a
+	// nonce split across a title and a body is clean in each half and cannot
+	// rejoin across the prose between them. checkFence below catches it either
+	// way — a reassembled nonce is a refused render, not a forged fence — but
+	// refusing every ticket that carries such a string is a denial of service
+	// an attacker picks for free. The property lives in the markdown rather
+	// than in this loop, so TestNoTwoPlaceholdersCanJoinIntoANonce holds the
+	// templates to it.
 	for name, value := range values {
 		if name == "fence_nonce" {
 			continue

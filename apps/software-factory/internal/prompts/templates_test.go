@@ -146,3 +146,73 @@ func TestDocumentVarNamesEachStagesOutputAsThatStageDoes(t *testing.T) {
 		t.Error("documentVar(propose) returned a name; no stage reads the proposal")
 	}
 }
+
+func TestNoTwoPlaceholdersCanJoinIntoANonce(t *testing.T) {
+	t.Parallel()
+
+	// The invariant per-value stripping rests on, and it lives in the markdown
+	// rather than in the code.
+	//
+	// strip runs on each value separately, so it cannot see a nonce split
+	// across two of them — a title ending `...a7a7` and a body opening
+	// `a7a7...` are each clean, and each survives untouched. What stops them
+	// reassembling is the template between them: every pair of placeholders is
+	// separated by prose, a newline or a tag, none of which is a hex digit, so
+	// no contiguous hex run can span the join.
+	//
+	// checkFence is the backstop and it does hold: with two placeholders made
+	// adjacent, a nonce or a whole forged tag split across a title and a body
+	// reassembles and the render is *refused* — verified by probe, both halves.
+	// So breaking this is not a silent forgery. It is every ticket carrying
+	// that text becoming unrenderable, which an attacker chooses freely, and
+	// the loss of the property that makes per-value stripping sound at all.
+	// Both are worth one markdown edit away from nothing noticing. Hence this.
+	files := []string{baseTemplate}
+	for _, stage := range work.Pipeline() {
+		file, err := stageTemplate(stage)
+		if err != nil {
+			t.Fatalf("stageTemplate(%s): %v", stage, err)
+		}
+		files = append(files, file)
+	}
+
+	for _, file := range files {
+		t.Run(file, func(t *testing.T) {
+			t.Parallel()
+
+			body, err := templates.ReadFile(file)
+			if err != nil {
+				t.Fatalf("reading %s: %v", file, err)
+			}
+			for _, gap := range gapsBetweenPlaceholders(string(body)) {
+				if strings.Trim(gap, "0123456789abcdefABCDEF") == "" {
+					t.Errorf("two placeholders in %s are separated by %q, which is nothing but hex: a nonce split across the two values would reassemble between them and checkFence would refuse every such ticket", file, gap)
+				}
+			}
+		})
+	}
+}
+
+// gapsBetweenPlaceholders returns the template text lying between each
+// consecutive pair of `{{name}}` placeholders.
+func gapsBetweenPlaceholders(template string) []string {
+	var gaps []string
+
+	rest := template
+	first := true
+	for {
+		before, after, found := strings.Cut(rest, "{{")
+		if !found {
+			return gaps
+		}
+		if !first {
+			gaps = append(gaps, before)
+		}
+		_, remainder, closed := strings.Cut(after, "}}")
+		if !closed {
+			return gaps
+		}
+		first = false
+		rest = remainder
+	}
+}
