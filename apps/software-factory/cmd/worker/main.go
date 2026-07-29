@@ -56,6 +56,15 @@ func run() error {
 	logger := newLogger(cfg.LogLevel)
 	bridgeKlog(logger)
 
+	// Read at startup rather than by the dispatcher itself, so a configuration
+	// nobody can run crashloops the pod with the reason in its logs. The same
+	// JSON arriving later as an UpdateConfig signal has no way to fail back to
+	// whoever sent it, which makes startup the one place this can be loud.
+	dispatcher, err := config.LoadDispatcher()
+	if err != nil {
+		return fmt.Errorf("reading the dispatcher's configuration: %w", err)
+	}
+
 	// The one metrics registry in this process. Prometheus panics on a
 	// duplicate registration, deliberately, so a second registry or a second
 	// construction of the metrics that record into it is a crash in
@@ -107,6 +116,14 @@ func run() error {
 		slog.String("pod", cfg.PodName),
 		slog.Int("registered_workflows", 0),
 		slog.Int("registered_activities", 0),
+		// What the dispatcher will run under, logged where it was read: the
+		// question asked of a live system is "did my config land", and this is
+		// the first of the two places that can answer it. The other is the
+		// GetStatus query, once C2 lands.
+		slog.Bool("dispatcher_paused", dispatcher.Paused),
+		slog.Int("dispatcher_max_in_flight", dispatcher.MaxInFlight),
+		slog.Int64("dispatcher_breaker_cooldown_seconds", dispatcher.BreakerCooldownSeconds),
+		slog.String("dispatcher_default_model", dispatcher.DefaultModel.Name),
 	)
 
 	// Run blocks until SIGINT or SIGTERM, then drains: in-flight activities
