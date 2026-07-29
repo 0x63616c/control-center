@@ -5,8 +5,10 @@
 package work
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"log/slog"
 )
 
 // ErrFileNotFound reports that a path does not exist inside a sandbox.
@@ -359,4 +361,61 @@ func (c Credential) LogValue() any {
 // cause. Failing here names the mistake at the moment it is made.
 func (c Credential) MarshalJSON() ([]byte, error) {
 	return nil, fmt.Errorf("refusing to serialise a Credential: fetch it inside the activity that uses it")
+}
+
+// CredentialFile is a complete credential document destined for a sandbox's
+// filesystem — the whole of a codex auth.json, not one field of it.
+//
+// Like Credential it is deliberately not a []byte: the type is what stops the
+// value reaching a log line or a durable store. It is a distinct type rather
+// than a Credential holding JSON so that it cannot be passed where a bare token
+// is wanted, and because Reveal returning []byte is what a file write consumes
+// — Credential.Reveal returning a string invites string manipulation of a
+// credential document.
+//
+// The file must be written with mode 0600. That is the writer's to enforce,
+// and because the destination is a pod rather than a local disk it is a
+// property of the transfer's write path, not of a umask.
+//
+// It must never be returned from an activity, for the same reason a Credential
+// must not, only more so: a document is exactly the shape somebody returns from
+// an activity, and Temporal would persist it to workflow history for the
+// namespace's whole retention.
+type CredentialFile struct {
+	content []byte
+}
+
+// NewCredentialFile wraps a credential document.
+func NewCredentialFile(content []byte) CredentialFile {
+	return CredentialFile{content: bytes.Clone(content)}
+}
+
+// Reveal returns the document's bytes. Call it only at the point they are
+// written to their destination.
+//
+// It returns a copy, so a caller that mutates what it is handed cannot edit the
+// document every later caller receives.
+func (f CredentialFile) Reveal() []byte {
+	return bytes.Clone(f.content)
+}
+
+// String redacts the document, so a stray %v cannot leak it.
+func (f CredentialFile) String() string {
+	return "[redacted credential file]"
+}
+
+// LogValue redacts the document in structured logs.
+//
+// It returns slog.Value, NOT any, so that CredentialFile actually satisfies
+// slog.LogValuer and slog genuinely calls it. Credential.LogValue returns any
+// and therefore does not — nothing leaks there only because slog falls through
+// to String. That is incidental protection, and a whole document is too easy to
+// log for incidental to be good enough.
+func (f CredentialFile) LogValue() slog.Value {
+	return slog.StringValue(f.String())
+}
+
+// MarshalJSON always fails, for the reason Credential's does.
+func (f CredentialFile) MarshalJSON() ([]byte, error) {
+	return nil, fmt.Errorf("refusing to serialise a CredentialFile: build it inside the activity that writes it")
 }
