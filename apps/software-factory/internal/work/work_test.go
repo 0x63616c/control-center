@@ -174,3 +174,51 @@ func TestSandboxSpecCarriesTheRunIDInTheSameFormAsAStageKey(t *testing.T) {
 		t.Errorf("SandboxSpec.RunID = %q, want %q", spec.RunID, key.RunID)
 	}
 }
+
+func TestAnObservedVersionIsAPrecondition(t *testing.T) {
+	t.Parallel()
+
+	v := work.ObservedVersion("41208")
+	if v.Token() != "41208" {
+		t.Errorf("Token() = %q, want the observed token", v.Token())
+	}
+	if v.IsUnconditional() || v.IsZero() {
+		t.Error("an observed version does not constrain the write it is handed to")
+	}
+}
+
+func TestAnEmptyTokenNeverBecomesAPrecondition(t *testing.T) {
+	t.Parallel()
+
+	// An empty resourceVersion is an unconditional overwrite to the Kubernetes
+	// apiserver, so a store that read "" and passed it on would silently write
+	// blind. It has to arrive as the zero value a store must refuse instead.
+	v := work.ObservedVersion("")
+	if !v.IsZero() || v.IsUnconditional() {
+		t.Error("an empty token produced a usable version; a lease would be silently disarmed")
+	}
+}
+
+func TestTheZeroVersionIsAPreconditionNoStoreCanSatisfy(t *testing.T) {
+	t.Parallel()
+
+	var v work.SecretVersion
+	if !v.IsZero() {
+		t.Error("the zero SecretVersion does not report itself as one")
+	}
+	if v.IsUnconditional() {
+		t.Error("a forgotten version reads as an unconditional overwrite")
+	}
+}
+
+func TestAnUnconditionalWriteMustBeAskedForByName(t *testing.T) {
+	t.Parallel()
+
+	v := work.Unconditional()
+	if !v.IsUnconditional() {
+		t.Error("Unconditional() does not report itself as unconditional")
+	}
+	if v.IsZero() {
+		t.Error("Unconditional() reads as a forgotten version; a store would refuse a deliberate blind write")
+	}
+}

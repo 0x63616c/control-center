@@ -10,7 +10,11 @@
 // refresh token blanked.
 package codexauth
 
-import "context"
+import (
+	"context"
+
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+)
 
 // SecretStore reads and writes the keys of the one Kubernetes Secret holding
 // the credential.
@@ -22,8 +26,31 @@ import "context"
 //
 // Put must be durable before it returns. The stored refresh token is
 // single-use: if a rotation is performed and the new token is lost, the old one
-// is already spent, and recovery is a human running a browser login.
+// is already spent, and recovery is a human running a browser login. The same
+// fact is why the seam is a compare-and-swap rather than a plain write — a
+// stale write silently applied over a concurrent rotation does not lose an
+// update, it kills the credential.
 type SecretStore interface {
-	Get(ctx context.Context, key string) ([]byte, error)
-	Put(ctx context.Context, key string, value []byte) error
+	// Get returns every key of the Secret together with the version of the
+	// object they were read from, which is the precondition a write derived
+	// from them may apply.
+	Get(ctx context.Context) (values map[string][]byte, version work.SecretVersion, err error)
+
+	// Put applies every key of values at one point, and only if the stored
+	// object still matches precondition. It returns the version the write
+	// produced, so a caller taking a lease and then settling it CASes on what
+	// its own lease write left behind rather than re-reading and adopting
+	// whatever landed in between.
+	//
+	// Both properties are the mechanism, not caution. The precondition is what
+	// makes a write a lease, and writing the lease marker and the rotated
+	// credential together is what puts them at one linearization point; split
+	// across two writes the lease is not a lease. Keys absent from values are
+	// left alone.
+	//
+	// It returns an error satisfying errors.Is(err, work.ErrVersionConflict)
+	// when, and only when, the precondition no longer holds, and refuses a zero
+	// precondition outright — an overwrite with no precondition has to be asked
+	// for by name.
+	Put(ctx context.Context, values map[string][]byte, precondition work.SecretVersion) (work.SecretVersion, error)
 }

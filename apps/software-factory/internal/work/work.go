@@ -34,6 +34,59 @@ var ErrFileNotFound = errors.New("file not found in sandbox")
 // Temporal's at the same boundary. Wrap with %w; compare with errors.Is.
 var ErrPermanent = errors.New("permanent failure")
 
+// ErrVersionConflict reports that a stored object changed between a read and
+// the write derived from it, and that the write was therefore not applied.
+//
+// It says only that, deliberately. Whether a conflict is contention worth
+// retrying or an invariant already violated depends entirely on what the caller
+// had done by the time it fired — a lease loser retries, a rotation that has
+// already spent its single-use refresh token cannot.
+var ErrVersionConflict = errors.New("stored object changed since it was read")
+
+// SecretVersion is the state a read of a stored object observed, and the
+// precondition a write derived from that read applies to it.
+//
+// It is a struct rather than a string because the obvious spelling is unsafe.
+// Kubernetes treats an empty resourceVersion on an update as an unconditional
+// overwrite that never conflicts, so with a bare string a dropped return value
+// or an unset field disarms a compare-and-swap silently, leaving code that
+// reads exactly like a lease and enforces nothing. Here the zero value is a
+// precondition no store can satisfy, and a blind write is something a caller
+// says out loud with Unconditional.
+type SecretVersion struct {
+	token         string
+	unconditional bool
+}
+
+// ObservedVersion is the precondition "unchanged since this token was read".
+// Implementations mint one from whatever their store calls a version; an empty
+// token yields the zero value, because a store that cannot say what it read
+// cannot constrain a write.
+func ObservedVersion(token string) SecretVersion {
+	return SecretVersion{token: token}
+}
+
+// Unconditional is the precondition "none": the write overwrites whatever is
+// there. It exists so that overwriting blind is a thing a caller asks for
+// rather than a thing a caller forgets.
+func Unconditional() SecretVersion {
+	return SecretVersion{unconditional: true}
+}
+
+// Token returns the store's own version string, empty unless this is an
+// observed version.
+func (v SecretVersion) Token() string { return v.token }
+
+// IsUnconditional reports whether the write may proceed regardless of what is
+// stored.
+func (v SecretVersion) IsUnconditional() bool { return v.unconditional }
+
+// IsZero reports that this names no precondition at all, which a store must
+// refuse rather than translate into a blind write. It is one call so that no
+// implementation has to remember that "no token" and "no precondition" are
+// different things.
+func (v SecretVersion) IsZero() bool { return v.token == "" && !v.unconditional }
+
 // Stage is one step of the pipeline.
 type Stage string
 
