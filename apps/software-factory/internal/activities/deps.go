@@ -94,14 +94,27 @@ type GitHub interface {
 	InstallationToken(ctx context.Context) (work.Credential, error)
 }
 
-// TokenSource yields a currently-valid model access token.
+// TokenSource yields the credential document to write into a sandbox.
 //
 // One method hides the whole of the credential problem: expiry, the OAuth
-// refresh, the single-use rotation of the refresh token, and persisting the
-// rotated value before it is used. Callers never see a refresh token, which is
-// what lets a sandbox be handed a credential file with that field blanked.
+// refresh, the single-use rotation of the refresh token, persisting the rotated
+// value before it is used — and the codex CLI's own file format.
+//
+// It yields a whole file rather than an access token because a sandbox's
+// auth.json composed from a token alone does not merely go unscoped, it FAILS
+// TO PARSE, and codex exec never starts. What makes it parse is a set of
+// non-uniform serde attributes on a Rust struct (id_token mandatory and
+// JWT-parsed, OPENAI_API_KEY present-but-nullable, refresh_token
+// present-but-blankable). Those are facts about codex, so they live in the one
+// package that has read its source; a caller assembling the JSON would have to
+// know them, and would drift from them.
+//
+// The returned document always has its refresh token blanked, so a caller
+// cannot leak one it never receives. There is deliberately no method returning
+// a bare token: nothing needs one today, and absent API surface is a stronger
+// guarantee than a documented convention.
 type TokenSource interface {
-	AccessToken(ctx context.Context) (work.Credential, error)
+	SandboxCredentialFile(ctx context.Context) (work.CredentialFile, error)
 }
 
 // TranscriptSink stores one stage attempt's raw event stream.
