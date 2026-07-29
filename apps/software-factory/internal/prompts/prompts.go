@@ -187,10 +187,10 @@ func comments(detail work.TicketDetail) string {
 	if detail.CommentsOmitted > 0 {
 		// A model that knows the thread was trimmed can say its plan rests on
 		// part of it. A model that does not, cannot.
-		out.WriteString(fmt.Sprintf("\n(%d comments from the middle of this thread are not shown.)\n", detail.CommentsOmitted))
+		fmt.Fprintf(&out, "\n(%d comments from the middle of this thread are not shown.)\n", detail.CommentsOmitted)
 	}
 	for _, comment := range detail.Comments {
-		out.WriteString(fmt.Sprintf("\n@%s wrote:\n\n%s\n", comment.Author, comment.Body))
+		fmt.Fprintf(&out, "\n@%s wrote:\n\n%s\n", comment.Author, comment.Body)
 	}
 	return out.String()
 }

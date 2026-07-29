@@ -58,6 +58,20 @@ requirements are on the worker rendering the prompt, and the prompt cannot enfor
    lands as un-fenced prose immediately before "Your instructions for this stage follow" —
    the most authoritative position in the prompt.
 
+Both are met in `fence.go`, with two choices worth naming:
+
+- The nonce is minted **per Render**, so a run's five stages each carry a different one.
+  Per-run would have been enough; per-render is strictly stronger, needs no nonce threaded
+  through workflow history, and means a document handed forward cannot contain the nonce of
+  the prompt it is interpolated into.
+- Stripping replaces the nonce with a visible marker rather than deleting it. Deletion lets
+  the text either side close up into a fresh copy of the nonce, and it hides the attempt
+  from whoever reads the transcript.
+
+`checkFence` then asserts the nonce appears exactly twice in the finished prompt and fails
+the render otherwise, so a value interpolated without being stripped is a stage that does
+not start rather than a fence that can be forged.
+
 ### `{{ticket_comments}}` — source
 
 Populated from `TicketDetail(ctx, number)` on the `GitHub` seam (title, body and the comment
@@ -146,7 +160,9 @@ that an override at one site is not read as licence to ignore the rest.
    malicious issue body into its plan, the fence's protection does not travel with it to
    `review`/`revise`/`implement`. Fencing handoffs with the same nonce is one line each and
    would cost some readability — worth doing if `auto` ever becomes filable by anyone but the
-   owner, which ADR-0011 already names as the trigger for revisiting the threat model.
+   owner, which ADR-0011 already names as the trigger for revisiting the threat model. The
+   renderer does strip the nonce from handoff documents as well, so an unfenced quote cannot
+   forge the fence; what it cannot do is mark where the quote begins.
 2. **`implement` is asked to paste real test output into its document.** On a large test
    suite that could be long, and the document is interpolated into `propose`'s prompt and
    surfaced to reviewers. No truncation guidance is given, deliberately — truncation
