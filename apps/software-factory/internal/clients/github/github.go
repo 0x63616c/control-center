@@ -316,8 +316,8 @@ func trimThread(thread []work.TicketComment) ([]work.TicketComment, int) {
 	return kept, len(thread) - maxThreadComments
 }
 
-// PostStatus opens the run's single status comment, or adopts the one this run
-// already opened.
+// PostStatus opens one of the run's status comments, or adopts the one this run
+// already opened for that step — the marker in the body decides which.
 //
 // The guarantee is best-effort de-duplication, not exclusion: GitHub offers no
 // conditional create, so two overlapping attempts can both list, both miss and

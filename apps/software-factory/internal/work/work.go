@@ -173,8 +173,9 @@ type TicketComment struct {
 // make the poll either pay for threads nobody asked for, or hand back a Ticket
 // whose empty Comments means "none" and "not fetched" at once.
 //
-// The run's own status comment is not in Comments. It is edited in place all
-// run, and a planner handed it reads our progress updates back as requirements.
+// The run's own status comments are not in Comments. It posts one per step and
+// edits them as it goes, and a planner handed those reads our progress updates
+// back as requirements.
 type TicketDetail struct {
 	Ticket
 
@@ -192,7 +193,8 @@ type TicketDetail struct {
 // SandboxID identifies one ticket's disposable pod.
 type SandboxID string
 
-// CommentID identifies the single status comment a run edits in place.
+// CommentID identifies one status comment of a run, which the run edits in
+// place as that step progresses.
 type CommentID int64
 
 // Model names the model and reasoning effort a stage runs at. Per-stage

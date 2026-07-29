@@ -248,7 +248,7 @@ func runRef(runID, runURL string) string {
 
 // model names the model a stage ran on, and its reasoning effort when one was
 // chosen. An unset effort renders as nothing rather than as empty parentheses,
-// because "effort ``" reads as a bug in the renderer.
+// because "effort “" reads as a bug in the renderer.
 func model(m work.Model) string {
 	if m.Effort == "" {
 		return code(m.Name)
