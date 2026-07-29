@@ -34,6 +34,30 @@ import (
 // happens over HTTP here: the work is on the task queue.
 const shutdownGrace = 5 * time.Second
 
+// workerStopTimeout is how long a drain waits for in-flight activities after a
+// SIGTERM. It must be set explicitly: worker.Options{} leaves it at the SDK's
+// zero value, and a zero timeout is not "wait forever" — awaitWaitGroup starts
+// an already-fired timer, so the drain returns immediately, logs "graceful stop
+// timed out" and cancels every activity context. That is the opposite of a
+// drain, and it is what this file used to do while claiming otherwise.
+//
+// It is deliberately far shorter than a stage. A stage may run for
+// work.MaxStageDuration (60m) and no deploy waits an hour, so a stage in flight
+// when the worker stops IS cancelled — that is the honest behaviour, and
+// ADR-0011's idempotent-stage design is what makes it affordable: the next
+// attempt finds the result file or the live process and reattaches rather than
+// paying for the work twice. What this window buys is the short activities
+// either side of a stage — a GitHub comment, a transcript write, a credential
+// rotation mid-flight — finishing instead of being torn in half.
+//
+// The relationship that matters is with the pod's grace period, not with the
+// stage timeout: terminationGracePeriodSeconds must exceed this plus
+// shutdownGrace, or the kubelet SIGKILLs the drain it is waiting for. F1 sets
+// 120s (infra/src/software-factory.ts, TERMINATION_GRACE_SECONDS), which leaves
+// 25s of headroom. TestTheDrainFitsInsideThePodsGracePeriod is what stops
+// either number moving alone.
+const workerStopTimeout = 90 * time.Second
+
 func main() {
 	if err := run(); err != nil {
 		// The process may have failed before it had a configured logger, so
@@ -104,7 +128,9 @@ func run() error {
 	}
 	defer temporal.Close()
 
-	w := worker.New(temporal, cfg.TaskQueue, worker.Options{})
+	w := worker.New(temporal, cfg.TaskQueue, worker.Options{
+		WorkerStopTimeout: workerStopTimeout,
+	})
 
 	// Registration site. The dispatcher and WorkTicket workflows (C1, C2) and
 	// the activities that carry out a stage are registered here, on this
@@ -132,8 +158,10 @@ func run() error {
 		slog.String("dispatcher_default_model", dispatcher.DefaultModel.Name),
 	)
 
-	// Run blocks until SIGINT or SIGTERM, then drains: in-flight activities
-	// finish, no new tasks are taken. Sandbox pods are deliberately left
+	// Run blocks until SIGINT or SIGTERM, then drains: no new tasks are taken,
+	// and in-flight activities get workerStopTimeout to finish before their
+	// contexts are cancelled. A stage will not finish in that window and is not
+	// meant to — see workerStopTimeout. Sandbox pods are deliberately left
 	// behind — they are independent objects, and a restarted worker reattaches
 	// to the attempt it left running rather than paying for it twice.
 	if err := w.Run(worker.InterruptCh()); err != nil {
