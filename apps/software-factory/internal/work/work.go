@@ -224,11 +224,27 @@ func (m Model) Validate() error {
 // Usage is the token accounting for one stage, as reported by the model's own
 // completion event. Tokens are the only cost this service spends, and they come
 // out of the same subscription window as its owner's interactive sessions.
+//
+// Two of these four are nested inside the other two, which is the fact anyone
+// summing them needs and nothing about the numbers themselves reveals. Both are
+// carried as the provider reports them (verified against codex rust-v0.145.0)
+// rather than pre-subtracted here, so this stays a faithful record of what was
+// said and the arithmetic happens once, where it is used.
 type Usage struct {
-	InputTokens       int64
+	// InputTokens is the whole input, INCLUDING CachedInputTokens.
+	InputTokens int64
+
+	// CachedInputTokens is the part of InputTokens served from the provider's
+	// prompt cache, and priced differently from the rest of it.
 	CachedInputTokens int64
-	OutputTokens      int64
-	ReasoningTokens   int64
+
+	// OutputTokens is the whole output, INCLUDING ReasoningTokens.
+	OutputTokens int64
+
+	// ReasoningTokens is the part of OutputTokens spent on reasoning. It bills
+	// at the output rate and is already counted there, so it is reported beside
+	// the output rather than added to it.
+	ReasoningTokens int64
 }
 
 // Add returns the sum of two usages, so a run can total its stages.
