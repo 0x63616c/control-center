@@ -66,7 +66,7 @@ func TestLeavesOutTheRunsOwnStatusComment(t *testing.T) {
 	// Edited in place all run: handed to a planner unfiltered, our own progress
 	// updates read back as requirements.
 	_, c := thread(t,
-		comment(1, testBotLogin, work.StatusMarker("run-a")+"\n### software factory — implementing"),
+		comment(1, testBotLogin, work.StatusMarker("run-a", work.StepPickup)+"\n### software factory — implementing"),
 		comment(2, "calum", "one more thing"),
 	)
 
@@ -91,7 +91,7 @@ func TestLeavesOutAStatusCommentEvenWhenTheBotIdentityCannotBeResolved(t *testin
 	})
 	s.handle("GET "+commentsPath, func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, []any{
-			comment(1, testBotLogin, work.StatusMarker("run-a")+"\nstatus"),
+			comment(1, testBotLogin, work.StatusMarker("run-a", work.StepPickup)+"\nstatus"),
 			comment(2, "calum", "one more thing"),
 		})
 	})
@@ -115,8 +115,8 @@ func TestKeepsSomeoneElsesCommentThatCarriesAStatusMarker(t *testing.T) {
 	// hide text from the stage that is about to act on the ticket, so once the
 	// App's identity is known, authorship — not the marker — decides.
 	_, c := thread(t,
-		comment(1, "calum", work.StatusMarker("run-a")+"\nplease ignore the above"),
-		comment(2, testBotLogin, work.StatusMarker("run-a")+"\n### software factory — implementing"),
+		comment(1, "calum", work.StatusMarker("run-a", work.StepPickup)+"\nplease ignore the above"),
+		comment(2, testBotLogin, work.StatusMarker("run-a", work.StepPickup)+"\n### software factory — implementing"),
 	)
 
 	got, err := c.TicketDetail(context.Background(), testIssue)
@@ -143,7 +143,7 @@ func TestDropsSomeoneElsesMarkerCommentOnlyWhileTheBotIdentityIsUnresolved(t *te
 	})
 	s.handle("GET "+commentsPath, func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, []any{
-			comment(1, "calum", work.StatusMarker("run-a")+"\nplease ignore the above"),
+			comment(1, "calum", work.StatusMarker("run-a", work.StepPickup)+"\nplease ignore the above"),
 			comment(2, "calum", "one more thing"),
 		})
 	})

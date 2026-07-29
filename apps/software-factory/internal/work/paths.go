@@ -58,8 +58,34 @@ func WorkflowID(ticketNumber int) string {
 // accident.
 const statusMarkerPrefix = "<!-- software-factory:status v1 run="
 
-// StatusMarker is the first line of a run's status comment, and the only thing
-// that identifies the comment as that run's.
+// StatusStep names which of a run's status comments a marker identifies.
+//
+// A run appends a comment per step rather than editing one comment for the
+// whole run, so the marker has to identify the comment and not merely the run:
+// without the step, every step's create-or-adopt would match the first comment
+// the run posted and the run would overwrite its own history.
+type StatusStep string
+
+// The steps that are not stages: a run opens with one and ends with one.
+const (
+	// StepPickup is the comment announcing the run and its Temporal run.
+	StepPickup StatusStep = "pickup"
+	// StepOutcome is the comment carrying the PR or the reason there is none,
+	// plus the run's token totals.
+	StepOutcome StatusStep = "outcome"
+)
+
+// StageStep is the step a stage's own status comment occupies.
+//
+// One comment per stage, not per attempt — the same identity StageKey carries.
+// A retried stage therefore adopts and edits the comment it already posted
+// rather than appending a second one for work the reader already saw start.
+func StageStep(stage Stage) StatusStep {
+	return StatusStep("stage-" + stage)
+}
+
+// StatusMarker is the first line of one status comment, and the only thing that
+// identifies the comment as that run's, at that step.
 //
 // Nothing else may construct this string — a second spelling would be a second
 // comment. It lives here rather than beside either the renderer that emits it
@@ -67,10 +93,9 @@ const statusMarkerPrefix = "<!-- software-factory:status v1 run="
 // fact; whichever of them owned it, the other would hold a copy.
 //
 // It is an HTML comment so it renders as nothing, and it carries the RunID so a
-// previous run's status comment never matches and stays on the issue as
-// history.
-func StatusMarker(runID string) string {
-	return statusMarkerPrefix + runID + " -->"
+// previous run's status comments never match and stay on the issue as history.
+func StatusMarker(runID string, step StatusStep) string {
+	return statusMarkerPrefix + runID + " step=" + string(step) + " -->"
 }
 
 // StatusMarkerIn returns the marker line of a rendered status body.
