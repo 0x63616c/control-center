@@ -583,6 +583,31 @@ func TestWorkTicketReportsTheOutcomeWithTheRunsTotal(t *testing.T) {
 	}
 }
 
+// TestWorkTicketReportsThePullRequestURLGitHubReturned proves the outcome
+// comment carries the URL FindPullRequest got from GitHub for the run's own
+// branch, not an empty value — #371. A run that opened a pull request but
+// left this blank would post a comment announcing success with nothing
+// linking to what it did.
+func TestWorkTicketReportsThePullRequestURLGitHubReturned(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.run()
+
+	var outcome *work.StatusReport
+	for i, report := range h.reports {
+		if report.Step == work.StepOutcome {
+			outcome = &h.reports[i]
+		}
+	}
+	if outcome == nil {
+		t.Fatal("a run must say how it ended")
+	}
+	if outcome.PullRequestURL != "https://github.com/o/r/pull/9" {
+		t.Fatalf("outcome report pull request url = %q, want the one GitHub reported", outcome.PullRequestURL)
+	}
+}
+
 // commentFor gives each status step a distinct comment id, so a test can tell
 // a step editing its own comment from a step editing another's.
 func commentFor(step work.StatusStep) work.CommentID {

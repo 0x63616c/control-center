@@ -148,26 +148,25 @@ type Proposed struct {
 	// PullRequestURL is the pull request the run opened, as GitHub reported it
 	// for the branch the worker named — not as the propose stage described it.
 	//
-	// That stage does not exist yet, so this is the contract for the field
-	// rather than a description of running code; #371 is what will make it hold
-	// at the source.
-	//
-	// An earlier draft of this comment said the stage lifts it from its own
-	// result file. That design was declined on #329, and #371 is why: a URL
-	// taken from model output is attacker-influenced, and
+	// It arrives here as work.StatusReport.PullRequestURL, set from
+	// activities.FindPullRequestOutput.PullRequest.URL in
+	// workflows.ticketRun.execute and threaded into the outcome report by
+	// finish (#371). An earlier draft of this comment said the stage lifts it
+	// from its own result file. That design was declined on #329: a URL taken
+	// from model output is attacker-influenced, and
 	// `https://github.com@evil.example/x` renders as an autolink to
 	// evil.example. It is asked of GitHub instead, which cannot be forged by
 	// anyone who can file an issue.
 	//
-	// It will not be a URL taken from model output by a second route as well:
-	// the envelope every stage answers in is `{"document": string}` with
+	// It is not a URL taken from model output by a second route either: the
+	// envelope every stage answers in is `{"document": string}` with
 	// additionalProperties false, so there is nowhere for a stage to put one.
 	//
 	// It is still rendered as markup only if it survives linkedURL and
 	// pullRequestHost, and inertly otherwise. Defence in depth: the guard costs
-	// nothing, it does not stop being worth doing once #371 lands, and the day
-	// this field is filled from somewhere else it is the only thing standing
-	// there.
+	// nothing, #371 landing does not make it stop being worth doing, and the
+	// day this field is filled from somewhere else it is the only thing
+	// standing there.
 	PullRequestURL string
 
 	EndedAt time.Time
@@ -283,16 +282,16 @@ func runRef(runID, runURL string) string {
 // service's name, and a reader has been handed it by something they have reason
 // to trust.
 //
-// This is a backstop, not the real fix. The real fix is that the propose stage
-// records the URL the GitHub API returned when it created the pull request,
-// rather than the one the model wrote — #371. Until then this fails closed to
-// the inert rendering below.
+// This is a backstop, not the real fix. The real fix, landed by #371, is that
+// the run records the URL the GitHub API returned when it created the pull
+// request, rather than one the model wrote. This still fails closed to the
+// inert rendering below if that value is ever wrong.
 //
-// #371 removes the ORIGINAL reason for this constant; it does not on its own
-// make it deletable. Whether a renderer that cannot see where its input came
-// from should still pin the host it will link to is a separate question, and
-// the reason a backstop is warranted at all — that it holds precisely when the
-// layer above it is wrong — does not depend on #371.
+// #371 removed the ORIGINAL reason for this constant; it did not make it
+// deletable. Whether a renderer that cannot see where its input came from
+// should still pin the host it will link to is a separate question, and the
+// reason a backstop is warranted at all — that it holds precisely when the
+// layer above it is wrong — did not depend on #371.
 //
 // The literal is deliberate. A backstop that reads its bound from config is not
 // a backstop: its whole job is to hold when the layer above it is wrong, and an
