@@ -224,7 +224,10 @@ func TestDispatcherIgnoresACompletionReportFromARunItHasAlreadyReplaced(t *testi
 	h.config.Concurrency = 1
 	h.inFlight = []work.InFlightTicket{{Ticket: 1, RunID: "run-2"}}
 	h.runs["work-ticket-1"] = work.RunState{Open: true, RunID: "run-2"}
-	h.tickets = tickets(1, 9)
+	// Ticket 1 is deliberately not listed: if the stale report freed its slot,
+	// the dispatcher would simply re-adopt the run it still has, and the bug
+	// would be invisible. Ticket 9 is what a wrongly-freed slot would start.
+	h.tickets = tickets(9)
 	h.at(45*time.Second, func() {
 		h.env.SignalWorkflow(workflows.SignalTicketDone, work.TicketDone{
 			Ticket: 1, RunID: "run-1", Outcome: work.OutcomeFailed, Failure: work.FailureOther,
