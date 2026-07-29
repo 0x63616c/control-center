@@ -26,6 +26,21 @@ var ErrRateLimited = fmt.Errorf("the model provider's rate limit was reached: %w
 // codex login and re-seeding.
 var ErrAuth = fmt.Errorf("codex could not authenticate: %w", work.ErrPermanent)
 
+// A constraint on whoever wires these into an activity (D1, #340).
+//
+// Both sentinels exist so the dispatcher can tell "wait, then carry on" from
+// "stop and fetch a human". Today it cannot, and not because of anything in
+// this file: there is no activity boundary yet. When one lands, Temporal
+// serialises an activity's error into an ApplicationError carrying a Type
+// string and a message — the Go error chain does NOT cross into workflow code.
+// errors.Is(err, ErrRateLimited) in the dispatcher will be false however
+// carefully the error was wrapped here.
+//
+// So these two buy nothing unless that translation maps each onto a DISTINCT
+// ApplicationError Type, and the dispatcher switches on the Type. If it maps
+// everything permanent onto one Type, delete one of these rather than leave a
+// distinction that reads as load-bearing and is not.
+
 // stderrLimit is how much of stderr an error may carry. The error is written to
 // Temporal history and quoted into a GitHub comment, and neither is the place
 // for a stage's whole log — the transcript already holds that.

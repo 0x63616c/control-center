@@ -114,7 +114,7 @@ func (r *Runner) run(ctx context.Context, run work.StageRun, events work.StageEv
 	if err != nil {
 		return work.StageResult{}, err
 	}
-	return work.StageResult{Output: output, ThreadID: stream.ThreadID, Usage: stream.Usage}, nil
+	return work.StageResult{Output: output, ThreadID: stream.ThreadID, Usage: stream.Usage, UsageMeasured: true}, nil
 }
 
 // streamed is what one codex invocation produced.
@@ -163,11 +163,14 @@ func (r *Runner) exec(ctx context.Context, run work.StageRun, events work.StageE
 
 // storedResult reads a result a previous attempt left behind.
 //
-// Usage and ThreadID are deliberately left zero. They arrived on the event
-// stream of a process this attempt was never attached to, and that stream is
-// gone. Zero under-reports what the run spent, which is a real gap and is
-// logged; inventing a number would be worse, because nothing downstream could
-// tell it from a measurement.
+// Usage and ThreadID are deliberately left zero, and UsageMeasured is left
+// false. They arrived on the event stream of a process this attempt was never
+// attached to, and that stream is gone. Inventing a number would be worse than
+// under-reporting, because nothing downstream could tell it from a
+// measurement — but a bare zero has the same problem one step removed, since
+// zero tokens is itself a legitimate reading. UsageMeasured is what makes "we
+// did not measure this" expressible to something that is not a human reading
+// the WARN below.
 func (r *Runner) storedResult(ctx context.Context, run work.StageRun, paths work.StagePaths) (work.StageResult, error) {
 	output, err := r.readResult(ctx, run, paths)
 	if err != nil {

@@ -180,9 +180,12 @@ func TestAResumedStageDoesNotInventTokensItDidNotSee(t *testing.T) {
 	t.Parallel()
 
 	// The stream that carried the usage and thread id belonged to a process
-	// this attempt was never attached to, so both are genuinely unknown. Zero
-	// under-reports the spend, which is a known gap; a fabricated number would
-	// be worse, because nothing downstream could tell it from a measurement.
+	// this attempt was never attached to, so both are genuinely unknown. A
+	// fabricated number would be worse than under-reporting, because nothing
+	// downstream could tell it from a measurement — and a bare zero has that
+	// same problem, since zero tokens is a legitimate reading. UsageMeasured is
+	// what separates the two, so it is asserted here rather than left to the
+	// WARN log, which only a human sees.
 	pods, files := newFakes()
 	files.put(testRun().Key.Paths().Result, []byte(resultJSON))
 
@@ -192,6 +195,30 @@ func TestAResumedStageDoesNotInventTokensItDidNotSee(t *testing.T) {
 	}
 	if result.Usage != (work.Usage{}) || result.ThreadID != "" {
 		t.Errorf("a resumed stage reported Usage %+v and ThreadID %q, want both empty", result.Usage, result.ThreadID)
+	}
+	if result.UsageMeasured {
+		t.Error("a resumed stage claims its zero usage was measured; an aggregator would add it to a total as though nobody had spent anything")
+	}
+}
+
+func TestAStageThatRanReportsItsUsageAsMeasured(t *testing.T) {
+	t.Parallel()
+
+	// The other half of the same fact. If UsageMeasured were never set, every
+	// stage would look unmeasured and the flag would say nothing at all.
+	pods, files := newFakes()
+	pods.onCodex = func(call *execCall) (int, error) {
+		files.put(testRun().Key.Paths().Result, []byte(resultJSON))
+		_, err := io.WriteString(call.stdout, `{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":40,"output_tokens":20,"reasoning_output_tokens":5}}`+"\n")
+		return 0, err
+	}
+
+	result, err := newTestRunner(pods, files).RunStage(context.Background(), testRun(), func([]byte) {})
+	if err != nil {
+		t.Fatalf("RunStage() = %v", err)
+	}
+	if !result.UsageMeasured {
+		t.Error("a stage this worker watched run reports its usage as unmeasured")
 	}
 }
 
@@ -322,9 +349,9 @@ type execCall struct {
 }
 
 type fakePods struct {
-	mu          sync.Mutex
-	calls       []execCall
-	alivePID    int
+	mu       sync.Mutex
+	calls    []execCall
+	alivePID int
 	// aliveOutput overrides what an exit-0 pgrep writes to stdout, so a test
 	// can express "pgrep found a process but its output does not parse as a
 	// PID" — a warning line, or nothing at all.

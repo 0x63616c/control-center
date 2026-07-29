@@ -19,10 +19,12 @@ func TestUsageIsCarriedExactlyAsCodexReportedIt(t *testing.T) {
 
 	// THE invariant of this parser. codex's input_tokens INCLUDES
 	// cached_input_tokens, and reasoning_output_tokens is a SUBSET of
-	// output_tokens. work.Usage documents that nesting and internal/telemetry
-	// does the subtraction. If a future edit "helpfully" subtracts here as
-	// well, the cache hits are removed twice and the billing figures go quietly
-	// wrong — no other test, dashboard or CI job would notice. This one fails.
+	// output_tokens. work.Usage documents that nesting, and internal/telemetry
+	// relies on it: it subtracts the cached part to get a disjoint uncached
+	// counter, and records reasoning as a subset of output. If a future edit
+	// "helpfully" subtracts here as well, the cache hits are removed twice and
+	// the billing figures go quietly wrong — no other test, dashboard or CI job
+	// would notice. This one fails.
 	stream := `{"type":"turn.completed","usage":{"input_tokens":1000,"cached_input_tokens":800,"cache_write_input_tokens":40,"output_tokens":300,"reasoning_output_tokens":250}}`
 
 	outcome, err := parseStream(strings.NewReader(stream), func([]byte) {})
@@ -32,7 +34,7 @@ func TestUsageIsCarriedExactlyAsCodexReportedIt(t *testing.T) {
 
 	want := work.Usage{InputTokens: 1000, CachedInputTokens: 800, OutputTokens: 300, ReasoningTokens: 250}
 	if outcome.Usage != want {
-		t.Errorf("Usage = %+v, want %+v — carry codex's numbers verbatim; the cached and reasoning subsets are subtracted in internal/telemetry, and doing it here too double-subtracts them", outcome.Usage, want)
+		t.Errorf("Usage = %+v, want %+v — carry codex's numbers verbatim; internal/telemetry subtracts the cached part downstream to build its disjoint counters, so subtracting here too removes it twice", outcome.Usage, want)
 	}
 }
 

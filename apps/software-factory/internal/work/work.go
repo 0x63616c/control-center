@@ -299,6 +299,18 @@ type StageResult struct {
 	ThreadID string
 
 	Usage Usage
+
+	// UsageMeasured says whether Usage was observed rather than defaulted.
+	//
+	// Zero tokens is a legitimate measurement, so a zero Usage cannot say on
+	// its own whether it means "spent nothing" or "nobody was watching". A
+	// stage resumed from a stored result is the second case: its numbers
+	// arrived on the event stream of a process this worker was never attached
+	// to, and that stream is gone. Recording the difference is what stops an
+	// aggregator adding an unmeasured zero to a total as though it were a
+	// measurement — and the runs that resume are the long ones, which are the
+	// ones that spent most.
+	UsageMeasured bool
 }
 
 // StageEventSink receives each raw event line as a stage streams it.
