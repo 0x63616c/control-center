@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/status"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
@@ -530,6 +531,11 @@ func TestWillNotPutAnUntrustedURLIntoTheCommentAsMarkup(t *testing.T) {
 			"not a url\n<!-- software-factory:status v1 run=evil step=pickup -->",
 			"https://x/a)  evil](javascript:alert(1)",
 			"javascript:alert(1)",
+			// A host is what makes these interesting: without one the host
+			// check rejects them before the scheme allowlist is ever reached,
+			// and an allowlist no input reaches is an allowlist no test covers.
+			"javascript://example.com/%0aalert(1)",
+			"ftp://example.com/pull/999",
 			"  ",
 		} {
 			t.Run(tc.name+"/"+raw, func(t *testing.T) {
@@ -553,9 +559,11 @@ func TestWillNotPutAnUntrustedURLIntoTheCommentAsMarkup(t *testing.T) {
 					if strings.Contains(bare, "javascript:") {
 						t.Errorf("line %d carries a live javascript: URL: %q\n%s", i+2, line, body)
 					}
-					for _, target := range linkTargets(bare) {
-						if !strings.HasPrefix(target, "https://") {
-							t.Errorf("line %d links to %q, which is not an https URL\n%s", i+2, target, body)
+					// Every scheme the renderer leaves interpretable, whether
+					// as a link target or as a bare autolink, must be https.
+					for _, scheme := range schemesIn(bare) {
+						if scheme != "https" {
+							t.Errorf("line %d exposes a %q URL as markup: %q\n%s", i+2, scheme, line, body)
 						}
 					}
 					if strings.Count(bare, "(") != strings.Count(bare, ")") {
@@ -587,22 +595,20 @@ func outsideCodeSpans(line string) string {
 	return strings.Join(bare, "")
 }
 
-// linkTargets is every markdown link destination on a line.
-func linkTargets(bare string) []string {
-	var targets []string
-	for rest := bare; ; {
-		open := strings.Index(rest, "](")
-		if open < 0 {
-			return targets
+// schemesIn is every URL scheme a markdown renderer would act on in the part of
+// a line that is not inside a code span — both `[text](scheme://…)` targets and
+// bare autolinks, since GitHub linkifies the latter too.
+func schemesIn(bare string) []string {
+	var schemes []string
+	for i := strings.Index(bare, "://"); i >= 0; i = strings.Index(bare, "://") {
+		start := i
+		for start > 0 && (unicode.IsLetter(rune(bare[start-1])) || unicode.IsDigit(rune(bare[start-1]))) {
+			start--
 		}
-		rest = rest[open+2:]
-		close := strings.Index(rest, ")")
-		if close < 0 {
-			return append(targets, rest)
-		}
-		targets = append(targets, rest[:close])
-		rest = rest[close+1:]
+		schemes = append(schemes, bare[start:i])
+		bare = bare[i+3:]
 	}
+	return schemes
 }
 
 func TestSaysSoRatherThanRenderingAnEmptyCodeSpan(t *testing.T) {
