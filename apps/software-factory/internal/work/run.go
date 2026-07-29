@@ -131,6 +131,37 @@ func (t DispatcherTuning) Validate() error {
 	return nil
 }
 
+// BranchName is the branch one run pushes its work to, and the branch its pull
+// request is later found by.
+//
+// It has one home for the same reason WorkflowID does: the sandbox creates it,
+// the implement stage pushes it, and the worker asks GitHub what pull request
+// is open on it. Three readers of one fact, so a second spelling is a run whose
+// pull request can never be found.
+//
+// Neither part can carry attacker-chosen text — a ticket number is an integer
+// and a RunID is a UUID Temporal mints — so no issue author can steer what gets
+// pushed or which branch is queried.
+func BranchName(ticketNumber int, runID string) string {
+	return fmt.Sprintf("software-factory/ticket-%d/%s", ticketNumber, runID)
+}
+
+// SandboxBranchEnv is the environment variable the sandbox reads its branch
+// from. It is part of the contract with the sandbox image, like SandboxRoot.
+const SandboxBranchEnv = "SF_BRANCH"
+
+// PullRequest is a pull request GitHub reported, as GitHub reported it.
+//
+// The URL comes from GitHub's own response and never from model output. That is
+// not a style preference: a URL lifted from a stage's document is
+// attacker-influenced text, and `https://github.com@evil.example/x` renders as
+// an autolink to evil.example (#371). Asking GitHub what is open on a branch we
+// named ourselves is unforgeable.
+type PullRequest struct {
+	Number int
+	URL    string
+}
+
 // Outcome is how a WorkTicket run ended.
 type Outcome string
 

@@ -145,10 +145,19 @@ func (s StageFailed) Body() string {
 // Proposed is the run's last comment when it opened a pull request.
 type Proposed struct {
 	RunID string
-	// PullRequestURL is the pull request the run opened. It is untrusted: the
-	// propose stage lifts it from the agent's own result file, which is model
-	// output derived from issue text an attacker chose. It is rendered as
-	// markup only if it survives linkedURL, and inertly otherwise.
+	// PullRequestURL is the pull request the run opened, as GitHub reported it
+	// for the branch the worker named — not as the propose stage described it.
+	//
+	// An earlier draft of this comment said the stage lifts it from its own
+	// result file. That design was declined on #329, and #371 is why: a URL
+	// taken from model output is attacker-influenced, and
+	// `https://github.com@evil.example/x` renders as an autolink to
+	// evil.example. It is asked of GitHub instead, which cannot be forged by
+	// anyone who can file an issue.
+	//
+	// It is still rendered as markup only if it survives linkedURL, and inertly
+	// otherwise. Defence in depth: the guard costs nothing and the day this
+	// field is filled from somewhere else it is the only thing standing there.
 	PullRequestURL string
 
 	EndedAt time.Time

@@ -160,7 +160,6 @@ func (r *ticketRun) execute(ctx workflow.Context) (WorkTicketResult, error) {
 	}
 
 	var handoff []byte
-	var proposed work.StageVerdict
 
 	for _, stage := range work.Pipeline() {
 		r.report(ctx, work.StatusReport{Stage: stage})
@@ -178,46 +177,40 @@ func (r *ticketRun) execute(ctx workflow.Context) (WorkTicketResult, error) {
 			return WorkTicketResult{Outcome: work.OutcomeFailed, Usage: r.usage}, err
 		}
 
-		// Tokens are counted before the verdict is read: they were spent
-		// whatever the stage decided.
+		// Tokens are counted as soon as the stage returns: they were spent
+		// whatever it produced.
 		r.usage = r.usage.Add(out.Usage)
-
-		if out.Verdict.Blocked {
-			return WorkTicketResult{
-				Outcome: work.OutcomeBlocked,
-				Usage:   r.usage,
-				Detail:  blockedDetail(stage, out.Verdict.Reason),
-			}, nil
-		}
-
 		handoff = out.Output
-		proposed = out.Verdict
 	}
 
-	if proposed.PullRequest == "" {
-		// The one thing this system exists to produce. A run that reports
-		// success without it has not done the job, and saying so is cheaper
-		// than a human discovering it by looking for a PR that is not there.
-		return WorkTicketResult{Outcome: work.OutcomeFailed, Usage: r.usage},
-			temporal.NewNonRetryableApplicationError(
-				fmt.Sprintf("the propose stage of ticket #%d reported no pull request", r.in.Ticket.Number),
-				activities.ErrTypeInvalid, nil)
+	// What the run achieved is asked of GitHub, never read out of what the
+	// propose stage said it did. Every stage's output is model text derived
+	// from a ticket an attacker may have written, so letting it decide the
+	// outcome would let it decide the outcome. A branch the worker named and a
+	// pull request GitHub reports on it cannot be forged from an issue body.
+	branch := work.BranchName(r.in.Ticket.Number, r.runID)
+	var found activities.FindPullRequestOutput
+	if err := workflow.ExecuteActivity(control, acts.FindPullRequest, branch).Get(ctx, &found); err != nil {
+		return WorkTicketResult{Outcome: work.OutcomeFailed, Usage: r.usage}, err
+	}
+
+	if !found.Found {
+		// Not a failure. Every stage ran and propose declined to open a pull
+		// request — which is the machine saying it could not do this ticket,
+		// and is exactly the "blocked" ADR-0011 names as one of the two moments
+		// the auto label comes off.
+		return WorkTicketResult{
+			Outcome: work.OutcomeBlocked,
+			Usage:   r.usage,
+			Detail:  fmt.Sprintf("no pull request was opened on %s", branch),
+		}, nil
 	}
 
 	return WorkTicketResult{
 		Outcome:     work.OutcomeProposed,
-		PullRequest: proposed.PullRequest,
+		PullRequest: found.PullRequest.URL,
 		Usage:       r.usage,
 	}, nil
-}
-
-// blockedDetail says which stage declined and why, because "blocked" alone is
-// the least useful thing a status comment could say.
-func blockedDetail(stage work.Stage, reason string) string {
-	if reason == "" {
-		return fmt.Sprintf("the %s stage declined the ticket without saying why", stage)
-	}
-	return fmt.Sprintf("the %s stage declined the ticket: %s", stage, reason)
 }
 
 // finish releases everything the run holds, whatever happened to it.

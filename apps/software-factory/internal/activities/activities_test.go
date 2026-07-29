@@ -34,6 +34,11 @@ type fakeGitHub struct {
 	editedBody string
 	cleared    []int
 	nextID     work.CommentID
+
+	pr          work.PullRequest
+	prFound     bool
+	prErr       error
+	askedBranch string
 }
 
 func (f *fakeGitHub) ListAutoTickets(context.Context) ([]work.Ticket, error) {
@@ -61,6 +66,11 @@ func (f *fakeGitHub) ClearAutoLabel(_ context.Context, issue int) error {
 
 func (f *fakeGitHub) InstallationToken(context.Context) (work.Credential, error) {
 	return work.Credential{}, nil
+}
+
+func (f *fakeGitHub) PullRequestForBranch(_ context.Context, branch string) (work.PullRequest, bool, error) {
+	f.askedBranch = branch
+	return f.pr, f.prFound, f.prErr
 }
 
 type fakePods struct {
@@ -127,17 +137,12 @@ func (f *fakeTranscript) Close() error {
 }
 
 type fakePrompts struct {
-	prompt  string
-	schema  []byte
-	err     error
-	verdict work.StageVerdict
+	prompt string
+	schema []byte
+	err    error
 
 	sawStage   work.Stage
 	sawHandoff []byte
-}
-
-func (f *fakePrompts) Verdict(work.Stage, []byte) (work.StageVerdict, error) {
-	return f.verdict, nil
 }
 
 func (f *fakePrompts) Render(stage work.Stage, _ work.TicketDetail, handoff []byte) (string, []byte, error) {
@@ -697,5 +702,56 @@ func TestRunStageRecordsAFailedStageToo(t *testing.T) {
 	}
 	if metrics.usages[0].InputTokens != 100 {
 		t.Fatalf("usage = %+v, want the tokens the failed attempt spent", metrics.usages[0])
+	}
+}
+
+func TestFindPullRequestAsksAboutTheBranchItWasGiven(t *testing.T) {
+	t.Parallel()
+
+	gh := &fakeGitHub{pr: work.PullRequest{Number: 9, URL: "https://github.com/o/r/pull/9"}, prFound: true}
+	d := deps()
+	d.GitHub = gh
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.FindPullRequest)
+
+	branch := work.BranchName(328, "run-1")
+	val, err := e.ExecuteActivity(a.FindPullRequest, branch)
+	if err != nil {
+		t.Fatalf("FindPullRequest: %v", err)
+	}
+
+	var out FindPullRequestOutput
+	if err := val.Get(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if gh.askedBranch != branch {
+		t.Fatalf("asked about %q, want %q", gh.askedBranch, branch)
+	}
+	if !out.Found || out.PullRequest.URL != "https://github.com/o/r/pull/9" {
+		t.Fatalf("out = %+v, want the pull request GitHub reported", out)
+	}
+}
+
+func TestFindPullRequestReportsAbsenceAsAnAnswerNotAnError(t *testing.T) {
+	t.Parallel()
+
+	d := deps()
+	d.GitHub = &fakeGitHub{prFound: false}
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.FindPullRequest)
+
+	val, err := e.ExecuteActivity(a.FindPullRequest, work.BranchName(328, "run-1"))
+	if err != nil {
+		t.Fatalf("a run that opened no pull request is blocked, not broken: %v", err)
+	}
+
+	var out FindPullRequestOutput
+	if err := val.Get(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Found {
+		t.Fatal("nothing was found")
 	}
 }

@@ -216,6 +216,50 @@ func (c *Client) ListAutoTickets(ctx context.Context) ([]work.Ticket, error) {
 	}
 }
 
+// PullRequestForBranch returns the open pull request whose head is branch, if
+// there is one.
+//
+// This is how a run learns what it achieved. It is asked of GitHub rather than
+// read out of the propose stage's own report because that report is model
+// output derived from issue text an attacker chose, and a URL taken from it is
+// a phishing vector that renders as an autolink (#371). The branch is one the
+// worker named from a ticket number and a Temporal RunID, so nothing an issue
+// author writes can steer which branch is queried or which URL comes back.
+//
+// Not found is not an error: a propose stage that declined to open a pull
+// request is a run that was blocked, which is a decision.
+//
+// The URL returned is HTMLURL — the page a human opens — not the API URL.
+func (c *Client) PullRequestForBranch(ctx context.Context, branch string) (work.PullRequest, bool, error) {
+	op := fmt.Sprintf("looking for an open pull request on %s", branch)
+
+	// Head must be qualified by owner, or GitHub matches branches of the same
+	// name in every fork and can answer with someone else's pull request.
+	opts := &gh.PullRequestListOptions{
+		State:       "open",
+		Head:        c.owner + ":" + branch,
+		ListOptions: gh.ListOptions{PerPage: perPage},
+	}
+
+	prs, _, err := c.api.PullRequests.List(ctx, c.owner, c.repo, opts)
+	if err != nil {
+		return work.PullRequest{}, false, classify(ctx, op, err)
+	}
+	if len(prs) == 0 {
+		return work.PullRequest{}, false, nil
+	}
+
+	// One branch, one open pull request — GitHub does not allow two from the
+	// same head. Taking the first is not a guess.
+	pr := prs[0]
+	if pr.GetNumber() == 0 || pr.GetHTMLURL() == "" {
+		return work.PullRequest{}, false, fmt.Errorf("%s: github returned a pull request with no number or url", op)
+	}
+
+	c.log.Info("found the run's pull request", "branch", branch, "pull_request", pr.GetNumber())
+	return work.PullRequest{Number: pr.GetNumber(), URL: pr.GetHTMLURL()}, true, nil
+}
+
 // TicketDetail returns a ticket with the discussion on it.
 //
 // By number rather than "the ticket being worked", because a stage that follows

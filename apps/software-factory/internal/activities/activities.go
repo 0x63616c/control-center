@@ -24,7 +24,7 @@ type Deps struct {
 	Pods        PodLifecycle
 	Stages      StageRunner
 	Transcripts TranscriptSink
-	Prompts     StageContract
+	Prompts     PromptRenderer
 	Status      StatusRenderer
 	Runs        RunLookup
 	Sweeper     SandboxSweeper
@@ -225,11 +225,6 @@ type RunStageOutput struct {
 	Output   []byte
 	ThreadID string
 	Usage    work.Usage
-
-	// Verdict is the part of Output the pipeline itself reads: whether the run
-	// is blocked, and what propose opened. Read here, once, rather than in the
-	// workflow, so that workflow code never parses a schema.
-	Verdict work.StageVerdict
 }
 
 // RunStage renders a stage's prompt, runs it in the sandbox, and stores its
@@ -291,17 +286,34 @@ func (a *Activities) RunStage(ctx context.Context, in RunStageInput) (RunStageOu
 		"input_tokens", result.Usage.InputTokens,
 		"output_tokens", result.Usage.OutputTokens)
 
-	verdict, err := a.deps.Prompts.Verdict(in.Key.Stage, result.Output)
-	if err != nil {
-		return RunStageOutput{}, fail(ctx, fmt.Sprintf("reading the verdict of %s", in.Key), err)
-	}
-
 	return RunStageOutput{
 		Output:   result.Output,
 		ThreadID: result.ThreadID,
 		Usage:    result.Usage,
-		Verdict:  verdict,
 	}, nil
+}
+
+// FindPullRequestOutput is what GitHub says is open on a run's branch.
+//
+// Found is a field rather than an empty URL meaning "none", because the two
+// answers lead to opposite outcomes — a proposal and a block — and a caller
+// that had to infer one from an empty string would eventually infer wrong.
+type FindPullRequestOutput struct {
+	Found       bool
+	PullRequest work.PullRequest
+}
+
+// FindPullRequest asks GitHub what a run actually achieved.
+//
+// It is the run's outcome, and it comes from GitHub rather than from what the
+// propose stage said it did. A stage's report is model output; GitHub's answer
+// about a branch the worker named is not.
+func (a *Activities) FindPullRequest(ctx context.Context, branch string) (FindPullRequestOutput, error) {
+	pr, found, err := a.deps.GitHub.PullRequestForBranch(ctx, branch)
+	if err != nil {
+		return FindPullRequestOutput{}, fail(ctx, fmt.Sprintf("looking for a pull request on %s", branch), err)
+	}
+	return FindPullRequestOutput{Found: found, PullRequest: pr}, nil
 }
 
 // DescribeRun reports whether a ticket's workflow is still open, and which run

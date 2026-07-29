@@ -88,6 +88,21 @@ type GitHub interface {
 	// a PR or given up. A human re-adds it to request another pass.
 	ClearAutoLabel(ctx context.Context, issue int) error
 
+	// PullRequestForBranch reports the open pull request on a branch, if there
+	// is one.
+	//
+	// This is how a run learns what it achieved, and the reason it is asked of
+	// GitHub rather than read out of the propose stage's own report: the
+	// stage's report is model output derived from issue text an attacker chose,
+	// and a URL taken from it is a phishing vector rendered as an autolink
+	// (#371). GitHub's answer about a branch we named ourselves cannot be
+	// forged by anyone who can file an issue.
+	//
+	// Absence is a real answer, not an error — a propose stage that declined to
+	// open a pull request is a run that was blocked, which is a decision rather
+	// than a failure.
+	PullRequestForBranch(ctx context.Context, branch string) (pr work.PullRequest, found bool, err error)
+
 	// InstallationToken mints a short-lived token scoped to this repository,
 	// for the sandbox to push with.
 	//
@@ -121,28 +136,26 @@ type TokenSource interface {
 	SandboxCredentialFile(ctx context.Context) (work.CredentialFile, error)
 }
 
-// StageContract owns what a stage is asked and what its answer means: the
-// prompt, the schema that constrains the answer, and the reading of the answer
-// back into the two facts the pipeline itself acts on.
+// PromptRenderer turns a ticket and the preceding stage's output into the
+// prompt and schema one stage runs on.
 //
-// Both halves are one interface because they are one decision. A schema and the
-// code that reads it are the same fact seen twice, and splitting them across
-// modules is how they drift.
-//
-// It is a seam rather than a call into a prompt package because prompts are the
+// It is a seam rather than a call into internal/prompts because prompts are the
 // highest-churn part of this service and orchestration is the lowest: a wording
 // change must not be a workflow change, and a test of the pipeline must not
-// need the real prompts to exist.
-type StageContract interface {
+// need the real prompts to exist. It is also the rule the linter enforces —
+// workflow code may not import internal/prompts at all, because the nonce a
+// render mints is invisible nondeterminism at the call site.
+//
+// It reads nothing back. An earlier design had a companion Verdict method that
+// parsed a stage's output for "blocked" and a pull request URL; that is gone
+// deliberately. No stage's TEXT may steer control flow — ticket bodies are
+// attacker-chosen and they reach a model — so what a run achieved is asked of
+// GitHub instead. See GitHub.PullRequestForBranch.
+type PromptRenderer interface {
 	// Render returns the prompt a stage runs on and the schema its final
 	// message must satisfy. handoff is the preceding stage's output, verbatim
 	// and unparsed, or nil for the first stage.
 	Render(stage work.Stage, detail work.TicketDetail, handoff []byte) (prompt string, schema []byte, err error)
-
-	// Verdict reads back the part of a stage's output the pipeline acts on.
-	// Everything else in that output is the next stage's business, and travels
-	// on untouched.
-	Verdict(stage work.Stage, output []byte) (work.StageVerdict, error)
 }
 
 // StatusRenderer turns a run's state into the body of its status comment.
