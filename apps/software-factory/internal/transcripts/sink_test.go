@@ -44,12 +44,30 @@ func writeEvents(t *testing.T, s *Sink, key work.StageKey, lines ...string) {
 	}
 }
 
-// openCount reports how many transcripts the sink currently holds open. It
-// lives here rather than on Sink so the refcount stays private to the package.
+// openCount reports how many transcripts the sink currently holds open. These
+// helpers live here rather than on Sink so the refcount stays private to the
+// package.
 func openCount(s *Sink) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.open)
+}
+
+// refCount reports how many writers currently hold h.
+func refCount(s *Sink, h *handle) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return h.refs
+}
+
+// sharedHandle reaches through the io.WriteCloser to the descriptor behind it.
+func sharedHandle(t *testing.T, w io.WriteCloser) *handle {
+	t.Helper()
+	ww, ok := w.(*writer)
+	if !ok {
+		t.Fatalf("Open returned a %T, want the package's own writer", w)
+	}
+	return ww.handle
 }
 
 func readFile(t *testing.T, path string) string {
@@ -274,9 +292,19 @@ func TestSinkSharesOneDescriptorBetweenOverlappingAttemptsOfOneStage(t *testing.
 	if got := openCount(s); got != 1 {
 		t.Errorf("the sink holds %d open transcripts, want 1 — overlapping attempts must share a descriptor", got)
 	}
+	h := sharedHandle(t, first)
+	if got := sharedHandle(t, second); got != h {
+		t.Fatal("the two attempts hold different descriptors; overlapping writers must share one")
+	}
+	if got := refCount(s, h); got != 2 {
+		t.Errorf("the shared descriptor has %d references, want 2", got)
+	}
 
 	if err := first.Close(); err != nil {
 		t.Fatalf("closing the first attempt returned an unexpected error: %v", err)
+	}
+	if got := refCount(s, h); got != 1 {
+		t.Errorf("the shared descriptor has %d references after one attempt closed, want 1", got)
 	}
 	if _, err := io.WriteString(second, "after the first attempt closed\n"); err != nil {
 		t.Fatalf("the surviving attempt could not write: %v", err)
