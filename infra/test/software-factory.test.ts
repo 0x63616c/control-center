@@ -123,15 +123,28 @@ describe("the worker's Role (#343)", () => {
     expect((await ruleFor("pods")).verbs).toContain("watch");
   });
 
-  test("does not grant list on pods", async () => {
-    // The authorizer maps `GET .../pods?watch=true` to `watch`, not `list`, and
-    // nothing calls Pods().List. Harmless to grant, but a verb nothing needs is
-    // a verb nobody can later justify.
-    expect((await ruleFor("pods")).verbs).not.toContain("list");
+  test("grants list on pods, which is the orphan sweeper's whole operation", async () => {
+    // Sweeping is list-by-label, filter-by-age, delete. Without it the sweeper
+    // fails Forbidden on its first run, and an RBAC denial reads as an
+    // infrastructure problem — so it gets debugged at the wrong layer.
+    //
+    // `watch` does not cover it: the authorizer maps `GET .../pods?watch=true`
+    // to `watch`, so neither verb implies the other.
+    expect((await ruleFor("pods")).verbs).toContain("list");
   });
 
-  test("grants exactly create/get/watch/delete on pods", async () => {
-    expect([...(await ruleFor("pods")).verbs].sort()).toEqual(["create", "delete", "get", "watch"]);
+  test("grants EXACTLY create/delete/get/list/watch on pods, and nothing else", async () => {
+    // Exact equality, deliberately, and it must STAY exact. This is the only
+    // thing keeping the verb set closed — replacing it with a toContain check
+    // per verb would keep a green suite while letting a sixth verb land
+    // unnoticed on the one rule in this file that cannot be scoped at all.
+    expect([...(await ruleFor("pods")).verbs].sort()).toEqual([
+      "create",
+      "delete",
+      "get",
+      "list",
+      "watch",
+    ]);
   });
 
   test("leaves the pods rule unscoped, because resourceNames cannot scope it", async () => {

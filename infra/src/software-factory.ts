@@ -159,15 +159,6 @@ const WORKER_UID = 65532;
 const TERMINATION_GRACE_SECONDS = 120;
 
 /**
- * The Temporal task queue this worker polls.
- *
- * D1 owns the canonical constant (`work.TaskQueue`) because D1 registers the
- * worker; this is the deployment side of the same string, and the env-parity
- * guard is what stops the two drifting.
- */
-const TEMPORAL_TASK_QUEUE = "software-factory";
-
-/**
  * What the worker's metrics and health server binds to (`METRICS_ADDR`).
  *
  * The port is the house's `DEFAULT_METRICS_PORT` rather than a second number,
@@ -292,9 +283,20 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
           apiGroups: [""],
           resources: ["pods"],
           // `watch` is load-bearing: WaitReady is watch-based (lifecycle.go),
-          // so without it EVERY sandbox start 403s. `list` is deliberately
-          // absent — the authorizer maps `GET .../pods?watch=true` to `watch`,
-          // and nothing calls Pods().List.
+          // so without it EVERY sandbox start 403s. It is NOT interchangeable
+          // with `list`: the authorizer maps `GET .../pods?watch=true` to
+          // `watch`, so neither verb covers the other.
+          //
+          // `list` is the orphan sweeper's entire operation — list by label,
+          // filter by age, delete. At the time of writing no `Pods().List`
+          // caller has landed (grep the tree: there is none), so this is
+          // granted AHEAD of its caller deliberately, to spare a second deploy
+          // and because the alternative failure is a `Forbidden` that reads as
+          // an infrastructure problem and gets debugged at the wrong layer.
+          //
+          // It widens nothing that was narrow: this rule already cannot be
+          // scoped (below), so the verb adds enumeration inside a namespace
+          // this ServiceAccount can already create, watch and delete in.
           //
           // This rule CANNOT be narrowed with `resourceNames`: Kubernetes
           // silently ignores that clause for `list`, `watch`, `create` and
@@ -304,7 +306,7 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
           // as a scoped grant while behaving as a namespace-wide one, which is
           // worse than an honest wide grant. Tighter pod isolation has to come
           // from a dedicated namespace or an admission policy.
-          verbs: ["create", "get", "watch", "delete"],
+          verbs: ["create", "get", "list", "watch", "delete"],
         },
         {
           apiGroups: [""],
@@ -455,7 +457,6 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
                   // but a CrashLoopBackOff on the first start.
                   { name: "TEMPORAL_HOST_PORT", value: TEMPORAL_FRONTEND_CLUSTER_ADDRESS },
                   { name: "TEMPORAL_NAMESPACE", value: SOFTWARE_FACTORY_TEMPORAL_NAMESPACE },
-                  { name: "TEMPORAL_TASK_QUEUE", value: TEMPORAL_TASK_QUEUE },
                   // Binds the /metrics AND /healthz server, so an absent value
                   // costs observability and liveness together.
                   { name: "METRICS_ADDR", value: METRICS_ADDR },
