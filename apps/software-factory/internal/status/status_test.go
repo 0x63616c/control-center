@@ -698,13 +698,17 @@ func TestRefusesEachKindOfURLItCannotVouchFor(t *testing.T) {
 		{"a double quote, which closes an HTML attribute", "https://example.com/a\"b"},
 		{"a single quote, which closes an HTML attribute just as well", "https://example.com/a'b"},
 		{"whitespace, which splits the value across the line", "https://example.com/a b"},
-		// U+009F and not \x00, deliberately. url.Parse REJECTS every ASCII
-		// control character, so \x00 never reaches the character blocklist —
-		// it is stopped by the parse-error clause, and unicode.IsControl could
-		// be deleted with this row still green. The C1 range is the only
-		// control that survives url.Parse, and U+009F is the only member of it
-		// that is not ALSO unicode.IsSpace, so it is the one input that pins
-		// this clause and nothing else. Do not "simplify" it back.
+		// A C1 control and not \x00, deliberately. url.Parse REJECTS every
+		// ASCII control character — all 33 of U+0000–U+001F and U+007F — so
+		// \x00 never reaches the character blocklist: it is stopped by the
+		// parse-error clause, and unicode.IsControl could be deleted with a
+		// \x00 row still green. The C1 range is what survives: all 32 of
+		// U+0080–U+009F parse cleanly and reach this guard.
+		//
+		// Any of them pins the clause except U+0085 (NEL), the single member
+		// unicode.IsSpace also matches — that one stays green with
+		// unicode.IsControl deleted. U+009F is one of the 31 that work, not the
+		// only one. Swap it for another C1 control freely; just not U+0085.
 		{"a control character", "https://example.com/a\u009fb"},
 		{"a newline, which puts chosen text on a line of its own", "https://example.com/a\nb"},
 	} {
