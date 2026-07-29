@@ -10,7 +10,7 @@
 
 import * as k8s from "@pulumi/kubernetes";
 import * as pulumi from "@pulumi/pulumi";
-import { controlCenterProductManifest, defineProduct } from "@www/platform";
+import { controlCenterProductManifest, defineProduct, type ProductSlug } from "@www/platform";
 import { DEFAULT_METRICS_PORT } from "@www/platform/metrics/port";
 import type { InfraNamespaceName } from "./cluster.ts";
 import type { WorkloadSpec } from "./component.ts";
@@ -29,6 +29,7 @@ export type ImageDigests = Record<string, string>;
 export type OwnedWorkloadSpec = WorkloadSpec & { namespaceName: InfraNamespaceName };
 
 const controlCenterProduct = defineProduct("control-center");
+const softwareFactoryProduct = defineProduct("software-factory");
 
 const IMAGE_REPOSITORIES = {
   api: {
@@ -60,14 +61,61 @@ const IMAGE_REPOSITORIES = {
     digestKey: controlCenterProduct.imageDigestKey("temporal-worker"),
     repository: controlCenterProduct.imageRepository("temporal-worker"),
   },
+  // The software factory's two images (ADR-0011). A DIFFERENT product, so the
+  // keys carry the product prefix and cannot collide with control-center's own
+  // `worker` above — `www-software-factory-worker` is not a control-center
+  // component.
+  //
+  // `sandbox` is here even though no workload runs it: the worker CREATES those
+  // pods at runtime and is handed the digest-pinned ref as env. Same map, same
+  // shape validation, same CI collection — so a sandbox is as reproducible as
+  // the worker that created it, rather than resolving `:main` at 3am.
+  "software-factory-worker": {
+    digestKey: softwareFactoryProduct.imageDigestKey("worker"),
+    repository: softwareFactoryProduct.imageRepository("worker"),
+  },
+  "software-factory-sandbox": {
+    digestKey: softwareFactoryProduct.imageDigestKey("sandbox"),
+    repository: softwareFactoryProduct.imageRepository("sandbox"),
+  },
 } as const satisfies Record<string, { digestKey: string; repository: string }>;
 
 const IMAGE_DIGEST_KEYS = new Set(
   Object.values(IMAGE_REPOSITORIES).map((image) => image.digestKey),
 );
-const REQUIRED_IMAGE_DIGEST_KEYS = Object.values(IMAGE_REPOSITORIES).map(
-  (image) => image.digestKey,
-);
+/**
+ * The digest keys belonging to one product.
+ *
+ * Required pins are asked for PER PRODUCT, not across the whole map. serviceSpecs
+ * renders control-center's workloads and nothing else, so demanding
+ * software-factory's pins there would let a broken sandbox build block the
+ * house's own deploy — a coupling between two products that share nothing but a
+ * registry. Each renderer asserts the pins it actually needs.
+ *
+ * `imageDigestKey` is `${slug}-${component}`, so the prefix is the product.
+ */
+function digestKeysFor(slug: ProductSlug): string[] {
+  return Object.values(IMAGE_REPOSITORIES)
+    .map((image) => image.digestKey)
+    .filter((key) => key.startsWith(`${slug}-`));
+}
+
+const REQUIRED_IMAGE_DIGEST_KEYS = digestKeysFor("control-center");
+
+/**
+ * @public - asserts that every image this product ships is digest-pinned.
+ *
+ * For renderers outside serviceSpecs (software-factory.ts) that must not render
+ * a mutable `:main` ref on a production cluster either.
+ */
+export function assertImageDigestPins(slug: ProductSlug, digests: ImageDigests): void {
+  const missing = digestKeysFor(slug).filter((key) => !digests[key]);
+  if (missing.length > 0) {
+    throw new Error(
+      `prod stack requires wwwinfra:imageDigests pins for ${slug} images; missing: ${missing.join(", ")}`,
+    );
+  }
+}
 
 function validateImageDigests(digests: ImageDigests): void {
   for (const key of Object.keys(digests)) {

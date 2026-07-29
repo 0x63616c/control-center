@@ -150,6 +150,7 @@ jobs:
               - 'apps/worker/**'
               - 'apps/temporal-worker/**'
               - 'apps/map-provision/**'
+              - 'apps/software-factory/**'
               - 'packages/**'
               - 'app-kit/**'
               - 'features/**'
@@ -302,9 +303,11 @@ jobs:
   # for the clock. A wall nothing runs is not a wall, and the hook that runs it
   # locally is bypassable with --no-verify, so this is the authoritative gate.
   #
-  # NOT in `deploy-home-server`'s needs, because nothing here is deployed yet:
-  # the build jobs, digest collection and IMAGE_REPOSITORIES entries land with
-  # the Dockerfiles. Until then a red result blocks the PR, not the deploy.
+  # In `deploy-home-server`'s needs since #342: the worker is deployed, so a red
+  # Go result must stop the deploy the way a red TypeScript one does. The image
+  # build jobs deliberately do NOT need this — they run concurrently with it,
+  # exactly like build-web runs concurrently with test-unit, and the deploy gate
+  # is what makes that safe.
   test-software-factory:
     needs: [changes]
     if: needs.changes.outputs.softwarefactory == 'true'
@@ -482,6 +485,64 @@ jobs:
           cache-scope: map-provision
 
 
+  # The software factory's two images (ADR-0011, #342). One path filter serves
+  # both, so a worker-only edit rebuilds the sandbox — the cheap direction to be
+  # wrong in, and the reason `apps/software-factory/**` is a single filter.
+  #
+  # No BUILD_HASH/BUILD_TIME build-args: neither image renders a build badge.
+  build-software-factory-worker:
+    needs: [changes]
+    if: needs.changes.outputs.softwarefactory == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: prod
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and push software-factory worker image
+        uses: ./.github/actions/build-product-image
+        env:
+          SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
+        with:
+          image: www-software-factory-worker
+          dockerfile: apps/software-factory/images/worker/Dockerfile
+          cache-scope: software-factory-worker
+
+
+  build-software-factory-sandbox:
+    needs: [changes]
+    if: needs.changes.outputs.softwarefactory == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: prod
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and push software-factory sandbox image
+        uses: ./.github/actions/build-product-image
+        env:
+          SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
+        with:
+          image: www-software-factory-sandbox
+          dockerfile: apps/software-factory/images/sandbox/Dockerfile
+          cache-scope: software-factory-sandbox
+
+      # The image contract nothing else can check: the worker execs
+      # sandbox-exec, tar, test and cat by absolute argv, and /work is an
+      # emptyDir that MASKS anything baked under it. smoke.sh reproduces that
+      # with a tmpfs and asserts the lot against the image just built.
+      #
+      # After the push, not before: the assertions are about the built image,
+      # and a failure here fails the job, which blocks the deploy through
+      # `needs:` — so a bad image can reach GHCR but never the cluster.
+      - name: Smoke-test the sandbox image contract
+        run: |
+          docker buildx build --platform linux/amd64 --load \
+            -f apps/software-factory/images/sandbox/Dockerfile \
+            -t sf-sandbox:ci .
+          apps/software-factory/images/sandbox/smoke.sh sf-sandbox:ci
+
+
   # After the images build on main, deploy to the home-server Talos cluster with
   # `pulumi up` (www-j934.14). The runner joins the tailnet with an EPHEMERAL
   # Tailscale key (auto-revoked when the job ends), reaches the kube-apiserver
@@ -504,6 +565,9 @@ jobs:
         build-worker,
         build-temporal-worker,
         build-map-provision,
+        build-software-factory-worker,
+        build-software-factory-sandbox,
+        test-software-factory,
       ]
     # always() lets us run even when some build jobs were skipped (no changes).
     # We proceed when: on main, an app OR infra changed, and no build failed.
@@ -595,7 +659,7 @@ jobs:
           # KEY is product-component scoped and matches the Pulumi imageDigests
           # config key, while repo names use full product slugs.
           declare -A out=()
-          for entry in www-control-center-web:control-center-web www-control-center-manage:control-center-manage www-control-center-api:control-center-api www-control-center-worker:control-center-worker www-control-center-temporal-worker:control-center-temporal-worker www-control-center-map-provision:control-center-map-provision; do
+          for entry in www-control-center-web:control-center-web www-control-center-manage:control-center-manage www-control-center-api:control-center-api www-control-center-worker:control-center-worker www-control-center-temporal-worker:control-center-temporal-worker www-control-center-map-provision:control-center-map-provision www-software-factory-worker:software-factory-worker www-software-factory-sandbox:software-factory-sandbox; do
             repo="${entry%%:*}"
             name="${entry#*:}"
             d=$(docker buildx imagetools inspect "ghcr.io/0x63616c/$repo:main" --format '{{.Manifest.Digest}}' 2>/dev/null || true)

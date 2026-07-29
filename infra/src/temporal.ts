@@ -73,6 +73,15 @@ export const SOFTWARE_FACTORY_TEMPORAL_NAMESPACE = "software-factory";
 /** In-cluster address of the frontend's gRPC port. */
 export const TEMPORAL_FRONTEND_SERVICE = "temporal-server";
 const FRONTEND_GRPC_PORT = 7233;
+
+/**
+ * @public - the frontend's address as reached from ANOTHER namespace, fully
+ * qualified. One exported string rather than a service name plus a port a
+ * caller reassembles, so software-factory.ts cannot hold a second spelling of
+ * it that drifts when the port changes. Same-namespace clients keep using the
+ * bare service name above.
+ */
+export const TEMPORAL_FRONTEND_CLUSTER_ADDRESS = `${TEMPORAL_FRONTEND_SERVICE}.${TEMPORAL_NAMESPACE}.svc.cluster.local:${FRONTEND_GRPC_PORT}`;
 const FRONTEND_HTTP_PORT = 7243;
 const UI_PORT = 8080;
 // Where the server's Prometheus reporter listens. 9090 is Temporal's own

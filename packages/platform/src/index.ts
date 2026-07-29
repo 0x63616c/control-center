@@ -31,7 +31,14 @@ export function genId(prefix: string, options?: { length?: number }): string {
   return `${prefix}_${randomHex(length)}`;
 }
 
-export const productSlugs = ["control-center", "captive-portal"] as const;
+// "software-factory" is a product for IMAGE-NAMING purposes and for nothing
+// else (ADR-0011): its two images are www-software-factory-{worker,sandbox}
+// rather than components of control-center, and this is the one place that
+// spelling is derived. It ships no web/api image, has no CNPG database and is
+// not part of the control-center deploy, so it is deliberately EXCLUDED from
+// cluster.ts's InfraNamespaceName — see the comment there. Adding it here does
+// not enrol it in ESO, CNPG, crons or GHCR pull secrets.
+export const productSlugs = ["control-center", "captive-portal", "software-factory"] as const;
 
 export type ProductSlug = (typeof productSlugs)[number];
 
@@ -564,6 +571,12 @@ function databasePasswordFor(product: ProductIdentity): SecretCatalogEntry {
       return secretCatalog.controlCenter.postgresPassword;
     case "captive-portal":
       return secretCatalog.captivePortal.postgresPassword;
+    case "software-factory":
+      // No database, by design (ADR-0011): no CNPG cluster, no owner, no
+      // password. Reaching here means defineProductDatabase was called on a
+      // product that has none, which is a programming error rather than a
+      // missing catalog entry.
+      throw new Error("software-factory has no product database");
   }
   return assertNever(product.slug);
 }

@@ -91,6 +91,21 @@ describe("serviceSpecs image digest pinning", () => {
     ).toThrow(/prod stack requires wwwinfra:imageDigests pins/);
   });
 
+  test("does not demand another product's pins", () => {
+    // serviceSpecs renders control-center's workloads and nothing else.
+    // Requiring software-factory's pins here would let a broken sandbox build
+    // block the house's own deploy — two products coupled by nothing but a
+    // shared registry. software-factory.ts asserts its own.
+    expect(() =>
+      serviceSpecs({
+        cloudflaredReplicas: 2,
+        nasNfsServer: "192.168.0.218",
+        imageDigests: ALL_IMAGE_DIGESTS,
+        requireImageDigestPins: shouldRequireImageDigestPins("prod"),
+      }),
+    ).not.toThrow();
+  });
+
   test("allows prod app Deployment rendering when every digest pin is present", () => {
     const specs = serviceSpecs({
       cloudflaredReplicas: 2,
