@@ -12,11 +12,12 @@ func completeEnv() map[string]string {
 	return map[string]string{
 		"TEMPORAL_HOST_PORT":     "temporal-frontend.temporal:7233",
 		"TEMPORAL_NAMESPACE":     "software-factory",
-		"TEMPORAL_TASK_QUEUE":    "software-factory",
 		"SANDBOX_NAMESPACE":      "software-factory",
 		"SANDBOX_IMAGE":          "ghcr.io/0x63616c/www-software-factory-sandbox@sha256:abc",
 		"METRICS_ADDR":           ":9090",
 		"POD_NAME":               "software-factory-worker-7d9f8c-abcde",
+		"TRANSCRIPTS_ROOT":       "/transcripts",
+		"TEMPORAL_UI_BASE_URL":   "https://temporal.worldwidewebb.co",
 		"CODEX_AUTH_SECRET_NAME": "codex-auth",
 	}
 }
@@ -83,8 +84,6 @@ func TestLoadWorkerReadsTheWholeEnvironment(t *testing.T) {
 		t.Errorf("TemporalHostPort = %q", got.TemporalHostPort)
 	case got.TemporalNamespace != "software-factory":
 		t.Errorf("TemporalNamespace = %q", got.TemporalNamespace)
-	case got.TaskQueue != "software-factory":
-		t.Errorf("TaskQueue = %q", got.TaskQueue)
 	case got.SandboxNamespace != "software-factory":
 		t.Errorf("SandboxNamespace = %q", got.SandboxNamespace)
 	case got.SandboxImage != "ghcr.io/0x63616c/www-software-factory-sandbox@sha256:abc":
@@ -93,6 +92,10 @@ func TestLoadWorkerReadsTheWholeEnvironment(t *testing.T) {
 		t.Errorf("MetricsAddr = %q", got.MetricsAddr)
 	case got.PodName != "software-factory-worker-7d9f8c-abcde":
 		t.Errorf("PodName = %q", got.PodName)
+	case got.TranscriptsRoot != "/transcripts":
+		t.Errorf("TranscriptsRoot = %q", got.TranscriptsRoot)
+	case got.TemporalUIBaseURL != "https://temporal.worldwidewebb.co":
+		t.Errorf("TemporalUIBaseURL = %q", got.TemporalUIBaseURL)
 	case got.CodexAuthSecretName != "codex-auth":
 		t.Errorf("CodexAuthSecretName = %q", got.CodexAuthSecretName)
 	case got.LogLevel != slog.LevelInfo:

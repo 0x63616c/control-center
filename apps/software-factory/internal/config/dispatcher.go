@@ -42,6 +42,22 @@ func LoadDispatcher() (work.Config, error) {
 	// stop doing. It also gives absence a meaning — leave that field alone —
 	// so this variable states the differences from the defaults rather than
 	// having to restate all of them.
+	// `null` is valid JSON and unmarshals into a zero ConfigUpdate, which
+	// applies nothing and yields the defaults — silently. That is not a typo an
+	// operator makes; it is what a templating system produces when the value it
+	// was asked to interpolate did not exist, which is precisely when somebody
+	// believes they configured something. Rejected by name so the pod says so.
+	if raw == "null" {
+		return work.Config{}, fmt.Errorf(
+			"%s is null, which would start the dispatcher on the defaults while looking configured: unset it to mean the defaults, or give it an object",
+			envDispatcherConfig)
+	}
+
+	// Note on duplicate keys: encoding/json takes the LAST occurrence, so
+	// `{"maxInFlight":1,"maxInFlight":9}` is 9 and no error is raised. Nothing
+	// here can improve on that without a second parser, and hand-written JSON
+	// in a Deployment is where it would happen. Worth knowing before reading a
+	// config that appears to disagree with itself.
 	var update work.ConfigUpdate
 	if err := json.Unmarshal([]byte(raw), &update); err != nil {
 		return work.Config{}, fmt.Errorf("%s is not a dispatcher configuration: %w", envDispatcherConfig, err)

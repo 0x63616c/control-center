@@ -42,6 +42,19 @@ type Config struct {
 // and is a first guess to be moved on measurement. It is deliberately long:
 // the plan's limit window is measured in hours, so a cooldown of a minute
 // spends the retry budget re-hitting the same wall.
+// maxAllowedInFlight is the ceiling on concurrent tickets.
+//
+// It is a guard against a typo, not a capacity plan: the default is 2, and the
+// binding constraint is one subscription's rate-limit window, which a run of
+// concurrent stages empties quickly. A missed keystroke turning 2 into 20 would
+// otherwise validate, deploy, and spend the window before anyone read a
+// dashboard — and this is the first path that puts the value into production.
+//
+// Chosen as "far above any value with a reason behind it, far below a typo".
+// It is a policy number rather than a derived one; if a real workload ever
+// wants more, this line and its justification are what should be argued with.
+const maxAllowedInFlight = 10
+
 const (
 	defaultMaxInFlight            = 2
 	defaultBreakerCooldownSeconds = 15 * 60
@@ -85,6 +98,10 @@ func (c Config) ModelFor(stage Stage) Model {
 func (c Config) Validate() error {
 	if c.MaxInFlight < 1 {
 		return fmt.Errorf("MaxInFlight must be at least 1, got %d: to stop starting work, set Paused", c.MaxInFlight)
+	}
+	if c.MaxInFlight > maxAllowedInFlight {
+		return fmt.Errorf("MaxInFlight must be at most %d, got %d: every ticket in flight runs codex against one subscription, so a value this size spends the whole rate-limit window at once",
+			maxAllowedInFlight, c.MaxInFlight)
 	}
 	if c.BreakerCooldownSeconds <= 0 {
 		return fmt.Errorf("BreakerCooldownSeconds must be positive, got %d: a breaker that reopens immediately stops nothing", c.BreakerCooldownSeconds)

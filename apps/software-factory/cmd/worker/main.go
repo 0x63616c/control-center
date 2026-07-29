@@ -125,7 +125,7 @@ func run() error {
 	}
 	defer temporal.Close()
 
-	w := worker.New(temporal, cfg.TaskQueue, worker.Options{
+	w := worker.New(temporal, work.TaskQueue, worker.Options{
 		WorkerStopTimeout: workerStopTimeout,
 	})
 
@@ -141,18 +141,34 @@ func run() error {
 	register(w, renderer, metrics, dispatcher, logger)
 
 	logger.Info("worker starting",
-		slog.String("task_queue", cfg.TaskQueue),
+		// Two different concepts that happen to share the string
+		// "software-factory": the queue work is scheduled on, and the Temporal
+		// namespace it lives in. They are logged as separate fields, and a
+		// runbook command line that transposes --task-queue and --namespace
+		// would be invisible on the wire — worth reading twice.
+		slog.String("task_queue", work.TaskQueue),
 		slog.String("temporal_namespace", cfg.TemporalNamespace),
 		slog.String("sandbox_namespace", cfg.SandboxNamespace),
 		slog.String("pod", cfg.PodName),
-		// What the dispatcher will run under, logged where it was read: the
-		// question asked of a live system is "did my config land", and this is
-		// the first of the two places that can answer it. The other is the
-		// GetStatus query, once C2 lands.
-		slog.Bool("dispatcher_paused", dispatcher.Paused),
-		slog.Int("dispatcher_max_in_flight", dispatcher.MaxInFlight),
-		slog.Int64("dispatcher_breaker_cooldown_seconds", dispatcher.BreakerCooldownSeconds),
-		slog.String("dispatcher_default_model", dispatcher.DefaultModel.Name),
+		// The config a dispatcher would START on, which is not the same as the
+		// config a running one is using — hence the name. ADR-0011's dispatcher
+		// is a long-running workflow that continues as new, carrying its config
+		// in workflow state, so after the first start DISPATCHER_CONFIG is
+		// read, validated, logged here, and then ignored.
+		//
+		// Logging it as "the dispatcher's config" is how somebody lowers
+		// maxInFlight to stop eating the rate-limit window, rolls the
+		// Deployment, reads this line back, and believes it — while the live
+		// dispatcher runs on the value it started with days ago. Once C2 lands,
+		// a deploy that means to change a running dispatcher pushes an
+		// UpdateConfig signal; the honest answer for a live system is the
+		// GetStatus query, not this.
+		slog.Group("dispatcher_starting_config",
+			slog.Bool("paused", dispatcher.Paused),
+			slog.Int("max_in_flight", dispatcher.MaxInFlight),
+			slog.Int64("breaker_cooldown_seconds", dispatcher.BreakerCooldownSeconds),
+			slog.String("default_model", dispatcher.DefaultModel.Name),
+		),
 	)
 
 	// Run blocks until SIGINT or SIGTERM, then drains: no new tasks are taken,
@@ -162,7 +178,7 @@ func run() error {
 	// behind — they are independent objects, and a restarted worker reattaches
 	// to the attempt it left running rather than paying for it twice.
 	if err := w.Run(worker.InterruptCh()); err != nil {
-		return fmt.Errorf("running the worker on task queue %s: %w", cfg.TaskQueue, err)
+		return fmt.Errorf("running the worker on task queue %s: %w", work.TaskQueue, err)
 	}
 	logger.Info("worker drained")
 	return nil

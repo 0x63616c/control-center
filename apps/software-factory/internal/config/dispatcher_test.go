@@ -148,3 +148,57 @@ func TestLoadDispatcherAppliesEveryFieldItIsGiven(t *testing.T) {
 		t.Errorf("review model = %+v, want the override", got.ModelFor(work.StageReview))
 	}
 }
+
+// TestTheDispatcherConfigVariableIsTheNameTheDeploymentSets pins the variable's
+// spelling against a literal.
+//
+// Every other test here sets and reads through envDispatcherConfig, so they
+// agree with a rename by construction. Nothing in this repository is the
+// consumer: the Deployment writes this name, and a rename here means a worker
+// that silently starts on the defaults while the operator's JSON sits in an
+// environment variable nothing reads. worker_test.go pins its seven the same
+// way, and this is the eighth.
+func TestTheDispatcherConfigVariableIsTheNameTheDeploymentSets(t *testing.T) {
+	const published = "DISPATCHER_CONFIG"
+
+	if envDispatcherConfig != published {
+		t.Errorf("envDispatcherConfig = %q, want %q; the Deployment sets this exact name and a rename starts the dispatcher on the defaults in silence",
+			envDispatcherConfig, published)
+	}
+
+	t.Setenv(published, `{"maxInFlight":3}`)
+	cfg, err := LoadDispatcher()
+	if err != nil {
+		t.Fatalf("LoadDispatcher: %v", err)
+	}
+	if cfg.MaxInFlight != 3 {
+		t.Errorf("MaxInFlight = %d, want 3; the literal name did not reach the loader", cfg.MaxInFlight)
+	}
+}
+
+// TestANullConfigIsRefusedRatherThanTreatedAsTheDefaults covers the templating
+// accident, not the typo. `null` is valid JSON, unmarshals into a zero
+// ConfigUpdate and applies nothing, so the dispatcher would start on the
+// defaults looking configured — and that is exactly what an interpolation of a
+// value that did not exist produces.
+func TestANullConfigIsRefusedRatherThanTreatedAsTheDefaults(t *testing.T) {
+	t.Setenv(envDispatcherConfig, "null")
+
+	if _, err := LoadDispatcher(); err == nil {
+		t.Fatal("LoadDispatcher accepted null and started on the defaults; an operator who templated a missing value would see a healthy pod running settings nobody chose")
+	}
+}
+
+// TestAnUnsetConfigStillMeansTheDefaults is the other half of the case above:
+// refusing null must not turn "I did not configure this" into a crashloop.
+func TestAnUnsetConfigStillMeansTheDefaults(t *testing.T) {
+	t.Setenv(envDispatcherConfig, "")
+
+	cfg, err := LoadDispatcher()
+	if err != nil {
+		t.Fatalf("LoadDispatcher with nothing set: %v", err)
+	}
+	if cfg.MaxInFlight != work.DefaultConfig().MaxInFlight {
+		t.Errorf("unset did not yield the defaults: %+v", cfg)
+	}
+}

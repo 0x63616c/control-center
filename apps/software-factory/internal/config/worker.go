@@ -22,11 +22,6 @@ type Worker struct {
 	// TemporalNamespace is the namespace this service's workflows live in.
 	TemporalNamespace string
 
-	// TaskQueue is the queue this worker polls. It is configuration rather
-	// than a constant so a worker can be pointed at a queue nothing else is
-	// serving, which is how a new build is tried without taking the live one.
-	TaskQueue string
-
 	// SandboxNamespace is the Kubernetes namespace per-ticket pods are created
 	// in. The worker's Role is scoped to it.
 	SandboxNamespace string
@@ -42,6 +37,18 @@ type Worker struct {
 	// decoration: it identifies the holder of the credential refresh lease, and
 	// a lease nobody can attribute cannot be investigated at 3am.
 	PodName string
+
+	// TranscriptsRoot is where stage transcripts are written, the mount point
+	// of the worker's transcript volume. Read rather than assumed because the
+	// deploy owns the mount path, and a worker writing somewhere else writes to
+	// the pod's own filesystem — which looks like success until the pod goes.
+	TranscriptsRoot string
+
+	// TemporalUIBaseURL is the ORIGIN of the Temporal UI, scheme and host with
+	// no path: whoever builds a run's URL appends the path grammar. The deploy
+	// owns the address, and nothing else in this service learns how the UI
+	// spells a run.
+	TemporalUIBaseURL string
 
 	// CodexAuthSecretName is the Kubernetes Secret holding the codex
 	// credential.
@@ -63,11 +70,12 @@ type Worker struct {
 const (
 	envTemporalHostPort  = "TEMPORAL_HOST_PORT"
 	envTemporalNamespace = "TEMPORAL_NAMESPACE"
-	envTaskQueue         = "TEMPORAL_TASK_QUEUE"
 	envSandboxNamespace  = "SANDBOX_NAMESPACE"
 	envSandboxImage      = "SANDBOX_IMAGE"
 	envMetricsAddr       = "METRICS_ADDR"
 	envPodName           = "POD_NAME"
+	envTranscriptsRoot   = "TRANSCRIPTS_ROOT"
+	envTemporalUIBaseURL = "TEMPORAL_UI_BASE_URL"
 	envCodexAuthSecret   = "CODEX_AUTH_SECRET_NAME"
 	envLogLevel          = "LOG_LEVEL"
 )
@@ -78,11 +86,12 @@ func workerEnvNames() []string {
 	return []string{
 		envTemporalHostPort,
 		envTemporalNamespace,
-		envTaskQueue,
 		envSandboxNamespace,
 		envSandboxImage,
 		envMetricsAddr,
 		envPodName,
+		envTranscriptsRoot,
+		envTemporalUIBaseURL,
 		envCodexAuthSecret,
 	}
 }
@@ -96,11 +105,12 @@ func (w Worker) Validate() error {
 	required := map[string]string{
 		envTemporalHostPort:  w.TemporalHostPort,
 		envTemporalNamespace: w.TemporalNamespace,
-		envTaskQueue:         w.TaskQueue,
 		envSandboxNamespace:  w.SandboxNamespace,
 		envSandboxImage:      w.SandboxImage,
 		envMetricsAddr:       w.MetricsAddr,
 		envPodName:           w.PodName,
+		envTranscriptsRoot:   w.TranscriptsRoot,
+		envTemporalUIBaseURL: w.TemporalUIBaseURL,
 		envCodexAuthSecret:   w.CodexAuthSecretName,
 	}
 	for _, name := range workerEnvNames() {
@@ -121,12 +131,13 @@ func LoadWorker() (Worker, error) {
 	cfg := Worker{
 		TemporalHostPort:  os.Getenv(envTemporalHostPort),
 		TemporalNamespace: os.Getenv(envTemporalNamespace),
-		TaskQueue:         os.Getenv(envTaskQueue),
 		SandboxNamespace:  os.Getenv(envSandboxNamespace),
 		SandboxImage:      os.Getenv(envSandboxImage),
 		MetricsAddr:       os.Getenv(envMetricsAddr),
 		PodName:           os.Getenv(envPodName),
 
+		TranscriptsRoot:     os.Getenv(envTranscriptsRoot),
+		TemporalUIBaseURL:   os.Getenv(envTemporalUIBaseURL),
 		CodexAuthSecretName: os.Getenv(envCodexAuthSecret),
 	}
 	if err := cfg.Validate(); err != nil {
@@ -148,11 +159,12 @@ func describeWorkerRequirement(err error) error {
 	purposes := map[string]string{
 		envTemporalHostPort:  "the Temporal frontend to dial, host:port",
 		envTemporalNamespace: "the Temporal namespace this service's workflows live in",
-		envTaskQueue:         "the task queue this worker polls",
 		envSandboxNamespace:  "the Kubernetes namespace per-ticket sandbox pods are created in",
 		envSandboxImage:      "the per-ticket sandbox image, pinned by digest",
 		envMetricsAddr:       "the address the metrics and health server listens on",
 		envPodName:           "this pod's own name, from the downward API; it identifies the credential lease holder",
+		envTranscriptsRoot:   "the mount point of the transcript volume, where stage transcripts are written",
+		envTemporalUIBaseURL: "the Temporal UI's origin, scheme and host with no path; run URLs are built from it",
 		envCodexAuthSecret:   "the Kubernetes Secret holding the codex credential; the worker's Role is pinned to this exact name",
 	}
 	for name, purpose := range purposes {
