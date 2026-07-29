@@ -252,10 +252,40 @@ already hit).
 
 ## Blast radius
 
-The worker holds a namespace-scoped `Role` — pods create/get/list/delete, `pods/exec`
-create, `pods/log` get, secrets get/update — and nothing cluster-scoped. This is the first
+The worker holds a namespace-scoped `Role` — pods create/get/**watch**/delete, `pods/exec`
+get/create, secrets get/update — and nothing cluster-scoped. This is the first
 pod in the cluster with Kubernetes API credentials at all; every existing Deployment sets
 `automountServiceAccountToken: false` deliberately, and sandboxes continue to.
+
+That verb list was wrong in the first draft of this ADR, in three ways, each found by
+enumerating the client's actual calls rather than reasoning about them (#343):
+
+- **`watch` on pods was missing.** `WaitReady` is watch-based, so every sandbox start would
+  have 403'd — the deploy would have failed on its first ticket, not subtly.
+- **`list` on pods is not required** and has been dropped. The authorizer maps
+  `GET .../pods?watch=true` to `watch`, not `list`, and nothing calls `Pods().List`.
+- **`pods/exec` needs `get` as well as `create`**, because the WebSocket executor issues a
+  `GET` and only the deprecated SPDY fallback uses `POST`. With `create` alone every exec
+  either silently takes the deprecated path or fails outright, depending on what
+  `httpstream.IsUpgradeFailure` makes of a 403.
+
+`pods/log` get was also dropped: no code path reads pod logs. Stage output arrives over the
+exec stream, and transcripts are written by the worker.
+
+Scoping is asymmetric between the two rules, and the asymmetry is structural rather than an
+oversight. Kubernetes `resourceNames` **cannot** restrict `list`, `watch`, `create` or
+`deletecollection` — the clause is silently ignored for those verbs. So:
+
+- The credential Secret rule *is* `resourceNames`-scoped to one object, which is possible
+  only because the client needs `get` and `update` and nothing else. `SecretClient` binds
+  namespace and name at construction and exposes no method taking either, so no code path
+  could want `list`. The narrow seam and the tight RBAC are one decision seen from two sides.
+- The pods rule *cannot* be scoped, since `watch` and `create` are unscopable and pod names
+  carry a per-run id unknown at Role-authoring time. **The namespace is the isolation
+  boundary for pods, not the Role.** A `resourceNames` clause must not be added there: it
+  would read as a scoped grant while behaving as a namespace-wide one, which is worse than an
+  honest wide grant. Tighter pod isolation has to come from a dedicated namespace or an
+  admission policy.
 
 Sandboxes hold a GitHub App installation token (one hour, scoped to this repository)
 because `implement` pushes a branch. Issue titles and bodies are attacker-controllable text
