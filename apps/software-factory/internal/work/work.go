@@ -199,8 +199,26 @@ type CommentID int64
 // overrides exist so the adversarial reviewer can be given different blind
 // spots from the planner without touching workflow code.
 type Model struct {
-	Name   string
-	Effort string
+	Name   string `json:"name"`
+	Effort string `json:"effort"`
+}
+
+// Validate reports whether this model can be invoked.
+//
+// It checks that both halves are present and nothing else. Effort in
+// particular is deliberately not checked against a list of known values:
+// codex's own ReasoningEffort carries a Custom(String) arm for "a
+// model-defined effort value that this client does not know yet" (verified
+// against rust-v0.145.0), so an allowlist here would reject efforts codex
+// accepts, and would go stale the first time a model gains one.
+func (m Model) Validate() error {
+	if m.Name == "" {
+		return fmt.Errorf("model name is required")
+	}
+	if m.Effort == "" {
+		return fmt.Errorf("reasoning effort is required for model %q", m.Name)
+	}
+	return nil
 }
 
 // Usage is the token accounting for one stage, as reported by the model's own
