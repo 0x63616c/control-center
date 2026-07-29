@@ -372,3 +372,135 @@ func assertGolden(t *testing.T, name, got string) {
 		t.Errorf("%s is stale.\n--- rendered ---\n%s\n--- golden ---\n%s", path, got, want)
 	}
 }
+
+// The tests below name the semantic properties of the format. They exist
+// because a golden file cannot: `assertGolden` ships a -update flag, so a
+// golden is a snapshot of whatever the renderers currently do, and a reader who
+// believes a failing golden is merely stale can regenerate the format's only
+// written home in one command. What a comment MEANS — the order the pipeline
+// runs in, which state word each renderer claims, which parts an outcome
+// comment may never lose — is asserted here instead, where the intent is in the
+// assertion rather than in a file that agrees with the code by construction.
+
+func TestPromisesThePipelineInTheOrderItWillRun(t *testing.T) {
+	t.Parallel()
+
+	// Containment is not enough. The pickup comment is where a reader learns
+	// what order the run executes in, so a reordered Pipeline that still names
+	// every stage would leave the comment lying about the run rather than
+	// merely incomplete.
+	stages := work.Pipeline()
+	names := make([]string, 0, len(stages))
+	for _, stage := range stages {
+		names = append(names, "`"+string(stage)+"`")
+	}
+	want := strings.Join(names, " → ")
+
+	if !strings.Contains(pickup().Body(), want) {
+		t.Errorf("pickup comment does not promise the pipeline as %q:\n%s", want, pickup().Body())
+	}
+}
+
+func TestEachStageRenderingClaimsItsOwnState(t *testing.T) {
+	t.Parallel()
+
+	// The three stage bodies share a marker and therefore a comment: the run
+	// posts one and edits it into the next. The heading is the only thing that
+	// tells a reader which of the three they are looking at, so a rendering
+	// that claimed another's state would report a failed stage as done on a
+	// ticket somebody is about to act on.
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+		deny []string
+	}{
+		{"started", started().Body(), "### plan — running", []string{"— done", "— failed"}},
+		{"succeeded", succeeded().Body(), "### plan — done", []string{"— running", "— failed"}},
+		{"failed", failed().Body(), "### plan — failed", []string{"— running", "— done"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if !strings.Contains(tc.body, tc.want) {
+				t.Errorf("%s stage does not head its comment %q:\n%s", tc.name, tc.want, tc.body)
+			}
+			for _, unwanted := range tc.deny {
+				if strings.Contains(tc.body, unwanted) {
+					t.Errorf("%s stage also claims %q, so the heading no longer says which it is:\n%s",
+						tc.name, unwanted, tc.body)
+				}
+			}
+		})
+	}
+}
+
+func TestEachCommentHeadsWithWhatActuallyHappened(t *testing.T) {
+	t.Parallel()
+
+	// Every comment of a run opens with a heading, and no two steps may share
+	// one: the pickup heading on an outcome comment would tell a reader the run
+	// is starting when it has just given up.
+	headings := map[string]string{}
+	for _, tc := range []struct{ name, body string }{
+		{"pickup", pickup().Body()},
+		{"proposed", proposed().Body()},
+		{"abandoned", abandoned().Body()},
+	} {
+		heading, found := lineWithPrefix(tc.body, "### ")
+		if !found {
+			t.Fatalf("%s comment has no heading:\n%s", tc.name, tc.body)
+		}
+		if other, clash := headings[heading]; clash {
+			t.Errorf("%s and %s both head their comment %q", other, tc.name, heading)
+		}
+		headings[heading] = tc.name
+	}
+
+	if !strings.Contains(proposed().Body(), "### software-factory opened a pull request") {
+		t.Errorf("the proposed comment does not say a pull request was opened:\n%s", proposed().Body())
+	}
+	if !strings.Contains(abandoned().Body(), "### software-factory stopped without opening a pull request") {
+		t.Errorf("the abandoned comment does not say the run stopped empty-handed:\n%s", abandoned().Body())
+	}
+}
+
+func TestTheProposedCommentCarriesThePullRequestItOpened(t *testing.T) {
+	t.Parallel()
+
+	// The whole point of the run is in this one field. A comment announcing a
+	// pull request and not linking it sends every reader to the PR list to
+	// guess which one it meant.
+	p := proposed()
+	if !strings.Contains(p.Body(), p.PullRequestURL) {
+		t.Errorf("the proposed comment does not carry %q:\n%s", p.PullRequestURL, p.Body())
+	}
+}
+
+func TestBothOutcomeCommentsSayTheAutoLabelWasCleared(t *testing.T) {
+	t.Parallel()
+
+	// A run clears `auto` whichever way it ends, so the reader's next move is
+	// the same in both cases: re-add the label. A comment that dropped this
+	// leaves a ticket looking finished with no stated way to ask for another
+	// pass.
+	for _, tc := range []struct{ name, body string }{
+		{"proposed", proposed().Body()},
+		{"abandoned", abandoned().Body()},
+	} {
+		if !strings.Contains(tc.body, "`auto` label has been cleared") {
+			t.Errorf("the %s comment does not say the auto label was cleared:\n%s", tc.name, tc.body)
+		}
+		if !strings.Contains(tc.body, "Re-add it to request another pass.") {
+			t.Errorf("the %s comment does not say how to request another pass:\n%s", tc.name, tc.body)
+		}
+	}
+}
+
+func lineWithPrefix(body, prefix string) (string, bool) {
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return line, true
+		}
+	}
+	return "", false
+}
