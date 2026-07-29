@@ -104,18 +104,20 @@ func (f *fakePods) Delete(_ context.Context, id work.SandboxID) error {
 // callErr is returned untouched, never wrapped in work.ErrPermanent, so a test
 // deciding retryability controls it directly.
 type fakeRepo struct {
-	sawSandbox work.SandboxID
-	sawURL     string
-	sawToken   string
-	sawLogin   string
-	called     int
-	err        error
+	sawSandbox   work.SandboxID
+	sawURL       string
+	sawToken     string
+	sawLogin     string
+	sawAccountID int64
+	called       int
+	err          error
 }
 
 func (f *fakeRepo) CloneRepo(_ context.Context, sandbox work.SandboxID, cloneURL string, credential work.SandboxCredential) error {
 	f.called++
 	f.sawSandbox, f.sawURL, f.sawToken = sandbox, cloneURL, credential.Token.Reveal()
 	f.sawLogin = credential.Login
+	f.sawAccountID = credential.AccountID
 	return f.err
 }
 
@@ -525,7 +527,7 @@ func TestCloneRepoMintsACredentialAndPassesItToTheCloner(t *testing.T) {
 	d := deps()
 	d.Repo = repo
 	d.RepoURL = "https://github.com/0x63616c/world-wide-webb.git"
-	d.GitHub = &fakeGitHub{token: work.SandboxCredential{Token: work.NewCredential("ghs_topsecret"), Login: "www-software-factory-bot[bot]"}}
+	d.GitHub = &fakeGitHub{token: work.SandboxCredential{Token: work.NewCredential("ghs_topsecret"), Login: "www-software-factory-bot[bot]", AccountID: 309464436}}
 	e := env(t)
 	a := mustNew(t, d)
 	e.RegisterActivity(a.CloneRepo)
@@ -552,6 +554,9 @@ func TestCloneRepoMintsACredentialAndPassesItToTheCloner(t *testing.T) {
 	// hosts.yml gh fails on before every command.
 	if repo.sawLogin != "www-software-factory-bot[bot]" {
 		t.Fatalf("the cloner received login %q, want the bot identity minted alongside the token", repo.sawLogin)
+	}
+	if repo.sawAccountID != 309464436 {
+		t.Fatalf("the cloner received account ID %d, want 309464436", repo.sawAccountID)
 	}
 }
 

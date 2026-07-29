@@ -32,7 +32,7 @@ const credentialsPath = work.SandboxRoot + "/.git-credentials"
 const credentialHelper = "credential.helper=" + credentialHelperValue
 
 // credentialHelperValue is credentialHelper's value half, factored out so
-// configureCredentialHelper's `git config` call and credentialHelper's `git
+// configureCheckoutIdentity's `git config` call and credentialHelper's `git
 // -c` form both point at the same file the same way — one spelling of "how
 // this checkout finds its credential", not two that could drift apart.
 const credentialHelperValue = "store --file=" + credentialsPath
@@ -65,7 +65,7 @@ const credentialHelperValue = "store --file=" + credentialsPath
 // propose.md tells the next stage to expect exactly that push already on
 // origin. Both run as `codex exec` inside the sandbox, well after this
 // activity has returned — so the credential this writes, and the checkout's
-// local `credential.helper` config pointing at it (configureCredentialHelper),
+// local `credential.helper` config pointing at it (configureCheckoutIdentity),
 // have to still be there and still work when they do. A version of this that
 // deleted the file once CloneRepo's own push succeeded would leave `implement`
 // with nothing to authenticate its own push with, which fails identically to
@@ -125,7 +125,7 @@ func (s *Sandboxes) CloneRepo(ctx context.Context, sandbox work.SandboxID, clone
 	// fresh clone, for the same reason the credential file is rewritten every
 	// time: a retry must leave the checkout in the state a first attempt would
 	// have, whichever branch of ensureCheckout it took.
-	if err := s.configureCredentialHelper(ctx, sandbox); err != nil {
+	if err := s.configureCheckoutIdentity(ctx, sandbox, credential); err != nil {
 		return err
 	}
 
@@ -240,7 +240,13 @@ func (s *Sandboxes) writeGhCredentials(ctx context.Context, sandbox work.Sandbox
 	return nil
 }
 
-// configureCredentialHelper points work.RepoDir's own git config at the
+// sandboxNoreplyEmail returns the GitHub noreply address associated with a bot
+// account's stable numeric ID.
+func sandboxNoreplyEmail(credential work.SandboxCredential) string {
+	return fmt.Sprintf("%d+%s@users.noreply.github.com", credential.AccountID, credential.Login)
+}
+
+// configureCheckoutIdentity points work.RepoDir's own git config at the
 // credential file, so anything that later runs `git push` (or any other
 // network command) from inside the checkout resolves a credential without
 // needing a `-c` flag of its own — which is exactly the shape a model's own
@@ -250,9 +256,18 @@ func (s *Sandboxes) writeGhCredentials(ctx context.Context, sandbox work.Sandbox
 // `--local` rather than `--global`: it writes into work.RepoDir/.git/config,
 // which is destroyed with the pod along with everything else, rather than a
 // home-directory file that would need its own cleanup story.
-func (s *Sandboxes) configureCredentialHelper(ctx context.Context, sandbox work.SandboxID) error {
-	return s.runExpecting0(ctx, sandbox, "configuring the checkout's credential helper",
-		[]string{"git", "-C", work.RepoDir, "config", "--local", "credential.helper", credentialHelperValue})
+func (s *Sandboxes) configureCheckoutIdentity(ctx context.Context, sandbox work.SandboxID, credential work.SandboxCredential) error {
+	for _, setting := range [][2]string{
+		{"credential.helper", credentialHelperValue},
+		{"user.name", credential.Login},
+		{"user.email", sandboxNoreplyEmail(credential)},
+	} {
+		if err := s.runExpecting0(ctx, sandbox, "configuring the checkout's "+setting[0],
+			[]string{"git", "-C", work.RepoDir, "config", "--local", setting[0], setting[1]}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ensureCheckout makes work.RepoDir a checkout of cloneURL on branch, reusing
@@ -318,7 +333,7 @@ func (s *Sandboxes) currentBranch(ctx context.Context, sandbox work.SandboxID) (
 // this is the branch a later `git push` inside the sandbox would default to.
 //
 // It carries no `-c credential.helper` of its own, deliberately: authenticating
-// through the checkout's local config, which configureCredentialHelper has
+// through the checkout's local config, which configureCheckoutIdentity has
 // already set, rather than through a flag only this package's own commands
 // carry, is what proves the two other things that read no `-c` at all — a
 // retried CloneRepo running this same push again, and implement's own bare

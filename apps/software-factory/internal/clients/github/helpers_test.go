@@ -31,6 +31,7 @@ const (
 	testInstallationID = 89012345
 	testBotSlug        = "www-software-factory-bot"
 	testBotLogin       = testBotSlug + "[bot]"
+	testBotAccountID   = int64(309464436)
 	testIssue          = 328
 )
 
@@ -93,6 +94,7 @@ type stub struct {
 	// without re-registering a pattern.
 	exchange http.HandlerFunc
 	appGet   http.HandlerFunc
+	userGet  http.HandlerFunc
 
 	// tokens are handed out by the default exchange in order, so a test can
 	// tell a refreshed token from the one it replaced.
@@ -113,10 +115,12 @@ func newStub(t *testing.T) (*stub, *clocktest.Fake) {
 	}
 	s.exchange = s.defaultExchange
 	s.appGet = s.defaultAppGet
+	s.userGet = s.defaultUserGet
 
 	s.mux.HandleFunc(fmt.Sprintf("POST /app/installations/%d/access_tokens", testInstallationID),
 		func(w http.ResponseWriter, r *http.Request) { s.exchange(w, r) })
 	s.mux.HandleFunc("GET /app", func(w http.ResponseWriter, r *http.Request) { s.appGet(w, r) })
+	s.mux.HandleFunc("GET /users/"+testBotLogin, func(w http.ResponseWriter, r *http.Request) { s.userGet(w, r) })
 
 	srv := httptest.NewServer(s)
 	t.Cleanup(srv.Close)
@@ -162,6 +166,10 @@ func (s *stub) defaultExchange(w http.ResponseWriter, _ *http.Request) {
 
 func (s *stub) defaultAppGet(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"id": testAppID, "slug": testBotSlug})
+}
+
+func (s *stub) defaultUserGet(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"id": testBotAccountID, "login": testBotLogin})
 }
 
 // requests returns every request the stub saw, in order.

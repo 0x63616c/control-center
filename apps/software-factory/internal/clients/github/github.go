@@ -461,7 +461,7 @@ func (c *Client) findOwnComment(ctx context.Context, op string, issue int, marke
 // must not fail a ticket, so callers degrade — they post rather than adopt, and
 // filter a thread by marker alone.
 func (c *Client) botLogin(ctx context.Context) (string, error) {
-	login, err := c.auth.botIdentity(ctx)
+	login, err := c.auth.botLogin(ctx)
 	if err != nil {
 		c.log.WarnContext(ctx, "could not resolve this app's own identity; treating every comment as someone else's",
 			"error", err.Error())
@@ -543,13 +543,9 @@ func (c *Client) InstallationToken(ctx context.Context) (work.SandboxCredential,
 	// after the first call, and a failure here must not leave a live token
 	// minted for a sandbox that never receives it. See work.SandboxCredential
 	// for why gh cannot proceed without it.
-	login, err := c.botLogin(ctx)
+	identity, err := c.auth.attribution(ctx)
 	if err != nil {
 		return work.SandboxCredential{}, err
-	}
-	if login == "" {
-		return work.SandboxCredential{}, permanent(op, ErrAuth, fmt.Errorf(
-			"github did not name this app's bot identity, so gh in the sandbox would have no account to attribute its token to"))
 	}
 
 	token, _, err := c.auth.mint(ctx, op, &gh.InstallationTokenOptions{
@@ -576,8 +572,8 @@ func (c *Client) InstallationToken(ctx context.Context) (work.SandboxCredential,
 	// business writing to the issue — and actions/checks/statuses, because
 	// nothing in this pipeline reruns or watches CI.
 	c.log.InfoContext(ctx, "minted a repository-scoped installation token for a sandbox",
-		"repository", c.repo, "login", login)
-	return work.SandboxCredential{Token: work.NewCredential(token), Login: login}, nil
+		"repository", c.repo, "login", identity.Login, "account_id", identity.AccountID)
+	return work.SandboxCredential{Token: work.NewCredential(token), Login: identity.Login, AccountID: identity.AccountID}, nil
 }
 
 // capBody bounds a comment body at a rune boundary.
