@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { httpBatchLink } from "@trpc/client";
 import type React from "react";
 import { useState } from "react";
-import { expect, fn, within } from "storybook/test";
+import { expect, fn, userEvent, within } from "storybook/test";
 import { trpc } from "@/lib/trpc";
 import { SettingsPage } from "./SettingsPage";
 
@@ -78,5 +78,35 @@ export const Open: Story = {
     for (const name of ["Debug", "About"]) {
       expect(doc.queryByRole("button", { name })).not.toBeInTheDocument();
     }
+  },
+};
+
+/**
+ * Escape closes the PIN dialog and leaves Settings open (#298).
+ *
+ * This is the composed surface, deliberately. Every SecurityPage story mounts
+ * that page bare, and the defect this pins only exists when a PIN dialog and
+ * the Settings page are open together , which is why a stack of green
+ * component stories said nothing about it.
+ */
+export const EscapeClosesOnlyTheTopSurface: Story = {
+  play: async ({ args, canvasElement }) => {
+    const doc = within(canvasElement.ownerDocument.body);
+
+    await userEvent.click(doc.getByRole("button", { name: "Security" }));
+    await userEvent.click(doc.getByRole("button", { name: "Change PIN" }));
+    await expect(doc.getByRole("dialog", { name: "Change PIN" })).toBeInTheDocument();
+
+    await userEvent.keyboard("{Escape}");
+
+    // The dialog goes; Settings stays. `onClose` is the page's only way out of
+    // this story, so an untouched spy is what "still open" means here.
+    await expect(doc.queryByRole("dialog", { name: "Change PIN" })).not.toBeInTheDocument();
+    await expect(doc.getByRole("button", { name: "Change PIN" })).toBeInTheDocument();
+    await expect(args.onClose).not.toHaveBeenCalled();
+
+    // A second Escape, with nothing on top, is Settings' own again.
+    await userEvent.keyboard("{Escape}");
+    await expect(args.onClose).toHaveBeenCalledTimes(1);
   },
 };
