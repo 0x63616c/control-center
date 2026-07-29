@@ -172,6 +172,10 @@ that an override at one site is not read as licence to ignore the rest.
    that only *resembles* a tag: Unicode confusables, or whitespace broken into the tag name.
    Those never match the opening tag the model was shown, and folding them away would mean
    normalising arbitrary issue text; the base's guard paragraph is what covers them.
+   Accepted cost: an issue that quotes a tag name legitimately — a ticket *about* this
+   fence is the obvious case — reaches the model with that quotation replaced by
+   `[fence marker removed]`. Nothing can tell a quotation from an attempt, and a visible
+   marker beats a silent deletion, but it will look like a bug to whoever hits it first.
 2. **`implement` is asked to paste real test output into its document.** On a large test
    suite that could be long, and the document is interpolated into `propose`'s prompt and
    surfaced to reviewers. No truncation guidance is given, deliberately — truncation
