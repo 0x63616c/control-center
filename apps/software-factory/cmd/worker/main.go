@@ -24,10 +24,19 @@ import (
 	tlog "go.temporal.io/sdk/log"
 	"go.temporal.io/sdk/worker"
 
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codex"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/k8s"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/runs"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/config"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/prompts"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/status"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/transcripts"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/workflows"
 )
 
 // shutdownGrace bounds how long the metrics server is given to finish in-flight
@@ -129,16 +138,28 @@ func run() error {
 		WorkerStopTimeout: workerStopTimeout,
 	})
 
-	// Registration site. The dispatcher and WorkTicket workflows (C1, C2) and
-	// the activities that carry out a stage are registered here, on this
-	// worker, and nowhere else — one queue, one worker, one list. Nothing is
-	// registered yet: this worker polls and finds nothing to do, which is the
-	// honest state of the system until those tracks land.
 	renderer, err := newPromptRenderer()
 	if err != nil {
 		return err
 	}
-	register(w, renderer, metrics, dispatcher, logger)
+
+	acts, err := newActivities(cfg, temporal, renderer, metrics, logger)
+	if err != nil {
+		return fmt.Errorf("building the activity set: %w", err)
+	}
+
+	// Registration site. The dispatcher and WorkTicket workflows and the
+	// activities that carry out a stage are registered here, on this worker,
+	// and nowhere else — one queue, one worker, one list.
+	register(w, acts, dispatcher, logger)
+
+	// Idempotent: a worker replica that loses the race to start this simply
+	// attaches to the execution the winner started. See ensureDispatcher's
+	// doc comment for why this happens on every boot rather than once, ever,
+	// by hand.
+	if err := ensureDispatcher(context.Background(), temporal, dispatcher, logger); err != nil {
+		return fmt.Errorf("ensuring the dispatcher is running: %w", err)
+	}
 
 	logger.Info("worker starting",
 		// Two different concepts that happen to share the string
@@ -209,27 +230,85 @@ func newObservability() (*prometheus.Registry, *telemetry.Metrics) {
 // register puts this worker's workflows and activities on its task queue.
 //
 // One function, one call site: a registration list that grew in two places
-// would be a queue serving a set of workflows nobody can enumerate. Nothing is
-// registered yet — C1's WorkTicket and C2's dispatcher, and the activities they
-// call, land here.
+// would be a queue serving a set of workflows nobody can enumerate. The
+// WorkTicket and Dispatcher workflows, and every activity method, land here
+// and nowhere else.
 //
-// The renderer and the metrics are parameters rather than things this builds:
-// both are process-wide singletons whose whole point is that exactly one exists
-// (see their construction in run), and an activity that built its own would get
-// a fresh nonce source or a second set of collectors.
-//
-// The renderer is a parameter rather than something this builds, because it
-// belongs to the activity that runs a stage and must never reach workflow code:
-// a replayed workflow that re-rendered a prompt would mint a fresh fence nonce
-// and diverge from its own history. That is what internal/prompts' place on the
-// workflows-are-deterministic deny list enforces, and what this signature says.
-func register(w worker.Worker, renderer *prompts.Renderer, metrics *telemetry.Metrics, dispatcher work.Config, logger *slog.Logger) {
+// acts arrives fully built rather than being assembled here: newActivities is
+// where every concrete client meets the interface it satisfies, and this
+// function's only job is telling the worker about the result — mixing the two
+// would make "what got registered" and "what got constructed" one lookup
+// instead of two.
+func register(w worker.Worker, acts *activities.Activities, dispatcher work.Config, logger *slog.Logger) {
+	w.RegisterWorkflow(workflows.WorkTicket)
+	w.RegisterWorkflow(workflows.Dispatcher)
+	w.RegisterActivity(acts)
+
 	logger.Info("registrations",
-		slog.Int("workflows", 0),
-		slog.Int("activities", 0),
+		slog.Int("workflows", 2),
 		slog.Int("stages_per_ticket", len(work.Pipeline())),
 		slog.Int("max_in_flight", dispatcher.MaxInFlight),
 	)
+}
+
+// newActivities builds the one activity set from concrete clients: GitHub,
+// the sandbox pods, the codex stage runner, transcripts, the prompt and
+// status renderers, the run lookup and the sandbox sweep.
+//
+// It is the composition root's other half of "a concrete client meets an
+// interface that consumes it" — main.go's own doc comment — kept out of run()
+// only because the list of clients is long enough to want its own name.
+//
+// One *k8s.Sandboxes instance is shared across three roles (Pods, Sweeper,
+// and — through codex.NewRunner — the stage runner's exec and file transfer):
+// it is "the only place this service speaks to the Kubernetes API" per its
+// own doc comment, and constructing a second would be a second client holding
+// a second watch on the same pods.
+func newActivities(
+	cfg config.Worker, temporal client.Client, renderer *prompts.Renderer, metrics *telemetry.Metrics, logger *slog.Logger,
+) (*activities.Activities, error) {
+	clk := clock.System{}
+
+	ghCfg, err := config.LoadGitHub()
+	if err != nil {
+		return nil, fmt.Errorf("reading the GitHub App's configuration: %w", err)
+	}
+	ghClient, err := github.New(ghCfg, clk, logger)
+	if err != nil {
+		return nil, fmt.Errorf("building the GitHub client: %w", err)
+	}
+
+	sandboxes, err := k8s.NewInCluster(cfg.SandboxNamespace, logger, clk)
+	if err != nil {
+		return nil, fmt.Errorf("building the Kubernetes sandbox client: %w", err)
+	}
+
+	transcriptSink, err := transcripts.New(cfg.TranscriptsRoot)
+	if err != nil {
+		return nil, fmt.Errorf("building the transcript sink at %s (TRANSCRIPTS_ROOT): %w", cfg.TranscriptsRoot, err)
+	}
+
+	sandboxTemplate := work.SandboxTemplate{
+		Image:           cfg.SandboxImage,
+		CPULimit:        cfg.SandboxCPULimit,
+		MemoryLimit:     cfg.SandboxMemoryLimit,
+		DeadlineSeconds: work.SandboxDeadlineSeconds,
+	}
+
+	return activities.New(activities.Deps{
+		GitHub:      ghClient,
+		Pods:        sandboxes,
+		Stages:      codex.NewRunner(sandboxes, sandboxes, clk, logger),
+		Transcripts: transcriptSink,
+		Prompts:     prompts.NewActivityRenderer(renderer),
+		Status:      status.NewRenderer(cfg.TemporalUIBaseURL, cfg.TemporalNamespace),
+		Runs:        runs.New(temporal),
+		Sweeper:     sandboxes,
+		Metrics:     metrics,
+		Log:         logger,
+		Clock:       clk,
+		Sandbox:     sandboxTemplate,
+	})
 }
 
 // stopServer gives in-flight scrapes a moment to finish. Its failure is logged

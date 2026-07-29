@@ -71,6 +71,15 @@ func WorkflowID(ticketNumber int) string {
 	return fmt.Sprintf("work-ticket-%d", ticketNumber)
 }
 
+// DispatcherWorkflowID is the one dispatcher's Temporal workflow ID.
+//
+// It is a constant rather than derived from anything, because there is
+// exactly one dispatcher: the composition root starts a workflow with this ID
+// on every boot, and Temporal's default StartWorkflowOptions — reused across
+// an already-running execution rather than erroring on it — is what makes
+// that idempotent. A second spelling anywhere would be a second dispatcher.
+const DispatcherWorkflowID = "software-factory-dispatcher"
+
 // statusMarkerPrefix opens every status marker. It carries a version so the
 // grammar can change without a new run adopting an old run's comment by
 // accident.

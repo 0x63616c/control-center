@@ -26,6 +26,15 @@ func TestWorkflowIDIsStableForATicket(t *testing.T) {
 	}
 }
 
+func TestDispatcherWorkflowIDIsStable(t *testing.T) {
+	t.Parallel()
+
+	if got, want := work.DispatcherWorkflowID, "software-factory-dispatcher"; got != want {
+		t.Errorf("DispatcherWorkflowID = %q, want %q — the composition root starts on this ID every boot; "+
+			"changing it orphans whatever dispatcher is already running under the old one", got, want)
+	}
+}
+
 func TestStagePathsAreDerivedFromTheKeyAlone(t *testing.T) {
 	t.Parallel()
 
