@@ -577,6 +577,20 @@ func TestAttachingConcludesRatherThanPollingForever(t *testing.T) {
 	// clock, so this asserts the shape the timeout would otherwise hide: an
 	// attached stage stops polling once the attempt is gone, and does it in a
 	// handful of polls rather than "eventually".
+	//
+	// Why this is not the same test as TestAttachingStopsWhenTheAttemptDies-
+	// WithoutAResult, which sets up the same scenario — that one asserts the
+	// OUTCOME, this one asserts the SHAPE of reaching it, and a mutant
+	// separates them: make waitForResult require three consecutive dead
+	// answers before concluding and the outcome test still PASSES while this
+	// one fails with "polled pgrep 4 times to notice an attempt that died on
+	// poll 2". Keeping them apart is what makes the termination assertion
+	// survive someone later changing that test's scenario.
+	//
+	// The bound below is >3 against an honest minimum of 3, so it absorbs
+	// exactly one extra poll and no more: a require-TWO version of that mutant
+	// passes here. That slack is deliberate, and it is one poll rather than
+	// zero so an extra probe added for a good reason is not a test failure.
 	pods, files := newFakes()
 	pods.alivePID = 4321
 	pods.onPgrepPoll = func(calls int) {

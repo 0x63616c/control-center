@@ -29,14 +29,25 @@ import (
 // that both are permanent and that a rate limit is not an auth failure — true
 // either way, so they will not make this choice for anyone.
 //
-// The trap, for whoever does decide: a test that calls an activity function
-// directly, or drives it through TestActivityEnvironment without going over the
-// wire, keeps the Go error chain intact — so errors.Is SUCCEEDS there and fails
-// only once a real workflow is on the other end. A green test is exactly what
-// would let the mistake ship. Assert this across a serialisation boundary or
-// not at all. Note that Translate's own doc says "errors.Is still finds the
-// sentinel on the way out", which is true of the value it returns in-process
-// and not of what the workflow receives.
+// Where to assert it, for whoever does decide, because the two obvious places
+// disagree and only one of them is honest. A DIRECT call to an activity
+// function proves nothing: nothing is serialised, the Go chain is intact, and
+// errors.Is SUCCEEDS — a green test for a thing that does not hold in
+// production. TestActivityEnvironment does serialise, so it is the boundary and
+// it is the right place to assert. Measured against this tree, with an activity
+// returning Translate(fmt.Errorf("scripted: %w", ErrRateLimited)):
+//
+//	direct call               errors.Is = true    *ApplicationError
+//	TestActivityEnvironment   errors.Is = false   *ActivityError
+//
+// The same measurement shows the recommended mechanism already works: errors.As
+// finds an *ApplicationError carrying (type: PermanentFailure, retryable:
+// false). A dispatcher can switch on that type the moment Translate gives each
+// sentinel one of its own.
+//
+// Translate's own doc says "errors.Is still finds the sentinel on the way out",
+// which is true of the value it returns in-process and not of what a workflow
+// receives.
 var (
 	// ErrRateLimited reports that the plan's rate limit, not the work, ended
 	// this stage.
