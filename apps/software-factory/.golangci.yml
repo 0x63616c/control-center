@@ -70,13 +70,20 @@ linters:
           files:
             - "**/internal/**"
             - "!**/internal/clients/k8s/**"
+          # Two whole-domain prefixes, NOT a list of specific modules. depguard
+          # resolves each import against its best-matching deny entry, so a
+          # narrower `k8s.io/client-go` entry alongside `k8s.io` silently stops
+          # the broad one applying to everything else — verified by probe.
+          # Sealing only client-go, api and apimachinery left k8s.io/streaming,
+          # k8s.io/utils, k8s.io/klog and every sigs.k8s.io type importable from
+          # anywhere under internal/, which is most of the worldview the seal
+          # exists to keep out. Pod specs pull metav1/corev1 in, which is what
+          # makes this the rule the pod client was written against.
           deny:
-            - pkg: k8s.io/client-go
-              desc: "Kubernetes types are sealed in internal/clients/k8s (SoftwareStyle: no leaky abstractions)"
-            - pkg: k8s.io/api
-              desc: "Kubernetes types are sealed in internal/clients/k8s"
-            - pkg: k8s.io/apimachinery
-              desc: "Kubernetes types are sealed in internal/clients/k8s — pod specs pull metav1/corev1 from here, so omitting it leaves the seal open"
+            - pkg: k8s.io
+              desc: "the whole Kubernetes worldview is sealed in internal/clients/k8s (SoftwareStyle: no leaky abstractions)"
+            - pkg: sigs.k8s.io
+              desc: "Kubernetes ecosystem types are sealed in internal/clients/k8s"
 
         github-sdk-is-sealed:
           files:
