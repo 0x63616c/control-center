@@ -54,6 +54,13 @@ type StatusReport struct {
 	// Outcome is empty while the run is still going.
 	Outcome Outcome
 
+	// PullRequestURL is the pull request the run opened, set only on the
+	// outcome report when Outcome is OutcomeProposed. It is the URL GitHub's
+	// API returned for the branch the worker named — never a value read out
+	// of a stage's own result file, which is model output derived from an
+	// issue an attacker may have written (#371).
+	PullRequestURL string
+
 	// Usage is the run's total so far, so cost is visible where the work is
 	// reviewed rather than only in a dashboard.
 	Usage Usage

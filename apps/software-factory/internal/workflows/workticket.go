@@ -319,6 +319,12 @@ func (r *ticketRun) finish(ctx workflow.Context, result WorkTicketResult, runErr
 	r.report(ctx, work.StatusReport{
 		Step: work.StepOutcome, State: state,
 		Outcome: outcome, Detail: detail, EndedAt: workflow.Now(ctx),
+		// result.PullRequest is what FindPullRequest got back from GitHub for
+		// this run's own branch — see execute — never a value a stage wrote
+		// into its own result file. Only meaningful when the run proposed;
+		// result.PullRequest is empty otherwise, so this is a no-op for every
+		// other outcome.
+		PullRequestURL: result.PullRequest,
 	})
 	r.tellDispatcher(ctx, work.TicketDone{
 		Ticket:  r.in.Ticket.Number,

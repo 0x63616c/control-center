@@ -91,18 +91,19 @@ func (r *Renderer) renderStage(report work.StatusReport) string {
 // renderOutcome handles the run's last comment, which is Proposed or
 // Abandoned depending on what the run achieved.
 //
-// PullRequestURL is not filled from report.Detail: nothing in this service
-// writes a pull request URL into a StatusReport today (see the field's own
-// doc comment in internal/status/status.go — that is #371's job, not
-// landed). Passing report.Detail through would be a guess at a contract that
-// does not exist yet; empty renders inertly, which Proposed.Body already
-// handles.
+// report.PullRequestURL is the URL GitHub's API returned for the run's own
+// branch (#371), threaded through from work.WorkTicketResult.PullRequest in
+// workflows.ticketRun.finish — never a value read out of a stage's own
+// result file. Proposed.Body still renders it defensively (linkedURL,
+// pullRequestHost): the field's provenance is trustworthy today, but the
+// renderer does not get to assume that stays true.
 func (r *Renderer) renderOutcome(report work.StatusReport) string {
 	if report.Outcome == work.OutcomeProposed {
 		return Proposed{
-			RunID:    report.RunID,
-			EndedAt:  report.EndedAt,
-			RunUsage: report.Usage,
+			RunID:          report.RunID,
+			PullRequestURL: report.PullRequestURL,
+			EndedAt:        report.EndedAt,
+			RunUsage:       report.Usage,
 		}.Body()
 	}
 	return Abandoned{

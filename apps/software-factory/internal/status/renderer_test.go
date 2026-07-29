@@ -69,8 +69,12 @@ func TestRendererDispatchesEachStatusReportShape(t *testing.T) {
 			report: work.StatusReport{
 				TicketNumber: 331, RunID: "run-1", Step: work.StepOutcome,
 				State: work.StepSucceeded, Outcome: work.OutcomeProposed, EndedAt: endedAt, Usage: usage,
+				PullRequestURL: "https://github.com/o/r/pull/9",
 			},
-			want: status.Proposed{RunID: "run-1", EndedAt: endedAt, RunUsage: usage}.Body(),
+			want: status.Proposed{
+				RunID: "run-1", EndedAt: endedAt, RunUsage: usage,
+				PullRequestURL: "https://github.com/o/r/pull/9",
+			}.Body(),
 		},
 		"abandoned": {
 			report: work.StatusReport{
