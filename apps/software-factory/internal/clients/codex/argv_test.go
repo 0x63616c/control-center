@@ -31,6 +31,7 @@ func TestStageArgvIsTheWholeCommand(t *testing.T) {
 		"codex", "exec",
 		"--json",
 		"--dangerously-bypass-approvals-and-sandbox",
+		"--cd", "/work/repo",
 		"--model", "gpt-5.6-terra",
 		"--config", "model_reasoning_effort=medium",
 		"--output-schema", "/work/0198c2f1/plan/schema.json",
@@ -106,5 +107,52 @@ func TestTheResultAndSchemaPathsAreTheStagesOwn(t *testing.T) {
 
 	if slices.Equal(first, second) {
 		t.Error("two runs of the same stage produce identical argv; the second would read the first's result file")
+	}
+}
+
+func TestAStageRunsInTheCheckoutAndNotTheSandboxRoot(t *testing.T) {
+	t.Parallel()
+
+	// The image's WORKDIR is work.SandboxRoot, and it cannot be the checkout:
+	// a WORKDIR the container runtime has to create inside the /work emptyDir
+	// is created as root mode 0755, so the sandbox uid cannot write its own
+	// clone. The checkout is therefore made by the process that clones it, at
+	// work.RepoDir, and codex has to be pointed at it explicitly.
+	//
+	// Getting this wrong does not present as a configuration error. codex exec
+	// outside a git repository dies with "Not inside a trusted directory"
+	// BEFORE it calls a model, so the stage reads as the model failing at its
+	// task rather than as the runner starting it in the wrong place.
+	argv := stageArgv(testRun())
+
+	i := slices.Index(argv, flagCd)
+	if i < 0 {
+		t.Fatalf("argv does not pass %s, so codex runs in the image's WORKDIR (%s) instead of the checkout (%s):\n%q",
+			flagCd, work.SandboxRoot, work.RepoDir, argv)
+	}
+	if i == len(argv)-1 {
+		t.Fatalf("%s is the last argument and has no value:\n%q", flagCd, argv)
+	}
+	if got := argv[i+1]; got != work.RepoDir {
+		t.Errorf("%s = %q, want the checkout %q — codex operates outside the repository anywhere else",
+			flagCd, got, work.RepoDir)
+	}
+}
+
+func TestTheStageScaffoldingStaysOutsideTheCheckout(t *testing.T) {
+	t.Parallel()
+
+	// The other half of why the checkout is a subdirectory rather than /work
+	// itself: codex runs with the repository as its working directory, so
+	// anything the run writes inside it is one `git add -A` away from being
+	// committed to the branch the implement stage pushes.
+	argv := stageArgv(testRun())
+	for _, arg := range argv {
+		if arg == work.RepoDir {
+			continue
+		}
+		if strings.HasPrefix(arg, work.RepoDir+"/") {
+			t.Errorf("argv puts %q inside the checkout; the run's own files would be committable by the stage that writes the branch:\n%q", arg, argv)
+		}
 	}
 }

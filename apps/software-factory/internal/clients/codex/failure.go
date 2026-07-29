@@ -7,29 +7,36 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
-// The failure sentinels, and a constraint on whoever wires them into an
-// activity (D1, #340).
+// The failure sentinels — and a decision about them that is now owed.
 //
 // Both exist so the dispatcher can tell "wait, then carry on" from "stop and
-// fetch a human". Today it cannot, and not because of anything in this file:
-// there is no activity boundary yet. When one lands, Temporal serialises an
-// activity's error into an ApplicationError carrying a Type string and a
-// message — the Go error chain does NOT cross into workflow code.
-// errors.Is(err, ErrRateLimited) in the dispatcher will be false however
-// carefully the error was wrapped here.
+// fetch a human". As of D1 (#368) it cannot, and this is no longer hypothetical:
+// activities.Translate is the one place a domain error becomes a Temporal one,
+// and it maps EVERY permanent error onto the single type
+// activities.ErrorTypePermanent. Nothing distinguishes a rate limit from an
+// auth failure on the far side.
 //
-// So these two buy nothing unless that translation maps each onto a DISTINCT
-// ApplicationError Type, and the dispatcher switches on the Type. If it maps
-// everything permanent onto one Type, delete one of these rather than leave a
-// distinction that reads as load-bearing and is not.
+// Nor can the dispatcher recover the difference itself. Temporal serialises an
+// activity's error into an ApplicationError carrying a type string and a
+// message; the messages survive, but the reconstructed values are
+// *ApplicationError, not these sentinels, so errors.Is(err, ErrRateLimited) in
+// workflow code is false however carefully the error was wrapped here.
 //
-// The trap that makes this worth writing down rather than merely true: a test
-// that calls the activity function directly, or drives it through
-// TestActivityEnvironment without going over the wire, keeps the Go error
-// chain intact — so errors.Is SUCCEEDS there and fails only once a real
-// workflow is on the other end. A green test is exactly what would let this
-// ship. Whatever D1 asserts about telling these apart has to assert it on the
-// far side of a serialisation boundary.
+// So one of two things should happen, and leaving it undecided is the only
+// wrong answer: either Translate grows a distinct type per sentinel and the
+// dispatcher switches on the type, or one of these is deleted rather than left
+// reading as load-bearing when nothing can read it. The tests below pin only
+// that both are permanent and that a rate limit is not an auth failure — true
+// either way, so they will not make this choice for anyone.
+//
+// The trap, for whoever does decide: a test that calls an activity function
+// directly, or drives it through TestActivityEnvironment without going over the
+// wire, keeps the Go error chain intact — so errors.Is SUCCEEDS there and fails
+// only once a real workflow is on the other end. A green test is exactly what
+// would let the mistake ship. Assert this across a serialisation boundary or
+// not at all. Note that Translate's own doc says "errors.Is still finds the
+// sentinel on the way out", which is true of the value it returns in-process
+// and not of what the workflow receives.
 var (
 	// ErrRateLimited reports that the plan's rate limit, not the work, ended
 	// this stage.
