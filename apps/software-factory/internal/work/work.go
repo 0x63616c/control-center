@@ -395,6 +395,48 @@ func NewCredential(value string) Credential {
 	return Credential{value: value}
 }
 
+// SandboxCredential is the installation token written into a sandbox, together
+// with the login GitHub attributes its use to.
+//
+// The login travels with the token rather than being fetched beside it because
+// it is a property OF the token — who this credential acts as — and because the
+// gh CLI refuses to use a token whose account it cannot name. gh resolves that
+// name by calling /user, which an installation token cannot answer, so it has
+// to be told: with no login in its hosts.yml, every gh invocation fails during
+// config migration with "couldn't get user name", before it runs the command it
+// was given. Verified against gh 2.96.0, not inferred.
+//
+// It carries the same never-return-from-an-activity rule Credential does.
+type SandboxCredential struct {
+	// Token is the short-lived, repository-scoped installation token.
+	Token Credential
+
+	// Login is the App's bot identity — its slug with a "[bot]" suffix.
+	Login string
+}
+
+// String redacts the whole struct, so a stray %v cannot leak the token it
+// wraps.
+//
+// Whole, not field by field: Credential redacts itself, so %v on this struct
+// already printed "{[redacted] <login>}" rather than the secret. That is one
+// formatting change away from being wrong, and the login is not worth the
+// exception — nothing that logs this needs it, and TicketDetail's filtering
+// already resolves the bot login by itself where it is genuinely needed.
+func (c SandboxCredential) String() string {
+	return "[redacted]"
+}
+
+// SandboxCredential must satisfy slog.LogValuer for the same reason Credential
+// must, and it is enforced the same way — at package scope, so a drifted
+// signature fails `go build`.
+var _ slog.LogValuer = SandboxCredential{}
+
+// LogValue redacts the credential in structured logs.
+func (c SandboxCredential) LogValue() slog.Value {
+	return slog.StringValue("[redacted]")
+}
+
 // Reveal returns the underlying secret. Call it only at the point the value is
 // written to its destination.
 func (c Credential) Reveal() string {

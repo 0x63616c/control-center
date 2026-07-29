@@ -97,7 +97,7 @@ const credentialHelperValue = "store --file=" + credentialsPath
 // limitation of clone-once-at-the-start, not a regression this fix
 // introduces; solving it needs a way to hand the sandbox a fresher credential
 // mid-run, which is out of #383's scope.
-func (s *Sandboxes) CloneRepo(ctx context.Context, sandbox work.SandboxID, cloneURL string, credential work.Credential) error {
+func (s *Sandboxes) CloneRepo(ctx context.Context, sandbox work.SandboxID, cloneURL string, credential work.SandboxCredential) error {
 	if cloneURL == "" {
 		return fmt.Errorf("cloning into sandbox %s: no repository url was configured: %w", sandbox, work.ErrPermanent)
 	}
@@ -181,8 +181,8 @@ func credentialLine(credential work.Credential) string {
 // an argv — the only place the credential's bytes exist outside this call are
 // the file itself and the memory holding this string, never an exec argument
 // and never a log line.
-func (s *Sandboxes) writeCredentials(ctx context.Context, sandbox work.SandboxID, credential work.Credential) error {
-	if err := s.Write(ctx, sandbox, credentialsPath, []byte(credentialLine(credential)), credentialFileMode); err != nil {
+func (s *Sandboxes) writeCredentials(ctx context.Context, sandbox work.SandboxID, credential work.SandboxCredential) error {
+	if err := s.Write(ctx, sandbox, credentialsPath, []byte(credentialLine(credential.Token)), credentialFileMode); err != nil {
 		return fmt.Errorf("writing the sandbox's git credential file: %w", err)
 	}
 	return s.writeGhCredentials(ctx, sandbox, credential)
@@ -210,14 +210,22 @@ func (s *Sandboxes) writeCredentials(ctx context.Context, sandbox work.SandboxID
 //
 // The token also expires an hour after it is minted while a run may last six,
 // and nothing rewrites either file mid-run — #417.
-func ghHostsFile(credential work.Credential) string {
-	// gh's own on-disk shape. Two spaces of indentation and no `user` key: gh
-	// resolves the login itself when it needs one, and an installation token
-	// has no user to name — x-access-token is git's basic-auth placeholder, not
-	// a GitHub account, so writing it here would record a login that does not
-	// exist.
+func ghHostsFile(credential work.SandboxCredential) string {
+	// gh's own on-disk shape. The `user` key is REQUIRED, and its absence is not
+	// a degraded mode — it is total failure. gh runs a config migration before
+	// every command, and that migration resolves the account name by calling
+	// /user, which an installation token cannot answer. Measured against gh
+	// 2.96.0 with the key absent:
+	//
+	//	failed to migrate config: cowardly refusing to continue with multi
+	//	account migration: couldn't get user name for "github.com"
+	//
+	// — emitted for `gh auth status` and `gh api` alike, before either ran. With
+	// the key present, gh names the account from the file and never asks GitHub
+	// who it is.
 	return "github.com:\n" +
-		"  oauth_token: " + credential.Reveal() + "\n" +
+		"  oauth_token: " + credential.Token.Reveal() + "\n" +
+		"  user: " + credential.Login + "\n" +
 		"  git_protocol: https\n"
 }
 
@@ -225,7 +233,7 @@ func ghHostsFile(credential work.Credential) string {
 //
 // Same transport and same mode as the git credential file: streamed as a tar
 // body by Write, never an exec argument, never a log line.
-func (s *Sandboxes) writeGhCredentials(ctx context.Context, sandbox work.SandboxID, credential work.Credential) error {
+func (s *Sandboxes) writeGhCredentials(ctx context.Context, sandbox work.SandboxID, credential work.SandboxCredential) error {
 	if err := s.Write(ctx, sandbox, work.GhHostsFile, []byte(ghHostsFile(credential)), credentialFileMode); err != nil {
 		return fmt.Errorf("writing the sandbox's gh credential file: %w", err)
 	}
