@@ -195,6 +195,41 @@ func TestAResumedStageDoesNotInventTokensItDidNotSee(t *testing.T) {
 	}
 }
 
+// pgrep exiting 0 IS the liveness answer, whatever it printed. procps prints a
+// PID line, but it can also print a warning, and a build that printed nothing
+// would still be saying "I matched something". Reading the number rather than
+// the exit code turns any of those into "no attempt is running" and starts a
+// second codex against the live one — two models writing the same result file,
+// paid for twice, with nothing in the logs to say it happened.
+func TestAnExitZeroPgrepThatPrintsNoUsablePIDIsStillALiveAttempt(t *testing.T) {
+	t.Parallel()
+
+	for _, out := range []string{"", "\n", "pgrep: some warning\n"} {
+		t.Run(fmt.Sprintf("%q", out), func(t *testing.T) {
+			t.Parallel()
+
+			pods, files := newFakes()
+			pods.aliveOutput = &out
+			pods.onPgrepPoll = func(calls int) {
+				if calls == 2 {
+					files.put(testRun().Key.Paths().Result, []byte(resultJSON))
+				}
+			}
+
+			result, err := newTestRunner(pods, files).RunStage(context.Background(), testRun(), func([]byte) {})
+			if err != nil {
+				t.Fatalf("RunStage() = %v", err)
+			}
+			if pods.codexCalls() != 0 {
+				t.Errorf("codex was invoked %d times against a sandbox where pgrep said one was already running", pods.codexCalls())
+			}
+			if string(result.Output) != resultJSON {
+				t.Errorf("Output = %q, want the attached attempt's result", result.Output)
+			}
+		})
+	}
+}
+
 func TestALiveAttemptIsWaitedForRatherThanDuplicated(t *testing.T) {
 	t.Parallel()
 
@@ -290,6 +325,10 @@ type fakePods struct {
 	mu          sync.Mutex
 	calls       []execCall
 	alivePID    int
+	// aliveOutput overrides what an exit-0 pgrep writes to stdout, so a test
+	// can express "pgrep found a process but its output does not parse as a
+	// PID" — a warning line, or nothing at all.
+	aliveOutput *string
 	pgrepCalls  int
 	onCodex     func(*execCall) (int, error)
 	onPgrepPoll func(calls int)
@@ -317,6 +356,15 @@ func (f *fakePods) Exec(_ context.Context, _ work.SandboxID, argv []string, stdi
 		f.mu.Lock()
 		pid := f.alivePID
 		f.mu.Unlock()
+		f.mu.Lock()
+		override := f.aliveOutput
+		f.mu.Unlock()
+		if override != nil {
+			if _, err := io.WriteString(stdout, *override); err != nil {
+				return 0, err
+			}
+			return 0, nil
+		}
 		if pid == 0 {
 			return 1, nil
 		}

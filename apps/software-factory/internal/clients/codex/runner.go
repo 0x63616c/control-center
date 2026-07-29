@@ -8,7 +8,6 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
-	"strconv"
 	"strings"
 	"time"
 
@@ -212,7 +211,7 @@ func (r *Runner) waitForResult(ctx context.Context, run work.StageRun, probe *sa
 			return nil
 		}
 
-		_, alive, err := probe.LivePID(ctx)
+		alive, err := probe.AttemptRunning(ctx)
 		if err != nil {
 			return fmt.Errorf("checking whether the attempt of %s is still alive: %w", run.Key, err)
 		}
@@ -257,44 +256,47 @@ func (p *sandboxProbe) ResultExists(ctx context.Context) (bool, error) {
 	}
 }
 
-// LivePID reports whether a codex for this stage is still running.
+// AttemptRunning reports whether a codex for this stage is still running.
 //
 // It asks the process table rather than reading a PID file, and the difference
 // is not convenience. A PID file can only be written by the process itself,
 // which needs either a shell or a wrapper in the sandbox image; and a PID
 // outlives its process, so a recycled number would read as "still running" and
-// hang the stage until its timeout. Matching codex's own argv on this attempt's
-// result path — a path derived from a ticket number, a Temporal RunID and a
-// stage name, none of which an issue author can steer — can only match the
-// process this stage started.
-func (p *sandboxProbe) LivePID(ctx context.Context) (int, bool, error) {
+// hang the stage until its timeout.
+//
+// The pattern is this attempt's result path — `<SandboxRoot>/<RunID>/<stage>`
+// (work.StageKey.Paths), so a Temporal RunID and one of five stage constants.
+// The ticket number is not in it; it appears only in TranscriptPath. What the
+// two fields that ARE in it buy is that nothing an issue author writes can
+// steer the pattern, and that two concurrent stages cannot collide: they differ
+// in RunID, or in the stage segment.
+//
+// What the pattern does not give is a guarantee of matching only this stage's
+// codex. A concurrent `pgrep -f` with the same pattern matches (pgrep excludes
+// its own PID, not a sibling's), and so does a file-transfer exec carrying the
+// path in its argv. Every one of those biases toward a false "running", which
+// costs one poll and never a double-run — the opposite direction to the answer
+// that would be expensive to get wrong.
+//
+// The exit code is the answer, not the output. pgrep exiting 0 means it matched
+// something whatever it printed, so nothing here parses stdout.
+func (p *sandboxProbe) AttemptRunning(ctx context.Context) (bool, error) {
 	var out bytes.Buffer
 	argv := []string{"pgrep", "-f", p.paths.Result}
 
 	code, err := p.runner.pods.Exec(ctx, p.sandbox, argv, nil, &out, io.Discard)
 	if err != nil {
-		return 0, false, fmt.Errorf("looking for a running attempt in sandbox %s: %w", p.sandbox, err)
+		return false, fmt.Errorf("looking for a running attempt in sandbox %s: %w", p.sandbox, err)
 	}
 	switch code {
 	case 0:
-		return parsePID(out.String()), true, nil
+		return true, nil
 	case 1:
 		// pgrep's own "nothing matched", which is the normal answer.
-		return 0, false, nil
+		return false, nil
 	default:
-		return 0, false, fmt.Errorf("pgrep failed in sandbox %s (exit %d): %s", p.sandbox, code, strings.TrimSpace(out.String()))
+		return false, fmt.Errorf("pgrep failed in sandbox %s (exit %d): %s", p.sandbox, code, strings.TrimSpace(out.String()))
 	}
-}
-
-// parsePID reads the first PID pgrep printed. More than one match means codex
-// re-execed itself; any of them being alive is the answer this is asked for.
-func parsePID(out string) int {
-	first, _, _ := strings.Cut(strings.TrimSpace(out), "\n")
-	pid, err := strconv.Atoi(strings.TrimSpace(first))
-	if err != nil {
-		return 0
-	}
-	return pid
 }
 
 // tailWriter keeps the last limit bytes written to it.
