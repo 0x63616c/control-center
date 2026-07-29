@@ -378,11 +378,14 @@ func describeState(state corev1.ContainerState) (string, string) {
 // retrying activity, and a second delete must not fail a run that has already
 // finished its work.
 func (s *Sandboxes) Delete(ctx context.Context, sandbox work.SandboxID) error {
-	// Grace zero: there is nothing to drain, and on a single-node cluster the
-	// capacity a corpse holds is the scarce thing.
-	err := s.cs.CoreV1().Pods(s.ns).Delete(ctx, string(sandbox), metav1.DeleteOptions{
-		GracePeriodSeconds: ptr(int64(0)),
-	})
+	// No DeleteOptions grace: the pod's own TerminationGracePeriodSeconds is
+	// already zero, which is what the apiserver uses when this leaves it nil.
+	// Passing 0 here would say something else — a force delete, which drops the
+	// object from etcd before the kubelet confirms teardown, so deleteAndWait
+	// could return while the container still holds its Guaranteed reservation.
+	// On a single-node cluster that reservation is the scarce thing, which is
+	// the very reason not to force.
+	err := s.cs.CoreV1().Pods(s.ns).Delete(ctx, string(sandbox), metav1.DeleteOptions{})
 	if err == nil || apierrors.IsNotFound(err) {
 		s.logger.InfoContext(ctx, "sandbox pod deleted", "sandbox", sandbox, "was_present", err == nil)
 		return nil

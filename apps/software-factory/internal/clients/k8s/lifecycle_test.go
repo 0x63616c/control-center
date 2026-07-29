@@ -298,7 +298,7 @@ func TestCreateLogsWhatItCreated(t *testing.T) {
 	}
 }
 
-func TestDeleteDeletesThePodWithNoGracePeriod(t *testing.T) {
+func TestDeleteTakesTheGraceFromThePodRatherThanForcing(t *testing.T) {
 	t.Parallel()
 
 	s, cs, _ := newLifecycleSandboxes(t, seededPod(t, validSpec(), corev1.PodRunning))
@@ -306,14 +306,30 @@ func TestDeleteDeletesThePodWithNoGracePeriod(t *testing.T) {
 		t.Fatalf("Delete returned an unexpected error: %v", err)
 	}
 
-	var grace *int64
+	deletes := 0
 	for _, a := range cs.Actions() {
-		if del, ok := a.(k8stesting.DeleteActionImpl); ok {
-			grace = del.DeleteOptions.GracePeriodSeconds
+		del, ok := a.(k8stesting.DeleteActionImpl)
+		if !ok {
+			continue
+		}
+		deletes++
+		if del.DeleteOptions.GracePeriodSeconds != nil {
+			t.Errorf("delete grace = %d, want it unset: a grace on DeleteOptions is a force delete, and the object would leave etcd before the kubelet released the node capacity this is trying to reclaim",
+				*del.DeleteOptions.GracePeriodSeconds)
 		}
 	}
-	if grace == nil || *grace != 0 {
-		t.Errorf("delete grace = %v, want 0: there is nothing to drain and the node's capacity is scarce", grace)
+	if deletes != 1 {
+		t.Fatalf("Delete issued %d deletes, want 1", deletes)
+	}
+
+	// The zero grace still applies; it comes from the spec, which is the one
+	// place it is stated.
+	pod, err := buildPod(validSpec(), defaultOptions())
+	if err != nil {
+		t.Fatalf("buildPod returned an unexpected error: %v", err)
+	}
+	if got := pod.Spec.TerminationGracePeriodSeconds; got == nil || *got != 0 {
+		t.Errorf("pod terminationGracePeriodSeconds = %v, want 0: there is nothing to drain", got)
 	}
 }
 
