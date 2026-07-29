@@ -103,6 +103,12 @@ func buildPod(spec work.SandboxSpec, o options) (*corev1.Pod, error) {
 	workSize := resource.NewQuantity(workSizeLimitBytes, resource.BinarySI)
 	uid := sandboxUID
 
+	var imagePullSecrets []corev1.LocalObjectReference
+	if o.imagePullSecretName != "" {
+		// Explicit, not a namespace-default fallback: see WithImagePullSecret.
+		imagePullSecrets = []corev1.LocalObjectReference{{Name: o.imagePullSecretName}}
+	}
+
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
@@ -120,6 +126,7 @@ func buildPod(spec work.SandboxSpec, o options) (*corev1.Pod, error) {
 			EnableServiceLinks:            ptr(false),
 			TerminationGracePeriodSeconds: ptr(int64(0)),
 			SecurityContext:               &corev1.PodSecurityContext{FSGroup: &uid},
+			ImagePullSecrets:              imagePullSecrets,
 			Containers: []corev1.Container{{
 				Name:            o.containerName,
 				Image:           spec.Image,

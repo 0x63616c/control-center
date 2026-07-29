@@ -60,6 +60,19 @@ type Worker struct {
 	// debugs it to the credential layer instead of to RBAC.
 	CodexAuthSecretName string
 
+	// SandboxImagePullSecretName is the Kubernetes Secret every sandbox pod
+	// authenticates its image pull with. The sandbox image is private on
+	// GHCR, like the worker's own — but unlike the worker's Deployment, a pod
+	// podspec.go builds has no Pulumi-managed spec to set imagePullSecrets on
+	// by hand, so this name has to arrive as config and be threaded onto each
+	// pod explicitly (k8s.WithImagePullSecret).
+	//
+	// It is read rather than assumed because there is no cluster-side
+	// fallback: an empty value here is a pod with no imagePullSecrets at all,
+	// which reads as a healthy Create followed by an ErrImagePull rather than
+	// as a startup failure (#404).
+	SandboxImagePullSecretName string
+
 	// LogLevel is the level everything below this process logs at.
 	LogLevel slog.Level
 
@@ -88,16 +101,17 @@ const (
 // quote them, and an error naming an input that does not exist is worse than no
 // error at all.
 const (
-	envTemporalHostPort  = "TEMPORAL_HOST_PORT"
-	envTemporalNamespace = "TEMPORAL_NAMESPACE"
-	envSandboxNamespace  = "SANDBOX_NAMESPACE"
-	envSandboxImage      = "SANDBOX_IMAGE"
-	envMetricsAddr       = "METRICS_ADDR"
-	envPodName           = "POD_NAME"
-	envTranscriptsRoot   = "TRANSCRIPTS_ROOT"
-	envTemporalUIBaseURL = "TEMPORAL_UI_BASE_URL"
-	envCodexAuthSecret   = "CODEX_AUTH_SECRET_NAME"
-	envLogLevel          = "LOG_LEVEL"
+	envTemporalHostPort       = "TEMPORAL_HOST_PORT"
+	envTemporalNamespace      = "TEMPORAL_NAMESPACE"
+	envSandboxNamespace       = "SANDBOX_NAMESPACE"
+	envSandboxImage           = "SANDBOX_IMAGE"
+	envMetricsAddr            = "METRICS_ADDR"
+	envPodName                = "POD_NAME"
+	envTranscriptsRoot        = "TRANSCRIPTS_ROOT"
+	envTemporalUIBaseURL      = "TEMPORAL_UI_BASE_URL"
+	envCodexAuthSecret        = "CODEX_AUTH_SECRET_NAME"
+	envSandboxImagePullSecret = "SANDBOX_IMAGE_PULL_SECRET_NAME"
+	envLogLevel               = "LOG_LEVEL"
 
 	envSandboxCPULimit    = "SANDBOX_CPU_LIMIT"
 	envSandboxMemoryLimit = "SANDBOX_MEMORY_LIMIT"
@@ -116,6 +130,7 @@ func workerEnvNames() []string {
 		envTranscriptsRoot,
 		envTemporalUIBaseURL,
 		envCodexAuthSecret,
+		envSandboxImagePullSecret,
 	}
 }
 
@@ -126,15 +141,16 @@ func workerEnvNames() []string {
 // at the first poll.
 func (w Worker) Validate() error {
 	required := map[string]string{
-		envTemporalHostPort:  w.TemporalHostPort,
-		envTemporalNamespace: w.TemporalNamespace,
-		envSandboxNamespace:  w.SandboxNamespace,
-		envSandboxImage:      w.SandboxImage,
-		envMetricsAddr:       w.MetricsAddr,
-		envPodName:           w.PodName,
-		envTranscriptsRoot:   w.TranscriptsRoot,
-		envTemporalUIBaseURL: w.TemporalUIBaseURL,
-		envCodexAuthSecret:   w.CodexAuthSecretName,
+		envTemporalHostPort:       w.TemporalHostPort,
+		envTemporalNamespace:      w.TemporalNamespace,
+		envSandboxNamespace:       w.SandboxNamespace,
+		envSandboxImage:           w.SandboxImage,
+		envMetricsAddr:            w.MetricsAddr,
+		envPodName:                w.PodName,
+		envTranscriptsRoot:        w.TranscriptsRoot,
+		envTemporalUIBaseURL:      w.TemporalUIBaseURL,
+		envCodexAuthSecret:        w.CodexAuthSecretName,
+		envSandboxImagePullSecret: w.SandboxImagePullSecretName,
 	}
 	for _, name := range workerEnvNames() {
 		if strings.TrimSpace(required[name]) == "" {
@@ -162,6 +178,8 @@ func LoadWorker() (Worker, error) {
 		TranscriptsRoot:     os.Getenv(envTranscriptsRoot),
 		TemporalUIBaseURL:   os.Getenv(envTemporalUIBaseURL),
 		CodexAuthSecretName: os.Getenv(envCodexAuthSecret),
+
+		SandboxImagePullSecretName: os.Getenv(envSandboxImagePullSecret),
 	}
 	if err := cfg.Validate(); err != nil {
 		return Worker{}, describeWorkerRequirement(err)
@@ -192,15 +210,16 @@ func orDefault(name, fallback string) string {
 // file to fix their Deployment.
 func describeWorkerRequirement(err error) error {
 	purposes := map[string]string{
-		envTemporalHostPort:  "the Temporal frontend to dial, host:port",
-		envTemporalNamespace: "the Temporal namespace this service's workflows live in",
-		envSandboxNamespace:  "the Kubernetes namespace per-ticket sandbox pods are created in",
-		envSandboxImage:      "the per-ticket sandbox image, pinned by digest",
-		envMetricsAddr:       "the address the metrics and health server listens on",
-		envPodName:           "this pod's own name, from the downward API; it identifies the credential lease holder",
-		envTranscriptsRoot:   "the mount point of the transcript volume, where stage transcripts are written",
-		envTemporalUIBaseURL: "the Temporal UI's origin, scheme and host with no path; run URLs are built from it",
-		envCodexAuthSecret:   "the Kubernetes Secret holding the codex credential; the worker's Role is pinned to this exact name",
+		envTemporalHostPort:       "the Temporal frontend to dial, host:port",
+		envTemporalNamespace:      "the Temporal namespace this service's workflows live in",
+		envSandboxNamespace:       "the Kubernetes namespace per-ticket sandbox pods are created in",
+		envSandboxImage:           "the per-ticket sandbox image, pinned by digest",
+		envMetricsAddr:            "the address the metrics and health server listens on",
+		envPodName:                "this pod's own name, from the downward API; it identifies the credential lease holder",
+		envTranscriptsRoot:        "the mount point of the transcript volume, where stage transcripts are written",
+		envTemporalUIBaseURL:      "the Temporal UI's origin, scheme and host with no path; run URLs are built from it",
+		envCodexAuthSecret:        "the Kubernetes Secret holding the codex credential; the worker's Role is pinned to this exact name",
+		envSandboxImagePullSecret: "the Kubernetes Secret every sandbox pod authenticates its image pull with; without it a sandbox pod ErrImagePulls against GHCR",
 	}
 	for name, purpose := range purposes {
 		if strings.Contains(err.Error(), name) {

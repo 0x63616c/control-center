@@ -205,6 +205,31 @@ func TestBuildPodRunsAsANonRootUserUnderTheDefaultSeccompProfile(t *testing.T) {
 	}
 }
 
+func TestBuildPodSetsImagePullSecretsFromOptions(t *testing.T) {
+	t.Parallel()
+
+	o := defaultOptions()
+	o.imagePullSecretName = "ghcr-pull"
+
+	pod, err := buildPod(validSpec(), o)
+	if err != nil {
+		t.Fatalf("buildPod returned an unexpected error: %v", err)
+	}
+	want := []corev1.LocalObjectReference{{Name: "ghcr-pull"}}
+	if !reflect.DeepEqual(pod.Spec.ImagePullSecrets, want) {
+		t.Errorf("imagePullSecrets = %+v, want %+v; the sandbox image is private on GHCR and an anonymous pull 401s", pod.Spec.ImagePullSecrets, want)
+	}
+}
+
+func TestBuildPodLeavesImagePullSecretsUnsetWhenOptionsCarryNone(t *testing.T) {
+	t.Parallel()
+
+	pod := mustBuild(t, validSpec())
+	if len(pod.Spec.ImagePullSecrets) != 0 {
+		t.Errorf("imagePullSecrets = %+v, want none when no secret name was configured", pod.Spec.ImagePullSecrets)
+	}
+}
+
 func TestBuildPodLabelsThePodSoASweepCanFindItByTicketAndRun(t *testing.T) {
 	t.Parallel()
 
