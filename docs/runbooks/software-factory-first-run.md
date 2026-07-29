@@ -12,8 +12,8 @@ Everything below runs from a worktree of this repo. `kubectl` and `talosctl`
 reach prod over the LAN; there is **no SSH to home-server**.
 
 Two kinds of angle bracket. `<n>`, `<ticket>`, `<run-id>`, `<stage>` are values
-you have — substitute them. `<name: track/#issue>` and `<name: unlanded>` are
-names that **do not exist yet**; a step needing one cannot be run until the work
+you have — substitute them. `<name: track/#issue>` is a name that **does not
+exist yet**; a step needing one cannot be run until the work
 that defines it lands.
 
 ## 0. What must be true first (hard gate)
@@ -42,10 +42,9 @@ that defines it lands.
 - [ ] The worker is polling its task queue — a Deployment that is `Ready` proves
       the process started, not that it registered. Check the queue has a poller
       with `task-queue describe` (§3, CLI pod). **Not executable today:** that
-      subcommand needs `--task-queue <task-queue: unlanded>`, and no track has
-      named the queue yet — A2 (#330) is config structs and D1 (#340) is the
-      worker wiring; neither issue mentions it (checked 2026-07-28). Take the
-      name from the worker's registration when it lands.
+      subcommand needs `--task-queue <task-queue: work.TaskQueue, D1/#340>`, a
+      constant in `internal/work` alongside `work.WorkflowID` — D1 owns adding
+      it, since D1 registers the worker. Substitute its value once D1 lands.
 - [ ] The codex credential is seeded (F2) and the GitHub App config Secret is
       wired (F1). Check **presence only**:
 
@@ -93,30 +92,48 @@ holds only `temporal-server`. Use a throwaway admin-tools pod:
       --namespace software-factory workflow list
 
 Swap the trailing subcommand for `workflow describe`, `workflow terminate`
-(abort lever 3, §5) or `task-queue describe --task-queue <task-queue: unlanded>`
-— see §0 for why that last one cannot be run yet.
+(abort lever 3, §5) or
+`task-queue describe --task-queue <task-queue: work.TaskQueue, D1/#340>` — see
+§0 for why that last one cannot be run yet.
 
-It prints two things that look like failures and are not. Four
-`would violate PodSecurity "restricted"` warnings: neither `temporal` nor
-`software-factory` carries PodSecurity labels (verified 2026-07-28), the cluster
-default warns on `restricted` without enforcing it, and the pod is admitted and
-runs — there is no misconfigured namespace here to go and fix. And sometimes
-`couldn't attach to pod … falling back to streaming logs`, when the command
-finishes before `kubectl` attaches; the output still arrives.
+Four `would violate PodSecurity "restricted"` warnings are expected and mean
+nothing is wrong: neither `temporal` nor `software-factory` carries PodSecurity
+labels (verified 2026-07-28), the cluster default warns on `restricted` without
+enforcing it, and the pod is admitted and runs. There is no misconfigured
+namespace here to go and fix.
 
 **`workflow list` prints nothing at all and exits 0** until the first run exists,
 because `software-factory` has no workflows yet. Empty is the correct output
 today, not a broken command — verified 2026-07-28. To prove the harness itself
-works, run `operator namespace list` instead: it returns `temporal-system`,
-`control-center`, `software-factory`.
+works before the first run, swap in `operator namespace list`, which returns
+`temporal-system`, `control-center`, `software-factory`.
 
-Adding a hardened pod spec silences the four warnings. It is cosmetic, it is not
-required, and it is **not** the form to hand-edit at 2am — use the short form
-above for that:
+**The output is also sometimes lost outright, and that does not mean the command
+did not run.** `kubectl run --rm -i` deletes the pod the moment the container
+exits, and attach can lose that race: you get `couldn't attach to pod … falling
+back to streaming logs`, then nothing. Measured 2026-07-28 against prod with
+`operator namespace list`, which prints 18 lines and is never empty — output
+arrived in 4 of 5 runs of the form above, and in 1 of 3 of an earlier set.
+
+**So never read an empty result as "it didn't happen"**, above all for
+`workflow terminate`: the next lever up is 4, which stops every other in-flight
+ticket to stop one. Confirm rather than escalate —
+
+    … --namespace software-factory workflow describe --workflow-id work-ticket-<n>
+
+— and read the status. A missing confirmation costs one more read; the wrong
+inference costs every other run.
+
+When you need the output to be there, sleep **before** the command so `kubectl`
+attaches while the container is still idle:
 
     kubectl -n temporal run tmp-temporal-cli --rm -i --restart=Never \
-      --image=temporalio/admin-tools:1.31.2 \
-      --overrides='{"spec":{"securityContext":{"runAsNonRoot":true,"runAsUser":1000,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"tmp-temporal-cli","image":"temporalio/admin-tools:1.31.2","securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}},"command":["temporal","--address","temporal-server:7233","--namespace","software-factory","workflow","list"]}]}}'
+      --image=temporalio/admin-tools:1.31.2 --command -- sh -c \
+      'sleep 2; temporal --address temporal-server:7233 --namespace software-factory workflow list'
+
+Measured 2026-07-28: **10 of 10** runs printed. Sleeping *after* the command
+instead is worse than not sleeping at all — **0 of 5** printed, because attach
+then connects only once the output has already gone.
 
 **Logs.** Grafana → Explore → Loki, 14-day retention:
 
@@ -157,7 +174,9 @@ started. On a first run this is where the boring failures live.
    the control surface is one signal and one query (ADR-0011), sendable from the
    Temporal UI or the CLI pod above. Leaves in-flight tickets running.
 3. **Terminate one ticket.** `workflow terminate --workflow-id work-ticket-<n>`
-   from the CLI pod. Its sandbox pod is not reaped by that — check
+   from the CLI pod. **It often prints nothing even when it worked** (§3) —
+   confirm with `workflow describe`, do not assume it failed and reach for 4.
+   Its sandbox pod is not reaped by the terminate either — check
    `kubectl -n software-factory get pods` and delete it.
 4. **Stop everything.**
    `kubectl -n software-factory scale deploy/<worker-deployment: F1/#343> --replicas=0`.
