@@ -135,7 +135,7 @@ func TestExecReturnsZeroWhenTheCommandExitsSuccessfully(t *testing.T) {
 	t.Parallel()
 
 	s, _ := newTestSandboxes(t, &scriptedStreamer{answers: []answer{{}}}, runningPod())
-	code, err := s.Exec(context.Background(), testSandbox, []string{"true"}, io.Discard, io.Discard)
+	code, err := s.Exec(context.Background(), testSandbox, []string{"true"}, nil, io.Discard, io.Discard)
 	if err != nil {
 		t.Fatalf("Exec returned an unexpected error: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestExecReturnsTheCommandsRealExitCodeWithoutAnError(t *testing.T) {
 			str := &scriptedStreamer{answers: []answer{{err: utilexec.CodeExitError{Err: errors.New("command terminated"), Code: tc.code}}}}
 			s, _ := newTestSandboxes(t, str, runningPod())
 
-			code, err := s.Exec(context.Background(), testSandbox, []string{"codex"}, io.Discard, io.Discard)
+			code, err := s.Exec(context.Background(), testSandbox, []string{"codex"}, nil, io.Discard, io.Discard)
 			if err != nil {
 				t.Fatalf("Exec returned an error for exit %d; a non-zero exit is evidence, not a failure: %v", tc.code, err)
 			}
@@ -181,7 +181,7 @@ func TestExecDoesNotTrustAnExitStatusFromAnErrorThatDidNotExit(t *testing.T) {
 	str := &scriptedStreamer{answers: []answer{{err: notExitedError{}}}}
 	s, _ := newTestSandboxes(t, str, runningPod())
 
-	code, err := s.Exec(context.Background(), testSandbox, []string{"codex"}, io.Discard, io.Discard)
+	code, err := s.Exec(context.Background(), testSandbox, []string{"codex"}, nil, io.Discard, io.Discard)
 	if err == nil {
 		t.Fatal("Exec succeeded on an error that never exited; utilexec.ExitError is an interface and matches values that carry no real status")
 	}
@@ -196,7 +196,7 @@ func TestExecReportsAConnectionDropAsAnErrorAndNotAsAnExitCode(t *testing.T) {
 	str := &scriptedStreamer{answers: []answer{{err: io.ErrUnexpectedEOF}}}
 	s, _ := newTestSandboxes(t, str, runningPod())
 
-	code, err := s.Exec(context.Background(), testSandbox, []string{"codex"}, io.Discard, io.Discard)
+	code, err := s.Exec(context.Background(), testSandbox, []string{"codex"}, nil, io.Discard, io.Discard)
 	if err == nil {
 		t.Fatal("Exec succeeded on a dropped connection")
 	}
@@ -220,7 +220,7 @@ func TestExecReportsAStreamFailureAgainstADeadlineExpiredPodAsPermanent(t *testi
 	str := &scriptedStreamer{answers: []answer{{err: io.ErrUnexpectedEOF}}}
 	s, _ := newTestSandboxes(t, str, dead)
 
-	_, err := s.Exec(context.Background(), testSandbox, []string{"codex"}, io.Discard, io.Discard)
+	_, err := s.Exec(context.Background(), testSandbox, []string{"codex"}, nil, io.Discard, io.Discard)
 	if !errors.Is(err, work.ErrPermanent) {
 		t.Fatalf("Exec error = %v, want it permanent: retrying reaches a corpse until the activity times out", err)
 	}
@@ -236,7 +236,7 @@ func TestExecReportsAStreamFailureAgainstAVanishedPodAsPermanent(t *testing.T) {
 	str := &scriptedStreamer{answers: []answer{{err: io.ErrUnexpectedEOF}}}
 	s, _ := newTestSandboxes(t, str)
 
-	if _, err := s.Exec(context.Background(), testSandbox, []string{"codex"}, io.Discard, io.Discard); !errors.Is(err, work.ErrPermanent) {
+	if _, err := s.Exec(context.Background(), testSandbox, []string{"codex"}, nil, io.Discard, io.Discard); !errors.Is(err, work.ErrPermanent) {
 		t.Fatalf("Exec error = %v, want it permanent: the sandbox is gone", err)
 	}
 }
@@ -251,7 +251,7 @@ func TestExecTargetsTheSandboxContainerByName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newSandboxes returned an unexpected error: %v", err)
 	}
-	if _, err := s.Exec(context.Background(), testSandbox, []string{"true"}, io.Discard, io.Discard); err != nil {
+	if _, err := s.Exec(context.Background(), testSandbox, []string{"true"}, nil, io.Discard, io.Discard); err != nil {
 		t.Fatalf("Exec returned an unexpected error: %v", err)
 	}
 
@@ -299,7 +299,7 @@ func TestExecPassesArgvThroughUntouchedBehindTheShim(t *testing.T) {
 
 	str := &scriptedStreamer{answers: []answer{{}}}
 	s, _ := newTestSandboxes(t, str, runningPod())
-	if _, err := s.Exec(context.Background(), testSandbox, argv, io.Discard, io.Discard); err != nil {
+	if _, err := s.Exec(context.Background(), testSandbox, argv, nil, io.Discard, io.Discard); err != nil {
 		t.Fatalf("Exec returned an unexpected error: %v", err)
 	}
 
@@ -333,7 +333,7 @@ func TestExecWritesStdoutAndStderrToTheirSeparateWriters(t *testing.T) {
 	s, _ := newTestSandboxes(t, str, runningPod())
 
 	var out, errOut bytes.Buffer
-	if _, err := s.Exec(context.Background(), testSandbox, []string{"codex"}, &out, &errOut); err != nil {
+	if _, err := s.Exec(context.Background(), testSandbox, []string{"codex"}, nil, &out, &errOut); err != nil {
 		t.Fatalf("Exec returned an unexpected error: %v", err)
 	}
 	if out.String() != "on stdout" {
@@ -354,7 +354,7 @@ func TestExecPropagatesCancellationToTheStream(t *testing.T) {
 	}}
 	s, _ := newTestSandboxes(t, str, runningPod())
 
-	code, err := s.Exec(ctx, testSandbox, []string{"sleep", "600"}, io.Discard, io.Discard)
+	code, err := s.Exec(ctx, testSandbox, []string{"sleep", "600"}, nil, io.Discard, io.Discard)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Exec error = %v, want it to wrap context.Canceled", err)
 	}
@@ -373,7 +373,7 @@ func TestExecIssuesAKillWhenTheContextIsCancelled(t *testing.T) {
 	}}
 	s, logs := newTestSandboxes(t, str, runningPod())
 
-	if _, err := s.Exec(ctx, testSandbox, []string{"sleep", "600"}, io.Discard, io.Discard); err == nil {
+	if _, err := s.Exec(ctx, testSandbox, []string{"sleep", "600"}, nil, io.Discard, io.Discard); err == nil {
 		t.Fatal("Exec succeeded on a cancelled context")
 	}
 
@@ -406,7 +406,7 @@ func TestExecReturnsTheContextErrorEvenWhenTheKillFails(t *testing.T) {
 	}}
 	s, logs := newTestSandboxes(t, str, runningPod())
 
-	_, err := s.Exec(ctx, testSandbox, []string{"sleep", "600"}, io.Discard, io.Discard)
+	_, err := s.Exec(ctx, testSandbox, []string{"sleep", "600"}, nil, io.Discard, io.Discard)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Exec error = %v, want it to wrap context.Canceled regardless of the kill's outcome", err)
 	}
@@ -420,7 +420,7 @@ func TestExecDoesNotIssueAKillWhenTheCommandCompletesNormally(t *testing.T) {
 
 	str := &scriptedStreamer{answers: []answer{{}}}
 	s, _ := newTestSandboxes(t, str, runningPod())
-	if _, err := s.Exec(context.Background(), testSandbox, []string{"true"}, io.Discard, io.Discard); err != nil {
+	if _, err := s.Exec(context.Background(), testSandbox, []string{"true"}, nil, io.Discard, io.Discard); err != nil {
 		t.Fatalf("Exec returned an unexpected error: %v", err)
 	}
 	if calls := str.observed(); len(calls) != 1 {
@@ -432,7 +432,7 @@ func TestExecRefusesAnEmptyArgv(t *testing.T) {
 	t.Parallel()
 
 	s, _ := newTestSandboxes(t, &scriptedStreamer{}, runningPod())
-	if _, err := s.Exec(context.Background(), testSandbox, nil, io.Discard, io.Discard); !errors.Is(err, work.ErrPermanent) {
+	if _, err := s.Exec(context.Background(), testSandbox, nil, nil, io.Discard, io.Discard); !errors.Is(err, work.ErrPermanent) {
 		t.Errorf("Exec error = %v, want it permanent", err)
 	}
 }
@@ -442,7 +442,7 @@ func TestExecLogsTheCommandWithoutItsArguments(t *testing.T) {
 
 	str := &scriptedStreamer{answers: []answer{{}}}
 	s, logs := newTestSandboxes(t, str, runningPod())
-	if _, err := s.Exec(context.Background(), testSandbox, []string{"codex", "/work/run/plan/prompt.md"}, io.Discard, io.Discard); err != nil {
+	if _, err := s.Exec(context.Background(), testSandbox, []string{"codex", "/work/run/plan/prompt.md"}, nil, io.Discard, io.Discard); err != nil {
 		t.Fatalf("Exec returned an unexpected error: %v", err)
 	}
 

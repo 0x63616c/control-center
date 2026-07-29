@@ -88,7 +88,7 @@ func TestServesConcurrentExecsAndCreatesWithoutADataRace(t *testing.T) {
 					errs <- fmt.Errorf("Write(%s): %w", path, err)
 				}
 
-				if _, err := s.Exec(context.Background(), testSandbox, []string{"true"}, io.Discard, io.Discard); err != nil {
+				if _, err := s.Exec(context.Background(), testSandbox, []string{"true"}, nil, io.Discard, io.Discard); err != nil {
 					errs <- fmt.Errorf("Exec: %w", err)
 				}
 
