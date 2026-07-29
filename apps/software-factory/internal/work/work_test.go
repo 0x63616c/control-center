@@ -245,11 +245,17 @@ func TestCredentialFileStaysOutOfFormattedOutput(t *testing.T) {
 	}
 }
 
-// Credential.LogValue returns `any`, which does NOT satisfy slog.LogValuer, so
-// slog never calls it — nothing leaks today only because slog falls through to
-// String(). CredentialFile must not inherit that: a document is exactly the
-// shape somebody logs whole, so the protection has to be real rather than
-// incidental. Asserting the interface is what makes it so.
+// A document is exactly the shape somebody logs whole, so its redaction has to
+// be a property of the type rather than an accident of how a handler happens to
+// render an unrecognised value. Asserting the interface is what makes it one.
+//
+// The load-bearing assertion now lives at package scope in work.go, so the
+// regression fails `go build` rather than only `go test`. It is restated here
+// for the reason the Credential one is: a bare `var _` with nothing beside it
+// reads as dead code, and deleting it silently removes the guard.
+//
+// What follows it is the run-time half — that a real handler writes nothing of
+// the document.
 func TestCredentialFileRedactsItselfThroughTheInterfaceSlogActuallyUses(t *testing.T) {
 	t.Parallel()
 

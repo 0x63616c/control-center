@@ -461,13 +461,27 @@ func (f CredentialFile) String() string {
 	return "[redacted credential file]"
 }
 
+// CredentialFile must satisfy slog.LogValuer, enforced here at package scope
+// for the same reason Credential's is: a signature that drifts off the
+// interface fails `go build` rather than only `go test`. It matters at least as
+// much here — this is the type whose own doc argues that incidental protection
+// is not good enough for a whole document.
+var _ slog.LogValuer = CredentialFile{}
+
 // LogValue redacts the document in structured logs.
 //
 // It returns slog.Value, NOT any, so that CredentialFile actually satisfies
-// slog.LogValuer and slog genuinely calls it. Credential.LogValue returns any
-// and therefore does not — nothing leaks there only because slog falls through
-// to String. That is incidental protection, and a whole document is too easy to
-// log for incidental to be good enough.
+// slog.LogValuer and slog genuinely calls it. Credential.LogValue has the same
+// signature and the same guard — see the assertion above it.
+//
+// Were this signature to drift, what happened next would depend on the handler,
+// and neither outcome is this type's doing: a TextHandler falls through to fmt,
+// which finds String(); a JSONHandler reaches encoding/json, which never calls
+// String() — MarshalJSON below refuses and the attribute renders as an !ERROR
+// string. So on this service's real path, whose logs are JSON for Loki, the
+// symptom of a regression is a corrupted field rather than a clean
+// "[redacted]". Protected, but by an accident of lookup order, and visibly
+// broken. The assertion above is what makes redaction a property of this type.
 func (f CredentialFile) LogValue() slog.Value {
 	return slog.StringValue(f.String())
 }
