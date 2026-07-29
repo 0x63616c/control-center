@@ -155,7 +155,7 @@ func (s *Sandboxes) exec(ctx context.Context, sandbox work.SandboxID, argv []str
 		return 0, fmt.Errorf("running a command in sandbox %s: argv is empty: %w", sandbox, work.ErrPermanent)
 	}
 	if s.streamer == nil {
-		return 0, fmt.Errorf("running %v in sandbox %s: this Sandboxes has no exec transport: %w", argv, sandbox, work.ErrPermanent)
+		return 0, fmt.Errorf("running %s in sandbox %s: this Sandboxes has no exec transport: %w", argvSummary(argv), sandbox, work.ErrPermanent)
 	}
 
 	execID := s.nextExecID()
@@ -177,7 +177,7 @@ func (s *Sandboxes) exec(ctx context.Context, sandbox work.SandboxID, argv []str
 		// returning: an activity timeout that leaves codex running burns quota
 		// nobody is waiting for.
 		s.killExec(ctx, target, execID)
-		return 0, fmt.Errorf("running %v in sandbox %s: %w", argv, sandbox, ctxErr)
+		return 0, fmt.Errorf("running %s in sandbox %s: %w", argvSummary(argv), sandbox, ctxErr)
 	}
 
 	code, exited := exitCode(err)
@@ -225,7 +225,7 @@ func exitCode(err error) (int, bool) {
 // error; classified on the error alone that is retryable, and the stage retries
 // into a corpse until its own hour-long timeout.
 func (s *Sandboxes) classifyExecFailure(ctx context.Context, sandbox work.SandboxID, argv []string, err error) error {
-	op := fmt.Sprintf("running %v", argv)
+	op := "running " + argvSummary(argv)
 
 	pod, getErr := s.cs.CoreV1().Pods(s.ns).Get(ctx, string(sandbox), metav1.GetOptions{})
 	switch {

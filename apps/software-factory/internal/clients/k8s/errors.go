@@ -91,6 +91,21 @@ func classifyPhase(sandbox work.SandboxID, op string, phase corev1.PodPhase, rea
 	}
 }
 
+// argvSummary renders a command for an error message: the program, and how
+// many words the command was, never the words themselves.
+//
+// It is the same redaction the exec Debug line already applies, for the same
+// reason — an argv carries file paths today and could carry more later — and it
+// matters more here, because errors reach Temporal history and Loki while a
+// Debug line may not. argv0 is what distinguishes tar from cat from codex,
+// which is the whole diagnostic value of the rest.
+func argvSummary(argv []string) string {
+	if len(argv) == 0 {
+		return "an empty command"
+	}
+	return fmt.Sprintf("%q (%d words)", argv[0], len(argv))
+}
+
 // exitCodeError reports a command that ran and failed, quoting what it said.
 //
 // stderr is the evidence and is never dropped: it is the only thing that
@@ -104,5 +119,5 @@ func exitCodeError(sandbox work.SandboxID, op string, argv []string, code int, s
 		return fmt.Errorf("%s in sandbox %s: %q exited %d, so the sandbox image is missing it%s: %w",
 			op, sandbox, argv[0], code, detail, work.ErrPermanent)
 	}
-	return fmt.Errorf("%s in sandbox %s: %v exited %d%s", op, sandbox, argv, code, detail)
+	return fmt.Errorf("%s in sandbox %s: %s exited %d%s", op, sandbox, argvSummary(argv), code, detail)
 }

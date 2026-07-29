@@ -106,6 +106,38 @@ func TestClassifiesAMissingSandboxBinaryAsPermanent(t *testing.T) {
 	}
 }
 
+func TestErrorsNameTheProgramAndNeverTheRestOfTheArgv(t *testing.T) {
+	t.Parallel()
+
+	// An argv carries file paths today and could carry more later; an error
+	// reaches Temporal history and Loki, so it redacts exactly as the exec
+	// Debug line does.
+	const sensitive = "/work/3f1c2a7e/plan/credential"
+	argv := []string{"codex", "exec", "--config", sensitive}
+
+	messages := []string{
+		argvSummary(argv),
+		exitCodeError("sandbox-ticket-42", "running a stage", argv, 1, "boom").Error(),
+		exitCodeError("sandbox-ticket-42", "running a stage", argv, exitNotFound, "").Error(),
+	}
+	for _, msg := range messages {
+		if !strings.Contains(msg, `"codex"`) {
+			t.Errorf("%q does not name argv0, which is what distinguishes tar from cat from codex", msg)
+		}
+		for _, word := range argv[1:] {
+			if strings.Contains(msg, word) {
+				t.Errorf("%q carries the argv word %q", msg, word)
+			}
+		}
+	}
+	if got, want := argvSummary(argv), `"codex" (4 words)`; got != want {
+		t.Errorf("argvSummary = %q, want %q", got, want)
+	}
+	if got := argvSummary(nil); got == "" || strings.Contains(got, "[]") {
+		t.Errorf("argvSummary(nil) = %q, want it to read as a sentence", got)
+	}
+}
+
 func TestClassifiesAPodStatusPhase(t *testing.T) {
 	t.Parallel()
 
