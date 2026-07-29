@@ -24,17 +24,18 @@ type dispatcherHarness struct {
 	env *testsuite.TestWorkflowEnvironment
 
 	// knobs.
-	config        work.Config
-	tuning        work.DispatcherTuning
-	inFlight      []work.InFlightTicket
-	breaker       work.Breaker
-	tickets       []work.Ticket
-	listErr       error
-	runs          map[string]work.RunState
-	sweepErr      error
-	historyLength int
-	runFor        time.Duration
-	callbacks     []delayedCallback
+	config           work.Config
+	tuning           work.DispatcherTuning
+	inFlight         []work.InFlightTicket
+	recentlyFinished []work.FinishedTicket
+	breaker          work.Breaker
+	tickets          []work.Ticket
+	listErr          error
+	runs             map[string]work.RunState
+	sweepErr         error
+	historyLength    int
+	runFor           time.Duration
+	callbacks        []delayedCallback
 
 	// what it did.
 	started   []int
@@ -114,11 +115,12 @@ func (h *dispatcherHarness) run() {
 	}
 
 	env.ExecuteWorkflow(workflows.Dispatcher, workflows.DispatcherInput{
-		Config:   h.config,
-		Tuning:   h.tuning,
-		Run:      work.DefaultRunPolicy(),
-		InFlight: h.inFlight,
-		Breaker:  h.breaker,
+		Config:           h.config,
+		Tuning:           h.tuning,
+		Run:              work.DefaultRunPolicy(),
+		InFlight:         h.inFlight,
+		RecentlyFinished: h.recentlyFinished,
+		Breaker:          h.breaker,
 	})
 }
 
@@ -659,6 +661,101 @@ func TestDispatcherForgetsWhyItPausedWhenAHumanResumesIt(t *testing.T) {
 
 	if reason := h.status(t).Config.PauseReason; reason != "" {
 		t.Fatalf("PauseReason = %q — GetStatus must not explain a pause that is over", reason)
+	}
+}
+
+// TestDispatcherDoesNotReclaimATicketTheNextTickStillListsAsAuto reproduces
+// #405: a run finishes and signals done, but the very next tick's
+// ListAutoTickets still names the ticket — GitHub's issue index had not yet
+// caught up with the label that run had just cleared. The dispatcher must not
+// start a second run against a ticket it just finished.
+func TestDispatcherDoesNotReclaimATicketTheNextTickStillListsAsAuto(t *testing.T) {
+	t.Parallel()
+
+	h := newDispatcherHarness(t)
+	h.config.MaxInFlight = 1
+	h.config.PollIntervalSeconds = 30
+	h.inFlight = []work.InFlightTicket{{Ticket: 320, RunID: "run-1"}}
+	h.runs["work-ticket-320"] = work.RunState{Open: true, RunID: "run-1"}
+	// The ticket stays in the (stale) list across every tick in this test —
+	// exactly what an eventually-consistent index does for the few seconds
+	// after ClearAutoLabel succeeds.
+	h.tickets = tickets(320)
+	h.runFor = 3 * time.Minute
+	h.at(45*time.Second, func() {
+		h.runs["work-ticket-320"] = work.RunState{}
+		h.env.SignalWorkflow(workflows.SignalTicketDone, work.TicketDone{
+			Ticket: 320, RunID: "run-1", Outcome: work.OutcomeProposed,
+		})
+	})
+	h.run()
+
+	if len(h.started) != 0 {
+		t.Fatalf("started %v — ticket 320 was re-claimed by a stale list before its run's own dispatcher "+
+			"had even seen the slot free for a full cooldown (#405)", h.started)
+	}
+}
+
+// TestDispatcherReclaimsATicketOnceItsCooldownExpires proves the guard is
+// temporary: once the cooldown has elapsed, a ticket still labelled `auto` —
+// exactly what "re-add it to request another pass" produces — is worked
+// again. Nothing here removed that path.
+func TestDispatcherReclaimsATicketOnceItsCooldownExpires(t *testing.T) {
+	t.Parallel()
+
+	h := newDispatcherHarness(t)
+	h.config.MaxInFlight = 1
+	h.config.PollIntervalSeconds = 30
+	h.tuning.ReclaimCooldown = 2 * time.Minute
+	h.inFlight = []work.InFlightTicket{{Ticket: 320, RunID: "run-1"}}
+	h.runs["work-ticket-320"] = work.RunState{Open: true, RunID: "run-1"}
+	h.tickets = tickets(320)
+	h.runFor = 5 * time.Minute
+	h.at(45*time.Second, func() {
+		h.runs["work-ticket-320"] = work.RunState{}
+		h.env.SignalWorkflow(workflows.SignalTicketDone, work.TicketDone{
+			Ticket: 320, RunID: "run-1", Outcome: work.OutcomeProposed,
+		})
+	})
+	h.run()
+
+	if len(h.started) != 1 || h.started[0] != 320 {
+		t.Fatalf("started %v, want ticket 320 once its cooldown elapsed — a human re-adding `auto` after that "+
+			"point must still get another pass", h.started)
+	}
+}
+
+// TestDispatcherCarriesRecentlyFinishedAcrossAContinueAsNew proves the guard
+// survives ContinueAsNew. State kept only in the loop and dropped from the
+// carried struct resets every few hours (see DispatcherInput's doc comment),
+// which would make this bug intermittent rather than fixed.
+func TestDispatcherCarriesRecentlyFinishedAcrossAContinueAsNew(t *testing.T) {
+	t.Parallel()
+
+	h := newDispatcherHarness(t)
+	h.tuning.MaxHistoryEvents = 1
+	h.historyLength = 100
+	h.config.MaxInFlight = 1
+	h.inFlight = []work.InFlightTicket{{Ticket: 320, RunID: "run-1"}}
+	h.runs["work-ticket-320"] = work.RunState{Open: true, RunID: "run-1"}
+	h.tickets = tickets(320)
+	h.runFor = 0
+	// h.runs is deliberately left untouched here: reconcile's own DescribeRun
+	// lookup races the mock activity's own goroutine when mutated this close
+	// to t=0 (an unrelated latent race in the harness, caught by -race), and
+	// this test only needs the fast path — the TicketDone signal itself, which
+	// is a Temporal channel and needs no such synchronization.
+	h.at(time.Nanosecond, func() {
+		h.env.SignalWorkflow(workflows.SignalTicketDone, work.TicketDone{
+			Ticket: 320, RunID: "run-1", Outcome: work.OutcomeProposed,
+		})
+	})
+	h.run()
+
+	in := h.continuedInput(t)
+	if len(in.RecentlyFinished) != 1 || in.RecentlyFinished[0].Ticket != 320 || in.RecentlyFinished[0].ExpiresAt.IsZero() {
+		t.Fatalf("carried %+v — a cooldown dropped across ContinueAsNew makes the race intermittent instead of fixed",
+			in.RecentlyFinished)
 	}
 }
 
