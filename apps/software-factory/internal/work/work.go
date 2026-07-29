@@ -413,6 +413,9 @@ type SandboxCredential struct {
 
 	// Login is the App's bot identity — its slug with a "[bot]" suffix.
 	Login string
+
+	// AccountID is the stable GitHub account ID for Login.
+	AccountID int64
 }
 
 // String redacts the whole struct, so a stray %v cannot leak the token it

@@ -42,7 +42,7 @@ type appAuth struct {
 	clk            clock.Clock
 	log            *slog.Logger
 
-	// exchange is the JWT-authenticated plane. It must NOT carry
+	// exchange is the unauthenticated base client. It must NOT carry
 	// installationTransport: that transport performs the exchange, so routing
 	// the exchange through it recurses and deadlocks on the mutex the refresh
 	// already holds.
@@ -58,8 +58,16 @@ type appAuth struct {
 	token     string
 	expiresAt time.Time
 
-	identityMu sync.Mutex
-	botLogin   string
+	identityMu     sync.Mutex
+	cachedBotLogin string
+	identity       botAttribution
+}
+
+// botAttribution is the validated GitHub identity commits made by a sandbox
+// must carry.
+type botAttribution struct {
+	Login     string
+	AccountID int64
 }
 
 // mintJWT signs a fresh App JWT. It is never cached: it costs one RSA
@@ -161,18 +169,21 @@ func classifyExchange(ctx context.Context, op string, installationID int64, err 
 	return classify(ctx, op, err)
 }
 
-// botIdentity returns the login GitHub attributes this App's comments to, which
+// botLogin resolves the login GitHub attributes this App's comments to, which
 // is the App's slug with a "[bot]" suffix.
 //
 // Resolved lazily and once, because it never changes and because GET /app costs
 // a request the common path does not need. It is read through the App JWT
 // plane: that endpoint does not accept an installation token.
-func (a *appAuth) botIdentity(ctx context.Context) (string, error) {
+func (a *appAuth) botLogin(ctx context.Context) (string, error) {
 	a.identityMu.Lock()
 	defer a.identityMu.Unlock()
+	return a.botLoginLocked(ctx)
+}
 
-	if a.botLogin != "" {
-		return a.botLogin, nil
+func (a *appAuth) botLoginLocked(ctx context.Context) (string, error) {
+	if a.cachedBotLogin != "" {
+		return a.cachedBotLogin, nil
 	}
 
 	client, err := a.appClient()
@@ -187,6 +198,40 @@ func (a *appAuth) botIdentity(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("reading this app's own identity: github returned no slug")
 	}
 
-	a.botLogin = app.GetSlug() + "[bot]"
-	return a.botLogin, nil
+	a.cachedBotLogin = app.GetSlug() + "[bot]"
+	return a.cachedBotLogin, nil
+}
+
+// attribution resolves the complete identity a sandbox needs to configure git
+// commit attribution. The public user lookup intentionally uses the base
+// client: GET /users/{username} accepts no App JWT, and a sandbox token must
+// not be minted before this identity is known to be valid.
+func (a *appAuth) attribution(ctx context.Context) (botAttribution, error) {
+	a.identityMu.Lock()
+	defer a.identityMu.Unlock()
+
+	if a.identity.AccountID != 0 {
+		return a.identity, nil
+	}
+
+	login, err := a.botLoginLocked(ctx)
+	if err != nil {
+		return botAttribution{}, err
+	}
+	user, _, err := a.exchange.Users.Get(ctx, login)
+	if err != nil {
+		return botAttribution{}, classify(ctx, "reading this app bot's public profile", err)
+	}
+	if user.GetID() == 0 {
+		return botAttribution{}, fmt.Errorf("reading this app bot's public profile: github returned no account id")
+	}
+	if user.GetLogin() == "" {
+		return botAttribution{}, fmt.Errorf("reading this app bot's public profile: github returned no login")
+	}
+	if user.GetLogin() != login {
+		return botAttribution{}, fmt.Errorf("reading this app bot's public profile: github returned login %q, want %q", user.GetLogin(), login)
+	}
+
+	a.identity = botAttribution{Login: user.GetLogin(), AccountID: user.GetID()}
+	return a.identity, nil
 }

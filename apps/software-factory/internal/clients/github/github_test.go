@@ -632,6 +632,18 @@ func TestMintsARepositoryScopedTokenCarryingEveryPermissionTheSandboxNeeds(t *te
 	if cred.Token.Reveal() != "installation-token-1" {
 		t.Errorf("credential = %q, want the exchanged token", cred.Token.Reveal())
 	}
+	if cred.Login != testBotLogin {
+		t.Errorf("credential login = %q, want %q", cred.Login, testBotLogin)
+	}
+	if cred.AccountID != testBotAccountID {
+		t.Errorf("credential account ID = %d, want %d", cred.AccountID, testBotAccountID)
+	}
+	if auth := s.first(t, "GET /app").Auth; !strings.HasPrefix(auth, "Bearer eyJ") {
+		t.Errorf("GET /app Authorization = %q, want the app jwt", auth)
+	}
+	if auth := s.first(t, "GET /users/"+testBotLogin).Auth; auth != "" {
+		t.Errorf("GET /users/%s Authorization = %q, want no authentication", testBotLogin, auth)
+	}
 
 	sent := decodeBody(t, s.first(t, "POST "+exchangePath))
 	repos, _ := sent["repositories"].([]any)
@@ -656,6 +668,74 @@ func TestMintsARepositoryScopedTokenCarryingEveryPermissionTheSandboxNeeds(t *te
 	}
 	if len(granted) != len(want) {
 		t.Errorf("permissions = %v, want exactly %v", granted, want)
+	}
+}
+
+func TestCachesBotAttributionButMintsAFreshSandboxToken(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newStub(t)
+	c, _ := s.client(t)
+
+	for range 2 {
+		if _, err := c.InstallationToken(context.Background()); err != nil {
+			t.Fatalf("InstallationToken returned an unexpected error: %v", err)
+		}
+	}
+	if got := s.count("GET /app"); got != 1 {
+		t.Errorf("GET /app count = %d, want 1", got)
+	}
+	if got := s.count("GET /users/" + testBotLogin); got != 1 {
+		t.Errorf("GET /users/%s count = %d, want 1", testBotLogin, got)
+	}
+	if got := s.count("POST " + exchangePath); got != 2 {
+		t.Errorf("sandbox token exchanges = %d, want 2", got)
+	}
+}
+
+func TestDoesNotMintASandboxTokenWhenBotProfileLookupFails(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newStub(t)
+	s.userGet = func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusInternalServerError, "server error")
+	}
+	c, _ := s.client(t)
+
+	if _, err := c.InstallationToken(context.Background()); err == nil {
+		t.Fatal("InstallationToken succeeded despite a failed bot profile lookup")
+	}
+	if got := s.count("POST " + exchangePath); got != 0 {
+		t.Errorf("sandbox token exchanges = %d, want 0 after profile lookup failure", got)
+	}
+	if login, err := c.botLogin(context.Background()); err != nil || login != testBotLogin {
+		t.Errorf("botLogin = %q, %v; want cached login %q and no error", login, err, testBotLogin)
+	}
+}
+
+func TestRejectsMalformedBotProfilesBeforeMintingASandboxToken(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]map[string]any{
+		"zero account id":  {"id": 0, "login": testBotLogin},
+		"empty login":      {"id": testBotAccountID, "login": ""},
+		"mismatched login": {"id": testBotAccountID, "login": "some-other-bot[bot]"},
+	}
+	for name, profile := range cases {
+		t.Run(name, func(t *testing.T) {
+			s, _ := newStub(t)
+			s.userGet = func(w http.ResponseWriter, _ *http.Request) {
+				writeJSON(w, http.StatusOK, profile)
+			}
+			c, _ := s.client(t)
+
+			if _, err := c.InstallationToken(context.Background()); err == nil {
+				t.Fatal("InstallationToken succeeded despite a malformed bot profile")
+			}
+			if got := s.count("POST " + exchangePath); got != 0 {
+				t.Errorf("sandbox token exchanges = %d, want 0 after malformed profile", got)
+			}
+		})
 	}
 }
 

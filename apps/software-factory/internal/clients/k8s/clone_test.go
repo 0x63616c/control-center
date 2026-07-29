@@ -32,10 +32,12 @@ var notARepo = answer{err: utilexec.CodeExitError{Err: errors.New("fatal: not a 
 // on.
 const testBotLogin = "www-software-factory-bot[bot]"
 
+const testBotAccountID = int64(309464436)
+
 // testCredential is what InstallationToken hands CloneRepo: a token and the
 // login gh must be told to attribute it to.
 func testCredential(token string) work.SandboxCredential {
-	return work.SandboxCredential{Token: work.NewCredential(token), Login: testBotLogin}
+	return work.SandboxCredential{Token: work.NewCredential(token), Login: testBotLogin, AccountID: testBotAccountID}
 }
 
 func TestCloneRepoFailsLoudlyWhenSFBranchIsNotSet(t *testing.T) {
@@ -110,6 +112,8 @@ func TestCloneRepoClonesChecksOutAndPushesAFreshSandbox(t *testing.T) {
 		{},                          // git clone
 		{},                          // git checkout -b
 		{},                          // git config --local credential.helper
+		{},                          // git config --local user.name
+		{},                          // git config --local user.email
 		{},                          // git push -u origin
 	}}
 	s, _ := newTestSandboxes(t, str, runningPod())
@@ -119,8 +123,8 @@ func TestCloneRepoClonesChecksOutAndPushesAFreshSandbox(t *testing.T) {
 	}
 
 	calls := str.observed()
-	if len(calls) != 9 {
-		t.Fatalf("issued %d exec calls, want 9: %+v", len(calls), calls)
+	if len(calls) != 11 {
+		t.Fatalf("issued %d exec calls, want 11: %+v", len(calls), calls)
 	}
 
 	if got := realArgv(calls[0].argv); len(got) != 2 || got[0] != "printenv" || got[1] != work.SandboxBranchEnv {
@@ -200,15 +204,21 @@ func TestCloneRepoClonesChecksOutAndPushesAFreshSandbox(t *testing.T) {
 	// This is the fix: the checkout's own git config, not just this package's
 	// own commands, is what implement's later BARE `git push` — no -c of its
 	// own — resolves a credential through.
-	config := realArgv(calls[7].argv)
-	if want := []string{"git", "-C", work.RepoDir, "config", "--local", "credential.helper", credentialHelperValue}; !equalArgv(config, want) {
-		t.Fatalf("config argv = %v, want %v", config, want)
+	configs := [][]string{
+		{"git", "-C", work.RepoDir, "config", "--local", "credential.helper", credentialHelperValue},
+		{"git", "-C", work.RepoDir, "config", "--local", "user.name", testBotLogin},
+		{"git", "-C", work.RepoDir, "config", "--local", "user.email", "309464436+" + testBotLogin + "@users.noreply.github.com"},
+	}
+	for i, want := range configs {
+		if got := realArgv(calls[7+i].argv); !equalArgv(got, want) {
+			t.Fatalf("config %d argv = %v, want %v", i, got, want)
+		}
 	}
 
 	// And the proof that it worked: this package's OWN push, issued after
-	// configureCredentialHelper, carries no `-c` of its own — the same shape
+	// configureCheckoutIdentity, carries no `-c` of its own — the same shape
 	// implement's bare `git push -u origin HEAD` takes.
-	push := realArgv(calls[8].argv)
+	push := realArgv(calls[10].argv)
 	if want := []string{"git", "-C", work.RepoDir, "push", "-u", "origin", testBranch}; !equalArgv(push, want) {
 		t.Fatalf("push argv = %v, want %v (no -c: it must authenticate through the checkout's own config)", push, want)
 	}
@@ -233,6 +243,8 @@ func TestCloneRepoLeavesAnExistingCheckoutOnTheRunsBranchAloneButPushesAnyway(t 
 		{},                          // tar -xf (writeGhCredentials)
 		{stdout: testBranch + "\n"}, // git rev-parse: already on this run's branch
 		{},                          // git config --local credential.helper
+		{},                          // git config --local user.name
+		{},                          // git config --local user.email
 		{},                          // git push -u origin
 	}}
 	s, _ := newTestSandboxes(t, str, runningPod())
@@ -242,8 +254,8 @@ func TestCloneRepoLeavesAnExistingCheckoutOnTheRunsBranchAloneButPushesAnyway(t 
 	}
 
 	calls := str.observed()
-	if len(calls) != 6 {
-		t.Fatalf("issued %d exec calls, want 6 — no clone, no checkout: %+v", len(calls), calls)
+	if len(calls) != 8 {
+		t.Fatalf("issued %d exec calls, want 8 — no clone, no checkout: %+v", len(calls), calls)
 	}
 	for _, c := range calls {
 		argv := realArgv(c.argv)
@@ -254,11 +266,16 @@ func TestCloneRepoLeavesAnExistingCheckoutOnTheRunsBranchAloneButPushesAnyway(t 
 	// The credential helper is reconfigured even when the checkout is reused,
 	// so a retry that resumes an old attempt's checkout is not depending on
 	// that attempt having got as far as configuring it.
-	config := realArgv(calls[4].argv)
-	if config[len(config)-1] != credentialHelperValue {
-		t.Fatalf("config argv = %v, want it to (re)configure the credential helper", config)
+	for i, want := range [][]string{
+		{"git", "-C", work.RepoDir, "config", "--local", "credential.helper", credentialHelperValue},
+		{"git", "-C", work.RepoDir, "config", "--local", "user.name", testBotLogin},
+		{"git", "-C", work.RepoDir, "config", "--local", "user.email", "309464436+" + testBotLogin + "@users.noreply.github.com"},
+	} {
+		if got := realArgv(calls[4+i].argv); !equalArgv(got, want) {
+			t.Fatalf("config %d argv = %v, want %v", i, got, want)
+		}
 	}
-	push := realArgv(calls[5].argv)
+	push := realArgv(calls[7].argv)
 	if push[len(push)-1] != testBranch {
 		t.Fatalf("push argv = %v, want it to still push the branch", push)
 	}
@@ -352,7 +369,7 @@ func TestCloneRepoLeavesTheCredentialFileAndItsCheckoutConfigInPlaceOnFailure(t 
 // its own, can still resolve a credential. This proves that against a real
 // git binary and a real local checkout — no k8s, no fakes — using exactly the
 // file format writeCredentials produces (credentialLine) and exactly the
-// config value configureCredentialHelper writes (credentialHelperValue's
+// config value configureCheckoutIdentity writes (credentialHelperValue's
 // format, "store --file=<path>").
 //
 // It is why this test could not have been satisfied by inspecting this
@@ -381,11 +398,29 @@ func TestACheckoutConfiguredThisWayResolvesACredentialForABarePush(t *testing.T)
 	}
 	runGit(t, repoDir, "init")
 
-	// The exact value configureCredentialHelper writes, just against a real
+	// The exact credential-helper value configureCheckoutIdentity writes, just against a real
 	// temp path instead of work.RepoDir's production one — "store
 	// --file=<path>" is git-credential-store(1)'s own config grammar, the same
 	// grammar credentialHelperValue is built from.
 	runGit(t, repoDir, "config", "--local", "credential.helper", "store --file="+credPath)
+	runGit(t, repoDir, "config", "--local", "user.name", testBotLogin)
+	runGit(t, repoDir, "config", "--local", "user.email", "309464436+"+testBotLogin+"@users.noreply.github.com")
+	if err := os.WriteFile(filepath.Join(repoDir, "fixture"), []byte("fixture\n"), 0o600); err != nil {
+		t.Fatalf("writing the commit fixture: %v", err)
+	}
+	runGit(t, repoDir, "add", "fixture")
+	runGit(t, repoDir, "commit", "-m", "fixture")
+	identity := hermeticGit(dir, "log", "-1", "--format=%an%n%ae%n%cn%n%ce")
+	identity.Dir = repoDir
+	var identityOut, identityErr bytes.Buffer
+	identity.Stdout, identity.Stderr = &identityOut, &identityErr
+	if err := identity.Run(); err != nil {
+		t.Fatalf("reading commit identity: %v\nstderr: %s", err, identityErr.String())
+	}
+	wantIdentity := testBotLogin + "\n309464436+" + testBotLogin + "@users.noreply.github.com\n" + testBotLogin + "\n309464436+" + testBotLogin + "@users.noreply.github.com\n"
+	if identityOut.String() != wantIdentity {
+		t.Fatalf("commit identity = %q, want %q", identityOut.String(), wantIdentity)
+	}
 
 	// A BARE `git credential fill`: no -c, nothing on this command line at all
 	// beyond the subcommand itself — the same shape implement.md's `git push
