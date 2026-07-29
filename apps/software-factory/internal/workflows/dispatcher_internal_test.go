@@ -13,7 +13,7 @@ import (
 func TestChildrenAreStartedAbandonedSoContinueAsNewDoesNotKillThem(t *testing.T) {
 	t.Parallel()
 
-	d := newDispatcher(DispatcherInput{Config: work.DefaultDispatcherConfig()})
+	d := newDispatcher(DispatcherInput{Config: work.DefaultConfig(), Tuning: work.DefaultDispatcherTuning(), Run: work.DefaultRunPolicy()})
 
 	options := d.childOptions(328)
 
@@ -27,7 +27,7 @@ func TestChildrenAreStartedAbandonedSoContinueAsNewDoesNotKillThem(t *testing.T)
 func TestAChildsWorkflowIDIsTheClaimOnItsTicket(t *testing.T) {
 	t.Parallel()
 
-	d := newDispatcher(DispatcherInput{Config: work.DefaultDispatcherConfig()})
+	d := newDispatcher(DispatcherInput{Config: work.DefaultConfig(), Tuning: work.DefaultDispatcherTuning(), Run: work.DefaultRunPolicy()})
 
 	if got := d.childOptions(328).WorkflowID; got != work.WorkflowID(328) {
 		t.Fatalf("WorkflowID = %q, want %q — starting a workflow with this ID *is* the claim, so a second "+
@@ -38,11 +38,11 @@ func TestAChildsWorkflowIDIsTheClaimOnItsTicket(t *testing.T) {
 func TestAChildIsGivenLongerThanItsStagesCanTake(t *testing.T) {
 	t.Parallel()
 
-	config := work.DefaultDispatcherConfig()
-	d := newDispatcher(DispatcherInput{Config: config})
+	policy := work.DefaultRunPolicy()
+	d := newDispatcher(DispatcherInput{Config: work.DefaultConfig(), Tuning: work.DefaultDispatcherTuning(), Run: policy})
 
-	if got := d.childOptions(328).WorkflowRunTimeout; got <= config.Run.RunBudget() {
+	if got := d.childOptions(328).WorkflowRunTimeout; got <= policy.RunBudget() {
 		t.Fatalf("run timeout %s does not exceed the stages' own budget %s, so a run using its stage timeouts "+
-			"would be killed for taking exactly as long as it was allowed", got, config.Run.RunBudget())
+			"would be killed for taking exactly as long as it was allowed", got, policy.RunBudget())
 	}
 }

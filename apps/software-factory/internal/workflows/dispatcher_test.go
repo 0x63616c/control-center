@@ -22,7 +22,8 @@ type dispatcherHarness struct {
 	env *testsuite.TestWorkflowEnvironment
 
 	// knobs.
-	config        work.DispatcherConfig
+	config        work.Config
+	tuning        work.DispatcherTuning
 	inFlight      []work.InFlightTicket
 	breaker       work.Breaker
 	tickets       []work.Ticket
@@ -50,13 +51,14 @@ func newDispatcherHarness(t *testing.T) *dispatcherHarness {
 	env := suite.NewTestWorkflowEnvironment()
 	env.SetDetachedChildWait(false)
 
-	config := work.DefaultDispatcherConfig()
+	tuning := work.DefaultDispatcherTuning()
 	// High enough that no test continues as new unless it asks to.
-	config.MaxHistoryEvents = 1_000_000
+	tuning.MaxHistoryEvents = 1_000_000
 
 	return &dispatcherHarness{
 		env:    env,
-		config: config,
+		config: work.DefaultConfig(),
+		tuning: tuning,
 		runs:   map[string]work.RunState{},
 		runFor: 90 * time.Second,
 	}
@@ -111,19 +113,21 @@ func (h *dispatcherHarness) run() {
 
 	env.ExecuteWorkflow(workflows.Dispatcher, workflows.DispatcherInput{
 		Config:   h.config,
+		Tuning:   h.tuning,
+		Run:      work.DefaultRunPolicy(),
 		InFlight: h.inFlight,
 		Breaker:  h.breaker,
 	})
 }
 
 // status queries the dispatcher the way a human would.
-func (h *dispatcherHarness) status(t *testing.T) work.DispatcherStatus {
+func (h *dispatcherHarness) status(t *testing.T) work.Status {
 	t.Helper()
 	val, err := h.env.QueryWorkflow(workflows.QueryStatus)
 	if err != nil {
 		t.Fatalf("query: %v", err)
 	}
-	var status work.DispatcherStatus
+	var status work.Status
 	if err := val.Get(&status); err != nil {
 		t.Fatalf("decode status: %v", err)
 	}
@@ -199,7 +203,7 @@ func TestDispatcherReleasesTheSlotWhenAChildReportsItFinished(t *testing.T) {
 	t.Parallel()
 
 	h := newDispatcherHarness(t)
-	h.config.Concurrency = 1
+	h.config.MaxInFlight = 1
 	h.inFlight = []work.InFlightTicket{{Ticket: 1, RunID: "run-1"}}
 	h.runs["work-ticket-1"] = work.RunState{Open: true, RunID: "run-1"}
 	h.tickets = tickets(1, 2)
@@ -221,7 +225,7 @@ func TestDispatcherIgnoresACompletionReportFromARunItHasAlreadyReplaced(t *testi
 	t.Parallel()
 
 	h := newDispatcherHarness(t)
-	h.config.Concurrency = 1
+	h.config.MaxInFlight = 1
 	h.inFlight = []work.InFlightTicket{{Ticket: 1, RunID: "run-2"}}
 	h.runs["work-ticket-1"] = work.RunState{Open: true, RunID: "run-2"}
 	// Ticket 1 is deliberately not listed: if the stale report freed its slot,
@@ -244,7 +248,7 @@ func TestDispatcherAdoptsARunItHasForgottenRatherThanStartingASecond(t *testing.
 	t.Parallel()
 
 	h := newDispatcherHarness(t)
-	h.config.Concurrency = 2
+	h.config.MaxInFlight = 2
 	h.tickets = tickets(1, 2, 3)
 	// Ticket 1 is already being worked by a run this dispatcher does not know
 	// about — the state after a restart, or after a lost ContinueAsNew.
@@ -277,7 +281,7 @@ func TestDispatcherPausesWhenItsOwnActivityReportsAnAuthFailure(t *testing.T) {
 	if !status.Config.Paused {
 		t.Fatal("a revoked credential must stop the system, not be retried every poll forever")
 	}
-	if status.Config.PauseReason == "" {
+	if status.PauseReason == "" {
 		t.Fatal("a paused system must say why, or the only way to find out is reading logs")
 	}
 	if len(h.started) != 0 {
@@ -289,7 +293,7 @@ func TestDispatcherPausesWhenAChildReportsAnAuthFailure(t *testing.T) {
 	t.Parallel()
 
 	h := newDispatcherHarness(t)
-	h.config.Concurrency = 1
+	h.config.MaxInFlight = 1
 	h.inFlight = []work.InFlightTicket{{Ticket: 1, RunID: "run-1"}}
 	h.runs["work-ticket-1"] = work.RunState{Open: true, RunID: "run-1"}
 	h.tickets = tickets(1, 2)
@@ -317,7 +321,7 @@ func TestDispatcherStartsNothingWhilePaused(t *testing.T) {
 
 	h := newDispatcherHarness(t)
 	h.config.Paused = true
-	h.config.PauseReason = "a human said so"
+
 	h.tickets = tickets(1, 2)
 	h.run()
 
@@ -345,8 +349,8 @@ func TestDispatcherTripsTheBreakerOnARateLimitAndWaitsOutTheCooldown(t *testing.
 	t.Parallel()
 
 	h := newDispatcherHarness(t)
-	h.config.Concurrency = 1
-	h.config.BreakerCooldown = 10 * time.Minute
+	h.config.MaxInFlight = 1
+	h.config.BreakerCooldownSeconds = int64((10 * time.Minute).Seconds())
 	h.inFlight = []work.InFlightTicket{{Ticket: 1, RunID: "run-1"}}
 	h.runs["work-ticket-1"] = work.RunState{Open: true, RunID: "run-1"}
 	h.tickets = tickets(1, 2)
@@ -364,7 +368,7 @@ func TestDispatcherTripsTheBreakerOnARateLimitAndWaitsOutTheCooldown(t *testing.
 		t.Fatalf("started %v inside the cooldown — every in-flight ticket would burn its retries into the same wall", h.started)
 	}
 	status := h.status(t)
-	if status.BreakerState != work.BreakerOpen || status.Config.Paused {
+	if !status.Breaker.OpenAt(h.env.Now()) || status.Config.Paused {
 		t.Fatalf("status = %+v, want an open breaker and no pause: a rate limit is a wait, not a dead system", status)
 	}
 }
@@ -373,8 +377,8 @@ func TestDispatcherStartsAgainOnceTheCooldownElapses(t *testing.T) {
 	t.Parallel()
 
 	h := newDispatcherHarness(t)
-	h.config.Concurrency = 1
-	h.config.BreakerCooldown = 2 * time.Minute
+	h.config.MaxInFlight = 1
+	h.config.BreakerCooldownSeconds = int64((2 * time.Minute).Seconds())
 	h.tickets = tickets(2)
 	h.breaker = work.Breaker{Reason: "rate limited"}
 	h.runFor = 10 * time.Minute
@@ -395,18 +399,18 @@ func TestDispatcherAppliesAConfigUpdate(t *testing.T) {
 
 	h := newDispatcherHarness(t)
 	h.tickets = tickets(1, 2, 3, 4)
-	h.config.Concurrency = 1
+	h.config.MaxInFlight = 1
 	h.at(45*time.Second, func() {
 		concurrency := 3
-		h.env.SignalWorkflow(workflows.SignalUpdateConfig, work.ConfigUpdate{Concurrency: &concurrency})
+		h.env.SignalWorkflow(workflows.SignalUpdateConfig, work.ConfigUpdate{MaxInFlight: &concurrency})
 	})
 	h.run()
 
 	if len(h.started) != 3 {
 		t.Fatalf("started %v, want 3 after the cap was raised", h.started)
 	}
-	if got := h.status(t).Config.Concurrency; got != 3 {
-		t.Fatalf("concurrency = %d, want 3", got)
+	if got := h.status(t).Config.MaxInFlight; got != 3 {
+		t.Fatalf("max in flight = %d, want 3", got)
 	}
 }
 
@@ -417,12 +421,12 @@ func TestDispatcherKeepsRunningOnAConfigUpdateItCannotUse(t *testing.T) {
 	h.tickets = tickets(1, 2, 3)
 	h.at(45*time.Second, func() {
 		zero := 0
-		h.env.SignalWorkflow(workflows.SignalUpdateConfig, work.ConfigUpdate{Concurrency: &zero})
+		h.env.SignalWorkflow(workflows.SignalUpdateConfig, work.ConfigUpdate{MaxInFlight: &zero})
 	})
 	h.run()
 
-	if got := h.status(t).Config.Concurrency; got != 2 {
-		t.Fatalf("concurrency = %d, want the previous value — a bad update is discarded, not adopted, and not fatal", got)
+	if got := h.status(t).Config.MaxInFlight; got != 2 {
+		t.Fatalf("max in flight = %d, want the previous value — a bad update is discarded, not adopted, and not fatal", got)
 	}
 	if h.env.IsWorkflowCompleted() && !temporal.IsCanceledError(h.env.GetWorkflowError()) {
 		t.Fatalf("a bad update must not end the dispatcher: %v", h.env.GetWorkflowError())
@@ -434,13 +438,11 @@ func TestDispatcherUnpausesOnAConfigUpdate(t *testing.T) {
 
 	h := newDispatcherHarness(t)
 	h.config.Paused = true
-	h.config.PauseReason = "auth failed"
+
 	h.tickets = tickets(1)
 	h.at(45*time.Second, func() {
-		resumed, reason, clear := false, "", true
-		h.env.SignalWorkflow(workflows.SignalUpdateConfig, work.ConfigUpdate{
-			Paused: &resumed, PauseReason: &reason, ClearBreaker: &clear,
-		})
+		resumed := false
+		h.env.SignalWorkflow(workflows.SignalUpdateConfig, work.ConfigUpdate{Paused: &resumed})
 	})
 	h.run()
 
@@ -457,14 +459,8 @@ func TestDispatcherReportsWhatItIsWorkingAndWhyItIsNotWorkingMore(t *testing.T) 
 	h.run()
 
 	status := h.status(t)
-	if len(status.InFlight) != 1 || status.InFlight[0].Ticket != 1 {
+	if len(status.InFlight) != 1 || status.InFlight[0] != 1 {
 		t.Fatalf("in flight = %+v, want ticket 1", status.InFlight)
-	}
-	if status.InFlight[0].StartedAt.IsZero() {
-		t.Fatal("a ticket that has been in flight for six hours is the thing you most want to see at 3am")
-	}
-	if status.StartedTotal != 1 {
-		t.Fatalf("started total = %d, want 1", status.StartedTotal)
 	}
 }
 
@@ -472,9 +468,9 @@ func TestDispatcherContinuesAsNewCarryingEverythingItKnows(t *testing.T) {
 	t.Parallel()
 
 	h := newDispatcherHarness(t)
-	h.config.MaxHistoryEvents = 1
+	h.tuning.MaxHistoryEvents = 1
 	h.historyLength = 100
-	h.config.Concurrency = 1
+	h.config.MaxInFlight = 1
 	h.tickets = tickets(1)
 	h.breaker = work.Breaker{Reason: "earlier rate limit"}
 	h.runFor = 0
@@ -484,8 +480,12 @@ func TestDispatcherContinuesAsNewCarryingEverythingItKnows(t *testing.T) {
 	if len(in.InFlight) != 1 || in.InFlight[0].Ticket != 1 || in.InFlight[0].RunID == "" {
 		t.Fatalf("carried %+v — a dropped in-flight set means the cap is enforced against nothing", in.InFlight)
 	}
-	if in.Config.Concurrency != 1 {
+	if in.Config.MaxInFlight != 1 {
 		t.Fatalf("carried config %+v, want the running config, not the defaults", in.Config)
+	}
+	if in.Tuning.MaxHistoryEvents != h.tuning.MaxHistoryEvents || in.Run.StageTimeout == 0 {
+		t.Fatalf("carried tuning %+v and policy %+v — deploy-time settings must survive a run boundary too",
+			in.Tuning, in.Run)
 	}
 	if in.Breaker.Reason != "earlier rate limit" {
 		t.Fatalf("carried breaker %+v — a breaker reset by ContinueAsNew is a breaker that never trips", in.Breaker)
@@ -496,13 +496,13 @@ func TestDispatcherDrainsSignalsThatArriveAsItContinuesAsNew(t *testing.T) {
 	t.Parallel()
 
 	h := newDispatcherHarness(t)
-	h.config.MaxHistoryEvents = 1
+	h.tuning.MaxHistoryEvents = 1
 	h.historyLength = 100
 	h.tickets = nil
 	h.runFor = 0
 	h.at(time.Nanosecond, func() {
-		paused, reason := true, "signalled while the run was closing"
-		h.env.SignalWorkflow(workflows.SignalUpdateConfig, work.ConfigUpdate{Paused: &paused, PauseReason: &reason})
+		paused := true
+		h.env.SignalWorkflow(workflows.SignalUpdateConfig, work.ConfigUpdate{Paused: &paused})
 	})
 	h.run()
 
@@ -516,7 +516,7 @@ func TestDispatcherSweepsOrphanedSandboxesNamingTheRunsThatMustSurvive(t *testin
 	t.Parallel()
 
 	h := newDispatcherHarness(t)
-	h.config.OrphanGrace = 30 * time.Minute
+	h.tuning.OrphanGrace = 30 * time.Minute
 	h.inFlight = []work.InFlightTicket{{Ticket: 1, RunID: "run-1"}}
 	h.runs["work-ticket-1"] = work.RunState{Open: true, RunID: "run-1"}
 	h.run()
@@ -537,8 +537,8 @@ func TestDispatcherDoesNotSweepOnEveryPoll(t *testing.T) {
 	t.Parallel()
 
 	h := newDispatcherHarness(t)
-	h.config.PollInterval = 30 * time.Second
-	h.config.OrphanGrace = 30 * time.Minute
+	h.tuning.PollInterval = 30 * time.Second
+	h.tuning.OrphanGrace = 30 * time.Minute
 	h.runFor = 5 * time.Minute
 	h.run()
 
@@ -551,7 +551,7 @@ func TestDispatcherRefusesAConfigItCannotRunOn(t *testing.T) {
 	t.Parallel()
 
 	h := newDispatcherHarness(t)
-	h.config.PollInterval = 0
+	h.tuning.PollInterval = 0
 	h.runFor = 0
 	h.run()
 

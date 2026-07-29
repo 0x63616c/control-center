@@ -48,9 +48,12 @@ const (
 type WorkTicketInput struct {
 	Ticket work.Ticket
 
-	// Policy is resolved by the dispatcher at the moment the run starts, and
-	// then fixed. A run finishes under the policy it began with, so a config
-	// change mid-flight cannot retune a pipeline halfway through.
+	// Config and Policy are both resolved by the dispatcher at the moment the
+	// run starts, and then fixed. A run finishes under the configuration it
+	// began with, so an update mid-flight cannot retune a pipeline halfway
+	// through — and the models a plan was made under are the models its review
+	// and implementation run under.
+	Config work.Config
 	Policy work.RunPolicy
 
 	// DispatcherID is the workflow to report completion to. Empty means nobody
@@ -109,6 +112,11 @@ func validate(in WorkTicketInput) error {
 			fmt.Sprintf("the run policy for ticket #%d is unusable: %v", in.Ticket.Number, err),
 			activities.ErrTypeInvalid, nil)
 	}
+	if err := in.Config.Validate(); err != nil {
+		return temporal.NewNonRetryableApplicationError(
+			fmt.Sprintf("the config for ticket #%d is unusable: %v", in.Ticket.Number, err),
+			activities.ErrTypeInvalid, nil)
+	}
 	return nil
 }
 
@@ -160,7 +168,7 @@ func (r *ticketRun) execute(ctx workflow.Context) (WorkTicketResult, error) {
 		in := activities.RunStageInput{
 			Key:     work.StageKey{Ticket: r.in.Ticket.Number, RunID: r.runID, Stage: stage},
 			Sandbox: r.sandbox,
-			Model:   r.in.Policy.Models.For(stage),
+			Model:   r.in.Config.ModelFor(stage),
 			Detail:  detail,
 			Handoff: handoff,
 		}

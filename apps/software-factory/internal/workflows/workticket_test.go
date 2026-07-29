@@ -42,6 +42,7 @@ type ticketHarness struct {
 
 	// knobs.
 	policy     work.RunPolicy
+	config     work.Config
 	stage      func(in activities.RunStageInput) (activities.RunStageOutput, error)
 	stageDelay time.Duration
 	labelErr   error
@@ -65,6 +66,7 @@ func newTicketHarness(t *testing.T) *ticketHarness {
 	return &ticketHarness{
 		env:      suite.NewTestWorkflowEnvironment(),
 		policy:   work.DefaultRunPolicy(),
+		config:   work.DefaultConfig(),
 		handoffs: map[work.Stage]string{},
 		models:   map[work.Stage]work.Model{},
 		keys:     map[work.Stage]work.StageKey{},
@@ -130,6 +132,7 @@ func (h *ticketHarness) run() {
 
 	env.ExecuteWorkflow(workflows.WorkTicket, workflows.WorkTicketInput{
 		Ticket:       work.Ticket{Number: 328, Title: "a ticket", Body: "do the thing"},
+		Config:       h.config,
 		Policy:       h.policy,
 		DispatcherID: dispatcherID,
 	})
@@ -394,15 +397,15 @@ func TestWorkTicketRunsEachStageOnItsConfiguredModel(t *testing.T) {
 	t.Parallel()
 
 	h := newTicketHarness(t)
-	h.policy.Models.Overrides = map[work.Stage]work.Model{
-		work.StageReview: {Name: "a-different-model", Effort: "high"},
+	h.config.StageModels = work.StageModels{
+		Review: &work.Model{Name: "a-different-model", Effort: "high"},
 	}
 	h.run()
 
 	if h.models[work.StageReview].Name != "a-different-model" {
 		t.Fatalf("review ran on %+v, want its override", h.models[work.StageReview])
 	}
-	if h.models[work.StagePlan] != h.policy.Models.Default {
+	if h.models[work.StagePlan] != h.config.DefaultModel {
 		t.Fatalf("plan ran on %+v, want the default", h.models[work.StagePlan])
 	}
 }

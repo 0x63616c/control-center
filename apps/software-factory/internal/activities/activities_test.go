@@ -242,7 +242,7 @@ func TestNewRefusesASandboxTemplateItCannotBuildAPodFrom(t *testing.T) {
 	d := deps()
 	d.Sandbox.Image = ""
 
-	if _, err := New(d); !errors.Is(err, work.ErrInvalidConfig) {
+	if _, err := New(d); !errors.Is(err, work.ErrInvalidRun) {
 		t.Fatalf("an imageless template must fail construction, got %v", err)
 	}
 }

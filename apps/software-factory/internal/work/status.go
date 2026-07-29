@@ -95,11 +95,11 @@ type SandboxTemplate struct {
 func (t SandboxTemplate) Validate() error {
 	switch {
 	case t.Image == "":
-		return fmt.Errorf("%w: the sandbox needs an image", ErrInvalidConfig)
+		return fmt.Errorf("%w: the sandbox needs an image", ErrInvalidRun)
 	case t.CPULimit == "" || t.MemoryLimit == "":
-		return fmt.Errorf("%w: the sandbox needs both a CPU and a memory limit", ErrInvalidConfig)
+		return fmt.Errorf("%w: the sandbox needs both a CPU and a memory limit", ErrInvalidRun)
 	case t.DeadlineSeconds <= 0:
-		return fmt.Errorf("%w: the sandbox needs a deadline, or a wedged pod outlives the cluster", ErrInvalidConfig)
+		return fmt.Errorf("%w: the sandbox needs a deadline, or a wedged pod outlives the cluster", ErrInvalidRun)
 	}
 	return nil
 }

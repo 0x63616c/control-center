@@ -257,4 +257,14 @@ type Status struct {
 	// A signal cannot fail back to its sender, so without this a config change
 	// that never took effect looks exactly like one that did.
 	ConfigError string `json:"configError,omitempty"`
+
+	// PauseReason is why the dispatcher paused itself, and empty when a human
+	// did it or when it is running.
+	//
+	// It is here for the same reason ConfigError is: the dispatcher pauses
+	// itself on an unusable credential, and Paused alone cannot tell that apart
+	// from a human pausing it deliberately. Those call for opposite responses —
+	// one is an incident, the other is somebody working — and the difference is
+	// invisible without this.
+	PauseReason string `json:"pauseReason,omitempty"`
 }

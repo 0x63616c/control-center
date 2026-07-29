@@ -20,13 +20,26 @@ import (
 // in-flight set resetting means the concurrency cap is enforced against
 // nothing.
 type DispatcherInput struct {
-	Config   work.DispatcherConfig
+	// Config is the operator's surface, replaced wholesale when an update is
+	// accepted. See work.Config.
+	Config work.Config
+
+	// Tuning paces the loop, and Run is the policy handed to each child. Both
+	// are deploy-time; neither is on the signal.
+	Tuning work.DispatcherTuning
+	Run    work.RunPolicy
+
 	InFlight []work.InFlightTicket
 	Breaker  work.Breaker
 
-	// StartedTotal is this run's tally, which resets here on purpose. Temporal
-	// holds the history that would answer the all-time question.
-	StartedTotal int
+	// ConfigError is why the last update was rejected. It is carried across
+	// ContinueAsNew because an operator reading GetStatus after a run boundary
+	// would otherwise see their rejected update turn into silence.
+	ConfigError string
+
+	// PauseReason is why the dispatcher paused itself, carried for the same
+	// reason.
+	PauseReason string
 
 	// LastSweep is when the orphan sweep last ran, so continuing as new does
 	// not restart its cadence and turn a half-hourly reconcile into a
@@ -43,9 +56,8 @@ type DispatcherInput struct {
 // notably not the visibility store: visibility is a search index and eventually
 // consistent, so using it as a semaphore would be a race dressed as a query.
 func Dispatcher(ctx workflow.Context, in DispatcherInput) error {
-	if err := in.Config.Validate(); err != nil {
-		return temporal.NewNonRetryableApplicationError(
-			fmt.Sprintf("the dispatcher cannot run on this config: %v", err), activities.ErrTypeInvalid, nil)
+	if err := validateDispatcher(in); err != nil {
+		return err
 	}
 
 	d := newDispatcher(in)
@@ -59,7 +71,7 @@ func Dispatcher(ctx workflow.Context, in DispatcherInput) error {
 	for {
 		d.tick(ctx)
 
-		if workflow.GetInfo(ctx).GetCurrentHistoryLength() >= d.config.MaxHistoryEvents {
+		if workflow.GetInfo(ctx).GetCurrentHistoryLength() >= d.tuning.MaxHistoryEvents {
 			return d.continueAsNew(ctx, updates, dones)
 		}
 
@@ -69,14 +81,60 @@ func Dispatcher(ctx workflow.Context, in DispatcherInput) error {
 	}
 }
 
+// validateDispatcher refuses an input the loop could not run on, before it
+// starts anything. All three parts are checked rather than the first that
+// fails, because a deploy with two wrong numbers should learn both.
+func validateDispatcher(in DispatcherInput) error {
+	for _, err := range []error{in.Config.Validate(), in.Tuning.Validate(), in.Run.Validate()} {
+		if err != nil {
+			return temporal.NewNonRetryableApplicationError(
+				fmt.Sprintf("the dispatcher cannot run on this input: %v", err), activities.ErrTypeInvalid, nil)
+		}
+	}
+	return nil
+}
+
+// applyUpdate accepts a config update or records why it was refused.
+//
+// Recording is the whole point. A Temporal signal cannot fail back to its
+// sender, so an update that was rejected and one that was applied look
+// identical from the outside — and the moment an operator is signalling a live
+// dispatcher is the moment they can least afford to assume. The error goes to
+// Status.ConfigError, which is the only channel a signal has, and a later
+// update that succeeds clears it so a stale complaint cannot outlive the
+// mistake.
+func (d *dispatcher) applyUpdate(ctx workflow.Context, update work.ConfigUpdate) {
+	log := workflow.GetLogger(ctx)
+
+	next, err := d.config.Apply(update)
+	if err != nil {
+		d.configError = err.Error()
+		log.Error("rejected a config update", "error", err)
+		return
+	}
+
+	// An operator un-pausing by hand is also saying the reason no longer
+	// applies. Leaving it set would have GetStatus explain a pause that is over.
+	if d.config.Paused && !next.Paused {
+		d.pauseReason = ""
+	}
+
+	d.config = next
+	d.configError = ""
+	log.Info("config updated", "max_in_flight", d.config.MaxInFlight, "paused", d.config.Paused)
+}
+
 // dispatcher is the loop's state. It is a struct rather than locals so that
 // the same value is what the query reads and what ContinueAsNew carries.
 type dispatcher struct {
-	config       work.DispatcherConfig
-	inFlight     map[int]work.InFlightTicket
-	breaker      work.Breaker
-	startedTotal int
-	lastSweep    time.Time
+	config      work.Config
+	tuning      work.DispatcherTuning
+	run         work.RunPolicy
+	inFlight    map[int]work.InFlightTicket
+	breaker     work.Breaker
+	configError string
+	pauseReason string
+	lastSweep   time.Time
 
 	// now is the last tick's time. A query handler runs outside the workflow's
 	// own goroutine and cannot ask for the time, so the breaker state it
@@ -91,11 +149,14 @@ func newDispatcher(in DispatcherInput) *dispatcher {
 		inFlight[ticket.Ticket] = ticket
 	}
 	return &dispatcher{
-		config:       in.Config,
-		inFlight:     inFlight,
-		breaker:      in.Breaker,
-		startedTotal: in.StartedTotal,
-		lastSweep:    in.LastSweep,
+		config:      in.Config,
+		tuning:      in.Tuning,
+		run:         in.Run,
+		inFlight:    inFlight,
+		breaker:     in.Breaker,
+		configError: in.ConfigError,
+		pauseReason: in.PauseReason,
+		lastSweep:   in.LastSweep,
 	}
 }
 
@@ -121,7 +182,7 @@ func (d *dispatcher) wait(ctx workflow.Context, updates, dones workflow.ReceiveC
 	defer cancelTimer()
 
 	selector := workflow.NewSelector(ctx)
-	selector.AddFuture(workflow.NewTimer(timerCtx, d.config.PollInterval), func(workflow.Future) {})
+	selector.AddFuture(workflow.NewTimer(timerCtx, d.tuning.PollInterval), func(workflow.Future) {})
 	selector.AddReceive(updates, func(c workflow.ReceiveChannel, _ bool) { d.receiveUpdate(ctx, c) })
 	selector.AddReceive(dones, func(c workflow.ReceiveChannel, _ bool) { d.receiveDone(ctx, c) })
 	selector.AddReceive(ctx.Done(), func(workflow.ReceiveChannel, bool) {})
@@ -179,14 +240,14 @@ func (d *dispatcher) reconcile(ctx workflow.Context) {
 // thirty seconds would be a Kubernetes call per poll for nothing.
 func (d *dispatcher) sweep(ctx workflow.Context) {
 	now := workflow.Now(ctx)
-	if !d.lastSweep.IsZero() && now.Sub(d.lastSweep) < d.config.OrphanGrace {
+	if !d.lastSweep.IsZero() && now.Sub(d.lastSweep) < d.tuning.OrphanGrace {
 		return
 	}
 	d.lastSweep = now
 
 	ctx = workflow.WithActivityOptions(ctx, d.activityOptions())
 
-	in := activities.SweepInput{LiveRunIDs: d.liveRunIDs(), MinAge: d.config.OrphanGrace}
+	in := activities.SweepInput{LiveRunIDs: d.liveRunIDs(), MinAge: d.tuning.OrphanGrace}
 	var result activities.SweepResult
 	if err := workflow.ExecuteActivity(ctx, acts.SweepOrphanSandboxes, in).Get(ctx, &result); err != nil {
 		d.noteFailure(ctx, err, "sweeping orphaned sandboxes")
@@ -209,15 +270,15 @@ func (d *dispatcher) start(ctx workflow.Context) {
 	log := workflow.GetLogger(ctx)
 
 	if d.config.Paused {
-		log.Debug("paused, starting nothing", "reason", d.config.PauseReason)
+		log.Debug("paused, starting nothing", "reason", d.pauseReason)
 		return
 	}
-	if d.breaker.State(workflow.Now(ctx)) == work.BreakerOpen {
+	if d.breaker.OpenAt(workflow.Now(ctx)) {
 		log.Debug("breaker open, starting nothing", "reason", d.breaker.Reason, "until", d.breaker.OpenUntil)
 		return
 	}
 
-	free := d.config.Concurrency - len(d.inFlight)
+	free := d.config.MaxInFlight - len(d.inFlight)
 	if free <= 0 {
 		return
 	}
@@ -270,7 +331,8 @@ func (d *dispatcher) claim(ctx workflow.Context, ticket work.Ticket) bool {
 	childCtx := workflow.WithChildOptions(ctx, d.childOptions(ticket.Number))
 	child := workflow.ExecuteChildWorkflow(childCtx, WorkTicket, WorkTicketInput{
 		Ticket:       ticket,
-		Policy:       d.config.Run,
+		Config:       d.config,
+		Policy:       d.run,
 		DispatcherID: workflow.GetInfo(ctx).WorkflowExecution.ID,
 	})
 
@@ -292,7 +354,6 @@ func (d *dispatcher) claim(ctx workflow.Context, ticket work.Ticket) bool {
 		RunID:     execution.RunID,
 		StartedAt: now,
 	}
-	d.startedTotal++
 	log.Info("started a run", "ticket", ticket.Number, "run_id", execution.RunID)
 	return true
 }
@@ -307,18 +368,7 @@ func (d *dispatcher) receiveUpdate(ctx workflow.Context, c workflow.ReceiveChann
 	var update work.ConfigUpdate
 	c.Receive(ctx, &update)
 
-	next, err := d.config.Apply(update)
-	if err != nil {
-		workflow.GetLogger(ctx).Error("discarded an unusable config update", "error", err)
-		return
-	}
-	d.config = next
-
-	if update.ClearBreaker != nil && *update.ClearBreaker {
-		d.breaker = work.Breaker{}
-	}
-	workflow.GetLogger(ctx).Info("config updated",
-		"concurrency", d.config.Concurrency, "paused", d.config.Paused, "reason", d.config.PauseReason)
+	d.applyUpdate(ctx, update)
 }
 
 // receiveDone frees a finishing run's slot and acts on what it reported.
@@ -364,9 +414,9 @@ func (d *dispatcher) act(ctx workflow.Context, failure work.FailureKind, detail 
 			workflow.GetLogger(ctx).Error("pausing: a credential is not usable", "detail", detail)
 		}
 		d.config.Paused = true
-		d.config.PauseReason = detail
+		d.pauseReason = detail
 	case work.FailureRateLimit:
-		d.breaker = d.breaker.Trip(workflow.Now(ctx), d.config.BreakerCooldown, detail)
+		d.breaker = d.breaker.TrippedAt(workflow.Now(ctx), d.config.BreakerCooldown(), detail)
 		workflow.GetLogger(ctx).Warn("breaker tripped", "until", d.breaker.OpenUntil, "detail", detail)
 	case work.FailureNone, work.FailureOther:
 		// One ticket's problem. The slot is already free; nothing else changes.
@@ -384,15 +434,7 @@ func (d *dispatcher) continueAsNew(ctx workflow.Context, updates, dones workflow
 	for {
 		var update work.ConfigUpdate
 		if updates.ReceiveAsync(&update) {
-			next, err := d.config.Apply(update)
-			if err != nil {
-				workflow.GetLogger(ctx).Error("discarded an unusable config update while continuing as new", "error", err)
-			} else {
-				d.config = next
-			}
-			if update.ClearBreaker != nil && *update.ClearBreaker {
-				d.breaker = work.Breaker{}
-			}
+			d.applyUpdate(ctx, update)
 			continue
 		}
 
@@ -412,11 +454,14 @@ func (d *dispatcher) continueAsNew(ctx workflow.Context, updates, dones workflow
 // input is the state as it crosses a run boundary.
 func (d *dispatcher) input() DispatcherInput {
 	in := DispatcherInput{
-		Config:       d.config,
-		InFlight:     make([]work.InFlightTicket, 0, len(d.inFlight)),
-		Breaker:      d.breaker,
-		StartedTotal: d.startedTotal,
-		LastSweep:    d.lastSweep,
+		Config:      d.config,
+		Tuning:      d.tuning,
+		Run:         d.run,
+		InFlight:    make([]work.InFlightTicket, 0, len(d.inFlight)),
+		Breaker:     d.breaker,
+		ConfigError: d.configError,
+		PauseReason: d.pauseReason,
+		LastSweep:   d.lastSweep,
 	}
 	for _, ticket := range sortedTickets(d.inFlight) {
 		in.InFlight = append(in.InFlight, d.inFlight[ticket])
@@ -425,14 +470,14 @@ func (d *dispatcher) input() DispatcherInput {
 }
 
 // status answers the one query: what is being worked, and why nothing more is.
-func (d *dispatcher) status() (work.DispatcherStatus, error) {
-	in := d.input()
-	return work.DispatcherStatus{
-		InFlight:     in.InFlight,
-		Config:       d.config,
-		Breaker:      d.breaker,
-		BreakerState: d.breaker.State(d.now),
-		StartedTotal: d.startedTotal,
+func (d *dispatcher) status() (work.Status, error) {
+	tickets := sortedTickets(d.inFlight)
+	return work.Status{
+		Config:      d.config,
+		InFlight:    tickets,
+		Breaker:     d.breaker,
+		ConfigError: d.configError,
+		PauseReason: d.pauseReason,
 	}, nil
 }
 
@@ -445,7 +490,7 @@ func (d *dispatcher) childOptions(ticket int) workflow.ChildWorkflowOptions {
 	return workflow.ChildWorkflowOptions{
 		WorkflowID:         work.WorkflowID(ticket),
 		ParentClosePolicy:  enums.PARENT_CLOSE_POLICY_ABANDON,
-		WorkflowRunTimeout: d.config.Run.RunTimeout(),
+		WorkflowRunTimeout: d.run.RunTimeout(),
 	}
 }
 
@@ -465,7 +510,7 @@ func sortedTickets(inFlight map[int]work.InFlightTicket) []int {
 // lookups, and none of them is worth stalling the loop for.
 func (d *dispatcher) activityOptions() workflow.ActivityOptions {
 	return workflow.ActivityOptions{
-		StartToCloseTimeout: d.config.Run.ControlTimeout,
-		RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: d.config.Run.ControlAttempts},
+		StartToCloseTimeout: d.run.ControlTimeout,
+		RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: d.run.ControlAttempts},
 	}
 }
