@@ -22,6 +22,10 @@ import (
 // would mint a fresh nonce on every replay and corrupt its own history. The
 // renderer is constructed here and used from an activity, and there is no
 // third shape.
+//
+// codexauth.go's holderID is the only other reader of crypto/rand in this
+// service, for the same "construct entropy only at the composition root"
+// reason; between the two, cmd/ is the whole of the entropy surface.
 func newPromptRenderer() (*prompts.Renderer, error) {
 	renderer, err := prompts.New(rand.Reader)
 	if err != nil {

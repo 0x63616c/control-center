@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/fs"
 	"strings"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
@@ -25,15 +24,6 @@ import (
 // package controls runs alongside it to hand it a fresher one. See CloneRepo's
 // doc for the exposure that acceptance carries and why it is bounded.
 const credentialsPath = work.SandboxRoot + "/.git-credentials"
-
-// credentialsMode is the file mode CloneRepo writes the credential file with.
-// Never wider: it holds a live push-scoped token for the sandbox's whole life.
-//
-// Enforcement of this mode is a known gap, not a guarantee: #363 is open on
-// GNU tar's delayed set-stat applying a requested mode only best-effort, and
-// nothing here re-checks it after the write. The bound this relies on instead
-// is who can reach the mode at all — see CloneRepo's doc.
-const credentialsMode fs.FileMode = 0o600
 
 // credentialHelper is the `git -c` value CloneRepo's own clone uses to
 // authenticate before any local git config exists to do it instead. git
@@ -192,7 +182,7 @@ func credentialLine(credential work.Credential) string {
 // the file itself and the memory holding this string, never an exec argument
 // and never a log line.
 func (s *Sandboxes) writeCredentials(ctx context.Context, sandbox work.SandboxID, credential work.Credential) error {
-	if err := s.Write(ctx, sandbox, credentialsPath, []byte(credentialLine(credential)), credentialsMode); err != nil {
+	if err := s.Write(ctx, sandbox, credentialsPath, []byte(credentialLine(credential)), credentialFileMode); err != nil {
 		return fmt.Errorf("writing the sandbox's git credential file: %w", err)
 	}
 	return nil

@@ -163,6 +163,21 @@ type TokenSource interface {
 	SandboxCredentialFile(ctx context.Context) (work.CredentialFile, error)
 }
 
+// CredentialWriter puts a credential document into a sandbox's filesystem.
+//
+// It is narrower than PodLifecycle on purpose: writing a file into a pod that
+// already exists is a distinct capability from creating, waiting on or
+// deleting one, and the activity that needs this should not gain the power to
+// delete a pod by asking for it. It is satisfied by the same *k8s.Sandboxes
+// that satisfies PodLifecycle and SandboxSweeper — one client, three narrow
+// interfaces, the shape every other seam onto it already takes.
+type CredentialWriter interface {
+	// WriteCodexCredential writes file to the sandbox's CODEX_HOME, mode 0600,
+	// as a file rather than an argument: the credential's bytes must never
+	// reach argv, a pod spec, or a log line.
+	WriteCodexCredential(ctx context.Context, sandbox work.SandboxID, file work.CredentialFile) error
+}
+
 // PromptRenderer turns a ticket and the preceding stage's output into the
 // prompt and schema one stage runs on.
 //

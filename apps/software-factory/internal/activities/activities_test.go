@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codexauth"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock/clocktest"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
@@ -233,6 +234,35 @@ func (f *fakeSweeper) SweepOrphans(_ context.Context, live []string, minAge time
 	return f.deleted, f.err
 }
 
+// fakeTokenSource stands in for codexauth.Source: it yields a fixed document
+// or a fixed error, and records whether it was called.
+type fakeTokenSource struct {
+	file    work.CredentialFile
+	err     error
+	fetched int
+}
+
+func (f *fakeTokenSource) SandboxCredentialFile(context.Context) (work.CredentialFile, error) {
+	f.fetched++
+	return f.file, f.err
+}
+
+// fakeCredentialWriter stands in for *k8s.Sandboxes' WriteCodexCredential: it
+// records what it was asked to write, so a test can assert the document
+// TokenSource yielded is exactly what reached the sandbox — and nothing else.
+type fakeCredentialWriter struct {
+	err        error
+	sawSandbox work.SandboxID
+	sawFile    work.CredentialFile
+	writes     int
+}
+
+func (f *fakeCredentialWriter) WriteCodexCredential(_ context.Context, sandbox work.SandboxID, file work.CredentialFile) error {
+	f.sawSandbox, f.sawFile = sandbox, file
+	f.writes++
+	return f.err
+}
+
 // --- harness ---------------------------------------------------------------
 
 func template() work.SandboxTemplate {
@@ -247,20 +277,22 @@ func template() work.SandboxTemplate {
 
 func deps() Deps {
 	return Deps{
-		GitHub:      &fakeGitHub{},
-		Pods:        &fakePods{},
-		Repo:        &fakeRepo{},
-		Stages:      &fakeStages{},
-		Transcripts: &fakeTranscript{},
-		Prompts:     &fakePrompts{},
-		Status:      &fakeStatus{},
-		Runs:        &fakeRuns{},
-		Sweeper:     &fakeSweeper{},
-		Metrics:     &fakeMetrics{},
-		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Clock:       clocktest.NewFake(time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)),
-		Sandbox:     template(),
-		RepoURL:     "https://github.com/0x63616c/world-wide-webb.git",
+		GitHub:           &fakeGitHub{},
+		Pods:             &fakePods{},
+		Repo:             &fakeRepo{},
+		Stages:           &fakeStages{},
+		Transcripts:      &fakeTranscript{},
+		Prompts:          &fakePrompts{},
+		Status:           &fakeStatus{},
+		Runs:             &fakeRuns{},
+		Sweeper:          &fakeSweeper{},
+		Metrics:          &fakeMetrics{},
+		TokenSource:      &fakeTokenSource{},
+		CredentialWriter: &fakeCredentialWriter{},
+		Log:              slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Clock:            clocktest.NewFake(time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)),
+		Sandbox:          template(),
+		RepoURL:          "https://github.com/0x63616c/world-wide-webb.git",
 	}
 }
 
@@ -290,7 +322,10 @@ func TestNewNamesEveryDependencyItIsMissing(t *testing.T) {
 	if err == nil {
 		t.Fatal("a set of activities with no dependencies must not construct")
 	}
-	for _, name := range []string{"GitHub", "Pods", "Repo", "Stages", "Transcripts", "Prompts", "Status", "Runs", "Sweeper", "Metrics", "Clock", "Log"} {
+	for _, name := range []string{
+		"GitHub", "Pods", "Repo", "Stages", "Transcripts", "Prompts", "Status", "Runs", "Sweeper", "Metrics",
+		"TokenSource", "CredentialWriter", "Clock", "Log",
+	} {
 		if !strings.Contains(err.Error(), name) {
 			t.Fatalf("error %q does not name the missing %s", err, name)
 		}
@@ -546,6 +581,83 @@ func TestCloneRepoSurfacesTheClonersFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "SF_BRANCH") {
 		t.Fatalf("error %q lost the cloner's reason", err)
+	}
+}
+
+// --- codex credential --------------------------------------------------
+
+func TestWriteCodexCredentialFetchesAndWritesExactlyWhatTheSourceYielded(t *testing.T) {
+	t.Parallel()
+
+	doc := work.NewCredentialFile([]byte(`{"tokens":{"access_token":"t"}}`))
+	tokens := &fakeTokenSource{file: doc}
+	writer := &fakeCredentialWriter{}
+	d := deps()
+	d.TokenSource, d.CredentialWriter = tokens, writer
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.WriteCodexCredential)
+
+	if _, err := e.ExecuteActivity(a.WriteCodexCredential, work.SandboxID("sandbox-328")); err != nil {
+		t.Fatalf("WriteCodexCredential: %v", err)
+	}
+
+	if tokens.fetched != 1 {
+		t.Fatalf("fetched the credential %d times, want 1", tokens.fetched)
+	}
+	if writer.writes != 1 {
+		t.Fatalf("wrote %d times, want 1", writer.writes)
+	}
+	if writer.sawSandbox != "sandbox-328" {
+		t.Fatalf("wrote to sandbox %q, want sandbox-328", writer.sawSandbox)
+	}
+	if string(writer.sawFile.Reveal()) != string(doc.Reveal()) {
+		t.Fatal("the document written was not the document the source yielded")
+	}
+}
+
+func TestWriteCodexCredentialFailsLoudlyWhenTheSourceCannotYieldOne(t *testing.T) {
+	t.Parallel()
+
+	tokens := &fakeTokenSource{err: permanent(codexauth.ErrUnseeded)}
+	writer := &fakeCredentialWriter{}
+	d := deps()
+	d.TokenSource, d.CredentialWriter = tokens, writer
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.WriteCodexCredential)
+
+	_, err := e.ExecuteActivity(a.WriteCodexCredential, work.SandboxID("sandbox-328"))
+	if err == nil {
+		t.Fatal("an unseeded credential must fail the activity")
+	}
+	if writer.writes != 0 {
+		t.Fatal("nothing must be written when the source could not yield a document")
+	}
+	// codexauth.ErrUnseeded wraps work.ErrPermanent: this must not be retried
+	// forever against a secret nobody has created (#398), and it must page a
+	// human the same way any other auth failure does.
+	if got := FailureKindOf(err); got != work.FailureAuth {
+		t.Fatalf("FailureKindOf = %q, want %q — a missing codex-auth secret must pause the dispatcher, not spin", got, work.FailureAuth)
+	}
+}
+
+func TestWriteCodexCredentialFailsLoudlyWhenTheSandboxCannotBeWrittenTo(t *testing.T) {
+	t.Parallel()
+
+	tokens := &fakeTokenSource{file: work.NewCredentialFile([]byte(`{}`))}
+	writer := &fakeCredentialWriter{err: errors.New("exec failed")}
+	d := deps()
+	d.TokenSource, d.CredentialWriter = tokens, writer
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.WriteCodexCredential)
+
+	if _, err := e.ExecuteActivity(a.WriteCodexCredential, work.SandboxID("sandbox-328")); err == nil {
+		t.Fatal("a write failure must fail the activity")
+	}
+	if tokens.fetched != 1 {
+		t.Fatalf("fetched the credential %d times, want 1 — the source must still be asked once", tokens.fetched)
 	}
 }
 

@@ -40,28 +40,35 @@ type ticketHarness struct {
 	env *testsuite.TestWorkflowEnvironment
 
 	// knobs.
-	policy     work.RunPolicy
-	config     work.Config
-	stage      func(in activities.RunStageInput) (activities.RunStageOutput, error)
-	stageDelay time.Duration
-	labelErr   error
-	noPR       bool
-	prErr      error
-	cancelAt   time.Duration
-	cloneErr   error
+	policy        work.RunPolicy
+	config        work.Config
+	stage         func(in activities.RunStageInput) (activities.RunStageOutput, error)
+	stageDelay    time.Duration
+	labelErr      error
+	noPR          bool
+	prErr         error
+	cancelAt      time.Duration
+	cloneErr      error
+	credentialErr error
 
 	// what the run did.
-	ran      []work.Stage
-	priors   map[work.Stage]map[work.Stage]string
-	models   map[work.Stage]work.Model
-	keys     map[work.Stage]work.StageKey
-	created  int
-	cloned   []work.SandboxID
-	deleted  []work.SandboxID
-	cleared  int
-	reports  []work.StatusReport
-	done     work.TicketDone
-	prBranch string
+	ran               []work.Stage
+	priors            map[work.Stage]map[work.Stage]string
+	models            map[work.Stage]work.Model
+	keys              map[work.Stage]work.StageKey
+	created           int
+	cloned            []work.SandboxID
+	deleted           []work.SandboxID
+	cleared           int
+	reports           []work.StatusReport
+	done              work.TicketDone
+	prBranch          string
+	credentialWritten []work.SandboxID
+
+	// setupOrder records "credential" and "clone" in the order the fakes were
+	// actually called, so a test can pin the relative order deliberately
+	// rather than merely that both ran before the stage loop.
+	setupOrder []string
 }
 
 func newTicketHarness(t *testing.T) *ticketHarness {
@@ -97,9 +104,17 @@ func (h *ticketHarness) run() {
 
 	env.OnActivity(acts.WaitSandboxReady, mock.Anything, mock.Anything).Return(nil)
 
+	env.OnActivity(acts.WriteCodexCredential, mock.Anything, mock.Anything).
+		Return(func(_ context.Context, sandbox work.SandboxID) error {
+			h.credentialWritten = append(h.credentialWritten, sandbox)
+			h.setupOrder = append(h.setupOrder, "credential")
+			return h.credentialErr
+		})
+
 	env.OnActivity(acts.CloneRepo, mock.Anything, mock.Anything).
 		Return(func(_ context.Context, sandbox work.SandboxID) error {
 			h.cloned = append(h.cloned, sandbox)
+			h.setupOrder = append(h.setupOrder, "clone")
 			return h.cloneErr
 		})
 
@@ -373,6 +388,71 @@ func TestWorkTicketDeletesTheSandboxWhenAStageFails(t *testing.T) {
 	}
 	if len(h.deleted) != 1 || h.deleted[0] != "sandbox-328" {
 		t.Fatalf("deleted %v, want the sandbox — a pod outliving its run is the leak the sweep exists to catch", h.deleted)
+	}
+}
+
+func TestWorkTicketWritesTheCodexCredentialIntoItsOwnSandboxBeforeTheFirstStage(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+	if len(h.credentialWritten) != 1 || h.credentialWritten[0] != "sandbox-328" {
+		t.Fatalf("wrote the codex credential to %v, want exactly [sandbox-328]", h.credentialWritten)
+	}
+	if len(h.ran) == 0 {
+		t.Fatal("no stage ran at all")
+	}
+}
+
+// TestWorkTicketWritesTheCodexCredentialBeforeCloningTheRepository pins the
+// order of the two setup activities that both run between WaitSandboxReady
+// and the stage loop. Neither has a filesystem dependency on the other —
+// CodexHomeDir and RepoDir are independent siblings of SandboxRoot — but the
+// codex-auth Secret does not exist in the cluster yet (#344), so every run
+// attempted before it is seeded fails at WriteCodexCredential. Credential
+// first means that failure is discovered before CloneRepo's round trip to
+// GitHub (minting an installation token, cloning, pushing) is paid for on a
+// run that cannot possibly proceed either way (#398).
+func TestWorkTicketWritesTheCodexCredentialBeforeCloningTheRepository(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+	want := []string{"credential", "clone"}
+	if len(h.setupOrder) != len(want) {
+		t.Fatalf("setup order = %v, want %v", h.setupOrder, want)
+	}
+	for i := range want {
+		if h.setupOrder[i] != want[i] {
+			t.Fatalf("setup order = %v, want %v", h.setupOrder, want)
+		}
+	}
+}
+
+func TestWorkTicketRunsNoStageAndDeletesTheSandboxWhenTheCodexCredentialCannotBeWritten(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.credentialErr = temporal.NewNonRetryableApplicationError(
+		"codex credential is not seeded", activities.ErrTypeAuth, nil)
+	h.run()
+
+	if h.env.GetWorkflowError() == nil {
+		t.Fatal("a run whose sandbox has no codex credential must not proceed to any stage")
+	}
+	if len(h.ran) != 0 {
+		t.Fatalf("ran %v — codex exec cannot authenticate without the credential, so no stage should have started", h.ran)
+	}
+	if len(h.deleted) != 1 || h.deleted[0] != "sandbox-328" {
+		t.Fatalf("deleted %v, want the sandbox cleaned up even though no stage ran", h.deleted)
 	}
 }
 
