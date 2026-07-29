@@ -37,10 +37,6 @@ type DispatcherInput struct {
 	// would otherwise see their rejected update turn into silence.
 	ConfigError string
 
-	// PauseReason is why the dispatcher paused itself, carried for the same
-	// reason.
-	PauseReason string
-
 	// LastSweep is when the orphan sweep last ran, so continuing as new does
 	// not restart its cadence and turn a half-hourly reconcile into a
 	// per-restart one.
@@ -114,9 +110,10 @@ func (d *dispatcher) applyUpdate(ctx workflow.Context, update work.ConfigUpdate)
 	}
 
 	// An operator un-pausing by hand is also saying the reason no longer
-	// applies. Leaving it set would have GetStatus explain a pause that is over.
-	if d.config.Paused && !next.Paused {
-		d.pauseReason = ""
+	// applies, unless they sent one. Leaving it set would have GetStatus
+	// explain a pause that is over.
+	if d.config.Paused && !next.Paused && update.PauseReason == nil {
+		next.PauseReason = ""
 	}
 
 	d.config = next
@@ -133,7 +130,6 @@ type dispatcher struct {
 	inFlight    map[int]work.InFlightTicket
 	breaker     work.Breaker
 	configError string
-	pauseReason string
 	lastSweep   time.Time
 
 	// now is the last tick's time. A query handler runs outside the workflow's
@@ -155,7 +151,6 @@ func newDispatcher(in DispatcherInput) *dispatcher {
 		inFlight:    inFlight,
 		breaker:     in.Breaker,
 		configError: in.ConfigError,
-		pauseReason: in.PauseReason,
 		lastSweep:   in.LastSweep,
 	}
 }
@@ -182,7 +177,7 @@ func (d *dispatcher) wait(ctx workflow.Context, updates, dones workflow.ReceiveC
 	defer cancelTimer()
 
 	selector := workflow.NewSelector(ctx)
-	selector.AddFuture(workflow.NewTimer(timerCtx, d.tuning.PollInterval), func(workflow.Future) {})
+	selector.AddFuture(workflow.NewTimer(timerCtx, d.config.PollInterval()), func(workflow.Future) {})
 	selector.AddReceive(updates, func(c workflow.ReceiveChannel, _ bool) { d.receiveUpdate(ctx, c) })
 	selector.AddReceive(dones, func(c workflow.ReceiveChannel, _ bool) { d.receiveDone(ctx, c) })
 	selector.AddReceive(ctx.Done(), func(workflow.ReceiveChannel, bool) {})
@@ -240,14 +235,14 @@ func (d *dispatcher) reconcile(ctx workflow.Context) {
 // thirty seconds would be a Kubernetes call per poll for nothing.
 func (d *dispatcher) sweep(ctx workflow.Context) {
 	now := workflow.Now(ctx)
-	if !d.lastSweep.IsZero() && now.Sub(d.lastSweep) < d.tuning.OrphanGrace {
+	if !d.lastSweep.IsZero() && now.Sub(d.lastSweep) < d.config.OrphanGrace() {
 		return
 	}
 	d.lastSweep = now
 
 	ctx = workflow.WithActivityOptions(ctx, d.activityOptions())
 
-	in := activities.SweepInput{LiveRunIDs: d.liveRunIDs(), MinAge: d.tuning.OrphanGrace}
+	in := activities.SweepInput{LiveRunIDs: d.liveRunIDs(), MinAge: d.config.OrphanGrace()}
 	var result activities.SweepResult
 	if err := workflow.ExecuteActivity(ctx, acts.SweepOrphanSandboxes, in).Get(ctx, &result); err != nil {
 		d.noteFailure(ctx, err, "sweeping orphaned sandboxes")
@@ -270,7 +265,7 @@ func (d *dispatcher) start(ctx workflow.Context) {
 	log := workflow.GetLogger(ctx)
 
 	if d.config.Paused {
-		log.Debug("paused, starting nothing", "reason", d.pauseReason)
+		log.Debug("paused, starting nothing", "reason", d.config.PauseReason)
 		return
 	}
 	if d.breaker.OpenAt(workflow.Now(ctx)) {
@@ -414,7 +409,7 @@ func (d *dispatcher) act(ctx workflow.Context, failure work.FailureKind, detail 
 			workflow.GetLogger(ctx).Error("pausing: a credential is not usable", "detail", detail)
 		}
 		d.config.Paused = true
-		d.pauseReason = detail
+		d.config.PauseReason = detail
 	case work.FailureRateLimit:
 		d.breaker = d.breaker.TrippedAt(workflow.Now(ctx), d.config.BreakerCooldown(), detail)
 		workflow.GetLogger(ctx).Warn("breaker tripped", "until", d.breaker.OpenUntil, "detail", detail)
@@ -460,7 +455,6 @@ func (d *dispatcher) input() DispatcherInput {
 		InFlight:    make([]work.InFlightTicket, 0, len(d.inFlight)),
 		Breaker:     d.breaker,
 		ConfigError: d.configError,
-		PauseReason: d.pauseReason,
 		LastSweep:   d.lastSweep,
 	}
 	for _, ticket := range sortedTickets(d.inFlight) {
@@ -477,7 +471,6 @@ func (d *dispatcher) status() (work.Status, error) {
 		InFlight:    tickets,
 		Breaker:     d.breaker,
 		ConfigError: d.configError,
-		PauseReason: d.pauseReason,
 	}, nil
 }
 
@@ -490,7 +483,7 @@ func (d *dispatcher) childOptions(ticket int) workflow.ChildWorkflowOptions {
 	return workflow.ChildWorkflowOptions{
 		WorkflowID:         work.WorkflowID(ticket),
 		ParentClosePolicy:  enums.PARENT_CLOSE_POLICY_ABANDON,
-		WorkflowRunTimeout: d.run.RunTimeout(),
+		WorkflowRunTimeout: d.run.RunTimeout,
 	}
 }
 

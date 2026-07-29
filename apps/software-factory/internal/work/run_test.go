@@ -21,6 +21,7 @@ func TestRunPolicyRejectsAnIncompletePolicyRatherThanDefaultingIt(t *testing.T) 
 	cases := map[string]func(p *work.RunPolicy){
 		"no stage timeout":     func(p *work.RunPolicy) { p.StageTimeout = 0 },
 		"no heartbeat timeout": func(p *work.RunPolicy) { p.StageHeartbeatTimeout = 0 },
+		"no run timeout":       func(p *work.RunPolicy) { p.RunTimeout = 0 },
 		"no stage attempts":    func(p *work.RunPolicy) { p.StageAttempts = 0 },
 		"no control timeout":   func(p *work.RunPolicy) { p.ControlTimeout = 0 },
 		"no control attempts":  func(p *work.RunPolicy) { p.ControlAttempts = 0 },
@@ -54,9 +55,9 @@ func TestARunIsGivenLongerThanItsStagesCanTake(t *testing.T) {
 
 	policy := work.DefaultRunPolicy()
 
-	if policy.RunTimeout() <= policy.RunBudget() {
+	if policy.RunTimeout <= policy.RunBudget() {
 		t.Fatalf("run timeout %s does not exceed the stages' budget %s, so a run using its stage timeouts "+
-			"would be killed for taking exactly as long as it was allowed", policy.RunTimeout(), policy.RunBudget())
+			"would be killed for taking exactly as long as it was allowed", policy.RunTimeout, policy.RunBudget())
 	}
 	if want := policy.StageTimeout * time.Duration(len(work.Pipeline())); policy.RunBudget() != want {
 		t.Fatalf("run budget = %s, want every stage's timeout summed (%s)", policy.RunBudget(), want)
@@ -75,8 +76,6 @@ func TestDispatcherTuningRejectsValuesTheLoopCannotRunOn(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string]func(c *work.DispatcherTuning){
-		"no poll interval":   func(c *work.DispatcherTuning) { c.PollInterval = 0 },
-		"no orphan grace":    func(c *work.DispatcherTuning) { c.OrphanGrace = 0 },
 		"no history ceiling": func(c *work.DispatcherTuning) { c.MaxHistoryEvents = 0 },
 	}
 
@@ -149,5 +148,17 @@ func TestOutcomeSaysWhetherAPullRequestExists(t *testing.T) {
 	}
 	if work.OutcomeBlocked.Proposed() || work.OutcomeFailed.Proposed() {
 		t.Fatal("nothing else does")
+	}
+}
+
+func TestRunPolicyRefusesARunTimeoutItsOwnStagesCanExhaust(t *testing.T) {
+	t.Parallel()
+
+	policy := work.DefaultRunPolicy()
+	policy.RunTimeout = policy.RunBudget()
+
+	if err := policy.Validate(); err == nil {
+		t.Fatal("a run whose stages can use every second of its timeout is a run Temporal kills for doing " +
+			"exactly what it was allowed to do; the ladder is the invariant, so it is checked")
 	}
 }

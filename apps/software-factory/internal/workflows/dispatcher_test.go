@@ -27,7 +27,6 @@ type dispatcherHarness struct {
 	tuning        work.DispatcherTuning
 	inFlight      []work.InFlightTicket
 	breaker       work.Breaker
-	pauseReason   string
 	tickets       []work.Ticket
 	listErr       error
 	runs          map[string]work.RunState
@@ -114,12 +113,11 @@ func (h *dispatcherHarness) run() {
 	}
 
 	env.ExecuteWorkflow(workflows.Dispatcher, workflows.DispatcherInput{
-		Config:      h.config,
-		Tuning:      h.tuning,
-		Run:         work.DefaultRunPolicy(),
-		InFlight:    h.inFlight,
-		Breaker:     h.breaker,
-		PauseReason: h.pauseReason,
+		Config:   h.config,
+		Tuning:   h.tuning,
+		Run:      work.DefaultRunPolicy(),
+		InFlight: h.inFlight,
+		Breaker:  h.breaker,
 	})
 }
 
@@ -284,7 +282,7 @@ func TestDispatcherPausesWhenItsOwnActivityReportsAnAuthFailure(t *testing.T) {
 	if !status.Config.Paused {
 		t.Fatal("a revoked credential must stop the system, not be retried every poll forever")
 	}
-	if status.PauseReason == "" {
+	if status.Config.PauseReason == "" {
 		t.Fatal("a paused system must say why, or the only way to find out is reading logs")
 	}
 	if len(h.started) != 0 {
@@ -519,7 +517,7 @@ func TestDispatcherSweepsOrphanedSandboxesNamingTheRunsThatMustSurvive(t *testin
 	t.Parallel()
 
 	h := newDispatcherHarness(t)
-	h.tuning.OrphanGrace = 30 * time.Minute
+	h.config.OrphanGraceSeconds = int64((30 * time.Minute).Seconds())
 	h.inFlight = []work.InFlightTicket{{Ticket: 1, RunID: "run-1"}}
 	h.runs["work-ticket-1"] = work.RunState{Open: true, RunID: "run-1"}
 	h.run()
@@ -540,8 +538,8 @@ func TestDispatcherDoesNotSweepOnEveryPoll(t *testing.T) {
 	t.Parallel()
 
 	h := newDispatcherHarness(t)
-	h.tuning.PollInterval = 30 * time.Second
-	h.tuning.OrphanGrace = 30 * time.Minute
+	h.config.PollIntervalSeconds = 30
+	h.config.OrphanGraceSeconds = int64((30 * time.Minute).Seconds())
 	h.runFor = 5 * time.Minute
 	h.run()
 
@@ -554,7 +552,7 @@ func TestDispatcherRefusesAConfigItCannotRunOn(t *testing.T) {
 	t.Parallel()
 
 	h := newDispatcherHarness(t)
-	h.tuning.PollInterval = 0
+	h.config.PollIntervalSeconds = 0
 	h.runFor = 0
 	h.run()
 
@@ -639,7 +637,7 @@ func TestDispatcherSaysWhyItPausedItself(t *testing.T) {
 	if !status.Config.Paused {
 		t.Fatal("a revoked credential must pause the dispatcher")
 	}
-	if status.PauseReason == "" {
+	if status.Config.PauseReason == "" {
 		t.Fatal("Paused alone cannot tell a dispatcher that stopped itself on a dead credential from a human " +
 			"pausing it deliberately — opposite responses, and the difference is invisible without a reason")
 	}
@@ -650,7 +648,7 @@ func TestDispatcherForgetsWhyItPausedWhenAHumanResumesIt(t *testing.T) {
 
 	h := newDispatcherHarness(t)
 	h.config.Paused = true
-	h.pauseReason = "github refused this app's credentials"
+	h.config.PauseReason = "github refused this app's credentials"
 	h.tickets = tickets(1)
 	h.at(45*time.Second, func() {
 		resumed := false
@@ -658,7 +656,7 @@ func TestDispatcherForgetsWhyItPausedWhenAHumanResumesIt(t *testing.T) {
 	})
 	h.run()
 
-	if reason := h.status(t).PauseReason; reason != "" {
+	if reason := h.status(t).Config.PauseReason; reason != "" {
 		t.Fatalf("PauseReason = %q — GetStatus must not explain a pause that is over", reason)
 	}
 }

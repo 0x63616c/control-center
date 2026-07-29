@@ -150,7 +150,7 @@ func (r *ticketRun) execute(ctx workflow.Context) (WorkTicketResult, error) {
 	create := activities.CreateSandboxInput{
 		TicketNumber: r.in.Ticket.Number,
 		RunID:        r.runID,
-		RunTimeout:   r.in.Policy.RunTimeout(),
+		RunTimeout:   r.in.Policy.RunTimeout,
 	}
 	if err := workflow.ExecuteActivity(control, acts.CreateSandbox, create).Get(ctx, &r.sandbox); err != nil {
 		return WorkTicketResult{Outcome: work.OutcomeFailed}, err

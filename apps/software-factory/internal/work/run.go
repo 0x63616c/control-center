@@ -36,6 +36,12 @@ type RunPolicy struct {
 	// cancellable instead of a black box.
 	StageHeartbeatTimeout time.Duration
 
+	// RunTimeout is what Temporal gives the whole run. It must exceed the
+	// stages' own budget, and the sandbox pod's Kubernetes deadline must exceed
+	// it in turn — that ladder is the invariant, and it is checked rather than
+	// derived so this cannot quietly disagree with the numbers D1 declares.
+	RunTimeout time.Duration
+
 	// StageAttempts is deliberately small: a stage retry is a full
 	// re-exploration of the repository, and quota is the binding cost.
 	StageAttempts int32
@@ -50,9 +56,15 @@ type RunPolicy struct {
 
 // DefaultRunPolicy is the single source of ADR-0011's per-run numbers.
 func DefaultRunPolicy() RunPolicy {
+	// These are the deadline ladder D1 (#340) declares as MaxStageDuration,
+	// StageHeartbeatTimeout and MaxRunDuration in internal/work/durations.go.
+	// That file is not merged yet, so the values are written here rather than
+	// referenced; when it lands these become references to it, and Validate's
+	// inequality below is what stops the two disagreeing in the meantime.
 	return RunPolicy{
 		StageTimeout:          60 * time.Minute,
-		StageHeartbeatTimeout: 3 * time.Minute,
+		StageHeartbeatTimeout: time.Minute,
+		RunTimeout:            6 * time.Hour,
 		StageAttempts:         2,
 		ControlTimeout:        2 * time.Minute,
 		ControlAttempts:       5,
@@ -69,6 +81,11 @@ func (p RunPolicy) Validate() error {
 	case p.StageHeartbeatTimeout >= p.StageTimeout:
 		return fmt.Errorf("%w: a heartbeat timeout of %s can never fire inside a stage timeout of %s",
 			ErrInvalidRun, p.StageHeartbeatTimeout, p.StageTimeout)
+	case p.RunTimeout <= 0:
+		return fmt.Errorf("%w: run timeout must be positive", ErrInvalidRun)
+	case p.RunTimeout <= p.StageTimeout*time.Duration(len(Pipeline())):
+		return fmt.Errorf("%w: a run timeout of %s cannot hold %d stages of %s each",
+			ErrInvalidRun, p.RunTimeout, len(Pipeline()), p.StageTimeout)
 	case p.StageAttempts <= 0:
 		return fmt.Errorf("%w: stage attempts must be positive", ErrInvalidRun)
 	case p.ControlTimeout <= 0:
@@ -85,62 +102,30 @@ func (p RunPolicy) RunBudget() time.Duration {
 	return p.StageTimeout * time.Duration(len(Pipeline()))
 }
 
-// RunTimeout is what Temporal gives a whole run: the stages' budget, doubled.
+// DispatcherTuning is what paces the loop and is not the operator's business.
 //
-// The doubling covers the cheap activities around the stages and their retries.
-// It is a ratio rather than a count of them on purpose — a count would be a
-// second place that has to change when a status update is added, and it would
-// be wrong silently. The pod's own deadline must sit above this, which is
-// asserted where both numbers are known rather than here.
-func (p RunPolicy) RunTimeout() time.Duration {
-	return p.RunBudget() * 2
-}
-
-// DispatcherTuning is how the dispatcher's loop is paced.
-//
-// These are deliberately NOT on Config. Config is the operator's surface and
-// every field on it is something worth changing on a live system under
-// pressure; these three are properties of the loop itself, and a wrong value is
-// a workflow that stops continuing as new or a sweep that races the runs it is
-// meant to protect. If an operator ever needs the poll interval at runtime,
-// promoting it to Config is a deliberate widening of that surface, not a
-// default.
+// The poll interval and the orphan grace ARE the operator's business and live
+// on Config, where GetStatus and UpdateConfig can reach them — a knob an
+// operator cannot reach from the place they look is a knob that does not exist.
+// What is left here is the one number that is a property of the loop rather
+// than a setting: the history ceiling.
 type DispatcherTuning struct {
-	// PollInterval is how often the dispatcher wakes to reconcile and start
-	// work. It bounds how stale the in-flight set can be, and nothing else:
-	// there is no WorkNow signal, because one would buy at most this interval.
-	PollInterval time.Duration
-
-	// OrphanGrace is both how often the sweep runs and how old a pod must be
-	// before it will delete it. One value for both because they are the same
-	// judgement — how long a pod may exist unaccounted for — and two would
-	// invite a sweep that runs more often than its own floor, which is a
-	// Kubernetes call per poll that can never delete anything.
-	OrphanGrace time.Duration
-
 	// MaxHistoryEvents is when the dispatcher ContinueAsNews. A timer loop's
 	// history is unbounded by construction, so this is not a tuning knob but
-	// the thing that keeps the workflow alive.
+	// the thing that keeps the workflow alive — which is why it is here and not
+	// on Config, where an operator could set it to something that stops the
+	// loop bounding its own history.
 	MaxHistoryEvents int
 }
 
 // DefaultDispatcherTuning is the single source of these three numbers.
 func DefaultDispatcherTuning() DispatcherTuning {
-	return DispatcherTuning{
-		PollInterval:     30 * time.Second,
-		OrphanGrace:      30 * time.Minute,
-		MaxHistoryEvents: 2000,
-	}
+	return DispatcherTuning{MaxHistoryEvents: 2000}
 }
 
 // Validate reports why the dispatcher cannot loop on this tuning.
 func (t DispatcherTuning) Validate() error {
-	switch {
-	case t.PollInterval <= 0:
-		return fmt.Errorf("%w: poll interval must be positive", ErrInvalidRun)
-	case t.OrphanGrace <= 0:
-		return fmt.Errorf("%w: orphan grace must be positive — a zero grace sweeps pods out from under their own runs", ErrInvalidRun)
-	case t.MaxHistoryEvents <= 0:
+	if t.MaxHistoryEvents <= 0 {
 		return fmt.Errorf("%w: history ceiling must be positive, or the dispatcher never continues as new", ErrInvalidRun)
 	}
 	return nil
