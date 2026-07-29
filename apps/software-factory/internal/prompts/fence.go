@@ -81,6 +81,14 @@ func mintNonce(entropy io.Reader) (string, error) {
 // attacker who has seen a lowercase nonce gets the uppercase variant for free,
 // and a byte-exact comparison hands it to them.
 //
+// The cost, which is real and accepted: an issue that quotes the tag name for a
+// legitimate reason — a ticket about this fence, filed in this repository, is
+// the obvious case — arrives at the model with that quotation replaced by
+// strippedMarker. It reads as redacted because it was. That is the right trade
+// (there is no way to tell a quotation from an attempt, and the marker makes
+// the removal visible rather than silent), but it is a surprise worth knowing
+// before filing it as a bug.
+//
 // What this cannot reach, and does not claim to: a string that only resembles
 // the tag — Unicode confusables (`untrustеd`, Cyrillic е), or whitespace broken
 // into the tag name. Those are not the fence and can never be, because they do
