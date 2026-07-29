@@ -210,10 +210,11 @@ type RunStageInput struct {
 	// stage of the run.
 	Detail work.TicketDetail
 
-	// Handoff is the preceding stage's output, verbatim, or nil for the first
-	// stage. It is opaque here: only the prompt renderer knows which schema it
-	// satisfies.
-	Handoff []byte
+	// Prior holds every completed stage's document, keyed by the stage that
+	// produced it, and is empty for the first stage. Every one of them, not
+	// only the last: revise reads the plan as well as the review, and the plan
+	// is two stages back by then.
+	Prior map[work.Stage]string
 }
 
 // RunStageOutput is what a stage produced.
@@ -222,7 +223,14 @@ type RunStageInput struct {
 // results are written to workflow history and kept for the namespace's whole
 // retention.
 type RunStageOutput struct {
-	Output   []byte
+	// Output is the raw result envelope, kept because it is what the transcript
+	// and any later forensics want.
+	Output []byte
+
+	// Document is the document inside that envelope, which is what the next
+	// stage's prompt is rendered from.
+	Document string
+
 	ThreadID string
 	Usage    work.Usage
 }
@@ -237,7 +245,7 @@ type RunStageOutput struct {
 func (a *Activities) RunStage(ctx context.Context, in RunStageInput) (RunStageOutput, error) {
 	log := activity.GetLogger(ctx)
 
-	prompt, schema, err := a.deps.Prompts.Render(in.Key.Stage, in.Detail, in.Handoff)
+	prompt, schema, err := a.deps.Prompts.Render(in.Key.Stage, in.Detail, in.Prior)
 	if err != nil {
 		return RunStageOutput{}, fail(ctx, fmt.Sprintf("rendering the prompt for %s", in.Key), err)
 	}
@@ -286,8 +294,14 @@ func (a *Activities) RunStage(ctx context.Context, in RunStageInput) (RunStageOu
 		"input_tokens", result.Usage.InputTokens,
 		"output_tokens", result.Usage.OutputTokens)
 
+	document, err := a.deps.Prompts.Document(result.Output)
+	if err != nil {
+		return RunStageOutput{}, fail(ctx, fmt.Sprintf("reading the result envelope of %s", in.Key), err)
+	}
+
 	return RunStageOutput{
 		Output:   result.Output,
+		Document: document,
 		ThreadID: result.ThreadID,
 		Usage:    result.Usage,
 	}, nil

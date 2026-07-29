@@ -153,9 +153,23 @@ type TokenSource interface {
 // GitHub instead. See GitHub.PullRequestForBranch.
 type PromptRenderer interface {
 	// Render returns the prompt a stage runs on and the schema its final
-	// message must satisfy. handoff is the preceding stage's output, verbatim
-	// and unparsed, or nil for the first stage.
-	Render(stage work.Stage, detail work.TicketDetail, handoff []byte) (prompt string, schema []byte, err error)
+	// message must satisfy.
+	//
+	// prior holds every completed stage's document, keyed by the stage that
+	// produced it — not just the last one. `revise` reads both the plan and the
+	// review, so a seam carrying only the preceding document cannot render it
+	// at all: the plan is two stages back by the time revise runs. A run may
+	// pass everything it has; a stage is shown only what its own prompt asks
+	// for.
+	Render(stage work.Stage, detail work.TicketDetail, prior map[work.Stage]string) (prompt string, schema []byte, err error)
+
+	// Document unwraps a stage's result envelope into the document inside it.
+	//
+	// It belongs beside Render because they are one format seen from two ends:
+	// whoever defines the envelope a stage answers in is the only one who can
+	// say what its answer means. It is not a verdict — the document is opaque
+	// payload for the next prompt, and nothing branches on its content.
+	Document(result []byte) (string, error)
 }
 
 // StatusRenderer turns a run's state into the body of its status comment.

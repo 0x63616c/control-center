@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -141,13 +142,23 @@ type fakePrompts struct {
 	schema []byte
 	err    error
 
-	sawStage   work.Stage
-	sawHandoff []byte
+	documentErr error
+
+	sawStage work.Stage
+	sawPrior map[work.Stage]string
 }
 
-func (f *fakePrompts) Render(stage work.Stage, _ work.TicketDetail, handoff []byte) (string, []byte, error) {
-	f.sawStage, f.sawHandoff = stage, handoff
+func (f *fakePrompts) Render(stage work.Stage, _ work.TicketDetail, prior map[work.Stage]string) (string, []byte, error) {
+	f.sawStage = stage
+	f.sawPrior = maps.Clone(prior)
 	return f.prompt, f.schema, f.err
+}
+
+func (f *fakePrompts) Document(result []byte) (string, error) {
+	if f.documentErr != nil {
+		return "", f.documentErr
+	}
+	return "document of " + string(result), nil
 }
 
 // fakeStatus renders a report to something a test can recognise without
@@ -430,13 +441,13 @@ func TestCreateSandboxTellsTheSandboxWhichBranchToPush(t *testing.T) {
 
 // --- stages ----------------------------------------------------------------
 
-func stageInput(stage work.Stage, handoff []byte) RunStageInput {
+func stageInput(stage work.Stage, prior map[work.Stage]string) RunStageInput {
 	return RunStageInput{
 		Key:     work.StageKey{Ticket: 328, RunID: "run-1", Stage: stage},
 		Sandbox: "sandbox-328",
 		Model:   work.Model{Name: "gpt-5.6-terra", Effort: "medium"},
 		Detail:  work.TicketDetail{Ticket: work.Ticket{Number: 328, Title: "t", Body: "b"}},
-		Handoff: handoff,
+		Prior:   prior,
 	}
 }
 
@@ -554,7 +565,7 @@ func TestRunStageClosesTheTranscriptWhenTheStageFails(t *testing.T) {
 	}
 }
 
-func TestRunStageHandsThePrecedingStagesOutputToTheRendererUntouched(t *testing.T) {
+func TestRunStageHandsEveryPriorDocumentToTheRenderer(t *testing.T) {
 	t.Parallel()
 
 	prompts := &fakePrompts{prompt: "do the thing", schema: []byte(`{"type":"object"}`)}
@@ -565,13 +576,18 @@ func TestRunStageHandsThePrecedingStagesOutputToTheRendererUntouched(t *testing.
 	a := mustNew(t, d)
 	e.RegisterActivity(a.RunStage)
 
-	handoff := []byte(`{"plan":"…"}`)
-	if _, err := e.ExecuteActivity(a.RunStage, stageInput(work.StageReview, handoff)); err != nil {
+	prior := map[work.Stage]string{work.StagePlan: "the plan", work.StageReview: "the review"}
+	if _, err := e.ExecuteActivity(a.RunStage, stageInput(work.StageRevise, prior)); err != nil {
 		t.Fatalf("RunStage: %v", err)
 	}
 
-	if prompts.sawStage != work.StageReview || string(prompts.sawHandoff) != string(handoff) {
-		t.Fatalf("renderer saw stage %q handoff %q", prompts.sawStage, prompts.sawHandoff)
+	// Every prior document, not only the last: revise reads the plan as well as
+	// the review, and a seam that carried one blob could not render it.
+	if prompts.sawStage != work.StageRevise {
+		t.Fatalf("renderer saw stage %q", prompts.sawStage)
+	}
+	if prompts.sawPrior[work.StagePlan] != "the plan" || prompts.sawPrior[work.StageReview] != "the review" {
+		t.Fatalf("renderer saw prior %v, want both the plan and the review", prompts.sawPrior)
 	}
 	if stages.sawRun.Prompt != "do the thing" || string(stages.sawRun.Schema) != `{"type":"object"}` {
 		t.Fatalf("the rendered prompt and schema must reach the stage runner, got %+v", stages.sawRun)

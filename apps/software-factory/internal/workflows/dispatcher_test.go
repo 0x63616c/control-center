@@ -3,6 +3,7 @@ package workflows_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -658,5 +659,34 @@ func TestDispatcherForgetsWhyItPausedWhenAHumanResumesIt(t *testing.T) {
 
 	if reason := h.status(t).Config.PauseReason; reason != "" {
 		t.Fatalf("PauseReason = %q — GetStatus must not explain a pause that is over", reason)
+	}
+}
+
+func TestDispatcherReconcilesInAFixedOrderSoAReplayMatches(t *testing.T) {
+	t.Parallel()
+
+	// Go randomises map iteration, and a workflow that scheduled activities in
+	// a different order on replay is corrupt — a failure that shows up days
+	// later as a broken run, never as a failed build. Eight tickets make an
+	// unsorted implementation escape with probability 1/8!, about 1 in 40,000.
+	const tickets = 8
+	h := newDispatcherHarness(t)
+	h.config.MaxInFlight = tickets
+	for n := 1; n <= tickets; n++ {
+		id := fmt.Sprintf("run-%d", n)
+		h.inFlight = append(h.inFlight, work.InFlightTicket{Ticket: n, RunID: id})
+		h.runs[work.WorkflowID(n)] = work.RunState{Open: true, RunID: id}
+	}
+	h.runFor = 45 * time.Second
+	h.run()
+
+	if len(h.described) < tickets {
+		t.Fatalf("reconciled %d of %d tickets", len(h.described), tickets)
+	}
+	for i, wantTicket := 0, 1; wantTicket <= tickets; i, wantTicket = i+1, wantTicket+1 {
+		if want := work.WorkflowID(wantTicket); h.described[i] != want {
+			t.Fatalf("reconciled %v — the in-flight set must be walked in a fixed order, not map order",
+				h.described[:tickets])
+		}
 	}
 }

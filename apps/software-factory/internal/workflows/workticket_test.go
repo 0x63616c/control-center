@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -26,7 +27,8 @@ const dispatcherID = "software-factory-dispatcher"
 // so a test can follow the handoff chain by identity rather than by shape.
 func stageOutput(stage work.Stage) activities.RunStageOutput {
 	return activities.RunStageOutput{
-		Output:   []byte(fmt.Sprintf(`{"from":%q}`, stage)),
+		Output:   []byte(fmt.Sprintf(`{"document":%q}`, stage)),
+		Document: "the " + string(stage) + " document",
 		ThreadID: "thread-" + string(stage),
 		Usage:    work.Usage{InputTokens: 10, OutputTokens: 1},
 	}
@@ -49,7 +51,7 @@ type ticketHarness struct {
 
 	// what the run did.
 	ran      []work.Stage
-	handoffs map[work.Stage]string
+	priors   map[work.Stage]map[work.Stage]string
 	models   map[work.Stage]work.Model
 	keys     map[work.Stage]work.StageKey
 	created  int
@@ -64,12 +66,12 @@ func newTicketHarness(t *testing.T) *ticketHarness {
 	t.Helper()
 	suite := &testsuite.WorkflowTestSuite{}
 	return &ticketHarness{
-		env:      suite.NewTestWorkflowEnvironment(),
-		policy:   work.DefaultRunPolicy(),
-		config:   work.DefaultConfig(),
-		handoffs: map[work.Stage]string{},
-		models:   map[work.Stage]work.Model{},
-		keys:     map[work.Stage]work.StageKey{},
+		env:    suite.NewTestWorkflowEnvironment(),
+		policy: work.DefaultRunPolicy(),
+		config: work.DefaultConfig(),
+		priors: map[work.Stage]map[work.Stage]string{},
+		models: map[work.Stage]work.Model{},
+		keys:   map[work.Stage]work.StageKey{},
 	}
 }
 
@@ -82,7 +84,7 @@ func (h *ticketHarness) run() {
 	env.OnActivity(acts.ReportStatus, mock.Anything, mock.Anything).
 		Return(func(_ context.Context, report work.StatusReport) (work.CommentID, error) {
 			h.reports = append(h.reports, report)
-			return 77, nil
+			return commentFor(report.Step), nil
 		})
 
 	env.OnActivity(acts.CreateSandbox, mock.Anything, mock.Anything).
@@ -111,7 +113,7 @@ func (h *ticketHarness) run() {
 	}
 	stage.Return(func(_ context.Context, in activities.RunStageInput) (activities.RunStageOutput, error) {
 		h.ran = append(h.ran, in.Key.Stage)
-		h.handoffs[in.Key.Stage] = string(in.Handoff)
+		h.priors[in.Key.Stage] = maps.Clone(in.Prior)
 		h.models[in.Key.Stage] = in.Model
 		h.keys[in.Key.Stage] = in.Key
 		if h.stage != nil {
@@ -188,24 +190,44 @@ func TestWorkTicketRunsTheFiveStagesInPipelineOrder(t *testing.T) {
 	}
 }
 
-func TestWorkTicketFeedsEachStageThePrecedingStagesOutput(t *testing.T) {
+func TestWorkTicketGivesReviseBothThePlanAndTheReview(t *testing.T) {
 	t.Parallel()
 
 	h := newTicketHarness(t)
 	h.run()
 
-	if got := h.handoffs[work.StagePlan]; got != "" {
-		t.Fatalf("the first stage has nothing to hand off from, got %q", got)
+	// The case a single rolling handoff cannot serve: revise.md interpolates
+	// {{plan}} AND {{review}}, and by the time revise runs the plan is two
+	// stages back. A pipeline that kept only the last document would fail every
+	// run at stage three, having already paid for two.
+	revise := h.priors[work.StageRevise]
+	if revise[work.StagePlan] != "the plan document" {
+		t.Fatalf("revise saw prior %v — the plan was discarded before the stage that reads it", revise)
 	}
-	for _, pair := range [][2]work.Stage{
-		{work.StagePlan, work.StageReview},
-		{work.StageReview, work.StageRevise},
-		{work.StageRevise, work.StageImplement},
-		{work.StageImplement, work.StagePropose},
-	} {
-		want := string(stageOutput(pair[0]).Output)
-		if got := h.handoffs[pair[1]]; got != want {
-			t.Fatalf("%s received %q, want %s's output %q", pair[1], got, pair[0], want)
+	if revise[work.StageReview] != "the review document" {
+		t.Fatalf("revise saw prior %v, want the review too", revise)
+	}
+}
+
+func TestWorkTicketAccumulatesEveryStagesDocumentRatherThanReplacingIt(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.run()
+
+	if got := h.priors[work.StagePlan]; len(got) != 0 {
+		t.Fatalf("the first stage has no prior documents, got %v", got)
+	}
+	// Each stage sees everything that ran before it, and nothing that did not.
+	for i, stage := range work.Pipeline() {
+		prior := h.priors[stage]
+		if len(prior) != i {
+			t.Fatalf("%s saw %d prior documents, want %d: %v", stage, len(prior), i, prior)
+		}
+		for _, earlier := range work.Pipeline()[:i] {
+			if prior[earlier] != "the "+string(earlier)+" document" {
+				t.Fatalf("%s did not receive the %s document: %v", stage, earlier, prior)
+			}
 		}
 	}
 }
@@ -453,43 +475,116 @@ func TestWorkTicketKeysEveryStageToThisRunSoARetryResumesRatherThanRestarts(t *t
 	}
 }
 
-func TestWorkTicketPostsOneStatusCommentAndEditsThatOne(t *testing.T) {
+func TestWorkTicketKeepsOneCommentPerStepAndEditsThatOne(t *testing.T) {
 	t.Parallel()
 
 	h := newTicketHarness(t)
 	h.run()
 
-	if len(h.reports) < 2 {
-		t.Fatalf("reported %d times, want a first post and at least one edit", len(h.reports))
-	}
-	if h.reports[0].Comment != 0 {
-		t.Fatal("the first report has no comment to edit")
-	}
-	for _, report := range h.reports[1:] {
-		if report.Comment != 77 {
-			t.Fatalf("report %+v does not carry the comment the run already posted, so it would post a second", report)
+	// Every step's first report posts (no comment yet) and every later report
+	// for that step edits the one it posted. A step that carried another's ID
+	// would rewrite someone else's comment.
+	seen := map[work.StatusStep]bool{}
+	for _, report := range h.reports {
+		if !seen[report.Step] {
+			if report.Comment != 0 {
+				t.Fatalf("the first %s report has no comment to edit, got %d", report.Step, report.Comment)
+			}
+			seen[report.Step] = true
+			continue
 		}
-	}
-	if last := h.reports[len(h.reports)-1]; last.Outcome == "" {
-		t.Fatal("the last report must state the outcome")
+		if report.Comment != commentFor(report.Step) {
+			t.Fatalf("%s report carries comment %d, want %d — a step must edit its own comment",
+				report.Step, report.Comment, commentFor(report.Step))
+		}
 	}
 }
 
-func TestWorkTicketReportsEveryStageItStarts(t *testing.T) {
+func TestWorkTicketReportsEveryStageStartingAndFinishing(t *testing.T) {
 	t.Parallel()
 
 	h := newTicketHarness(t)
 	h.run()
 
-	reported := map[work.Stage]bool{}
-	for _, report := range h.reports {
-		if report.Stage != "" {
-			reported[report.Stage] = true
-		}
-	}
+	// StageSucceeded is where a stage's own token count is published. Without a
+	// caller it is most of the observability value, unrendered.
 	for _, stage := range work.Pipeline() {
-		if !reported[stage] {
-			t.Fatalf("no status report names %s — at 3am you must be able to see which stage a ticket is on", stage)
+		var running, succeeded int
+		for _, report := range h.reports {
+			if report.Step != work.StageStep(stage) {
+				continue
+			}
+			switch report.State {
+			case work.StepRunning:
+				running++
+			case work.StepSucceeded:
+				succeeded++
+				if report.Usage.InputTokens == 0 {
+					t.Fatalf("%s succeeded with no tokens reported: %+v", stage, report)
+				}
+				if report.EndedAt.IsZero() || report.StartedAt.IsZero() {
+					t.Fatalf("%s succeeded without a duration: %+v", stage, report)
+				}
+				if report.Model.Name == "" {
+					t.Fatalf("%s succeeded without naming its model: %+v", stage, report)
+				}
+			case work.StepFailed:
+				t.Fatalf("%s failed unexpectedly: %+v", stage, report)
+			}
+		}
+		if running != 1 || succeeded != 1 {
+			t.Fatalf("%s reported %d starts and %d successes, want one of each", stage, running, succeeded)
 		}
 	}
+}
+
+func TestWorkTicketReportsTheStageThatFailed(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.stage = failingStage
+	h.run()
+
+	var failed *work.StatusReport
+	for i, report := range h.reports {
+		if report.Step == work.StageStep(work.StagePlan) && report.State == work.StepFailed {
+			failed = &h.reports[i]
+		}
+	}
+	if failed == nil {
+		t.Fatal("a failed stage is the one a human most wants to see on the ticket")
+	}
+	if failed.Detail == "" {
+		t.Fatal("and it must say why")
+	}
+}
+
+func TestWorkTicketReportsTheOutcomeWithTheRunsTotal(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.run()
+
+	var outcome *work.StatusReport
+	for i, report := range h.reports {
+		if report.Step == work.StepOutcome {
+			outcome = &h.reports[i]
+		}
+	}
+	if outcome == nil {
+		t.Fatal("a run must say how it ended")
+	}
+	if outcome.Outcome != work.OutcomeProposed || outcome.State != work.StepSucceeded {
+		t.Fatalf("outcome report = %+v, want a proposed run", outcome)
+	}
+	// The run's total, not the last stage's — cost is reviewed where the work is.
+	if outcome.Usage.InputTokens != 50 {
+		t.Fatalf("outcome usage = %+v, want every stage summed", outcome.Usage)
+	}
+}
+
+// commentFor gives each status step a distinct comment id, so a test can tell
+// a step editing its own comment from a step editing another's.
+func commentFor(step work.StatusStep) work.CommentID {
+	return work.CommentID(len(step) + 100)
 }

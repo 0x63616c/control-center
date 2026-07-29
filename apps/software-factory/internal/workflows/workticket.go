@@ -90,7 +90,11 @@ func WorkTicket(ctx workflow.Context, in WorkTicketInput) (WorkTicketResult, err
 		return WorkTicketResult{}, err
 	}
 
-	run := &ticketRun{in: in, runID: workflow.GetInfo(ctx).WorkflowExecution.RunID}
+	run := &ticketRun{
+		in:       in,
+		runID:    workflow.GetInfo(ctx).WorkflowExecution.RunID,
+		comments: map[work.StatusStep]work.CommentID{},
+	}
 	result, err := run.execute(ctx)
 	run.finish(ctx, result, err)
 	return result, err
@@ -130,8 +134,12 @@ type ticketRun struct {
 	runID string
 
 	sandbox work.SandboxID
-	comment work.CommentID
 	usage   work.Usage
+
+	// comments is one comment per status step. A stage's comment is posted when
+	// the stage starts and edited when it ends, so the ID has to survive
+	// between those two moments and must not be shared with another step.
+	comments map[work.StatusStep]work.CommentID
 }
 
 // execute is the pipeline. Everything it creates, it records on the run first,
@@ -140,7 +148,7 @@ func (r *ticketRun) execute(ctx workflow.Context) (WorkTicketResult, error) {
 	control := workflow.WithActivityOptions(ctx, r.controlOptions())
 	stages := workflow.WithActivityOptions(ctx, r.stageOptions())
 
-	r.report(ctx, work.StatusReport{Detail: "picked up"})
+	r.report(ctx, work.StatusReport{Step: work.StepPickup, State: work.StepRunning})
 
 	var detail work.TicketDetail
 	if err := workflow.ExecuteActivity(control, acts.FetchTicketDetail, r.in.Ticket.Number).Get(ctx, &detail); err != nil {
@@ -159,28 +167,51 @@ func (r *ticketRun) execute(ctx workflow.Context) (WorkTicketResult, error) {
 		return WorkTicketResult{Outcome: work.OutcomeFailed}, err
 	}
 
-	var handoff []byte
+	// Every completed stage's document, not just the last. revise reads the
+	// plan and the review, and the plan is two stages behind it by then — a
+	// single rolling handoff would have discarded it, and the run would die at
+	// stage three having paid for two.
+	prior := make(map[work.Stage]string, len(work.Pipeline()))
 
 	for _, stage := range work.Pipeline() {
-		r.report(ctx, work.StatusReport{Stage: stage})
+		model := r.in.Config.ModelFor(stage)
+		startedAt := workflow.Now(ctx)
+		r.report(ctx, work.StatusReport{
+			Step: work.StageStep(stage), State: work.StepRunning,
+			Stage: stage, Model: model, StartedAt: startedAt,
+		})
 
 		in := activities.RunStageInput{
 			Key:     work.StageKey{Ticket: r.in.Ticket.Number, RunID: r.runID, Stage: stage},
 			Sandbox: r.sandbox,
-			Model:   r.in.Config.ModelFor(stage),
+			Model:   model,
 			Detail:  detail,
-			Handoff: handoff,
+			Prior:   prior,
 		}
 
 		var out activities.RunStageOutput
 		if err := workflow.ExecuteActivity(stages, acts.RunStage, in).Get(ctx, &out); err != nil {
+			// Reported before the error is returned. A stage that failed is the
+			// one a human most wants to see on the ticket, and the tokens it
+			// spent are still spent.
+			r.report(ctx, work.StatusReport{
+				Step: work.StageStep(stage), State: work.StepFailed,
+				Stage: stage, Model: model, StartedAt: startedAt, EndedAt: workflow.Now(ctx),
+				Usage: out.Usage, Detail: err.Error(),
+			})
 			return WorkTicketResult{Outcome: work.OutcomeFailed, Usage: r.usage}, err
 		}
 
 		// Tokens are counted as soon as the stage returns: they were spent
 		// whatever it produced.
 		r.usage = r.usage.Add(out.Usage)
-		handoff = out.Output
+		prior[stage] = out.Document
+
+		r.report(ctx, work.StatusReport{
+			Step: work.StageStep(stage), State: work.StepSucceeded,
+			Stage: stage, Model: model, StartedAt: startedAt, EndedAt: workflow.Now(ctx),
+			Usage: out.Usage,
+		})
 	}
 
 	// What the run achieved is asked of GitHub, never read out of what the
@@ -272,7 +303,14 @@ func (r *ticketRun) finish(ctx workflow.Context, result WorkTicketResult, runErr
 		detail = runErr.Error()
 	}
 
-	r.report(ctx, work.StatusReport{Outcome: outcome, Detail: detail})
+	state := work.StepSucceeded
+	if outcome != work.OutcomeProposed {
+		state = work.StepFailed
+	}
+	r.report(ctx, work.StatusReport{
+		Step: work.StepOutcome, State: state,
+		Outcome: outcome, Detail: detail, EndedAt: workflow.Now(ctx),
+	})
 	r.tellDispatcher(ctx, work.TicketDone{
 		Ticket:  r.in.Ticket.Number,
 		RunID:   r.runID,
@@ -311,18 +349,23 @@ func (r *ticketRun) tellDispatcher(ctx workflow.Context, done work.TicketDone) {
 func (r *ticketRun) report(ctx workflow.Context, report work.StatusReport) {
 	report.TicketNumber = r.in.Ticket.Number
 	report.RunID = r.runID
-	report.Usage = r.usage
-	report.Comment = r.comment
+	report.Comment = r.comments[report.Step]
+
+	// The outcome comment carries the run's total; a stage's carries its own,
+	// which the caller has already set.
+	if report.Step == work.StepOutcome {
+		report.Usage = r.usage
+	}
 
 	control := workflow.WithActivityOptions(ctx, r.controlOptions())
 
 	var id work.CommentID
 	if err := workflow.ExecuteActivity(control, acts.ReportStatus, report).Get(ctx, &id); err != nil {
 		workflow.GetLogger(ctx).Error("could not update the status comment",
-			"ticket", r.in.Ticket.Number, "error", err)
+			"ticket", r.in.Ticket.Number, "step", string(report.Step), "error", err)
 		return
 	}
-	r.comment = id
+	r.comments[report.Step] = id
 }
 
 // controlOptions govern the cheap activities: short, and retried freely,

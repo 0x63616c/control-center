@@ -1,6 +1,9 @@
 package work
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // StatusReport is everything a run's status comment says about itself at one
 // moment.
@@ -18,12 +21,34 @@ import "fmt"
 type StatusReport struct {
 	TicketNumber int
 
+	// Step is which of a run's comments this is. A run keeps one comment per
+	// step — pickup, one per stage, and the outcome — each identified by its
+	// own marker, rather than one comment rewritten from start to finish. That
+	// is what lets a reader scroll a ticket and see the run happen.
+	Step StatusStep
+
+	// State is where that step has got to. It is explicit rather than inferred
+	// from which other fields are set: "a stage report with a reason is a
+	// failure" is the kind of rule that is true until someone reports a reason
+	// for something else.
+	State StepState
+
+	// Model is what the stage ran on, and empty for the steps that are not a
+	// stage.
+	Model Model
+
+	// StartedAt and EndedAt bound the step. EndedAt is zero while it is still
+	// running. Both come from workflow time, so a replay renders the same
+	// comment it rendered the first time.
+	StartedAt time.Time
+	EndedAt   time.Time
+
 	// RunID is Temporal's RunID, which is both the link to the run and what
 	// makes the comment's marker this run's. See StatusMarker.
 	RunID string
 
-	// Stage is the stage now running, and empty when the run is starting or
-	// over.
+	// Stage is the stage this report is about, and empty for the pickup and
+	// outcome steps.
 	Stage Stage
 
 	// Outcome is empty while the run is still going.
@@ -37,11 +62,23 @@ type StatusReport struct {
 	// Nothing branches on it.
 	Detail string
 
-	// Comment is the comment to edit, and zero means none exists yet. It is the
-	// whole of "post once, edit in place": a run that has posted carries the ID
-	// forward, and a run that has not cannot accidentally edit another's.
+	// Comment is the comment to edit, and zero means this step has none yet. It
+	// is per step, not per run: a stage's comment is posted when the stage
+	// starts and edited when it ends, and no step can edit another's.
 	Comment CommentID
 }
+
+// StepState is how far one status step has got.
+type StepState string
+
+const (
+	// StepRunning is a step that has started and not finished.
+	StepRunning StepState = "running"
+	// StepSucceeded is a step that finished cleanly.
+	StepSucceeded StepState = "succeeded"
+	// StepFailed is a step that did not.
+	StepFailed StepState = "failed"
+)
 
 // RunState is what a lookup of a ticket's workflow found.
 //
