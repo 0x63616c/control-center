@@ -3,9 +3,21 @@
 The one manual credential step in the software-factory. Everything here is staged
 except the value itself, which only you can supply.
 
-**Prerequisite:** the deploy chain (#366 → #368 → #369) is merged and
-`software-factory` actually has a Deployment. Before that lands the namespace is
-empty (`No resources found`) and there is nothing for the Secret to serve.
+**Use `scripts/seed-codex-auth.sh`.** It does exactly what §1 below does, in the
+same order, with the same guards (never `--from-literal`, never a dry-run|apply
+pipe, wait for the old pod to actually go before replacing the Secret). §1 is
+kept as the manual fallback and as the explanation of what the script does and
+why, not as the primary path.
+
+```sh
+scripts/seed-codex-auth.sh --check          # report state, change nothing
+scripts/seed-codex-auth.sh                  # seed from ~/.codex/auth.json (first seed)
+scripts/seed-codex-auth.sh --replace        # re-seed over an existing Secret
+scripts/seed-codex-auth.sh --replace -      # re-seed from stdin instead of a file
+```
+
+`software-factory` has a running Deployment as of PR #369 (merged 2026-07-29), so
+this is no longer blocked on anything landing.
 
 > This runbook is deliberately a separate file from
 > `docs/runbooks/software-factory-first-run.md` (#345) — that one covers the first
@@ -19,22 +31,13 @@ empty (`No resources found`) and there is nothing for the Secret to serve.
 Every name below is read off the code that consumes it, not off memory. If you
 change one, change it in the file cited beside it.
 
-**Read the `infra/` rows on `origin/sf/e2-f1`, not on `main`.** That branch is the
-one that defines them and it has not merged: on `main`,
-`infra/src/software-factory.ts` defines the namespace alone —
-`CODEX_AUTH_SECRET_NAME`, `WORKER_SERVICE_ACCOUNT` and the `resourceNames` pin are
-not there at all.
-
-**Constant names, no line numbers, deliberately.** Earlier revisions of this table
-cited `sf/e2-f1` by line and the numbers went stale twice in a single day — both
-times without the branch merging, and both times with every *value* unchanged. A
-line number on an unmerged branch is a coordinate into something still being
-written. The names are stable, greppable, and already the thing that matters:
+**All of it is on `main` now.** `sf/e2-f1` merged as PR #369 (2026-07-29); the
+rows below and their line numbers still are not cited, on the same reasoning —
+names are stable and greppable, line numbers on a fast-moving file are not:
 
 ```sh
-git fetch origin sf/e2-f1
 git grep -n 'CODEX_AUTH_SECRET_NAME\|WORKER_SERVICE_ACCOUNT\|SOFTWARE_FACTORY_NAMESPACE' \
-  origin/sf/e2-f1 -- infra/src/software-factory.ts
+  -- infra/src/software-factory.ts
 ```
 
 The first three hits are the `const` lines; their string literals are the Value
@@ -43,11 +46,11 @@ wins — it is what the Role and the worker both read.
 
 | What | Value | Defined as | In |
 |---|---|---|---|
-| Namespace | `software-factory` | `SOFTWARE_FACTORY_NAMESPACE` | `infra/src/software-factory.ts` (also on `main`) |
-| Secret name | `codex-auth` | `CODEX_AUTH_SECRET_NAME` | `infra/src/software-factory.ts` (`sf/e2-f1` only) |
-| Deployment | `software-factory-worker` | `WORKER_SERVICE_ACCOUNT`, reused as the Deployment's `metadata.name` | `infra/src/software-factory.ts` (`sf/e2-f1` only) |
-| Pod label | `app=software-factory-worker` | `workerLabels` | `infra/src/software-factory.ts` (`sf/e2-f1` only) — what §1's wait selects on |
-| Credential key | `auth.json` | `CredentialKey` | `apps/software-factory/internal/clients/codexauth/state.go` (on `main`) |
+| Namespace | `software-factory` | `SOFTWARE_FACTORY_NAMESPACE` | `infra/src/software-factory.ts` |
+| Secret name | `codex-auth` | `CODEX_AUTH_SECRET_NAME` | `infra/src/software-factory.ts` |
+| Deployment | `software-factory-worker` | `WORKER_SERVICE_ACCOUNT`, reused as the Deployment's `metadata.name` | `infra/src/software-factory.ts` |
+| Pod label | `app=software-factory-worker` | `workerLabels` | `infra/src/software-factory.ts` — what §1's wait selects on |
+| Credential key | `auth.json` | `CredentialKey` | `apps/software-factory/internal/clients/codexauth/state.go` |
 | Lease key | `refresh_state.json` | `StateKey` | same file — **the seed must NOT write this** |
 
 The Secret name is load-bearing twice over: the worker's Role pins `secrets`
@@ -75,6 +78,10 @@ validates the operator's typing. §3 says what that looks like.
 ---
 
 ## 1. Seed it
+
+This is what `scripts/seed-codex-auth.sh` does. Read this section to understand
+it, or to do it by hand if the script is unavailable; run the script if you
+just want it done.
 
 The credential comes from `codex login` on your Mac, which writes
 `~/.codex/auth.json`. Confirm it exists — **do not open it**:
@@ -109,9 +116,11 @@ kubectl -n software-factory create secret generic codex-auth \
 kubectl -n software-factory scale deploy/software-factory-worker --replicas=1
 ```
 
-On a **first** seed you can skip both `scale` commands — there is nothing running
-yet — and the wait is harmless either way: with no matching pod it exits 0
-immediately (checked against this cluster's empty namespace, 0.2s). The 180s
+On a **first** seed (nothing running yet — the namespace now has a running
+Deployment as of #369, so this applies to a fresh cluster, not this one) you can
+skip both `scale` commands, and the wait is harmless either way: with no
+matching pod it exits 0 immediately (checked against an empty namespace, 0.2s).
+The 180s
 timeout is deliberately above the 120s grace period, so a worker that takes the
 full grace to drain still finishes inside it. If the wait ever times out, **stop**:
 something is holding the pod open, and everything below assumes it is gone.
