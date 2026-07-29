@@ -30,6 +30,10 @@ import (
 // fact is why the seam is a compare-and-swap rather than a plain write — a
 // stale write silently applied over a concurrent rotation does not lose an
 // update, it kills the credential.
+//
+// None of that is expressible in Go's type system, so it is a test instead:
+// codexauthtest.RunSecretStoreContract holds every implementation to it, and a
+// new one is expected to run it rather than to reread this comment.
 type SecretStore interface {
 	// Get returns every key of the Secret together with the version of the
 	// object they were read from, which is the precondition a write derived
@@ -46,11 +50,15 @@ type SecretStore interface {
 	// makes a write a lease, and writing the lease marker and the rotated
 	// credential together is what puts them at one linearization point; split
 	// across two writes the lease is not a lease. Keys absent from values are
-	// left alone.
+	// left alone; a key can be blanked but never removed, which is why the
+	// lease marker is a state this package can read as "no attempt in flight"
+	// rather than a key whose absence means the same thing.
 	//
 	// It returns an error satisfying errors.Is(err, work.ErrVersionConflict)
-	// when, and only when, the precondition no longer holds, and refuses a zero
-	// precondition outright — an overwrite with no precondition has to be asked
-	// for by name.
+	// when, and only when, the precondition no longer holds, and one satisfying
+	// errors.Is(err, work.ErrNoPrecondition) when the precondition names none —
+	// a distinct sentinel because contention is worth retrying and a forgotten
+	// version never is. An overwrite with no precondition has to be asked for
+	// by name, with work.Unconditional.
 	Put(ctx context.Context, values map[string][]byte, precondition work.SecretVersion) (work.SecretVersion, error)
 }
