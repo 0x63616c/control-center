@@ -21,9 +21,13 @@ const (
 	// jwtLifetime is GitHub's hard maximum for an App JWT.
 	jwtLifetime = 10 * time.Minute
 
-	// jwtBackdate keeps iat behind GitHub's clock. GitHub rejects a JWT issued
-	// in its future, and pod clock skew is real.
-	jwtBackdate = 60 * time.Second
+	// jwtClockSkew pulls both ends of the JWT's window inward. GitHub validates
+	// iat and exp against ITS clock, not ours, and pod clock skew is real: a
+	// local clock running fast issues a JWT that GitHub reads as issued in its
+	// future or as expiring past its ceiling. Either is a 401 that arrives
+	// intermittently and reads as random. GitHub's own documentation backdates
+	// iat for exactly this reason; exp earns the same margin.
+	jwtClockSkew = 60 * time.Second
 )
 
 // appAuth holds the App's identity and the installation token minted from it.
@@ -34,7 +38,6 @@ const (
 type appAuth struct {
 	appID          int64
 	installationID int64
-	repo           string
 	key            *rsa.PrivateKey
 	clk            clock.Clock
 	log            *slog.Logger
@@ -65,8 +68,8 @@ func (a *appAuth) mintJWT() (string, error) {
 	now := a.clk.Now()
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.RegisteredClaims{
 		Issuer:    strconv.FormatInt(a.appID, 10),
-		IssuedAt:  jwt.NewNumericDate(now.Add(-jwtBackdate)),
-		ExpiresAt: jwt.NewNumericDate(now.Add(jwtLifetime)),
+		IssuedAt:  jwt.NewNumericDate(now.Add(-jwtClockSkew)),
+		ExpiresAt: jwt.NewNumericDate(now.Add(jwtLifetime - jwtClockSkew)),
 	})
 	signed, err := token.SignedString(a.key)
 	if err != nil {

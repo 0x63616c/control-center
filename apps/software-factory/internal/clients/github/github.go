@@ -132,7 +132,6 @@ func New(cfg config.GitHub, clk clock.Clock, log *slog.Logger, opts ...Option) (
 	auth := &appAuth{
 		appID:          cfg.AppID,
 		installationID: cfg.InstallationID,
-		repo:           cfg.Repo,
 		key:            key,
 		clk:            clk,
 		log:            log,
@@ -255,11 +254,6 @@ func (c *Client) TicketDetail(ctx context.Context, number int) (work.TicketDetai
 
 // threadOf reads every comment on an issue, oldest first, minus this service's
 // own status comments.
-//
-// Those are filtered two ways, because either alone has a hole: by author,
-// which catches anything the bot wrote, and by the status marker, which still
-// catches our own comments on the run where the App's identity could not be
-// resolved.
 func (c *Client) threadOf(ctx context.Context, op string, number int) ([]work.TicketComment, error) {
 	botLogin, err := c.botLogin(ctx)
 	if err != nil {
@@ -280,10 +274,7 @@ func (c *Client) threadOf(ctx context.Context, op string, number int) ([]work.Ti
 		}
 		for _, comment := range comments {
 			author := comment.GetUser().GetLogin()
-			if _, isStatus := work.StatusMarkerIn(comment.GetBody()); isStatus {
-				continue
-			}
-			if botLogin != "" && author == botLogin {
+			if isOwnStatus(botLogin, author, comment.GetBody()) {
 				continue
 			}
 			thread = append(thread, work.TicketComment{Author: author, Body: comment.GetBody()})
@@ -293,6 +284,23 @@ func (c *Client) threadOf(ctx context.Context, op string, number int) ([]work.Ti
 		}
 		opts.Page = resp.NextPage
 	}
+}
+
+// isOwnStatus reports whether a comment is one of this run's status updates,
+// which a planner handed the thread unfiltered would read back as requirements.
+//
+// Authorship decides. The status marker is the fallback for the run where the
+// App's identity could not be resolved, and only then: issue text is
+// attacker-controllable, so a marker match applied to everyone's comments would
+// be a way for a commenter to hide their own text from the stage about to act
+// on the ticket. Losing a stranger's marker-carrying comment while we are blind
+// to our own name is the smaller failure, and the narrower one.
+func isOwnStatus(botLogin, author, body string) bool {
+	if botLogin != "" {
+		return author == botLogin
+	}
+	_, isStatus := work.StatusMarkerIn(body)
+	return isStatus
 }
 
 // trimThread keeps a long thread's ends and reports how much of its middle it

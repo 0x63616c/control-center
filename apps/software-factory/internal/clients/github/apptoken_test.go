@@ -26,7 +26,7 @@ func listIssues(s *stub) {
 	})
 }
 
-func TestMintsAnAppJWTWithTheIssuerBackdatedIssuedAtAndTenMinuteExpiryGitHubRequires(t *testing.T) {
+func TestMintsAnAppJWTWithTheIssuerAndAWindowHeldOffGitHubsLimitsAtBothEnds(t *testing.T) {
 	t.Parallel()
 
 	s, clk := newStub(t)
@@ -53,13 +53,20 @@ func TestMintsAnAppJWTWithTheIssuerBackdatedIssuedAtAndTenMinuteExpiryGitHubRequ
 	if want := fmt.Sprint(testAppID); claims.Issuer != want {
 		t.Errorf("app jwt iss = %q, want the app id %q", claims.Issuer, want)
 	}
-	// GitHub rejects a jwt whose iat is in ITS future, and pod clock skew is
-	// real, so the claim is deliberately backdated.
+	// Both ends are pulled a minute inward, because GitHub validates them
+	// against ITS clock and pod clock skew is real. Pinned as literals rather
+	// than as the constants they come from: a test that restates the code
+	// cannot catch the code changing.
 	if want := clk.Now().Add(-60 * time.Second); !claims.IssuedAt.Equal(want) {
-		t.Errorf("app jwt iat = %s, want %s", claims.IssuedAt, want)
+		t.Errorf("app jwt iat = %s, want %s — backdated, or github reads it as issued in its future",
+			claims.IssuedAt, want)
 	}
-	if want := clk.Now().Add(10 * time.Minute); !claims.ExpiresAt.Equal(want) {
-		t.Errorf("app jwt exp = %s, want %s (github's hard maximum)", claims.ExpiresAt, want)
+	if want := clk.Now().Add(9 * time.Minute); !claims.ExpiresAt.Equal(want) {
+		t.Errorf("app jwt exp = %s, want %s — a minute inside github's ten-minute ceiling, or a fast local clock 401s",
+			claims.ExpiresAt, want)
+	}
+	if got := claims.ExpiresAt.Sub(claims.IssuedAt.Time); got > 10*time.Minute {
+		t.Errorf("app jwt exp - iat = %s, want no more than github's maximum of 10m", got)
 	}
 }
 
