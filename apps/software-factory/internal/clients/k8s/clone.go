@@ -185,6 +185,50 @@ func (s *Sandboxes) writeCredentials(ctx context.Context, sandbox work.SandboxID
 	if err := s.Write(ctx, sandbox, credentialsPath, []byte(credentialLine(credential)), credentialFileMode); err != nil {
 		return fmt.Errorf("writing the sandbox's git credential file: %w", err)
 	}
+	return s.writeGhCredentials(ctx, sandbox, credential)
+}
+
+// ghHostsFile is the gh CLI's own credential file, holding the same
+// installation token the git credential file above carries.
+//
+// The duplication is gh's, not ours: it reads GH_TOKEN or this file and never
+// git's credential store, so a token that only exists in git's format is a
+// token gh cannot see. `propose` opens the pull request with gh (#414), so it
+// has to be in both.
+//
+// Written as a file rather than set as GH_TOKEN in the pod's environment,
+// deliberately. A pod's environment is in its spec, readable by anything with
+// pod-read in the namespace and carried in whatever created it; a file streamed
+// in by Write exists only in this call's memory and on the pod's own
+// filesystem, which is the property the git credential file was given for the
+// same reason.
+//
+// What this does NOT do is keep the token from the model: the sandbox is one
+// container running as one uid, and the stage runs as that uid, so both
+// credential files are readable by the agent. That is #416, and it is a known,
+// accepted gap rather than an oversight of this function.
+//
+// The token also expires an hour after it is minted while a run may last six,
+// and nothing rewrites either file mid-run — #417.
+func ghHostsFile(credential work.Credential) string {
+	// gh's own on-disk shape. Two spaces of indentation and no `user` key: gh
+	// resolves the login itself when it needs one, and an installation token
+	// has no user to name — x-access-token is git's basic-auth placeholder, not
+	// a GitHub account, so writing it here would record a login that does not
+	// exist.
+	return "github.com:\n" +
+		"  oauth_token: " + credential.Reveal() + "\n" +
+		"  git_protocol: https\n"
+}
+
+// writeGhCredentials puts the gh CLI's hosts.yml into the sandbox.
+//
+// Same transport and same mode as the git credential file: streamed as a tar
+// body by Write, never an exec argument, never a log line.
+func (s *Sandboxes) writeGhCredentials(ctx context.Context, sandbox work.SandboxID, credential work.Credential) error {
+	if err := s.Write(ctx, sandbox, work.GhHostsFile, []byte(ghHostsFile(credential)), credentialFileMode); err != nil {
+		return fmt.Errorf("writing the sandbox's gh credential file: %w", err)
+	}
 	return nil
 }
 
