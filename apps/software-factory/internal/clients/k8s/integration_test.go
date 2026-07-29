@@ -123,7 +123,7 @@ func TestSandboxRoundTripAgainstACluster(t *testing.T) {
 		}
 		// The mode survived extraction, and the parents are traversable.
 		var out bytes.Buffer
-		code, err := s.Exec(ctx, sandbox, []string{"stat", "-c", "%a", secretPath}, &out, os.Stderr)
+		code, err := s.Exec(ctx, sandbox, []string{"stat", "-c", "%a", secretPath}, nil, &out, os.Stderr)
 		if err != nil || code != 0 {
 			t.Fatalf("stat: code %d, err %v", code, err)
 		}
@@ -144,7 +144,7 @@ func TestSandboxRoundTripAgainstACluster(t *testing.T) {
 		// apiserver shows whether the error stream's metav1.Status becomes a
 		// CodeExitError. argv-only, so no shell is needed to produce the code:
 		// the sandbox image ships none, deliberately.
-		code, err := s.Exec(ctx, sandbox, []string{"test", "-e", "/definitely/not/here"}, os.Stderr, os.Stderr)
+		code, err := s.Exec(ctx, sandbox, []string{"test", "-e", "/definitely/not/here"}, nil, os.Stderr, os.Stderr)
 		if err != nil {
 			t.Fatalf("Exec: %v", err)
 		}
@@ -154,7 +154,7 @@ func TestSandboxRoundTripAgainstACluster(t *testing.T) {
 	})
 
 	t.Run("reports a missing binary as exit 127", func(t *testing.T) {
-		code, err := s.Exec(ctx, sandbox, []string{"definitely-not-a-command"}, os.Stderr, os.Stderr)
+		code, err := s.Exec(ctx, sandbox, []string{"definitely-not-a-command"}, nil, os.Stderr, os.Stderr)
 		if err != nil {
 			t.Fatalf("Exec: %v", err)
 		}
@@ -167,7 +167,7 @@ func TestSandboxRoundTripAgainstACluster(t *testing.T) {
 		runCtx, stop := context.WithCancel(ctx)
 		done := make(chan error, 1)
 		go func() {
-			_, err := s.Exec(runCtx, sandbox, []string{"sleep", "600"}, os.Stderr, os.Stderr)
+			_, err := s.Exec(runCtx, sandbox, []string{"sleep", "600"}, nil, os.Stderr, os.Stderr)
 			done <- err
 		}()
 		time.Sleep(2 * time.Second)
@@ -179,7 +179,7 @@ func TestSandboxRoundTripAgainstACluster(t *testing.T) {
 		// The assertion that matters: no sleep survives. This covers both
 		// layers — the CRI killing on disconnect, and the shim's --kill.
 		var out bytes.Buffer
-		if _, err := s.Exec(ctx, sandbox, []string{"pgrep", "-c", "sleep"}, &out, os.Stderr); err != nil {
+		if _, err := s.Exec(ctx, sandbox, []string{"pgrep", "-c", "sleep"}, nil, &out, os.Stderr); err != nil {
 			t.Fatalf("pgrep: %v", err)
 		}
 		if n := strings.TrimSpace(out.String()); n != "" && n != "0" {

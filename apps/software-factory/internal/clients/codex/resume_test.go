@@ -13,10 +13,9 @@ type scriptedProbe struct {
 	resultErr   error
 	resultCalls int
 
-	pid      int
-	alive    bool
-	pidErr   error
-	pidCalls int
+	alive      bool
+	aliveErr   error
+	aliveCalls int
 }
 
 func (p *scriptedProbe) ResultExists(context.Context) (bool, error) {
@@ -31,12 +30,12 @@ func (p *scriptedProbe) ResultExists(context.Context) (bool, error) {
 	return p.results[i], nil
 }
 
-func (p *scriptedProbe) LivePID(context.Context) (int, bool, error) {
-	p.pidCalls++
-	if p.pidErr != nil {
-		return 0, false, p.pidErr
+func (p *scriptedProbe) AttemptRunning(context.Context) (bool, error) {
+	p.aliveCalls++
+	if p.aliveErr != nil {
+		return false, p.aliveErr
 	}
-	return p.pid, p.alive, nil
+	return p.alive, nil
 }
 
 func TestDecide(t *testing.T) {
@@ -53,18 +52,18 @@ func TestDecide(t *testing.T) {
 			want:  ResumeDone,
 		},
 		{
-			name:  "reports run when no attempt has started",
-			probe: &scriptedProbe{results: []bool{false}, pid: 0},
+			name:  "reports run when no attempt is running",
+			probe: &scriptedProbe{results: []bool{false}},
 			want:  ResumeRun,
 		},
 		{
 			name:  "reports attach when an attempt is still running",
-			probe: &scriptedProbe{results: []bool{false}, pid: 4242, alive: true},
+			probe: &scriptedProbe{results: []bool{false}, alive: true},
 			want:  ResumeAttach,
 		},
 		{
 			name:  "reports run when an attempt died without producing a result",
-			probe: &scriptedProbe{results: []bool{false, false}, pid: 4242},
+			probe: &scriptedProbe{results: []bool{false, false}},
 			want:  ResumeRun,
 		},
 		{
@@ -72,7 +71,7 @@ func TestDecide(t *testing.T) {
 			// check and the liveness check. Without the second look this reads
 			// as a dead attempt and pays for a full re-run.
 			name:  "reports done when an attempt finished during the liveness check",
-			probe: &scriptedProbe{results: []bool{false, true}, pid: 4242},
+			probe: &scriptedProbe{results: []bool{false, true}},
 			want:  ResumeDone,
 		},
 	}
@@ -98,8 +97,8 @@ func TestDecideSkipsTheLivenessCheckOnceAResultExists(t *testing.T) {
 	if _, err := Decide(context.Background(), probe); err != nil {
 		t.Fatalf("Decide returned an unexpected error: %v", err)
 	}
-	if probe.pidCalls != 0 {
-		t.Errorf("looked for a running process %d times; a completed stage must not be probed further", probe.pidCalls)
+	if probe.aliveCalls != 0 {
+		t.Errorf("looked for a running process %d times; a completed stage must not be probed further", probe.aliveCalls)
 	}
 }
 
@@ -118,7 +117,7 @@ func TestDecideFailsRatherThanGuessingWhenTheSandboxCannotBeRead(t *testing.T) {
 
 	t.Run("while checking for a running process", func(t *testing.T) {
 		t.Parallel()
-		probe := &scriptedProbe{results: []bool{false}, pidErr: sentinel}
+		probe := &scriptedProbe{results: []bool{false}, aliveErr: sentinel}
 		if _, err := Decide(context.Background(), probe); !errors.Is(err, sentinel) {
 			t.Errorf("Decide error = %v, want it to wrap %v", err, sentinel)
 		}

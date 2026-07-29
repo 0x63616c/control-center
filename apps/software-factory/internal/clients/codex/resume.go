@@ -46,9 +46,16 @@ type StageProbe interface {
 	// presence is the completion record.
 	ResultExists(ctx context.Context) (bool, error)
 
-	// LivePID returns the process ID a previous attempt recorded and whether
-	// that process is still running. A zero PID means no attempt recorded one.
-	LivePID(ctx context.Context) (int, bool, error)
+	// AttemptRunning reports whether a codex started by a previous attempt is
+	// still running in the sandbox.
+	//
+	// It answers with a bool and not a PID. Nothing records a PID any more —
+	// the implementation asks the process table — so a number here would be an
+	// artefact of parsing whatever the probe printed, and a caller comparing it
+	// to zero would be reading the parse rather than the answer. That is
+	// exactly the bug this seam used to have: an unparseable line read as "no
+	// attempt is running" and started a second codex against a live one.
+	AttemptRunning(ctx context.Context) (bool, error)
 }
 
 // Decide reports what to do about a stage attempt.
@@ -71,20 +78,17 @@ func Decide(ctx context.Context, probe StageProbe) (Resumption, error) {
 		return ResumeDone, nil
 	}
 
-	pid, alive, err := probe.LivePID(ctx)
+	alive, err := probe.AttemptRunning(ctx)
 	if err != nil {
 		return ResumeRun, fmt.Errorf("checking for a running attempt: %w", err)
-	}
-	if pid == 0 {
-		return ResumeRun, nil
 	}
 	if alive {
 		return ResumeAttach, nil
 	}
 
-	// The recorded process is gone and had written no result when we looked.
-	// It may have finished in the window between those two observations, so
-	// look once more before paying for a full re-run.
+	// Nothing is running and nothing had written a result when we looked. An
+	// attempt may have finished in the window between those two observations,
+	// so look once more before paying for a full re-run.
 	done, err = probe.ResultExists(ctx)
 	if err != nil {
 		return ResumeRun, fmt.Errorf("re-checking for a result after finding a dead attempt: %w", err)
