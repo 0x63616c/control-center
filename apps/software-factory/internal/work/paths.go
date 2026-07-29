@@ -3,6 +3,7 @@ package work
 import (
 	"fmt"
 	"path"
+	"strings"
 )
 
 // SandboxRoot is where a stage's working files live inside the sandbox.
@@ -50,6 +51,39 @@ func (k StageKey) String() string {
 // costs a drain rather than a deploy.
 func WorkflowID(ticketNumber int) string {
 	return fmt.Sprintf("work-ticket-%d", ticketNumber)
+}
+
+// statusMarkerPrefix opens every status marker. It carries a version so the
+// grammar can change without a new run adopting an old run's comment by
+// accident.
+const statusMarkerPrefix = "<!-- software-factory:status v1 run="
+
+// StatusMarker is the first line of a run's status comment, and the only thing
+// that identifies the comment as that run's.
+//
+// Nothing else may construct this string — a second spelling would be a second
+// comment. It lives here rather than beside either the renderer that emits it
+// or the client that matches it, because those are two packages and this is one
+// fact; whichever of them owned it, the other would hold a copy.
+//
+// It is an HTML comment so it renders as nothing, and it carries the RunID so a
+// previous run's status comment never matches and stays on the issue as
+// history.
+func StatusMarker(runID string) string {
+	return statusMarkerPrefix + runID + " -->"
+}
+
+// StatusMarkerIn returns the marker line of a rendered status body.
+//
+// Only the first line counts. A human quoting a status comment reproduces its
+// marker further down, and matching that would let a run adopt a comment it did
+// not write.
+func StatusMarkerIn(body string) (string, bool) {
+	line, _, _ := strings.Cut(body, "\n")
+	if !strings.HasPrefix(line, statusMarkerPrefix) || !strings.HasSuffix(line, " -->") {
+		return "", false
+	}
+	return line, true
 }
 
 // StagePaths are the files one stage attempt reads and writes in the sandbox.

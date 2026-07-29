@@ -140,6 +140,46 @@ type Ticket struct {
 	Body   string
 }
 
+// TicketComment is one comment on a ticket's thread.
+//
+// Author and Body are attacker-controllable for exactly the reason Ticket's
+// are, and one step further: anyone who can comment on an issue chooses Body,
+// and no membership is required to comment on a public repository's issue. It
+// carries the same prohibition — never a shell, a command argument, a
+// Kubernetes object or a filesystem path.
+type TicketComment struct {
+	// Author is the commenter's GitHub login. It is here so a reader — human or
+	// model — can weigh who said something, not so anything can authorise on it.
+	Author string
+	Body   string
+}
+
+// TicketDetail is a ticket together with the discussion on it: what the ticket
+// asks for, plus the corrections and clarifications that arrived afterwards.
+//
+// It is a separate type from Ticket rather than more fields on it, because the
+// two are read at different prices and by different callers. Listing eligible
+// tickets is a poll that runs every few seconds and needs one request per page;
+// a thread costs its own paged read per ticket. Folding them together would
+// make the poll either pay for threads nobody asked for, or hand back a Ticket
+// whose empty Comments means "none" and "not fetched" at once.
+//
+// The run's own status comment is not in Comments. It is edited in place all
+// run, and a planner handed it reads our progress updates back as requirements.
+type TicketDetail struct {
+	Ticket
+
+	// Comments is the thread in the order it was written, oldest first.
+	Comments []TicketComment
+
+	// CommentsOmitted counts the comments dropped from the middle of a thread
+	// too long to carry. It is a field rather than a silent truncation so a
+	// caller rendering this into a prompt can say the thread was trimmed —
+	// which is the difference between a model knowing it lacks context and a
+	// model believing it has all of it.
+	CommentsOmitted int
+}
+
 // SandboxID identifies one ticket's disposable pod.
 type SandboxID string
 
