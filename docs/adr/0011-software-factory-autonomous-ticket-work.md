@@ -77,9 +77,16 @@ deliberately excludes. Machine state belongs in Temporal, which can be queried; 
 carries a status **comment** instead, which is chronological and more informative than a
 label.
 
-That comment is posted once per run and **edited in place** as the run progresses: picked
-up (with a link to the Temporal run), stage transitions, then outcome and token totals. One
-live status block per run rather than five comments of spam.
+A run **appends** one comment per step: picked up (with a link to the Temporal run), one per
+stage — posted when the stage starts, edited in place when it ends — then outcome and token
+totals. One comment per `(run, stage)`, not per attempt, so a retried stage edits its own
+comment rather than appending a second.
+
+Decided 2026-07-28, replacing an earlier single comment edited in place for the whole run:
+the ticket's timeline is then the audit trail, and the cost — a five-stage run leaving seven
+comments — was named and accepted. The rendering and its golden files are `internal/status`;
+the marker identifying one comment is `work.StatusMarker`, which is why it carries the step
+and not only the run.
 
 ## Sandboxes are plain Pods
 

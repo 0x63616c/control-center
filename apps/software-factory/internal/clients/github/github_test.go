@@ -215,7 +215,7 @@ func TestPostsTheRunsStatusCommentAndReturnsItsID(t *testing.T) {
 	})
 	c, _ := s.client(t)
 
-	body := work.StatusMarker("run-a") + "\n### software factory — implementing"
+	body := work.StatusMarker("run-a", work.StepPickup) + "\n### software factory — implementing"
 	got, err := c.PostStatus(context.Background(), testIssue, body)
 	if err != nil {
 		t.Fatalf("PostStatus returned an unexpected error: %v", err)
@@ -235,7 +235,7 @@ func TestPostsTheRunsStatusCommentAndReturnsItsID(t *testing.T) {
 func TestAdoptsItsOwnEarlierStatusCommentInsteadOfPostingASecondOne(t *testing.T) {
 	t.Parallel()
 
-	marker := work.StatusMarker("run-a")
+	marker := work.StatusMarker("run-a", work.StepPickup)
 	s, _ := newStub(t)
 	s.handle("GET "+commentsPath, func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, []any{comment(999, testBotLogin, marker+"\nearlier")})
@@ -259,14 +259,14 @@ func TestPostsANewCommentWhenOnlyAnEarlierRunsStatusCommentIsPresent(t *testing.
 
 	s, _ := newStub(t)
 	s.handle("GET "+commentsPath, func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, []any{comment(111, testBotLogin, work.StatusMarker("older-run")+"\nhistory")})
+		writeJSON(w, http.StatusOK, []any{comment(111, testBotLogin, work.StatusMarker("older-run", work.StepPickup)+"\nhistory")})
 	})
 	s.handle("POST "+commentsPath, func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusCreated, comment(999, testBotLogin, "posted"))
 	})
 	c, _ := s.client(t)
 
-	got, err := c.PostStatus(context.Background(), testIssue, work.StatusMarker("run-a")+"\nnew")
+	got, err := c.PostStatus(context.Background(), testIssue, work.StatusMarker("run-a", work.StepPickup)+"\nnew")
 	if err != nil {
 		t.Fatalf("PostStatus returned an unexpected error: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestPostsANewCommentWhenOnlyAnEarlierRunsStatusCommentIsPresent(t *testing.
 func TestDoesNotAdoptAMarkerCommentWrittenBySomeoneElse(t *testing.T) {
 	t.Parallel()
 
-	marker := work.StatusMarker("run-a")
+	marker := work.StatusMarker("run-a", work.StepPickup)
 	s, _ := newStub(t)
 	s.handle("GET "+commentsPath, func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, []any{comment(111, "some-human", marker+"\nlook what I can do")})
@@ -303,7 +303,7 @@ func TestDoesNotAdoptAMarkerCommentWrittenBySomeoneElse(t *testing.T) {
 func TestPagesTheCommentListToFindItsOwnStatusComment(t *testing.T) {
 	t.Parallel()
 
-	marker := work.StatusMarker("run-a")
+	marker := work.StatusMarker("run-a", work.StepPickup)
 	s, _ := newStub(t)
 	s.handle("GET "+commentsPath, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("page") == "2" {
@@ -330,7 +330,7 @@ func TestPagesTheCommentListToFindItsOwnStatusComment(t *testing.T) {
 func TestPostsRatherThanAdoptingWhenTheBotIdentityCannotBeResolved(t *testing.T) {
 	t.Parallel()
 
-	marker := work.StatusMarker("run-a")
+	marker := work.StatusMarker("run-a", work.StepPickup)
 	s, _ := newStub(t)
 	s.appGet = func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusInternalServerError, "server error")
@@ -358,7 +358,7 @@ func TestPostsRatherThanAdoptingWhenTheBotIdentityCannotBeResolved(t *testing.T)
 func TestResolvesTheBotIdentityOncePerClient(t *testing.T) {
 	t.Parallel()
 
-	marker := work.StatusMarker("run-a")
+	marker := work.StatusMarker("run-a", work.StepPickup)
 	s, _ := newStub(t)
 	s.handle("GET "+commentsPath, func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, []any{})
@@ -398,7 +398,7 @@ func TestPostsWithoutListingWhenTheBodyCarriesNoMarker(t *testing.T) {
 func TestTruncatesAnOversizedStatusBody(t *testing.T) {
 	t.Parallel()
 
-	oversized := work.StatusMarker("run-a") + "\n" + strings.Repeat("x", 200_000)
+	oversized := work.StatusMarker("run-a", work.StepPickup) + "\n" + strings.Repeat("x", 200_000)
 
 	t.Run("when posting", func(t *testing.T) {
 		t.Parallel()

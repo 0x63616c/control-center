@@ -56,8 +56,9 @@ type PodLifecycle interface {
 // The methods are narrow on purpose. There is no RemoveLabel(issue, label) —
 // `auto` is the only label this system touches, and a general method would be
 // an invitation to touch others. There is no Comment/EditComment pair either:
-// a run maintains exactly one status comment and edits it in place, so the type
-// says PostStatus and EditStatus and cannot express five comments of spam.
+// a run posts one status comment per step of its own pipeline and edits that
+// step's comment in place, so the type says PostStatus and EditStatus and
+// cannot express arbitrary commenting.
 type GitHub interface {
 	// ListAutoTickets returns the open issues labelled `auto`. The label means
 	// this ticket wants machine work and none has been delivered.
@@ -74,7 +75,8 @@ type GitHub interface {
 	// is about writes.
 	TicketDetail(ctx context.Context, number int) (work.TicketDetail, error)
 
-	// PostStatus opens the run's single status comment.
+	// PostStatus opens one of the run's status comments, or adopts it if this
+	// run already opened it. The body carries the marker that says which.
 	PostStatus(ctx context.Context, issue int, body string) (work.CommentID, error)
 
 	// EditStatus rewrites that comment in place as the run progresses.
