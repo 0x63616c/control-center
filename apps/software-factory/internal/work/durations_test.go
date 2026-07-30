@@ -67,11 +67,43 @@ func TestEveryDurationIsPositive(t *testing.T) {
 		{name: "StageHeartbeatTimeout", d: StageHeartbeatTimeout},
 		{name: "MaxRunDuration", d: MaxRunDuration},
 		{name: "SandboxDeadline", d: SandboxDeadline},
+		{name: "SessionExecutionTimeout", d: SessionExecutionTimeout},
+		{name: "SessionCreationTimeout", d: SessionCreationTimeout},
 	}
 
 	for _, tc := range cases {
 		if tc.d <= 0 {
 			t.Errorf("%s is %s; every constructor here rejects a non-positive duration", tc.name, tc.d)
 		}
+	}
+}
+
+// TestASessionCanOutlastItsRun is D4's inequality: a Session that expires
+// before the run it serves fails every stage after it, while one that
+// outlives the run is merely pointless. The same direction as
+// TestKubernetesNeverKillsAPodTemporalStillBelievesIn, one rung up the ladder.
+func TestASessionCanOutlastItsRun(t *testing.T) {
+	t.Parallel()
+
+	if SessionExecutionTimeout < MaxRunDuration {
+		t.Errorf("SessionExecutionTimeout (%s) is shorter than MaxRunDuration (%s): the session would expire while a run it serves was still legitimately working",
+			SessionExecutionTimeout, MaxRunDuration)
+	}
+}
+
+// TestSessionCreationTimeoutMatchesWhatWaitSandboxReadyAlreadyBounds pins D4's
+// derivation rather than its number: with no warm pool (D1), CreateSession's
+// wait for a pod to claim its session is the same wait WaitSandboxReady
+// already performs under controlOptions() today, so this must equal
+// ControlTimeout*ControlAttempts and not a second literal that could quietly
+// stop agreeing with it.
+func TestSessionCreationTimeoutMatchesWhatWaitSandboxReadyAlreadyBounds(t *testing.T) {
+	t.Parallel()
+
+	policy := DefaultRunPolicy()
+	want := policy.ControlTimeout * time.Duration(policy.ControlAttempts)
+	if SessionCreationTimeout != want {
+		t.Errorf("SessionCreationTimeout = %s, want %s (DefaultRunPolicy's ControlTimeout*ControlAttempts, the same bound WaitSandboxReady is already held to)",
+			SessionCreationTimeout, want)
 	}
 }

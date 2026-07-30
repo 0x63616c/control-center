@@ -54,3 +54,45 @@ const (
 	// wrong twice.
 	SandboxDeadlineSeconds = int64(SandboxDeadline / time.Second)
 )
+
+// Step 3 (D1/D4 in the addendum to the sandbox-as-worker spec, #434) adds two
+// more deadlines to the same ladder: workflow.SessionOptions.ExecutionTimeout
+// and .CreationTimeout, for the Session the WorkTicket workflow holds open
+// across a run's sandbox pod. Both are var, not const, because the second is
+// derived from DefaultRunPolicy() rather than written as a literal — see its
+// own comment — and a const cannot call a function. Neither is configurable
+// for the same reason nothing else on this ladder is.
+var (
+	// SessionExecutionTimeout is workflow.SessionOptions.ExecutionTimeout: how
+	// long the Session covering one ticket's run may stay open.
+	//
+	// At or above MaxRunDuration, the same direction durations_test.go already
+	// checks for SandboxDeadline against MaxRunDuration: a session that expires
+	// before the run it serves fails every stage after it, while one that
+	// outlives the run is merely pointless rather than actively wrong. Set
+	// equal to MaxRunDuration rather than padded further above it — nothing
+	// yet needs headroom beyond the run's own bound, and a second, larger
+	// number would only invite the two to drift apart silently, which is
+	// exactly what this ladder exists to catch instead.
+	SessionExecutionTimeout = MaxRunDuration
+
+	// SessionCreationTimeout is workflow.SessionOptions.CreationTimeout: how
+	// long workflow.CreateSession waits for a sandbox pod's embedded worker to
+	// claim the session-creation task before failing loudly. Verified against
+	// the SDK's own source that this is a real, enforced bound and not merely
+	// documentation (sdk-go@v1.47.0: session creation is a regular activity
+	// with ScheduleToStartTimeout: CreationTimeout, and ScheduleToStartTimeout
+	// is always non-retryable) — so sizing it is meaningful.
+	//
+	// Derived, not guessed: D1 ships no warm pool, so every pod is created
+	// fresh for its own ticket, which makes CreateSession's wait exactly the
+	// same wait WaitSandboxReady already performs today — "pod created until
+	// that pod can do the next thing asked of it" — just observed a
+	// different way (there, an activity polling pod readiness; here, the
+	// pod's own embedded worker polling its task queue). WaitSandboxReady
+	// runs under controlOptions() (workticket.go), so its own existing bound
+	// is DefaultRunPolicy's ControlTimeout retried ControlAttempts times, and
+	// this reuses that bound directly rather than writing a second number
+	// that could disagree with it.
+	SessionCreationTimeout = DefaultRunPolicy().ControlTimeout * time.Duration(DefaultRunPolicy().ControlAttempts)
+)
