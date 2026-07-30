@@ -134,10 +134,10 @@ This ID needs no secrets to derive (the schematic hash is a function of the
 extension list only) and was reproduced by the plain `curl` above, not by
 running `talhelper genconfig` against real cluster secrets. Per
 `talconfig.yaml`'s own comment, this list-vs-ID pair MUST be re-verified by
-`talhelper genconfig` (`scripts/secrets.sh talhelper genconfig`) as part of
-the human-apply procedure before it's trusted for a live `talosctl upgrade` —
-treat this recorded ID as "how we think the render will come out," not the
-apply-time source of truth.
+`talhelper genconfig` (see "Rendering / validating" above for the exact
+invocation) as part of the human-apply procedure before it's trusted for a
+live `talosctl upgrade` — treat this recorded ID as "how we think the render
+will come out," not the apply-time source of truth.
 
 If the extension list in `talconfig.yaml` ever changes, re-render
 (`talhelper genconfig`) and update this ID + the POST output above to match —
@@ -184,10 +184,14 @@ sops --encrypt --in-place talsecret.sops.yaml   # needs no private key, just the
 **Rendering / validating** (needs the private key to decrypt, so always via
 `scripts/secrets.sh`, never a bare `SOPS_AGE_KEY=...` on the command line):
 
+Both scripts live at **repo root**, not under `infra/talos/` — run from repo
+root, or reach `scripts/secrets.sh` with a relative `../../` if you `cd`
+first:
+
 ```bash
 scripts/secrets.sh scripts/test-talos-config.sh
-# or, to inspect the rendered config directly:
-cd infra/talos && scripts/secrets.sh talhelper genconfig
+# or, to inspect the rendered config directly (from repo root):
+(cd infra/talos && ../../scripts/secrets.sh talhelper genconfig)
 ```
 
 Never commit a plaintext `talsecret.yaml` / `talsecret.yml`. The rendered

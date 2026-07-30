@@ -1,9 +1,11 @@
 // `kubernetes-sigs/agent-sandbox` CRDs + controller (program handoff step 1,
 // software-factory migration: /tmp/handoffs/2026-07-29-software-factory-migration-program.md,
-// issue #432). Installs the `Sandbox`, `SandboxTemplate`, `SandboxClaim`, and
-// `SandboxWarmPool` CRDs (`agents.x-k8s.io/v1beta1`) that a later step will
-// use to schedule VM-isolated (`kata` RuntimeClass, infra/src/kata.ts)
-// software-factory agent work. This step installs the CRDs + controller ONLY
+// issue #432). Installs the `Sandbox` CRD (`agents.x-k8s.io/v1beta1`) plus
+// `SandboxTemplate`, `SandboxClaim`, and `SandboxWarmPool` (a separate group,
+// `extensions.agents.x-k8s.io/v1beta1` — confirmed against the pinned v0.5.3
+// manifest) that a later step will use to schedule VM-isolated (`kata`
+// RuntimeClass, infra/src/kata.ts) software-factory agent work. This step
+// installs the CRDs + controller ONLY
 // — no `Sandbox` custom resource is created by Pulumi here; the software
 // factory itself changes nothing in this step. The acceptance-test `Sandbox`
 // this program step uses to prove Kata isolation works is a throwaway applied
