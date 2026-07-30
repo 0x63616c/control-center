@@ -64,6 +64,12 @@ func (r *Renderer) Render(report work.StatusReport) string {
 	}
 }
 
+// RenderDuplicateWorkflowID turns the dispatcher's terminal duplicate-ID
+// decision into the one comment it may post outside a ticket workflow.
+func (r *Renderer) RenderDuplicateWorkflowID(rejection work.DuplicateWorkflowExecution) string {
+	return DuplicateWorkflowIDRejected(rejection).Body()
+}
+
 // renderStage handles the three bodies a stage's own comment can hold.
 func (r *Renderer) renderStage(report work.StatusReport) string {
 	switch report.State {

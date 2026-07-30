@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -34,6 +35,8 @@ type dispatcherHarness struct {
 	autoLabelErr     error
 	listErr          error
 	runs             map[string]work.RunState
+	seedClosedTicket bool
+	childSetsOpen    bool
 	sweepErr         error
 	historyLength    int
 	runFor           time.Duration
@@ -44,6 +47,7 @@ type dispatcherHarness struct {
 	described   []string
 	labelChecks []int
 	sweeps      []activities.SweepInput
+	rejections  []work.DuplicateWorkflowExecution
 }
 
 type delayedCallback struct {
@@ -67,6 +71,7 @@ func newDispatcherHarness(t *testing.T) *dispatcherHarness {
 		tuning:           tuning,
 		runs:             map[string]work.RunState{},
 		autoLabelPresent: map[int]bool{},
+		childSetsOpen:    true,
 		runFor:           90 * time.Second,
 	}
 }
@@ -117,6 +122,13 @@ func (h *dispatcherHarness) run() {
 			return activities.SweepResult{}, h.sweepErr
 		})
 
+	env.OnActivity(acts.RejectDuplicateWorkflowID, mock.Anything, mock.Anything).
+		Return(func(_ context.Context, rejection work.DuplicateWorkflowExecution) error {
+			h.rejections = append(h.rejections, rejection)
+			h.autoLabelPresent[rejection.TicketNumber] = false
+			return nil
+		})
+
 	// Starting a run makes that ticket's workflow open, which is what a
 	// reconcile a moment later will find. The child itself is a stub: this is a
 	// test of the dispatcher, and a real child would free its own slot and hide
@@ -124,7 +136,9 @@ func (h *dispatcherHarness) run() {
 	env.OnWorkflow(workflows.WorkTicket, mock.Anything, mock.Anything).
 		Return(func(_ workflow.Context, in workflows.WorkTicketInput) (workflows.WorkTicketResult, error) {
 			h.started = append(h.started, in.Ticket.Number)
-			h.runs[work.WorkflowID(in.Ticket.Number)] = work.RunState{Open: true, RunID: "child-run"}
+			if h.childSetsOpen {
+				h.runs[work.WorkflowID(in.Ticket.Number)] = work.RunState{Open: true, RunID: "child-run"}
+			}
 			return workflows.WorkTicketResult{Outcome: work.OutcomeProposed}, nil
 		})
 
@@ -138,14 +152,31 @@ func (h *dispatcherHarness) run() {
 		env.RegisterDelayedCallback(env.CancelWorkflow, h.runFor)
 	}
 
-	env.ExecuteWorkflow(workflows.Dispatcher, workflows.DispatcherInput{
+	in := workflows.DispatcherInput{
 		Config:           h.config,
 		Tuning:           h.tuning,
 		Run:              work.DefaultRunPolicy(),
 		InFlight:         h.inFlight,
 		RecentlyFinished: h.recentlyFinished,
 		Breaker:          h.breaker,
-	})
+	}
+	if h.seedClosedTicket {
+		env.ExecuteWorkflow(dispatcherAfterClosedTicket, in)
+		return
+	}
+	env.ExecuteWorkflow(workflows.Dispatcher, in)
+}
+
+// dispatcherAfterClosedTicket leaves a completed child with the stable ticket
+// workflow ID in the test environment before handing control to Dispatcher.
+// The next child start then follows Temporal's real REJECT_DUPLICATE path.
+func dispatcherAfterClosedTicket(ctx workflow.Context, in workflows.DispatcherInput) error {
+	childCtx := workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{WorkflowID: work.WorkflowID(320)})
+	child := workflow.ExecuteChildWorkflow(childCtx, workflows.WorkTicket, workflows.WorkTicketInput{Ticket: work.Ticket{Number: 320}})
+	if err := child.Get(ctx, nil); err != nil {
+		return err
+	}
+	return workflows.Dispatcher(ctx, in)
 }
 
 // status queries the dispatcher the way a human would.
@@ -183,6 +214,28 @@ func tickets(numbers ...int) []work.Ticket {
 		out = append(out, work.Ticket{Number: n, Title: "t", Body: "b"})
 	}
 	return out
+}
+
+func TestDispatcherRejectsAClosedTicketsReusedWorkflowID(t *testing.T) {
+	t.Parallel()
+
+	h := newDispatcherHarness(t)
+	h.seedClosedTicket = true
+	h.childSetsOpen = false
+	h.tickets = tickets(320)
+	h.runs[work.WorkflowID(320)] = work.RunState{RunID: "earlier-run"}
+	h.run()
+
+	if got, want := h.started, []int{320}; !slices.Equal(got, want) {
+		t.Fatalf("started %v, want only the seeded earlier run; duplicate start must not consume a slot", got)
+	}
+	want := work.DuplicateWorkflowExecution{TicketNumber: 320, WorkflowID: work.WorkflowID(320), RunID: "earlier-run"}
+	if got := h.rejections; len(got) != 1 || got[0] != want {
+		t.Fatalf("rejections %v, want [%+v]", got, want)
+	}
+	if status := h.status(t); len(status.InFlight) != 0 {
+		t.Fatalf("in flight %v, want none after duplicate start rejection", status.InFlight)
+	}
 }
 
 func TestDispatcherStartsUpToTheConcurrencyCapAndNoMore(t *testing.T) {

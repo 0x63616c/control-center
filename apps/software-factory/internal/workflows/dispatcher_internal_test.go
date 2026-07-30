@@ -5,6 +5,8 @@ import (
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	enums "go.temporal.io/api/enums/v1"
+	"go.temporal.io/sdk/temporal"
+	"go.temporal.io/sdk/workflow"
 )
 
 // The child options are asserted directly rather than through a run, because
@@ -15,7 +17,7 @@ func TestChildrenAreStartedAbandonedSoContinueAsNewDoesNotKillThem(t *testing.T)
 
 	d := newDispatcher(DispatcherInput{Config: work.DefaultConfig(), Tuning: work.DefaultDispatcherTuning(), Run: work.DefaultRunPolicy()})
 
-	options := d.childOptions(work.Ticket{Number: 328})
+	options := d.childOptions(work.Ticket{Number: 328}, 1)
 
 	if options.ParentClosePolicy != enums.PARENT_CLOSE_POLICY_ABANDON {
 		t.Fatalf("ParentClosePolicy = %v, want ABANDON. The default is TERMINATE, and ContinueAsNew closes the "+
@@ -24,12 +26,33 @@ func TestChildrenAreStartedAbandonedSoContinueAsNewDoesNotKillThem(t *testing.T)
 	}
 }
 
+func TestChildWorkflowReusePolicyIsVersioned(t *testing.T) {
+	t.Parallel()
+
+	d := newDispatcher(DispatcherInput{Config: work.DefaultConfig(), Tuning: work.DefaultDispatcherTuning(), Run: work.DefaultRunPolicy()})
+
+	if got := d.childOptions(work.Ticket{Number: 328}, workflow.DefaultVersion).WorkflowIDReusePolicy; got != enums.WORKFLOW_ID_REUSE_POLICY_UNSPECIFIED {
+		t.Fatalf("legacy WorkflowIDReusePolicy = %v, want the omitted historical policy so retained pre-change history replays", got)
+	}
+	if got := d.childOptions(work.Ticket{Number: 328}, 1).WorkflowIDReusePolicy; got != enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE {
+		t.Fatalf("current WorkflowIDReusePolicy = %v, want REJECT_DUPLICATE", got)
+	}
+}
+
+func TestTypedChildWorkflowStartCollisionIsRecognised(t *testing.T) {
+	t.Parallel()
+
+	if !temporal.IsWorkflowExecutionAlreadyStartedError(&temporal.ChildWorkflowExecutionAlreadyStartedError{}) {
+		t.Fatal("the SDK's typed child-start collision must select the terminal duplicate-ID path")
+	}
+}
+
 func TestAChildsWorkflowIDIsTheClaimOnItsTicket(t *testing.T) {
 	t.Parallel()
 
 	d := newDispatcher(DispatcherInput{Config: work.DefaultConfig(), Tuning: work.DefaultDispatcherTuning(), Run: work.DefaultRunPolicy()})
 
-	if got := d.childOptions(work.Ticket{Number: 328}).WorkflowID; got != work.WorkflowID(328) {
+	if got := d.childOptions(work.Ticket{Number: 328}, 1).WorkflowID; got != work.WorkflowID(328) {
 		t.Fatalf("WorkflowID = %q, want %q — starting a workflow with this ID *is* the claim, so a second "+
 			"spelling would be a second claim", got, work.WorkflowID(328))
 	}
@@ -41,7 +64,7 @@ func TestAChildIsGivenLongerThanItsStagesCanTake(t *testing.T) {
 	policy := work.DefaultRunPolicy()
 	d := newDispatcher(DispatcherInput{Config: work.DefaultConfig(), Tuning: work.DefaultDispatcherTuning(), Run: policy})
 
-	if got := d.childOptions(work.Ticket{Number: 328}).WorkflowRunTimeout; got <= policy.RunBudget() {
+	if got := d.childOptions(work.Ticket{Number: 328}, 1).WorkflowRunTimeout; got <= policy.RunBudget() {
 		t.Fatalf("run timeout %s does not exceed the stages' own budget %s, so a run using its stage timeouts "+
 			"would be killed for taking exactly as long as it was allowed", got, policy.RunBudget())
 	}
@@ -52,7 +75,7 @@ func TestAChildCarriesItsTicketMetadata(t *testing.T) {
 
 	d := newDispatcher(DispatcherInput{Config: work.DefaultConfig(), Tuning: work.DefaultDispatcherTuning(), Run: work.DefaultRunPolicy()})
 
-	options := d.childOptions(work.Ticket{Number: 328, Title: "Show work-ticket GitHub issue in Temporal"})
+	options := d.childOptions(work.Ticket{Number: 328, Title: "Show work-ticket GitHub issue in Temporal"}, 1)
 
 	if got, want := options.StaticSummary, "#328 Show work-ticket GitHub issue in Temporal"; got != want {
 		t.Fatalf("StaticSummary = %q, want %q", got, want)

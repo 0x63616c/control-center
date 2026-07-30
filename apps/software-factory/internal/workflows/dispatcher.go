@@ -50,6 +50,10 @@ type DispatcherInput struct {
 	LastSweep time.Time
 }
 
+// rejectDuplicateWorkflowIDChange is retained for the namespace retention
+// period: old dispatcher histories created child starts with AllowDuplicate.
+const rejectDuplicateWorkflowIDChange = "dispatcher-reject-duplicate-ticket-workflow-id"
+
 // Dispatcher owns the control plane: it decides which tickets are worked, how
 // many at once, and when the system should stop taking work on.
 //
@@ -366,7 +370,8 @@ func (d *dispatcher) claim(ctx workflow.Context, ticket work.Ticket) bool {
 		return true
 	}
 
-	childCtx := workflow.WithChildOptions(ctx, d.childOptions(ticket))
+	version := workflow.GetVersion(ctx, rejectDuplicateWorkflowIDChange, workflow.DefaultVersion, 1)
+	childCtx := workflow.WithChildOptions(ctx, d.childOptions(ticket, version))
 	child := workflow.ExecuteChildWorkflow(childCtx, WorkTicket, WorkTicketInput{
 		Ticket:       ticket,
 		Config:       d.config,
@@ -380,6 +385,17 @@ func (d *dispatcher) claim(ctx workflow.Context, ticket work.Ticket) bool {
 	// completion signal is for.
 	var execution workflow.Execution
 	if err := child.GetChildWorkflowExecution().Get(ctx, &execution); err != nil {
+		if temporal.IsWorkflowExecutionAlreadyStartedError(err) {
+			rejection := work.DuplicateWorkflowExecution{
+				TicketNumber: ticket.Number,
+				WorkflowID:   work.WorkflowID(ticket.Number),
+				RunID:        existing.RunID,
+			}
+			if activityErr := workflow.ExecuteActivity(activityCtx, acts.RejectDuplicateWorkflowID, rejection).Get(ctx, nil); activityErr != nil {
+				d.noteFailure(ctx, activityErr, fmt.Sprintf("rejecting duplicate workflow ID for ticket #%d", ticket.Number))
+			}
+			return false
+		}
 		// Not fatal, and not a reason to record a slot: the next tick's lookup
 		// adopts the run if it did in fact start.
 		log.Error("could not start a run for this ticket", "ticket", ticket.Number, "error", err)
@@ -528,14 +544,18 @@ func (d *dispatcher) status() (work.Status, error) {
 // ParentClosePolicy ABANDON is required, not stylistic. The default is
 // TERMINATE and ContinueAsNew closes the parent run, so the default would have
 // the dispatcher kill every ticket it had just started, every few hours.
-func (d *dispatcher) childOptions(ticket work.Ticket) workflow.ChildWorkflowOptions {
-	return workflow.ChildWorkflowOptions{
+func (d *dispatcher) childOptions(ticket work.Ticket, version workflow.Version) workflow.ChildWorkflowOptions {
+	options := workflow.ChildWorkflowOptions{
 		WorkflowID:         work.WorkflowID(ticket.Number),
 		ParentClosePolicy:  enums.PARENT_CLOSE_POLICY_ABANDON,
 		WorkflowRunTimeout: d.run.RunTimeout,
 		StaticSummary:      fmt.Sprintf("#%d %s", ticket.Number, ticket.Title),
 		StaticDetails:      fmt.Sprintf("[GitHub issue #%d](https://github.com/0x63616c/world-wide-webb/issues/%d)", ticket.Number, ticket.Number),
 	}
+	if version != workflow.DefaultVersion {
+		options.WorkflowIDReusePolicy = enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE
+	}
+	return options
 }
 
 // sortedTickets returns the in-flight ticket numbers in a fixed order. Go

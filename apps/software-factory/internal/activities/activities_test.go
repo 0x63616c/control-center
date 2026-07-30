@@ -83,6 +83,10 @@ func (f *fakeGitHub) PostStatus(_ context.Context, issue int, body string) (work
 	return f.nextID, f.postErr
 }
 
+func (f *fakeGitHub) PostDuplicateWorkflowIDRejection(ctx context.Context, issue int, body string) (work.CommentID, error) {
+	return f.PostStatus(ctx, issue, body)
+}
+
 func (f *fakeGitHub) EditStatus(_ context.Context, id work.CommentID, body string) error {
 	f.editedID, f.editedBody = id, body
 	return f.editErr
@@ -255,11 +259,19 @@ func (f *fakePrompts) Decode(stage work.Stage, result []byte) (work.StageOutput,
 
 // fakeStatus renders a report to something a test can recognise without
 // depending on the real wording, which A3 owns.
-type fakeStatus struct{ saw work.StatusReport }
+type fakeStatus struct {
+	saw          work.StatusReport
+	sawRejection work.DuplicateWorkflowExecution
+}
 
 func (f *fakeStatus) Render(report work.StatusReport) string {
 	f.saw = report
 	return fmt.Sprintf("run %s stage %s", report.RunID, report.Stage)
+}
+
+func (f *fakeStatus) RenderDuplicateWorkflowID(rejection work.DuplicateWorkflowExecution) string {
+	f.sawRejection = rejection
+	return "duplicate workflow notice"
 }
 
 type fakeRuns struct {
@@ -574,6 +586,29 @@ func TestClearAutoLabelSurfacesAnAuthFailureAsTheTypeThatPausesTheDispatcher(t *
 	}
 	if got := FailureKindOf(err); got != work.FailureAuth {
 		t.Fatalf("FailureKindOf = %q, want %q — this is what pauses the dispatcher", got, work.FailureAuth)
+	}
+}
+
+func TestRejectDuplicateWorkflowIDPostsBeforeClearingAuto(t *testing.T) {
+	t.Parallel()
+
+	gh := &fakeGitHub{}
+	status := &fakeStatus{}
+	d := deps()
+	d.GitHub, d.Status = gh, status
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.RejectDuplicateWorkflowID)
+
+	in := work.DuplicateWorkflowExecution{TicketNumber: 328, WorkflowID: "work-ticket-328", RunID: "run-1"}
+	if _, err := e.ExecuteActivity(a.RejectDuplicateWorkflowID, in); err != nil {
+		t.Fatalf("RejectDuplicateWorkflowID: %v", err)
+	}
+	if status.sawRejection != in || gh.postedTo != 328 || gh.postedBody != "duplicate workflow notice" {
+		t.Fatalf("rendered %+v and posted #%d %q, want %+v / #328 / duplicate notice", status.sawRejection, gh.postedTo, gh.postedBody, in)
+	}
+	if len(gh.cleared) != 1 || gh.cleared[0] != 328 {
+		t.Fatalf("cleared %v, want [328] after posting the notice", gh.cleared)
 	}
 }
 

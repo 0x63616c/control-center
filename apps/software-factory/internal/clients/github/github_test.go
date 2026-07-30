@@ -386,6 +386,24 @@ func TestPostsRatherThanAdoptingWhenTheBotIdentityCannotBeResolved(t *testing.T)
 	}
 }
 
+func TestDuplicateWorkflowRejectionRefusesToPostWhenBotIdentityCannotBeResolved(t *testing.T) {
+	t.Parallel()
+
+	marker := work.StatusMarker("work-ticket-328", work.StatusStep("duplicate-workflow-id"))
+	s, _ := newStub(t)
+	s.appGet = func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusInternalServerError, "server error")
+	}
+	s.handle("POST "+commentsPath, func(http.ResponseWriter, *http.Request) {
+		t.Error("posted a second terminal rejection comment while unable to prove authorship")
+	})
+	c, _ := s.client(t)
+
+	if _, err := c.PostDuplicateWorkflowIDRejection(context.Background(), testIssue, marker+"\nterminal"); err == nil {
+		t.Fatal("duplicate workflow rejection must retry when it cannot prove its comment author")
+	}
+}
+
 func TestResolvesTheBotIdentityOncePerClient(t *testing.T) {
 	t.Parallel()
 

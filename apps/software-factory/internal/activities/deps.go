@@ -91,6 +91,13 @@ type GitHub interface {
 	// run already opened it. The body carries the marker that says which.
 	PostStatus(ctx context.Context, issue int, body string) (work.CommentID, error)
 
+	// PostDuplicateWorkflowIDRejection posts or adopts the terminal comment
+	// for a ticket whose workflow ID was already used. Unlike ordinary status,
+	// it refuses to post while the App's author identity is unknown: this
+	// comment can retry on every poll until auto is cleared, so a duplicate is
+	// not an acceptable degraded outcome.
+	PostDuplicateWorkflowIDRejection(ctx context.Context, issue int, body string) (work.CommentID, error)
+
 	// EditStatus rewrites that comment in place as the run progresses.
 	EditStatus(ctx context.Context, id work.CommentID, body string) error
 
@@ -257,6 +264,7 @@ type PromptRenderer interface {
 // status comment changes far more often than the decision to report one.
 type StatusRenderer interface {
 	Render(report work.StatusReport) string
+	RenderDuplicateWorkflowID(rejection work.DuplicateWorkflowExecution) string
 }
 
 // RunLookup answers whether a ticket's workflow is still open.

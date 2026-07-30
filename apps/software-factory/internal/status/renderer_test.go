@@ -150,3 +150,13 @@ func TestRendererRefusesAnUnrecognisedStep(t *testing.T) {
 		t.Errorf("Render() of an unrecognised step = %q, want it to name the step", got)
 	}
 }
+
+func TestRendererRendersDuplicateWorkflowIDRejection(t *testing.T) {
+	t.Parallel()
+
+	renderer := status.NewRenderer("", "")
+	in := work.DuplicateWorkflowExecution{TicketNumber: 331, WorkflowID: "work-ticket-331", RunID: "run-1"}
+	if got, want := renderer.RenderDuplicateWorkflowID(in), (status.DuplicateWorkflowIDRejected(in)).Body(); got != want {
+		t.Errorf("RenderDuplicateWorkflowID = %q, want %q", got, want)
+	}
+}

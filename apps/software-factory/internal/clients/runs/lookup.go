@@ -68,7 +68,7 @@ func (l *Lookup) Describe(ctx context.Context, workflowID string) (work.RunState
 
 	open := info.GetStatus() == enums.WORKFLOW_EXECUTION_STATUS_RUNNING
 	runID := ""
-	if open && info.GetExecution() != nil {
+	if info.GetExecution() != nil {
 		runID = info.GetExecution().GetRunId()
 	}
 	return work.RunState{Open: open, RunID: runID}, nil
