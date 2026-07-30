@@ -140,8 +140,11 @@ means a GitHub issue - same thing, one vocabulary.
   main checkout is usually well behind. `.wtp.yml` puts every worktree under
   `~/.worktrees/world-wide-webb/` (never nested in `.claude/worktrees/` or any
   repo subfolder - that's what caused lefthook/env setup to be flaky) and its
-  `post_create` hooks run `bun install` + `lefthook install` automatically, so a
-  fresh worktree is immediately usable. See #182.
+  `post_create` hooks run `bun install` + `lefthook install` automatically, then
+  retarget the new branch's upstream from inherited `origin/main` to its eventual
+  same-named `origin/<new-branch>` ref. This keeps `git status`, `git pull`, and
+  a normal push scoped to the feature branch even before its first push. A fresh
+  worktree is immediately usable. See #182.
   - A `PreToolUse` guard (`.claude/hooks/guard-worktree-only.sh`, shared by
     Claude Code and Codex) enforces this. It judges Edit/Write/`apply_patch` by
     the **target file's** path, not by your cwd, so writing into a worktree from
