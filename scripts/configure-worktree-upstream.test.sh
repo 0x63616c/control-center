@@ -46,6 +46,36 @@ merge=$(git -C "$WORKTREE" config --get "branch.$BRANCH.merge")
 [ "$remote" = "origin" ] || { echo "expected origin remote, got: $remote" >&2; exit 1; }
 [ "$merge" = "refs/heads/$BRANCH" ] || { echo "expected feature merge ref, got: $merge" >&2; exit 1; }
 
+PRESERVED_BRANCH="existing"
+PRESERVED_MERGE="refs/heads/release"
+git -C "$WORKTREE" checkout -qb "$PRESERVED_BRANCH" "$BRANCH"
+git -C "$WORKTREE" config "branch.$PRESERVED_BRANCH.remote" origin
+git -C "$WORKTREE" config "branch.$PRESERVED_BRANCH.merge" "$PRESERVED_MERGE"
+(cd "$WORKTREE" && "$HELPER")
+
+preserved_remote=$(git -C "$WORKTREE" config --get "branch.$PRESERVED_BRANCH.remote")
+preserved_merge=$(git -C "$WORKTREE" config --get "branch.$PRESERVED_BRANCH.merge")
+[ "$preserved_remote" = "origin" ] || { echo "expected preserved origin remote, got: $preserved_remote" >&2; exit 1; }
+[ "$preserved_merge" = "$PRESERVED_MERGE" ] || {
+  echo "expected preserved merge ref $PRESERVED_MERGE, got: $preserved_merge" >&2
+  exit 1
+}
+
+PUBLISHED_BRANCH="published"
+git -C "$WORKTREE" checkout -qb "$PUBLISHED_BRANCH" "$BRANCH"
+git -C "$WORKTREE" push -q origin "refs/heads/$PUBLISHED_BRANCH:refs/heads/$PUBLISHED_BRANCH"
+git -C "$WORKTREE" fetch -q origin "$PUBLISHED_BRANCH"
+git -C "$WORKTREE" config "branch.$PUBLISHED_BRANCH.remote" origin
+git -C "$WORKTREE" config "branch.$PUBLISHED_BRANCH.merge" refs/heads/main
+(cd "$WORKTREE" && "$HELPER")
+
+published_merge=$(git -C "$WORKTREE" config --get "branch.$PUBLISHED_BRANCH.merge")
+[ "$published_merge" = "refs/heads/main" ] || {
+  echo "expected existing published branch to retain main upstream, got: $published_merge" >&2
+  exit 1
+}
+
+git -C "$WORKTREE" checkout -q "$BRANCH"
 push=$(git -C "$WORKTREE" -c push.default=simple push --dry-run --porcelain)
 printf '%s\n' "$push" | grep -Fq "refs/heads/$BRANCH:refs/heads/$BRANCH" || {
   echo "bare push did not target feature:" >&2
