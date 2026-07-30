@@ -100,6 +100,9 @@ type ticketHarness struct {
 	cloneErr error
 	draftErr error
 	readyErr error
+	// pullRequestDraft controls whether the run's PR was created by the
+	// draft-first factory. False models a workflow that began before rollout.
+	pullRequestDraft bool
 
 	// persistErr, when set, is returned by every PersistTranscript call — the
 	// relay is best-effort, so this exists to prove a failed one does not
@@ -171,6 +174,7 @@ func newTicketHarness(t *testing.T) *ticketHarness {
 		ci:        map[int]activities.ObserveCIOutput{},
 		review:    map[int][]work.Finding{},
 		persisted: map[work.StageKey]activities.PersistTranscriptInput{},
+		pullRequestDraft: true,
 	}
 }
 
@@ -273,7 +277,7 @@ func (h *ticketHarness) run() {
 			h.openOrUpdate++
 			return work.PullRequest{
 				Number: 9, URL: "https://github.com/o/r/pull/9", NodeID: "PR_node9",
-				Title: in.Title, Body: in.Body,
+				Title: in.Title, Body: in.Body, Draft: h.pullRequestDraft,
 			}, nil
 		})
 
@@ -962,7 +966,34 @@ func TestWorkTicketDeclinesADeclinedRunDraftFirstThenLabelThenComment(t *testing
 // TestWorkTicketContinuesWhenDeclineDraftConversionExhaustsItsRetries proves
 // a declined pull request is already safe because it started as a draft, so
 // the idempotent conversion cannot block terminal cleanup.
-func TestWorkTicketContinuesWhenDeclineDraftConversionExhaustsItsRetries(t *testing.T) {
+func TestWorkTicketFailsAndRetainsAutoWhenLegacyReadyPRDraftConversionExhaustsItsRetries(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.pullRequestDraft = false
+	h.review = map[int][]work.Finding{
+		1: {{ID: "same-finding", Blocking: true, Summary: "one"}},
+		2: {{ID: "same-finding", Blocking: true, Summary: "still here"}},
+	}
+	h.draftErr = temporal.NewNonRetryableApplicationError(
+		"github refused this app's credentials", activities.ErrTypeAuth, nil)
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err == nil {
+		t.Fatal("a legacy ready pull request that cannot be converted to draft must fail")
+	}
+	if h.cleared != 0 {
+		t.Fatalf("cleared the auto label %d times, want zero for an unsafe legacy pull request", h.cleared)
+	}
+	// The full-detail comment is best-effort and additive — it cannot itself
+	// be mistaken for approval — so decline still posts it even though draft
+	// conversion failed, per terminal.go's own doc comment.
+	if len(h.postedPRComments) != 1 {
+		t.Fatalf("posted %d pull request comments, want exactly one even though draft conversion failed", len(h.postedPRComments))
+	}
+}
+
+func TestWorkTicketContinuesWhenDraftFirstDeclineConversionExhaustsItsRetries(t *testing.T) {
 	t.Parallel()
 
 	h := newTicketHarness(t)
@@ -979,12 +1010,6 @@ func TestWorkTicketContinuesWhenDeclineDraftConversionExhaustsItsRetries(t *test
 	}
 	if h.cleared != 1 {
 		t.Fatalf("cleared the auto label %d times, want cleanup to continue", h.cleared)
-	}
-	// The full-detail comment is best-effort and additive — it cannot itself
-	// be mistaken for approval — so decline still posts it even though draft
-	// conversion failed, per terminal.go's own doc comment.
-	if len(h.postedPRComments) != 1 {
-		t.Fatalf("posted %d pull request comments, want exactly one even though draft conversion failed", len(h.postedPRComments))
 	}
 }
 

@@ -283,6 +283,7 @@ func (c *Client) PullRequestForBranch(ctx context.Context, branch string) (work.
 	return work.PullRequest{
 		Number: pr.GetNumber(),
 		URL:    pr.GetHTMLURL(),
+		Draft:  pr.GetDraft(),
 		NodeID: pr.GetNodeID(),
 		Title:  pr.GetTitle(),
 		Body:   pr.GetBody(),
@@ -358,14 +359,15 @@ func (c *Client) createPullRequest(ctx context.Context, branch, title, body stri
 	if err != nil {
 		return work.PullRequest{}, classify(ctx, op, err)
 	}
-	if pr.GetNumber() == 0 || pr.GetHTMLURL() == "" || pr.GetNodeID() == "" {
-		return work.PullRequest{}, fmt.Errorf("%s: github returned a pull request with no number, url or node id", op)
+	if pr.GetNumber() == 0 || pr.GetHTMLURL() == "" || pr.GetNodeID() == "" || !pr.GetDraft() {
+		return work.PullRequest{}, fmt.Errorf("%s: github returned a pull request with no number, url, node id or draft state", op)
 	}
 
 	c.log.InfoContext(ctx, "opened the run's pull request", "branch", branch, "pull_request", pr.GetNumber())
 	return work.PullRequest{
 		Number: pr.GetNumber(),
 		URL:    pr.GetHTMLURL(),
+		Draft:  pr.GetDraft(),
 		NodeID: pr.GetNodeID(),
 		Title:  pr.GetTitle(),
 		Body:   pr.GetBody(),
@@ -388,6 +390,7 @@ func (c *Client) editPullRequest(ctx context.Context, existing work.PullRequest,
 	return work.PullRequest{
 		Number: existing.Number,
 		URL:    existing.URL,
+		Draft:  pr.GetDraft(),
 		NodeID: existing.NodeID,
 		Title:  pr.GetTitle(),
 		Body:   pr.GetBody(),

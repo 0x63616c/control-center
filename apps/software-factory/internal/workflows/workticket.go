@@ -317,12 +317,17 @@ func (r *ticketRun) finish(ctx workflow.Context, result WorkTicketResult, runErr
 	if !cancelled {
 		switch outcome {
 		case work.OutcomeBlocked, work.OutcomeExhausted:
-			r.decline(ctx, declineDetail{
+			if declineErr := r.decline(ctx, declineDetail{
 				Outcome:     outcome,
 				Detail:      detail,
 				PullRequest: result.PullRequest,
 				FullDetail:  result.FullDetail,
-			})
+			}); declineErr != nil {
+				terminalErr = declineErr
+				if failure == work.FailureNone || failure == work.FailureOther {
+					failure = activities.FailureKindOf(declineErr)
+				}
+			}
 		case work.OutcomeProposed:
 			if err := workflow.ExecuteActivity(control, acts.MarkPullRequestReadyForReview, result.PullRequest.NodeID).Get(ctx, nil); err != nil {
 				log.Error("marking the pull request ready for review failed after every retry; the auto label stays on",

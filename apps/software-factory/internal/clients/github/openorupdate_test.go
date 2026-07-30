@@ -26,6 +26,7 @@ func TestOpenOrUpdatePullRequestCreatesOnTheDefaultBranchWhenNoneExists(t *testi
 			"node_id":  "PR_new42",
 			"title":    "fix: it",
 			"body":     "the fix",
+			"draft":    true,
 		})
 	})
 	c, _ := s.client(t)
@@ -36,6 +37,9 @@ func TestOpenOrUpdatePullRequestCreatesOnTheDefaultBranchWhenNoneExists(t *testi
 	}
 	if pr.Number != 42 || pr.NodeID != "PR_new42" {
 		t.Fatalf("pr = %+v, want #42 with node id PR_new42", pr)
+	}
+	if !pr.Draft {
+		t.Fatal("created pull request is not recorded as draft")
 	}
 
 	create := s.first(t, "POST /repos/"+testOwner+"/"+testRepo+"/pulls")
@@ -60,11 +64,11 @@ func TestOpenOrUpdatePullRequestEditsWhenTitleOrBodyChanged(t *testing.T) {
 
 	s, _ := newStub(t)
 	s.handle("PATCH /repos/"+testOwner+"/"+testRepo+"/pulls/9", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"title": "fix: it v2", "body": "the fix, updated"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"title": "fix: it v2", "body": "the fix, updated", "draft": true})
 	})
 	c, _ := s.client(t)
 
-	existing := &work.PullRequest{Number: 9, URL: "https://github.com/o/r/pull/9", NodeID: "PR_9", Title: "fix: it", Body: "the fix"}
+	existing := &work.PullRequest{Number: 9, URL: "https://github.com/o/r/pull/9", Draft: true, NodeID: "PR_9", Title: "fix: it", Body: "the fix"}
 	pr, err := c.OpenOrUpdatePullRequest(t.Context(), testBranch, "fix: it v2", "the fix, updated", existing)
 	if err != nil {
 		t.Fatalf("OpenOrUpdatePullRequest: %v", err)
@@ -74,6 +78,9 @@ func TestOpenOrUpdatePullRequestEditsWhenTitleOrBodyChanged(t *testing.T) {
 	}
 	if pr.Title != "fix: it v2" || pr.Body != "the fix, updated" {
 		t.Fatalf("pr title/body = %q/%q, want the edited ones", pr.Title, pr.Body)
+	}
+	if !pr.Draft {
+		t.Fatal("edited pull request lost its reported draft state")
 	}
 	if s.count("POST /repos/"+testOwner+"/"+testRepo+"/pulls") != 0 {
 		t.Fatal("an existing pull request was created a second time instead of edited")

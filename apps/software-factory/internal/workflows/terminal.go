@@ -1,6 +1,8 @@
 package workflows
 
 import (
+	"fmt"
+
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"go.temporal.io/sdk/workflow"
 )
@@ -40,10 +42,12 @@ type declineDetail struct {
 // work.StepOutcome path, called by ticketRun.finish before or after this, and
 // unchanged by this step.
 //
-// Pull requests start as drafts, so a conversion failure cannot expose a
-// declined change as ready for review. The conversion stays as a cheap
-// idempotent safety net, but cleanup continues after a failure.
-func (r *ticketRun) decline(ctx workflow.Context, d declineDetail) {
+// Pull requests created after the draft-first rollout start as drafts, so the
+// conversion stays a cheap idempotent safety net and cleanup can continue
+// after its failure. A workflow that began before rollout may own a ready
+// pull request, though; its reported Draft state keeps the legacy fail-closed
+// behavior until conversion succeeds.
+func (r *ticketRun) decline(ctx workflow.Context, d declineDetail) error {
 	log := workflow.GetLogger(ctx)
 	control := workflow.WithActivityOptions(ctx, r.controlOptions())
 
@@ -55,12 +59,18 @@ func (r *ticketRun) decline(ctx workflow.Context, d declineDetail) {
 			log.Error("clearing the auto label failed; this ticket will be listed again",
 				"ticket", r.in.Ticket.Number, "error", err)
 		}
-		return
+		return nil
 	}
 
 	if err := workflow.ExecuteActivity(control, acts.ConvertPullRequestToDraft, d.PullRequest.NodeID).Get(ctx, nil); err != nil {
-		log.Error("converting the pull request to draft failed after every retry; continuing because pull requests start as drafts",
+		log.Error("converting the pull request to draft failed after every retry",
 			"ticket", r.in.Ticket.Number, "pull_request", d.PullRequest.Number, "error", err)
+		if !d.PullRequest.Draft {
+			log.Error("the pull request may predate draft-first creation; the auto label stays on",
+				"ticket", r.in.Ticket.Number, "pull_request", d.PullRequest.Number)
+			r.postPullRequestComment(ctx, d)
+			return fmt.Errorf("converting legacy ready pull request %s to draft: %w", d.PullRequest.URL, err)
+		}
 	}
 
 	if err := workflow.ExecuteActivity(control, acts.ClearAutoLabel, r.in.Ticket.Number).Get(ctx, nil); err != nil {
@@ -69,6 +79,7 @@ func (r *ticketRun) decline(ctx workflow.Context, d declineDetail) {
 	}
 
 	r.postPullRequestComment(ctx, d)
+	return nil
 }
 
 // postPullRequestComment posts the pull request's full-detail comment,
