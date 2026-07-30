@@ -81,6 +81,7 @@ type Client struct {
 	// GitHub's production endpoint, or a test stub's when withBaseURL
 	// redirected the REST plane too. See graphql.go.
 	graphqlURL string
+	downloads  *http.Client
 
 	// defaultBranchCache holds the repository's default branch once resolved
 	// — see defaultBranch. It never changes without a deploy-time repository
@@ -174,7 +175,10 @@ func New(cfg config.GitHub, clk clock.Clock, log *slog.Logger, opts ...Option) (
 		graphqlURL = strings.TrimSuffix(o.baseURL, "/") + "/graphql"
 	}
 
-	return &Client{owner: cfg.Owner, repo: cfg.Repo, api: api, auth: auth, log: log, graphqlURL: graphqlURL}, nil
+	return &Client{
+		owner: cfg.Owner, repo: cfg.Repo, api: api, auth: auth, log: log, graphqlURL: graphqlURL,
+		downloads: &http.Client{Transport: base, Timeout: o.httpClient.Timeout},
+	}, nil
 }
 
 // newGitHubClient builds an SDK client, optionally aimed elsewhere. go-github

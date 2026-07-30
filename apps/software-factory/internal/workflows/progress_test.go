@@ -1,27 +1,31 @@
 package workflows
 
-import "testing"
+import (
+	"testing"
 
-func TestIsSubsetOf(t *testing.T) {
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+)
+
+func TestSameCheckFailures(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
 		name string
-		a, b []string
+		a, b []work.CheckFailure
 		want bool
 	}{
-		{"empty a is a subset of anything", nil, []string{"x"}, true},
-		{"empty a is a subset of empty b", nil, nil, true},
-		{"identical sets", []string{"a", "b"}, []string{"a", "b"}, true},
-		{"a is a subset of a larger b", []string{"a"}, []string{"a", "b"}, true},
-		{"a is not a subset once it has something new", []string{"a", "c"}, []string{"a", "b"}, false},
-		{"non-empty a against empty b is never a subset", []string{"a"}, nil, false},
+		{"empty sets match", nil, nil, true},
+		{"identical sets match despite order", []work.CheckFailure{{Name: "a", Fingerprint: "one"}, {Name: "b", Fingerprint: "two"}}, []work.CheckFailure{{Name: "b", Fingerprint: "two"}, {Name: "a", Fingerprint: "one"}}, true},
+		{"strict subset does not match", []work.CheckFailure{{Name: "a", Fingerprint: "one"}}, []work.CheckFailure{{Name: "a", Fingerprint: "one"}, {Name: "b", Fingerprint: "two"}}, false},
+		{"added failure does not match", []work.CheckFailure{{Name: "a", Fingerprint: "one"}, {Name: "b", Fingerprint: "two"}}, []work.CheckFailure{{Name: "a", Fingerprint: "one"}}, false},
+		{"same check name with another failure does not match", []work.CheckFailure{{Name: "test", Fingerprint: "one"}}, []work.CheckFailure{{Name: "test", Fingerprint: "two"}}, false},
+		{"missing fingerprints never claim stagnation", []work.CheckFailure{{Name: "test"}}, []work.CheckFailure{{Name: "test"}}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := isSubsetOf(tc.a, tc.b); got != tc.want {
-				t.Errorf("isSubsetOf(%v, %v) = %v, want %v", tc.a, tc.b, got, tc.want)
+			if got := sameCheckFailures(tc.a, tc.b); got != tc.want {
+				t.Errorf("sameCheckFailures(%v, %v) = %v, want %v", tc.a, tc.b, got, tc.want)
 			}
 		})
 	}

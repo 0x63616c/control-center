@@ -51,10 +51,14 @@ type ObserveCIOutput struct {
 	Green bool
 
 	// RedChecks names every check that had concluded and did not count as
-	// passing, when Concluded is true. Meaningless when Concluded is false —
-	// an unobserved turn reports no red checks of its own and must not be
-	// compared as though it had, per the spec's carry-forward rule.
+	// passing, when Concluded is true. Preserve this field's type for open
+	// WorkTicket histories recorded before failure identities existed.
 	RedChecks []string
+
+	// RedFailures identifies the same failed checks with opaque fingerprints.
+	// Rule 1 in new workflow histories compares these identities rather than
+	// check names alone. Meaningless when Concluded is false.
+	RedFailures []work.CheckFailure
 }
 
 // ObserveCI polls GitHub's check runs for a branch until every one of them
@@ -114,15 +118,19 @@ func reduceChecks(checks []work.CheckRun) (concluded bool, out ObserveCIOutput) 
 		return false, ObserveCIOutput{}
 	}
 
-	var red []string
+	var redChecks []string
+	var redFailures []work.CheckFailure
 	for _, check := range checks {
 		if !check.Completed {
 			return false, ObserveCIOutput{}
 		}
 		if !check.Green() {
-			red = append(red, check.Name)
+			redChecks = append(redChecks, check.Name)
+			redFailures = append(redFailures, work.CheckFailure{Name: check.Name, Fingerprint: check.FailureFingerprint})
 		}
 	}
 
-	return true, ObserveCIOutput{Concluded: true, Green: len(red) == 0, RedChecks: red}
+	return true, ObserveCIOutput{
+		Concluded: true, Green: len(redChecks) == 0, RedChecks: redChecks, RedFailures: redFailures,
+	}
 }

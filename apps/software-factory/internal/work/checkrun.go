@@ -6,12 +6,17 @@ package work
 // It is the vocabulary internal/clients/github's ChecksForRef reads GitHub's
 // Checks API response into, and Activities.ObserveCI reduces a whole ref's
 // worth of these into "concluded" and "green" for the implement/review
-// loop's progress-detection rules — rule 1 (the same failing check twice),
+// loop's progress-detection rules — rule 1 (the same failed check identity
+// twice),
 // in the pipeline-rewrite spec's "The real stop condition" section.
 type CheckRun struct {
-	// Name is the check's own name, as GitHub reports it — what rule 1
-	// compares turn over turn to decide whether the same check is still red.
+	// Name is the check's own name, as GitHub reports it.
 	Name string
+
+	// FailureFingerprint identifies this check's failure output without
+	// retaining that potentially large, untrusted output in workflow history.
+	// It is meaningful for completed non-green checks only.
+	FailureFingerprint string
 
 	// Completed is whether this check run has finished — GitHub's own
 	// "completed" status, as opposed to "queued" or "in_progress". A run
@@ -22,6 +27,14 @@ type CheckRun struct {
 	// "failure", "neutral", "cancelled", "skipped", "timed_out" or
 	// "action_required". Empty until Completed.
 	Conclusion string
+}
+
+// CheckFailure is the stable identity of one failed GitHub check run.
+// WorkTicket rule 1 compares these values turn over turn, so a same-named
+// check with different CI output counts as progress rather than stagnation.
+type CheckFailure struct {
+	Name        string
+	Fingerprint string
 }
 
 // Green reports whether this check run's conclusion counts as passing.
