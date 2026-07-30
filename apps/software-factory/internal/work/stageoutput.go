@@ -59,8 +59,8 @@ func NewStageOutput(stage Stage, value stageOutputValue) StageOutput {
 // cases, not calling it directly — decodeStageOutputValue also unmarshals,
 // and this only checks shape, at construction, before any JSON is involved.
 // Kept beside NewStageOutput rather than merged into decodeStageOutputValue
-// so the two remain independently readable: one answers "what does the wire
-// say", the other "what did the caller just hand me directly."
+// so the two remain independently readable: one answers what the wire says,
+// the other what the caller just handed it directly.
 func stageWantsShape(stage Stage, value stageOutputValue) bool {
 	switch stage {
 	case StagePlan, StageReview, StageRevise, StagePropose:

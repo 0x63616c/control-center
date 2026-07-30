@@ -118,7 +118,7 @@ func TestDecodeStageOutputValueIsExhaustiveOverPipeline(t *testing.T) {
 			switch stage {
 			case StageImplement:
 				raw = json.RawMessage(`{"Report":"r","Blocked":false,"BlockedReason":""}`)
-			default:
+			case StagePlan, StageReview, StageRevise, StagePropose:
 				raw = json.RawMessage(`{"Document":"d"}`)
 			}
 			if _, err := decodeStageOutputValue(stage, raw); err != nil {
