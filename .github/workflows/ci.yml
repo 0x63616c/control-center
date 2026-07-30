@@ -549,7 +549,8 @@ jobs:
       # The image contract nothing else can check: the worker execs
       # sandbox-exec, tar, test and cat by absolute argv, and /work is an
       # emptyDir that MASKS anything baked under it. smoke.sh reproduces that
-      # with a tmpfs and asserts the lot against the image just built.
+      # with a tmpfs, asserts the lot, and launches Playwright Chromium to
+      # write a real headless screenshot against the image just built.
       #
       # After the push, not before: the assertions are about the built image,
       # and a failure here fails the job, which blocks the deploy through

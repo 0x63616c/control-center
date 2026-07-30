@@ -97,6 +97,17 @@ ARG GH_SHA256=83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60
 # fires on one and not the other teaches people to distrust the wall.
 ARG GOLANGCI_LINT_VERSION=2.12.2
 ARG GOLANGCI_LINT_SHA256=8df580d2670fed8fa984aac0507099af8df275e665215f5c7a2ae3943893a553
+# Playwright must match the exact version in bun.lock. Its Chromium registry has
+# three archives: Chrome for headed use, the headless shell Playwright launches
+# by default, and ffmpeg for video support. Pin all three, rather than trusting
+# a mutable browser CDN response at image build time.
+ARG PLAYWRIGHT_VERSION=1.60.0
+ARG PLAYWRIGHT_CHROMIUM_REVISION=1223
+ARG PLAYWRIGHT_CHROMIUM_VERSION=148.0.7778.96
+ARG PLAYWRIGHT_CHROMIUM_SHA256=e58a0612f6156ad287ff392c681f6e1154d0c938feccf631d0c5d7abf3bbf81a
+ARG PLAYWRIGHT_CHROMIUM_HEADLESS_SHELL_SHA256=88817c574c1838a39f88fda0bbd043b4481fd385fb10e92c323e230844d636ce
+ARG PLAYWRIGHT_FFMPEG_REVISION=1011
+ARG PLAYWRIGHT_FFMPEG_SHA256=ebc74fc5b94830176a3c2914ae96bd8bc7f6a91f4f33890230f84a172ee61ccc
 
 # GNU tar, coreutils (test, cat, printenv, rm) and a shell come from the base
 # image. Added here: git, because CloneRepo checks the ticket's repository out
@@ -173,6 +184,37 @@ RUN curl -fsSL -o /tmp/golangci-lint.tar.gz \
     && rm -rf /tmp/golangci-lint.tar.gz "/tmp/golangci-lint-${GOLANGCI_LINT_VERSION}-linux-amd64" \
     && golangci-lint --version
 
+# Let Playwright's pinned dependency resolver, rather than a hand-maintained
+# list of shared libraries, choose the Debian Trixie packages Chromium needs.
+# The browser archives below are fetched explicitly so this executable payload
+# remains checksum-pinned like every other downloaded tool in the image.
+RUN bunx --yes "playwright@${PLAYWRIGHT_VERSION}" install-deps chromium \
+    && rm -rf /root/.bun /root/.cache
+
+RUN curl -fsSL -o /tmp/chrome-linux64.zip \
+        "https://cdn.playwright.dev/builds/cft/${PLAYWRIGHT_CHROMIUM_VERSION}/linux64/chrome-linux64.zip" \
+    && echo "${PLAYWRIGHT_CHROMIUM_SHA256}  /tmp/chrome-linux64.zip" | sha256sum -c - \
+    && curl -fsSL -o /tmp/chrome-headless-shell-linux64.zip \
+        "https://cdn.playwright.dev/builds/cft/${PLAYWRIGHT_CHROMIUM_VERSION}/linux64/chrome-headless-shell-linux64.zip" \
+    && echo "${PLAYWRIGHT_CHROMIUM_HEADLESS_SHELL_SHA256}  /tmp/chrome-headless-shell-linux64.zip" | sha256sum -c - \
+    && curl -fsSL -o /tmp/ffmpeg-linux.zip \
+        "https://cdn.playwright.dev/dbazure/download/playwright/builds/ffmpeg/${PLAYWRIGHT_FFMPEG_REVISION}/ffmpeg-linux.zip" \
+    && echo "${PLAYWRIGHT_FFMPEG_SHA256}  /tmp/ffmpeg-linux.zip" | sha256sum -c - \
+    && install -d -m 0755 \
+        "/ms-playwright/chromium-${PLAYWRIGHT_CHROMIUM_REVISION}" \
+        "/ms-playwright/chromium_headless_shell-${PLAYWRIGHT_CHROMIUM_REVISION}" \
+        "/ms-playwright/ffmpeg-${PLAYWRIGHT_FFMPEG_REVISION}" \
+    && unzip -q /tmp/chrome-linux64.zip \
+        -d "/ms-playwright/chromium-${PLAYWRIGHT_CHROMIUM_REVISION}" \
+    && unzip -q /tmp/chrome-headless-shell-linux64.zip \
+        -d "/ms-playwright/chromium_headless_shell-${PLAYWRIGHT_CHROMIUM_REVISION}" \
+    && unzip -q /tmp/ffmpeg-linux.zip \
+        -d "/ms-playwright/ffmpeg-${PLAYWRIGHT_FFMPEG_REVISION}" \
+    && touch "/ms-playwright/chromium-${PLAYWRIGHT_CHROMIUM_REVISION}/INSTALLATION_COMPLETE" \
+    && touch "/ms-playwright/chromium_headless_shell-${PLAYWRIGHT_CHROMIUM_REVISION}/INSTALLATION_COMPLETE" \
+    && touch "/ms-playwright/ffmpeg-${PLAYWRIGHT_FFMPEG_REVISION}/INSTALLATION_COMPLETE" \
+    && rm -f /tmp/chrome-linux64.zip /tmp/chrome-headless-shell-linux64.zip /tmp/ffmpeg-linux.zip
+
 # The Go toolchain, taken from the build stage rather than downloaded again, so
 # it cannot drift from the version this module declares.
 COPY --from=build /usr/local/go /usr/local/go
@@ -207,6 +249,7 @@ RUN groupadd --gid 1000 sandbox \
 RUN install -d -o 1000 -g 1000 -m 0755 /work
 
 ENV HOME=/home/sandbox
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 # WORKDIR is the working directory every `codex exec` inherits: pods/exec runs
 # with the container's cwd, and podspec.go sets no WorkingDir, so this is it.

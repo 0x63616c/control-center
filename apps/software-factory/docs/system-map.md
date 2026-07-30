@@ -159,7 +159,12 @@ cannot be resumed. A heartbeat timeout, Codex/process failure, or stage timeout
 can also consume the retry budget.
 
 The sandbox image includes Node, Go, `gcc`/`libc6-dev`, and a pinned
-`golangci-lint`; the previous toolchain-gap warning no longer applies.
+`golangci-lint`; the previous toolchain-gap warning no longer applies. It also
+ships checksum-pinned Playwright Chromium at `/ms-playwright`; Playwright's
+dependency resolver supplies the native Trixie libraries, and the smoke test
+proves uid 1000 can write a real headless page PNG while `/work` is masked.
+Headed desktop capture and native browser-tab chrome remain out of scope:
+Playwright page screenshots are headless and do not capture a browser window.
 
 ## Where a human is required
 

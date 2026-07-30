@@ -30,6 +30,15 @@ E1 (#341) left these undecided. Decided here:
 - **`golangci-lint`**, pinned to the same version CI pins
   (`.github/workflows/ci.yml`, `version: v2.12.2`) — a lint rule that fires in
   CI and not in the sandbox teaches people to distrust the wall.
+- **Playwright Chromium** — the exact `playwright@1.60.0` browser registry
+  bundle, including Chromium, its headless shell, and ffmpeg, is extracted to
+  root-owned `/ms-playwright` and discovered through
+  `PLAYWRIGHT_BROWSERS_PATH`. Chromium's Debian Trixie libraries come from
+  Playwright's own `install-deps chromium` resolver; each downloaded browser
+  archive is version- and SHA-256-pinned in the Dockerfile. This lets the
+  uid-1000 sandbox take real headless page screenshots. A page screenshot does
+  not include native browser tab/window chrome, and headed desktop capture is
+  deliberately not a sandbox capability.
 - **A shell.** `codex exec`'s job is running shell commands on the agent's
   behalf. The argv-only rule constrains how the *worker* invokes this image, not
   what the image contains.
@@ -108,3 +117,5 @@ apps/software-factory/images/sandbox/smoke.sh sf-sandbox:local
 `smoke.sh` mounts a tmpfs over `/work`, because that is what the pod's emptyDir
 does to it. Anything baked under `/work` is masked at runtime; running the
 checks without the mount passes on an image that fails in the cluster.
+It also launches the baked Playwright Chromium against a `data:` URL and asserts
+the resulting PNG is non-empty.
