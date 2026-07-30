@@ -22,6 +22,7 @@ func TestPullRequestForBranchReturnsWhatGitHubSaysIsOpenOnIt(t *testing.T) {
 			"node_id":  "PR_kwDOtest9",
 			"title":    "fix: the thing",
 			"body":     "does the thing",
+			"draft":    true,
 		}})
 	})
 	c, _ := s.client(t)
@@ -45,6 +46,9 @@ func TestPullRequestForBranchReturnsWhatGitHubSaysIsOpenOnIt(t *testing.T) {
 	}
 	if pr.Title != "fix: the thing" || pr.Body != "does the thing" {
 		t.Fatalf("title/body = %q/%q, want the ones github reported", pr.Title, pr.Body)
+	}
+	if !pr.Draft {
+		t.Fatal("draft = false, want the state github reported")
 	}
 }
 

@@ -204,11 +204,16 @@ type PullRequest struct {
 	Number int
 	URL    string
 
+	// Draft is GitHub's reported draft state. It distinguishes draft-first
+	// pull requests from ready pull requests owned by workflows begun before
+	// the draft-first rollout, so terminal cleanup never clears `auto` after
+	// failing to protect a legacy ready pull request.
+	Draft bool
+
 	// NodeID is GitHub's GraphQL global identifier for this pull request,
 	// distinct from Number, which is the REST API's identifier. The
-	// convertPullRequestToDraft mutation accepts only this one — REST has no
-	// path to convert a ready pull request back to draft at all. See
-	// clients/github's graphql.go.
+	// draft-state mutations accept only this one — REST has no path to change
+	// an open pull request's draft state. See clients/github's graphql.go.
 	NodeID string
 
 	// Title and Body are this pull request's current title and description,

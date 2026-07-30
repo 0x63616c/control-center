@@ -186,6 +186,8 @@ func (p Proposed) Body() string {
 		field("Finished", code(stamp(p.EndedAt))),
 		field("Run total", tokens(p.RunUsage)),
 		"",
+		"The pull request above is ready for human review.",
+		"",
 		autoLabelNote,
 	)
 }
@@ -219,8 +221,8 @@ func (a Abandoned) Body() string {
 }
 
 // Declined is the run's last comment when the implement/review loop reached a
-// non-approval end but a pull request already existed — converted to draft
-// as part of the terminal-cleanup sequence (#435).
+// non-approval end but a pull request already existed. Pull requests start
+// as drafts, so a declined pull request remains one.
 //
 // Distinct from Abandoned, which is what a run posts when it declined before
 // ever pushing anything and so has no pull request to link: Declined always
@@ -261,7 +263,7 @@ func (d Declined) Body() string {
 		field("Finished", code(stamp(d.EndedAt))),
 		field("Run total", tokens(d.RunUsage)),
 		"",
-		"The pull request above has been converted to a draft, and the `auto` label has been cleared. Re-add it to request another pass.",
+		"The pull request above remains a draft, and the `auto` label has been cleared. Re-add it to request another pass.",
 	)
 }
 
@@ -274,8 +276,8 @@ func declineHeading(o work.Outcome) string {
 }
 
 // autoLabelNote closes Proposed's and Abandoned's outcome comments. Declined
-// carries its own variant, because that comment also has to say the pull
-// request was converted to draft. The run clears `auto` whichever way it
+// carries its own variant, because that comment also says the pull request
+// remains a draft. The run clears `auto` whichever way it
 // ends, so the reader's next move is the same in every case and is worth
 // stating where they are looking.
 const autoLabelNote = "The `auto` label has been cleared. Re-add it to request another pass."

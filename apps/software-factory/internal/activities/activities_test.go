@@ -60,6 +60,8 @@ type fakeGitHub struct {
 
 	draftedNodeID string
 	draftErr      error
+	readyNodeID   string
+	readyErr      error
 }
 
 func (f *fakeGitHub) ListAutoTickets(context.Context) ([]work.Ticket, error) {
@@ -111,6 +113,11 @@ func (f *fakeGitHub) OpenOrUpdatePullRequest(_ context.Context, branch, title, b
 func (f *fakeGitHub) ConvertPullRequestToDraft(_ context.Context, nodeID string) error {
 	f.draftedNodeID = nodeID
 	return f.draftErr
+}
+
+func (f *fakeGitHub) MarkPullRequestReadyForReview(_ context.Context, nodeID string) error {
+	f.readyNodeID = nodeID
+	return f.readyErr
 }
 
 type fakePods struct {
@@ -1444,6 +1451,38 @@ func TestConvertPullRequestToDraftFailsTheActivityWhenGitHubDoes(t *testing.T) {
 	// rather than swallow the client's error.
 	if _, err := e.ExecuteActivity(a.ConvertPullRequestToDraft, "PR_1"); err == nil {
 		t.Fatal("want an error when the github client cannot convert the pull request to draft")
+	}
+}
+
+func TestMarkPullRequestReadyForReviewPassesTheNodeIDThrough(t *testing.T) {
+	t.Parallel()
+
+	gh := &fakeGitHub{}
+	d := deps()
+	d.GitHub = gh
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.MarkPullRequestReadyForReview)
+
+	if _, err := e.ExecuteActivity(a.MarkPullRequestReadyForReview, "PR_kwDOtest9"); err != nil {
+		t.Fatalf("MarkPullRequestReadyForReview: %v", err)
+	}
+	if gh.readyNodeID != "PR_kwDOtest9" {
+		t.Fatalf("ready node id = %q, want PR_kwDOtest9", gh.readyNodeID)
+	}
+}
+
+func TestMarkPullRequestReadyForReviewFailsTheActivityWhenGitHubDoes(t *testing.T) {
+	t.Parallel()
+
+	d := deps()
+	d.GitHub = &fakeGitHub{readyErr: github.ErrAuth}
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.MarkPullRequestReadyForReview)
+
+	if _, err := e.ExecuteActivity(a.MarkPullRequestReadyForReview, "PR_1"); err == nil {
+		t.Fatal("want an error when the github client cannot mark the pull request ready")
 	}
 }
 

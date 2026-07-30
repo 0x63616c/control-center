@@ -832,14 +832,18 @@ func (a *Activities) OpenOrUpdatePullRequest(ctx context.Context, in OpenOrUpdat
 	return pr, nil
 }
 
-// ConvertPullRequestToDraft marks a run's pull request as a draft — the
-// terminal-state signal that the factory declined this ticket rather than
-// approving it. See internal/workflows' terminal-cleanup ordering for why a
-// failure here, after every retry is exhausted, fails the whole workflow
-// rather than logging and continuing like every other cleanup step does.
+// ConvertPullRequestToDraft makes a declined pull request safe to leave behind.
 func (a *Activities) ConvertPullRequestToDraft(ctx context.Context, nodeID string) error {
 	if err := a.deps.GitHub.ConvertPullRequestToDraft(ctx, nodeID); err != nil {
 		return fail(ctx, fmt.Sprintf("converting pull request %s to draft", nodeID), err)
+	}
+	return nil
+}
+
+// MarkPullRequestReadyForReview makes a proposed pull request reviewable.
+func (a *Activities) MarkPullRequestReadyForReview(ctx context.Context, nodeID string) error {
+	if err := a.deps.GitHub.MarkPullRequestReadyForReview(ctx, nodeID); err != nil {
+		return fail(ctx, fmt.Sprintf("marking pull request %s ready for review", nodeID), err)
 	}
 	return nil
 }
