@@ -106,6 +106,8 @@ func TestImplementPromptRequiresTheCanonicalPullRequestDescription(t *testing.T)
 	}
 
 	for _, requirement := range []string{
+		"bun run check",
+		"actual output in the implementation report",
 		".github/pull_request_template.md",
 		"complete every applicable section",
 		"Fixes #{{ticket_number}}",

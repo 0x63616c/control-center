@@ -27,7 +27,7 @@ intent of.
 Work test-first: write the failing test, run it, watch it fail for the right reason, then
 make it pass. Put the real commands and their real output in your document. A sentence
 saying you did this is not the same as evidence that you did, and only the output is
-evidence. Run the repository's own checks before you finish and show those too.
+evidence. Run `bun run check` before you finish and include its actual output in the implementation report.
 
 The plan was written by someone who had not tried it, and any findings below came from a
 reviewer who read your report rather than the code changing under them. Where either turns
