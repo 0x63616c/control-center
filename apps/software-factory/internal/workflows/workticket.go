@@ -127,11 +127,9 @@ func WorkTicket(ctx workflow.Context, in WorkTicketInput) (WorkTicketResult, err
 		comments: map[work.StatusStep]work.CommentID{},
 	}
 	result, err := run.execute(ctx)
-	// finish's own error is the terminal-cleanup sequence's, not execute's:
-	// draft conversion exhausting its retries on a declined run is the one
-	// cleanup failure that must turn a normal Complete into a Fail (see
-	// finish's own doc comment and terminal.go's decline) — everything else
-	// finish does is best-effort and already logs rather than returns.
+	// finish's own error is the terminal readiness operation's, not execute's:
+	// a proposed pull request that cannot be made ready for human review must
+	// turn a normal Complete into a Fail. Other cleanup remains best-effort.
 	if finishErr := run.finish(ctx, result, err); finishErr != nil && err == nil {
 		err = finishErr
 	}
@@ -271,11 +269,9 @@ func (r *ticketRun) execute(ctx workflow.Context) (WorkTicketResult, error) {
 // decided, and a failure to tidy up must not overwrite the reason a run
 // ended, so most steps log instead of returning — the sandbox pod is caught
 // by the dispatcher's orphan sweep if DeleteSandbox fails here too. The one
-// deliberate exception is decline's own return (below): a declined run whose
-// pull request could not be converted to draft after every retry must turn
-// this run's own Complete into a Fail, per Calum's confirmed terminal-state
-// design (terminal.go's decline doc comment) — everything else about "this
-// step must not fail the run" still holds.
+// deliberate exception is making a proposed pull request ready for review:
+// if that fails after every retry, leaving `auto` on and failing loudly is
+// safer than silently hiding work that a human needs to review.
 func (r *ticketRun) finish(ctx workflow.Context, result WorkTicketResult, runErr error) error {
 	log := workflow.GetLogger(ctx)
 	ctx, cancel := workflow.NewDisconnectedContext(ctx)
@@ -307,37 +303,38 @@ func (r *ticketRun) finish(ctx workflow.Context, result WorkTicketResult, runErr
 	// and keeps its label — no clearing, no decline, on that path at all.
 	//
 	// Every other ending clears the label exactly once, through exactly one
-	// of two routes, never both: OutcomeBlocked and OutcomeExhausted are a
-	// decline (draft conversion, then the label, then the pull request
-	// comment — terminal.go's decline owns that whole ordered sequence, and
-	// its own failure is what can fail this run). Everything else —
-	// OutcomeProposed and OutcomeFailed alike — clears the label directly,
+	// of three routes, never both: OutcomeBlocked and OutcomeExhausted are a
+	// decline (the idempotent draft conversion, then the label and pull request
+	// comment). OutcomeProposed first makes the draft ready for review, then
+	// clears the label; failure to make it ready fails the workflow and leaves
+	// the label on. OutcomeFailed clears the label directly,
 	// exactly as every ending did before this step: ADR-0011 names "a PR
 	// opened, or blocked" as when the label comes off, and leaving it on
 	// after a hard failure would have the dispatcher re-list and re-fail the
 	// ticket forever, which is the unbounded requeue this system is built to
-	// avoid. A second, unconditional ClearAutoLabel here on top of decline's
-	// own would defeat the whole mechanism: a declined run whose draft
-	// conversion failed is deliberately left labelled, and clearing it
-	// anyway would make a Failed workflow's ticket look resolved.
-	var declineErr error
+	// avoid.
+	var terminalErr error
 	if !cancelled {
 		switch outcome {
 		case work.OutcomeBlocked, work.OutcomeExhausted:
-			declineErr = r.decline(ctx, declineDetail{
+			r.decline(ctx, declineDetail{
 				Outcome:     outcome,
 				Detail:      detail,
 				PullRequest: result.PullRequest,
 				FullDetail:  result.FullDetail,
 			})
-			if declineErr != nil {
-				log.Error("declining the run failed; the workflow fails rather than completes",
-					"ticket", r.in.Ticket.Number, "error", declineErr)
+		case work.OutcomeProposed:
+			if err := workflow.ExecuteActivity(control, acts.MarkPullRequestReadyForReview, result.PullRequest.NodeID).Get(ctx, nil); err != nil {
+				log.Error("marking the pull request ready for review failed after every retry; the auto label stays on",
+					"ticket", r.in.Ticket.Number, "pull_request", result.PullRequest.Number, "error", err)
+				terminalErr = fmt.Errorf("marking pull request %s ready for review: %w", result.PullRequest.URL, err)
 				if failure == work.FailureNone || failure == work.FailureOther {
-					failure = activities.FailureKindOf(declineErr)
+					failure = activities.FailureKindOf(err)
 				}
+				break
 			}
-		case work.OutcomeProposed, work.OutcomeFailed:
+			fallthrough
+		case work.OutcomeFailed:
 			if err := workflow.ExecuteActivity(control, acts.ClearAutoLabel, r.in.Ticket.Number).Get(ctx, nil); err != nil {
 				log.Error("clearing the auto label failed; this ticket will be listed again",
 					"ticket", r.in.Ticket.Number, "error", err)
@@ -353,22 +350,28 @@ func (r *ticketRun) finish(ctx workflow.Context, result WorkTicketResult, runErr
 		}
 	}
 
-	state := work.StepSucceeded
-	if outcome != work.OutcomeProposed {
-		state = work.StepFailed
+	// Proposed is an externally visible promise that GitHub accepted the
+	// readiness mutation. Do not post it when that mutation failed: reporting
+	// a human-ready PR while it remains draft would recreate the ambiguity this
+	// terminal ordering removes.
+	if terminalErr == nil {
+		state := work.StepSucceeded
+		if outcome != work.OutcomeProposed {
+			state = work.StepFailed
+		}
+		r.report(ctx, work.StatusReport{
+			Step: work.StepOutcome, State: state,
+			Outcome: outcome, Detail: detail, EndedAt: workflow.Now(ctx),
+			// result.PullRequest is what the loop's own create-or-edit calls got
+			// back from GitHub for this run's own branch, never a value a stage
+			// wrote into its own result file — see openOrUpdatePullRequest in
+			// loop.go. Populated on a decline as well as a proposal now that PR
+			// ownership is workflow code (#435): result.PullRequest.URL is empty
+			// only when the loop never pushed anything, which is a no-op here for
+			// exactly that case.
+			PullRequestURL: result.PullRequest.URL,
+		})
 	}
-	r.report(ctx, work.StatusReport{
-		Step: work.StepOutcome, State: state,
-		Outcome: outcome, Detail: detail, EndedAt: workflow.Now(ctx),
-		// result.PullRequest is what the loop's own create-or-edit calls got
-		// back from GitHub for this run's own branch, never a value a stage
-		// wrote into its own result file — see openOrUpdatePullRequest in
-		// loop.go. Populated on a decline as well as a proposal now that PR
-		// ownership is workflow code (#435): result.PullRequest.URL is empty
-		// only when the loop never pushed anything, which is a no-op here for
-		// exactly that case.
-		PullRequestURL: result.PullRequest.URL,
-	})
 	r.tellDispatcher(ctx, work.TicketDone{
 		Ticket:  r.in.Ticket.Number,
 		RunID:   r.runID,
@@ -376,7 +379,7 @@ func (r *ticketRun) finish(ctx workflow.Context, result WorkTicketResult, runErr
 		Failure: failure,
 		Detail:  detail,
 	})
-	return declineErr
+	return terminalErr
 }
 
 // tellDispatcher reports the slot free.

@@ -46,6 +46,9 @@ func TestOpenOrUpdatePullRequestCreatesOnTheDefaultBranchWhenNoneExists(t *testi
 	if body["head"] != testBranch {
 		t.Fatalf("head = %v, want %q", body["head"], testBranch)
 	}
+	if body["draft"] != true {
+		t.Fatalf("draft = %v, want true", body["draft"])
+	}
 }
 
 // TestOpenOrUpdatePullRequestEditsWhenTitleOrBodyChanged proves the "existing,

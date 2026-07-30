@@ -99,6 +99,7 @@ type ticketHarness struct {
 
 	cloneErr error
 	draftErr error
+	readyErr error
 
 	// persistErr, when set, is returned by every PersistTranscript call — the
 	// relay is best-effort, so this exists to prove a failed one does not
@@ -129,6 +130,8 @@ type ticketHarness struct {
 	openOrUpdate     int
 	observedCI       int
 	drafted          []string
+	markedReady      []string
+	terminalActions  []string
 	postedPRComments []prComment
 
 	// persisted records what PersistTranscript was called with, keyed by
@@ -212,6 +215,7 @@ func (h *ticketHarness) run() {
 	env.OnActivity(acts.ClearAutoLabel, mock.Anything, 328).
 		Return(func(_ context.Context, _ int) error {
 			h.cleared++
+			h.terminalActions = append(h.terminalActions, "clear-label")
 			return h.labelErr
 		})
 
@@ -219,6 +223,13 @@ func (h *ticketHarness) run() {
 		Return(func(_ context.Context, nodeID string) error {
 			h.drafted = append(h.drafted, nodeID)
 			return h.draftErr
+		})
+
+	env.OnActivity(acts.MarkPullRequestReadyForReview, mock.Anything, mock.Anything).
+		Return(func(_ context.Context, nodeID string) error {
+			h.markedReady = append(h.markedReady, nodeID)
+			h.terminalActions = append(h.terminalActions, "mark-ready")
+			return h.readyErr
 		})
 
 	env.OnActivity(acts.PostPullRequestComment, mock.Anything, mock.Anything, mock.Anything).
@@ -948,12 +959,10 @@ func TestWorkTicketDeclinesADeclinedRunDraftFirstThenLabelThenComment(t *testing
 	}
 }
 
-// TestWorkTicketFailsRatherThanCompleteWhenDraftConversionExhaustsItsRetries
-// is the test that specifically guards against the looks-like-success
-// failure mode the terminal-state split exists to prevent: a declined run
-// whose pull request could not be converted to draft must not clear the
-// label and must not report a normal Complete.
-func TestWorkTicketFailsRatherThanCompleteWhenDraftConversionExhaustsItsRetries(t *testing.T) {
+// TestWorkTicketContinuesWhenDeclineDraftConversionExhaustsItsRetries proves
+// a declined pull request is already safe because it started as a draft, so
+// the idempotent conversion cannot block terminal cleanup.
+func TestWorkTicketContinuesWhenDeclineDraftConversionExhaustsItsRetries(t *testing.T) {
 	t.Parallel()
 
 	h := newTicketHarness(t)
@@ -965,16 +974,63 @@ func TestWorkTicketFailsRatherThanCompleteWhenDraftConversionExhaustsItsRetries(
 		"github refused this app's credentials", activities.ErrTypeAuth, nil)
 	h.run()
 
-	if err := h.env.GetWorkflowError(); err == nil {
-		t.Fatal("a run whose pull request could not be converted to draft must Fail, not Complete with a declined outcome")
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("a draft-first declined run remains safely declined when conversion fails: %v", err)
 	}
-	if h.cleared != 0 {
-		t.Fatal("the auto label must stay on when draft conversion fails, or a Failed workflow's ticket looks resolved")
+	if h.cleared != 1 {
+		t.Fatalf("cleared the auto label %d times, want cleanup to continue", h.cleared)
 	}
 	// The full-detail comment is best-effort and additive — it cannot itself
 	// be mistaken for approval — so decline still posts it even though draft
 	// conversion failed, per terminal.go's own doc comment.
 	if len(h.postedPRComments) != 1 {
 		t.Fatalf("posted %d pull request comments, want exactly one even though draft conversion failed", len(h.postedPRComments))
+	}
+}
+
+func TestWorkTicketFailsAndLeavesAutoWhenMarkingAProposedPullRequestReadyFails(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.readyErr = temporal.NewNonRetryableApplicationError(
+		"github refused this app's credentials", activities.ErrTypeAuth, nil)
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err == nil {
+		t.Fatal("a proposed pull request that cannot be marked ready must fail the workflow")
+	}
+	if len(h.markedReady) != 1 || h.markedReady[0] != "PR_node9" {
+		t.Fatalf("marked ready %v, want exactly the run's pull request node id", h.markedReady)
+	}
+	if h.cleared != 0 {
+		t.Fatalf("cleared the auto label %d times, want zero when readiness fails", h.cleared)
+	}
+	if h.done.Failure != work.FailureAuth {
+		t.Fatalf("dispatcher failure = %s, want auth", h.done.Failure)
+	}
+	for _, report := range h.reports {
+		if report.Step == work.StepOutcome {
+			t.Fatalf("outcome report = %+v, want no misleading ready-for-review status", report)
+		}
+	}
+}
+
+func TestWorkTicketMarksAProposedPullRequestReadyBeforeClearingAuto(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+	if len(h.markedReady) != 1 || h.markedReady[0] != "PR_node9" {
+		t.Fatalf("marked ready %v, want exactly the run's pull request node id", h.markedReady)
+	}
+	if h.cleared != 1 {
+		t.Fatalf("cleared the auto label %d times, want one", h.cleared)
+	}
+	if got := strings.Join(h.terminalActions, ","); got != "mark-ready,clear-label" {
+		t.Fatalf("terminal actions = %q, want mark-ready,clear-label", got)
 	}
 }

@@ -491,6 +491,9 @@ func TestTheProposedCommentCarriesThePullRequestItOpened(t *testing.T) {
 	if !strings.Contains(p.Body(), p.PullRequestURL) {
 		t.Errorf("the proposed comment does not carry %q:\n%s", p.PullRequestURL, p.Body())
 	}
+	if !strings.Contains(p.Body(), "ready for human review") {
+		t.Errorf("the proposed comment does not say when a human should review it:\n%s", p.Body())
+	}
 }
 
 // TestTheDeclinedCommentCarriesThePullRequestAndDistinguishesWhyItDeclined

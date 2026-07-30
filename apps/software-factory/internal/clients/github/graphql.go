@@ -11,8 +11,8 @@ import (
 )
 
 // This file is this package's only user of GitHub's GraphQL API, kept to
-// exactly the one mutation REST cannot express: converting an already-open
-// pull request back to draft. See github.go's "Verified facts" above
+// exactly the two mutations REST cannot express: changing an already-open
+// pull request's draft state. See github.go's "Verified facts" above
 // PullRequestForBranch for why REST has no path for that at all, and why
 // go-github's PullRequestsService.Edit silently no-ops rather than erroring
 // if asked to.
@@ -29,6 +29,14 @@ import (
 // request.
 const convertDraftMutation = `mutation($id: ID!) {
   convertPullRequestToDraft(input: {pullRequestId: $id}) {
+    pullRequest {
+      isDraft
+    }
+  }
+}`
+
+const markReadyMutation = `mutation($id: ID!) {
+  markPullRequestReadyForReview(input: {pullRequestId: $id}) {
     pullRequest {
       isDraft
     }
@@ -64,13 +72,23 @@ type graphQLResponse struct {
 // PullRequestForBranch and the create-or-edit path in github.go for where
 // NodeID is populated on work.PullRequest.
 func (c *Client) ConvertPullRequestToDraft(ctx context.Context, nodeID string) error {
-	op := fmt.Sprintf("converting pull request %s to draft", nodeID)
+	return c.setPullRequestDraftState(ctx, nodeID, "converting", "to draft", convertDraftMutation, "converted pull request to draft")
+}
+
+// MarkPullRequestReadyForReview marks a draft pull request ready for human review.
+func (c *Client) MarkPullRequestReadyForReview(ctx context.Context, nodeID string) error {
+	return c.setPullRequestDraftState(ctx, nodeID, "marking", "ready for review", markReadyMutation, "marked pull request ready for review")
+}
+
+// setPullRequestDraftState sends one of GitHub's two GraphQL draft-state mutations.
+func (c *Client) setPullRequestDraftState(ctx context.Context, nodeID, verb, state, mutation, successMessage string) error {
+	op := fmt.Sprintf("%s pull request %s %s", verb, nodeID, state)
 	if nodeID == "" {
 		return permanent(op, ErrInvalid, fmt.Errorf("no pull request node id was supplied"))
 	}
 
 	body, err := json.Marshal(graphQLRequest{
-		Query:     convertDraftMutation,
+		Query:     mutation,
 		Variables: map[string]any{"id": nodeID},
 	})
 	if err != nil {
@@ -105,7 +123,7 @@ func (c *Client) ConvertPullRequestToDraft(ctx context.Context, nodeID string) e
 		return classifyGraphQLErrors(op, decoded.Errors)
 	}
 
-	c.log.InfoContext(ctx, "converted pull request to draft", "node_id", nodeID)
+	c.log.InfoContext(ctx, successMessage, "node_id", nodeID)
 	return nil
 }
 

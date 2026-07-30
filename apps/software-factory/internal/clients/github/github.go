@@ -77,7 +77,7 @@ type Client struct {
 	auth  *appAuth
 	log   *slog.Logger
 
-	// graphqlURL is where ConvertPullRequestToDraft posts its mutation:
+	// graphqlURL is where the pull request draft-state mutations post:
 	// GitHub's production endpoint, or a test stub's when withBaseURL
 	// redirected the REST plane too. See graphql.go.
 	graphqlURL string
@@ -353,6 +353,7 @@ func (c *Client) createPullRequest(ctx context.Context, branch, title, body stri
 		Body:  gh.Ptr(body),
 		Head:  gh.Ptr(branch),
 		Base:  gh.Ptr(base),
+		Draft: gh.Ptr(true),
 	})
 	if err != nil {
 		return work.PullRequest{}, classify(ctx, op, err)
@@ -690,7 +691,7 @@ func (c *Client) InstallationToken(ctx context.Context) (work.SandboxCredential,
 			// without this, with an error that never reaches this client's
 			// taxonomy. Agents edit workflows, so this is not hypothetical.
 			Workflows: gh.Ptr("write"),
-			// OpenOrUpdatePullRequest/ConvertPullRequestToDraft need it.
+			// OpenOrUpdatePullRequest and the draft-state mutations need it.
 			PullRequests: gh.Ptr("write"),
 			// GitHub will not grant the others without it.
 			Metadata: gh.Ptr("read"),

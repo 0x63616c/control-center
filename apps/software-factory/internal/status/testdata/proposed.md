@@ -6,4 +6,6 @@ https://github.com/0x63616c/world-wide-webb/pull/999
 - **Finished** — `2026-07-28T18:41:02Z`
 - **Run total** — in `212,845` (`190,002` cached) · out `31,004` · reasoning `12,873`
 
+The pull request above is ready for human review.
+
 The `auto` label has been cleared. Re-add it to request another pass.
