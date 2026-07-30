@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
+	"go.temporal.io/sdk/worker"
 )
 
 // acts is a nil handle used only to name activity methods for the test
@@ -85,8 +86,19 @@ type ticketHarness struct {
 func newTicketHarness(t *testing.T) *ticketHarness {
 	t.Helper()
 	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+
+	// The stage loop runs under a Session (#434 step 3, D2): without this,
+	// CreateSession has no session worker to claim it and every run fails
+	// before its first stage, in a test environment that would otherwise
+	// have no opinion on Sessions at all.
+	env.SetWorkerOptions(worker.Options{
+		EnableSessionWorker:               true,
+		MaxConcurrentSessionExecutionSize: 1,
+	})
+
 	return &ticketHarness{
-		env:    suite.NewTestWorkflowEnvironment(),
+		env:    env,
 		policy: work.DefaultRunPolicy(),
 		config: work.DefaultConfig(),
 		priors: map[work.Stage]map[work.Stage]work.StageOutput{},
