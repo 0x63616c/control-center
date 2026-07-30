@@ -138,7 +138,13 @@ func TestBuildPodTerminatesWithoutAGracePeriod(t *testing.T) {
 	}
 }
 
-func TestBuildPodRequestsCPUAndLimitsOnlyMemory(t *testing.T) {
+// TestBuildPodIsDeliberatelyBurstableNotGuaranteed proves the sandbox pod
+// requests CPU but limits only memory. Guaranteed QoS needs limits to equal
+// requests for every resource, so this combination is Burstable — accepted
+// per #87's repo-wide ban on CPU limits, not an oversight. See the comment
+// above the resources literal in podspec.go for the eviction-order
+// consequence that trade carries.
+func TestBuildPodIsDeliberatelyBurstableNotGuaranteed(t *testing.T) {
 	t.Parallel()
 
 	c := sandboxContainer(t, mustBuild(t, validSpec()))
@@ -149,7 +155,7 @@ func TestBuildPodRequestsCPUAndLimitsOnlyMemory(t *testing.T) {
 		t.Errorf("memory request = %s, want 8Gi", got.String())
 	}
 	if _, ok := c.Resources.Limits[corev1.ResourceCPU]; ok {
-		t.Error("cpu limit is present, want it absent: CPU limits are banned (#87)")
+		t.Error("cpu limit is present, want it absent: CPU limits are banned (#87), which makes this pod Burstable rather than Guaranteed QoS")
 	}
 	if got := c.Resources.Limits[corev1.ResourceMemory]; got.Cmp(resource.MustParse("8Gi")) != 0 {
 		t.Errorf("memory limit = %s, want 8Gi", got.String())
