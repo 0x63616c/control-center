@@ -41,3 +41,40 @@ func TestTaskQueueIsUsableAsATaskQueueName(t *testing.T) {
 		t.Errorf("TaskQueue %q contains whitespace", TaskQueue)
 	}
 }
+
+// TestSandboxTaskQueueIsDerivedPerRun pins the D1 shape: one pod, one ticket,
+// one queue that names it — never the shared constant a warm pool would need.
+func TestSandboxTaskQueueIsDerivedPerRun(t *testing.T) {
+	t.Parallel()
+
+	a := SandboxTaskQueue("run-a")
+	b := SandboxTaskQueue("run-b")
+
+	if a == b {
+		t.Errorf("SandboxTaskQueue(%q) and SandboxTaskQueue(%q) collided on %q; two tickets would poll the same queue", "run-a", "run-b", a)
+	}
+	if a == TaskQueue || b == TaskQueue {
+		t.Error("a sandbox queue name collided with the main worker's TaskQueue")
+	}
+	if got := SandboxTaskQueue("run-a"); got != a {
+		t.Errorf("SandboxTaskQueue(%q) = %q then %q; the same run must always name the same queue", "run-a", a, got)
+	}
+}
+
+// TestSandboxTaskQueueIsUsableAsATaskQueueName holds the same human-typeable
+// bar TaskQueue is held to, against a realistic Temporal RunID.
+func TestSandboxTaskQueueIsUsableAsATaskQueueName(t *testing.T) {
+	t.Parallel()
+
+	got := SandboxTaskQueue("b6f1e2b2-1c1e-4b1a-9c1a-1234567890ab")
+	switch {
+	case got == "":
+		t.Error("SandboxTaskQueue returned an empty name")
+	case strings.TrimSpace(got) != got:
+		t.Errorf("SandboxTaskQueue name %q is padded with whitespace", got)
+	case strings.ContainsAny(got, " \t\n\r"):
+		t.Errorf("SandboxTaskQueue name %q contains whitespace", got)
+	case !strings.HasPrefix(got, "software-factory-sandbox-"):
+		t.Errorf("SandboxTaskQueue name %q does not carry the published prefix an operator would filter on", got)
+	}
+}
