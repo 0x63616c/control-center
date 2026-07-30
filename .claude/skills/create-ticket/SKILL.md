@@ -10,7 +10,7 @@ description: Use when filing a GitHub issue in this repo, or when the user says 
 ## Recipe
 
 1. Search first — don't dupe: `gh issue list --search "<keywords>" --state all --json number,title,labels,state`
-2. Pick exactly one `area/*` and one `type/*` label (list below), plus `auto` if an agent could take it end-to-end unattended. No other labels — no priority, no status, no milestone.
+2. Pick exactly one `area/*` and one `type/*` label (list below), plus `auto` if an agent could take it end-to-end unattended. No other labels at filing time — no priority, no status, no milestone. `failed` is a lifecycle marker software-factory adds later to a failed ticket and any run-owned PR; do not select it here.
 3. Create:
 
 ```bash

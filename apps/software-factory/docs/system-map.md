@@ -35,6 +35,7 @@ work-ticket-<n>  (one child workflow per ticket, ABANDON on parent close)
         │
         ├─ FindPullRequest ───────── asks GitHub, not the model
         └─ finish (disconnected ctx): DeleteSandbox, ClearAutoLabel,
+                                      LabelFailure (hard failures only),
                                       outcome comment, signal dispatcher
         ▼
 open PR ──► a human reads it, merges it, and thereby deploys
@@ -260,7 +261,8 @@ unzip`. No gcc, so `go test -race` cannot link; no `golangci-lint`. Both are wha
    apply to this pipeline."*
 4. **Re-adding `auto`** for another pass. The machine removes it on every ending except
    cancellation — including a hard failure, because leaving it on means the dispatcher relists
-   and refails the ticket forever (`workticket.go:296`).
+   and refails the ticket forever (`workticket.go:296`). Hard failures also add `failed` to the
+   ticket and any run-owned PR, alongside the outcome comment.
 5. **Re-seeding the codex credential** if the refresh token dies. The only manual credential
    step; `scripts/seed-codex-auth.sh`, deliberately not in SOPS because the value rotates on
    first use.

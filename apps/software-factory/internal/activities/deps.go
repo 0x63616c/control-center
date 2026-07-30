@@ -61,9 +61,9 @@ type PodLifecycle interface {
 // GitHub is this service's view of the issue tracker: the tickets it may work,
 // the status it reports, and the credential a sandbox needs to push a branch.
 //
-// The methods are narrow on purpose. There is no RemoveLabel(issue, label) —
-// `auto` is the only label this system touches, and a general method would be
-// an invitation to touch others. There is no Comment/EditComment pair either:
+// The methods are narrow on purpose. There is no generic label writer — this
+// system only clears `auto` and marks failed runs with `failed`. There is no
+// Comment/EditComment pair either:
 // a run posts one status comment per step of its own pipeline and edits that
 // step's comment in place, so the type says PostStatus and EditStatus and
 // cannot express arbitrary commenting.
@@ -104,6 +104,9 @@ type GitHub interface {
 	// ClearAutoLabel removes `auto`, which the machine does when it has opened
 	// a PR or given up. A human re-adds it to request another pass.
 	ClearAutoLabel(ctx context.Context, issue int) error
+
+	// MarkFailed adds the terminal failure marker to an issue or pull request.
+	MarkFailed(ctx context.Context, target int) error
 
 	// PullRequestForBranch reports the open pull request on a branch, if there
 	// is one.

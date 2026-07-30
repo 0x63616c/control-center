@@ -17,6 +17,7 @@ var (
 	issuePath    = fmt.Sprintf("%s/%d", issuesPath, testIssue)
 	commentsPath = issuePath + "/comments"
 	autoPath     = fmt.Sprintf("%s/labels/%s", issuePath, autoLabel)
+	labelsPath   = issuePath + "/labels"
 	commentPath  = fmt.Sprintf("%s/comments/999", issuesPath)
 	exchangePath = fmt.Sprintf("/app/installations/%d/access_tokens", testInstallationID)
 )
@@ -582,6 +583,24 @@ func TestRemovesTheAutoLabel(t *testing.T) {
 	}
 	if got := s.first(t, "DELETE "+autoPath).Path; got != autoPath {
 		t.Errorf("removed %q, want exactly the auto label", got)
+	}
+}
+
+func TestMarksAnIssueFailed(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newStub(t)
+	s.handle("POST "+labelsPath, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, []any{})
+	})
+	c, _ := s.client(t)
+
+	if err := c.MarkFailed(context.Background(), testIssue); err != nil {
+		t.Fatalf("MarkFailed returned an unexpected error: %v", err)
+	}
+	sent := strings.TrimSpace(string(s.first(t, "POST "+labelsPath).Body))
+	if sent != `["failed"]` {
+		t.Errorf("posted %s, want the failed label only", sent)
 	}
 }
 

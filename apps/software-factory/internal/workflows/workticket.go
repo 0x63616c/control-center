@@ -362,6 +362,20 @@ func (r *ticketRun) finish(ctx workflow.Context, result WorkTicketResult, runErr
 					failure = activities.FailureKindOf(err)
 				}
 			}
+			// This activity changes WorkTicket's recorded command sequence. Old
+			// histories retain their clear-and-report path; only new executions
+			// schedule the failure marker.
+			version := workflow.GetVersion(ctx, "work-ticket-failed-label-v1", workflow.DefaultVersion, 1)
+			if outcome == work.OutcomeFailed && version != workflow.DefaultVersion {
+				in := activities.LabelFailureInput{
+					TicketNumber:      r.in.Ticket.Number,
+					PullRequestNumber: result.PullRequest.Number,
+				}
+				if err := workflow.ExecuteActivity(control, acts.LabelFailure, in).Get(ctx, nil); err != nil {
+					log.Error("adding failed labels failed after every retry; reporting the original run failure",
+						"ticket", r.in.Ticket.Number, "pull_request", result.PullRequest.Number, "error", err)
+				}
+			}
 		}
 	}
 

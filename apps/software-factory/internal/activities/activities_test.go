@@ -30,13 +30,14 @@ type fakeGitHub struct {
 	detail           work.TicketDetail
 	autoLabelPresent bool
 
-	postErr, editErr, labelErr, listErr, detailErr, autoLabelErr error
+	postErr, editErr, labelErr, failedErr, listErr, detailErr, autoLabelErr error
 
 	postedTo   int
 	postedBody string
 	editedID   work.CommentID
 	editedBody string
 	cleared    []int
+	failed     []int
 	nextID     work.CommentID
 
 	pr          work.PullRequest
@@ -95,6 +96,11 @@ func (f *fakeGitHub) EditStatus(_ context.Context, id work.CommentID, body strin
 func (f *fakeGitHub) ClearAutoLabel(_ context.Context, issue int) error {
 	f.cleared = append(f.cleared, issue)
 	return f.labelErr
+}
+
+func (f *fakeGitHub) MarkFailed(_ context.Context, target int) error {
+	f.failed = append(f.failed, target)
+	return f.failedErr
 }
 
 func (f *fakeGitHub) InstallationToken(context.Context) (work.SandboxCredential, error) {
@@ -586,6 +592,67 @@ func TestClearAutoLabelSurfacesAnAuthFailureAsTheTypeThatPausesTheDispatcher(t *
 	}
 	if got := FailureKindOf(err); got != work.FailureAuth {
 		t.Fatalf("FailureKindOf = %q, want %q — this is what pauses the dispatcher", got, work.FailureAuth)
+	}
+}
+
+func TestLabelFailureMarksTheIssueAndItsPullRequest(t *testing.T) {
+	t.Parallel()
+
+	gh := &fakeGitHub{}
+	d := deps()
+	d.GitHub = gh
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.LabelFailure)
+
+	if _, err := e.ExecuteActivity(a.LabelFailure, LabelFailureInput{TicketNumber: 328, PullRequestNumber: 9}); err != nil {
+		t.Fatalf("LabelFailure: %v", err)
+	}
+	if got, want := fmt.Sprint(gh.failed), "[328 9]"; got != want {
+		t.Fatalf("marked %s, want %s", got, want)
+	}
+}
+
+func TestLabelFailureMarksOnlyTheIssueBeforeAPullRequestExists(t *testing.T) {
+	t.Parallel()
+
+	gh := &fakeGitHub{}
+	d := deps()
+	d.GitHub = gh
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.LabelFailure)
+
+	if _, err := e.ExecuteActivity(a.LabelFailure, LabelFailureInput{TicketNumber: 328}); err != nil {
+		t.Fatalf("LabelFailure: %v", err)
+	}
+	if got, want := fmt.Sprint(gh.failed), "[328]"; got != want {
+		t.Fatalf("marked %s, want %s", got, want)
+	}
+}
+
+func TestLabelFailurePreservesTheGitHubFailureKind(t *testing.T) {
+	t.Parallel()
+
+	gh := &fakeGitHub{failedErr: fmt.Errorf("labelling: %w (%w): %w", github.ErrAuth, work.ErrPermanent, errors.New("403"))}
+	d := deps()
+	d.GitHub = gh
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.LabelFailure)
+
+	_, err := e.ExecuteActivity(a.LabelFailure, LabelFailureInput{TicketNumber: 328, PullRequestNumber: 9})
+	if err == nil {
+		t.Fatal("an auth failure must fail the activity")
+	}
+	if got := FailureKindOf(err); got != work.FailureAuth {
+		t.Fatalf("FailureKindOf = %q, want %q", got, work.FailureAuth)
+	}
+	if !strings.Contains(err.Error(), "issue #328") {
+		t.Fatalf("error %q does not identify the failed target", err)
+	}
+	if got, want := fmt.Sprint(gh.failed), "[328]"; got != want {
+		t.Fatalf("marked %s, want %s after the first target fails", got, want)
 	}
 }
 

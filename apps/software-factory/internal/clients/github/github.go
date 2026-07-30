@@ -23,9 +23,12 @@ import (
 	gh "github.com/google/go-github/v78/github"
 )
 
-// autoLabel is the one label this system touches. Nothing parameterises it:
-// a general removeLabel would be an invitation to touch others.
-const autoLabel = "auto"
+// These are the system labels this client may change. Nothing parameterises
+// them: a general label writer would be an invitation to touch others.
+const (
+	autoLabel   = "auto"
+	failedLabel = "failed"
+)
 
 // perPage is GitHub's maximum page size. Every listing here uses it, because
 // the cost of a listing is requests, not rows.
@@ -724,6 +727,19 @@ func (c *Client) ClearAutoLabel(ctx context.Context, issue int) error {
 	}
 
 	c.log.InfoContext(ctx, "the auto label was already absent", "issue", issue)
+	return nil
+}
+
+// MarkFailed adds the terminal failure marker to an issue or pull request.
+// Pull requests use GitHub's issues endpoint for labels, so target is the
+// resource's shared number in either case.
+func (c *Client) MarkFailed(ctx context.Context, target int) error {
+	op := fmt.Sprintf("adding the failed label to #%d", target)
+
+	if _, _, err := c.api.Issues.AddLabelsToIssue(ctx, c.owner, c.repo, target, []string{failedLabel}); err != nil {
+		return classify(ctx, op, err)
+	}
+	c.log.InfoContext(ctx, "added the failed label", "target", target)
 	return nil
 }
 
