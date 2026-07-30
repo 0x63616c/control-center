@@ -40,6 +40,7 @@
     "lint:fix": "bun run format",
     "gate": "bun scripts/quality-gate.ts gate",
     "gate:pre-push": "bun scripts/quality-gate.ts pre-push",
+    "check": "bun scripts/check.ts",
     "knip": "bun scripts/quality-gate.ts knip",
     "knip:fix": "bunx knip --fix --allow-remove-files",
     "typecheck": "bun run --filter '*' typecheck && bun run typecheck:config",

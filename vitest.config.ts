@@ -63,7 +63,12 @@ export default defineConfig({
           // chain as apps-gen/*.ts, so it needs the identical jsdom + "@" alias
           // + MapLibre stub environment, not a separate project.
           root: "./scripts",
-          include: ["apps-gen/**/*.test.ts", "apps-check.test.ts", "alias-parity.test.ts"],
+          include: [
+            "apps-gen/**/*.test.ts",
+            "apps-check.test.ts",
+            "alias-parity.test.ts",
+            "check.test.ts",
+          ],
           environment: "jsdom",
           // Same MapLibre stub as apps/web's unit project (www-355t.11):
           // collect() pulls in the real TILE_REGISTRY, which imports
