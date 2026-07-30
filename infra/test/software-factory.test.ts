@@ -56,11 +56,25 @@ interface PolicyRule {
   resourceNames?: string[];
 }
 
-async function ruleFor(resource: string): Promise<PolicyRule> {
+async function rulesFor(resource: string): Promise<PolicyRule[]> {
   const rules = await get<PolicyRule[]>(install().role, "rules");
-  const rule = rules.find((r) => r.resources.includes(resource));
-  if (!rule) throw new Error(`no rule for ${resource}`);
-  return rule;
+  return rules.filter((r) => r.resources.includes(resource));
+}
+
+// ruleFor is for a resource this Role grants exactly one rule for. "secrets"
+// is granted by two — the pinned codex-auth rule and the unpinned per-ticket
+// rule (#434) — and silently returning the first of them would make a test
+// pass for the wrong rule instead of failing loudly. Use rulesFor and select
+// by resourceNames for those.
+async function ruleFor(resource: string): Promise<PolicyRule> {
+  const rules = await rulesFor(resource);
+  if (rules.length === 0) throw new Error(`no rule for ${resource}`);
+  if (rules.length > 1) {
+    throw new Error(
+      `${rules.length} rules grant ${resource}; ruleFor cannot disambiguate between them — use rulesFor and select by resourceNames or verbs instead`,
+    );
+  }
+  return rules[0];
 }
 
 interface Container {
@@ -162,19 +176,49 @@ describe("the worker's Role (#343)", () => {
     expect([...(await ruleFor("pods/exec")).verbs].sort()).toEqual(["create", "get"]);
   });
 
-  test("pins the secrets rule to the one credential Secret, and to two verbs", async () => {
+  test("pins the codex-auth secrets rule to that one credential, and to two verbs", async () => {
     // Scoping works here and not on pods, and the asymmetry is structural:
     // SecretClient binds namespace and name at construction, so no code path
-    // could want `list`.
-    const rule = await ruleFor("secrets");
+    // could want `list`. Selected by resourceNames rather than ruleFor("secrets"),
+    // which is now ambiguous between this rule and the per-ticket one below —
+    // a helper that silently returned the first match would have made this
+    // test pass against the wrong rule.
+    const rules = await rulesFor("secrets");
+    const rule = rules.find((r) => r.resourceNames !== undefined);
+    if (!rule) throw new Error("no resourceNames-scoped secrets rule found");
     expect(rule.resourceNames).toEqual(["codex-auth"]);
     expect([...rule.verbs].sort()).toEqual(["get", "update"]);
   });
 
-  test("grants nothing outside the core API group, and no fourth resource", async () => {
+  test("leaves the per-ticket credential secrets rule unscoped, because resourceNames cannot scope a name unknown at authoring time (#434)", async () => {
+    // The per-ticket codex-credential Secret (D3, lifecycle.go) and its orphan
+    // sweep (sweep.go) both need create/get/update/delete/list against a name
+    // that carries a per-run id — the same limitation that keeps the pods rule
+    // above unscoped, and for the same reason: Kubernetes ignores
+    // resourceNames for list/create/deletecollection regardless. THE
+    // NAMESPACE IS THE ISOLATION BOUNDARY for this rule, not a resourceNames
+    // clause, and that namespace also holds WORKER_SECRET_NAME, the Secret
+    // carrying the GitHub App's private key — #453 is deciding whether to
+    // narrow this rule away from sharing a namespace with that.
+    const rules = await rulesFor("secrets");
+    const rule = rules.find((r) => r.resourceNames === undefined);
+    if (!rule) throw new Error("no unscoped secrets rule found");
+    expect([...rule.verbs].sort()).toEqual(["create", "delete", "get", "list", "update"]);
+  });
+
+  test("grants nothing outside the core API group, and no fifth resource", async () => {
     const rules = await get<PolicyRule[]>(install().role, "rules");
     expect(rules.every((r) => r.apiGroups.every((g) => g === ""))).toBe(true);
-    expect(rules.flatMap((r) => r.resources).sort()).toEqual(["pods", "pods/exec", "secrets"]);
+    // Four rules, not four distinct resource names: "secrets" appears twice,
+    // once pinned to codex-auth and once unpinned for the per-ticket Secret
+    // (#434). A further widening — a new resource, or a rule outside the core
+    // API group — is what this assertion exists to catch.
+    expect(rules.flatMap((r) => r.resources).sort()).toEqual([
+      "pods",
+      "pods/exec",
+      "secrets",
+      "secrets",
+    ]);
   });
 });
 
