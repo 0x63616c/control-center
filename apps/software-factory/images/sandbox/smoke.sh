@@ -94,9 +94,23 @@ check "the stage cwd is the sandbox root and the sandbox uid can write it" 0 \
 check "a directory the process creates under /work is writable by it" 0 \
   /usr/bin/env sh -c 'mkdir -p /work/repo && touch /work/repo/probe'
 
-# The pinned versions, echoed so a bump is visible in the run log rather than
-# only in a diff.
+# The pinned versions are both asserted and logged: a bump is visible in the
+# run log, while a failed or empty version command fails the named check.
 check "pinned tool versions" 0 \
-  /usr/bin/env sh -c 'echo "codex $(codex --version) | bun $(bun --version) | $(go version) | $(git --version)"'
+  /usr/bin/env sh -c '
+    codex_version="$(codex --version)" || { echo "codex --version failed"; exit 1; }
+    [ -n "$codex_version" ] || { echo "codex --version returned empty output"; exit 1; }
+
+    bun_version="$(bun --version)" || { echo "bun --version failed"; exit 1; }
+    [ -n "$bun_version" ] || { echo "bun --version returned empty output"; exit 1; }
+
+    go_version="$(go version)" || { echo "go version failed"; exit 1; }
+    [ -n "$go_version" ] || { echo "go version returned empty output"; exit 1; }
+
+    git_version="$(git --version)" || { echo "git --version failed"; exit 1; }
+    [ -n "$git_version" ] || { echo "git --version returned empty output"; exit 1; }
+
+    echo "codex $codex_version | bun $bun_version | $go_version | $git_version"
+  '
 
 exit "$fail"
