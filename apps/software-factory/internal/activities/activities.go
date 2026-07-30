@@ -43,18 +43,12 @@ type Deps struct {
 	RepoURL string
 
 	// TokenSource yields the codex credential document a sandbox needs to
-	// authenticate. WriteCodexCredential fetches from it and writes what it
-	// returns through CredentialWriter, inside the one activity that does
-	// both — never returning the document, because Temporal would persist it
-	// to workflow history for the namespace's whole retention.
+	// authenticate. CreateSandbox fetches from it and hands the document to
+	// PodLifecycle.Create, which turns it into a per-ticket Kubernetes Secret
+	// mounted into the pod before it exists (D3, #434) — never returning the
+	// document itself, because Temporal would persist it to workflow history
+	// for the namespace's whole retention.
 	TokenSource TokenSource
-
-	// CredentialWriter puts the document TokenSource yields onto the
-	// sandbox's filesystem. A separate field from TokenSource because they
-	// are two different capabilities satisfied by two different concrete
-	// clients — codexauth.Source reads and refreshes the credential;
-	// *k8s.Sandboxes writes it into a pod.
-	CredentialWriter CredentialWriter
 
 	// Log is the injected logger. Clients and activities log themselves, so
 	// leaf code rarely logs by hand and nobody can forget.
@@ -116,9 +110,6 @@ func New(deps Deps) (*Activities, error) {
 	if deps.TokenSource == nil {
 		missing = append(missing, "TokenSource")
 	}
-	if deps.CredentialWriter == nil {
-		missing = append(missing, "CredentialWriter")
-	}
 	if deps.Log == nil {
 		missing = append(missing, "Log")
 	}
@@ -151,15 +142,17 @@ func New(deps Deps) (*Activities, error) {
 // work is indistinguishable from one that is a real capability until the day
 // something calls it by accident.
 //
-// WriteCodexCredential and CloneRepo are not on this list, and not yet
-// registered anywhere but the main worker's *Activities (New, above): both
-// still depend on a way for the credential to reach a sandbox pod's own
-// process. Today that is the pods/exec transport internal/clients/k8s still
-// runs (deliberately kept alive past this step's other deletions for exactly
-// this reason — see internal/clients/k8s/exec.go's own doc comment on Exec).
-// #431/D3 replaces it with a per-ticket Kubernetes Secret mounted at pod
-// creation, which is what would let these two run here instead — that is
-// tracked separately and is not invented in this constructor.
+// CloneRepo is not on this list, and not yet registered anywhere but the main
+// worker's *Activities (New, above): it mints a GitHub App installation
+// token in-process from the App's private key, and #431 has not decided
+// whether the sandbox pod may hold that capability itself. Today CloneRepo
+// still reaches the pod through the pods/exec transport internal/clients/k8s
+// keeps alive for exactly this reason — see internal/clients/k8s/exec.go's
+// own doc comment on Exec. There used to be a second activity here for the
+// same reason, WriteCodexCredential, until D3 (#431) replaced its transport
+// with a per-ticket Kubernetes Secret mounted at pod creation and the
+// activity became a no-op nothing called any more — it, and the workticket.go
+// call to it, are deleted rather than kept as a step that does nothing.
 type SandboxDeps struct {
 	// Stages executes RunStage's own codex invocation. In the sandbox pod this
 	// is backed by internal/clients/local, not internal/clients/k8s: the
@@ -323,36 +316,21 @@ func (a *Activities) WaitSandboxReady(ctx context.Context, sandbox work.SandboxI
 	return nil
 }
 
-// WriteCodexCredential is now a no-op, kept only because
-// internal/workflows/workticket.go still calls it at this exact point in the
-// pipeline and this slice's ownership does not extend to that file (#434,
-// D3). It does no work and returns nil unconditionally.
-//
-// Before D3, this fetched the codex credential from TokenSource and wrote it
-// into the sandbox via CredentialWriter, inside one activity, so the document
-// never crossed the activity/workflow boundary Temporal records. D3 replaces
-// that transport entirely: CreateSandbox now fetches the same document and
-// writes it into a per-ticket Kubernetes Secret before the pod exists, and
-// the pod's own spec mounts that Secret directly at work.CodexAuthFile (see
-// k8s.buildPod). By the time a workflow reaches this call, WaitSandboxReady
-// has already returned, which means the container is already running, which
-// means the volume is already mounted — the file this activity used to write
-// is already there. Calling TokenSource again here would be real, wasted
-// OAuth-refresh work for a document nothing does anything with, so it is not
-// called at all.
-//
-// A follow-up should delete this method, activities.CredentialWriter, and the
-// workticket.go call, once that file is available to whoever picks it up.
-func (a *Activities) WriteCodexCredential(context.Context, work.SandboxID) error {
-	return nil
-}
-
 // CloneRepo checks the ticket's repository out inside the sandbox and pushes
 // this run's branch. It must run once the sandbox is ready and before the
 // first stage: codex refuses to run outside a git repository and exits before
 // any model call, so a run that discovered a missing checkout inside `plan`
 // would already have paid for that stage against a sandbox that could never
-// have worked. See WriteCodexCredential's doc comment for why it runs first.
+// have worked.
+//
+// There used to be a WriteCodexCredential activity that had to run before
+// this one, writing the codex OAuth credential into the sandbox over
+// pods/exec. D3 (#434) replaced that transport with a per-ticket Kubernetes
+// Secret CreateSandbox provisions and the pod's own spec mounts directly at
+// work.CodexAuthFile, in place before the container ever starts — so the
+// credential is already there by the time any activity runs, and the
+// activity that used to write it had nothing left to do. It,
+// activities.CredentialWriter and workticket.go's call to it are deleted.
 //
 // The credential is minted here, inside the activity that uses it, and never
 // returned: like InstallationToken's own doc says, Temporal persists an

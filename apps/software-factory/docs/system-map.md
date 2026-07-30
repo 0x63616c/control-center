@@ -22,14 +22,15 @@ GitHub issue labelled `auto`
 work-ticket-<n>  (one child workflow per ticket, ABANDON on parent close)
         │
         ├─ FetchTicketDetail ─────── issue title, body, comments
-        ├─ CreateSandbox ─────────── one Pod, `sleep infinity`, emptyDir /work
+        ├─ CreateSandbox ─────────── one Pod, `sleep infinity`, emptyDir /work,
+        │                            per-ticket Secret mounted at auth.json
         ├─ WaitSandboxReady
-        ├─ WriteCodexCredential ──── auth.json, refresh_token = ""
         ├─ CloneRepo ─────────────── repo + git creds + gh hosts.yml + bot identity
         │
-        │   ┌──────────── the five stages, forward only, no loops ────────────┐
+        │   ┌──────── the five stages, forward only, no loops, one Session ───┐
         ├───│  plan → review → revise → implement → propose                  │
-        │   │  each = one `codex exec`, fresh process, no shared context      │
+        │   │  each = RunStage, a local `codex exec` inside the sandbox pod's │
+        │   │  own embedded worker (cmd/sandbox-worker), same pod every stage │
         │   └─────────────────────────────────────────────────────────────────┘
         │
         ├─ FindPullRequest ───────── asks GitHub, not the model

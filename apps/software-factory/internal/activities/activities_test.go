@@ -260,22 +260,6 @@ func (f *fakeTokenSource) SandboxCredentialFile(context.Context) (work.Credentia
 	return f.file, f.err
 }
 
-// fakeCredentialWriter stands in for *k8s.Sandboxes' WriteCodexCredential: it
-// records what it was asked to write, so a test can assert the document
-// TokenSource yielded is exactly what reached the sandbox — and nothing else.
-type fakeCredentialWriter struct {
-	err        error
-	sawSandbox work.SandboxID
-	sawFile    work.CredentialFile
-	writes     int
-}
-
-func (f *fakeCredentialWriter) WriteCodexCredential(_ context.Context, sandbox work.SandboxID, file work.CredentialFile) error {
-	f.sawSandbox, f.sawFile = sandbox, file
-	f.writes++
-	return f.err
-}
-
 // --- harness ---------------------------------------------------------------
 
 func template() work.SandboxTemplate {
@@ -290,22 +274,21 @@ func template() work.SandboxTemplate {
 
 func deps() Deps {
 	return Deps{
-		GitHub:           &fakeGitHub{},
-		Pods:             &fakePods{},
-		Repo:             &fakeRepo{},
-		Stages:           &fakeStages{},
-		Transcripts:      &fakeTranscript{},
-		Prompts:          &fakePrompts{},
-		Status:           &fakeStatus{},
-		Runs:             &fakeRuns{},
-		Sweeper:          &fakeSweeper{},
-		Metrics:          &fakeMetrics{},
-		TokenSource:      &fakeTokenSource{},
-		CredentialWriter: &fakeCredentialWriter{},
-		Log:              slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Clock:            clocktest.NewFake(time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)),
-		Sandbox:          template(),
-		RepoURL:          "https://github.com/0x63616c/world-wide-webb.git",
+		GitHub:      &fakeGitHub{},
+		Pods:        &fakePods{},
+		Repo:        &fakeRepo{},
+		Stages:      &fakeStages{},
+		Transcripts: &fakeTranscript{},
+		Prompts:     &fakePrompts{},
+		Status:      &fakeStatus{},
+		Runs:        &fakeRuns{},
+		Sweeper:     &fakeSweeper{},
+		Metrics:     &fakeMetrics{},
+		TokenSource: &fakeTokenSource{},
+		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Clock:       clocktest.NewFake(time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)),
+		Sandbox:     template(),
+		RepoURL:     "https://github.com/0x63616c/world-wide-webb.git",
 	}
 }
 
@@ -337,7 +320,7 @@ func TestNewNamesEveryDependencyItIsMissing(t *testing.T) {
 	}
 	for _, name := range []string{
 		"GitHub", "Pods", "Repo", "Stages", "Transcripts", "Prompts", "Status", "Runs", "Sweeper", "Metrics",
-		"TokenSource", "CredentialWriter", "Clock", "Log",
+		"TokenSource", "Clock", "Log",
 	} {
 		if !strings.Contains(err.Error(), name) {
 			t.Fatalf("error %q does not name the missing %s", err, name)
@@ -711,36 +694,6 @@ func TestCloneRepoSurfacesTheClonersFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "SF_BRANCH") {
 		t.Fatalf("error %q lost the cloner's reason", err)
-	}
-}
-
-// --- codex credential --------------------------------------------------
-
-// TestWriteCodexCredentialIsANoOpThatTouchesNothing proves the D3 (#434)
-// redesign: the credential now reaches the sandbox through a Secret
-// CreateSandbox provisions and buildPod mounts directly at
-// work.CodexAuthFile (see TestCreateSandboxFetchesTheCredentialAndPassesItToPodsCreate
-// and internal/clients/k8s's podspec_test.go), so this activity has nothing
-// left to do — it must not touch TokenSource or CredentialWriter at all.
-func TestWriteCodexCredentialIsANoOpThatTouchesNothing(t *testing.T) {
-	t.Parallel()
-
-	tokens := &fakeTokenSource{file: work.NewCredentialFile([]byte(`{}`))}
-	writer := &fakeCredentialWriter{}
-	d := deps()
-	d.TokenSource, d.CredentialWriter = tokens, writer
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.WriteCodexCredential)
-
-	if _, err := e.ExecuteActivity(a.WriteCodexCredential, work.SandboxID("sandbox-328")); err != nil {
-		t.Fatalf("WriteCodexCredential: %v", err)
-	}
-	if tokens.fetched != 0 {
-		t.Fatal("a no-op must not fetch the credential — that work is real OAuth-refresh cost spent for nothing")
-	}
-	if writer.writes != 0 {
-		t.Fatal("a no-op must not write anything")
 	}
 }
 

@@ -34,10 +34,9 @@ func TestNewActivitiesBuildsTheCodexCredentialSource(t *testing.T) {
 // TestBuildDepsWiresTheCodexCredentialSeam is the source-level companion to
 // TestBuildDepsSatisfiesActivitiesNew: that test proves the Deps buildDeps
 // returns is one activities.New accepts, which already fails loudly if
-// TokenSource or CredentialWriter go nil, but it would stay green even if
-// buildDeps silently swapped in the wrong CredentialWriter (Pods, say,
-// instead of sandboxes) — anything non-nil satisfies presence. This checks
-// the actual wiring, not just that something was plugged in.
+// TokenSource goes nil, but it would stay green even if buildDeps silently
+// swapped in the wrong TokenSource — anything non-nil satisfies presence.
+// This checks the actual wiring, not just that something was plugged in.
 func TestBuildDepsWiresTheCodexCredentialSeam(t *testing.T) {
 	t.Parallel()
 
@@ -47,13 +46,8 @@ func TestBuildDepsWiresTheCodexCredentialSeam(t *testing.T) {
 	}
 	body := extractFuncBody(t, string(source), "func buildDeps(")
 
-	for _, want := range []string{
-		"TokenSource:      tokenSource",
-		"CredentialWriter: sandboxes",
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("buildDeps()'s body does not contain %q; the codex credential seam is unwired again (#398)", want)
-		}
+	if want := "TokenSource: tokenSource"; !strings.Contains(body, want) {
+		t.Errorf("buildDeps()'s body does not contain %q; the codex credential seam is unwired again (#398)", want)
 	}
 }
 

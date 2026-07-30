@@ -28,10 +28,11 @@ const dispatcherID = "software-factory-dispatcher"
 // so a test can follow the handoff chain by identity rather than by shape.
 func stageOutput(stage work.Stage) activities.RunStageOutput {
 	return activities.RunStageOutput{
-		Output:   []byte(fmt.Sprintf(`{"document":%q}`, stage)),
-		Result:   stageOutputResult(stage),
-		ThreadID: "thread-" + string(stage),
-		Usage:    work.Usage{InputTokens: 10, OutputTokens: 1},
+		Output:     []byte(fmt.Sprintf(`{"document":%q}`, stage)),
+		Result:     stageOutputResult(stage),
+		ThreadID:   "thread-" + string(stage),
+		Usage:      work.Usage{InputTokens: 10, OutputTokens: 1},
+		Transcript: work.Transcript(fmt.Sprintf(`{"stage":%q}`, stage)),
 	}
 }
 
@@ -52,35 +53,33 @@ type ticketHarness struct {
 	env *testsuite.TestWorkflowEnvironment
 
 	// knobs.
-	policy        work.RunPolicy
-	config        work.Config
-	stage         func(in activities.RunStageInput) (activities.RunStageOutput, error)
-	stageDelay    time.Duration
-	labelErr      error
-	noPR          bool
-	prErr         error
-	cancelAt      time.Duration
-	cloneErr      error
-	credentialErr error
+	policy     work.RunPolicy
+	config     work.Config
+	stage      func(in activities.RunStageInput) (activities.RunStageOutput, error)
+	stageDelay time.Duration
+	labelErr   error
+	noPR       bool
+	prErr      error
+	cancelAt   time.Duration
+	cloneErr   error
 
 	// what the run did.
-	ran               []work.Stage
-	priors            map[work.Stage]map[work.Stage]work.StageOutput
-	models            map[work.Stage]work.Model
-	keys              map[work.Stage]work.StageKey
-	created           int
-	cloned            []work.SandboxID
-	deleted           []work.SandboxID
-	cleared           int
-	reports           []work.StatusReport
-	done              work.TicketDone
-	prBranch          string
-	credentialWritten []work.SandboxID
+	ran      []work.Stage
+	priors   map[work.Stage]map[work.Stage]work.StageOutput
+	models   map[work.Stage]work.Model
+	keys     map[work.Stage]work.StageKey
+	created  int
+	cloned   []work.SandboxID
+	deleted  []work.SandboxID
+	cleared  int
+	reports  []work.StatusReport
+	done     work.TicketDone
+	prBranch string
 
-	// setupOrder records "credential" and "clone" in the order the fakes were
-	// actually called, so a test can pin the relative order deliberately
-	// rather than merely that both ran before the stage loop.
-	setupOrder []string
+	// persisted records what PersistTranscript was called with, keyed by
+	// stage, so a test can assert the relay actually carries each stage's own
+	// transcript home rather than merely that the activity was called.
+	persisted map[work.Stage]activities.PersistTranscriptInput
 }
 
 func newTicketHarness(t *testing.T) *ticketHarness {
@@ -98,12 +97,13 @@ func newTicketHarness(t *testing.T) *ticketHarness {
 	})
 
 	return &ticketHarness{
-		env:    env,
-		policy: work.DefaultRunPolicy(),
-		config: work.DefaultConfig(),
-		priors: map[work.Stage]map[work.Stage]work.StageOutput{},
-		models: map[work.Stage]work.Model{},
-		keys:   map[work.Stage]work.StageKey{},
+		env:       env,
+		policy:    work.DefaultRunPolicy(),
+		config:    work.DefaultConfig(),
+		priors:    map[work.Stage]map[work.Stage]work.StageOutput{},
+		models:    map[work.Stage]work.Model{},
+		keys:      map[work.Stage]work.StageKey{},
+		persisted: map[work.Stage]activities.PersistTranscriptInput{},
 	}
 }
 
@@ -127,18 +127,16 @@ func (h *ticketHarness) run() {
 
 	env.OnActivity(acts.WaitSandboxReady, mock.Anything, mock.Anything).Return(nil)
 
-	env.OnActivity(acts.WriteCodexCredential, mock.Anything, mock.Anything).
-		Return(func(_ context.Context, sandbox work.SandboxID) error {
-			h.credentialWritten = append(h.credentialWritten, sandbox)
-			h.setupOrder = append(h.setupOrder, "credential")
-			return h.credentialErr
-		})
-
 	env.OnActivity(acts.CloneRepo, mock.Anything, mock.Anything).
 		Return(func(_ context.Context, sandbox work.SandboxID) error {
 			h.cloned = append(h.cloned, sandbox)
-			h.setupOrder = append(h.setupOrder, "clone")
 			return h.cloneErr
+		})
+
+	env.OnActivity(acts.PersistTranscript, mock.Anything, mock.Anything).
+		Return(func(_ context.Context, in activities.PersistTranscriptInput) error {
+			h.persisted[in.Key.Stage] = in
+			return nil
 		})
 
 	env.OnActivity(acts.DeleteSandbox, mock.Anything, mock.Anything).
@@ -233,6 +231,58 @@ func TestWorkTicketRunsTheFiveStagesInPipelineOrder(t *testing.T) {
 		if h.ran[i] != want[i] {
 			t.Fatalf("ran %v, want %v", h.ran, want)
 		}
+	}
+}
+
+// TestWorkTicketPersistsEveryStagesOwnTranscript is D5's whole point (#434):
+// a stage's transcript is written on the sandbox pod's own local disk, gone
+// the moment DeleteSandbox removes it, so the workflow must relay each one
+// out through PersistTranscript before that happens — and must relay each
+// stage's OWN transcript, not the last one seen or an empty one.
+func TestWorkTicketPersistsEveryStagesOwnTranscript(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+	for _, stage := range work.Pipeline() {
+		in, ok := h.persisted[stage]
+		if !ok {
+			t.Fatalf("PersistTranscript was never called for %s", stage)
+		}
+		want := stageOutput(stage).Transcript
+		if string(in.Transcript) != string(want) {
+			t.Errorf("PersistTranscript for %s got transcript %q, want %q — the stage's own, not another one's", stage, in.Transcript, want)
+		}
+		if in.Key.Stage != stage || in.Key.Ticket != 328 {
+			t.Errorf("PersistTranscript for %s got key %+v, want it keyed to this stage and ticket", stage, in.Key)
+		}
+	}
+}
+
+// TestWorkTicketSurvivesAFailedTranscriptRelay proves persistTranscript is
+// best-effort, the same shape as report(): a transcript is forensics, not the
+// run's actual work, and the tokens a stage spent are already spent whether
+// or not its transcript makes it home. A run must not fail because the relay
+// could not.
+func TestWorkTicketSurvivesAFailedTranscriptRelay(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	env := h.env
+	env.OnActivity(acts.PersistTranscript, mock.Anything, mock.Anything).
+		Return(fmt.Errorf("the transcript volume is full"))
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v — a failed transcript relay must not fail the run", err)
+	}
+	want := work.Pipeline()
+	if len(h.ran) != len(want) {
+		t.Fatalf("ran %v, want every stage despite the relay failing", h.ran)
 	}
 }
 
@@ -411,71 +461,6 @@ func TestWorkTicketDeletesTheSandboxWhenAStageFails(t *testing.T) {
 	}
 	if len(h.deleted) != 1 || h.deleted[0] != "sandbox-328" {
 		t.Fatalf("deleted %v, want the sandbox — a pod outliving its run is the leak the sweep exists to catch", h.deleted)
-	}
-}
-
-func TestWorkTicketWritesTheCodexCredentialIntoItsOwnSandboxBeforeTheFirstStage(t *testing.T) {
-	t.Parallel()
-
-	h := newTicketHarness(t)
-	h.run()
-
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow: %v", err)
-	}
-	if len(h.credentialWritten) != 1 || h.credentialWritten[0] != "sandbox-328" {
-		t.Fatalf("wrote the codex credential to %v, want exactly [sandbox-328]", h.credentialWritten)
-	}
-	if len(h.ran) == 0 {
-		t.Fatal("no stage ran at all")
-	}
-}
-
-// TestWorkTicketWritesTheCodexCredentialBeforeCloningTheRepository pins the
-// order of the two setup activities that both run between WaitSandboxReady
-// and the stage loop. Neither has a filesystem dependency on the other —
-// CodexHomeDir and RepoDir are independent siblings of SandboxRoot — but the
-// codex-auth Secret does not exist in the cluster yet (#344), so every run
-// attempted before it is seeded fails at WriteCodexCredential. Credential
-// first means that failure is discovered before CloneRepo's round trip to
-// GitHub (minting an installation token, cloning, pushing) is paid for on a
-// run that cannot possibly proceed either way (#398).
-func TestWorkTicketWritesTheCodexCredentialBeforeCloningTheRepository(t *testing.T) {
-	t.Parallel()
-
-	h := newTicketHarness(t)
-	h.run()
-
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow: %v", err)
-	}
-	want := []string{"credential", "clone"}
-	if len(h.setupOrder) != len(want) {
-		t.Fatalf("setup order = %v, want %v", h.setupOrder, want)
-	}
-	for i := range want {
-		if h.setupOrder[i] != want[i] {
-			t.Fatalf("setup order = %v, want %v", h.setupOrder, want)
-		}
-	}
-}
-
-func TestWorkTicketRunsNoStageAndDeletesTheSandboxWhenTheCodexCredentialCannotBeWritten(t *testing.T) {
-	t.Parallel()
-
-	h := newTicketHarness(t)
-	h.credentialErr = temporal.NewNonRetryableApplicationError(
-		"codex credential is not seeded", activities.ErrTypeAuth, nil)
-	h.run()
-
-	if h.env.GetWorkflowError() == nil {
-		t.Fatal("a run whose sandbox has no codex credential must not proceed to any stage")
-	}
-	if len(h.ran) != 0 {
-		t.Fatalf("ran %v — codex exec cannot authenticate without the credential, so no stage should have started", h.ran)
-	}
-	if len(h.deleted) != 1 || h.deleted[0] != "sandbox-328" {
-		t.Fatalf("deleted %v, want the sandbox cleaned up even though no stage ran", h.deleted)
 	}
 }
 

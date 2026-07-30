@@ -35,11 +35,10 @@ import (
 //
 // Every client is a nil-typed concrete pointer rather than a hand-rolled
 // fake: each type already satisfies its activities interface (pinned in
-// internal/activities/deps_test.go for GitHub, TokenSource, RepoCloner and
-// CredentialWriter), and a nil pointer wrapped in an interface is a non-nil
-// interface value — exactly what activities.New's presence checks look for.
-// None of their methods are called here; this test is about wiring, not
-// behaviour.
+// internal/activities/deps_test.go for GitHub, TokenSource and RepoCloner),
+// and a nil pointer wrapped in an interface is a non-nil interface value —
+// exactly what activities.New's presence checks look for. None of their
+// methods are called here; this test is about wiring, not behaviour.
 func TestBuildDepsSatisfiesActivitiesNew(t *testing.T) {
 	t.Parallel()
 

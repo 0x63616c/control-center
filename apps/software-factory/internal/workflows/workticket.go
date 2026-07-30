@@ -167,19 +167,14 @@ func (r *ticketRun) execute(ctx workflow.Context) (WorkTicketResult, error) {
 		return WorkTicketResult{Outcome: work.OutcomeFailed}, err
 	}
 
-	// Both of the next two must happen before the first stage — codex refuses
-	// to run outside a git repository, and it refuses to run unauthenticated,
-	// and either failure caught inside `plan` would be a run that already paid
-	// for a stage against a sandbox that could never have worked. Neither
-	// depends on the other: CodexHomeDir and RepoDir are independent siblings
-	// of SandboxRoot. Credential first anyway (#398) — the codex-auth Secret
-	// does not exist in the cluster yet (#344), so until it is seeded every
-	// run fails here, and failing on that before CloneRepo means a run that
-	// cannot possibly proceed never also pays for CloneRepo's round trip to
-	// GitHub: minting an installation token, cloning, and pushing (#383).
-	if err := workflow.ExecuteActivity(control, acts.WriteCodexCredential, r.sandbox).Get(ctx, nil); err != nil {
-		return WorkTicketResult{Outcome: work.OutcomeFailed}, err
-	}
+	// codex refuses to run outside a git repository, so the checkout must
+	// exist before the first stage or a run that discovered that inside `plan`
+	// would already have paid for a stage against a sandbox that could never
+	// have worked. The codex credential itself no longer needs a matching
+	// activity here at all (D3, #434): CreateSandbox already wrote it into a
+	// per-ticket Secret and the pod's own spec mounted that Secret directly at
+	// work.CodexAuthFile, in place before the container — and therefore
+	// WaitSandboxReady's wait — ever returned.
 	clone := workflow.WithActivityOptions(ctx, r.cloneOptions())
 	if err := workflow.ExecuteActivity(clone, acts.CloneRepo, r.sandbox).Get(ctx, nil); err != nil {
 		return WorkTicketResult{Outcome: work.OutcomeFailed}, err
@@ -205,11 +200,11 @@ func (r *ticketRun) execute(ctx workflow.Context) (WorkTicketResult, error) {
 	// spec, #2), so nothing here needs to track whether the loop already
 	// left through an error return.
 	//
-	// WriteCodexCredential and CloneRepo, above, run OUTSIDE this session —
-	// see activities.SandboxDeps' doc comment for why: they still depend on
-	// the pods/exec transport internal/clients/k8s keeps alive, not on the
-	// sandbox pod's own embedded worker, so pinning them to a session that
-	// worker hosts would just fail to schedule them at all.
+	// CloneRepo, above, runs OUTSIDE this session — see activities.SandboxDeps'
+	// doc comment for why: it still depends on the pods/exec transport
+	// internal/clients/k8s keeps alive, not on the sandbox pod's own embedded
+	// worker, so pinning it to a session that worker hosts would just fail to
+	// schedule it at all.
 	sessionCtx, err := r.createSession(ctx)
 	if err != nil {
 		return WorkTicketResult{Outcome: work.OutcomeFailed}, err
@@ -251,6 +246,7 @@ func (r *ticketRun) execute(ctx workflow.Context) (WorkTicketResult, error) {
 		// whatever it produced.
 		r.usage = r.usage.Add(out.Usage)
 		prior[stage] = out.Result
+		r.persistTranscript(ctx, in.Key, out.Transcript)
 
 		r.report(ctx, work.StatusReport{
 			Step: work.StageStep(stage), State: work.StepSucceeded,
@@ -417,6 +413,33 @@ func (r *ticketRun) report(ctx workflow.Context, report work.StatusReport) {
 		return
 	}
 	r.comments[report.Step] = id
+}
+
+// persistTranscript relays one stage's transcript out of the sandbox pod and
+// into the durable, NFS-backed sink the rest of this service trusts (#434
+// step 3, D5).
+//
+// It always runs on the MAIN worker's queue, never the sandbox's per-ticket
+// one — control is rebuilt from ctx here rather than reusing whatever
+// ActivityOptions the caller already has in scope, the same "derive it
+// fresh" shape report() already uses, and for the same reason: this call must
+// land on work.TaskQueue regardless of which ActivityOptions happen to be on
+// the context the caller is holding (the stage loop's own is the session's
+// per-ticket queue). PersistTranscript's own doc comment names this same
+// requirement from the activity side.
+//
+// Best-effort, the same shape as report(): the transcript is forensics, not
+// the run's actual work, and the tokens a stage spent are already spent
+// whether or not its transcript makes it home. A run must not fail because
+// the relay could not.
+func (r *ticketRun) persistTranscript(ctx workflow.Context, key work.StageKey, transcript work.Transcript) {
+	control := workflow.WithActivityOptions(ctx, r.controlOptions())
+
+	in := activities.PersistTranscriptInput{Key: key, Transcript: transcript}
+	if err := workflow.ExecuteActivity(control, acts.PersistTranscript, in).Get(ctx, nil); err != nil {
+		workflow.GetLogger(ctx).Error("could not persist the stage transcript; it stays on the sandbox pod's own disk and is lost once DeleteSandbox removes it",
+			"ticket", r.in.Ticket.Number, "run_id", r.runID, "stage", string(key.Stage), "error", err)
+	}
 }
 
 // stageFailureDetail renders a stage's error for its status comment.

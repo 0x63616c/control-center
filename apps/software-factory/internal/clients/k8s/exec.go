@@ -142,37 +142,33 @@ func (r *remoteStreamer) stream(ctx context.Context, target execTarget, o stream
 // the reattach/kill-by-pidfile mechanism Sessions replace).
 //
 // This transport survives step 3 deliberately, not as an oversight awaiting
-// cleanup — and survives past #431's credential Secret mount too, for a
-// reason worth stating precisely rather than leaving to be assumed: that
-// Secret (#431/D3) carries the codex OAuth credential WriteCodexCredential
-// writes, but CloneRepo authenticates with a different one, a GitHub App
+// cleanup — and survives past #431's credential Secret mount too (D3 shipped
+// in a later slice than this comment's first draft, and WriteCodexCredential
+// along with it — deleted, once the Secret mount made it a no-op nothing
+// called for a reason). What outlives both is CloneRepo, which authenticates
+// with a different credential than the one that Secret carries: a GitHub App
 // installation token minted in-process from the App's private key
 // (activities.go, CloneRepo → a.deps.GitHub.InstallationToken). Mounting the
 // codex Secret into the pod says nothing about whether the pod may mint or
 // hold that token — a separate, still-open question this file does not
 // answer. So deleting this transport needs two things to land, not one: the
 // credential-reach decision, AND somewhere for CloneRepo's token-minting to
-// live once it does. Until both are true, this method is the only way either
-// activity reaches a pod at all, and deleting it would either break the
+// live once it does. Until both are true, this method is the only way
+// CloneRepo reaches a pod at all, and deleting it would either break the
 // build or force that decision here instead of where it is owned.
 //
-// So its remaining callers, after step 3's stage loop moved onto a local
+// So its one remaining caller, after step 3's stage loop moved onto a local
 // os/exec.Cmd the pod's own embedded worker holds directly (RunStage, via
-// internal/clients/local), are exactly two: CloneRepo's git
-// clone/checkout/push and WriteCodexCredential's credential file write.
-// CloneRepo's own doc comment states outright that it is idempotent under
-// activity retry (an existing checkout on the run's branch is left in place,
-// everything else redone) — verified there, not assumed here.
-// WriteCodexCredential's is a plain, unconditional overwrite through Write,
-// which is idempotent by construction (the same document, written again,
-// produces the same file) though its own doc comment does not use the word.
-// Both are short. A cancelled call here can leave one of those two processes
-// briefly alive in the sandbox, but the blast radius is bounded by the pod's
-// own lifetime: DeleteSandbox destroys it at the run's end regardless, so
-// there is no window in which an orphaned clone or file write outlives the
-// sandbox it was writing into. Contrast this with the pre-#434 shape, where
-// the same gap would have applied to RunStage's own hour-long codex
-// invocation — that exposure is what step 3 actually closes.
+// internal/clients/local), is CloneRepo's git clone/checkout/push. Its own
+// doc comment states outright that it is idempotent under activity retry (an
+// existing checkout on the run's branch is left in place, everything else
+// redone) — verified there, not assumed here. It is also short. A cancelled
+// call here can leave that process briefly alive in the sandbox, but the
+// blast radius is bounded by the pod's own lifetime: DeleteSandbox destroys
+// it at the run's end regardless, so there is no window in which an orphaned
+// clone outlives the sandbox it was writing into. Contrast this with the
+// pre-#434 shape, where the same gap would have applied to RunStage's own
+// hour-long codex invocation — that exposure is what step 3 actually closes.
 func (s *Sandboxes) Exec(ctx context.Context, sandbox work.SandboxID, argv []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	return s.exec(ctx, sandbox, argv, stdin, stdout, stderr)
 }

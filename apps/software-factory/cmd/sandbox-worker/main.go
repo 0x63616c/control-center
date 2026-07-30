@@ -17,10 +17,13 @@
 // crypto/rand for the prompt renderer) — is accepted; each piece is a few
 // lines, and cmd/ binaries cannot import one another's `package main`.
 //
-// This process registers RunStage and nothing else today. WriteCodexCredential
-// and CloneRepo stay on cmd/worker until #431/D3 lands a way for their
-// credential to reach this process without crossing a Temporal payload — see
-// activities.SandboxDeps' own doc comment.
+// This process registers RunStage and nothing else today. CloneRepo stays on
+// cmd/worker: it mints a GitHub App installation token in-process, and #431
+// has not yet decided whether the sandbox pod may hold that capability
+// itself — see activities.SandboxDeps' own doc comment. (WriteCodexCredential
+// used to stay there for the same class of reason, until D3's Secret mount
+// made it a no-op nothing called for any more; it and the workticket.go call
+// to it are deleted.)
 package main
 
 import (
