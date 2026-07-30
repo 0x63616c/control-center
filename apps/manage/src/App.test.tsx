@@ -28,6 +28,15 @@ describe("extension detection", () => {
 });
 
 describe("App", () => {
+  it("links to the extension documentation from the footer", () => {
+    render(<App extVersion="1.0.0" />);
+    const link = screen.getByRole("link", { name: "Docs" });
+    expect(link).toHaveAttribute(
+      "href",
+      "https://github.com/0x63616c/world-wide-webb/blob/main/apps/manage/extension/README.md",
+    );
+  });
+
   it("renders every tool as a sidebar row", () => {
     render(<App extVersion="1.0.0" />);
     for (const tool of TOOLS) {
