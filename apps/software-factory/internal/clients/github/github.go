@@ -252,7 +252,7 @@ func (c *Client) ListAutoTickets(ctx context.Context) ([]work.Ticket, error) {
 	for {
 		req, err := c.api.NewRequest(http.MethodGet, listIssuesURL(c.owner, c.repo, opts), nil)
 		if err != nil {
-			return nil, fmt.Errorf("%s: creating github request: %w", op, err)
+			return nil, classify(ctx, op, err)
 		}
 		// Match Issues.ListByRepo so this decoder changes only the response shape.
 		req.Header.Set("Accept", issueListAccept)

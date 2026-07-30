@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -31,6 +32,13 @@ func withDependencySummary(blockedBy, totalBlockedBy int) issueOption {
 			"blocked_by":       blockedBy,
 			"total_blocked_by": totalBlockedBy,
 		}
+	}
+}
+
+// withNullDependencySummary adds an explicit null dependency summary.
+func withNullDependencySummary() issueOption {
+	return func(issue map[string]any) {
+		issue["issue_dependencies_summary"] = nil
 	}
 }
 
@@ -156,6 +164,44 @@ func TestTreatsAbsentDependencySummaryAsUnblocked(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Number != 328 {
 		t.Errorf("got %+v, want ready issue #328", got)
+	}
+}
+
+func TestTreatsNullDependencySummaryAsUnblocked(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newStub(t)
+	s.handle("GET "+issuesPath, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, []any{
+			issueWithOptions(328, "ready ticket", "", []string{autoLabel}, withNullDependencySummary()),
+		})
+	})
+	c, _ := s.client(t)
+
+	got, err := c.ListAutoTickets(context.Background())
+	if err != nil {
+		t.Fatalf("ListAutoTickets returned an unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0].Number != 328 {
+		t.Errorf("got %+v, want ready issue #328", got)
+	}
+}
+
+func TestClassifiesRequestConstructionFailures(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newStub(t)
+	c, _ := s.client(t)
+	c.repo = "%"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	got, err := c.ListAutoTickets(ctx)
+	if got != nil {
+		t.Errorf("got %d tickets alongside an error, want none", len(got))
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("error = %v, want context cancellation", err)
 	}
 }
 
