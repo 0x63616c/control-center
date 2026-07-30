@@ -72,6 +72,10 @@ type GitHub interface {
 	// this ticket wants machine work and none has been delivered.
 	ListAutoTickets(ctx context.Context) ([]work.Ticket, error)
 
+	// AutoLabelPresent reads one issue and reports whether it still carries
+	// `auto`. It guards dispatch against a stale label-filtered list result.
+	AutoLabelPresent(ctx context.Context, issue int) (bool, error)
+
 	// TicketDetail returns one ticket with the discussion on it: what was
 	// asked, plus the corrections that arrived afterwards. A plan built from
 	// the issue body alone is a plan built from the first draft of the ask.

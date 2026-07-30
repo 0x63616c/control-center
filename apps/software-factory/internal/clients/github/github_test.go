@@ -203,6 +203,37 @@ func TestPreservesIssueTextVerbatim(t *testing.T) {
 	}
 }
 
+func TestReadsTheAutoLabelFromOneIssue(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		labels []string
+		want   bool
+	}{
+		{name: "present", labels: []string{autoLabel}, want: true},
+		{name: "absent", labels: []string{"bug"}, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			s, _ := newStub(t)
+			s.handle("GET "+issuePath, func(w http.ResponseWriter, _ *http.Request) {
+				writeJSON(w, http.StatusOK, issue(testIssue, "ticket", "body", tc.labels...))
+			})
+			c, _ := s.client(t)
+
+			got, err := c.AutoLabelPresent(context.Background(), testIssue)
+			if err != nil {
+				t.Fatalf("AutoLabelPresent: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("AutoLabelPresent = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPostsTheRunsStatusCommentAndReturnsItsID(t *testing.T) {
 	t.Parallel()
 

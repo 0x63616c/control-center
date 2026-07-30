@@ -237,6 +237,21 @@ func (c *Client) ListAutoTickets(ctx context.Context) ([]work.Ticket, error) {
 	}
 }
 
+// AutoLabelPresent reads one issue and reports whether it still carries
+// `auto`.
+//
+// The dispatcher uses this primary issue read to reject stale candidates from
+// the label-filtered issue list before it starts a workflow for them.
+func (c *Client) AutoLabelPresent(ctx context.Context, issue int) (bool, error) {
+	op := fmt.Sprintf("reading the auto label on issue #%d", issue)
+
+	current, _, err := c.api.Issues.Get(ctx, c.owner, c.repo, issue)
+	if err != nil {
+		return false, classify(ctx, op, err)
+	}
+	return hasAutoLabel(current), nil
+}
+
 // PullRequestForBranch returns the open pull request whose head is branch, if
 // there is one.
 //
