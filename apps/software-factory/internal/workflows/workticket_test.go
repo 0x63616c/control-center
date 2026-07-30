@@ -477,6 +477,9 @@ func TestWorkTicketProposesOnAGreenFirstWindowWithNoBlockingFindings(t *testing.
 	if result.PullRequest.URL != "https://github.com/o/r/pull/9" || result.PullRequest.NodeID != "PR_node9" {
 		t.Fatalf("pull request = %+v, want the one the loop opened", result.PullRequest)
 	}
+	if result.PullRequest.Title != "#328 the title" {
+		t.Fatalf("pull request title = %q, want the workflow-generated issue prefix", result.PullRequest.Title)
+	}
 	if len(h.implementTurns) != 1 || len(h.reviewTurns) != 1 {
 		t.Fatalf("implement turns = %d, review turns = %d, want exactly one each on the happy path",
 			len(h.implementTurns), len(h.reviewTurns))

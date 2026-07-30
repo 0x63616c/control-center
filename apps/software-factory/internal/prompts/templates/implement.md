@@ -42,13 +42,15 @@ letting a reviewer discover it. If you finished without completing the work — 
 plan turned out unimplementable — say so in the first line.
 
 Your answer also has `title` and `body` fields, separate from the document: the pull request
-title and description for the branch as it now stands. The workflow opens the pull request
-from these after your first successful push, and edits it to match on every later turn — write
-them as the pull request a human will read right now, not as a diff against what you said last
-turn. Build `body` from `.github/pull_request_template.md`: complete every applicable section
-with the branch's current facts, including the behavioral change and relevant changed areas,
-why it matters, and exact verification commands with their real outcomes. Reference the issue
-as `Refs #{{ticket_number}}` — never `Fixes #{{ticket_number}}` or `Closes #{{ticket_number}}`,
+title and description for the branch as it now stands. Make `title` a clean descriptive title
+without an issue-number prefix; the workflow prepends `#<issue-number> ` when it opens or
+updates the pull request. The workflow opens the pull request from these after your first
+successful push, and edits it to match on every later turn — write them as the pull request a
+human will read right now, not as a diff against what you said last turn. Build `body` from
+`.github/pull_request_template.md`: complete every applicable section with the branch's current
+facts, including the behavioral change and relevant changed areas, why it matters, and exact
+verification commands with their real outcomes. Reference the issue as
+`Refs #{{ticket_number}}` — never `Fixes #{{ticket_number}}` or `Closes #{{ticket_number}}`,
 which would close the issue the moment this pull request merges, before anyone has verified it
 against the real system. Keep the Screenshot section for UI work only; delete the Screenshot section when there is no UI change.
 Never manufacture command output or visual evidence.
