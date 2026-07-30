@@ -101,10 +101,17 @@ function makeSelectChain(rows: unknown[]): SelectChain {
 
 describe("reconcile", () => {
   let store: ReturnType<typeof createInMemoryDeviceStateStore>;
+  let infoSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     vi.resetAllMocks();
     store = createInMemoryDeviceStateStore();
+    resetChangeLog();
+    infoSpy = vi.spyOn(getLogger(), "info");
+  });
+
+  afterEach(() => {
+    infoSpy.mockRestore();
   });
 
   it("updates reportedState when HA state changes", async () => {
@@ -119,6 +126,15 @@ describe("reconcile", () => {
     const row = await store.read("dev-1");
     expect(row?.reportedState).toEqual({ on: true });
     expect(row?.available).toBe(true);
+    expect(infoSpy).toHaveBeenCalledWith(
+      {
+        deviceId: "dev-1",
+        entityId: "light.lamp",
+        reported: { on: true },
+        available: true,
+      },
+      "device-sync observed reported state change",
+    );
   });
 
   it("skips enforcer-managed lights , they are owned by the light enforcer (www-7d5b.2.6)", async () => {
@@ -187,6 +203,27 @@ describe("reconcile", () => {
     const row = await store.read("dev-1");
     expect(row?.desiredState).toBeNull();
     expect(row?.desiredUntilUtc).toBeNull();
+    expect(infoSpy).toHaveBeenCalledWith(
+      {
+        deviceId: "dev-1",
+        entityId: "light.lamp",
+        desired: { on: true },
+        reported: { on: true },
+      },
+      "device-sync observed desired state and cleared command window",
+    );
+  });
+
+  it("stays quiet when reported state is unchanged and no command window converges", async () => {
+    await seedDevice(store, { reported: { on: true }, available: true });
+
+    const snapshot = new Map([
+      ["light.lamp", { entity_id: "light.lamp", state: "on", attributes: {}, last_updated: "" }],
+    ]);
+
+    await reconcile(snapshot, store);
+
+    expect(infoSpy).not.toHaveBeenCalled();
   });
 });
 
