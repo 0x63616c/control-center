@@ -172,9 +172,10 @@ func (r *ticketRun) execute(ctx workflow.Context) (WorkTicketResult, error) {
 	// would already have paid for a stage against a sandbox that could never
 	// have worked. The codex credential itself no longer needs a matching
 	// activity here at all (D3, #434): CreateSandbox already wrote it into a
-	// per-ticket Secret and the pod's own spec mounted that Secret directly at
-	// work.CodexAuthFile, in place before the container — and therefore
-	// WaitSandboxReady's wait — ever returned.
+	// per-ticket Secret, the pod's own spec mounted that Secret, and
+	// cmd/sandbox-worker symlinked work.CodexAuthFile to it before
+	// registering RunStage — all of that done before WaitSandboxReady's wait
+	// ever returned.
 	clone := workflow.WithActivityOptions(ctx, r.cloneOptions())
 	if err := workflow.ExecuteActivity(clone, acts.CloneRepo, r.sandbox).Get(ctx, nil); err != nil {
 		return WorkTicketResult{Outcome: work.OutcomeFailed}, err
