@@ -61,7 +61,7 @@ check() { # check <name> <expected-exit> <cmd...>
 # fail is worse than no check, because it reads as verified.
 check "every binary the worker's argv names is on PATH" 0 \
   /usr/bin/env sh -c '
-    for b in tar test cat git bun go codex; do
+    for b in tar test cat git bun bunx go codex; do
       command -v "$b" >/dev/null || { echo "missing: $b"; exit 1; }
     done'
 
@@ -104,13 +104,16 @@ check "pinned tool versions" 0 \
     bun_version="$(bun --version)" || { echo "bun --version failed"; exit 1; }
     [ -n "$bun_version" ] || { echo "bun --version returned empty output"; exit 1; }
 
+    bunx_version="$(bunx --version)" || { echo "bunx --version failed"; exit 1; }
+    [ -n "$bunx_version" ] || { echo "bunx --version returned empty output"; exit 1; }
+
     go_version="$(go version)" || { echo "go version failed"; exit 1; }
     [ -n "$go_version" ] || { echo "go version returned empty output"; exit 1; }
 
     git_version="$(git --version)" || { echo "git --version failed"; exit 1; }
     [ -n "$git_version" ] || { echo "git --version returned empty output"; exit 1; }
 
-    echo "codex $codex_version | bun $bun_version | $go_version | $git_version"
+    echo "codex $codex_version | bun $bun_version | bunx $bunx_version | $go_version | $git_version"
   '
 
 exit "$fail"
