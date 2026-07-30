@@ -5,11 +5,10 @@
 # and writes transcripts to the NFS volume. It is the first pod in this cluster
 # with Kubernetes API credentials at all.
 #
-# NOT YET BUILDABLE: cmd/worker is D1 (#340) and does not exist. This file is
-# the image contract, landed with the sandbox image it is a pair with; CI does
-# not build it until D1 lands, so a missing composition root cannot redden main.
-# Everything below except the final `go build` argument is exercised by the
-# sandbox image's build today.
+# `cmd/worker` landed (D1, #340) and CI builds this image on every change to it
+# — the `build-software-factory-worker` job. The note that used to sit here,
+# saying the composition root did not exist yet and CI skipped this file, was
+# true only until D1 landed.
 #
 # amd64 only. The home-server Talos node is the only deploy target and it is
 # x86; CI builds --platform linux/amd64 on a native runner.

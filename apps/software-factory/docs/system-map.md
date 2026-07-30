@@ -307,7 +307,9 @@ they are visible in one place.
 | tokens and outcomes | Prometheus counters by stage and model, the workflow result, the outcome comment |
 | worker logs | Loki, 14d — which is why transcripts are stored rather than shipped |
 
-The transcript volume is the whole NFS share, including cluster backups and media ([#412][412]).
+The worker's *mount* is scoped to a transcripts subtree (`subPath`,
+`infra/src/software-factory.ts:521`), but the *PersistentVolume* behind it is provisioned
+against the whole NFS export — which also holds cluster backups and media ([#412][412]).
 
 ## Open tickets this map makes legible
 
@@ -315,12 +317,15 @@ The transcript volume is the whole NFS share, including cluster backups and medi
 - **[#425][425]** — every stage shows as `RunStage` in the Temporal UI; stage identity is
   payload-only.
 - **[#426][426]** — a resumed stage reports 0 tokens as though measured.
-- **[#428][428]** — sandbox cannot run `-race` or `golangci-lint`.
+- **[#428][428]** — the sandbox image now carries what both need (gcc/libc6-dev for
+  `-race`, a pinned `golangci-lint`), landed by #440; still open because nothing has yet
+  run either gate inside a live sandbox.
 - **[#415][415]** — per-stage schemas and a typed input seam landed; nothing acts on `implement`'s
   new `blocked`/`blocked_reason` fields yet, and the other four stages still carry one prose
   field. Step 5 is expected to wire it up as part of the pipeline redesign.
 - **[#416][416]**, **[#417][417]** — the sandbox's GitHub token: readable, and expires mid-run.
-- **[#412][412]** — transcript mount is the whole share.
+- **[#412][412]** — the transcripts PV is provisioned against the whole NFS export; the
+  worker's own mount is already `subPath`-scoped.
 - **[#331][331]** — status comment renders `in` as a loop total including the cached part.
 
 Unfiled, and named in *What is absent* above: no diff review, no CI observation, no loop back,
