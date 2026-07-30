@@ -564,6 +564,42 @@ func (c *Client) PostStatus(ctx context.Context, issue int, body string) (work.C
 	return work.CommentID(comment.GetID()), nil
 }
 
+// PostDuplicateWorkflowIDRejection posts or adopts a ticket's one-run notice.
+// It requires a resolved App login before writing: terminal rejection retries
+// can recur while auto remains, and cannot safely degrade to duplicate posts.
+func (c *Client) PostDuplicateWorkflowIDRejection(ctx context.Context, issue int, body string) (work.CommentID, error) {
+	op := fmt.Sprintf("posting the duplicate workflow rejection on issue #%d", issue)
+	body = capBody(body)
+	marker, ok := work.StatusMarkerIn(body)
+	if !ok {
+		return 0, fmt.Errorf("%s: rejection body has no status marker", op)
+	}
+
+	botLogin, err := c.auth.botLogin(ctx)
+	if err != nil {
+		return 0, classify(ctx, op, err)
+	}
+	if botLogin == "" {
+		return 0, fmt.Errorf("%s: GitHub returned an empty bot login", op)
+	}
+
+	id, found, err := c.findCommentByMarker(ctx, op, issue, marker, botLogin)
+	if err != nil {
+		return 0, err
+	}
+	if found {
+		c.log.InfoContext(ctx, "adopted the duplicate workflow rejection comment", "issue", issue, "comment_id", int64(id))
+		return id, nil
+	}
+
+	comment, _, err := c.api.Issues.CreateComment(ctx, c.owner, c.repo, issue, &gh.IssueComment{Body: gh.Ptr(body)})
+	if err != nil {
+		return 0, classify(ctx, op, err)
+	}
+	c.log.InfoContext(ctx, "posted the duplicate workflow rejection comment", "issue", issue, "comment_id", comment.GetID())
+	return work.CommentID(comment.GetID()), nil
+}
+
 // findOwnComment looks for a comment this run already posted: same marker, and
 // written by this App.
 //
@@ -582,6 +618,11 @@ func (c *Client) findOwnComment(ctx context.Context, op string, issue int, marke
 		return 0, false, nil
 	}
 
+	return c.findCommentByMarker(ctx, op, issue, marker, botLogin)
+}
+
+// findCommentByMarker finds a comment with marker that the named App wrote.
+func (c *Client) findCommentByMarker(ctx context.Context, op string, issue int, marker, botLogin string) (work.CommentID, bool, error) {
 	opts := &gh.IssueListCommentsOptions{
 		Sort:        gh.Ptr("created"),
 		Direction:   gh.Ptr("desc"),

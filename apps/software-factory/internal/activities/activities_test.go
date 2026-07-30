@@ -81,6 +81,10 @@ func (f *fakeGitHub) PostStatus(_ context.Context, issue int, body string) (work
 	return f.nextID, f.postErr
 }
 
+func (f *fakeGitHub) PostDuplicateWorkflowIDRejection(ctx context.Context, issue int, body string) (work.CommentID, error) {
+	return f.PostStatus(ctx, issue, body)
+}
+
 func (f *fakeGitHub) EditStatus(_ context.Context, id work.CommentID, body string) error {
 	f.editedID, f.editedBody = id, body
 	return f.editErr
