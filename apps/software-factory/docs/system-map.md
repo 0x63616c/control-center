@@ -71,7 +71,7 @@ Defaults (`work/control.go:85`):
 
 | knob | value |
 |---|---|
-| max in flight | 2 |
+| max in flight | 3 |
 | poll interval | 30s |
 | breaker cooldown | 15m |
 | orphan grace | 30m |
