@@ -42,9 +42,9 @@ letting a reviewer discover it. If you finished without completing the work — 
 plan turned out unimplementable — say so in the first line.
 
 Your answer also has `title` and `body` fields, separate from the document: the pull request
-title and description for the branch as it now stands. Make `title` a clean descriptive title
-without an issue-number prefix; the workflow prepends `#<issue-number> ` when it opens or
-updates the pull request. The workflow opens the pull request from these after your first
+title and description for the branch as it now stands. Make `title` a clean descriptive title;
+the workflow uses it as supplied when it opens or updates the pull request. The workflow opens
+the pull request from these after your first
 successful push, and edits it to match on every later turn — write them as the pull request a
 human will read right now, not as a diff against what you said last turn. Build `body` from
 `.github/pull_request_template.md`: complete every applicable section with the branch's current

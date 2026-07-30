@@ -90,10 +90,9 @@ func (r *ticketRun) implementReviewLoop(
 				}, nil
 			}
 
-			// Implement owns the descriptive title; the workflow owns the ticket
-			// number that makes GitHub pull request titles consistently traceable.
-			pullRequestTitle := fmt.Sprintf("#%d %s", r.in.Ticket.Number, impl.Title)
-			updated, err := r.openOrUpdatePullRequest(control, branch, pullRequestTitle, impl.Body, pr)
+			// Implement owns the descriptive title. Its required Refs #N body
+			// reference supplies GitHub's clickable issue traceability.
+			updated, err := r.openOrUpdatePullRequest(control, branch, impl.Title, impl.Body, pr)
 			if err != nil {
 				return WorkTicketResult{Outcome: work.OutcomeFailed, Usage: r.usage, PullRequest: pr}, err
 			}
