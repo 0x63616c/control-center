@@ -8,6 +8,14 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
+// StageLocker acquires the process-held lock for one stage attempt.
+//
+// The lock encloses both the stored-result probe and codex spawn, so an
+// at-least-once activity delivery cannot pay for a second invocation.
+type StageLocker interface {
+	Acquire(ctx context.Context, path string) (io.Closer, error)
+}
+
 // PodExecer runs a command inside an already-running sandbox.
 //
 // Argv is handed to the container's exec directly. There is no shell, ever —

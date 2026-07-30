@@ -113,6 +113,9 @@ func run() error {
 		// both properties of THIS worker instance, not of the cluster.
 		EnableSessionWorker:               true,
 		MaxConcurrentSessionExecutionSize: 1,
+		// This serialises duplicate activity delivery against this pod's mutable
+		// stage directory; it is a guard, not a throughput setting.
+		MaxConcurrentActivityExecutionSize: 1,
 	})
 
 	renderer, err := newPromptRenderer()
@@ -246,7 +249,7 @@ func buildSandboxDeps(transcriptSink activities.TranscriptSink, renderer *prompt
 		// the sandbox, so a stage's codex invocation is a subprocess of this
 		// very activity rather than something reached over the Kubernetes
 		// API.
-		Stages:      codex.NewRunner(local.NewExecer(), local.NewFileTransfer(), logger),
+		Stages:      codex.NewRunner(local.NewExecer(), local.NewFileTransfer(), local.NewLocker(clock.System{}), logger),
 		Transcripts: transcriptSink,
 		Prompts:     prompts.NewActivityRenderer(renderer),
 		Metrics:     telemetry.NewMetrics(prometheus.NewRegistry()),

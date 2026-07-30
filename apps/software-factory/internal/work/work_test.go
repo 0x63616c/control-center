@@ -47,6 +47,7 @@ func TestStagePathsAreDerivedFromTheKeyAlone(t *testing.T) {
 		{"Prompt", paths.Prompt, "/work/0198c2f1/plan/1/prompt.md"},
 		{"Schema", paths.Schema, "/work/0198c2f1/plan/1/schema.json"},
 		{"Result", paths.Result, "/work/0198c2f1/plan/1/result.json"},
+		{"Lock", paths.Lock, "/work/0198c2f1/plan/1/codex.lock"},
 	} {
 		if tc.got != tc.want {
 			t.Errorf("Paths().%s = %q, want %q", tc.name, tc.got, tc.want)

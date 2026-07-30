@@ -352,10 +352,13 @@ func buildDeps(
 	}
 
 	return activities.Deps{
-		GitHub:      ghClient,
-		Pods:        sandboxes,
-		Repo:        sandboxes,
-		Stages:      codex.NewRunner(sandboxes, sandboxes, logger),
+		GitHub: ghClient,
+		Pods:   sandboxes,
+		Repo:   sandboxes,
+		// Stages run only on a Session-bound sandbox worker. Keep this legacy
+		// dependency fail-closed so an accidental main-queue execution cannot
+		// bypass the sandbox's per-stage lock.
+		Stages:      codex.NewRunner(sandboxes, sandboxes, codex.NewUnavailableLocker("the main worker has no sandbox-local flock"), logger),
 		Transcripts: transcriptSink,
 		Prompts:     prompts.NewActivityRenderer(renderer),
 		Status:      status.NewRenderer(cfg.TemporalUIBaseURL, cfg.TemporalNamespace),

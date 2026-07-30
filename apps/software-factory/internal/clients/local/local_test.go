@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codex"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock/clocktest"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
@@ -19,6 +22,7 @@ import (
 var (
 	_ codex.PodExecer    = Execer{}
 	_ codex.FileTransfer = FileTransfer{}
+	_ codex.StageLocker  = (*Locker)(nil)
 )
 
 // testSandbox is the only argument every call below carries for interface
@@ -213,4 +217,100 @@ func TestReadDoesNotReportNotFoundForAPermissionFailure(t *testing.T) {
 	if errors.Is(err, work.ErrFileNotFound) {
 		t.Error("a permission failure was reported as a missing file")
 	}
+}
+
+func TestLockerKeepsTheSuccessfulFlockOpenUntilReleased(t *testing.T) {
+	t.Parallel()
+
+	ops := &fakeLockOps{locked: true}
+	locker := newLocker(clocktest.NewFake(time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)), ops)
+	handle, err := locker.Acquire(context.Background(), "/work/run/plan/1/codex.lock")
+	if err != nil {
+		t.Fatalf("Acquire() = %v", err)
+	}
+	if ops.mkdirPath != "/work/run/plan/1" {
+		t.Errorf("MkdirAll path = %q, want the lock's stage directory", ops.mkdirPath)
+	}
+	if ops.file.closed {
+		t.Error("Acquire() closed the successful flock before its caller could protect the probe and spawn")
+	}
+	if err := handle.Close(); err != nil {
+		t.Fatalf("Close() = %v", err)
+	}
+	if !ops.file.closed {
+		t.Error("Close() did not release the held lock file")
+	}
+}
+
+func TestLockerReturnsRetryableErrorWhenAnotherAttemptKeepsTheFlock(t *testing.T) {
+	t.Parallel()
+
+	ops := &fakeLockOps{}
+	locker := newLocker(clocktest.NewFake(time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)), ops)
+	_, err := locker.Acquire(context.Background(), "/work/run/plan/1/codex.lock")
+	if err == nil {
+		t.Fatal("Acquire() = nil while every flock attempt is contended")
+	}
+	if errors.Is(err, work.ErrPermanent) {
+		t.Errorf("Acquire() = %v, want retryable contention", err)
+	}
+	if !strings.Contains(err.Error(), "another attempt") {
+		t.Errorf("Acquire() = %v, want a clear competing-attempt error", err)
+	}
+	if ops.opens < 2 {
+		t.Errorf("Acquire() opened the lock %d times, want retries before timeout", ops.opens)
+	}
+}
+
+func TestLockerMarksSetupFailurePermanent(t *testing.T) {
+	t.Parallel()
+
+	locker := newLocker(clocktest.NewFake(time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)), &fakeLockOps{mkdirErr: errors.New("permission denied")})
+	_, err := locker.Acquire(context.Background(), "/work/run/plan/1/codex.lock")
+	if !errors.Is(err, work.ErrPermanent) {
+		t.Errorf("Acquire() = %v, want permanent setup failure", err)
+	}
+}
+
+func TestLockerHonoursCancellationWhileWaiting(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	locker := newLocker(clocktest.NewFake(time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)), &fakeLockOps{})
+	_, err := locker.Acquire(ctx, "/work/run/plan/1/codex.lock")
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Acquire() = %v, want context.Canceled", err)
+	}
+}
+
+type fakeLockOps struct {
+	locked    bool
+	mkdirErr  error
+	mkdirPath string
+	opens     int
+	file      fakeLockFile
+}
+
+func (f *fakeLockOps) MkdirAll(path string, _ fs.FileMode) error {
+	f.mkdirPath = path
+	return f.mkdirErr
+}
+
+func (f *fakeLockOps) Open(string) (io.Closer, error) {
+	f.opens++
+	return &f.file, nil
+}
+
+func (f *fakeLockOps) TryLock(io.Closer) (bool, error) {
+	return f.locked, nil
+}
+
+type fakeLockFile struct {
+	closed bool
+}
+
+func (f *fakeLockFile) Close() error {
+	f.closed = true
+	return nil
 }

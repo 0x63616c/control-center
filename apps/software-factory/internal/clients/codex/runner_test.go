@@ -251,10 +251,59 @@ func TestAnUnreadableSandboxNeverBecomesAReRun(t *testing.T) {
 	}
 }
 
+func TestContendedStageLockAllowsOnlyOneCodexSpawn(t *testing.T) {
+	pods, files := newFakes()
+	firstSpawned := make(chan struct{})
+	finishFirst := make(chan struct{})
+	var acquireMu sync.Mutex
+	acquires := 0
+	locks := &fakeLocker{acquire: func(context.Context, string) (io.Closer, error) {
+		acquireMu.Lock()
+		defer acquireMu.Unlock()
+		acquires++
+		if acquires > 1 {
+			return nil, errors.New("held by another attempt")
+		}
+		return fakeLock{onClose: func() {}}, nil
+	}}
+	pods.onCodex = func(call *execCall) (int, error) {
+		close(firstSpawned)
+		<-finishFirst
+		return writesResult(files, resultJSON)(call)
+	}
+	runner := NewRunner(pods, files, locks, slog.New(slog.DiscardHandler))
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := runner.RunStage(context.Background(), testRun(), func([]byte) {})
+		firstDone <- err
+	}()
+	<-firstSpawned
+
+	_, err := runner.RunStage(context.Background(), testRun(), func([]byte) {})
+	if err == nil {
+		t.Fatal("RunStage() = nil while another attempt holds the stage lock")
+	}
+	if errors.Is(err, work.ErrPermanent) {
+		t.Errorf("RunStage() = %v, want retryable contention", err)
+	}
+	if !strings.Contains(err.Error(), testRun().Key.String()) {
+		t.Errorf("RunStage() = %v, want the stage key naming the lock holder", err)
+	}
+	if got := pods.codexCalls(); got != 1 {
+		t.Errorf("codex was invoked %d times while the lock was contended, want 1", got)
+	}
+
+	close(finishFirst)
+	if err := <-firstDone; err != nil {
+		t.Errorf("the lock holder RunStage() = %v", err)
+	}
+}
+
 // --- fakes -----------------------------------------------------------------
 
 func newTestRunner(pods *fakePods, files *fakeFiles) *Runner {
-	return NewRunner(pods, files, slog.New(slog.DiscardHandler))
+	return NewRunner(pods, files, fakeLocker{}, slog.New(slog.DiscardHandler))
 }
 
 func newFakes() (*fakePods, *fakeFiles) {
@@ -340,6 +389,28 @@ type fakeFiles struct {
 	mu      sync.Mutex
 	files   map[string][]byte
 	readErr error
+}
+
+type fakeLocker struct {
+	acquire func(context.Context, string) (io.Closer, error)
+}
+
+func (f fakeLocker) Acquire(ctx context.Context, path string) (io.Closer, error) {
+	if f.acquire == nil {
+		return fakeLock{}, nil
+	}
+	return f.acquire(ctx, path)
+}
+
+type fakeLock struct {
+	onClose func()
+}
+
+func (f fakeLock) Close() error {
+	if f.onClose != nil {
+		f.onClose()
+	}
+	return nil
 }
 
 func (f *fakeFiles) Write(_ context.Context, _ work.SandboxID, path string, content []byte, _ fs.FileMode) error {
