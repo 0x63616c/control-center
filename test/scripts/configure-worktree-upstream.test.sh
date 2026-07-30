@@ -4,7 +4,8 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-HELPER="$HERE/configure-worktree-upstream.sh"
+ROOT="$(cd "$HERE/../.." && pwd)"
+HELPER="$ROOT/scripts/configure-worktree-upstream.sh"
 
 if [ ! -x "$HELPER" ]; then
   echo "not executable: $HELPER" >&2
@@ -102,8 +103,8 @@ printf '%s\n' "$push" | grep -Fq "refs/heads/$BRANCH:refs/heads/$BRANCH" || {
   exit 1
 }
 
-upstream_line=$(grep -n -F 'command: "bash scripts/configure-worktree-upstream.sh"' "$HERE/../.wtp.yml" | cut -d: -f1)
-bun_install_line=$(grep -n -F 'command: "bun install"' "$HERE/../.wtp.yml" | cut -d: -f1)
+upstream_line=$(grep -n -F 'command: "bash scripts/configure-worktree-upstream.sh"' "$ROOT/.wtp.yml" | cut -d: -f1)
+bun_install_line=$(grep -n -F 'command: "bun install"' "$ROOT/.wtp.yml" | cut -d: -f1)
 [ -n "$upstream_line" ] || {
   echo ".wtp.yml does not invoke the upstream repair helper" >&2
   exit 1

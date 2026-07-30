@@ -22,7 +22,7 @@
   },
   // app-kit/ + features/ are root-level source that live OUTSIDE the
   // apps/*/packages/* workspaces, so `bun run --filter '*' typecheck` never sees
-  // them; typecheck them here. scripts/alias-parity.test.ts is included so tsc
+  // them; typecheck them here. test/scripts/alias-parity.test.ts is included so tsc
   // actually EXERCISES the `@app-kit` alias (inherited from tsconfig.json), not
   // just declares it (Track C, C7).
   "include": [
@@ -30,11 +30,11 @@
     "apps/web/vitest.workspace.ts",
     "app-kit/**/*.ts",
     "features/**/*.ts",
-    "scripts/alias-parity.test.ts"
+    "test/scripts/alias-parity.test.ts"
   ],
   // app-kit's own *.test.ts is exercised by vitest (esbuild, no typecheck) and
   // uses runtime symbol-brand casts that tsc flags; it was never in a tsc
-  // program before C7, so keep it out here. scripts/alias-parity.test.ts stays
+  // program before C7, so keep it out here. test/scripts/alias-parity.test.ts stays
   // (listed explicitly in `include`) — it is the alias resolution proof.
   //
   // A folded feature's WEB-coupled files (manifest.ts + modal-store.ts, the

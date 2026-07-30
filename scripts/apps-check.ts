@@ -117,7 +117,7 @@ const AGGREGATES: readonly Aggregate[] = [
   },
 ];
 
-/** @public consumed by scripts/apps-check.test.ts and this module's CLI wrapper. */
+/** @public consumed by test/scripts/apps-check.test.ts and this module's CLI wrapper. */
 export async function checkDrift(): Promise<{ drifted: boolean; files: string[] }> {
   const drifted: string[] = [];
   for (const aggregate of AGGREGATES) {
