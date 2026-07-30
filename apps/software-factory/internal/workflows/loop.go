@@ -90,7 +90,10 @@ func (r *ticketRun) implementReviewLoop(
 				}, nil
 			}
 
-			updated, err := r.openOrUpdatePullRequest(control, branch, impl.Title, impl.Body, pr)
+			// Implement owns the descriptive title; the workflow owns the ticket
+			// number that makes GitHub pull request titles consistently traceable.
+			pullRequestTitle := fmt.Sprintf("#%d %s", r.in.Ticket.Number, impl.Title)
+			updated, err := r.openOrUpdatePullRequest(control, branch, pullRequestTitle, impl.Body, pr)
 			if err != nil {
 				return WorkTicketResult{Outcome: work.OutcomeFailed, Usage: r.usage, PullRequest: pr}, err
 			}
@@ -360,8 +363,8 @@ func (r *ticketRun) runReviewTurn(
 }
 
 // openOrUpdatePullRequest asks GitHub what is open on this run's branch and
-// creates or edits its pull request to match implement's latest title and
-// body.
+// creates or edits its pull request to match the workflow-generated numbered
+// title and implement's latest body.
 //
 // This is PR ownership as code, not the model (#435's locked decision): a
 // pull request opens after the FIRST successful push and is never held back
