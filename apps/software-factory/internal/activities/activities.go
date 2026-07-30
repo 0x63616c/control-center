@@ -848,6 +848,15 @@ func (a *Activities) MarkPullRequestReadyForReview(ctx context.Context, nodeID s
 	return nil
 }
 
+// EnablePullRequestAutoMerge arms a proposed pull request to squash-merge
+// itself once Calum approves it and its checks are green.
+func (a *Activities) EnablePullRequestAutoMerge(ctx context.Context, nodeID string) error {
+	if err := a.deps.GitHub.EnablePullRequestAutoMerge(ctx, nodeID); err != nil {
+		return fail(ctx, fmt.Sprintf("enabling auto-merge on pull request %s", nodeID), err)
+	}
+	return nil
+}
+
 // PostPullRequestComment posts a run's full decline detail on its pull
 // request.
 //

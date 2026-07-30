@@ -97,9 +97,10 @@ type ticketHarness struct {
 	cancelAt   time.Duration
 	stageDelay time.Duration
 
-	cloneErr error
-	draftErr error
-	readyErr error
+	cloneErr     error
+	draftErr     error
+	readyErr     error
+	autoMergeErr error
 	// pullRequestDraft controls whether the run's PR was created by the
 	// draft-first factory. False models a workflow that began before rollout.
 	pullRequestDraft bool
@@ -134,6 +135,7 @@ type ticketHarness struct {
 	observedCI       int
 	drafted          []string
 	markedReady      []string
+	autoMerged       []string
 	terminalActions  []string
 	postedPRComments []prComment
 
@@ -234,6 +236,13 @@ func (h *ticketHarness) run() {
 			h.markedReady = append(h.markedReady, nodeID)
 			h.terminalActions = append(h.terminalActions, "mark-ready")
 			return h.readyErr
+		})
+
+	env.OnActivity(acts.EnablePullRequestAutoMerge, mock.Anything, mock.Anything).
+		Return(func(_ context.Context, nodeID string) error {
+			h.autoMerged = append(h.autoMerged, nodeID)
+			h.terminalActions = append(h.terminalActions, "enable-auto-merge")
+			return h.autoMergeErr
 		})
 
 	env.OnActivity(acts.PostPullRequestComment, mock.Anything, mock.Anything, mock.Anything).
@@ -1055,10 +1064,32 @@ func TestWorkTicketMarksAProposedPullRequestReadyBeforeClearingAuto(t *testing.T
 	if len(h.markedReady) != 1 || h.markedReady[0] != "PR_node9" {
 		t.Fatalf("marked ready %v, want exactly the run's pull request node id", h.markedReady)
 	}
+	if len(h.autoMerged) != 1 || h.autoMerged[0] != "PR_node9" {
+		t.Fatalf("auto-merged %v, want exactly the run's pull request node id", h.autoMerged)
+	}
 	if h.cleared != 1 {
 		t.Fatalf("cleared the auto label %d times, want one", h.cleared)
 	}
-	if got := strings.Join(h.terminalActions, ","); got != "mark-ready,clear-label" {
-		t.Fatalf("terminal actions = %q, want mark-ready,clear-label", got)
+	if got := strings.Join(h.terminalActions, ","); got != "mark-ready,enable-auto-merge,clear-label" {
+		t.Fatalf("terminal actions = %q, want mark-ready,enable-auto-merge,clear-label — auto-merge must arm only after the pull request leaves draft", got)
+	}
+}
+
+func TestWorkTicketClearsAutoWhenEnablingAutoMergeFailsBecauseThePullRequestIsAlreadyReviewable(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.autoMergeErr = temporal.NewNonRetryableApplicationError(
+		"github refused this app's credentials", activities.ErrTypeAuth, nil)
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("a proposed pull request whose auto-merge enable fails must still complete: %v", err)
+	}
+	if len(h.markedReady) != 1 || h.markedReady[0] != "PR_node9" {
+		t.Fatalf("marked ready %v, want exactly the run's pull request node id", h.markedReady)
+	}
+	if h.cleared != 1 {
+		t.Fatalf("cleared the auto label %d times, want one — the pull request is already reviewable and mergeable by hand", h.cleared)
 	}
 }

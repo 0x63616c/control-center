@@ -338,6 +338,16 @@ func (r *ticketRun) finish(ctx workflow.Context, result WorkTicketResult, runErr
 				}
 				break
 			}
+			// Auto-merge is armed only now, in the same step as undrafting —
+			// never earlier, so a still-iterating draft can never be armed to
+			// merge itself the moment someone later approves it. A failure
+			// here does not hold the label on: the pull request is already a
+			// real, reviewable proposal, and Calum can always merge it by
+			// hand, so this is worth logging but not worth blocking on.
+			if err := workflow.ExecuteActivity(control, acts.EnablePullRequestAutoMerge, result.PullRequest.NodeID).Get(ctx, nil); err != nil {
+				log.Error("enabling auto-merge failed after every retry; the pull request still needs a manual merge",
+					"ticket", r.in.Ticket.Number, "pull_request", result.PullRequest.Number, "error", err)
+			}
 			fallthrough
 		case work.OutcomeFailed:
 			if err := workflow.ExecuteActivity(control, acts.ClearAutoLabel, r.in.Ticket.Number).Get(ctx, nil); err != nil {

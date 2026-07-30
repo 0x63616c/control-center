@@ -138,6 +138,11 @@ type GitHub interface {
 	// MarkPullRequestReadyForReview makes a draft pull request reviewable.
 	MarkPullRequestReadyForReview(ctx context.Context, nodeID string) error
 
+	// EnablePullRequestAutoMerge arms a pull request to squash-merge itself
+	// once its required approval and checks are satisfied. Callers must only
+	// call this once the pull request is already out of draft.
+	EnablePullRequestAutoMerge(ctx context.Context, nodeID string) error
+
 	// ChecksForRef returns every check run GitHub has recorded against ref —
 	// a branch name, in this service's only caller — as one snapshot. It
 	// takes no view on whether they have concluded or passed:

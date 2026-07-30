@@ -58,10 +58,12 @@ type fakeGitHub struct {
 		existing            *work.PullRequest
 	}
 
-	draftedNodeID string
-	draftErr      error
-	readyNodeID   string
-	readyErr      error
+	draftedNodeID   string
+	draftErr        error
+	readyNodeID     string
+	readyErr        error
+	autoMergeNodeID string
+	autoMergeErr    error
 }
 
 func (f *fakeGitHub) ListAutoTickets(context.Context) ([]work.Ticket, error) {
@@ -118,6 +120,11 @@ func (f *fakeGitHub) ConvertPullRequestToDraft(_ context.Context, nodeID string)
 func (f *fakeGitHub) MarkPullRequestReadyForReview(_ context.Context, nodeID string) error {
 	f.readyNodeID = nodeID
 	return f.readyErr
+}
+
+func (f *fakeGitHub) EnablePullRequestAutoMerge(_ context.Context, nodeID string) error {
+	f.autoMergeNodeID = nodeID
+	return f.autoMergeErr
 }
 
 type fakePods struct {
@@ -1483,6 +1490,38 @@ func TestMarkPullRequestReadyForReviewFailsTheActivityWhenGitHubDoes(t *testing.
 
 	if _, err := e.ExecuteActivity(a.MarkPullRequestReadyForReview, "PR_1"); err == nil {
 		t.Fatal("want an error when the github client cannot mark the pull request ready")
+	}
+}
+
+func TestEnablePullRequestAutoMergePassesTheNodeIDThrough(t *testing.T) {
+	t.Parallel()
+
+	gh := &fakeGitHub{}
+	d := deps()
+	d.GitHub = gh
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.EnablePullRequestAutoMerge)
+
+	if _, err := e.ExecuteActivity(a.EnablePullRequestAutoMerge, "PR_kwDOtest9"); err != nil {
+		t.Fatalf("EnablePullRequestAutoMerge: %v", err)
+	}
+	if gh.autoMergeNodeID != "PR_kwDOtest9" {
+		t.Fatalf("auto-merge node id = %q, want PR_kwDOtest9", gh.autoMergeNodeID)
+	}
+}
+
+func TestEnablePullRequestAutoMergeFailsTheActivityWhenGitHubDoes(t *testing.T) {
+	t.Parallel()
+
+	d := deps()
+	d.GitHub = &fakeGitHub{autoMergeErr: github.ErrAuth}
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.EnablePullRequestAutoMerge)
+
+	if _, err := e.ExecuteActivity(a.EnablePullRequestAutoMerge, "PR_1"); err == nil {
+		t.Fatal("want an error when the github client cannot enable auto-merge")
 	}
 }
 
