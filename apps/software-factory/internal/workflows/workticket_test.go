@@ -963,9 +963,9 @@ func TestWorkTicketDeclinesADeclinedRunDraftFirstThenLabelThenComment(t *testing
 	}
 }
 
-// TestWorkTicketContinuesWhenDeclineDraftConversionExhaustsItsRetries proves
-// a declined pull request is already safe because it started as a draft, so
-// the idempotent conversion cannot block terminal cleanup.
+// TestWorkTicketFailsAndRetainsAutoWhenLegacyReadyPRDraftConversionExhaustsItsRetries
+// proves a ready PR from before draft-first rollout keeps its label when the
+// conversion that would make it safe exhausts retries.
 func TestWorkTicketFailsAndRetainsAutoWhenLegacyReadyPRDraftConversionExhaustsItsRetries(t *testing.T) {
 	t.Parallel()
 
