@@ -205,6 +205,37 @@ func TestBuildPodRunsAsANonRootUserUnderTheDefaultSeccompProfile(t *testing.T) {
 	}
 }
 
+func TestBuildPodAcceptsTheKnownSandboxEnvKeys(t *testing.T) {
+	t.Parallel()
+
+	spec := validSpec()
+	spec.Env = map[string]string{
+		work.CodexHomeEnv:     "/work/.codex",
+		work.GhConfigDirEnv:   "/work/.config/gh",
+		work.SandboxBranchEnv: "sf/ticket-42",
+	}
+	if _, err := buildPod(spec, defaultOptions()); err != nil {
+		t.Fatalf("buildPod returned an unexpected error for the three known env keys: %v", err)
+	}
+}
+
+func TestBuildPodRejectsAnUnknownSandboxEnvKey(t *testing.T) {
+	t.Parallel()
+
+	spec := validSpec()
+	spec.Env = map[string]string{
+		work.CodexHomeEnv:       "/work/.codex",
+		"AWS_SECRET_ACCESS_KEY": "leaked",
+	}
+	_, err := buildPod(spec, defaultOptions())
+	if !errors.Is(err, work.ErrPermanent) {
+		t.Fatalf("buildPod error = %v, want it to wrap work.ErrPermanent", err)
+	}
+	if !strings.Contains(err.Error(), "AWS_SECRET_ACCESS_KEY") {
+		t.Errorf("buildPod error = %q, want it to name the offending key", err.Error())
+	}
+}
+
 func TestBuildPodSetsImagePullSecretsFromOptions(t *testing.T) {
 	t.Parallel()
 
@@ -248,13 +279,16 @@ func TestBuildPodLabelsThePodSoASweepCanFindItByTicketAndRun(t *testing.T) {
 func TestBuildPodOrdersEnvironmentVariablesDeterministically(t *testing.T) {
 	t.Parallel()
 
-	spec := validSpec()
-	spec.Env = map[string]string{"E": "5", "A": "1", "D": "4", "B": "2", "C": "3"}
+	// sortedEnv, not buildPod: ordering is a property of the rendering
+	// helper, independent of which keys the allowlist admits, and using
+	// arbitrary keys here (rather than the three real ones) still exercises
+	// the sort with more than a two-element map.
+	env := map[string]string{"E": "5", "A": "1", "D": "4", "B": "2", "C": "3"}
 
-	first := sandboxContainer(t, mustBuild(t, spec)).Env
-	second := sandboxContainer(t, mustBuild(t, spec)).Env
+	first := sortedEnv(env)
+	second := sortedEnv(env)
 	if !reflect.DeepEqual(first, second) {
-		t.Fatalf("two builds of one spec produced different env: %v vs %v", first, second)
+		t.Fatalf("two renders of one map produced different env: %v vs %v", first, second)
 	}
 	for i := 1; i < len(first); i++ {
 		if first[i-1].Name >= first[i].Name {

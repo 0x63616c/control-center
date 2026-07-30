@@ -21,12 +21,19 @@ E1 (#341) left these undecided. Decided here:
 - **`bun` and the Go toolchain** — this repo is both, so a ticket that cannot
   build or test one half of it cannot be worked. Go is copied from the builder
   stage so it cannot drift from `go.mod`; bun matches the version CI pins.
+- **`gcc` and `libc6-dev`** — without them `CGO_ENABLED=1 go test -race`
+  cannot link, which is exactly what CI's authoritative gate runs (#428). A
+  build-time CGO smoke build proves the link path works, not just that `gcc`
+  is on `PATH`.
+- **`golangci-lint`**, pinned to the same version CI pins
+  (`.github/workflows/ci.yml`, `version: v2.12.2`) — a lint rule that fires in
+  CI and not in the sandbox teaches people to distrust the wall.
 - **A shell.** `codex exec`'s job is running shell commands on the agent's
   behalf. The argv-only rule constrains how the *worker* invokes this image, not
   what the image contains.
 
-Not shipped: linters and formatters beyond the toolchains. CI is the
-authoritative wall, and a ticket that needs one can install it.
+Not shipped: formatters beyond the toolchains. CI is the authoritative wall,
+and a ticket that needs one can install it.
 
 **The repo is not baked in, and neither is `bun install`.** The sandbox clones
 at stage time with the installation token it holds, so an image is never stale

@@ -36,6 +36,20 @@ const sandboxUID int64 = 1000
 // cluster is a single node, so those neighbours are the rest of the house.
 const workSizeLimitBytes = 20 << 30
 
+// allowedSandboxEnvKeys is the deny-by-default allowlist for spec.Env. A
+// container in this cluster inherits nothing from the node or kubelet — this
+// map IS the sandbox's entire environment contract (image-baked ENV
+// directives aside), so a key that reaches buildPod outside this set is
+// treated as a configuration bug, not silently passed through. Today exactly
+// three keys are ever set, all from cmd/worker/main.go and
+// work.SandboxTemplate.Spec: work.CodexHomeEnv, work.GhConfigDirEnv,
+// work.SandboxBranchEnv.
+var allowedSandboxEnvKeys = map[string]bool{
+	work.CodexHomeEnv:     true,
+	work.GhConfigDirEnv:   true,
+	work.SandboxBranchEnv: true,
+}
+
 // maxPodNameLength is Kubernetes' DNS-1123 label limit, which a pod name is.
 const maxPodNameLength = 63
 
@@ -82,6 +96,12 @@ func buildPod(spec work.SandboxSpec, o options) (*corev1.Pod, error) {
 	if spec.DeadlineSeconds <= 0 {
 		return nil, fmt.Errorf("building the sandbox pod for ticket %d: the deadline is %ds, which Kubernetes will not accept: %w",
 			spec.TicketNumber, spec.DeadlineSeconds, work.ErrPermanent)
+	}
+	for _, key := range sortedKeys(spec.Env) {
+		if !allowedSandboxEnvKeys[key] {
+			return nil, fmt.Errorf("building the sandbox pod for ticket %d: env var %q is not on the sandbox allowlist: %w",
+				spec.TicketNumber, key, work.ErrPermanent)
+		}
 	}
 
 	cpu, err := resource.ParseQuantity(spec.CPULimit)
@@ -157,6 +177,19 @@ func buildPod(spec work.SandboxSpec, o options) (*corev1.Pod, error) {
 // workVolumeName is the emptyDir mounted at work.SandboxRoot.
 const workVolumeName = "work"
 
+// sortedKeys returns env's keys in sorted order. Map iteration is random, so
+// callers that need a deterministic pass over env — sortedEnv below, and the
+// allowlist check in buildPod — share this rather than each sorting their own
+// copy out of step with the other.
+func sortedKeys(env map[string]string) []string {
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // sortedEnv renders an environment map in key order. Map iteration is random,
 // so an unsorted slice would make two builds of one spec differ and defeat both
 // specMatches and any test that compares pods.
@@ -164,12 +197,7 @@ func sortedEnv(env map[string]string) []corev1.EnvVar {
 	if len(env) == 0 {
 		return nil
 	}
-	keys := make([]string, 0, len(env))
-	for k := range env {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
+	keys := sortedKeys(env)
 	out := make([]corev1.EnvVar, 0, len(keys))
 	for _, k := range keys {
 		out = append(out, corev1.EnvVar{Name: k, Value: env[k]})

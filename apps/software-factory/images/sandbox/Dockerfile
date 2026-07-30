@@ -64,6 +64,11 @@ COPY apps/software-factory/ ./
 # dynamically linked one would depend on that base's libc by accident.
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags="-s -w" -o /out/sandbox-exec ./cmd/sandbox-exec
+# The worker binary, built here for step 3 to embed in this image (prep only —
+# see the COPY below in the runtime stage; nothing invokes it in this step).
+# Same flags images/worker/Dockerfile builds it with.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags="-s -w" -o /out/worker ./cmd/worker
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 2: the sandbox itself.
@@ -88,13 +93,23 @@ ARG BUN_SHA256=c3d3c14e9a5ec83ff67d0acfe76e4315ad06da9f34f59fc7b13813782caf1f66
 # token has to reach it in gh's own format. See clone.go: ghHostsPath.
 ARG GH_VERSION=2.96.0
 ARG GH_SHA256=83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60
+# golangci-lint, pinned to what CI pins (.github/workflows/ci.yml:363,
+# `version: v2.12.2`) for the same reason that comment gives: a rule that
+# fires on one and not the other teaches people to distrust the wall.
+ARG GOLANGCI_LINT_VERSION=2.12.2
+ARG GOLANGCI_LINT_SHA256=8df580d2670fed8fa984aac0507099af8df275e665215f5c7a2ae3943893a553
 
 # GNU tar, coreutils (test, cat, printenv, rm) and a shell come from the base
 # image. Added here: git, because CloneRepo checks the ticket's repository out
 # and pushes its branch before any stage runs, and `implement` later commits
 # and pushes to that same checkout; ca-certificates for the OpenAI and GitHub
 # APIs; curl and unzip for the two downloads below; passwd for
-# groupadd/useradd, which trixie-slim omits; procps for pgrep.
+# groupadd/useradd, which trixie-slim omits; procps for pgrep; gcc and
+# libc6-dev so `CGO_ENABLED=1 go test -race` can link inside this image (#428)
+# — both listed explicitly rather than relied on as a transitive pull-in of
+# `gcc`, since that could change under a base-image bump. Verified below by a
+# CGO smoke build, not just `command -v gcc`, which would only prove the
+# compiler is on PATH and not that it can actually link a cgo package.
 #
 # procps is a DIRECT dependency of this image, not a convenience. B5's stage
 # liveness probe is `pgrep -f <result path>`, and debian:trixie-slim ships no
@@ -113,7 +128,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
+        gcc \
         git \
+        libc6-dev \
         passwd \
         procps \
         unzip \
@@ -122,6 +139,7 @@ RUN apt-get update \
     && command -v tar >/dev/null \
     && command -v test >/dev/null \
     && command -v cat >/dev/null \
+    && command -v gcc >/dev/null \
     && command -v git >/dev/null \
     && command -v printenv >/dev/null \
     && command -v rm >/dev/null
@@ -150,6 +168,14 @@ RUN curl -fsSL -o /tmp/bun.zip \
     && rm -rf /tmp/bun.zip /tmp/bun-linux-x64 \
     && bun --version
 
+RUN curl -fsSL -o /tmp/golangci-lint.tar.gz \
+        "https://github.com/golangci/golangci-lint/releases/download/v${GOLANGCI_LINT_VERSION}/golangci-lint-${GOLANGCI_LINT_VERSION}-linux-amd64.tar.gz" \
+    && echo "${GOLANGCI_LINT_SHA256}  /tmp/golangci-lint.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/golangci-lint.tar.gz -C /tmp \
+    && install -m 0755 "/tmp/golangci-lint-${GOLANGCI_LINT_VERSION}-linux-amd64/golangci-lint" /usr/local/bin/golangci-lint \
+    && rm -rf /tmp/golangci-lint.tar.gz "/tmp/golangci-lint-${GOLANGCI_LINT_VERSION}-linux-amd64" \
+    && golangci-lint --version
+
 # The Go toolchain, taken from the build stage rather than downloaded again, so
 # it cannot drift from the version this module declares.
 COPY --from=build /usr/local/go /usr/local/go
@@ -158,7 +184,19 @@ COPY --from=build /usr/local/go /usr/local/go
 ENV PATH=/usr/local/go/bin:$PATH
 ENV GOTOOLCHAIN=local
 
+# Proves #428's actual claim — that a cgo package LINKS in this image — rather
+# than just that `gcc` resolves on PATH. `command -v gcc` above would pass even
+# if libc6-dev were missing and the link step failed; this would not.
+RUN printf 'package main\nimport "C"\nfunc main() {}\n' > /tmp/cgo_check.go \
+    && CGO_ENABLED=1 go build -o /tmp/cgo_check /tmp/cgo_check.go \
+    && rm -f /tmp/cgo_check.go /tmp/cgo_check
+
 COPY --from=build /out/sandbox-exec /usr/local/bin/sandbox-exec
+# Built for step 3 (an embedded Temporal worker inside the sandbox pod,
+# polling a task queue via workflow.CreateSession) but UNWIRED here: nothing
+# in this step's workflow invokes it, and the pod's command stays `sleep
+# infinity` below. Same static/no-CGO build images/worker/Dockerfile uses.
+COPY --from=build /out/worker /usr/local/bin/worker
 
 # uid/gid 1000, and it is a contract, not a convention: podspec.go pins
 # runAsUser/runAsGroup/fsGroup to 1000 (sandboxUID) so that Read's ownership
