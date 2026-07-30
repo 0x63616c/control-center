@@ -19,6 +19,12 @@ hooks:
     - type: command
       command: "bunx lefthook install --force"
 
+    # A branch created from origin/main inherits main as its upstream. The
+    # branch is not on origin yet, so configure its eventual same-named ref
+    # directly rather than using `git branch --set-upstream-to`.
+    - type: command
+      command: "bash scripts/configure-worktree-upstream.sh"
+
     # Per-machine Claude Code permission grants (gitignored). Not present on
     # every machine — kept last so its absence doesn't block bun install /
     # lefthook above.
