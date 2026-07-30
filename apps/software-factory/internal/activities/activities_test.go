@@ -1341,8 +1341,15 @@ func TestOpenOrUpdatePullRequestPassesThePushThroughToGitHub(t *testing.T) {
 	if gh.openOrUpdateInput.branch != "software-factory/ticket-328/run-1" || gh.openOrUpdateInput.title != "new" || gh.openOrUpdateInput.body != "new body" {
 		t.Fatalf("gh saw %+v, want the input passed through unchanged", gh.openOrUpdateInput)
 	}
-	if gh.openOrUpdateInput.existing != existing {
-		t.Fatal("existing was not passed through — the workflow's own FindPullRequest lookup would be looked up a second time")
+	// Value, not pointer identity: ExecuteActivity round-trips the input
+	// through Temporal's real data converter even in this in-memory test
+	// environment, so the *work.PullRequest the fake records can never be the
+	// same pointer the test constructed. What the claim actually is — "the
+	// activity forwards the existing pull request unchanged" — is a value
+	// claim, and that is what this asserts.
+	if gh.openOrUpdateInput.existing == nil || *gh.openOrUpdateInput.existing != *existing {
+		t.Fatalf("existing = %+v, want %+v passed through unchanged — the workflow's own FindPullRequest lookup would be looked up a second time",
+			gh.openOrUpdateInput.existing, existing)
 	}
 }
 

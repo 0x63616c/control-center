@@ -83,6 +83,24 @@ func TestRendererDispatchesEachStatusReportShape(t *testing.T) {
 			},
 			want: status.Abandoned{RunID: "run-1", Reason: "blocked", EndedAt: endedAt, RunUsage: usage}.Body(),
 		},
+		"declined with a pull request already open": {
+			report: work.StatusReport{
+				TicketNumber: 331, RunID: "run-1", Step: work.StepOutcome,
+				State: work.StepFailed, Outcome: work.OutcomeExhausted, EndedAt: endedAt, Usage: usage,
+				Detail: "ran out of turns", PullRequestURL: "https://github.com/o/r/pull/9",
+			},
+			want: status.Declined{
+				RunID: "run-1", Outcome: work.OutcomeExhausted, Reason: "ran out of turns",
+				PullRequestURL: "https://github.com/o/r/pull/9", EndedAt: endedAt, RunUsage: usage,
+			}.Body(),
+		},
+		"blocked before any push still renders as abandoned": {
+			report: work.StatusReport{
+				TicketNumber: 331, RunID: "run-1", Step: work.StepOutcome,
+				State: work.StepFailed, Outcome: work.OutcomeExhausted, EndedAt: endedAt, Usage: usage, Detail: "blocked",
+			},
+			want: status.Abandoned{RunID: "run-1", Reason: "blocked", EndedAt: endedAt, RunUsage: usage}.Body(),
+		},
 	}
 
 	for name, tc := range cases {

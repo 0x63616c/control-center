@@ -19,6 +19,9 @@ func TestPullRequestForBranchReturnsWhatGitHubSaysIsOpenOnIt(t *testing.T) {
 			"number":   9,
 			"html_url": "https://github.com/" + testOwner + "/" + testRepo + "/pull/9",
 			"url":      "https://api.github.com/repos/" + testOwner + "/" + testRepo + "/pulls/9",
+			"node_id":  "PR_kwDOtest9",
+			"title":    "fix: the thing",
+			"body":     "does the thing",
 		}})
 	})
 	c, _ := s.client(t)
@@ -34,6 +37,34 @@ func TestPullRequestForBranchReturnsWhatGitHubSaysIsOpenOnIt(t *testing.T) {
 	// The page a human opens, not the API URL — the status comment links it.
 	if pr.URL != "https://github.com/"+testOwner+"/"+testRepo+"/pull/9" {
 		t.Fatalf("url = %q, want the html url", pr.URL)
+	}
+	// The GraphQL node id, not the REST number — convertPullRequestToDraft
+	// accepts only this one (#435).
+	if pr.NodeID != "PR_kwDOtest9" {
+		t.Fatalf("node_id = %q, want PR_kwDOtest9", pr.NodeID)
+	}
+	if pr.Title != "fix: the thing" || pr.Body != "does the thing" {
+		t.Fatalf("title/body = %q/%q, want the ones github reported", pr.Title, pr.Body)
+	}
+}
+
+func TestPullRequestForBranchRefusesAPullRequestWithNoNodeID(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newStub(t)
+	s.handle("GET /repos/"+testOwner+"/"+testRepo+"/pulls", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]any{{
+			"number":   9,
+			"html_url": "https://github.com/" + testOwner + "/" + testRepo + "/pull/9",
+		}})
+	})
+	c, _ := s.client(t)
+
+	// Without a node id, ConvertPullRequestToDraft has nothing to convert —
+	// this must fail loudly here rather than surface later as an opaque
+	// GraphQL error with an empty id.
+	if _, _, err := c.PullRequestForBranch(t.Context(), testBranch); err == nil {
+		t.Fatal("a pull request with no node id would silently break draft conversion later")
 	}
 }
 

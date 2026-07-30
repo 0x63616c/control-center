@@ -88,15 +88,16 @@ func (r *Renderer) renderStage(report work.StatusReport) string {
 	}
 }
 
-// renderOutcome handles the run's last comment, which is Proposed or
-// Abandoned depending on what the run achieved.
+// renderOutcome handles the run's last comment: Proposed, Declined or
+// Abandoned, depending on what the run achieved and whether it left a pull
+// request behind.
 //
 // report.PullRequestURL is the URL GitHub's API returned for the run's own
 // branch (#371), threaded through from work.WorkTicketResult.PullRequest in
 // workflows.ticketRun.finish — never a value read out of a stage's own
-// result file. Proposed.Body still renders it defensively (linkedURL,
-// pullRequestHost): the field's provenance is trustworthy today, but the
-// renderer does not get to assume that stays true.
+// result file. Proposed.Body and Declined.Body still render it defensively
+// (linkedURL, pullRequestHost): the field's provenance is trustworthy today,
+// but the renderer does not get to assume that stays true.
 func (r *Renderer) renderOutcome(report work.StatusReport) string {
 	if report.Outcome == work.OutcomeProposed {
 		return Proposed{
@@ -106,6 +107,25 @@ func (r *Renderer) renderOutcome(report work.StatusReport) string {
 			RunUsage:       report.Usage,
 		}.Body()
 	}
+
+	// A non-approval outcome still has a pull request to link once the loop's
+	// terminal-cleanup sequence has run (#435): PR ownership is code now, so a
+	// pull request opens after the first successful push, long before the
+	// loop knows how it will end. Only OutcomeBlocked and OutcomeExhausted can
+	// carry one — OutcomeFailed is an infra break the run never got far
+	// enough to open anything for, and falls through to Abandoned below like
+	// a decline that happened before any push did.
+	if report.PullRequestURL != "" && (report.Outcome == work.OutcomeBlocked || report.Outcome == work.OutcomeExhausted) {
+		return Declined{
+			RunID:          report.RunID,
+			Outcome:        report.Outcome,
+			Reason:         report.Detail,
+			PullRequestURL: report.PullRequestURL,
+			EndedAt:        report.EndedAt,
+			RunUsage:       report.Usage,
+		}.Body()
+	}
+
 	return Abandoned{
 		RunID:    report.RunID,
 		Reason:   report.Detail,

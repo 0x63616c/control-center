@@ -218,9 +218,66 @@ func (a Abandoned) Body() string {
 	)
 }
 
-// autoLabelNote closes both outcome comments. The run clears `auto` when it
-// finishes either way, so the reader's next move is the same in both cases and
-// is worth stating where they are looking.
+// Declined is the run's last comment when the implement/review loop reached a
+// non-approval end but a pull request already existed — converted to draft
+// as part of the terminal-cleanup sequence (#435).
+//
+// Distinct from Abandoned, which is what a run posts when it declined before
+// ever pushing anything and so has no pull request to link: Declined always
+// has one, because PR ownership is code now and a pull request opens after
+// the first successful push, long before the loop can know how it will end.
+type Declined struct {
+	RunID string
+
+	// Outcome names which kind of decline this was — work.OutcomeBlocked (the
+	// agent's own explicit verdict) or work.OutcomeExhausted (the counters'
+	// own backstop) — so a reader can tell "it said no" from "it ran out of
+	// budget" without opening Temporal.
+	Outcome work.Outcome
+
+	// Reason is why the run stopped. Rendered defensively — see cell.
+	Reason string
+
+	// PullRequestURL is the draft pull request this run left behind, as
+	// GitHub reported it — the same provenance guarantee as
+	// Proposed.PullRequestURL: never a value read out of a stage's own result
+	// file (#371).
+	PullRequestURL string
+
+	EndedAt  time.Time
+	RunUsage work.Usage
+}
+
+// Body renders the outcome comment for a run that declined with a pull
+// request already open.
+func (d Declined) Body() string {
+	return join(
+		work.StatusMarker(d.RunID, work.StepOutcome),
+		"### software-factory declined this ticket — "+declineHeading(d.Outcome),
+		"",
+		pullRequestRef(d.PullRequestURL),
+		"",
+		field("Reason", inert(d.Reason, "_none given_")),
+		field("Finished", code(stamp(d.EndedAt))),
+		field("Run total", tokens(d.RunUsage)),
+		"",
+		"The pull request above has been converted to a draft, and the `auto` label has been cleared. Re-add it to request another pass.",
+	)
+}
+
+// declineHeading names which kind of decline a Declined comment is about.
+func declineHeading(o work.Outcome) string {
+	if o == work.OutcomeExhausted {
+		return "ran out of turns"
+	}
+	return "blocked"
+}
+
+// autoLabelNote closes Proposed's and Abandoned's outcome comments. Declined
+// carries its own variant, because that comment also has to say the pull
+// request was converted to draft. The run clears `auto` whichever way it
+// ends, so the reader's next move is the same in every case and is worth
+// stating where they are looking.
 const autoLabelNote = "The `auto` label has been cleared. Re-add it to request another pass."
 
 // join assembles a comment body from its lines. Bodies are built as lines

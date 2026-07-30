@@ -73,6 +73,17 @@ func abandoned() status.Abandoned {
 	}
 }
 
+func declined() status.Declined {
+	return status.Declined{
+		RunID:          runID,
+		Outcome:        work.OutcomeExhausted,
+		Reason:         "the same blocking review finding survived an intervening implement turn",
+		PullRequestURL: "https://github.com/0x63616c/world-wide-webb/pull/999",
+		EndedAt:        runEndAt,
+		RunUsage:       runUsage,
+	}
+}
+
 // bodies is every comment a run can post, by the golden file that holds it.
 func bodies() map[string]string {
 	noURL := pickup()
@@ -85,6 +96,7 @@ func bodies() map[string]string {
 		"stage-failed.md":    failed().Body(),
 		"proposed.md":        proposed().Body(),
 		"abandoned.md":       abandoned().Body(),
+		"declined.md":        declined().Body(),
 	}
 }
 
@@ -446,6 +458,7 @@ func TestEachCommentHeadsWithWhatActuallyHappened(t *testing.T) {
 		{"pickup", pickup().Body()},
 		{"proposed", proposed().Body()},
 		{"abandoned", abandoned().Body()},
+		{"declined", declined().Body()},
 	} {
 		heading, found := lineWithPrefix(tc.body, "### ")
 		if !found {
@@ -463,6 +476,9 @@ func TestEachCommentHeadsWithWhatActuallyHappened(t *testing.T) {
 	if !strings.Contains(abandoned().Body(), "### software-factory stopped without opening a pull request") {
 		t.Errorf("the abandoned comment does not say the run stopped empty-handed:\n%s", abandoned().Body())
 	}
+	if !strings.Contains(declined().Body(), "### software-factory declined this ticket") {
+		t.Errorf("the declined comment does not say the run declined the ticket:\n%s", declined().Body())
+	}
 }
 
 func TestTheProposedCommentCarriesThePullRequestItOpened(t *testing.T) {
@@ -477,6 +493,33 @@ func TestTheProposedCommentCarriesThePullRequestItOpened(t *testing.T) {
 	}
 }
 
+// TestTheDeclinedCommentCarriesThePullRequestAndDistinguishesWhyItDeclined
+// proves Declined's whole reason for existing over Abandoned: the loop
+// opened a pull request before it knew how the run would end, so the decline
+// comment must still link it — and it must say which kind of decline this
+// was, since OutcomeBlocked and OutcomeExhausted mean different things to a
+// human deciding whether to re-add `auto`.
+func TestTheDeclinedCommentCarriesThePullRequestAndDistinguishesWhyItDeclined(t *testing.T) {
+	t.Parallel()
+
+	d := declined()
+	if !strings.Contains(d.Body(), d.PullRequestURL) {
+		t.Errorf("the declined comment does not carry %q:\n%s", d.PullRequestURL, d.Body())
+	}
+	if !strings.Contains(d.Body(), "ran out of turns") {
+		t.Errorf("an exhausted decline does not say so:\n%s", d.Body())
+	}
+
+	blocked := declined()
+	blocked.Outcome = work.OutcomeBlocked
+	if strings.Contains(blocked.Body(), "ran out of turns") {
+		t.Errorf("a blocked decline reads as exhausted:\n%s", blocked.Body())
+	}
+	if d.Body() == blocked.Body() {
+		t.Error("an exhausted decline and a blocked decline render identically")
+	}
+}
+
 func TestBothOutcomeCommentsSayTheAutoLabelWasCleared(t *testing.T) {
 	t.Parallel()
 
@@ -486,6 +529,7 @@ func TestBothOutcomeCommentsSayTheAutoLabelWasCleared(t *testing.T) {
 	// pass.
 	for _, tc := range []struct{ name, body string }{
 		{"proposed", proposed().Body()},
+		{"declined", declined().Body()},
 		{"abandoned", abandoned().Body()},
 	} {
 		if !strings.Contains(tc.body, "`auto` label has been cleared") {
