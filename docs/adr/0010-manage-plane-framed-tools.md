@@ -1,6 +1,6 @@
-# manage: one framed shell for every tool we operate
+# Manage: one framed shell for every tool we operate
 
-`manage.worldwidewebb.co` is a two-column web app — a grouped sidebar of the tools we operate on
+`manage.worldwidewebb.co` is Manage, a two-column web app with a grouped sidebar of the tools we operate on
 the left, the selected tool live in a same-page `<iframe>` on the right. It replaces the bookmark
 folder: Control Center, Home Assistant, Plex, Grafana, Temporal, pgAdmin, Storybook, Cloudflare,
 Cloudflare Zero Trust, Pulumi, Tailscale, UniFi, Synology and GitHub in one place, one keystroke
@@ -21,9 +21,9 @@ exposes a supported toggle.
 That header is not a server-side check. It is an instruction to the *browser*, honoured
 voluntarily. Every design below is a different answer to "who deletes it, and for whom".
 
-## Rejected: a reverse proxy under manage
+## Rejected: a reverse proxy under Manage
 
-The obvious shape — manage proxies each tool at `manage.worldwidewebb.co/t/<tool>/` and strips the
+The obvious shape — Manage proxies each tool at `manage.worldwidewebb.co/t/<tool>/` and strips the
 header on the way through — dies on sub-path support. Grafana (`serve_from_sub_path`), Temporal UI
 (`PUBLIC_PATH`) and pgAdmin (`SCRIPT_NAME`) relocate fine, but Home Assistant emits `/`-rooted URLs
 and ignores the path component of `external_url` (home-assistant/core#21113, still open), and DSM
@@ -32,7 +32,7 @@ a body-rewriting MITM in front of the tools we depend on to debug outages.
 
 The host-per-tool variant (`manage-grafana.worldwidewebb.co`, each upstream at `/`) avoids the
 rewriting but buys a proxy service, its own session store, cookies scoped across the zone, and a
-DNS record per tool — to solve a problem the browser can solve locally. It also makes manage
+DNS record per tool — to solve a problem the browser can solve locally. It also makes Manage
 security-critical: it would hold a live session for every tool behind one gate we wrote ourselves.
 
 ## Rejected: Cloudflare response-header transform rules
@@ -80,7 +80,7 @@ producing a pane that silently fails months later; codegen turns that into a bui
 
 ## Degradation is a feature, not a fallback
 
-The extension sets a marker on manage's own origin via a content script. The app reads it at boot
+The extension sets a marker on Manage's own origin via a content script. The app reads it at boot
 and knows which mode it is in: frame everything, or render launcher cards. There is no timeout
 heuristic and no blank white pane — the two modes are both designed states. That is what keeps the
 app fully usable on a phone, where no extension exists and every tool degrades to a labelled
@@ -93,7 +93,7 @@ button that opens its own Access-gated host.
   click through a self-signed certificate warning, so both need `noTLSVerify` origins — an
   extension to the ingress model in `infra/cloudflare/src/routes.ts`, which today expresses only
   `http://` origin strings.
-- manage has **no authentication of its own**: no login, no session store, no database. Cloudflare
+- Manage has **no authentication of its own**: no login, no session store, no database. Cloudflare
   Access is the gate, as for every other private host. It holds no credentials and no data — a list
   of links and a set of iframes — so a second gate in front of it would protect nothing while being
   the only stateful thing in the app.
@@ -113,7 +113,7 @@ above:
 - **No Storybook row.** The design listed 14 tools; 13 shipped. The `control-center-storybook`
   workload was deleted in Track B and its tunnel route pruned, so a `storybook.worldwidewebb.co`
   pane would 502 forever. Storybook is a local-dev tool now.
-- **The palette moved to `packages/theme`.** manage renders in the same black theme as the control
+- **The palette moved to `packages/theme`.** Manage renders in the same black theme as the control
   center, and the only honest way to do that across two apps is one file both `@import`. Copying the
   `:root` block would have forked it.
 - **The rule generator lives in `apps/manage/src/extension-rules.ts`, not `scripts/`.** It belongs
@@ -121,7 +121,7 @@ above:
   loader, which the frame-unlock spec has to import through.
 - **The accent bar on the active sidebar row is the one intentional deviation from the prototype.**
   The prototype's bar is drawn 10px to the left of its row, inside the scroll container's clip rect,
-  so it never actually paints. manage widens the scroll box by exactly that 10px and pays it back as
+  so it never actually paints. Manage widens the scroll box by exactly that 10px and pays it back as
   padding.
 
 `unifi.worldwidewebb.co` and `dsm.worldwidewebb.co` exist as predicted, and needed the ingress-model

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "manage — frame unlock",
+  "name": "Manage — frame unlock",
   "version": "1.0.0",
-  "description": "Strips frame-deny response headers from manage's tool allowlist, for framed sub-documents only.",
+  "description": "Strips frame-deny response headers from Manage's tool allowlist, for framed sub-documents only.",
   "permissions": [
     "declarativeNetRequest"
   ],

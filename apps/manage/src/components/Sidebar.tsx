@@ -35,7 +35,7 @@ export function Sidebar({
         <div className="mark" aria-hidden="true">
           M
         </div>
-        <h1>manage</h1>
+        <h1>Manage</h1>
       </div>
 
       <nav className="scroll" aria-label="Tools">
