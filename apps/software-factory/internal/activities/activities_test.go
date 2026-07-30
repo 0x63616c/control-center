@@ -3,6 +3,7 @@ package activities
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -1127,5 +1128,41 @@ func TestRunStageFailsWhenTheEnvelopeCannotBeRead(t *testing.T) {
 	if _, err := e.ExecuteActivity(a.RunStage, stageInput(work.StagePlan, nil)); err == nil {
 		t.Fatal("a stage that answered in some other shape has not done its job; carrying an empty document " +
 			"into the next prompt would hide that")
+	}
+}
+
+// TestRunStageOutputRefusesThePreThisStepShape covers the real migration path,
+// which is the activity *result* decode and not StageOutput.UnmarshalJSON.
+//
+// Before this step the result carried `Document string`; it now carries
+// `Result work.StageOutput`. That is a rename, so a pre-deploy payload has no
+// "Result" key at all and StageOutput.UnmarshalJSON is never reached — plain
+// encoding/json, which is exactly what the SDK's JSONPayloadConverter runs,
+// would drop the unrecognised "Document" and hand back a zero Result with no
+// error. A run in flight across the deploy would then replay as though the
+// completed stage had produced nothing, and fail later somewhere unrelated
+// (buildStageInput's missing-prior check) instead of here, where the mismatch
+// is. RunStageOutput.UnmarshalJSON is what makes it fail here.
+func TestRunStageOutputRefusesThePreThisStepShape(t *testing.T) {
+	t.Parallel()
+
+	// The literal shape a pre-this-step RunStage activity result was written
+	// to history as: no json struct tags on the type, so bare Go field names.
+	old := []byte(`{"Output":"e30=","Document":"the plan itself","ThreadID":"thread_1",` +
+		`"Usage":{"InputTokens":1,"OutputTokens":2}}`)
+
+	payload, err := converter.GetDefaultDataConverter().ToPayload(json.RawMessage(old))
+	if err != nil {
+		t.Fatalf("building the payload: %v", err)
+	}
+
+	var out RunStageOutput
+	err = converter.GetDefaultDataConverter().FromPayload(payload, &out)
+	if err == nil {
+		t.Fatalf("decoding a pre-this-step result must fail loudly; it produced Result.Prose() = %q, "+
+			"which would replay as though the stage produced nothing", out.Result.Prose())
+	}
+	if !strings.Contains(err.Error(), "Document") {
+		t.Fatalf("the error must name the field that no longer exists, got: %v", err)
 	}
 }

@@ -171,12 +171,15 @@ func (o *StageOutput) UnmarshalJSON(data []byte) error {
 // thing. No default: a sixth stage has to be added here before it compiles,
 // matching stageTemplate's own no-default idiom.
 //
-// A stage tag this switch does not recognise — including the pre-this-step
-// wire shape, which has no "stage"/"value" keys at all — is refused with an
-// explicit error rather than silently producing a StageOutput whose value is
-// nil. A tolerant decode here would let a run in flight at the deploy that
-// ships this change replay as though a stage produced nothing, rather than
-// failing loudly where the mismatch actually is.
+// A stage tag this switch does not recognise is refused with an explicit
+// error rather than silently producing a StageOutput whose value is nil,
+// which downstream code would read as "this stage produced nothing".
+//
+// That is not, on its own, the guard against a run in flight across the deploy
+// that ships this step. This method only runs once a "Result" key is present,
+// and a pre-this-step activity result has no such key — the field was named
+// Document. Renames are caught a level up, by
+// activities.RunStageOutput.UnmarshalJSON.
 func decodeStageOutputValue(stage Stage, raw json.RawMessage) (stageOutputValue, error) {
 	switch stage {
 	case StagePlan, StageReview, StageRevise, StagePropose:

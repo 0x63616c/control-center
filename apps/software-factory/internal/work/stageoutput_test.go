@@ -85,14 +85,19 @@ func TestMarshalJSONRefusesAnEmptyStageOutput(t *testing.T) {
 	}
 }
 
-// TestUnmarshalJSONRefusesThePreThisStepShape is the regression guard the
-// Migration section of this step's spec depends on: an old, pre-this-step
-// RunStageOutput payload — {"Output":...,"Document":"...","ThreadID":...,
-// "Usage":{...}}, with no "stage"/"value" keys at all — must fail loudly on
-// UnmarshalJSON, not decode into a StageOutput with a nil value. A lenient
-// decode here would let a run replaying across this deploy silently forward
-// an empty document instead of failing where the mismatch actually is.
-func TestUnmarshalJSONRefusesThePreThisStepShape(t *testing.T) {
+// TestUnmarshalJSONRefusesAJSONObjectCarryingNoStageTag pins the no-default
+// switch in decodeStageOutputValue: an object with no recognised "stage" key
+// is refused with an explicit error rather than decoding into a StageOutput
+// with a nil value, which downstream code would read as "this stage produced
+// nothing".
+//
+// This is NOT the pre-this-step-payload migration guard, despite using a
+// payload of that shape as its no-stage-tag example. That migration happens a
+// level up, at the activity result, where `Document` was renamed to `Result`
+// — a payload from before this step has no "Result" key, so it never reaches
+// this method at all. RunStageOutput.UnmarshalJSON is what catches it, and
+// activities.TestRunStageOutputRefusesThePreThisStepShape is that guard.
+func TestUnmarshalJSONRefusesAJSONObjectCarryingNoStageTag(t *testing.T) {
 	t.Parallel()
 
 	oldShape := []byte(`{"Output":"eyJkb2N1bWVudCI6IngifQ==","Document":"x","ThreadID":"thread-1","Usage":{"InputTokens":1}}`)
