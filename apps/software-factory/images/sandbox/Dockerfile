@@ -161,8 +161,10 @@ RUN curl -fsSL -o /tmp/bun.zip \
     && echo "${BUN_SHA256}  /tmp/bun.zip" | sha256sum -c - \
     && unzip -q /tmp/bun.zip -d /tmp \
     && install -m 0755 /tmp/bun-linux-x64/bun /usr/local/bin/bun \
+    && ln -s bun /usr/local/bin/bunx \
     && rm -rf /tmp/bun.zip /tmp/bun-linux-x64 \
-    && bun --version
+    && bun --version \
+    && command -v bunx >/dev/null
 
 RUN curl -fsSL -o /tmp/golangci-lint.tar.gz \
         "https://github.com/golangci/golangci-lint/releases/download/v${GOLANGCI_LINT_VERSION}/golangci-lint-${GOLANGCI_LINT_VERSION}-linux-amd64.tar.gz" \
