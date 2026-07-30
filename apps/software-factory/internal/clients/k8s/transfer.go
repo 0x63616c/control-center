@@ -21,9 +21,9 @@ import (
 const dirMode = 0o755
 
 // credentialFileMode is the mode every credential file this package writes
-// into a sandbox is written with — CloneRepo's git credential file and
-// WriteCodexCredential's codex auth.json. One constant rather than one per
-// caller, so #363 ("the sandbox credential file's 0600 mode is unowned and
+// into a sandbox is written with — CloneRepo's git credential file and its
+// gh hosts.yml. One constant rather than one per caller, so #363 ("the
+// sandbox credential file's 0600 mode is unowned and
 // unenforced") has exactly one place to hold the line: a caller cannot drift
 // to a wider mode by copying a literal instead of this name, and Write's own
 // mode check (mode&^fs.ModePerm) rejects anything that is not a plain

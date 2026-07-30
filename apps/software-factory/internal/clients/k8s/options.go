@@ -1,14 +1,11 @@
 package k8s
 
-import "time"
-
 // options is the tunable part of a Sandboxes. Everything here has a default
 // that is correct for this cluster; an Option exists only where a test or a
 // future configuration needs to say otherwise.
 type options struct {
 	containerName       string
 	maxReadBytes        int64
-	killGrace           time.Duration
 	imagePullSecretName string
 }
 
@@ -25,7 +22,6 @@ func defaultOptions() options {
 	return options{
 		containerName: "sandbox",
 		maxReadBytes:  defaultReadBytes,
-		killGrace:     5 * time.Second,
 	}
 }
 
@@ -40,12 +36,6 @@ func WithMaxReadBytes(n int64) Option {
 // name is a contract with the sandbox image, and a contract deserves a seam.
 func WithContainerName(name string) Option {
 	return func(o *options) { o.containerName = name }
-}
-
-// WithKillGrace sets how long the kill issued on context cancellation waits
-// between SIGTERM and SIGKILL.
-func WithKillGrace(d time.Duration) Option {
-	return func(o *options) { o.killGrace = d }
 }
 
 // WithImagePullSecret names the Secret every sandbox pod authenticates its

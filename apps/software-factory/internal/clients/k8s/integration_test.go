@@ -37,16 +37,22 @@ var (
 //     real exit code, and for which failures it does not;
 //   - that the WebSocket executor negotiates, and what the SPDY fallback
 //     predicate does with a 403 from a partial RBAC grant;
-//   - that cancelling a context actually kills the remote process;
+//   - that cancelling a context stops the stream and Exec returns
+//     context.Canceled — NOT, as of #434, that the remote process itself
+//     dies: that guarantee depended on the pidfile shim's --kill, which is
+//     deleted along with the shim (step 3 of the software-factory migration;
+//     see exec.go's Exec doc comment for the accepted regression this leaves
+//     until a later slice moves stage execution into the pod's own process,
+//     where the embedded worker holds a real os/exec.Cmd it can kill
+//     directly);
 //
 // The 128+N signal-kill mapping is NOT asserted here: producing a specific
 // signal death needs a helper the image does not ship, and adding one only for
 // a test is not worth a contract. The handling is unit-tested against a
-// CodeExitError{Code: 137}; what a real SIGKILL becomes is covered indirectly
-// by the cancellation subtest, which asserts the process is gone.
+// CodeExitError{Code: 137}.
 //   - that WaitReady's readiness definition implies exec is serviceable;
 //   - that the sandbox image satisfies its contract — tar, test, cat, sleep
-//     infinity, the sandbox-exec shim, and one non-root uid owning /work;
+//     infinity, and one non-root uid owning /work;
 //   - that PSA baseline admits the pod spec and the Role grants enough verbs.
 //
 // It is not in the default `go test ./...` run and is not part of the unit
@@ -85,7 +91,8 @@ func TestSandboxRoundTripAgainstACluster(t *testing.T) {
 		Env:             map[string]string{"CODEX_HOME": "/work/.codex"},
 	}
 
-	sandbox, err := s.Create(ctx, spec)
+	credential := work.NewCredentialFile([]byte(`{"tokens":{"access_token":"integration-test"}}`))
+	sandbox, err := s.Create(ctx, spec, credential)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -100,7 +107,7 @@ func TestSandboxRoundTripAgainstACluster(t *testing.T) {
 	}
 
 	t.Run("adopts its own create retry", func(t *testing.T) {
-		got, err := s.Create(ctx, spec)
+		got, err := s.Create(ctx, spec, credential)
 		if err != nil {
 			t.Fatalf("Create (retry): %v", err)
 		}
@@ -163,7 +170,13 @@ func TestSandboxRoundTripAgainstACluster(t *testing.T) {
 		}
 	})
 
-	t.Run("kills the remote process on cancellation", func(t *testing.T) {
+	t.Run("stops the stream on cancellation", func(t *testing.T) {
+		// Since #434 this only asserts what Exec's own doc comment still
+		// promises: the stream tears down and the caller sees
+		// context.Canceled. It does NOT assert the remote process dies —
+		// that depended on the deleted pidfile shim's --kill, and is an
+		// accepted regression until a later slice moves stage execution
+		// into the pod's own process (see exec.go).
 		runCtx, stop := context.WithCancel(ctx)
 		done := make(chan error, 1)
 		go func() {
@@ -174,16 +187,6 @@ func TestSandboxRoundTripAgainstACluster(t *testing.T) {
 		stop()
 		if err := <-done; !errors.Is(err, context.Canceled) {
 			t.Fatalf("Exec error = %v, want context.Canceled", err)
-		}
-
-		// The assertion that matters: no sleep survives. This covers both
-		// layers — the CRI killing on disconnect, and the shim's --kill.
-		var out bytes.Buffer
-		if _, err := s.Exec(ctx, sandbox, []string{"pgrep", "-c", "sleep"}, nil, &out, os.Stderr); err != nil {
-			t.Fatalf("pgrep: %v", err)
-		}
-		if n := strings.TrimSpace(out.String()); n != "" && n != "0" {
-			t.Errorf("%s sleep processes survived cancellation", n)
 		}
 	})
 }

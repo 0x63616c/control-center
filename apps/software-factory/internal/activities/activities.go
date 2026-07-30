@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"time"
 
@@ -42,18 +43,12 @@ type Deps struct {
 	RepoURL string
 
 	// TokenSource yields the codex credential document a sandbox needs to
-	// authenticate. WriteCodexCredential fetches from it and writes what it
-	// returns through CredentialWriter, inside the one activity that does
-	// both — never returning the document, because Temporal would persist it
-	// to workflow history for the namespace's whole retention.
+	// authenticate. CreateSandbox fetches from it and hands the document to
+	// PodLifecycle.Create, which turns it into a per-ticket Kubernetes Secret
+	// mounted into the pod before it exists (D3, #434) — never returning the
+	// document itself, because Temporal would persist it to workflow history
+	// for the namespace's whole retention.
 	TokenSource TokenSource
-
-	// CredentialWriter puts the document TokenSource yields onto the
-	// sandbox's filesystem. A separate field from TokenSource because they
-	// are two different capabilities satisfied by two different concrete
-	// clients — codexauth.Source reads and refreshes the credential;
-	// *k8s.Sandboxes writes it into a pod.
-	CredentialWriter CredentialWriter
 
 	// Log is the injected logger. Clients and activities log themselves, so
 	// leaf code rarely logs by hand and nobody can forget.
@@ -115,9 +110,6 @@ func New(deps Deps) (*Activities, error) {
 	if deps.TokenSource == nil {
 		missing = append(missing, "TokenSource")
 	}
-	if deps.CredentialWriter == nil {
-		missing = append(missing, "CredentialWriter")
-	}
 	if deps.Log == nil {
 		missing = append(missing, "Log")
 	}
@@ -134,6 +126,82 @@ func New(deps Deps) (*Activities, error) {
 		return nil, fmt.Errorf("activities need a usable sandbox template: %w", err)
 	}
 	return &Activities{deps: deps}, nil
+}
+
+// SandboxDeps are what a sandbox pod's embedded worker needs to host RunStage
+// under a Temporal Session (step 3, #434's D2).
+//
+// It is deliberately narrower than Deps rather than the same struct with the
+// rest left zero: this composition root creates no pod, holds no Kubernetes
+// API access, mints no GitHub credential and posts no status comment, so it
+// has no business requiring a PodLifecycle, a SandboxSweeper, a RunLookup, a
+// StatusRenderer, a GitHub client or a RepoURL just to build the one activity
+// it actually registers. Requiring them anyway would mean inventing stand-ins
+// for capabilities this process is never supposed to have, which is a worse
+// failure mode than a second, smaller constructor: a stand-in that happens to
+// work is indistinguishable from one that is a real capability until the day
+// something calls it by accident.
+//
+// CloneRepo is not on this list, and not yet registered anywhere but the main
+// worker's *Activities (New, above): it mints a GitHub App installation
+// token in-process from the App's private key, and #431 has not decided
+// whether the sandbox pod may hold that capability itself. Today CloneRepo
+// still reaches the pod through the pods/exec transport internal/clients/k8s
+// keeps alive for exactly this reason — see internal/clients/k8s/exec.go's
+// own doc comment on Exec. There used to be a second activity here for the
+// same reason, WriteCodexCredential, until D3 (#431) replaced its transport
+// with a per-ticket Kubernetes Secret mounted at pod creation and the
+// activity became a no-op nothing called any more — it, and the workticket.go
+// call to it, are deleted rather than kept as a step that does nothing.
+type SandboxDeps struct {
+	// Stages executes RunStage's own codex invocation. In the sandbox pod this
+	// is backed by internal/clients/local, not internal/clients/k8s: the
+	// process running this Activities value already IS the sandbox, so there
+	// is nothing remote left to exec into.
+	Stages StageRunner
+
+	Transcripts TranscriptSink
+	Prompts     PromptRenderer
+	Metrics     Metrics
+	Log         *slog.Logger
+	Clock       clock.Clock
+}
+
+// NewSandboxSide builds the activity set a sandbox pod's embedded worker
+// registers. Only RunStage is ever scheduled against the result today — see
+// SandboxDeps' own doc comment for why WriteCodexCredential and CloneRepo stay
+// off this constructor rather than being wired here as a stand-in.
+func NewSandboxSide(deps SandboxDeps) (*Activities, error) {
+	missing := []string{}
+	if deps.Stages == nil {
+		missing = append(missing, "Stages")
+	}
+	if deps.Transcripts == nil {
+		missing = append(missing, "Transcripts")
+	}
+	if deps.Prompts == nil {
+		missing = append(missing, "Prompts")
+	}
+	if deps.Metrics == nil {
+		missing = append(missing, "Metrics")
+	}
+	if deps.Log == nil {
+		missing = append(missing, "Log")
+	}
+	if deps.Clock == nil {
+		missing = append(missing, "Clock")
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("sandbox-side activities need %v", missing)
+	}
+	return &Activities{deps: Deps{
+		Stages:      deps.Stages,
+		Transcripts: deps.Transcripts,
+		Prompts:     deps.Prompts,
+		Metrics:     deps.Metrics,
+		Log:         deps.Log,
+		Clock:       deps.Clock,
+	}}, nil
 }
 
 // ListAutoTickets returns the open issues asking for machine work.
@@ -208,6 +276,14 @@ type CreateSandboxInput struct {
 }
 
 // CreateSandbox creates the pod this run's stages execute in.
+//
+// It fetches the codex credential document from TokenSource and hands it to
+// Pods.Create in-process — never returning it, never logging it, and never
+// letting it appear anywhere Temporal records: CreateSandboxInput above is
+// this activity's whole recorded input, an identifier only, the same shape
+// CloneRepo's already was before this step (D3, #434, acceptance criterion
+// 5). Pods.Create is what turns the document into a per-ticket Kubernetes
+// Secret mounted into the pod; see PodLifecycle's own doc comment.
 func (a *Activities) CreateSandbox(ctx context.Context, in CreateSandboxInput) (work.SandboxID, error) {
 	deadline := time.Duration(a.deps.Sandbox.DeadlineSeconds) * time.Second
 	if deadline <= in.RunTimeout {
@@ -220,7 +296,12 @@ func (a *Activities) CreateSandbox(ctx context.Context, in CreateSandboxInput) (
 			deadline, in.RunTimeout, work.ErrPermanent))
 	}
 
-	id, err := a.deps.Pods.Create(ctx, a.deps.Sandbox.Spec(in.TicketNumber, in.RunID))
+	credential, err := a.deps.TokenSource.SandboxCredentialFile(ctx)
+	if err != nil {
+		return "", fail(ctx, fmt.Sprintf("fetching the codex credential for ticket #%d's sandbox", in.TicketNumber), err)
+	}
+
+	id, err := a.deps.Pods.Create(ctx, a.deps.Sandbox.Spec(in.TicketNumber, in.RunID), credential)
 	if err != nil {
 		return "", fail(ctx, fmt.Sprintf("creating the sandbox for ticket #%d", in.TicketNumber), err)
 	}
@@ -235,47 +316,21 @@ func (a *Activities) WaitSandboxReady(ctx context.Context, sandbox work.SandboxI
 	return nil
 }
 
-// WriteCodexCredential puts the codex CLI's auth.json into the sandbox at
-// work.CodexHomeDir, so codex exec can authenticate.
-//
-// It fetches from TokenSource and writes through CredentialWriter inside this
-// one activity, and returns nothing but an error: the document must never
-// cross the activity/workflow boundary, because Temporal persists an
-// activity's result to workflow history for the namespace's whole retention,
-// and a credential written there would live as long as the history does.
-//
-// Called once per run, before the first stage, and before CloneRepo: both
-// must run once the sandbox is ready and before the first stage, and either
-// order satisfies that on its own — CodexHomeDir and RepoDir are independent
-// siblings of SandboxRoot, so neither activity touches what the other
-// writes. Credential first anyway, deliberately: the codex-auth Secret does
-// not exist in the cluster yet (#344) and every run attempted before it is
-// seeded fails here, so failing on the cheaper, more-likely-broken
-// precondition first means a run that cannot possibly proceed never also
-// pays for CloneRepo's network round trip to GitHub — a mint, a clone and a
-// push — for nothing.
-//
-// codex.NewRunner's stage runner never touches this: it execs codex inside
-// the checkout and reads CODEX_HOME from the sandbox's own environment,
-// exactly as CloneRepo reads SF_BRANCH — this activity's job ends the moment
-// the file exists.
-func (a *Activities) WriteCodexCredential(ctx context.Context, sandbox work.SandboxID) error {
-	file, err := a.deps.TokenSource.SandboxCredentialFile(ctx)
-	if err != nil {
-		return fail(ctx, "fetching the codex credential", err)
-	}
-	if err := a.deps.CredentialWriter.WriteCodexCredential(ctx, sandbox, file); err != nil {
-		return fail(ctx, fmt.Sprintf("writing the codex credential into sandbox %s", sandbox), err)
-	}
-	return nil
-}
-
 // CloneRepo checks the ticket's repository out inside the sandbox and pushes
 // this run's branch. It must run once the sandbox is ready and before the
 // first stage: codex refuses to run outside a git repository and exits before
 // any model call, so a run that discovered a missing checkout inside `plan`
 // would already have paid for that stage against a sandbox that could never
-// have worked. See WriteCodexCredential's doc comment for why it runs first.
+// have worked.
+//
+// There used to be a WriteCodexCredential activity that had to run before
+// this one, writing the codex OAuth credential into the sandbox over
+// pods/exec. D3 (#434) replaced that transport with a per-ticket Kubernetes
+// Secret CreateSandbox provisions and the pod's own spec mounts directly at
+// work.CodexAuthFile, in place before the container ever starts — so the
+// credential is already there by the time any activity runs, and the
+// activity that used to write it had nothing left to do. It,
+// activities.CredentialWriter and workticket.go's call to it are deleted.
 //
 // The credential is minted here, inside the activity that uses it, and never
 // returned: like InstallationToken's own doc says, Temporal persists an
@@ -335,6 +390,18 @@ type RunStageOutput struct {
 
 	ThreadID string
 	Usage    work.Usage
+
+	// Transcript is this attempt's whole event stream, carried home from the
+	// sandbox's own local sink so a new activity on the MAIN task queue
+	// (PersistTranscript, below) can replay it into the real, durable one —
+	// #434's step 3 (D5) moved RunStage's execution into the sandbox pod,
+	// whose local disk does not survive DeleteSandbox and must never be NFS
+	// (see internal/transcripts.Sink's own doc comment).
+	//
+	// It is the largest field on this type by far — see work.Transcript's own
+	// doc comment for the measured size — which is deliberate: nothing else
+	// should ever be added here alongside it.
+	Transcript work.Transcript
 }
 
 // UnmarshalJSON decodes a stage's activity result, refusing any key this
@@ -397,12 +464,21 @@ func (a *Activities) RunStage(ctx context.Context, in RunStageInput) (RunStageOu
 		}
 	}()
 
+	// captured mirrors every byte the transcript writer sees, so this attempt's
+	// whole event stream can travel home as RunStageOutput.Transcript once the
+	// stage finishes — see that field's own doc comment for why. A plain
+	// io.MultiWriter rather than a read-back after Close: the local sink
+	// (transcripts.Sink) only ever exposes a writer, never a reader, and
+	// reading is exactly the api this package would otherwise have to add
+	// just for this.
+	var captured bytes.Buffer
+
 	// StageEvents rather than a sink assembled here: framing belongs to
 	// transcripts.EventSink, which owns the format, and heartbeat-before-write
 	// belongs with it so a blocking transcript writer cannot silence liveness.
 	// A second assembly of the same two consumers is a second place for one of
 	// them to be left out.
-	events := StageEvents(ctx, in.Key, transcript, a.deps.Log)
+	events := StageEvents(ctx, in.Key, io.MultiWriter(transcript, &captured), a.deps.Log)
 
 	started := a.deps.Clock.Now()
 	result, err := a.deps.Stages.RunStage(ctx, work.StageRun{
@@ -435,11 +511,52 @@ func (a *Activities) RunStage(ctx context.Context, in RunStageInput) (RunStageOu
 	}
 
 	return RunStageOutput{
-		Output:   result.Output,
-		Result:   decoded,
-		ThreadID: result.ThreadID,
-		Usage:    result.Usage,
+		Output:     result.Output,
+		Result:     decoded,
+		ThreadID:   result.ThreadID,
+		Usage:      result.Usage,
+		Transcript: work.Transcript(captured.Bytes()),
 	}, nil
+}
+
+// PersistTranscriptInput names one stage attempt's transcript and carries its
+// bytes, home from the sandbox that produced them.
+type PersistTranscriptInput struct {
+	Key        work.StageKey
+	Transcript work.Transcript
+}
+
+// PersistTranscript writes one stage attempt's transcript into the durable,
+// NFS-backed transcripts.Sink this activity's own Deps.Transcripts is bound
+// to — the composition root's, never the sandbox's local one.
+//
+// It exists because RunStage no longer runs where that durable sink is
+// reachable: #434's step 3 moved stage execution into the sandbox pod's own
+// process, whose local disk is not durable and must never be NFS (see
+// internal/transcripts.Sink's own doc comment). This activity is what carries
+// the bytes the rest of the way, and it must be scheduled onto the MAIN
+// worker's task queue — internal/workflows/workticket.go's job, not this
+// package's, since ActivityOptions.TaskQueue is set at the call site.
+//
+// It writes the whole transcript in one call rather than streaming it, unlike
+// the original write RunStage's own local sink did line by line: by the time
+// this runs, the stage has already finished and every byte already exists, so
+// there is nothing left to stream incrementally.
+func (a *Activities) PersistTranscript(ctx context.Context, in PersistTranscriptInput) error {
+	w, err := a.deps.Transcripts.Open(ctx, in.Key)
+	if err != nil {
+		return fail(ctx, fmt.Sprintf("opening the durable transcript for %s", in.Key), err)
+	}
+
+	_, writeErr := w.Write(in.Transcript.Bytes())
+	closeErr := w.Close()
+	if writeErr != nil {
+		return fail(ctx, fmt.Sprintf("writing the relayed transcript for %s", in.Key), writeErr)
+	}
+	if closeErr != nil {
+		return fail(ctx, fmt.Sprintf("closing the relayed transcript for %s", in.Key), closeErr)
+	}
+	return nil
 }
 
 // FindPullRequestOutput is what GitHub says is open on a run's branch.

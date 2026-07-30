@@ -34,10 +34,9 @@ func TestNewActivitiesBuildsTheCodexCredentialSource(t *testing.T) {
 // TestBuildDepsWiresTheCodexCredentialSeam is the source-level companion to
 // TestBuildDepsSatisfiesActivitiesNew: that test proves the Deps buildDeps
 // returns is one activities.New accepts, which already fails loudly if
-// TokenSource or CredentialWriter go nil, but it would stay green even if
-// buildDeps silently swapped in the wrong CredentialWriter (Pods, say,
-// instead of sandboxes) — anything non-nil satisfies presence. This checks
-// the actual wiring, not just that something was plugged in.
+// TokenSource goes nil, but it would stay green even if buildDeps silently
+// swapped in the wrong TokenSource — anything non-nil satisfies presence.
+// This checks the actual wiring, not just that something was plugged in.
 func TestBuildDepsWiresTheCodexCredentialSeam(t *testing.T) {
 	t.Parallel()
 
@@ -47,13 +46,8 @@ func TestBuildDepsWiresTheCodexCredentialSeam(t *testing.T) {
 	}
 	body := extractFuncBody(t, string(source), "func buildDeps(")
 
-	for _, want := range []string{
-		"TokenSource:      tokenSource",
-		"CredentialWriter: sandboxes",
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("buildDeps()'s body does not contain %q; the codex credential seam is unwired again (#398)", want)
-		}
+	if want := "TokenSource: tokenSource"; !strings.Contains(body, want) {
+		t.Errorf("buildDeps()'s body does not contain %q; the codex credential seam is unwired again (#398)", want)
 	}
 }
 
@@ -62,7 +56,10 @@ func TestBuildDepsWiresTheCodexCredentialSeam(t *testing.T) {
 // deploy to remember: #398 found CODEX_HOME silently absent, with codex exec
 // failing identically to a model failure, and GH_CONFIG_DIR fails the same way
 // — gh falls back to $HOME/.config/gh, finds no credential there, and `propose`
-// reports itself blocked (#414).
+// reports itself blocked (#414). Extended for #434 step 3: the sandbox pod's
+// own embedded worker needs the same Temporal frontend and namespace this
+// process itself dials, copied from cfg rather than a second pair of
+// environment variables invented for it.
 //
 // TestBuildDepsSatisfiesActivitiesNew does not cover this — SandboxTemplate's
 // own Validate checks Image, the resource limits and the deadline, never Env.
@@ -86,6 +83,14 @@ func TestSandboxTemplateCarriesItsPathEnvironment(t *testing.T) {
 		{
 			"work.GhConfigDirEnv: work.GhConfigDir",
 			"gh looks in $HOME/.config/gh instead, finds no credential, and propose cannot open the pull request",
+		},
+		{
+			"work.SandboxTemporalHostPortEnv: cfg.TemporalHostPort",
+			"the sandbox pod's own embedded worker (#434) has no Temporal frontend to dial and CreateSession's CreationTimeout is all a run would ever see",
+		},
+		{
+			"work.SandboxTemporalNamespaceEnv: cfg.TemporalNamespace",
+			"the sandbox pod's own embedded worker would dial the wrong namespace, or none",
 		},
 	} {
 		if !strings.Contains(body, tc.entry) {

@@ -21,7 +21,7 @@ import (
 // codexauth's takeover policy depends on.
 const codexRefresherTimeout = 20 * time.Second
 
-// newCodexAuthSource builds the codex token source WriteCodexCredential reads
+// newCodexAuthSource builds the codex token source CreateSandbox reads
 // from — the seam #398 closes between codexauth.Source, built and tested, and
 // activities.Deps.TokenSource, which had nothing plugged into it.
 //
@@ -33,7 +33,7 @@ const codexRefresherTimeout = 20 * time.Second
 //
 // The codex-auth Secret does not exist until it is seeded out of band (#344,
 // docs/runbooks/software-factory-seed-codex-auth.md). Its absence surfaces
-// only once WriteCodexCredential actually calls SandboxCredentialFile — this
+// only once CreateSandbox actually calls SandboxCredentialFile — this
 // function only builds the client, deliberately: failing worker boot over a
 // Secret a human has not created yet would crashloop a worker that has
 // nothing to do until its first ticket anyway.

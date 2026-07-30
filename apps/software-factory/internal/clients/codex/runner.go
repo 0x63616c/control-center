@@ -1,7 +1,6 @@
 package codex
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -9,20 +8,13 @@ import (
 	"io/fs"
 	"log/slog"
 	"strings"
-	"time"
 
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
 // stageFileMode is the mode the prompt and schema are written with. They are
 // the sandbox's own working files and nothing else reads them.
 const stageFileMode fs.FileMode = 0o600
-
-// defaultPollInterval is how often an attached attempt is checked on. It is a
-// poll rather than a wait because pods/exec offers nothing to wait on, and it
-// is slow because the thing being waited for takes minutes.
-const defaultPollInterval = 15 * time.Second
 
 // stderrKeep is how much of a stage's stderr is held for its error message.
 // stderr is evidence and the tail of it is the cause, but the whole of it can
@@ -34,32 +26,21 @@ const stderrKeep = 64 << 10
 // It is idempotent by construction rather than by care: every attempt begins by
 // asking what the previous one left behind, and the paths it asks about are
 // derived from the stage key alone. A retry therefore reads a finished stage's
-// result, attaches to a live one, and only runs when neither is true — which is
-// what makes a worker restart cheap instead of another model invocation.
+// result and only runs when that is absent — which is what makes a retry
+// within the same session cheap instead of another model invocation.
+//
+// It no longer holds a clock or a poll interval. Both existed only for
+// waitForResult, the cross-process reattach Sessions removed (#434) — see
+// resume.go's Resumption doc comment.
 type Runner struct {
-	pods         PodExecer
-	files        FileTransfer
-	clock        clock.Clock
-	logger       *slog.Logger
-	pollInterval time.Duration
-}
-
-// Option adjusts a Runner. Required dependencies are positional; only things
-// with a sane default are optional.
-type Option func(*Runner)
-
-// WithPollInterval sets how often an attached attempt is checked on.
-func WithPollInterval(d time.Duration) Option {
-	return func(r *Runner) { r.pollInterval = d }
+	pods   PodExecer
+	files  FileTransfer
+	logger *slog.Logger
 }
 
 // NewRunner builds a Runner over a sandbox's exec and file transports.
-func NewRunner(pods PodExecer, files FileTransfer, clk clock.Clock, logger *slog.Logger, opts ...Option) *Runner {
-	r := &Runner{pods: pods, files: files, clock: clk, logger: logger, pollInterval: defaultPollInterval}
-	for _, opt := range opts {
-		opt(r)
-	}
-	return r
+func NewRunner(pods PodExecer, files FileTransfer, logger *slog.Logger) *Runner {
+	return &Runner{pods: pods, files: files, logger: logger}
 }
 
 // RunStage executes one stage, or resumes whatever a previous attempt of it
@@ -77,11 +58,6 @@ func (r *Runner) RunStage(ctx context.Context, run work.StageRun, events work.St
 
 	switch decision {
 	case ResumeDone:
-		return r.storedResult(ctx, run, paths)
-	case ResumeAttach:
-		if err := r.waitForResult(ctx, run, probe); err != nil {
-			return work.StageResult{}, err
-		}
 		return r.storedResult(ctx, run, paths)
 	case ResumeRun:
 		return r.run(ctx, run, events, paths)
@@ -195,46 +171,12 @@ func (r *Runner) readResult(ctx context.Context, run work.StageRun, paths work.S
 	return output, nil
 }
 
-// waitForResult attaches to a live attempt: it waits for that attempt's result
-// rather than starting a second model against the same sandbox.
-//
-// It stops when the attempt dies without writing one, rather than waiting out
-// the stage timeout for a process that is already gone.
-func (r *Runner) waitForResult(ctx context.Context, run work.StageRun, probe *sandboxProbe) error {
-	for {
-		if err := r.clock.Sleep(ctx, r.pollInterval); err != nil {
-			return fmt.Errorf("waiting for the live attempt of %s: %w", run.Key, err)
-		}
-
-		done, err := probe.ResultExists(ctx)
-		if err != nil {
-			return fmt.Errorf("checking on the live attempt of %s: %w", run.Key, err)
-		}
-		if done {
-			return nil
-		}
-
-		alive, err := probe.AttemptRunning(ctx)
-		if err != nil {
-			return fmt.Errorf("checking whether the attempt of %s is still alive: %w", run.Key, err)
-		}
-		if alive {
-			continue
-		}
-
-		// It died between our checks; it may have finished in that window.
-		done, err = probe.ResultExists(ctx)
-		if err != nil {
-			return fmt.Errorf("re-checking the result of %s: %w", run.Key, err)
-		}
-		if done {
-			return nil
-		}
-		return fmt.Errorf("the running attempt of %s died without writing a result", run.Key)
-	}
-}
-
-// sandboxProbe answers Decide's two questions about one stage's sandbox.
+// sandboxProbe answers Decide's one remaining question about one stage's
+// sandbox. Before #434 it answered a second — AttemptRunning — deleted along
+// with waitForResult, its only caller: see resume.go's Resumption doc comment
+// for why a cross-process "is a previous attempt still running" question no
+// longer arises once a stage is a local subprocess of the very activity
+// deciding this.
 type sandboxProbe struct {
 	runner  *Runner
 	sandbox work.SandboxID
@@ -256,55 +198,6 @@ func (p *sandboxProbe) ResultExists(ctx context.Context) (bool, error) {
 		return false, nil
 	default:
 		return false, fmt.Errorf("reading %s: %w", p.paths.Result, err)
-	}
-}
-
-// AttemptRunning reports whether a codex for this stage is still running.
-//
-// It asks the process table rather than reading a PID file, and the difference
-// is not convenience. A PID file can only be written by the process itself,
-// which needs either a shell or a wrapper in the sandbox image; and a PID
-// outlives its process, so a recycled number would read as "still running" and
-// hang the stage until its timeout.
-//
-// The pattern is this attempt's result path — `<SandboxRoot>/<RunID>/<stage>`
-// (work.StageKey.Paths), so a Temporal RunID and one of five stage constants.
-// The ticket number is not in it; it appears only in TranscriptPath. What the
-// two fields that ARE in it buy is that nothing an issue author writes can
-// steer the pattern, and that two concurrent stages cannot collide: they differ
-// in RunID, or in the stage segment.
-//
-// What the pattern does not give is a guarantee of matching only this stage's
-// codex. A concurrent `pgrep -f` with the same pattern matches (pgrep excludes
-// its own PID, not a sibling's), and so does a file-transfer exec carrying the
-// path in its argv. Every one of those biases toward a false "running", which
-// costs one poll and never a double-run — the opposite direction to the answer
-// that would be expensive to get wrong.
-//
-// The exit code is the answer, not the output. pgrep exiting 0 means it matched
-// something whatever it printed, so nothing here parses stdout.
-func (p *sandboxProbe) AttemptRunning(ctx context.Context) (bool, error) {
-	var out bytes.Buffer
-	argv := []string{"pgrep", "-f", p.paths.Result}
-
-	// Probe, not Exec: Exec's shim would wrap this into "sandbox-exec
-	// --pidfile P -- pgrep -f <pattern>", a command line that contains
-	// <pattern> itself, so the search would always find its own wrapper
-	// process and report "running" whether or not codex ever started
-	// (#411). Probe runs pgrep bare, with nothing of its own for the
-	// pattern to match.
-	code, err := p.runner.pods.Probe(ctx, p.sandbox, argv, &out, io.Discard)
-	if err != nil {
-		return false, fmt.Errorf("looking for a running attempt in sandbox %s: %w", p.sandbox, err)
-	}
-	switch code {
-	case 0:
-		return true, nil
-	case 1:
-		// pgrep's own "nothing matched", which is the normal answer.
-		return false, nil
-	default:
-		return false, fmt.Errorf("pgrep failed in sandbox %s (exit %d): %s", p.sandbox, code, strings.TrimSpace(out.String()))
 	}
 }
 

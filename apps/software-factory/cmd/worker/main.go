@@ -306,18 +306,17 @@ func newActivities(
 // "this seam is wired into the composition root" means. #395 shipped a new
 // Deps field, Repo, that this file did not yet populate; activities.New
 // caught it loudly in a pod's crash loop rather than here, in a test, because
-// this function did not exist to catch it first. #398 adds two more,
-// TokenSource and CredentialWriter, through the same seam.
+// this function did not exist to catch it first. #398 added TokenSource
+// through the same seam.
 //
 // tokenSource is a parameter rather than built here for the same reason
 // sandboxes is: newCodexAuthSource dials the in-cluster Kubernetes API to
 // build a SecretStore, which TestBuildDepsSatisfiesActivitiesNew cannot do
 // outside a pod. Constructing it stays in newActivities, alongside sandboxes.
 //
-// One *k8s.Sandboxes is threaded through Pods, Repo, Sweeper, CredentialWriter
-// and — via codex.NewRunner — the stage runner's exec and file transfer,
-// deliberately: see the doc on newActivities for why a second instance would
-// be wrong.
+// One *k8s.Sandboxes is threaded through Pods, Repo, Sweeper and — via
+// codex.NewRunner — the stage runner's exec and file transfer, deliberately:
+// see the doc on newActivities for why a second instance would be wrong.
 func buildDeps(
 	cfg config.Worker,
 	ghCfg config.GitHub,
@@ -333,8 +332,9 @@ func buildDeps(
 ) activities.Deps {
 	// CODEX_HOME is part of the contract with the sandbox image (like
 	// SF_BRANCH), set on every sandbox's template so codex exec always knows
-	// where to look. It is never a secret: the credential itself is written
-	// as a file by WriteCodexCredential, never carried in the environment.
+	// where to look. It is never a secret: the credential itself reaches the
+	// pod as a mounted per-ticket Secret (D3, #434), never carried in the
+	// environment.
 	sandboxTemplate := work.SandboxTemplate{
 		Image:           cfg.SandboxImage,
 		CPULimit:        cfg.SandboxCPULimit,
@@ -343,6 +343,15 @@ func buildDeps(
 		Env: map[string]string{
 			work.CodexHomeEnv:   work.CodexHomeDir,
 			work.GhConfigDirEnv: work.GhConfigDir,
+
+			// The sandbox pod's own embedded Temporal worker (#434 step 3,
+			// cmd/sandbox-worker) dials the exact same frontend and namespace
+			// this process just dialled above — one Temporal cluster, two
+			// kinds of worker — so these are copied from cfg rather than a
+			// second pair of environment variables this process would have
+			// to be given separately for no reason.
+			work.SandboxTemporalHostPortEnv:  cfg.TemporalHostPort,
+			work.SandboxTemporalNamespaceEnv: cfg.TemporalNamespace,
 		},
 	}
 
@@ -350,7 +359,7 @@ func buildDeps(
 		GitHub:      ghClient,
 		Pods:        sandboxes,
 		Repo:        sandboxes,
-		Stages:      codex.NewRunner(sandboxes, sandboxes, clk, logger),
+		Stages:      codex.NewRunner(sandboxes, sandboxes, logger),
 		Transcripts: transcriptSink,
 		Prompts:     prompts.NewActivityRenderer(renderer),
 		Status:      status.NewRenderer(cfg.TemporalUIBaseURL, cfg.TemporalNamespace),
@@ -358,11 +367,10 @@ func buildDeps(
 		Sweeper:     sandboxes,
 		Metrics:     metrics,
 
-		// TokenSource fetches and refreshes the codex credential; sandboxes —
-		// the same *k8s.Sandboxes bound to Pods, Repo and Sweeper above —
-		// writes what it yields into a sandbox's filesystem. See #398.
-		TokenSource:      tokenSource,
-		CredentialWriter: sandboxes,
+		// TokenSource fetches and refreshes the codex credential; CreateSandbox
+		// hands what it yields straight to Pods.Create, which turns it into a
+		// per-ticket Secret mounted into the pod (D3, #434). See #398.
+		TokenSource: tokenSource,
 
 		Log:     logger,
 		Clock:   clk,

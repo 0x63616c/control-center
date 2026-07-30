@@ -153,13 +153,17 @@ func (t SandboxTemplate) Validate() error {
 // The branch is derived here rather than passed in, so the name the sandbox
 // pushes to and the name the worker later queries GitHub for come from one
 // call. A caller that could supply its own would be a caller that could supply
-// a different one.
+// a different one. SandboxTaskQueue is derived the same way and for the same
+// reason (#434, D1/D2): the queue this run's pod polls and the queue
+// workflow.CreateSession names must be the exact same computation, not two
+// call sites that happen to agree today.
 func (t SandboxTemplate) Spec(ticketNumber int, runID string) SandboxSpec {
-	env := make(map[string]string, len(t.Env)+1)
+	env := make(map[string]string, len(t.Env)+2)
 	for k, v := range t.Env {
 		env[k] = v
 	}
 	env[SandboxBranchEnv] = BranchName(ticketNumber, runID)
+	env[SandboxTaskQueueEnv] = SandboxTaskQueue(runID)
 	return SandboxSpec{
 		TicketNumber:    ticketNumber,
 		RunID:           runID,

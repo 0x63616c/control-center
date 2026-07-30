@@ -68,11 +68,17 @@ func TestBuildPodRejectsANameThatWouldExceedTheKubernetesLimit(t *testing.T) {
 	}
 }
 
-func TestBuildPodRunsSleepInfinityAsTheContainerCommandWithNoShell(t *testing.T) {
+// TestBuildPodRunsTheEmbeddedWorkerAsTheContainerCommandWithNoShell is
+// TestBuildPodRunsSleepInfinityAsTheContainerCommandWithNoShell's #434
+// replacement: the pod's own embedded Temporal worker (cmd/sandbox-worker,
+// installed by images/sandbox/Dockerfile) is what runs now, not `sleep
+// infinity` with stages arriving over pods/exec — but the argv-only
+// guarantee this test polices is unchanged either way.
+func TestBuildPodRunsTheEmbeddedWorkerAsTheContainerCommandWithNoShell(t *testing.T) {
 	t.Parallel()
 
 	c := sandboxContainer(t, mustBuild(t, validSpec()))
-	if want := []string{"sleep", "infinity"}; !reflect.DeepEqual(c.Command, want) {
+	if want := []string{sandboxWorkerBinaryPath}; !reflect.DeepEqual(c.Command, want) {
 		t.Errorf("container command = %v, want %v", c.Command, want)
 	}
 	if len(c.Args) != 0 {
@@ -210,12 +216,15 @@ func TestBuildPodAcceptsTheKnownSandboxEnvKeys(t *testing.T) {
 
 	spec := validSpec()
 	spec.Env = map[string]string{
-		work.CodexHomeEnv:     "/work/.codex",
-		work.GhConfigDirEnv:   "/work/.config/gh",
-		work.SandboxBranchEnv: "sf/ticket-42",
+		work.CodexHomeEnv:                "/work/.codex",
+		work.GhConfigDirEnv:              "/work/.config/gh",
+		work.SandboxBranchEnv:            "sf/ticket-42",
+		work.SandboxTaskQueueEnv:         "software-factory-sandbox-run-1",
+		work.SandboxTemporalHostPortEnv:  "temporal-frontend.temporal:7233",
+		work.SandboxTemporalNamespaceEnv: "software-factory",
 	}
 	if _, err := buildPod(spec, defaultOptions()); err != nil {
-		t.Fatalf("buildPod returned an unexpected error for the three known env keys: %v", err)
+		t.Fatalf("buildPod returned an unexpected error for the known env keys: %v", err)
 	}
 }
 
@@ -329,8 +338,8 @@ func TestBuildPodMountsAWritableEmptyDirAtTheSandboxRoot(t *testing.T) {
 	t.Parallel()
 
 	pod := mustBuild(t, validSpec())
-	if len(pod.Spec.Volumes) != 1 {
-		t.Fatalf("pod has %d volumes, want exactly 1", len(pod.Spec.Volumes))
+	if len(pod.Spec.Volumes) != 2 {
+		t.Fatalf("pod has %d volumes, want exactly 2 (the emptyDir and the credential secret)", len(pod.Spec.Volumes))
 	}
 	vol := pod.Spec.Volumes[0]
 	if vol.EmptyDir == nil {
@@ -341,11 +350,65 @@ func TestBuildPodMountsAWritableEmptyDirAtTheSandboxRoot(t *testing.T) {
 	}
 
 	c := sandboxContainer(t, pod)
-	if len(c.VolumeMounts) != 1 || c.VolumeMounts[0].MountPath != work.SandboxRoot {
-		t.Errorf("volume mounts = %+v, want one at %q", c.VolumeMounts, work.SandboxRoot)
+	if len(c.VolumeMounts) != 2 {
+		t.Fatalf("volume mounts = %+v, want exactly 2 (the sandbox root and the credential mount)", c.VolumeMounts)
+	}
+	if c.VolumeMounts[0].MountPath != work.SandboxRoot {
+		t.Errorf("volume mounts = %+v, want the first one at %q", c.VolumeMounts, work.SandboxRoot)
 	}
 	if c.VolumeMounts[0].ReadOnly {
 		t.Error("the sandbox root is mounted read-only; stages write into it")
+	}
+}
+
+// TestBuildPodMountsTheCodexCredentialSecretDirectlyAtCodexAuthFile proves D3
+// (#434): the per-ticket credential Secret is mounted, via subPath, at exactly
+// the path the codex CLI reads — so Kubernetes itself puts the credential in
+// place at container start, and no activity ever writes it.
+func TestBuildPodMountsTheCodexCredentialSecretDirectlyAtCodexAuthFile(t *testing.T) {
+	t.Parallel()
+
+	spec := validSpec()
+	pod := mustBuild(t, spec)
+	sandbox := work.SandboxID("sandbox-ticket-42-3f1c2a7e-0000-4000-8000-000000000001")
+
+	var vol *corev1.Volume
+	for i := range pod.Spec.Volumes {
+		if pod.Spec.Volumes[i].Name == credentialSecretVolumeName {
+			vol = &pod.Spec.Volumes[i]
+		}
+	}
+	if vol == nil {
+		t.Fatalf("no volume named %q; pod volumes = %+v", credentialSecretVolumeName, pod.Spec.Volumes)
+	}
+	if vol.Secret == nil {
+		t.Fatalf("volume %q is not a secret volume", vol.Name)
+	}
+	if want := credentialSecretName(sandbox); vol.Secret.SecretName != want {
+		t.Errorf("secret name = %q, want %q — Create and Delete must name the same object", vol.Secret.SecretName, want)
+	}
+	if vol.Secret.DefaultMode == nil || *vol.Secret.DefaultMode != 0o440 {
+		t.Errorf("defaultMode = %v, want 0440: owner-read alone leaves root as the only reader", vol.Secret.DefaultMode)
+	}
+
+	c := sandboxContainer(t, pod)
+	var mount *corev1.VolumeMount
+	for i := range c.VolumeMounts {
+		if c.VolumeMounts[i].Name == credentialSecretVolumeName {
+			mount = &c.VolumeMounts[i]
+		}
+	}
+	if mount == nil {
+		t.Fatalf("no volume mount named %q; mounts = %+v", credentialSecretVolumeName, c.VolumeMounts)
+	}
+	if mount.MountPath != work.CodexAuthFile {
+		t.Errorf("mount path = %q, want %q", mount.MountPath, work.CodexAuthFile)
+	}
+	if mount.SubPath != codexAuthSecretKey {
+		t.Errorf("subPath = %q, want %q", mount.SubPath, codexAuthSecretKey)
+	}
+	if !mount.ReadOnly {
+		t.Error("the credential mount is writable; nothing inside the sandbox should be able to alter its own credential")
 	}
 }
 

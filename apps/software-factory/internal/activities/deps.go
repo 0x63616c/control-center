@@ -46,8 +46,14 @@ type StageRunner interface {
 // return the identifier of a pod it created but could not wait for, and would
 // leak it. Splitting them means the caller always holds the ID it needs to
 // clean up.
+//
+// Create's codexCredential parameter is D3's (#434) credential transport: an
+// implementation writes it into a per-ticket Kubernetes Secret and mounts
+// that Secret into the pod it builds, before the pod exists — never as a
+// Temporal activity payload, and never returned from Create. Delete removes
+// that Secret alongside the pod it mounted into, symmetric with Create.
 type PodLifecycle interface {
-	Create(ctx context.Context, spec work.SandboxSpec) (work.SandboxID, error)
+	Create(ctx context.Context, spec work.SandboxSpec, codexCredential work.CredentialFile) (work.SandboxID, error)
 	WaitReady(ctx context.Context, sandbox work.SandboxID) error
 	Delete(ctx context.Context, sandbox work.SandboxID) error
 }
@@ -161,21 +167,6 @@ type RepoCloner interface {
 // guarantee than a documented convention.
 type TokenSource interface {
 	SandboxCredentialFile(ctx context.Context) (work.CredentialFile, error)
-}
-
-// CredentialWriter puts a credential document into a sandbox's filesystem.
-//
-// It is narrower than PodLifecycle on purpose: writing a file into a pod that
-// already exists is a distinct capability from creating, waiting on or
-// deleting one, and the activity that needs this should not gain the power to
-// delete a pod by asking for it. It is satisfied by the same *k8s.Sandboxes
-// that satisfies PodLifecycle and SandboxSweeper — one client, three narrow
-// interfaces, the shape every other seam onto it already takes.
-type CredentialWriter interface {
-	// WriteCodexCredential writes file to the sandbox's CODEX_HOME, mode 0600,
-	// as a file rather than an argument: the credential's bytes must never
-	// reach argv, a pod spec, or a log line.
-	WriteCodexCredential(ctx context.Context, sandbox work.SandboxID, file work.CredentialFile) error
 }
 
 // PromptRenderer turns a ticket and the preceding stage's output into the

@@ -1,13 +1,11 @@
 package k8s
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"path"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -21,20 +19,6 @@ import (
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
-
-// shimPath is the sandbox image's exec wrapper, and a contract with that image.
-//
-// It exists because pods/exec never reports the remote PID, and no argv-only
-// coreutils trick recovers one: env and setsid exec-replace themselves so no
-// tag survives in the process's cmdline, and pkill -f against the joined argv
-// is ambiguous exactly when it matters — two attempts of the same stage. The
-// shim is the only mechanism that yields a specific PID without a shell.
-const shimPath = "/usr/local/bin/sandbox-exec"
-
-// execDir holds one pidfile per live exec. It is a cancellation handle with the
-// lifetime of a single exec call, written and removed by the shim, and must not
-// be confused with the stage's own codex.pid, which is the idempotency record.
-var execDir = path.Join(work.SandboxRoot, ".exec")
 
 // execTarget is the container one stream addresses. It carries both, because a
 // single remoteStreamer serves every sandbox.
@@ -150,13 +134,47 @@ func (r *remoteStreamer) stream(ctx context.Context, target execTarget, o stream
 // this exec path summarises argv into its own errors, so a prompt in argv would
 // copy attacker-chosen text into the logs as well.
 //
-// Cancelling the context kills the remote process, not just this call.
+// Cancelling the context stops the stream — remotecommand's own
+// StreamWithContext honours it — but, unlike before #434, no longer kills the
+// remote process. That guarantee depended on cmd/sandbox-exec, the pidfile
+// shim this method used to wrap every argv in so a caller could name and
+// signal a specific remote PID; the shim is deleted (ADR-0011, #434 step 3:
+// the reattach/kill-by-pidfile mechanism Sessions replace).
+//
+// This transport survives step 3 deliberately, not as an oversight awaiting
+// cleanup — and survives past #431's credential Secret mount too (D3 shipped
+// in a later slice than this comment's first draft, and WriteCodexCredential
+// along with it — deleted, once the Secret mount made it a no-op nothing
+// called for a reason). What outlives both is CloneRepo, which authenticates
+// with a different credential than the one that Secret carries: a GitHub App
+// installation token minted in-process from the App's private key
+// (activities.go, CloneRepo → a.deps.GitHub.InstallationToken). Mounting the
+// codex Secret into the pod says nothing about whether the pod may mint or
+// hold that token — a separate, still-open question this file does not
+// answer. So deleting this transport needs two things to land, not one: the
+// credential-reach decision, AND somewhere for CloneRepo's token-minting to
+// live once it does. Until both are true, this method is the only way
+// CloneRepo reaches a pod at all, and deleting it would either break the
+// build or force that decision here instead of where it is owned.
+//
+// So its one remaining caller, after step 3's stage loop moved onto a local
+// os/exec.Cmd the pod's own embedded worker holds directly (RunStage, via
+// internal/clients/local), is CloneRepo's git clone/checkout/push. Its own
+// doc comment states outright that it is idempotent under activity retry (an
+// existing checkout on the run's branch is left in place, everything else
+// redone) — verified there, not assumed here. It is also short. A cancelled
+// call here can leave that process briefly alive in the sandbox, but the
+// blast radius is bounded by the pod's own lifetime: DeleteSandbox destroys
+// it at the run's end regardless, so there is no window in which an orphaned
+// clone outlives the sandbox it was writing into. Contrast this with the
+// pre-#434 shape, where the same gap would have applied to RunStage's own
+// hour-long codex invocation — that exposure is what step 3 actually closes.
 func (s *Sandboxes) Exec(ctx context.Context, sandbox work.SandboxID, argv []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	return s.exec(ctx, sandbox, argv, stdin, stdout, stderr)
 }
 
-// exec is the one path every remote command takes, so exit-code extraction, the
-// kill-on-cancel path and post-failure pod classification each exist once.
+// exec is the one path every remote command takes, so exit-code extraction and
+// post-failure pod classification each exist once.
 func (s *Sandboxes) exec(ctx context.Context, sandbox work.SandboxID, argv []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	if len(argv) == 0 {
 		return 0, fmt.Errorf("running a command in sandbox %s: argv is empty: %w", sandbox, work.ErrPermanent)
@@ -165,70 +183,24 @@ func (s *Sandboxes) exec(ctx context.Context, sandbox work.SandboxID, argv []str
 		return 0, fmt.Errorf("running %s in sandbox %s: this Sandboxes has no exec transport: %w", argvSummary(argv), sandbox, work.ErrPermanent)
 	}
 
-	execID := s.nextExecID()
 	target := execTarget{pod: sandbox, container: s.opts.containerName}
-	// The shim wraps argv rather than replacing it: everything after "--" is
-	// handed to the container untouched, which is the argv-only guarantee.
-	wrapped := append([]string{shimPath, "--pidfile", pidfilePath(execID), "--"}, argv...)
 
 	// argv0 and argc only: a full argv carries file paths today and could carry
 	// more later.
-	s.logger.DebugContext(ctx, "sandbox exec started",
-		"sandbox", sandbox, "exec_id", execID, "argv0", argv[0], "argc", len(argv))
+	s.logger.DebugContext(ctx, "sandbox exec started", "sandbox", sandbox, "argv0", argv[0], "argc", len(argv))
 	started := s.clk.Now()
 
-	err := s.streamer.stream(ctx, target, streamOpts{argv: wrapped, stdin: stdin, stdout: stdout, stderr: stderr})
+	err := s.streamer.stream(ctx, target, streamOpts{argv: argv, stdin: stdin, stdout: stdout, stderr: stderr})
 
 	if ctxErr := ctx.Err(); ctxErr != nil && err != nil {
-		// The caller asked to stop. Kill the remote process rather than merely
-		// returning: an activity timeout that leaves codex running burns quota
-		// nobody is waiting for.
-		s.killExec(ctx, target, execID)
 		return 0, fmt.Errorf("running %s in sandbox %s: %w", argvSummary(argv), sandbox, ctxErr)
 	}
 
 	code, exited := exitCode(err)
 	if err == nil || exited {
 		s.logger.InfoContext(ctx, "sandbox exec finished",
-			"sandbox", sandbox, "exec_id", execID, "exit_code", code,
+			"sandbox", sandbox, "exit_code", code,
 			"duration_ms", s.clk.Now().Sub(started).Milliseconds())
-		return code, nil
-	}
-	return 0, s.classifyExecFailure(ctx, sandbox, argv, err)
-}
-
-// Probe runs argv directly inside sandbox, without the pidfile shim, and
-// reports its exit code.
-//
-// Exec's shim exists to give a command a cancellable, killable identity, but
-// wrapping every exec through it makes a pgrep-based liveness check
-// self-defeating. pgrep -f matches by substring against a process's WHOLE
-// command line, and the shim invoking that pgrep has a command line of its
-// own — "sandbox-exec --pidfile P -- pgrep -f <pattern>" — which trivially
-// contains <pattern>. Route AttemptRunning's probe through Exec and every
-// call finds itself "still running": Decide never returns ResumeRun, codex
-// never starts, and the stage's transcript stays empty while its heartbeat
-// quietly expires (#411, reproduced against the real sandbox image and a real
-// procps pgrep — the shim process itself was the only match).
-//
-// Probe is for exactly that class of call: quick, self-terminating checks
-// that need no recorded PID because there is nothing worth cancelling them
-// for. Unlike Exec it does NOT honour context cancellation by killing the
-// remote process — there is no pidfile to name one by — so it must never be
-// used for anything that can outlive the caller's patience.
-func (s *Sandboxes) Probe(ctx context.Context, sandbox work.SandboxID, argv []string, stdout, stderr io.Writer) (int, error) {
-	if len(argv) == 0 {
-		return 0, fmt.Errorf("probing sandbox %s: argv is empty: %w", sandbox, work.ErrPermanent)
-	}
-	if s.streamer == nil {
-		return 0, fmt.Errorf("probing %s in sandbox %s: this Sandboxes has no exec transport: %w", argvSummary(argv), sandbox, work.ErrPermanent)
-	}
-
-	target := execTarget{pod: sandbox, container: s.opts.containerName}
-	err := s.streamer.stream(ctx, target, streamOpts{argv: argv, stdout: stdout, stderr: stderr})
-
-	code, exited := exitCode(err)
-	if err == nil || exited {
 		return code, nil
 	}
 	return 0, s.classifyExecFailure(ctx, sandbox, argv, err)
@@ -284,39 +256,4 @@ func (s *Sandboxes) classifyExecFailure(ctx context.Context, sandbox work.Sandbo
 		return verdict
 	}
 	return classify(sandbox, op, err)
-}
-
-// killExec asks the shim to kill the process this exec started.
-//
-// Its outcome is logged and never returned: the caller asked to stop, and a
-// failed best-effort kill does not change what exec must report. The context is
-// detached because the one it came from is already cancelled — a kill on a dead
-// context would not be sent at all — and bounded so a wedged apiserver cannot
-// hold a cancelled activity open.
-func (s *Sandboxes) killExec(ctx context.Context, target execTarget, execID string) {
-	killCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*s.opts.killGrace)
-	defer cancel()
-
-	var stderr bytes.Buffer
-	err := s.streamer.stream(killCtx, target, streamOpts{
-		argv:   []string{shimPath, "--kill", pidfilePath(execID)},
-		stderr: &stderr,
-	})
-
-	s.logger.WarnContext(killCtx, "killing a cancelled sandbox exec",
-		"sandbox", target.pod, "exec_id", execID, "cause", "context_cancelled",
-		"error", errText(err), "stderr", stderr.String())
-}
-
-// pidfilePath is where the shim records one exec's child PID.
-func pidfilePath(execID string) string {
-	return path.Join(execDir, execID+".pid")
-}
-
-// errText renders an error for a log attribute, including the nil case.
-func errText(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
 }

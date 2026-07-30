@@ -3,7 +3,8 @@
 # built image rather than against the Dockerfile that claims to produce it.
 #
 # Everything here is a fact some Go code already depends on: exec.go execs
-# /usr/local/bin/sandbox-exec, transfer.go execs tar/test/cat, podspec.go pins
+# argv directly (no shim, since #434 deleted it — step 3 of the
+# software-factory migration), transfer.go execs tar/test/cat, podspec.go pins
 # uid 1000 and mounts an emptyDir at /work. A unit test cannot reach any of
 # them — the image is the unit.
 #
@@ -60,16 +61,9 @@ check() { # check <name> <expected-exit> <cmd...>
 # fail is worse than no check, because it reads as verified.
 check "every binary the worker's argv names is on PATH" 0 \
   /usr/bin/env sh -c '
-    for b in tar test cat git bun go codex sandbox-exec pgrep; do
+    for b in tar test cat git bun go codex; do
       command -v "$b" >/dev/null || { echo "missing: $b"; exit 1; }
     done'
-
-# Stage liveness is `pgrep -f <result path>` (B5). If pgrep is absent the runner
-# does not error — it reports "nothing running" and the retry starts a SECOND
-# copy of a stage that never stopped. `-f` specifically, since the match is
-# against codex's full argv rather than its process name.
-check "pgrep matches against a full argv, which is how stage liveness works" 0 \
-  /usr/bin/env sh -c 'sleep 30 & sleep 0.2; pgrep -f "sleep 30" >/dev/null'
 
 # GNU tar specifically: transfer.go extracts relative names with -C /, and the
 # two tars differ on leading-slash handling and on delayed set-stat failures.
@@ -82,32 +76,10 @@ check "tar is GNU tar" 0 \
 check "runs as uid/gid 1000" 0 \
   /usr/bin/env sh -c '[ "$(id -u)" = 1000 ] && [ "$(id -g)" = 1000 ]'
 
-# THE one this image is most likely to ship broken: no .exec directory can be
-# baked, because the emptyDir masks it. Without the shim's mkdir the pidfile
-# never appears, --kill is a silent no-op, and kill-on-cancel is defeated while
-# still logging that a kill was attempted.
-check "the shim creates its pidfile's parent under a masked /work" 0 \
-  sandbox-exec --pidfile /work/.exec/smoke.pid -- \
-  /usr/bin/env sh -c 'test -s /work/.exec/smoke.pid'
-
-# The stage success/failure signal is the child's exit code, relayed through
-# the shim and out through remotecommand.
-check "the shim forwards a zero child status" 0 sandbox-exec --pidfile /work/.exec/t.pid -- /bin/true
-check "the shim forwards a non-zero child status" 1 sandbox-exec --pidfile /work/.exec/f.pid -- /bin/false
-
-# --kill must reach the whole tree: a stage's real cost is what codex spawns.
-check "--kill stops the process group, not just the child" 0 \
-  /usr/bin/env sh -c '
-    sandbox-exec --pidfile /work/.exec/k.pid -- /usr/bin/env sh -c "sleep 60 & echo \$! > /work/gc.pid; wait" &
-    # Bounded: an image whose shim never writes a pidfile must FAIL here, not
-    # hang the whole suite waiting for a file that is never coming.
-    for _ in $(seq 200); do [ -s /work/.exec/k.pid ] && [ -s /work/gc.pid ] && break; sleep 0.05; done
-    [ -s /work/.exec/k.pid ] || { echo "no pidfile appeared"; exit 1; }
-    [ -s /work/gc.pid ] || { echo "the grandchild never started"; exit 1; }
-    gc=$(cat /work/gc.pid)
-    sandbox-exec --kill /work/.exec/k.pid
-    for _ in $(seq 100); do kill -0 "$gc" 2>/dev/null || exit 0; sleep 0.1; done
-    echo "grandchild $gc survived"; exit 1'
+# The pidfile-shim and --kill checks that used to live here are gone along
+# with the shim itself (#434, step 3: Temporal Sessions replace the pods/exec
+# reattach/kill-by-pidfile mechanism this image used to carry — the embedded
+# worker holds a real os/exec.Cmd it can kill directly instead).
 
 # WORKDIR is the cwd every `codex exec` inherits — pods/exec runs with the
 # container's cwd and podspec.go sets no WorkingDir. It must be writable BY THE

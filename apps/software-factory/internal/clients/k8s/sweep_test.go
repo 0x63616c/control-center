@@ -39,6 +39,25 @@ func sandboxPod(ticket int, runID string, age time.Duration) *corev1.Pod {
 	}
 }
 
+// sandboxSecret is a per-ticket credential Secret for one run, created age
+// ago, labelled the way ensureCredentialSecret labels one — the same scheme
+// sandboxPod uses, which is what lets one sweep attribute both by selector.
+func sandboxSecret(ticket int, runID string, age time.Duration) *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      credentialSecretName(work.SandboxID("sandbox-ticket-" + strconv.Itoa(ticket) + "-" + runID)),
+			Namespace: "software-factory",
+			Labels: map[string]string{
+				labelName:      labelNameValue,
+				labelManagedBy: labelManagedByValue,
+				labelTicket:    strconv.Itoa(ticket),
+				labelRunID:     runID,
+			},
+			CreationTimestamp: metav1.NewTime(sweepNow.Add(-age)),
+		},
+	}
+}
+
 // foreignPod is somebody else's pod in the same namespace: no sandbox labels,
 // old enough that only the selector keeps it alive.
 func foreignPod(name string) *corev1.Pod {
@@ -77,6 +96,21 @@ func survivors(t *testing.T, cs *fake.Clientset) map[string]bool {
 	left := map[string]bool{}
 	for _, pod := range list.Items {
 		left[pod.Name] = true
+	}
+	return left
+}
+
+// secretSurvivors names the credential Secrets still in the namespace.
+func secretSurvivors(t *testing.T, cs *fake.Clientset) map[string]bool {
+	t.Helper()
+
+	list, err := cs.CoreV1().Secrets("software-factory").List(t.Context(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("listing secrets: %v", err)
+	}
+	left := map[string]bool{}
+	for _, secret := range list.Items {
+		left[secret.Name] = true
 	}
 	return left
 }
@@ -336,6 +370,147 @@ func TestSweepKeepsAPodItCannotAttributeOrAge(t *testing.T) {
 	for _, tc := range cases {
 		if left[tc.pod] != tc.want {
 			t.Errorf("pod %s present = %t, want %t: %s", tc.pod, left[tc.pod], tc.want, tc.why)
+		}
+	}
+}
+
+// TestSweepDeletesAnOrphanedCredentialSecretWithNoPod is the case
+// sweepOrphanSecrets exists for: Create wrote the credential Secret and never
+// got as far as a pod for it to belong to (its own Create call failed, or was
+// never retried to completion) — sandboxSelector() over Pods alone would
+// never see this Secret at all.
+func TestSweepDeletesAnOrphanedCredentialSecretWithNoPod(t *testing.T) {
+	t.Parallel()
+
+	orphanSecret := sandboxSecret(101, "run-orphan", 4*time.Hour)
+	liveSecret := sandboxSecret(102, "run-live", 4*time.Hour)
+	youngSecret := sandboxSecret(103, "run-young", 30*time.Second)
+
+	s, cs := newSweeper(t, orphanSecret, liveSecret, youngSecret)
+
+	deleted, err := s.SweepOrphans(t.Context(), []string{"run-live"}, 15*time.Minute)
+	if err != nil {
+		t.Fatalf("SweepOrphans: %v", err)
+	}
+	if deleted != 1 {
+		t.Errorf("deleted = %d, want 1", deleted)
+	}
+
+	left := secretSurvivors(t, cs)
+	cases := []struct {
+		secret string
+		want   bool
+		why    string
+	}{
+		{secret: liveSecret.Name, want: true, why: "its run is live"},
+		{secret: youngSecret.Name, want: true, why: "under the age floor, the same protection a pod gets against the create-then-record race"},
+		{secret: orphanSecret.Name, want: false, why: "old, unowned, and has no pod for the pod-sweep to have caught it through"},
+	}
+	for _, tc := range cases {
+		if left[tc.secret] != tc.want {
+			t.Errorf("secret %s present = %t, want %t: %s", tc.secret, left[tc.secret], tc.want, tc.why)
+		}
+	}
+}
+
+// TestSweepDeletingAnOrphanedPodDoesNotDoubleCountItsSecret proves the two
+// passes compose rather than collide: Delete already removes a pod's
+// credential Secret, so sweepOrphanSecrets must find it already gone and
+// count it as such — never a second deletion, never a failure.
+func TestSweepDeletingAnOrphanedPodDoesNotDoubleCountItsSecret(t *testing.T) {
+	t.Parallel()
+
+	pod := sandboxPod(101, "run-orphan", 4*time.Hour)
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+		Name:      credentialSecretName(work.SandboxID(pod.Name)),
+		Namespace: "software-factory",
+		Labels: map[string]string{
+			labelName: labelNameValue, labelManagedBy: labelManagedByValue,
+			labelTicket: "101", labelRunID: "run-orphan",
+		},
+		CreationTimestamp: metav1.NewTime(sweepNow.Add(-4 * time.Hour)),
+	}}
+	s, cs := newSweeper(t, pod, secret)
+
+	deleted, err := s.SweepOrphans(t.Context(), nil, 15*time.Minute)
+	if err != nil {
+		t.Fatalf("SweepOrphans: %v", err)
+	}
+	// One orphan, one deletion counted for the pod's own sweep pass; the
+	// secret pass finds it already gone (Delete removed both together) and
+	// counts nothing further for it.
+	if deleted != 1 {
+		t.Errorf("deleted = %d, want 1 — the pod pass's own Delete already removed the secret", deleted)
+	}
+	if secretSurvivors(t, cs)[secret.Name] {
+		t.Error("the credential secret survived sweeping its own orphaned pod")
+	}
+}
+
+// TestSweepAsksTheApiserverForItsOwnSecretsOnlyToo is
+// TestSweepAsksTheApiserverForItsOwnPodsOnly's counterpart for Secrets: the
+// same selector, restricting the second List the same way the first is
+// restricted, so this sweep stays inside its own blast radius in a namespace
+// that holds other Secrets too.
+func TestSweepAsksTheApiserverForItsOwnSecretsOnlyToo(t *testing.T) {
+	t.Parallel()
+
+	s, cs := newSweeper(t)
+	var selectors []string
+	cs.PrependReactor("list", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		selectors = append(selectors, action.(k8stesting.ListAction).GetListRestrictions().Labels.String())
+		return false, nil, nil
+	})
+
+	if _, err := s.SweepOrphans(t.Context(), nil, time.Minute); err != nil {
+		t.Fatalf("SweepOrphans: %v", err)
+	}
+	if len(selectors) != 1 {
+		t.Fatalf("listed secrets %d times, want 1", len(selectors))
+	}
+	for _, want := range []string{labelName + "=" + labelNameValue, labelManagedBy + "=" + labelManagedByValue} {
+		if !strings.Contains(selectors[0], want) {
+			t.Errorf("secret list selector %q does not restrict on %q", selectors[0], want)
+		}
+	}
+}
+
+// TestSweepKeepsASecretItCannotAttributeOrAge is
+// TestSweepKeepsAPodItCannotAttributeOrAge's counterpart for Secrets.
+func TestSweepKeepsASecretItCannotAttributeOrAge(t *testing.T) {
+	t.Parallel()
+
+	unattributable := sandboxSecret(101, "run-a", 4*time.Hour)
+	delete(unattributable.Labels, labelRunID)
+
+	undateable := sandboxSecret(102, "run-b", 4*time.Hour)
+	undateable.CreationTimestamp = metav1.Time{}
+
+	orphan := sandboxSecret(103, "run-c", 4*time.Hour)
+
+	s, cs := newSweeper(t, unattributable, undateable, orphan)
+
+	deleted, err := s.SweepOrphans(t.Context(), nil, 15*time.Minute)
+	if err != nil {
+		t.Fatalf("SweepOrphans: %v", err)
+	}
+	if deleted != 1 {
+		t.Errorf("deleted = %d, want 1", deleted)
+	}
+
+	left := secretSurvivors(t, cs)
+	cases := []struct {
+		secret string
+		want   bool
+		why    string
+	}{
+		{secret: unattributable.Name, want: true, why: "no run id means it cannot be matched against the live set"},
+		{secret: undateable.Name, want: true, why: "a zero creation timestamp is the one anomaly that would otherwise age it into deletion"},
+		{secret: orphan.Name, want: false, why: "attributable, dateable, old and unowned"},
+	}
+	for _, tc := range cases {
+		if left[tc.secret] != tc.want {
+			t.Errorf("secret %s present = %t, want %t: %s", tc.secret, left[tc.secret], tc.want, tc.why)
 		}
 	}
 }

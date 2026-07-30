@@ -10,14 +10,20 @@ import (
 
 // Resumption is what a stage attempt should do about the state a previous
 // attempt left behind.
+//
+// Before step 3 (#434) a third value, ResumeAttach, existed: an attempt could
+// find a previous one still running *in a different process* (the worker had
+// restarted; the sandbox's codex had not) and wait on it rather than starting
+// a second one. Sessions remove that possibility by construction — a stage now
+// runs as a local subprocess inside the very activity that is deciding this,
+// so "a previous attempt is still running, elsewhere" cannot arise: either
+// this call is that attempt, or no attempt is running. See ADR-0011 and #434's
+// spec ("The reattach path really is dead code the moment Sessions land").
 type Resumption int
 
 const (
 	// ResumeRun means no usable attempt exists: execute the stage.
 	ResumeRun Resumption = iota
-	// ResumeAttach means an attempt is still running: wait for it rather than
-	// starting a second model invocation against the same sandbox.
-	ResumeAttach
 	// ResumeDone means an attempt completed: read its stored result.
 	ResumeDone
 )
@@ -27,8 +33,6 @@ func (r Resumption) String() string {
 	switch r {
 	case ResumeRun:
 		return "run"
-	case ResumeAttach:
-		return "attach"
 	case ResumeDone:
 		return "done"
 	default:
@@ -38,33 +42,25 @@ func (r Resumption) String() string {
 
 // StageProbe observes what a previous attempt left behind in the sandbox.
 //
-// It is a seam rather than two direct file reads because the *order* of these
-// observations is load-bearing, and order is only testable if the answers can
-// be made to change between calls.
+// It is a seam rather than a direct file read for the same reason every other
+// external edge in this package is: a test hands it a fake rather than
+// reaching a real sandbox. Only one observation remains post-#434 — see
+// Resumption's doc comment for why AttemptRunning is gone rather than merely
+// unused.
 type StageProbe interface {
 	// ResultExists reports whether the stage's result file is present. Its
-	// presence is the completion record.
+	// presence is the completion record, and — because retries stay within one
+	// session and one process now — the only question left to ask about a
+	// previous attempt at all: did it already write one.
 	ResultExists(ctx context.Context) (bool, error)
-
-	// AttemptRunning reports whether a codex started by a previous attempt is
-	// still running in the sandbox.
-	//
-	// It answers with a bool and not a PID. Nothing records a PID any more —
-	// the implementation asks the process table — so a number here would be an
-	// artefact of parsing whatever the probe printed, and a caller comparing it
-	// to zero would be reading the parse rather than the answer. That is
-	// exactly the bug this seam used to have: an unparseable line read as "no
-	// attempt is running" and started a second codex against a live one.
-	AttemptRunning(ctx context.Context) (bool, error)
 }
 
 // Decide reports what to do about a stage attempt.
 //
-// Activities retry, so a stage can be entered while a previous attempt's codex
-// process is still alive in the sandbox. Getting this wrong is expensive in
-// both directions: re-running a finished stage burns subscription quota the
-// owner also needs interactively, and treating a dead attempt as live hangs the
-// stage until its timeout.
+// Activities retry, and a retry within the same session can find its own
+// previous attempt already finished. Getting this wrong is expensive in one
+// direction only now: re-running a finished stage burns subscription quota the
+// owner also needs interactively.
 //
 // It never guesses. If the sandbox cannot be read, it returns an error rather
 // than defaulting to a re-run — a wrong "run" costs real money, and a caller
@@ -73,25 +69,6 @@ func Decide(ctx context.Context, probe StageProbe) (Resumption, error) {
 	done, err := probe.ResultExists(ctx)
 	if err != nil {
 		return ResumeRun, fmt.Errorf("checking for a completed result: %w", err)
-	}
-	if done {
-		return ResumeDone, nil
-	}
-
-	alive, err := probe.AttemptRunning(ctx)
-	if err != nil {
-		return ResumeRun, fmt.Errorf("checking for a running attempt: %w", err)
-	}
-	if alive {
-		return ResumeAttach, nil
-	}
-
-	// Nothing is running and nothing had written a result when we looked. An
-	// attempt may have finished in the window between those two observations,
-	// so look once more before paying for a full re-run.
-	done, err = probe.ResultExists(ctx)
-	if err != nil {
-		return ResumeRun, fmt.Errorf("re-checking for a result after finding a dead attempt: %w", err)
 	}
 	if done {
 		return ResumeDone, nil

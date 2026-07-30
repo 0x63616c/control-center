@@ -9,6 +9,7 @@
 package workflows
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
@@ -146,7 +147,6 @@ type ticketRun struct {
 // so finish can undo it.
 func (r *ticketRun) execute(ctx workflow.Context) (WorkTicketResult, error) {
 	control := workflow.WithActivityOptions(ctx, r.controlOptions())
-	stages := workflow.WithActivityOptions(ctx, r.stageOptions())
 
 	r.report(ctx, work.StatusReport{Step: work.StepPickup, State: work.StepRunning})
 
@@ -167,19 +167,14 @@ func (r *ticketRun) execute(ctx workflow.Context) (WorkTicketResult, error) {
 		return WorkTicketResult{Outcome: work.OutcomeFailed}, err
 	}
 
-	// Both of the next two must happen before the first stage — codex refuses
-	// to run outside a git repository, and it refuses to run unauthenticated,
-	// and either failure caught inside `plan` would be a run that already paid
-	// for a stage against a sandbox that could never have worked. Neither
-	// depends on the other: CodexHomeDir and RepoDir are independent siblings
-	// of SandboxRoot. Credential first anyway (#398) — the codex-auth Secret
-	// does not exist in the cluster yet (#344), so until it is seeded every
-	// run fails here, and failing on that before CloneRepo means a run that
-	// cannot possibly proceed never also pays for CloneRepo's round trip to
-	// GitHub: minting an installation token, cloning, and pushing (#383).
-	if err := workflow.ExecuteActivity(control, acts.WriteCodexCredential, r.sandbox).Get(ctx, nil); err != nil {
-		return WorkTicketResult{Outcome: work.OutcomeFailed}, err
-	}
+	// codex refuses to run outside a git repository, so the checkout must
+	// exist before the first stage or a run that discovered that inside `plan`
+	// would already have paid for a stage against a sandbox that could never
+	// have worked. The codex credential itself no longer needs a matching
+	// activity here at all (D3, #434): CreateSandbox already wrote it into a
+	// per-ticket Secret and the pod's own spec mounted that Secret directly at
+	// work.CodexAuthFile, in place before the container — and therefore
+	// WaitSandboxReady's wait — ever returned.
 	clone := workflow.WithActivityOptions(ctx, r.cloneOptions())
 	if err := workflow.ExecuteActivity(clone, acts.CloneRepo, r.sandbox).Get(ctx, nil); err != nil {
 		return WorkTicketResult{Outcome: work.OutcomeFailed}, err
@@ -195,6 +190,28 @@ func (r *ticketRun) execute(ctx workflow.Context) (WorkTicketResult, error) {
 	// note in internal/prompts/input.go for why this does not extend to a
 	// stage invoked more than once.
 	prior := make(map[work.Stage]work.StageOutput, len(work.Pipeline()))
+
+	// One Session for the whole stage loop (#434 step 3, D2/B3): exactly one
+	// CreateSession per run, matched by exactly one CompleteSession at the
+	// run's true end — success, failure or cancellation, never per-stage. The
+	// defer is what makes "every exit path" cheap rather than a branch at
+	// each return below: CompleteSession is a provable no-op when called
+	// twice or on a session that already failed (temporal-session-semantics
+	// spec, #2), so nothing here needs to track whether the loop already
+	// left through an error return.
+	//
+	// CloneRepo, above, runs OUTSIDE this session — see activities.SandboxDeps'
+	// doc comment for why: it still depends on the pods/exec transport
+	// internal/clients/k8s keeps alive, not on the sandbox pod's own embedded
+	// worker, so pinning it to a session that worker hosts would just fail to
+	// schedule it at all.
+	sessionCtx, err := r.createSession(ctx)
+	if err != nil {
+		return WorkTicketResult{Outcome: work.OutcomeFailed}, err
+	}
+	defer workflow.CompleteSession(sessionCtx)
+
+	stages := workflow.WithActivityOptions(sessionCtx, r.stageOptions())
 
 	for _, stage := range work.Pipeline() {
 		model := r.in.Config.ModelFor(stage)
@@ -220,7 +237,7 @@ func (r *ticketRun) execute(ctx workflow.Context) (WorkTicketResult, error) {
 			r.report(ctx, work.StatusReport{
 				Step: work.StageStep(stage), State: work.StepFailed,
 				Stage: stage, Model: model, StartedAt: startedAt, EndedAt: workflow.Now(ctx),
-				Usage: out.Usage, Detail: err.Error(),
+				Usage: out.Usage, Detail: stageFailureDetail(err),
 			})
 			return WorkTicketResult{Outcome: work.OutcomeFailed, Usage: r.usage}, err
 		}
@@ -229,6 +246,7 @@ func (r *ticketRun) execute(ctx workflow.Context) (WorkTicketResult, error) {
 		// whatever it produced.
 		r.usage = r.usage.Add(out.Usage)
 		prior[stage] = out.Result
+		r.persistTranscript(ctx, in.Key, out.Transcript)
 
 		r.report(ctx, work.StatusReport{
 			Step: work.StageStep(stage), State: work.StepSucceeded,
@@ -395,6 +413,92 @@ func (r *ticketRun) report(ctx workflow.Context, report work.StatusReport) {
 		return
 	}
 	r.comments[report.Step] = id
+}
+
+// persistTranscript relays one stage's transcript out of the sandbox pod and
+// into the durable, NFS-backed sink the rest of this service trusts (#434
+// step 3, D5).
+//
+// It always runs on the MAIN worker's queue, never the sandbox's per-ticket
+// one — control is rebuilt from ctx here rather than reusing whatever
+// ActivityOptions the caller already has in scope, the same "derive it
+// fresh" shape report() already uses, and for the same reason: this call must
+// land on work.TaskQueue regardless of which ActivityOptions happen to be on
+// the context the caller is holding (the stage loop's own is the session's
+// per-ticket queue). PersistTranscript's own doc comment names this same
+// requirement from the activity side.
+//
+// Best-effort, the same shape as report(): the transcript is forensics, not
+// the run's actual work, and the tokens a stage spent are already spent
+// whether or not its transcript makes it home. A run must not fail because
+// the relay could not.
+func (r *ticketRun) persistTranscript(ctx workflow.Context, key work.StageKey, transcript work.Transcript) {
+	control := workflow.WithActivityOptions(ctx, r.controlOptions())
+
+	in := activities.PersistTranscriptInput{Key: key, Transcript: transcript}
+	if err := workflow.ExecuteActivity(control, acts.PersistTranscript, in).Get(ctx, nil); err != nil {
+		workflow.GetLogger(ctx).Error("could not persist the stage transcript; it stays on the sandbox pod's own disk and is lost once DeleteSandbox removes it",
+			"ticket", r.in.Ticket.Number, "run_id", r.runID, "stage", string(key.Stage), "error", err)
+	}
+}
+
+// stageFailureDetail renders a stage's error for its status comment.
+//
+// workflow.ErrSessionFailed means the session's host pod died (Kata VM
+// crash, OOM, node pressure) — reported synchronously rather than waited out
+// over the stage's own timeout (durations.go's SessionExecutionTimeout doc
+// comment; temporal-session-semantics spec, #5) — and is called out by name
+// here rather than left as a bare Temporal error string, because there is
+// nothing to resume: /work was that pod's own emptyDir, gone with it. Pulled
+// out of the stage loop as its own function so this rendering is testable
+// without simulating the SDK's own session-failure detection.
+func stageFailureDetail(err error) string {
+	if errors.Is(err, workflow.ErrSessionFailed) {
+		return fmt.Sprintf("the sandbox's session failed — its pod is gone and cannot be resumed: %v", err)
+	}
+	return err.Error()
+}
+
+// createSession claims this run's sandbox pod as a Temporal Session host, so
+// every stage's RunStage lands on the same pod and the same embedded worker
+// (#434 step 3, D1/D2).
+//
+// ActivityOptions.TaskQueue is set to this run's own SandboxTaskQueue before
+// CreateSession is called: the session is created on the queue named there
+// (verified against sdk-go v1.47.0 — CreateSession's own doc comment, "The
+// session will be created on the taskqueue user specified in
+// ActivityOptions"), which is what makes it this run's own sandbox pod that
+// claims it and not any other. With no warm pool (D1) there is exactly one
+// poller on that queue, so nothing else could claim it regardless.
+//
+// SessionExecutionTimeout/SessionCreationTimeout come from the durations
+// ladder (work/durations.go), not literals here, for the reason every other
+// number on that ladder is centralised: an operator who retunes one without
+// re-deriving the rest should see it fail in durations_test.go, not in a
+// production run.
+func (r *ticketRun) createSession(ctx workflow.Context) (workflow.Context, error) {
+	sandboxQueue := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		TaskQueue: work.SandboxTaskQueue(r.runID),
+	})
+
+	sessionCtx, err := workflow.CreateSession(sandboxQueue, &workflow.SessionOptions{
+		ExecutionTimeout: work.SessionExecutionTimeout,
+		CreationTimeout:  work.SessionCreationTimeout,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("creating a session for sandbox %s: %w", r.sandbox, err)
+	}
+
+	// HostName is populated the instant CreateSession returns nil — verified
+	// against sdk-go source, not merely documented (temporal-session-semantics
+	// spec, #3) — so this is never a stale or partial read. It is the pod
+	// identity observable the step-3 acceptance run checks Temporal history
+	// for (acceptance criterion 3).
+	info := workflow.GetSessionInfo(sessionCtx)
+	workflow.GetLogger(ctx).Info("sandbox session created",
+		"sandbox", r.sandbox, "session_id", info.SessionID, "session_host", info.HostName)
+
+	return sessionCtx, nil
 }
 
 // controlOptions govern the cheap activities: short, and retried freely,

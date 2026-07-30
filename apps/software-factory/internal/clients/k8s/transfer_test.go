@@ -84,8 +84,8 @@ func TestWriteWritesTarHeaderNamesRelativeToTheExtractionRoot(t *testing.T) {
 	call := str.observed()[0]
 	// GNU tar strips a leading / and warns; busybox tar differs. Relative
 	// names extracted with -C / are unambiguous under both.
-	if want := []string{"tar", "-xf", "-", "-C", "/"}; !reflect.DeepEqual(call.argv[4:], want) {
-		t.Errorf("extract argv = %v, want %v", call.argv[4:], want)
+	if want := []string{"tar", "-xf", "-", "-C", "/"}; !reflect.DeepEqual(call.argv, want) {
+		t.Errorf("extract argv = %v, want %v", call.argv, want)
 	}
 	for _, e := range decodeTar(t, call.stdin) {
 		if strings.HasPrefix(e.name, "/") {
@@ -310,11 +310,11 @@ func TestReadProbesBeforeItReads(t *testing.T) {
 	}
 	// Order is load-bearing: deriving absence from cat's exit 1 would conflate
 	// it with permission denied.
-	if want := []string{"test", "-e", testPath}; !reflect.DeepEqual(calls[0].argv[4:], want) {
-		t.Errorf("first call argv = %v, want %v", calls[0].argv[4:], want)
+	if want := []string{"test", "-e", testPath}; !reflect.DeepEqual(calls[0].argv, want) {
+		t.Errorf("first call argv = %v, want %v", calls[0].argv, want)
 	}
-	if want := []string{"cat", testPath}; !reflect.DeepEqual(calls[1].argv[4:], want) {
-		t.Errorf("second call argv = %v, want %v", calls[1].argv[4:], want)
+	if want := []string{"cat", testPath}; !reflect.DeepEqual(calls[1].argv, want) {
+		t.Errorf("second call argv = %v, want %v", calls[1].argv, want)
 	}
 }
 

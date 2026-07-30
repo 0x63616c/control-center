@@ -43,8 +43,7 @@ func (f *answeringStreamer) stream(_ context.Context, _ execTarget, o streamOpts
 			return err
 		}
 	}
-	// argv is [shim --pidfile P -- cmd args...].
-	argv := o.argv[4:]
+	argv := o.argv
 	if argv[0] == "cat" && o.stdout != nil {
 		// The payload is derived from the path, so a caller receiving another
 		// goroutine's bytes is detectable.
@@ -94,7 +93,7 @@ func TestServesConcurrentExecsAndCreatesWithoutADataRace(t *testing.T) {
 
 				spec := validSpec()
 				spec.TicketNumber = w*100 + r + 1
-				if _, err := s.Create(context.Background(), spec); err != nil {
+				if _, err := s.Create(context.Background(), spec, validCredential()); err != nil {
 					errs <- fmt.Errorf("Create(ticket %d): %w", spec.TicketNumber, err)
 				}
 			}
@@ -109,39 +108,5 @@ func TestServesConcurrentExecsAndCreatesWithoutADataRace(t *testing.T) {
 	}
 	if len(failures) > 0 {
 		t.Fatalf("%d concurrent operations returned the wrong answer:\n%s", len(failures), strings.Join(failures, "\n"))
-	}
-}
-
-func TestMintsDistinctExecTagsUnderConcurrency(t *testing.T) {
-	t.Parallel()
-
-	s, err := newSandboxes(fake.NewSimpleClientset(), nil, "software-factory", discardLogger(), testClock())
-	if err != nil {
-		t.Fatalf("newSandboxes returned an unexpected error: %v", err)
-	}
-
-	const workers, each = 8, 200
-	ids := make(chan string, workers*each)
-	var wg sync.WaitGroup
-	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for range each {
-				ids <- s.nextExecID()
-			}
-		}()
-	}
-	wg.Wait()
-	close(ids)
-
-	seen := make(map[string]bool, workers*each)
-	for id := range ids {
-		if seen[id] {
-			// Two live execs sharing a pidfile would have one's cancellation
-			// kill the other's process.
-			t.Fatalf("exec id %q was minted twice under concurrency", id)
-		}
-		seen[id] = true
 	}
 }

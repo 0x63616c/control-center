@@ -46,6 +46,28 @@ func verbs(cs *fake.Clientset) []string {
 	return out
 }
 
+// actionsOn lists the verbs of every action against one apiserver resource
+// (e.g. "pods" or "secrets"), in order. Create now also writes a credential
+// Secret before every pod Create attempt (D3, #434), so a test asserting how
+// many times the POD itself was created or fetched needs to look past that
+// Secret traffic rather than counting every "create" verb regardless of what
+// it created.
+func actionsOn(cs *fake.Clientset, resource string) []string {
+	var out []string
+	for _, a := range cs.Actions() {
+		if a.GetResource().Resource == resource {
+			out = append(out, a.GetVerb())
+		}
+	}
+	return out
+}
+
+// validCredential is the codex credential document every Create test hands
+// in when the document's own content is not what the test is about.
+func validCredential() work.CredentialFile {
+	return work.NewCredentialFile([]byte(`{"tokens":{"access_token":"test-token"}}`))
+}
+
 func newLifecycleSandboxes(t *testing.T, objects ...runtime.Object) (*Sandboxes, *fake.Clientset, *strings.Builder) {
 	t.Helper()
 	s, cs, logs, _ := newLifecycleSandboxesWithClock(t, objects...)
@@ -71,15 +93,20 @@ func TestCreateCreatesThePodAndReturnsItsSandboxID(t *testing.T) {
 	t.Parallel()
 
 	s, cs, _ := newLifecycleSandboxes(t)
-	got, err := s.Create(context.Background(), validSpec())
+	got, err := s.Create(context.Background(), validSpec(), validCredential())
 	if err != nil {
 		t.Fatalf("Create returned an unexpected error: %v", err)
 	}
 	if want := work.SandboxID("sandbox-ticket-42-3f1c2a7e-0000-4000-8000-000000000001"); got != want {
 		t.Errorf("Create = %q, want %q", got, want)
 	}
-	if len(cs.Actions()) != 1 || cs.Actions()[0].GetVerb() != "create" {
-		t.Errorf("actions = %v, want exactly one create", verbs(cs))
+	// The credential Secret is created before the pod, so the pod's own create
+	// is the second action rather than the only one.
+	if pods := actionsOn(cs, "pods"); len(pods) != 1 || pods[0] != "create" {
+		t.Errorf("pod actions = %v, want exactly one create", pods)
+	}
+	if secrets := actionsOn(cs, "secrets"); len(secrets) != 1 || secrets[0] != "create" {
+		t.Errorf("secret actions = %v, want exactly one create", secrets)
 	}
 }
 
@@ -92,23 +119,26 @@ func TestCreateAdoptsAMatchingPodLeftByItsOwnRetry(t *testing.T) {
 			t.Parallel()
 			s, cs, logs := newLifecycleSandboxes(t, seededPod(t, spec, phase))
 
-			got, err := s.Create(context.Background(), spec)
+			got, err := s.Create(context.Background(), spec, validCredential())
 			if err != nil {
 				t.Fatalf("Create returned an unexpected error: %v", err)
 			}
 			if want := work.SandboxID("sandbox-ticket-42-3f1c2a7e-0000-4000-8000-000000000001"); got != want {
 				t.Errorf("Create = %q, want the existing pod %q", got, want)
 			}
-			// One failed create, one get, and nothing else. A second create
-			// would mean the adoption never happened.
+			// One failed create, one get, and nothing else against the POD —
+			// a second create would mean the adoption never happened. The
+			// credential Secret's own create runs regardless (it must, so a
+			// retry's Secret write is never skipped), so it is excluded here.
+			pods := actionsOn(cs, "pods")
 			creates := 0
-			for _, v := range verbs(cs) {
+			for _, v := range pods {
 				if v == "create" {
 					creates++
 				}
 			}
 			if creates != 1 {
-				t.Errorf("actions = %v, want exactly one (rejected) create", verbs(cs))
+				t.Errorf("pod actions = %v, want exactly one (rejected) create", pods)
 			}
 			if !strings.Contains(logs.String(), "adopted") {
 				t.Errorf("logs %q do not record the adoption decision", logs.String())
@@ -163,7 +193,7 @@ func TestCreateRefusesToAdoptAPodThatDriftsFromTheSpec(t *testing.T) {
 			tc.drift(pod)
 
 			s, cs, logs := newLifecycleSandboxes(t, pod)
-			_, err := s.Create(context.Background(), spec)
+			_, err := s.Create(context.Background(), spec, validCredential())
 			if !errors.Is(err, work.ErrPermanent) {
 				t.Fatalf("Create error = %v, want it permanent: a drifting spec under an identical name is an invariant violation", err)
 			}
@@ -193,7 +223,7 @@ func TestCreateReplacesAPodLeftTerminatedByAnEarlierAttempt(t *testing.T) {
 			pod.Status.Reason = "DeadlineExceeded"
 
 			s, cs, logs := newLifecycleSandboxes(t, pod)
-			if _, err := s.Create(context.Background(), spec); err != nil {
+			if _, err := s.Create(context.Background(), spec, validCredential()); err != nil {
 				t.Fatalf("Create returned an unexpected error: %v", err)
 			}
 
@@ -229,7 +259,7 @@ func TestCreateRefusesToAdoptAPodThatIsTerminating(t *testing.T) {
 	pod.DeletionTimestamp = &now
 
 	s, _, _ := newLifecycleSandboxes(t, pod)
-	_, err := s.Create(context.Background(), spec)
+	_, err := s.Create(context.Background(), spec, validCredential())
 	if err == nil {
 		t.Fatal("Create adopted a terminating pod")
 	}
@@ -244,7 +274,7 @@ func TestCreateRefusesToGuessAboutAPodInAnUnknownPhase(t *testing.T) {
 	spec := validSpec()
 	s, _, _ := newLifecycleSandboxes(t, seededPod(t, spec, corev1.PodUnknown))
 
-	_, err := s.Create(context.Background(), spec)
+	_, err := s.Create(context.Background(), spec, validCredential())
 	if err == nil {
 		t.Fatal("Create made a decision about a pod in an unknown phase")
 	}
@@ -264,7 +294,7 @@ func TestCreateReportsAForbiddenCreateAsPermanent(t *testing.T) {
 		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "sandbox", errors.New("no create verb"))
 	})
 
-	if _, err := s.Create(context.Background(), validSpec()); !errors.Is(err, work.ErrPermanent) {
+	if _, err := s.Create(context.Background(), validSpec(), validCredential()); !errors.Is(err, work.ErrPermanent) {
 		t.Errorf("Create error = %v, want it permanent: a missing RBAC verb is not a moment", err)
 	}
 }
@@ -276,7 +306,7 @@ func TestCreateRejectsASpecItCannotBuildAPodFor(t *testing.T) {
 	spec := validSpec()
 	spec.CPULimit = "2x"
 
-	if _, err := s.Create(context.Background(), spec); !errors.Is(err, work.ErrPermanent) {
+	if _, err := s.Create(context.Background(), spec, validCredential()); !errors.Is(err, work.ErrPermanent) {
 		t.Fatalf("Create error = %v, want it permanent", err)
 	}
 	if len(cs.Actions()) != 0 {
@@ -288,7 +318,7 @@ func TestCreateLogsWhatItCreated(t *testing.T) {
 	t.Parallel()
 
 	s, _, logs := newLifecycleSandboxes(t)
-	if _, err := s.Create(context.Background(), validSpec()); err != nil {
+	if _, err := s.Create(context.Background(), validSpec(), validCredential()); err != nil {
 		t.Fatalf("Create returned an unexpected error: %v", err)
 	}
 	for _, field := range []string{"ticket", "run_id", "image", "cpu", "memory", "deadline_seconds"} {
@@ -306,8 +336,14 @@ func TestDeleteTakesTheGraceFromThePodRatherThanForcing(t *testing.T) {
 		t.Fatalf("Delete returned an unexpected error: %v", err)
 	}
 
+	// Delete now also removes the per-ticket credential Secret (D3, #434), so
+	// this asserts the pod's own delete specifically rather than every delete
+	// against the fake clientset.
 	deletes := 0
 	for _, a := range cs.Actions() {
+		if a.GetResource().Resource != "pods" {
+			continue
+		}
 		del, ok := a.(k8stesting.DeleteActionImpl)
 		if !ok {
 			continue
@@ -319,7 +355,7 @@ func TestDeleteTakesTheGraceFromThePodRatherThanForcing(t *testing.T) {
 		}
 	}
 	if deletes != 1 {
-		t.Fatalf("Delete issued %d deletes, want 1", deletes)
+		t.Fatalf("Delete issued %d pod deletes, want 1", deletes)
 	}
 
 	// The zero grace still applies; it comes from the spec, which is the one
@@ -330,6 +366,75 @@ func TestDeleteTakesTheGraceFromThePodRatherThanForcing(t *testing.T) {
 	}
 	if got := pod.Spec.TerminationGracePeriodSeconds; got == nil || *got != 0 {
 		t.Errorf("pod terminationGracePeriodSeconds = %v, want 0: there is nothing to drain", got)
+	}
+}
+
+func TestCreateWritesTheCodexCredentialIntoAPerTicketSecret(t *testing.T) {
+	t.Parallel()
+
+	s, cs, _ := newLifecycleSandboxes(t)
+	credential := validCredential()
+	if _, err := s.Create(context.Background(), validSpec(), credential); err != nil {
+		t.Fatalf("Create returned an unexpected error: %v", err)
+	}
+
+	got, err := cs.CoreV1().Secrets("software-factory").Get(context.Background(),
+		credentialSecretName(work.SandboxID("sandbox-ticket-42-3f1c2a7e-0000-4000-8000-000000000001")), metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("the credential secret was not created: %v", err)
+	}
+	if string(got.Data[codexAuthSecretKey]) != string(credential.Reveal()) {
+		t.Errorf("secret data[%q] = %q, want the credential document unchanged", codexAuthSecretKey, got.Data[codexAuthSecretKey])
+	}
+}
+
+func TestCreateOverwritesAnExistingCredentialSecretOnRetry(t *testing.T) {
+	t.Parallel()
+
+	spec := validSpec()
+	sandbox := work.SandboxID("sandbox-ticket-42-3f1c2a7e-0000-4000-8000-000000000001")
+	existing := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: credentialSecretName(sandbox), Namespace: "software-factory"},
+		Data:       map[string][]byte{codexAuthSecretKey: []byte("stale")},
+	}
+	s, cs, _ := newLifecycleSandboxes(t, existing, seededPod(t, spec, corev1.PodPending))
+
+	credential := validCredential()
+	if _, err := s.Create(context.Background(), spec, credential); err != nil {
+		t.Fatalf("Create returned an unexpected error: %v", err)
+	}
+
+	got, err := cs.CoreV1().Secrets("software-factory").Get(context.Background(), credentialSecretName(sandbox), metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("reading the secret back: %v", err)
+	}
+	if string(got.Data[codexAuthSecretKey]) != string(credential.Reveal()) {
+		t.Errorf("secret data[%q] = %q, want this attempt's own fetch to have overwritten the stale value", codexAuthSecretKey, got.Data[codexAuthSecretKey])
+	}
+}
+
+func TestDeleteAlsoDeletesTheCredentialSecret(t *testing.T) {
+	t.Parallel()
+
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: credentialSecretName(testSandbox), Namespace: "software-factory"}}
+	s, cs, _ := newLifecycleSandboxes(t, seededPod(t, validSpec(), corev1.PodRunning), secret)
+
+	if err := s.Delete(context.Background(), testSandbox); err != nil {
+		t.Fatalf("Delete returned an unexpected error: %v", err)
+	}
+
+	_, err := cs.CoreV1().Secrets("software-factory").Get(context.Background(), credentialSecretName(testSandbox), metav1.GetOptions{})
+	if !apierrors.IsNotFound(err) {
+		t.Errorf("the credential secret survived Delete: %v", err)
+	}
+}
+
+func TestDeleteTreatsAnAlreadyAbsentCredentialSecretAsDeleted(t *testing.T) {
+	t.Parallel()
+
+	s, _, _ := newLifecycleSandboxes(t, seededPod(t, validSpec(), corev1.PodRunning))
+	if err := s.Delete(context.Background(), testSandbox); err != nil {
+		t.Errorf("Delete returned %v when no credential secret existed; cleanup must be idempotent", err)
 	}
 }
 

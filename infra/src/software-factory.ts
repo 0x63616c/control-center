@@ -337,6 +337,25 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
           resourceNames: [CODEX_AUTH_SECRET_NAME],
           verbs: ["get", "update"],
         },
+        {
+          apiGroups: [""],
+          resources: ["secrets"],
+          // The per-ticket codex-credential Secret (#434, D3): CreateSandbox
+          // provisions one per run (internal/clients/k8s/lifecycle.go,
+          // ensureCredentialSecret) and DeleteSandbox removes it, and the
+          // orphan sweep now lists and deletes any left behind by a worker
+          // that died between the two (sweep.go, sweepOrphanSecrets).
+          //
+          // This CANNOT be scoped with `resourceNames` the way the codex-auth
+          // rule above is, for exactly the reason the pods rule above cannot
+          // be either: the name carries a per-run id unknown when this Role
+          // is authored, and Kubernetes ignores `resourceNames` for `list`,
+          // `create` and `deletecollection` regardless. THE NAMESPACE IS THE
+          // ISOLATION BOUNDARY for this rule, not a resourceNames clause —
+          // stated explicitly rather than left to look like an oversight,
+          // the same call already made for pods above.
+          verbs: ["create", "get", "update", "delete", "list"],
+        },
       ],
     },
     inNamespace,

@@ -31,22 +31,13 @@ import (
 // Implementations must honour context cancellation by killing the remote
 // process, not merely by returning: an activity timeout that leaves a codex
 // process running in the sandbox burns quota nobody is waiting for.
+// Probe (a pgrep-based liveness check for AttemptRunning) and AttemptRunning
+// itself are gone as of #434: Sessions make "a previous attempt is still
+// running, in a different process" unrepresentable (see resume.go's
+// Resumption doc comment), so there is nothing left to probe for and Exec is
+// the whole interface.
 type PodExecer interface {
 	Exec(ctx context.Context, sandbox work.SandboxID, argv []string, stdin io.Reader, stdout, stderr io.Writer) (int, error)
-
-	// Probe runs argv inside the sandbox without Exec's pidfile shim, for a
-	// quick, self-terminating liveness check — AttemptRunning's pgrep, in
-	// particular. It must not go through Exec: the shim's own command line
-	// carries argv after "--", so a pgrep -f search for anything the shim is
-	// currently running would match the shim's own wrapper process, and
-	// Decide would read that self-match as "an attempt is already running"
-	// on every single call, including the very first (#411).
-	//
-	// It gives up the cancellation guarantee Exec's docstring promises:
-	// there is no pidfile for a caller to kill by, so Probe must only be
-	// used for something that finishes on its own well within the caller's
-	// patience.
-	Probe(ctx context.Context, sandbox work.SandboxID, argv []string, stdout, stderr io.Writer) (int, error)
 }
 
 // FileTransfer moves files between the worker and a sandbox. It is how a
