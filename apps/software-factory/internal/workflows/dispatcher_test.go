@@ -77,6 +77,13 @@ func (h *dispatcherHarness) at(d time.Duration, fn func()) {
 	h.callbacks = append(h.callbacks, delayedCallback{at: d, fn: fn})
 }
 
+// atStart queues a callback before virtual time advances. Use it when a test
+// needs a signal in the dispatcher's first workflow task, rather than racing a
+// forced ContinueAsNew at a later virtual instant.
+func (h *dispatcherHarness) atStart(fn func()) {
+	h.at(0, fn)
+}
+
 func (h *dispatcherHarness) run() {
 	env := h.env
 
@@ -521,7 +528,7 @@ func TestDispatcherDrainsSignalsThatArriveAsItContinuesAsNew(t *testing.T) {
 	h.historyLength = 100
 	h.tickets = nil
 	h.runFor = 0
-	h.at(time.Nanosecond, func() {
+	h.atStart(func() {
 		paused := true
 		h.env.SignalWorkflow(workflows.SignalUpdateConfig, work.ConfigUpdate{Paused: &paused})
 	})
@@ -634,7 +641,7 @@ func TestDispatcherCarriesARejectedUpdateAcrossAContinueAsNew(t *testing.T) {
 	h.tuning.MaxHistoryEvents = 1
 	h.historyLength = 100
 	h.runFor = 0
-	h.at(time.Nanosecond, func() {
+	h.atStart(func() {
 		zero := 0
 		h.env.SignalWorkflow(workflows.SignalUpdateConfig, work.ConfigUpdate{MaxInFlight: &zero})
 	})
@@ -800,7 +807,7 @@ func TestDispatcherCarriesRecentlyFinishedAcrossAContinueAsNew(t *testing.T) {
 	// to t=0 (an unrelated latent race in the harness, caught by -race), and
 	// this test only needs the fast path — the TicketDone signal itself, which
 	// is a Temporal channel and needs no such synchronization.
-	h.at(time.Nanosecond, func() {
+	h.atStart(func() {
 		h.env.SignalWorkflow(workflows.SignalTicketDone, work.TicketDone{
 			Ticket: 320, RunID: "run-1", Outcome: work.OutcomeProposed,
 		})
