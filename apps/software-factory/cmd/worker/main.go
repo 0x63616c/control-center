@@ -350,7 +350,7 @@ func buildDeps(
 		GitHub:      ghClient,
 		Pods:        sandboxes,
 		Repo:        sandboxes,
-		Stages:      codex.NewRunner(sandboxes, sandboxes, clk, logger),
+		Stages:      codex.NewRunner(sandboxes, sandboxes, logger),
 		Transcripts: transcriptSink,
 		Prompts:     prompts.NewActivityRenderer(renderer),
 		Status:      status.NewRenderer(cfg.TemporalUIBaseURL, cfg.TemporalNamespace),
