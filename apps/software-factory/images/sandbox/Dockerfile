@@ -8,16 +8,9 @@
 # internal/clients/k8s, and every one of those contracts is argv-only — no shell
 # is ever invoked by the worker, on any path:
 #
-#   /usr/local/bin/sandbox-exec   cmd/sandbox-exec — the pidfile shim that makes
-#                                 a stage killable (exec.go: shimPath)
 #   tar                           file-in, `tar -xf - -C /` (transfer.go)
 #   test                          the file-existence probe (transfer.go)
 #   cat                           file-out (transfer.go)
-#   pgrep                         stage liveness, `pgrep -f <result path>` (B5).
-#                                 LOAD-BEARING, not a nicety: it is the only way
-#                                 the runner knows a stage is already running, so
-#                                 without it every retry re-runs a live stage.
-#                                 Asserted at build time below.
 #   printenv                      SF_BRANCH, read back rather than recomputed,
 #                                 so CloneRepo notices if this pod's branch ever
 #                                 disagrees with what SandboxTemplate.Spec baked
@@ -41,11 +34,18 @@
 # image, not about what the image contains — an image without one could not run
 # a single ticket.
 #
+# The pidfile shim that used to make a remote exec killable, and pgrep — the
+# liveness probe that used to stand in for a real process handle — are both
+# gone (#434, step 3 of the software-factory migration: Temporal Sessions
+# replace the pods/exec reattach path they existed for; the embedded worker
+# holds a real os/exec.Cmd instead).
+#
 # amd64 only. The home-server Talos node is the only deploy target and it is
 # x86; CI builds --platform linux/amd64 on a native runner.
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Stage 1: the shim, and the Go toolchain the runtime stage borrows.
+# Stage 1: the embedded worker binary, and the Go toolchain the runtime stage
+# borrows.
 #
 # The version comes from the image tag rather than a second declaration, and it
 # is deliberately the same Go the worker is built with and the same one go.mod
@@ -60,10 +60,6 @@ COPY apps/software-factory/go.mod apps/software-factory/go.sum ./
 RUN go mod download
 
 COPY apps/software-factory/ ./
-# Static: the shim is copied into a different base than it was built in, and a
-# dynamically linked one would depend on that base's libc by accident.
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath -ldflags="-s -w" -o /out/sandbox-exec ./cmd/sandbox-exec
 # The worker binary, built here for step 3 to embed in this image (prep only —
 # see the COPY below in the runtime stage; nothing invokes it in this step).
 # Same flags images/worker/Dockerfile builds it with.
@@ -104,20 +100,17 @@ ARG GOLANGCI_LINT_SHA256=8df580d2670fed8fa984aac0507099af8df275e665215f5c7a2ae39
 # and pushes its branch before any stage runs, and `implement` later commits
 # and pushes to that same checkout; ca-certificates for the OpenAI and GitHub
 # APIs; curl and unzip for the two downloads below; passwd for
-# groupadd/useradd, which trixie-slim omits; procps for pgrep; gcc and
-# libc6-dev so `CGO_ENABLED=1 go test -race` can link inside this image (#428)
-# — both listed explicitly rather than relied on as a transitive pull-in of
-# `gcc`, since that could change under a base-image bump. Verified below by a
-# CGO smoke build, not just `command -v gcc`, which would only prove the
-# compiler is on PATH and not that it can actually link a cgo package.
+# groupadd/useradd, which trixie-slim omits; gcc and libc6-dev so
+# `CGO_ENABLED=1 go test -race` can link inside this image (#428) — both
+# listed explicitly rather than relied on as a transitive pull-in of `gcc`,
+# since that could change under a base-image bump. Verified below by a CGO
+# smoke build, not just `command -v gcc`, which would only prove the compiler
+# is on PATH and not that it can actually link a cgo package.
 #
-# procps is a DIRECT dependency of this image, not a convenience. B5's stage
-# liveness probe is `pgrep -f <result path>`, and debian:trixie-slim ships no
-# pgrep, no pkill and no ps — measured against the base image, not assumed. Its
-# absence has to fail this build, because it does not fail at runtime: a missing
-# pgrep reports "no stage running", and the retry starts a second copy of a
-# stage that never stopped, two models writing one result file. What that probe
-# does and does not answer — liveness, never identity — is in ../README.md.
+# procps (pgrep) is no longer installed here: it existed solely for B5's
+# pgrep-based stage-liveness probe, deleted along with the rest of the
+# reattach path in #434 (step 3 — Sessions give the embedded worker a real
+# process handle, so there is nothing left to pgrep for).
 #
 # The assertions below are the point of failing here rather than at 2am. One
 # call per binary, because the multi-name form asserts less than it reads as:
@@ -132,10 +125,8 @@ RUN apt-get update \
         git \
         libc6-dev \
         passwd \
-        procps \
         unzip \
     && rm -rf /var/lib/apt/lists/* \
-    && command -v pgrep >/dev/null \
     && command -v tar >/dev/null \
     && command -v test >/dev/null \
     && command -v cat >/dev/null \
@@ -191,7 +182,6 @@ RUN printf 'package main\nimport "C"\nfunc main() {}\n' > /tmp/cgo_check.go \
     && CGO_ENABLED=1 go build -o /tmp/cgo_check /tmp/cgo_check.go \
     && rm -f /tmp/cgo_check.go /tmp/cgo_check
 
-COPY --from=build /out/sandbox-exec /usr/local/bin/sandbox-exec
 # Built for step 3 (an embedded Temporal worker inside the sandbox pod,
 # polling a task queue via workflow.CreateSession) but UNWIRED here: nothing
 # in this step's workflow invokes it, and the pod's command stays `sleep

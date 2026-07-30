@@ -14,7 +14,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sync/atomic"
 
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
@@ -28,9 +27,9 @@ import (
 // codex.FileTransfer; it declares none of them, because interfaces are
 // consumer-side.
 //
-// It is safe for concurrent use. It holds immutable configuration, a clientset
-// which is itself concurrency-safe, and one atomic counter; no method mutates
-// the receiver otherwise, and nothing here touches process-global state.
+// It is safe for concurrent use. It holds immutable configuration and a
+// clientset which is itself concurrency-safe; no method mutates the receiver
+// otherwise, and nothing here touches process-global state.
 type Sandboxes struct {
 	cs       kubernetes.Interface
 	streamer streamer
@@ -38,11 +37,6 @@ type Sandboxes struct {
 	logger   *slog.Logger
 	clk      clock.Clock
 	opts     options
-
-	// execSeq distinguishes two execs minted in the same nanosecond. The tag it
-	// contributes to names a pidfile, and two live execs sharing one would have
-	// the second's cancellation kill the first's process.
-	execSeq atomic.Uint64
 }
 
 // NewInCluster builds a Sandboxes from the pod's own service account.
@@ -119,9 +113,6 @@ func resolveOptions(opts []Option) (options, error) {
 	if problems := validation.IsDNS1123Label(o.containerName); len(problems) > 0 {
 		return options{}, fmt.Errorf("constructing a Sandboxes: container name %q is not a valid Kubernetes name: %s", o.containerName, problems[0])
 	}
-	if o.killGrace <= 0 {
-		return options{}, fmt.Errorf("constructing a Sandboxes: the kill grace is %s, leaving no window between SIGTERM and SIGKILL", o.killGrace)
-	}
 	if o.imagePullSecretName != "" {
 		if problems := validation.IsDNS1123Subdomain(o.imagePullSecretName); len(problems) > 0 {
 			return options{}, fmt.Errorf("constructing a Sandboxes: image pull secret name %q is not a valid Kubernetes name: %s", o.imagePullSecretName, problems[0])
@@ -145,15 +136,6 @@ func validateDeps(namespace string, logger *slog.Logger, clk clock.Clock) error 
 		return fmt.Errorf("constructing a Sandboxes: the clock is nil")
 	}
 	return nil
-}
-
-// nextExecID mints the tag one exec is known by, which names its pidfile.
-//
-// It is a counter and a timestamp rather than random bytes: uniqueness is only
-// needed among the execs live in one sandbox at one time, and crypto/rand is
-// denied outside the composition root.
-func (s *Sandboxes) nextExecID() string {
-	return fmt.Sprintf("%d-%d", s.clk.Now().UnixNano(), s.execSeq.Add(1))
 }
 
 // warningLogger turns an apiserver deprecation warning into a structured

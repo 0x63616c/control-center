@@ -12,8 +12,6 @@ home-server Talos node is the only deploy target and it is x86.
 
 E1 (#341) left these undecided. Decided here:
 
-- **`sandbox-exec`** (`../cmd/sandbox-exec`) — the pidfile shim `exec.go` execs.
-  Without it a stage is unkillable, because pods/exec never reports a remote PID.
 - **GNU `tar`, `test`, `cat`** — the argv `transfer.go` uses for file-in, the
   existence probe and file-out. From the base image; asserted by `smoke.sh`.
 - **`git`** — `implement` pushes its branch, which is what makes GitHub the
@@ -78,7 +76,7 @@ creates `work.RepoDir`, and nothing pre-creates it.
 
 Permissions are the reason it works this way; they are not the reason worth
 remembering. `/work` also holds the run's scaffolding — the rendered prompt, the
-schema, the result file, the shim's `.exec` pidfiles. A checkout rooted at
+schema and the result file. A checkout rooted at
 `/work` would put all of that **inside the git working tree**, one `git add -A`
 away from committing a rendered prompt into the branch `implement` pushes. That
 argument survives any change to how the runtime creates directories.
@@ -86,29 +84,13 @@ argument survives any change to how the runtime creates directories.
 **Nothing clones the repository yet.** `work.RepoDir` names the destination; no
 track owns putting a repo there — #383 tracks it.
 
-**`pgrep` answers liveness, not identity.** Stage resumption uses `pgrep -f
-<result path>`, which matches *any* process whose cmdline contains that path.
-Neither the PIDs nor their number means anything. Measured, one stage, three
-ways:
-
-| what mentions the path | matches |
-|---|---|
-| the shim and its child only | 2 — `sandbox-exec …`, and the process it wraps |
-| plus a shell whose script *text* contains it | 3 |
-| plus the `$(pgrep -f …)` substitution's own forked shell, momentarily | 4 |
-
-So the count is a function of who happens to hold the string in their argv at
-the instant you ask — **including the observer**. Harmless, because the shim and
-its child live and die together and the only question being asked is "is
-anything still running". But the result is a **boolean**: something matched, or
-nothing did. A caller that reads a PID out of it, or counts the matches to learn
-how many stage processes exist, is wrong in a way that will look right in
-testing.
-
-The shim's own pidfile cannot substitute for `pgrep` here. It is
-`/work/.exec/<execID>.pid`, scoped to a single exec call with a fresh id, so a
-retry cannot find a previous attempt's file by construction. The shim answers
-*cancellation*; `pgrep` answers *is this stage already running*.
+**The pidfile shim and its `pgrep -f <result path>` stage-liveness probe are
+gone (#434, step 3 of the software-factory migration).** Both existed to give
+the main worker a way to find and cancel a remote codex process across
+`pods/exec`, which offers no real process handle of its own. Temporal Sessions
+replace the mechanism rather than fixing it: the embedded worker that now runs
+a stage holds a real `os/exec.Cmd` in its own process, so there is no
+reattach to probe for and nothing left needing a pidfile.
 
 ## Pins
 

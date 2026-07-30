@@ -318,11 +318,12 @@ func TestExecOptionsNeverRequestATTY(t *testing.T) {
 	}
 }
 
-func TestExecPassesArgvThroughUntouchedBehindTheShim(t *testing.T) {
+func TestExecPassesArgvThroughUntouched(t *testing.T) {
 	t.Parallel()
 
 	// Every one of these is inert as argv and dangerous in a shell. They must
-	// arrive byte-identical.
+	// arrive byte-identical — no shim wraps them any more (#434 deleted
+	// cmd/sandbox-exec, the pidfile shim this used to wrap every argv in).
 	argv := []string{"codex", "exec", "a b", "it's", "x;rm -rf /", "$(id)", "`id`", "--flag=--flag"}
 
 	str := &scriptedStreamer{answers: []answer{{}}}
@@ -332,20 +333,8 @@ func TestExecPassesArgvThroughUntouchedBehindTheShim(t *testing.T) {
 	}
 
 	got := str.observed()[0].argv
-	if len(got) < 4 {
-		t.Fatalf("streamer argv = %v, too short to carry the shim prefix", got)
-	}
-	if got[0] != shimPath || got[1] != "--pidfile" || got[3] != "--" {
-		t.Errorf("shim prefix = %v, want [%s --pidfile <path> --]", got[:4], shimPath)
-	}
-	if !strings.HasPrefix(got[2], work.SandboxRoot+"/.exec/") || !strings.HasSuffix(got[2], ".pid") {
-		t.Errorf("pidfile = %q, want one under %s/.exec", got[2], work.SandboxRoot)
-	}
-	if got[2] == work.SandboxRoot+"/.exec/codex.pid" {
-		t.Error("the shim was pointed at the stage's own codex.pid; that is the idempotency record, not a cancellation handle")
-	}
-	if !reflect.DeepEqual(got[4:], argv) {
-		t.Errorf("argv after the shim prefix = %v, want %v", got[4:], argv)
+	if !reflect.DeepEqual(got, argv) {
+		t.Errorf("streamer argv = %v, want %v byte-identical", got, argv)
 	}
 	for _, a := range got {
 		if a == "sh" || a == "bash" || a == "-c" {
@@ -375,10 +364,14 @@ func TestExecWritesStdoutAndStderrToTheirSeparateWriters(t *testing.T) {
 func TestExecPropagatesCancellationToTheStream(t *testing.T) {
 	t.Parallel()
 
+	// #434 deleted cmd/sandbox-exec, the pidfile shim Exec used to send a
+	// second, out-of-band kill through on cancellation (see Exec's own doc
+	// comment on what this now costs). What remains, and what this still
+	// asserts: the stream itself stops and the caller sees context.Canceled —
+	// remotecommand's StreamWithContext honours the context on its own.
 	ctx, cancel := context.WithCancel(context.Background())
 	str := &scriptedStreamer{answers: []answer{
 		{before: cancel, err: errors.New("stream torn down")},
-		{}, // the kill
 	}}
 	s, _ := newTestSandboxes(t, str, runningPod())
 
@@ -389,70 +382,8 @@ func TestExecPropagatesCancellationToTheStream(t *testing.T) {
 	if code != 0 {
 		t.Errorf("Exec code = %d, want 0", code)
 	}
-}
-
-func TestExecIssuesAKillWhenTheContextIsCancelled(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	str := &scriptedStreamer{answers: []answer{
-		{before: cancel, err: errors.New("stream torn down")},
-		{},
-	}}
-	s, logs := newTestSandboxes(t, str, runningPod())
-
-	if _, err := s.Exec(ctx, testSandbox, []string{"sleep", "600"}, nil, io.Discard, io.Discard); err == nil {
-		t.Fatal("Exec succeeded on a cancelled context")
-	}
-
-	calls := str.observed()
-	if len(calls) != 2 {
-		t.Fatalf("streamer saw %d calls, want 2: the command and the kill", len(calls))
-	}
-	kill := calls[1]
-	if len(kill.argv) != 3 || kill.argv[0] != shimPath || kill.argv[1] != "--kill" {
-		t.Fatalf("kill argv = %v, want [%s --kill <pidfile>]", kill.argv, shimPath)
-	}
-	if kill.argv[2] != calls[0].argv[2] {
-		t.Errorf("the kill names pidfile %q but the command wrote %q", kill.argv[2], calls[0].argv[2])
-	}
-	if kill.ctxErr != nil {
-		t.Errorf("the kill ran on a context that was already done (%v); it would never have been sent", kill.ctxErr)
-	}
-	if !strings.Contains(logs.String(), "killing a cancelled sandbox exec") {
-		t.Error("the kill was not logged; at 3am this is the only evidence a process was reaped")
-	}
-}
-
-func TestExecReturnsTheContextErrorEvenWhenTheKillFails(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	str := &scriptedStreamer{answers: []answer{
-		{before: cancel, err: errors.New("stream torn down")},
-		{err: errors.New("no such pidfile"), stderr: "sandbox-exec: no such pidfile"},
-	}}
-	s, logs := newTestSandboxes(t, str, runningPod())
-
-	_, err := s.Exec(ctx, testSandbox, []string{"sleep", "600"}, nil, io.Discard, io.Discard)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("Exec error = %v, want it to wrap context.Canceled regardless of the kill's outcome", err)
-	}
-	if !strings.Contains(logs.String(), "no such pidfile") {
-		t.Error("the failed kill was not logged with its evidence")
-	}
-}
-
-func TestExecDoesNotIssueAKillWhenTheCommandCompletesNormally(t *testing.T) {
-	t.Parallel()
-
-	str := &scriptedStreamer{answers: []answer{{}}}
-	s, _ := newTestSandboxes(t, str, runningPod())
-	if _, err := s.Exec(context.Background(), testSandbox, []string{"true"}, nil, io.Discard, io.Discard); err != nil {
-		t.Fatalf("Exec returned an unexpected error: %v", err)
-	}
 	if calls := str.observed(); len(calls) != 1 {
-		t.Errorf("streamer saw %d calls, want exactly 1: a spurious kill would reap an unrelated process", len(calls))
+		t.Errorf("streamer saw %d calls, want exactly 1: there is no more out-of-band kill to issue", len(calls))
 	}
 }
 

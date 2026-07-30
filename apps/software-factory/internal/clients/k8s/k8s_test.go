@@ -39,10 +39,6 @@ func TestRefusesToConstructWithoutTheThingsItCannotWorkWithout(t *testing.T) {
 			name: "with a container name that is not a valid kubernetes name", namespace: "software-factory",
 			logger: discardLogger(), clk: testClock(), opts: []Option{WithContainerName("Not A Name")},
 		},
-		{
-			name: "with a kill grace that is not positive", namespace: "software-factory",
-			logger: discardLogger(), clk: testClock(), opts: []Option{WithKillGrace(0)},
-		},
 	}
 
 	for _, tc := range cases {
@@ -82,25 +78,5 @@ func TestNewInClusterValidatesItsArgumentsBeforeReachingForACluster(t *testing.T
 	}
 	if _, err := NewInCluster("software-factory", nil, testClock()); err == nil {
 		t.Fatal("NewInCluster accepted a nil logger")
-	}
-}
-
-func TestMintsADistinctTagForEveryExec(t *testing.T) {
-	t.Parallel()
-
-	s, err := newSandboxes(fake.NewSimpleClientset(), nil, "software-factory", discardLogger(), testClock())
-	if err != nil {
-		t.Fatalf("newSandboxes returned an unexpected error: %v", err)
-	}
-
-	// The tag names a pidfile, and two live execs sharing one would have the
-	// second's cancellation kill the first's process.
-	seen := make(map[string]bool, 128)
-	for range 128 {
-		id := s.nextExecID()
-		if seen[id] {
-			t.Fatalf("exec id %q was minted twice", id)
-		}
-		seen[id] = true
 	}
 }
