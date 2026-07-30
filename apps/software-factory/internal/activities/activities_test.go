@@ -853,8 +853,21 @@ func TestRunStageClosesTheTranscriptWhenTheStageFails(t *testing.T) {
 	a := mustNew(t, d)
 	e.RegisterActivity(a.RunStage)
 
-	if _, err := e.ExecuteActivity(a.RunStage, stageInput(work.StagePlan, nil)); err == nil {
+	_, err := e.ExecuteActivity(a.RunStage, stageInput(work.StagePlan, nil))
+	if err == nil {
 		t.Fatal("a failed stage fails its activity")
+	}
+	// The real cause, not a JSON-encode error about RunStage's own zero-value
+	// result. RunStage returns *RunStageOutput and nil on every error path
+	// precisely so the SDK's activity executor — which serializes a
+	// non-pointer return regardless of the accompanying error — never tries
+	// to encode a work.StageOutput{} that deliberately refuses to marshal.
+	// Reproduced for real in prod run one (#434): a benign stage failure
+	// surfaced as "unable to encode ... NewStageOutput was never called"
+	// instead of this fakeStages error. A bare err==nil check would not have
+	// caught that regression; asserting the message would.
+	if !strings.Contains(err.Error(), "exit 1") {
+		t.Fatalf("activity error = %q, want it to carry the stage's own message (\"exit 1\"), not a substitute", err.Error())
 	}
 	if !transcript.closed.Load() {
 		t.Fatal("a failed stage's transcript is the one most worth reading, so it must still be closed")
