@@ -46,8 +46,15 @@ Talos base images ship no system extensions. This node needs:
   dependency, not the v3 mount-helper dependency (NFS recon, 2026-07-24).
 - `siderolabs/tailscale` — tailnet join (the `endpoint` above resolves over
   Tailscale).
+- `siderolabs/kata-containers` — VM-isolated Kata Containers runtime, for the
+  software-factory sandbox pods (program handoff step 1,
+  `/tmp/handoffs/2026-07-29-software-factory-migration-program.md`). Registers
+  `kata`/`kata-qemu` containerd runtime handlers itself; the `kata`
+  `RuntimeClass` object is Pulumi-managed (`infra/src/kata.ts`), same split as
+  `nvidia` below it. No extra containerd config patch needed, same precedent
+  as the NVIDIA extensions.
 
-All five are **official** Image Factory extensions, valid for Talos v1.13.7
+All six are **official** Image Factory extensions, valid for Talos v1.13.7
 (confirmed against `siderolabs/extensions` tag `v1.13.7`).
 
 ### Where the schematic lives in `talconfig.yaml`
@@ -64,7 +71,7 @@ automatically and correctly on next render. This is the config-authoring
 equivalent of the brief's `schematic: { id: <SCHEMATIC_ID> }` for this talhelper
 version.
 
-**Schematic ID for the exact extension list above, on v1.13.7:**
+**Schematic ID for the five-extension list (pre-Kata, live on the node today):**
 
 ```
 73b5d5a3c4c54fc6722f58b88d9273466c52a4956a98250fbe2ca87b65547355
@@ -91,6 +98,46 @@ Resulting installer image reference (what `machine.install.image` renders to):
 ```
 factory.talos.dev/metal-installer/73b5d5a3c4c54fc6722f58b88d9273466c52a4956a98250fbe2ca87b65547355:v1.13.7
 ```
+
+**Schematic ID for the six-extension list, adding `siderolabs/kata-containers`
+(what `talconfig.yaml` now pins — NOT yet applied to the live node; requires
+the `talosctl upgrade` in the human-apply procedure below to take effect):**
+
+```
+195eb23007a571a62f64d8eb362b6eacf3a4786b7cb11257a76c7b7fcbfba78c
+```
+
+Obtained via the same POST, extension list extended with
+`siderolabs/kata-containers` appended last:
+
+```bash
+curl -sS -X POST --data-binary @- https://factory.talos.dev/schematics <<'EOF'
+customization:
+  systemExtensions:
+    officialExtensions:
+      - siderolabs/nonfree-kmod-nvidia-production
+      - siderolabs/nvidia-container-toolkit-production
+      - siderolabs/iscsi-tools
+      - siderolabs/nfs-utils
+      - siderolabs/tailscale
+      - siderolabs/kata-containers
+EOF
+```
+
+Resulting installer image reference:
+
+```
+factory.talos.dev/metal-installer/195eb23007a571a62f64d8eb362b6eacf3a4786b7cb11257a76c7b7fcbfba78c:v1.13.7
+```
+
+This ID needs no secrets to derive (the schematic hash is a function of the
+extension list only) and was reproduced by the plain `curl` above, not by
+running `talhelper genconfig` against real cluster secrets. Per
+`talconfig.yaml`'s own comment, this list-vs-ID pair MUST be re-verified by
+`talhelper genconfig` (`scripts/secrets.sh talhelper genconfig`) as part of
+the human-apply procedure before it's trusted for a live `talosctl upgrade` —
+treat this recorded ID as "how we think the render will come out," not the
+apply-time source of truth.
 
 If the extension list in `talconfig.yaml` ever changes, re-render
 (`talhelper genconfig`) and update this ID + the POST output above to match —

@@ -7,6 +7,7 @@
 // CI deploy: SOPS_AGE_KEY injected from AGE_PRIVATE_KEY GitHub secret.
 
 import * as pulumi from "@pulumi/pulumi";
+import { installAgentSandboxCrds } from "./src/agent-sandbox.ts";
 import { installCertManager, issuePortalCertificate } from "./src/certmanager.ts";
 import { makeCluster } from "./src/cluster.ts";
 import { installCnpg } from "./src/cnpg.ts";
@@ -15,6 +16,7 @@ import { installDbUi } from "./src/db-ui.ts";
 import { installEso } from "./src/eso.ts";
 import { verifyLiveGhcrPullSecrets } from "./src/ghcr-pull-secret-preflight.ts";
 import { installHomeAssistant } from "./src/homeassistant.ts";
+import { installKataRuntimeClass } from "./src/kata.ts";
 import { installLvmLocalPv } from "./src/lvm-localpv.ts";
 import { installMetallb } from "./src/metallb.ts";
 import { installMetricsServer } from "./src/metrics-server.ts";
@@ -186,6 +188,15 @@ if (target.substrate === "talos") {
   // The device plugin advertises nvidia.com/gpu so GPU workloads (Plex) can be
   // scheduled; needs the nvidia kernel modules (infra/talos machine.kernel).
   installNvidiaDevicePlugin({ provider: cluster.provider });
+  // Kata VM-isolated RuntimeClass + agent-sandbox CRDs (program handoff step 1,
+  // software-factory migration, issue #432). Inert until the kata-containers
+  // Talos extension is actually on the node (infra/talos/talconfig.yaml) —
+  // this RuntimeClass object has no matching containerd handler until that
+  // upgrade runs, and nothing in this step schedules a pod against it. The
+  // software factory itself changes nothing here; deliberately disconnected
+  // from installSoftwareFactory below.
+  installKataRuntimeClass({ provider: cluster.provider });
+  installAgentSandboxCrds({ provider: cluster.provider });
   // Temporal (issue #124): its own namespace, its own Postgres, hand-written
   // Deployments — no Helm chart. Same reuse of the already-installed CNPG
   // operator as Home Assistant above.

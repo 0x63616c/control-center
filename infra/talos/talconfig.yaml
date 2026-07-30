@@ -24,6 +24,16 @@ nodes:
     # to factory.talos.dev unless run with --offline-mode); the resulting ID
     # for this exact extension set + v1.13.7 is recorded in README.md and MUST
     # match after any edit here.
+    #
+    # siderolabs/kata-containers (program handoff step 1 of the software-factory
+    # migration, /tmp/handoffs/2026-07-29-software-factory-migration-program.md):
+    # gives Kata VM-isolated containers a `kata`/`kata-qemu` containerd runtime
+    # handler, for later scheduling of untrusted software-factory agent work
+    # into VM-isolated pods (see infra/src/kata.ts's RuntimeClass). Editing this
+    # list alone does NOTHING live , it changes machine.install.image, which
+    # only takes effect after a `talosctl upgrade` + reboot (infra/talos/README.md's
+    # Image Factory schematic section documents the exact upgrade command). New
+    # schematic ID for this extended list: see README.md.
     schematic:
       customization:
         systemExtensions:
@@ -33,6 +43,7 @@ nodes:
             - siderolabs/iscsi-tools
             - siderolabs/nfs-utils
             - siderolabs/tailscale
+            - siderolabs/kata-containers
     networkInterfaces:
       - interface: enp4s0 # 2.5GbE NIC — confirmed on hardware 2026-07-24 via `talosctl get links` (MAC d8:bb:c1:df:7d:19)
         dhcp: false # CRITICAL: Talos defaults physical links to DHCP. Without this,
