@@ -15,7 +15,7 @@ func TestChildrenAreStartedAbandonedSoContinueAsNewDoesNotKillThem(t *testing.T)
 
 	d := newDispatcher(DispatcherInput{Config: work.DefaultConfig(), Tuning: work.DefaultDispatcherTuning(), Run: work.DefaultRunPolicy()})
 
-	options := d.childOptions(328)
+	options := d.childOptions(work.Ticket{Number: 328})
 
 	if options.ParentClosePolicy != enums.PARENT_CLOSE_POLICY_ABANDON {
 		t.Fatalf("ParentClosePolicy = %v, want ABANDON. The default is TERMINATE, and ContinueAsNew closes the "+
@@ -29,7 +29,7 @@ func TestAChildsWorkflowIDIsTheClaimOnItsTicket(t *testing.T) {
 
 	d := newDispatcher(DispatcherInput{Config: work.DefaultConfig(), Tuning: work.DefaultDispatcherTuning(), Run: work.DefaultRunPolicy()})
 
-	if got := d.childOptions(328).WorkflowID; got != work.WorkflowID(328) {
+	if got := d.childOptions(work.Ticket{Number: 328}).WorkflowID; got != work.WorkflowID(328) {
 		t.Fatalf("WorkflowID = %q, want %q — starting a workflow with this ID *is* the claim, so a second "+
 			"spelling would be a second claim", got, work.WorkflowID(328))
 	}
@@ -41,8 +41,23 @@ func TestAChildIsGivenLongerThanItsStagesCanTake(t *testing.T) {
 	policy := work.DefaultRunPolicy()
 	d := newDispatcher(DispatcherInput{Config: work.DefaultConfig(), Tuning: work.DefaultDispatcherTuning(), Run: policy})
 
-	if got := d.childOptions(328).WorkflowRunTimeout; got <= policy.RunBudget() {
+	if got := d.childOptions(work.Ticket{Number: 328}).WorkflowRunTimeout; got <= policy.RunBudget() {
 		t.Fatalf("run timeout %s does not exceed the stages' own budget %s, so a run using its stage timeouts "+
 			"would be killed for taking exactly as long as it was allowed", got, policy.RunBudget())
+	}
+}
+
+func TestAChildCarriesItsTicketMetadata(t *testing.T) {
+	t.Parallel()
+
+	d := newDispatcher(DispatcherInput{Config: work.DefaultConfig(), Tuning: work.DefaultDispatcherTuning(), Run: work.DefaultRunPolicy()})
+
+	options := d.childOptions(work.Ticket{Number: 328, Title: "Show work-ticket GitHub issue in Temporal"})
+
+	if got, want := options.StaticSummary, "#328 Show work-ticket GitHub issue in Temporal"; got != want {
+		t.Fatalf("StaticSummary = %q, want %q", got, want)
+	}
+	if got, want := options.StaticDetails, "[GitHub issue #328](https://github.com/0x63616c/world-wide-webb/issues/328)"; got != want {
+		t.Fatalf("StaticDetails = %q, want %q", got, want)
 	}
 }
