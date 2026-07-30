@@ -120,3 +120,29 @@ func TestChecksForRefFingerprintsGenericGitHubActionsFailuresFromTestLogs(t *tes
 		t.Fatalf("checks = %+v, want the failing Go test identity from the Actions log", checks)
 	}
 }
+
+func TestFailedGoTestsQualifiesSameNamedTestsByPackage(t *testing.T) {
+	t.Parallel()
+
+	pkgA := "2026-07-30T21:00:00Z --- FAIL: TestValidate (0.00s)\n" +
+		"2026-07-30T21:00:00Z FAIL\n" +
+		"2026-07-30T21:00:00Z FAIL\tgithub.com/0x63616c/world-wide-webb/pkg/a\t0.01s\n"
+	pkgB := "2026-07-30T21:00:00Z --- FAIL: TestValidate (0.00s)\n" +
+		"2026-07-30T21:00:00Z FAIL\n" +
+		"2026-07-30T21:00:00Z FAIL\tgithub.com/0x63616c/world-wide-webb/pkg/b\t0.01s\n"
+
+	testsA := failedGoTests(pkgA)
+	testsB := failedGoTests(pkgB)
+	if len(testsA) != 1 || len(testsB) != 1 || testsA[0] == testsB[0] {
+		t.Fatalf("failedGoTests(pkgA) = %v, failedGoTests(pkgB) = %v, want distinct package-qualified identities", testsA, testsB)
+	}
+}
+
+func TestFailedGoTestsFallsBackToBareNameWithoutAPackageSummaryLine(t *testing.T) {
+	t.Parallel()
+
+	tests := failedGoTests("2026-07-30T21:00:00Z --- FAIL: TestTruncated (0.00s)\n")
+	if len(tests) != 1 || tests[0] != "TestTruncated" {
+		t.Fatalf("failedGoTests = %v, want the bare test name when no summary line was logged", tests)
+	}
+}

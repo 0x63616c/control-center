@@ -195,20 +195,39 @@ func (c *Client) downloadJobLog(ctx context.Context, logURL *url.URL) (string, e
 	return string(bytes), nil
 }
 
+// failedGoTests returns one identity per failing test, qualified by its
+// package. `go test` prints a bare test name on each "--- FAIL:" line, so two
+// different packages' same-named tests (e.g. TestValidate in two packages)
+// would otherwise fingerprint identically and hide a real change in what's
+// failing. Qualification comes from the "FAIL\t<package>\t<elapsed>" summary
+// line `go test` emits once a package's run finishes; any failures logged
+// before a summary line is seen (a truncated log) fall back to the bare name
+// rather than being dropped.
 func failedGoTests(log string) []string {
 	const marker = "--- FAIL: "
 
 	seen := make(map[string]struct{})
+	var pending []string
 	for _, line := range strings.Split(log, "\n") {
-		at := strings.Index(line, marker)
-		if at < 0 {
+		if at := strings.Index(line, marker); at >= 0 {
+			rest := line[at+len(marker):]
+			name, _, _ := strings.Cut(rest, " ")
+			if name != "" {
+				pending = append(pending, name)
+			}
 			continue
 		}
-		rest := line[at+len(marker):]
-		name, _, _ := strings.Cut(rest, " ")
-		if name != "" {
-			seen[name] = struct{}{}
+		pkg, ok := goTestPackageSummary(line)
+		if !ok || len(pending) == 0 {
+			continue
 		}
+		for _, name := range pending {
+			seen[pkg+"."+name] = struct{}{}
+		}
+		pending = pending[:0]
+	}
+	for _, name := range pending {
+		seen[name] = struct{}{}
 	}
 
 	tests := make([]string, 0, len(seen))
@@ -217,6 +236,25 @@ func failedGoTests(log string) []string {
 	}
 	sort.Strings(tests)
 	return tests
+}
+
+// goTestPackageSummary reports the package from a "FAIL\t<package>\t<elapsed>"
+// or "ok  \t<package>\t<elapsed>" line, tolerating a leading Actions log
+// timestamp. It ignores the bare "--- FAIL: <test>" lines that precede it,
+// since those never carry "FAIL"/"ok" as a standalone token.
+func goTestPackageSummary(line string) (string, bool) {
+	fields := strings.Fields(line)
+	for i := 0; i < len(fields)-1; i++ {
+		if fields[i] != "FAIL" && fields[i] != "ok" {
+			continue
+		}
+		pkg := fields[i+1]
+		if pkg == "" || strings.HasPrefix(pkg, "[") {
+			continue
+		}
+		return pkg, true
+	}
+	return "", false
 }
 
 // checkRunAnnotations returns every annotation for a failed check or no
