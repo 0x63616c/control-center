@@ -81,6 +81,8 @@ export default defineConfig({
     // OOMs, drop back to 2 — this is a tuning knob, not a correctness boundary.
     maxWorkers: 4,
     pool: "forks",
+    // An empty collection must never make sandbox or CI verification look green.
+    passWithNoTests: false,
     // Coverage config lives here (not as CLI flags) so it can carry include/
     // exclude + thresholds; per-project config is ignored once `projects` is set,
     // so the root config is the only one that matters (www-355t.11). Without an
