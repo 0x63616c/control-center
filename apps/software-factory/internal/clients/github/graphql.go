@@ -11,13 +11,17 @@ import (
 )
 
 // This file is this package's only user of GitHub's GraphQL API, kept to
-// exactly the two mutations REST cannot express: changing an already-open
-// pull request's draft state. See github.go's "Verified facts" above
-// PullRequestForBranch for why REST has no path for that at all, and why
-// go-github's PullRequestsService.Edit silently no-ops rather than erroring
-// if asked to.
+// exactly the mutations REST cannot express: changing an already-open pull
+// request's draft state, and enabling merge-when-ready. See github.go's
+// "Verified facts" above PullRequestForBranch for why REST has no path for
+// draft state at all, and why go-github's PullRequestsService.Edit silently
+// no-ops rather than erroring if asked to. Auto-merge is the same story:
+// go-github v78's PullRequestsService has no auto-merge-enable method because
+// REST has none — PullRequestsService.Merge merges immediately, it does not
+// arm a PR to merge itself once its requirements are met; only the
+// enablePullRequestAutoMerge mutation does that.
 //
-// No GraphQL client library is added for one mutation. The request and
+// No GraphQL client library is added for these few mutations. The request and
 // response shapes here are the whole of what this service needs from GitHub's
 // GraphQL API; a hand-rolled POST is narrower than a generated client whose
 // types would cross this package's boundary the moment a caller touched them
@@ -39,6 +43,20 @@ const markReadyMutation = `mutation($id: ID!) {
   markPullRequestReadyForReview(input: {pullRequestId: $id}) {
     pullRequest {
       isDraft
+    }
+  }
+}`
+
+// enableAutoMergeMutation arms a pull request to merge itself, squash, the
+// moment its branch protection requirements (the required approval) are met
+// and its checks are green. It does not merge anything itself — that is what
+// distinguishes it from PullRequestsService.Merge.
+const enableAutoMergeMutation = `mutation($id: ID!) {
+  enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: SQUASH}) {
+    pullRequest {
+      autoMergeRequest {
+        enabledAt
+      }
     }
   }
 }`
@@ -72,16 +90,27 @@ type graphQLResponse struct {
 // PullRequestForBranch and the create-or-edit path in github.go for where
 // NodeID is populated on work.PullRequest.
 func (c *Client) ConvertPullRequestToDraft(ctx context.Context, nodeID string) error {
-	return c.setPullRequestDraftState(ctx, nodeID, "converting", "to draft", convertDraftMutation, "converted pull request to draft")
+	return c.runPullRequestMutation(ctx, nodeID, "converting", "to draft", convertDraftMutation, "converted pull request to draft")
 }
 
 // MarkPullRequestReadyForReview marks a draft pull request ready for human review.
 func (c *Client) MarkPullRequestReadyForReview(ctx context.Context, nodeID string) error {
-	return c.setPullRequestDraftState(ctx, nodeID, "marking", "ready for review", markReadyMutation, "marked pull request ready for review")
+	return c.runPullRequestMutation(ctx, nodeID, "marking", "ready for review", markReadyMutation, "marked pull request ready for review")
 }
 
-// setPullRequestDraftState sends one of GitHub's two GraphQL draft-state mutations.
-func (c *Client) setPullRequestDraftState(ctx context.Context, nodeID, verb, state, mutation, successMessage string) error {
+// EnablePullRequestAutoMerge arms a pull request to squash-merge itself once
+// its required approval and checks are satisfied. Call sites must only reach
+// this once the pull request is already out of draft — GitHub accepts the
+// mutation on a draft PR too, which would arm a still-iterating draft to
+// merge the moment someone later approves it.
+func (c *Client) EnablePullRequestAutoMerge(ctx context.Context, nodeID string) error {
+	return c.runPullRequestMutation(ctx, nodeID, "enabling", "auto-merge", enableAutoMergeMutation, "enabled auto-merge on pull request")
+}
+
+// runPullRequestMutation sends one of this file's single-id GraphQL mutations
+// against a pull request and reports success or failure; the mutation's own
+// answer is never decoded, because every call site already knows what it asked for.
+func (c *Client) runPullRequestMutation(ctx context.Context, nodeID, verb, state, mutation, successMessage string) error {
 	op := fmt.Sprintf("%s pull request %s %s", verb, nodeID, state)
 	if nodeID == "" {
 		return permanent(op, ErrInvalid, fmt.Errorf("no pull request node id was supplied"))
