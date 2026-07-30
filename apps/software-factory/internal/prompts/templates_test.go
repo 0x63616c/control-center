@@ -117,33 +117,74 @@ func TestBaseFencesTheIssueTextWithTheRunsNonce(t *testing.T) {
 	}
 }
 
-func TestDocumentVarNamesEachStagesOutputAsThatStageDoes(t *testing.T) {
+func TestEveryStageHasASchemaAndTheyAreDistinct(t *testing.T) {
 	t.Parallel()
 
+	seen := map[string]work.Stage{}
+	for _, stage := range work.Pipeline() {
+		file, err := stageSchema(stage)
+		if err != nil {
+			t.Fatalf("stageSchema(%s): %v", stage, err)
+		}
+		if other, ok := seen[file]; ok {
+			t.Errorf("stages %s and %s share the schema %s", stage, other, file)
+		}
+		seen[file] = stage
+
+		if _, err := templates.ReadFile(file); err != nil {
+			t.Fatalf("the schema for %s is not embedded: %v", stage, err)
+		}
+	}
+}
+
+// TestBuildStageInputProducesTheSameVariableNamesAsToday is the regression
+// guard for the typed input seam: it proves buildStageInput's per-stage
+// structs emit the same template placeholder names documentVar used to
+// produce (plan, review, revised_plan, implementation_report), so this
+// redesign is a pure refactor of the seam and not a template-visible change.
+// No templates/*.md file needed a placeholder rename because of it.
+func TestBuildStageInputProducesTheSameVariableNamesAsToday(t *testing.T) {
+	t.Parallel()
+
+	prior := map[work.Stage]work.StageOutput{
+		work.StagePlan:      work.NewStageOutput(work.StagePlan, work.DocumentOutput{Document: "the plan"}),
+		work.StageReview:    work.NewStageOutput(work.StageReview, work.DocumentOutput{Document: "the review"}),
+		work.StageRevise:    work.NewStageOutput(work.StageRevise, work.DocumentOutput{Document: "the revised plan"}),
+		work.StageImplement: work.NewStageOutput(work.StageImplement, work.ImplementOutput{Report: "the report"}),
+	}
+
 	cases := []struct {
-		produced work.Stage
-		want     string
+		stage work.Stage
+		want  []string
 	}{
-		{produced: work.StagePlan, want: "plan"},
-		{produced: work.StageReview, want: "review"},
-		{produced: work.StageRevise, want: "revised_plan"},
-		{produced: work.StageImplement, want: "implementation_report"},
+		{stage: work.StagePlan, want: nil},
+		{stage: work.StageReview, want: []string{"plan"}},
+		{stage: work.StageRevise, want: []string{"plan", "review"}},
+		{stage: work.StageImplement, want: []string{"revised_plan"}},
+		{stage: work.StagePropose, want: []string{"implementation_report"}},
 	}
 
 	for _, tc := range cases {
-		got, err := documentVar(tc.produced)
-		if err != nil {
-			t.Fatalf("documentVar(%s): %v", tc.produced, err)
-		}
-		if got != tc.want {
-			t.Errorf("documentVar(%s) = %q, want %q", tc.produced, got, tc.want)
-		}
-	}
+		t.Run(string(tc.stage), func(t *testing.T) {
+			t.Parallel()
 
-	// Nothing follows propose, so asking for its variable is a bug in the
-	// caller rather than a name we have not chosen yet.
-	if _, err := documentVar(work.StagePropose); err == nil {
-		t.Error("documentVar(propose) returned a name; no stage reads the proposal")
+			in, err := buildStageInput(tc.stage, prior)
+			if err != nil {
+				t.Fatalf("buildStageInput(%s): %v", tc.stage, err)
+			}
+			values, err := in.templateValues()
+			if err != nil {
+				t.Fatalf("templateValues(%s): %v", tc.stage, err)
+			}
+			if len(values) != len(tc.want) {
+				t.Fatalf("%s produced %v, want variables %v", tc.stage, values, tc.want)
+			}
+			for _, name := range tc.want {
+				if _, ok := values[name]; !ok {
+					t.Errorf("%s did not produce {{%s}}, which documentVar produced today", tc.stage, name)
+				}
+			}
+		})
 	}
 }
 

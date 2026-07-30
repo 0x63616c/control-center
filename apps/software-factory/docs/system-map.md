@@ -132,20 +132,34 @@ step in the ordinary sense. It is not. Nothing in the pipeline reviews the diff.
 
 ### Handoff is prose, not data
 
-ADR-0011 says a plan "travels as data, not as conversation". In the code, all five stages share
-**one** schema (`templates/envelope.schema.json`):
+ADR-0011 says a plan "travels as data, not as conversation". As of [#415][415]'s first wave,
+each stage has its **own** schema (`templates/plan.schema.json` … `templates/propose.schema.json`)
+instead of one shared envelope. `plan`, `review`, `revise` and `propose` still answer in one
+string field:
 
 ```json
 { "document": { "type": "string", "description": "The stage's whole output, as markdown." } }
 ```
 
-One string field. The schema is transport; content is taught in prose and read back as prose.
-Its first line doubles as the status shown on the issue. So the structure is real at the
-transport layer and absent at the content layer, which is the substance of [#415][415].
+`implement` now also answers `blocked` (boolean) and `blocked_reason` (string), alongside its
+`report` string. That is real structure at the content layer, not only the wire — but nothing
+reads it yet. `implement.md` fills the fields, `prompts.Decode` constructs the typed
+`work.ImplementOutput{Report, Blocked, BlockedReason}` from them, and it stops there: no stage's
+prompt and no workflow code branches on `Blocked` in this step. The field exists so step 5's
+`implement`/review loop can start reading it without inventing the schema-plus-Go-type mechanism
+from scratch; wiring a reader now would be work step 5 immediately supersedes.
 
-`Prior` carries **every** completed stage's document forward, not a rolling handoff
-(`workticket.go:193`), but each prompt injects only what it needs: review gets the plan; revise
-gets plan + review; implement gets the revised plan; propose gets the implementation report.
+The carrier changed to match: a stage's output is `work.StageOutput`, a closed sum type over
+`work.DocumentOutput` (plan/review/revise/propose) and `work.ImplementOutput` (implement) — never
+a struct wide enough to hold both at once, so nothing downstream can read one stage's field off a
+value another stage produced.
+
+`Prior` carries **every** completed stage's output forward, not a rolling handoff
+(`workticket.go`), keyed by stage — one slot per stage, last-write-wins, which is the whole
+history on today's linear one-pass-per-stage pipeline. Each prompt injects only what it needs, via
+a typed input struct per stage (`internal/prompts/input.go`) rather than a generic lookup table:
+review gets the plan; revise gets plan + review; implement gets the revised plan; propose gets the
+implementation report.
 
 ### Prompt injection defences that are in place
 
@@ -176,7 +190,10 @@ diff is model work; opening a PR is an API call with no judgment in it.
 below says the work was not completed"* — the implementation report, which the same prompt
 fences as untrusted at line 35. Its one objective check is "the branch has no commits ahead of
 `main`", and commits existing is not the work being done. The workflow refuses to trust stage
-text for the outcome; propose trusts it for the decision.
+text for the outcome; propose trusts it for the decision. **Unresolved by [#415][415]'s first
+wave, deliberately**: `propose` is deleted entirely in step 5, as a stage and as a word, so
+rewiring its prompt now would be thrown away almost immediately. The fix is deletion, not a patch
+to a stage about to stop existing.
 
 ## Trust and coupling: liveness
 
@@ -270,7 +287,10 @@ they are visible in one place.
   from a red result, a review finding, or a changes-requested review to another attempt.
   Re-work means a human re-adds `auto`, which starts a **fresh run from `plan`** with a new run
   ID and a new branch.
-- **No structured stage output.** One markdown string per stage ([#415][415]).
+- **Structured stage output only partly landed.** [#415][415]'s first wave gave each stage its own
+  schema and gave `implement` a real `blocked`/`blocked_reason` pair, but nothing reads either
+  field yet, and `plan`/`review`/`revise`/`propose` still answer in one prose string apiece — see
+  "Handoff is prose, not data" above.
 - **No per-stage capability enforcement.** Read-only is prose.
 - **No network isolation.** Flannel implements no policy engine; the cluster has zero
   NetworkPolicies. An egress allowlist would be a no-op file.
@@ -296,7 +316,9 @@ The transcript volume is the whole NFS share, including cluster backups and medi
   payload-only.
 - **[#426][426]** — a resumed stage reports 0 tokens as though measured.
 - **[#428][428]** — sandbox cannot run `-race` or `golangci-lint`.
-- **[#415][415]** — stage output the worker acts on should be typed fields.
+- **[#415][415]** — per-stage schemas and a typed input seam landed; nothing acts on `implement`'s
+  new `blocked`/`blocked_reason` fields yet, and the other four stages still carry one prose
+  field. Step 5 is expected to wire it up as part of the pipeline redesign.
 - **[#416][416]**, **[#417][417]** — the sandbox's GitHub token: readable, and expires mid-run.
 - **[#412][412]** — transcript mount is the whole share.
 - **[#331][331]** — status comment renders `in` as a loop total including the cached part.

@@ -3,6 +3,7 @@ package activities
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -169,23 +170,29 @@ type fakePrompts struct {
 	schema []byte
 	err    error
 
-	documentErr error
+	decodeErr error
+	// decode, when set, overrides the default document-shaped decode below —
+	// used by tests exercising implement's ImplementOutput shape.
+	decode func(stage work.Stage, result []byte) (work.StageOutput, error)
 
 	sawStage work.Stage
-	sawPrior map[work.Stage]string
+	sawPrior map[work.Stage]work.StageOutput
 }
 
-func (f *fakePrompts) Render(stage work.Stage, _ work.TicketDetail, prior map[work.Stage]string) (string, []byte, error) {
+func (f *fakePrompts) Render(stage work.Stage, _ work.TicketDetail, prior map[work.Stage]work.StageOutput) (string, []byte, error) {
 	f.sawStage = stage
 	f.sawPrior = maps.Clone(prior)
 	return f.prompt, f.schema, f.err
 }
 
-func (f *fakePrompts) Document(result []byte) (string, error) {
-	if f.documentErr != nil {
-		return "", f.documentErr
+func (f *fakePrompts) Decode(stage work.Stage, result []byte) (work.StageOutput, error) {
+	if f.decodeErr != nil {
+		return work.StageOutput{}, f.decodeErr
 	}
-	return "document of " + string(result), nil
+	if f.decode != nil {
+		return f.decode(stage, result)
+	}
+	return work.NewStageOutput(stage, work.DocumentOutput{Document: "document of " + string(result)}), nil
 }
 
 // fakeStatus renders a report to something a test can recognise without
@@ -677,7 +684,7 @@ func TestWriteCodexCredentialFailsLoudlyWhenTheSandboxCannotBeWrittenTo(t *testi
 
 // --- stages ----------------------------------------------------------------
 
-func stageInput(stage work.Stage, prior map[work.Stage]string) RunStageInput {
+func stageInput(stage work.Stage, prior map[work.Stage]work.StageOutput) RunStageInput {
 	return RunStageInput{
 		Key:     work.StageKey{Ticket: 328, RunID: "run-1", Stage: stage},
 		Sandbox: "sandbox-328",
@@ -812,7 +819,10 @@ func TestRunStageHandsEveryPriorDocumentToTheRenderer(t *testing.T) {
 	a := mustNew(t, d)
 	e.RegisterActivity(a.RunStage)
 
-	prior := map[work.Stage]string{work.StagePlan: "the plan", work.StageReview: "the review"}
+	prior := map[work.Stage]work.StageOutput{
+		work.StagePlan:   work.NewStageOutput(work.StagePlan, work.DocumentOutput{Document: "the plan"}),
+		work.StageReview: work.NewStageOutput(work.StageReview, work.DocumentOutput{Document: "the review"}),
+	}
 	if _, err := e.ExecuteActivity(a.RunStage, stageInput(work.StageRevise, prior)); err != nil {
 		t.Fatalf("RunStage: %v", err)
 	}
@@ -822,11 +832,49 @@ func TestRunStageHandsEveryPriorDocumentToTheRenderer(t *testing.T) {
 	if prompts.sawStage != work.StageRevise {
 		t.Fatalf("renderer saw stage %q", prompts.sawStage)
 	}
-	if prompts.sawPrior[work.StagePlan] != "the plan" || prompts.sawPrior[work.StageReview] != "the review" {
+	if prompts.sawPrior[work.StagePlan].Prose() != "the plan" || prompts.sawPrior[work.StageReview].Prose() != "the review" {
 		t.Fatalf("renderer saw prior %v, want both the plan and the review", prompts.sawPrior)
 	}
 	if stages.sawRun.Prompt != "do the thing" || string(stages.sawRun.Schema) != `{"type":"object"}` {
 		t.Fatalf("the rendered prompt and schema must reach the stage runner, got %+v", stages.sawRun)
+	}
+}
+
+// TestRunStageCarriesImplementsBlockedFields proves Blocked/BlockedReason
+// survive from the decoded envelope through to the activity's own result,
+// on the concrete work.ImplementOutput type — not merely as prose folded
+// into the document every other stage answers in.
+func TestRunStageCarriesImplementsBlockedFields(t *testing.T) {
+	t.Parallel()
+
+	d := deps()
+	d.Prompts = &fakePrompts{decode: func(stage work.Stage, _ []byte) (work.StageOutput, error) {
+		return work.NewStageOutput(stage, work.ImplementOutput{
+			Report: "did the work", Blocked: true, BlockedReason: "needs a human",
+		}), nil
+	}}
+	d.Stages = &fakeStages{result: work.StageResult{
+		Output: []byte(`{"report":"did the work","blocked":true,"blocked_reason":"needs a human"}`),
+	}}
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.RunStage)
+
+	val, err := e.ExecuteActivity(a.RunStage, stageInput(work.StageImplement, nil))
+	if err != nil {
+		t.Fatalf("RunStage: %v", err)
+	}
+
+	var out RunStageOutput
+	if err := val.Get(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	got, ok := out.Result.Value().(work.ImplementOutput)
+	if !ok {
+		t.Fatalf("Result.Value() = %T, want work.ImplementOutput", out.Result.Value())
+	}
+	if !got.Blocked || got.BlockedReason != "needs a human" {
+		t.Fatalf("Blocked/BlockedReason did not survive to the activity's output: %+v", got)
 	}
 }
 
@@ -1059,8 +1107,8 @@ func TestRunStageReturnsTheDocumentInsideTheEnvelopeNotTheEnvelope(t *testing.T)
 	if err := val.Get(&out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if out.Document != "document of "+string(envelope) {
-		t.Fatalf("Document = %q — it must come from the seam that owns the envelope format", out.Document)
+	if out.Result.Prose() != "document of "+string(envelope) {
+		t.Fatalf("Result.Prose() = %q — it must come from the seam that owns the envelope format", out.Result.Prose())
 	}
 	if string(out.Output) != string(envelope) {
 		t.Fatalf("Output = %q, want the raw envelope kept for the transcript", out.Output)
@@ -1071,7 +1119,7 @@ func TestRunStageFailsWhenTheEnvelopeCannotBeRead(t *testing.T) {
 	t.Parallel()
 
 	d := deps()
-	d.Prompts = &fakePrompts{documentErr: errors.New("no document field")}
+	d.Prompts = &fakePrompts{decodeErr: errors.New("no document field")}
 	d.Stages = &fakeStages{result: work.StageResult{Output: []byte(`{"nonsense":1}`)}}
 	e := env(t)
 	a := mustNew(t, d)
@@ -1080,5 +1128,41 @@ func TestRunStageFailsWhenTheEnvelopeCannotBeRead(t *testing.T) {
 	if _, err := e.ExecuteActivity(a.RunStage, stageInput(work.StagePlan, nil)); err == nil {
 		t.Fatal("a stage that answered in some other shape has not done its job; carrying an empty document " +
 			"into the next prompt would hide that")
+	}
+}
+
+// TestRunStageOutputRefusesThePreThisStepShape covers the real migration path,
+// which is the activity *result* decode and not StageOutput.UnmarshalJSON.
+//
+// Before this step the result carried `Document string`; it now carries
+// `Result work.StageOutput`. That is a rename, so a pre-deploy payload has no
+// "Result" key at all and StageOutput.UnmarshalJSON is never reached — plain
+// encoding/json, which is exactly what the SDK's JSONPayloadConverter runs,
+// would drop the unrecognised "Document" and hand back a zero Result with no
+// error. A run in flight across the deploy would then replay as though the
+// completed stage had produced nothing, and fail later somewhere unrelated
+// (buildStageInput's missing-prior check) instead of here, where the mismatch
+// is. RunStageOutput.UnmarshalJSON is what makes it fail here.
+func TestRunStageOutputRefusesThePreThisStepShape(t *testing.T) {
+	t.Parallel()
+
+	// The literal shape a pre-this-step RunStage activity result was written
+	// to history as: no json struct tags on the type, so bare Go field names.
+	old := []byte(`{"Output":"e30=","Document":"the plan itself","ThreadID":"thread_1",` +
+		`"Usage":{"InputTokens":1,"OutputTokens":2}}`)
+
+	payload, err := converter.GetDefaultDataConverter().ToPayload(json.RawMessage(old))
+	if err != nil {
+		t.Fatalf("building the payload: %v", err)
+	}
+
+	var out RunStageOutput
+	err = converter.GetDefaultDataConverter().FromPayload(payload, &out)
+	if err == nil {
+		t.Fatalf("decoding a pre-this-step result must fail loudly; it produced Result.Prose() = %q, "+
+			"which would replay as though the stage produced nothing", out.Result.Prose())
+	}
+	if !strings.Contains(err.Error(), "Document") {
+		t.Fatalf("the error must name the field that no longer exists, got: %v", err)
 	}
 }

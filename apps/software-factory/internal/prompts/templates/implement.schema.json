@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "software-factory implement output",
+  "description": "What the implement stage returns: its report as markdown, and whether it finished.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["report", "blocked", "blocked_reason"],
+  "properties": {
+    "report": {
+      "type": "string",
+      "description": "The implementation report, as markdown. Its first line is one sentence summarising the outcome."
+    },
+    "blocked": {
+      "type": "boolean",
+      "description": "True if the stage did not complete the work: blocked, or the revised plan turned out unimplementable."
+    },
+    "blocked_reason": {
+      "type": "string",
+      "description": "Why, when blocked is true. Empty string when blocked is false."
+    }
+  }
+}

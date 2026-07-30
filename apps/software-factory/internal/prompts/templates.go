@@ -12,7 +12,7 @@ import (
 // string literals, so changing what a stage is told is a markdown edit that
 // reviews as prose. See NOTES.md for what each one is for.
 //
-//go:embed templates/*.md templates/envelope.schema.json
+//go:embed templates/*.md templates/*.schema.json
 var templates embed.FS
 
 // baseTemplate is prefixed to every stage prompt. It carries the role, the
@@ -40,48 +40,25 @@ func stageTemplate(stage work.Stage) (string, error) {
 	return "", fmt.Errorf("no prompt for stage %q: it is not a stage of this pipeline", stage)
 }
 
-// reads returns the earlier stages whose documents a stage's prompt
-// interpolates, in the order the prompt presents them.
+// stageSchema names the file holding one stage's own output schema — the
+// JSON Schema handed to codex as --output-schema for that stage.
 //
-// This is the handoff graph, and it lives here because the templates are what
-// define it: `review.md` asks for the plan, so review reads plan. A stage
-// handed more than this is shown only what it asks for.
-func reads(stage work.Stage) []work.Stage {
+// The switch is exhaustive and has no default, matching stageTemplate: a
+// sixth stage must be given a schema here before it will compile.
+func stageSchema(stage work.Stage) (string, error) {
 	switch stage {
 	case work.StagePlan:
-		return nil
+		return "templates/plan.schema.json", nil
 	case work.StageReview:
-		return []work.Stage{work.StagePlan}
+		return "templates/review.schema.json", nil
 	case work.StageRevise:
-		return []work.Stage{work.StagePlan, work.StageReview}
+		return "templates/revise.schema.json", nil
 	case work.StageImplement:
-		return []work.Stage{work.StageRevise}
+		return "templates/implement.schema.json", nil
 	case work.StagePropose:
-		return []work.Stage{work.StageImplement}
+		return "templates/propose.schema.json", nil
 	}
-	return nil
-}
-
-// documentVar is the template variable a stage's document is interpolated as.
-//
-// Each is named for what its producing stage calls its own output — plan
-// produces "the plan", revise produces "the revised plan" — so no stage refers
-// to another's work by a name that stage does not use for itself.
-func documentVar(produced work.Stage) (string, error) {
-	switch produced {
-	case work.StagePlan:
-		return "plan", nil
-	case work.StageReview:
-		return "review", nil
-	case work.StageRevise:
-		return "revised_plan", nil
-	case work.StageImplement:
-		return "implementation_report", nil
-	case work.StagePropose:
-		// Nothing follows propose, so its document is never interpolated.
-		return "", fmt.Errorf("the %s stage's document is read by no later stage", produced)
-	}
-	return "", fmt.Errorf("no document variable for stage %q", produced)
+	return "", fmt.Errorf("no schema for stage %q: it is not a stage of this pipeline", stage)
 }
 
 // interpolate substitutes `{{name}}` placeholders in a template.

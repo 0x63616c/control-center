@@ -1,7 +1,9 @@
 package activities
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -310,11 +312,11 @@ type RunStageInput struct {
 	// stage of the run.
 	Detail work.TicketDetail
 
-	// Prior holds every completed stage's document, keyed by the stage that
+	// Prior holds every completed stage's output, keyed by the stage that
 	// produced it, and is empty for the first stage. Every one of them, not
 	// only the last: revise reads the plan as well as the review, and the plan
 	// is two stages back by then.
-	Prior map[work.Stage]string
+	Prior map[work.Stage]work.StageOutput
 }
 
 // RunStageOutput is what a stage produced.
@@ -327,12 +329,45 @@ type RunStageOutput struct {
 	// and any later forensics want.
 	Output []byte
 
-	// Document is the document inside that envelope, which is what the next
-	// stage's prompt is rendered from.
-	Document string
+	// Result is the stage-specific output decoded out of that envelope, which
+	// is what the next stage's prompt is rendered from.
+	Result work.StageOutput
 
 	ThreadID string
 	Usage    work.Usage
+}
+
+// UnmarshalJSON decodes a stage's activity result, refusing any key this
+// struct has no field for.
+//
+// This is the workflow-history migration boundary, and the strictness is the
+// point. The SDK's JSONPayloadConverter decodes an activity result with a
+// plain json.Unmarshal, which ignores unrecognised keys — so a field *rename*
+// (this step's `Document string` becoming `Result work.StageOutput`) would
+// otherwise decode a pre-deploy payload without error and leave the renamed
+// field at its zero value. work.StageOutput's own UnmarshalJSON cannot catch
+// that: it only runs when a "Result" key is present, and a pre-deploy payload
+// has none. A run in flight across such a deploy would replay as though a
+// completed stage had produced nothing and fail later, somewhere unrelated, as
+// a missing-prior error rather than a decode error naming the real mismatch.
+//
+// The cost is that removing or renaming a field here becomes a loud break for
+// in-flight runs, which is the intended trade: adding a field stays
+// compatible, because an absent key is not an unknown one.
+func (o *RunStageOutput) UnmarshalJSON(data []byte) error {
+	// A distinct type so decoding does not re-enter this method. Its fields,
+	// and therefore work.StageOutput's own UnmarshalJSON, are unaffected.
+	type wire RunStageOutput
+
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+
+	var w wire
+	if err := dec.Decode(&w); err != nil {
+		return fmt.Errorf("reading a stage activity result: %w", err)
+	}
+	*o = RunStageOutput(w)
+	return nil
 }
 
 // RunStage renders a stage's prompt, runs it in the sandbox, and stores its
@@ -394,14 +429,14 @@ func (a *Activities) RunStage(ctx context.Context, in RunStageInput) (RunStageOu
 		"input_tokens", result.Usage.InputTokens,
 		"output_tokens", result.Usage.OutputTokens)
 
-	document, err := a.deps.Prompts.Document(result.Output)
+	decoded, err := a.deps.Prompts.Decode(in.Key.Stage, result.Output)
 	if err != nil {
 		return RunStageOutput{}, fail(ctx, fmt.Sprintf("reading the result envelope of %s", in.Key), err)
 	}
 
 	return RunStageOutput{
 		Output:   result.Output,
-		Document: document,
+		Result:   decoded,
 		ThreadID: result.ThreadID,
 		Usage:    result.Usage,
 	}, nil

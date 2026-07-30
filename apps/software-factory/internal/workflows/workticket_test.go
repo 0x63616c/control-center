@@ -28,10 +28,21 @@ const dispatcherID = "software-factory-dispatcher"
 func stageOutput(stage work.Stage) activities.RunStageOutput {
 	return activities.RunStageOutput{
 		Output:   []byte(fmt.Sprintf(`{"document":%q}`, stage)),
-		Document: "the " + string(stage) + " document",
+		Result:   stageOutputResult(stage),
 		ThreadID: "thread-" + string(stage),
 		Usage:    work.Usage{InputTokens: 10, OutputTokens: 1},
 	}
+}
+
+// stageOutputResult builds the work.StageOutput stageOutput carries: an
+// ImplementOutput for implement (the only stage that does not answer in
+// DocumentOutput), a DocumentOutput for every other stage. Prose() reads the
+// same either way, which is all these tests key off.
+func stageOutputResult(stage work.Stage) work.StageOutput {
+	if stage == work.StageImplement {
+		return work.NewStageOutput(stage, work.ImplementOutput{Report: "the " + string(stage) + " document"})
+	}
+	return work.NewStageOutput(stage, work.DocumentOutput{Document: "the " + string(stage) + " document"})
 }
 
 // ticketHarness runs one WorkTicket workflow against fakes and records what it
@@ -53,7 +64,7 @@ type ticketHarness struct {
 
 	// what the run did.
 	ran               []work.Stage
-	priors            map[work.Stage]map[work.Stage]string
+	priors            map[work.Stage]map[work.Stage]work.StageOutput
 	models            map[work.Stage]work.Model
 	keys              map[work.Stage]work.StageKey
 	created           int
@@ -78,7 +89,7 @@ func newTicketHarness(t *testing.T) *ticketHarness {
 		env:    suite.NewTestWorkflowEnvironment(),
 		policy: work.DefaultRunPolicy(),
 		config: work.DefaultConfig(),
-		priors: map[work.Stage]map[work.Stage]string{},
+		priors: map[work.Stage]map[work.Stage]work.StageOutput{},
 		models: map[work.Stage]work.Model{},
 		keys:   map[work.Stage]work.StageKey{},
 	}
@@ -265,10 +276,10 @@ func TestWorkTicketGivesReviseBothThePlanAndTheReview(t *testing.T) {
 	// stages back. A pipeline that kept only the last document would fail every
 	// run at stage three, having already paid for two.
 	revise := h.priors[work.StageRevise]
-	if revise[work.StagePlan] != "the plan document" {
+	if revise[work.StagePlan].Prose() != "the plan document" {
 		t.Fatalf("revise saw prior %v — the plan was discarded before the stage that reads it", revise)
 	}
-	if revise[work.StageReview] != "the review document" {
+	if revise[work.StageReview].Prose() != "the review document" {
 		t.Fatalf("revise saw prior %v, want the review too", revise)
 	}
 }
@@ -289,7 +300,7 @@ func TestWorkTicketAccumulatesEveryStagesDocumentRatherThanReplacingIt(t *testin
 			t.Fatalf("%s saw %d prior documents, want %d: %v", stage, len(prior), i, prior)
 		}
 		for _, earlier := range work.Pipeline()[:i] {
-			if prior[earlier] != "the "+string(earlier)+" document" {
+			if prior[earlier].Prose() != "the "+string(earlier)+" document" {
 				t.Fatalf("%s did not receive the %s document: %v", stage, earlier, prior)
 			}
 		}

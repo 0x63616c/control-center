@@ -36,14 +36,24 @@ func ticket() work.TicketDetail {
 	}
 }
 
-// everyDocument is a prior document for every stage that produces one, so a
+// stageOutputOf builds the StageOutput a stage produces for a given prose
+// document — DocumentOutput for every stage except implement, which answers
+// in ImplementOutput instead.
+func stageOutputOf(stage work.Stage, doc string) work.StageOutput {
+	if stage == work.StageImplement {
+		return work.NewStageOutput(stage, work.ImplementOutput{Report: doc})
+	}
+	return work.NewStageOutput(stage, work.DocumentOutput{Document: doc})
+}
+
+// everyDocument is a prior output for every stage that produces one, so a
 // test can render any stage without assembling the run's history itself.
-func everyDocument() map[work.Stage]string {
-	return map[work.Stage]string{
-		work.StagePlan:      "the plan document",
-		work.StageReview:    "the review document",
-		work.StageRevise:    "the revised plan document",
-		work.StageImplement: "the implementation report document",
+func everyDocument() map[work.Stage]work.StageOutput {
+	return map[work.Stage]work.StageOutput{
+		work.StagePlan:      stageOutputOf(work.StagePlan, "the plan document"),
+		work.StageReview:    stageOutputOf(work.StageReview, "the review document"),
+		work.StageRevise:    stageOutputOf(work.StageRevise, "the revised plan document"),
+		work.StageImplement: stageOutputOf(work.StageImplement, "the implementation report document"),
 	}
 }
 
@@ -157,11 +167,11 @@ func TestRenderCarriesTheDocumentsAStageIsMeantToRead(t *testing.T) {
 			for _, produced := range tc.reads {
 				wanted[produced] = true
 			}
-			for produced, doc := range docs {
+			for produced, out := range docs {
 				// A stage handed the whole run's history must still be shown
 				// only the documents its own prompt asks for; anything else is
 				// tokens spent on context the stage was designed not to need.
-				if got, want := strings.Contains(got, doc), wanted[produced]; got != want {
+				if got, want := strings.Contains(got, out.Prose()), wanted[produced]; got != want {
 					t.Errorf("%s document present = %t, want %t", produced, got, want)
 				}
 			}
@@ -177,13 +187,21 @@ func TestRenderRefusesAStageWhoseInputDocumentIsMissing(t *testing.T) {
 	cases := []struct {
 		name  string
 		stage work.Stage
-		prior map[work.Stage]string
+		prior map[work.Stage]work.StageOutput
 	}{
 		{name: "review without a plan", stage: work.StageReview, prior: nil},
-		{name: "revise without a review", stage: work.StageRevise, prior: map[work.Stage]string{work.StagePlan: "p"}},
+		{
+			name:  "revise without a review",
+			stage: work.StageRevise,
+			prior: map[work.Stage]work.StageOutput{work.StagePlan: stageOutputOf(work.StagePlan, "p")},
+		},
 		{name: "implement without a revised plan", stage: work.StageImplement, prior: everyDocument0(work.StageRevise)},
 		{name: "propose without a report", stage: work.StagePropose, prior: everyDocument0(work.StageImplement)},
-		{name: "a blank document is no document", stage: work.StageReview, prior: map[work.Stage]string{work.StagePlan: "   \n"}},
+		{
+			name:  "a blank document is no document",
+			stage: work.StageReview,
+			prior: map[work.Stage]work.StageOutput{work.StagePlan: stageOutputOf(work.StagePlan, "   \n")},
+		},
 	}
 
 	for _, tc := range cases {
@@ -199,7 +217,7 @@ func TestRenderRefusesAStageWhoseInputDocumentIsMissing(t *testing.T) {
 
 // everyDocument0 is every prior document except the one named, so a case can
 // say which input it is withholding.
-func everyDocument0(without work.Stage) map[work.Stage]string {
+func everyDocument0(without work.Stage) map[work.Stage]work.StageOutput {
 	docs := everyDocument()
 	delete(docs, without)
 	return docs

@@ -10,10 +10,9 @@
 // them: changing what a plan should contain is an edit to prose, reviewed as
 // prose, with no struct, schema or golden file to regenerate.
 //
-// The envelope a stage answers in lives here too, for the same reason. Schema
-// and Document are the two ends of one fact — `{"document": "<markdown>"}` —
-// and splitting them would leave the writer of the schema and the reader of the
-// result free to disagree.
+// The envelope each stage answers in lives here too, for the same reason: one
+// JSON Schema and one Go decoder per stage (output.go), so the writer of a
+// stage's schema and the reader of its result cannot drift apart.
 package prompts
 
 import (
@@ -57,11 +56,11 @@ type Input struct {
 	// fence.
 	Ticket work.TicketDetail
 
-	// Prior holds each completed stage's document, keyed by the stage that
+	// Prior holds each completed stage's output, keyed by the stage that
 	// produced it. A run may pass everything it has: a stage is shown only the
 	// documents its own prompt asks for, and nothing is required of a stage
 	// that has not run yet.
-	Prior map[work.Stage]string
+	Prior map[work.Stage]work.StageOutput
 }
 
 // Render assembles the stage's whole prompt.
@@ -79,7 +78,7 @@ func (r *Renderer) Render(in Input) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	values, err := in.staticValues()
+	values, documents, err := in.staticValues()
 	if err != nil {
 		return "", err
 	}
@@ -109,7 +108,7 @@ func (r *Renderer) Render(in Input) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("rendering the %s prompt for ticket #%d: %w", in.Stage, in.Ticket.Number, err)
 	}
-	if err := checkFence(rendered, nonce, len(reads(in.Stage))); err != nil {
+	if err := checkFence(rendered, nonce, documents); err != nil {
 		return "", fmt.Errorf("rendering the %s prompt for ticket #%d: %w", in.Stage, in.Ticket.Number, err)
 	}
 	return rendered, nil
@@ -142,13 +141,15 @@ func (in Input) template() (string, error) {
 
 // staticValues is every interpolated value except the nonce, with the input
 // validated on the way: a value that cannot be rendered honestly is an error
-// here rather than a gap in the prompt.
-func (in Input) staticValues() (map[string]string, error) {
+// here rather than a gap in the prompt. The second return is how many of
+// those values are prior-stage documents — checkFence's count of the
+// document fences the render must open and close, one per document.
+func (in Input) staticValues() (map[string]string, int, error) {
 	if in.Ticket.Number <= 0 {
-		return nil, fmt.Errorf("ticket number %d is not an issue number: the prompt names the issue it is for", in.Ticket.Number)
+		return nil, 0, fmt.Errorf("ticket number %d is not an issue number: the prompt names the issue it is for", in.Ticket.Number)
 	}
 	if strings.TrimSpace(in.Ticket.Title) == "" {
-		return nil, fmt.Errorf("ticket #%d has no title: every GitHub issue has one, so this detail was not fetched", in.Ticket.Number)
+		return nil, 0, fmt.Errorf("ticket #%d has no title: every GitHub issue has one, so this detail was not fetched", in.Ticket.Number)
 	}
 
 	values := map[string]string{
@@ -158,18 +159,18 @@ func (in Input) staticValues() (map[string]string, error) {
 		"ticket_comments": comments(in.Ticket),
 	}
 
-	for _, produced := range reads(in.Stage) {
-		document := in.Prior[produced]
-		if strings.TrimSpace(document) == "" {
-			return nil, fmt.Errorf("the %s stage reads the %s stage's document, and there is none: the run cannot skip a stage", in.Stage, produced)
-		}
-		name, err := documentVar(produced)
-		if err != nil {
-			return nil, err
-		}
-		values[name] = document
+	stageInput, err := buildStageInput(in.Stage, in.Prior)
+	if err != nil {
+		return nil, 0, err
 	}
-	return values, nil
+	stageValues, err := stageInput.templateValues()
+	if err != nil {
+		return nil, 0, err
+	}
+	for name, value := range stageValues {
+		values[name] = value
+	}
+	return values, len(stageValues), nil
 }
 
 // body is the issue's description, or a statement that it has none.
