@@ -22,8 +22,8 @@ GitHub issue labelled `auto`
 work-ticket-<n>  (one child workflow per ticket, ABANDON on parent close)
         │
         ├─ FetchTicketDetail ─────── issue title, body, comments
-        ├─ CreateSandbox ─────────── one Pod, `sleep infinity`, emptyDir /work,
-        │                            per-ticket Secret mounted at auth.json
+        ├─ CreateSandbox ─────────── one Pod running its own embedded worker,
+        │                            emptyDir /work, per-ticket Secret mounted at auth.json
         ├─ WaitSandboxReady
         ├─ CloneRepo ─────────────── repo + git creds + gh hosts.yml + bot identity
         │
@@ -227,8 +227,9 @@ measurement, and the run total silently under-reports by a whole stage. That is 
 
 ## What the sandbox is
 
-One Pod per ticket, `restartPolicy: Never`, `sleep infinity` entrypoint — a session stages exec
-into, not a batch job (`clients/k8s/podspec.go:109`):
+One Pod per ticket, `restartPolicy: Never`, running its own embedded Temporal worker
+(`cmd/sandbox-worker`) that polls this run's per-ticket queue — not a batch job
+(`clients/k8s/podspec.go:109`):
 
 - `automountServiceAccountToken: false` — **no cluster access**
 - `runAsNonRoot`, explicit uid, `allowPrivilegeEscalation: false`, `capabilities: drop ALL`

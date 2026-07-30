@@ -39,15 +39,13 @@ against `main` and never carries a lockfile's `node_modules` from build day.
 Nothing performs that clone yet — #383 owns it, and `work.RepoDir` is the agreed
 destination.
 
-**The image cannot consume per-run values, and that is structural.** The pod's
-command is `sleep infinity` (`podspec.go`) and this image sets no `ENTRYPOINT`,
-so no process of ours starts at container start and nothing in the image ever
-reads its environment. Per-run values — which branch to push, the ticket, the
-run id — reach the sandbox as env on the *pod* (`SandboxSpec.Env`, set by
-whoever creates the sandbox) and are consumed by the process that acts on them,
-which is the clone/branch step in #383. Asking the image to read one has no
-implementation site: the request means "the thing that runs inside it", and that
-thing does not exist yet.
+**The pod's command is its own embedded Temporal worker (#434 step 3).** The
+image ships `cmd/sandbox-worker` at `/usr/local/bin/sandbox-worker`, and
+`podspec.go`'s `Command` runs it directly — no shell, no `sleep infinity`.
+Per-run values — which branch to push, the ticket, the run id, and which
+per-ticket Temporal queue to poll — reach it as env on the *pod*
+(`SandboxSpec.Env`, set by whoever creates the sandbox) and are read by that
+process at start, not by anything baked into the image at build time.
 
 ## Invariants a stage depends on
 

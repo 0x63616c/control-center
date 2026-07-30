@@ -76,8 +76,27 @@ func SandboxTaskQueue(runID string) string {
 // CloneRepo already uses for SF_BRANCH, so the two can never disagree about
 // which queue this pod is supposed to be polling.
 //
-// Nothing sets this on a real pod spec yet: wiring podspec.go/SandboxTemplate
-// to include it is step 3's later slice (deploy wiring). The name is fixed
-// here first so that slice, and cmd/sandbox-worker today, agree on it without
-// a second spelling appearing in either place.
+// Set on every sandbox pod's spec by SandboxTemplate.Spec (status.go), the
+// same place SandboxBranchEnv is computed per ticket — both are per-run
+// values a static template cannot hold in advance, so both are added there
+// rather than in the template's own Env map.
 const SandboxTaskQueueEnv = "SANDBOX_TASK_QUEUE"
+
+// SandboxTemporalHostPortEnv and SandboxTemporalNamespaceEnv are the
+// environment variables a sandbox pod's embedded worker dials Temporal with.
+//
+// Unlike SandboxTaskQueueEnv these are NOT per-ticket: every sandbox pod in
+// this cluster reaches the same Temporal frontend the main worker itself
+// dials, so the composition root (cmd/worker/main.go) sets both once, from
+// the exact same config.Worker fields it uses to dial Temporal for itself,
+// into SandboxTemplate's own static Env map — not computed per ticket the
+// way SandboxTaskQueueEnv is.
+//
+// The names match config.SandboxWorker's own (and the main worker's
+// TEMPORAL_HOST_PORT/TEMPORAL_NAMESPACE), deliberately: an operator who
+// already knows those two names from the main worker's Deployment does not
+// need a third pair to look up for the sandbox.
+const (
+	SandboxTemporalHostPortEnv  = "TEMPORAL_HOST_PORT"
+	SandboxTemporalNamespaceEnv = "TEMPORAL_NAMESPACE"
+)

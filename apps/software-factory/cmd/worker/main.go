@@ -343,6 +343,15 @@ func buildDeps(
 		Env: map[string]string{
 			work.CodexHomeEnv:   work.CodexHomeDir,
 			work.GhConfigDirEnv: work.GhConfigDir,
+
+			// The sandbox pod's own embedded Temporal worker (#434 step 3,
+			// cmd/sandbox-worker) dials the exact same frontend and namespace
+			// this process just dialled above — one Temporal cluster, two
+			// kinds of worker — so these are copied from cfg rather than a
+			// second pair of environment variables this process would have
+			// to be given separately for no reason.
+			work.SandboxTemporalHostPortEnv:  cfg.TemporalHostPort,
+			work.SandboxTemporalNamespaceEnv: cfg.TemporalNamespace,
 		},
 	}
 

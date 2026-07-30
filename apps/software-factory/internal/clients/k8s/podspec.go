@@ -36,18 +36,27 @@ const sandboxUID int64 = 1000
 // cluster is a single node, so those neighbours are the rest of the house.
 const workSizeLimitBytes = 20 << 30
 
+// sandboxWorkerBinaryPath is where images/sandbox/Dockerfile installs
+// cmd/sandbox-worker — a contract with that image, the same shape as
+// sandboxUID above.
+const sandboxWorkerBinaryPath = "/usr/local/bin/sandbox-worker"
+
 // allowedSandboxEnvKeys is the deny-by-default allowlist for spec.Env. A
 // container in this cluster inherits nothing from the node or kubelet — this
 // map IS the sandbox's entire environment contract (image-baked ENV
 // directives aside), so a key that reaches buildPod outside this set is
-// treated as a configuration bug, not silently passed through. Today exactly
-// three keys are ever set, all from cmd/worker/main.go and
-// work.SandboxTemplate.Spec: work.CodexHomeEnv, work.GhConfigDirEnv,
-// work.SandboxBranchEnv.
+// treated as a configuration bug, not silently passed through. Set from
+// cmd/worker/main.go's static SandboxTemplate.Env (work.CodexHomeEnv,
+// work.GhConfigDirEnv, and — new for #434 step 3 — the two Temporal env vars
+// the pod's own embedded worker dials with) and from work.SandboxTemplate.Spec
+// per ticket (work.SandboxBranchEnv, work.SandboxTaskQueueEnv).
 var allowedSandboxEnvKeys = map[string]bool{
-	work.CodexHomeEnv:     true,
-	work.GhConfigDirEnv:   true,
-	work.SandboxBranchEnv: true,
+	work.CodexHomeEnv:                true,
+	work.GhConfigDirEnv:              true,
+	work.SandboxBranchEnv:            true,
+	work.SandboxTaskQueueEnv:         true,
+	work.SandboxTemporalHostPortEnv:  true,
+	work.SandboxTemporalNamespaceEnv: true,
 }
 
 // maxPodNameLength is Kubernetes' DNS-1123 label limit, which a pod name is.
@@ -192,9 +201,15 @@ func buildPod(spec work.SandboxSpec, o options) (*corev1.Pod, error) {
 				Name:            o.containerName,
 				Image:           spec.Image,
 				ImagePullPolicy: corev1.PullIfNotPresent,
-				// A session staged into, not a job: the stages are execs. Argv
-				// only — no shell here and none in the image's entrypoint.
-				Command:   []string{"sleep", "infinity"},
+				// The pod's own embedded Temporal worker (#434 step 3,
+				// cmd/sandbox-worker) — not `sleep infinity` with stages
+				// arriving over pods/exec, which is what this line built
+				// before Sessions replaced that transport. Argv only, still:
+				// no shell here and none in the image's entrypoint, and this
+				// binary takes no arguments — its whole configuration is the
+				// env vars set below (work.SandboxTemporalHostPortEnv,
+				// work.SandboxTemporalNamespaceEnv, work.SandboxTaskQueueEnv).
+				Command:   []string{sandboxWorkerBinaryPath},
 				Env:       sortedEnv(spec.Env),
 				Resources: resources,
 				VolumeMounts: []corev1.VolumeMount{

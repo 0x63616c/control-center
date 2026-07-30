@@ -68,11 +68,17 @@ func TestBuildPodRejectsANameThatWouldExceedTheKubernetesLimit(t *testing.T) {
 	}
 }
 
-func TestBuildPodRunsSleepInfinityAsTheContainerCommandWithNoShell(t *testing.T) {
+// TestBuildPodRunsTheEmbeddedWorkerAsTheContainerCommandWithNoShell is
+// TestBuildPodRunsSleepInfinityAsTheContainerCommandWithNoShell's #434
+// replacement: the pod's own embedded Temporal worker (cmd/sandbox-worker,
+// installed by images/sandbox/Dockerfile) is what runs now, not `sleep
+// infinity` with stages arriving over pods/exec — but the argv-only
+// guarantee this test polices is unchanged either way.
+func TestBuildPodRunsTheEmbeddedWorkerAsTheContainerCommandWithNoShell(t *testing.T) {
 	t.Parallel()
 
 	c := sandboxContainer(t, mustBuild(t, validSpec()))
-	if want := []string{"sleep", "infinity"}; !reflect.DeepEqual(c.Command, want) {
+	if want := []string{sandboxWorkerBinaryPath}; !reflect.DeepEqual(c.Command, want) {
 		t.Errorf("container command = %v, want %v", c.Command, want)
 	}
 	if len(c.Args) != 0 {
@@ -210,12 +216,15 @@ func TestBuildPodAcceptsTheKnownSandboxEnvKeys(t *testing.T) {
 
 	spec := validSpec()
 	spec.Env = map[string]string{
-		work.CodexHomeEnv:     "/work/.codex",
-		work.GhConfigDirEnv:   "/work/.config/gh",
-		work.SandboxBranchEnv: "sf/ticket-42",
+		work.CodexHomeEnv:                "/work/.codex",
+		work.GhConfigDirEnv:              "/work/.config/gh",
+		work.SandboxBranchEnv:            "sf/ticket-42",
+		work.SandboxTaskQueueEnv:         "software-factory-sandbox-run-1",
+		work.SandboxTemporalHostPortEnv:  "temporal-frontend.temporal:7233",
+		work.SandboxTemporalNamespaceEnv: "software-factory",
 	}
 	if _, err := buildPod(spec, defaultOptions()); err != nil {
-		t.Fatalf("buildPod returned an unexpected error for the three known env keys: %v", err)
+		t.Fatalf("buildPod returned an unexpected error for the known env keys: %v", err)
 	}
 }
 

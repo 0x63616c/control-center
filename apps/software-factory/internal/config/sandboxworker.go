@@ -38,20 +38,19 @@ type SandboxWorker struct {
 	LogLevel slog.Level
 }
 
-// Environment variables LoadSandboxWorker reads.
-const (
-	envSandboxWorkerTemporalHostPort  = "TEMPORAL_HOST_PORT"
-	envSandboxWorkerTemporalNamespace = "TEMPORAL_NAMESPACE"
-	envSandboxWorkerLogLevel          = "LOG_LEVEL"
-)
-
 // sandboxWorkerEnvNames are the variables that must be set. LOG_LEVEL is
 // absent deliberately, the same reason workerEnvNames omits it: it is the one
 // input with a safe default.
+//
+// All three names live in internal/work (SandboxTemporalHostPortEnv,
+// SandboxTemporalNamespaceEnv, SandboxTaskQueueEnv), not as local constants
+// here: podspec.go sets them on the pod's env and this reads them back, so
+// the name has to have one home both packages import rather than two
+// spellings that could drift.
 func sandboxWorkerEnvNames() []string {
 	return []string{
-		envSandboxWorkerTemporalHostPort,
-		envSandboxWorkerTemporalNamespace,
+		work.SandboxTemporalHostPortEnv,
+		work.SandboxTemporalNamespaceEnv,
 		work.SandboxTaskQueueEnv,
 	}
 }
@@ -59,9 +58,9 @@ func sandboxWorkerEnvNames() []string {
 // Validate reports whether this config can start a sandbox worker.
 func (w SandboxWorker) Validate() error {
 	required := map[string]string{
-		envSandboxWorkerTemporalHostPort:  w.TemporalHostPort,
-		envSandboxWorkerTemporalNamespace: w.TemporalNamespace,
-		work.SandboxTaskQueueEnv:          w.TaskQueue,
+		work.SandboxTemporalHostPortEnv:  w.TemporalHostPort,
+		work.SandboxTemporalNamespaceEnv: w.TemporalNamespace,
+		work.SandboxTaskQueueEnv:         w.TaskQueue,
 	}
 	for _, name := range sandboxWorkerEnvNames() {
 		if strings.TrimSpace(required[name]) == "" {
@@ -81,8 +80,8 @@ func (w SandboxWorker) Validate() error {
 // who names it and who polls it.
 func LoadSandboxWorker() (SandboxWorker, error) {
 	cfg := SandboxWorker{
-		TemporalHostPort:  os.Getenv(envSandboxWorkerTemporalHostPort),
-		TemporalNamespace: os.Getenv(envSandboxWorkerTemporalNamespace),
+		TemporalHostPort:  os.Getenv(work.SandboxTemporalHostPortEnv),
+		TemporalNamespace: os.Getenv(work.SandboxTemporalNamespaceEnv),
 		TaskQueue:         os.Getenv(work.SandboxTaskQueueEnv),
 	}
 	if err := cfg.Validate(); err != nil {
@@ -101,9 +100,9 @@ func LoadSandboxWorker() (SandboxWorker, error) {
 // variable is for, the same reason describeWorkerRequirement does for Worker.
 func describeSandboxWorkerRequirement(err error) error {
 	purposes := map[string]string{
-		envSandboxWorkerTemporalHostPort:  "the Temporal frontend to dial, host:port",
-		envSandboxWorkerTemporalNamespace: "the Temporal namespace this pod's workflow run lives in",
-		work.SandboxTaskQueueEnv:          "this pod's own per-ticket task queue, computed by CreateSandbox and read back here",
+		work.SandboxTemporalHostPortEnv:  "the Temporal frontend to dial, host:port",
+		work.SandboxTemporalNamespaceEnv: "the Temporal namespace this pod's workflow run lives in",
+		work.SandboxTaskQueueEnv:         "this pod's own per-ticket task queue, computed by CreateSandbox and read back here",
 	}
 	for name, purpose := range purposes {
 		if strings.Contains(err.Error(), name) {

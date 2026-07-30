@@ -1,12 +1,16 @@
 # syntax=docker/dockerfile:1
 
 # The per-ticket sandbox (ADR-0011): a session that stages `codex exec` into,
-# not a batch job. The pod's command is `sleep infinity` and every stage arrives
-# as a pods/exec, so nothing in here is an entrypoint in the usual sense.
+# not a batch job. The pod's command is its own embedded Temporal worker
+# (cmd/sandbox-worker, #434 step 3) — not `sleep infinity` with stages
+# arriving over pods/exec, which is what this image ran before Sessions
+# replaced that transport.
 #
-# Everything the worker runs inside this image is a contract with
-# internal/clients/k8s, and every one of those contracts is argv-only — no shell
-# is ever invoked by the worker, on any path:
+# The argv this embedded worker itself invokes is a contract with
+# internal/clients/local (the codex CLI it execs directly, as a local
+# subprocess), and the git/gh argv CloneRepo still reaches remotely through
+# internal/clients/k8s until #431 decides otherwise (see that package's
+# exec.go). Either way, no shell is ever invoked, on any path:
 #
 #   tar                           file-in, `tar -xf - -C /` (transfer.go)
 #   test                          the file-existence probe (transfer.go)
@@ -60,11 +64,12 @@ COPY apps/software-factory/go.mod apps/software-factory/go.sum ./
 RUN go mod download
 
 COPY apps/software-factory/ ./
-# The worker binary, built here for step 3 to embed in this image (prep only —
-# see the COPY below in the runtime stage; nothing invokes it in this step).
-# Same flags images/worker/Dockerfile builds it with.
+# The embedded worker binary this pod runs as its own Command (#434 step 3) —
+# NOT cmd/worker, which is the main, control-plane worker's own binary and
+# does not belong in this image. Same flags images/worker/Dockerfile builds
+# cmd/worker with.
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath -ldflags="-s -w" -o /out/worker ./cmd/worker
+    go build -trimpath -ldflags="-s -w" -o /out/sandbox-worker ./cmd/sandbox-worker
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 2: the sandbox itself.
@@ -182,11 +187,11 @@ RUN printf 'package main\nimport "C"\nfunc main() {}\n' > /tmp/cgo_check.go \
     && CGO_ENABLED=1 go build -o /tmp/cgo_check /tmp/cgo_check.go \
     && rm -f /tmp/cgo_check.go /tmp/cgo_check
 
-# Built for step 3 (an embedded Temporal worker inside the sandbox pod,
-# polling a task queue via workflow.CreateSession) but UNWIRED here: nothing
-# in this step's workflow invokes it, and the pod's command stays `sleep
-# infinity` below. Same static/no-CGO build images/worker/Dockerfile uses.
-COPY --from=build /out/worker /usr/local/bin/worker
+# The pod's own embedded Temporal worker (#434 step 3): polls this run's
+# per-ticket queue via workflow.CreateSession, and is what CMD below actually
+# runs — see podspec.go's sandboxWorkerBinaryPath, which is a contract with
+# this exact install path.
+COPY --from=build /out/sandbox-worker /usr/local/bin/sandbox-worker
 
 # uid/gid 1000, and it is a contract, not a convention: podspec.go pins
 # runAsUser/runAsGroup/fsGroup to 1000 (sandboxUID) so that Read's ownership
@@ -224,7 +229,7 @@ ENV HOME=/home/sandbox
 WORKDIR /work
 USER 1000:1000
 
-# Mirrors podspec.go's Command so `docker run` behaves like the pod does. The
-# pod sets its own, so this is documentation with a fallback, not a default the
-# cluster relies on.
-CMD ["sleep", "infinity"]
+# Mirrors podspec.go's Command (sandboxWorkerBinaryPath) so `docker run`
+# behaves like the pod does. The pod sets its own, so this is documentation
+# with a fallback, not a default the cluster relies on.
+CMD ["/usr/local/bin/sandbox-worker"]
