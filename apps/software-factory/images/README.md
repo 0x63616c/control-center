@@ -16,10 +16,13 @@ E1 (#341) left these undecided. Decided here:
   existence probe and file-out. From the base image; asserted by `smoke.sh`.
 - **`git`** — `implement` pushes its branch, which is what makes GitHub the
   durable state between stages.
-- **`bun`/`bunx` and the Go toolchain** — this repo is both, so a ticket that
-  cannot build or test one half of it cannot be worked. `bunx` is required by
-  the root `prepare` lifecycle hook. Go is copied from the builder stage so it
-  cannot drift from `go.mod`; bun matches the version CI pins.
+- **`bun`/`bunx`, Node and the Go toolchain** — this repo is both, so a ticket
+  that cannot build or test one half of it cannot be worked. Bun remains the
+  repository's package/runtime command and `bunx` is required by the root
+  `prepare` lifecycle hook. Node lets Vitest's `forks` pool create its child
+  processes through Bun's `node:child_process` compatibility layer. Go is
+  copied from the builder stage so it cannot drift from `go.mod`; bun matches
+  the version CI pins.
 - **`gcc` and `libc6-dev`** — without them `CGO_ENABLED=1 go test -race`
   cannot link, which is exactly what CI's authoritative gate runs (#428). A
   build-time CGO smoke build proves the link path works, not just that `gcc`

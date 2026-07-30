@@ -106,11 +106,12 @@ ARG GOLANGCI_LINT_SHA256=8df580d2670fed8fa984aac0507099af8df275e665215f5c7a2ae39
 # and pushes to that same checkout; ca-certificates for the OpenAI and GitHub
 # APIs; curl and unzip for the two downloads below; passwd for
 # groupadd/useradd, which trixie-slim omits; gcc and libc6-dev so
-# `CGO_ENABLED=1 go test -race` can link inside this image (#428) — both
-# listed explicitly rather than relied on as a transitive pull-in of `gcc`,
-# since that could change under a base-image bump. Verified below by a CGO
-# smoke build, not just `command -v gcc`, which would only prove the compiler
-# is on PATH and not that it can actually link a cgo package.
+# `CGO_ENABLED=1 go test -race` can link inside this image (#428); Node, because
+# Vitest's forks pool uses it through Bun's `node:child_process` compatibility
+# layer — all listed explicitly rather than relied on as a transitive pull-in.
+# That could change under a base-image bump. Verified below by a CGO smoke
+# build, not just `command -v gcc`, which would only prove the compiler is on
+# PATH and not that it can actually link a cgo package.
 #
 # procps (pgrep) is no longer installed here: it existed solely for B5's
 # pgrep-based stage-liveness probe, deleted along with the rest of the
@@ -129,6 +130,7 @@ RUN apt-get update \
         gcc \
         git \
         libc6-dev \
+        nodejs \
         passwd \
         unzip \
     && rm -rf /var/lib/apt/lists/* \
@@ -137,6 +139,7 @@ RUN apt-get update \
     && command -v cat >/dev/null \
     && command -v gcc >/dev/null \
     && command -v git >/dev/null \
+    && command -v node >/dev/null \
     && command -v printenv >/dev/null \
     && command -v rm >/dev/null
 
