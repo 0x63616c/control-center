@@ -139,11 +139,25 @@ func (r *remoteStreamer) stream(ctx context.Context, target execTarget, o stream
 // remote process. That guarantee depended on cmd/sandbox-exec, the pidfile
 // shim this method used to wrap every argv in so a caller could name and
 // signal a specific remote PID; the shim is deleted (ADR-0011, #434 step 3:
-// the reattach/kill-by-pidfile mechanism Sessions replace). A stage that
-// outlives a cancelled activity here can therefore keep running in the
-// sandbox until this whole remote transport is retired in a later slice of
-// #434, when RunStage moves to a local os/exec.Cmd the pod's own worker holds
-// and can kill directly.
+// the reattach/kill-by-pidfile mechanism Sessions replace).
+//
+// This transport survives step 3 deliberately, not as an oversight awaiting
+// cleanup. #434's own spec gates moving CloneRepo/WriteCodexCredential into
+// the sandbox pod on #431's credential-reach decision — until that lands,
+// this method is the only way either activity reaches a pod at all, and
+// deleting it would either break the build or force #431's decision here
+// instead of where it is owned. So its remaining callers, after step 3's
+// stage loop moved onto a local os/exec.Cmd the pod's own embedded worker
+// holds directly (RunStage, via internal/clients/local), are exactly two:
+// CloneRepo's git clone/checkout/push and WriteCodexCredential's credential
+// file write — both short, and both already idempotent under retry. A
+// cancelled call here can leave one of those two processes briefly alive in
+// the sandbox, but the blast radius is bounded by the pod's own lifetime:
+// DeleteSandbox destroys it at the run's end regardless, so there is no
+// window in which an orphaned clone or file write outlives the sandbox it
+// was writing into. Contrast this with the pre-#434 shape, where the same
+// gap would have applied to RunStage's own hour-long codex invocation —
+// that exposure is what step 3 actually closes.
 func (s *Sandboxes) Exec(ctx context.Context, sandbox work.SandboxID, argv []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	return s.exec(ctx, sandbox, argv, stdin, stdout, stderr)
 }
