@@ -43,6 +43,7 @@ func planOutput() *activities.RunPlanOutput {
 	var out activities.RunPlanOutput
 	fillStageOutput(&out.Output, &out.Result, &out.ThreadID, &out.Usage,
 		work.NewStageOutput(work.StagePlan, work.DocumentOutput{Document: "the plan"}))
+	out.Transcript = transcriptFor(work.StagePlan)
 	return &out
 }
 
@@ -52,6 +53,7 @@ func implementOutput(blocked bool, blockedReason, title, body string) *activitie
 		work.NewStageOutput(work.StageImplement, work.ImplementOutput{
 			Report: "implemented it", Blocked: blocked, BlockedReason: blockedReason, Title: title, Body: body,
 		}))
+	out.Transcript = transcriptFor(work.StageImplement)
 	return &out
 }
 
@@ -59,6 +61,7 @@ func reviewOutput(findings ...work.Finding) *activities.RunReviewOutput {
 	var out activities.RunReviewOutput
 	fillStageOutput(&out.Output, &out.Result, &out.ThreadID, &out.Usage,
 		work.NewStageOutput(work.StageReview, work.ReviewOutput{Document: "the review", Findings: findings}))
+	out.Transcript = transcriptFor(work.StageReview)
 	return &out
 }
 
@@ -70,6 +73,14 @@ func fillStageOutput(output *[]byte, result *work.StageOutput, threadID *string,
 	*result = value
 	*threadID = "thread-" + string(value.Stage())
 	*usage = work.Usage{InputTokens: 10, OutputTokens: 1}
+}
+
+// transcriptFor is the transcript planOutput/implementOutput/reviewOutput
+// leave on a turn's output, so a test asserting PersistTranscript relayed
+// the right bytes has a fixed value to compare against without reaching
+// into the promoted field it can't build a literal against directly.
+func transcriptFor(stage work.Stage) work.Transcript {
+	return work.Transcript(fmt.Sprintf(`{"type":"turn.completed","stage":%q}`, stage))
 }
 
 // ticketHarness runs one WorkTicket workflow against fakes and records what
@@ -88,6 +99,11 @@ type ticketHarness struct {
 
 	cloneErr error
 	draftErr error
+
+	// persistErr, when set, is returned by every PersistTranscript call — the
+	// relay is best-effort, so this exists to prove a failed one does not
+	// fail the run, not to test PersistTranscript's own retry behaviour.
+	persistErr error
 
 	// implement, keyed by turn (1-indexed). A turn not present in the map
 	// runs the default: not blocked, pushed, no title/body worth noting.
@@ -114,6 +130,12 @@ type ticketHarness struct {
 	observedCI       int
 	drafted          []string
 	postedPRComments []prComment
+
+	// persisted records what PersistTranscript was called with, keyed by
+	// stage and turn — a loop invokes each stage more than once, so a single
+	// slot per stage would let a later turn's transcript overwrite an
+	// earlier one's and hide a call that never happened for one of them.
+	persisted map[work.StageKey]activities.PersistTranscriptInput
 }
 
 // prComment is one comment postPullRequestComment posted, recorded so a test
@@ -145,6 +167,7 @@ func newTicketHarness(t *testing.T) *ticketHarness {
 		implement: map[int]*activities.RunImplementOutput{},
 		ci:        map[int]activities.ObserveCIOutput{},
 		review:    map[int][]work.Finding{},
+		persisted: map[work.StageKey]activities.PersistTranscriptInput{},
 	}
 }
 
@@ -178,6 +201,12 @@ func (h *ticketHarness) run() {
 		Return(func(_ context.Context, id work.SandboxID) error {
 			h.deleted = append(h.deleted, id)
 			return nil
+		})
+
+	env.OnActivity(acts.PersistTranscript, mock.Anything, mock.Anything).
+		Return(func(_ context.Context, in activities.PersistTranscriptInput) error {
+			h.persisted[in.Key] = in
+			return h.persistErr
 		})
 
 	env.OnActivity(acts.ClearAutoLabel, mock.Anything, 328).
@@ -327,6 +356,41 @@ func TestWorkTicketFailsBeforeAnyStageWhenTheCloneFails(t *testing.T) {
 	if len(h.deleted) != 1 || h.deleted[0] != "sandbox-328" {
 		t.Fatalf("deleted %v, want the sandbox cleaned up despite the clone failing", h.deleted)
 	}
+	// An infra failure still clears the label — ADR-0011 names "a PR opened,
+	// or blocked" as the moments it comes off, but leaving it on after a hard
+	// failure would have the dispatcher re-list and re-fail the ticket
+	// forever, which is the unbounded requeue this system exists to avoid.
+	// This is the OutcomeFailed path through finish(), distinct from
+	// decline()'s (OutcomeBlocked/OutcomeExhausted) — see finish's own
+	// doc comment.
+	if h.cleared != 1 {
+		t.Fatalf("cleared the auto label %d times, want exactly once even on an infra failure", h.cleared)
+	}
+	if h.done.Failure != work.FailureOther {
+		t.Fatalf("signalled failure kind %q, want %q — the ordinary case, not auth or rate-limit", h.done.Failure, work.FailureOther)
+	}
+}
+
+// TestWorkTicketTellsItsDispatcherWhenTheFailureWasAuth guards the
+// agent-verdict-versus-infra split's other half: the FailureKind the
+// dispatcher is signalled must actually distinguish an auth failure from an
+// ordinary one, or the dispatcher cannot tell "pause, a credential is dead"
+// from "this one ticket broke" — see work.FailureKind's own doc comment.
+func TestWorkTicketTellsItsDispatcherWhenTheFailureWasAuth(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	// The type is the whole of what a workflow sees: an activity failure
+	// crosses a process boundary, so the client's own sentinel does not
+	// survive the trip and workflow code has no business importing it.
+	h.labelErr = temporal.NewNonRetryableApplicationError(
+		"clearing the auto label: github refused this app's credentials", activities.ErrTypeAuth, nil)
+	h.run()
+
+	if h.done.Failure != work.FailureAuth {
+		t.Fatalf("signalled %+v, want an auth failure — this is the report that pauses the dispatcher, and without it "+
+			"a ticket whose label cannot be removed is re-listed every poll forever", h.done)
+	}
 }
 
 // TestWorkTicketSurfacesAnImplementFailureRatherThanAnEncodeError guards
@@ -439,6 +503,60 @@ func TestWorkTicketKeysEachTurnToThisRunWithAOneIndexedTurnNumber(t *testing.T) 
 	}
 	if len(h.reviewTurns) != 1 || h.reviewTurns[0].Turn != 1 {
 		t.Fatalf("review turns = %+v, want exactly one at turn 1", h.reviewTurns)
+	}
+}
+
+// TestWorkTicketPersistsEveryTurnsOwnTranscript is D5's whole point (#434),
+// carried forward from the five-stage pipeline to the loop: a turn's
+// transcript is written on the sandbox pod's own local disk, gone the moment
+// DeleteSandbox removes it, so the workflow must relay each one out through
+// PersistTranscript before that happens — keyed to that turn specifically,
+// not the last one seen or an empty one, since a loop invokes plan once and
+// implement/review more than once.
+func TestWorkTicketPersistsEveryTurnsOwnTranscript(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.ci = map[int]activities.ObserveCIOutput{1: red("build"), 2: green()}
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+
+	check := func(key work.StageKey, stage work.Stage) {
+		in, ok := h.persisted[key]
+		if !ok {
+			t.Fatalf("PersistTranscript was never called for %+v", key)
+		}
+		if want := transcriptFor(stage); string(in.Transcript) != string(want) {
+			t.Errorf("PersistTranscript for %+v got transcript %q, want %q — this turn's own, not another's",
+				key, in.Transcript, want)
+		}
+	}
+	check(h.implementTurns[0], work.StageImplement)
+	check(h.implementTurns[1], work.StageImplement)
+	check(h.reviewTurns[0], work.StageReview)
+}
+
+// TestWorkTicketSurvivesAFailedTranscriptRelay proves persistTranscript is
+// best-effort, the same shape as report(): a transcript is forensics, not the
+// run's actual work, and the tokens a turn spent are already spent whether or
+// not its transcript makes it home. A run must not fail because the relay
+// could not.
+func TestWorkTicketSurvivesAFailedTranscriptRelay(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.persistErr = errors.New("the transcript volume is full")
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v — a failed transcript relay must not fail the run", err)
+	}
+	result := h.result(t)
+	if result.Outcome != work.OutcomeProposed {
+		t.Fatalf("outcome = %s, want proposed despite the relay failing", result.Outcome)
 	}
 }
 
