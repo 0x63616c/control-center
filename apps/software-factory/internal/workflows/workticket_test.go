@@ -79,6 +79,7 @@ type ticketHarness struct {
 
 	cloneErr      error
 	credentialErr error
+	draftErr      error
 
 	// implement, keyed by turn (1-indexed). A turn not present in the map
 	// runs the default: not blocked, pushed, no title/body worth noting.
@@ -93,16 +94,26 @@ type ticketHarness struct {
 	reviewErr    error
 
 	// what the run did.
-	implementTurns []work.StageKey
-	reviewTurns    []work.StageKey
-	created        int
-	cloned         []work.SandboxID
-	deleted        []work.SandboxID
-	cleared        int
-	reports        []work.StatusReport
-	done           work.TicketDone
-	openOrUpdate   int
-	observedCI     int
+	implementTurns   []work.StageKey
+	reviewTurns      []work.StageKey
+	created          int
+	cloned           []work.SandboxID
+	deleted          []work.SandboxID
+	cleared          int
+	reports          []work.StatusReport
+	done             work.TicketDone
+	openOrUpdate     int
+	observedCI       int
+	drafted          []string
+	postedPRComments []prComment
+}
+
+// prComment is one comment postPullRequestComment posted, recorded so a test
+// can assert on the pull request number and body without depending on
+// PostStatus's own wording.
+type prComment struct {
+	Number int
+	Body   string
 }
 
 func newTicketHarness(t *testing.T) *ticketHarness {
@@ -168,6 +179,18 @@ func (h *ticketHarness) run() {
 		Return(func(_ context.Context, _ int) error {
 			h.cleared++
 			return h.labelErr
+		})
+
+	env.OnActivity(acts.ConvertPullRequestToDraft, mock.Anything, mock.Anything).
+		Return(func(_ context.Context, nodeID string) error {
+			h.drafted = append(h.drafted, nodeID)
+			return h.draftErr
+		})
+
+	env.OnActivity(acts.PostPullRequestComment, mock.Anything, mock.Anything, mock.Anything).
+		Return(func(_ context.Context, pr int, body string) error {
+			h.postedPRComments = append(h.postedPRComments, prComment{Number: pr, Body: body})
+			return nil
 		})
 
 	plan := env.OnActivity(acts.RunPlan, mock.Anything, mock.Anything)
@@ -745,5 +768,60 @@ func TestWorkTicketReportsTheOutcomeWithTheRunsTotal(t *testing.T) {
 	}
 	if outcome.PullRequestURL != "https://github.com/o/r/pull/9" {
 		t.Fatalf("outcome report pull request url = %q, want the one the loop opened", outcome.PullRequestURL)
+	}
+}
+
+// --- terminal-cleanup ordering (slice iii's decline, wired here) -----------
+
+func TestWorkTicketDeclinesADeclinedRunDraftFirstThenLabelThenComment(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.review = map[int][]work.Finding{
+		1: {{ID: "same-finding", Blocking: true, Summary: "one"}},
+		2: {{ID: "same-finding", Blocking: true, Summary: "still here"}},
+	}
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("a successful decline must not fail the workflow: %v", err)
+	}
+	result := h.result(t)
+	if result.Outcome != work.OutcomeExhausted {
+		t.Fatalf("outcome = %s, want exhausted", result.Outcome)
+	}
+	if len(h.drafted) != 1 || h.drafted[0] != "PR_node9" {
+		t.Fatalf("drafted %v, want exactly the run's own pull request node id once", h.drafted)
+	}
+	if h.cleared != 1 {
+		t.Fatalf("cleared the auto label %d times, want exactly once — decline owns it, finish must not also clear it", h.cleared)
+	}
+}
+
+// TestWorkTicketFailsRatherThanCompleteWhenDraftConversionExhaustsItsRetries
+// is the test that specifically guards against the looks-like-success
+// failure mode the terminal-state split exists to prevent: a declined run
+// whose pull request could not be converted to draft must not clear the
+// label and must not report a normal Complete.
+func TestWorkTicketFailsRatherThanCompleteWhenDraftConversionExhaustsItsRetries(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.review = map[int][]work.Finding{
+		1: {{ID: "same-finding", Blocking: true, Summary: "one"}},
+		2: {{ID: "same-finding", Blocking: true, Summary: "still here"}},
+	}
+	h.draftErr = temporal.NewNonRetryableApplicationError(
+		"github refused this app's credentials", activities.ErrTypeAuth, nil)
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err == nil {
+		t.Fatal("a run whose pull request could not be converted to draft must Fail, not Complete with a declined outcome")
+	}
+	if h.cleared != 0 {
+		t.Fatal("the auto label must stay on when draft conversion fails, or a Failed workflow's ticket looks resolved")
+	}
+	if len(h.postedPRComments) != 0 {
+		t.Fatal("no full-detail comment was set on this run, so none should have posted")
 	}
 }

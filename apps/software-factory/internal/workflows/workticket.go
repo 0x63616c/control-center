@@ -127,7 +127,14 @@ func WorkTicket(ctx workflow.Context, in WorkTicketInput) (WorkTicketResult, err
 		comments: map[work.StatusStep]work.CommentID{},
 	}
 	result, err := run.execute(ctx)
-	run.finish(ctx, result, err)
+	// finish's own error is the terminal-cleanup sequence's, not execute's:
+	// draft conversion exhausting its retries on a declined run is the one
+	// cleanup failure that must turn a normal Complete into a Fail (see
+	// finish's own doc comment and terminal.go's decline) — everything else
+	// finish does is best-effort and already logs rather than returns.
+	if finishErr := run.finish(ctx, result, err); finishErr != nil && err == nil {
+		err = finishErr
+	}
 	return result, err
 }
 
@@ -259,11 +266,16 @@ func (r *ticketRun) execute(ctx workflow.Context) (WorkTicketResult, error) {
 // when it matters most — cancellation is the case where a pod is most likely to
 // be left behind.
 //
-// Nothing here can fail the run: it is called after the outcome is decided, and
-// a failure to tidy up must not overwrite the reason a run ended. Each step logs
-// instead, and the one that matters — the pod — is caught by the dispatcher's
-// orphan sweep if it fails here too.
-func (r *ticketRun) finish(ctx workflow.Context, result WorkTicketResult, runErr error) {
+// Almost nothing here can fail the run: it is called after the outcome is
+// decided, and a failure to tidy up must not overwrite the reason a run
+// ended, so most steps log instead of returning — the sandbox pod is caught
+// by the dispatcher's orphan sweep if DeleteSandbox fails here too. The one
+// deliberate exception is decline's own return (below): a declined run whose
+// pull request could not be converted to draft after every retry must turn
+// this run's own Complete into a Fail, per Calum's confirmed terminal-state
+// design (terminal.go's decline doc comment) — everything else about "this
+// step must not fail the run" still holds.
+func (r *ticketRun) finish(ctx workflow.Context, result WorkTicketResult, runErr error) error {
 	log := workflow.GetLogger(ctx)
 	ctx, cancel := workflow.NewDisconnectedContext(ctx)
 	defer cancel()
@@ -280,27 +292,6 @@ func (r *ticketRun) finish(ctx workflow.Context, result WorkTicketResult, runErr
 	failure := activities.FailureKindOf(runErr)
 	cancelled := temporal.IsCanceledError(runErr)
 
-	// A cancelled run decided nothing, so the ticket still wants machine work
-	// and keeps its label. Every other ending clears it — including a failure.
-	// ADR-0011 names "a PR opened, or blocked" as the moments the label comes
-	// off; leaving it on after a hard failure would mean the dispatcher lists
-	// the ticket again on the next poll and fails it again, forever, which is
-	// the unbounded requeue this system is built to avoid.
-	if !cancelled {
-		if err := workflow.ExecuteActivity(control, acts.ClearAutoLabel, r.in.Ticket.Number).Get(ctx, nil); err != nil {
-			log.Error("clearing the auto label failed; this ticket will be listed again",
-				"ticket", r.in.Ticket.Number, "error", err)
-			// An auth failure here is the case that matters: the label stays on,
-			// so the dispatcher must hear about it and pause. It only replaces
-			// the run's own kind when that kind was not already specific — a
-			// rate-limited run whose label clear also failed is still
-			// rate-limited.
-			if failure == work.FailureNone || failure == work.FailureOther {
-				failure = activities.FailureKindOf(err)
-			}
-		}
-	}
-
 	outcome := result.Outcome
 	if outcome == "" {
 		outcome = work.OutcomeFailed
@@ -309,6 +300,56 @@ func (r *ticketRun) finish(ctx workflow.Context, result WorkTicketResult, runErr
 	detail := result.Detail
 	if runErr != nil && detail == "" {
 		detail = runErr.Error()
+	}
+
+	// A cancelled run decided nothing, so the ticket still wants machine work
+	// and keeps its label — no clearing, no decline, on that path at all.
+	//
+	// Every other ending clears the label exactly once, through exactly one
+	// of two routes, never both: OutcomeBlocked and OutcomeExhausted are a
+	// decline (draft conversion, then the label, then the pull request
+	// comment — terminal.go's decline owns that whole ordered sequence, and
+	// its own failure is what can fail this run). Everything else —
+	// OutcomeProposed and OutcomeFailed alike — clears the label directly,
+	// exactly as every ending did before this step: ADR-0011 names "a PR
+	// opened, or blocked" as when the label comes off, and leaving it on
+	// after a hard failure would have the dispatcher re-list and re-fail the
+	// ticket forever, which is the unbounded requeue this system is built to
+	// avoid. A second, unconditional ClearAutoLabel here on top of decline's
+	// own would defeat the whole mechanism: a declined run whose draft
+	// conversion failed is deliberately left labelled, and clearing it
+	// anyway would make a Failed workflow's ticket look resolved.
+	var declineErr error
+	if !cancelled {
+		switch outcome {
+		case work.OutcomeBlocked, work.OutcomeExhausted:
+			declineErr = r.decline(ctx, declineDetail{
+				Outcome:     outcome,
+				Detail:      detail,
+				PullRequest: result.PullRequest,
+				FullDetail:  result.FullDetail,
+			})
+			if declineErr != nil {
+				log.Error("declining the run failed; the workflow fails rather than completes",
+					"ticket", r.in.Ticket.Number, "error", declineErr)
+				if failure == work.FailureNone || failure == work.FailureOther {
+					failure = activities.FailureKindOf(declineErr)
+				}
+			}
+		case work.OutcomeProposed, work.OutcomeFailed:
+			if err := workflow.ExecuteActivity(control, acts.ClearAutoLabel, r.in.Ticket.Number).Get(ctx, nil); err != nil {
+				log.Error("clearing the auto label failed; this ticket will be listed again",
+					"ticket", r.in.Ticket.Number, "error", err)
+				// An auth failure here is the case that matters: the label stays
+				// on, so the dispatcher must hear about it and pause. It only
+				// replaces the run's own kind when that kind was not already
+				// specific — a rate-limited run whose label clear also failed is
+				// still rate-limited.
+				if failure == work.FailureNone || failure == work.FailureOther {
+					failure = activities.FailureKindOf(err)
+				}
+			}
+		}
 	}
 
 	state := work.StepSucceeded
@@ -334,6 +375,7 @@ func (r *ticketRun) finish(ctx workflow.Context, result WorkTicketResult, runErr
 		Failure: failure,
 		Detail:  detail,
 	})
+	return declineErr
 }
 
 // tellDispatcher reports the slot free.

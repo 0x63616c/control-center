@@ -39,7 +39,7 @@ type ObserveCIInput struct {
 // ObserveCIOutput is what CI reported for one run's branch, reduced to
 // exactly the three questions the implement/review loop's progress-detection
 // rules need answered — see the pipeline-rewrite spec's "CI observation" and
-// "The real stop condition."
+// "The real stop condition" sections.
 type ObserveCIOutput struct {
 	// Concluded is whether every check run GitHub reported had reached
 	// "completed" before Bound elapsed. False means genuinely unknown, not
