@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,9 @@ const (
 	autoLabel   = "auto"
 	failedLabel = "failed"
 )
+
+// issueListAccept matches the header go-github sends for Issues.ListByRepo.
+const issueListAccept = "application/vnd.github.squirrel-girl-preview"
 
 // perPage is GitHub's maximum page size. Every listing here uses it, because
 // the cost of a listing is requests, not rows.
@@ -200,6 +204,34 @@ func newGitHubClient(hc *http.Client, baseURL string) (*gh.Client, error) {
 	return client, nil
 }
 
+// listedIssue carries the fields the auto-ticket list needs, including the
+// dependency summary omitted from go-github's Issue model.
+type listedIssue struct {
+	Number              int                       `json:"number"`
+	Title               string                    `json:"title"`
+	Body                string                    `json:"body"`
+	PullRequest         *struct{}                 `json:"pull_request"`
+	DependenciesSummary *issueDependenciesSummary `json:"issue_dependencies_summary"`
+}
+
+type issueDependenciesSummary struct {
+	BlockedBy int `json:"blocked_by"`
+}
+
+func listIssuesURL(owner, repo string, opts *gh.IssueListByRepoOptions) string {
+	query := url.Values{
+		"direction": {opts.Direction},
+		"labels":    {strings.Join(opts.Labels, ",")},
+		"per_page":  {strconv.Itoa(opts.ListOptions.PerPage)},
+		"sort":      {opts.Sort},
+		"state":     {opts.State},
+	}
+	if opts.ListOptions.Page != 0 {
+		query.Set("page", strconv.Itoa(opts.ListOptions.Page))
+	}
+	return fmt.Sprintf("repos/%v/%v/issues?%s", owner, repo, query.Encode())
+}
+
 // ListAutoTickets returns the open issues labelled `auto`, oldest first.
 //
 // All or nothing: a failure on any page returns no tickets at all. A partial
@@ -218,23 +250,34 @@ func (c *Client) ListAutoTickets(ctx context.Context) ([]work.Ticket, error) {
 
 	var tickets []work.Ticket
 	for {
-		issues, resp, err := c.api.Issues.ListByRepo(ctx, c.owner, c.repo, opts)
+		req, err := c.api.NewRequest(http.MethodGet, listIssuesURL(c.owner, c.repo, opts), nil)
+		if err != nil {
+			return nil, fmt.Errorf("%s: creating github request: %w", op, err)
+		}
+		// Match Issues.ListByRepo so this decoder changes only the response shape.
+		req.Header.Set("Accept", issueListAccept)
+
+		var issues []listedIssue
+		resp, err := c.api.Do(ctx, req, &issues)
 		if err != nil {
 			return nil, classify(ctx, op, err)
 		}
 		for _, issue := range issues {
 			// The issues endpoint returns pull requests too, and a PR carrying
 			// `auto` would be fed to the pipeline as a ticket.
-			if issue.IsPullRequest() {
+			if issue.PullRequest != nil {
 				continue
 			}
-			if issue.GetNumber() == 0 {
+			if issue.Number == 0 {
 				return nil, fmt.Errorf("%s: github returned an issue with no number", op)
 			}
+			if issue.DependenciesSummary != nil && issue.DependenciesSummary.BlockedBy > 0 {
+				continue
+			}
 			tickets = append(tickets, work.Ticket{
-				Number: issue.GetNumber(),
-				Title:  issue.GetTitle(),
-				Body:   issue.GetBody(),
+				Number: issue.Number,
+				Title:  issue.Title,
+				Body:   issue.Body,
 			})
 		}
 		if resp.NextPage == 0 {
