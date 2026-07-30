@@ -166,7 +166,7 @@ func TestCreateRefusesToAdoptAPodThatDriftsFromTheSpec(t *testing.T) {
 		{
 			name: "whose resource limits differ", field: "resources",
 			drift: func(p *corev1.Pod) {
-				p.Spec.Containers[0].Resources.Limits[corev1.ResourceMemory] = resourceQuantity(t, "8Gi")
+				p.Spec.Containers[0].Resources.Limits[corev1.ResourceMemory] = resourceQuantity(t, "16Gi")
 			},
 		},
 		{

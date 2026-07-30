@@ -315,7 +315,7 @@ func template() work.SandboxTemplate {
 	return work.SandboxTemplate{
 		Image:           "ghcr.io/example/sandbox:v1",
 		CPURequest:      "2",
-		MemoryLimit:     "4Gi",
+		MemoryLimit:     "8Gi",
 		DeadlineSeconds: int64((12 * time.Hour).Seconds()),
 		Env:             map[string]string{"CODEX_HOME": "/work/.codex"},
 	}

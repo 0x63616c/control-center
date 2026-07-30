@@ -20,7 +20,7 @@ func validSpec() work.SandboxSpec {
 		RunID:           "3f1c2a7e-0000-4000-8000-000000000001",
 		Image:           "ghcr.io/0x63616c/sandbox@sha256:" + strings.Repeat("a", 64),
 		CPURequest:      "2",
-		MemoryLimit:     "4Gi",
+		MemoryLimit:     "8Gi",
 		DeadlineSeconds: 3600,
 		Env:             map[string]string{"CODEX_HOME": "/work/.codex"},
 	}
@@ -145,14 +145,14 @@ func TestBuildPodRequestsCPUAndLimitsOnlyMemory(t *testing.T) {
 	if got := c.Resources.Requests[corev1.ResourceCPU]; got.Cmp(resource.MustParse("2")) != 0 {
 		t.Errorf("cpu request = %s, want 2", got.String())
 	}
-	if got := c.Resources.Requests[corev1.ResourceMemory]; got.Cmp(resource.MustParse("4Gi")) != 0 {
-		t.Errorf("memory request = %s, want 4Gi", got.String())
+	if got := c.Resources.Requests[corev1.ResourceMemory]; got.Cmp(resource.MustParse("8Gi")) != 0 {
+		t.Errorf("memory request = %s, want 8Gi", got.String())
 	}
 	if _, ok := c.Resources.Limits[corev1.ResourceCPU]; ok {
 		t.Error("cpu limit is present, want it absent: CPU limits are banned (#87)")
 	}
-	if got := c.Resources.Limits[corev1.ResourceMemory]; got.Cmp(resource.MustParse("4Gi")) != 0 {
-		t.Errorf("memory limit = %s, want 4Gi", got.String())
+	if got := c.Resources.Limits[corev1.ResourceMemory]; got.Cmp(resource.MustParse("8Gi")) != 0 {
+		t.Errorf("memory limit = %s, want 8Gi", got.String())
 	}
 }
 
