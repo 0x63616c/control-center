@@ -121,13 +121,16 @@ means a GitHub issue - same thing, one vocabulary.
 - One issue per request, even when several arrive together, so they close
   independently. Brain dumps record their origin (e.g. `item #22`) in the body;
   those numbers are not GitHub issue numbers.
-- **Never let a commit message auto-close a ticket you haven't validated live.**
-  `Fixes #N`/`Closes #N` in a commit body closes the issue the moment it merges
-  to `main` - before deploy finishes, before you've confirmed the fix actually
-  works against the real system. Push the fix WITHOUT a closing keyword, verify
-  it live (rerun the failing job/request/flow), THEN close with a comment
-  stating what was verified. If a keyword slips through and auto-closes early,
-  reopen immediately and say why.
+- **Merged to `main` is done - close the ticket then.** Do not hold an issue
+  open pending prod verification; that just accumulates a backlog of done-but-open
+  tickets. If the change turns out broken, file a NEW issue.
+- **Close by hand, never by keyword.** `Fixes #N`/`Closes #N` anywhere in a
+  commit body or PR description closes the issue at merge with no comment and no
+  record of what shipped - and it fires from prose about future intent too
+  (`then close #N` in a Testing section has done it). Use `Refs #N`, then
+  `gh issue close N` with a comment naming the PR (number + title) and merge
+  sha. If a keyword slips through, that is not a crisis: add the comment the
+  close should have carried.
 
 ## Workflow
 
