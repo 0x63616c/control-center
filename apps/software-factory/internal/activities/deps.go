@@ -46,8 +46,14 @@ type StageRunner interface {
 // return the identifier of a pod it created but could not wait for, and would
 // leak it. Splitting them means the caller always holds the ID it needs to
 // clean up.
+//
+// Create's codexCredential parameter is D3's (#434) credential transport: an
+// implementation writes it into a per-ticket Kubernetes Secret and mounts
+// that Secret into the pod it builds, before the pod exists — never as a
+// Temporal activity payload, and never returned from Create. Delete removes
+// that Secret alongside the pod it mounted into, symmetric with Create.
 type PodLifecycle interface {
-	Create(ctx context.Context, spec work.SandboxSpec) (work.SandboxID, error)
+	Create(ctx context.Context, spec work.SandboxSpec, codexCredential work.CredentialFile) (work.SandboxID, error)
 	WaitReady(ctx context.Context, sandbox work.SandboxID) error
 	Delete(ctx context.Context, sandbox work.SandboxID) error
 }

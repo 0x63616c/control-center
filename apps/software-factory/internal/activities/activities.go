@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"time"
 
@@ -282,6 +283,14 @@ type CreateSandboxInput struct {
 }
 
 // CreateSandbox creates the pod this run's stages execute in.
+//
+// It fetches the codex credential document from TokenSource and hands it to
+// Pods.Create in-process — never returning it, never logging it, and never
+// letting it appear anywhere Temporal records: CreateSandboxInput above is
+// this activity's whole recorded input, an identifier only, the same shape
+// CloneRepo's already was before this step (D3, #434, acceptance criterion
+// 5). Pods.Create is what turns the document into a per-ticket Kubernetes
+// Secret mounted into the pod; see PodLifecycle's own doc comment.
 func (a *Activities) CreateSandbox(ctx context.Context, in CreateSandboxInput) (work.SandboxID, error) {
 	deadline := time.Duration(a.deps.Sandbox.DeadlineSeconds) * time.Second
 	if deadline <= in.RunTimeout {
@@ -294,7 +303,12 @@ func (a *Activities) CreateSandbox(ctx context.Context, in CreateSandboxInput) (
 			deadline, in.RunTimeout, work.ErrPermanent))
 	}
 
-	id, err := a.deps.Pods.Create(ctx, a.deps.Sandbox.Spec(in.TicketNumber, in.RunID))
+	credential, err := a.deps.TokenSource.SandboxCredentialFile(ctx)
+	if err != nil {
+		return "", fail(ctx, fmt.Sprintf("fetching the codex credential for ticket #%d's sandbox", in.TicketNumber), err)
+	}
+
+	id, err := a.deps.Pods.Create(ctx, a.deps.Sandbox.Spec(in.TicketNumber, in.RunID), credential)
 	if err != nil {
 		return "", fail(ctx, fmt.Sprintf("creating the sandbox for ticket #%d", in.TicketNumber), err)
 	}
@@ -309,38 +323,27 @@ func (a *Activities) WaitSandboxReady(ctx context.Context, sandbox work.SandboxI
 	return nil
 }
 
-// WriteCodexCredential puts the codex CLI's auth.json into the sandbox at
-// work.CodexHomeDir, so codex exec can authenticate.
+// WriteCodexCredential is now a no-op, kept only because
+// internal/workflows/workticket.go still calls it at this exact point in the
+// pipeline and this slice's ownership does not extend to that file (#434,
+// D3). It does no work and returns nil unconditionally.
 //
-// It fetches from TokenSource and writes through CredentialWriter inside this
-// one activity, and returns nothing but an error: the document must never
-// cross the activity/workflow boundary, because Temporal persists an
-// activity's result to workflow history for the namespace's whole retention,
-// and a credential written there would live as long as the history does.
+// Before D3, this fetched the codex credential from TokenSource and wrote it
+// into the sandbox via CredentialWriter, inside one activity, so the document
+// never crossed the activity/workflow boundary Temporal records. D3 replaces
+// that transport entirely: CreateSandbox now fetches the same document and
+// writes it into a per-ticket Kubernetes Secret before the pod exists, and
+// the pod's own spec mounts that Secret directly at work.CodexAuthFile (see
+// k8s.buildPod). By the time a workflow reaches this call, WaitSandboxReady
+// has already returned, which means the container is already running, which
+// means the volume is already mounted — the file this activity used to write
+// is already there. Calling TokenSource again here would be real, wasted
+// OAuth-refresh work for a document nothing does anything with, so it is not
+// called at all.
 //
-// Called once per run, before the first stage, and before CloneRepo: both
-// must run once the sandbox is ready and before the first stage, and either
-// order satisfies that on its own — CodexHomeDir and RepoDir are independent
-// siblings of SandboxRoot, so neither activity touches what the other
-// writes. Credential first anyway, deliberately: the codex-auth Secret does
-// not exist in the cluster yet (#344) and every run attempted before it is
-// seeded fails here, so failing on the cheaper, more-likely-broken
-// precondition first means a run that cannot possibly proceed never also
-// pays for CloneRepo's network round trip to GitHub — a mint, a clone and a
-// push — for nothing.
-//
-// codex.NewRunner's stage runner never touches this: it execs codex inside
-// the checkout and reads CODEX_HOME from the sandbox's own environment,
-// exactly as CloneRepo reads SF_BRANCH — this activity's job ends the moment
-// the file exists.
-func (a *Activities) WriteCodexCredential(ctx context.Context, sandbox work.SandboxID) error {
-	file, err := a.deps.TokenSource.SandboxCredentialFile(ctx)
-	if err != nil {
-		return fail(ctx, "fetching the codex credential", err)
-	}
-	if err := a.deps.CredentialWriter.WriteCodexCredential(ctx, sandbox, file); err != nil {
-		return fail(ctx, fmt.Sprintf("writing the codex credential into sandbox %s", sandbox), err)
-	}
+// A follow-up should delete this method, activities.CredentialWriter, and the
+// workticket.go call, once that file is available to whoever picks it up.
+func (a *Activities) WriteCodexCredential(context.Context, work.SandboxID) error {
 	return nil
 }
 
@@ -409,6 +412,18 @@ type RunStageOutput struct {
 
 	ThreadID string
 	Usage    work.Usage
+
+	// Transcript is this attempt's whole event stream, carried home from the
+	// sandbox's own local sink so a new activity on the MAIN task queue
+	// (PersistTranscript, below) can replay it into the real, durable one —
+	// #434's step 3 (D5) moved RunStage's execution into the sandbox pod,
+	// whose local disk does not survive DeleteSandbox and must never be NFS
+	// (see internal/transcripts.Sink's own doc comment).
+	//
+	// It is the largest field on this type by far — see work.Transcript's own
+	// doc comment for the measured size — which is deliberate: nothing else
+	// should ever be added here alongside it.
+	Transcript work.Transcript
 }
 
 // UnmarshalJSON decodes a stage's activity result, refusing any key this
@@ -471,12 +486,21 @@ func (a *Activities) RunStage(ctx context.Context, in RunStageInput) (RunStageOu
 		}
 	}()
 
+	// captured mirrors every byte the transcript writer sees, so this attempt's
+	// whole event stream can travel home as RunStageOutput.Transcript once the
+	// stage finishes — see that field's own doc comment for why. A plain
+	// io.MultiWriter rather than a read-back after Close: the local sink
+	// (transcripts.Sink) only ever exposes a writer, never a reader, and
+	// reading is exactly the api this package would otherwise have to add
+	// just for this.
+	var captured bytes.Buffer
+
 	// StageEvents rather than a sink assembled here: framing belongs to
 	// transcripts.EventSink, which owns the format, and heartbeat-before-write
 	// belongs with it so a blocking transcript writer cannot silence liveness.
 	// A second assembly of the same two consumers is a second place for one of
 	// them to be left out.
-	events := StageEvents(ctx, in.Key, transcript, a.deps.Log)
+	events := StageEvents(ctx, in.Key, io.MultiWriter(transcript, &captured), a.deps.Log)
 
 	started := a.deps.Clock.Now()
 	result, err := a.deps.Stages.RunStage(ctx, work.StageRun{
@@ -509,11 +533,52 @@ func (a *Activities) RunStage(ctx context.Context, in RunStageInput) (RunStageOu
 	}
 
 	return RunStageOutput{
-		Output:   result.Output,
-		Result:   decoded,
-		ThreadID: result.ThreadID,
-		Usage:    result.Usage,
+		Output:     result.Output,
+		Result:     decoded,
+		ThreadID:   result.ThreadID,
+		Usage:      result.Usage,
+		Transcript: work.Transcript(captured.Bytes()),
 	}, nil
+}
+
+// PersistTranscriptInput names one stage attempt's transcript and carries its
+// bytes, home from the sandbox that produced them.
+type PersistTranscriptInput struct {
+	Key        work.StageKey
+	Transcript work.Transcript
+}
+
+// PersistTranscript writes one stage attempt's transcript into the durable,
+// NFS-backed transcripts.Sink this activity's own Deps.Transcripts is bound
+// to — the composition root's, never the sandbox's local one.
+//
+// It exists because RunStage no longer runs where that durable sink is
+// reachable: #434's step 3 moved stage execution into the sandbox pod's own
+// process, whose local disk is not durable and must never be NFS (see
+// internal/transcripts.Sink's own doc comment). This activity is what carries
+// the bytes the rest of the way, and it must be scheduled onto the MAIN
+// worker's task queue — internal/workflows/workticket.go's job, not this
+// package's, since ActivityOptions.TaskQueue is set at the call site.
+//
+// It writes the whole transcript in one call rather than streaming it, unlike
+// the original write RunStage's own local sink did line by line: by the time
+// this runs, the stage has already finished and every byte already exists, so
+// there is nothing left to stream incrementally.
+func (a *Activities) PersistTranscript(ctx context.Context, in PersistTranscriptInput) error {
+	w, err := a.deps.Transcripts.Open(ctx, in.Key)
+	if err != nil {
+		return fail(ctx, fmt.Sprintf("opening the durable transcript for %s", in.Key), err)
+	}
+
+	_, writeErr := w.Write(in.Transcript.Bytes())
+	closeErr := w.Close()
+	if writeErr != nil {
+		return fail(ctx, fmt.Sprintf("writing the relayed transcript for %s", in.Key), writeErr)
+	}
+	if closeErr != nil {
+		return fail(ctx, fmt.Sprintf("closing the relayed transcript for %s", in.Key), closeErr)
+	}
+	return nil
 }
 
 // FindPullRequestOutput is what GitHub says is open on a run's branch.

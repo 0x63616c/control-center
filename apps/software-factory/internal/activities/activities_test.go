@@ -81,15 +81,17 @@ func (f *fakeGitHub) PullRequestForBranch(_ context.Context, branch string) (wor
 }
 
 type fakePods struct {
-	created   []work.SandboxSpec
-	deleted   []work.SandboxID
-	createErr error
-	readyErr  error
-	deleteErr error
+	created    []work.SandboxSpec
+	sawCredent []work.CredentialFile
+	deleted    []work.SandboxID
+	createErr  error
+	readyErr   error
+	deleteErr  error
 }
 
-func (f *fakePods) Create(_ context.Context, spec work.SandboxSpec) (work.SandboxID, error) {
+func (f *fakePods) Create(_ context.Context, spec work.SandboxSpec, credential work.CredentialFile) (work.SandboxID, error) {
 	f.created = append(f.created, spec)
+	f.sawCredent = append(f.sawCredent, credential)
 	return work.SandboxID(fmt.Sprintf("sandbox-%d", spec.TicketNumber)), f.createErr
 }
 
@@ -498,8 +500,10 @@ func TestClearAutoLabelSurfacesAnAuthFailureAsTheTypeThatPausesTheDispatcher(t *
 func TestCreateSandboxRefusesAPodDeadlineTheRunCanOutlive(t *testing.T) {
 	t.Parallel()
 
+	tokens := &fakeTokenSource{}
 	d := deps()
 	d.Sandbox.DeadlineSeconds = 60
+	d.TokenSource = tokens
 	e := env(t)
 	a := mustNew(t, d)
 	e.RegisterActivity(a.CreateSandbox)
@@ -512,6 +516,9 @@ func TestCreateSandboxRefusesAPodDeadlineTheRunCanOutlive(t *testing.T) {
 	}
 	if d.Pods.(*fakePods).created != nil {
 		t.Fatal("the pod must not have been created at all")
+	}
+	if tokens.fetched != 0 {
+		t.Fatal("the credential must not be fetched for a deadline that was refused before it")
 	}
 	if got := errTypeOf(t, err); got != ErrTypePermanent {
 		t.Fatalf("type = %q, want %q — no retry changes a deploy-time number", got, ErrTypePermanent)
@@ -543,6 +550,59 @@ func TestCreateSandboxNamesThePodForTheRunAndTheTicket(t *testing.T) {
 	}
 	if spec.Image != template().Image || spec.CPULimit != template().CPULimit {
 		t.Fatalf("spec did not come from the template: %+v", spec)
+	}
+}
+
+func TestCreateSandboxFetchesTheCredentialAndPassesItToPodsCreate(t *testing.T) {
+	t.Parallel()
+
+	doc := work.NewCredentialFile([]byte(`{"tokens":{"access_token":"t"}}`))
+	pods := &fakePods{}
+	tokens := &fakeTokenSource{file: doc}
+	d := deps()
+	d.Pods, d.TokenSource = pods, tokens
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.CreateSandbox)
+
+	if _, err := e.ExecuteActivity(a.CreateSandbox, CreateSandboxInput{
+		TicketNumber: 328, RunID: "run-1", RunTimeout: 5 * time.Hour,
+	}); err != nil {
+		t.Fatalf("CreateSandbox: %v", err)
+	}
+
+	if tokens.fetched != 1 {
+		t.Fatalf("fetched the credential %d times, want 1", tokens.fetched)
+	}
+	if len(pods.sawCredent) != 1 || string(pods.sawCredent[0].Reveal()) != string(doc.Reveal()) {
+		t.Fatalf("Pods.Create did not receive the document TokenSource yielded: %+v", pods.sawCredent)
+	}
+	// CreateSandboxInput above is this activity's whole recorded input — the
+	// credential must never reach it (#434 D3, acceptance criterion 5).
+}
+
+func TestCreateSandboxFailsLoudlyWhenTheCredentialCannotBeFetched(t *testing.T) {
+	t.Parallel()
+
+	pods := &fakePods{}
+	tokens := &fakeTokenSource{err: permanent(codexauth.ErrUnseeded)}
+	d := deps()
+	d.Pods, d.TokenSource = pods, tokens
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.CreateSandbox)
+
+	_, err := e.ExecuteActivity(a.CreateSandbox, CreateSandboxInput{
+		TicketNumber: 328, RunID: "run-1", RunTimeout: 5 * time.Hour,
+	})
+	if err == nil {
+		t.Fatal("an unseeded credential must fail CreateSandbox before any pod is created")
+	}
+	if pods.created != nil {
+		t.Fatal("the pod must not be created without a credential to seal into its Secret")
+	}
+	if got := FailureKindOf(err); got != work.FailureAuth {
+		t.Fatalf("FailureKindOf = %q, want %q — a missing codex-auth secret must pause the dispatcher, not spin", got, work.FailureAuth)
 	}
 }
 
@@ -656,11 +716,16 @@ func TestCloneRepoSurfacesTheClonersFailure(t *testing.T) {
 
 // --- codex credential --------------------------------------------------
 
-func TestWriteCodexCredentialFetchesAndWritesExactlyWhatTheSourceYielded(t *testing.T) {
+// TestWriteCodexCredentialIsANoOpThatTouchesNothing proves the D3 (#434)
+// redesign: the credential now reaches the sandbox through a Secret
+// CreateSandbox provisions and buildPod mounts directly at
+// work.CodexAuthFile (see TestCreateSandboxFetchesTheCredentialAndPassesItToPodsCreate
+// and internal/clients/k8s's podspec_test.go), so this activity has nothing
+// left to do — it must not touch TokenSource or CredentialWriter at all.
+func TestWriteCodexCredentialIsANoOpThatTouchesNothing(t *testing.T) {
 	t.Parallel()
 
-	doc := work.NewCredentialFile([]byte(`{"tokens":{"access_token":"t"}}`))
-	tokens := &fakeTokenSource{file: doc}
+	tokens := &fakeTokenSource{file: work.NewCredentialFile([]byte(`{}`))}
 	writer := &fakeCredentialWriter{}
 	d := deps()
 	d.TokenSource, d.CredentialWriter = tokens, writer
@@ -671,63 +736,11 @@ func TestWriteCodexCredentialFetchesAndWritesExactlyWhatTheSourceYielded(t *test
 	if _, err := e.ExecuteActivity(a.WriteCodexCredential, work.SandboxID("sandbox-328")); err != nil {
 		t.Fatalf("WriteCodexCredential: %v", err)
 	}
-
-	if tokens.fetched != 1 {
-		t.Fatalf("fetched the credential %d times, want 1", tokens.fetched)
-	}
-	if writer.writes != 1 {
-		t.Fatalf("wrote %d times, want 1", writer.writes)
-	}
-	if writer.sawSandbox != "sandbox-328" {
-		t.Fatalf("wrote to sandbox %q, want sandbox-328", writer.sawSandbox)
-	}
-	if string(writer.sawFile.Reveal()) != string(doc.Reveal()) {
-		t.Fatal("the document written was not the document the source yielded")
-	}
-}
-
-func TestWriteCodexCredentialFailsLoudlyWhenTheSourceCannotYieldOne(t *testing.T) {
-	t.Parallel()
-
-	tokens := &fakeTokenSource{err: permanent(codexauth.ErrUnseeded)}
-	writer := &fakeCredentialWriter{}
-	d := deps()
-	d.TokenSource, d.CredentialWriter = tokens, writer
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.WriteCodexCredential)
-
-	_, err := e.ExecuteActivity(a.WriteCodexCredential, work.SandboxID("sandbox-328"))
-	if err == nil {
-		t.Fatal("an unseeded credential must fail the activity")
+	if tokens.fetched != 0 {
+		t.Fatal("a no-op must not fetch the credential — that work is real OAuth-refresh cost spent for nothing")
 	}
 	if writer.writes != 0 {
-		t.Fatal("nothing must be written when the source could not yield a document")
-	}
-	// codexauth.ErrUnseeded wraps work.ErrPermanent: this must not be retried
-	// forever against a secret nobody has created (#398), and it must page a
-	// human the same way any other auth failure does.
-	if got := FailureKindOf(err); got != work.FailureAuth {
-		t.Fatalf("FailureKindOf = %q, want %q — a missing codex-auth secret must pause the dispatcher, not spin", got, work.FailureAuth)
-	}
-}
-
-func TestWriteCodexCredentialFailsLoudlyWhenTheSandboxCannotBeWrittenTo(t *testing.T) {
-	t.Parallel()
-
-	tokens := &fakeTokenSource{file: work.NewCredentialFile([]byte(`{}`))}
-	writer := &fakeCredentialWriter{err: errors.New("exec failed")}
-	d := deps()
-	d.TokenSource, d.CredentialWriter = tokens, writer
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.WriteCodexCredential)
-
-	if _, err := e.ExecuteActivity(a.WriteCodexCredential, work.SandboxID("sandbox-328")); err == nil {
-		t.Fatal("a write failure must fail the activity")
-	}
-	if tokens.fetched != 1 {
-		t.Fatalf("fetched the credential %d times, want 1 — the source must still be asked once", tokens.fetched)
+		t.Fatal("a no-op must not write anything")
 	}
 }
 
@@ -767,6 +780,44 @@ func TestRunStageWritesOneTerminatedLinePerEventToTheTranscript(t *testing.T) {
 	}
 	if !transcript.closed.Load() {
 		t.Fatal("the transcript must be closed")
+	}
+}
+
+// TestRunStageCarriesTheWholeTranscriptHomeOnItsOutput proves D5 (#434): a
+// successful stage's whole event stream travels back on RunStageOutput, not
+// only into the sandbox's own local sink, so a later PersistTranscript
+// activity on the main queue has something to relay.
+func TestRunStageCarriesTheWholeTranscriptHomeOnItsOutput(t *testing.T) {
+	t.Parallel()
+
+	transcript := &fakeTranscript{}
+	stages := &fakeStages{
+		events: [][]byte{[]byte(`{"type":"turn.started"}`), []byte(`{"type":"turn.completed"}`)},
+		result: work.StageResult{Output: []byte(`{"ok":true}`)},
+	}
+	d := deps()
+	d.Transcripts, d.Stages = transcript, stages
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.RunStage)
+
+	val, err := e.ExecuteActivity(a.RunStage, stageInput(work.StagePlan, nil))
+	if err != nil {
+		t.Fatalf("RunStage: %v", err)
+	}
+
+	var out RunStageOutput
+	if err := val.Get(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	want := `{"type":"turn.started"}` + "\n" + `{"type":"turn.completed"}` + "\n"
+	if string(out.Transcript) != want {
+		t.Fatalf("out.Transcript = %q, want %q — exactly what the local sink received", string(out.Transcript), want)
+	}
+	// The local sink still received every byte too: the capture is a mirror,
+	// not a replacement for it.
+	if transcript.buf.String() != want {
+		t.Fatalf("the local sink = %q, want the same bytes", transcript.buf.String())
 	}
 }
 
@@ -943,6 +994,66 @@ func TestRunStageDoesNotStartTheStageWhenTheTranscriptCannotBeOpened(t *testing.
 	}
 	if stages.ranOnce {
 		t.Fatal("tokens must not be spent on a stage whose record cannot be kept")
+	}
+}
+
+// --- transcript relay --------------------------------------------------
+
+func TestPersistTranscriptWritesTheWholeDocumentThroughTheDurableSink(t *testing.T) {
+	t.Parallel()
+
+	sink := &fakeTranscript{}
+	d := deps()
+	d.Transcripts = sink
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.PersistTranscript)
+
+	key := work.StageKey{Ticket: 328, RunID: "run-1", Stage: work.StagePlan}
+	transcript := work.Transcript(`{"type":"turn.started"}` + "\n")
+	if _, err := e.ExecuteActivity(a.PersistTranscript, PersistTranscriptInput{Key: key, Transcript: transcript}); err != nil {
+		t.Fatalf("PersistTranscript: %v", err)
+	}
+
+	if sink.buf.String() != string(transcript) {
+		t.Fatalf("durable sink = %q, want %q", sink.buf.String(), string(transcript))
+	}
+	if !sink.closed.Load() {
+		t.Fatal("the durable transcript must be closed")
+	}
+}
+
+func TestPersistTranscriptFailsLoudlyWhenTheDurableSinkCannotBeOpened(t *testing.T) {
+	t.Parallel()
+
+	sink := &fakeTranscript{openErr: errors.New("no such volume")}
+	d := deps()
+	d.Transcripts = sink
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.PersistTranscript)
+
+	key := work.StageKey{Ticket: 328, RunID: "run-1", Stage: work.StagePlan}
+	_, err := e.ExecuteActivity(a.PersistTranscript, PersistTranscriptInput{Key: key, Transcript: work.Transcript("x")})
+	if err == nil {
+		t.Fatal("an unopenable durable sink must fail the activity")
+	}
+}
+
+func TestPersistTranscriptFailsLoudlyWhenTheWriteItselfFails(t *testing.T) {
+	t.Parallel()
+
+	sink := &fakeTranscript{writeErr: errors.New("volume full")}
+	d := deps()
+	d.Transcripts = sink
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.PersistTranscript)
+
+	key := work.StageKey{Ticket: 328, RunID: "run-1", Stage: work.StagePlan}
+	_, err := e.ExecuteActivity(a.PersistTranscript, PersistTranscriptInput{Key: key, Transcript: work.Transcript("x")})
+	if err == nil {
+		t.Fatal("a write failure against the durable sink must fail the activity — unlike RunStage's own local write, there is no in-memory copy of this record left anywhere else")
 	}
 }
 
