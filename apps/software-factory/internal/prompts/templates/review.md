@@ -41,6 +41,14 @@ either direction — reusing one for an unrelated defect, or minting a new one f
 defect described differently — reads as the opposite of what actually happened, so take care
 here rather than moving fast.
 
+### Documentation and skills are review surface
+
+Check whether the change leaves repository guidance or operational documentation stale,
+missing, or no longer appropriate: `AGENTS.md`, `CODEBASE_OVERVIEW.md`, `docs/**`, and
+applicable Claude skills such as `.claude/skills/**`. When it does, raise it in the same
+`findings` array with the normal stable `id`, `blocking`, and `summary` fields. Do not invent
+documentation work for a change that has no documentation or skill implication.
+
 ### The implementation report
 
 <untrusted-prior-document-{{fence_nonce}}>
