@@ -163,8 +163,10 @@ The sandbox image includes Node, Go, `gcc`/`libc6-dev`, and a pinned
 ships checksum-pinned Playwright Chromium at `/ms-playwright`; Playwright's
 dependency resolver supplies the native Trixie libraries, and the smoke test
 proves uid 1000 can write a real headless page PNG while `/work` is masked.
-Headed desktop capture and native browser-tab chrome remain out of scope:
-Playwright page screenshots are headless and do not capture a browser window.
+The resolver also supplies Xvfb and `xauth`; smoke keeps a headed Chromium
+window open at a 1366×1024 page viewport on a 1400×1100 display, so browser
+chrome does not silently shrink the panel viewport. Playwright page PNGs remain
+headless and do not themselves capture native browser chrome.
 
 ## Where a human is required
 

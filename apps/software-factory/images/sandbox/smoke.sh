@@ -134,6 +134,21 @@ check "Playwright Chromium writes a non-empty headless screenshot" 0 \
     test -s "$screenshot"
   '
 
+# `install-deps chromium` supplies Xvfb on Trixie. Keep a headed browser open
+# under a display larger than the 1366x1024 panel viewport: the acceptance
+# checklist calls out that browser chrome otherwise steals vertical pixels.
+# Playwright's `open` command is headed unless PWTEST_CLI_HEADLESS is set, and
+# `timeout` must therefore expire. A launch failure exits before 5 seconds and
+# fails this check instead of being mistaken for a working display.
+check "Playwright opens a headed 1366x1024 Chromium window under Xvfb" 124 \
+  /usr/bin/env sh -c '
+    timeout 5 xvfb-run -a -s "-screen 0 1400x1100x24" \
+      bunx --yes playwright@1.60.0 open \
+        --viewport-size "1366,1024" \
+        --user-data-dir /tmp/sandbox-playwright-headed-profile \
+        "data:text/html,%3Ch1%3Eheaded%20sandbox%20browser%3C%2Fh1%3E"
+  '
+
 # Vitest's forks pool reaches this exact Bun compatibility path. Checking only
 # `node` on PATH would miss a broken Bun-to-Node handoff.
 check "Bun can fork a Node child" 0 \

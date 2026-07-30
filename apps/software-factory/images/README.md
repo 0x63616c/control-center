@@ -36,9 +36,12 @@ E1 (#341) left these undecided. Decided here:
   `PLAYWRIGHT_BROWSERS_PATH`. Chromium's Debian Trixie libraries come from
   Playwright's own `install-deps chromium` resolver; each downloaded browser
   archive is version- and SHA-256-pinned in the Dockerfile. This lets the
-  uid-1000 sandbox take real headless page screenshots. A page screenshot does
-  not include native browser tab/window chrome, and headed desktop capture is
-  deliberately not a sandbox capability.
+  uid-1000 sandbox take real headless page screenshots. Playwright's resolver
+  also supplies Xvfb, and smoke verifies the full Chromium binary remains open
+  in a headed 1366×1024 page viewport on a 1400×1100 virtual display. A
+  Playwright page screenshot does not itself include native browser tab/window
+  chrome; the headed check exists so agent-browser-style window sessions have a
+  runnable display rather than silently falling back to an undersized viewport.
 - **A shell.** `codex exec`'s job is running shell commands on the agent's
   behalf. The argv-only rule constrains how the *worker* invokes this image, not
   what the image contains.
@@ -118,4 +121,5 @@ apps/software-factory/images/sandbox/smoke.sh sf-sandbox:local
 does to it. Anything baked under `/work` is masked at runtime; running the
 checks without the mount passes on an image that fails in the cluster.
 It also launches the baked Playwright Chromium against a `data:` URL and asserts
-the resulting PNG is non-empty.
+the resulting PNG is non-empty, then keeps a headed Chromium window open under
+Xvfb at a display size that leaves room for browser chrome.

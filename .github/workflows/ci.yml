@@ -560,6 +560,7 @@ jobs:
           docker buildx build --platform linux/amd64 --load \
             -f apps/software-factory/images/sandbox/Dockerfile \
             -t sf-sandbox:ci .
+          docker image inspect --format 'sandbox image size: {{.Size}} bytes' sf-sandbox:ci
           apps/software-factory/images/sandbox/smoke.sh sf-sandbox:ci
 
 
