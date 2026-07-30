@@ -54,6 +54,18 @@ Talos base images ship no system extensions. This node needs:
   `nvidia` below it. No extra containerd config patch needed, same precedent
   as the NVIDIA extensions.
 
+  **Verified live 2026-07-29**, after the upgrade that installed it: a throwaway
+  `Sandbox` with `spec.podTemplate.spec.runtimeClassName: kata` came up, the
+  created Pod carried `runtimeClassName: kata` (so the agent-sandbox controller
+  does propagate it), and `uname -r` inside the pod answered **`6.18.35`**
+  against the node's `6.18.39-talos` — a different kernel, which is the proof of
+  VM isolation rather than a silent fall back to `runc`. The `kata`
+  (cloud-hypervisor) handler works on this board; `kata-qemu` was not needed.
+
+  Note the **nested** path. Top-level `spec.runtimeClassName` does not exist on
+  this CRD, and a structural-schema CRD prunes it silently, so a pod declared
+  that way would come up on plain `runc` with nothing erroring.
+
 All six are **official** Image Factory extensions, valid for Talos v1.13.7
 (confirmed against `siderolabs/extensions` tag `v1.13.7`).
 
