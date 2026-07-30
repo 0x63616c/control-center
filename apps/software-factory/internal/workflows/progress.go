@@ -36,8 +36,8 @@ func sameCheckNamesSubset(a []string, b []work.CheckFailure) bool {
 	for _, failure := range b {
 		set[failure.Name] = struct{}{}
 	}
-	for _, failure := range a {
-		if _, ok := set[failure.Name]; !ok {
+	for _, name := range a {
+		if _, ok := set[name]; !ok {
 			return false
 		}
 	}
