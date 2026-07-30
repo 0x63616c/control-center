@@ -1,5 +1,12 @@
 # CODEOWNERS: security-sensitive paths require review before merge (CC-k8t7).
 # These paths gate access to AGE_PRIVATE_KEY (decrypts all 114 production secrets).
+#
+# Catch-all below makes @0x63616c the required approver repo-wide, so branch
+# protection's "require review from Code Owners" applies to every PR (see #495).
+# Human PRs bypass this requirement via the branch protection bypass list;
+# software-factory bot PRs do not, and need this approval before merging.
+
+*                              @0x63616c
 
 .github/workflows/**          @0x63616c
 secrets/**                    @0x63616c
