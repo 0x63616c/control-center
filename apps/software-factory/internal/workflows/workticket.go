@@ -185,11 +185,16 @@ func (r *ticketRun) execute(ctx workflow.Context) (WorkTicketResult, error) {
 		return WorkTicketResult{Outcome: work.OutcomeFailed}, err
 	}
 
-	// Every completed stage's document, not just the last. revise reads the
+	// Every completed stage's output, not just the last. revise reads the
 	// plan and the review, and the plan is two stages behind it by then — a
 	// single rolling handoff would have discarded it, and the run would die at
 	// stage three having paid for two.
-	prior := make(map[work.Stage]string, len(work.Pipeline()))
+	//
+	// One slot per stage, last-write-wins: today's pipeline runs each stage
+	// exactly once, so this is the whole history. See buildStageInput's own
+	// note in internal/prompts/input.go for why this does not extend to a
+	// stage invoked more than once.
+	prior := make(map[work.Stage]work.StageOutput, len(work.Pipeline()))
 
 	for _, stage := range work.Pipeline() {
 		model := r.in.Config.ModelFor(stage)
@@ -223,7 +228,7 @@ func (r *ticketRun) execute(ctx workflow.Context) (WorkTicketResult, error) {
 		// Tokens are counted as soon as the stage returns: they were spent
 		// whatever it produced.
 		r.usage = r.usage.Add(out.Usage)
-		prior[stage] = out.Document
+		prior[stage] = out.Result
 
 		r.report(ctx, work.StatusReport{
 			Step: work.StageStep(stage), State: work.StepSucceeded,

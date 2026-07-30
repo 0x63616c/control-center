@@ -310,11 +310,11 @@ type RunStageInput struct {
 	// stage of the run.
 	Detail work.TicketDetail
 
-	// Prior holds every completed stage's document, keyed by the stage that
+	// Prior holds every completed stage's output, keyed by the stage that
 	// produced it, and is empty for the first stage. Every one of them, not
 	// only the last: revise reads the plan as well as the review, and the plan
 	// is two stages back by then.
-	Prior map[work.Stage]string
+	Prior map[work.Stage]work.StageOutput
 }
 
 // RunStageOutput is what a stage produced.
@@ -327,9 +327,9 @@ type RunStageOutput struct {
 	// and any later forensics want.
 	Output []byte
 
-	// Document is the document inside that envelope, which is what the next
-	// stage's prompt is rendered from.
-	Document string
+	// Result is the stage-specific output decoded out of that envelope, which
+	// is what the next stage's prompt is rendered from.
+	Result work.StageOutput
 
 	ThreadID string
 	Usage    work.Usage
@@ -394,14 +394,14 @@ func (a *Activities) RunStage(ctx context.Context, in RunStageInput) (RunStageOu
 		"input_tokens", result.Usage.InputTokens,
 		"output_tokens", result.Usage.OutputTokens)
 
-	document, err := a.deps.Prompts.Document(result.Output)
+	decoded, err := a.deps.Prompts.Decode(in.Key.Stage, result.Output)
 	if err != nil {
 		return RunStageOutput{}, fail(ctx, fmt.Sprintf("reading the result envelope of %s", in.Key), err)
 	}
 
 	return RunStageOutput{
 		Output:   result.Output,
-		Document: document,
+		Result:   decoded,
 		ThreadID: result.ThreadID,
 		Usage:    result.Usage,
 	}, nil

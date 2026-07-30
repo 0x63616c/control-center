@@ -1,6 +1,10 @@
 package prompts
 
-import "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+import (
+	"fmt"
+
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+)
 
 // ActivityRenderer adapts *Renderer to activities.PromptRenderer, so this
 // package satisfies that interface without importing internal/activities —
@@ -22,22 +26,29 @@ func NewActivityRenderer(renderer *Renderer) *ActivityRenderer {
 	return &ActivityRenderer{renderer: renderer}
 }
 
-// Render renders a stage's prompt and returns it with the envelope schema
-// every stage answers in — one schema for every stage, so it needs nothing
-// from the call beyond a place to be returned from. See Schema.
+// Render renders a stage's prompt and returns it with that stage's own
+// output schema, looked up by stageSchema.
 func (a *ActivityRenderer) Render(
-	stage work.Stage, detail work.TicketDetail, prior map[work.Stage]string,
+	stage work.Stage, detail work.TicketDetail, prior map[work.Stage]work.StageOutput,
 ) (prompt string, schema []byte, err error) {
 	prompt, err = a.renderer.Render(Input{Stage: stage, Ticket: detail, Prior: prior})
 	if err != nil {
 		return "", nil, err
 	}
-	return prompt, Schema(), nil
+	file, err := stageSchema(stage)
+	if err != nil {
+		return "", nil, err
+	}
+	schema, err = templates.ReadFile(file)
+	if err != nil {
+		return "", nil, fmt.Errorf("reading %s: %w", file, err)
+	}
+	return prompt, schema, nil
 }
 
-// Document unwraps a stage's result envelope. It forwards to the
-// package-level Document, which is the whole implementation; this method
-// exists only so *ActivityRenderer satisfies activities.PromptRenderer.
-func (a *ActivityRenderer) Document(result []byte) (string, error) {
-	return Document(result)
+// Decode unwraps a stage's result envelope. It forwards to the package-level
+// Decode, which is the whole implementation; this method exists only so
+// *ActivityRenderer satisfies activities.PromptRenderer.
+func (a *ActivityRenderer) Decode(stage work.Stage, result []byte) (work.StageOutput, error) {
+	return Decode(stage, result)
 }

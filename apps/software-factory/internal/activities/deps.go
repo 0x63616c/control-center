@@ -188,30 +188,41 @@ type CredentialWriter interface {
 // workflow code may not import internal/prompts at all, because the nonce a
 // render mints is invisible nondeterminism at the call site.
 //
-// It reads nothing back. An earlier design had a companion Verdict method that
-// parsed a stage's output for "blocked" and a pull request URL; that is gone
-// deliberately. No stage's TEXT may steer control flow — ticket bodies are
-// attacker-chosen and they reach a model — so what a run achieved is asked of
-// GitHub instead. See GitHub.PullRequestForBranch.
+// The workflow itself still reads nothing back from a stage. An earlier
+// design had a companion Verdict method that parsed a stage's output for
+// "blocked" and a pull request URL; that is gone deliberately. No stage's
+// PROSE may steer control flow — ticket bodies are attacker-chosen and they
+// reach a model — so what a run achieved is asked of GitHub instead. See
+// GitHub.PullRequestForBranch. implement's Blocked/BlockedReason (Decode,
+// below) is real structured data, constrained by --output-schema rather than
+// free text, and step 5 does branch on it — but nothing in this step wires
+// it anywhere; see internal/prompts' "Why blocked has no reader yet".
 type PromptRenderer interface {
 	// Render returns the prompt a stage runs on and the schema its final
-	// message must satisfy.
+	// message must satisfy — one schema per stage, not a single shared
+	// envelope, so a required field like implement's Blocked is stated for
+	// the stage that actually answers it.
 	//
-	// prior holds every completed stage's document, keyed by the stage that
+	// prior holds every completed stage's output, keyed by the stage that
 	// produced it — not just the last one. `revise` reads both the plan and the
 	// review, so a seam carrying only the preceding document cannot render it
 	// at all: the plan is two stages back by the time revise runs. A run may
 	// pass everything it has; a stage is shown only what its own prompt asks
 	// for.
-	Render(stage work.Stage, detail work.TicketDetail, prior map[work.Stage]string) (prompt string, schema []byte, err error)
+	Render(stage work.Stage, detail work.TicketDetail, prior map[work.Stage]work.StageOutput) (prompt string, schema []byte, err error)
 
-	// Document unwraps a stage's result envelope into the document inside it.
+	// Decode unwraps a stage's result envelope into the domain's StageOutput.
 	//
 	// It belongs beside Render because they are one format seen from two ends:
 	// whoever defines the envelope a stage answers in is the only one who can
-	// say what its answer means. It is not a verdict — the document is opaque
-	// payload for the next prompt, and nothing branches on its content.
-	Document(result []byte) (string, error)
+	// say what its answer means. It is not a verdict in the sense that mattered
+	// before this type existed — Blocked/BlockedReason on implement's output is
+	// real branchable data, not prose to be re-parsed, but it is not derived
+	// from ticket text either: it is the model's own structured self-report,
+	// constrained by --output-schema. What still never branches on this is the
+	// workflow's own outcome decision, which continues to ask GitHub rather
+	// than trust any stage's output — see GitHub.PullRequestForBranch.
+	Decode(stage work.Stage, result []byte) (work.StageOutput, error)
 }
 
 // StatusRenderer turns a run's state into the body of its status comment.

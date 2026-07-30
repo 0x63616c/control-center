@@ -29,6 +29,11 @@ discover it. If you finished without completing the work — blocked, or the rev
 turned out unimplementable — say so in the first line, because the next stage decides whether
 to open a pull request at all on the strength of that.
 
+Your answer also has a `blocked` field and a `blocked_reason` field, separate from the
+document. Set `blocked` to true if you did not complete the work, and give the reason in
+`blocked_reason`; otherwise leave `blocked` false and `blocked_reason` empty. Fill these in
+alongside the first-line summary above, not instead of it.
+
 ### The revised plan
 
 <untrusted-prior-document-{{fence_nonce}}>
