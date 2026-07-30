@@ -20,18 +20,17 @@ that defines it lands.
 
 - [ ] Every earlier track merged: B5 (#337), C1 (#338), C2 (#339), D1 (#340),
       E1 (#341), E2 (#342), F1 (#343), F2 (#344). G is last by construction.
-- [ ] **Merged ≠ deployed.** `apps/software-factory/**` is its own CI path filter
-      and is deliberately absent from `any_app` (`.github/workflows/ci.yml`), and
-      `deploy-home-server` fires on
-      `any_app || infra || (workflow_dispatch && force_all)` (`ci.yml`). Until E2
-      wires the build and deploy path, a software-factory-only *merge* is green
-      with zero effect on prod — but a `force_all` dispatch still deploys, so
-      "nothing can deploy this" is the wrong reading. Do not infer "running"
-      from "merged" — look:
+- [ ] **Merged ≠ deployed — but by now both are true.** `apps/software-factory/**`
+      is its own CI path filter, deliberately absent from `any_app`
+      (`.github/workflows/ci.yml`), and `deploy-home-server` fires on
+      `any_app || infra || softwarefactory || (workflow_dispatch && force_all)`
+      (`ci.yml`) since E2 (#342) wired the `softwarefactory` term in. Do not
+      infer "running" from "merged" — look:
 
       kubectl -n software-factory get deploy,pods
 
-      Today that prints `No resources found in software-factory namespace.`
+      Today that prints the `software-factory-worker` Deployment `1/1` Ready
+      with a `Running` pod (live since #369).
 
 - [ ] Temporal namespace registered (already true):
 
@@ -41,10 +40,10 @@ that defines it lands.
 
 - [ ] The worker is polling its task queue — a Deployment that is `Ready` proves
       the process started, not that it registered. Check the queue has a poller
-      with `task-queue describe` (§3, CLI pod). **Not executable today:** that
-      subcommand needs `--task-queue <task-queue: work.TaskQueue, D1/#340>`, a
-      constant in `internal/work` alongside `work.WorkflowID` — D1 owns adding
-      it, since D1 registers the worker. Substitute its value once D1 lands.
+      with `task-queue describe --task-queue software-factory` (§3, CLI pod;
+      the value is `work.TaskQueue`, `internal/work/queue.go:39`). Expect a
+      poller for each `TaskQueueType` (`activity`, `workflow`), `Identity`
+      naming the running pod, `LastAccessTime` seconds ago.
 - [ ] The codex credential is seeded (F2) and the GitHub App config Secret is
       wired (F1). Check **presence only**:
 
@@ -92,9 +91,8 @@ holds only `temporal-server`. Use a throwaway admin-tools pod:
       --namespace software-factory workflow list
 
 Swap the trailing subcommand for `workflow describe`, `workflow terminate`
-(abort lever 3, §5) or
-`task-queue describe --task-queue <task-queue: work.TaskQueue, D1/#340>` — see
-§0 for why that last one cannot be run yet.
+(abort lever 3, §5) or `task-queue describe --task-queue software-factory`
+(`work.TaskQueue`, §0).
 
 Four `would violate PodSecurity "restricted"` warnings are expected and mean
 nothing is wrong: neither `temporal` nor `software-factory` carries PodSecurity
@@ -142,9 +140,9 @@ then connects only once the output has already gone.
 
 Transcripts outlive Loki and are the record of what the model actually did.
 The path under the volume is `<ticket>/<run-id>/<stage>.jsonl`
-(`work.StageKey.TranscriptPath`); the volume's **mount path is F1's to define
-(#343) and does not exist yet** — nothing in the Go tree or `infra/` names one.
-Find it from the worker's pod spec on the day, not from this file.
+(`work.StageKey.TranscriptPath`), mounted at `/transcripts`
+(`TRANSCRIPTS_MOUNT_PATH`, `infra/src/software-factory.ts`) since F1 (#343)
+landed. Full path: `/transcripts/<ticket>/<run-id>/<stage>.jsonl`.
 
 **Pods.** The window the other three miss:
 
