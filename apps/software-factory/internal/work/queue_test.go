@@ -78,3 +78,15 @@ func TestSandboxTaskQueueIsUsableAsATaskQueueName(t *testing.T) {
 		t.Errorf("SandboxTaskQueue name %q does not carry the published prefix an operator would filter on", got)
 	}
 }
+
+// TestSandboxTaskQueueEnvIsPinnedToItsPublishedName holds the env var name
+// against a literal for the same reason TestTaskQueueIsPinnedToItsPublishedName
+// does: CreateSandbox's pod spec and cmd/sandbox-worker's config both name it,
+// so a rename that compiles here but not there is a pod polling nothing.
+func TestSandboxTaskQueueEnvIsPinnedToItsPublishedName(t *testing.T) {
+	t.Parallel()
+
+	if SandboxTaskQueueEnv != "SANDBOX_TASK_QUEUE" {
+		t.Errorf("SandboxTaskQueueEnv = %q, want %q", SandboxTaskQueueEnv, "SANDBOX_TASK_QUEUE")
+	}
+}

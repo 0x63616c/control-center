@@ -64,3 +64,20 @@ const sandboxTaskQueuePrefix = "software-factory-sandbox-"
 func SandboxTaskQueue(runID string) string {
 	return sandboxTaskQueuePrefix + runID
 }
+
+// SandboxTaskQueueEnv is the environment variable a sandbox pod's embedded
+// worker reads its own SandboxTaskQueue value back from.
+//
+// It is part of the contract with the sandbox image, the same shape as
+// SandboxBranchEnv and CodexHomeEnv: whoever builds the pod's env
+// (CreateSandbox, via SandboxTemplate.Spec) computes SandboxTaskQueue(runID)
+// once and sets it here, and cmd/sandbox-worker reads it back rather than
+// recomputing it — the same "read back what CreateSandbox baked in" pattern
+// CloneRepo already uses for SF_BRANCH, so the two can never disagree about
+// which queue this pod is supposed to be polling.
+//
+// Nothing sets this on a real pod spec yet: wiring podspec.go/SandboxTemplate
+// to include it is step 3's later slice (deploy wiring). The name is fixed
+// here first so that slice, and cmd/sandbox-worker today, agree on it without
+// a second spelling appearing in either place.
+const SandboxTaskQueueEnv = "SANDBOX_TASK_QUEUE"

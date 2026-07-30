@@ -354,6 +354,55 @@ func TestNewRefusesASandboxTemplateItCannotBuildAPodFrom(t *testing.T) {
 	}
 }
 
+// sandboxDeps builds a complete SandboxDeps, the way deps() does for Deps.
+func sandboxDeps() SandboxDeps {
+	return SandboxDeps{
+		Stages:      &fakeStages{},
+		Transcripts: &fakeTranscript{},
+		Prompts:     &fakePrompts{},
+		Metrics:     &fakeMetrics{},
+		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Clock:       clocktest.NewFake(time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)),
+	}
+}
+
+// TestNewSandboxSideNamesEveryDependencyItIsMissing is NewSandboxSide's half
+// of TestNewNamesEveryDependencyItIsMissing: a narrower constructor still owes
+// the same "no usable-but-invalid zero value" guarantee, over a narrower set
+// of fields.
+func TestNewSandboxSideNamesEveryDependencyItIsMissing(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewSandboxSide(SandboxDeps{})
+	if err == nil {
+		t.Fatal("a sandbox-side activity set with no dependencies must not construct")
+	}
+	for _, name := range []string{"Stages", "Transcripts", "Prompts", "Metrics", "Log", "Clock"} {
+		if !strings.Contains(err.Error(), name) {
+			t.Fatalf("error %q does not name the missing %s", err, name)
+		}
+	}
+}
+
+// TestNewSandboxSideBuildsAWorkingRunStage proves the narrower constructor
+// actually wires RunStage end to end, not merely that it type-checks: a
+// SandboxDeps missing something RunStage silently never touched would still
+// pass the missing-dependency test above.
+func TestNewSandboxSideBuildsAWorkingRunStage(t *testing.T) {
+	t.Parallel()
+
+	a, err := NewSandboxSide(sandboxDeps())
+	if err != nil {
+		t.Fatalf("NewSandboxSide: %v", err)
+	}
+
+	e := env(t)
+	e.RegisterActivity(a.RunStage)
+	if _, err := e.ExecuteActivity(a.RunStage, stageInput(work.StagePlan, nil)); err != nil {
+		t.Fatalf("RunStage on a sandbox-side Activities: %v", err)
+	}
+}
+
 func TestNewRefusesToConstructWithNoRepositoryToClone(t *testing.T) {
 	t.Parallel()
 

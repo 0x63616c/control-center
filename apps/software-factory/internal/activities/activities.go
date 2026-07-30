@@ -136,6 +136,80 @@ func New(deps Deps) (*Activities, error) {
 	return &Activities{deps: deps}, nil
 }
 
+// SandboxDeps are what a sandbox pod's embedded worker needs to host RunStage
+// under a Temporal Session (step 3, #434's D2).
+//
+// It is deliberately narrower than Deps rather than the same struct with the
+// rest left zero: this composition root creates no pod, holds no Kubernetes
+// API access, mints no GitHub credential and posts no status comment, so it
+// has no business requiring a PodLifecycle, a SandboxSweeper, a RunLookup, a
+// StatusRenderer, a GitHub client or a RepoURL just to build the one activity
+// it actually registers. Requiring them anyway would mean inventing stand-ins
+// for capabilities this process is never supposed to have, which is a worse
+// failure mode than a second, smaller constructor: a stand-in that happens to
+// work is indistinguishable from one that is a real capability until the day
+// something calls it by accident.
+//
+// WriteCodexCredential and CloneRepo are not on this list, and not yet
+// registered anywhere but the main worker's *Activities (New, above): both
+// still depend on a way for the credential to reach a sandbox pod's own
+// process. Today that is the pods/exec transport internal/clients/k8s still
+// runs (deliberately kept alive past this step's other deletions for exactly
+// this reason — see internal/clients/k8s/exec.go's own doc comment on Exec).
+// #431/D3 replaces it with a per-ticket Kubernetes Secret mounted at pod
+// creation, which is what would let these two run here instead — that is
+// tracked separately and is not invented in this constructor.
+type SandboxDeps struct {
+	// Stages executes RunStage's own codex invocation. In the sandbox pod this
+	// is backed by internal/clients/local, not internal/clients/k8s: the
+	// process running this Activities value already IS the sandbox, so there
+	// is nothing remote left to exec into.
+	Stages StageRunner
+
+	Transcripts TranscriptSink
+	Prompts     PromptRenderer
+	Metrics     Metrics
+	Log         *slog.Logger
+	Clock       clock.Clock
+}
+
+// NewSandboxSide builds the activity set a sandbox pod's embedded worker
+// registers. Only RunStage is ever scheduled against the result today — see
+// SandboxDeps' own doc comment for why WriteCodexCredential and CloneRepo stay
+// off this constructor rather than being wired here as a stand-in.
+func NewSandboxSide(deps SandboxDeps) (*Activities, error) {
+	missing := []string{}
+	if deps.Stages == nil {
+		missing = append(missing, "Stages")
+	}
+	if deps.Transcripts == nil {
+		missing = append(missing, "Transcripts")
+	}
+	if deps.Prompts == nil {
+		missing = append(missing, "Prompts")
+	}
+	if deps.Metrics == nil {
+		missing = append(missing, "Metrics")
+	}
+	if deps.Log == nil {
+		missing = append(missing, "Log")
+	}
+	if deps.Clock == nil {
+		missing = append(missing, "Clock")
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("sandbox-side activities need %v", missing)
+	}
+	return &Activities{deps: Deps{
+		Stages:      deps.Stages,
+		Transcripts: deps.Transcripts,
+		Prompts:     deps.Prompts,
+		Metrics:     deps.Metrics,
+		Log:         deps.Log,
+		Clock:       deps.Clock,
+	}}, nil
+}
+
 // ListAutoTickets returns the open issues asking for machine work.
 func (a *Activities) ListAutoTickets(ctx context.Context) ([]work.Ticket, error) {
 	tickets, err := a.deps.GitHub.ListAutoTickets(ctx)
