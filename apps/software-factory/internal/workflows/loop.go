@@ -60,7 +60,7 @@ func (r *ticketRun) implementReviewLoop(
 		ciTurns       int
 		reviewTurns   int
 		lastRed       []work.CheckFailure // the last CI-observed turn's failed check identities, carried forward across an unobserved turn — never reset to empty by one.
-		lastBlocking  []string // the previous review turn's blocking finding ids.
+		lastBlocking  []string            // the previous review turn's blocking finding ids.
 		pr            work.PullRequest
 	)
 
