@@ -88,10 +88,10 @@ export function renderManifest(input: ExtensionInput = {}): string {
   const scheme = input.scheme ?? "https";
   const manifest = {
     manifest_version: 3,
-    name: "manage — frame unlock",
+    name: "Manage — frame unlock",
     version: EXTENSION_VERSION,
     description:
-      "Strips frame-deny response headers from manage's tool allowlist, for framed sub-documents only.",
+      "Strips frame-deny response headers from Manage's tool allowlist, for framed sub-documents only.",
     permissions: ["declarativeNetRequest"],
     host_permissions: hostPatterns(hosts, scheme),
     declarative_net_request: {

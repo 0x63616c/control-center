@@ -28,6 +28,11 @@ describe("extension detection", () => {
 });
 
 describe("App", () => {
+  it("renders the Manage brand heading", () => {
+    render(<App extVersion="1.0.0" />);
+    expect(screen.getByRole("heading", { level: 1, name: "Manage" })).toBeInTheDocument();
+  });
+
   it("links to the extension documentation from the footer", () => {
     render(<App extVersion="1.0.0" />);
     const link = screen.getByRole("link", { name: "Docs" });

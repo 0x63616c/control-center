@@ -14,9 +14,9 @@ export function LauncherCard({ tool }: { tool: Tool }) {
       <LogoMark color={tool.color} mark={tool.mark} className="big" />
       <h3>{tool.label} needs the frame-unlock extension</h3>
       <p>
-        {tool.label} sends a frame-deny header, so a browser without the local <code>manage</code>{" "}
+        {tool.label} sends a frame-deny header, so a browser without the local <code>Manage</code>{" "}
         extension refuses to render it here. Load <code>apps/manage/extension/</code> as an unpacked
-        extension, then reload manage.
+        extension, then reload Manage.
       </p>
       <a className="cta" href={tool.url} target="_blank" rel="noreferrer">
         open in new tab ↗

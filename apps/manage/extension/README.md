@@ -1,6 +1,6 @@
-# manage — frame unlock extension
+# Manage — frame unlock extension
 
-Local, unpacked, one machine. It exists because the tools manage frames send
+Local, unpacked, one machine. It exists because the tools Manage frames send
 `x-frame-options` / CSP `frame-ancestors` and cannot be reverse-proxied under a
 sub-path (Home Assistant, DSM and UniFi all emit `/`-rooted URLs). See
 `docs/adr/0010-manage-plane-framed-tools.md`.
@@ -9,7 +9,7 @@ sub-path (Home Assistant, DSM and UniFi all emit `/`-rooted URLs). See
 
 1. `chrome://extensions` → enable **Developer mode**
 2. **Load unpacked** → select this directory (`apps/manage/extension/`)
-3. Reload manage. The sidebar footer should read `extension active`.
+3. Reload Manage. The sidebar footer should read `extension active`.
 
 ## `manifest.json` and `rules.gen.json` are GENERATED
 
