@@ -90,6 +90,95 @@ it can; the rest is on you.
 
 `workflow.Context` is **not** `context.Context`. Activities and clients get the real one.
 
+## Changing an existing workflow
+
+**Treat a workflow command-sequence change as a history compatibility change.** Temporal
+replays a workflow's complete history through the deployed code for every workflow task and
+expects the commands it issues to line up with that history. If they diverge, Temporal refuses
+to guess and reports a non-determinism error; the open execution can then wedge retrying
+workflow tasks.
+
+This applies to any edit that can change the ordered workflow commands: activity calls, child
+workflow starts, timers, selectors that choose when to schedule a command, and their
+command-producing branches. It does **not** by itself apply to an activity implementation body
+or to a helper the workflow never calls. Normal `testsuite` tests prove intended new behavior;
+they do not prove that a persisted old history still replays.
+
+`Dispatcher` is the primary risk here. It is the singleton
+`software-factory-dispatcher`, remains open for hours, and carries its state over
+`ContinueAsNew`, so a normal deploy commonly reaches an open run. `WorkTicket` normally
+finishes sooner and is less exposed, but an open ticket workflow can still replay and is not
+exempt.
+
+When changing a command sequence, put the old and new decision branches behind
+`workflow.GetVersion` **at the changed command branch**. Give the change a stable, unique ID
+for that compatibility transition; do not add an unrelated marker elsewhere. Histories from
+before the change must keep replaying the legacy branch, while new histories take the new
+branch. Keep the legacy branch until no retained history can need it. For example:
+
+```go
+version := workflow.GetVersion(ctx, "dispatcher-claim-v2", workflow.DefaultVersion, 1)
+if version == workflow.DefaultVersion {
+	// Preserve the command sequence recorded by pre-change histories.
+	return claimLegacy(ctx, ticket)
+}
+return claimV2(ctx, ticket)
+```
+
+When unsure whether an edit is compatible, replay an exported real or production-like history
+against the changed workflow before deploying. Export the exact execution (include `--run-id`
+when replaying a non-current run) from the same admin-tools context used by the runbook:
+
+```sh
+kubectl -n temporal run tmp-temporal-cli --rm -i --restart=Never \
+  --image=temporalio/admin-tools:1.31.2 --command -- sh -c \
+  'sleep 2; temporal --address temporal-server:7233 --namespace software-factory \
+  workflow show --workflow-id <workflow-id> --run-id <run-id> --output json' \
+  > <workflow-id>-<run-id>.json
+```
+
+Use `worker.WorkflowReplayer` in a focused Go test, registering the workflow exactly as the
+worker does. `ReplayWorkflowHistoryFromJSONFile` consumes the JSON produced by `workflow show`:
+
+```go
+func TestReplayDispatcherHistory(t *testing.T) {
+	replayer := worker.NewWorkflowReplayer()
+	replayer.RegisterWorkflow(workflows.Dispatcher)
+
+	require.NoError(t, replayer.ReplayWorkflowHistoryFromJSONFile(
+		nil, "testdata/dispatcher-history.json"))
+}
+```
+
+### Recovery for an already wedged dispatcher
+
+This is the recovery for the known dispatcher non-determinism failure, not a substitute for
+versioning or a replay check. PR #478 changed the dispatcher's `claim()` command path and is
+the concrete incident that prompted this rule. Terminate the wedged execution, restart the
+worker so startup ensures a fresh dispatcher, then unpause that fresh dispatcher: it currently
+starts paused by configuration.
+
+```sh
+kubectl -n temporal run tmp-temporal-cli --rm -i --restart=Never \
+  --image=temporalio/admin-tools:1.31.2 --command -- \
+  temporal --address temporal-server:7233 --namespace software-factory \
+  workflow terminate --workflow-id software-factory-dispatcher
+
+kubectl -n software-factory rollout restart deploy/software-factory-worker
+
+kubectl -n software-factory rollout status deploy/software-factory-worker --timeout=5m
+
+kubectl -n temporal run tmp-temporal-cli --rm -i --restart=Never \
+  --image=temporalio/admin-tools:1.31.2 --command -- \
+  temporal --address temporal-server:7233 --namespace software-factory \
+  workflow signal --workflow-id software-factory-dispatcher \
+  --name update-config --input '{"paused":false}'
+```
+
+Confirm the replacement execution is running with `workflow describe --workflow-id
+software-factory-dispatcher` in the same CLI context. The separate workflow-task retry and
+alerting problem is out of scope here.
+
 ## Operating protocol
 
 - TDD test-first for workflows and activities. The dispatcher's concurrency cap, pause and
