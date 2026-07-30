@@ -361,11 +361,15 @@ func TestBuildPodMountsAWritableEmptyDirAtTheSandboxRoot(t *testing.T) {
 	}
 }
 
-// TestBuildPodMountsTheCodexCredentialSecretDirectlyAtCodexAuthFile proves D3
-// (#434): the per-ticket credential Secret is mounted, via subPath, at exactly
-// the path the codex CLI reads — so Kubernetes itself puts the credential in
-// place at container start, and no activity ever writes it.
-func TestBuildPodMountsTheCodexCredentialSecretDirectlyAtCodexAuthFile(t *testing.T) {
+// TestBuildPodMountsTheCodexCredentialSecretOutsideCodexHome proves D3
+// (#434): the per-ticket credential Secret is mounted, via subPath, at
+// work.CodexAuthSecretMountFile — deliberately NOT at work.CodexAuthFile
+// itself, and not nested anywhere under work.SandboxRoot. Mounting it
+// directly at CodexAuthFile made Kubernetes, not the sandbox uid, own
+// CodexHomeDir — the directory codex also needs to write other files into —
+// and every one of those writes failed with a permission error in prod run
+// one (#434). See work.CodexAuthSecretMountFile's own doc comment.
+func TestBuildPodMountsTheCodexCredentialSecretOutsideCodexHome(t *testing.T) {
 	t.Parallel()
 
 	spec := validSpec()
@@ -401,8 +405,12 @@ func TestBuildPodMountsTheCodexCredentialSecretDirectlyAtCodexAuthFile(t *testin
 	if mount == nil {
 		t.Fatalf("no volume mount named %q; mounts = %+v", credentialSecretVolumeName, c.VolumeMounts)
 	}
-	if mount.MountPath != work.CodexAuthFile {
-		t.Errorf("mount path = %q, want %q", mount.MountPath, work.CodexAuthFile)
+	if mount.MountPath != work.CodexAuthSecretMountFile {
+		t.Errorf("mount path = %q, want %q", mount.MountPath, work.CodexAuthSecretMountFile)
+	}
+	if mount.MountPath == work.CodexAuthFile {
+		t.Errorf("mount path = %q, the exact path this test exists to keep it away from — "+
+			"see work.CodexAuthSecretMountFile's own doc comment for why", mount.MountPath)
 	}
 	if mount.SubPath != codexAuthSecretKey {
 		t.Errorf("subPath = %q, want %q", mount.SubPath, codexAuthSecretKey)

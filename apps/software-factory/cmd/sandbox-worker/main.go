@@ -27,6 +27,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -175,8 +176,57 @@ func newActivities(renderer *prompts.Renderer, logger *slog.Logger) (*activities
 		return nil, fmt.Errorf("building the local transcript sink at %s: %w", transcriptsSubdir, err)
 	}
 
+	if err := ensureCodexHome(work.CodexHomeDir, work.CodexAuthFile, work.CodexAuthSecretMountFile); err != nil {
+		return nil, fmt.Errorf("preparing codex's home directory: %w", err)
+	}
+
 	deps := buildSandboxDeps(transcriptSink, renderer, logger)
 	return activities.NewSandboxSide(deps)
+}
+
+// ensureCodexHome creates homeDir owned by this process's own uid, then
+// symlinks authFile — the path inside it codex actually reads — to
+// mountFile, the credential Secret Kubernetes mounted outside SandboxRoot.
+//
+// See work.CodexAuthSecretMountFile's own doc comment for why the Secret is
+// not mounted at authFile directly: a subPath mount there made Kubernetes,
+// not this process, own homeDir, and codex needs to write other files into
+// it — a PATH-aliases file, its app-server socket — which every failed with
+// a permission error in prod run one (#434). Creating homeDir here instead
+// makes it an ordinary directory this process made for itself, like every
+// other directory it creates under work.SandboxRoot.
+//
+// The symlink, not a copy: mountFile's bytes are still placed entirely by
+// Kubernetes and never pass through a write this process performs — that is
+// the invariant D3 (#434) established, and this must not undo it.
+//
+// Idempotent, though nothing in this pod's single-run lifecycle calls it
+// twice today: a second call finds its own symlink already in place and
+// returns nil rather than erroring.
+func ensureCodexHome(homeDir, authFile, mountFile string) error {
+	if err := os.MkdirAll(homeDir, 0o700); err != nil {
+		return fmt.Errorf("creating %s: %w", homeDir, err)
+	}
+
+	switch target, err := os.Readlink(authFile); {
+	case err == nil:
+		if target != mountFile {
+			return fmt.Errorf("%s already exists and points at %s, not %s", authFile, target, mountFile)
+		}
+		return nil
+	case errors.Is(err, os.ErrNotExist):
+		// Nothing there yet — fall through and create it.
+	default:
+		// Anything else, including a regular file already at authFile
+		// (os.Readlink on a non-symlink fails, deliberately not silently
+		// replaced): refuse rather than guess what put it there.
+		return fmt.Errorf("checking %s: %w", authFile, err)
+	}
+
+	if err := os.Symlink(mountFile, authFile); err != nil {
+		return fmt.Errorf("linking %s to %s: %w", authFile, mountFile, err)
+	}
+	return nil
 }
 
 // buildSandboxDeps assembles activities.SandboxDeps from clients newActivities

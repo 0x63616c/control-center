@@ -48,9 +48,35 @@ const CodexHomeDir = SandboxRoot + "/.codex"
 const CodexHomeEnv = "CODEX_HOME"
 
 // CodexAuthFile is where the codex CLI's auth.json lives inside CodexHomeDir —
-// the file codex exec reads on every invocation to authenticate, and the file
-// a sandbox's TokenSource-fetched credential document is written to.
+// the file codex exec reads on every invocation to authenticate. It is a
+// symlink to CodexAuthSecretMountFile, created by cmd/sandbox-worker at
+// startup — see that constant's own doc comment for why it is not the Secret
+// mount itself.
 const CodexAuthFile = CodexHomeDir + "/auth.json"
+
+// CodexAuthSecretMountFile is where the sandbox's per-ticket credential
+// Secret is actually mounted by Kubernetes — deliberately NOT inside
+// CodexHomeDir, and outside SandboxRoot entirely.
+//
+// A subPath volume mount forces Kubernetes to create any directory that has
+// to host it, as root, before the container's own process ever starts — the
+// same trap RepoDir's own doc comment describes for a WORKDIR the container
+// runtime has to create inside an emptyDir. Mounting the credential Secret
+// directly under CodexHomeDir (D3, #434) made THAT directory root-owned
+// instead of owned by the sandbox uid, and codex needs to write other files
+// there too — a PATH-aliases file, its app-server socket — not just read
+// auth.json out of it. Every one of those writes failed with EACCES in prod
+// run one: "WARNING: proceeding, even though we could not create PATH
+// aliases: Permission denied (os error 13)", then "Error: failed to
+// initialize in-process app-server client: Permission denied (os error 13)".
+//
+// Mounted here instead, cmd/sandbox-worker creates CodexHomeDir itself at
+// startup — an ordinary os.MkdirAll, owned by the uid that made it, like
+// every other directory this process creates under SandboxRoot — and
+// symlinks CodexAuthFile to this path. The credential's bytes are still
+// placed entirely by Kubernetes and never pass through a write this process
+// performs; only CodexHomeDir's own ownership changes.
+const CodexAuthSecretMountFile = "/var/run/secrets/software-factory/codex-auth.json"
 
 // GhConfigDir is the gh CLI's config directory inside the sandbox, and
 // GhHostsFile the credential file it reads out of it.
