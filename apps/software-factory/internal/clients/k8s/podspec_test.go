@@ -279,10 +279,38 @@ func TestBuildPodLabelsThePodSoASweepCanFindItByTicketAndRun(t *testing.T) {
 func TestBuildPodOrdersEnvironmentVariablesDeterministically(t *testing.T) {
 	t.Parallel()
 
-	// sortedEnv, not buildPod: ordering is a property of the rendering
-	// helper, independent of which keys the allowlist admits, and using
-	// arbitrary keys here (rather than the three real ones) still exercises
-	// the sort with more than a two-element map.
+	// Through buildPod, with the three real allowlisted keys, deliberately
+	// written out of order — this is the coverage the allowlist must not
+	// erode. buildPod's allowlist loop only validates spec.Env today, never
+	// filters or reorders it before sortedEnv renders it (podspec.go:157),
+	// but a later change that made the loop filter rather than merely
+	// validate could silently reorder or drop env, and that's exactly the
+	// case a helper-level test of sortedEnv alone would stop catching.
+	spec := validSpec()
+	spec.Env = map[string]string{
+		work.SandboxBranchEnv: "sf/ticket-42",
+		work.CodexHomeEnv:     "/work/.codex",
+		work.GhConfigDirEnv:   "/work/.config/gh",
+	}
+
+	first := sandboxContainer(t, mustBuild(t, spec)).Env
+	second := sandboxContainer(t, mustBuild(t, spec)).Env
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("two builds of one spec produced different env: %v vs %v", first, second)
+	}
+	for i := 1; i < len(first); i++ {
+		if first[i-1].Name >= first[i].Name {
+			t.Fatalf("env is not sorted by key: %v", first)
+		}
+	}
+}
+
+func TestSortedEnvOrdersAnArbitraryMapByKey(t *testing.T) {
+	t.Parallel()
+
+	// sortedEnv in isolation, with more keys than the allowlist admits, so
+	// the sort itself is exercised independently of which keys buildPod lets
+	// through.
 	env := map[string]string{"E": "5", "A": "1", "D": "4", "B": "2", "C": "3"}
 
 	first := sortedEnv(env)
