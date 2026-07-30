@@ -372,13 +372,15 @@ type stageInput struct {
 	// stage and every turn of the run.
 	Detail work.TicketDetail
 
-	// Prior holds every completed turn of every stage, keyed by the stage that
-	// produced it and ordered oldest first, empty for the run's first stage.
-	// It is not narrowed to what one particular stage reads: internal/prompts'
-	// buildStageInput is the one place that decides what a stage is shown, so
-	// this stays the whole history and that stays the only place the decision
-	// is made.
-	Prior map[work.Stage][]work.StageOutput
+	// Prior is exactly the plan, the latest implement turn and the latest
+	// review turn — see work.PriorTurns' own doc comment for why this
+	// activity input is never wider than that. The workflow
+	// (internal/workflows) keeps the run's full turn history in its own
+	// local state, for progress detection, and narrows to this shape itself
+	// before building a turn's StageAttempt — not here, and not in
+	// internal/prompts, so there is exactly one place a caller could widen
+	// it back out, and that place is the one that has to justify it.
+	Prior work.PriorTurns
 }
 
 // stageOutput is one stage attempt's result, common to every stage.
@@ -429,7 +431,7 @@ type StageAttempt struct {
 	Sandbox work.SandboxID
 	Model   work.Model
 	Detail  work.TicketDetail
-	Prior   map[work.Stage][]work.StageOutput
+	Prior   work.PriorTurns
 }
 
 // NewRunPlanInput builds the plan stage's one attempt.

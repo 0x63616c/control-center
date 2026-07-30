@@ -52,15 +52,14 @@ func stageOutputOf(stage work.Stage, doc string) work.StageOutput {
 }
 
 // everyDocument is one turn's output for every stage, so a test can render
-// any stage without assembling the run's whole history itself. Each stage's
-// history is one turn long here; TestRenderCarriesTheDocumentsAStageIsMeantToRead
-// and buildStageInput's own tests build a longer history where a second turn
-// matters.
-func everyDocument() map[work.Stage][]work.StageOutput {
-	return map[work.Stage][]work.StageOutput{
-		work.StagePlan:      {stageOutputOf(work.StagePlan, "the plan document")},
-		work.StageImplement: {stageOutputOf(work.StageImplement, "the implementation report document")},
-		work.StageReview:    {stageOutputOf(work.StageReview, "the review document")},
+// any stage without assembling its own work.PriorTurns. Buildstageinput's own
+// tests build a narrower or differently-valued PriorTurns where a second
+// turn's content specifically matters.
+func everyDocument() work.PriorTurns {
+	return work.PriorTurns{
+		Plan:            stageOutputOf(work.StagePlan, "the plan document"),
+		LatestImplement: stageOutputOf(work.StageImplement, "the implementation report document"),
+		LatestReview:    stageOutputOf(work.StageReview, "the review document"),
 	}
 }
 
@@ -119,7 +118,7 @@ func TestRenderPutsEveryPieceOfTicketTextInsideTheFence(t *testing.T) {
 	r := newTestRenderer(t)
 	detail := ticket()
 
-	got, err := r.Render(Input{Stage: work.StagePlan, Ticket: detail, Prior: nil})
+	got, err := r.Render(Input{Stage: work.StagePlan, Ticket: detail, Prior: work.PriorTurns{}})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -173,9 +172,7 @@ func TestRenderCarriesTheDocumentsAStageIsMeantToRead(t *testing.T) {
 	t.Run("implement's first turn", func(t *testing.T) {
 		t.Parallel()
 
-		prior := map[work.Stage][]work.StageOutput{
-			work.StagePlan: {stageOutputOf(work.StagePlan, "the plan document")},
-		}
+		prior := work.PriorTurns{Plan: stageOutputOf(work.StagePlan, "the plan document")}
 		got, err := r.Render(Input{Stage: work.StageImplement, Ticket: ticket(), Prior: prior})
 		if err != nil {
 			t.Fatalf("Render: %v", err)
@@ -194,13 +191,13 @@ func TestRenderCarriesTheDocumentsAStageIsMeantToRead(t *testing.T) {
 	t.Run("implement's later turn", func(t *testing.T) {
 		t.Parallel()
 
-		prior := map[work.Stage][]work.StageOutput{
-			work.StagePlan:      {stageOutputOf(work.StagePlan, "the plan document")},
-			work.StageImplement: {stageOutputOf(work.StageImplement, "turn one's own report")},
-			work.StageReview: {work.NewStageOutput(work.StageReview, work.ReviewOutput{
+		prior := work.PriorTurns{
+			Plan:            stageOutputOf(work.StagePlan, "the plan document"),
+			LatestImplement: stageOutputOf(work.StageImplement, "turn one's own report"),
+			LatestReview: work.NewStageOutput(work.StageReview, work.ReviewOutput{
 				Document: "the review document",
 				Findings: []work.Finding{{ID: "f1", Blocking: true, Summary: "fix the missing nil check"}},
-			})},
+			}),
 		}
 		got, err := r.Render(Input{Stage: work.StageImplement, Ticket: ticket(), Prior: prior})
 		if err != nil {
@@ -220,9 +217,7 @@ func TestRenderCarriesTheDocumentsAStageIsMeantToRead(t *testing.T) {
 	t.Run("review's first turn", func(t *testing.T) {
 		t.Parallel()
 
-		prior := map[work.Stage][]work.StageOutput{
-			work.StageImplement: {stageOutputOf(work.StageImplement, "the implementation report")},
-		}
+		prior := work.PriorTurns{LatestImplement: stageOutputOf(work.StageImplement, "the implementation report")}
 		got, err := r.Render(Input{Stage: work.StageReview, Ticket: ticket(), Prior: prior})
 		if err != nil {
 			t.Fatalf("Render: %v", err)
@@ -238,12 +233,12 @@ func TestRenderCarriesTheDocumentsAStageIsMeantToRead(t *testing.T) {
 	t.Run("review's later turn", func(t *testing.T) {
 		t.Parallel()
 
-		prior := map[work.Stage][]work.StageOutput{
-			work.StageImplement: {stageOutputOf(work.StageImplement, "turn two's report")},
-			work.StageReview: {work.NewStageOutput(work.StageReview, work.ReviewOutput{
+		prior := work.PriorTurns{
+			LatestImplement: stageOutputOf(work.StageImplement, "turn two's report"),
+			LatestReview: work.NewStageOutput(work.StageReview, work.ReviewOutput{
 				Document: "turn one's review",
 				Findings: []work.Finding{{ID: "f1", Blocking: true, Summary: "still broken"}},
-			})},
+			}),
 		}
 		got, err := r.Render(Input{Stage: work.StageReview, Ticket: ticket(), Prior: prior})
 		if err != nil {
@@ -266,19 +261,19 @@ func TestRenderRefusesAStageWhoseInputDocumentIsMissing(t *testing.T) {
 	cases := []struct {
 		name  string
 		stage work.Stage
-		prior map[work.Stage][]work.StageOutput
+		prior work.PriorTurns
 	}{
-		{name: "review without any implement turn", stage: work.StageReview, prior: nil},
-		{name: "implement without a plan", stage: work.StageImplement, prior: nil},
+		{name: "review without any implement turn", stage: work.StageReview, prior: work.PriorTurns{}},
+		{name: "implement without a plan", stage: work.StageImplement, prior: work.PriorTurns{}},
 		{
 			name:  "a blank plan is no plan",
 			stage: work.StageImplement,
-			prior: map[work.Stage][]work.StageOutput{work.StagePlan: {stageOutputOf(work.StagePlan, "   \n")}},
+			prior: work.PriorTurns{Plan: stageOutputOf(work.StagePlan, "   \n")},
 		},
 		{
 			name:  "a blank implementation report is no report",
 			stage: work.StageReview,
-			prior: map[work.Stage][]work.StageOutput{work.StageImplement: {stageOutputOf(work.StageImplement, "   \n")}},
+			prior: work.PriorTurns{LatestImplement: stageOutputOf(work.StageImplement, "   \n")},
 		},
 	}
 

@@ -128,44 +128,27 @@ func findingsProse(out work.StageOutput) string {
 	return b.String()
 }
 
-// buildStageInput selects and builds one stage's typed input from the run's
-// prior outputs.
-//
-// prior is one ordered, oldest-first slice per stage rather than one value:
-// plan's is always length one, but implement and review each loop, so a
-// single slot per stage — sufficient when a stage ran at most once — cannot
-// carry the history a later turn needs to read. The workflow (internal/
-// workflows) appends this run's own turns to it as they complete; this
-// function only ever reads the tail of each slice — the latest turn — because
-// no stage here needs anything further back than that.
+// buildStageInput selects and builds one stage's typed input from
+// work.PriorTurns — already narrowed to each stage's own latest turn by the
+// time it reaches here (see PriorTurns' own doc comment for why nothing
+// wider ever crosses the activity boundary).
 //
 // Exhaustive, no default — matches stageTemplate.
-func buildStageInput(stage work.Stage, prior map[work.Stage][]work.StageOutput) (stageInput, error) {
+func buildStageInput(stage work.Stage, prior work.PriorTurns) (stageInput, error) {
 	switch stage {
 	case work.StagePlan:
 		return planInput{}, nil
 	case work.StageImplement:
 		return implementInput{
-			Plan:             last(prior[work.StagePlan]),
-			PreviousReport:   last(prior[work.StageImplement]),
-			MostRecentReview: last(prior[work.StageReview]),
+			Plan:             prior.Plan,
+			PreviousReport:   prior.LatestImplement,
+			MostRecentReview: prior.LatestReview,
 		}, nil
 	case work.StageReview:
 		return reviewInput{
-			Implementation: last(prior[work.StageImplement]),
-			PreviousReview: last(prior[work.StageReview]),
+			Implementation: prior.LatestImplement,
+			PreviousReview: prior.LatestReview,
 		}, nil
 	}
 	return nil, fmt.Errorf("no input shape for stage %q", stage)
-}
-
-// last returns the most recent output in a stage's turn history, or the zero
-// StageOutput if the stage has not produced one yet — the same "not run yet"
-// signal a single-slot map value gave before this became a slice, so every
-// existing caller of Prose() on a not-yet-run stage keeps seeing "".
-func last(outputs []work.StageOutput) work.StageOutput {
-	if len(outputs) == 0 {
-		return work.StageOutput{}
-	}
-	return outputs[len(outputs)-1]
 }

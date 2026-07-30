@@ -56,10 +56,10 @@ func TestNewPromptRendererRendersEveryStageOfThePipeline(t *testing.T) {
 	// Every prior stage's output, so any stage can be rendered. What this
 	// asserts is that the wiring here reaches the merged prompt set at all —
 	// the prompts' own contents are internal/prompts' business.
-	prior := map[work.Stage][]work.StageOutput{
-		work.StagePlan:      {work.NewStageOutput(work.StagePlan, work.DocumentOutput{Document: "the plan"})},
-		work.StageImplement: {work.NewStageOutput(work.StageImplement, work.ImplementOutput{Report: "the implementation report"})},
-		work.StageReview:    {work.NewStageOutput(work.StageReview, work.ReviewOutput{Document: "the review"})},
+	prior := work.PriorTurns{
+		Plan:            work.NewStageOutput(work.StagePlan, work.DocumentOutput{Document: "the plan"}),
+		LatestImplement: work.NewStageOutput(work.StageImplement, work.ImplementOutput{Report: "the implementation report"}),
+		LatestReview:    work.NewStageOutput(work.StageReview, work.ReviewOutput{Document: "the review"}),
 	}
 
 	for _, stage := range work.Pipeline() {

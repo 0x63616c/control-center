@@ -147,12 +147,12 @@ func TestEveryStageHasASchemaAndTheyAreDistinct(t *testing.T) {
 func TestBuildStageInputProducesTheDeclaredVariableNames(t *testing.T) {
 	t.Parallel()
 
-	prior := map[work.Stage][]work.StageOutput{
-		work.StagePlan:      {work.NewStageOutput(work.StagePlan, work.DocumentOutput{Document: "the plan"})},
-		work.StageImplement: {work.NewStageOutput(work.StageImplement, work.ImplementOutput{Report: "turn one's report"})},
-		work.StageReview: {work.NewStageOutput(work.StageReview, work.ReviewOutput{
+	prior := work.PriorTurns{
+		Plan:            work.NewStageOutput(work.StagePlan, work.DocumentOutput{Document: "the plan"}),
+		LatestImplement: work.NewStageOutput(work.StageImplement, work.ImplementOutput{Report: "turn one's report"}),
+		LatestReview: work.NewStageOutput(work.StageReview, work.ReviewOutput{
 			Document: "the review", Findings: []work.Finding{{ID: "f1", Blocking: true, Summary: "s"}},
-		})},
+		}),
 	}
 
 	cases := []struct {

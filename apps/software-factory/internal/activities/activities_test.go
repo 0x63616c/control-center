@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -207,12 +206,12 @@ type fakePrompts struct {
 	decode func(stage work.Stage, result []byte) (work.StageOutput, error)
 
 	sawStage work.Stage
-	sawPrior map[work.Stage][]work.StageOutput
+	sawPrior work.PriorTurns
 }
 
-func (f *fakePrompts) Render(stage work.Stage, _ work.TicketDetail, prior map[work.Stage][]work.StageOutput) (string, []byte, error) {
+func (f *fakePrompts) Render(stage work.Stage, _ work.TicketDetail, prior work.PriorTurns) (string, []byte, error) {
 	f.sawStage = stage
-	f.sawPrior = maps.Clone(prior)
+	f.sawPrior = prior
 	return f.prompt, f.schema, f.err
 }
 
@@ -421,7 +420,7 @@ func TestNewSandboxSideBuildsAWorkingRunPlan(t *testing.T) {
 
 	e := env(t)
 	e.RegisterActivity(a.RunPlan)
-	if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(nil)); err != nil {
+	if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{})); err != nil {
 		t.Fatalf("RunPlan on a sandbox-side Activities: %v", err)
 	}
 }
@@ -741,7 +740,7 @@ func TestCloneRepoSurfacesTheClonersFailure(t *testing.T) {
 // runStage plumbing — plan stands in for "any stage" throughout this file
 // except where a test is specifically about implement's or review's own
 // decoded shape, which build a RunImplementInput/RunReviewInput directly.
-func stageAttempt(prior map[work.Stage][]work.StageOutput) RunPlanInput {
+func stageAttempt(prior work.PriorTurns) RunPlanInput {
 	return NewRunPlanInput(StageAttempt{
 		Key:     work.StageKey{Ticket: 328, RunID: "run-1", Stage: work.StagePlan, Turn: 1},
 		Sandbox: "sandbox-328",
@@ -765,7 +764,7 @@ func TestRunPlanWritesOneTerminatedLinePerEventToTheTranscript(t *testing.T) {
 	a := mustNew(t, d)
 	e.RegisterActivity(a.RunPlan)
 
-	if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(nil)); err != nil {
+	if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{})); err != nil {
 		t.Fatalf("RunPlan: %v", err)
 	}
 
@@ -796,7 +795,7 @@ func TestRunPlanCarriesTheWholeTranscriptHomeOnItsOutput(t *testing.T) {
 	a := mustNew(t, d)
 	e.RegisterActivity(a.RunPlan)
 
-	val, err := e.ExecuteActivity(a.RunPlan, stageAttempt(nil))
+	val, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{}))
 	if err != nil {
 		t.Fatalf("RunPlan: %v", err)
 	}
@@ -845,7 +844,7 @@ func TestRunPlanHeartbeatsOffTheEventStreamSoAStuckStageIsSeenAsDeadRatherThanSl
 			a := mustNew(t, d)
 			e.RegisterActivity(a.RunPlan)
 
-			if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(nil)); err != nil {
+			if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{})); err != nil {
 				t.Fatalf("RunPlan: %v", err)
 			}
 
@@ -870,7 +869,7 @@ func TestRunPlanKeepsGoingWhenTheTranscriptCannotBeWritten(t *testing.T) {
 	a := mustNew(t, d)
 	e.RegisterActivity(a.RunPlan)
 
-	val, err := e.ExecuteActivity(a.RunPlan, stageAttempt(nil))
+	val, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{}))
 	if err != nil {
 		t.Fatalf("losing the record of the work is cheaper than losing the work: %v", err)
 	}
@@ -895,7 +894,7 @@ func TestRunPlanClosesTheTranscriptWhenTheStageFails(t *testing.T) {
 	a := mustNew(t, d)
 	e.RegisterActivity(a.RunPlan)
 
-	_, err := e.ExecuteActivity(a.RunPlan, stageAttempt(nil))
+	_, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{}))
 	if err == nil {
 		t.Fatal("a failed stage fails its activity")
 	}
@@ -923,9 +922,9 @@ func TestRunImplementHandsEveryPriorTurnToTheRenderer(t *testing.T) {
 	a := mustNew(t, d)
 	e.RegisterActivity(a.RunImplement)
 
-	prior := map[work.Stage][]work.StageOutput{
-		work.StagePlan:      {work.NewStageOutput(work.StagePlan, work.DocumentOutput{Document: "the plan"})},
-		work.StageImplement: {work.NewStageOutput(work.StageImplement, work.ImplementOutput{Report: "turn one's report"})},
+	prior := work.PriorTurns{
+		Plan:            work.NewStageOutput(work.StagePlan, work.DocumentOutput{Document: "the plan"}),
+		LatestImplement: work.NewStageOutput(work.StageImplement, work.ImplementOutput{Report: "turn one's report"}),
 	}
 	in := NewRunImplementInput(StageAttempt{
 		Key:     work.StageKey{Ticket: 328, RunID: "run-1", Stage: work.StageImplement, Turn: 2},
@@ -938,17 +937,17 @@ func TestRunImplementHandsEveryPriorTurnToTheRenderer(t *testing.T) {
 		t.Fatalf("RunImplement: %v", err)
 	}
 
-	// Every prior turn, not only the plan: buildStageInput reads the plan and
-	// implement's own previous turn, and a seam that carried one entry could
-	// not render either at once.
+	// Both fields the loop narrows to, not only the plan: buildStageInput
+	// reads the plan and implement's own previous turn, and a seam that
+	// carried only one could not render either at once.
 	if prompts.sawStage != work.StageImplement {
 		t.Fatalf("renderer saw stage %q", prompts.sawStage)
 	}
-	if len(prompts.sawPrior[work.StagePlan]) != 1 || prompts.sawPrior[work.StagePlan][0].Prose() != "the plan" {
-		t.Fatalf("renderer saw prior plan turns %v, want [\"the plan\"]", prompts.sawPrior[work.StagePlan])
+	if prompts.sawPrior.Plan.Prose() != "the plan" {
+		t.Fatalf("renderer saw prior plan %q, want %q", prompts.sawPrior.Plan.Prose(), "the plan")
 	}
-	if len(prompts.sawPrior[work.StageImplement]) != 1 || prompts.sawPrior[work.StageImplement][0].Prose() != "turn one's report" {
-		t.Fatalf("renderer saw prior implement turns %v, want turn one's report", prompts.sawPrior[work.StageImplement])
+	if prompts.sawPrior.LatestImplement.Prose() != "turn one's report" {
+		t.Fatalf("renderer saw prior implement report %q, want %q", prompts.sawPrior.LatestImplement.Prose(), "turn one's report")
 	}
 	if stages.sawRun.Prompt != "do the thing" || string(stages.sawRun.Schema) != `{"type":"object"}` {
 		t.Fatalf("the rendered prompt and schema must reach the stage runner, got %+v", stages.sawRun)
@@ -1054,7 +1053,7 @@ func TestRunPlanDoesNotStartTheStageWhenTheTranscriptCannotBeOpened(t *testing.T
 	a := mustNew(t, d)
 	e.RegisterActivity(a.RunPlan)
 
-	if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(nil)); err == nil {
+	if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{})); err == nil {
 		t.Fatal("an unopenable transcript fails the stage")
 	}
 	if stages.ranOnce {
@@ -1213,7 +1212,7 @@ func TestRunPlanRecordsWhatASuccessfulStageSpent(t *testing.T) {
 	a := mustNew(t, d)
 	e.RegisterActivity(a.RunPlan)
 
-	if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(nil)); err != nil {
+	if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{})); err != nil {
 		t.Fatalf("RunPlan: %v", err)
 	}
 
@@ -1242,7 +1241,7 @@ func TestRunPlanRecordsAFailedStageToo(t *testing.T) {
 	a := mustNew(t, d)
 	e.RegisterActivity(a.RunPlan)
 
-	if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(nil)); err == nil {
+	if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{})); err == nil {
 		t.Fatal("a failed stage fails its activity")
 	}
 
@@ -1432,7 +1431,7 @@ func TestRunPlanReturnsTheDocumentInsideTheEnvelopeNotTheEnvelope(t *testing.T) 
 	a := mustNew(t, d)
 	e.RegisterActivity(a.RunPlan)
 
-	val, err := e.ExecuteActivity(a.RunPlan, stageAttempt(nil))
+	val, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{}))
 	if err != nil {
 		t.Fatalf("RunPlan: %v", err)
 	}
@@ -1459,7 +1458,7 @@ func TestRunPlanFailsWhenTheEnvelopeCannotBeRead(t *testing.T) {
 	a := mustNew(t, d)
 	e.RegisterActivity(a.RunPlan)
 
-	if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(nil)); err == nil {
+	if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{})); err == nil {
 		t.Fatal("a stage that answered in some other shape has not done its job; carrying an empty document " +
 			"into the next prompt would hide that")
 	}

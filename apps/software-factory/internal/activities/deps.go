@@ -216,14 +216,15 @@ type PromptRenderer interface {
 	// envelope, so a required field like implement's Blocked is stated for
 	// the stage that actually answers it.
 	//
-	// prior holds every completed turn of every stage, keyed by the stage that
-	// produced it and ordered oldest first — not just the latest turn of the
-	// latest stage. implement and review each loop under this pipeline (#435),
-	// so a seam carrying only one value per stage cannot render a turn that
-	// needs its own previous turn's output, or the previous review's findings.
-	// A run may pass everything it has; a stage is shown only what its own
-	// prompt asks for.
-	Render(stage work.Stage, detail work.TicketDetail, prior map[work.Stage][]work.StageOutput) (prompt string, schema []byte, err error)
+	// prior is exactly the plan, the latest implement turn and the latest
+	// review turn — see work.PriorTurns' own doc comment for why the seam
+	// is bounded to that rather than the run's whole turn history. The
+	// workflow (internal/workflows) keeps the full history in its own local
+	// state, for progress detection; it narrows to this before building an
+	// activity input, because Temporal records this input into workflow
+	// history on every single stage invocation, and the whole history would
+	// otherwise be shipped, and re-shipped, on every turn.
+	Render(stage work.Stage, detail work.TicketDetail, prior work.PriorTurns) (prompt string, schema []byte, err error)
 
 	// Decode unwraps a stage's result envelope into the domain's StageOutput.
 	//

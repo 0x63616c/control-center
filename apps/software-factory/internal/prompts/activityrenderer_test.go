@@ -102,7 +102,7 @@ func TestActivityRendererFailsLikeTheRendererItWraps(t *testing.T) {
 	t.Parallel()
 
 	adapter := NewActivityRenderer(newTestRenderer(t))
-	_, _, err := adapter.Render(work.StagePlan, work.TicketDetail{}, nil)
+	_, _, err := adapter.Render(work.StagePlan, work.TicketDetail{}, work.PriorTurns{})
 	if err == nil {
 		t.Fatal("Render with an empty ticket detail: want an error, got nil")
 	}

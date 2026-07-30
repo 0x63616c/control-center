@@ -222,6 +222,19 @@ func lastOutput(outputs []work.StageOutput) work.StageOutput {
 	return outputs[len(outputs)-1]
 }
 
+// narrowPrior reduces the loop's own full turn history down to exactly what
+// one stage attempt's activity input is allowed to carry — see
+// work.PriorTurns' own doc comment for why. The full history stays right
+// here, in prior, this function's argument: it never itself crosses into an
+// activity input, only the three values this returns do.
+func narrowPrior(prior map[work.Stage][]work.StageOutput) work.PriorTurns {
+	return work.PriorTurns{
+		Plan:            lastOutput(prior[work.StagePlan]),
+		LatestImplement: lastOutput(prior[work.StageImplement]),
+		LatestReview:    lastOutput(prior[work.StageReview]),
+	}
+}
+
 // runPlanTurn runs the plan stage's one and only turn.
 func (r *ticketRun) runPlanTurn(
 	ctx, stages workflow.Context, detail work.TicketDetail, prior map[work.Stage][]work.StageOutput,
@@ -239,7 +252,7 @@ func (r *ticketRun) runPlanTurn(
 		Sandbox: r.sandbox,
 		Model:   model,
 		Detail:  detail,
-		Prior:   prior,
+		Prior:   narrowPrior(prior),
 	}
 
 	var out activities.RunPlanOutput
@@ -282,7 +295,7 @@ func (r *ticketRun) runImplementTurn(
 		Sandbox: r.sandbox,
 		Model:   model,
 		Detail:  detail,
-		Prior:   prior,
+		Prior:   narrowPrior(prior),
 	}
 
 	var out activities.RunImplementOutput
@@ -323,7 +336,7 @@ func (r *ticketRun) runReviewTurn(
 		Sandbox: r.sandbox,
 		Model:   model,
 		Detail:  detail,
-		Prior:   prior,
+		Prior:   narrowPrior(prior),
 	}
 
 	var out activities.RunReviewOutput
