@@ -38,16 +38,27 @@ const (
 	// long silent turns.
 	StageHeartbeatTimeout = time.Minute
 
-	// MaxRunDuration is the workflow run timeout for one ticket: above the sum
-	// of its five stages, with room for the cheap activities between them —
-	// labels, status comments, the sandbox's own lifecycle.
-	MaxRunDuration = 6 * time.Hour
+	// MaxRunDuration is the workflow run timeout for one ticket: above
+	// RunPolicy.RunBudget()'s worst case (MaxStageInvocations stage
+	// invocations at MaxStageDuration each — 19 hours today), with room for
+	// the cheap activities between them — labels, status comments, the
+	// sandbox's own lifecycle.
+	//
+	// This grew from 6 hours under the five-stages-once pipeline to 24 under
+	// the pipeline rewrite's implement/review loop: MaxStageInvocations is 19
+	// rather than 5, and 19*MaxStageDuration (19h) does not fit inside 6h. It
+	// is a theoretical ceiling, not the expected case — "Sizing, measured" in
+	// the pipeline-rewrite spec measured real implement turns at 62s-617s, so
+	// a 15-turn run in practice finishes in low single-digit hours, not 19 —
+	// but Validate checks the ceiling every stage using its whole timeout
+	// could reach, not the common case, so this has to fit it.
+	MaxRunDuration = 24 * time.Hour
 
 	// SandboxDeadline is the pod's activeDeadlineSeconds, above the run
 	// timeout so Kubernetes never kills a sandbox a live run still expects.
 	// A stage whose pod vanished under it reports an exec failure with no
 	// cause, which is the most expensive kind of failure to diagnose.
-	SandboxDeadline = 7 * time.Hour
+	SandboxDeadline = 25 * time.Hour
 
 	// SandboxDeadlineSeconds is that deadline in the units Kubernetes takes,
 	// converted here rather than at the call site so the units cannot be got

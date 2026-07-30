@@ -11,8 +11,8 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
-// documentEnvelope is codex's wire shape for the four stages that answer in
-// a single prose field: plan, review, revise, propose.
+// documentEnvelope is codex's wire shape for the one stage that answers in a
+// single prose field with nothing else beside it: plan.
 //
 // It carries codex's own field spellings — this is the schema-facing type,
 // distinct from work.DocumentOutput, which is a Go-to-Go encoding across a
@@ -28,11 +28,28 @@ type documentEnvelope struct {
 }
 
 // implementEnvelope is codex's wire shape for the implement stage: its
-// report, plus whether it finished.
+// report, whether it finished, and the pull request title/body for the
+// branch as it now stands.
 type implementEnvelope struct {
 	Report        json.RawMessage `json:"report"`
 	Blocked       *bool           `json:"blocked"`
 	BlockedReason *string         `json:"blocked_reason"`
+	Title         *string         `json:"title"`
+	Body          *string         `json:"body"`
+}
+
+// findingEnvelope is codex's wire shape for one review finding.
+type findingEnvelope struct {
+	ID       string `json:"id"`
+	Blocking bool   `json:"blocking"`
+	Summary  string `json:"summary"`
+}
+
+// reviewEnvelope is codex's wire shape for the review stage: its document,
+// plus every finding it raised.
+type reviewEnvelope struct {
+	Document json.RawMessage   `json:"document"`
+	Findings []findingEnvelope `json:"findings"`
 }
 
 // decodeDocumentEnvelope reads a stage's result envelope and returns the one
@@ -75,55 +92,105 @@ func decodeDocumentEnvelope(result []byte) (string, error) {
 }
 
 // decodeImplementEnvelope reads the implement stage's result envelope: its
-// report, plus whether it finished.
+// report, whether it finished, and the pull request title/body for the
+// branch as it now stands.
 //
 // Strict in the same ways decodeDocumentEnvelope is, plus one more: blocked
 // and blocked_reason travel together. A blocked run with no reason told
 // nobody what it needed, and a blocked_reason on a run that says it finished
-// is a stage contradicting itself.
-func decodeImplementEnvelope(result []byte) (report string, blocked bool, blockedReason string, err error) {
+// is a stage contradicting itself. title and body are checked for presence
+// only, not for content: both are legitimately empty on a blocked turn that
+// pushed nothing worth describing.
+func decodeImplementEnvelope(result []byte) (report string, blocked bool, blockedReason, title, body string, err error) {
 	var envelope implementEnvelope
 
 	decoder := json.NewDecoder(bytes.NewReader(result))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&envelope); err != nil {
-		return "", false, "", fmt.Errorf("reading the stage's result envelope: %w", err)
+		return "", false, "", "", "", fmt.Errorf("reading the stage's result envelope: %w", err)
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return "", false, "", fmt.Errorf("the stage's result holds more than one envelope; only its final message is its output")
+		return "", false, "", "", "", fmt.Errorf("the stage's result holds more than one envelope; only its final message is its output")
 	}
 	if envelope.Report == nil {
-		return "", false, "", fmt.Errorf("the stage's result has no report field: it returned something other than the envelope it was given")
+		return "", false, "", "", "", fmt.Errorf("the stage's result has no report field: it returned something other than the envelope it was given")
 	}
 	if string(envelope.Report) == "null" {
-		return "", false, "", fmt.Errorf("the stage's result sets report to null: it answered in the envelope and put nothing in it")
+		return "", false, "", "", "", fmt.Errorf("the stage's result sets report to null: it answered in the envelope and put nothing in it")
 	}
 	if err := json.Unmarshal(envelope.Report, &report); err != nil {
-		return "", false, "", fmt.Errorf("reading the stage's report out of its result envelope: %w", err)
+		return "", false, "", "", "", fmt.Errorf("reading the stage's report out of its result envelope: %w", err)
 	}
 	if strings.TrimSpace(report) == "" {
-		return "", false, "", fmt.Errorf("the stage returned an empty report: it produced no handoff at all")
+		return "", false, "", "", "", fmt.Errorf("the stage returned an empty report: it produced no handoff at all")
 	}
 	if envelope.Blocked == nil {
-		return "", false, "", fmt.Errorf("the stage's result has no blocked field: it returned something other than the envelope it was given")
+		return "", false, "", "", "", fmt.Errorf("the stage's result has no blocked field: it returned something other than the envelope it was given")
 	}
 	if envelope.BlockedReason == nil {
-		return "", false, "", fmt.Errorf("the stage's result has no blocked_reason field: it returned something other than the envelope it was given")
+		return "", false, "", "", "", fmt.Errorf("the stage's result has no blocked_reason field: it returned something other than the envelope it was given")
+	}
+	if envelope.Title == nil {
+		return "", false, "", "", "", fmt.Errorf("the stage's result has no title field: it returned something other than the envelope it was given")
+	}
+	if envelope.Body == nil {
+		return "", false, "", "", "", fmt.Errorf("the stage's result has no body field: it returned something other than the envelope it was given")
 	}
 	switch {
 	case *envelope.Blocked && strings.TrimSpace(*envelope.BlockedReason) == "":
-		return "", false, "", fmt.Errorf("the stage says it is blocked but gives no blocked_reason")
+		return "", false, "", "", "", fmt.Errorf("the stage says it is blocked but gives no blocked_reason")
 	case !*envelope.Blocked && strings.TrimSpace(*envelope.BlockedReason) != "":
-		return "", false, "", fmt.Errorf("the stage gives a blocked_reason but says blocked is false")
+		return "", false, "", "", "", fmt.Errorf("the stage gives a blocked_reason but says blocked is false")
 	}
 
-	return report, *envelope.Blocked, *envelope.BlockedReason, nil
+	return report, *envelope.Blocked, *envelope.BlockedReason, *envelope.Title, *envelope.Body, nil
+}
+
+// decodeReviewEnvelope reads the review stage's result envelope: its
+// document, plus every finding it raised.
+//
+// Strict in the same ways decodeDocumentEnvelope is. An empty findings array
+// is not an error — a clean pass is a legitimate review outcome — but every
+// finding present must carry a non-empty id: sameness across turns is exact
+// string equality on it (see work.ReviewOutput), and an empty id would make
+// every such finding compare equal to every other.
+func decodeReviewEnvelope(result []byte) (document string, findings []work.Finding, err error) {
+	var envelope reviewEnvelope
+
+	decoder := json.NewDecoder(bytes.NewReader(result))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&envelope); err != nil {
+		return "", nil, fmt.Errorf("reading the stage's result envelope: %w", err)
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return "", nil, fmt.Errorf("the stage's result holds more than one envelope; only its final message is its output")
+	}
+	if envelope.Document == nil {
+		return "", nil, fmt.Errorf("the stage's result has no document field: it returned something other than the envelope it was given")
+	}
+	if string(envelope.Document) == "null" {
+		return "", nil, fmt.Errorf("the stage's result sets document to null: it answered in the envelope and put nothing in it")
+	}
+	if err := json.Unmarshal(envelope.Document, &document); err != nil {
+		return "", nil, fmt.Errorf("reading the stage's document out of its result envelope: %w", err)
+	}
+	if strings.TrimSpace(document) == "" {
+		return "", nil, fmt.Errorf("the stage returned an empty document: it produced no handoff at all")
+	}
+
+	for i, f := range envelope.Findings {
+		if strings.TrimSpace(f.ID) == "" {
+			return "", nil, fmt.Errorf("finding %d has no id: sameness across turns is exact string equality on it, and an empty id cannot be compared", i)
+		}
+		findings = append(findings, work.Finding{ID: f.ID, Blocking: f.Blocking, Summary: f.Summary})
+	}
+	return document, findings, nil
 }
 
 // Decode reads a stage's result envelope — codex's answer to
 // templates/<stage>.schema.json — into the domain's StageOutput.
 //
-// Exhaustive, no default: a sixth stage needs a case here before it
+// Exhaustive, no default: a fourth stage needs a case here before it
 // compiles, matching stageTemplate and work.decodeStageOutputValue.
 //
 // This must only ever be called from activity code — today, exclusively
@@ -136,20 +203,26 @@ func decodeImplementEnvelope(result []byte) (report string, blocked bool, blocke
 // mechanically, not only by this comment.
 func Decode(stage work.Stage, result []byte) (work.StageOutput, error) {
 	switch stage {
-	case work.StagePlan, work.StageReview, work.StageRevise, work.StagePropose:
+	case work.StagePlan:
 		document, err := decodeDocumentEnvelope(result)
 		if err != nil {
 			return work.StageOutput{}, err
 		}
 		return work.NewStageOutput(stage, work.DocumentOutput{Document: document}), nil
 	case work.StageImplement:
-		report, blocked, blockedReason, err := decodeImplementEnvelope(result)
+		report, blocked, blockedReason, title, body, err := decodeImplementEnvelope(result)
 		if err != nil {
 			return work.StageOutput{}, err
 		}
 		return work.NewStageOutput(stage, work.ImplementOutput{
-			Report: report, Blocked: blocked, BlockedReason: blockedReason,
+			Report: report, Blocked: blocked, BlockedReason: blockedReason, Title: title, Body: body,
 		}), nil
+	case work.StageReview:
+		document, findings, err := decodeReviewEnvelope(result)
+		if err != nil {
+			return work.StageOutput{}, err
+		}
+		return work.NewStageOutput(stage, work.ReviewOutput{Document: document, Findings: findings}), nil
 	}
 	return work.StageOutput{}, fmt.Errorf("no decoder for stage %q", stage)
 }

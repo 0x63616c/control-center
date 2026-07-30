@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -24,62 +23,127 @@ var acts *activities.Activities
 
 const dispatcherID = "software-factory-dispatcher"
 
-// stageOutput is what a happy pipeline returns, one distinct value per stage,
-// so a test can follow the handoff chain by identity rather than by shape.
-func stageOutput(stage work.Stage) activities.RunStageOutput {
-	return activities.RunStageOutput{
-		Output:     []byte(fmt.Sprintf(`{"document":%q}`, stage)),
-		Result:     stageOutputResult(stage),
-		ThreadID:   "thread-" + string(stage),
-		Usage:      work.Usage{InputTokens: 10, OutputTokens: 1},
-		Transcript: work.Transcript(fmt.Sprintf(`{"stage":%q}`, stage)),
-	}
+// planOutput, implementOutput and reviewOutput build one turn's activity
+// result, one per stage, since each answers in its own work.StageOutput
+// shape. RunPlanOutput/RunImplementOutput/RunReviewOutput each embed an
+// unexported stageOutput, so a value cannot be built with a struct literal
+// from outside internal/activities — only its promoted exported fields
+// (Output, Result, ThreadID, Usage) are reachable from here, which is enough
+// to build one field by field.
+
+// Pointers, not values: RunPlan/RunImplement/RunReview return
+// *RunPlanOutput/*RunImplementOutput/*RunReviewOutput and nil on error (#457
+// — a value return is never a nil pointer, so the SDK always tries to encode
+// it, even on an error path where the embedded work.StageOutput is the zero
+// value on purpose and refuses to marshal, silently replacing the real error
+// with an encode failure). testify's mock checks the registered return
+// against the activity's actual signature, so these have to match it.
+
+func planOutput() *activities.RunPlanOutput {
+	var out activities.RunPlanOutput
+	fillStageOutput(&out.Output, &out.Result, &out.ThreadID, &out.Usage,
+		work.NewStageOutput(work.StagePlan, work.DocumentOutput{Document: "the plan"}))
+	out.Transcript = transcriptFor(work.StagePlan)
+	return &out
 }
 
-// stageOutputResult builds the work.StageOutput stageOutput carries: an
-// ImplementOutput for implement (the only stage that does not answer in
-// DocumentOutput), a DocumentOutput for every other stage. Prose() reads the
-// same either way, which is all these tests key off.
-func stageOutputResult(stage work.Stage) work.StageOutput {
-	if stage == work.StageImplement {
-		return work.NewStageOutput(stage, work.ImplementOutput{Report: "the " + string(stage) + " document"})
-	}
-	return work.NewStageOutput(stage, work.DocumentOutput{Document: "the " + string(stage) + " document"})
+func implementOutput(blocked bool, blockedReason, title, body string) *activities.RunImplementOutput {
+	var out activities.RunImplementOutput
+	fillStageOutput(&out.Output, &out.Result, &out.ThreadID, &out.Usage,
+		work.NewStageOutput(work.StageImplement, work.ImplementOutput{
+			Report: "implemented it", Blocked: blocked, BlockedReason: blockedReason, Title: title, Body: body,
+		}))
+	out.Transcript = transcriptFor(work.StageImplement)
+	return &out
 }
 
-// ticketHarness runs one WorkTicket workflow against fakes and records what it
-// did. Knobs are set before run; everything else is a successful pipeline.
+func reviewOutput(findings ...work.Finding) *activities.RunReviewOutput {
+	var out activities.RunReviewOutput
+	fillStageOutput(&out.Output, &out.Result, &out.ThreadID, &out.Usage,
+		work.NewStageOutput(work.StageReview, work.ReviewOutput{Document: "the review", Findings: findings}))
+	out.Transcript = transcriptFor(work.StageReview)
+	return &out
+}
+
+// fillStageOutput fills in the fields every *Output type promotes from its
+// embedded stageOutput, so the three constructors above share one body
+// rather than repeating it.
+func fillStageOutput(output *[]byte, result *work.StageOutput, threadID *string, usage *work.Usage, value work.StageOutput) {
+	*output = []byte(fmt.Sprintf(`{"result":%q}`, value.Stage()))
+	*result = value
+	*threadID = "thread-" + string(value.Stage())
+	*usage = work.Usage{InputTokens: 10, OutputTokens: 1}
+}
+
+// transcriptFor is the transcript planOutput/implementOutput/reviewOutput
+// leave on a turn's output, so a test asserting PersistTranscript relayed
+// the right bytes has a fixed value to compare against without reaching
+// into the promoted field it can't build a literal against directly.
+func transcriptFor(stage work.Stage) work.Transcript {
+	return work.Transcript(fmt.Sprintf(`{"type":"turn.completed","stage":%q}`, stage))
+}
+
+// ticketHarness runs one WorkTicket workflow against fakes and records what
+// it did. Knobs are set before run; the zero-knob default is a run that
+// plans once, implements once, observes CI green immediately, reviews once
+// with no blocking findings, and proposes.
 type ticketHarness struct {
 	env *testsuite.TestWorkflowEnvironment
 
 	// knobs.
 	policy     work.RunPolicy
 	config     work.Config
-	stage      func(in activities.RunStageInput) (*activities.RunStageOutput, error)
-	stageDelay time.Duration
 	labelErr   error
-	noPR       bool
-	prErr      error
 	cancelAt   time.Duration
-	cloneErr   error
+	stageDelay time.Duration
+
+	cloneErr error
+	draftErr error
+
+	// persistErr, when set, is returned by every PersistTranscript call — the
+	// relay is best-effort, so this exists to prove a failed one does not
+	// fail the run, not to test PersistTranscript's own retry behaviour.
+	persistErr error
+
+	// implement, keyed by turn (1-indexed). A turn not present in the map
+	// runs the default: not blocked, pushed, no title/body worth noting.
+	implement map[int]*activities.RunImplementOutput
+	// ci, keyed by implement turn. A turn not present observes green.
+	ci map[int]activities.ObserveCIOutput
+	// review, keyed by review turn (1-indexed, its own counter). A turn not
+	// present raises no findings.
+	review map[int][]work.Finding
+
+	implementErr error
+	reviewErr    error
 
 	// what the run did.
-	ran      []work.Stage
-	priors   map[work.Stage]map[work.Stage]work.StageOutput
-	models   map[work.Stage]work.Model
-	keys     map[work.Stage]work.StageKey
-	created  int
-	cloned   []work.SandboxID
-	deleted  []work.SandboxID
-	cleared  int
-	reports  []work.StatusReport
-	done     work.TicketDone
-	prBranch string
+	implementTurns   []work.StageKey
+	reviewTurns      []work.StageKey
+	created          int
+	cloned           []work.SandboxID
+	deleted          []work.SandboxID
+	cleared          int
+	reports          []work.StatusReport
+	done             work.TicketDone
+	openOrUpdate     int
+	observedCI       int
+	drafted          []string
+	postedPRComments []prComment
 
 	// persisted records what PersistTranscript was called with, keyed by
-	// stage, so a test can assert the relay actually carries each stage's own
-	// transcript home rather than merely that the activity was called.
-	persisted map[work.Stage]activities.PersistTranscriptInput
+	// stage and turn — a loop invokes each stage more than once, so a single
+	// slot per stage would let a later turn's transcript overwrite an
+	// earlier one's and hide a call that never happened for one of them.
+	persisted map[work.StageKey]activities.PersistTranscriptInput
+}
+
+// prComment is one comment postPullRequestComment posted, recorded so a test
+// can assert on the pull request number and body without depending on
+// PostStatus's own wording.
+type prComment struct {
+	Number int
+	Body   string
 }
 
 func newTicketHarness(t *testing.T) *ticketHarness {
@@ -100,10 +164,10 @@ func newTicketHarness(t *testing.T) *ticketHarness {
 		env:       env,
 		policy:    work.DefaultRunPolicy(),
 		config:    work.DefaultConfig(),
-		priors:    map[work.Stage]map[work.Stage]work.StageOutput{},
-		models:    map[work.Stage]work.Model{},
-		keys:      map[work.Stage]work.StageKey{},
-		persisted: map[work.Stage]activities.PersistTranscriptInput{},
+		implement: map[int]*activities.RunImplementOutput{},
+		ci:        map[int]activities.ObserveCIOutput{},
+		review:    map[int][]work.Finding{},
+		persisted: map[work.StageKey]activities.PersistTranscriptInput{},
 	}
 }
 
@@ -133,16 +197,16 @@ func (h *ticketHarness) run() {
 			return h.cloneErr
 		})
 
-	env.OnActivity(acts.PersistTranscript, mock.Anything, mock.Anything).
-		Return(func(_ context.Context, in activities.PersistTranscriptInput) error {
-			h.persisted[in.Key.Stage] = in
-			return nil
-		})
-
 	env.OnActivity(acts.DeleteSandbox, mock.Anything, mock.Anything).
 		Return(func(_ context.Context, id work.SandboxID) error {
 			h.deleted = append(h.deleted, id)
 			return nil
+		})
+
+	env.OnActivity(acts.PersistTranscript, mock.Anything, mock.Anything).
+		Return(func(_ context.Context, in activities.PersistTranscriptInput) error {
+			h.persisted[in.Key] = in
+			return h.persistErr
 		})
 
 	env.OnActivity(acts.ClearAutoLabel, mock.Anything, 328).
@@ -151,35 +215,65 @@ func (h *ticketHarness) run() {
 			return h.labelErr
 		})
 
-	stage := env.OnActivity(acts.RunStage, mock.Anything, mock.Anything)
+	env.OnActivity(acts.ConvertPullRequestToDraft, mock.Anything, mock.Anything).
+		Return(func(_ context.Context, nodeID string) error {
+			h.drafted = append(h.drafted, nodeID)
+			return h.draftErr
+		})
+
+	env.OnActivity(acts.PostPullRequestComment, mock.Anything, mock.Anything, mock.Anything).
+		Return(func(_ context.Context, pr int, body string) error {
+			h.postedPRComments = append(h.postedPRComments, prComment{Number: pr, Body: body})
+			return nil
+		})
+
+	plan := env.OnActivity(acts.RunPlan, mock.Anything, mock.Anything)
 	if h.stageDelay > 0 {
-		stage = stage.After(h.stageDelay)
+		plan = plan.After(h.stageDelay)
 	}
-	stage.Return(func(_ context.Context, in activities.RunStageInput) (*activities.RunStageOutput, error) {
-		h.ran = append(h.ran, in.Key.Stage)
-		h.priors[in.Key.Stage] = maps.Clone(in.Prior)
-		h.models[in.Key.Stage] = in.Model
-		h.keys[in.Key.Stage] = in.Key
-		if h.stage != nil {
-			return h.stage(in)
-		}
-		out := stageOutput(in.Key.Stage)
-		return &out, nil
-	})
+	plan.Return(planOutput(), nil)
+
+	env.OnActivity(acts.RunImplement, mock.Anything, mock.Anything).
+		Return(func(_ context.Context, in activities.RunImplementInput) (*activities.RunImplementOutput, error) {
+			h.implementTurns = append(h.implementTurns, in.Key)
+			if h.implementErr != nil {
+				return nil, h.implementErr
+			}
+			if out, ok := h.implement[in.Key.Turn]; ok {
+				return out, nil
+			}
+			return implementOutput(false, "", "the title", "the body"), nil
+		})
+
+	env.OnActivity(acts.RunReview, mock.Anything, mock.Anything).
+		Return(func(_ context.Context, in activities.RunReviewInput) (*activities.RunReviewOutput, error) {
+			h.reviewTurns = append(h.reviewTurns, in.Key)
+			if h.reviewErr != nil {
+				return nil, h.reviewErr
+			}
+			return reviewOutput(h.review[in.Key.Turn]...), nil
+		})
 
 	env.OnActivity(acts.FindPullRequest, mock.Anything, mock.Anything).
-		Return(func(_ context.Context, branch string) (activities.FindPullRequestOutput, error) {
-			h.prBranch = branch
-			if h.prErr != nil {
-				return activities.FindPullRequestOutput{}, h.prErr
-			}
-			if h.noPR {
-				return activities.FindPullRequestOutput{}, nil
-			}
-			return activities.FindPullRequestOutput{
-				Found:       true,
-				PullRequest: work.PullRequest{Number: 9, URL: "https://github.com/o/r/pull/9"},
+		Return(activities.FindPullRequestOutput{Found: false}, nil)
+
+	env.OnActivity(acts.OpenOrUpdatePullRequest, mock.Anything, mock.Anything).
+		Return(func(_ context.Context, in activities.OpenOrUpdatePullRequestInput) (work.PullRequest, error) {
+			h.openOrUpdate++
+			return work.PullRequest{
+				Number: 9, URL: "https://github.com/o/r/pull/9", NodeID: "PR_node9",
+				Title: in.Title, Body: in.Body,
 			}, nil
+		})
+
+	env.OnActivity(acts.ObserveCI, mock.Anything, mock.Anything).
+		Return(func(_ context.Context, in activities.ObserveCIInput) (activities.ObserveCIOutput, error) {
+			h.observedCI++
+			turn := len(h.implementTurns)
+			if out, ok := h.ci[turn]; ok {
+				return out, nil
+			}
+			return activities.ObserveCIOutput{Concluded: true, Green: true}, nil
 		})
 
 	env.OnSignalExternalWorkflow(mock.Anything, dispatcherID, mock.Anything, workflows.SignalTicketDone, mock.Anything).
@@ -209,91 +303,27 @@ func (h *ticketHarness) result(t *testing.T) workflows.WorkTicketResult {
 	return result
 }
 
-// failingStage is a stage that dies the way a wedged codex process does.
-//
-// Returns nil, not &activities.RunStageOutput{} — this is the real activity's
-// own contract (see RunStage's doc comment) and it matters here: a value
-// return of the zero RunStageOutput is what silently swapped this exact
-// NonRetryableApplicationError for a JSON-encode error in prod run one
-// (#434), because the SDK reflects and serializes a non-pointer return
-// regardless of the accompanying error. Returning nil here is what makes this
-// mock actually exercise RunStage's real failure contract, not a shape the
-// SDK would never see from the production activity.
-func failingStage(activities.RunStageInput) (*activities.RunStageOutput, error) {
-	return nil, temporal.NewNonRetryableApplicationError("exit 1", activities.ErrTypePermanent, nil)
+// commentFor gives each status step a distinct comment id, so a test can
+// tell a step editing its own comment from a step editing another's.
+func commentFor(step work.StatusStep) work.CommentID {
+	return work.CommentID(len(step) + 100)
 }
 
-func TestWorkTicketRunsTheFiveStagesInPipelineOrder(t *testing.T) {
-	t.Parallel()
-
-	h := newTicketHarness(t)
-	h.run()
-
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow: %v", err)
-	}
-	want := work.Pipeline()
-	if len(h.ran) != len(want) {
-		t.Fatalf("ran %v, want %v", h.ran, want)
-	}
-	for i := range want {
-		if h.ran[i] != want[i] {
-			t.Fatalf("ran %v, want %v", h.ran, want)
-		}
-	}
+// red returns a concluded, red ObserveCIOutput naming checks.
+func red(checks ...string) activities.ObserveCIOutput {
+	return activities.ObserveCIOutput{Concluded: true, Green: false, RedChecks: checks}
 }
 
-// TestWorkTicketPersistsEveryStagesOwnTranscript is D5's whole point (#434):
-// a stage's transcript is written on the sandbox pod's own local disk, gone
-// the moment DeleteSandbox removes it, so the workflow must relay each one
-// out through PersistTranscript before that happens — and must relay each
-// stage's OWN transcript, not the last one seen or an empty one.
-func TestWorkTicketPersistsEveryStagesOwnTranscript(t *testing.T) {
-	t.Parallel()
-
-	h := newTicketHarness(t)
-	h.run()
-
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow: %v", err)
-	}
-	for _, stage := range work.Pipeline() {
-		in, ok := h.persisted[stage]
-		if !ok {
-			t.Fatalf("PersistTranscript was never called for %s", stage)
-		}
-		want := stageOutput(stage).Transcript
-		if string(in.Transcript) != string(want) {
-			t.Errorf("PersistTranscript for %s got transcript %q, want %q — the stage's own, not another one's", stage, in.Transcript, want)
-		}
-		if in.Key.Stage != stage || in.Key.Ticket != 328 {
-			t.Errorf("PersistTranscript for %s got key %+v, want it keyed to this stage and ticket", stage, in.Key)
-		}
-	}
+// green is a concluded, passing ObserveCIOutput.
+func green() activities.ObserveCIOutput {
+	return activities.ObserveCIOutput{Concluded: true, Green: true}
 }
 
-// TestWorkTicketSurvivesAFailedTranscriptRelay proves persistTranscript is
-// best-effort, the same shape as report(): a transcript is forensics, not the
-// run's actual work, and the tokens a stage spent are already spent whether
-// or not its transcript makes it home. A run must not fail because the relay
-// could not.
-func TestWorkTicketSurvivesAFailedTranscriptRelay(t *testing.T) {
-	t.Parallel()
+// unobserved is what ObserveCI reports when its own poll bound elapsed
+// before CI concluded.
+func unobserved() activities.ObserveCIOutput { return activities.ObserveCIOutput{Concluded: false} }
 
-	h := newTicketHarness(t)
-	env := h.env
-	env.OnActivity(acts.PersistTranscript, mock.Anything, mock.Anything).
-		Return(fmt.Errorf("the transcript volume is full"))
-	h.run()
-
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow: %v — a failed transcript relay must not fail the run", err)
-	}
-	want := work.Pipeline()
-	if len(h.ran) != len(want) {
-		t.Fatalf("ran %v, want every stage despite the relay failing", h.ran)
-	}
-}
+// --- setup / infra, carried over from the five-stage pipeline -------------
 
 func TestWorkTicketClonesTheSandboxBeforeAnyStageRuns(t *testing.T) {
 	t.Parallel()
@@ -307,16 +337,8 @@ func TestWorkTicketClonesTheSandboxBeforeAnyStageRuns(t *testing.T) {
 	if len(h.cloned) != 1 || h.cloned[0] != "sandbox-328" {
 		t.Fatalf("cloned %v, want exactly the one sandbox this run created", h.cloned)
 	}
-	if len(h.ran) == 0 {
-		t.Fatal("no stage ran at all")
-	}
 }
 
-// TestWorkTicketFailsBeforeAnyStageWhenTheCloneFails is #383's whole point:
-// codex refuses to run outside a git repository and exits before any model
-// call, so a run that discovered a missing checkout inside `plan` would
-// already have paid for a stage against a sandbox that could never have
-// worked. The clone must be caught first.
 func TestWorkTicketFailsBeforeAnyStageWhenTheCloneFails(t *testing.T) {
 	t.Parallel()
 
@@ -328,161 +350,76 @@ func TestWorkTicketFailsBeforeAnyStageWhenTheCloneFails(t *testing.T) {
 	if h.env.GetWorkflowError() == nil {
 		t.Fatal("a run whose sandbox could not be cloned into must fail")
 	}
-	if len(h.ran) != 0 {
-		t.Fatalf("ran %v — no stage may run against a sandbox with no repository in it", h.ran)
+	if len(h.implementTurns) != 0 {
+		t.Fatalf("implement ran %v — no stage may run against a sandbox with no repository in it", h.implementTurns)
 	}
 	if len(h.deleted) != 1 || h.deleted[0] != "sandbox-328" {
 		t.Fatalf("deleted %v, want the sandbox cleaned up despite the clone failing", h.deleted)
 	}
-}
-
-func TestWorkTicketGivesReviseBothThePlanAndTheReview(t *testing.T) {
-	t.Parallel()
-
-	h := newTicketHarness(t)
-	h.run()
-
-	// The case a single rolling handoff cannot serve: revise.md interpolates
-	// {{plan}} AND {{review}}, and by the time revise runs the plan is two
-	// stages back. A pipeline that kept only the last document would fail every
-	// run at stage three, having already paid for two.
-	revise := h.priors[work.StageRevise]
-	if revise[work.StagePlan].Prose() != "the plan document" {
-		t.Fatalf("revise saw prior %v — the plan was discarded before the stage that reads it", revise)
-	}
-	if revise[work.StageReview].Prose() != "the review document" {
-		t.Fatalf("revise saw prior %v, want the review too", revise)
-	}
-}
-
-func TestWorkTicketAccumulatesEveryStagesDocumentRatherThanReplacingIt(t *testing.T) {
-	t.Parallel()
-
-	h := newTicketHarness(t)
-	h.run()
-
-	if got := h.priors[work.StagePlan]; len(got) != 0 {
-		t.Fatalf("the first stage has no prior documents, got %v", got)
-	}
-	// Each stage sees everything that ran before it, and nothing that did not.
-	for i, stage := range work.Pipeline() {
-		prior := h.priors[stage]
-		if len(prior) != i {
-			t.Fatalf("%s saw %d prior documents, want %d: %v", stage, len(prior), i, prior)
-		}
-		for _, earlier := range work.Pipeline()[:i] {
-			if prior[earlier].Prose() != "the "+string(earlier)+" document" {
-				t.Fatalf("%s did not receive the %s document: %v", stage, earlier, prior)
-			}
-		}
-	}
-}
-
-func TestWorkTicketTotalsTheTokensEveryStageSpent(t *testing.T) {
-	t.Parallel()
-
-	h := newTicketHarness(t)
-	h.run()
-
-	result := h.result(t)
-	if result.Usage.InputTokens != 50 || result.Usage.OutputTokens != 5 {
-		t.Fatalf("usage = %+v, want the sum of five stages", result.Usage)
-	}
-}
-
-func TestWorkTicketReportsTheProposedPullRequest(t *testing.T) {
-	t.Parallel()
-
-	h := newTicketHarness(t)
-	h.run()
-
-	result := h.result(t)
-	if result.Outcome != work.OutcomeProposed || result.PullRequest == "" {
-		t.Fatalf("result = %+v, want a proposed pull request", result)
-	}
-}
-
-func TestWorkTicketIsBlockedWhenNoPullRequestWasOpened(t *testing.T) {
-	t.Parallel()
-
-	h := newTicketHarness(t)
-	h.noPR = true
-	h.run()
-
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("propose declining to open a pull request is a decision, not a failure: %v", err)
-	}
-	result := h.result(t)
-	if result.Outcome != work.OutcomeBlocked || result.PullRequest != "" {
-		t.Fatalf("result = %+v, want blocked with no pull request", result)
-	}
+	// An infra failure still clears the label — ADR-0011 names "a PR opened,
+	// or blocked" as the moments it comes off, but leaving it on after a hard
+	// failure would have the dispatcher re-list and re-fail the ticket
+	// forever, which is the unbounded requeue this system exists to avoid.
+	// This is the OutcomeFailed path through finish(), distinct from
+	// decline()'s (OutcomeBlocked/OutcomeExhausted) — see finish's own
+	// doc comment.
 	if h.cleared != 1 {
-		t.Fatalf("cleared %d times — a blocked run is one of the two moments ADR-0011 takes the label off", h.cleared)
+		t.Fatalf("cleared the auto label %d times, want exactly once even on an infra failure", h.cleared)
+	}
+	if h.done.Failure != work.FailureOther {
+		t.Fatalf("signalled failure kind %q, want %q — the ordinary case, not auth or rate-limit", h.done.Failure, work.FailureOther)
 	}
 }
 
-func TestWorkTicketAsksGitHubAboutItsOwnBranchRatherThanTrustingTheStage(t *testing.T) {
+// TestWorkTicketTellsItsDispatcherWhenTheFailureWasAuth guards the
+// agent-verdict-versus-infra split's other half: the FailureKind the
+// dispatcher is signalled must actually distinguish an auth failure from an
+// ordinary one, or the dispatcher cannot tell "pause, a credential is dead"
+// from "this one ticket broke" — see work.FailureKind's own doc comment.
+func TestWorkTicketTellsItsDispatcherWhenTheFailureWasAuth(t *testing.T) {
 	t.Parallel()
 
 	h := newTicketHarness(t)
+	// The type is the whole of what a workflow sees: an activity failure
+	// crosses a process boundary, so the client's own sentinel does not
+	// survive the trip and workflow code has no business importing it.
+	h.labelErr = temporal.NewNonRetryableApplicationError(
+		"clearing the auto label: github refused this app's credentials", activities.ErrTypeAuth, nil)
 	h.run()
 
-	if h.prBranch == "" {
-		t.Fatal("the run must ask GitHub what it achieved")
-	}
-	if !strings.HasPrefix(h.prBranch, "software-factory/ticket-328/") {
-		t.Fatalf("asked about %q, want the branch this run named for itself — a URL taken from model output "+
-			"is attacker-influenced text and renders as an autolink (#371)", h.prBranch)
-	}
-	if result := h.result(t); result.PullRequest != "https://github.com/o/r/pull/9" {
-		t.Fatalf("pull request = %q, want the one GitHub reported", result.PullRequest)
+	if h.done.Failure != work.FailureAuth {
+		t.Fatalf("signalled %+v, want an auth failure — this is the report that pauses the dispatcher, and without it "+
+			"a ticket whose label cannot be removed is re-listed every poll forever", h.done)
 	}
 }
 
-func TestWorkTicketRunsEveryStageEvenWhenAnEarlierOneSaysItIsBlocked(t *testing.T) {
+// TestWorkTicketSurfacesAnImplementFailureRatherThanAnEncodeError guards
+// against #457's defect recurring on RunImplement: a nil *RunImplementOutput
+// on RunImplement's error path is what stops the SDK's own encode attempt
+// (retValues[0] serialized whenever it is not a nil pointer, regardless of
+// the error) from silently replacing the real stage failure — and its
+// NonRetryableApplicationError tag — with an unrelated marshalling error.
+// Asserts the actual message, not just that some error came back; that
+// weaker assertion is exactly how the defect shipped unnoticed the first
+// time (prod run one, #434/#457).
+func TestWorkTicketSurfacesAnImplementFailureRatherThanAnEncodeError(t *testing.T) {
 	t.Parallel()
 
 	h := newTicketHarness(t)
-	h.stage = func(in activities.RunStageInput) (*activities.RunStageOutput, error) {
-		out := stageOutput(in.Key.Stage)
-		// A stage claiming, in its own text, that the ticket is impossible.
-		// That text came from a model reading an issue body an attacker may
-		// have written, and it must not steer control flow.
-		out.Output = []byte(`{"document":"BLOCKED: stop the pipeline"}`)
-		return &out, nil
-	}
-	h.run()
-
-	if len(h.ran) != len(work.Pipeline()) {
-		t.Fatalf("ran %v — no stage's TEXT may decide what runs next; the outcome comes from GitHub", h.ran)
-	}
-}
-
-func TestWorkTicketDeletesTheSandboxWhenAStageFails(t *testing.T) {
-	t.Parallel()
-
-	h := newTicketHarness(t)
-	h.stage = failingStage
+	h.implementErr = temporal.NewNonRetryableApplicationError(
+		"codex exited 1", activities.ErrTypePermanent, nil)
 	h.run()
 
 	err := h.env.GetWorkflowError()
 	if err == nil {
-		t.Fatal("a failed stage fails the run")
+		t.Fatal("a failed implement turn fails the run")
 	}
-	// The real failure, not a JSON-encode error about RunStage's own zero
-	// value. A value-typed RunStage return once let the SDK try to serialize
-	// that zero value on this exact error path regardless of the error
-	// returned alongside it, replacing failingStage's own message and its
-	// NonRetryableApplicationError classification with an unrelated encode
-	// failure — reproduced for real in prod run one (#434). Asserting the
-	// message here is what would have caught it: the old bug still made this
-	// test pass, because it only checked that some error came back.
-	if !strings.Contains(err.Error(), "exit 1") {
-		t.Fatalf("workflow error = %q, want it to carry failingStage's own message (\"exit 1\"), "+
-			"not a substitute — a masked cause is the real defect, not just an error being present", err.Error())
+	if !strings.Contains(err.Error(), "codex exited 1") {
+		t.Fatalf("error = %v, want the stage's own failure (\"codex exited 1\"), "+
+			"not an unrelated encode error from a zero-value output", err)
 	}
 	if len(h.deleted) != 1 || h.deleted[0] != "sandbox-328" {
-		t.Fatalf("deleted %v, want the sandbox — a pod outliving its run is the leak the sweep exists to catch", h.deleted)
+		t.Fatalf("deleted %v, want the sandbox cleaned up despite the stage failing", h.deleted)
 	}
 }
 
@@ -495,10 +432,422 @@ func TestWorkTicketDeletesTheSandboxWhenTheRunIsCancelled(t *testing.T) {
 	h.run()
 
 	if err := h.env.GetWorkflowError(); !temporal.IsCanceledError(err) {
-		t.Fatalf("the run was meant to be cancelled mid-stage, got %v", err)
+		t.Fatalf("the run was meant to be cancelled, got %v", err)
 	}
 	if len(h.deleted) != 1 {
 		t.Fatalf("deleted %v — cleanup must run on a disconnected context, or cancelling a run leaks its pod", h.deleted)
+	}
+}
+
+func TestWorkTicketRefusesAnIncompletePolicyWithoutTouchingTheWorld(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.policy.StageTimeout = 0
+	h.run()
+
+	err := h.env.GetWorkflowError()
+	if err == nil {
+		t.Fatal("an incomplete policy must fail the run rather than acquire a default")
+	}
+	if h.created != 0 || len(h.implementTurns) != 0 {
+		t.Fatal("and it must fail before anything is created")
+	}
+	var app *temporal.ApplicationError
+	if !errors.As(err, &app) || !app.NonRetryable() {
+		t.Fatalf("retrying a bad input changes nothing, so it must be non-retryable: %v", err)
+	}
+}
+
+// --- the happy path ---------------------------------------------------------
+
+func TestWorkTicketProposesOnAGreenFirstWindowWithNoBlockingFindings(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+	result := h.result(t)
+	if result.Outcome != work.OutcomeProposed {
+		t.Fatalf("outcome = %s, want proposed", result.Outcome)
+	}
+	if result.PullRequest.URL != "https://github.com/o/r/pull/9" || result.PullRequest.NodeID != "PR_node9" {
+		t.Fatalf("pull request = %+v, want the one the loop opened", result.PullRequest)
+	}
+	if len(h.implementTurns) != 1 || len(h.reviewTurns) != 1 {
+		t.Fatalf("implement turns = %d, review turns = %d, want exactly one each on the happy path",
+			len(h.implementTurns), len(h.reviewTurns))
+	}
+	if h.openOrUpdate != 1 {
+		t.Fatalf("opened/updated the pull request %d times, want once (after the one successful push)", h.openOrUpdate)
+	}
+}
+
+func TestWorkTicketKeysEachTurnToThisRunWithAOneIndexedTurnNumber(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.ci = map[int]activities.ObserveCIOutput{1: red("build"), 2: green()}
+	h.run()
+
+	if len(h.implementTurns) != 2 {
+		t.Fatalf("implement turns = %d, want 2", len(h.implementTurns))
+	}
+	for i, key := range h.implementTurns {
+		if key.Turn != i+1 || key.Stage != work.StageImplement || key.Ticket != 328 || key.RunID == "" {
+			t.Fatalf("implement turn %d keyed as %+v", i, key)
+		}
+	}
+	if len(h.reviewTurns) != 1 || h.reviewTurns[0].Turn != 1 {
+		t.Fatalf("review turns = %+v, want exactly one at turn 1", h.reviewTurns)
+	}
+}
+
+// TestWorkTicketPersistsEveryTurnsOwnTranscript is D5's whole point (#434),
+// carried forward from the five-stage pipeline to the loop: a turn's
+// transcript is written on the sandbox pod's own local disk, gone the moment
+// DeleteSandbox removes it, so the workflow must relay each one out through
+// PersistTranscript before that happens — keyed to that turn specifically,
+// not the last one seen or an empty one, since a loop invokes plan once and
+// implement/review more than once.
+func TestWorkTicketPersistsEveryTurnsOwnTranscript(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.ci = map[int]activities.ObserveCIOutput{1: red("build"), 2: green()}
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+
+	check := func(key work.StageKey, stage work.Stage) {
+		in, ok := h.persisted[key]
+		if !ok {
+			t.Fatalf("PersistTranscript was never called for %+v", key)
+		}
+		if want := transcriptFor(stage); string(in.Transcript) != string(want) {
+			t.Errorf("PersistTranscript for %+v got transcript %q, want %q — this turn's own, not another's",
+				key, in.Transcript, want)
+		}
+	}
+	check(h.implementTurns[0], work.StageImplement)
+	check(h.implementTurns[1], work.StageImplement)
+	check(h.reviewTurns[0], work.StageReview)
+}
+
+// TestWorkTicketSurvivesAFailedTranscriptRelay proves persistTranscript is
+// best-effort, the same shape as report(): a transcript is forensics, not the
+// run's actual work, and the tokens a turn spent are already spent whether or
+// not its transcript makes it home. A run must not fail because the relay
+// could not.
+func TestWorkTicketSurvivesAFailedTranscriptRelay(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.persistErr = errors.New("the transcript volume is full")
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v — a failed transcript relay must not fail the run", err)
+	}
+	result := h.result(t)
+	if result.Outcome != work.OutcomeProposed {
+		t.Fatalf("outcome = %s, want proposed despite the relay failing", result.Outcome)
+	}
+}
+
+// --- CI-exhaustion, window 1, never reaching review -------------------------
+
+// TestWorkTicketTerminatesAtFiveOnAnAllRedRunNeverReachingReview is the
+// acceptance test the pipeline-rewrite spec names specifically to catch the
+// old, wrong "23 regardless of when CI fails" assumption: under the real
+// schedule, an all-red run terminates at 5, in window 1, having never run
+// review at all.
+func TestWorkTicketTerminatesAtFiveOnAnAllRedRunNeverReachingReview(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	// Alternating check names: neither turn's red set is ever a subset of
+	// the previous turn's, so rule 1 never fires and this isolates the
+	// counter backstop alone — a repeated name here would trip rule 1 first
+	// and terminate at 2, testing the wrong mechanism.
+	h.ci = map[int]activities.ObserveCIOutput{
+		1: red("A"), 2: red("B"), 3: red("A"), 4: red("B"), 5: red("A"),
+	}
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("counter exhaustion is a decision, not an error: %v", err)
+	}
+	result := h.result(t)
+	if result.Outcome != work.OutcomeExhausted {
+		t.Fatalf("outcome = %s, want exhausted", result.Outcome)
+	}
+	if len(h.implementTurns) != 5 {
+		t.Fatalf("implement turns = %d, want exactly 5 (the ci_turns backstop), not 15 or 23", len(h.implementTurns))
+	}
+	if len(h.reviewTurns) != 0 {
+		t.Fatalf("review turns = %d, want zero — review never runs in a window that stays red", len(h.reviewTurns))
+	}
+}
+
+// --- the 15-turn worst case, review-exhaustion path -------------------------
+
+func TestWorkTicketTerminatesAfterFifteenImplementAndThreeReviewOnRepeatedReviewExhaustion(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	// Each of 3 windows: 4 reds then a green (5 implement turns/window).
+	// Alternating check names within each window so rule 1 never fires and
+	// this isolates the counter backstop.
+	h.ci = map[int]activities.ObserveCIOutput{
+		1: red("A"), 2: red("B"), 3: red("A"), 4: red("B"), 5: green(),
+		6: red("A"), 7: red("B"), 8: red("A"), 9: red("B"), 10: green(),
+		11: red("A"), 12: red("B"), 13: red("A"), 14: red("B"), 15: green(),
+	}
+	// Each of 3 reviews raises a fresh, non-repeating blocking finding, so
+	// rule 2 never fires and the run runs out on the counter alone.
+	h.review = map[int][]work.Finding{
+		1: {{ID: "finding-1", Blocking: true, Summary: "one"}},
+		2: {{ID: "finding-2", Blocking: true, Summary: "two"}},
+		3: {{ID: "finding-3", Blocking: true, Summary: "three"}},
+	}
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("counter exhaustion is a decision, not an error: %v", err)
+	}
+	result := h.result(t)
+	if result.Outcome != work.OutcomeExhausted {
+		t.Fatalf("outcome = %s, want exhausted", result.Outcome)
+	}
+	if len(h.implementTurns) != 15 {
+		t.Fatalf("implement turns = %d, want exactly 15 (work.MaxStageInvocations' derivation)", len(h.implementTurns))
+	}
+	if len(h.reviewTurns) != 3 {
+		t.Fatalf("review turns = %d, want exactly 3, no fourth window", len(h.reviewTurns))
+	}
+}
+
+// --- ci_turns resets on green, mid-run --------------------------------------
+
+func TestWorkTicketResetsCiTurnsOnGreenAndTheNextWindowStartsFromZero(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	// Window 1: red, red, green (proceeds to review before exhausting).
+	// Window 2 (after a blocking finding reopens one): red, red, red, red,
+	// green — if window 2's reds accumulated onto window 1's, this would
+	// exhaust at turn 4 of window 2 (turn 6 overall) instead of reaching
+	// green on turn 5 of window 2 (turn 8 overall). Check names alternate
+	// within each window so rule 1 never fires and only the counter's own
+	// reset is under test.
+	h.ci = map[int]activities.ObserveCIOutput{
+		1: red("A"), 2: red("B"), 3: green(),
+		4: red("A"), 5: red("B"), 6: red("A"), 7: red("B"), 8: green(),
+	}
+	h.review = map[int][]work.Finding{
+		1: {{ID: "finding-1", Blocking: true, Summary: "one"}},
+		// review turn 2 raises nothing: the run proposes after window 2.
+	}
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+	result := h.result(t)
+	if result.Outcome != work.OutcomeProposed {
+		t.Fatalf("outcome = %s, want proposed — window 2's reds must not have inherited window 1's count", result.Outcome)
+	}
+	if len(h.implementTurns) != 8 {
+		t.Fatalf("implement turns = %d, want 8 (3 + 5)", len(h.implementTurns))
+	}
+	if len(h.reviewTurns) != 2 {
+		t.Fatalf("review turns = %d, want 2", len(h.reviewTurns))
+	}
+}
+
+// --- rule 2: a repeated blocking finding fires before either counter -------
+
+func TestWorkTicketTerminatesWhenTheSameBlockingFindingSurvivesAReview(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	// CI green immediately every window; review turns 1 and 2 both raise the
+	// identical blocking finding id.
+	h.review = map[int][]work.Finding{
+		1: {{ID: "same-finding", Blocking: true, Summary: "one"}},
+		2: {{ID: "same-finding", Blocking: true, Summary: "still here"}},
+	}
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("a stalled run is a decision, not an error: %v", err)
+	}
+	result := h.result(t)
+	if result.Outcome != work.OutcomeExhausted {
+		t.Fatalf("outcome = %s, want exhausted", result.Outcome)
+	}
+	if len(h.implementTurns) != 2 {
+		t.Fatalf("implement turns = %d, want exactly 2 (one per CI window before each review)", len(h.implementTurns))
+	}
+	if len(h.reviewTurns) != 2 {
+		t.Fatalf("review turns = %d, want exactly 2 — rule 2 fires on the second, not a third window", len(h.reviewTurns))
+	}
+}
+
+func TestWorkTicketANewBlockingFindingIsProgressNotAStall(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.review = map[int][]work.Finding{
+		1: {{ID: "finding-a", Blocking: true, Summary: "one"}},
+		2: {{ID: "finding-b", Blocking: true, Summary: "different"}},
+		// review turn 3 raises nothing: proposes.
+	}
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+	result := h.result(t)
+	if result.Outcome != work.OutcomeProposed {
+		t.Fatalf("outcome = %s, want proposed — an entirely new finding id is progress, not a stall", result.Outcome)
+	}
+	if len(h.reviewTurns) != 3 {
+		t.Fatalf("review turns = %d, want 3", len(h.reviewTurns))
+	}
+}
+
+// --- rule 3: blocked stops immediately --------------------------------------
+
+func TestWorkTicketBlockedStopsImmediatelyRegardlessOfRemainingBudget(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.implement = map[int]*activities.RunImplementOutput{
+		2: implementOutput(true, "needs a human decision", "", ""),
+	}
+	// Turn 1 red, so the window continues to a turn 2 rather than reaching
+	// review after turn 1 alone. If blocked were not checked first, turn 2
+	// would also be asked about CI.
+	h.ci = map[int]activities.ObserveCIOutput{1: red("build")}
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("blocked is a decision, not an error: %v", err)
+	}
+	result := h.result(t)
+	if result.Outcome != work.OutcomeBlocked || result.Detail != "needs a human decision" {
+		t.Fatalf("result = %+v, want blocked with the reason implement gave", result)
+	}
+	if len(h.implementTurns) != 2 {
+		t.Fatalf("implement turns = %d, want exactly 2 — no turn after the blocked one", len(h.implementTurns))
+	}
+	if h.observedCI != 1 {
+		t.Fatalf("observed CI %d times, want exactly 1 (turn 1's, before the blocked turn 2) — "+
+			"rule 3 is checked ahead of CI/review machinery", h.observedCI)
+	}
+	if len(h.reviewTurns) != 0 {
+		t.Fatal("no review after a blocked implement turn")
+	}
+}
+
+// --- unobserved CI carries forward the last observed red set ---------------
+
+func TestWorkTicketUnobservedCICarriesForwardTheLastObservedRedSetRatherThanResetting(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	// Turn 1: red {A,B}. Turn 2: unobserved. Turn 3: red {A}. If the
+	// unobserved turn reset the comparison to empty, turn 3's {A} would not
+	// be a subset of an empty set and rule 1 would not fire; it must instead
+	// compare against turn 1's {A,B} and terminate.
+	h.ci = map[int]activities.ObserveCIOutput{
+		1: red("A", "B"),
+		2: unobserved(),
+		3: red("A"),
+	}
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("a stalled run is a decision, not an error: %v", err)
+	}
+	result := h.result(t)
+	if result.Outcome != work.OutcomeExhausted {
+		t.Fatalf("outcome = %s, want exhausted on turn 3's rule-1 comparison against turn 1's observed set", result.Outcome)
+	}
+	if len(h.implementTurns) != 3 {
+		t.Fatalf("implement turns = %d, want exactly 3", len(h.implementTurns))
+	}
+	if len(h.reviewTurns) != 0 {
+		t.Fatal("review must never run in a window that never reaches green")
+	}
+}
+
+func TestWorkTicketUnobservedCICountsAgainstTheCounterAsRed(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.ci = map[int]activities.ObserveCIOutput{
+		1: unobserved(), 2: unobserved(), 3: unobserved(), 4: unobserved(), 5: unobserved(),
+	}
+	h.run()
+
+	result := h.result(t)
+	if result.Outcome != work.OutcomeExhausted {
+		t.Fatalf("outcome = %s, want exhausted — an unknown CI outcome must not be free progress", result.Outcome)
+	}
+	if len(h.implementTurns) != 5 {
+		t.Fatalf("implement turns = %d, want exactly 5", len(h.implementTurns))
+	}
+}
+
+// --- dispatcher / label / usage, adapted for the loop -----------------------
+
+func TestWorkTicketTotalsTheTokensEveryTurnSpent(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.ci = map[int]activities.ObserveCIOutput{1: red("x")}
+	h.run()
+
+	result := h.result(t)
+	// plan + 2 implement turns + 1 review turn = 4 stage invocations, 10 in
+	// / 1 out tokens each.
+	if result.Usage.InputTokens != 40 || result.Usage.OutputTokens != 4 {
+		t.Fatalf("usage = %+v, want the sum of every turn that actually ran", result.Usage)
+	}
+}
+
+func TestWorkTicketClearsTheAutoLabelOnSuccess(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.run()
+
+	if h.cleared != 1 {
+		t.Fatalf("cleared %d times, want once", h.cleared)
+	}
+}
+
+func TestWorkTicketLeavesTheAutoLabelWhenAHumanCancelsTheRun(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.stageDelay = time.Hour
+	h.cancelAt = time.Minute
+	h.run()
+
+	if err := h.env.GetWorkflowError(); !temporal.IsCanceledError(err) {
+		t.Fatalf("the run was meant to be cancelled, got %v", err)
+	}
+	if h.cleared != 0 {
+		t.Fatal("a cancelled run decided nothing, so the ticket still wants machine work")
 	}
 }
 
@@ -516,95 +865,7 @@ func TestWorkTicketSignalsItsDispatcherOnSuccess(t *testing.T) {
 	}
 }
 
-func TestWorkTicketSignalsItsDispatcherWhenItFails(t *testing.T) {
-	t.Parallel()
-
-	h := newTicketHarness(t)
-	h.stage = failingStage
-	h.run()
-
-	if h.done.Outcome != work.OutcomeFailed || h.done.Failure != work.FailureOther {
-		t.Fatalf("signalled %+v, want a failure report — a dispatcher that is not told holds the slot until it reconciles", h.done)
-	}
-}
-
-func TestWorkTicketTellsItsDispatcherWhenTheFailureWasAuth(t *testing.T) {
-	t.Parallel()
-
-	h := newTicketHarness(t)
-	// The type is the whole of what a workflow sees: an activity failure crosses
-	// a process boundary, so the client's own sentinel does not survive the trip
-	// and workflow code has no business importing it.
-	h.labelErr = temporal.NewNonRetryableApplicationError(
-		"clearing the auto label: github refused this app's credentials", activities.ErrTypeAuth, nil)
-	h.run()
-
-	if h.done.Failure != work.FailureAuth {
-		t.Fatalf("signalled %+v, want an auth failure — this is the report that pauses the dispatcher, and without it "+
-			"a ticket whose label cannot be removed is re-listed every poll forever", h.done)
-	}
-}
-
-func TestWorkTicketClearsTheAutoLabelOnSuccess(t *testing.T) {
-	t.Parallel()
-
-	h := newTicketHarness(t)
-	h.run()
-
-	if h.cleared != 1 {
-		t.Fatalf("cleared %d times, want once", h.cleared)
-	}
-}
-
-func TestWorkTicketClearsTheAutoLabelAfterAFailureSoTheTicketIsNotRelistedForever(t *testing.T) {
-	t.Parallel()
-
-	h := newTicketHarness(t)
-	h.stage = failingStage
-	h.run()
-
-	if h.cleared != 1 {
-		t.Fatalf("cleared %d times, want once — a ticket left labelled is picked up again on the next poll, forever", h.cleared)
-	}
-}
-
-func TestWorkTicketLeavesTheAutoLabelWhenAHumanCancelsTheRun(t *testing.T) {
-	t.Parallel()
-
-	h := newTicketHarness(t)
-	h.stageDelay = time.Hour
-	h.cancelAt = time.Minute
-	h.run()
-
-	if err := h.env.GetWorkflowError(); !temporal.IsCanceledError(err) {
-		t.Fatalf("the run was meant to be cancelled mid-stage, got %v", err)
-	}
-	if h.cleared != 0 {
-		t.Fatal("a cancelled run decided nothing, so the ticket still wants machine work")
-	}
-}
-
-func TestWorkTicketRefusesAnIncompletePolicyWithoutTouchingTheWorld(t *testing.T) {
-	t.Parallel()
-
-	h := newTicketHarness(t)
-	h.policy.StageTimeout = 0
-	h.run()
-
-	err := h.env.GetWorkflowError()
-	if err == nil {
-		t.Fatal("an incomplete policy must fail the run rather than acquire a default")
-	}
-	if h.created != 0 || len(h.ran) != 0 {
-		t.Fatal("and it must fail before anything is created")
-	}
-	var app *temporal.ApplicationError
-	if !errors.As(err, &app) || !app.NonRetryable() {
-		t.Fatalf("retrying a bad input changes nothing, so it must be non-retryable: %v", err)
-	}
-}
-
-func TestWorkTicketRunsEachStageOnItsConfiguredModel(t *testing.T) {
+func TestWorkTicketRunsEachTurnOnItsConfiguredModel(t *testing.T) {
 	t.Parallel()
 
 	h := newTicketHarness(t)
@@ -613,108 +874,14 @@ func TestWorkTicketRunsEachStageOnItsConfiguredModel(t *testing.T) {
 	}
 	h.run()
 
-	if h.models[work.StageReview].Name != "a-different-model" {
-		t.Fatalf("review ran on %+v, want its override", h.models[work.StageReview])
-	}
-	if h.models[work.StagePlan] != h.config.DefaultModel {
-		t.Fatalf("plan ran on %+v, want the default", h.models[work.StagePlan])
-	}
-}
-
-func TestWorkTicketKeysEveryStageToThisRunSoARetryResumesRatherThanRestarts(t *testing.T) {
-	t.Parallel()
-
-	h := newTicketHarness(t)
-	h.run()
-
-	for stage, key := range h.keys {
-		if key.Ticket != 328 || key.RunID == "" || key.Stage != stage {
-			t.Fatalf("%s keyed as %+v — the key is the whole of a stage's identity", stage, key)
-		}
-	}
-}
-
-func TestWorkTicketKeepsOneCommentPerStepAndEditsThatOne(t *testing.T) {
-	t.Parallel()
-
-	h := newTicketHarness(t)
-	h.run()
-
-	// Every step's first report posts (no comment yet) and every later report
-	// for that step edits the one it posted. A step that carried another's ID
-	// would rewrite someone else's comment.
-	seen := map[work.StatusStep]bool{}
+	var sawReviewModel work.Model
 	for _, report := range h.reports {
-		if !seen[report.Step] {
-			if report.Comment != 0 {
-				t.Fatalf("the first %s report has no comment to edit, got %d", report.Step, report.Comment)
-			}
-			seen[report.Step] = true
-			continue
-		}
-		if report.Comment != commentFor(report.Step) {
-			t.Fatalf("%s report carries comment %d, want %d — a step must edit its own comment",
-				report.Step, report.Comment, commentFor(report.Step))
+		if report.Step == work.StageStep(work.StageReview) && report.State == work.StepSucceeded {
+			sawReviewModel = report.Model
 		}
 	}
-}
-
-func TestWorkTicketReportsEveryStageStartingAndFinishing(t *testing.T) {
-	t.Parallel()
-
-	h := newTicketHarness(t)
-	h.run()
-
-	// StageSucceeded is where a stage's own token count is published. Without a
-	// caller it is most of the observability value, unrendered.
-	for _, stage := range work.Pipeline() {
-		var running, succeeded int
-		for _, report := range h.reports {
-			if report.Step != work.StageStep(stage) {
-				continue
-			}
-			switch report.State {
-			case work.StepRunning:
-				running++
-			case work.StepSucceeded:
-				succeeded++
-				if report.Usage.InputTokens == 0 {
-					t.Fatalf("%s succeeded with no tokens reported: %+v", stage, report)
-				}
-				if report.EndedAt.IsZero() || report.StartedAt.IsZero() {
-					t.Fatalf("%s succeeded without a duration: %+v", stage, report)
-				}
-				if report.Model.Name == "" {
-					t.Fatalf("%s succeeded without naming its model: %+v", stage, report)
-				}
-			case work.StepFailed:
-				t.Fatalf("%s failed unexpectedly: %+v", stage, report)
-			}
-		}
-		if running != 1 || succeeded != 1 {
-			t.Fatalf("%s reported %d starts and %d successes, want one of each", stage, running, succeeded)
-		}
-	}
-}
-
-func TestWorkTicketReportsTheStageThatFailed(t *testing.T) {
-	t.Parallel()
-
-	h := newTicketHarness(t)
-	h.stage = failingStage
-	h.run()
-
-	var failed *work.StatusReport
-	for i, report := range h.reports {
-		if report.Step == work.StageStep(work.StagePlan) && report.State == work.StepFailed {
-			failed = &h.reports[i]
-		}
-	}
-	if failed == nil {
-		t.Fatal("a failed stage is the one a human most wants to see on the ticket")
-	}
-	if failed.Detail == "" {
-		t.Fatal("and it must say why")
+	if sawReviewModel.Name != "a-different-model" {
+		t.Fatalf("review ran on %+v, want its override", sawReviewModel)
 	}
 }
 
@@ -736,39 +903,78 @@ func TestWorkTicketReportsTheOutcomeWithTheRunsTotal(t *testing.T) {
 	if outcome.Outcome != work.OutcomeProposed || outcome.State != work.StepSucceeded {
 		t.Fatalf("outcome report = %+v, want a proposed run", outcome)
 	}
-	// The run's total, not the last stage's — cost is reviewed where the work is.
-	if outcome.Usage.InputTokens != 50 {
-		t.Fatalf("outcome usage = %+v, want every stage summed", outcome.Usage)
+	if outcome.PullRequestURL != "https://github.com/o/r/pull/9" {
+		t.Fatalf("outcome report pull request url = %q, want the one the loop opened", outcome.PullRequestURL)
 	}
 }
 
-// TestWorkTicketReportsThePullRequestURLGitHubReturned proves the outcome
-// comment carries the URL FindPullRequest got from GitHub for the run's own
-// branch, not an empty value — #371. A run that opened a pull request but
-// left this blank would post a comment announcing success with nothing
-// linking to what it did.
-func TestWorkTicketReportsThePullRequestURLGitHubReturned(t *testing.T) {
+// --- terminal-cleanup ordering (slice iii's decline, wired here) -----------
+
+func TestWorkTicketDeclinesADeclinedRunDraftFirstThenLabelThenComment(t *testing.T) {
 	t.Parallel()
 
 	h := newTicketHarness(t)
+	h.review = map[int][]work.Finding{
+		1: {{ID: "same-finding", Blocking: true, Summary: "one"}},
+		2: {{ID: "same-finding", Blocking: true, Summary: "still here"}},
+	}
 	h.run()
 
-	var outcome *work.StatusReport
-	for i, report := range h.reports {
-		if report.Step == work.StepOutcome {
-			outcome = &h.reports[i]
-		}
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("a successful decline must not fail the workflow: %v", err)
 	}
-	if outcome == nil {
-		t.Fatal("a run must say how it ended")
+	result := h.result(t)
+	if result.Outcome != work.OutcomeExhausted {
+		t.Fatalf("outcome = %s, want exhausted", result.Outcome)
 	}
-	if outcome.PullRequestURL != "https://github.com/o/r/pull/9" {
-		t.Fatalf("outcome report pull request url = %q, want the one GitHub reported", outcome.PullRequestURL)
+	if len(h.drafted) != 1 || h.drafted[0] != "PR_node9" {
+		t.Fatalf("drafted %v, want exactly the run's own pull request node id once", h.drafted)
+	}
+	if h.cleared != 1 {
+		t.Fatalf("cleared the auto label %d times, want exactly once — decline owns it, finish must not also clear it", h.cleared)
+	}
+	if len(h.postedPRComments) != 1 {
+		t.Fatalf("posted %d pull request comments, want exactly one — the run's own full-detail comment", len(h.postedPRComments))
+	}
+	comment := h.postedPRComments[0]
+	if comment.Number != 9 {
+		t.Fatalf("commented on pull request #%d, want #9, the run's own", comment.Number)
+	}
+	if !strings.Contains(comment.Body, "same-finding") {
+		t.Fatalf("comment body = %q, want it to name the repeated finding that stalled the run", comment.Body)
+	}
+	if !strings.Contains(comment.Body, "the plan") {
+		t.Fatalf("comment body = %q, want the plan the loop was working from", comment.Body)
 	}
 }
 
-// commentFor gives each status step a distinct comment id, so a test can tell
-// a step editing its own comment from a step editing another's.
-func commentFor(step work.StatusStep) work.CommentID {
-	return work.CommentID(len(step) + 100)
+// TestWorkTicketFailsRatherThanCompleteWhenDraftConversionExhaustsItsRetries
+// is the test that specifically guards against the looks-like-success
+// failure mode the terminal-state split exists to prevent: a declined run
+// whose pull request could not be converted to draft must not clear the
+// label and must not report a normal Complete.
+func TestWorkTicketFailsRatherThanCompleteWhenDraftConversionExhaustsItsRetries(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.review = map[int][]work.Finding{
+		1: {{ID: "same-finding", Blocking: true, Summary: "one"}},
+		2: {{ID: "same-finding", Blocking: true, Summary: "still here"}},
+	}
+	h.draftErr = temporal.NewNonRetryableApplicationError(
+		"github refused this app's credentials", activities.ErrTypeAuth, nil)
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err == nil {
+		t.Fatal("a run whose pull request could not be converted to draft must Fail, not Complete with a declined outcome")
+	}
+	if h.cleared != 0 {
+		t.Fatal("the auto label must stay on when draft conversion fails, or a Failed workflow's ticket looks resolved")
+	}
+	// The full-detail comment is best-effort and additive — it cannot itself
+	// be mistaken for approval — so decline still posts it even though draft
+	// conversion failed, per terminal.go's own doc comment.
+	if len(h.postedPRComments) != 1 {
+		t.Fatalf("posted %d pull request comments, want exactly one even though draft conversion failed", len(h.postedPRComments))
+	}
 }

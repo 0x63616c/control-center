@@ -59,8 +59,26 @@ func TestARunIsGivenLongerThanItsStagesCanTake(t *testing.T) {
 		t.Fatalf("run timeout %s does not exceed the stages' budget %s, so a run using its stage timeouts "+
 			"would be killed for taking exactly as long as it was allowed", policy.RunTimeout, policy.RunBudget())
 	}
-	if want := policy.StageTimeout * time.Duration(len(work.Pipeline())); policy.RunBudget() != want {
-		t.Fatalf("run budget = %s, want every stage's timeout summed (%s)", policy.RunBudget(), want)
+	// Not len(work.Pipeline()) (3): a run's real worst case is the
+	// implement/review loop's derived ceiling of MaxStageInvocations (19)
+	// stage invocations, not one pass over the three stages Pipeline() names.
+	if want := policy.StageTimeout * time.Duration(work.MaxStageInvocations); policy.RunBudget() != want {
+		t.Fatalf("run budget = %s, want every invocation's timeout summed (%s)", policy.RunBudget(), want)
+	}
+}
+
+func TestRunPolicyRefusesARunTimeoutSizedForTheOldFiveStageFormula(t *testing.T) {
+	t.Parallel()
+
+	// A value that passes the old RunTimeout <= StageTimeout*5 bound but
+	// fails the loop's real RunTimeout <= StageTimeout*MaxStageInvocations
+	// (19) bound must be rejected — this is the acceptance criterion the
+	// pipeline-rewrite spec names for RunPolicy.Validate under slice ii.
+	policy := work.DefaultRunPolicy()
+	policy.RunTimeout = policy.StageTimeout * 5
+
+	if err := policy.Validate(); err == nil {
+		t.Fatal("a run timeout sized for 5 stages must be refused once the loop's real ceiling is 19 invocations")
 	}
 }
 

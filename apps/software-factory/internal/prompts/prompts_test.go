@@ -27,8 +27,8 @@ func ticket() work.TicketDetail {
 	return work.TicketDetail{
 		Ticket: work.Ticket{
 			Number: 329,
-			Title:  "the five stage prompt templates",
-			Body:   "Define what a plan, review, revision, implementation and proposal each contain.",
+			Title:  "the three stage prompt templates",
+			Body:   "Define what a plan, an implementation turn and a review turn each contain.",
 		},
 		Comments: []work.TicketComment{
 			{Author: "0x63616c", Body: "keep it simple and let the agents do the heavy lifting"},
@@ -37,23 +37,29 @@ func ticket() work.TicketDetail {
 }
 
 // stageOutputOf builds the StageOutput a stage produces for a given prose
-// document — DocumentOutput for every stage except implement, which answers
-// in ImplementOutput instead.
+// document: DocumentOutput for plan, ImplementOutput for implement, and
+// ReviewOutput (with no findings) for review.
 func stageOutputOf(stage work.Stage, doc string) work.StageOutput {
-	if stage == work.StageImplement {
+	switch stage {
+	case work.StagePlan:
+		return work.NewStageOutput(stage, work.DocumentOutput{Document: doc})
+	case work.StageImplement:
 		return work.NewStageOutput(stage, work.ImplementOutput{Report: doc})
+	case work.StageReview:
+		return work.NewStageOutput(stage, work.ReviewOutput{Document: doc})
 	}
-	return work.NewStageOutput(stage, work.DocumentOutput{Document: doc})
+	return work.StageOutput{}
 }
 
-// everyDocument is a prior output for every stage that produces one, so a
-// test can render any stage without assembling the run's history itself.
-func everyDocument() map[work.Stage]work.StageOutput {
-	return map[work.Stage]work.StageOutput{
-		work.StagePlan:      stageOutputOf(work.StagePlan, "the plan document"),
-		work.StageReview:    stageOutputOf(work.StageReview, "the review document"),
-		work.StageRevise:    stageOutputOf(work.StageRevise, "the revised plan document"),
-		work.StageImplement: stageOutputOf(work.StageImplement, "the implementation report document"),
+// everyDocument is one turn's output for every stage, so a test can render
+// any stage without assembling its own work.PriorTurns. Buildstageinput's own
+// tests build a narrower or differently-valued PriorTurns where a second
+// turn's content specifically matters.
+func everyDocument() work.PriorTurns {
+	return work.PriorTurns{
+		Plan:            stageOutputOf(work.StagePlan, "the plan document"),
+		LatestImplement: stageOutputOf(work.StageImplement, "the implementation report document"),
+		LatestReview:    stageOutputOf(work.StageReview, "the review document"),
 	}
 }
 
@@ -112,7 +118,7 @@ func TestRenderPutsEveryPieceOfTicketTextInsideTheFence(t *testing.T) {
 	r := newTestRenderer(t)
 	detail := ticket()
 
-	got, err := r.Render(Input{Stage: work.StagePlan, Ticket: detail, Prior: nil})
+	got, err := r.Render(Input{Stage: work.StagePlan, Ticket: detail, Prior: work.PriorTurns{}})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -137,46 +143,114 @@ func TestRenderPutsEveryPieceOfTicketTextInsideTheFence(t *testing.T) {
 	}
 }
 
+// TestRenderCarriesTheDocumentsAStageIsMeantToRead exercises what each
+// stage's own prompt actually surfaces, turn by turn: plan reads nothing;
+// implement always reads the plan, plus its own previous turn's report and
+// the most recent review's findings once those exist; review always reads
+// the latest implement turn, plus the previous review's findings once one
+// exists. "Findings" is prose the workflow-loop's progress detection cares
+// about, rendered from work.Finding values — not review's raw Document —
+// which is why these cases check for a finding's Summary rather than for a
+// document string the way earlier turns' checks do.
 func TestRenderCarriesTheDocumentsAStageIsMeantToRead(t *testing.T) {
 	t.Parallel()
 
 	r := newTestRenderer(t)
-	docs := everyDocument()
 
-	cases := []struct {
-		stage work.Stage
-		reads []work.Stage
-	}{
-		{stage: work.StagePlan, reads: nil},
-		{stage: work.StageReview, reads: []work.Stage{work.StagePlan}},
-		{stage: work.StageRevise, reads: []work.Stage{work.StagePlan, work.StageReview}},
-		{stage: work.StageImplement, reads: []work.Stage{work.StageRevise}},
-		{stage: work.StagePropose, reads: []work.Stage{work.StageImplement}},
-	}
+	t.Run("plan reads no prior document", func(t *testing.T) {
+		t.Parallel()
 
-	for _, tc := range cases {
-		t.Run(string(tc.stage), func(t *testing.T) {
-			t.Parallel()
+		got, err := r.Render(Input{Stage: work.StagePlan, Ticket: ticket()})
+		if err != nil {
+			t.Fatalf("Render: %v", err)
+		}
+		if strings.Contains(got, documentTag) {
+			t.Error("plan's prompt opens a document fence; plan reads no prior document")
+		}
+	})
 
-			got, err := r.Render(Input{Stage: tc.stage, Ticket: ticket(), Prior: docs})
-			if err != nil {
-				t.Fatalf("Render(%s): %v", tc.stage, err)
-			}
+	t.Run("implement's first turn", func(t *testing.T) {
+		t.Parallel()
 
-			wanted := map[work.Stage]bool{}
-			for _, produced := range tc.reads {
-				wanted[produced] = true
-			}
-			for produced, out := range docs {
-				// A stage handed the whole run's history must still be shown
-				// only the documents its own prompt asks for; anything else is
-				// tokens spent on context the stage was designed not to need.
-				if got, want := strings.Contains(got, out.Prose()), wanted[produced]; got != want {
-					t.Errorf("%s document present = %t, want %t", produced, got, want)
-				}
-			}
-		})
-	}
+		prior := work.PriorTurns{Plan: stageOutputOf(work.StagePlan, "the plan document")}
+		got, err := r.Render(Input{Stage: work.StageImplement, Ticket: ticket(), Prior: prior})
+		if err != nil {
+			t.Fatalf("Render: %v", err)
+		}
+		if !strings.Contains(got, "the plan document") {
+			t.Error("implement's prompt does not carry the plan")
+		}
+		if !strings.Contains(got, "first implement turn") {
+			t.Error("implement's first turn does not declare that it has no previous report to continue from")
+		}
+		if !strings.Contains(got, "No findings to show") {
+			t.Error("implement's first turn does not declare that review has not run yet")
+		}
+	})
+
+	t.Run("implement's later turn", func(t *testing.T) {
+		t.Parallel()
+
+		prior := work.PriorTurns{
+			Plan:            stageOutputOf(work.StagePlan, "the plan document"),
+			LatestImplement: stageOutputOf(work.StageImplement, "turn one's own report"),
+			LatestReview: work.NewStageOutput(work.StageReview, work.ReviewOutput{
+				Document: "the review document",
+				Findings: []work.Finding{{ID: "f1", Blocking: true, Summary: "fix the missing nil check"}},
+			}),
+		}
+		got, err := r.Render(Input{Stage: work.StageImplement, Ticket: ticket(), Prior: prior})
+		if err != nil {
+			t.Fatalf("Render: %v", err)
+		}
+		if !strings.Contains(got, "the plan document") {
+			t.Error("implement's prompt does not carry the plan")
+		}
+		if !strings.Contains(got, "turn one's own report") {
+			t.Error("implement's later turn does not carry its own previous turn's report")
+		}
+		if !strings.Contains(got, "fix the missing nil check") {
+			t.Error("implement's later turn does not carry the most recent review's findings")
+		}
+	})
+
+	t.Run("review's first turn", func(t *testing.T) {
+		t.Parallel()
+
+		prior := work.PriorTurns{LatestImplement: stageOutputOf(work.StageImplement, "the implementation report")}
+		got, err := r.Render(Input{Stage: work.StageReview, Ticket: ticket(), Prior: prior})
+		if err != nil {
+			t.Fatalf("Render: %v", err)
+		}
+		if !strings.Contains(got, "the implementation report") {
+			t.Error("review's prompt does not carry the latest implement turn's report")
+		}
+		if !strings.Contains(got, "No findings to show") {
+			t.Error("review's first turn does not declare that there is no previous review to compare against")
+		}
+	})
+
+	t.Run("review's later turn", func(t *testing.T) {
+		t.Parallel()
+
+		prior := work.PriorTurns{
+			LatestImplement: stageOutputOf(work.StageImplement, "turn two's report"),
+			LatestReview: work.NewStageOutput(work.StageReview, work.ReviewOutput{
+				Document: "turn one's review",
+				Findings: []work.Finding{{ID: "f1", Blocking: true, Summary: "still broken"}},
+			}),
+		}
+		got, err := r.Render(Input{Stage: work.StageReview, Ticket: ticket(), Prior: prior})
+		if err != nil {
+			t.Fatalf("Render: %v", err)
+		}
+		if !strings.Contains(got, "turn two's report") {
+			t.Error("review's prompt does not carry the latest implement turn's report")
+		}
+		if !strings.Contains(got, "still broken") {
+			t.Error("review's later turn does not carry the previous review's own findings")
+		}
+	})
 }
 
 func TestRenderRefusesAStageWhoseInputDocumentIsMissing(t *testing.T) {
@@ -187,20 +261,19 @@ func TestRenderRefusesAStageWhoseInputDocumentIsMissing(t *testing.T) {
 	cases := []struct {
 		name  string
 		stage work.Stage
-		prior map[work.Stage]work.StageOutput
+		prior work.PriorTurns
 	}{
-		{name: "review without a plan", stage: work.StageReview, prior: nil},
+		{name: "review without any implement turn", stage: work.StageReview, prior: work.PriorTurns{}},
+		{name: "implement without a plan", stage: work.StageImplement, prior: work.PriorTurns{}},
 		{
-			name:  "revise without a review",
-			stage: work.StageRevise,
-			prior: map[work.Stage]work.StageOutput{work.StagePlan: stageOutputOf(work.StagePlan, "p")},
+			name:  "a blank plan is no plan",
+			stage: work.StageImplement,
+			prior: work.PriorTurns{Plan: stageOutputOf(work.StagePlan, "   \n")},
 		},
-		{name: "implement without a revised plan", stage: work.StageImplement, prior: everyDocument0(work.StageRevise)},
-		{name: "propose without a report", stage: work.StagePropose, prior: everyDocument0(work.StageImplement)},
 		{
-			name:  "a blank document is no document",
+			name:  "a blank implementation report is no report",
 			stage: work.StageReview,
-			prior: map[work.Stage]work.StageOutput{work.StagePlan: stageOutputOf(work.StagePlan, "   \n")},
+			prior: work.PriorTurns{LatestImplement: stageOutputOf(work.StageImplement, "   \n")},
 		},
 	}
 
@@ -213,14 +286,6 @@ func TestRenderRefusesAStageWhoseInputDocumentIsMissing(t *testing.T) {
 			}
 		})
 	}
-}
-
-// everyDocument0 is every prior document except the one named, so a case can
-// say which input it is withholding.
-func everyDocument0(without work.Stage) map[work.Stage]work.StageOutput {
-	docs := everyDocument()
-	delete(docs, without)
-	return docs
 }
 
 func TestRenderRefusesInputItCannotRender(t *testing.T) {

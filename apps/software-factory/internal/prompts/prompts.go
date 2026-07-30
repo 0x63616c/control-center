@@ -56,11 +56,11 @@ type Input struct {
 	// fence.
 	Ticket work.TicketDetail
 
-	// Prior holds each completed stage's output, keyed by the stage that
-	// produced it. A run may pass everything it has: a stage is shown only the
-	// documents its own prompt asks for, and nothing is required of a stage
-	// that has not run yet.
-	Prior map[work.Stage]work.StageOutput
+	// Prior is exactly the plan, latest implement turn and latest review
+	// turn — see work.PriorTurns' own doc comment for why this is a
+	// purpose-built struct rather than the run's whole turn history. A stage
+	// that has not run yet reads as the zero StageOutput on the field for it.
+	Prior work.PriorTurns
 }
 
 // Render assembles the stage's whole prompt.

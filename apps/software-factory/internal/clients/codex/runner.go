@@ -78,7 +78,12 @@ func (r *Runner) run(ctx context.Context, run work.StageRun, events work.StageEv
 		return work.StageResult{}, fmt.Errorf("writing the output schema for %s: %w", run.Key, err)
 	}
 
-	stream, exitCode, err := r.exec(ctx, run, events)
+	resumeThreadID, err := r.priorThreadID(ctx, run)
+	if err != nil {
+		return work.StageResult{}, err
+	}
+
+	stream, exitCode, err := r.exec(ctx, run, events, resumeThreadID)
 	if err != nil {
 		return work.StageResult{}, err
 	}
@@ -86,11 +91,54 @@ func (r *Runner) run(ctx context.Context, run work.StageRun, events work.StageEv
 		return work.StageResult{}, fmt.Errorf("%s: %w", run.Key, err)
 	}
 
+	if err := r.saveThreadID(ctx, run, stream.ThreadID); err != nil {
+		return work.StageResult{}, err
+	}
+
 	output, err := r.readResult(ctx, run, paths)
 	if err != nil {
 		return work.StageResult{}, err
 	}
 	return work.StageResult{Output: output, ThreadID: stream.ThreadID, Usage: stream.Usage, UsageMeasured: true}, nil
+}
+
+// priorThreadID returns the thread id implement's own previous turn left
+// behind, or "" if there is none to resume — either because this is
+// implement's first turn of the run, or because run.Key.Stage is not
+// implement at all. review is never resumed by construction: this method
+// never reads sessionIDFile for anything but StageImplement, so nothing
+// downstream of it can accidentally pass a review turn's stageArgv a resume
+// argument.
+func (r *Runner) priorThreadID(ctx context.Context, run work.StageRun) (string, error) {
+	if run.Key.Stage != work.StageImplement {
+		return "", nil
+	}
+	content, err := r.files.Read(ctx, run.Sandbox, sessionIDFile(run.Key))
+	if errors.Is(err, work.ErrFileNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("reading %s's previous session id: %w", run.Key, err)
+	}
+	return strings.TrimSpace(string(content)), nil
+}
+
+// saveThreadID persists implement's own thread id for its next turn to resume,
+// and does nothing at all for any other stage — see priorThreadID's doc
+// comment for why that asymmetry is deliberate rather than an oversight.
+//
+// A turn that produced no thread id (verified nowhere in this stream, which
+// would itself be surprising) leaves the previous file alone rather than
+// overwriting it with nothing: a stale-but-real thread id is a better resume
+// target than none at all.
+func (r *Runner) saveThreadID(ctx context.Context, run work.StageRun, threadID string) error {
+	if run.Key.Stage != work.StageImplement || threadID == "" {
+		return nil
+	}
+	if err := r.files.Write(ctx, run.Sandbox, sessionIDFile(run.Key), []byte(threadID), stageFileMode); err != nil {
+		return fmt.Errorf("saving %s's session id for the next turn to resume: %w", run.Key, err)
+	}
+	return nil
 }
 
 // streamed is what one codex invocation produced.
@@ -105,7 +153,7 @@ type streamed struct {
 // is also the enclosing activity's heartbeat: a stage that reports nothing for
 // the heartbeat timeout is treated as dead, and a stage that reported
 // everything at the end would be treated as dead for an hour and then finish.
-func (r *Runner) exec(ctx context.Context, run work.StageRun, events work.StageEventSink) (streamed, int, error) {
+func (r *Runner) exec(ctx context.Context, run work.StageRun, events work.StageEventSink, resumeThreadID string) (streamed, int, error) {
 	reader, writer := io.Pipe()
 	var stderr tailWriter
 	stderr.limit = stderrKeep
@@ -121,7 +169,7 @@ func (r *Runner) exec(ctx context.Context, run work.StageRun, events work.StageE
 		parseErr <- err
 	}()
 
-	exitCode, execErr := r.pods.Exec(ctx, run.Sandbox, stageArgv(run), strings.NewReader(run.Prompt), writer, &stderr)
+	exitCode, execErr := r.pods.Exec(ctx, run.Sandbox, stageArgv(run, resumeThreadID), strings.NewReader(run.Prompt), writer, &stderr)
 	// Closing the write end is what ends the parse; it must happen whether the
 	// exec succeeded or not.
 	_ = writer.Close()

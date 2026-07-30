@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -75,6 +76,18 @@ type Client struct {
 	api   *gh.Client
 	auth  *appAuth
 	log   *slog.Logger
+
+	// graphqlURL is where ConvertPullRequestToDraft posts its mutation:
+	// GitHub's production endpoint, or a test stub's when withBaseURL
+	// redirected the REST plane too. See graphql.go.
+	graphqlURL string
+
+	// defaultBranchCache holds the repository's default branch once resolved
+	// — see defaultBranch. It never changes without a deploy-time repository
+	// setting change, so it is cached for the client's whole lifetime rather
+	// than re-read before every pull request.
+	defaultBranchMu    sync.Mutex
+	defaultBranchCache string
 }
 
 // options is the optional half of construction. It is unexported: growth goes
@@ -153,7 +166,15 @@ func New(cfg config.GitHub, clk clock.Clock, log *slog.Logger, opts ...Option) (
 		return nil, err
 	}
 
-	return &Client{owner: cfg.Owner, repo: cfg.Repo, api: api, auth: auth, log: log}, nil
+	// GraphQL and REST are one API authenticated one way; when a test points
+	// the REST plane at a stub via withBaseURL, the GraphQL plane follows it
+	// to the same stub rather than reaching real GitHub.
+	graphqlURL := "https://api.github.com/graphql"
+	if o.baseURL != "" {
+		graphqlURL = strings.TrimSuffix(o.baseURL, "/") + "/graphql"
+	}
+
+	return &Client{owner: cfg.Owner, repo: cfg.Repo, api: api, auth: auth, log: log, graphqlURL: graphqlURL}, nil
 }
 
 // newGitHubClient builds an SDK client, optionally aimed elsewhere. go-github
@@ -219,15 +240,17 @@ func (c *Client) ListAutoTickets(ctx context.Context) ([]work.Ticket, error) {
 // PullRequestForBranch returns the open pull request whose head is branch, if
 // there is one.
 //
-// This is how a run learns what it achieved. It is asked of GitHub rather than
-// read out of the propose stage's own report because that report is model
-// output derived from issue text an attacker chose, and a URL taken from it is
-// a phishing vector that renders as an autolink (#371). The branch is one the
-// worker named from a ticket number and a Temporal RunID, so nothing an issue
-// author writes can steer which branch is queried or which URL comes back.
+// This is how a run learns what already exists on its own branch. It is asked
+// of GitHub rather than read out of a stage's own report because that report
+// is model output derived from issue text an attacker chose, and a URL taken
+// from it is a phishing vector that renders as an autolink (#371). The branch
+// is one the worker named from a ticket number and a Temporal RunID, so
+// nothing an issue author writes can steer which branch is queried or which
+// URL comes back.
 //
-// Not found is not an error: a propose stage that declined to open a pull
-// request is a run that was blocked, which is a decision.
+// Not found is not an error: under the pipeline rewrite (#435), PR ownership
+// is workflow code — OpenOrUpdatePullRequest creates on Found: false and edits
+// on Found: true, so absence here just picks which of those two happens next.
 //
 // The URL returned is HTMLURL — the page a human opens — not the API URL.
 func (c *Client) PullRequestForBranch(ctx context.Context, branch string) (work.PullRequest, bool, error) {
@@ -252,12 +275,122 @@ func (c *Client) PullRequestForBranch(ctx context.Context, branch string) (work.
 	// One branch, one open pull request — GitHub does not allow two from the
 	// same head. Taking the first is not a guess.
 	pr := prs[0]
-	if pr.GetNumber() == 0 || pr.GetHTMLURL() == "" {
-		return work.PullRequest{}, false, fmt.Errorf("%s: github returned a pull request with no number or url", op)
+	if pr.GetNumber() == 0 || pr.GetHTMLURL() == "" || pr.GetNodeID() == "" {
+		return work.PullRequest{}, false, fmt.Errorf("%s: github returned a pull request with no number, url or node id", op)
 	}
 
 	c.log.Info("found the run's pull request", "branch", branch, "pull_request", pr.GetNumber())
-	return work.PullRequest{Number: pr.GetNumber(), URL: pr.GetHTMLURL()}, true, nil
+	return work.PullRequest{
+		Number: pr.GetNumber(),
+		URL:    pr.GetHTMLURL(),
+		NodeID: pr.GetNodeID(),
+		Title:  pr.GetTitle(),
+		Body:   pr.GetBody(),
+	}, true, nil
+}
+
+// defaultBranch resolves the repository's default branch — the base every
+// pull request this service opens targets — and caches it for the client's
+// whole lifetime. It never changes without a deploy-time repository setting
+// change, so re-reading it before every pull request would be a wasted round
+// trip.
+func (c *Client) defaultBranch(ctx context.Context) (string, error) {
+	c.defaultBranchMu.Lock()
+	defer c.defaultBranchMu.Unlock()
+
+	if c.defaultBranchCache != "" {
+		return c.defaultBranchCache, nil
+	}
+
+	repo, _, err := c.api.Repositories.Get(ctx, c.owner, c.repo)
+	if err != nil {
+		return "", classify(ctx, "reading the repository's default branch", err)
+	}
+	if repo.GetDefaultBranch() == "" {
+		return "", fmt.Errorf("reading the repository's default branch: github returned none")
+	}
+
+	c.defaultBranchCache = repo.GetDefaultBranch()
+	return c.defaultBranchCache, nil
+}
+
+// OpenOrUpdatePullRequest creates the run's pull request the first time its
+// branch has anything pushed, and edits it in place on every push after that
+// whose title or body actually changed. existing is what a prior
+// PullRequestForBranch call already found on this branch — nil means none
+// exists yet — so this never re-queries what its caller already knows.
+//
+// PR ownership moved here from the model (#435): `propose` used to run
+// `gh pr create` itself, from inside the sandbox, once, at the end of a fixed
+// pipeline. Under the implement/review loop this opens the pull request after
+// the FIRST successful push and is never held back waiting for CI or review,
+// so a human watching the ticket sees a diff the moment there is one.
+func (c *Client) OpenOrUpdatePullRequest(ctx context.Context, branch, title, body string, existing *work.PullRequest) (work.PullRequest, error) {
+	if existing == nil {
+		return c.createPullRequest(ctx, branch, title, body)
+	}
+	if existing.Title == title && existing.Body == body {
+		// Idempotent no-op: a push that changed nothing implement/review
+		// hadn't already told GitHub about must not spend an Edit call it
+		// does not need.
+		return *existing, nil
+	}
+	return c.editPullRequest(ctx, *existing, title, body)
+}
+
+// createPullRequest opens a new pull request from branch onto the
+// repository's default branch.
+func (c *Client) createPullRequest(ctx context.Context, branch, title, body string) (work.PullRequest, error) {
+	op := fmt.Sprintf("opening a pull request from %s", branch)
+
+	base, err := c.defaultBranch(ctx)
+	if err != nil {
+		return work.PullRequest{}, err
+	}
+
+	pr, _, err := c.api.PullRequests.Create(ctx, c.owner, c.repo, &gh.NewPullRequest{
+		Title: gh.Ptr(title),
+		Body:  gh.Ptr(body),
+		Head:  gh.Ptr(branch),
+		Base:  gh.Ptr(base),
+	})
+	if err != nil {
+		return work.PullRequest{}, classify(ctx, op, err)
+	}
+	if pr.GetNumber() == 0 || pr.GetHTMLURL() == "" || pr.GetNodeID() == "" {
+		return work.PullRequest{}, fmt.Errorf("%s: github returned a pull request with no number, url or node id", op)
+	}
+
+	c.log.InfoContext(ctx, "opened the run's pull request", "branch", branch, "pull_request", pr.GetNumber())
+	return work.PullRequest{
+		Number: pr.GetNumber(),
+		URL:    pr.GetHTMLURL(),
+		NodeID: pr.GetNodeID(),
+		Title:  pr.GetTitle(),
+		Body:   pr.GetBody(),
+	}, nil
+}
+
+// editPullRequest rewrites an existing pull request's title and body.
+func (c *Client) editPullRequest(ctx context.Context, existing work.PullRequest, title, body string) (work.PullRequest, error) {
+	op := fmt.Sprintf("editing pull request #%d", existing.Number)
+
+	pr, _, err := c.api.PullRequests.Edit(ctx, c.owner, c.repo, existing.Number, &gh.PullRequest{
+		Title: gh.Ptr(title),
+		Body:  gh.Ptr(body),
+	})
+	if err != nil {
+		return work.PullRequest{}, classify(ctx, op, err)
+	}
+
+	c.log.InfoContext(ctx, "edited the run's pull request", "pull_request", existing.Number)
+	return work.PullRequest{
+		Number: existing.Number,
+		URL:    existing.URL,
+		NodeID: existing.NodeID,
+		Title:  pr.GetTitle(),
+		Body:   pr.GetBody(),
+	}, nil
 }
 
 // TicketDetail returns a ticket with the discussion on it.
@@ -557,7 +690,7 @@ func (c *Client) InstallationToken(ctx context.Context) (work.SandboxCredential,
 			// without this, with an error that never reaches this client's
 			// taxonomy. Agents edit workflows, so this is not hypothetical.
 			Workflows: gh.Ptr("write"),
-			// propose opens the PR from inside the pod.
+			// OpenOrUpdatePullRequest/ConvertPullRequestToDraft need it.
 			PullRequests: gh.Ptr("write"),
 			// GitHub will not grant the others without it.
 			Metadata: gh.Ptr("read"),

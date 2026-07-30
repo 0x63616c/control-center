@@ -137,20 +137,22 @@ func TestEveryStageHasASchemaAndTheyAreDistinct(t *testing.T) {
 	}
 }
 
-// TestBuildStageInputProducesTheSameVariableNamesAsToday is the regression
-// guard for the typed input seam: it proves buildStageInput's per-stage
-// structs emit the same template placeholder names documentVar used to
-// produce (plan, review, revised_plan, implementation_report), so this
-// redesign is a pure refactor of the seam and not a template-visible change.
-// No templates/*.md file needed a placeholder rename because of it.
-func TestBuildStageInputProducesTheSameVariableNamesAsToday(t *testing.T) {
+// TestBuildStageInputProducesTheDeclaredVariableNames is the regression guard
+// for the typed input seam: it proves buildStageInput's per-stage structs
+// emit exactly the placeholder names each stage's own template expects
+// (plan, previous_implement_report, review_findings for implement;
+// implementation_report, previous_review_findings for review), given a full
+// two-turn history so every "declare absence" fallback has real content to
+// stand in for instead.
+func TestBuildStageInputProducesTheDeclaredVariableNames(t *testing.T) {
 	t.Parallel()
 
-	prior := map[work.Stage]work.StageOutput{
-		work.StagePlan:      work.NewStageOutput(work.StagePlan, work.DocumentOutput{Document: "the plan"}),
-		work.StageReview:    work.NewStageOutput(work.StageReview, work.DocumentOutput{Document: "the review"}),
-		work.StageRevise:    work.NewStageOutput(work.StageRevise, work.DocumentOutput{Document: "the revised plan"}),
-		work.StageImplement: work.NewStageOutput(work.StageImplement, work.ImplementOutput{Report: "the report"}),
+	prior := work.PriorTurns{
+		Plan:            work.NewStageOutput(work.StagePlan, work.DocumentOutput{Document: "the plan"}),
+		LatestImplement: work.NewStageOutput(work.StageImplement, work.ImplementOutput{Report: "turn one's report"}),
+		LatestReview: work.NewStageOutput(work.StageReview, work.ReviewOutput{
+			Document: "the review", Findings: []work.Finding{{ID: "f1", Blocking: true, Summary: "s"}},
+		}),
 	}
 
 	cases := []struct {
@@ -158,10 +160,8 @@ func TestBuildStageInputProducesTheSameVariableNamesAsToday(t *testing.T) {
 		want  []string
 	}{
 		{stage: work.StagePlan, want: nil},
-		{stage: work.StageReview, want: []string{"plan"}},
-		{stage: work.StageRevise, want: []string{"plan", "review"}},
-		{stage: work.StageImplement, want: []string{"revised_plan"}},
-		{stage: work.StagePropose, want: []string{"implementation_report"}},
+		{stage: work.StageImplement, want: []string{"plan", "previous_implement_report", "review_findings"}},
+		{stage: work.StageReview, want: []string{"implementation_report", "previous_review_findings"}},
 	}
 
 	for _, tc := range cases {
@@ -181,7 +181,7 @@ func TestBuildStageInputProducesTheSameVariableNamesAsToday(t *testing.T) {
 			}
 			for _, name := range tc.want {
 				if _, ok := values[name]; !ok {
-					t.Errorf("%s did not produce {{%s}}, which documentVar produced today", tc.stage, name)
+					t.Errorf("%s did not produce {{%s}}", tc.stage, name)
 				}
 			}
 		})

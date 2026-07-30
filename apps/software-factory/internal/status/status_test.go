@@ -73,6 +73,17 @@ func abandoned() status.Abandoned {
 	}
 }
 
+func declined() status.Declined {
+	return status.Declined{
+		RunID:          runID,
+		Outcome:        work.OutcomeExhausted,
+		Reason:         "the same blocking review finding survived an intervening implement turn",
+		PullRequestURL: "https://github.com/0x63616c/world-wide-webb/pull/999",
+		EndedAt:        runEndAt,
+		RunUsage:       runUsage,
+	}
+}
+
 // bodies is every comment a run can post, by the golden file that holds it.
 func bodies() map[string]string {
 	noURL := pickup()
@@ -85,6 +96,7 @@ func bodies() map[string]string {
 		"stage-failed.md":    failed().Body(),
 		"proposed.md":        proposed().Body(),
 		"abandoned.md":       abandoned().Body(),
+		"declined.md":        declined().Body(),
 	}
 }
 
@@ -446,6 +458,7 @@ func TestEachCommentHeadsWithWhatActuallyHappened(t *testing.T) {
 		{"pickup", pickup().Body()},
 		{"proposed", proposed().Body()},
 		{"abandoned", abandoned().Body()},
+		{"declined", declined().Body()},
 	} {
 		heading, found := lineWithPrefix(tc.body, "### ")
 		if !found {
@@ -463,6 +476,9 @@ func TestEachCommentHeadsWithWhatActuallyHappened(t *testing.T) {
 	if !strings.Contains(abandoned().Body(), "### software-factory stopped without opening a pull request") {
 		t.Errorf("the abandoned comment does not say the run stopped empty-handed:\n%s", abandoned().Body())
 	}
+	if !strings.Contains(declined().Body(), "### software-factory declined this ticket") {
+		t.Errorf("the declined comment does not say the run declined the ticket:\n%s", declined().Body())
+	}
 }
 
 func TestTheProposedCommentCarriesThePullRequestItOpened(t *testing.T) {
@@ -477,6 +493,33 @@ func TestTheProposedCommentCarriesThePullRequestItOpened(t *testing.T) {
 	}
 }
 
+// TestTheDeclinedCommentCarriesThePullRequestAndDistinguishesWhyItDeclined
+// proves Declined's whole reason for existing over Abandoned: the loop
+// opened a pull request before it knew how the run would end, so the decline
+// comment must still link it — and it must say which kind of decline this
+// was, since OutcomeBlocked and OutcomeExhausted mean different things to a
+// human deciding whether to re-add `auto`.
+func TestTheDeclinedCommentCarriesThePullRequestAndDistinguishesWhyItDeclined(t *testing.T) {
+	t.Parallel()
+
+	d := declined()
+	if !strings.Contains(d.Body(), d.PullRequestURL) {
+		t.Errorf("the declined comment does not carry %q:\n%s", d.PullRequestURL, d.Body())
+	}
+	if !strings.Contains(d.Body(), "ran out of turns") {
+		t.Errorf("an exhausted decline does not say so:\n%s", d.Body())
+	}
+
+	blocked := declined()
+	blocked.Outcome = work.OutcomeBlocked
+	if strings.Contains(blocked.Body(), "ran out of turns") {
+		t.Errorf("a blocked decline reads as exhausted:\n%s", blocked.Body())
+	}
+	if d.Body() == blocked.Body() {
+		t.Error("an exhausted decline and a blocked decline render identically")
+	}
+}
+
 func TestBothOutcomeCommentsSayTheAutoLabelWasCleared(t *testing.T) {
 	t.Parallel()
 
@@ -486,6 +529,7 @@ func TestBothOutcomeCommentsSayTheAutoLabelWasCleared(t *testing.T) {
 	// pass.
 	for _, tc := range []struct{ name, body string }{
 		{"proposed", proposed().Body()},
+		{"declined", declined().Body()},
 		{"abandoned", abandoned().Body()},
 	} {
 		if !strings.Contains(tc.body, "`auto` label has been cleared") {
@@ -509,14 +553,14 @@ func lineWithPrefix(body, prefix string) (string, bool) {
 func TestWillNotPutAnUntrustedURLIntoTheCommentAsMarkup(t *testing.T) {
 	t.Parallel()
 
-	// A URL is free text until something has checked it. PullRequestURL is
-	// written by the propose stage from the agent's own result file, which is
-	// model output derived from issue text an attacker chose; RunURL is config,
+	// A URL is free text until something has checked it. This test treats
+	// PullRequestURL as though it could still be attacker-influenced, worth
+	// guarding regardless of which activity supplies it; RunURL is config,
 	// but it lands inside a markdown link where a single `)` closes the link
 	// early and hands the remainder to the renderer.
 	//
 	// What is asserted is not that the value disappears — showing it is how a
-	// reader finds out what the propose stage produced — but that it is never
+	// reader finds out which pull request the run opened — but that it is never
 	// MARKUP. Inside a code span an HTML comment is literal text a human can
 	// see, which is the opposite of the invisible marker line this format
 	// identifies its own comments by.
@@ -651,7 +695,7 @@ func TestRendersAModelNameDefensivelyToo(t *testing.T) {
 //
 // The question is deliberately "did it become markup", not "is it absent": an
 // unusable URL is still shown, inside a code span, because the value is how a
-// reader works out what the propose stage produced.
+// reader works out which pull request the run opened.
 type urlRenderer struct {
 	name string
 	// markup renders a comment carrying raw and reports whether raw ended up
@@ -739,9 +783,9 @@ func TestStillLinksAURLItCanVouchFor(t *testing.T) {
 func TestLinksOnlyAPullRequestOnGitHub(t *testing.T) {
 	t.Parallel()
 
-	// PullRequestURL is model output: the propose stage lifts it from the
-	// agent's own result file, and that agent read issue text an attacker
-	// chose. A well-formed URL on a host of the attacker's choosing is a
+	// This test treats PullRequestURL as though it could still be
+	// attacker-influenced, worth guarding regardless of source. A well-formed
+	// URL on a host of the attacker's choosing is a
 	// working phishing link posted to a real ticket under this service's name,
 	// so the host is checked and not merely the syntax.
 	//

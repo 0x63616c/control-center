@@ -90,7 +90,7 @@ func TestDocumentSaysWhatItWasGivenWhenItCannotReadIt(t *testing.T) {
 func TestImplementReadsAStagesOutput(t *testing.T) {
 	t.Parallel()
 
-	got, err := Decode(work.StageImplement, []byte(`{"report":"did the work","blocked":false,"blocked_reason":""}`))
+	got, err := Decode(work.StageImplement, []byte(`{"report":"did the work","blocked":false,"blocked_reason":"","title":"t","body":"b"}`))
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestImplementReadsAStagesOutput(t *testing.T) {
 func TestImplementCarriesBlockedAndItsReason(t *testing.T) {
 	t.Parallel()
 
-	got, err := Decode(work.StageImplement, []byte(`{"report":"could not finish","blocked":true,"blocked_reason":"needs a human decision"}`))
+	got, err := Decode(work.StageImplement, []byte(`{"report":"could not finish","blocked":true,"blocked_reason":"needs a human decision","title":"","body":""}`))
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestImplementRefusesAnythingButTheEnvelope(t *testing.T) {
 }
 
 // TestDecodeIsExhaustiveOverPipeline calls Decode for every stage of the
-// pipeline against a stage-appropriate fixture, so a sixth stage or a
+// pipeline against a stage-appropriate fixture, so a fourth stage or a
 // mis-wired case shows up here rather than only in a caller that happens to
 // exercise that one stage.
 func TestDecodeIsExhaustiveOverPipeline(t *testing.T) {
@@ -159,10 +159,13 @@ func TestDecodeIsExhaustiveOverPipeline(t *testing.T) {
 			t.Parallel()
 
 			var fixture string
-			if stage == work.StageImplement {
-				fixture = `{"report":"r","blocked":false,"blocked_reason":""}`
-			} else {
+			switch stage {
+			case work.StagePlan:
 				fixture = `{"document":"d"}`
+			case work.StageImplement:
+				fixture = `{"report":"r","blocked":false,"blocked_reason":"","title":"t","body":"b"}`
+			case work.StageReview:
+				fixture = `{"document":"d","findings":[]}`
 			}
 
 			got, err := Decode(stage, []byte(fixture))
@@ -173,5 +176,101 @@ func TestDecodeIsExhaustiveOverPipeline(t *testing.T) {
 				t.Errorf("Stage() = %q, want %q", got.Stage(), stage)
 			}
 		})
+	}
+}
+
+func TestReviewReadsFindings(t *testing.T) {
+	t.Parallel()
+
+	got, err := Decode(work.StageReview, []byte(`{"document":"looks good","findings":[`+
+		`{"id":"work/control.go-missing-nil-check","blocking":true,"summary":"a nil check is missing"},`+
+		`{"id":"work/style-nit","blocking":false,"summary":"a naming nit"}]}`))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	value, ok := got.Value().(work.ReviewOutput)
+	if !ok {
+		t.Fatalf("Value() = %T, want work.ReviewOutput", got.Value())
+	}
+	if len(value.Findings) != 2 {
+		t.Fatalf("Findings = %+v, want 2", value.Findings)
+	}
+	if value.Findings[0].ID != "work/control.go-missing-nil-check" || !value.Findings[0].Blocking {
+		t.Errorf("Findings[0] = %+v, want the blocking finding", value.Findings[0])
+	}
+	if value.Findings[1].Blocking {
+		t.Errorf("Findings[1] = %+v, want an advisory finding", value.Findings[1])
+	}
+	if got := value.BlockingFindingIDs(); len(got) != 1 || got[0] != "work/control.go-missing-nil-check" {
+		t.Errorf("BlockingFindingIDs() = %v, want exactly the one blocking id", got)
+	}
+}
+
+func TestReviewAcceptsNoFindingsAsACleanPass(t *testing.T) {
+	t.Parallel()
+
+	got, err := Decode(work.StageReview, []byte(`{"document":"clean pass","findings":[]}`))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	value := got.Value().(work.ReviewOutput)
+	if len(value.Findings) != 0 {
+		t.Errorf("Findings = %+v, want none", value.Findings)
+	}
+}
+
+func TestReviewRefusesAFindingWithNoID(t *testing.T) {
+	t.Parallel()
+
+	_, err := Decode(work.StageReview, []byte(`{"document":"d","findings":[{"id":"","blocking":true,"summary":"s"}]}`))
+	if err == nil {
+		t.Fatal("Decode accepted a finding with an empty id; sameness across turns cannot be judged on one")
+	}
+}
+
+func TestReviewRefusesAnUnknownTopLevelKey(t *testing.T) {
+	t.Parallel()
+
+	_, err := Decode(work.StageReview, []byte(`{"document":"d","findings":[],"verdict":"approve"}`))
+	if err == nil {
+		t.Fatal("Decode accepted a field the review envelope does not have")
+	}
+}
+
+func TestReviewRefusesAnUnknownFindingKey(t *testing.T) {
+	t.Parallel()
+
+	_, err := Decode(work.StageReview, []byte(
+		`{"document":"d","findings":[{"id":"f1","blocking":true,"summary":"s","severity":"high"}]}`))
+	if err == nil {
+		t.Fatal("Decode accepted a finding field the schema does not have")
+	}
+}
+
+func TestImplementCarriesTitleAndBody(t *testing.T) {
+	t.Parallel()
+
+	got, err := Decode(work.StageImplement, []byte(
+		`{"report":"did the work","blocked":false,"blocked_reason":"","title":"Fix the thing","body":"Refs #1"}`))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	value := got.Value().(work.ImplementOutput)
+	if value.Title != "Fix the thing" || value.Body != "Refs #1" {
+		t.Errorf("got %+v, want the title and body carried through", value)
+	}
+}
+
+func TestImplementAllowsAnEmptyTitleAndBodyWhenBlocked(t *testing.T) {
+	t.Parallel()
+
+	got, err := Decode(work.StageImplement, []byte(
+		`{"report":"could not finish","blocked":true,"blocked_reason":"needs a human","title":"","body":""}`))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	value := got.Value().(work.ImplementOutput)
+	if value.Title != "" || value.Body != "" {
+		t.Errorf("got %+v, want an empty title and body on a blocked turn", value)
 	}
 }

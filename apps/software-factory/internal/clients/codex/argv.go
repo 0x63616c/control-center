@@ -2,6 +2,7 @@ package codex
 
 import (
 	"fmt"
+	"path"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
@@ -23,7 +24,27 @@ const (
 	// model thinks. Verified against rust-v0.145.0: the TOML key and the Config
 	// field are both model_reasoning_effort.
 	configReasoningEffort = "model_reasoning_effort"
+
+	// resumeSubcommand continues a previous codex conversation by thread id,
+	// for implement's turn-to-turn resume (#435's pipeline rewrite — "Codex
+	// sessions"). Verified against the installed codex-cli 0.145.0's own
+	// `codex exec resume --help`: the documented shape is
+	// `codex exec resume <SESSION_ID> [PROMPT]`, confirmed rather than assumed.
+	resumeSubcommand = "resume"
 )
+
+// sessionIDFile is where implement's own resume identity is written, a
+// sibling of every turn's own numbered StagePaths().Dir rather than inside
+// one of them — the file argv reads from before turn N's own directory has
+// been created and writes to after turn N-1's has already been used.
+//
+// Only implement ever reads or writes this path. review is deliberately never
+// resumed (a fresh, unbiased thread every turn is its whole value), and
+// nothing in this package ever passes StageReview to sessionIDFile's callers
+// for that reason — see Runner.run.
+func sessionIDFile(key work.StageKey) string {
+	return path.Join(work.SandboxRoot, key.RunID, string(key.Stage), "session.id")
+}
 
 // stageArgv is the command one stage attempt runs, and the only place it is
 // built.
@@ -57,9 +78,27 @@ const (
 // directory that is not a git repository exits with "Not inside a trusted
 // directory and --skip-git-repo-check was not specified" before it calls a
 // model at all, so the stage reads as the model failing at its task.
-func stageArgv(run work.StageRun) []string {
+//
+// resumeThreadID continues a previous codex conversation rather than starting
+// fresh, and is empty on any turn that has none to continue — implement's
+// first turn of a run, and every review turn (never resumed at all; see
+// sessionIDFile). Runner.run is the only caller and the only place that
+// decides what to pass here — this function does no I/O of its own and takes
+// the caller's word for it.
+//
+// The subcommand goes LAST, after every exec-level flag, not first. codex's
+// own usage is `codex exec [OPTIONS] <COMMAND> [ARGS]` — `resume` is a
+// subcommand of `exec`, not a sibling flag, so anything placed after it is
+// parsed as *resume's* own options rather than exec's. Verified directly:
+// `codex exec --help` accepts `--cd`/`-C`; `codex exec resume --help` does
+// not (it only takes `--all`/`--last` beyond the options the two share). A
+// build that appended `resume <id>` right after `codex exec` and put `--cd`
+// after that would therefore fail on every resumed turn — silently only on
+// resumed turns, since turn one (never resumed) would look healthy. That
+// exact ordering bug shipped here once; it is why this note exists.
+func stageArgv(run work.StageRun, resumeThreadID string) []string {
 	paths := run.Key.Paths()
-	return []string{
+	args := []string{
 		"codex", "exec",
 		flagJSON,
 		flagBypassSandbox,
@@ -69,4 +108,8 @@ func stageArgv(run work.StageRun) []string {
 		flagOutputSchema, paths.Schema,
 		flagOutputLastMessage, paths.Result,
 	}
+	if resumeThreadID != "" {
+		args = append(args, resumeSubcommand, resumeThreadID)
+	}
+	return args
 }

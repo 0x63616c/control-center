@@ -97,16 +97,17 @@ type GitHub interface {
 	// PullRequestForBranch reports the open pull request on a branch, if there
 	// is one.
 	//
-	// This is how a run learns what it achieved, and the reason it is asked of
-	// GitHub rather than read out of the propose stage's own report: the
-	// stage's report is model output derived from issue text an attacker chose,
-	// and a URL taken from it is a phishing vector rendered as an autolink
-	// (#371). GitHub's answer about a branch we named ourselves cannot be
-	// forged by anyone who can file an issue.
+	// This is how a run learns what already exists on its own branch, and the
+	// reason it is asked of GitHub rather than read out of a stage's own
+	// report: a stage's report is model output derived from issue text an
+	// attacker chose, and a URL taken from it is a phishing vector rendered as
+	// an autolink (#371). GitHub's answer about a branch we named ourselves
+	// cannot be forged by anyone who can file an issue.
 	//
-	// Absence is a real answer, not an error — a propose stage that declined to
-	// open a pull request is a run that was blocked, which is a decision rather
-	// than a failure.
+	// Absence is a real answer, not an error — under the pipeline rewrite
+	// (#435), PR ownership is workflow code: OpenOrUpdatePullRequest creates
+	// on Found: false and edits on Found: true, so absence here just picks
+	// which of those two happens next.
 	PullRequestForBranch(ctx context.Context, branch string) (pr work.PullRequest, found bool, err error)
 
 	// InstallationToken mints a short-lived token scoped to this repository,
@@ -117,6 +118,28 @@ type GitHub interface {
 	// for the namespace's whole retention. Call this inside the activity that
 	// writes the token into the sandbox.
 	InstallationToken(ctx context.Context) (work.SandboxCredential, error)
+
+	// OpenOrUpdatePullRequest opens the run's pull request the first time its
+	// branch has anything pushed, and edits it on every later push that
+	// changed its title or body. existing is nil the first time; every push
+	// after that it is what a prior PullRequestForBranch call already found,
+	// so this never looks twice.
+	OpenOrUpdatePullRequest(ctx context.Context, branch, title, body string, existing *work.PullRequest) (work.PullRequest, error)
+
+	// ConvertPullRequestToDraft marks a pull request as a draft: the
+	// terminal-state signal that a run declined its ticket rather than
+	// approving it. It takes the pull request's GraphQL node id, not its REST
+	// number — see work.PullRequest.NodeID.
+	ConvertPullRequestToDraft(ctx context.Context, nodeID string) error
+
+	// ChecksForRef returns every check run GitHub has recorded against ref —
+	// a branch name, in this service's only caller — as one snapshot. It
+	// takes no view on whether they have concluded or passed:
+	// Activities.ObserveCI is what polls this repeatedly and reduces the
+	// snapshot into concluded/green/red for the implement/review loop's
+	// progress-detection rules, so this stays a single request, symmetric
+	// with PullRequestForBranch.
+	ChecksForRef(ctx context.Context, ref string) ([]work.CheckRun, error)
 }
 
 // RepoCloner checks the ticket's repository out inside its sandbox, on the
@@ -179,28 +202,29 @@ type TokenSource interface {
 // workflow code may not import internal/prompts at all, because the nonce a
 // render mints is invisible nondeterminism at the call site.
 //
-// The workflow itself still reads nothing back from a stage. An earlier
-// design had a companion Verdict method that parsed a stage's output for
-// "blocked" and a pull request URL; that is gone deliberately. No stage's
-// PROSE may steer control flow — ticket bodies are attacker-chosen and they
-// reach a model — so what a run achieved is asked of GitHub instead. See
-// GitHub.PullRequestForBranch. implement's Blocked/BlockedReason (Decode,
-// below) is real structured data, constrained by --output-schema rather than
-// free text, and step 5 does branch on it — but nothing in this step wires
-// it anywhere; see internal/prompts' "Why blocked has no reader yet".
+// The workflow itself still reads nothing back from a stage's PROSE — ticket
+// bodies are attacker-chosen and they reach a model, so no stage's document
+// may steer control flow, and what a run achieved on GitHub is still asked of
+// GitHub. See GitHub.PullRequestForBranch. What the workflow's own loop *does*
+// read, since the pipeline rewrite (#435): implement's Blocked/BlockedReason
+// and review's Findings, both real structured data constrained by
+// --output-schema rather than free text, never re-parsed prose. See
+// work.ImplementOutput and work.ReviewOutput.
 type PromptRenderer interface {
 	// Render returns the prompt a stage runs on and the schema its final
 	// message must satisfy — one schema per stage, not a single shared
 	// envelope, so a required field like implement's Blocked is stated for
 	// the stage that actually answers it.
 	//
-	// prior holds every completed stage's output, keyed by the stage that
-	// produced it — not just the last one. `revise` reads both the plan and the
-	// review, so a seam carrying only the preceding document cannot render it
-	// at all: the plan is two stages back by the time revise runs. A run may
-	// pass everything it has; a stage is shown only what its own prompt asks
-	// for.
-	Render(stage work.Stage, detail work.TicketDetail, prior map[work.Stage]work.StageOutput) (prompt string, schema []byte, err error)
+	// prior is exactly the plan, the latest implement turn and the latest
+	// review turn — see work.PriorTurns' own doc comment for why the seam
+	// is bounded to that rather than the run's whole turn history. The
+	// workflow (internal/workflows) keeps the full history in its own local
+	// state, for progress detection; it narrows to this before building an
+	// activity input, because Temporal records this input into workflow
+	// history on every single stage invocation, and the whole history would
+	// otherwise be shipped, and re-shipped, on every turn.
+	Render(stage work.Stage, detail work.TicketDetail, prior work.PriorTurns) (prompt string, schema []byte, err error)
 
 	// Decode unwraps a stage's result envelope into the domain's StageOutput.
 	//

@@ -358,35 +358,51 @@ func (a *Activities) DeleteSandbox(ctx context.Context, sandbox work.SandboxID) 
 	return nil
 }
 
-// RunStageInput is one stage attempt.
-type RunStageInput struct {
+// stageInput is one stage attempt's input, common to every stage. RunPlanInput,
+// RunImplementInput and RunReviewInput each embed it rather than repeating its
+// fields, so the plumbing that renders a prompt and runs it is written once
+// against this shape and each stage's own activity method (below) is a thin,
+// named wrapper — per-stage activity names (#425) replacing one generic
+// RunStage dispatched by a Stage field, per the pipeline-rewrite spec (#435).
+type stageInput struct {
 	Key     work.StageKey
 	Sandbox work.SandboxID
 	Model   work.Model
 
 	// Detail is the ticket as the run read it at pickup, identical for every
-	// stage of the run.
+	// stage and every turn of the run.
 	Detail work.TicketDetail
 
-	// Prior holds every completed stage's output, keyed by the stage that
-	// produced it, and is empty for the first stage. Every one of them, not
-	// only the last: revise reads the plan as well as the review, and the plan
-	// is two stages back by then.
-	Prior map[work.Stage]work.StageOutput
+	// Prior is exactly the plan, the latest implement turn and the latest
+	// review turn — see work.PriorTurns' own doc comment for why this
+	// activity input is never wider than that. The workflow
+	// (internal/workflows) keeps the run's full turn history in its own
+	// local state, for progress detection, and narrows to this shape itself
+	// before building a turn's StageAttempt — not here, and not in
+	// internal/prompts, so there is exactly one place a caller could widen
+	// it back out, and that place is the one that has to justify it.
+	Prior work.PriorTurns
 }
 
-// RunStageOutput is what a stage produced.
+// stageOutput is one stage attempt's result, common to every stage.
+// RunPlanOutput, RunImplementOutput and RunReviewOutput each embed it, so a
+// caller reads the same fields — token accounting, the raw envelope, the
+// relayed transcript — regardless of which of the three activities produced
+// them.
 //
-// It deliberately does not carry a work.Credential or any part of one. Activity
-// results are written to workflow history and kept for the namespace's whole
-// retention.
-type RunStageOutput struct {
+// It deliberately does not carry a work.Credential or any part of one.
+// Activity results are written to workflow history and kept for the
+// namespace's whole retention.
+type stageOutput struct {
 	// Output is the raw result envelope, kept because it is what the transcript
 	// and any later forensics want.
 	Output []byte
 
-	// Result is the stage-specific output decoded out of that envelope, which
-	// is what the next stage's prompt is rendered from.
+	// Result is the stage-specific output decoded out of that envelope. Its
+	// underlying value is documented on the stage's own output type — for
+	// example RunImplementOutput's doc comment says to read a
+	// work.ImplementOutput out of it — and it is what a later turn's prompt is
+	// rendered from, once the workflow appends it to Prior.
 	Result work.StageOutput
 
 	ThreadID string
@@ -395,9 +411,9 @@ type RunStageOutput struct {
 	// Transcript is this attempt's whole event stream, carried home from the
 	// sandbox's own local sink so a new activity on the MAIN task queue
 	// (PersistTranscript, below) can replay it into the real, durable one —
-	// #434's step 3 (D5) moved RunStage's execution into the sandbox pod,
-	// whose local disk does not survive DeleteSandbox and must never be NFS
-	// (see internal/transcripts.Sink's own doc comment).
+	// #434's step 3 (D5) moved stage execution into the sandbox pod, whose
+	// local disk does not survive DeleteSandbox and must never be NFS (see
+	// internal/transcripts.Sink's own doc comment).
 	//
 	// It is the largest field on this type by far — see work.Transcript's own
 	// doc comment for the measured size — which is deliberate: nothing else
@@ -405,27 +421,167 @@ type RunStageOutput struct {
 	Transcript work.Transcript
 }
 
-// UnmarshalJSON decodes a stage's activity result, refusing any key this
-// struct has no field for.
+// StageAttempt is the one caller-facing shape behind RunPlanInput,
+// RunImplementInput and RunReviewInput. It is exported, unlike stageInput
+// itself, purely so a workflow — necessarily in another package — can build
+// one: an unexported embedded field cannot be named in a composite literal
+// outside this package, so NewRunPlanInput/NewRunImplementInput/
+// NewRunReviewInput below are the only way in from internal/workflows.
+type StageAttempt struct {
+	Key     work.StageKey
+	Sandbox work.SandboxID
+	Model   work.Model
+	Detail  work.TicketDetail
+	Prior   work.PriorTurns
+}
+
+// NewRunPlanInput builds the plan stage's one attempt.
+func NewRunPlanInput(attempt StageAttempt) RunPlanInput {
+	return RunPlanInput{stageInput: stageInput(attempt)}
+}
+
+// NewRunImplementInput builds one implement turn's attempt.
+func NewRunImplementInput(attempt StageAttempt) RunImplementInput {
+	return RunImplementInput{stageInput: stageInput(attempt)}
+}
+
+// NewRunReviewInput builds one review turn's attempt.
+func NewRunReviewInput(attempt StageAttempt) RunReviewInput {
+	return RunReviewInput{stageInput: stageInput(attempt)}
+}
+
+// RunPlanInput is the plan attempt. There is only ever one per run: plan does
+// not loop under this pipeline.
+type RunPlanInput struct{ stageInput }
+
+// RunPlanOutput is what the plan stage produced. Result's underlying value is
+// always a work.DocumentOutput.
+type RunPlanOutput struct{ stageOutput }
+
+// UnmarshalJSON decodes a plan activity result, refusing any key this struct
+// has no field for — see the shared reasoning on stageOutputUnmarshalJSON.
+func (o *RunPlanOutput) UnmarshalJSON(data []byte) error {
+	return stageOutputUnmarshalJSON(data, &o.stageOutput)
+}
+
+// RunPlan renders the plan stage's prompt, runs it in the sandbox, and stores
+// its event stream.
+//
+// Returns *RunPlanOutput, not RunPlanOutput, and nil on every error path —
+// load-bearing, not stylistic, and identical in kind and reason to #457's fix
+// for the generic RunStage this method replaced. The SDK's reflection-based
+// activity executor (executeFunction) serializes retValues[0] whenever it is
+// not a nil pointer, regardless of whether an error was also returned; a
+// value-typed struct is never a nil pointer, so a value return here would
+// always be handed to the data converter, even on an error path, where
+// RunPlanOutput.Result (a work.StageOutput) is the zero value on purpose —
+// and work.StageOutput.MarshalJSON refuses to encode its own zero value (a
+// deliberate guard against a stage that forgot to call NewStageOutput on its
+// success path). That refusal would silently replace the real error, and its
+// retry classification, with an encode error instead — exactly what prod run
+// one observed for RunStage before #457. A nil *RunPlanOutput on every error
+// path trips executeFunction's own nil-pointer check and skips the encode
+// entirely.
+func (a *Activities) RunPlan(ctx context.Context, in RunPlanInput) (*RunPlanOutput, error) {
+	out, err := a.runStage(ctx, in.stageInput)
+	if err != nil {
+		return nil, err
+	}
+	return &RunPlanOutput{stageOutput: out}, nil
+}
+
+// RunImplementInput is one implement turn.
+type RunImplementInput struct{ stageInput }
+
+// RunImplementOutput is what one implement turn produced. Result's underlying
+// value is always a work.ImplementOutput — read Blocked, BlockedReason, Title
+// and Body off it; there is deliberately no duplicate copy of those fields
+// here, so a caller has exactly one place to look, the same place it already
+// has to look to append this turn onto Prior for the next one.
+type RunImplementOutput struct{ stageOutput }
+
+// UnmarshalJSON decodes an implement activity result, refusing any key this
+// struct has no field for — see the shared reasoning on
+// stageOutputUnmarshalJSON.
+func (o *RunImplementOutput) UnmarshalJSON(data []byte) error {
+	return stageOutputUnmarshalJSON(data, &o.stageOutput)
+}
+
+// RunImplement renders one implement turn's prompt, runs it in the sandbox,
+// and stores its event stream.
+//
+// It does not itself decide whether there will be another turn, whether the
+// pull request opens or updates, or whether CI is green — all of that is the
+// workflow loop's job (internal/workflows), driven by this activity's Result
+// and the CI-observation activity's own. This activity's whole job is running
+// one turn and handing back what it produced.
+//
+// Returns *RunImplementOutput and nil on every error path, for the same
+// reason RunPlan does — see its doc comment; #457 diagnosed and fixed the
+// identical defect on the generic RunStage this method replaced.
+func (a *Activities) RunImplement(ctx context.Context, in RunImplementInput) (*RunImplementOutput, error) {
+	out, err := a.runStage(ctx, in.stageInput)
+	if err != nil {
+		return nil, err
+	}
+	return &RunImplementOutput{stageOutput: out}, nil
+}
+
+// RunReviewInput is one review turn.
+type RunReviewInput struct{ stageInput }
+
+// RunReviewOutput is what one review turn produced. Result's underlying value
+// is always a work.ReviewOutput — read Findings off it; there is deliberately
+// no duplicate copy of them here, for the reason RunImplementOutput gives.
+type RunReviewOutput struct{ stageOutput }
+
+// UnmarshalJSON decodes a review activity result, refusing any key this
+// struct has no field for — see the shared reasoning on
+// stageOutputUnmarshalJSON.
+func (o *RunReviewOutput) UnmarshalJSON(data []byte) error {
+	return stageOutputUnmarshalJSON(data, &o.stageOutput)
+}
+
+// RunReview renders one review turn's prompt, runs it in the sandbox, and
+// stores its event stream.
+//
+// Every review turn is a fresh codex thread — the workflow must never resume
+// one review turn's session into the next, unlike implement's. That is
+// enforced by never writing a review session id anywhere stageArgv reads one
+// from (internal/clients/codex/argv.go), not by anything in this method.
+//
+// Returns *RunReviewOutput and nil on every error path, for the same reason
+// RunPlan does — see its doc comment; #457 diagnosed and fixed the identical
+// defect on the generic RunStage this method replaced.
+func (a *Activities) RunReview(ctx context.Context, in RunReviewInput) (*RunReviewOutput, error) {
+	out, err := a.runStage(ctx, in.stageInput)
+	if err != nil {
+		return nil, err
+	}
+	return &RunReviewOutput{stageOutput: out}, nil
+}
+
+// stageOutputUnmarshalJSON is RunPlanOutput's, RunImplementOutput's and
+// RunReviewOutput's shared UnmarshalJSON body.
 //
 // This is the workflow-history migration boundary, and the strictness is the
 // point. The SDK's JSONPayloadConverter decodes an activity result with a
-// plain json.Unmarshal, which ignores unrecognised keys — so a field *rename*
-// (this step's `Document string` becoming `Result work.StageOutput`) would
-// otherwise decode a pre-deploy payload without error and leave the renamed
-// field at its zero value. work.StageOutput's own UnmarshalJSON cannot catch
-// that: it only runs when a "Result" key is present, and a pre-deploy payload
-// has none. A run in flight across such a deploy would replay as though a
-// completed stage had produced nothing and fail later, somewhere unrelated, as
-// a missing-prior error rather than a decode error naming the real mismatch.
+// plain json.Unmarshal, which ignores unrecognised keys — so a field rename or
+// removal would otherwise decode a pre-deploy payload without error and leave
+// the changed field at its zero value. work.StageOutput's own UnmarshalJSON
+// cannot catch that on its own: it only runs when a "Result" key is present,
+// and a pre-deploy payload might have none. A run in flight across such a
+// deploy would replay as though a completed stage had produced nothing and
+// fail later, somewhere unrelated, as a missing-prior error rather than a
+// decode error naming the real mismatch.
 //
-// The cost is that removing or renaming a field here becomes a loud break for
-// in-flight runs, which is the intended trade: adding a field stays
-// compatible, because an absent key is not an unknown one.
-func (o *RunStageOutput) UnmarshalJSON(data []byte) error {
+// The cost is that removing or renaming a field on any of the three becomes a
+// loud break for in-flight runs, which is the intended trade: adding a field
+// stays compatible, because an absent key is not an unknown one.
+func stageOutputUnmarshalJSON(data []byte, out *stageOutput) error {
 	// A distinct type so decoding does not re-enter this method. Its fields,
 	// and therefore work.StageOutput's own UnmarshalJSON, are unaffected.
-	type wire RunStageOutput
+	type wire stageOutput
 
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
@@ -434,48 +590,29 @@ func (o *RunStageOutput) UnmarshalJSON(data []byte) error {
 	if err := dec.Decode(&w); err != nil {
 		return fmt.Errorf("reading a stage activity result: %w", err)
 	}
-	*o = RunStageOutput(w)
+	*out = stageOutput(w)
 	return nil
 }
 
-// RunStage renders a stage's prompt, runs it in the sandbox, and stores its
-// event stream.
+// runStage is the one place a stage attempt is actually run, shared by
+// RunPlan, RunImplement and RunReview so the three differ only in the types
+// Temporal sees, never in what running a stage does.
 //
 // The event sink does two jobs at once because there is exactly one stream and
 // two consumers of it: the transcript wants the bytes, and Temporal wants to
 // know the stage is alive. A stage that emits nothing for the heartbeat timeout
 // is dead rather than slow, and only the stream can tell the difference.
-//
-// Returns *RunStageOutput, not RunStageOutput, and every error path returns
-// nil rather than a zero value — this is load-bearing, not stylistic. The
-// SDK's reflection-based activity executor (executeFunction) serializes
-// retValues[0] whenever it is not a nil pointer, REGARDLESS of whether an
-// error was also returned; for a value-typed return it always serializes,
-// because a struct value is never a nil pointer. RunStageOutput.Result is a
-// work.StageOutput, which refuses to marshal at its own zero value (see
-// stageoutput.go: "NewStageOutput was never called") — a deliberate guard
-// against a stage that forgot to call NewStageOutput on its SUCCESS path. But
-// every error return here builds that same zero value on purpose, and with a
-// value receiver the SDK tried to encode it anyway: the real error
-// (`fail(...)`'s wrapped stage failure, complete with its retry
-// classification) was discarded and replaced by this encode error instead —
-// observed for real in prod run one (#434), where a benign stage failure
-// surfaced as "unable to encode ... NewStageOutput was never called" and,
-// worse, silently lost its NonRetryableApplicationError tag and retried
-// twice before failing. A nil *RunStageOutput on every error path skips the
-// encode entirely (executeFunction's own nil-pointer check), so the real
-// error reaches Temporal unmodified.
-func (a *Activities) RunStage(ctx context.Context, in RunStageInput) (*RunStageOutput, error) {
+func (a *Activities) runStage(ctx context.Context, in stageInput) (stageOutput, error) {
 	log := activity.GetLogger(ctx)
 
 	prompt, schema, err := a.deps.Prompts.Render(in.Key.Stage, in.Detail, in.Prior)
 	if err != nil {
-		return nil, fail(ctx, fmt.Sprintf("rendering the prompt for %s", in.Key), err)
+		return stageOutput{}, fail(ctx, fmt.Sprintf("rendering the prompt for %s", in.Key), err)
 	}
 
 	transcript, err := a.deps.Transcripts.Open(ctx, in.Key)
 	if err != nil {
-		return nil, fail(ctx, fmt.Sprintf("opening the transcript for %s", in.Key), err)
+		return stageOutput{}, fail(ctx, fmt.Sprintf("opening the transcript for %s", in.Key), err)
 	}
 	defer func() {
 		if closeErr := transcript.Close(); closeErr != nil {
@@ -486,7 +623,7 @@ func (a *Activities) RunStage(ctx context.Context, in RunStageInput) (*RunStageO
 	}()
 
 	// captured mirrors every byte the transcript writer sees, so this attempt's
-	// whole event stream can travel home as RunStageOutput.Transcript once the
+	// whole event stream can travel home as stageOutput.Transcript once the
 	// stage finishes — see that field's own doc comment for why. A plain
 	// io.MultiWriter rather than a read-back after Close: the local sink
 	// (transcripts.Sink) only ever exposes a writer, never a reader, and
@@ -515,12 +652,13 @@ func (a *Activities) RunStage(ctx context.Context, in RunStageInput) (*RunStageO
 		// spent its tokens too, and a metric that only counts successes makes
 		// the expensive case the invisible one.
 		a.deps.Metrics.StageFinished(in.Key.Stage, in.Model, outcomeOf(err), result.Usage, took)
-		return nil, fail(ctx, fmt.Sprintf("running %s", in.Key), err)
+		return stageOutput{}, fail(ctx, fmt.Sprintf("running %s", in.Key), err)
 	}
 	a.deps.Metrics.StageFinished(in.Key.Stage, in.Model, telemetry.OutcomeSuccess, result.Usage, took)
 
 	log.Info("stage finished",
 		"stage", string(in.Key.Stage),
+		"turn", in.Key.Turn,
 		"ticket", in.Key.Ticket,
 		"model", in.Model.Name,
 		"input_tokens", result.Usage.InputTokens,
@@ -528,10 +666,10 @@ func (a *Activities) RunStage(ctx context.Context, in RunStageInput) (*RunStageO
 
 	decoded, err := a.deps.Prompts.Decode(in.Key.Stage, result.Output)
 	if err != nil {
-		return nil, fail(ctx, fmt.Sprintf("reading the result envelope of %s", in.Key), err)
+		return stageOutput{}, fail(ctx, fmt.Sprintf("reading the result envelope of %s", in.Key), err)
 	}
 
-	return &RunStageOutput{
+	return stageOutput{
 		Output:     result.Output,
 		Result:     decoded,
 		ThreadID:   result.ThreadID,
@@ -590,11 +728,14 @@ type FindPullRequestOutput struct {
 	PullRequest work.PullRequest
 }
 
-// FindPullRequest asks GitHub what a run actually achieved.
+// FindPullRequest asks GitHub what already exists on a run's branch.
 //
-// It is the run's outcome, and it comes from GitHub rather than from what the
-// propose stage said it did. A stage's report is model output; GitHub's answer
-// about a branch the worker named is not.
+// It comes from GitHub rather than from what a stage's own report said it did:
+// a stage's report is model output derived from issue text an attacker chose,
+// and GitHub's answer about a branch the worker named is not. Under the
+// pipeline rewrite (#435) this is called before every OpenOrUpdatePullRequest,
+// so the workflow knows whether to create or edit, and once more at the run's
+// end to read the PR whichever terminal path needs.
 func (a *Activities) FindPullRequest(ctx context.Context, branch string) (FindPullRequestOutput, error) {
 	pr, found, err := a.deps.GitHub.PullRequestForBranch(ctx, branch)
 	if err != nil {
@@ -653,4 +794,58 @@ func (a *Activities) SweepOrphanSandboxes(ctx context.Context, in SweepInput) (S
 			"deleted", deleted, "live_runs", len(in.LiveRunIDs))
 	}
 	return SweepResult{Deleted: deleted}, nil
+}
+
+// OpenOrUpdatePullRequestInput is one push, asked to become — or stay — the
+// run's pull request.
+type OpenOrUpdatePullRequestInput struct {
+	Branch string
+	Title  string
+	Body   string
+
+	// Existing is nil the first time this run's branch has anything pushed to
+	// it, and what FindPullRequest already found on every push after that. It
+	// is passed in rather than re-queried here: the workflow already asked.
+	Existing *work.PullRequest
+}
+
+// OpenOrUpdatePullRequest opens the run's pull request the first time its
+// branch has anything pushed, and edits its title/body on every later push
+// that changed them. PR ownership is code now, not the model (#435): a pull
+// request opens after the first successful push and is never held back
+// waiting for CI or review to conclude.
+func (a *Activities) OpenOrUpdatePullRequest(ctx context.Context, in OpenOrUpdatePullRequestInput) (work.PullRequest, error) {
+	pr, err := a.deps.GitHub.OpenOrUpdatePullRequest(ctx, in.Branch, in.Title, in.Body, in.Existing)
+	if err != nil {
+		return work.PullRequest{}, fail(ctx, fmt.Sprintf("opening or updating the pull request on %s", in.Branch), err)
+	}
+	return pr, nil
+}
+
+// ConvertPullRequestToDraft marks a run's pull request as a draft — the
+// terminal-state signal that the factory declined this ticket rather than
+// approving it. See internal/workflows' terminal-cleanup ordering for why a
+// failure here, after every retry is exhausted, fails the whole workflow
+// rather than logging and continuing like every other cleanup step does.
+func (a *Activities) ConvertPullRequestToDraft(ctx context.Context, nodeID string) error {
+	if err := a.deps.GitHub.ConvertPullRequestToDraft(ctx, nodeID); err != nil {
+		return fail(ctx, fmt.Sprintf("converting pull request %s to draft", nodeID), err)
+	}
+	return nil
+}
+
+// PostPullRequestComment posts a run's full decline detail on its pull
+// request.
+//
+// It reuses PostStatus rather than adding a new client method: a pull request
+// is an issue to GitHub's REST API for commenting purposes, and a body
+// carrying no status marker is exactly the "post a plain comment" case
+// PostStatus already falls through to (github.Client.PostStatus) — this
+// comment is never edited later, so there is nothing here for a marker to
+// let a retry adopt.
+func (a *Activities) PostPullRequestComment(ctx context.Context, pullRequest int, body string) error {
+	if _, err := a.deps.GitHub.PostStatus(ctx, pullRequest, body); err != nil {
+		return fail(ctx, fmt.Sprintf("posting a comment on pull request #%d", pullRequest), err)
+	}
+	return nil
 }

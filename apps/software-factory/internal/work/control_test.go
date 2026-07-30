@@ -184,7 +184,7 @@ func TestApplyOverridesSurviveAJSONRoundTrip(t *testing.T) {
 	want := work.ConfigUpdate{
 		MaxInFlight:            &limit,
 		BreakerCooldownSeconds: &cooldown,
-		StageModels:            &work.StageModels{Propose: &work.Model{Name: "other-model", Effort: "low"}},
+		StageModels:            &work.StageModels{Review: &work.Model{Name: "other-model", Effort: "low"}},
 	}
 
 	encoded, err := json.Marshal(want)
@@ -203,8 +203,8 @@ func TestApplyOverridesSurviveAJSONRoundTrip(t *testing.T) {
 	if applied.MaxInFlight != 3 || applied.BreakerCooldownSeconds != 60 {
 		t.Errorf("round-tripped update applied as %+v, want cap 3 and cooldown 60s", applied)
 	}
-	if got, want := applied.ModelFor(work.StagePropose), (work.Model{Name: "other-model", Effort: "low"}); got != want {
-		t.Errorf("ModelFor(propose) = %+v after a round trip, want %+v", got, want)
+	if got, want := applied.ModelFor(work.StageReview), (work.Model{Name: "other-model", Effort: "low"}); got != want {
+		t.Errorf("ModelFor(review) = %+v after a round trip, want %+v", got, want)
 	}
 }
 
@@ -339,7 +339,7 @@ func TestAWellSpelledSignalStillDecodes(t *testing.T) {
 	// a deploy actually sends: every field at once, including a nested override.
 	const payload = `{"paused":true,"maxInFlight":3,"breakerCooldownSeconds":60,` +
 		`"defaultModel":{"name":"other-model","effort":"low"},` +
-		`"stageModels":{"revise":{"name":"revise-model","effort":"high"}}}`
+		`"stageModels":{"implement":{"name":"implement-model","effort":"high"}}}`
 
 	var update work.ConfigUpdate
 	if err := json.Unmarshal([]byte(payload), &update); err != nil {
@@ -352,8 +352,8 @@ func TestAWellSpelledSignalStillDecodes(t *testing.T) {
 	if !applied.Paused || applied.MaxInFlight != 3 || applied.BreakerCooldownSeconds != 60 {
 		t.Errorf("applied = %+v, want paused with cap 3 and a 60s cooldown", applied)
 	}
-	if got, want := applied.ModelFor(work.StageRevise), (work.Model{Name: "revise-model", Effort: "high"}); got != want {
-		t.Errorf("ModelFor(revise) = %+v, want %+v", got, want)
+	if got, want := applied.ModelFor(work.StageImplement), (work.Model{Name: "implement-model", Effort: "high"}); got != want {
+		t.Errorf("ModelFor(implement) = %+v, want %+v", got, want)
 	}
 }
 
@@ -431,11 +431,11 @@ func TestConfigUpdateMarshalsToTheKeysAnOperatorTypes(t *testing.T) {
 	update := work.ConfigUpdate{
 		MaxInFlight:            &limit,
 		BreakerCooldownSeconds: &cooldown,
-		StageModels:            &work.StageModels{Propose: &work.Model{Name: "other-model", Effort: "low"}},
+		StageModels:            &work.StageModels{Implement: &work.Model{Name: "other-model", Effort: "low"}},
 	}
 
 	const want = `{"maxInFlight":3,"breakerCooldownSeconds":60,` +
-		`"stageModels":{"propose":{"name":"other-model","effort":"low"}}}`
+		`"stageModels":{"implement":{"name":"other-model","effort":"low"}}}`
 
 	encoded, err := json.Marshal(update)
 	if err != nil {

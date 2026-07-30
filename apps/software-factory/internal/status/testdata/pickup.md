@@ -3,6 +3,6 @@
 
 - **Run** — [`019a3f2c-7b1e-4f9a-9c2d-3e5f6a7b8c9d`](https://temporal.example/namespaces/software-factory/workflows/work-ticket-331/019a3f2c-7b1e-4f9a-9c2d-3e5f6a7b8c9d/history)
 - **Started** — `2026-07-28T18:04:05Z`
-- **Pipeline** — `plan` → `review` → `revise` → `implement` → `propose`
+- **Pipeline** — `plan` → `implement` → `review`
 
 Each stage appends its own comment below, and edits it when the stage ends.

@@ -1,0 +1,35 @@
+package work
+
+// CheckRun is one GitHub check run reported against a commit, as GitHub
+// itself reports it.
+//
+// It is the vocabulary internal/clients/github's ChecksForRef reads GitHub's
+// Checks API response into, and Activities.ObserveCI reduces a whole ref's
+// worth of these into "concluded" and "green" for the implement/review
+// loop's progress-detection rules — rule 1 (the same failing check twice),
+// in the pipeline-rewrite spec's "The real stop condition" section.
+type CheckRun struct {
+	// Name is the check's own name, as GitHub reports it — what rule 1
+	// compares turn over turn to decide whether the same check is still red.
+	Name string
+
+	// Completed is whether this check run has finished — GitHub's own
+	// "completed" status, as opposed to "queued" or "in_progress". A run
+	// that has not completed has no meaningful Conclusion yet.
+	Completed bool
+
+	// Conclusion is GitHub's verdict once Completed is true: "success",
+	// "failure", "neutral", "cancelled", "skipped", "timed_out" or
+	// "action_required". Empty until Completed.
+	Conclusion string
+}
+
+// Green reports whether this check run's conclusion counts as passing.
+//
+// "neutral" and "skipped" both count: GitHub itself does not fail a
+// required check on either, so treating them as red here would make this
+// stricter than GitHub's own merge-readiness rule for no reason this
+// service's loop needs.
+func (c CheckRun) Green() bool {
+	return c.Completed && (c.Conclusion == "success" || c.Conclusion == "neutral" || c.Conclusion == "skipped")
+}

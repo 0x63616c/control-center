@@ -17,13 +17,12 @@
 // crypto/rand for the prompt renderer) — is accepted; each piece is a few
 // lines, and cmd/ binaries cannot import one another's `package main`.
 //
-// This process registers RunStage and nothing else today. CloneRepo stays on
-// cmd/worker: it mints a GitHub App installation token in-process, and #431
-// has not yet decided whether the sandbox pod may hold that capability
-// itself — see activities.SandboxDeps' own doc comment. (WriteCodexCredential
-// used to stay there for the same class of reason, until D3's Secret mount
-// made it a no-op nothing called for any more; it and the workticket.go call
-// to it are deleted.)
+// This process registers RunPlan, RunImplement and RunReview and nothing else
+// today (#425/#435 split the single, generic RunStage this comment used to
+// name into one named activity per stage). WriteCodexCredential and CloneRepo
+// stay on cmd/worker until #431/D3 lands a way for their
+// credential to reach this process without crossing a Temporal payload — see
+// activities.SandboxDeps' own doc comment.
 package main
 
 import (
@@ -140,21 +139,27 @@ func run() error {
 	return nil
 }
 
-// register puts this pod's one activity on its task queue.
+// register puts this pod's activities on its task queue: one per stage
+// (#425/#435), replacing the single generic RunStage this comment used to
+// name — RunPlan, RunImplement and RunReview share this pod for the same
+// reason RunStage alone used to: whichever stage a run's next turn is, it
+// executes as a local subprocess of this pod's own activity.
 //
 // Deliberately NOT w.RegisterActivity(acts): that registers every exported
 // method Temporal's SDK recognises as an activity signature, which for
 // *activities.Activities is every activity this whole service has, sandbox
-// or not. Registering the bound method directly registers exactly the one
-// name this process is prepared to serve — the same "only what this process
-// is prepared to serve" guarantee acceptance criterion 4 checks for on the
+// or not. Registering the bound methods directly registers exactly the names
+// this process is prepared to serve — the same "only what this process is
+// prepared to serve" guarantee acceptance criterion 4 checks for on the
 // workflow side, applied here to activities too.
 func register(w worker.Worker, acts *activities.Activities, logger *slog.Logger) {
-	w.RegisterActivity(acts.RunStage)
+	w.RegisterActivity(acts.RunPlan)
+	w.RegisterActivity(acts.RunImplement)
+	w.RegisterActivity(acts.RunReview)
 
 	logger.Info("registrations",
 		slog.Int("workflows", 0),
-		slog.Int("activities", 1),
+		slog.Int("activities", 3),
 	)
 }
 

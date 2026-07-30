@@ -238,9 +238,7 @@ type ConfigUpdate struct {
 type StageModels struct {
 	Plan      *Model `json:"plan,omitempty"`
 	Review    *Model `json:"review,omitempty"`
-	Revise    *Model `json:"revise,omitempty"`
 	Implement *Model `json:"implement,omitempty"`
-	Propose   *Model `json:"propose,omitempty"`
 }
 
 // For returns the override for a stage, or nil if it has none.
@@ -250,12 +248,8 @@ func (m StageModels) For(stage Stage) *Model {
 		return m.Plan
 	case StageReview:
 		return m.Review
-	case StageRevise:
-		return m.Revise
 	case StageImplement:
 		return m.Implement
-	case StagePropose:
-		return m.Propose
 	default:
 		return nil
 	}

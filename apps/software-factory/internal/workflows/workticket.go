@@ -18,6 +18,22 @@ import (
 	"go.temporal.io/sdk/workflow"
 )
 
+// The implement/review loop's two counters, and how many implement turns one
+// CI window gets before its own counter is exhausted.
+//
+// See the pipeline-rewrite spec's "The turn schedule" for the derivation:
+// maxImplementTurnsPerWindow is ci_turns' ceiling — 5 TOTAL attempts per
+// window, not 5 retries after a free first one — and maxReviewTurns is
+// review_turns' ceiling, which never resets. Together with plan's one
+// invocation they derive work.MaxStageInvocations (1 + 5*3 + 3 = 19), which
+// RunPolicy.RunBudget() and Validate() are held to; this is the other place
+// that arithmetic has to agree with it, so a change to either constant here
+// must update work.MaxStageInvocations too or the two silently disagree.
+const (
+	maxImplementTurnsPerWindow = 5
+	maxReviewTurns             = 3
+)
+
 // acts names the activity methods for workflow.ExecuteActivity. It is always
 // nil: Temporal resolves an activity from the method's name, never by calling
 // it, and a nil handle makes it impossible for workflow code to invoke one
@@ -66,17 +82,31 @@ type WorkTicketInput struct {
 type WorkTicketResult struct {
 	Outcome work.Outcome
 
-	// PullRequest is the URL propose opened, and is set only when Outcome is
-	// proposed.
-	PullRequest string
+	// PullRequest is the run's own pull request, once the implement/review
+	// loop has pushed anything — the zero value means it never did. Populated
+	// regardless of Outcome, not only when it is proposed: a declined run
+	// (OutcomeBlocked or OutcomeExhausted) still needs its NodeID and Number
+	// so the terminal-exit sequence can convert it to draft and comment on
+	// it. PR ownership moved from the model to workflow code under the
+	// pipeline rewrite (#435) — see the loop's openOrUpdatePullRequest.
+	PullRequest work.PullRequest
 
 	// Usage is every stage's tokens, totalled. It is the run's whole cost, and
 	// it is in the result so the number survives in workflow history rather
 	// than only in a metric.
 	Usage work.Usage
 
-	// Detail is why a run blocked, or what it was doing when it failed.
+	// Detail is the one-line reason a run blocked, was exhausted, or what it
+	// was doing when it failed — the outcome comment's summary.
 	Detail string
+
+	// FullDetail is the longer prose worth posting as the pull request's own
+	// comment on a declined ending: why the loop stopped, in more than one
+	// line. Empty is legitimate — a decline before the first push, or a
+	// stall the one-line Detail already says everything about — and the
+	// terminal-exit sequence posts no pull request comment at all in that
+	// case rather than an empty one.
+	FullDetail string
 }
 
 // WorkTicket plans, reviews, revises, implements and proposes one ticket, then
@@ -97,7 +127,14 @@ func WorkTicket(ctx workflow.Context, in WorkTicketInput) (WorkTicketResult, err
 		comments: map[work.StatusStep]work.CommentID{},
 	}
 	result, err := run.execute(ctx)
-	run.finish(ctx, result, err)
+	// finish's own error is the terminal-cleanup sequence's, not execute's:
+	// draft conversion exhausting its retries on a declined run is the one
+	// cleanup failure that must turn a normal Complete into a Fail (see
+	// finish's own doc comment and terminal.go's decline) — everything else
+	// finish does is best-effort and already logs rather than returns.
+	if finishErr := run.finish(ctx, result, err); finishErr != nil && err == nil {
+		err = finishErr
+	}
 	return result, err
 }
 
@@ -181,16 +218,13 @@ func (r *ticketRun) execute(ctx workflow.Context) (WorkTicketResult, error) {
 		return WorkTicketResult{Outcome: work.OutcomeFailed}, err
 	}
 
-	// Every completed stage's output, not just the last. revise reads the
-	// plan and the review, and the plan is two stages behind it by then — a
-	// single rolling handoff would have discarded it, and the run would die at
-	// stage three having paid for two.
-	//
-	// One slot per stage, last-write-wins: today's pipeline runs each stage
-	// exactly once, so this is the whole history. See buildStageInput's own
-	// note in internal/prompts/input.go for why this does not extend to a
-	// stage invoked more than once.
-	prior := make(map[work.Stage]work.StageOutput, len(work.Pipeline()))
+	// Every completed turn of every stage, oldest first, keyed by the stage
+	// that produced it. Plan's slice is always length one; implement and
+	// review each loop, so a single slot per stage — sufficient when a stage
+	// ran at most once — cannot carry what a later turn needs to read. See
+	// buildStageInput's own note in internal/prompts/input.go, which is what
+	// actually reads out of this.
+	prior := make(map[work.Stage][]work.StageOutput, 3)
 
 	// One Session for the whole stage loop (#434 step 3, D2/B3): exactly one
 	// CreateSession per run, matched by exactly one CompleteSession at the
@@ -213,77 +247,17 @@ func (r *ticketRun) execute(ctx workflow.Context) (WorkTicketResult, error) {
 	defer workflow.CompleteSession(sessionCtx)
 
 	stages := workflow.WithActivityOptions(sessionCtx, r.stageOptions())
+	ci := workflow.WithActivityOptions(ctx, r.ciOptions())
 
-	for _, stage := range work.Pipeline() {
-		model := r.in.Config.ModelFor(stage)
-		startedAt := workflow.Now(ctx)
-		r.report(ctx, work.StatusReport{
-			Step: work.StageStep(stage), State: work.StepRunning,
-			Stage: stage, Model: model, StartedAt: startedAt,
-		})
-
-		in := activities.RunStageInput{
-			Key:     work.StageKey{Ticket: r.in.Ticket.Number, RunID: r.runID, Stage: stage},
-			Sandbox: r.sandbox,
-			Model:   model,
-			Detail:  detail,
-			Prior:   prior,
-		}
-
-		var out activities.RunStageOutput
-		if err := workflow.ExecuteActivity(stages, acts.RunStage, in).Get(ctx, &out); err != nil {
-			// Reported before the error is returned. A stage that failed is the
-			// one a human most wants to see on the ticket, and the tokens it
-			// spent are still spent.
-			r.report(ctx, work.StatusReport{
-				Step: work.StageStep(stage), State: work.StepFailed,
-				Stage: stage, Model: model, StartedAt: startedAt, EndedAt: workflow.Now(ctx),
-				Usage: out.Usage, Detail: stageFailureDetail(err),
-			})
-			return WorkTicketResult{Outcome: work.OutcomeFailed, Usage: r.usage}, err
-		}
-
-		// Tokens are counted as soon as the stage returns: they were spent
-		// whatever it produced.
-		r.usage = r.usage.Add(out.Usage)
-		prior[stage] = out.Result
-		r.persistTranscript(ctx, in.Key, out.Transcript)
-
-		r.report(ctx, work.StatusReport{
-			Step: work.StageStep(stage), State: work.StepSucceeded,
-			Stage: stage, Model: model, StartedAt: startedAt, EndedAt: workflow.Now(ctx),
-			Usage: out.Usage,
-		})
-	}
-
-	// What the run achieved is asked of GitHub, never read out of what the
-	// propose stage said it did. Every stage's output is model text derived
-	// from a ticket an attacker may have written, so letting it decide the
-	// outcome would let it decide the outcome. A branch the worker named and a
-	// pull request GitHub reports on it cannot be forged from an issue body.
-	branch := work.BranchName(r.in.Ticket.Number, r.runID)
-	var found activities.FindPullRequestOutput
-	if err := workflow.ExecuteActivity(control, acts.FindPullRequest, branch).Get(ctx, &found); err != nil {
+	// plan runs exactly once and counts against neither counter — see "The
+	// turn schedule" in the pipeline-rewrite spec.
+	planResult, err := r.runPlanTurn(ctx, stages, detail, prior)
+	if err != nil {
 		return WorkTicketResult{Outcome: work.OutcomeFailed, Usage: r.usage}, err
 	}
+	prior[work.StagePlan] = append(prior[work.StagePlan], planResult)
 
-	if !found.Found {
-		// Not a failure. Every stage ran and propose declined to open a pull
-		// request — which is the machine saying it could not do this ticket,
-		// and is exactly the "blocked" ADR-0011 names as one of the two moments
-		// the auto label comes off.
-		return WorkTicketResult{
-			Outcome: work.OutcomeBlocked,
-			Usage:   r.usage,
-			Detail:  fmt.Sprintf("no pull request was opened on %s", branch),
-		}, nil
-	}
-
-	return WorkTicketResult{
-		Outcome:     work.OutcomeProposed,
-		PullRequest: found.PullRequest.URL,
-		Usage:       r.usage,
-	}, nil
+	return r.implementReviewLoop(ctx, control, stages, ci, detail, prior)
 }
 
 // finish releases everything the run holds, whatever happened to it.
@@ -293,11 +267,16 @@ func (r *ticketRun) execute(ctx workflow.Context) (WorkTicketResult, error) {
 // when it matters most — cancellation is the case where a pod is most likely to
 // be left behind.
 //
-// Nothing here can fail the run: it is called after the outcome is decided, and
-// a failure to tidy up must not overwrite the reason a run ended. Each step logs
-// instead, and the one that matters — the pod — is caught by the dispatcher's
-// orphan sweep if it fails here too.
-func (r *ticketRun) finish(ctx workflow.Context, result WorkTicketResult, runErr error) {
+// Almost nothing here can fail the run: it is called after the outcome is
+// decided, and a failure to tidy up must not overwrite the reason a run
+// ended, so most steps log instead of returning — the sandbox pod is caught
+// by the dispatcher's orphan sweep if DeleteSandbox fails here too. The one
+// deliberate exception is decline's own return (below): a declined run whose
+// pull request could not be converted to draft after every retry must turn
+// this run's own Complete into a Fail, per Calum's confirmed terminal-state
+// design (terminal.go's decline doc comment) — everything else about "this
+// step must not fail the run" still holds.
+func (r *ticketRun) finish(ctx workflow.Context, result WorkTicketResult, runErr error) error {
 	log := workflow.GetLogger(ctx)
 	ctx, cancel := workflow.NewDisconnectedContext(ctx)
 	defer cancel()
@@ -314,27 +293,6 @@ func (r *ticketRun) finish(ctx workflow.Context, result WorkTicketResult, runErr
 	failure := activities.FailureKindOf(runErr)
 	cancelled := temporal.IsCanceledError(runErr)
 
-	// A cancelled run decided nothing, so the ticket still wants machine work
-	// and keeps its label. Every other ending clears it — including a failure.
-	// ADR-0011 names "a PR opened, or blocked" as the moments the label comes
-	// off; leaving it on after a hard failure would mean the dispatcher lists
-	// the ticket again on the next poll and fails it again, forever, which is
-	// the unbounded requeue this system is built to avoid.
-	if !cancelled {
-		if err := workflow.ExecuteActivity(control, acts.ClearAutoLabel, r.in.Ticket.Number).Get(ctx, nil); err != nil {
-			log.Error("clearing the auto label failed; this ticket will be listed again",
-				"ticket", r.in.Ticket.Number, "error", err)
-			// An auth failure here is the case that matters: the label stays on,
-			// so the dispatcher must hear about it and pause. It only replaces
-			// the run's own kind when that kind was not already specific — a
-			// rate-limited run whose label clear also failed is still
-			// rate-limited.
-			if failure == work.FailureNone || failure == work.FailureOther {
-				failure = activities.FailureKindOf(err)
-			}
-		}
-	}
-
 	outcome := result.Outcome
 	if outcome == "" {
 		outcome = work.OutcomeFailed
@@ -345,6 +303,56 @@ func (r *ticketRun) finish(ctx workflow.Context, result WorkTicketResult, runErr
 		detail = runErr.Error()
 	}
 
+	// A cancelled run decided nothing, so the ticket still wants machine work
+	// and keeps its label — no clearing, no decline, on that path at all.
+	//
+	// Every other ending clears the label exactly once, through exactly one
+	// of two routes, never both: OutcomeBlocked and OutcomeExhausted are a
+	// decline (draft conversion, then the label, then the pull request
+	// comment — terminal.go's decline owns that whole ordered sequence, and
+	// its own failure is what can fail this run). Everything else —
+	// OutcomeProposed and OutcomeFailed alike — clears the label directly,
+	// exactly as every ending did before this step: ADR-0011 names "a PR
+	// opened, or blocked" as when the label comes off, and leaving it on
+	// after a hard failure would have the dispatcher re-list and re-fail the
+	// ticket forever, which is the unbounded requeue this system is built to
+	// avoid. A second, unconditional ClearAutoLabel here on top of decline's
+	// own would defeat the whole mechanism: a declined run whose draft
+	// conversion failed is deliberately left labelled, and clearing it
+	// anyway would make a Failed workflow's ticket look resolved.
+	var declineErr error
+	if !cancelled {
+		switch outcome {
+		case work.OutcomeBlocked, work.OutcomeExhausted:
+			declineErr = r.decline(ctx, declineDetail{
+				Outcome:     outcome,
+				Detail:      detail,
+				PullRequest: result.PullRequest,
+				FullDetail:  result.FullDetail,
+			})
+			if declineErr != nil {
+				log.Error("declining the run failed; the workflow fails rather than completes",
+					"ticket", r.in.Ticket.Number, "error", declineErr)
+				if failure == work.FailureNone || failure == work.FailureOther {
+					failure = activities.FailureKindOf(declineErr)
+				}
+			}
+		case work.OutcomeProposed, work.OutcomeFailed:
+			if err := workflow.ExecuteActivity(control, acts.ClearAutoLabel, r.in.Ticket.Number).Get(ctx, nil); err != nil {
+				log.Error("clearing the auto label failed; this ticket will be listed again",
+					"ticket", r.in.Ticket.Number, "error", err)
+				// An auth failure here is the case that matters: the label stays
+				// on, so the dispatcher must hear about it and pause. It only
+				// replaces the run's own kind when that kind was not already
+				// specific — a rate-limited run whose label clear also failed is
+				// still rate-limited.
+				if failure == work.FailureNone || failure == work.FailureOther {
+					failure = activities.FailureKindOf(err)
+				}
+			}
+		}
+	}
+
 	state := work.StepSucceeded
 	if outcome != work.OutcomeProposed {
 		state = work.StepFailed
@@ -352,12 +360,14 @@ func (r *ticketRun) finish(ctx workflow.Context, result WorkTicketResult, runErr
 	r.report(ctx, work.StatusReport{
 		Step: work.StepOutcome, State: state,
 		Outcome: outcome, Detail: detail, EndedAt: workflow.Now(ctx),
-		// result.PullRequest is what FindPullRequest got back from GitHub for
-		// this run's own branch — see execute — never a value a stage wrote
-		// into its own result file. Only meaningful when the run proposed;
-		// result.PullRequest is empty otherwise, so this is a no-op for every
-		// other outcome.
-		PullRequestURL: result.PullRequest,
+		// result.PullRequest is what the loop's own create-or-edit calls got
+		// back from GitHub for this run's own branch, never a value a stage
+		// wrote into its own result file — see openOrUpdatePullRequest in
+		// loop.go. Populated on a decline as well as a proposal now that PR
+		// ownership is workflow code (#435): result.PullRequest.URL is empty
+		// only when the loop never pushed anything, which is a no-op here for
+		// exactly that case.
+		PullRequestURL: result.PullRequest.URL,
 	})
 	r.tellDispatcher(ctx, work.TicketDone{
 		Ticket:  r.in.Ticket.Number,
@@ -366,6 +376,7 @@ func (r *ticketRun) finish(ctx workflow.Context, result WorkTicketResult, runErr
 		Failure: failure,
 		Detail:  detail,
 	})
+	return declineErr
 }
 
 // tellDispatcher reports the slot free.

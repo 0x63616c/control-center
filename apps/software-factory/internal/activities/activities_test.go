@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -46,6 +45,20 @@ type fakeGitHub struct {
 
 	token    work.SandboxCredential
 	tokenErr error
+
+	checks    []work.CheckRun
+	checksErr error
+	checksRef string
+
+	openOrUpdatePR    work.PullRequest
+	openOrUpdateErr   error
+	openOrUpdateInput struct {
+		branch, title, body string
+		existing            *work.PullRequest
+	}
+
+	draftedNodeID string
+	draftErr      error
 }
 
 func (f *fakeGitHub) ListAutoTickets(context.Context) ([]work.Ticket, error) {
@@ -78,6 +91,21 @@ func (f *fakeGitHub) InstallationToken(context.Context) (work.SandboxCredential,
 func (f *fakeGitHub) PullRequestForBranch(_ context.Context, branch string) (work.PullRequest, bool, error) {
 	f.askedBranch = branch
 	return f.pr, f.prFound, f.prErr
+}
+
+func (f *fakeGitHub) ChecksForRef(_ context.Context, ref string) ([]work.CheckRun, error) {
+	f.checksRef = ref
+	return f.checks, f.checksErr
+}
+
+func (f *fakeGitHub) OpenOrUpdatePullRequest(_ context.Context, branch, title, body string, existing *work.PullRequest) (work.PullRequest, error) {
+	f.openOrUpdateInput.branch, f.openOrUpdateInput.title, f.openOrUpdateInput.body, f.openOrUpdateInput.existing = branch, title, body, existing
+	return f.openOrUpdatePR, f.openOrUpdateErr
+}
+
+func (f *fakeGitHub) ConvertPullRequestToDraft(_ context.Context, nodeID string) error {
+	f.draftedNodeID = nodeID
+	return f.draftErr
 }
 
 type fakePods struct {
@@ -178,12 +206,12 @@ type fakePrompts struct {
 	decode func(stage work.Stage, result []byte) (work.StageOutput, error)
 
 	sawStage work.Stage
-	sawPrior map[work.Stage]work.StageOutput
+	sawPrior work.PriorTurns
 }
 
-func (f *fakePrompts) Render(stage work.Stage, _ work.TicketDetail, prior map[work.Stage]work.StageOutput) (string, []byte, error) {
+func (f *fakePrompts) Render(stage work.Stage, _ work.TicketDetail, prior work.PriorTurns) (string, []byte, error) {
 	f.sawStage = stage
-	f.sawPrior = maps.Clone(prior)
+	f.sawPrior = prior
 	return f.prompt, f.schema, f.err
 }
 
@@ -194,7 +222,16 @@ func (f *fakePrompts) Decode(stage work.Stage, result []byte) (work.StageOutput,
 	if f.decode != nil {
 		return f.decode(stage, result)
 	}
-	return work.NewStageOutput(stage, work.DocumentOutput{Document: "document of " + string(result)}), nil
+	switch stage {
+	case work.StagePlan:
+		return work.NewStageOutput(stage, work.DocumentOutput{Document: "document of " + string(result)}), nil
+	case work.StageImplement:
+		return work.NewStageOutput(stage, work.ImplementOutput{Report: "document of " + string(result)}), nil
+	case work.StageReview:
+		return work.NewStageOutput(stage, work.ReviewOutput{Document: "document of " + string(result)}), nil
+	default:
+		return work.NewStageOutput(stage, work.DocumentOutput{Document: "document of " + string(result)}), nil
+	}
 }
 
 // fakeStatus renders a report to something a test can recognise without
@@ -369,11 +406,11 @@ func TestNewSandboxSideNamesEveryDependencyItIsMissing(t *testing.T) {
 	}
 }
 
-// TestNewSandboxSideBuildsAWorkingRunStage proves the narrower constructor
-// actually wires RunStage end to end, not merely that it type-checks: a
-// SandboxDeps missing something RunStage silently never touched would still
-// pass the missing-dependency test above.
-func TestNewSandboxSideBuildsAWorkingRunStage(t *testing.T) {
+// TestNewSandboxSideBuildsAWorkingRunPlan proves the narrower constructor
+// actually wires the stage-running activities end to end, not merely that it
+// type-checks: a SandboxDeps missing something RunPlan silently never touched
+// would still pass the missing-dependency test above.
+func TestNewSandboxSideBuildsAWorkingRunPlan(t *testing.T) {
 	t.Parallel()
 
 	a, err := NewSandboxSide(sandboxDeps())
@@ -382,9 +419,9 @@ func TestNewSandboxSideBuildsAWorkingRunStage(t *testing.T) {
 	}
 
 	e := env(t)
-	e.RegisterActivity(a.RunStage)
-	if _, err := e.ExecuteActivity(a.RunStage, stageInput(work.StagePlan, nil)); err != nil {
-		t.Fatalf("RunStage on a sandbox-side Activities: %v", err)
+	e.RegisterActivity(a.RunPlan)
+	if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{})); err != nil {
+		t.Fatalf("RunPlan on a sandbox-side Activities: %v", err)
 	}
 }
 
@@ -699,17 +736,21 @@ func TestCloneRepoSurfacesTheClonersFailure(t *testing.T) {
 
 // --- stages ----------------------------------------------------------------
 
-func stageInput(stage work.Stage, prior map[work.Stage]work.StageOutput) RunStageInput {
-	return RunStageInput{
-		Key:     work.StageKey{Ticket: 328, RunID: "run-1", Stage: stage},
+// stageAttempt builds a plan attempt's input for tests exercising the shared
+// runStage plumbing — plan stands in for "any stage" throughout this file
+// except where a test is specifically about implement's or review's own
+// decoded shape, which build a RunImplementInput/RunReviewInput directly.
+func stageAttempt(prior work.PriorTurns) RunPlanInput {
+	return NewRunPlanInput(StageAttempt{
+		Key:     work.StageKey{Ticket: 328, RunID: "run-1", Stage: work.StagePlan, Turn: 1},
 		Sandbox: "sandbox-328",
 		Model:   work.Model{Name: "gpt-5.6-terra", Effort: "medium"},
 		Detail:  work.TicketDetail{Ticket: work.Ticket{Number: 328, Title: "t", Body: "b"}},
 		Prior:   prior,
-	}
+	})
 }
 
-func TestRunStageWritesOneTerminatedLinePerEventToTheTranscript(t *testing.T) {
+func TestRunPlanWritesOneTerminatedLinePerEventToTheTranscript(t *testing.T) {
 	t.Parallel()
 
 	transcript := &fakeTranscript{}
@@ -721,10 +762,10 @@ func TestRunStageWritesOneTerminatedLinePerEventToTheTranscript(t *testing.T) {
 	d.Transcripts, d.Stages = transcript, stages
 	e := env(t)
 	a := mustNew(t, d)
-	e.RegisterActivity(a.RunStage)
+	e.RegisterActivity(a.RunPlan)
 
-	if _, err := e.ExecuteActivity(a.RunStage, stageInput(work.StagePlan, nil)); err != nil {
-		t.Fatalf("RunStage: %v", err)
+	if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{})); err != nil {
+		t.Fatalf("RunPlan: %v", err)
 	}
 
 	want := `{"type":"turn.started"}` + "\n" + `{"type":"turn.completed"}` + "\n"
@@ -736,11 +777,11 @@ func TestRunStageWritesOneTerminatedLinePerEventToTheTranscript(t *testing.T) {
 	}
 }
 
-// TestRunStageCarriesTheWholeTranscriptHomeOnItsOutput proves D5 (#434): a
-// successful stage's whole event stream travels back on RunStageOutput, not
-// only into the sandbox's own local sink, so a later PersistTranscript
-// activity on the main queue has something to relay.
-func TestRunStageCarriesTheWholeTranscriptHomeOnItsOutput(t *testing.T) {
+// TestRunPlanCarriesTheWholeTranscriptHomeOnItsOutput proves D5 (#434): a
+// successful stage's whole event stream travels back on the activity's own
+// output, not only into the sandbox's own local sink, so a later
+// PersistTranscript activity on the main queue has something to relay.
+func TestRunPlanCarriesTheWholeTranscriptHomeOnItsOutput(t *testing.T) {
 	t.Parallel()
 
 	transcript := &fakeTranscript{}
@@ -752,14 +793,14 @@ func TestRunStageCarriesTheWholeTranscriptHomeOnItsOutput(t *testing.T) {
 	d.Transcripts, d.Stages = transcript, stages
 	e := env(t)
 	a := mustNew(t, d)
-	e.RegisterActivity(a.RunStage)
+	e.RegisterActivity(a.RunPlan)
 
-	val, err := e.ExecuteActivity(a.RunStage, stageInput(work.StagePlan, nil))
+	val, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{}))
 	if err != nil {
-		t.Fatalf("RunStage: %v", err)
+		t.Fatalf("RunPlan: %v", err)
 	}
 
-	var out RunStageOutput
+	var out RunPlanOutput
 	if err := val.Get(&out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -774,7 +815,7 @@ func TestRunStageCarriesTheWholeTranscriptHomeOnItsOutput(t *testing.T) {
 	}
 }
 
-func TestRunStageHeartbeatsOffTheEventStreamSoAStuckStageIsSeenAsDeadRatherThanSlow(t *testing.T) {
+func TestRunPlanHeartbeatsOffTheEventStreamSoAStuckStageIsSeenAsDeadRatherThanSlow(t *testing.T) {
 	t.Parallel()
 
 	// The SDK throttles heartbeats, so the count is the SDK's business and not
@@ -801,10 +842,10 @@ func TestRunStageHeartbeatsOffTheEventStreamSoAStuckStageIsSeenAsDeadRatherThanS
 				beats.Add(1)
 			})
 			a := mustNew(t, d)
-			e.RegisterActivity(a.RunStage)
+			e.RegisterActivity(a.RunPlan)
 
-			if _, err := e.ExecuteActivity(a.RunStage, stageInput(work.StagePlan, nil)); err != nil {
-				t.Fatalf("RunStage: %v", err)
+			if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{})); err != nil {
+				t.Fatalf("RunPlan: %v", err)
 			}
 
 			if got := beats.Load() > 0; got != c.wantBeat {
@@ -814,7 +855,7 @@ func TestRunStageHeartbeatsOffTheEventStreamSoAStuckStageIsSeenAsDeadRatherThanS
 	}
 }
 
-func TestRunStageKeepsGoingWhenTheTranscriptCannotBeWritten(t *testing.T) {
+func TestRunPlanKeepsGoingWhenTheTranscriptCannotBeWritten(t *testing.T) {
 	t.Parallel()
 
 	transcript := &fakeTranscript{writeErr: errors.New("volume full")}
@@ -826,14 +867,14 @@ func TestRunStageKeepsGoingWhenTheTranscriptCannotBeWritten(t *testing.T) {
 	d.Transcripts, d.Stages = transcript, stages
 	e := env(t)
 	a := mustNew(t, d)
-	e.RegisterActivity(a.RunStage)
+	e.RegisterActivity(a.RunPlan)
 
-	val, err := e.ExecuteActivity(a.RunStage, stageInput(work.StagePlan, nil))
+	val, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{}))
 	if err != nil {
 		t.Fatalf("losing the record of the work is cheaper than losing the work: %v", err)
 	}
 
-	var out RunStageOutput
+	var out RunPlanOutput
 	if err := val.Get(&out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -842,7 +883,7 @@ func TestRunStageKeepsGoingWhenTheTranscriptCannotBeWritten(t *testing.T) {
 	}
 }
 
-func TestRunStageClosesTheTranscriptWhenTheStageFails(t *testing.T) {
+func TestRunPlanClosesTheTranscriptWhenTheStageFails(t *testing.T) {
 	t.Parallel()
 
 	transcript := &fakeTranscript{}
@@ -851,30 +892,26 @@ func TestRunStageClosesTheTranscriptWhenTheStageFails(t *testing.T) {
 	d.Stages = &fakeStages{err: errors.New("exit 1")}
 	e := env(t)
 	a := mustNew(t, d)
-	e.RegisterActivity(a.RunStage)
+	e.RegisterActivity(a.RunPlan)
 
-	_, err := e.ExecuteActivity(a.RunStage, stageInput(work.StagePlan, nil))
+	_, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{}))
 	if err == nil {
 		t.Fatal("a failed stage fails its activity")
 	}
-	// The real cause, not a JSON-encode error about RunStage's own zero-value
-	// result. RunStage returns *RunStageOutput and nil on every error path
-	// precisely so the SDK's activity executor — which serializes a
-	// non-pointer return regardless of the accompanying error — never tries
-	// to encode a work.StageOutput{} that deliberately refuses to marshal.
-	// Reproduced for real in prod run one (#434): a benign stage failure
-	// surfaced as "unable to encode ... NewStageOutput was never called"
-	// instead of this fakeStages error. A bare err==nil check would not have
-	// caught that regression; asserting the message would.
+	// Asserts the real cause, not just that some error came back — a nil
+	// *RunPlanOutput on this path is what stops the SDK's own encode attempt
+	// silently replacing it with an unrelated marshalling error (#457's whole
+	// point; that gap is exactly how the defect shipped unnoticed the first
+	// time, in RunStage before this activity replaced it).
 	if !strings.Contains(err.Error(), "exit 1") {
-		t.Fatalf("activity error = %q, want it to carry the stage's own message (\"exit 1\"), not a substitute", err.Error())
+		t.Fatalf("error = %v, want the stage's own failure (\"exit 1\"), not an unrelated encode error", err)
 	}
 	if !transcript.closed.Load() {
 		t.Fatal("a failed stage's transcript is the one most worth reading, so it must still be closed")
 	}
 }
 
-func TestRunStageHandsEveryPriorDocumentToTheRenderer(t *testing.T) {
+func TestRunImplementHandsEveryPriorTurnToTheRenderer(t *testing.T) {
 	t.Parallel()
 
 	prompts := &fakePrompts{prompt: "do the thing", schema: []byte(`{"type":"object"}`)}
@@ -883,34 +920,45 @@ func TestRunStageHandsEveryPriorDocumentToTheRenderer(t *testing.T) {
 	d.Prompts, d.Stages = prompts, stages
 	e := env(t)
 	a := mustNew(t, d)
-	e.RegisterActivity(a.RunStage)
+	e.RegisterActivity(a.RunImplement)
 
-	prior := map[work.Stage]work.StageOutput{
-		work.StagePlan:   work.NewStageOutput(work.StagePlan, work.DocumentOutput{Document: "the plan"}),
-		work.StageReview: work.NewStageOutput(work.StageReview, work.DocumentOutput{Document: "the review"}),
+	prior := work.PriorTurns{
+		Plan:            work.NewStageOutput(work.StagePlan, work.DocumentOutput{Document: "the plan"}),
+		LatestImplement: work.NewStageOutput(work.StageImplement, work.ImplementOutput{Report: "turn one's report"}),
 	}
-	if _, err := e.ExecuteActivity(a.RunStage, stageInput(work.StageRevise, prior)); err != nil {
-		t.Fatalf("RunStage: %v", err)
+	in := NewRunImplementInput(StageAttempt{
+		Key:     work.StageKey{Ticket: 328, RunID: "run-1", Stage: work.StageImplement, Turn: 2},
+		Sandbox: "sandbox-328",
+		Model:   work.Model{Name: "gpt-5.6-terra", Effort: "medium"},
+		Detail:  work.TicketDetail{Ticket: work.Ticket{Number: 328, Title: "t", Body: "b"}},
+		Prior:   prior,
+	})
+	if _, err := e.ExecuteActivity(a.RunImplement, in); err != nil {
+		t.Fatalf("RunImplement: %v", err)
 	}
 
-	// Every prior document, not only the last: revise reads the plan as well as
-	// the review, and a seam that carried one blob could not render it.
-	if prompts.sawStage != work.StageRevise {
+	// Both fields the loop narrows to, not only the plan: buildStageInput
+	// reads the plan and implement's own previous turn, and a seam that
+	// carried only one could not render either at once.
+	if prompts.sawStage != work.StageImplement {
 		t.Fatalf("renderer saw stage %q", prompts.sawStage)
 	}
-	if prompts.sawPrior[work.StagePlan].Prose() != "the plan" || prompts.sawPrior[work.StageReview].Prose() != "the review" {
-		t.Fatalf("renderer saw prior %v, want both the plan and the review", prompts.sawPrior)
+	if prompts.sawPrior.Plan.Prose() != "the plan" {
+		t.Fatalf("renderer saw prior plan %q, want %q", prompts.sawPrior.Plan.Prose(), "the plan")
+	}
+	if prompts.sawPrior.LatestImplement.Prose() != "turn one's report" {
+		t.Fatalf("renderer saw prior implement report %q, want %q", prompts.sawPrior.LatestImplement.Prose(), "turn one's report")
 	}
 	if stages.sawRun.Prompt != "do the thing" || string(stages.sawRun.Schema) != `{"type":"object"}` {
 		t.Fatalf("the rendered prompt and schema must reach the stage runner, got %+v", stages.sawRun)
 	}
 }
 
-// TestRunStageCarriesImplementsBlockedFields proves Blocked/BlockedReason
-// survive from the decoded envelope through to the activity's own result,
-// on the concrete work.ImplementOutput type — not merely as prose folded
-// into the document every other stage answers in.
-func TestRunStageCarriesImplementsBlockedFields(t *testing.T) {
+// TestRunImplementCarriesBlockedFields proves Blocked/BlockedReason survive
+// from the decoded envelope through to the activity's own result, on the
+// concrete work.ImplementOutput type — not merely as prose folded into the
+// document plan answers in.
+func TestRunImplementCarriesBlockedFields(t *testing.T) {
 	t.Parallel()
 
 	d := deps()
@@ -920,18 +968,24 @@ func TestRunStageCarriesImplementsBlockedFields(t *testing.T) {
 		}), nil
 	}}
 	d.Stages = &fakeStages{result: work.StageResult{
-		Output: []byte(`{"report":"did the work","blocked":true,"blocked_reason":"needs a human"}`),
+		Output: []byte(`{"report":"did the work","blocked":true,"blocked_reason":"needs a human","title":"","body":""}`),
 	}}
 	e := env(t)
 	a := mustNew(t, d)
-	e.RegisterActivity(a.RunStage)
+	e.RegisterActivity(a.RunImplement)
 
-	val, err := e.ExecuteActivity(a.RunStage, stageInput(work.StageImplement, nil))
+	in := NewRunImplementInput(StageAttempt{
+		Key:     work.StageKey{Ticket: 328, RunID: "run-1", Stage: work.StageImplement, Turn: 1},
+		Sandbox: "sandbox-328",
+		Model:   work.Model{Name: "gpt-5.6-terra", Effort: "medium"},
+		Detail:  work.TicketDetail{Ticket: work.Ticket{Number: 328, Title: "t", Body: "b"}},
+	})
+	val, err := e.ExecuteActivity(a.RunImplement, in)
 	if err != nil {
-		t.Fatalf("RunStage: %v", err)
+		t.Fatalf("RunImplement: %v", err)
 	}
 
-	var out RunStageOutput
+	var out RunImplementOutput
 	if err := val.Get(&out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -944,7 +998,51 @@ func TestRunStageCarriesImplementsBlockedFields(t *testing.T) {
 	}
 }
 
-func TestRunStageDoesNotStartTheStageWhenTheTranscriptCannotBeOpened(t *testing.T) {
+// TestRunReviewCarriesFindings proves Findings survive from the decoded
+// envelope through to the activity's own result, on the concrete
+// work.ReviewOutput type.
+func TestRunReviewCarriesFindings(t *testing.T) {
+	t.Parallel()
+
+	d := deps()
+	d.Prompts = &fakePrompts{decode: func(stage work.Stage, _ []byte) (work.StageOutput, error) {
+		return work.NewStageOutput(stage, work.ReviewOutput{
+			Document: "found one blocking issue",
+			Findings: []work.Finding{{ID: "f1", Blocking: true, Summary: "missing nil check"}},
+		}), nil
+	}}
+	d.Stages = &fakeStages{result: work.StageResult{
+		Output: []byte(`{"document":"found one blocking issue","findings":[{"id":"f1","blocking":true,"summary":"missing nil check"}]}`),
+	}}
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.RunReview)
+
+	in := NewRunReviewInput(StageAttempt{
+		Key:     work.StageKey{Ticket: 328, RunID: "run-1", Stage: work.StageReview, Turn: 1},
+		Sandbox: "sandbox-328",
+		Model:   work.Model{Name: "gpt-5.6-terra", Effort: "medium"},
+		Detail:  work.TicketDetail{Ticket: work.Ticket{Number: 328, Title: "t", Body: "b"}},
+	})
+	val, err := e.ExecuteActivity(a.RunReview, in)
+	if err != nil {
+		t.Fatalf("RunReview: %v", err)
+	}
+
+	var out RunReviewOutput
+	if err := val.Get(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	got, ok := out.Result.Value().(work.ReviewOutput)
+	if !ok {
+		t.Fatalf("Result.Value() = %T, want work.ReviewOutput", out.Result.Value())
+	}
+	if len(got.Findings) != 1 || got.Findings[0].ID != "f1" {
+		t.Fatalf("Findings did not survive to the activity's output: %+v", got)
+	}
+}
+
+func TestRunPlanDoesNotStartTheStageWhenTheTranscriptCannotBeOpened(t *testing.T) {
 	t.Parallel()
 
 	stages := &fakeStages{}
@@ -953,9 +1051,9 @@ func TestRunStageDoesNotStartTheStageWhenTheTranscriptCannotBeOpened(t *testing.
 	d.Stages = stages
 	e := env(t)
 	a := mustNew(t, d)
-	e.RegisterActivity(a.RunStage)
+	e.RegisterActivity(a.RunPlan)
 
-	if _, err := e.ExecuteActivity(a.RunStage, stageInput(work.StagePlan, nil)); err == nil {
+	if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{})); err == nil {
 		t.Fatal("an unopenable transcript fails the stage")
 	}
 	if stages.ranOnce {
@@ -1100,7 +1198,7 @@ func errTypeOf(t *testing.T, err error) string {
 	return appErrorOf(t, err).Type()
 }
 
-func TestRunStageRecordsWhatASuccessfulStageSpent(t *testing.T) {
+func TestRunPlanRecordsWhatASuccessfulStageSpent(t *testing.T) {
 	t.Parallel()
 
 	metrics := &fakeMetrics{}
@@ -1112,10 +1210,10 @@ func TestRunStageRecordsWhatASuccessfulStageSpent(t *testing.T) {
 	}}
 	e := env(t)
 	a := mustNew(t, d)
-	e.RegisterActivity(a.RunStage)
+	e.RegisterActivity(a.RunPlan)
 
-	if _, err := e.ExecuteActivity(a.RunStage, stageInput(work.StagePlan, nil)); err != nil {
-		t.Fatalf("RunStage: %v", err)
+	if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{})); err != nil {
+		t.Fatalf("RunPlan: %v", err)
 	}
 
 	if len(metrics.outcomes) != 1 || metrics.outcomes[0] != telemetry.OutcomeSuccess {
@@ -1129,7 +1227,7 @@ func TestRunStageRecordsWhatASuccessfulStageSpent(t *testing.T) {
 	}
 }
 
-func TestRunStageRecordsAFailedStageToo(t *testing.T) {
+func TestRunPlanRecordsAFailedStageToo(t *testing.T) {
 	t.Parallel()
 
 	metrics := &fakeMetrics{}
@@ -1141,9 +1239,9 @@ func TestRunStageRecordsAFailedStageToo(t *testing.T) {
 	}
 	e := env(t)
 	a := mustNew(t, d)
-	e.RegisterActivity(a.RunStage)
+	e.RegisterActivity(a.RunPlan)
 
-	if _, err := e.ExecuteActivity(a.RunStage, stageInput(work.StagePlan, nil)); err == nil {
+	if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{})); err == nil {
 		t.Fatal("a failed stage fails its activity")
 	}
 
@@ -1210,7 +1308,116 @@ func TestFindPullRequestReportsAbsenceAsAnAnswerNotAnError(t *testing.T) {
 	}
 }
 
-func TestRunStageReturnsTheDocumentInsideTheEnvelopeNotTheEnvelope(t *testing.T) {
+func TestOpenOrUpdatePullRequestPassesThePushThroughToGitHub(t *testing.T) {
+	t.Parallel()
+
+	gh := &fakeGitHub{openOrUpdatePR: work.PullRequest{Number: 9, URL: "https://github.com/o/r/pull/9", NodeID: "PR_9"}}
+	d := deps()
+	d.GitHub = gh
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.OpenOrUpdatePullRequest)
+
+	existing := &work.PullRequest{Number: 9, NodeID: "PR_9", Title: "old", Body: "old body"}
+	val, err := e.ExecuteActivity(a.OpenOrUpdatePullRequest, OpenOrUpdatePullRequestInput{
+		Branch: "software-factory/ticket-328/run-1", Title: "new", Body: "new body", Existing: existing,
+	})
+	if err != nil {
+		t.Fatalf("OpenOrUpdatePullRequest: %v", err)
+	}
+
+	var out work.PullRequest
+	if err := val.Get(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Number != 9 || out.NodeID != "PR_9" {
+		t.Fatalf("out = %+v, want what the client returned", out)
+	}
+	if gh.openOrUpdateInput.branch != "software-factory/ticket-328/run-1" || gh.openOrUpdateInput.title != "new" || gh.openOrUpdateInput.body != "new body" {
+		t.Fatalf("gh saw %+v, want the input passed through unchanged", gh.openOrUpdateInput)
+	}
+	// Value, not pointer identity: ExecuteActivity round-trips the input
+	// through Temporal's real data converter even in this in-memory test
+	// environment, so the *work.PullRequest the fake records can never be the
+	// same pointer the test constructed. What the claim actually is — "the
+	// activity forwards the existing pull request unchanged" — is a value
+	// claim, and that is what this asserts.
+	if gh.openOrUpdateInput.existing == nil || *gh.openOrUpdateInput.existing != *existing {
+		t.Fatalf("existing = %+v, want %+v passed through unchanged — the workflow's own FindPullRequest lookup would be looked up a second time",
+			gh.openOrUpdateInput.existing, existing)
+	}
+}
+
+func TestOpenOrUpdatePullRequestFailsTheActivityWhenGitHubDoes(t *testing.T) {
+	t.Parallel()
+
+	d := deps()
+	d.GitHub = &fakeGitHub{openOrUpdateErr: github.ErrInvalid}
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.OpenOrUpdatePullRequest)
+
+	if _, err := e.ExecuteActivity(a.OpenOrUpdatePullRequest, OpenOrUpdatePullRequestInput{Branch: "b", Title: "t", Body: "d"}); err == nil {
+		t.Fatal("want an error when the github client refuses to open or update the pull request")
+	}
+}
+
+func TestConvertPullRequestToDraftPassesTheNodeIDThrough(t *testing.T) {
+	t.Parallel()
+
+	gh := &fakeGitHub{}
+	d := deps()
+	d.GitHub = gh
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.ConvertPullRequestToDraft)
+
+	if _, err := e.ExecuteActivity(a.ConvertPullRequestToDraft, "PR_kwDOtest9"); err != nil {
+		t.Fatalf("ConvertPullRequestToDraft: %v", err)
+	}
+	if gh.draftedNodeID != "PR_kwDOtest9" {
+		t.Fatalf("drafted node id = %q, want PR_kwDOtest9", gh.draftedNodeID)
+	}
+}
+
+func TestConvertPullRequestToDraftFailsTheActivityWhenGitHubDoes(t *testing.T) {
+	t.Parallel()
+
+	d := deps()
+	d.GitHub = &fakeGitHub{draftErr: github.ErrAuth}
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.ConvertPullRequestToDraft)
+
+	// This is the one activity in this service whose caller (ticketRun.decline)
+	// must turn a failure into the workflow's own error rather than log and
+	// continue — see internal/workflows/terminal.go. That decision reads the
+	// error this activity returns, so the activity itself must actually fail
+	// rather than swallow the client's error.
+	if _, err := e.ExecuteActivity(a.ConvertPullRequestToDraft, "PR_1"); err == nil {
+		t.Fatal("want an error when the github client cannot convert the pull request to draft")
+	}
+}
+
+func TestPostPullRequestCommentReusesPostStatusAgainstThePullRequestNumber(t *testing.T) {
+	t.Parallel()
+
+	gh := &fakeGitHub{}
+	d := deps()
+	d.GitHub = gh
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.PostPullRequestComment)
+
+	if _, err := e.ExecuteActivity(a.PostPullRequestComment, 42, "the full decline detail"); err != nil {
+		t.Fatalf("PostPullRequestComment: %v", err)
+	}
+	if gh.postedTo != 42 || gh.postedBody != "the full decline detail" {
+		t.Fatalf("posted to %d with %q, want #42 with the given body", gh.postedTo, gh.postedBody)
+	}
+}
+
+func TestRunPlanReturnsTheDocumentInsideTheEnvelopeNotTheEnvelope(t *testing.T) {
 	t.Parallel()
 
 	// The next stage's prompt is rendered from the document, and A1's envelope
@@ -1222,14 +1429,14 @@ func TestRunStageReturnsTheDocumentInsideTheEnvelopeNotTheEnvelope(t *testing.T)
 	d.Stages = &fakeStages{result: work.StageResult{Output: envelope}}
 	e := env(t)
 	a := mustNew(t, d)
-	e.RegisterActivity(a.RunStage)
+	e.RegisterActivity(a.RunPlan)
 
-	val, err := e.ExecuteActivity(a.RunStage, stageInput(work.StagePlan, nil))
+	val, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{}))
 	if err != nil {
-		t.Fatalf("RunStage: %v", err)
+		t.Fatalf("RunPlan: %v", err)
 	}
 
-	var out RunStageOutput
+	var out RunPlanOutput
 	if err := val.Get(&out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -1241,7 +1448,7 @@ func TestRunStageReturnsTheDocumentInsideTheEnvelopeNotTheEnvelope(t *testing.T)
 	}
 }
 
-func TestRunStageFailsWhenTheEnvelopeCannotBeRead(t *testing.T) {
+func TestRunPlanFailsWhenTheEnvelopeCannotBeRead(t *testing.T) {
 	t.Parallel()
 
 	d := deps()
@@ -1249,18 +1456,18 @@ func TestRunStageFailsWhenTheEnvelopeCannotBeRead(t *testing.T) {
 	d.Stages = &fakeStages{result: work.StageResult{Output: []byte(`{"nonsense":1}`)}}
 	e := env(t)
 	a := mustNew(t, d)
-	e.RegisterActivity(a.RunStage)
+	e.RegisterActivity(a.RunPlan)
 
-	if _, err := e.ExecuteActivity(a.RunStage, stageInput(work.StagePlan, nil)); err == nil {
+	if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{})); err == nil {
 		t.Fatal("a stage that answered in some other shape has not done its job; carrying an empty document " +
 			"into the next prompt would hide that")
 	}
 }
 
-// TestRunStageOutputRefusesThePreThisStepShape covers the real migration path,
+// TestRunPlanOutputRefusesThePreThisStepShape covers the real migration path,
 // which is the activity *result* decode and not StageOutput.UnmarshalJSON.
 //
-// Before this step the result carried `Document string`; it now carries
+// Before step 4 (#443) the result carried `Document string`; it now carries
 // `Result work.StageOutput`. That is a rename, so a pre-deploy payload has no
 // "Result" key at all and StageOutput.UnmarshalJSON is never reached — plain
 // encoding/json, which is exactly what the SDK's JSONPayloadConverter runs,
@@ -1268,8 +1475,10 @@ func TestRunStageFailsWhenTheEnvelopeCannotBeRead(t *testing.T) {
 // error. A run in flight across the deploy would then replay as though the
 // completed stage had produced nothing, and fail later somewhere unrelated
 // (buildStageInput's missing-prior check) instead of here, where the mismatch
-// is. RunStageOutput.UnmarshalJSON is what makes it fail here.
-func TestRunStageOutputRefusesThePreThisStepShape(t *testing.T) {
+// is. stageOutputUnmarshalJSON, shared by RunPlanOutput/RunImplementOutput/
+// RunReviewOutput since this step's activity split (#435), is what makes it
+// fail here.
+func TestRunPlanOutputRefusesThePreThisStepShape(t *testing.T) {
 	t.Parallel()
 
 	// The literal shape a pre-this-step RunStage activity result was written
@@ -1282,7 +1491,7 @@ func TestRunStageOutputRefusesThePreThisStepShape(t *testing.T) {
 		t.Fatalf("building the payload: %v", err)
 	}
 
-	var out RunStageOutput
+	var out RunPlanOutput
 	err = converter.GetDefaultDataConverter().FromPayload(payload, &out)
 	if err == nil {
 		t.Fatalf("decoding a pre-this-step result must fail loudly; it produced Result.Prose() = %q, "+

@@ -38,15 +38,15 @@ func TestDispatcherWorkflowIDIsStable(t *testing.T) {
 func TestStagePathsAreDerivedFromTheKeyAlone(t *testing.T) {
 	t.Parallel()
 
-	key := work.StageKey{Ticket: 312, RunID: "0198c2f1", Stage: work.StagePlan}
+	key := work.StageKey{Ticket: 312, RunID: "0198c2f1", Stage: work.StagePlan, Turn: 1}
 	paths := key.Paths()
 
 	for _, tc := range []struct{ name, got, want string }{
-		{"Dir", paths.Dir, "/work/0198c2f1/plan"},
-		{"Prompt", paths.Prompt, "/work/0198c2f1/plan/prompt.md"},
-		{"Schema", paths.Schema, "/work/0198c2f1/plan/schema.json"},
-		{"Result", paths.Result, "/work/0198c2f1/plan/result.json"},
-		{"PID", paths.PID, "/work/0198c2f1/plan/codex.pid"},
+		{"Dir", paths.Dir, "/work/0198c2f1/plan/1"},
+		{"Prompt", paths.Prompt, "/work/0198c2f1/plan/1/prompt.md"},
+		{"Schema", paths.Schema, "/work/0198c2f1/plan/1/schema.json"},
+		{"Result", paths.Result, "/work/0198c2f1/plan/1/result.json"},
+		{"PID", paths.PID, "/work/0198c2f1/plan/1/codex.pid"},
 	} {
 		if tc.got != tc.want {
 			t.Errorf("Paths().%s = %q, want %q", tc.name, tc.got, tc.want)
@@ -57,19 +57,30 @@ func TestStagePathsAreDerivedFromTheKeyAlone(t *testing.T) {
 func TestStagePathsSeparateRunsOfTheSameStage(t *testing.T) {
 	t.Parallel()
 
-	first := work.StageKey{Ticket: 312, RunID: "run-a", Stage: work.StageImplement}.Paths()
-	second := work.StageKey{Ticket: 312, RunID: "run-b", Stage: work.StageImplement}.Paths()
+	first := work.StageKey{Ticket: 312, RunID: "run-a", Stage: work.StageImplement, Turn: 1}.Paths()
+	second := work.StageKey{Ticket: 312, RunID: "run-b", Stage: work.StageImplement, Turn: 1}.Paths()
 
 	if first.Result == second.Result {
 		t.Error("two runs of a ticket share a result path; a re-run would read the previous run's output as its own")
 	}
 }
 
+func TestStagePathsSeparateTurnsOfTheSameStage(t *testing.T) {
+	t.Parallel()
+
+	first := work.StageKey{Ticket: 312, RunID: "run-a", Stage: work.StageImplement, Turn: 1}.Paths()
+	second := work.StageKey{Ticket: 312, RunID: "run-a", Stage: work.StageImplement, Turn: 2}.Paths()
+
+	if first.Result == second.Result {
+		t.Error("two turns of a stage share a result path; a Temporal retry of turn 1 could read turn 2's result as its own")
+	}
+}
+
 func TestTranscriptPathKeepsAttemptsSeparatelyInspectable(t *testing.T) {
 	t.Parallel()
 
-	key := work.StageKey{Ticket: 312, RunID: "0198c2f1", Stage: work.StageReview}
-	if got, want := key.TranscriptPath(), "312/0198c2f1/review.jsonl"; got != want {
+	key := work.StageKey{Ticket: 312, RunID: "0198c2f1", Stage: work.StageReview, Turn: 2}
+	if got, want := key.TranscriptPath(), "312/0198c2f1/review.2.jsonl"; got != want {
 		t.Errorf("TranscriptPath() = %q, want %q", got, want)
 	}
 }
@@ -77,9 +88,7 @@ func TestTranscriptPathKeepsAttemptsSeparatelyInspectable(t *testing.T) {
 func TestPipelineOrdersTheStages(t *testing.T) {
 	t.Parallel()
 
-	want := []work.Stage{
-		work.StagePlan, work.StageReview, work.StageRevise, work.StageImplement, work.StagePropose,
-	}
+	want := []work.Stage{work.StagePlan, work.StageImplement, work.StageReview}
 	got := work.Pipeline()
 	if len(got) != len(want) {
 		t.Fatalf("Pipeline() = %v, want %v", got, want)
@@ -94,7 +103,7 @@ func TestPipelineOrdersTheStages(t *testing.T) {
 func TestPipelineCannotBeReorderedByACaller(t *testing.T) {
 	t.Parallel()
 
-	work.Pipeline()[0] = work.StagePropose
+	work.Pipeline()[0] = work.StageReview
 	if got := work.Pipeline()[0]; got != work.StagePlan {
 		t.Errorf("Pipeline()[0] = %v after a caller wrote to a previous result, want %v", got, work.StagePlan)
 	}

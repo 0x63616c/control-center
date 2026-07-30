@@ -61,10 +61,12 @@ const credentialHelperValue = "store --file=" + credentialsPath
 //
 // # The credential outlives this call, on purpose
 //
-// implement.md tells the model to push its own commit before it finishes, and
-// propose.md tells the next stage to expect exactly that push already on
-// origin. Both run as `codex exec` inside the sandbox, well after this
-// activity has returned — so the credential this writes, and the checkout's
+// implement.md tells the model to push its own commit before it finishes,
+// every turn. The workflow reads that push back from GitHub afterward
+// (FindPullRequest/OpenOrUpdatePullRequest, #435) rather than a later stage
+// reading it from inside the sandbox — but implement itself runs as
+// `codex exec` inside the sandbox, well after this activity has returned, and
+// may run many turns — so the credential this writes, and the checkout's
 // local `credential.helper` config pointing at it (configureCheckoutIdentity),
 // have to still be there and still work when they do. A version of this that
 // deleted the file once CloneRepo's own push succeeded would leave `implement`
@@ -193,8 +195,10 @@ func (s *Sandboxes) writeCredentials(ctx context.Context, sandbox work.SandboxID
 //
 // The duplication is gh's, not ours: it reads GH_TOKEN or this file and never
 // git's credential store, so a token that only exists in git's format is a
-// token gh cannot see. `propose` opens the pull request with gh (#414), so it
-// has to be in both.
+// token gh cannot see. The old `propose` stage opened the pull request with
+// gh (#414); PR creation is now workflow code against go-github (#435), so
+// whether the sandbox still needs gh and this file at all is worth
+// re-examining — not resolved here.
 //
 // Written as a file rather than set as GH_TOKEN in the pod's environment,
 // deliberately. A pod's environment is in its spec, readable by anything with
