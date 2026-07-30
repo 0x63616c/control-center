@@ -228,6 +228,25 @@ func TestReviewRefusesAFindingWithNoID(t *testing.T) {
 	}
 }
 
+func TestReviewRefusesAnUnknownTopLevelKey(t *testing.T) {
+	t.Parallel()
+
+	_, err := Decode(work.StageReview, []byte(`{"document":"d","findings":[],"verdict":"approve"}`))
+	if err == nil {
+		t.Fatal("Decode accepted a field the review envelope does not have")
+	}
+}
+
+func TestReviewRefusesAnUnknownFindingKey(t *testing.T) {
+	t.Parallel()
+
+	_, err := Decode(work.StageReview, []byte(
+		`{"document":"d","findings":[{"id":"f1","blocking":true,"summary":"s","severity":"high"}]}`))
+	if err == nil {
+		t.Fatal("Decode accepted a finding field the schema does not have")
+	}
+}
+
 func TestImplementCarriesTitleAndBody(t *testing.T) {
 	t.Parallel()
 
