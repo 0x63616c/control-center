@@ -6,7 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	gh "github.com/google/go-github/v78/github"
@@ -98,7 +103,7 @@ func (c *Client) checkFailureFingerprint(ctx context.Context, run *gh.CheckRun) 
 		// GitHub Actions' generic exit-code annotation says a job failed but
 		// not which assertion or test failed. Treating it as an identity would
 		// turn a different failure in the same job into a false stagnation.
-		return "", nil
+		return c.actionsLogFailureFingerprint(ctx, run)
 	}
 	sort.Slice(detail.Annotations, func(i, j int) bool {
 		return annotationKey(detail.Annotations[i]) < annotationKey(detail.Annotations[j])
@@ -110,6 +115,108 @@ func (c *Client) checkFailureFingerprint(ctx context.Context, run *gh.CheckRun) 
 	}
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:]), nil
+}
+
+// jobLogMaxBytes bounds the optional Actions log download. A test name is
+// normally near the end, but an unbounded log is not a safe CI observation.
+const jobLogMaxBytes = 2 << 20
+
+// actionsLogFailureFingerprint obtains a Go test identity when a GitHub
+// Actions check's Checks API payload is only its generic exit-code message.
+// Actions-log access is an optional enrichment: an unavailable log leaves the
+// check unidentified so rule 1 cannot mistake it for a proven repeat.
+func (c *Client) actionsLogFailureFingerprint(ctx context.Context, run *gh.CheckRun) (string, error) {
+	jobID, ok := actionsJobID(run.GetDetailsURL())
+	if !ok {
+		return "", nil
+	}
+
+	logURL, _, err := c.api.Actions.GetWorkflowJobLogs(ctx, c.owner, c.repo, jobID, 0)
+	if err != nil || logURL == nil {
+		return "", nil
+	}
+	log, err := c.downloadJobLog(ctx, logURL)
+	if err != nil {
+		return "", nil
+	}
+
+	failedTests := failedGoTests(log)
+	if len(failedTests) == 0 {
+		return "", nil
+	}
+	encoded, err := json.Marshal(struct {
+		FailedTests []string `json:"failed_tests"`
+	}{FailedTests: failedTests})
+	if err != nil {
+		return "", fmt.Errorf("serializing failed Go tests for check %q: %w", run.GetName(), err)
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+func actionsJobID(detailsURL string) (int64, bool) {
+	parsed, err := url.Parse(detailsURL)
+	if err != nil {
+		return 0, false
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) < 2 || parts[len(parts)-2] != "job" {
+		return 0, false
+	}
+	jobID, err := strconv.ParseInt(parts[len(parts)-1], 10, 64)
+	return jobID, err == nil && jobID > 0
+}
+
+func (c *Client) downloadJobLog(ctx context.Context, logURL *url.URL) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, logURL.String(), nil)
+	if err != nil {
+		return "", fmt.Errorf("building Actions job-log request: %w", err)
+	}
+	resp, err := c.downloads.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("downloading Actions job log: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		if err := resp.Body.Close(); err != nil {
+			return "", fmt.Errorf("closing failed Actions job log response: %w", err)
+		}
+		return "", fmt.Errorf("downloading Actions job log: got HTTP %d", resp.StatusCode)
+	}
+	bytes, err := io.ReadAll(io.LimitReader(resp.Body, jobLogMaxBytes))
+	if err != nil {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			return "", fmt.Errorf("reading Actions job log: %w; closing response: %w", err, closeErr)
+		}
+		return "", fmt.Errorf("reading Actions job log: %w", err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		return "", fmt.Errorf("closing Actions job log response: %w", err)
+	}
+	return string(bytes), nil
+}
+
+func failedGoTests(log string) []string {
+	const marker = "--- FAIL: "
+
+	seen := make(map[string]struct{})
+	for _, line := range strings.Split(log, "\n") {
+		at := strings.Index(line, marker)
+		if at < 0 {
+			continue
+		}
+		rest := line[at+len(marker):]
+		name, _, _ := strings.Cut(rest, " ")
+		if name != "" {
+			seen[name] = struct{}{}
+		}
+	}
+
+	tests := make([]string, 0, len(seen))
+	for name := range seen {
+		tests = append(tests, name)
+	}
+	sort.Strings(tests)
+	return tests
 }
 
 // checkRunAnnotations returns every annotation for a failed check or no

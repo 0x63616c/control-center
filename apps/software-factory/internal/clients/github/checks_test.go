@@ -87,3 +87,36 @@ func TestChecksForRefLeavesGenericGitHubActionsFailuresUnfingerprinted(t *testin
 		t.Fatalf("checks = %+v, want a failed check without a false failure identity", checks)
 	}
 }
+
+func TestChecksForRefFingerprintsGenericGitHubActionsFailuresFromTestLogs(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newStub(t)
+	s.handle("GET /repos/"+testOwner+"/"+testRepo+"/commits/"+testBranch+"/check-runs", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"check_runs": []map[string]any{{
+			"id": 91, "name": "test-software-factory", "status": "completed", "conclusion": "failure",
+			"details_url": s.URL + "/" + testOwner + "/" + testRepo + "/actions/runs/100/job/91",
+		}}})
+	})
+	s.handle("GET /repos/"+testOwner+"/"+testRepo+"/check-runs/91/annotations", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, []map[string]any{{
+			"path": ".github", "annotation_level": "failure", "message": "Process completed with exit code 1.",
+		}})
+	})
+	s.handle("GET /repos/"+testOwner+"/"+testRepo+"/actions/jobs/91/logs", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", s.URL+"/job-91.log")
+		w.WriteHeader(http.StatusFound)
+	})
+	s.handle("GET /job-91.log", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("2026-07-30T21:00:00Z --- FAIL: TestWorkTicketContinuesWhenTheSameCheckHasAnotherFailure (0.00s)\n"))
+	})
+	c, _ := s.client(t)
+
+	checks, err := c.ChecksForRef(t.Context(), testBranch)
+	if err != nil {
+		t.Fatalf("ChecksForRef: %v", err)
+	}
+	if len(checks) != 1 || checks[0].FailureFingerprint == "" {
+		t.Fatalf("checks = %+v, want the failing Go test identity from the Actions log", checks)
+	}
+}
