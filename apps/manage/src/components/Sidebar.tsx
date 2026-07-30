@@ -70,7 +70,7 @@ export function Sidebar({
           target="_blank"
           rel="noreferrer"
         >
-          setup
+          Docs
         </a>
       </div>
     </aside>
