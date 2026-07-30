@@ -20,6 +20,7 @@ trap 'rm -rf "$TMP"' EXIT
 ORIGIN="$TMP/origin.git"
 SEED="$TMP/seed"
 WORKTREE="$TMP/worktree"
+BRANCH="sf/feature"
 GIT_ID=(-c user.email=test@example.com -c user.name=test -c commit.gpgsign=false)
 
 git init --bare -q -b main "$ORIGIN"
@@ -30,9 +31,9 @@ git -C "$SEED" add README
 git -C "$SEED" "${GIT_ID[@]}" commit -qm seed
 git -C "$SEED" push -qu origin main
 git clone -q "$ORIGIN" "$WORKTREE"
-git -C "$WORKTREE" checkout -qb feature origin/main
+git -C "$WORKTREE" checkout -qb "$BRANCH" origin/main
 
-before_merge=$(git -C "$WORKTREE" config --get branch.feature.merge)
+before_merge=$(git -C "$WORKTREE" config --get "branch.$BRANCH.merge")
 [ "$before_merge" = "refs/heads/main" ] || {
   echo "fixture did not inherit origin/main: $before_merge" >&2
   exit 1
@@ -40,13 +41,13 @@ before_merge=$(git -C "$WORKTREE" config --get branch.feature.merge)
 
 (cd "$WORKTREE" && "$HELPER")
 
-remote=$(git -C "$WORKTREE" config --get branch.feature.remote)
-merge=$(git -C "$WORKTREE" config --get branch.feature.merge)
+remote=$(git -C "$WORKTREE" config --get "branch.$BRANCH.remote")
+merge=$(git -C "$WORKTREE" config --get "branch.$BRANCH.merge")
 [ "$remote" = "origin" ] || { echo "expected origin remote, got: $remote" >&2; exit 1; }
-[ "$merge" = "refs/heads/feature" ] || { echo "expected feature merge ref, got: $merge" >&2; exit 1; }
+[ "$merge" = "refs/heads/$BRANCH" ] || { echo "expected feature merge ref, got: $merge" >&2; exit 1; }
 
 push=$(git -C "$WORKTREE" push --dry-run --porcelain)
-printf '%s\n' "$push" | grep -Fq 'refs/heads/feature:refs/heads/feature' || {
+printf '%s\n' "$push" | grep -Fq "refs/heads/$BRANCH:refs/heads/$BRANCH" || {
   echo "bare push did not target feature:" >&2
   printf '%s\n' "$push" >&2
   exit 1
