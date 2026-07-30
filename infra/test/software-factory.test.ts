@@ -223,6 +223,12 @@ describe("the worker's Role (#343)", () => {
 });
 
 describe("the worker Deployment (#343)", () => {
+  test("starts a newly created dispatcher unpaused", async () => {
+    const [container] = (await deploymentSpec()).template.spec.containers;
+    const dispatcherConfig = container.env.find((env) => env.name === "DISPATCHER_CONFIG");
+    expect(dispatcherConfig?.value).toBe(JSON.stringify({ paused: false }));
+  });
+
   test("is a single replica with a Recreate strategy", async () => {
     // Two replicas would mean two credential refreshers, and a rolling update
     // over this volume is a deadlock this cluster has already hit.
