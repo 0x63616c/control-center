@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
-import { collect } from "./collect";
-import { validate } from "./validate";
+import { collect } from "../../../scripts/apps-gen/collect";
+import { validate } from "../../../scripts/apps-gen/validate";
 
 // Lightweight sanity check that collect() over the REAL tile registry produces
 // a model validate() accepts (exactly one home tile, no guestExposed

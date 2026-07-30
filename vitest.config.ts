@@ -21,7 +21,7 @@ export default defineConfig({
       "infra",
       // app-kit: the App authoring surface (defineApp/defineApi/defineJobs/
       // defineCron brand checks). No package.json/vite config of its own
-      // (like scripts/apps-gen below), and define-app.test.ts only imports
+      // (like test/scripts/apps-gen below), and define-app.test.ts only imports
       // sibling files via relative paths, so a bare inline project (no react
       // plugin, no jsdom, no aliases) is enough.
       {
@@ -31,8 +31,8 @@ export default defineConfig({
           include: ["**/*.test.ts"],
         },
       },
-      // scripts/apps-gen: the codegen collector/validator (Track C Slice 3).
-      // No package.json/vite config of its own (it's a scripts/ subdir, not a
+      // test/scripts/apps-gen: tests for the codegen collector/validator (Track C Slice 3).
+      // No package.json/vite config of its own (the production code is a scripts/ subdir, not a
       // workspace package), so it needs an inline project definition rather
       // than a directory reference. collect.ts imports apps/web's
       // TILE_REGISTRY, which transitively imports TSX tile components, so
@@ -44,7 +44,7 @@ export default defineConfig({
         resolve: {
           alias: {
             "@": resolve(__dirname, "apps/web/src"),
-            // Authoring-surface aliases (Track C, C7). scripts/alias-parity.test.ts
+            // Authoring-surface aliases (Track C, C7). test/scripts/alias-parity.test.ts
             // imports `@app-kit` to prove vitest resolves it identically to tsc,
             // bun, and vite. `@app-kit/server` precedes `@app-kit` (prefix match).
             // Kept in sync with the tsconfig `paths`, vite.config.ts, and
@@ -56,13 +56,13 @@ export default defineConfig({
         },
         test: {
           name: "apps-gen",
-          // root stays "./scripts" (not "./scripts/apps-gen") so this project's
-          // default include glob also reaches scripts/apps-check.test.ts, a
-          // sibling of apps-check.ts one level up from apps-gen/ (Task 3.4).
+          // root stays "./test/scripts" (not "./test/scripts/apps-gen") so this project's
+          // default include glob also reaches apps-check.test.ts, a sibling of
+          // the apps-gen suites (Task 3.4).
           // apps-check.ts drives the SAME collect()/validate()/renderTiles()
           // chain as apps-gen/*.ts, so it needs the identical jsdom + "@" alias
           // + MapLibre stub environment, not a separate project.
-          root: "./scripts",
+          root: "./test/scripts",
           include: [
             "apps-gen/**/*.test.ts",
             "apps-check.test.ts",

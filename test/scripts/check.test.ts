@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { CheckError, changedPaths, changedPathsFromPorcelain, selectChecks } from "./check";
+import {
+  CheckError,
+  changedPaths,
+  changedPathsFromPorcelain,
+  selectChecks,
+} from "../../scripts/check";
 
 describe("check", () => {
   it("selects the Go tree for Go-only changes", () => {

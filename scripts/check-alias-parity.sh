@@ -4,7 +4,7 @@
 # them, or a module resolves in one tool and not another (tsc green, vite build
 # red — or worse, silently divergent code). Wired into CI (test-unit job).
 #
-# The alias-parity.test.ts vitest case proves the aliases RESOLVE at runtime; this
+# The test/scripts/alias-parity.test.ts vitest case proves the aliases RESOLVE at runtime; this
 # script is the static backstop that every resolver CONFIG still carries the
 # mapping, so a dropped alias fails fast in CI regardless of whether a test
 # happens to import through it.

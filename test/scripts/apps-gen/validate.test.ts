@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { CodegenError, validate } from "./validate";
+import { CodegenError, validate } from "../../../scripts/apps-gen/validate";
 
 const baseTile = { label: "x", component: () => null, worldCol: 0, worldRow: 0, cols: 1, rows: 1 };
 const base = {

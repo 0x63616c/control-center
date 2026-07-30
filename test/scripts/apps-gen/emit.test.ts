@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
-import { collect } from "./collect";
-import { renderHttp, renderTiles } from "./emit";
+import { collect } from "../../../scripts/apps-gen/collect";
+import { renderHttp, renderTiles } from "../../../scripts/apps-gen/emit";
 
 // The determinism gate for the emitter (Task 3.3): renderTiles() over the real
 // collected model must be stable across two calls, and the emitted apps must be

@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { checkDrift } from "./apps-check";
+import { checkDrift } from "../../scripts/apps-check";
 
 // Confirms the committed features/_generated/tiles.gen.ts is byte-identical to
 // a fresh in-memory render of the same collect() -> validate() -> renderTiles()
