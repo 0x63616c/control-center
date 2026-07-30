@@ -139,11 +139,10 @@ neither requires parsing human-readable text.
 
 **Stages are idempotent, because activities retry.** A completed `result.json` is the whole
 resumption contract: present means the stage is done and its output is returned; absent means
-run it. #434 removed attach-and-wait because a stage is a local subprocess of the activity
-and Session deciding it, so no separate running attempt can survive for a retry to observe.
-`ResumeDone` covers the narrower activity-retry window where that same Session finds its
-earlier attempt wrote a result but failed to report success, avoiding a duplicate paid Codex
-run.
+run it. #434 removed attach-and-wait: the sandbox worker hosting the Session runs the stage as
+its activity's local subprocess and cancellation owns that child. `ResumeDone` covers the
+narrower activity-retry window where that same Session finds its earlier attempt wrote a result
+but failed to report success, avoiding a duplicate paid Codex run.
 
 **`implement` pushes its branch before finishing.** The branch is going to origin anyway,
 and it makes GitHub the durable state between stages. A pod lost between `implement` and
@@ -273,10 +272,10 @@ few, because a retry is a full re-exploration and quota is the binding cost. Rat
 auth failures are **non-retryable** — one trips the breaker, the other is dead until a human
 re-seeds.
 
-The worker drains on SIGTERM via `worker.Run(worker.InterruptCh())`, with
+The main worker drains on SIGTERM via `worker.Run(worker.InterruptCh())`, with
 `terminationGracePeriodSeconds` above the drain window. Sandbox pods are deliberately **not**
-cleaned up on shutdown; they are independent objects, and the reattach behaviour above means
-a restarted worker resumes rather than redoes.
+cleaned up by that drain: their embedded workers host Session stages independently. If a
+sandbox host itself dies, its emptyDir and Session are gone, so there is nothing to resume.
 
 The Deployment is `replicas: 1` with `strategy: Recreate`. Two replicas would mean two
 refreshers, and a rolling update over an RWO volume deadlocks (a failure mode this repo has

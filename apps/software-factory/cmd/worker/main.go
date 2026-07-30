@@ -51,14 +51,11 @@ const shutdownGrace = 5 * time.Second
 // timed out" and cancels every activity context. That is the opposite of a
 // drain, and it is what this file used to do while claiming otherwise.
 //
-// It is deliberately far shorter than a stage. A stage may run for
-// work.MaxStageDuration (60m) and no deploy waits an hour, so a stage in flight
-// when the worker stops IS cancelled — that is the honest behaviour, and
-// ADR-0011's idempotent-stage design is what makes it affordable: the next
-// attempt can read a result already written before its activity retry rather
-// than paying for the work twice. What this window buys is the short activities
-// either side of a stage — a GitHub comment, a transcript write, a credential
-// rotation mid-flight — finishing instead of being torn in half.
+// It is deliberately far shorter than a stage. Stages run on the sandbox
+// worker that hosts their Session, not on this main worker, so draining this
+// process does not cancel them. This window is for the short control activities
+// here — a GitHub comment, a transcript write, a credential rotation — finishing
+// instead of being torn in half.
 //
 // The relationship that matters is with the pod's grace period, not with the
 // stage timeout: terminationGracePeriodSeconds must exceed this plus
@@ -194,11 +191,9 @@ func run() error {
 
 	// Run blocks until SIGINT or SIGTERM, then drains: no new tasks are taken,
 	// and in-flight activities get workerStopTimeout to finish before their
-	// contexts are cancelled. A stage will not finish in that window and is not
-	// meant to — see workerStopTimeout. Sandbox pods are deliberately left
-	// behind — a stage is a subprocess of its session-bound activity, so the
-	// retry can only avoid duplicate work when its earlier attempt wrote a
-	// result before it stopped.
+	// contexts are cancelled. Sandbox pods are deliberately left behind: their
+	// Session workers own stage activities, so this main-worker drain neither
+	// cancels nor resumes them.
 	if err := w.Run(worker.InterruptCh()); err != nil {
 		return fmt.Errorf("running the worker on task queue %s: %w", work.TaskQueue, err)
 	}
