@@ -333,9 +333,19 @@ func commentFor(step work.StatusStep) work.CommentID {
 	return work.CommentID(len(step) + 100)
 }
 
-// red returns a concluded, red ObserveCIOutput naming checks.
+// red returns a concluded, red ObserveCIOutput with deterministic failure
+// identities. Callers that need a same check name with different failures use
+// redFailure directly.
 func red(checks ...string) activities.ObserveCIOutput {
-	return activities.ObserveCIOutput{Concluded: true, Green: false, RedChecks: checks}
+	failures := make([]work.CheckFailure, 0, len(checks))
+	for _, check := range checks {
+		failures = append(failures, work.CheckFailure{Name: check, Fingerprint: check + "-failure"})
+	}
+	return activities.ObserveCIOutput{Concluded: true, Green: false, RedChecks: checks, RedFailures: failures}
+}
+
+func redFailure(name, fingerprint string) activities.ObserveCIOutput {
+	return activities.ObserveCIOutput{Concluded: true, Green: false, RedChecks: []string{name}, RedFailures: []work.CheckFailure{{Name: name, Fingerprint: fingerprint}}}
 }
 
 // green is a concluded, passing ObserveCIOutput.
@@ -622,6 +632,71 @@ func TestWorkTicketTerminatesAtFiveOnAnAllRedRunNeverReachingReview(t *testing.T
 	}
 }
 
+func TestWorkTicketContinuesWhenTheObservedRedSetShrinks(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.ci = map[int]activities.ObserveCIOutput{
+		1: red("A", "B"),
+		2: red("A"),
+		3: green(),
+	}
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+	if result := h.result(t); result.Outcome != work.OutcomeProposed {
+		t.Fatalf("outcome = %s, want proposed after the red set shrinks then CI passes", result.Outcome)
+	}
+	if len(h.implementTurns) != 3 {
+		t.Fatalf("implement turns = %d, want 3", len(h.implementTurns))
+	}
+}
+
+func TestWorkTicketContinuesWhenTheSameCheckHasAnotherFailure(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.ci = map[int]activities.ObserveCIOutput{
+		1: redFailure("test-software-factory", "failure-one"),
+		2: redFailure("test-software-factory", "failure-two"),
+		3: green(),
+	}
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+	if result := h.result(t); result.Outcome != work.OutcomeProposed {
+		t.Fatalf("outcome = %s, want proposed after CI reports a different failure", result.Outcome)
+	}
+	if len(h.implementTurns) != 3 {
+		t.Fatalf("implement turns = %d, want 3", len(h.implementTurns))
+	}
+}
+
+func TestWorkTicketTerminatesWhenTheSameFailureRepeats(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.ci = map[int]activities.ObserveCIOutput{
+		1: redFailure("test-software-factory", "same-failure"),
+		2: redFailure("test-software-factory", "same-failure"),
+	}
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+	if result := h.result(t); result.Outcome != work.OutcomeExhausted {
+		t.Fatalf("outcome = %s, want exhausted on the repeated failure", result.Outcome)
+	}
+	if len(h.implementTurns) != 2 {
+		t.Fatalf("implement turns = %d, want 2", len(h.implementTurns))
+	}
+}
+
 // --- the 15-turn worst case, review-exhaustion path -------------------------
 
 func TestWorkTicketTerminatesAfterFifteenImplementAndThreeReviewOnRepeatedReviewExhaustion(t *testing.T) {
@@ -790,12 +865,11 @@ func TestWorkTicketUnobservedCICarriesForwardTheLastObservedRedSetRatherThanRese
 	t.Parallel()
 
 	h := newTicketHarness(t)
-	// Turn 1: red {A,B}. Turn 2: unobserved. Turn 3: red {A}. If the
-	// unobserved turn reset the comparison to empty, turn 3's {A} would not
-	// be a subset of an empty set and rule 1 would not fire; it must instead
-	// compare against turn 1's {A,B} and terminate.
+	// Turn 1: red {A}. Turn 2: unobserved. Turn 3: red {A}. The unobserved
+	// turn must not reset the comparison: the later identical failure still
+	// terminates against the last observed one.
 	h.ci = map[int]activities.ObserveCIOutput{
-		1: red("A", "B"),
+		1: red("A"),
 		2: unobserved(),
 		3: red("A"),
 	}

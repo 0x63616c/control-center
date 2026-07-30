@@ -14,7 +14,7 @@ import (
 // implementReviewLoop is the pipeline rewrite's real subject (ticket #435):
 // plan has already run once by the time this is called; this runs implement
 // and review in a loop bounded by two counters and, before either counter
-// backstop fires, by progress detection — the same failing CI check or the
+// backstop fires, by progress detection — the same failed CI identity or the
 // same blocking review finding surviving an intervening turn.
 //
 // The turn-by-turn walk, matching the pipeline-rewrite spec's "The turn
@@ -59,7 +59,7 @@ func (r *ticketRun) implementReviewLoop(
 		reviewTurn    int
 		ciTurns       int
 		reviewTurns   int
-		lastRed       []string // the last CI-observed turn's red check names, carried forward across an unobserved turn — never reset to empty by one.
+		lastRed       []work.CheckFailure // the last CI-observed turn's failed check identities, carried forward across an unobserved turn — never reset to empty by one.
 		lastBlocking  []string // the previous review turn's blocking finding ids.
 		pr            work.PullRequest
 	)
@@ -124,15 +124,22 @@ func (r *ticketRun) implementReviewLoop(
 				break // leave the CI window, go to review
 			}
 
-			// Red. Rule 1, before the counter: the same failing check(s)
-			// held across an intervening implement turn, with nothing new
-			// having appeared, is terminal on its own, even with budget left.
-			if len(obs.RedChecks) > 0 && isSubsetOf(obs.RedChecks, lastRed) {
+			// Rule 1 changes whether another implement activity is scheduled, so
+			// version it at that command-producing decision. Old histories retain
+			// the previous name-only subset behaviour; new runs require identical
+			// failure identities, which treats a shrinking set as progress.
+			version := workflow.GetVersion(ctx, "work-ticket-ci-stagnation-v2", workflow.DefaultVersion, 1)
+			failures := observedFailures(obs)
+			stagnated := sameCheckFailures(failures, lastRed)
+			if version == workflow.DefaultVersion {
+				stagnated = sameCheckNamesSubset(obs.RedChecks, lastRed)
+			}
+			if len(failures) > 0 && stagnated {
 				return r.exhausted(pr, prior, fmt.Sprintf(
 					"CI failed the same check(s) (%s) on %s as the previous observed turn: no progress",
-					strings.Join(obs.RedChecks, ", "), branch)), nil
+					checkFailureNames(failures), branch)), nil
 			}
-			lastRed = obs.RedChecks
+			lastRed = failures
 
 			ciTurns++
 			if ciTurns >= maxImplementTurnsPerWindow {
@@ -176,6 +183,35 @@ func (r *ticketRun) implementReviewLoop(
 		// ciTurns is already 0, carried from this window's own green; a
 		// fresh CI window opens.
 	}
+}
+
+// observedFailures reads new activity results' precise identities, and
+// converts a pre-versioned result's retained names during old-history replay.
+func observedFailures(obs activities.ObserveCIOutput) []work.CheckFailure {
+	if len(obs.RedFailures) > 0 {
+		return obs.RedFailures
+	}
+
+	failures := make([]work.CheckFailure, 0, len(obs.RedChecks))
+	for _, name := range obs.RedChecks {
+		failures = append(failures, work.CheckFailure{Name: name})
+	}
+	return failures
+}
+
+// checkFailureNames makes a readable stall reason without exposing opaque CI
+// fingerprints in a ticket or pull request comment.
+func checkFailureNames(failures []work.CheckFailure) string {
+	seen := make(map[string]struct{}, len(failures))
+	names := make([]string, 0, len(failures))
+	for _, failure := range failures {
+		if _, ok := seen[failure.Name]; ok {
+			continue
+		}
+		seen[failure.Name] = struct{}{}
+		names = append(names, failure.Name)
+	}
+	return strings.Join(names, ", ")
 }
 
 // exhausted builds the counters'-backstop terminal result: the loop tried,

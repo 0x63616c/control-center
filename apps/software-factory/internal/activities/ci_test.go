@@ -40,12 +40,12 @@ func TestObserveCIReportsGreenWhenEveryCheckPasses(t *testing.T) {
 	}
 }
 
-func TestObserveCIReportsRedAndNamesTheFailingChecks(t *testing.T) {
+func TestObserveCIReportsRedCheckIdentities(t *testing.T) {
 	t.Parallel()
 
 	gh := &fakeGitHub{checks: []work.CheckRun{
 		{Name: "build", Completed: true, Conclusion: "success"},
-		{Name: "test", Completed: true, Conclusion: "failure"},
+		{Name: "test", FailureFingerprint: "failure-a", Completed: true, Conclusion: "failure"},
 	}}
 	d := deps()
 	d.GitHub = gh
@@ -66,6 +66,9 @@ func TestObserveCIReportsRedAndNamesTheFailingChecks(t *testing.T) {
 	}
 	if len(out.RedChecks) != 1 || out.RedChecks[0] != "test" {
 		t.Fatalf("RedChecks = %v, want [test]", out.RedChecks)
+	}
+	if want := (work.CheckFailure{Name: "test", Fingerprint: "failure-a"}); len(out.RedFailures) != 1 || out.RedFailures[0] != want {
+		t.Fatalf("RedFailures = %v, want [%+v]", out.RedFailures, want)
 	}
 }
 
