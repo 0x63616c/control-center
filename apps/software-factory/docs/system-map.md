@@ -142,10 +142,13 @@ is best-effort: a transcript relay failure does not discard a run's work.
 `CreateSandbox` creates one `restartPolicy: Never` pod per ticket. It has an
 `emptyDir` work volume, a per-ticket credential Secret, no automatically
 mounted service-account token, a non-root security context, no privilege
-escalation, and all Linux capabilities dropped. The sandbox worker is the only
-worker that registers `RunPlan`, `RunImplement`, and `RunReview`; it enables
-one concurrent Temporal Session. The main worker registers workflows and
-control activities instead.
+escalation, and all Linux capabilities dropped. Both workers register activity
+methods: the main worker registers the complete `Activities` object on its
+main queue, while the sandbox worker explicitly registers `RunPlan`,
+`RunImplement`, and `RunReview` and enables one concurrent Temporal Session.
+Stage calls are Session-bound to the run-specific sandbox queue, which only
+that sandbox pod polls; main-queue registration does not make the main worker
+an executor for those Session-bound stage calls.
 
 The stage activity retry policy is still two attempts, but it applies on the
 Session's run-specific sandbox queue. A rollout of the main worker can resume
