@@ -168,9 +168,10 @@ that an override at one site is not read as licence to ignore the rest.
   `implement`'s "push the branch before you finish" is **not** in `AGENTS.md` and is
   load-bearing — the pushed branch is the durable state the workflow's `OpenOrUpdatePullRequest`
   activity acts on after every turn, so a lost pod costs a re-clone rather than the ticket.
-  `Refs #N` (never `Fixes`/`Closes`) moved from the old `propose.md` into `implement.md`'s
-  `body` guidance, for the same reason it was worth stating twice before: the failure mode
-  (auto-closing an unvalidated issue) is silent and effectively irreversible.
+  `Fixes #N` moved from the old `propose.md` into `implement.md`'s `body` guidance so the
+  resolved issue intentionally auto-closes when its PR merges. The prompt confines that
+  closing reference to the canonical linked-issue section, preventing incidental prose or
+  commit messages from triggering an unrelated closure.
 - **Whether a later turn should read the codebase.** Never mentioned in either direction.
   `review` is told to verify against the repository as it actually is, which encourages
   reading without framing it as unusual.

@@ -251,12 +251,12 @@ func TestImplementCarriesTitleAndBody(t *testing.T) {
 	t.Parallel()
 
 	got, err := Decode(work.StageImplement, []byte(
-		`{"report":"did the work","blocked":false,"blocked_reason":"","title":"Fix the thing","body":"Refs #1"}`))
+		`{"report":"did the work","blocked":false,"blocked_reason":"","title":"Fix the thing","body":"Fixes #1"}`))
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
 	value := got.Value().(work.ImplementOutput)
-	if value.Title != "Fix the thing" || value.Body != "Refs #1" {
+	if value.Title != "Fix the thing" || value.Body != "Fixes #1" {
 		t.Errorf("got %+v, want the title and body carried through", value)
 	}
 }

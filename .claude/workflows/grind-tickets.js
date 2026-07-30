@@ -67,7 +67,8 @@ Hard house rules you MUST obey:
 - Fixed panel size 1366x1024, not responsive.
 - NEVER \`git add -A\` or \`git add .\` - concurrent sessions share checkouts and you will
   swallow their uncommitted work. Stage explicit paths only, then verify with \`git show --stat HEAD\`.
-- NEVER write "Fixes #N"/"Closes #N" in a commit message. Closing happens only after live verification.
+- NEVER write "Fixes #N"/"Closes #N" in a commit message. A resolved issue closes when the
+  canonical \`Fixes #N\` reference in its PR description merges; use no closing keywords elsewhere.
 - Commit messages are written in NORMAL English prose, not compressed/caveman style.
 - Do not run background jobs or yield waiting on anything. Everything foreground and bounded.
 
@@ -380,9 +381,9 @@ if (ready.length === 0) {
 // This used to cherry-pick onto main and push. It no longer does: main is now
 // branch-and-PR by default (#120), so an unattended workflow must not be the one
 // exception that still writes to main. Nothing here merges, so there is also
-// nothing to rebuild, deploy-verify or auto-close - those phases went with the
-// push. A human merging the PR is what triggers the deploy, and closing a ticket
-// stays a deliberate act after verifying live (AGENTS.md).
+// nothing to rebuild or deploy-verify - those phases went with the push. A human
+// merging the PR triggers the deploy and GitHub auto-closes an issue whose
+// canonical PR-description field says `Fixes #N` (AGENTS.md).
 //
 // Serialized rather than parallel: these branches share one checkout and the
 // worktrees they came from, and concurrent pushes race.
@@ -413,10 +414,10 @@ worktree - \`git -C ${REPO} worktree list\` and \`git -C ${REPO} branch --list $
    Build \`<file>\` from \`.github/pull_request_template.md\`. Complete every applicable
    section with the branch's current facts: describe the behavior and relevant changed areas,
    explain why, and list exact verification commands with their real outcomes. Reference the
-   issue as \`Refs #${r.ticket}\`. NEVER \`Fixes\`/\`Closes\` - that auto-closes an unvalidated
-   ticket the moment somebody merges. Keep the Screenshot section for UI work with real visual
-   evidence; delete it when there is no UI change. Never manufacture command output or visual
-   evidence.
+   resolved issue as \`Fixes #${r.ticket}\` in the template's canonical linked-issue section.
+   Never use closing keywords in commit messages or incidental PR prose. Keep the Screenshot
+   section for UI work with real visual evidence; delete it when there is no UI change. Never
+   manufacture command output or visual evidence.
 5. Watch CI on the PR to a real conclusion: \`gh pr checks <pr-number> --watch\`. Record the
    final status in notes ("CI green" / "CI failed: <check name>" / etc) - do not guess, wait for
    the real result. Do not attempt to fix unrelated pre-existing CI failures; only fix ones your
@@ -446,5 +447,5 @@ return {
   implemented: impls.map((r) => ({ ticket: r.ticket, status: r.status, files: r.filesChanged, notes: r.notes })),
   notLanded: notLanded.map((r) => ({ ticket: r.ticket, why: r.notes })),
   proposed,
-  summary: `${opened.length} PR(s) opened for review. Nothing merged, nothing deployed, no ticket closed.`,
+  summary: `${opened.length} PR(s) opened for review. Nothing merged or deployed; linked issues auto-close when their PRs merge.`,
 }

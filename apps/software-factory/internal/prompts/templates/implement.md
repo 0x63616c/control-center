@@ -50,9 +50,10 @@ human will read right now, not as a diff against what you said last turn. Build 
 `.github/pull_request_template.md`: complete every applicable section with the branch's current
 facts, including the behavioral change and relevant changed areas, why it matters, and exact
 verification commands with their real outcomes. Reference the issue as
-`Refs #{{ticket_number}}` — never `Fixes #{{ticket_number}}` or `Closes #{{ticket_number}}`,
-which would close the issue the moment this pull request merges, before anyone has verified it
-against the real system. Keep the Screenshot section for UI work only; delete the Screenshot section when there is no UI change.
+`Fixes #{{ticket_number}}`, which intentionally auto-closes the issue when this pull request
+merges into the default branch. Put this closing reference only in the template's canonical
+linked-issue section; never use closing keywords in commit messages or incidental PR prose.
+Keep the Screenshot section for UI work only; delete the Screenshot section when there is no UI change.
 Never manufacture command output or visual evidence.
 Leave both `title` and `body` empty only when `blocked` is true and nothing was pushed worth describing.
 

@@ -6,12 +6,13 @@
 
 ## Why / linked issue
 
-<!-- Explain why this change is needed, then reference every related issue as
-     Refs #N — never "Fixes"/"Closes": merging deploys to prod, and AGENTS.md
-     forbids auto-closing a ticket before it's validated live. Close the issue
-     yourself, with a comment, once you've confirmed the fix live. -->
+<!-- Explain why this change is needed, then link every resolved issue as
+     Fixes #N. GitHub closes that issue automatically when this PR merges into
+     the default branch. Put closing keywords only in this canonical linked-
+     issue section: never in commit messages or incidental PR prose. Use a
+     neutral reference for related issues this PR does not resolve. -->
 
-Refs #
+Fixes #
 
 ## How it was verified
 
