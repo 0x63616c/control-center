@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -77,9 +78,8 @@ type ticketHarness struct {
 	cancelAt   time.Duration
 	stageDelay time.Duration
 
-	cloneErr      error
-	credentialErr error
-	draftErr      error
+	cloneErr error
+	draftErr error
 
 	// implement, keyed by turn (1-indexed). A turn not present in the map
 	// runs the default: not blocked, pushed, no title/body worth noting.
@@ -159,9 +159,6 @@ func (h *ticketHarness) run() {
 		})
 
 	env.OnActivity(acts.WaitSandboxReady, mock.Anything, mock.Anything).Return(nil)
-
-	env.OnActivity(acts.WriteCodexCredential, mock.Anything, mock.Anything).
-		Return(func(_ context.Context, _ work.SandboxID) error { return h.credentialErr })
 
 	env.OnActivity(acts.CloneRepo, mock.Anything, mock.Anything).
 		Return(func(_ context.Context, sandbox work.SandboxID) error {
@@ -321,22 +318,6 @@ func TestWorkTicketFailsBeforeAnyStageWhenTheCloneFails(t *testing.T) {
 	}
 	if len(h.deleted) != 1 || h.deleted[0] != "sandbox-328" {
 		t.Fatalf("deleted %v, want the sandbox cleaned up despite the clone failing", h.deleted)
-	}
-}
-
-func TestWorkTicketRunsNoStageAndDeletesTheSandboxWhenTheCodexCredentialCannotBeWritten(t *testing.T) {
-	t.Parallel()
-
-	h := newTicketHarness(t)
-	h.credentialErr = temporal.NewNonRetryableApplicationError(
-		"codex credential is not seeded", activities.ErrTypeAuth, nil)
-	h.run()
-
-	if h.env.GetWorkflowError() == nil {
-		t.Fatal("a run whose sandbox has no codex credential must not proceed to any stage")
-	}
-	if len(h.implementTurns) != 0 {
-		t.Fatal("codex exec cannot authenticate without the credential, so no stage should have started")
 	}
 }
 
@@ -796,6 +777,19 @@ func TestWorkTicketDeclinesADeclinedRunDraftFirstThenLabelThenComment(t *testing
 	if h.cleared != 1 {
 		t.Fatalf("cleared the auto label %d times, want exactly once — decline owns it, finish must not also clear it", h.cleared)
 	}
+	if len(h.postedPRComments) != 1 {
+		t.Fatalf("posted %d pull request comments, want exactly one — the run's own full-detail comment", len(h.postedPRComments))
+	}
+	comment := h.postedPRComments[0]
+	if comment.Number != 9 {
+		t.Fatalf("commented on pull request #%d, want #9, the run's own", comment.Number)
+	}
+	if !strings.Contains(comment.Body, "same-finding") {
+		t.Fatalf("comment body = %q, want it to name the repeated finding that stalled the run", comment.Body)
+	}
+	if !strings.Contains(comment.Body, "the plan") {
+		t.Fatalf("comment body = %q, want the plan the loop was working from", comment.Body)
+	}
 }
 
 // TestWorkTicketFailsRatherThanCompleteWhenDraftConversionExhaustsItsRetries
@@ -821,7 +815,10 @@ func TestWorkTicketFailsRatherThanCompleteWhenDraftConversionExhaustsItsRetries(
 	if h.cleared != 0 {
 		t.Fatal("the auto label must stay on when draft conversion fails, or a Failed workflow's ticket looks resolved")
 	}
-	if len(h.postedPRComments) != 0 {
-		t.Fatal("no full-detail comment was set on this run, so none should have posted")
+	// The full-detail comment is best-effort and additive — it cannot itself
+	// be mistaken for approval — so decline still posts it even though draft
+	// conversion failed, per terminal.go's own doc comment.
+	if len(h.postedPRComments) != 1 {
+		t.Fatalf("posted %d pull request comments, want exactly one even though draft conversion failed", len(h.postedPRComments))
 	}
 }

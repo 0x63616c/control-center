@@ -85,7 +85,8 @@ func (r *ticketRun) implementReviewLoop(
 			if impl.Blocked {
 				return WorkTicketResult{
 					Outcome: work.OutcomeBlocked, Usage: r.usage, PullRequest: pr,
-					Detail: impl.BlockedReason,
+					Detail:     impl.BlockedReason,
+					FullDetail: fullDeclineDetail(impl.BlockedReason, prior),
 				}, nil
 			}
 
@@ -108,7 +109,7 @@ func (r *ticketRun) implementReviewLoop(
 				// last seen, however many turns back that was.
 				ciTurns++
 				if ciTurns >= maxImplementTurnsPerWindow {
-					return r.exhausted(pr, fmt.Sprintf(
+					return r.exhausted(pr, prior, fmt.Sprintf(
 						"CI did not conclude for %s within %d implement turns in this window", branch, ciTurns)), nil
 				}
 				continue
@@ -124,7 +125,7 @@ func (r *ticketRun) implementReviewLoop(
 			// held across an intervening implement turn, with nothing new
 			// having appeared, is terminal on its own, even with budget left.
 			if len(obs.RedChecks) > 0 && isSubsetOf(obs.RedChecks, lastRed) {
-				return r.exhausted(pr, fmt.Sprintf(
+				return r.exhausted(pr, prior, fmt.Sprintf(
 					"CI failed the same check(s) (%s) on %s as the previous observed turn: no progress",
 					strings.Join(obs.RedChecks, ", "), branch)), nil
 			}
@@ -132,7 +133,7 @@ func (r *ticketRun) implementReviewLoop(
 
 			ciTurns++
 			if ciTurns >= maxImplementTurnsPerWindow {
-				return r.exhausted(pr, fmt.Sprintf(
+				return r.exhausted(pr, prior, fmt.Sprintf(
 					"CI stayed red on %s for %d implement turns: this window's budget is exhausted", branch, ciTurns)), nil
 			}
 		}
@@ -159,12 +160,12 @@ func (r *ticketRun) implementReviewLoop(
 		// Rule 2, before the counter: the same blocking finding id surviving
 		// an intervening implement turn is terminal on its own.
 		if intersects(blocking, lastBlocking) {
-			return r.exhausted(pr, fmt.Sprintf(
+			return r.exhausted(pr, prior, fmt.Sprintf(
 				"review turn %d repeated a blocking finding review turn %d already raised: no progress", reviewTurn, reviewTurn-1)), nil
 		}
 
 		if reviewTurns >= maxReviewTurns {
-			return r.exhausted(pr, fmt.Sprintf(
+			return r.exhausted(pr, prior, fmt.Sprintf(
 				"review raised blocking findings on all %d of its allotted turns", reviewTurns)), nil
 		}
 
@@ -178,10 +179,47 @@ func (r *ticketRun) implementReviewLoop(
 // genuinely made no further progress or ran out of budget, and never
 // reached approval. Distinct from OutcomeBlocked, which is implement's own
 // explicit verdict rather than a backstop firing — see work.OutcomeExhausted.
-func (r *ticketRun) exhausted(pr work.PullRequest, detail string) WorkTicketResult {
+func (r *ticketRun) exhausted(pr work.PullRequest, prior map[work.Stage][]work.StageOutput, detail string) WorkTicketResult {
 	return WorkTicketResult{
-		Outcome: work.OutcomeExhausted, Usage: r.usage, PullRequest: pr, Detail: detail,
+		Outcome: work.OutcomeExhausted, Usage: r.usage, PullRequest: pr,
+		Detail: detail, FullDetail: fullDeclineDetail(detail, prior),
 	}
+}
+
+// fullDeclineDetail renders the prose worth posting as a declined run's own
+// pull request comment: why the loop stopped, the plan it was working from,
+// and the most recent review's findings if review ever ran. It reads out of
+// the same turn history the loop already carries in workflow state — no new
+// activity call, nothing beyond what prior already holds.
+func fullDeclineDetail(reason string, prior map[work.Stage][]work.StageOutput) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "**Why the loop stopped**\n\n%s\n", reason)
+
+	if plan := lastOutput(prior[work.StagePlan]); plan.Prose() != "" {
+		fmt.Fprintf(&b, "\n**Plan**\n\n%s\n", plan.Prose())
+	}
+
+	if review, ok := lastOutput(prior[work.StageReview]).Value().(work.ReviewOutput); ok && len(review.Findings) > 0 {
+		b.WriteString("\n**Most recent review findings**\n\n")
+		for _, f := range review.Findings {
+			kind := "advisory"
+			if f.Blocking {
+				kind = "blocking"
+			}
+			fmt.Fprintf(&b, "- id=%s (%s): %s\n", f.ID, kind, f.Summary)
+		}
+	}
+
+	return b.String()
+}
+
+// lastOutput returns the most recent output in a stage's turn history, or
+// the zero work.StageOutput if the stage has not produced one yet.
+func lastOutput(outputs []work.StageOutput) work.StageOutput {
+	if len(outputs) == 0 {
+		return work.StageOutput{}
+	}
+	return outputs[len(outputs)-1]
 }
 
 // runPlanTurn runs the plan stage's one and only turn.
@@ -215,6 +253,7 @@ func (r *ticketRun) runPlanTurn(
 	}
 
 	r.usage = r.usage.Add(out.Usage)
+	r.persistTranscript(ctx, attempt.Key, out.Transcript)
 	r.report(ctx, work.StatusReport{
 		Step: work.StageStep(work.StagePlan), State: work.StepSucceeded,
 		Stage: work.StagePlan, Model: model, StartedAt: startedAt, EndedAt: workflow.Now(ctx),
@@ -257,6 +296,7 @@ func (r *ticketRun) runImplementTurn(
 	}
 
 	r.usage = r.usage.Add(out.Usage)
+	r.persistTranscript(ctx, attempt.Key, out.Transcript)
 	r.report(ctx, work.StatusReport{
 		Step: work.StageStep(work.StageImplement), State: work.StepSucceeded,
 		Stage: work.StageImplement, Model: model, StartedAt: startedAt, EndedAt: workflow.Now(ctx),
@@ -297,6 +337,7 @@ func (r *ticketRun) runReviewTurn(
 	}
 
 	r.usage = r.usage.Add(out.Usage)
+	r.persistTranscript(ctx, attempt.Key, out.Transcript)
 	r.report(ctx, work.StatusReport{
 		Step: work.StageStep(work.StageReview), State: work.StepSucceeded,
 		Stage: work.StageReview, Model: model, StartedAt: startedAt, EndedAt: workflow.Now(ctx),
