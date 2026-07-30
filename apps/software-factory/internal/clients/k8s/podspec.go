@@ -214,17 +214,18 @@ func buildPod(spec work.SandboxSpec, o options) (*corev1.Pod, error) {
 				Resources: resources,
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: workVolumeName, MountPath: work.SandboxRoot},
-					// Mounted at the exact destination the codex CLI reads,
-					// nested inside the /work emptyDir above rather than
-					// beside it — Kubernetes allows a volume mount's path to
-					// sit under another mount's, and this is what lets
-					// Kubernetes itself put the credential in place at
-					// container start, before any activity runs. See D3
-					// (#434): CreateSandbox provisions this Secret and
-					// nothing else ever writes this file.
+					// Deliberately NOT nested under work.SandboxRoot, let alone
+					// under work.CodexHomeDir — see work.CodexAuthSecretMountFile's
+					// own doc comment for why: a subPath mount at the codex CLI's
+					// own auth.json path made Kubernetes, not the sandbox uid, own
+					// the directory codex also needed to write other files into,
+					// and every one of those writes 403'd in prod run one (#434).
+					// cmd/sandbox-worker symlinks work.CodexAuthFile to this path
+					// at startup; CreateSandbox still provisions the Secret and
+					// nothing ever writes the credential's own bytes.
 					{
 						Name:      credentialSecretVolumeName,
-						MountPath: work.CodexAuthFile,
+						MountPath: work.CodexAuthSecretMountFile,
 						SubPath:   codexAuthSecretKey,
 						ReadOnly:  true,
 					},

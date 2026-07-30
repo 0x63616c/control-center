@@ -326,8 +326,9 @@ func (a *Activities) WaitSandboxReady(ctx context.Context, sandbox work.SandboxI
 // There used to be a WriteCodexCredential activity that had to run before
 // this one, writing the codex OAuth credential into the sandbox over
 // pods/exec. D3 (#434) replaced that transport with a per-ticket Kubernetes
-// Secret CreateSandbox provisions and the pod's own spec mounts directly at
-// work.CodexAuthFile, in place before the container ever starts — so the
+// Secret CreateSandbox provisions and the pod's own spec mounts at
+// work.CodexAuthSecretMountFile; cmd/sandbox-worker symlinks
+// work.CodexAuthFile to it before registering any activity — so the
 // credential is already there by the time any activity runs, and the
 // activity that used to write it had nothing left to do. It,
 // activities.CredentialWriter and workticket.go's call to it are deleted.
