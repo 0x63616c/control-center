@@ -57,7 +57,7 @@ func TestAChildCarriesItsTicketMetadata(t *testing.T) {
 	if got, want := options.StaticSummary, "#328 Show work-ticket GitHub issue in Temporal"; got != want {
 		t.Fatalf("StaticSummary = %q, want %q", got, want)
 	}
-	if got, want := options.StaticDetails, "https://github.com/0x63616c/world-wide-webb/issues/328"; got != want {
+	if got, want := options.StaticDetails, "[GitHub issue #328](https://github.com/0x63616c/world-wide-webb/issues/328)"; got != want {
 		t.Fatalf("StaticDetails = %q, want %q", got, want)
 	}
 }

@@ -520,7 +520,7 @@ func (d *dispatcher) childOptions(ticket work.Ticket) workflow.ChildWorkflowOpti
 		ParentClosePolicy:  enums.PARENT_CLOSE_POLICY_ABANDON,
 		WorkflowRunTimeout: d.run.RunTimeout,
 		StaticSummary:      fmt.Sprintf("#%d %s", ticket.Number, ticket.Title),
-		StaticDetails:      fmt.Sprintf("https://github.com/0x63616c/world-wide-webb/issues/%d", ticket.Number),
+		StaticDetails:      fmt.Sprintf("[GitHub issue #%d](https://github.com/0x63616c/world-wide-webb/issues/%d)", ticket.Number, ticket.Number),
 	}
 }
 
