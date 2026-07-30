@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "bun run --cwd ../web storybook",
     "build": "bun run --cwd ../web build-storybook",
-    "test": "bun run --cwd ../web test",
-    "typecheck": "bun run --cwd ../web typecheck"
+    "test": "bun run --cwd ../web test"
   }
 }

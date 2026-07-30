@@ -10,9 +10,7 @@
     "./trpc": "./src/trpc.ts",
     "./guest": "./src/guest.ts"
   },
-  "scripts": {
-    "typecheck": "tsc --noEmit"
-  },
+  "scripts": {},
   "dependencies": {
     "@control-center/api": "workspace:*"
   },

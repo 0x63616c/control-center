@@ -18,7 +18,6 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:guest-smoke": "bun run scripts/guest-server-smoke.ts",
-    "typecheck": "tsc --noEmit",
     "db:generate": "bunx drizzle-kit generate",
     "db:migrate": "bunx drizzle-kit migrate",
     "db:push": "bunx drizzle-kit push",

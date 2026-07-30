@@ -1,7 +1,13 @@
 {
-  "extends": "../tsconfig.json",
+  "extends": "../tsconfig.base.json",
   "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "./dist/types",
+    "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo",
     "allowImportingTsExtensions": true
   },
-  "include": ["src", "test", "scripts", "program.ts"]
+  "include": ["src", "test", "scripts", "program.ts"],
+  "references": [{ "path": "../packages/platform" }]
 }

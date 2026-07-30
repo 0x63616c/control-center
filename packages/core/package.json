@@ -9,8 +9,7 @@
     "./testing/integration-sync": "./src/integration-sync/store-contract.ts"
   },
   "scripts": {
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "test": "vitest run"
   },
   "dependencies": {
     "@www/logger": "workspace:*",

@@ -3,9 +3,13 @@
   // apps/*/packages/* workspaces, so `bun run --filter '*' typecheck` never sees
   // them (www-355t.2).
   // allowImportingTsExtensions: config files may import sibling .ts by path.
-  "extends": "./tsconfig.json",
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "noEmit": true,
+    "composite": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "./dist/types",
+    "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo",
     "allowImportingTsExtensions": true,
     // Authoring-surface aliases (Track C, C7) live HERE, not on the root
     // tsconfig: the root must stay `paths`-free so the apps:gen/apps:check
@@ -28,6 +32,7 @@
   "include": [
     "vitest.config.ts",
     "apps/web/vitest.workspace.ts",
+    "apps/api/src",
     "app-kit/**/*.ts",
     "features/**/*.ts",
     "scripts/alias-parity.test.ts"
@@ -56,5 +61,11 @@
     "features/**/modal-store.ts",
     "features/**/web.tsx",
     "features/**/web/**"
+  ],
+  "references": [
+    { "path": "./packages/logger" },
+    { "path": "./packages/platform" },
+    { "path": "./packages/worker-runtime" },
+    { "path": "./packages/core" }
   ]
 }

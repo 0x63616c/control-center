@@ -6,8 +6,7 @@
   "scripts": {
     "dev": "node --experimental-strip-types src/index.ts",
     "start": "node src/index.mjs",
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "test": "vitest run"
   },
   "dependencies": {
     "@temporalio/client": "^1.21.1",

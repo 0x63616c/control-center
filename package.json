@@ -42,8 +42,7 @@
     "gate:pre-push": "bun scripts/quality-gate.ts pre-push",
     "knip": "bun scripts/quality-gate.ts knip",
     "knip:fix": "bunx knip --fix --allow-remove-files",
-    "typecheck": "bun run --filter '*' typecheck && bun run typecheck:config",
-    "typecheck:config": "tsc -p tsconfig.config.json --noEmit",
+    "typecheck": "tsc -b",
     "prepare": "bunx lefthook install --force"
   },
   "devDependencies": {

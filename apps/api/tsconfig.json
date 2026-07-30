@@ -1,7 +1,10 @@
 {
-  "extends": "../../tsconfig.json",
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "types": ["bun-types"],
+    "composite": true,
+    "noEmit": true,
+    "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo",
     // The api runs via `bun --watch src/server.ts` and never emits (root sets
     // noEmit), so the old rootDir/outDir were dead config. Dropping rootDir +
     // allowImportingTsExtensions lets modules import siblings by explicit .ts path.

@@ -5,8 +5,7 @@
   "type": "module",
   "main": "program.ts",
   "scripts": {
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "test": "vitest run"
   },
   "dependencies": {
     "@pulumi/pulumi": "^3.145.0",

@@ -1,7 +1,15 @@
 {
-  "extends": "./tsconfig.json",
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom"]
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "paths": { "@/*": ["./src/*"] },
+    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom"],
+    "composite": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "./dist/test-types",
+    "tsBuildInfoFile": "./dist/tsconfig.test.tsbuildinfo"
   },
   "include": ["src", "test", "e2e", "vite.config.ts", "vitest.config.ts", "playwright.config.ts"],
   "exclude": []

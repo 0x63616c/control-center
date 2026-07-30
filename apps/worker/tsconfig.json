@@ -1,7 +1,12 @@
 {
-  "extends": "../../tsconfig.json",
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "types": ["bun"],
+    "composite": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "./dist/types",
+    "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo",
     // Mirrors api: the worker runs via `bun src/index.ts` and never emits.
     // allowImportingTsExtensions lets it resolve @control-center/api's .ts barrel.
     "allowImportingTsExtensions": true,
@@ -20,5 +25,11 @@
       "@features/*": ["../../features/*"]
     }
   },
-  "include": ["src"]
+  "include": ["src"],
+  "references": [
+    { "path": "../../tsconfig.config.json" },
+    { "path": "../../packages/logger" },
+    { "path": "../../packages/platform" },
+    { "path": "../../packages/worker-runtime" }
+  ]
 }

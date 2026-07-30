@@ -1,8 +1,14 @@
 {
-  "extends": "../../tsconfig.json",
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "./dist/types",
+    "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo",
     "types": ["bun"],
     "allowImportingTsExtensions": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  "references": [{ "path": "../logger" }, { "path": "../platform" }]
 }

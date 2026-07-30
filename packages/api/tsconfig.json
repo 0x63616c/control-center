@@ -1,6 +1,11 @@
 {
-  "extends": "../../tsconfig.json",
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "./dist/types",
+    "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo",
     // @cc/api re-exports apps/api's AppRouter/GuestRouter TYPES, so this program
     // typechecks apps/api's trpc sources transitively — which, since the C7 fold,
     // import the guest-wifi feature + generated aggregates via `@features` /
@@ -12,5 +17,6 @@
       "@features/*": ["../../features/*"]
     }
   },
-  "include": ["src"]
+  "include": ["src"],
+  "references": [{ "path": "../../tsconfig.config.json" }]
 }

@@ -67,7 +67,7 @@ import { GENERATED_JOBS } from "@features/_generated/jobs.gen";
 
 describe("S1 worker job seam", () => {
   it("collects the notify job from features/notif via the generated barrel", () => {
-    const notify = GENERATED_JOBS.find((s) => s.type === "notify");
+    const notify = GENERATED_JOBS.find((s) => String(s.type) === "notify");
     expect(notify).toBeDefined();
     expect(typeof notify?.handler).toBe("function");
     expect(notify?.maxMs).toBe(60_000);
@@ -87,7 +87,7 @@ describe("S1 worker job seam", () => {
     dbMock.selectCallIndex = 0;
     apnsMock.sent = [];
 
-    const notify = GENERATED_JOBS.find((s) => s.type === "notify");
+    const notify = GENERATED_JOBS.find((s) => String(s.type) === "notify");
     if (!notify) throw new Error("notify spec not found in GENERATED_JOBS");
 
     const controller = new AbortController();

@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true
+    // NB: no `paths` here on purpose. The apps:gen/apps:check codegen runs `bun
+    // run` from apps/web so bun resolves the tile tree's `@/*` via
+    // apps/web/tsconfig.json (the nearest tsconfig). Adding root `paths` here
+    // shadows that and breaks `@/` resolution for the codegen. The C7
+    // authoring-surface aliases (@app-kit / @features) live on tsconfig.config.json
+    // (which typechecks app-kit/ + features/) and apps/web/tsconfig.json instead.
+  },
+  "exclude": ["node_modules", "dist"]
+}

@@ -15,7 +15,6 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e:portal": "playwright test -c e2e-portal",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build"
   },

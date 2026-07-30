@@ -1,12 +1,12 @@
 import type { AppRouter } from "@cc/api/trpc";
 import { QueryClient } from "@tanstack/react-query";
 import { httpBatchLink } from "@trpc/client";
-import { createTRPCReact } from "@trpc/react-query";
+import { type CreateTRPCReact, createTRPCReact } from "@trpc/react-query";
 import type { inferRouterOutputs } from "@trpc/server";
 import { loggingFetch } from "./log/fetch-log";
 import { loggingLink } from "./log/trpc-link";
 
-export const trpc = createTRPCReact<AppRouter>();
+export const trpc: CreateTRPCReact<AppRouter, unknown> = createTRPCReact<AppRouter>();
 
 export type RouterOutputs = inferRouterOutputs<AppRouter>;
 

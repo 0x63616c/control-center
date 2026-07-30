@@ -10,8 +10,7 @@
     "./metrics/port": "./metrics/port.ts"
   },
   "scripts": {
-    "test": "vitest run --config vitest.config.ts",
-    "typecheck": "tsc --noEmit"
+    "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
     "@www/logger": "workspace:*",

@@ -4,17 +4,40 @@
   // `bun run typecheck` (www-355t.10). vitest/globals types the global
   // describe/it/expect (vitest.config.ts sets globals:true); jest-dom types the
   // custom matchers (toBeInTheDocument, etc.).
-  "extends": "./tsconfig.json",
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom"]
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "paths": {
+      "@/*": ["./src/*"],
+      "gifenc": ["./src/types/gifenc.d.ts"],
+      "@app-kit": ["../../app-kit/index.ts"],
+      "@app-kit/server": ["../../app-kit/server.ts"],
+      "@features/*": ["../../features/*"]
+    },
+    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom"],
+    "composite": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "./dist/test-types",
+    "rootDir": "../..",
+    "tsBuildInfoFile": "./dist/tsconfig.test.tsbuildinfo"
   },
   "include": [
+    "src",
     "src/**/*.test.ts",
     "src/**/*.test.tsx",
     "src/**/*.spec.ts",
     "src/**/*.spec.tsx",
     "src/**/__tests__/**/*.ts",
-    "src/**/__tests__/**/*.tsx"
+    "src/**/__tests__/**/*.tsx",
+    "../../features/**/manifest.ts",
+    "../../features/**/modal-store.ts",
+    "../../features/**/detail-wiring.tsx",
+    "../../features/**/tesla-map.tsx",
+    "../../features/**/web.tsx",
+    "../../features/**/web/**/*",
+    "../../app-kit/**/*.ts"
   ],
   "exclude": []
 }
