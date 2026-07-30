@@ -46,12 +46,15 @@ title and description for the branch as it now stands. Make `title` a clean desc
 without an issue-number prefix; the workflow prepends `#<issue-number> ` when it opens or
 updates the pull request. The workflow opens the pull request from these after your first
 successful push, and edits it to match on every later turn — write them as the pull request a
-human will read right now, not as a diff against what you said last turn. Use the repository's
-pull request template for `body`, referencing the issue as
+human will read right now, not as a diff against what you said last turn. Build `body` from
+`.github/pull_request_template.md`: complete every applicable section with the branch's current
+facts, including the behavioral change and relevant changed areas, why it matters, and exact
+verification commands with their real outcomes. Reference the issue as
 `Refs #{{ticket_number}}` — never `Fixes #{{ticket_number}}` or `Closes #{{ticket_number}}`,
 which would close the issue the moment this pull request merges, before anyone has verified it
-against the real system. Leave both `title` and `body` empty only when `blocked` is true and
-nothing was pushed worth describing.
+against the real system. Keep the Screenshot section for UI work only; delete the Screenshot section when there is no UI change.
+Never manufacture command output or visual evidence.
+Leave both `title` and `body` empty only when `blocked` is true and nothing was pushed worth describing.
 
 Your answer also has a `blocked` field and a `blocked_reason` field. Set `blocked` to true if
 you did not complete the work, and give the reason in `blocked_reason`; otherwise leave

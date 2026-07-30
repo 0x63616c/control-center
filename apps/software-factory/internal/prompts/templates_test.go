@@ -97,6 +97,27 @@ func TestEveryStageHasAPromptAndTheyAreDistinct(t *testing.T) {
 	}
 }
 
+func TestImplementPromptRequiresTheCanonicalPullRequestDescription(t *testing.T) {
+	t.Parallel()
+
+	body, err := templates.ReadFile("templates/implement.md")
+	if err != nil {
+		t.Fatalf("reading implement prompt: %v", err)
+	}
+
+	for _, requirement := range []string{
+		".github/pull_request_template.md",
+		"complete every applicable section",
+		"Refs #{{ticket_number}}",
+		"delete the Screenshot section when there is no UI change",
+		"Never manufacture command output or visual evidence",
+	} {
+		if !strings.Contains(string(body), requirement) {
+			t.Errorf("implement prompt does not require %q", requirement)
+		}
+	}
+}
+
 func TestBaseFencesTheIssueTextWithTheRunsNonce(t *testing.T) {
 	t.Parallel()
 

@@ -20,6 +20,10 @@ description: Use when starting work on a GitHub issue/ticket - keeps the sequenc
    relocate an agent session.
 4. **Plan the work.** Sketch the approach before touching code.
 5. **Implement the plan.**
+6. **Hand off the PR.** Use `.github/pull_request_template.md` for its
+   description. Complete every applicable section with real branch evidence,
+   reference the ticket as `Refs #<N>` (never `Fixes`/`Closes`), and delete the
+   Screenshot section when there is no UI change.
 
 If step 2 finds the ticket is stale/invalid, say so and confirm with the user
 before planning — don't silently reinterpret or silently proceed.
