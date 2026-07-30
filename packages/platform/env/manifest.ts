@@ -19,7 +19,7 @@
  * DATABASE_URL (design spec §4 "Hydration inputs").
  */
 import { DEFAULT_METRICS_PORT } from "../metrics/port";
-import { bool, enumOf, int, num, pgUrl, secret, str, url } from "./fields";
+import { enumOf, int, num, pgUrl, secret, str, url } from "./fields";
 import { defineEnv } from "./registry";
 
 export const ENV = defineEnv({
@@ -76,12 +76,8 @@ export const ENV = defineEnv({
   // ── Tesla (ac, tesla) ─────────────────────────────────────────────────────
   TESLA_ENTITY_PREFIX: str().default("evee").forRuntime("api").forFeatures("tesla"),
 
-  // ── Media (booth, wakes, worker) ──────────────────────────────────────────
-  MEDIA_STORAGE_DIR: str()
-    .default("/mnt/media")
-    .forRuntime("worker", "api")
-    .forFeatures("booth", "wakes"),
-  YOUTUBE_INGEST_ENABLED: bool().default(false).forRuntime("worker"),
+  // ── Media storage (booth, wakes) ──────────────────────────────────────────
+  MEDIA_STORAGE_DIR: str().default("/mnt/media").forRuntime("api").forFeatures("booth", "wakes"),
 
   // ── Spotify (sound) ───────────────────────────────────────────────────────
   SPOTIFY_CLIENT_ID: secret().optionalSecret().forRuntime("api").forFeatures("sound"),

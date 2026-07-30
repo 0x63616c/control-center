@@ -49,20 +49,11 @@ COPY features features
 RUN cd apps/worker && bun build src/index.ts --target=bun --outfile ../../dist/worker.js
 
 # ── Stage 2: runtime image ────────────────────────────────────────────────────
-# The bundle, the SQL migration files, and the media toolchain (yt-dlp +
-# ffmpeg) the ingest handler shells out to. bun is the runtime; alpine keeps a
+# The bundle and SQL migration files ship with the Bun runtime; Alpine keeps a
 # shell for on-box debugging.
 FROM oven/bun:1.2-alpine AS runtime
 
 WORKDIR /app
-
-# yt-dlp needs ffmpeg to mux the separate DASH video+audio streams YouTube
-# serves above 360p. python3 + pip because yt-dlp is a Python CLI;
-# --break-system-packages is required on Alpine's managed Python (PEP 668).
-RUN apk add --no-cache ffmpeg python3 py3-pip \
- && pip3 install --break-system-packages yt-dlp \
- && yt-dlp --version \
- && ffmpeg -version | head -1
 
 COPY --from=build /app/dist/worker.js worker.js
 # Migrations resolve relative to the bundle's own location (import.meta.url),

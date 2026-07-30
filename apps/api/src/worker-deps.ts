@@ -39,4 +39,3 @@ export { runDeviceSyncCycle } from "./services/device-sync-service";
 export { runEnforcerCycle } from "./services/light-enforcer-service";
 export { reconcilePartyMode } from "./services/party-service";
 export { runWithingsWeightIngestCycle } from "./services/withings-weight-service";
-export { runYoutubeIngest } from "./services/youtube-ingest-service";

@@ -131,8 +131,8 @@ iteration (the desired-state-is-truth pattern). A named subtype of Worker Cycle.
 _Avoid_: reconciler, syncer.
 
 **Queue Job**:
-A unit of work claimed from the shared work queue by a worker and run once — as opposed to a
-recurring Worker Cycle. Job types include notification delivery and media ingest.
+ A unit of work claimed from the shared work queue by a worker and run once — as opposed to a
+recurring Worker Cycle. Job types include notification delivery.
 _Avoid_: task, message, cycle.
 
 **Cron**:

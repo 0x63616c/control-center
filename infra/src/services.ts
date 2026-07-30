@@ -477,8 +477,6 @@ export function serviceSpecs(opts: ServiceSpecOptions): OwnedWorkloadSpec[] {
       namespaceName: "control-center",
       image: ghcrImage("worker", digests),
       replicas: 1,
-      // 512M covers the Bun process and a yt-dlp subprocess: downloads stream to
-      // disk through a small buffer, so memory is flat in the file's size.
       resources: { memory: "512M" },
       secrets: mountSecrets("worker"),
       secretName: SERVICE_SECRET_TARGETS.worker.secretName,
@@ -487,11 +485,6 @@ export function serviceSpecs(opts: ServiceSpecOptions): OwnedWorkloadSpec[] {
         // Point at the NFS mount below -- the env default (/mnt/media) is the
         // container overlay fs, not the NAS share.
         MEDIA_STORAGE_DIR: "/app/media",
-        // YouTube ingest master switch. Off: YouTube returns LOGIN_REQUIRED for
-        // every player client from this egress IP, so downloads cannot succeed
-        // and each claimed job just burns its attempts. Flip to "true" once the
-        // block is resolved -- the queued backlog resumes on its own.
-        YOUTUBE_INGEST_ENABLED: "false",
       },
       // NFS PV for the Synology media share. The DS420+ exports ONLY
       // /volume1/Homelab (not its subdirs), so mount that export and subPath

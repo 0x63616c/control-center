@@ -20,7 +20,7 @@
  * parameter, not a module singleton) so callers control the connection and
  * tests can hand in a mock. The one exception is the job handler at the bottom,
  * which is a process entrypoint and therefore owns its own db reference (the
- * feature's own singleton, ./db), the same way youtube-ingest-service's handler
+ * feature's own singleton, ./db), the same way a queue handler
  * does.
  */
 import { randomBytes } from "node:crypto";

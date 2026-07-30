@@ -137,7 +137,7 @@ Two patterns coexist, chosen by where the code physically lives:
   `Logger` is an explicit constructor arg, no module-global), and `cli.ts` /
   `serve.ts` (bosun). These create the root and pass children down.
 - **`getLogger()`**, for the **shared `@control-center/api` domain services**
-  (`jobs/queue.ts`, the playlist-poller, youtube-ingest, controls-service, the
+  (`jobs/queue.ts`, controls-service, the
   enforcers). This code is imported and run under **two different process roots**
   (the `api` server AND the `media-worker`), so it cannot demand a threaded
   logger from a single owner without one of the two roots being unable to reach
@@ -391,7 +391,7 @@ observability gaps. The single highest-value change is the **worker/media-worker
 runtime**, which today swallows every cycle error into invisible in-memory stats.
 
 > **Shared-code ownership, these tickets are NOT fully parallel on shared files.**
-> The job queue, playlist-poller, youtube-ingest, controls-service, and the
+> The job queue, controls-service, and the
 > enforcers physically live in **`@control-center/api`** and are run by **two** process
 > roots (the api server and the media-worker). To avoid parallel worktrees both
 > editing `jobs/queue.ts` / the poller / ingest and conflicting on every merge,
@@ -418,7 +418,6 @@ ingest, controls, enforcers, see the §5 ownership note); those modules log via
 - `server.ts:82` per-request `console.warn` → **`reqLog.info({ status, durationMs }, "request completed")`** for real methods (it was mis-levelled at warn for 200s; completed requests are `info`). **A SUCCESSFUL CORS `OPTIONS` preflight is not logged at all** (transport noise, always the same 2xx, would roughly double the line count); a preflight returning >=400 is a `warn` ("cors preflight rejected"), since a broken preflight breaks every request behind it. Build `reqLog = log.child({ reqId, method, path })` at the top of `fetch()`.
 - `server.ts:87` startup `console.warn` → `log.info({ port, env }, "api started")`.
 - `party-service.ts:131` `console.error("Transient HA error…")` → `log.error({ err, tick, speed }, "party engine tick failed")` (now carries the real error).
-- `playlist-poller-service.ts:77` `console.warn` → `log.warn({ err, sourceId }, "yt-dlp failed for source")`.
 - `db/seed.ts` console.* → `info`/`error` (seed-only, low priority but keep consistent).
 
 **Add (new structured logs):**
@@ -431,9 +430,7 @@ ingest, controls, enforcers, see the §5 ownership note); those modules log via
 - `light-enforcer-service.ts applyDecision`, `logChange` (info) per push (entityId, on/off, brightness, **colour as kelvin/rgb tuple only**) and per adopt (entityId, adopted reported state), keyed `light-push:<entityId>` / `light-adopt:<entityId>` so a stuck 1s push is one line + `repeats`, not a flood.
 - `device-sync-service.ts sweepExpiredWindows`, `warn` on command marked Timeout (deviceId, entityId, desired, elapsed).
 - `jobs/queue.ts`, `error` no-handler; `warn` retry (jobId, type, attempt, delaySec, err); `error` permanent failure (jobId, type, attempts, err); plus `claimAndRun` `info` claimed (jobId, type, attempts) / `info` completed (jobId, type, durationMs) / queue-empty NOT logged (a queue that is empty is the normal case and carries no signal) (these fire under BOTH the api and media-worker roots via `getLogger()`).
-- `youtube-ingest-service.ts`, `info` idempotent skip; `error` media_item not found; `info` yt-dlp audio/video start+complete (videoId, path, bytes, durationMs); `warn` metadata-fetch failure (null duration); `info` OpenRouter enrich start/complete (model, durationMs); `warn` enrich skipped when `OPENROUTER_API_KEY` absent (**never the key value**). Runs under the media-worker root in practice but the code is api-owned.
 - `integrations/spotify/client.ts refreshToken`, `info` success with `expires_in` (**never the token**). Hourly, so `info` is cheap.
-- `playlist-poller-service.ts`, `info` cycle start/summary (sourceId, found, new vs known); `info` empty playlist; `info` new items discovered (sourceId, newCount, videoIds).
 - `controls-service.ts`, `warn` getControlsState DB-read failure (devices appear unavailable); `warn` writeDesired per-entity DB write failure (entityId, desired).
 
 > All of the above `@control-center/api` domain modules acquire their logger via
@@ -481,12 +478,6 @@ ingest live in `@control-center/api` and their logging is owned by the **API tic
 - `index.ts hasSufficientDisk` statfs catch → `warn` "statfs failed, assuming sufficient" (dir, err), makes the allow-on-error assumption explicit.
 - runtime cycle catch / 3+ streak → `error` (same runtime changes as worker, above).
 - `index.ts` migrations start/done.
-
-> The queue `claimed`/`completed`/`queue-empty`, youtube-ingest yt-dlp /
-> OpenRouter-enrich, and playlist-poller cycle-summary lines are specified once,
-> under the **api** section above, and are delivered by the API ticket. They
-> appear in `media-worker` logs at runtime (bound `service: "media-worker"` via
-> `getLogger()`); they are listed here only for the §6 liveness picture.
 
 > **History.** A `### bosun` per-service section lived here when the deploy tool was
 > an in-repo service that logged through `@repo/logger`. bosun has been replaced by

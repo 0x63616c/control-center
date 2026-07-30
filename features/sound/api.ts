@@ -8,7 +8,6 @@ import { defineApi } from "@app-kit";
 import { publicProcedure, router } from "@app-kit/server";
 import { z } from "zod";
 import { setSpeakerDesiredVolume } from "./enforcer";
-import { addUrls } from "./ingest";
 import { getSonosFavorites } from "./sonos-favorites-service";
 import { getSoundSystem } from "./sonos-sound-system-service";
 import {
@@ -118,14 +117,6 @@ const spotifyRouter = router({
 });
 
 export const soundRouter = router({
-  // Paste-links-in-chat intake path (www-kp4k.3). Accepts an array of raw
-  // YouTube URLs or video IDs; dedupes, creates pending media_items, and
-  // enqueues youtube_ingest jobs. Idempotent: URLs already in the DB are
-  // silently ignored (ON CONFLICT DO NOTHING on yt_video_id).
-  addUrls: publicProcedure
-    .input(z.object({ urls: z.array(z.string().min(1)).min(1).max(100) }))
-    .mutation(({ input }) => addUrls(input.urls)),
-
   soundSystem: publicProcedure
     .input(z.object({}).optional())
     .output(SoundSystemSchema)

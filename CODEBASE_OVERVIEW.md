@@ -17,7 +17,7 @@ iPad / browser
 background loops and jobs
   -> worker
   -> @control-center/api/worker domain cycles (apps/api/src/worker-deps.ts barrel)
-  -> desired-state reconciliation, weather ingest, party mode, weight/YouTube ingest,
+  -> desired-state reconciliation, weather ingest, party mode, weight ingest,
      GitHub deploy polling
 
 deploy
@@ -174,7 +174,7 @@ Most feature-owned business logic lives inside each feature's own facet files
 `apps/api/src/services/` still holds a residual set of interval-cycle enforcers that
 are hand-wired into `apps/worker` rather than folded into a feature yet: climate,
 light, and device-sync enforcers, party mode, ASC version polling, weight ingest
-(including the Withings variant), and YouTube ingest. The sonos-volume enforcer has
+(including the Withings variant). The sonos-volume enforcer has
 already been folded into `features/sound/enforcer.ts`. The rest are pending a hoist
 to a shared substrate (tracked as open structural debt); see
 `docs/superpowers/reviews/2026-07-23-post-track-c-codebase-review.md` for the current
@@ -213,7 +213,6 @@ Major tables include:
 - `integration_sync_status` - integration/worker heartbeat state.
 - `weather_reading` and `weather_daily_reading` - append-only weather history (`features/weather/`).
 - `lamp_mode` - singleton persistent party-mode state.
-- `media_source` and `media_item` - media pipeline state.
 - `weight_measurement` - append-only Renpho scale weigh-ins (kg canonical, lb display-only), ingested from an HA BLE sensor by the `weight-ingest` worker cycle; sanity-band/manual exclusions live in `excluded_reason`, surfaced by the Weight tile and its Trend/Readings detail pages via the `weight` tRPC router (`features/weight/`).
 
 There is no longer a `board_tile_placement` table: tile position lives solely in each

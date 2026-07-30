@@ -10,22 +10,7 @@
 import * as core from "@www/core";
 import { db } from "../db/index";
 
-export type { JobHandler, JobSpec } from "@www/core";
-
-// Registry augmentation for the one queue producer still hand-wired in
-// apps/api: `youtube_ingest` (the app-level job HANDLER; the producer moved
-// into features/sound, Wave 6, which carries its own copy of this
-// augmentation for programs that don't compile this file). `notify`
-// registered here through S1 commit 1; relocated to features/notif/jobs.ts +
-// service.ts in commit 2 (this line deleted atomically with the service move).
-// Placement matters: worker-deps.ts re-exports through this file, so
-// `youtube_ingest` reaches the apps/worker program transitively via the
-// `@control-center/api/worker` barrel.
-declare module "@www/core" {
-  interface JobTypeRegistry {
-    youtube_ingest: { mediaItemId: string; videoId: string };
-  }
-}
+export type { JobSpec } from "@www/core";
 
 export function releaseInFlightJobsWithTimeout(timeoutMs?: number): Promise<number> {
   return core.releaseInFlightJobsWithTimeout(db, timeoutMs);

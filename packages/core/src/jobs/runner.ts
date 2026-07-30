@@ -50,8 +50,7 @@ export function jobWorker(db: JobQueueDb, spec: JobSpec): Worker {
  * Scoped to `status = 'running'` on purpose: rows deliberately parked in
  * `queued` on a future run_after must never be resurrected by a sweep.
  *
- * yt-dlp resumes from its .part file when re-run against the same output path,
- * so a requeued download continues rather than starting over.
+ * Handlers must be idempotent because a requeued job can run on another worker.
  *
  * The ceiling on attempts lives here rather than on the claim SELECT: a process
  * death never reaches claimOne's own catch block, so a job that keeps killing

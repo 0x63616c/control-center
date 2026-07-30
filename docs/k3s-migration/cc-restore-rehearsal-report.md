@@ -59,7 +59,6 @@ Confirm each AC-named area survived:
 - [ ] `integration_sync_status`: every integration heartbeat present.
 - [ ] `weather_reading` / `weather_daily_reading`: latest reads survive.
 - [ ] `lamp_mode`: singleton mode + speed survive (party re-arms correctly).
-- [ ] `media_source` / `media_item`: counts survive AND `media_item.orphans` returns 0 rows.
 - [ ] `job`: queue status visible; no surprise `locked`/`running` rows carried in.
 
 Diff output (expected: empty, or explained):

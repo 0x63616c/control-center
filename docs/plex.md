@@ -15,7 +15,7 @@ deploys via the normal push-to-`main` → CI `pulumi up` path on the
   `/config`. Plex's SQLite databases live here and **must not** go on NFS
   (SQLite over NFS corrupts).
 - **Media volume**: the Synology NFS export `/volume1/Homelab`, subPath `media`,
-  mounted **read-only** at `/data` — the same share the worker's media ingest uses.
+  mounted **read-only** at `/data`.
 - **GPU**: `nvidia.com/gpu: 1` on the `nvidia` RuntimeClass, so hardware
   transcode uses the node's RTX 3060. The Deployment carries
   `pulumi.com/skipAwait` so a cold apply doesn't race the device plugin
@@ -77,7 +77,7 @@ After claiming, in **Settings → Libraries → Add Library**:
 
 1. Pick the library type (Movies / TV Shows / Other Videos).
 2. **Browse for media folder** → `/data` (the NFS `media/` share, read-only).
-   Today it holds `dog-tv/` (DJ sets) and `youtube/`; `booth-photos/` and
+   Today it holds `dog-tv/` (DJ sets); `booth-photos/` and
    `wake-photos/` are stills, not video libraries.
 3. Save. Plex scans and populates as content lands in the share.
 
