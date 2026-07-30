@@ -55,10 +55,8 @@ func NewExecer() Execer { return Execer{} }
 // may be nil for a command that reads none.
 //
 // Cancelling ctx kills the process directly — exec.CommandContext holds the
-// real child PID in this same process, so unlike the remote transport this
-// replaces, no pidfile or out-of-band kill call is needed: the guarantee
-// k8s.Sandboxes.Exec's doc comment says #434 costs it is what this
-// implementation restores.
+// real child PID in this same process, so no out-of-band cancellation is
+// needed. This is the Session-bound execution model #434 introduced.
 func (Execer) Exec(ctx context.Context, _ work.SandboxID, argv []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	if len(argv) == 0 {
 		return 0, fmt.Errorf("running a local command: argv is empty: %w", work.ErrPermanent)

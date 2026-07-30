@@ -196,28 +196,20 @@ wave, deliberately**: `propose` is deleted entirely in step 5, as a stage and as
 rewiring its prompt now would be thrown away almost immediately. The fix is deletion, not a patch
 to a stage about to stop existing.
 
-## Trust and coupling: liveness
+## Resumption
 
-A stage's liveness and its transcript both ride the exec stream from the **worker** into the
-sandbox. The worker parses codex's `--json` events as they arrive and each event is also the
-activity's heartbeat (`clients/codex/runner.go:129`), and the worker is what
-writes those events to the transcript volume.
-
-The worker redeploys constantly (every push to `main` deploys). Each roll breaks the stream,
-which burns one of the stage's **two** attempts. The work itself does not stop: the sandbox is a
-separate pod, and resumption keys off deterministic paths (`work/paths.go:191`):
+A stage has one resumption observation: the deterministic completion record
+(`work/paths.go`):
 
 | on disk in the sandbox | meaning |
 |---|---|
 | `result.json` present | stage is **done**; read it, never re-run |
-| `codex.pid` live | attach and wait |
-| neither | run |
+| `result.json` absent | run |
 
-Observed live on ticket [#423][423]: the pod survived with 0 restarts, finished stages were not
-re-run, the interrupted stage's codex processes were still alive and the retry reattached. **The
-observer was replaced; the work never stopped.** "Heartbeat timeout" names the watcher going
-away, not the stage dying. This coupling is [#424][424]; the reattach machinery ([#411][411],
-[#413][413]) exists to paper over it.
+#434 removed attach-and-wait: a Session-bound activity runs the stage as its own local
+subprocess, so no separate running attempt exists for a retry to observe. The `result.json`
+case is deliberately narrower. It covers an activity retry in the same Session after an earlier
+attempt wrote its result but failed to report success, avoiding a duplicate paid Codex run.
 
 One consequence is already visible in the data: a stage resumed from a stored result reports
 `Usage` zero with `UsageMeasured: false` (`runner.go:170`), and **nothing reads
@@ -244,7 +236,7 @@ Layout inside (`work/paths.go`):
 /work/repo                     the checkout
 /work/.codex/auth.json         codex credential, refresh_token = ""
 /work/.gh/hosts.yml            gh CLI credential
-/work/<runid>/<stage>/         prompt.md, schema.json, result.json, codex.pid
+/work/<runid>/<stage>/         prompt.md, schema.json, result.json
 ```
 
 **Credentials the agent can read.** `hosts.yml` holds the GitHub App installation token in

@@ -86,13 +86,11 @@ argument survives any change to how the runtime creates directories.
 **Nothing clones the repository yet.** `work.RepoDir` names the destination; no
 track owns putting a repo there — #383 tracks it.
 
-**The pidfile shim and its `pgrep -f <result path>` stage-liveness probe are
-gone (#434, step 3 of the software-factory migration).** Both existed to give
-the main worker a way to find and cancel a remote codex process across
-`pods/exec`, which offers no real process handle of its own. Temporal Sessions
-replace the mechanism rather than fixing it: the embedded worker that now runs
-a stage holds a real `os/exec.Cmd` in its own process, so there is no
-reattach to probe for and nothing left needing a pidfile.
+**The remote process-management shim is gone (#434, step 3 of the
+software-factory migration).** It existed to let the main worker find and
+cancel a Codex process across `pods/exec`, which offers no real process handle
+of its own. Temporal Sessions replace the mechanism: the embedded worker that
+now runs a stage holds a real `os/exec.Cmd` in its own process.
 
 ## Pins
 

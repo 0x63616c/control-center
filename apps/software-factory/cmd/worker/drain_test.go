@@ -52,16 +52,15 @@ func TestTheDrainFitsInsideThePodsGracePeriod(t *testing.T) {
 // TestTheDrainDoesNotPretendToOutlastAStage records the honest half of the
 // trade, so nobody "fixes" the drain by raising it to a stage's length.
 //
-// A stage may run for work.MaxStageDuration. No deploy waits an hour, so a
-// stage in flight at SIGTERM is cancelled, and ADR-0011's idempotent-stage
-// design is what makes that affordable — the next attempt reattaches to the
-// live process or reads the result file. Raising this window towards
-// MaxStageDuration would buy nothing and would blow the grace period above.
+// Stages run on sandbox Session workers, not this main worker. The main drain
+// must therefore not borrow a stage's 60-minute duration as its target:
+// raising this window towards MaxStageDuration would buy nothing and would blow
+// the grace period above.
 func TestTheDrainDoesNotPretendToOutlastAStage(t *testing.T) {
 	t.Parallel()
 
 	if workerStopTimeout >= work.MaxStageDuration {
-		t.Errorf("workerStopTimeout = %s, which is not less than a stage's %s; a drain that waits for a stage cannot fit in any sane pod grace period, and reattachment is what covers a cancelled stage",
+		t.Errorf("workerStopTimeout = %s, which is not less than a stage's %s; the main worker does not host stages, so a stage-length drain buys nothing and cannot fit in the pod grace period",
 			workerStopTimeout, work.MaxStageDuration)
 	}
 }

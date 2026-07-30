@@ -38,11 +38,9 @@
 # image, not about what the image contains — an image without one could not run
 # a single ticket.
 #
-# The pidfile shim that used to make a remote exec killable, and pgrep — the
-# liveness probe that used to stand in for a real process handle — are both
-# gone (#434, step 3 of the software-factory migration: Temporal Sessions
-# replace the pods/exec reattach path they existed for; the embedded worker
-# holds a real os/exec.Cmd instead).
+# The remote process-management shim and its liveness probe are gone (#434,
+# step 3 of the software-factory migration): Temporal Sessions let the
+# embedded worker hold a real os/exec.Cmd instead.
 #
 # amd64 only. The home-server Talos node is the only deploy target and it is
 # x86; CI builds --platform linux/amd64 on a native runner.
@@ -113,10 +111,8 @@ ARG GOLANGCI_LINT_SHA256=8df580d2670fed8fa984aac0507099af8df275e665215f5c7a2ae39
 # build, not just `command -v gcc`, which would only prove the compiler is on
 # PATH and not that it can actually link a cgo package.
 #
-# procps (pgrep) is no longer installed here: it existed solely for B5's
-# pgrep-based stage-liveness probe, deleted along with the rest of the
-# reattach path in #434 (step 3 — Sessions give the embedded worker a real
-# process handle, so there is nothing left to pgrep for).
+# procps is not installed: its only use was the removed remote-process
+# liveness probe. Sessions give the embedded worker a real process handle.
 #
 # The assertions below are the point of failing here rather than at 2am. One
 # call per binary, because the multi-name form asserts less than it reads as:
@@ -207,8 +203,7 @@ RUN groupadd --gid 1000 sandbox \
 
 # /work is an emptyDir at runtime, so this directory is MASKED the moment the
 # pod starts and nothing baked under it survives. It exists for the `docker run`
-# case and to document the mount point — the shim creates its own pidfile
-# directory at runtime precisely because this one does not survive.
+# case and to document the mount point.
 RUN install -d -o 1000 -g 1000 -m 0755 /work
 
 ENV HOME=/home/sandbox

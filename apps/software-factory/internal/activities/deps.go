@@ -27,14 +27,14 @@ import (
 // enclosing activity heartbeats on them, and extract the token usage, the
 // provider's thread ID and the schema-conforming final message.
 //
-// It must be idempotent. Activities retry, and a retry can begin while the
-// previous attempt's process is still alive in the sandbox, so an
-// implementation decides between running, attaching and reading a stored result
-// from what the previous attempt left behind — never by assuming it is first.
+// It must be idempotent. Activities retry, so an implementation reads a
+// completed result when it is present and runs only when it is absent. The
+// Session host owns the stage subprocess, so cancellation does not leave a
+// separate process for a retry to observe.
 //
-// The result is read from a file rather than from the process's stdout, because
-// only a file survives the worker dying between the model finishing and the
-// worker noticing.
+// The result is read from a file rather than from the process's stdout because
+// it is the durable completion record when a model invocation finishes before
+// its activity reports success.
 type StageRunner interface {
 	RunStage(ctx context.Context, run work.StageRun, events work.StageEventSink) (work.StageResult, error)
 }

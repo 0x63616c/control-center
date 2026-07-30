@@ -31,11 +31,9 @@ import (
 // Implementations must honour context cancellation by killing the remote
 // process, not merely by returning: an activity timeout that leaves a codex
 // process running in the sandbox burns quota nobody is waiting for.
-// Probe (a pgrep-based liveness check for AttemptRunning) and AttemptRunning
-// itself are gone as of #434: Sessions make "a previous attempt is still
-// running, in a different process" unrepresentable (see resume.go's
-// Resumption doc comment), so there is nothing left to probe for and Exec is
-// the whole interface.
+// The remote process-liveness probe is gone as of #434: Sessions make "a
+// previous attempt is still running, in a different process" unrepresentable
+// (see resume.go's Resumption doc comment), so Exec is the whole interface.
 type PodExecer interface {
 	Exec(ctx context.Context, sandbox work.SandboxID, argv []string, stdin io.Reader, stdout, stderr io.Writer) (int, error)
 }
