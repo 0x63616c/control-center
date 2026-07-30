@@ -243,10 +243,6 @@ type StagePaths struct {
 	// stage's completion record: present means done, and the stage must be read
 	// from it rather than re-run.
 	Result string
-	// PID holds the process ID of a running attempt. Present with a live
-	// process means attach and wait; present with a dead one means the attempt
-	// died and must be redone.
-	PID string
 }
 
 // Paths returns where this attempt's files live inside the sandbox.
@@ -257,7 +253,6 @@ func (k StageKey) Paths() StagePaths {
 		Prompt: path.Join(dir, "prompt.md"),
 		Schema: path.Join(dir, "schema.json"),
 		Result: path.Join(dir, "result.json"),
-		PID:    path.Join(dir, "codex.pid"),
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -46,11 +47,19 @@ func TestStagePathsAreDerivedFromTheKeyAlone(t *testing.T) {
 		{"Prompt", paths.Prompt, "/work/0198c2f1/plan/1/prompt.md"},
 		{"Schema", paths.Schema, "/work/0198c2f1/plan/1/schema.json"},
 		{"Result", paths.Result, "/work/0198c2f1/plan/1/result.json"},
-		{"PID", paths.PID, "/work/0198c2f1/plan/1/codex.pid"},
 	} {
 		if tc.got != tc.want {
 			t.Errorf("Paths().%s = %q, want %q", tc.name, tc.got, tc.want)
 		}
+	}
+}
+
+func TestStagePathsExposeOnlyTheFilesTheCurrentRunnerUses(t *testing.T) {
+	t.Parallel()
+
+	pathsType := reflect.TypeFor[work.StagePaths]()
+	if _, found := pathsType.FieldByName("PID"); found {
+		t.Error("StagePaths exposes PID even though resumption only reads result.json")
 	}
 }
 

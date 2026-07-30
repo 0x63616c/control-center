@@ -137,11 +137,13 @@ as conversation. Success and failure come from the process exit code and the `tu
 / top-level `error` events in `--json`; both are load-bearing in the CLI's own source and
 neither requires parsing human-readable text.
 
-**Stages are idempotent, because activities retry.** If the worker dies mid-stage, Temporal
-reschedules that activity while the original `codex` process may still be running in the
-pod. Each stage therefore keys off deterministic paths — a completed result file means the
-stage is done and its output is returned; a live PID file means attach and wait rather than
-restart; neither means run. Worker restarts become cheap instead of destructive.
+**Stages are idempotent, because activities retry.** A completed `result.json` is the whole
+resumption contract: present means the stage is done and its output is returned; absent means
+run it. #434 removed attach-and-wait because a stage is a local subprocess of the activity
+and Session deciding it, so no separate running attempt can survive for a retry to observe.
+`ResumeDone` covers the narrower activity-retry window where that same Session finds its
+earlier attempt wrote a result but failed to report success, avoiding a duplicate paid Codex
+run.
 
 **`implement` pushes its branch before finishing.** The branch is going to origin anyway,
 and it makes GitHub the durable state between stages. A pod lost between `implement` and

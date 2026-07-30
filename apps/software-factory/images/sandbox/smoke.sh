@@ -76,10 +76,9 @@ check "tar is GNU tar" 0 \
 check "runs as uid/gid 1000" 0 \
   /usr/bin/env sh -c '[ "$(id -u)" = 1000 ] && [ "$(id -g)" = 1000 ]'
 
-# The pidfile-shim and --kill checks that used to live here are gone along
-# with the shim itself (#434, step 3: Temporal Sessions replace the pods/exec
-# reattach/kill-by-pidfile mechanism this image used to carry — the embedded
-# worker holds a real os/exec.Cmd it can kill directly instead).
+# The remote-process checks that used to live here were deleted with the
+# removed pods/exec mechanism (#434, step 3). The embedded worker now holds a
+# real os/exec.Cmd it can cancel directly.
 
 # WORKDIR is the cwd every `codex exec` inherits — pods/exec runs with the
 # container's cwd and podspec.go sets no WorkingDir. It must be writable BY THE

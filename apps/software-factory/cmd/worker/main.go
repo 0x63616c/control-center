@@ -55,8 +55,8 @@ const shutdownGrace = 5 * time.Second
 // work.MaxStageDuration (60m) and no deploy waits an hour, so a stage in flight
 // when the worker stops IS cancelled — that is the honest behaviour, and
 // ADR-0011's idempotent-stage design is what makes it affordable: the next
-// attempt finds the result file or the live process and reattaches rather than
-// paying for the work twice. What this window buys is the short activities
+// attempt can read a result already written before its activity retry rather
+// than paying for the work twice. What this window buys is the short activities
 // either side of a stage — a GitHub comment, a transcript write, a credential
 // rotation mid-flight — finishing instead of being torn in half.
 //
@@ -196,8 +196,9 @@ func run() error {
 	// and in-flight activities get workerStopTimeout to finish before their
 	// contexts are cancelled. A stage will not finish in that window and is not
 	// meant to — see workerStopTimeout. Sandbox pods are deliberately left
-	// behind — they are independent objects, and a restarted worker reattaches
-	// to the attempt it left running rather than paying for it twice.
+	// behind — a stage is a subprocess of its session-bound activity, so the
+	// retry can only avoid duplicate work when its earlier attempt wrote a
+	// result before it stopped.
 	if err := w.Run(worker.InterruptCh()); err != nil {
 		return fmt.Errorf("running the worker on task queue %s: %w", work.TaskQueue, err)
 	}

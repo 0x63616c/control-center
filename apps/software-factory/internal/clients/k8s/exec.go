@@ -135,11 +135,9 @@ func (r *remoteStreamer) stream(ctx context.Context, target execTarget, o stream
 // copy attacker-chosen text into the logs as well.
 //
 // Cancelling the context stops the stream — remotecommand's own
-// StreamWithContext honours it — but, unlike before #434, no longer kills the
-// remote process. That guarantee depended on cmd/sandbox-exec, the pidfile
-// shim this method used to wrap every argv in so a caller could name and
-// signal a specific remote PID; the shim is deleted (ADR-0011, #434 step 3:
-// the reattach/kill-by-pidfile mechanism Sessions replace).
+// StreamWithContext honours it — but cannot guarantee the remote process has
+// exited. Stage execution now belongs to the Session-bound activity, which
+// holds the local process handle needed to cancel its child.
 //
 // This transport survives step 3 deliberately, not as an oversight awaiting
 // cleanup — and survives past #431's credential Secret mount too (D3 shipped

@@ -504,8 +504,8 @@ func equalArgv(got, want []string) bool {
 	return true
 }
 
-// realArgv used to strip the sandbox-exec shim prefix ("sandbox-exec
-// --pidfile P --") every exec call carried. #434 deleted that shim, so Exec
+// realArgv used to strip a sandbox-exec shim prefix from every exec call.
+// #434 deleted that shim, so Exec
 // now passes argv through untouched and this is the identity — kept, rather
 // than inlined at every call site below, so this file's assertions still read
 // as "the argv this line actually asked to run" without a rename pass.

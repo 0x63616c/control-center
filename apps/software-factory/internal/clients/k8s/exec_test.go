@@ -323,7 +323,7 @@ func TestExecPassesArgvThroughUntouched(t *testing.T) {
 
 	// Every one of these is inert as argv and dangerous in a shell. They must
 	// arrive byte-identical — no shim wraps them any more (#434 deleted
-	// cmd/sandbox-exec, the pidfile shim this used to wrap every argv in).
+	// cmd/sandbox-exec, which used to wrap every argv).
 	argv := []string{"codex", "exec", "a b", "it's", "x;rm -rf /", "$(id)", "`id`", "--flag=--flag"}
 
 	str := &scriptedStreamer{answers: []answer{{}}}
@@ -364,9 +364,9 @@ func TestExecWritesStdoutAndStderrToTheirSeparateWriters(t *testing.T) {
 func TestExecPropagatesCancellationToTheStream(t *testing.T) {
 	t.Parallel()
 
-	// #434 deleted cmd/sandbox-exec, the pidfile shim Exec used to send a
-	// second, out-of-band kill through on cancellation (see Exec's own doc
-	// comment on what this now costs). What remains, and what this still
+	// #434 deleted cmd/sandbox-exec, which used to send a second, out-of-band
+	// cancellation through on context cancellation (see Exec's own doc comment
+	// on what this now costs). What remains, and what this still
 	// asserts: the stream itself stops and the caller sees context.Canceled —
 	// remotecommand's StreamWithContext honours the context on its own.
 	ctx, cancel := context.WithCancel(context.Background())

@@ -54,14 +54,14 @@ func TestTheDrainFitsInsideThePodsGracePeriod(t *testing.T) {
 //
 // A stage may run for work.MaxStageDuration. No deploy waits an hour, so a
 // stage in flight at SIGTERM is cancelled, and ADR-0011's idempotent-stage
-// design is what makes that affordable — the next attempt reattaches to the
-// live process or reads the result file. Raising this window towards
+// design is what makes that affordable — the next attempt reads a result file
+// only when the cancelled attempt had already written one. Raising this window towards
 // MaxStageDuration would buy nothing and would blow the grace period above.
 func TestTheDrainDoesNotPretendToOutlastAStage(t *testing.T) {
 	t.Parallel()
 
 	if workerStopTimeout >= work.MaxStageDuration {
-		t.Errorf("workerStopTimeout = %s, which is not less than a stage's %s; a drain that waits for a stage cannot fit in any sane pod grace period, and reattachment is what covers a cancelled stage",
+		t.Errorf("workerStopTimeout = %s, which is not less than a stage's %s; a drain that waits for a stage cannot fit in any sane pod grace period, and only a written result can avoid a duplicate stage run",
 			workerStopTimeout, work.MaxStageDuration)
 	}
 }

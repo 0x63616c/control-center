@@ -39,12 +39,8 @@ var (
 //     predicate does with a 403 from a partial RBAC grant;
 //   - that cancelling a context stops the stream and Exec returns
 //     context.Canceled — NOT, as of #434, that the remote process itself
-//     dies: that guarantee depended on the pidfile shim's --kill, which is
-//     deleted along with the shim (step 3 of the software-factory migration;
-//     see exec.go's Exec doc comment for the accepted regression this leaves
-//     until a later slice moves stage execution into the pod's own process,
-//     where the embedded worker holds a real os/exec.Cmd it can kill
-//     directly);
+//     exits. Stage execution instead belongs to the pod's embedded worker,
+//     which holds a real os/exec.Cmd and can cancel it directly;
 //
 // The 128+N signal-kill mapping is NOT asserted here: producing a specific
 // signal death needs a helper the image does not ship, and adding one only for
@@ -173,10 +169,9 @@ func TestSandboxRoundTripAgainstACluster(t *testing.T) {
 	t.Run("stops the stream on cancellation", func(t *testing.T) {
 		// Since #434 this only asserts what Exec's own doc comment still
 		// promises: the stream tears down and the caller sees
-		// context.Canceled. It does NOT assert the remote process dies —
-		// that depended on the deleted pidfile shim's --kill, and is an
-		// accepted regression until a later slice moves stage execution
-		// into the pod's own process (see exec.go).
+		// context.Canceled. It does NOT assert the remote process exits;
+		// stage execution belongs to the pod's embedded worker instead
+		// (see exec.go).
 		runCtx, stop := context.WithCancel(ctx)
 		done := make(chan error, 1)
 		go func() {
