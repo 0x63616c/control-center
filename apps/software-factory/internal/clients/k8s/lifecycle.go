@@ -68,7 +68,7 @@ func (s *Sandboxes) Create(ctx context.Context, spec work.SandboxSpec, codexCred
 	if err == nil {
 		s.logger.InfoContext(ctx, "sandbox pod created",
 			"sandbox", created.Name, "ticket", spec.TicketNumber, "run_id", spec.RunID,
-			"image", spec.Image, "cpu", spec.CPULimit, "memory", spec.MemoryLimit,
+			"image", spec.Image, "cpu_request", spec.CPURequest, "memory_limit", spec.MemoryLimit,
 			"deadline_seconds", spec.DeadlineSeconds)
 		return work.SandboxID(created.Name), nil
 	}
@@ -184,7 +184,7 @@ func (s *Sandboxes) reconcileExisting(ctx context.Context, spec work.SandboxSpec
 		}
 		s.logger.InfoContext(ctx, "sandbox pod created",
 			"sandbox", created.Name, "ticket", spec.TicketNumber, "run_id", spec.RunID,
-			"image", spec.Image, "cpu", spec.CPULimit, "memory", spec.MemoryLimit,
+			"image", spec.Image, "cpu_request", spec.CPURequest, "memory_limit", spec.MemoryLimit,
 			"deadline_seconds", spec.DeadlineSeconds)
 		return work.SandboxID(created.Name), nil
 

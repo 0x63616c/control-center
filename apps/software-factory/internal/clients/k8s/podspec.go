@@ -154,20 +154,30 @@ func buildPod(spec work.SandboxSpec, o options) (*corev1.Pod, error) {
 		}
 	}
 
-	cpu, err := resource.ParseQuantity(spec.CPULimit)
+	cpu, err := resource.ParseQuantity(spec.CPURequest)
 	if err != nil {
-		return nil, fmt.Errorf("building the sandbox pod for ticket %d: cpu limit %q: %w: %w", spec.TicketNumber, spec.CPULimit, err, work.ErrPermanent)
+		return nil, fmt.Errorf("building the sandbox pod for ticket %d: cpu request %q: %w: %w", spec.TicketNumber, spec.CPURequest, err, work.ErrPermanent)
 	}
 	memory, err := resource.ParseQuantity(spec.MemoryLimit)
 	if err != nil {
 		return nil, fmt.Errorf("building the sandbox pod for ticket %d: memory limit %q: %w: %w", spec.TicketNumber, spec.MemoryLimit, err, work.ErrPermanent)
 	}
 
-	// Requests equal limits, so the pod is Guaranteed QoS and a noisy
-	// neighbour cannot evict a ticket mid-run.
+	// CPU is requested but not limited: CPU is compressible and #87 banned
+	// limiting it repo-wide. Memory keeps both a request and a limit, since
+	// memory is incompressible and an unlimited sandbox could exhaust the node.
+	//
+	// This deliberately makes the sandbox pod Burstable rather than Guaranteed
+	// QoS: Guaranteed requires limits to equal requests for every resource, and
+	// dropping the CPU limit alone breaks that. Burstable pods are evicted
+	// before Guaranteed ones under node memory pressure, which matters here
+	// because up to two 8Gi sandboxes (max_in_flight: 2) can be resident on
+	// this single node at once. That is the accepted consequence of #87's
+	// repo-wide ban, not an oversight — every other Burstable workload in this
+	// repo carries the same trade.
 	resources := corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{corev1.ResourceCPU: cpu, corev1.ResourceMemory: memory},
-		Limits:   corev1.ResourceList{corev1.ResourceCPU: cpu, corev1.ResourceMemory: memory},
+		Limits:   corev1.ResourceList{corev1.ResourceMemory: memory},
 	}
 
 	workSize := resource.NewQuantity(workSizeLimitBytes, resource.BinarySI)

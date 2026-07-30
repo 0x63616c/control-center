@@ -376,8 +376,8 @@ type SandboxSpec struct {
 
 	Image string
 
-	// CPULimit and MemoryLimit are Kubernetes quantity strings ("2", "4Gi").
-	CPULimit    string
+	// CPURequest and MemoryLimit are Kubernetes quantity strings ("2", "8Gi").
+	CPURequest  string
 	MemoryLimit string
 
 	// DeadlineSeconds is the hard ceiling Kubernetes enforces on the pod. It

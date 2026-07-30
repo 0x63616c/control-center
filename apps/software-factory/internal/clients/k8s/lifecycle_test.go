@@ -166,7 +166,7 @@ func TestCreateRefusesToAdoptAPodThatDriftsFromTheSpec(t *testing.T) {
 		{
 			name: "whose resource limits differ", field: "resources",
 			drift: func(p *corev1.Pod) {
-				p.Spec.Containers[0].Resources.Limits[corev1.ResourceMemory] = resourceQuantity(t, "8Gi")
+				p.Spec.Containers[0].Resources.Limits[corev1.ResourceMemory] = resourceQuantity(t, "16Gi")
 			},
 		},
 		{
@@ -304,7 +304,7 @@ func TestCreateRejectsASpecItCannotBuildAPodFor(t *testing.T) {
 
 	s, cs, _ := newLifecycleSandboxes(t)
 	spec := validSpec()
-	spec.CPULimit = "2x"
+	spec.CPURequest = "2x"
 
 	if _, err := s.Create(context.Background(), spec, validCredential()); !errors.Is(err, work.ErrPermanent) {
 		t.Fatalf("Create error = %v, want it permanent", err)
@@ -321,7 +321,7 @@ func TestCreateLogsWhatItCreated(t *testing.T) {
 	if _, err := s.Create(context.Background(), validSpec(), validCredential()); err != nil {
 		t.Fatalf("Create returned an unexpected error: %v", err)
 	}
-	for _, field := range []string{"ticket", "run_id", "image", "cpu", "memory", "deadline_seconds"} {
+	for _, field := range []string{"ticket", "run_id", "image", "cpu_request", "memory_limit", "deadline_seconds"} {
 		if !strings.Contains(logs.String(), `"`+field+`"`) {
 			t.Errorf("logs %q do not carry %q", logs.String(), field)
 		}

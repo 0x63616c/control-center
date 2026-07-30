@@ -314,8 +314,8 @@ func (f *fakeTokenSource) SandboxCredentialFile(context.Context) (work.Credentia
 func template() work.SandboxTemplate {
 	return work.SandboxTemplate{
 		Image:           "ghcr.io/example/sandbox:v1",
-		CPULimit:        "2",
-		MemoryLimit:     "4Gi",
+		CPURequest:      "2",
+		MemoryLimit:     "8Gi",
 		DeadlineSeconds: int64((12 * time.Hour).Seconds()),
 		Env:             map[string]string{"CODEX_HOME": "/work/.codex"},
 	}
@@ -623,7 +623,7 @@ func TestCreateSandboxNamesThePodForTheRunAndTheTicket(t *testing.T) {
 	if spec.TicketNumber != 328 || spec.RunID != "run-1" {
 		t.Fatalf("spec = %+v, want ticket 328 run run-1", spec)
 	}
-	if spec.Image != template().Image || spec.CPULimit != template().CPULimit {
+	if spec.Image != template().Image || spec.CPURequest != template().CPURequest {
 		t.Fatalf("spec did not come from the template: %+v", spec)
 	}
 }
