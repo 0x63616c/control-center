@@ -34,7 +34,7 @@ work-ticket-<n> (child workflow; one disposable sandbox pod)
         └─ finish: delete sandbox, update labels/status; a clean review makes
                    the draft PR ready for human review and enables auto-merge
         ▼
-human approval and merge → deploy
+human approval → GitHub auto-merges when requirements are satisfied → deploy
 ```
 
 The fixed first pass is `plan → implement → review`, defined by
@@ -163,7 +163,8 @@ The sandbox image includes Node, Go, `gcc`/`libc6-dev`, and a pinned
 1. File the issue and add the `auto` label. The service never adds it.
 2. Review and approve a successful PR. The workflow opens/updates the draft,
    but approval is a GitHub policy decision.
-3. Merge the approved PR. Merging deploys.
+3. GitHub auto-merges after approval and any other required checks complete.
+   A human can still merge manually if arming auto-merge failed; merging deploys.
 4. Resolve a blocked, exhausted, or failed outcome and re-add `auto` if another
    machine pass is wanted.
 5. Re-seed Codex credentials if their refresh credential becomes unusable.
