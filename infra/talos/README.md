@@ -238,6 +238,61 @@ YAML) is gitignored for the same reason.
   config.** The line above ("no kubeconfig/cluster bootstrap has happened")
   described the state at authoring time only.
 
+## Upgrading the node (`talosctl upgrade`)
+
+**Always pass `--drain=false`.** The default `--drain=true` cordons the node and
+evicts its pods, and on this cluster that **never finishes**: three
+single-replica CloudNativePG clusters carry PDBs with `minAvailable: 1` and so
+`ALLOWED DISRUPTIONS: 0` — `control-center-postgres-primary`,
+`home-assistant-postgres-primary`, `temporal-postgres-primary`. A single-node
+cluster has nowhere to move them, so the drain loops on
+`evicting pod …-postgres-1` until the client's 5-minute global timeout, and the
+reboot is never triggered.
+
+Draining a single node cannot relocate anything anyway. With `--drain=false`
+pods take SIGTERM from the reboot, which is what a reboot does regardless.
+
+Observed 2026-07-29: the default-drain attempt evicted everything *without* a
+PDB before deadlocking, so **Home Assistant went down and restarted (~1 min
+outage) for nothing** — the upgrade had not even begun.
+
+```bash
+export TALOSCONFIG=$PWD/infra/talos/clusterconfig/talosconfig
+talosctl upgrade --image=factory.talos.dev/metal-installer/<schematic-id>:v<version> --drain=false
+```
+
+`talosctl upgrade` blocks (`--wait` defaults true, `--timeout` 30m). Run it so
+it cannot be killed at a tool timeout mid-flight, and verify against node state
+(`talosctl get machinestatus`, `talosctl logs machined`, `dmesg`) rather than
+trusting the client's report.
+
+**Recovering from a deadlocked attempt:** `pkill -f 'talosctl upgrade'`, then
+**`kubectl uncordon home-server`** — the failed attempt leaves the node tainted
+`node.kubernetes.io/unschedulable` — confirm pods recover, then re-run with
+`--drain=false`.
+
+**Expect seconds of API downtime, not minutes.** `talosctl upgrade` reboots via
+**kexec** by default, skipping BIOS/POST entirely (`--reboot-mode` takes
+`default|force|powercycle`; only `powercycle` bypasses kexec). Measured
+2026-07-29: LAN polls 10s apart either side of the reboot both succeeded. The
+3-8 minute figure quoted elsewhere in this repo describes a **full POST boot**
+and is not a comparable sample.
+
+After it returns, check the three postgres clusters explicitly — `--drain=false`
+means their primaries were killed ungracefully and recovered by WAL replay, so
+`Running` alone is not the check:
+
+```bash
+kubectl get cluster -A -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name,READY:.status.readyInstances,PHASE:.status.phase
+```
+
+**Never render the installer image from the local `main` checkout.** It is
+usually well behind `origin/main` and renders a *valid but wrong* schematic
+silently — caught 2026-07-29, when local `main` produced the old
+five-extension schematic instead of the kata-bearing one, with nothing
+erroring. Render from a worktree at `origin/main` and treat a schematic
+mismatch as an abort gate.
+
 ## kubectl + talosctl context setup
 
 Endpoints and contexts are **declared in `talconfig.yaml`** (`endpoint:`,
