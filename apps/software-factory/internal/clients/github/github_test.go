@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -22,6 +23,25 @@ var (
 	exchangePath = fmt.Sprintf("/app/installations/%d/access_tokens", testInstallationID)
 )
 
+type issueOption func(map[string]any)
+
+// withDependencySummary adds GitHub's optional dependency summary to an issue.
+func withDependencySummary(blockedBy, totalBlockedBy int) issueOption {
+	return func(issue map[string]any) {
+		issue["issue_dependencies_summary"] = map[string]any{
+			"blocked_by":       blockedBy,
+			"total_blocked_by": totalBlockedBy,
+		}
+	}
+}
+
+// withNullDependencySummary adds an explicit null dependency summary.
+func withNullDependencySummary() issueOption {
+	return func(issue map[string]any) {
+		issue["issue_dependencies_summary"] = nil
+	}
+}
+
 // issue builds the JSON GitHub returns for one issue.
 func issue(number int, title, body string, labels ...string) map[string]any {
 	named := make([]any, 0, len(labels))
@@ -29,6 +49,16 @@ func issue(number int, title, body string, labels ...string) map[string]any {
 		named = append(named, map[string]any{"name": l})
 	}
 	return map[string]any{"number": number, "title": title, "body": body, "labels": named}
+}
+
+// issueWithOptions builds an issue with optional fields that current tests do
+// not need to spell out.
+func issueWithOptions(number int, title, body string, labels []string, opts ...issueOption) map[string]any {
+	issue := issue(number, title, body, labels...)
+	for _, opt := range opts {
+		opt(issue)
+	}
+	return issue
 }
 
 // comment builds the JSON GitHub returns for one issue comment.
@@ -75,6 +105,131 @@ func TestListsTheOpenIssuesLabelledAuto(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("ticket %d = %+v, want %+v", i, got[i], want[i])
 		}
+	}
+}
+
+func TestSkipsIssuesWithOpenBlockers(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newStub(t)
+	s.handle("GET "+issuesPath, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, []any{
+			issueWithOptions(328, "blocked ticket", "", []string{autoLabel}, withDependencySummary(2, 2)),
+			issue(331, "ready ticket", "", autoLabel),
+		})
+	})
+	c, _ := s.client(t)
+
+	got, err := c.ListAutoTickets(context.Background())
+	if err != nil {
+		t.Fatalf("ListAutoTickets returned an unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0].Number != 331 {
+		t.Errorf("got %+v, want only ready issue #331", got)
+	}
+}
+
+func TestReturnsIssuesWithOnlyClosedBlockers(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newStub(t)
+	s.handle("GET "+issuesPath, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, []any{
+			issueWithOptions(328, "ready ticket", "", []string{autoLabel}, withDependencySummary(0, 3)),
+		})
+	})
+	c, _ := s.client(t)
+
+	got, err := c.ListAutoTickets(context.Background())
+	if err != nil {
+		t.Fatalf("ListAutoTickets returned an unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0].Number != 328 {
+		t.Errorf("got %+v, want ready issue #328 despite closed blockers", got)
+	}
+}
+
+func TestTreatsAbsentDependencySummaryAsUnblocked(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newStub(t)
+	s.handle("GET "+issuesPath, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, []any{issue(328, "ready ticket", "", autoLabel)})
+	})
+	c, _ := s.client(t)
+
+	got, err := c.ListAutoTickets(context.Background())
+	if err != nil {
+		t.Fatalf("ListAutoTickets returned an unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0].Number != 328 {
+		t.Errorf("got %+v, want ready issue #328", got)
+	}
+}
+
+func TestTreatsNullDependencySummaryAsUnblocked(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newStub(t)
+	s.handle("GET "+issuesPath, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, []any{
+			issueWithOptions(328, "ready ticket", "", []string{autoLabel}, withNullDependencySummary()),
+		})
+	})
+	c, _ := s.client(t)
+
+	got, err := c.ListAutoTickets(context.Background())
+	if err != nil {
+		t.Fatalf("ListAutoTickets returned an unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0].Number != 328 {
+		t.Errorf("got %+v, want ready issue #328", got)
+	}
+}
+
+func TestClassifiesRequestConstructionFailures(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newStub(t)
+	c, _ := s.client(t)
+	c.repo = "%"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	got, err := c.ListAutoTickets(ctx)
+	if got != nil {
+		t.Errorf("got %d tickets alongside an error, want none", len(got))
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("error = %v, want context cancellation", err)
+	}
+}
+
+func TestContinuesPastBlockedIssuesOnEarlierPages(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newStub(t)
+	s.handle("GET "+issuesPath, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("page") == "2" {
+			writeJSON(w, http.StatusOK, []any{issue(331, "ready ticket", "", autoLabel)})
+			return
+		}
+		w.Header().Set("Link", fmt.Sprintf(`<%s%s?page=2>; rel="next"`, s.URL, issuesPath))
+		writeJSON(w, http.StatusOK, []any{
+			issueWithOptions(328, "blocked ticket", "", []string{autoLabel}, withDependencySummary(1, 1)),
+		})
+	})
+	c, _ := s.client(t)
+
+	got, err := c.ListAutoTickets(context.Background())
+	if err != nil {
+		t.Fatalf("ListAutoTickets returned an unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0].Number != 331 {
+		t.Errorf("got %+v, want only ready issue #331 from page 2", got)
+	}
+	if gotRequests := s.count("GET " + issuesPath); gotRequests != 2 {
+		t.Errorf("got %d issue-list requests, want both pages", gotRequests)
 	}
 }
 
