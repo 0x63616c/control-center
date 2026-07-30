@@ -91,11 +91,12 @@ type ticketHarness struct {
 	env *testsuite.TestWorkflowEnvironment
 
 	// knobs.
-	policy     work.RunPolicy
-	config     work.Config
-	labelErr   error
-	cancelAt   time.Duration
-	stageDelay time.Duration
+	policy          work.RunPolicy
+	config          work.Config
+	labelErr        error
+	failureLabelErr error
+	cancelAt        time.Duration
+	stageDelay      time.Duration
 
 	cloneErr     error
 	draftErr     error
@@ -121,6 +122,7 @@ type ticketHarness struct {
 
 	implementErr error
 	reviewErr    error
+	ciErr        error
 
 	// what the run did.
 	implementTurns   []work.StageKey
@@ -129,6 +131,7 @@ type ticketHarness struct {
 	cloned           []work.SandboxID
 	deleted          []work.SandboxID
 	cleared          int
+	failedTargets    []activities.LabelFailureInput
 	reports          []work.StatusReport
 	done             work.TicketDone
 	openOrUpdate     int
@@ -225,6 +228,12 @@ func (h *ticketHarness) run() {
 			return h.labelErr
 		})
 
+	env.OnActivity(acts.LabelFailure, mock.Anything, mock.Anything).
+		Return(func(_ context.Context, in activities.LabelFailureInput) error {
+			h.failedTargets = append(h.failedTargets, in)
+			return h.failureLabelErr
+		})
+
 	env.OnActivity(acts.ConvertPullRequestToDraft, mock.Anything, mock.Anything).
 		Return(func(_ context.Context, nodeID string) error {
 			h.drafted = append(h.drafted, nodeID)
@@ -293,6 +302,9 @@ func (h *ticketHarness) run() {
 	env.OnActivity(acts.ObserveCI, mock.Anything, mock.Anything).
 		Return(func(_ context.Context, in activities.ObserveCIInput) (activities.ObserveCIOutput, error) {
 			h.observedCI++
+			if h.ciErr != nil {
+				return activities.ObserveCIOutput{}, h.ciErr
+			}
 			turn := len(h.implementTurns)
 			if out, ok := h.ci[turn]; ok {
 				return out, nil
@@ -444,6 +456,30 @@ func TestWorkTicketSurfacesAnImplementFailureRatherThanAnEncodeError(t *testing.
 	}
 	if len(h.deleted) != 1 || h.deleted[0] != "sandbox-328" {
 		t.Fatalf("deleted %v, want the sandbox cleaned up despite the stage failing", h.deleted)
+	}
+}
+
+func TestWorkTicketLabelsTheIssueWhenItFailsBeforeOpeningAPullRequest(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.cloneErr = temporal.NewNonRetryableApplicationError("clone failed", activities.ErrTypePermanent, nil)
+	h.run()
+
+	if got, want := fmt.Sprint(h.failedTargets), "[{328 0}]"; got != want {
+		t.Fatalf("failure labels = %s, want %s", got, want)
+	}
+}
+
+func TestWorkTicketLabelsTheIssueAndPullRequestWhenCIFailsAfterOpeningIt(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.ciErr = temporal.NewNonRetryableApplicationError("CI lookup failed", activities.ErrTypePermanent, nil)
+	h.run()
+
+	if got, want := fmt.Sprint(h.failedTargets), "[{328 9}]"; got != want {
+		t.Fatalf("failure labels = %s, want %s", got, want)
 	}
 }
 

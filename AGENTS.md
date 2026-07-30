@@ -108,13 +108,15 @@ means a GitHub issue - same thing, one vocabulary.
   below it, clearly marked as ours. Summarising the ask is the one unacceptable edit.
 - Title is a cleaned-up handle; a one-line description sits above the verbatim block.
 - **Labels: exactly one `area/*` and one `type/*`, plus `auto` when it applies.
-  Nothing else.** No priority, no status, no milestones, no Projects board -
+  Nothing else at filing time.** No priority, no status, no milestones, no Projects board -
   deliberately, so it cannot go stale.
   - `area/`: `infra` `network` `hardware` `panel-ui` `tiles` `integrations`
     `observability` `docs` `tooling` `security`
   - `type/`: `bug` `chore` `feature` `design` `spike` `verify` `question`
   - `auto`: an agent can take this end-to-end unattended. `grind-tickets` draws
     from this pool; when unsure, leave it off.
+  - `failed`: software-factory adds this lifecycle marker to a failed ticket and
+    any run-owned PR; never select it while filing.
   - List below can drift; confirm with
     `gh label list --limit 100 --json name | jq -r '.[].name' | grep -E '^(area|type)/'`
     (repo also carries unrelated default labels like `bug`/`enhancement` - ignore those).

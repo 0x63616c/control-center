@@ -270,6 +270,27 @@ func (a *Activities) ClearAutoLabel(ctx context.Context, issue int) error {
 	return nil
 }
 
+// LabelFailureInput names the ticket and, when it exists, run-owned pull
+// request that need a terminal failure marker.
+type LabelFailureInput struct {
+	TicketNumber      int
+	PullRequestNumber int
+}
+
+// LabelFailure marks a failed ticket and its existing run pull request.
+func (a *Activities) LabelFailure(ctx context.Context, in LabelFailureInput) error {
+	if err := a.deps.GitHub.MarkFailed(ctx, in.TicketNumber); err != nil {
+		return fail(ctx, fmt.Sprintf("adding the failed label to issue #%d", in.TicketNumber), err)
+	}
+	if in.PullRequestNumber == 0 {
+		return nil
+	}
+	if err := a.deps.GitHub.MarkFailed(ctx, in.PullRequestNumber); err != nil {
+		return fail(ctx, fmt.Sprintf("adding the failed label to pull request #%d", in.PullRequestNumber), err)
+	}
+	return nil
+}
+
 // RejectDuplicateWorkflowID records that a ticket has already spent its sole
 // workflow ID, then clears auto so the dispatcher does not attempt it again.
 // The fixed marker in the rendered body makes a retry adopt the first comment.
