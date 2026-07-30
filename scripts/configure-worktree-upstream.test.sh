@@ -46,15 +46,21 @@ merge=$(git -C "$WORKTREE" config --get "branch.$BRANCH.merge")
 [ "$remote" = "origin" ] || { echo "expected origin remote, got: $remote" >&2; exit 1; }
 [ "$merge" = "refs/heads/$BRANCH" ] || { echo "expected feature merge ref, got: $merge" >&2; exit 1; }
 
-push=$(git -C "$WORKTREE" push --dry-run --porcelain)
+push=$(git -C "$WORKTREE" -c push.default=simple push --dry-run --porcelain)
 printf '%s\n' "$push" | grep -Fq "refs/heads/$BRANCH:refs/heads/$BRANCH" || {
   echo "bare push did not target feature:" >&2
   printf '%s\n' "$push" >&2
   exit 1
 }
 
-grep -Fq 'command: "bash scripts/configure-worktree-upstream.sh"' "$HERE/../.wtp.yml" || {
+upstream_line=$(grep -n -F 'command: "bash scripts/configure-worktree-upstream.sh"' "$HERE/../.wtp.yml" | cut -d: -f1)
+bun_install_line=$(grep -n -F 'command: "bun install"' "$HERE/../.wtp.yml" | cut -d: -f1)
+[ -n "$upstream_line" ] || {
   echo ".wtp.yml does not invoke the upstream repair helper" >&2
+  exit 1
+}
+[ "$upstream_line" -lt "$bun_install_line" ] || {
+  echo ".wtp.yml runs the upstream repair after fallible setup" >&2
   exit 1
 }
 

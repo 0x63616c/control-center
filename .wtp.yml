@@ -9,21 +9,22 @@ defaults:
 
 hooks:
   post_create:
+    # A branch created from origin/main inherits main as its upstream. Run this
+    # safety repair before any fallible setup step; the branch is not on origin
+    # yet, so configure its eventual same-named ref directly rather than using
+    # `git branch --set-upstream-to`.
+    - type: command
+      command: "bash scripts/configure-worktree-upstream.sh"
+
     # This repo has no .env — local dev env comes from scripts/secrets.sh at
     # runtime, never a dotenv file (see AGENTS.md). A wtp hook that copies a
     # nonexistent file aborts every later hook in the chain, so the essential
-    # setup steps run first and the optional per-machine copy runs last.
+    # setup steps run before the optional per-machine copy.
     - type: command
       command: "bun install"
 
     - type: command
       command: "bunx lefthook install --force"
-
-    # A branch created from origin/main inherits main as its upstream. The
-    # branch is not on origin yet, so configure its eventual same-named ref
-    # directly rather than using `git branch --set-upstream-to`.
-    - type: command
-      command: "bash scripts/configure-worktree-upstream.sh"
 
     # Per-machine Claude Code permission grants (gitignored). Not present on
     # every machine — kept last so its absence doesn't block bun install /
