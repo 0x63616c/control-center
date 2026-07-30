@@ -19,6 +19,7 @@ func TestSameCheckFailures(t *testing.T) {
 		{"strict subset does not match", []work.CheckFailure{{Name: "a", Fingerprint: "one"}}, []work.CheckFailure{{Name: "a", Fingerprint: "one"}, {Name: "b", Fingerprint: "two"}}, false},
 		{"added failure does not match", []work.CheckFailure{{Name: "a", Fingerprint: "one"}, {Name: "b", Fingerprint: "two"}}, []work.CheckFailure{{Name: "a", Fingerprint: "one"}}, false},
 		{"same check name with another failure does not match", []work.CheckFailure{{Name: "test", Fingerprint: "one"}}, []work.CheckFailure{{Name: "test", Fingerprint: "two"}}, false},
+		{"missing fingerprints never claim stagnation", []work.CheckFailure{{Name: "test"}}, []work.CheckFailure{{Name: "test"}}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

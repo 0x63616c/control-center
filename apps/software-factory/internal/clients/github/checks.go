@@ -78,7 +78,7 @@ func (c *Client) checkFailureFingerprint(ctx context.Context, run *gh.CheckRun) 
 		Annotations: make([]checkAnnotationDetail, 0, len(annotations)),
 	}
 	for _, annotation := range annotations {
-		detail.Annotations = append(detail.Annotations, checkAnnotationDetail{
+		candidate := checkAnnotationDetail{
 			Path:            annotation.GetPath(),
 			StartLine:       annotation.GetStartLine(),
 			EndLine:         annotation.GetEndLine(),
@@ -88,7 +88,17 @@ func (c *Client) checkFailureFingerprint(ctx context.Context, run *gh.CheckRun) 
 			Title:           annotation.GetTitle(),
 			Message:         annotation.GetMessage(),
 			RawDetails:      annotation.GetRawDetails(),
-		})
+		}
+		if genericGitHubActionsAnnotation(candidate) {
+			continue
+		}
+		detail.Annotations = append(detail.Annotations, candidate)
+	}
+	if !detail.hasEvidence() {
+		// GitHub Actions' generic exit-code annotation says a job failed but
+		// not which assertion or test failed. Treating it as an identity would
+		// turn a different failure in the same job into a false stagnation.
+		return "", nil
 	}
 	sort.Slice(detail.Annotations, func(i, j int) bool {
 		return annotationKey(detail.Annotations[i]) < annotationKey(detail.Annotations[j])
@@ -131,6 +141,10 @@ type checkFailureDetail struct {
 	Annotations []checkAnnotationDetail `json:"annotations"`
 }
 
+func (d checkFailureDetail) hasEvidence() bool {
+	return d.Title != "" || d.Summary != "" || d.Text != "" || len(d.Annotations) > 0
+}
+
 type checkAnnotationDetail struct {
 	Path            string `json:"path"`
 	StartLine       int    `json:"start_line"`
@@ -141,6 +155,14 @@ type checkAnnotationDetail struct {
 	Title           string `json:"title"`
 	Message         string `json:"message"`
 	RawDetails      string `json:"raw_details"`
+}
+
+// genericGitHubActionsAnnotation filters the workflow runner's stock exit
+// annotation. It does not identify the failed command, unlike an annotation
+// with a title, raw details, or a more specific message.
+func genericGitHubActionsAnnotation(annotation checkAnnotationDetail) bool {
+	return annotation.Title == "" && annotation.RawDetails == "" &&
+		annotation.Message == "Process completed with exit code 1."
 }
 
 func annotationKey(annotation checkAnnotationDetail) string {

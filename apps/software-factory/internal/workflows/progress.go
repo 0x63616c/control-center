@@ -9,6 +9,17 @@ import "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 // subset is evidence of progress, as is a same-named check with a different
 // fingerprint. The caller only invokes this when a is non-empty.
 func sameCheckFailures(a, b []work.CheckFailure) bool {
+	for _, failure := range a {
+		if failure.Fingerprint == "" {
+			return false
+		}
+	}
+	for _, failure := range b {
+		if failure.Fingerprint == "" {
+			return false
+		}
+	}
+
 	aSet := make(map[work.CheckFailure]struct{}, len(a))
 	for _, failure := range a {
 		aSet[failure] = struct{}{}

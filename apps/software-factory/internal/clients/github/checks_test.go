@@ -62,3 +62,28 @@ func TestChecksForRefRejectsAPartialAnnotationSnapshot(t *testing.T) {
 		t.Fatal("ChecksForRef returned a partial check snapshot after annotation retrieval failed")
 	}
 }
+
+func TestChecksForRefLeavesGenericGitHubActionsFailuresUnfingerprinted(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newStub(t)
+	s.handle("GET /repos/"+testOwner+"/"+testRepo+"/commits/"+testBranch+"/check-runs", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"check_runs": []map[string]any{{
+			"id": 91, "name": "test-software-factory", "status": "completed", "conclusion": "failure",
+		}}})
+	})
+	s.handle("GET /repos/"+testOwner+"/"+testRepo+"/check-runs/91/annotations", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, []map[string]any{{
+			"path": ".github", "annotation_level": "failure", "message": "Process completed with exit code 1.",
+		}})
+	})
+	c, _ := s.client(t)
+
+	checks, err := c.ChecksForRef(t.Context(), testBranch)
+	if err != nil {
+		t.Fatalf("ChecksForRef: %v", err)
+	}
+	if len(checks) != 1 || checks[0].FailureFingerprint != "" {
+		t.Fatalf("checks = %+v, want a failed check without a false failure identity", checks)
+	}
+}
