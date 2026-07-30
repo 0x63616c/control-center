@@ -1,14 +1,37 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "software-factory review output",
-  "description": "What the review stage returns.",
+  "description": "What the review stage returns: its document, plus every finding it raised.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["document"],
+  "required": ["document", "findings"],
   "properties": {
     "document": {
       "type": "string",
       "description": "The stage's whole output, as markdown. Its first line is one sentence summarising the outcome."
+    },
+    "findings": {
+      "type": "array",
+      "description": "Every finding this turn raised. Empty when the turn found nothing to raise.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "blocking", "summary"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "A short, stable slug for this exact defect, e.g. \"work/control.go-missing-nil-check\". Reuse the identical string across turns for the same underlying issue; a new issue gets a new id."
+          },
+          "blocking": {
+            "type": "boolean",
+            "description": "True if this finding must be addressed before the work is acceptable."
+          },
+          "summary": {
+            "type": "string",
+            "description": "What the finding is, concretely: the evidence checked and the concrete failure it would cause."
+          }
+        }
+      }
     }
   }
 }

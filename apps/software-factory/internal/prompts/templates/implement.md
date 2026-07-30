@@ -1,6 +1,6 @@
 ## Stage: implement
 
-Carry out the revised plan below. This is the only stage that writes code.
+Carry out the plan below. This is the only stage that writes code.
 
 The branch already exists and is checked out. Do not create, rename or switch branches. You
 are working in a disposable per-ticket checkout, not the operator's working copy, so
@@ -9,33 +9,67 @@ first does not apply here — the branch it would have you create has already be
 you. That is the only rule in `AGENTS.md` this stage sets aside.
 
 Push the branch before you finish — `git push -u origin HEAD` if it has no upstream yet. The
-next stage opens the pull request from what you pushed, so work you did not push did not
-happen. Do not open a pull request yourself.
+workflow opens or updates the pull request itself, from your title and body below, once you
+push — work you did not push did not happen, and you must never open a pull request yourself.
+
+**This run may call `implement` more than once.** A red build sends you around again in the
+same window; a review that finds a blocking issue sends you around again after it, working
+from your plan, its findings below, and your own previous turn's report below. When a
+previous report is shown to you, it is because you already said it in an earlier turn of this
+same codex session — do not repeat it verbatim, and continue rather than restart: you may
+still remember what you last did, but the workflow reads only what you write, so if the
+previous report or the review's findings mattered to what you do next, say why in this turn's
+report too. `review` runs in a fresh thread with no memory of anything, including of you, so
+its findings below are the only account of what it saw — treat them as real defects to address
+or, if you disagree with one, to explicitly reject and say why, not as something to guess the
+intent of.
 
 Work test-first: write the failing test, run it, watch it fail for the right reason, then
 make it pass. Put the real commands and their real output in your document. A sentence
 saying you did this is not the same as evidence that you did, and only the output is
 evidence. Run the repository's own checks before you finish and show those too.
 
-The revised plan was written by people who had not tried it. Where it turns out to be wrong,
-deviate — that is expected and correct. What is not acceptable is deviating silently: say
-what you changed and why.
+The plan was written by someone who had not tried it, and any findings below came from a
+reviewer who read your report rather than the code changing under them. Where either turns
+out to be wrong, deviate — that is expected and correct. What is not acceptable is deviating
+silently: say what you changed and why.
 
-Your document is **the implementation report**. It is read by the stage that writes the pull
-request description, and then by a human reviewer. Cover what you changed and why it matters,
-the failing and passing test output, your deviations from the revised plan, and anything left
-broken, skipped or uncertain. Flag that last part yourself rather than letting a reviewer
-discover it. If you finished without completing the work — blocked, or the revised plan
-turned out unimplementable — say so in the first line, because the next stage decides whether
-to open a pull request at all on the strength of that.
+Your document is **the implementation report**. It is read by a human reviewer, and — if this
+run calls `review` — by a fresh review turn with no other context on your work. Cover what you
+changed and why it matters, the failing and passing test output, your deviations from the
+plan, and anything left broken, skipped or uncertain. Flag that last part yourself rather than
+letting a reviewer discover it. If you finished without completing the work — blocked, or the
+plan turned out unimplementable — say so in the first line.
 
-Your answer also has a `blocked` field and a `blocked_reason` field, separate from the
-document. Set `blocked` to true if you did not complete the work, and give the reason in
-`blocked_reason`; otherwise leave `blocked` false and `blocked_reason` empty. Fill these in
-alongside the first-line summary above, not instead of it.
+Your answer also has `title` and `body` fields, separate from the document: the pull request
+title and description for the branch as it now stands. The workflow opens the pull request
+from these after your first successful push, and edits it to match on every later turn — write
+them as the pull request a human will read right now, not as a diff against what you said last
+turn. Use the repository's pull request template for `body`, referencing the issue as
+`Refs #{{ticket_number}}` — never `Fixes #{{ticket_number}}` or `Closes #{{ticket_number}}`,
+which would close the issue the moment this pull request merges, before anyone has verified it
+against the real system. Leave both `title` and `body` empty only when `blocked` is true and
+nothing was pushed worth describing.
 
-### The revised plan
+Your answer also has a `blocked` field and a `blocked_reason` field. Set `blocked` to true if
+you did not complete the work, and give the reason in `blocked_reason`; otherwise leave
+`blocked` false and `blocked_reason` empty. Fill these in alongside the first-line summary
+above, not instead of it.
+
+### The plan
 
 <untrusted-prior-document-{{fence_nonce}}>
-{{revised_plan}}
+{{plan}}
+</untrusted-prior-document-{{fence_nonce}}>
+
+### Your previous turn's report
+
+<untrusted-prior-document-{{fence_nonce}}>
+{{previous_implement_report}}
+</untrusted-prior-document-{{fence_nonce}}>
+
+### The most recent review's findings
+
+<untrusted-prior-document-{{fence_nonce}}>
+{{review_findings}}
 </untrusted-prior-document-{{fence_nonce}}>

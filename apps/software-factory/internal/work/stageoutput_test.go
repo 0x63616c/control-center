@@ -2,6 +2,7 @@ package work
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -15,13 +16,18 @@ func TestNewStageOutputRoundTripsThroughJSON(t *testing.T) {
 		value stageOutputValue
 	}{
 		{name: "plan", stage: StagePlan, value: DocumentOutput{Document: "the plan"}},
-		{name: "review", stage: StageReview, value: DocumentOutput{Document: "the review"}},
-		{name: "revise", stage: StageRevise, value: DocumentOutput{Document: "the revised plan"}},
-		{name: "propose", stage: StagePropose, value: DocumentOutput{Document: "opened PR #1"}},
+		{
+			name:  "review",
+			stage: StageReview,
+			value: ReviewOutput{Document: "the review", Findings: []Finding{{ID: "f1", Blocking: true, Summary: "s"}}},
+		},
 		{
 			name:  "implement",
 			stage: StageImplement,
-			value: ImplementOutput{Report: "did the work", Blocked: true, BlockedReason: "needs a human"},
+			value: ImplementOutput{
+				Report: "did the work", Blocked: true, BlockedReason: "needs a human",
+				Title: "t", Body: "b",
+			},
 		},
 	}
 
@@ -42,7 +48,7 @@ func TestNewStageOutputRoundTripsThroughJSON(t *testing.T) {
 			if got.Stage() != tc.stage {
 				t.Errorf("Stage() = %q, want %q", got.Stage(), tc.stage)
 			}
-			if got.Value() != tc.value {
+			if !reflect.DeepEqual(got.Value(), tc.value) {
 				t.Errorf("Value() = %#v, want %#v", got.Value(), tc.value)
 			}
 			if got.Prose() != tc.value.Prose() {
@@ -122,8 +128,10 @@ func TestDecodeStageOutputValueIsExhaustiveOverPipeline(t *testing.T) {
 			var raw json.RawMessage
 			switch stage {
 			case StageImplement:
-				raw = json.RawMessage(`{"Report":"r","Blocked":false,"BlockedReason":""}`)
-			case StagePlan, StageReview, StageRevise, StagePropose:
+				raw = json.RawMessage(`{"Report":"r","Blocked":false,"BlockedReason":"","Title":"","Body":""}`)
+			case StageReview:
+				raw = json.RawMessage(`{"Document":"d","Findings":[]}`)
+			case StagePlan:
 				raw = json.RawMessage(`{"Document":"d"}`)
 			}
 			if _, err := decodeStageOutputValue(stage, raw); err != nil {

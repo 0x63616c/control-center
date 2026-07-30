@@ -86,7 +86,7 @@ func TestSinkWritesAStagesEventsUnderThePathTheStageKeyNames(t *testing.T) {
 	key := work.StageKey{Ticket: 312, RunID: "0198c2f1", Stage: work.StageReview}
 	writeEvents(t, s, key, "{\"a\":1}\n", "{\"a\":2}\n")
 
-	got := readFile(t, filepath.Join(root, "312", "0198c2f1", "review.jsonl"))
+	got := readFile(t, filepath.Join(root, "312", "0198c2f1", "review.0.jsonl"))
 	if want := "{\"a\":1}\n{\"a\":2}\n"; got != want {
 		t.Errorf("transcript = %q, want %q", got, want)
 	}
@@ -115,7 +115,7 @@ func TestSinkLeavesAnEmptyTranscriptWhenAStageEmitsNothing(t *testing.T) {
 	key := work.StageKey{Ticket: 7, RunID: "0198c2f1", Stage: work.StagePlan}
 	writeEvents(t, s, key)
 
-	info, err := os.Stat(filepath.Join(root, "7", "0198c2f1", "plan.jsonl"))
+	info, err := os.Stat(filepath.Join(root, "7", "0198c2f1", "plan.0.jsonl"))
 	if err != nil {
 		t.Fatalf("a stage that emitted nothing left no transcript: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestSinkAppendsToAnExistingTranscriptRatherThanTruncatingIt(t *testing.T) {
 	writeEvents(t, s, key, "first\n")
 	writeEvents(t, s, key, "second\n")
 
-	got := readFile(t, filepath.Join(root, "7", "0198c2f1", "implement.jsonl"))
+	got := readFile(t, filepath.Join(root, "7", "0198c2f1", "implement.0.jsonl"))
 	if want := "first\nsecond\n"; got != want {
 		t.Errorf("transcript = %q, want %q — a retry must not erase the attempt it replaced", got, want)
 	}
@@ -157,7 +157,7 @@ func TestSinkLetsAReaderTailATranscriptBeforeTheStageFinishes(t *testing.T) {
 		t.Fatalf("writing returned an unexpected error: %v", err)
 	}
 
-	got := readFile(t, filepath.Join(root, "7", "0198c2f1", "implement.jsonl"))
+	got := readFile(t, filepath.Join(root, "7", "0198c2f1", "implement.0.jsonl"))
 	if want := "mid-stage\n"; got != want {
 		t.Errorf("transcript = %q, want %q — events must reach the volume before the stage ends", got, want)
 	}
@@ -172,10 +172,10 @@ func TestSinkKeepsTwoRunsOfTheSameStageSeparatelyInspectable(t *testing.T) {
 	writeEvents(t, s, first, "from the first run\n")
 	writeEvents(t, s, second, "from the second run\n")
 
-	if got, want := readFile(t, filepath.Join(root, "7", "0198c2f1", "plan.jsonl")), "from the first run\n"; got != want {
+	if got, want := readFile(t, filepath.Join(root, "7", "0198c2f1", "plan.0.jsonl")), "from the first run\n"; got != want {
 		t.Errorf("first run's transcript = %q, want %q", got, want)
 	}
-	if got, want := readFile(t, filepath.Join(root, "7", "0198c2f2", "plan.jsonl")), "from the second run\n"; got != want {
+	if got, want := readFile(t, filepath.Join(root, "7", "0198c2f2", "plan.0.jsonl")), "from the second run\n"; got != want {
 		t.Errorf("second run's transcript = %q, want %q", got, want)
 	}
 }
@@ -211,7 +211,7 @@ func TestSinkOpensTranscriptsForManyStagesOfOneRunConcurrently(t *testing.T) {
 	wg.Wait()
 
 	for _, stage := range stages {
-		path := filepath.Join(root, "7", "0198c2f1", string(stage)+".jsonl")
+		path := filepath.Join(root, "7", "0198c2f1", string(stage)+".0.jsonl")
 		if got, want := readFile(t, path), string(stage)+"\n"; got != want {
 			t.Errorf("%s transcript = %q, want %q", stage, got, want)
 		}
@@ -251,7 +251,7 @@ func TestSinkInterleavesTwoOverlappingAttemptsOfOneStageWithoutLosingALine(t *te
 	close(start)
 	wg.Wait()
 
-	got := strings.Split(strings.TrimSuffix(readFile(t, filepath.Join(root, "7", "0198c2f1", "implement.jsonl")), "\n"), "\n")
+	got := strings.Split(strings.TrimSuffix(readFile(t, filepath.Join(root, "7", "0198c2f1", "implement.0.jsonl")), "\n"), "\n")
 	want := make([]string, 0, attempts*linesPerAttempt)
 	for attempt := range attempts {
 		for i := range linesPerAttempt {
@@ -315,7 +315,7 @@ func TestSinkSharesOneDescriptorBetweenOverlappingAttemptsOfOneStage(t *testing.
 	if got := openCount(s); got != 0 {
 		t.Errorf("the sink holds %d open transcripts after every attempt closed, want 0", got)
 	}
-	if got, want := readFile(t, filepath.Join(root, "7", "0198c2f1", "implement.jsonl")), "after the first attempt closed\n"; got != want {
+	if got, want := readFile(t, filepath.Join(root, "7", "0198c2f1", "implement.0.jsonl")), "after the first attempt closed\n"; got != want {
 		t.Errorf("transcript = %q, want %q", got, want)
 	}
 }

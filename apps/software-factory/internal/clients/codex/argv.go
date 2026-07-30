@@ -2,6 +2,7 @@ package codex
 
 import (
 	"fmt"
+	"path"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
@@ -23,7 +24,31 @@ const (
 	// model thinks. Verified against rust-v0.145.0: the TOML key and the Config
 	// field are both model_reasoning_effort.
 	configReasoningEffort = "model_reasoning_effort"
+
+	// resumeSubcommand continues a previous codex conversation by thread id,
+	// for implement's turn-to-turn resume (#435's pipeline rewrite — "Codex
+	// sessions"). UNVERIFIED, unlike every other spelling in this block: the
+	// rust-v0.145.0 source this file otherwise checks every flag against was
+	// not reachable while writing this, so this is written down from the
+	// publicly documented `codex exec resume <SESSION_ID> [PROMPT]` shape,
+	// not confirmed against codex-rs/exec/src/cli.rs. Confirm it against that
+	// source before this ships, and do not read this comment as verification
+	// that it is correct.
+	resumeSubcommand = "resume"
 )
+
+// sessionIDFile is where implement's own resume identity is written, a
+// sibling of every turn's own numbered StagePaths().Dir rather than inside
+// one of them — the file argv reads from before turn N's own directory has
+// been created and writes to after turn N-1's has already been used.
+//
+// Only implement ever reads or writes this path. review is deliberately never
+// resumed (a fresh, unbiased thread every turn is its whole value), and
+// nothing in this package ever passes StageReview to sessionIDFile's callers
+// for that reason — see Runner.run.
+func sessionIDFile(key work.StageKey) string {
+	return path.Join(work.SandboxRoot, key.RunID, string(key.Stage), "session.id")
+}
 
 // stageArgv is the command one stage attempt runs, and the only place it is
 // built.
@@ -57,10 +82,20 @@ const (
 // directory that is not a git repository exits with "Not inside a trusted
 // directory and --skip-git-repo-check was not specified" before it calls a
 // model at all, so the stage reads as the model failing at its task.
-func stageArgv(run work.StageRun) []string {
+//
+// resumeThreadID continues a previous codex conversation rather than starting
+// fresh, and is empty on any turn that has none to continue — implement's
+// first turn of a run, and every review turn (never resumed at all; see
+// sessionIDFile). Runner.run is the only caller and the only place that
+// decides what to pass here — this function does no I/O of its own and takes
+// the caller's word for it.
+func stageArgv(run work.StageRun, resumeThreadID string) []string {
 	paths := run.Key.Paths()
-	return []string{
-		"codex", "exec",
+	args := []string{"codex", "exec"}
+	if resumeThreadID != "" {
+		args = append(args, resumeSubcommand, resumeThreadID)
+	}
+	return append(args,
 		flagJSON,
 		flagBypassSandbox,
 		flagCd, work.RepoDir,
@@ -68,5 +103,5 @@ func stageArgv(run work.StageRun) []string {
 		flagConfig, fmt.Sprintf("%s=%s", configReasoningEffort, run.Model.Effort),
 		flagOutputSchema, paths.Schema,
 		flagOutputLastMessage, paths.Result,
-	}
+	)
 }

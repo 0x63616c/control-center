@@ -3,6 +3,7 @@ package work
 import (
 	"fmt"
 	"path"
+	"strconv"
 	"strings"
 )
 
@@ -55,8 +56,12 @@ const CodexAuthFile = CodexHomeDir + "/auth.json"
 // GhConfigDir is the gh CLI's config directory inside the sandbox, and
 // GhHostsFile the credential file it reads out of it.
 //
-// gh exists in the sandbox because `propose` opens the pull request with it
-// (#414). It needs its own credential file because it has no code path that
+// gh was put in the sandbox because the old `propose` stage opened the pull
+// request with it (#414). The pipeline rewrite (#435) moves PR create/edit to
+// workflow code against go-github, so whether the sandbox still needs gh (and
+// this credential file) at all is worth re-examining — not resolved here,
+// since nothing else about the sandbox's gh usage changed as part of that
+// rewrite. It needs its own credential file because it has no code path that
 // reads git's: git resolves a token through credential.helper and a
 // git-credential-store file, and gh looks only at GH_TOKEN in the environment
 // or at this file. The same installation token therefore reaches the sandbox
@@ -82,14 +87,23 @@ const (
 
 // StageKey identifies one stage attempt, and is the whole of that identity.
 //
-// Every deterministic path a stage keys off is derived from these three fields
+// Every deterministic path a stage keys off is derived from these four fields
 // and nothing else. That is what makes a stage idempotent under activity retry:
 // a rescheduled activity computes the same paths, finds what the previous
 // attempt left behind, and resumes instead of restarting.
 //
-// None of the three can carry attacker-controlled text — a ticket number is an
-// integer, a Temporal RunID is a UUID, and a Stage is one of five constants —
-// so the paths below cannot be steered by anything an issue author writes.
+// Turn exists because implement and review each loop under this step's
+// pipeline rewrite: RunID and Stage alone collided across turns, which would
+// let a Temporal-level retry of one turn's activity resume from a later turn's
+// session.id, or a later turn's own StagePaths().Dir. It is 1-indexed — the
+// first attempt of a stage in a run is turn 1 — because that is the number a
+// status comment shows a human ("implement, turn 3 of 15"), and a stage that
+// never loops (plan) simply always runs at turn 1.
+//
+// None of the four can carry attacker-controlled text — a ticket number and a
+// turn are both integers, a Temporal RunID is a UUID, and a Stage is one of
+// three constants — so the paths below cannot be steered by anything an issue
+// author writes.
 type StageKey struct {
 	// Ticket is the GitHub issue number.
 	Ticket int
@@ -98,11 +112,13 @@ type StageKey struct {
 	// than overwriting its own history.
 	RunID string
 	Stage Stage
+	// Turn is which attempt of Stage this is within RunID, starting at 1.
+	Turn int
 }
 
 // String names the attempt for logs and errors.
 func (k StageKey) String() string {
-	return fmt.Sprintf("ticket #%d stage %s run %s", k.Ticket, k.Stage, k.RunID)
+	return fmt.Sprintf("ticket #%d stage %s turn %d run %s", k.Ticket, k.Stage, k.Turn, k.RunID)
 }
 
 // WorkflowID is the Temporal workflow ID for a ticket's run.
@@ -209,7 +225,7 @@ type StagePaths struct {
 
 // Paths returns where this attempt's files live inside the sandbox.
 func (k StageKey) Paths() StagePaths {
-	dir := path.Join(SandboxRoot, k.RunID, string(k.Stage))
+	dir := path.Join(SandboxRoot, k.RunID, string(k.Stage), strconv.Itoa(k.Turn))
 	return StagePaths{
 		Dir:    dir,
 		Prompt: path.Join(dir, "prompt.md"),
@@ -224,8 +240,9 @@ func (k StageKey) Paths() StagePaths {
 //
 // The volume is mounted on the worker, never on the sandbox: the worker pulls
 // the stream out, so a sandbox holds nothing worth keeping and reaches nothing
-// worth stealing. Keyed by RunID so a retry stays separately inspectable from
-// the attempt it replaced.
+// worth stealing. Keyed by RunID and Turn so a retry, and a later turn of a
+// looping stage, each stay separately inspectable from the attempt they
+// replaced or followed.
 func (k StageKey) TranscriptPath() string {
-	return path.Join(fmt.Sprintf("%d", k.Ticket), k.RunID, string(k.Stage)+".jsonl")
+	return path.Join(fmt.Sprintf("%d", k.Ticket), k.RunID, fmt.Sprintf("%s.%d.jsonl", k.Stage, k.Turn))
 }

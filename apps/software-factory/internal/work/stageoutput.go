@@ -75,11 +75,14 @@ func NewStageOutput(stage Stage, value stageOutputValue) StageOutput {
 // the other what the caller just handed it directly.
 func stageWantsShape(stage Stage, value stageOutputValue) bool {
 	switch stage {
-	case StagePlan, StageReview, StageRevise, StagePropose:
+	case StagePlan:
 		_, ok := value.(DocumentOutput)
 		return ok
 	case StageImplement:
 		_, ok := value.(ImplementOutput)
+		return ok
+	case StageReview:
+		_, ok := value.(ReviewOutput)
 		return ok
 	}
 	return false
@@ -105,23 +108,79 @@ func (o StageOutput) Prose() string {
 // stage.
 func (o StageOutput) Value() stageOutputValue { return o.value }
 
-// DocumentOutput is what plan, review, revise and propose each answer in:
-// one prose field.
+// DocumentOutput is what plan answers in: one prose field.
 type DocumentOutput struct{ Document string }
 
 // Prose returns the document.
 func (d DocumentOutput) Prose() string { return d.Document }
 
-// ImplementOutput is what the implement stage answers in: its report, plus
-// whether it finished.
+// ImplementOutput is what the implement stage answers in: its report, whether
+// it finished, and the pull request title/body for the branch as it now
+// stands.
+//
+// Title and Body are empty on a turn that set Blocked and pushed nothing worth
+// describing. They are model output, same as Report, and are rendered into a
+// pull request by workflow code rather than trusted as a URL or any other
+// forgeable value — see work.PullRequest's own doc comment for why a stage's
+// output never supplies an identifier, only prose.
 type ImplementOutput struct {
 	Report        string
 	Blocked       bool
 	BlockedReason string
+	Title         string
+	Body          string
 }
 
 // Prose returns the report.
 func (o ImplementOutput) Prose() string { return o.Report }
+
+// Finding is one defect a review turn raised.
+//
+// ID is a short, stable slug the model is instructed to reuse across turns for
+// the same underlying issue — see the pipeline-rewrite spec's "What a finding
+// id is, and how sameness is determined." Sameness is exact string equality on
+// ID, checked by the workflow loop, never a fuzzy or semantic comparison: the
+// burden of keeping an id stable across a review's fresh, memory-less threads
+// is on the prompt, not on code that would otherwise need a model call of its
+// own just to compare two findings.
+type Finding struct {
+	ID       string
+	Blocking bool
+	Summary  string
+}
+
+// ReviewOutput is what the review stage answers in: its document, plus every
+// finding it raised.
+//
+// A separate shape from DocumentOutput, not a DocumentOutput with an extra
+// field bolted beside it, for the same reason ImplementOutput is its own
+// type: a StageOutput's dynamic value is always exactly one stage's own
+// shape, and folding review's findings into the shape plan also uses would
+// let a caller construct a plan output carrying findings, or a review output
+// with none, and have both compile.
+type ReviewOutput struct {
+	Document string
+	Findings []Finding
+}
+
+// Prose returns the document. Findings are structured data for the workflow's
+// own progress-detection logic, not prose — they are never the human-readable
+// handoff a later stage's prompt quotes wholesale.
+func (o ReviewOutput) Prose() string { return o.Document }
+
+// BlockingFindingIDs returns the IDs of every finding this review marked
+// blocking, so the workflow's stall-detection rule (the same blocking finding
+// id surviving an intervening implement turn) has something to compare
+// without reaching into ReviewOutput's fields itself.
+func (o ReviewOutput) BlockingFindingIDs() []string {
+	var ids []string
+	for _, f := range o.Findings {
+		if f.Blocking {
+			ids = append(ids, f.ID)
+		}
+	}
+	return ids
+}
 
 // stageOutputWire is StageOutput's own JSON shape: the stage tag plus the
 // value, so UnmarshalJSON can pick the right concrete type back out. Bare
@@ -168,7 +227,7 @@ func (o *StageOutput) UnmarshalJSON(data []byte) error {
 // Temporal has already serialized once, on replay. Two switches, not one
 // shared function: collapsing them would make Temporal replay depend on
 // prompts' codex-facing schema knowledge, which has no reason to be the same
-// thing. No default: a sixth stage has to be added here before it compiles,
+// thing. No default: a fourth stage has to be added here before it compiles,
 // matching stageTemplate's own no-default idiom.
 //
 // A stage tag this switch does not recognise is refused with an explicit
@@ -182,7 +241,7 @@ func (o *StageOutput) UnmarshalJSON(data []byte) error {
 // activities.RunStageOutput.UnmarshalJSON.
 func decodeStageOutputValue(stage Stage, raw json.RawMessage) (stageOutputValue, error) {
 	switch stage {
-	case StagePlan, StageReview, StageRevise, StagePropose:
+	case StagePlan:
 		var v DocumentOutput
 		if err := json.Unmarshal(raw, &v); err != nil {
 			return nil, fmt.Errorf("reading %s output: %w", stage, err)
@@ -190,6 +249,12 @@ func decodeStageOutputValue(stage Stage, raw json.RawMessage) (stageOutputValue,
 		return v, nil
 	case StageImplement:
 		var v ImplementOutput
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return nil, fmt.Errorf("reading %s output: %w", stage, err)
+		}
+		return v, nil
+	case StageReview:
+		var v ReviewOutput
 		if err := json.Unmarshal(raw, &v); err != nil {
 			return nil, fmt.Errorf("reading %s output: %w", stage, err)
 		}

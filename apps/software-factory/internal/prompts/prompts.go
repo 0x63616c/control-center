@@ -56,11 +56,12 @@ type Input struct {
 	// fence.
 	Ticket work.TicketDetail
 
-	// Prior holds each completed stage's output, keyed by the stage that
-	// produced it. A run may pass everything it has: a stage is shown only the
-	// documents its own prompt asks for, and nothing is required of a stage
-	// that has not run yet.
-	Prior map[work.Stage]work.StageOutput
+	// Prior holds every completed turn of every stage, keyed by the stage that
+	// produced it and ordered oldest first. A run may pass everything it has: a
+	// stage is shown only the documents its own prompt asks for — buildStageInput
+	// reads only the tail of the slice it needs, today's latest turn — and
+	// nothing is required of a stage that has not run yet.
+	Prior map[work.Stage][]work.StageOutput
 }
 
 // Render assembles the stage's whole prompt.

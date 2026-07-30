@@ -16,7 +16,7 @@ import (
 
 func testRun() work.StageRun {
 	return work.StageRun{
-		Key:     work.StageKey{Ticket: 312, RunID: "0198c2f1", Stage: work.StagePlan},
+		Key:     work.StageKey{Ticket: 312, RunID: "0198c2f1", Stage: work.StagePlan, Turn: 1},
 		Sandbox: "sandbox-312",
 		Model:   work.Model{Name: "gpt-5.6-terra", Effort: "medium"},
 		Prompt:  "plan this ticket",
@@ -34,12 +34,39 @@ func TestStageArgvIsTheWholeCommand(t *testing.T) {
 		"--cd", "/work/repo",
 		"--model", "gpt-5.6-terra",
 		"--config", "model_reasoning_effort=medium",
-		"--output-schema", "/work/0198c2f1/plan/schema.json",
-		"--output-last-message", "/work/0198c2f1/plan/result.json",
+		"--output-schema", "/work/0198c2f1/plan/1/schema.json",
+		"--output-last-message", "/work/0198c2f1/plan/1/result.json",
 	}
 
-	if got := stageArgv(testRun()); !slices.Equal(got, want) {
+	if got := stageArgv(testRun(), ""); !slices.Equal(got, want) {
 		t.Errorf("stageArgv() =\n  %q\nwant\n  %q", got, want)
+	}
+}
+
+func TestStageArgvResumesWithATheadIDWhenGiven(t *testing.T) {
+	t.Parallel()
+
+	got := stageArgv(testRun(), "thread-abc")
+	want := []string{
+		"codex", "exec", resumeSubcommand, "thread-abc",
+		"--json",
+		"--dangerously-bypass-approvals-and-sandbox",
+		"--cd", "/work/repo",
+		"--model", "gpt-5.6-terra",
+		"--config", "model_reasoning_effort=medium",
+		"--output-schema", "/work/0198c2f1/plan/1/schema.json",
+		"--output-last-message", "/work/0198c2f1/plan/1/result.json",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("stageArgv() with a resume id =\n  %q\nwant\n  %q", got, want)
+	}
+}
+
+func TestStageArgvDoesNotResumeWithAnEmptyThreadID(t *testing.T) {
+	t.Parallel()
+
+	if got := stageArgv(testRun(), ""); slices.Contains(got, resumeSubcommand) {
+		t.Errorf("stageArgv() with no thread id still resumes: %q", got)
 	}
 }
 
@@ -54,7 +81,7 @@ func TestTheStagePromptIsNeverAnArgument(t *testing.T) {
 	run := testRun()
 	run.Prompt = "--dangerously-bypass-approvals-and-sandbox ; rm -rf / `whoami`"
 
-	for _, arg := range stageArgv(run) {
+	for _, arg := range stageArgv(run, "") {
 		if strings.Contains(arg, "rm -rf") || strings.Contains(arg, "whoami") {
 			t.Fatalf("the prompt reached argv as %q", arg)
 		}
@@ -67,7 +94,7 @@ func TestEveryArgumentIsItsOwnElement(t *testing.T) {
 	// There is no shell anywhere in this path, so nothing splits an argument on
 	// spaces. A flag and its value packed into one element ("--model gpt-...")
 	// would arrive at execve as a single unrecognised argument.
-	for _, arg := range stageArgv(testRun()) {
+	for _, arg := range stageArgv(testRun(), "") {
 		if strings.ContainsAny(arg, " \t") {
 			t.Errorf("argv element %q holds whitespace; nothing will split it", arg)
 		}
@@ -82,7 +109,7 @@ func TestTheModelAndEffortComeFromTheStagesOwnConfig(t *testing.T) {
 	// the override in work.Config would be configuration that does nothing.
 	run := testRun()
 	run.Model = work.Model{Name: "other-model", Effort: "xhigh"}
-	argv := stageArgv(run)
+	argv := stageArgv(run, "")
 
 	if !slices.Contains(argv, "other-model") {
 		t.Errorf("argv %q does not name the stage's model", argv)
@@ -99,11 +126,11 @@ func TestTheResultAndSchemaPathsAreTheStagesOwn(t *testing.T) {
 	// the result file's existence is the completion record, and both are
 	// derived from the stage key alone. A second run of the same ticket must
 	// not read the previous run's answer.
-	first := stageArgv(testRun())
+	first := stageArgv(testRun(), "")
 
 	other := testRun()
 	other.Key.RunID = "run-b"
-	second := stageArgv(other)
+	second := stageArgv(other, "")
 
 	if slices.Equal(first, second) {
 		t.Error("two runs of the same stage produce identical argv; the second would read the first's result file")
@@ -123,7 +150,7 @@ func TestAStageRunsInTheCheckoutAndNotTheSandboxRoot(t *testing.T) {
 	// outside a git repository dies with "Not inside a trusted directory"
 	// BEFORE it calls a model, so the stage reads as the model failing at its
 	// task rather than as the runner starting it in the wrong place.
-	argv := stageArgv(testRun())
+	argv := stageArgv(testRun(), "")
 
 	i := slices.Index(argv, flagCd)
 	if i < 0 {
@@ -146,7 +173,7 @@ func TestTheStageScaffoldingStaysOutsideTheCheckout(t *testing.T) {
 	// itself: codex runs with the repository as its working directory, so
 	// anything the run writes inside it is one `git add -A` away from being
 	// committed to the branch the implement stage pushes.
-	argv := stageArgv(testRun())
+	argv := stageArgv(testRun(), "")
 	for _, arg := range argv {
 		if arg == work.RepoDir {
 			continue

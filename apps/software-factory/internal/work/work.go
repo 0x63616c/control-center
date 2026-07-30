@@ -118,23 +118,35 @@ func (v SecretVersion) Precondition() (resourceVersion string, err error) {
 type Stage string
 
 // The stages of a run, in pipeline order.
+//
+// StageRevise and StagePropose existed here once and are gone, as constants
+// and as words: revise's job folded into implement (a plan an implementer
+// finds wrong is a plan it deviates from, in its own report, not a fourth
+// stage's document), and propose's job — opening the pull request — is now
+// workflow code acting on GitHub's own API rather than a model told to run
+// `gh pr create`. See the pipeline-rewrite spec's "Locked decisions" for why.
 const (
 	// StagePlan turns a ticket into an implementation plan.
 	StagePlan Stage = "plan"
-	// StageReview adversarially critiques that plan from a fresh thread.
-	StageReview Stage = "review"
-	// StageRevise folds the critique back into the plan.
-	StageRevise Stage = "revise"
-	// StageImplement writes the code and pushes the branch.
+	// StageImplement writes the code, pushes the branch, and may run more than
+	// once: a turn that leaves CI red is followed by another implement turn in
+	// the same window, resumed from its own prior codex conversation.
 	StageImplement Stage = "implement"
-	// StagePropose opens the pull request and stops.
-	StagePropose Stage = "propose"
+	// StageReview adversarially critiques implement's work once CI is green,
+	// from a fresh thread every turn. It may also run more than once: a turn
+	// that raises a blocking finding is followed by a fresh implement window.
+	StageReview Stage = "review"
 )
 
 // Pipeline is the order stages run in, and the single source of truth for that
 // order. It returns a fresh slice per call so no caller can reorder another's.
+//
+// This is the order a run's stages are first reached in, not a fixed-length
+// schedule: implement and review each loop, under the turn budgets and
+// progress-detection rules internal/workflows' loop enforces. See "The turn
+// schedule" in the pipeline-rewrite spec.
 func Pipeline() []Stage {
-	return []Stage{StagePlan, StageReview, StageRevise, StageImplement, StagePropose}
+	return []Stage{StagePlan, StageImplement, StageReview}
 }
 
 // Ticket is a GitHub issue eligible for machine work.

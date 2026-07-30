@@ -28,14 +28,10 @@ func stageTemplate(stage work.Stage) (string, error) {
 	switch stage {
 	case work.StagePlan:
 		return "templates/plan.md", nil
-	case work.StageReview:
-		return "templates/review.md", nil
-	case work.StageRevise:
-		return "templates/revise.md", nil
 	case work.StageImplement:
 		return "templates/implement.md", nil
-	case work.StagePropose:
-		return "templates/propose.md", nil
+	case work.StageReview:
+		return "templates/review.md", nil
 	}
 	return "", fmt.Errorf("no prompt for stage %q: it is not a stage of this pipeline", stage)
 }
@@ -49,14 +45,10 @@ func stageSchema(stage work.Stage) (string, error) {
 	switch stage {
 	case work.StagePlan:
 		return "templates/plan.schema.json", nil
-	case work.StageReview:
-		return "templates/review.schema.json", nil
-	case work.StageRevise:
-		return "templates/revise.schema.json", nil
 	case work.StageImplement:
 		return "templates/implement.schema.json", nil
-	case work.StagePropose:
-		return "templates/propose.schema.json", nil
+	case work.StageReview:
+		return "templates/review.schema.json", nil
 	}
 	return "", fmt.Errorf("no schema for stage %q: it is not a stage of this pipeline", stage)
 }
