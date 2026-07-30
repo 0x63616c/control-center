@@ -167,13 +167,13 @@ func newTicketHarness(t *testing.T) *ticketHarness {
 	})
 
 	return &ticketHarness{
-		env:       env,
-		policy:    work.DefaultRunPolicy(),
-		config:    work.DefaultConfig(),
-		implement: map[int]*activities.RunImplementOutput{},
-		ci:        map[int]activities.ObserveCIOutput{},
-		review:    map[int][]work.Finding{},
-		persisted: map[work.StageKey]activities.PersistTranscriptInput{},
+		env:              env,
+		policy:           work.DefaultRunPolicy(),
+		config:           work.DefaultConfig(),
+		implement:        map[int]*activities.RunImplementOutput{},
+		ci:               map[int]activities.ObserveCIOutput{},
+		review:           map[int][]work.Finding{},
+		persisted:        map[work.StageKey]activities.PersistTranscriptInput{},
 		pullRequestDraft: true,
 	}
 }
