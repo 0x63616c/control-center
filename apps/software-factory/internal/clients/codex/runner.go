@@ -35,18 +35,28 @@ const stderrKeep = 64 << 10
 type Runner struct {
 	pods   PodExecer
 	files  FileTransfer
+	locks  StageLocker
 	logger *slog.Logger
 }
 
 // NewRunner builds a Runner over a sandbox's exec and file transports.
-func NewRunner(pods PodExecer, files FileTransfer, logger *slog.Logger) *Runner {
-	return &Runner{pods: pods, files: files, logger: logger}
+func NewRunner(pods PodExecer, files FileTransfer, locks StageLocker, logger *slog.Logger) *Runner {
+	return &Runner{pods: pods, files: files, locks: locks, logger: logger}
 }
 
 // RunStage executes one stage, or resumes whatever a previous attempt of it
 // left behind.
-func (r *Runner) RunStage(ctx context.Context, run work.StageRun, events work.StageEventSink) (work.StageResult, error) {
+func (r *Runner) RunStage(ctx context.Context, run work.StageRun, events work.StageEventSink) (result work.StageResult, err error) {
 	paths := run.Key.Paths()
+	lock, err := r.locks.Acquire(ctx, paths.Lock)
+	if err != nil {
+		return work.StageResult{}, fmt.Errorf("acquiring the codex lock for %s: %w", run.Key, err)
+	}
+	defer func() {
+		if closeErr := lock.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("releasing the codex lock for %s: %w", run.Key, closeErr)
+		}
+	}()
 	probe := &sandboxProbe{runner: r, sandbox: run.Sandbox, paths: paths}
 
 	decision, err := Decide(ctx, probe)

@@ -243,6 +243,9 @@ type StagePaths struct {
 	// stage's completion record: present means done, and the stage must be read
 	// from it rather than re-run.
 	Result string
+	// Lock serialises attempts of this exact stage while they probe and run.
+	// It stays beside Result so no process outside this sandbox needs it.
+	Lock string
 }
 
 // Paths returns where this attempt's files live inside the sandbox.
@@ -253,6 +256,7 @@ func (k StageKey) Paths() StagePaths {
 		Prompt: path.Join(dir, "prompt.md"),
 		Schema: path.Join(dir, "schema.json"),
 		Result: path.Join(dir, "result.json"),
+		Lock:   path.Join(dir, "codex.lock"),
 	}
 }
 
