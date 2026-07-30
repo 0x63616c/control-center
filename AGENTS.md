@@ -11,7 +11,7 @@
   (raw dump). Pull ideas from there.
 - Read the `docs/writing-scalable-typescript/` guide (start at its `README.md`)
   before writing or reviewing TS/TSX. It is docs, not an invokable skill.
-- **`apps/software-factory-worker/` is Go and has its own standards**, in its nested
+- **`apps/software-factory/` is Go and has its own standards**, in its nested
   `AGENTS.md` + `docs/SoftwareStyle.md` + `.golangci.yml`. Those apply to **that
   directory only** and say nothing about the rest of this repo - do not cite them in a
   review of TS code. Everything in this file still applies there.
