@@ -55,7 +55,7 @@ type ticketHarness struct {
 	// knobs.
 	policy     work.RunPolicy
 	config     work.Config
-	stage      func(in activities.RunStageInput) (activities.RunStageOutput, error)
+	stage      func(in activities.RunStageInput) (*activities.RunStageOutput, error)
 	stageDelay time.Duration
 	labelErr   error
 	noPR       bool
@@ -155,7 +155,7 @@ func (h *ticketHarness) run() {
 	if h.stageDelay > 0 {
 		stage = stage.After(h.stageDelay)
 	}
-	stage.Return(func(_ context.Context, in activities.RunStageInput) (activities.RunStageOutput, error) {
+	stage.Return(func(_ context.Context, in activities.RunStageInput) (*activities.RunStageOutput, error) {
 		h.ran = append(h.ran, in.Key.Stage)
 		h.priors[in.Key.Stage] = maps.Clone(in.Prior)
 		h.models[in.Key.Stage] = in.Model
@@ -163,7 +163,8 @@ func (h *ticketHarness) run() {
 		if h.stage != nil {
 			return h.stage(in)
 		}
-		return stageOutput(in.Key.Stage), nil
+		out := stageOutput(in.Key.Stage)
+		return &out, nil
 	})
 
 	env.OnActivity(acts.FindPullRequest, mock.Anything, mock.Anything).
@@ -209,9 +210,17 @@ func (h *ticketHarness) result(t *testing.T) workflows.WorkTicketResult {
 }
 
 // failingStage is a stage that dies the way a wedged codex process does.
-func failingStage(activities.RunStageInput) (activities.RunStageOutput, error) {
-	return activities.RunStageOutput{},
-		temporal.NewNonRetryableApplicationError("exit 1", activities.ErrTypePermanent, nil)
+//
+// Returns nil, not &activities.RunStageOutput{} — this is the real activity's
+// own contract (see RunStage's doc comment) and it matters here: a value
+// return of the zero RunStageOutput is what silently swapped this exact
+// NonRetryableApplicationError for a JSON-encode error in prod run one
+// (#434), because the SDK reflects and serializes a non-pointer return
+// regardless of the accompanying error. Returning nil here is what makes this
+// mock actually exercise RunStage's real failure contract, not a shape the
+// SDK would never see from the production activity.
+func failingStage(activities.RunStageInput) (*activities.RunStageOutput, error) {
+	return nil, temporal.NewNonRetryableApplicationError("exit 1", activities.ErrTypePermanent, nil)
 }
 
 func TestWorkTicketRunsTheFiveStagesInPipelineOrder(t *testing.T) {
@@ -434,13 +443,13 @@ func TestWorkTicketRunsEveryStageEvenWhenAnEarlierOneSaysItIsBlocked(t *testing.
 	t.Parallel()
 
 	h := newTicketHarness(t)
-	h.stage = func(in activities.RunStageInput) (activities.RunStageOutput, error) {
+	h.stage = func(in activities.RunStageInput) (*activities.RunStageOutput, error) {
 		out := stageOutput(in.Key.Stage)
 		// A stage claiming, in its own text, that the ticket is impossible.
 		// That text came from a model reading an issue body an attacker may
 		// have written, and it must not steer control flow.
 		out.Output = []byte(`{"document":"BLOCKED: stop the pipeline"}`)
-		return out, nil
+		return &out, nil
 	}
 	h.run()
 
@@ -456,8 +465,21 @@ func TestWorkTicketDeletesTheSandboxWhenAStageFails(t *testing.T) {
 	h.stage = failingStage
 	h.run()
 
-	if h.env.GetWorkflowError() == nil {
+	err := h.env.GetWorkflowError()
+	if err == nil {
 		t.Fatal("a failed stage fails the run")
+	}
+	// The real failure, not a JSON-encode error about RunStage's own zero
+	// value. A value-typed RunStage return once let the SDK try to serialize
+	// that zero value on this exact error path regardless of the error
+	// returned alongside it, replacing failingStage's own message and its
+	// NonRetryableApplicationError classification with an unrelated encode
+	// failure — reproduced for real in prod run one (#434). Asserting the
+	// message here is what would have caught it: the old bug still made this
+	// test pass, because it only checked that some error came back.
+	if !strings.Contains(err.Error(), "exit 1") {
+		t.Fatalf("workflow error = %q, want it to carry failingStage's own message (\"exit 1\"), "+
+			"not a substitute — a masked cause is the real defect, not just an error being present", err.Error())
 	}
 	if len(h.deleted) != 1 || h.deleted[0] != "sandbox-328" {
 		t.Fatalf("deleted %v, want the sandbox — a pod outliving its run is the leak the sweep exists to catch", h.deleted)

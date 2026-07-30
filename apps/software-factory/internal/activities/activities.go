@@ -444,17 +444,37 @@ func (o *RunStageOutput) UnmarshalJSON(data []byte) error {
 // two consumers of it: the transcript wants the bytes, and Temporal wants to
 // know the stage is alive. A stage that emits nothing for the heartbeat timeout
 // is dead rather than slow, and only the stream can tell the difference.
-func (a *Activities) RunStage(ctx context.Context, in RunStageInput) (RunStageOutput, error) {
+//
+// Returns *RunStageOutput, not RunStageOutput, and every error path returns
+// nil rather than a zero value — this is load-bearing, not stylistic. The
+// SDK's reflection-based activity executor (executeFunction) serializes
+// retValues[0] whenever it is not a nil pointer, REGARDLESS of whether an
+// error was also returned; for a value-typed return it always serializes,
+// because a struct value is never a nil pointer. RunStageOutput.Result is a
+// work.StageOutput, which refuses to marshal at its own zero value (see
+// stageoutput.go: "NewStageOutput was never called") — a deliberate guard
+// against a stage that forgot to call NewStageOutput on its SUCCESS path. But
+// every error return here builds that same zero value on purpose, and with a
+// value receiver the SDK tried to encode it anyway: the real error
+// (`fail(...)`'s wrapped stage failure, complete with its retry
+// classification) was discarded and replaced by this encode error instead —
+// observed for real in prod run one (#434), where a benign stage failure
+// surfaced as "unable to encode ... NewStageOutput was never called" and,
+// worse, silently lost its NonRetryableApplicationError tag and retried
+// twice before failing. A nil *RunStageOutput on every error path skips the
+// encode entirely (executeFunction's own nil-pointer check), so the real
+// error reaches Temporal unmodified.
+func (a *Activities) RunStage(ctx context.Context, in RunStageInput) (*RunStageOutput, error) {
 	log := activity.GetLogger(ctx)
 
 	prompt, schema, err := a.deps.Prompts.Render(in.Key.Stage, in.Detail, in.Prior)
 	if err != nil {
-		return RunStageOutput{}, fail(ctx, fmt.Sprintf("rendering the prompt for %s", in.Key), err)
+		return nil, fail(ctx, fmt.Sprintf("rendering the prompt for %s", in.Key), err)
 	}
 
 	transcript, err := a.deps.Transcripts.Open(ctx, in.Key)
 	if err != nil {
-		return RunStageOutput{}, fail(ctx, fmt.Sprintf("opening the transcript for %s", in.Key), err)
+		return nil, fail(ctx, fmt.Sprintf("opening the transcript for %s", in.Key), err)
 	}
 	defer func() {
 		if closeErr := transcript.Close(); closeErr != nil {
@@ -494,7 +514,7 @@ func (a *Activities) RunStage(ctx context.Context, in RunStageInput) (RunStageOu
 		// spent its tokens too, and a metric that only counts successes makes
 		// the expensive case the invisible one.
 		a.deps.Metrics.StageFinished(in.Key.Stage, in.Model, outcomeOf(err), result.Usage, took)
-		return RunStageOutput{}, fail(ctx, fmt.Sprintf("running %s", in.Key), err)
+		return nil, fail(ctx, fmt.Sprintf("running %s", in.Key), err)
 	}
 	a.deps.Metrics.StageFinished(in.Key.Stage, in.Model, telemetry.OutcomeSuccess, result.Usage, took)
 
@@ -507,10 +527,10 @@ func (a *Activities) RunStage(ctx context.Context, in RunStageInput) (RunStageOu
 
 	decoded, err := a.deps.Prompts.Decode(in.Key.Stage, result.Output)
 	if err != nil {
-		return RunStageOutput{}, fail(ctx, fmt.Sprintf("reading the result envelope of %s", in.Key), err)
+		return nil, fail(ctx, fmt.Sprintf("reading the result envelope of %s", in.Key), err)
 	}
 
-	return RunStageOutput{
+	return &RunStageOutput{
 		Output:     result.Output,
 		Result:     decoded,
 		ThreadID:   result.ThreadID,
