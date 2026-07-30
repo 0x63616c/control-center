@@ -245,8 +245,8 @@ func TestDispatcherStartsUpToTheConcurrencyCapAndNoMore(t *testing.T) {
 	h.tickets = tickets(1, 2, 3, 4)
 	h.run()
 
-	if len(h.started) != 2 {
-		t.Fatalf("started %v, want 2 — the cap is the whole of the concurrency control", h.started)
+	if len(h.started) != 3 {
+		t.Fatalf("started %v, want 3 — the cap is the whole of the concurrency control", h.started)
 	}
 }
 
@@ -254,10 +254,11 @@ func TestDispatcherStartsNothingMoreWhileTheCapIsFull(t *testing.T) {
 	t.Parallel()
 
 	h := newDispatcherHarness(t)
-	h.inFlight = []work.InFlightTicket{{Ticket: 1, RunID: "run-1"}, {Ticket: 2, RunID: "run-2"}}
+	h.inFlight = []work.InFlightTicket{{Ticket: 1, RunID: "run-1"}, {Ticket: 2, RunID: "run-2"}, {Ticket: 3, RunID: "run-3"}}
 	h.runs["work-ticket-1"] = work.RunState{Open: true, RunID: "run-1"}
 	h.runs["work-ticket-2"] = work.RunState{Open: true, RunID: "run-2"}
-	h.tickets = tickets(1, 2, 3)
+	h.runs["work-ticket-3"] = work.RunState{Open: true, RunID: "run-3"}
+	h.tickets = tickets(1, 2, 3, 4)
 	h.run()
 
 	if len(h.started) != 0 {
@@ -506,7 +507,7 @@ func TestDispatcherKeepsRunningOnAConfigUpdateItCannotUse(t *testing.T) {
 	})
 	h.run()
 
-	if got := h.status(t).Config.MaxInFlight; got != 2 {
+	if got := h.status(t).Config.MaxInFlight; got != 3 {
 		t.Fatalf("max in flight = %d, want the previous value — a bad update is discarded, not adopted, and not fatal", got)
 	}
 	if h.env.IsWorkflowCompleted() && !temporal.IsCanceledError(h.env.GetWorkflowError()) {

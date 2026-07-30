@@ -82,7 +82,7 @@ const maxAllowedInFlight = 10
 // the plan's limit window is measured in hours, so a cooldown of a minute
 // spends the retry budget re-hitting the same wall.
 const (
-	defaultMaxInFlight            = 2
+	defaultMaxInFlight            = 3
 	defaultBreakerCooldownSeconds = 15 * 60
 	defaultPollIntervalSeconds    = 30
 	defaultOrphanGraceSeconds     = 30 * 60
