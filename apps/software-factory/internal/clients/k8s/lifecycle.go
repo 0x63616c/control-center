@@ -43,9 +43,23 @@ const (
 // run's own Create is being retried — never that an older run left a pod with a
 // different spec and a deadline already ticking. That is what makes adopting
 // the existing pod safe rather than a guess.
-func (s *Sandboxes) Create(ctx context.Context, spec work.SandboxSpec) (work.SandboxID, error) {
+//
+// codexCredential never reaches this call's own Temporal activity payload —
+// see activities.CreateSandbox's doc comment. It is written into a per-ticket
+// Kubernetes Secret before the pod is created, so the volume mount buildPod
+// wired in (D3, #434) has something to reference the moment the container
+// starts. Written unconditionally on every call, including a retry that finds
+// the pod already there: the same "written unconditionally" idempotency
+// clone.go's own writeCredentials already relies on for the git credential —
+// a retry must leave the Secret holding whatever this attempt's own fetch just
+// returned, and overwriting it with identical content costs nothing.
+func (s *Sandboxes) Create(ctx context.Context, spec work.SandboxSpec, codexCredential work.CredentialFile) (work.SandboxID, error) {
 	want, err := buildPod(spec, s.opts)
 	if err != nil {
+		return "", err
+	}
+
+	if err := s.ensureCredentialSecret(ctx, work.SandboxID(want.Name), codexCredential); err != nil {
 		return "", err
 	}
 
@@ -61,6 +75,51 @@ func (s *Sandboxes) Create(ctx context.Context, spec work.SandboxSpec) (work.San
 		return "", classify(work.SandboxID(want.Name), "creating the sandbox pod", err)
 	}
 	return s.reconcileExisting(ctx, spec, want)
+}
+
+// ensureCredentialSecret creates or updates the per-ticket Secret carrying a
+// sandbox's codex credential document, so the Create call that follows always
+// finds it in place before the pod that mounts it exists.
+//
+// Create-then-fall-back-to-update rather than a Get-first read/modify/write:
+// the common case is a fresh run, where a Get would only cost a round trip
+// this Create attempt already knows the answer to. AlreadyExists is the one
+// case that needs the object's current ResourceVersion, which is why that
+// branch alone pays for a Get.
+func (s *Sandboxes) ensureCredentialSecret(ctx context.Context, sandbox work.SandboxID, credential work.CredentialFile) error {
+	name := credentialSecretName(sandbox)
+	secrets := s.cs.CoreV1().Secrets(s.ns)
+	want := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   name,
+			Labels: map[string]string{labelManagedBy: labelManagedByValue},
+		},
+		Type: corev1.SecretTypeOpaque,
+		// Reveal is called once, right here, and the copy it returns is never
+		// logged, returned, or held past this function: see work.CredentialFile's
+		// own doc comment on why a document must never cross an activity
+		// boundary, and CreateSandbox's for why this call itself never appears
+		// in one.
+		Data: map[string][]byte{codexAuthSecretKey: credential.Reveal()},
+	}
+
+	if _, err := secrets.Create(ctx, want, metav1.CreateOptions{}); err == nil {
+		s.logger.InfoContext(ctx, "sandbox credential secret created", "sandbox", sandbox, "secret", name)
+		return nil
+	} else if !apierrors.IsAlreadyExists(err) {
+		return classify(sandbox, "creating the sandbox's credential secret", err)
+	}
+
+	got, err := secrets.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return classify(sandbox, "reading the sandbox's existing credential secret", err)
+	}
+	got.Data = want.Data
+	if _, err := secrets.Update(ctx, got, metav1.UpdateOptions{}); err != nil {
+		return classify(sandbox, "updating the sandbox's credential secret", err)
+	}
+	s.logger.InfoContext(ctx, "sandbox credential secret updated", "sandbox", sandbox, "secret", name)
+	return nil
 }
 
 // reconcileExisting decides what to do about a pod this run's own Create
@@ -372,11 +431,12 @@ func describeState(state corev1.ContainerState) (string, string) {
 	}
 }
 
-// Delete removes a sandbox pod. It does not wait for the object to disappear.
+// Delete removes a sandbox pod and its per-ticket credential Secret. It does
+// not wait for either object to disappear.
 //
-// An already-absent pod is success: this is a cleanup path, it runs in a
-// retrying activity, and a second delete must not fail a run that has already
-// finished its work.
+// An already-absent object is success for both: this is a cleanup path, it
+// runs in a retrying activity, and a second delete must not fail a run that
+// has already finished its work.
 func (s *Sandboxes) Delete(ctx context.Context, sandbox work.SandboxID) error {
 	// No DeleteOptions grace: the pod's own TerminationGracePeriodSeconds is
 	// already zero, which is what the apiserver uses when this leaves it nil.
@@ -386,9 +446,28 @@ func (s *Sandboxes) Delete(ctx context.Context, sandbox work.SandboxID) error {
 	// On a single-node cluster that reservation is the scarce thing, which is
 	// the very reason not to force.
 	err := s.cs.CoreV1().Pods(s.ns).Delete(ctx, string(sandbox), metav1.DeleteOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return classify(sandbox, "deleting the sandbox pod", err)
+	}
+	podWasPresent := err == nil
+
+	if err := s.deleteCredentialSecret(ctx, sandbox); err != nil {
+		return err
+	}
+
+	s.logger.InfoContext(ctx, "sandbox pod deleted", "sandbox", sandbox, "was_present", podWasPresent)
+	return nil
+}
+
+// deleteCredentialSecret removes a sandbox's per-ticket credential Secret,
+// alongside the pod that mounted it — D3 (#434)'s "DeleteSandbox deletes the
+// Secret alongside the pod". Absence is success, the same as the pod's own
+// delete above.
+func (s *Sandboxes) deleteCredentialSecret(ctx context.Context, sandbox work.SandboxID) error {
+	name := credentialSecretName(sandbox)
+	err := s.cs.CoreV1().Secrets(s.ns).Delete(ctx, name, metav1.DeleteOptions{})
 	if err == nil || apierrors.IsNotFound(err) {
-		s.logger.InfoContext(ctx, "sandbox pod deleted", "sandbox", sandbox, "was_present", err == nil)
 		return nil
 	}
-	return classify(sandbox, "deleting the sandbox pod", err)
+	return classify(sandbox, "deleting the sandbox's credential secret", err)
 }

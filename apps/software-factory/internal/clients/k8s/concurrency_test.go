@@ -93,7 +93,7 @@ func TestServesConcurrentExecsAndCreatesWithoutADataRace(t *testing.T) {
 
 				spec := validSpec()
 				spec.TicketNumber = w*100 + r + 1
-				if _, err := s.Create(context.Background(), spec); err != nil {
+				if _, err := s.Create(context.Background(), spec, validCredential()); err != nil {
 					errs <- fmt.Errorf("Create(ticket %d): %w", spec.TicketNumber, err)
 				}
 			}

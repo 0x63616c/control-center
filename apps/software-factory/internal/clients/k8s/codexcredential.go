@@ -2,25 +2,32 @@ package k8s
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
-// WriteCodexCredential puts the codex CLI's auth.json into the sandbox at
-// work.CodexAuthFile, so codex exec can authenticate. It implements
-// activities.CredentialWriter.
+// WriteCodexCredential is a deliberate no-op. It implements
+// activities.CredentialWriter only so *Sandboxes keeps satisfying that
+// interface — cmd/worker's composition root still wires CredentialWriter to
+// this client, and that assignment must keep compiling — but there is nothing
+// left for it to do.
 //
-// It is written by Write, which streams the content as a tar body rather than
-// an argv or a pod spec field — the only place the document's bytes exist
-// outside this call are the file itself and the memory holding the
-// work.CredentialFile, never an exec argument and never a log line. See
-// Write's own doc comment for why a tar header carries the mode instead of a
-// write-then-chmod, which would leave a window where the document is
-// world-readable.
-func (s *Sandboxes) WriteCodexCredential(ctx context.Context, sandbox work.SandboxID, file work.CredentialFile) error {
-	if err := s.Write(ctx, sandbox, work.CodexAuthFile, file.Reveal(), credentialFileMode); err != nil {
-		return fmt.Errorf("writing the sandbox's codex credential file: %w", err)
-	}
+// Before #434's step 3 (D3), this streamed file's content into the sandbox
+// over pods/exec, the same tar transport this package used for every other
+// write into a running pod. That transport is gone: RunStage now runs inside
+// the sandbox pod's own process, not reached remotely, so there is no exec
+// left to stream a tar body over.
+//
+// D3 replaces it with a per-ticket Kubernetes Secret: CreateSandbox (see
+// lifecycle.go's ensureCredentialSecret) writes the codex credential document
+// into that Secret before the pod exists, and buildPod (podspec.go) mounts it
+// directly at work.CodexAuthFile via a subPath volume mount. Kubernetes
+// itself puts the file in place at container start — before any activity,
+// including this one, ever runs — so by the time a workflow reaches this
+// call the file is already there. See activities.Activities.WriteCodexCredential's
+// own doc comment for why the activity that calls this is kept, unchanged,
+// rather than removed: internal/workflows/workticket.go still calls it, and
+// this package's ownership for this slice does not extend to that file.
+func (s *Sandboxes) WriteCodexCredential(context.Context, work.SandboxID, work.CredentialFile) error {
 	return nil
 }

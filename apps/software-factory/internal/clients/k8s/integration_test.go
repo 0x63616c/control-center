@@ -91,7 +91,8 @@ func TestSandboxRoundTripAgainstACluster(t *testing.T) {
 		Env:             map[string]string{"CODEX_HOME": "/work/.codex"},
 	}
 
-	sandbox, err := s.Create(ctx, spec)
+	credential := work.NewCredentialFile([]byte(`{"tokens":{"access_token":"integration-test"}}`))
+	sandbox, err := s.Create(ctx, spec, credential)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -106,7 +107,7 @@ func TestSandboxRoundTripAgainstACluster(t *testing.T) {
 	}
 
 	t.Run("adopts its own create retry", func(t *testing.T) {
-		got, err := s.Create(ctx, spec)
+		got, err := s.Create(ctx, spec, credential)
 		if err != nil {
 			t.Fatalf("Create (retry): %v", err)
 		}

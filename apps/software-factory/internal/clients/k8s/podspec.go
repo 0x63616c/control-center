@@ -53,6 +53,47 @@ var allowedSandboxEnvKeys = map[string]bool{
 // maxPodNameLength is Kubernetes' DNS-1123 label limit, which a pod name is.
 const maxPodNameLength = 63
 
+// credentialSecretPrefix opens every per-ticket credential Secret's name, the
+// same "shared prefix over the sandbox's own SandboxID" pattern
+// sandboxTaskQueuePrefix uses in internal/work/queue.go — visually distinct in
+// `kubectl get secrets`, and a guarantee against a second spelling appearing
+// anywhere else.
+const credentialSecretPrefix = "codex-credential-"
+
+// credentialSecretVolumeName names the volume that mounts a sandbox's
+// per-ticket credential Secret.
+const credentialSecretVolumeName = "codex-credential"
+
+// codexAuthSecretKey is the one key inside a sandbox's credential Secret: the
+// whole of the codex CLI's auth.json document.
+const codexAuthSecretKey = "auth.json"
+
+// credentialSecretDefaultMode is the file mode Kubernetes applies to the
+// mounted key.
+//
+// Group-read, not owner-read alone: a Secret volume's files are always owned
+// by root and the pod's fsGroup (never the container's own uid), regardless
+// of the container's RunAsUser — see buildPod's SecurityContext, which sets
+// both FSGroup and the container's RunAsGroup to sandboxUID. Owner-only
+// (0400) would leave root holding the only readable bit and the sandbox
+// process unable to open its own credential.
+var credentialSecretDefaultMode int32 = 0o440
+
+// credentialSecretName returns the per-ticket Secret name a sandbox pod
+// mounts its codex credential from, derived from the pod's own name rather
+// than minted separately.
+//
+// One function, called from buildPod (to name the volume it wires in) and
+// from lifecycle.go's ensureCredentialSecret/deleteCredentialSecret (to name
+// the object it writes and later removes) — so all three can never disagree
+// about which Secret a given sandbox means. The pod name already carries the
+// run id and is already validated as DNS-1123-label-safe by podName above, so
+// prefixing it stays well inside a Secret name's looser DNS-1123-subdomain
+// limit (253 characters) without any further validation here.
+func credentialSecretName(sandbox work.SandboxID) string {
+	return credentialSecretPrefix + string(sandbox)
+}
+
 // podName is the one spelling of a sandbox's Kubernetes name.
 //
 // It carries the run id as well as the ticket, so an AlreadyExists on Create can
@@ -153,10 +194,26 @@ func buildPod(spec work.SandboxSpec, o options) (*corev1.Pod, error) {
 				ImagePullPolicy: corev1.PullIfNotPresent,
 				// A session staged into, not a job: the stages are execs. Argv
 				// only — no shell here and none in the image's entrypoint.
-				Command:      []string{"sleep", "infinity"},
-				Env:          sortedEnv(spec.Env),
-				Resources:    resources,
-				VolumeMounts: []corev1.VolumeMount{{Name: workVolumeName, MountPath: work.SandboxRoot}},
+				Command:   []string{"sleep", "infinity"},
+				Env:       sortedEnv(spec.Env),
+				Resources: resources,
+				VolumeMounts: []corev1.VolumeMount{
+					{Name: workVolumeName, MountPath: work.SandboxRoot},
+					// Mounted at the exact destination the codex CLI reads,
+					// nested inside the /work emptyDir above rather than
+					// beside it — Kubernetes allows a volume mount's path to
+					// sit under another mount's, and this is what lets
+					// Kubernetes itself put the credential in place at
+					// container start, before any activity runs. See D3
+					// (#434): CreateSandbox provisions this Secret and
+					// nothing else ever writes this file.
+					{
+						Name:      credentialSecretVolumeName,
+						MountPath: work.CodexAuthFile,
+						SubPath:   codexAuthSecretKey,
+						ReadOnly:  true,
+					},
+				},
 				SecurityContext: &corev1.SecurityContext{
 					RunAsNonRoot:             ptr(true),
 					RunAsUser:                &uid,
@@ -166,10 +223,22 @@ func buildPod(spec work.SandboxSpec, o options) (*corev1.Pod, error) {
 					SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 				},
 			}},
-			Volumes: []corev1.Volume{{
-				Name:         workVolumeName,
-				VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: workSize}},
-			}},
+			Volumes: []corev1.Volume{
+				{
+					Name:         workVolumeName,
+					VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: workSize}},
+				},
+				{
+					Name: credentialSecretVolumeName,
+					VolumeSource: corev1.VolumeSource{
+						Secret: &corev1.SecretVolumeSource{
+							SecretName:  credentialSecretName(work.SandboxID(name)),
+							DefaultMode: &credentialSecretDefaultMode,
+							Items:       []corev1.KeyToPath{{Key: codexAuthSecretKey, Path: codexAuthSecretKey}},
+						},
+					},
+				},
+			},
 		},
 	}, nil
 }
