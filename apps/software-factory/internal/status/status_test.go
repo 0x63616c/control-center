@@ -84,19 +84,24 @@ func declined() status.Declined {
 	}
 }
 
+func duplicateWorkflowIDRejected() status.DuplicateWorkflowIDRejected {
+	return status.DuplicateWorkflowIDRejected{TicketNumber: 331, WorkflowID: "work-ticket-331", RunID: runID}
+}
+
 // bodies is every comment a run can post, by the golden file that holds it.
 func bodies() map[string]string {
 	noURL := pickup()
 	noURL.RunURL = ""
 	return map[string]string{
-		"pickup.md":          pickup().Body(),
-		"pickup-no-url.md":   noURL.Body(),
-		"stage-started.md":   started().Body(),
-		"stage-succeeded.md": succeeded().Body(),
-		"stage-failed.md":    failed().Body(),
-		"proposed.md":        proposed().Body(),
-		"abandoned.md":       abandoned().Body(),
-		"declined.md":        declined().Body(),
+		"pickup.md":                         pickup().Body(),
+		"pickup-no-url.md":                  noURL.Body(),
+		"stage-started.md":                  started().Body(),
+		"stage-succeeded.md":                succeeded().Body(),
+		"stage-failed.md":                   failed().Body(),
+		"proposed.md":                       proposed().Body(),
+		"abandoned.md":                      abandoned().Body(),
+		"declined.md":                       declined().Body(),
+		"duplicate-workflow-id-rejected.md": duplicateWorkflowIDRejected().Body(),
 	}
 }
 
@@ -125,6 +130,7 @@ func TestOpensEveryCommentWithItsOwnMarker(t *testing.T) {
 		{"stage failed", failed().Body(), work.StatusMarker(runID, work.StageStep(work.StagePlan))},
 		{"proposed", proposed().Body(), work.StatusMarker(runID, work.StepOutcome)},
 		{"abandoned", abandoned().Body(), work.StatusMarker(runID, work.StepOutcome)},
+		{"duplicate workflow ID", duplicateWorkflowIDRejected().Body(), work.StatusMarker("work-ticket-331", work.StatusStep("duplicate-workflow-id"))},
 	}
 
 	for _, tc := range cases {

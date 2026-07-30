@@ -87,6 +87,14 @@ const (
 	StepFailed StepState = "failed"
 )
 
+// DuplicateWorkflowExecution identifies the execution that already consumed a
+// ticket's one permitted workflow ID.
+type DuplicateWorkflowExecution struct {
+	TicketNumber int
+	WorkflowID   string
+	RunID        string
+}
+
 // RunState is what a lookup of a ticket's workflow found.
 //
 // It exists so the dispatcher's reconcile speaks domain vocabulary rather than
@@ -99,9 +107,10 @@ type RunState struct {
 	// the slot is free — so they are not distinguished here.
 	Open bool
 
-	// RunID identifies the open run, so a dispatcher that has forgotten a
-	// ticket can adopt the run that owns it rather than starting a second one.
-	// Empty when Open is false.
+	// RunID identifies the latest execution. When Open it lets a dispatcher
+	// adopt the run that owns the ticket; when closed it names the execution
+	// that consumed the ticket's workflow ID. It is empty only when Temporal
+	// reports that the workflow has never existed.
 	RunID string
 }
 

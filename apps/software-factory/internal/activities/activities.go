@@ -270,6 +270,20 @@ func (a *Activities) ClearAutoLabel(ctx context.Context, issue int) error {
 	return nil
 }
 
+// RejectDuplicateWorkflowID records that a ticket has already spent its sole
+// workflow ID, then clears auto so the dispatcher does not attempt it again.
+// The fixed marker in the rendered body makes a retry adopt the first comment.
+func (a *Activities) RejectDuplicateWorkflowID(ctx context.Context, rejection work.DuplicateWorkflowExecution) error {
+	body := a.deps.Status.RenderDuplicateWorkflowID(rejection)
+	if _, err := a.deps.GitHub.PostStatus(ctx, rejection.TicketNumber, body); err != nil {
+		return fail(ctx, fmt.Sprintf("posting the duplicate workflow notice on issue #%d", rejection.TicketNumber), err)
+	}
+	if err := a.deps.GitHub.ClearAutoLabel(ctx, rejection.TicketNumber); err != nil {
+		return fail(ctx, fmt.Sprintf("clearing the auto label on issue #%d after duplicate workflow rejection", rejection.TicketNumber), err)
+	}
+	return nil
+}
+
 // CreateSandboxInput asks for one run's pod.
 type CreateSandboxInput struct {
 	TicketNumber int

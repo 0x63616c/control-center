@@ -49,6 +49,33 @@ type Pickup struct {
 	StartedAt time.Time
 }
 
+// DuplicateWorkflowIDRejected explains why a ticket cannot be dispatched
+// again. Its identity is the stable workflow ID rather than a dispatcher run,
+// so retries always adopt the same comment.
+type DuplicateWorkflowIDRejected struct {
+	TicketNumber int
+	WorkflowID   string
+	RunID        string
+}
+
+// Body renders the terminal one-run notice.
+func (d DuplicateWorkflowIDRejected) Body() string {
+	run := "_unavailable_"
+	if d.RunID != "" {
+		run = code(d.RunID)
+	}
+	return join(
+		work.StatusMarker(d.WorkflowID, work.StatusStep("duplicate-workflow-id")),
+		"### software-factory will not run this ticket again",
+		"",
+		field("Workflow", code(d.WorkflowID)),
+		field("Earlier run", run),
+		"",
+		"This workflow ID already consumed this ticket's only run. The `auto` label has been cleared.",
+		"File a new issue to request another attempt.",
+	)
+}
+
 // Body renders the pickup comment.
 func (p Pickup) Body() string {
 	return join(

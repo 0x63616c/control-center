@@ -102,11 +102,10 @@ func TestDescribeReportsAClosedWorkflowAsNotOpen(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Describe: %v", err)
 			}
-			// A closed run's RunID is not carried: RunState.RunID is
-			// documented as "empty when Open is false", and a dispatcher
-			// that adopted a closed run's ID would believe a free slot is
-			// still held.
-			want := work.RunState{Open: false, RunID: ""}
+			// A closed run still identifies the execution that consumed this
+			// workflow ID. The dispatcher uses Open, not RunID, for capacity;
+			// retaining this value lets its duplicate-ID notice name that run.
+			want := work.RunState{Open: false, RunID: "run-1"}
 			if got != want {
 				t.Errorf("Describe = %+v, want %+v", got, want)
 			}

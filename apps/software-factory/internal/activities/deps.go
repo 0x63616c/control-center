@@ -252,6 +252,7 @@ type PromptRenderer interface {
 // status comment changes far more often than the decision to report one.
 type StatusRenderer interface {
 	Render(report work.StatusReport) string
+	RenderDuplicateWorkflowID(rejection work.DuplicateWorkflowExecution) string
 }
 
 // RunLookup answers whether a ticket's workflow is still open.
