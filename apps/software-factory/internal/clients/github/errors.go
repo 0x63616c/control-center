@@ -90,7 +90,7 @@ func classify(ctx context.Context, op string, err error) error {
 
 	// Secondary limits and 429s are typically minute-long transients, and
 	// failing the activity for one would fail the whole WorkTicket workflow —
-	// discarding every token already spent on plan, review and revise to save a
+	// discarding every token already spent so far this run to save a
 	// minute.
 	var secondary *gh.AbuseRateLimitError
 	if errors.As(err, &secondary) {

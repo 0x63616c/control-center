@@ -553,14 +553,14 @@ func lineWithPrefix(body, prefix string) (string, bool) {
 func TestWillNotPutAnUntrustedURLIntoTheCommentAsMarkup(t *testing.T) {
 	t.Parallel()
 
-	// A URL is free text until something has checked it. PullRequestURL is
-	// written by the propose stage from the agent's own result file, which is
-	// model output derived from issue text an attacker chose; RunURL is config,
+	// A URL is free text until something has checked it. This test treats
+	// PullRequestURL as though it could still be attacker-influenced, worth
+	// guarding regardless of which activity supplies it; RunURL is config,
 	// but it lands inside a markdown link where a single `)` closes the link
 	// early and hands the remainder to the renderer.
 	//
 	// What is asserted is not that the value disappears — showing it is how a
-	// reader finds out what the propose stage produced — but that it is never
+	// reader finds out which pull request the run opened — but that it is never
 	// MARKUP. Inside a code span an HTML comment is literal text a human can
 	// see, which is the opposite of the invisible marker line this format
 	// identifies its own comments by.
@@ -695,7 +695,7 @@ func TestRendersAModelNameDefensivelyToo(t *testing.T) {
 //
 // The question is deliberately "did it become markup", not "is it absent": an
 // unusable URL is still shown, inside a code span, because the value is how a
-// reader works out what the propose stage produced.
+// reader works out which pull request the run opened.
 type urlRenderer struct {
 	name string
 	// markup renders a comment carrying raw and reports whether raw ended up
@@ -783,9 +783,9 @@ func TestStillLinksAURLItCanVouchFor(t *testing.T) {
 func TestLinksOnlyAPullRequestOnGitHub(t *testing.T) {
 	t.Parallel()
 
-	// PullRequestURL is model output: the propose stage lifts it from the
-	// agent's own result file, and that agent read issue text an attacker
-	// chose. A well-formed URL on a host of the attacker's choosing is a
+	// This test treats PullRequestURL as though it could still be
+	// attacker-influenced, worth guarding regardless of source. A well-formed
+	// URL on a host of the attacker's choosing is a
 	// working phishing link posted to a real ticket under this service's name,
 	// so the host is checked and not merely the syntax.
 	//

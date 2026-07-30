@@ -55,11 +55,11 @@ func TestBuildDepsWiresTheCodexCredentialSeam(t *testing.T) {
 // sets every environment variable the image is a contract with, not left to the
 // deploy to remember: #398 found CODEX_HOME silently absent, with codex exec
 // failing identically to a model failure, and GH_CONFIG_DIR fails the same way
-// — gh falls back to $HOME/.config/gh, finds no credential there, and `propose`
-// reports itself blocked (#414). Extended for #434 step 3: the sandbox pod's
-// own embedded worker needs the same Temporal frontend and namespace this
-// process itself dials, copied from cfg rather than a second pair of
-// environment variables invented for it.
+// — gh falls back to $HOME/.config/gh, finds no credential there, and any
+// gh-dependent step in the sandbox reports itself blocked (#414). Extended
+// for #434 step 3: the sandbox pod's own embedded worker needs the same
+// Temporal frontend and namespace this process itself dials, copied from cfg
+// rather than a second pair of environment variables invented for it.
 //
 // TestBuildDepsSatisfiesActivitiesNew does not cover this — SandboxTemplate's
 // own Validate checks Image, the resource limits and the deadline, never Env.
@@ -82,7 +82,7 @@ func TestSandboxTemplateCarriesItsPathEnvironment(t *testing.T) {
 		},
 		{
 			"work.GhConfigDirEnv: work.GhConfigDir",
-			"gh looks in $HOME/.config/gh instead, finds no credential, and propose cannot open the pull request",
+			"gh looks in $HOME/.config/gh instead and finds no credential",
 		},
 		{
 			"work.SandboxTemporalHostPortEnv: cfg.TemporalHostPort",

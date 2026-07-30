@@ -53,7 +53,7 @@ func TestRetriesASecondaryRateLimitAfterTheIntervalGitHubAsksFor(t *testing.T) {
 	})
 
 	// Failing the activity would fail the whole WorkTicket workflow, discarding
-	// every token already spent on plan, review and revise to save a minute.
+	// every token already spent so far this run to save a minute.
 	assertRetryable(t, err)
 	if !errors.Is(err, ErrRateLimit) {
 		t.Errorf("error %q is not %v", err, ErrRateLimit)

@@ -146,7 +146,7 @@ func (s StageFailed) Body() string {
 type Proposed struct {
 	RunID string
 	// PullRequestURL is the pull request the run opened, as GitHub reported it
-	// for the branch the worker named — not as the propose stage described it.
+	// for the branch the worker named — not as any stage's own report described it.
 	//
 	// It arrives here as work.StatusReport.PullRequestURL, set from
 	// activities.FindPullRequestOutput.PullRequest.URL in
@@ -385,14 +385,14 @@ func asciiLower(s string) string {
 // pullRequestRef renders the pull request a run opened.
 //
 // A URL that does not survive linkedURL is still shown, but inertly: the value
-// is the one thing a reader needs in order to work out what the propose stage
-// actually produced, and dropping it would leave a comment announcing a pull
-// request with no way to find out which one it meant or why it is missing.
+// is the one thing a reader needs in order to work out which pull request the
+// run actually opened, and dropping it would leave a comment announcing a
+// pull request with no way to find out which one it meant or why it is
+// missing.
 //
 // Inertly means inside a code span, via inert, which collapses whitespace and
 // caps the text at maxReasonRunes. A pathological value is therefore shown
-// truncated: the reader gets a lead on what propose produced, not a verbatim
-// copy of it.
+// truncated: the reader gets a lead on the URL, not a verbatim copy of it.
 func pullRequestRef(rawURL string) string {
 	if parsed, ok := linkedURL(rawURL); ok && asciiLower(parsed.Host) == pullRequestHost {
 		return rawURL

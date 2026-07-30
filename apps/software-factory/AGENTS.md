@@ -17,8 +17,9 @@ issue tracking). This file **adds** to it; it does not replace it.
 
 A Go Temporal worker that autonomously works GitHub issues labelled `auto`: a dispatcher
 workflow polls for eligible tickets and a WorkTicket workflow per issue runs
-`plan → review → revise → implement → propose`, each stage a `codex exec` inside a
-disposable per-ticket Kubernetes pod. It opens a PR and stops. Merging stays human.
+`plan → implement → review`, looping implement/review under turn budgets, each stage a
+`codex exec` inside a disposable per-ticket Kubernetes pod. The workflow itself opens or
+updates the pull request after every push implement makes. Merging stays human.
 
 What actually happens end to end — what each stage reads, may write and is trusted for, where
 a human is required, and what is absent: [`docs/system-map.md`](./docs/system-map.md).

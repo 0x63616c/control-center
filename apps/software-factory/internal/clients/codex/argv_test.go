@@ -48,7 +48,7 @@ func TestStageArgvResumesWithATheadIDWhenGiven(t *testing.T) {
 
 	got := stageArgv(testRun(), "thread-abc")
 	want := []string{
-		"codex", "exec", resumeSubcommand, "thread-abc",
+		"codex", "exec",
 		"--json",
 		"--dangerously-bypass-approvals-and-sandbox",
 		"--cd", "/work/repo",
@@ -56,9 +56,42 @@ func TestStageArgvResumesWithATheadIDWhenGiven(t *testing.T) {
 		"--config", "model_reasoning_effort=medium",
 		"--output-schema", "/work/0198c2f1/plan/1/schema.json",
 		"--output-last-message", "/work/0198c2f1/plan/1/result.json",
+		resumeSubcommand, "thread-abc",
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("stageArgv() with a resume id =\n  %q\nwant\n  %q", got, want)
+	}
+}
+
+// TestStageArgvPutsTheResumeSubcommandLastNotFirst pins the ordering bug this
+// once shipped with: codex's usage is `codex exec [OPTIONS] <COMMAND>
+// [ARGS]`, so `resume <id>` has to come AFTER every exec-level flag, not
+// right after `codex exec`. Verified directly against the installed
+// codex-cli: `codex exec resume --help` does not accept `--cd` (or most of
+// exec's own flags) at all, so anything placed after `resume` in argv is
+// parsed as resume's own options — an invocation that fails on every resumed
+// turn, silently, because turn one (never resumed) looks perfectly healthy.
+func TestStageArgvPutsTheResumeSubcommandLastNotFirst(t *testing.T) {
+	t.Parallel()
+
+	got := stageArgv(testRun(), "thread-abc")
+
+	cdAt := slices.Index(got, flagCd)
+	resumeAt := slices.Index(got, resumeSubcommand)
+	if cdAt < 0 {
+		t.Fatalf("argv does not carry %s at all: %q", flagCd, got)
+	}
+	if resumeAt < 0 {
+		t.Fatalf("argv does not carry %q at all: %q", resumeSubcommand, got)
+	}
+	if resumeAt < cdAt {
+		t.Fatalf("%q appears before %s at %q; codex parses everything after resume as resume's own "+
+			"options, and codex exec resume does not accept %s at all", resumeSubcommand, flagCd, got, flagCd)
+	}
+	// The thread id must be resume's own next argument, not floating
+	// somewhere an exec-level flag could swallow it as its own value.
+	if got, want := got[resumeAt+1], "thread-abc"; got != want {
+		t.Fatalf("the argument after %q = %q, want the thread id %q", resumeSubcommand, got, want)
 	}
 }
 

@@ -27,13 +27,9 @@ const (
 
 	// resumeSubcommand continues a previous codex conversation by thread id,
 	// for implement's turn-to-turn resume (#435's pipeline rewrite — "Codex
-	// sessions"). UNVERIFIED, unlike every other spelling in this block: the
-	// rust-v0.145.0 source this file otherwise checks every flag against was
-	// not reachable while writing this, so this is written down from the
-	// publicly documented `codex exec resume <SESSION_ID> [PROMPT]` shape,
-	// not confirmed against codex-rs/exec/src/cli.rs. Confirm it against that
-	// source before this ships, and do not read this comment as verification
-	// that it is correct.
+	// sessions"). Verified against the installed codex-cli 0.145.0's own
+	// `codex exec resume --help`: the documented shape is
+	// `codex exec resume <SESSION_ID> [PROMPT]`, confirmed rather than assumed.
 	resumeSubcommand = "resume"
 )
 
@@ -89,13 +85,21 @@ func sessionIDFile(key work.StageKey) string {
 // sessionIDFile). Runner.run is the only caller and the only place that
 // decides what to pass here — this function does no I/O of its own and takes
 // the caller's word for it.
+//
+// The subcommand goes LAST, after every exec-level flag, not first. codex's
+// own usage is `codex exec [OPTIONS] <COMMAND> [ARGS]` — `resume` is a
+// subcommand of `exec`, not a sibling flag, so anything placed after it is
+// parsed as *resume's* own options rather than exec's. Verified directly:
+// `codex exec --help` accepts `--cd`/`-C`; `codex exec resume --help` does
+// not (it only takes `--all`/`--last` beyond the options the two share). A
+// build that appended `resume <id>` right after `codex exec` and put `--cd`
+// after that would therefore fail on every resumed turn — silently only on
+// resumed turns, since turn one (never resumed) would look healthy. That
+// exact ordering bug shipped here once; it is why this note exists.
 func stageArgv(run work.StageRun, resumeThreadID string) []string {
 	paths := run.Key.Paths()
-	args := []string{"codex", "exec"}
-	if resumeThreadID != "" {
-		args = append(args, resumeSubcommand, resumeThreadID)
-	}
-	return append(args,
+	args := []string{
+		"codex", "exec",
 		flagJSON,
 		flagBypassSandbox,
 		flagCd, work.RepoDir,
@@ -103,5 +107,9 @@ func stageArgv(run work.StageRun, resumeThreadID string) []string {
 		flagConfig, fmt.Sprintf("%s=%s", configReasoningEffort, run.Model.Effort),
 		flagOutputSchema, paths.Schema,
 		flagOutputLastMessage, paths.Result,
-	)
+	}
+	if resumeThreadID != "" {
+		args = append(args, resumeSubcommand, resumeThreadID)
+	}
+	return args
 }

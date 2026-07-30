@@ -240,15 +240,17 @@ func (c *Client) ListAutoTickets(ctx context.Context) ([]work.Ticket, error) {
 // PullRequestForBranch returns the open pull request whose head is branch, if
 // there is one.
 //
-// This is how a run learns what it achieved. It is asked of GitHub rather than
-// read out of the propose stage's own report because that report is model
-// output derived from issue text an attacker chose, and a URL taken from it is
-// a phishing vector that renders as an autolink (#371). The branch is one the
-// worker named from a ticket number and a Temporal RunID, so nothing an issue
-// author writes can steer which branch is queried or which URL comes back.
+// This is how a run learns what already exists on its own branch. It is asked
+// of GitHub rather than read out of a stage's own report because that report
+// is model output derived from issue text an attacker chose, and a URL taken
+// from it is a phishing vector that renders as an autolink (#371). The branch
+// is one the worker named from a ticket number and a Temporal RunID, so
+// nothing an issue author writes can steer which branch is queried or which
+// URL comes back.
 //
-// Not found is not an error: a propose stage that declined to open a pull
-// request is a run that was blocked, which is a decision.
+// Not found is not an error: under the pipeline rewrite (#435), PR ownership
+// is workflow code — OpenOrUpdatePullRequest creates on Found: false and edits
+// on Found: true, so absence here just picks which of those two happens next.
 //
 // The URL returned is HTMLURL — the page a human opens — not the API URL.
 func (c *Client) PullRequestForBranch(ctx context.Context, branch string) (work.PullRequest, bool, error) {
@@ -688,7 +690,7 @@ func (c *Client) InstallationToken(ctx context.Context) (work.SandboxCredential,
 			// without this, with an error that never reaches this client's
 			// taxonomy. Agents edit workflows, so this is not hypothetical.
 			Workflows: gh.Ptr("write"),
-			// propose opens the PR from inside the pod.
+			// OpenOrUpdatePullRequest/ConvertPullRequestToDraft need it.
 			PullRequests: gh.Ptr("write"),
 			// GitHub will not grant the others without it.
 			Metadata: gh.Ptr("read"),
