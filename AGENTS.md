@@ -171,9 +171,20 @@ means a GitHub issue - same thing, one vocabulary.
   change (passing test, working slice, doc update); never batch. Push the
   branch immediately - the push target is now the PR branch, not `main`.
 - Opening a PR, and self-merging it once it's green, is pre-approved for every
-  requested change. Never pause to ask, and no required reviewers are needed -
-  the goal is an auditable trail ("here's the PR for that change"), not an
-  approval gate.
+  requested change made by a human (you, an agent working a task Calum gave
+  it directly). Never pause to ask. `main` carries a branch-protection
+  ruleset requiring one Code Owner (@0x63616c) approval, but Calum is a
+  bypass actor - the goal for human-driven work stays an auditable trail
+  ("here's the PR for that change"), not an approval gate. GitHub's default
+  merge button still shows "review required" for a bypass actor; use the
+  "Merge without waiting for requirements to be met" button (or `gh pr merge
+  --admin`, or the plain `PUT .../pulls/{n}/merge` API call) rather than
+  reading that as blocked.
+  - **software-factory's PRs are the one exception.** Its GitHub App is not a
+    bypass actor, deliberately: those PRs need Calum's actual review before
+    they merge. The service enables GitHub auto-merge (squash) on its own
+    PRs once they leave draft, so once approved they merge themselves - no
+    manual merge step for those.
 - **Merging to `main` deploys to prod** (push-to-main triggers CI + deploy), so
   merging the PR is the deliberate act. Merge once CI is green; don't merge a
   red PR.
