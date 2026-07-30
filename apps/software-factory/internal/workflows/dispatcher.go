@@ -352,7 +352,7 @@ func (d *dispatcher) claim(ctx workflow.Context, ticket work.Ticket) bool {
 		return true
 	}
 
-	childCtx := workflow.WithChildOptions(ctx, d.childOptions(ticket.Number))
+	childCtx := workflow.WithChildOptions(ctx, d.childOptions(ticket))
 	child := workflow.ExecuteChildWorkflow(childCtx, WorkTicket, WorkTicketInput{
 		Ticket:       ticket,
 		Config:       d.config,
@@ -514,11 +514,13 @@ func (d *dispatcher) status() (work.Status, error) {
 // ParentClosePolicy ABANDON is required, not stylistic. The default is
 // TERMINATE and ContinueAsNew closes the parent run, so the default would have
 // the dispatcher kill every ticket it had just started, every few hours.
-func (d *dispatcher) childOptions(ticket int) workflow.ChildWorkflowOptions {
+func (d *dispatcher) childOptions(ticket work.Ticket) workflow.ChildWorkflowOptions {
 	return workflow.ChildWorkflowOptions{
-		WorkflowID:         work.WorkflowID(ticket),
+		WorkflowID:         work.WorkflowID(ticket.Number),
 		ParentClosePolicy:  enums.PARENT_CLOSE_POLICY_ABANDON,
 		WorkflowRunTimeout: d.run.RunTimeout,
+		StaticSummary:      fmt.Sprintf("#%d %s", ticket.Number, ticket.Title),
+		StaticDetails:      fmt.Sprintf("https://github.com/0x63616c/world-wide-webb/issues/%d", ticket.Number),
 	}
 }
 
