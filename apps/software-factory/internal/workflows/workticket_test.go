@@ -31,27 +31,35 @@ const dispatcherID = "software-factory-dispatcher"
 // (Output, Result, ThreadID, Usage) are reachable from here, which is enough
 // to build one field by field.
 
-func planOutput() activities.RunPlanOutput {
+// Pointers, not values: RunPlan/RunImplement/RunReview return
+// *RunPlanOutput/*RunImplementOutput/*RunReviewOutput and nil on error (#457
+// — a value return is never a nil pointer, so the SDK always tries to encode
+// it, even on an error path where the embedded work.StageOutput is the zero
+// value on purpose and refuses to marshal, silently replacing the real error
+// with an encode failure). testify's mock checks the registered return
+// against the activity's actual signature, so these have to match it.
+
+func planOutput() *activities.RunPlanOutput {
 	var out activities.RunPlanOutput
 	fillStageOutput(&out.Output, &out.Result, &out.ThreadID, &out.Usage,
 		work.NewStageOutput(work.StagePlan, work.DocumentOutput{Document: "the plan"}))
-	return out
+	return &out
 }
 
-func implementOutput(blocked bool, blockedReason, title, body string) activities.RunImplementOutput {
+func implementOutput(blocked bool, blockedReason, title, body string) *activities.RunImplementOutput {
 	var out activities.RunImplementOutput
 	fillStageOutput(&out.Output, &out.Result, &out.ThreadID, &out.Usage,
 		work.NewStageOutput(work.StageImplement, work.ImplementOutput{
 			Report: "implemented it", Blocked: blocked, BlockedReason: blockedReason, Title: title, Body: body,
 		}))
-	return out
+	return &out
 }
 
-func reviewOutput(findings ...work.Finding) activities.RunReviewOutput {
+func reviewOutput(findings ...work.Finding) *activities.RunReviewOutput {
 	var out activities.RunReviewOutput
 	fillStageOutput(&out.Output, &out.Result, &out.ThreadID, &out.Usage,
 		work.NewStageOutput(work.StageReview, work.ReviewOutput{Document: "the review", Findings: findings}))
-	return out
+	return &out
 }
 
 // fillStageOutput fills in the fields every *Output type promotes from its
@@ -83,7 +91,7 @@ type ticketHarness struct {
 
 	// implement, keyed by turn (1-indexed). A turn not present in the map
 	// runs the default: not blocked, pushed, no title/body worth noting.
-	implement map[int]activities.RunImplementOutput
+	implement map[int]*activities.RunImplementOutput
 	// ci, keyed by implement turn. A turn not present observes green.
 	ci map[int]activities.ObserveCIOutput
 	// review, keyed by review turn (1-indexed, its own counter). A turn not
@@ -134,7 +142,7 @@ func newTicketHarness(t *testing.T) *ticketHarness {
 		env:       env,
 		policy:    work.DefaultRunPolicy(),
 		config:    work.DefaultConfig(),
-		implement: map[int]activities.RunImplementOutput{},
+		implement: map[int]*activities.RunImplementOutput{},
 		ci:        map[int]activities.ObserveCIOutput{},
 		review:    map[int][]work.Finding{},
 	}
@@ -197,10 +205,10 @@ func (h *ticketHarness) run() {
 	plan.Return(planOutput(), nil)
 
 	env.OnActivity(acts.RunImplement, mock.Anything, mock.Anything).
-		Return(func(_ context.Context, in activities.RunImplementInput) (activities.RunImplementOutput, error) {
+		Return(func(_ context.Context, in activities.RunImplementInput) (*activities.RunImplementOutput, error) {
 			h.implementTurns = append(h.implementTurns, in.Key)
 			if h.implementErr != nil {
-				return activities.RunImplementOutput{}, h.implementErr
+				return nil, h.implementErr
 			}
 			if out, ok := h.implement[in.Key.Turn]; ok {
 				return out, nil
@@ -209,10 +217,10 @@ func (h *ticketHarness) run() {
 		})
 
 	env.OnActivity(acts.RunReview, mock.Anything, mock.Anything).
-		Return(func(_ context.Context, in activities.RunReviewInput) (activities.RunReviewOutput, error) {
+		Return(func(_ context.Context, in activities.RunReviewInput) (*activities.RunReviewOutput, error) {
 			h.reviewTurns = append(h.reviewTurns, in.Key)
 			if h.reviewErr != nil {
-				return activities.RunReviewOutput{}, h.reviewErr
+				return nil, h.reviewErr
 			}
 			return reviewOutput(h.review[in.Key.Turn]...), nil
 		})
@@ -318,6 +326,36 @@ func TestWorkTicketFailsBeforeAnyStageWhenTheCloneFails(t *testing.T) {
 	}
 	if len(h.deleted) != 1 || h.deleted[0] != "sandbox-328" {
 		t.Fatalf("deleted %v, want the sandbox cleaned up despite the clone failing", h.deleted)
+	}
+}
+
+// TestWorkTicketSurfacesAnImplementFailureRatherThanAnEncodeError guards
+// against #457's defect recurring on RunImplement: a nil *RunImplementOutput
+// on RunImplement's error path is what stops the SDK's own encode attempt
+// (retValues[0] serialized whenever it is not a nil pointer, regardless of
+// the error) from silently replacing the real stage failure — and its
+// NonRetryableApplicationError tag — with an unrelated marshalling error.
+// Asserts the actual message, not just that some error came back; that
+// weaker assertion is exactly how the defect shipped unnoticed the first
+// time (prod run one, #434/#457).
+func TestWorkTicketSurfacesAnImplementFailureRatherThanAnEncodeError(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.implementErr = temporal.NewNonRetryableApplicationError(
+		"codex exited 1", activities.ErrTypePermanent, nil)
+	h.run()
+
+	err := h.env.GetWorkflowError()
+	if err == nil {
+		t.Fatal("a failed implement turn fails the run")
+	}
+	if !strings.Contains(err.Error(), "codex exited 1") {
+		t.Fatalf("error = %v, want the stage's own failure (\"codex exited 1\"), "+
+			"not an unrelated encode error from a zero-value output", err)
+	}
+	if len(h.deleted) != 1 || h.deleted[0] != "sandbox-328" {
+		t.Fatalf("deleted %v, want the sandbox cleaned up despite the stage failing", h.deleted)
 	}
 }
 
@@ -573,7 +611,7 @@ func TestWorkTicketBlockedStopsImmediatelyRegardlessOfRemainingBudget(t *testing
 	t.Parallel()
 
 	h := newTicketHarness(t)
-	h.implement = map[int]activities.RunImplementOutput{
+	h.implement = map[int]*activities.RunImplementOutput{
 		2: implementOutput(true, "needs a human decision", "", ""),
 	}
 	// Turn 1 red, so the window continues to a turn 2 rather than reaching

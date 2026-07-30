@@ -463,9 +463,28 @@ func (o *RunPlanOutput) UnmarshalJSON(data []byte) error {
 
 // RunPlan renders the plan stage's prompt, runs it in the sandbox, and stores
 // its event stream.
-func (a *Activities) RunPlan(ctx context.Context, in RunPlanInput) (RunPlanOutput, error) {
+//
+// Returns *RunPlanOutput, not RunPlanOutput, and nil on every error path —
+// load-bearing, not stylistic, and identical in kind and reason to #457's fix
+// for the generic RunStage this method replaced. The SDK's reflection-based
+// activity executor (executeFunction) serializes retValues[0] whenever it is
+// not a nil pointer, regardless of whether an error was also returned; a
+// value-typed struct is never a nil pointer, so a value return here would
+// always be handed to the data converter, even on an error path, where
+// RunPlanOutput.Result (a work.StageOutput) is the zero value on purpose —
+// and work.StageOutput.MarshalJSON refuses to encode its own zero value (a
+// deliberate guard against a stage that forgot to call NewStageOutput on its
+// success path). That refusal would silently replace the real error, and its
+// retry classification, with an encode error instead — exactly what prod run
+// one observed for RunStage before #457. A nil *RunPlanOutput on every error
+// path trips executeFunction's own nil-pointer check and skips the encode
+// entirely.
+func (a *Activities) RunPlan(ctx context.Context, in RunPlanInput) (*RunPlanOutput, error) {
 	out, err := a.runStage(ctx, in.stageInput)
-	return RunPlanOutput{stageOutput: out}, err
+	if err != nil {
+		return nil, err
+	}
+	return &RunPlanOutput{stageOutput: out}, nil
 }
 
 // RunImplementInput is one implement turn.
@@ -493,9 +512,16 @@ func (o *RunImplementOutput) UnmarshalJSON(data []byte) error {
 // workflow loop's job (internal/workflows), driven by this activity's Result
 // and the CI-observation activity's own. This activity's whole job is running
 // one turn and handing back what it produced.
-func (a *Activities) RunImplement(ctx context.Context, in RunImplementInput) (RunImplementOutput, error) {
+//
+// Returns *RunImplementOutput and nil on every error path, for the same
+// reason RunPlan does — see its doc comment; #457 diagnosed and fixed the
+// identical defect on the generic RunStage this method replaced.
+func (a *Activities) RunImplement(ctx context.Context, in RunImplementInput) (*RunImplementOutput, error) {
 	out, err := a.runStage(ctx, in.stageInput)
-	return RunImplementOutput{stageOutput: out}, err
+	if err != nil {
+		return nil, err
+	}
+	return &RunImplementOutput{stageOutput: out}, nil
 }
 
 // RunReviewInput is one review turn.
@@ -520,9 +546,16 @@ func (o *RunReviewOutput) UnmarshalJSON(data []byte) error {
 // one review turn's session into the next, unlike implement's. That is
 // enforced by never writing a review session id anywhere stageArgv reads one
 // from (internal/clients/codex/argv.go), not by anything in this method.
-func (a *Activities) RunReview(ctx context.Context, in RunReviewInput) (RunReviewOutput, error) {
+//
+// Returns *RunReviewOutput and nil on every error path, for the same reason
+// RunPlan does — see its doc comment; #457 diagnosed and fixed the identical
+// defect on the generic RunStage this method replaced.
+func (a *Activities) RunReview(ctx context.Context, in RunReviewInput) (*RunReviewOutput, error) {
 	out, err := a.runStage(ctx, in.stageInput)
-	return RunReviewOutput{stageOutput: out}, err
+	if err != nil {
+		return nil, err
+	}
+	return &RunReviewOutput{stageOutput: out}, nil
 }
 
 // stageOutputUnmarshalJSON is RunPlanOutput's, RunImplementOutput's and
