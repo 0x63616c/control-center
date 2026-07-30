@@ -49,5 +49,6 @@ If neither list fits, ask the user rather than inventing a new label.
 
 This skill creates issues, not pull requests. If the work continues to a PR,
 write its description from `.github/pull_request_template.md`: complete every
-applicable section with real branch evidence, reference the issue as `Refs #N`,
-and delete the Screenshot section when there is no UI change.
+applicable section with real branch evidence, use the canonical `Fixes #N` field
+for an issue the PR resolves (and no closing keywords elsewhere), and delete the
+Screenshot section when there is no UI change.

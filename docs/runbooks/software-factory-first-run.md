@@ -188,8 +188,9 @@ sessions own branches you cannot see (AGENTS.md).
 
 ## 6. Aftermath
 
-- [ ] Calum closes the PR by hand.
-- [ ] `gh issue edit <n> --remove-label auto`, then close the throwaway ticket.
+- [ ] Calum verifies the merged PR and its throwaway issue auto-closed through the
+      PR's canonical `Fixes #N` reference.
+- [ ] `gh issue edit <n> --remove-label auto`.
 - [ ] Record the run on #345: which stages ran, tokens spent (they are in the
       outcome comment), what broke, what this file got wrong.
 - [ ] Anything unvalidatable-until-prod that the run **did** validate — the
@@ -199,7 +200,7 @@ sessions own branches you cannot see (AGENTS.md).
 
 ## 7. Retire `grind-tickets` (gated on §6)
 
-Only once a run has reached `propose` on its own. Then, one PR, `Refs #345`:
+Only once a run has reached `propose` on its own. Then, one PR, `Fixes #345`:
 
 - [ ] delete `.claude/workflows/grind-tickets.js`
 - [ ] AGENTS.md — the `auto` label bullet still says `grind-tickets` draws from
