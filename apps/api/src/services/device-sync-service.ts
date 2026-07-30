@@ -135,7 +135,7 @@ export async function sweepExpiredWindows(
         deviceId: device.id,
         entityId: device.entityId,
         desired: device.desiredState,
-        elapsed: device.desiredUntilUtc ? now.getTime() - device.desiredUntilUtc.getTime() : null,
+        elapsed: device.desiredAtUtc ? now.getTime() - device.desiredAtUtc.getTime() : null,
       },
       "command window expired, clearing desired",
       { level: "warn" },
