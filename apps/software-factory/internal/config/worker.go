@@ -76,24 +76,24 @@ type Worker struct {
 	// LogLevel is the level everything below this process logs at.
 	LogLevel slog.Level
 
-	// SandboxCPULimit and SandboxMemoryLimit are the per-ticket sandbox pod's
-	// resource limits, as Kubernetes quantity strings ("2", "4Gi").
+	// SandboxCPURequest and SandboxMemoryLimit are the per-ticket sandbox pod's
+	// CPU request and memory limit, as Kubernetes quantity strings ("2", "4Gi").
 	//
 	// Optional, like LogLevel: nothing deploys them today (#340 landed the
 	// worker's own composition ahead of a resourced deploy for the sandbox
 	// pods it creates), and a default that lets a first deploy create a
 	// working pod is worth more here than a crashloop over a number nobody
 	// has decided is wrong yet. Once infra sets these explicitly the default
-	// stops mattering; until then it is a real limit, not a placeholder that
-	// skips enforcement.
-	SandboxCPULimit    string
+	// stops mattering; until then they are real resource settings, not
+	// placeholders that skip enforcement.
+	SandboxCPURequest  string
 	SandboxMemoryLimit string
 }
 
-// Defaults for the two optional sandbox resource limits. See their fields'
+// Defaults for the optional sandbox resource settings. See their fields'
 // doc comment on Worker for why they default rather than fail.
 const (
-	defaultSandboxCPULimit    = "2"
+	defaultSandboxCPURequest  = "2"
 	defaultSandboxMemoryLimit = "4Gi"
 )
 
@@ -113,7 +113,7 @@ const (
 	envSandboxImagePullSecret = "SANDBOX_IMAGE_PULL_SECRET_NAME"
 	envLogLevel               = "LOG_LEVEL"
 
-	envSandboxCPULimit    = "SANDBOX_CPU_LIMIT"
+	envSandboxCPURequest  = "SANDBOX_CPU_REQUEST"
 	envSandboxMemoryLimit = "SANDBOX_MEMORY_LIMIT"
 )
 
@@ -191,7 +191,7 @@ func LoadWorker() (Worker, error) {
 	}
 	cfg.LogLevel = level
 
-	cfg.SandboxCPULimit = orDefault(envSandboxCPULimit, defaultSandboxCPULimit)
+	cfg.SandboxCPURequest = orDefault(envSandboxCPURequest, defaultSandboxCPURequest)
 	cfg.SandboxMemoryLimit = orDefault(envSandboxMemoryLimit, defaultSandboxMemoryLimit)
 	return cfg, nil
 }

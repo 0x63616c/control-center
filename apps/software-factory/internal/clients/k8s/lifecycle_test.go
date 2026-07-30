@@ -304,7 +304,7 @@ func TestCreateRejectsASpecItCannotBuildAPodFor(t *testing.T) {
 
 	s, cs, _ := newLifecycleSandboxes(t)
 	spec := validSpec()
-	spec.CPULimit = "2x"
+	spec.CPURequest = "2x"
 
 	if _, err := s.Create(context.Background(), spec, validCredential()); !errors.Is(err, work.ErrPermanent) {
 		t.Fatalf("Create error = %v, want it permanent", err)

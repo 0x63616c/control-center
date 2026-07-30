@@ -64,7 +64,7 @@ func TestTheRequiredEnvironmentIsExactlyWhatTheTestsSupply(t *testing.T) {
 func setEnv(t *testing.T, env map[string]string) {
 	t.Helper()
 
-	for _, name := range append(workerEnvNames(), "LOG_LEVEL") {
+	for _, name := range append(workerEnvNames(), "LOG_LEVEL", envSandboxCPURequest, envSandboxMemoryLimit) {
 		t.Setenv(name, "")
 	}
 	for name, value := range env {
@@ -103,28 +103,28 @@ func TestLoadWorkerReadsTheWholeEnvironment(t *testing.T) {
 		t.Errorf("SandboxImagePullSecretName = %q", got.SandboxImagePullSecretName)
 	case got.LogLevel != slog.LevelInfo:
 		t.Errorf("LogLevel = %v, want the default %v", got.LogLevel, slog.LevelInfo)
-	case got.SandboxCPULimit != defaultSandboxCPULimit:
-		t.Errorf("SandboxCPULimit = %q, want the default %q", got.SandboxCPULimit, defaultSandboxCPULimit)
+	case got.SandboxCPURequest != defaultSandboxCPURequest:
+		t.Errorf("SandboxCPURequest = %q, want the default %q", got.SandboxCPURequest, defaultSandboxCPURequest)
 	case got.SandboxMemoryLimit != defaultSandboxMemoryLimit:
 		t.Errorf("SandboxMemoryLimit = %q, want the default %q", got.SandboxMemoryLimit, defaultSandboxMemoryLimit)
 	}
 }
 
-// TestLoadWorkerTakesTheSandboxLimitsItIsGiven proves the two optional
-// resource limits are read like every other input when set, and only fall
+// TestLoadWorkerTakesTheSandboxResourcesItIsGiven proves the optional CPU
+// request and memory limit are read like every other input when set, and only fall
 // back to their defaults when absent — the same contract LogLevel has.
-func TestLoadWorkerTakesTheSandboxLimitsItIsGiven(t *testing.T) {
+func TestLoadWorkerTakesTheSandboxResourcesItIsGiven(t *testing.T) {
 	env := completeEnv()
-	env["SANDBOX_CPU_LIMIT"] = "4"
-	env["SANDBOX_MEMORY_LIMIT"] = "8Gi"
+	env[envSandboxCPURequest] = "4"
+	env[envSandboxMemoryLimit] = "8Gi"
 	setEnv(t, env)
 
 	got, err := LoadWorker()
 	if err != nil {
 		t.Fatalf("LoadWorker: %v", err)
 	}
-	if got.SandboxCPULimit != "4" {
-		t.Errorf("SandboxCPULimit = %q, want %q", got.SandboxCPULimit, "4")
+	if got.SandboxCPURequest != "4" {
+		t.Errorf("SandboxCPURequest = %q, want %q", got.SandboxCPURequest, "4")
 	}
 	if got.SandboxMemoryLimit != "8Gi" {
 		t.Errorf("SandboxMemoryLimit = %q, want %q", got.SandboxMemoryLimit, "8Gi")
