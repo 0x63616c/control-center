@@ -120,6 +120,29 @@ func TestImplementPromptRequiresTheCanonicalPullRequestDescription(t *testing.T)
 	}
 }
 
+func TestReviewPromptRequiresDocumentationDriftFindings(t *testing.T) {
+	t.Parallel()
+
+	body, err := templates.ReadFile("templates/review.md")
+	if err != nil {
+		t.Fatalf("reading review prompt: %v", err)
+	}
+
+	for _, requirement := range []string{
+		"AGENTS.md",
+		"CODEBASE_OVERVIEW.md",
+		"docs/**",
+		".claude/skills/**",
+		"normal stable `id`, `blocking`, and `summary` fields",
+		"operational documentation stale,",
+		"or no longer appropriate",
+	} {
+		if !strings.Contains(string(body), requirement) {
+			t.Errorf("review prompt does not require %q", requirement)
+		}
+	}
+}
+
 func TestBaseFencesTheIssueTextWithTheRunsNonce(t *testing.T) {
 	t.Parallel()
 
