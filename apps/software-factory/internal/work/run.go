@@ -15,6 +15,20 @@ import (
 // is a deploy that is wrong, and fails the workflow. Compare with errors.Is.
 var ErrInvalidRun = errors.New("invalid run configuration")
 
+// MaxStageInvocations is the most stage-activity invocations one run's
+// implement/review loop can make before its counters force it to stop —
+// derived, not asserted, in the pipeline-rewrite spec's "The turn schedule":
+// 1 `plan` (runs once) + 15 `implement` (3 CI windows of at most 5 turns
+// each, ci_turns being 5 TOTAL attempts per window, not 5 retries after a
+// free first one) + 3 `review` (review_turns, never resets) = 19.
+//
+// It is the one place that arithmetic lives. RunPolicy.Validate and
+// RunBudget both reference it rather than repeating "19", so a future
+// retuning of either counter's ceiling has exactly one number to change and
+// a test (TestMaxStageInvocationsMatchesTheDerivedSchedule) that fails if it
+// drifts from the counters it is supposed to summarize.
+const MaxStageInvocations = 19
+
 // RunPolicy is the timing a WorkTicket run is held to: how long each stage
 // gets, how long it may go quiet, and how often anything is retried.
 //
@@ -82,9 +96,10 @@ func (p RunPolicy) Validate() error {
 			ErrInvalidRun, p.StageHeartbeatTimeout, p.StageTimeout)
 	case p.RunTimeout <= 0:
 		return fmt.Errorf("%w: run timeout must be positive", ErrInvalidRun)
-	case p.RunTimeout <= p.StageTimeout*time.Duration(len(Pipeline())):
-		return fmt.Errorf("%w: a run timeout of %s cannot hold %d stages of %s each",
-			ErrInvalidRun, p.RunTimeout, len(Pipeline()), p.StageTimeout)
+	case p.RunTimeout <= p.StageTimeout*MaxStageInvocations:
+		return fmt.Errorf("%w: a run timeout of %s cannot hold %d stage invocations of %s each "+
+			"(1 plan + up to 15 implement + up to 3 review, the loop's derived worst case)",
+			ErrInvalidRun, p.RunTimeout, MaxStageInvocations, p.StageTimeout)
 	case p.StageAttempts <= 0:
 		return fmt.Errorf("%w: stage attempts must be positive", ErrInvalidRun)
 	case p.ControlTimeout <= 0:
@@ -96,9 +111,10 @@ func (p RunPolicy) Validate() error {
 }
 
 // RunBudget is the longest a run's stages can legitimately take: every stage
-// using its whole timeout.
+// invocation the implement/review loop could possibly make, each using its
+// whole timeout. See MaxStageInvocations for the derivation.
 func (p RunPolicy) RunBudget() time.Duration {
-	return p.StageTimeout * time.Duration(len(Pipeline()))
+	return p.StageTimeout * MaxStageInvocations
 }
 
 // DispatcherTuning is what paces the loop and is not the operator's business.
@@ -187,6 +203,21 @@ const SandboxBranchEnv = "SF_BRANCH"
 type PullRequest struct {
 	Number int
 	URL    string
+
+	// NodeID is GitHub's GraphQL global identifier for this pull request,
+	// distinct from Number, which is the REST API's identifier. The
+	// convertPullRequestToDraft mutation accepts only this one — REST has no
+	// path to convert a ready pull request back to draft at all. See
+	// clients/github's graphql.go.
+	NodeID string
+
+	// Title and Body are this pull request's current title and description,
+	// as GitHub itself reports them. They exist only so create-or-edit can
+	// tell whether a later push actually changed either before spending an
+	// Edit call — never rendered on the ticket: the status comment links the
+	// URL and says nothing about a pull request's title or body.
+	Title string
+	Body  string
 }
 
 // Outcome is how a WorkTicket run ended.
@@ -199,6 +230,17 @@ const (
 	// so on the issue. Not an error: a machine declining a ticket it does not
 	// understand is the system working.
 	OutcomeBlocked Outcome = "blocked"
+	// OutcomeExhausted means the implement/review loop ran out of turn budget,
+	// or found the same failing CI check or the same blocking review finding
+	// twice, without ever reaching approval.
+	//
+	// Distinct from OutcomeBlocked: that one is the agent's own explicit
+	// verdict that it cannot do the ticket at all, given directly by implement.
+	// This one is the counters' backstop firing on a run that was still trying
+	// when its budget or its progress ran out. A human reading the outcome
+	// comment should be able to tell those apart rather than see one
+	// "abandoned" bucket.
+	OutcomeExhausted Outcome = "exhausted"
 	// OutcomeFailed means the run broke.
 	OutcomeFailed Outcome = "failed"
 )

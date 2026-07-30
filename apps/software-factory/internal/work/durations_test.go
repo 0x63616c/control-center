@@ -24,10 +24,14 @@ func TestAHeartbeatTimeoutCanFireWithinAStage(t *testing.T) {
 func TestARunCanContainItsStages(t *testing.T) {
 	t.Parallel()
 
-	stages := time.Duration(len(Pipeline())) * MaxStageDuration
+	// Not len(Pipeline()) (3, under the pipeline rewrite): a run's real worst
+	// case is the implement/review loop's derived ceiling, MaxStageInvocations
+	// (19) stage invocations, not one pass over the three stages Pipeline()
+	// names. See RunPolicy.Validate's identical check.
+	stages := MaxStageInvocations * MaxStageDuration
 	if MaxRunDuration <= stages {
-		t.Errorf("MaxRunDuration (%s) does not exceed the %d stages it contains (%s): a run would time out while a stage was still legitimately working",
-			MaxRunDuration, len(Pipeline()), stages)
+		t.Errorf("MaxRunDuration (%s) does not exceed the %d stage invocations it can contain (%s): a run would time out while a stage was still legitimately working",
+			MaxRunDuration, MaxStageInvocations, stages)
 	}
 }
 
