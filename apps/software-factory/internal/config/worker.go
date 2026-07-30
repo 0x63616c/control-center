@@ -76,25 +76,36 @@ type Worker struct {
 	// LogLevel is the level everything below this process logs at.
 	LogLevel slog.Level
 
-	// SandboxCPULimit and SandboxMemoryLimit are the per-ticket sandbox pod's
-	// resource limits, as Kubernetes quantity strings ("2", "4Gi").
+	// SandboxCPURequest and SandboxMemoryLimit are the per-ticket sandbox
+	// pod's CPU request and memory limit, as Kubernetes quantity strings
+	// ("2", "8Gi"). There is deliberately no CPU limit: CPU is compressible
+	// and #87 banned limiting it repo-wide, so only a request is configured
+	// here (see podspec.go). Memory is incompressible, so it keeps both a
+	// request and a limit.
 	//
 	// Optional, like LogLevel: nothing deploys them today (#340 landed the
 	// worker's own composition ahead of a resourced deploy for the sandbox
 	// pods it creates), and a default that lets a first deploy create a
 	// working pod is worth more here than a crashloop over a number nobody
 	// has decided is wrong yet. Once infra sets these explicitly the default
-	// stops mattering; until then it is a real limit, not a placeholder that
-	// skips enforcement.
-	SandboxCPULimit    string
+	// stops mattering; until then they are real resource settings, not
+	// placeholders that skip enforcement.
+	SandboxCPURequest  string
 	SandboxMemoryLimit string
 }
 
-// Defaults for the two optional sandbox resource limits. See their fields'
+// Defaults for the two optional sandbox resource settings. See their fields'
 // doc comment on Worker for why they default rather than fail.
+//
+// defaultSandboxMemoryLimit is set from a measurement, not a guess: #493
+// measured `bun run typecheck` peaking at 6.92Gi inside the sandbox image,
+// against the previous 4Gi limit — which is why #479's runs died mid-implement.
+// 8Gi is 1.16x that peak, a deliberate near-term unblock rather than a
+// comfortable margin; #492 (bounding tsc's fan-out) is the real fix for the
+// peak itself.
 const (
-	defaultSandboxCPULimit    = "2"
-	defaultSandboxMemoryLimit = "4Gi"
+	defaultSandboxCPURequest  = "2"
+	defaultSandboxMemoryLimit = "8Gi"
 )
 
 // Environment variables LoadWorker reads. They are constants because the errors
@@ -113,7 +124,7 @@ const (
 	envSandboxImagePullSecret = "SANDBOX_IMAGE_PULL_SECRET_NAME"
 	envLogLevel               = "LOG_LEVEL"
 
-	envSandboxCPULimit    = "SANDBOX_CPU_LIMIT"
+	envSandboxCPURequest  = "SANDBOX_CPU_REQUEST"
 	envSandboxMemoryLimit = "SANDBOX_MEMORY_LIMIT"
 )
 
@@ -191,7 +202,7 @@ func LoadWorker() (Worker, error) {
 	}
 	cfg.LogLevel = level
 
-	cfg.SandboxCPULimit = orDefault(envSandboxCPULimit, defaultSandboxCPULimit)
+	cfg.SandboxCPURequest = orDefault(envSandboxCPURequest, defaultSandboxCPURequest)
 	cfg.SandboxMemoryLimit = orDefault(envSandboxMemoryLimit, defaultSandboxMemoryLimit)
 	return cfg, nil
 }

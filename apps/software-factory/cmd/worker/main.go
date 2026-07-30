@@ -337,7 +337,7 @@ func buildDeps(
 	// environment.
 	sandboxTemplate := work.SandboxTemplate{
 		Image:           cfg.SandboxImage,
-		CPULimit:        cfg.SandboxCPULimit,
+		CPURequest:      cfg.SandboxCPURequest,
 		MemoryLimit:     cfg.SandboxMemoryLimit,
 		DeadlineSeconds: work.SandboxDeadlineSeconds,
 		Env: map[string]string{

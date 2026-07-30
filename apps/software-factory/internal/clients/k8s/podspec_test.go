@@ -19,7 +19,7 @@ func validSpec() work.SandboxSpec {
 		TicketNumber:    42,
 		RunID:           "3f1c2a7e-0000-4000-8000-000000000001",
 		Image:           "ghcr.io/0x63616c/sandbox@sha256:" + strings.Repeat("a", 64),
-		CPULimit:        "2",
+		CPURequest:      "2",
 		MemoryLimit:     "4Gi",
 		DeadlineSeconds: 3600,
 		Env:             map[string]string{"CODEX_HOME": "/work/.codex"},
@@ -138,22 +138,21 @@ func TestBuildPodTerminatesWithoutAGracePeriod(t *testing.T) {
 	}
 }
 
-func TestBuildPodRequestsExactlyWhatItLimits(t *testing.T) {
+func TestBuildPodRequestsCPUAndLimitsOnlyMemory(t *testing.T) {
 	t.Parallel()
 
 	c := sandboxContainer(t, mustBuild(t, validSpec()))
-	for _, name := range []corev1.ResourceName{corev1.ResourceCPU, corev1.ResourceMemory} {
-		req, lim := c.Resources.Requests[name], c.Resources.Limits[name]
-		if req.Cmp(lim) != 0 {
-			t.Errorf("%s request %s != limit %s; a sandbox must be Guaranteed QoS", name, req.String(), lim.String())
-		}
+	if got := c.Resources.Requests[corev1.ResourceCPU]; got.Cmp(resource.MustParse("2")) != 0 {
+		t.Errorf("cpu request = %s, want 2", got.String())
 	}
-	cpu, memory := c.Resources.Limits[corev1.ResourceCPU], c.Resources.Limits[corev1.ResourceMemory]
-	if want := resource.MustParse("2"); cpu.Cmp(want) != 0 {
-		t.Errorf("cpu limit = %s, want 2", cpu.String())
+	if got := c.Resources.Requests[corev1.ResourceMemory]; got.Cmp(resource.MustParse("4Gi")) != 0 {
+		t.Errorf("memory request = %s, want 4Gi", got.String())
 	}
-	if want := resource.MustParse("4Gi"); memory.Cmp(want) != 0 {
-		t.Errorf("memory limit = %s, want 4Gi", memory.String())
+	if _, ok := c.Resources.Limits[corev1.ResourceCPU]; ok {
+		t.Error("cpu limit is present, want it absent: CPU limits are banned (#87)")
+	}
+	if got := c.Resources.Limits[corev1.ResourceMemory]; got.Cmp(resource.MustParse("4Gi")) != 0 {
+		t.Errorf("memory limit = %s, want 4Gi", got.String())
 	}
 }
 
@@ -161,7 +160,7 @@ func TestBuildPodRejectsAMalformedCPUQuantity(t *testing.T) {
 	t.Parallel()
 
 	spec := validSpec()
-	spec.CPULimit = "2x"
+	spec.CPURequest = "2x"
 	if _, err := buildPod(spec, defaultOptions()); !errors.Is(err, work.ErrPermanent) {
 		t.Errorf("buildPod error = %v, want it to wrap work.ErrPermanent", err)
 	}

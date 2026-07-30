@@ -85,7 +85,7 @@ func TestSandboxRoundTripAgainstACluster(t *testing.T) {
 		TicketNumber:    999999,
 		RunID:           "integration",
 		Image:           *image,
-		CPULimit:        "500m",
+		CPURequest:      "500m",
 		MemoryLimit:     "512Mi",
 		DeadlineSeconds: 600,
 		Env:             map[string]string{"CODEX_HOME": "/work/.codex"},

@@ -115,8 +115,8 @@ type RunState struct {
 type SandboxTemplate struct {
 	Image string
 
-	// CPULimit and MemoryLimit are Kubernetes quantity strings ("2", "4Gi").
-	CPULimit    string
+	// CPURequest and MemoryLimit are Kubernetes quantity strings ("2", "8Gi").
+	CPURequest  string
 	MemoryLimit string
 
 	// DeadlineSeconds is the pod's hard ceiling. It must sit above the
@@ -134,14 +134,14 @@ type SandboxTemplate struct {
 // Validate reports why this template cannot build a pod.
 //
 // Every field is required. An unset image would be an obscure ImagePullBackOff
-// on the first ticket, and an unset limit would put an unbounded pod on the box
-// that runs the house — both worth refusing at construction instead.
+// on the first ticket, and an unset memory limit would put an unbounded pod on
+// the box that runs the house — both worth refusing at construction instead.
 func (t SandboxTemplate) Validate() error {
 	switch {
 	case t.Image == "":
 		return fmt.Errorf("%w: the sandbox needs an image", ErrInvalidRun)
-	case t.CPULimit == "" || t.MemoryLimit == "":
-		return fmt.Errorf("%w: the sandbox needs both a CPU and a memory limit", ErrInvalidRun)
+	case t.CPURequest == "" || t.MemoryLimit == "":
+		return fmt.Errorf("%w: the sandbox needs both a CPU request and a memory limit", ErrInvalidRun)
 	case t.DeadlineSeconds <= 0:
 		return fmt.Errorf("%w: the sandbox needs a deadline, or a wedged pod outlives the cluster", ErrInvalidRun)
 	}
@@ -168,7 +168,7 @@ func (t SandboxTemplate) Spec(ticketNumber int, runID string) SandboxSpec {
 		TicketNumber:    ticketNumber,
 		RunID:           runID,
 		Image:           t.Image,
-		CPULimit:        t.CPULimit,
+		CPURequest:      t.CPURequest,
 		MemoryLimit:     t.MemoryLimit,
 		DeadlineSeconds: t.DeadlineSeconds,
 		Env:             env,
