@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 
@@ -81,21 +82,48 @@ func (s *Sandboxes) SweepOrphans(ctx context.Context, live []string, minAge time
 			minAge, work.ErrPermanent)
 	}
 
+	stillLive := make(map[string]bool, len(live))
+	for _, runID := range live {
+		stillLive[runID] = true
+	}
+	now := s.clk.Now()
+	var failures []error
+
+	deletedPods, podFailures := s.sweepOrphanPods(ctx, stillLive, minAge, now)
+	failures = append(failures, podFailures...)
+
+	// Secrets are swept separately from, not instead of, pods: Delete already
+	// removes a pod's credential Secret as part of deleting the pod, so this
+	// pass exists for the case that leaves a Secret with no pod to be found
+	// through at all — Create wrote the Secret and then failed, or was never
+	// retried to completion, before the pod it belongs to ever existed. See
+	// ensureCredentialSecret's own doc comment for why the Secret carries the
+	// same labels a pod does, which is what makes this pass possible without a
+	// second attribution mechanism.
+	deletedSecrets, secretFailures := s.sweepOrphanSecrets(ctx, stillLive, minAge, now)
+	failures = append(failures, secretFailures...)
+
+	deleted := deletedPods + deletedSecrets
+	if len(failures) > 0 {
+		return deleted, fmt.Errorf("sweeping orphaned sandboxes in %s: %w", s.ns, errors.Join(failures...))
+	}
+	return deleted, nil
+}
+
+// sweepOrphanPods deletes sandbox pods that no live run owns and that are
+// older than minAge. A delete that fails does not stop the sweep — every
+// other orphan is still attempted, and the failures are collected and
+// reported together.
+func (s *Sandboxes) sweepOrphanPods(ctx context.Context, stillLive map[string]bool, minAge time.Duration, now time.Time) (int, []error) {
 	pods, err := s.cs.CoreV1().Pods(s.ns).List(ctx, metav1.ListOptions{LabelSelector: sandboxSelector()})
 	if err != nil {
 		// Transient by default, and that includes a Forbidden: this needs the
 		// list verb as well as delete, and a Role that is being fixed is not a
 		// reason to stop trying. What must never happen is reporting "nothing
 		// to sweep" for a namespace we could not see.
-		return 0, fmt.Errorf("listing sandbox pods in %s: %w", s.ns, err)
+		return 0, []error{fmt.Errorf("listing sandbox pods in %s: %w", s.ns, err)}
 	}
 
-	stillLive := make(map[string]bool, len(live))
-	for _, runID := range live {
-		stillLive[runID] = true
-	}
-
-	now := s.clk.Now()
 	deleted := 0
 	var failures []error
 
@@ -126,7 +154,9 @@ func (s *Sandboxes) SweepOrphans(ctx context.Context, live []string, minAge time
 
 		// Delete treats an already-absent pod as success, which is what this
 		// wants: the sweep's goal is the pod's absence, and a pod that lost a
-		// race to something else is a sweep that got what it came for.
+		// race to something else is a sweep that got what it came for. It also
+		// removes this pod's credential Secret, so the common case never
+		// reaches sweepOrphanSecrets at all.
 		if err := s.Delete(ctx, work.SandboxID(pod.Name)); err != nil {
 			failures = append(failures, err)
 			continue
@@ -139,9 +169,63 @@ func (s *Sandboxes) SweepOrphans(ctx context.Context, live []string, minAge time
 			"age_seconds", int64(now.Sub(pod.CreationTimestamp.Time).Seconds()),
 		)
 	}
+	return deleted, failures
+}
 
-	if len(failures) > 0 {
-		return deleted, fmt.Errorf("sweeping orphaned sandboxes in %s: %w", s.ns, errors.Join(failures...))
+// sweepOrphanSecrets deletes per-ticket credential Secrets that no live run
+// owns and that are older than minAge — the same two conditions
+// sweepOrphanPods applies to pods, applied here to Secrets instead, because a
+// Secret Create wrote and then never got a pod for (a failed or abandoned
+// retry between the two calls in Create) is invisible to a sweep that only
+// ever lists pods.
+func (s *Sandboxes) sweepOrphanSecrets(ctx context.Context, stillLive map[string]bool, minAge time.Duration, now time.Time) (int, []error) {
+	secrets, err := s.cs.CoreV1().Secrets(s.ns).List(ctx, metav1.ListOptions{LabelSelector: sandboxSelector()})
+	if err != nil {
+		return 0, []error{fmt.Errorf("listing sandbox credential secrets in %s: %w", s.ns, err)}
 	}
-	return deleted, nil
+
+	deleted := 0
+	var failures []error
+
+	for _, secret := range secrets.Items {
+		runID := secret.Labels[labelRunID]
+		if runID == "" {
+			s.logger.WarnContext(ctx, "keeping a sandbox credential secret with no run id: it cannot be matched against the live set",
+				"secret", secret.Name)
+			continue
+		}
+		if secret.CreationTimestamp.IsZero() {
+			s.logger.WarnContext(ctx, "keeping a sandbox credential secret with no creation timestamp: it cannot be aged against the floor",
+				"secret", secret.Name)
+			continue
+		}
+
+		if stillLive[runID] {
+			continue
+		}
+		if age := now.Sub(secret.CreationTimestamp.Time); age < minAge {
+			continue
+		}
+
+		// The pod this Secret would have belonged to may already be gone (the
+		// common case: sweepOrphanPods, or this run's own DeleteSandbox,
+		// already deleted it, which deletes the Secret too — this Delete then
+		// finds it already absent and treats that as success) or may never
+		// have existed at all (Create's own failure case this pass exists
+		// for). Either way there is nothing left to do but remove the Secret
+		// itself.
+		name := secret.Name
+		if err := s.cs.CoreV1().Secrets(s.ns).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			failures = append(failures, classify(work.SandboxID(runID), "sweeping an orphaned sandbox credential secret", err))
+			continue
+		}
+		deleted++
+		s.logger.WarnContext(ctx, "swept an orphaned sandbox credential secret",
+			"secret", name,
+			"ticket", secret.Labels[labelTicket],
+			"run_id", runID,
+			"age_seconds", int64(now.Sub(secret.CreationTimestamp.Time).Seconds()),
+		)
+	}
+	return deleted, failures
 }
