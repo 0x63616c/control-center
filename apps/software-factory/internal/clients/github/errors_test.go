@@ -184,6 +184,12 @@ func TestNamesTheOperationAndItsSubjectInEveryError(t *testing.T) {
 			want: []string{"listing", "auto"},
 		},
 		{
+			name: "reading an auto label",
+			path: "GET " + issuePath,
+			call: func(c *Client) error { _, err := c.AutoLabelPresent(context.Background(), testIssue); return err },
+			want: []string{"auto label", fmt.Sprintf("#%d", testIssue)},
+		},
+		{
 			name: "posting a status comment",
 			path: "POST " + commentsPath,
 			call: func(c *Client) error {

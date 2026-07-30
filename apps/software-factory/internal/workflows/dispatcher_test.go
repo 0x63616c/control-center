@@ -30,6 +30,8 @@ type dispatcherHarness struct {
 	recentlyFinished []work.FinishedTicket
 	breaker          work.Breaker
 	tickets          []work.Ticket
+	autoLabelPresent map[int]bool
+	autoLabelErr     error
 	listErr          error
 	runs             map[string]work.RunState
 	sweepErr         error
@@ -38,9 +40,10 @@ type dispatcherHarness struct {
 	callbacks        []delayedCallback
 
 	// what it did.
-	started   []int
-	described []string
-	sweeps    []activities.SweepInput
+	started     []int
+	described   []string
+	labelChecks []int
+	sweeps      []activities.SweepInput
 }
 
 type delayedCallback struct {
@@ -59,11 +62,12 @@ func newDispatcherHarness(t *testing.T) *dispatcherHarness {
 	tuning.MaxHistoryEvents = 1_000_000
 
 	return &dispatcherHarness{
-		env:    env,
-		config: work.DefaultConfig(),
-		tuning: tuning,
-		runs:   map[string]work.RunState{},
-		runFor: 90 * time.Second,
+		env:              env,
+		config:           work.DefaultConfig(),
+		tuning:           tuning,
+		runs:             map[string]work.RunState{},
+		autoLabelPresent: map[int]bool{},
+		runFor:           90 * time.Second,
 	}
 }
 
@@ -79,6 +83,19 @@ func (h *dispatcherHarness) run() {
 	env.OnActivity(acts.ListAutoTickets, mock.Anything).
 		Return(func(context.Context) ([]work.Ticket, error) {
 			return h.tickets, h.listErr
+		})
+
+	env.OnActivity(acts.AutoLabelPresent, mock.Anything, mock.Anything).
+		Return(func(_ context.Context, ticket int) (bool, error) {
+			h.labelChecks = append(h.labelChecks, ticket)
+			if h.autoLabelErr != nil {
+				return false, h.autoLabelErr
+			}
+			present, configured := h.autoLabelPresent[ticket]
+			if !configured {
+				return true, nil
+			}
+			return present, nil
 		})
 
 	env.OnActivity(acts.DescribeRun, mock.Anything, mock.Anything).
@@ -693,6 +710,44 @@ func TestDispatcherDoesNotReclaimATicketTheNextTickStillListsAsAuto(t *testing.T
 	if len(h.started) != 0 {
 		t.Fatalf("started %v — ticket 320 was re-claimed by a stale list before its run's own dispatcher "+
 			"had even seen the slot free for a full cooldown (#405)", h.started)
+	}
+}
+
+// TestDispatcherRejectsAStaleListCandidateWhosePointReadHasNoAutoLabel proves
+// the point read, rather than the post-finish cooldown, rejects an issue that
+// remains briefly visible through GitHub's label-indexed list.
+func TestDispatcherRejectsAStaleListCandidateWhosePointReadHasNoAutoLabel(t *testing.T) {
+	t.Parallel()
+
+	h := newDispatcherHarness(t)
+	h.tickets = tickets(320)
+	h.autoLabelPresent[320] = false
+	h.run()
+
+	if len(h.started) != 0 {
+		t.Fatalf("started %v — a list result without a current auto label must not start work", h.started)
+	}
+	if len(h.described) != 0 {
+		t.Fatalf("described %v — a rejected candidate must not reach claim", h.described)
+	}
+	if len(h.labelChecks) == 0 || h.labelChecks[0] != 320 {
+		t.Fatalf("label checks %v, want a point read for ticket 320", h.labelChecks)
+	}
+}
+
+func TestDispatcherPausesWhenTheAutoLabelPointReadCannotAuthenticate(t *testing.T) {
+	t.Parallel()
+
+	h := newDispatcherHarness(t)
+	h.tickets = tickets(320)
+	h.autoLabelErr = temporal.NewNonRetryableApplicationError("installation revoked", activities.ErrTypeAuth, nil)
+	h.run()
+
+	if !h.status(t).Config.Paused {
+		t.Fatal("an unusable credential discovered by the point read must pause the dispatcher")
+	}
+	if len(h.started) != 0 {
+		t.Fatalf("started %v — a failed eligibility check must not claim work", h.started)
 	}
 }
 

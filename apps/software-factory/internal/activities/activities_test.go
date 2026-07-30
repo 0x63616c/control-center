@@ -26,10 +26,11 @@ import (
 // --- fakes -----------------------------------------------------------------
 
 type fakeGitHub struct {
-	tickets []work.Ticket
-	detail  work.TicketDetail
+	tickets          []work.Ticket
+	detail           work.TicketDetail
+	autoLabelPresent bool
 
-	postErr, editErr, labelErr, listErr, detailErr error
+	postErr, editErr, labelErr, listErr, detailErr, autoLabelErr error
 
 	postedTo   int
 	postedBody string
@@ -63,6 +64,10 @@ type fakeGitHub struct {
 
 func (f *fakeGitHub) ListAutoTickets(context.Context) ([]work.Ticket, error) {
 	return f.tickets, f.listErr
+}
+
+func (f *fakeGitHub) AutoLabelPresent(_ context.Context, _ int) (bool, error) {
+	return f.autoLabelPresent, f.autoLabelErr
 }
 
 func (f *fakeGitHub) TicketDetail(_ context.Context, _ int) (work.TicketDetail, error) {
@@ -441,6 +446,49 @@ func TestNewRefusesToConstructWithNoRepositoryToClone(t *testing.T) {
 }
 
 // --- github activities -----------------------------------------------------
+
+func TestAutoLabelPresentReturnsThePointReadResult(t *testing.T) {
+	t.Parallel()
+
+	gh := &fakeGitHub{autoLabelPresent: true}
+	d := deps()
+	d.GitHub = gh
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.AutoLabelPresent)
+
+	val, err := e.ExecuteActivity(a.AutoLabelPresent, 328)
+	if err != nil {
+		t.Fatalf("AutoLabelPresent: %v", err)
+	}
+
+	var present bool
+	if err := val.Get(&present); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !present {
+		t.Fatal("a current auto label must be returned to the dispatcher")
+	}
+}
+
+func TestAutoLabelPresentSurfacesAnAuthFailureAsTheTypeThatPausesTheDispatcher(t *testing.T) {
+	t.Parallel()
+
+	gh := &fakeGitHub{autoLabelErr: fmt.Errorf("reading: %w (%w): %w", github.ErrAuth, work.ErrPermanent, errors.New("403"))}
+	d := deps()
+	d.GitHub = gh
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.AutoLabelPresent)
+
+	_, err := e.ExecuteActivity(a.AutoLabelPresent, 328)
+	if err == nil {
+		t.Fatal("an auth failure must fail the activity")
+	}
+	if got := FailureKindOf(err); got != work.FailureAuth {
+		t.Fatalf("FailureKindOf = %q, want %q — this is what pauses the dispatcher", got, work.FailureAuth)
+	}
+}
 
 func TestReportStatusPostsWhenNoCommentExistsYet(t *testing.T) {
 	t.Parallel()

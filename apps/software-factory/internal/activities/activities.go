@@ -214,6 +214,16 @@ func (a *Activities) ListAutoTickets(ctx context.Context) ([]work.Ticket, error)
 	return tickets, nil
 }
 
+// AutoLabelPresent confirms that an issue returned by the label-indexed list
+// still carries `auto` before the dispatcher claims it.
+func (a *Activities) AutoLabelPresent(ctx context.Context, issue int) (bool, error) {
+	present, err := a.deps.GitHub.AutoLabelPresent(ctx, issue)
+	if err != nil {
+		return false, fail(ctx, fmt.Sprintf("checking the auto label on issue #%d", issue), err)
+	}
+	return present, nil
+}
+
 // FetchTicketDetail reads a ticket and the discussion on it.
 //
 // A run reads this once and carries it through every stage, so all five stages

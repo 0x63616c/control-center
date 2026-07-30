@@ -321,6 +321,20 @@ func (d *dispatcher) start(ctx workflow.Context) {
 			log.Debug("skipped a ticket still inside its post-finish cooldown", "ticket", ticket.Number)
 			continue
 		}
+
+		var autoLabelPresent bool
+		if err := workflow.ExecuteActivity(activityCtx, acts.AutoLabelPresent, ticket.Number).Get(ctx, &autoLabelPresent); err != nil {
+			d.noteFailure(ctx, err, fmt.Sprintf("checking the auto label on ticket #%d", ticket.Number))
+			return
+		}
+		if !autoLabelPresent {
+			// ListAutoTickets reads GitHub's label index, which can lag a label
+			// removal. The primary issue read is the eligibility decision right
+			// next to the claim, while the cooldown remains a second backstop.
+			log.Debug("skipped a ticket whose auto label is no longer present", "ticket", ticket.Number)
+			continue
+		}
+
 		if d.claim(ctx, ticket) {
 			free--
 		}
