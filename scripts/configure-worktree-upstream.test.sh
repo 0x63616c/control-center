@@ -61,6 +61,25 @@ preserved_merge=$(git -C "$WORKTREE" config --get "branch.$PRESERVED_BRANCH.merg
   exit 1
 }
 
+# An unpublished branch someone is already working on, deliberately tracking
+# main. It has no remote ref, so the remote-ref guard alone would retarget it
+# and silently change what `git pull` and a bare `git push` do to work in
+# progress. Its own commits are what mark it as not-just-created.
+INPROGRESS_BRANCH="inprogress"
+git -C "$WORKTREE" checkout -qb "$INPROGRESS_BRANCH" origin/main
+git -C "$WORKTREE" config "branch.$INPROGRESS_BRANCH.remote" origin
+git -C "$WORKTREE" config "branch.$INPROGRESS_BRANCH.merge" refs/heads/main
+printf 'work in progress\n' >"$WORKTREE/WIP"
+git -C "$WORKTREE" add WIP
+git -C "$WORKTREE" "${GIT_ID[@]}" commit -qm "work in progress"
+(cd "$WORKTREE" && "$HELPER")
+
+inprogress_merge=$(git -C "$WORKTREE" config --get "branch.$INPROGRESS_BRANCH.merge")
+[ "$inprogress_merge" = "refs/heads/main" ] || {
+  echo "expected unpushed in-progress branch to retain main upstream, got: $inprogress_merge" >&2
+  exit 1
+}
+
 PUBLISHED_BRANCH="published"
 git -C "$WORKTREE" checkout -qb "$PUBLISHED_BRANCH" "$BRANCH"
 git -C "$WORKTREE" push -q origin "refs/heads/$PUBLISHED_BRANCH:refs/heads/$PUBLISHED_BRANCH"
