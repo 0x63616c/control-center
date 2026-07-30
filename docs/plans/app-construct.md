@@ -15,7 +15,7 @@
 
 **Tech Stack:** Bun, TypeScript, tRPC v11, Drizzle, React, Vite, Storybook, Vitest, Biome, lefthook, GitHub Actions CI (`push` to `main` deploys prod).
 
-**Source design:** `/private/tmp/.../designs/FINAL-app-construct.md` (the FINAL App-construct design). This plan is the executable form of that design. Vocabulary follows `CONTEXT.md` (Panel, Board, Chrome, Banner, Tile, Tile View, Overlay, Modal, Variant, Page, Product, App, App Manifest, Sensitive, Unlock/PIN Session, Worker Cycle, Enforcer, Queue Job, Cron, AV Control, Media Ingest) and `codebase-design` (module, interface, implementation, depth, seam, adapter, leverage, locality, deletion test) exactly.
+**Source design:** `/private/tmp/.../designs/FINAL-app-construct.md` (the FINAL App-construct design). This plan is the executable form of that design. Vocabulary follows `CONTEXT.md` (Panel, Board, Chrome, Banner, Tile, Tile View, Overlay, Modal, Variant, Page, Product, App, App Manifest, Sensitive, Unlock/PIN Session, Worker Cycle, Enforcer, Queue Job, Cron, AV Control) and `codebase-design` (module, interface, implementation, depth, seam, adapter, leverage, locality, deletion test) exactly.
 
 ## Global Constraints
 

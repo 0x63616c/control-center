@@ -150,9 +150,9 @@ const workers: Worker[] = [
     runOnStart: true,
     run: runAscVersionPollCycle,
   },
-  // One Worker per job type: independent timer chains, so a 1h download cannot
-  // delay an APNs push, plus the reaper that recovers rows stranded at
-  // `running` by a process death no in-process timeout can observe.
+  // One Worker per job type keeps feature-owned work independently scheduled.
+  // The reaper recovers rows stranded at `running` by a process death that no
+  // in-process timeout can observe.
   ...JOBS.map(jobWorker),
   staleJobReaper(JOBS),
 ];

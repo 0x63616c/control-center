@@ -3,9 +3,8 @@
  * apps/api's tests and the `@control-center/api/worker` barrel keep importing
  * from this path with their pre-move signatures , the db is bound here once
  * instead of threaded through every call site. `enqueueJob` itself is NOT
- * re-exported here: apps/api no longer enqueues (the last producer,
- * playlist-poller/addUrls, moved into features/sound in the media split,
- * Track C Wave 6, calling core.enqueueJob directly with the feature's own db).
+ * re-exported here: API call sites do not produce durable jobs; feature-owned
+ * producers call core.enqueueJob with their own database handle.
  */
 import * as core from "@www/core";
 import { db } from "../db/index";

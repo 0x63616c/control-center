@@ -242,13 +242,6 @@ Registered workers currently include:
 
 The shared runtime in `packages/worker-runtime` prevents overlapping cycles per worker, isolates failures, logs failure and recovery transitions, warns on slow cycles, and exposes stats.
 
-The media pipeline (playlist poller, ingest queue, NAS media mount) runs inside `worker`: media-worker was merged into it (ADR-0003), so there is one worker deployable and one api barrel (`@control-center/api/worker` at `apps/api/src/worker-deps.ts`).
-
-- `queue-worker` every 2s.
-- `playlist-poller` every 2m.
-
-It checks media storage free space before claiming download work.
-
 ## Temporal
 
 Temporal runs on the cluster in its own `temporal` k8s namespace, declared by
