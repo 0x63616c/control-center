@@ -410,9 +410,13 @@ worktree - \`git -C ${REPO} worktree list\` and \`git -C ${REPO} branch --list $
    there - do NOT reach for --no-verify.
 4. Open the pull request OPEN, not draft:
    \`gh pr create --base main --head ${r.branch} --title "<conventional commit title>" --body-file <file>\`
-   The body states what changed and how it was verified, with real pasted output, and
-   references the issue as \`Refs #${r.ticket}\`. NEVER \`Fixes\`/\`Closes\` - that auto-closes an
-   unvalidated ticket the moment somebody merges.
+   Build \`<file>\` from \`.github/pull_request_template.md\`. Complete every applicable
+   section with the branch's current facts: describe the behavior and relevant changed areas,
+   explain why, and list exact verification commands with their real outcomes. Reference the
+   issue as \`Refs #${r.ticket}\`. NEVER \`Fixes\`/\`Closes\` - that auto-closes an unvalidated
+   ticket the moment somebody merges. Keep the Screenshot section for UI work with real visual
+   evidence; delete it when there is no UI change. Never manufacture command output or visual
+   evidence.
 5. Watch CI on the PR to a real conclusion: \`gh pr checks <pr-number> --watch\`. Record the
    final status in notes ("CI green" / "CI failed: <check name>" / etc) - do not guess, wait for
    the real result. Do not attempt to fix unrelated pre-existing CI failures; only fix ones your
