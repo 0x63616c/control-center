@@ -59,6 +59,20 @@ export async function reconcile(
     const availabilityChanged = device.available !== available;
 
     if (reportedChanged || availabilityChanged) {
+      // This loop runs every second, so log only a changed observation through
+      // logChange. It makes a persisted HA update diagnosable without turning
+      // steady state into a stream of identical lines.
+      logChange(
+        getLogger(),
+        `device-sync-reported:${device.entityId}`,
+        {
+          deviceId: device.id,
+          entityId: device.entityId,
+          reported,
+          available,
+        },
+        "device-sync observed reported state change",
+      );
       // Parity note: the legacy raw update here never touched updatedAtUtc;
       // writeReported always stamps it. Ruled acceptable (controller,
       // Task 9) , it makes updatedAtUtc honest ("row last written") and no
@@ -78,6 +92,20 @@ export async function reconcile(
       stateEquals(reported, device.desiredState) &&
       device.desiredUntilUtc > now
     ) {
+      // Clearing this window means HA converged to the panel command before it
+      // timed out. Keep it distinct from the timeout warning below so a missed
+      // command and a successful one remain diagnosable events.
+      logChange(
+        getLogger(),
+        `device-sync-converged:${device.entityId}`,
+        {
+          deviceId: device.id,
+          entityId: device.entityId,
+          desired: device.desiredState,
+          reported,
+        },
+        "device-sync observed desired state and cleared command window",
+      );
       await store.clearDesired(device.id);
     }
   }
@@ -107,7 +135,7 @@ export async function sweepExpiredWindows(
         deviceId: device.id,
         entityId: device.entityId,
         desired: device.desiredState,
-        elapsed: device.desiredUntilUtc ? now.getTime() - device.desiredUntilUtc.getTime() : null,
+        elapsed: device.desiredAtUtc ? now.getTime() - device.desiredAtUtc.getTime() : null,
       },
       "command window expired, clearing desired",
       { level: "warn" },
