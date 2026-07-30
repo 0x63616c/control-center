@@ -125,6 +125,15 @@ func decodeImplementEnvelope(result []byte) (report string, blocked bool, blocke
 //
 // Exhaustive, no default: a sixth stage needs a case here before it
 // compiles, matching stageTemplate and work.decodeStageOutputValue.
+//
+// This must only ever be called from activity code — today, exclusively
+// activities.RunStage. It calls work.NewStageOutput, which panics on a
+// stage/shape mismatch; that panic is only safe on the activity side of the
+// workflow/activity boundary (see NewStageOutput's doc comment). Calling
+// Decode from internal/workflows/** would risk a workflow-task panic that
+// Temporal retries forever instead of failing the run — depguard already
+// forbids that package from importing this one at all, so this is enforced
+// mechanically, not only by this comment.
 func Decode(stage work.Stage, result []byte) (work.StageOutput, error) {
 	switch stage {
 	case work.StagePlan, work.StageReview, work.StageRevise, work.StagePropose:

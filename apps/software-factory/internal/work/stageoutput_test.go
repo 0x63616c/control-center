@@ -52,7 +52,7 @@ func TestNewStageOutputRoundTripsThroughJSON(t *testing.T) {
 	}
 }
 
-func TestNewStageOutputPanicsWhenTheValueDoesNotMatchTheStage(t *testing.T) {
+func TestNewStageOutputPanicsOnAMismatchedShape(t *testing.T) {
 	t.Parallel()
 
 	defer func() {

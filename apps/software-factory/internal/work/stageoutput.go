@@ -47,6 +47,18 @@ type stageOutputValue interface {
 // panic() rather than a returned error: this is a programmer error in this
 // package's own two switches, not a runtime input problem — nothing external
 // can trigger it, so there is no caller to hand an error to.
+//
+// That panic is only safe where it lands on the activity side of the
+// workflow/activity boundary. This must never be called from
+// internal/workflows/** — a workflow-side panic fails the *workflow task*,
+// which Temporal retries indefinitely by default (this worker leaves
+// WorkflowPanicPolicy unset, whose zero value is BlockWorkflow), wedging the
+// run rather than failing it. prompts.Decode, this function's only caller, is
+// itself only ever invoked from activities.RunStage — see Decode's doc
+// comment — and internal/workflows/** is mechanically forbidden from
+// importing internal/prompts at all (.golangci.yml's depguard rule), not
+// merely by convention. If a future stage's decode needs to run somewhere a
+// panic could reach workflow code, it must return an error there instead.
 func NewStageOutput(stage Stage, value stageOutputValue) StageOutput {
 	if !stageWantsShape(stage, value) {
 		panic(fmt.Sprintf("NewStageOutput: %s does not produce a %T", stage, value))
