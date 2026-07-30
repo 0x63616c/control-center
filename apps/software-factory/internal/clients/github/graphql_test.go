@@ -40,6 +40,78 @@ func TestConvertPullRequestToDraftPostsTheMutationWithTheNodeID(t *testing.T) {
 	}
 }
 
+func TestMarkPullRequestReadyForReviewPostsTheMutationWithTheNodeID(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newStub(t)
+	s.handle("POST /graphql", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decoding the graphql request: %v", err)
+		}
+		vars, _ := body["variables"].(map[string]any)
+		if vars["id"] != "PR_kwDOtest9" {
+			t.Errorf("variables.id = %v, want the pull request's node id", vars["id"])
+		}
+		query, _ := body["query"].(string)
+		if !containsSubstr(query, "markPullRequestReadyForReview") {
+			t.Errorf("query = %q, want it to call markPullRequestReadyForReview", query)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"markPullRequestReadyForReview": map[string]any{}}})
+	})
+	c, _ := s.client(t)
+
+	if err := c.MarkPullRequestReadyForReview(t.Context(), "PR_kwDOtest9"); err != nil {
+		t.Fatalf("MarkPullRequestReadyForReview: %v", err)
+	}
+}
+
+func TestMarkPullRequestReadyForReviewRefusesAnEmptyNodeID(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newStub(t)
+	s.handle("POST /graphql", func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("a mutation was sent for an empty node id")
+	})
+	c, _ := s.client(t)
+
+	if err := c.MarkPullRequestReadyForReview(t.Context(), ""); err == nil {
+		t.Fatal("want an error for an empty node id")
+	}
+}
+
+func TestMarkPullRequestReadyForReviewClassifiesAnHTTPFailure(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newStub(t)
+	s.handle("POST /graphql", func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusUnauthorized, "Bad credentials")
+	})
+	c, _ := s.client(t)
+
+	err := c.MarkPullRequestReadyForReview(t.Context(), "PR_1")
+	if !errors.Is(err, ErrAuth) {
+		t.Fatalf("err = %v, want ErrAuth", err)
+	}
+}
+
+func TestMarkPullRequestReadyForReviewClassifiesAGraphQLBodyError(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newStub(t)
+	s.handle("POST /graphql", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"errors": []map[string]any{{"type": "NOT_FOUND", "message": "Could not resolve to a PullRequest"}},
+		})
+	})
+	c, _ := s.client(t)
+
+	err := c.MarkPullRequestReadyForReview(t.Context(), "PR_gone")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
 // TestConvertPullRequestToDraftRefusesAnEmptyNodeID proves this fails before
 // ever posting a mutation with nothing to convert, rather than sending
 // GitHub a request with a null id and getting back an opaque GraphQL error.

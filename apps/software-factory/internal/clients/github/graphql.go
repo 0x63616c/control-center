@@ -11,8 +11,8 @@ import (
 )
 
 // This file is this package's only user of GitHub's GraphQL API, kept to
-// exactly the one mutation REST cannot express: converting an already-open
-// pull request back to draft. See github.go's "Verified facts" above
+// exactly the pull-request lifecycle mutations REST cannot express: converting
+// an already-open pull request to draft and marking it ready for review. See github.go's "Verified facts" above
 // PullRequestForBranch for why REST has no path for that at all, and why
 // go-github's PullRequestsService.Edit silently no-ops rather than erroring
 // if asked to.
@@ -29,6 +29,16 @@ import (
 // request.
 const convertDraftMutation = `mutation($id: ID!) {
   convertPullRequestToDraft(input: {pullRequestId: $id}) {
+    pullRequest {
+      isDraft
+    }
+  }
+}`
+
+// markReadyMutation is GitHub's mutation for making a draft pull request
+// visible to human reviewers.
+const markReadyMutation = `mutation($id: ID!) {
+  markPullRequestReadyForReview(input: {pullRequestId: $id}) {
     pullRequest {
       isDraft
     }
@@ -106,6 +116,53 @@ func (c *Client) ConvertPullRequestToDraft(ctx context.Context, nodeID string) e
 	}
 
 	c.log.InfoContext(ctx, "converted pull request to draft", "node_id", nodeID)
+	return nil
+}
+
+// MarkPullRequestReadyForReview promotes a draft pull request once the
+// factory has completed its implementation and review loop.
+//
+// It takes the pull request's GraphQL node id, not its REST number — the two
+// are different identifiers and this mutation accepts only the former.
+func (c *Client) MarkPullRequestReadyForReview(ctx context.Context, nodeID string) error {
+	op := fmt.Sprintf("marking pull request %s ready for review", nodeID)
+	if nodeID == "" {
+		return permanent(op, ErrInvalid, fmt.Errorf("no pull request node id was supplied"))
+	}
+
+	body, err := json.Marshal(graphQLRequest{
+		Query:     markReadyMutation,
+		Variables: map[string]any{"id": nodeID},
+	})
+	if err != nil {
+		return fmt.Errorf("%s: encoding the graphql request: %w", op, err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.graphqlURL, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("%s: building the graphql request: %w", op, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.api.Client().Do(req)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if checked := gh.CheckResponse(resp); checked != nil {
+		return classify(ctx, op, checked)
+	}
+
+	var decoded graphQLResponse
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		return fmt.Errorf("%s: decoding the graphql response: %w", op, err)
+	}
+	if len(decoded.Errors) > 0 {
+		return classifyGraphQLErrors(op, decoded.Errors)
+	}
+
+	c.log.InfoContext(ctx, "marked pull request ready for review", "node_id", nodeID)
 	return nil
 }
 

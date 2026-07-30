@@ -99,6 +99,7 @@ type ticketHarness struct {
 
 	cloneErr error
 	draftErr error
+	readyErr error
 
 	// persistErr, when set, is returned by every PersistTranscript call — the
 	// relay is best-effort, so this exists to prove a failed one does not
@@ -124,11 +125,13 @@ type ticketHarness struct {
 	cloned           []work.SandboxID
 	deleted          []work.SandboxID
 	cleared          int
+	terminalOps      []string
 	reports          []work.StatusReport
 	done             work.TicketDone
 	openOrUpdate     int
 	observedCI       int
 	drafted          []string
+	readied          []string
 	postedPRComments []prComment
 
 	// persisted records what PersistTranscript was called with, keyed by
@@ -212,6 +215,7 @@ func (h *ticketHarness) run() {
 	env.OnActivity(acts.ClearAutoLabel, mock.Anything, 328).
 		Return(func(_ context.Context, _ int) error {
 			h.cleared++
+			h.terminalOps = append(h.terminalOps, "clear-auto")
 			return h.labelErr
 		})
 
@@ -219,6 +223,13 @@ func (h *ticketHarness) run() {
 		Return(func(_ context.Context, nodeID string) error {
 			h.drafted = append(h.drafted, nodeID)
 			return h.draftErr
+		})
+
+	env.OnActivity(acts.MarkPullRequestReadyForReview, mock.Anything, mock.Anything).
+		Return(func(_ context.Context, nodeID string) error {
+			h.readied = append(h.readied, nodeID)
+			h.terminalOps = append(h.terminalOps, "mark-ready")
+			return h.readyErr
 		})
 
 	env.OnActivity(acts.PostPullRequestComment, mock.Anything, mock.Anything, mock.Anything).
@@ -836,6 +847,30 @@ func TestWorkTicketClearsTheAutoLabelOnSuccess(t *testing.T) {
 	if h.cleared != 1 {
 		t.Fatalf("cleared %d times, want once", h.cleared)
 	}
+	if len(h.readied) != 1 || h.readied[0] != "PR_node9" {
+		t.Fatalf("readied %v, want exactly the run's own pull request node id once", h.readied)
+	}
+	if got, want := strings.Join(h.terminalOps, ","), "mark-ready,clear-auto"; got != want {
+		t.Fatalf("terminal operations = %q, want %q", got, want)
+	}
+}
+
+func TestWorkTicketLeavesAutoLabelWhenReadyPromotionFails(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.readyErr = temporal.NewNonRetryableApplicationError("github refused this app's credentials", activities.ErrTypeAuth, nil)
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err == nil {
+		t.Fatal("an approved pull request that could not be marked ready must fail the workflow")
+	}
+	if h.cleared != 0 {
+		t.Fatal("the auto label must stay on when ready promotion fails")
+	}
+	if len(h.readied) != 1 || h.readied[0] != "PR_node9" {
+		t.Fatalf("readied %v, want the run's own pull request node id", h.readied)
+	}
 }
 
 func TestWorkTicketLeavesTheAutoLabelWhenAHumanCancelsTheRun(t *testing.T) {
@@ -956,7 +991,7 @@ func TestWorkTicketDeclinesADeclinedRunDraftFirstThenLabelThenComment(t *testing
 // failure mode the terminal-state split exists to prevent: a declined run
 // whose pull request could not be converted to draft must not clear the
 // label and must not report a normal Complete.
-func TestWorkTicketFailsRatherThanCompleteWhenDraftConversionExhaustsItsRetries(t *testing.T) {
+func TestWorkTicketCompletesWhenDeclineDraftSafetyNetFails(t *testing.T) {
 	t.Parallel()
 
 	h := newTicketHarness(t)
@@ -968,11 +1003,11 @@ func TestWorkTicketFailsRatherThanCompleteWhenDraftConversionExhaustsItsRetries(
 		"github refused this app's credentials", activities.ErrTypeAuth, nil)
 	h.run()
 
-	if err := h.env.GetWorkflowError(); err == nil {
-		t.Fatal("a run whose pull request could not be converted to draft must Fail, not Complete with a declined outcome")
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("a declined run stays safely draft and must complete even when the redundant conversion fails: %v", err)
 	}
-	if h.cleared != 0 {
-		t.Fatal("the auto label must stay on when draft conversion fails, or a Failed workflow's ticket looks resolved")
+	if h.cleared != 1 {
+		t.Fatal("the auto label must be cleared after a declined run even when draft conversion fails")
 	}
 	// The full-detail comment is best-effort and additive — it cannot itself
 	// be mistaken for approval — so decline still posts it even though draft

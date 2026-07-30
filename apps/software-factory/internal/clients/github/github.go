@@ -77,7 +77,7 @@ type Client struct {
 	auth  *appAuth
 	log   *slog.Logger
 
-	// graphqlURL is where ConvertPullRequestToDraft posts its mutation:
+	// graphqlURL is where pull-request lifecycle mutations post:
 	// GitHub's production endpoint, or a test stub's when withBaseURL
 	// redirected the REST plane too. See graphql.go.
 	graphqlURL string
@@ -338,8 +338,8 @@ func (c *Client) defaultBranch(ctx context.Context) (string, error) {
 // PR ownership moved here from the model (#435): `propose` used to run
 // `gh pr create` itself, from inside the sandbox, once, at the end of a fixed
 // pipeline. Under the implement/review loop this opens the pull request after
-// the FIRST successful push and is never held back waiting for CI or review,
-// so a human watching the ticket sees a diff the moment there is one.
+// the FIRST successful push so a human can see progress and CI can run, but
+// it remains draft until the workflow has finished its approval path.
 func (c *Client) OpenOrUpdatePullRequest(ctx context.Context, branch, title, body string, existing *work.PullRequest) (work.PullRequest, error) {
 	if existing == nil {
 		return c.createPullRequest(ctx, branch, title, body)
@@ -368,6 +368,7 @@ func (c *Client) createPullRequest(ctx context.Context, branch, title, body stri
 		Body:  gh.Ptr(body),
 		Head:  gh.Ptr(branch),
 		Base:  gh.Ptr(base),
+		Draft: gh.Ptr(true),
 	})
 	if err != nil {
 		return work.PullRequest{}, classify(ctx, op, err)

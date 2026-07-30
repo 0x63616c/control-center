@@ -130,11 +130,14 @@ type GitHub interface {
 	// so this never looks twice.
 	OpenOrUpdatePullRequest(ctx context.Context, branch, title, body string, existing *work.PullRequest) (work.PullRequest, error)
 
-	// ConvertPullRequestToDraft marks a pull request as a draft: the
-	// terminal-state signal that a run declined its ticket rather than
-	// approving it. It takes the pull request's GraphQL node id, not its REST
-	// number — see work.PullRequest.NodeID.
+	// ConvertPullRequestToDraft is an idempotent safety net for a declined run.
+	// It takes the pull request's GraphQL node id, not its REST number — see
+	// work.PullRequest.NodeID.
 	ConvertPullRequestToDraft(ctx context.Context, nodeID string) error
+
+	// MarkPullRequestReadyForReview makes an approved run's draft pull request
+	// visible to human reviewers. It takes the GraphQL node id.
+	MarkPullRequestReadyForReview(ctx context.Context, nodeID string) error
 
 	// ChecksForRef returns every check run GitHub has recorded against ref —
 	// a branch name, in this service's only caller — as one snapshot. It

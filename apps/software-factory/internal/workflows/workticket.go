@@ -271,11 +271,9 @@ func (r *ticketRun) execute(ctx workflow.Context) (WorkTicketResult, error) {
 // decided, and a failure to tidy up must not overwrite the reason a run
 // ended, so most steps log instead of returning — the sandbox pod is caught
 // by the dispatcher's orphan sweep if DeleteSandbox fails here too. The one
-// deliberate exception is decline's own return (below): a declined run whose
-// pull request could not be converted to draft after every retry must turn
-// this run's own Complete into a Fail, per Calum's confirmed terminal-state
-// design (terminal.go's decline doc comment) — everything else about "this
-// step must not fail the run" still holds.
+// deliberate exception is ready-for-review promotion: an approved run whose
+// pull request cannot be promoted after every retry must turn this run's own
+// Complete into a Fail, leaving `auto` present so the dispatcher relists it.
 func (r *ticketRun) finish(ctx workflow.Context, result WorkTicketResult, runErr error) error {
 	log := workflow.GetLogger(ctx)
 	ctx, cancel := workflow.NewDisconnectedContext(ctx)
@@ -308,36 +306,40 @@ func (r *ticketRun) finish(ctx workflow.Context, result WorkTicketResult, runErr
 	//
 	// Every other ending clears the label exactly once, through exactly one
 	// of two routes, never both: OutcomeBlocked and OutcomeExhausted are a
-	// decline (draft conversion, then the label, then the pull request
-	// comment — terminal.go's decline owns that whole ordered sequence, and
-	// its own failure is what can fail this run). Everything else —
-	// OutcomeProposed and OutcomeFailed alike — clears the label directly,
+	// decline (draft conversion safety net, then the label, then the pull
+	// request comment — terminal.go's decline owns that whole ordered
+	// sequence). OutcomeProposed first promotes the PR to ready-for-review,
+	// then clears the label; OutcomeFailed clears it directly,
 	// exactly as every ending did before this step: ADR-0011 names "a PR
 	// opened, or blocked" as when the label comes off, and leaving it on
 	// after a hard failure would have the dispatcher re-list and re-fail the
 	// ticket forever, which is the unbounded requeue this system is built to
 	// avoid. A second, unconditional ClearAutoLabel here on top of decline's
 	// own would defeat the whole mechanism: a declined run whose draft
-	// conversion failed is deliberately left labelled, and clearing it
+	// ready promotion failed is deliberately left labelled, and clearing it
 	// anyway would make a Failed workflow's ticket look resolved.
-	var declineErr error
+	var terminalErr error
 	if !cancelled {
 		switch outcome {
 		case work.OutcomeBlocked, work.OutcomeExhausted:
-			declineErr = r.decline(ctx, declineDetail{
+			r.decline(ctx, declineDetail{
 				Outcome:     outcome,
 				Detail:      detail,
 				PullRequest: result.PullRequest,
 				FullDetail:  result.FullDetail,
 			})
-			if declineErr != nil {
-				log.Error("declining the run failed; the workflow fails rather than completes",
-					"ticket", r.in.Ticket.Number, "error", declineErr)
+		case work.OutcomeProposed:
+			if err := workflow.ExecuteActivity(control, acts.MarkPullRequestReadyForReview, result.PullRequest.NodeID).Get(ctx, nil); err != nil {
+				terminalErr = err
+				log.Error("marking the pull request ready for review failed; the auto label stays on so this ticket is relisted",
+					"ticket", r.in.Ticket.Number, "pull_request", result.PullRequest.Number, "error", err)
 				if failure == work.FailureNone || failure == work.FailureOther {
-					failure = activities.FailureKindOf(declineErr)
+					failure = activities.FailureKindOf(err)
 				}
+				break
 			}
-		case work.OutcomeProposed, work.OutcomeFailed:
+			fallthrough
+		case work.OutcomeFailed:
 			if err := workflow.ExecuteActivity(control, acts.ClearAutoLabel, r.in.Ticket.Number).Get(ctx, nil); err != nil {
 				log.Error("clearing the auto label failed; this ticket will be listed again",
 					"ticket", r.in.Ticket.Number, "error", err)
@@ -376,7 +378,7 @@ func (r *ticketRun) finish(ctx workflow.Context, result WorkTicketResult, runErr
 		Failure: failure,
 		Detail:  detail,
 	})
-	return declineErr
+	return terminalErr
 }
 
 // tellDispatcher reports the slot free.

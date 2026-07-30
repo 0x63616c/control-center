@@ -1,8 +1,6 @@
 package workflows
 
 import (
-	"fmt"
-
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"go.temporal.io/sdk/workflow"
 )
@@ -36,28 +34,18 @@ type declineDetail struct {
 }
 
 // decline runs the ordered terminal-cleanup sequence for every non-approval
-// ending: convert the pull request to draft first, strip `auto` only if that
-// succeeded, then post the pull request's own detail comment. It never posts
+// ending: attempt to convert the pull request to draft, strip `auto`, then
+// post the pull request's own detail comment. It never posts
 // the one-line issue comment itself — that is r.report's existing
 // work.StepOutcome path, called by ticketRun.finish before or after this, and
 // unchanged by this step.
 //
-// This ordering, and the error this returns on a failed draft conversion, is
-// the terminal-state split's whole point (ticket #435, "Terminal-cleanup
-// ordering"): every other cleanup step in this file — ClearAutoLabel,
-// DeleteSandbox — logs a failure and continues, because leaving the auto
-// label on or a sandbox pod running is a recoverable, visible loose end. A
-// failed draft conversion is not that. If it stayed "log and continue" like
-// its neighbours, a declined run whose PR conversion silently failed would
-// still clear `auto` and post its comments, leaving an open, unlabelled,
-// ready-for-review pull request on GitHub that is observably identical to an
-// approved success — exactly the case `gh pr list --draft` exists to catch,
-// silently defeated. So this is the one cleanup step whose failure is not
-// absorbed here: the caller must propagate a non-nil return as the workflow's
-// own error, turning what would otherwise be a normal Complete into a Fail.
-// An operator reading `tctl workflow list --query 'ExecutionStatus="Failed"'`
-// can then trust that every ticket NOT on that list either succeeded or was
-// cleanly, observably declined.
+// A pull request now starts as a draft, so a conversion failure cannot make a
+// declined run look approved. It is therefore a cheap, idempotent safety net:
+// log its failure and continue with the visible declined outcome. The mirror
+// operation on ticketRun.finish — making an approved pull request ready — is
+// terminal, because its failure would otherwise leave a completed ticket
+// hidden in draft without notifying a human reviewer.
 func (r *ticketRun) decline(ctx workflow.Context, d declineDetail) error {
 	log := workflow.GetLogger(ctx)
 	control := workflow.WithActivityOptions(ctx, r.controlOptions())
@@ -74,11 +62,8 @@ func (r *ticketRun) decline(ctx workflow.Context, d declineDetail) error {
 	}
 
 	if err := workflow.ExecuteActivity(control, acts.ConvertPullRequestToDraft, d.PullRequest.NodeID).Get(ctx, nil); err != nil {
-		log.Error("converting the pull request to draft failed after every retry; "+
-			"the auto label stays on so this ticket is not mistaken for an approved success",
+		log.Error("converting the pull request to draft failed; continuing because declined pull requests start draft",
 			"ticket", r.in.Ticket.Number, "pull_request", d.PullRequest.Number, "error", err)
-		r.postPullRequestComment(ctx, d)
-		return fmt.Errorf("converting pull request %s to draft: %w", d.PullRequest.URL, err)
 	}
 
 	if err := workflow.ExecuteActivity(control, acts.ClearAutoLabel, r.in.Ticket.Number).Get(ctx, nil); err != nil {
