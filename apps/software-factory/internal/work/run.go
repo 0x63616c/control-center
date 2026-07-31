@@ -228,6 +228,21 @@ type PullRequest struct {
 	Number int
 	URL    string
 
+	// State is the lifecycle state GitHub reported. Closed alone never proves a
+	// merge: target merge reconciliation requires an explicit confirmation too.
+	State PullRequestState
+
+	// HeadSHA and BaseSHA are GitHub's current branch tips, never model prose.
+	HeadSHA string
+	BaseSHA string
+
+	// Mergeability is GitHub's current assessment. Unknown means it is still
+	// computing and must not be guessed into a conflict verdict.
+	Mergeability PullRequestMergeability
+
+	// MergeSHA is meaningful only alongside an authoritative merged confirmation.
+	MergeSHA string
+
 	// Draft is GitHub's reported draft state. It distinguishes draft-first
 	// pull requests from ready pull requests owned by workflows begun before
 	// the draft-first rollout, so terminal cleanup never clears `auto` after

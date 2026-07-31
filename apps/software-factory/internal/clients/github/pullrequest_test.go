@@ -16,13 +16,18 @@ func TestPullRequestForBranchReturnsWhatGitHubSaysIsOpenOnIt(t *testing.T) {
 	s, _ := newStub(t)
 	s.handle("GET /repos/"+testOwner+"/"+testRepo+"/pulls", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode([]map[string]any{{
-			"number":   9,
-			"html_url": "https://github.com/" + testOwner + "/" + testRepo + "/pull/9",
-			"url":      "https://api.github.com/repos/" + testOwner + "/" + testRepo + "/pulls/9",
-			"node_id":  "PR_kwDOtest9",
-			"title":    "fix: the thing",
-			"body":     "does the thing",
-			"draft":    true,
+			"number":           9,
+			"html_url":         "https://github.com/" + testOwner + "/" + testRepo + "/pull/9",
+			"url":              "https://api.github.com/repos/" + testOwner + "/" + testRepo + "/pulls/9",
+			"node_id":          "PR_kwDOtest9",
+			"title":            "fix: the thing",
+			"body":             "does the thing",
+			"draft":            true,
+			"state":            "open",
+			"head":             map[string]any{"sha": "head-sha"},
+			"base":             map[string]any{"sha": "base-sha"},
+			"mergeable_state":  "clean",
+			"merge_commit_sha": "unconfirmed-merge-sha",
 		}})
 	})
 	c, _ := s.client(t)
@@ -49,6 +54,12 @@ func TestPullRequestForBranchReturnsWhatGitHubSaysIsOpenOnIt(t *testing.T) {
 	}
 	if !pr.Draft {
 		t.Fatal("draft = false, want the state github reported")
+	}
+	if pr.State != work.PullRequestStateOpen || pr.HeadSHA != "head-sha" || pr.BaseSHA != "base-sha" {
+		t.Fatalf("authoritative pull request fields = %+v, want open head/base state", pr)
+	}
+	if pr.Mergeability != work.PullRequestMergeabilityMergeable || pr.MergeSHA != "unconfirmed-merge-sha" {
+		t.Fatalf("merge fields = %+v, want GitHub's mergeability and SHA without inferring a merge", pr)
 	}
 }
 

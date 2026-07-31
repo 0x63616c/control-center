@@ -57,6 +57,11 @@ type fakeGitHub struct {
 	readyErr        error
 	autoMergeNodeID string
 	autoMergeErr    error
+
+	mergeNumber      int
+	mergeExpectedSHA string
+	mergeResult      work.PullRequestMergeResult
+	mergeErr         error
 }
 
 func (f *fakeGitHub) PostComment(_ context.Context, number int, body string) error {
@@ -100,6 +105,11 @@ func (f *fakeGitHub) MarkPullRequestReadyForReview(_ context.Context, nodeID str
 func (f *fakeGitHub) EnablePullRequestAutoMerge(_ context.Context, nodeID string) error {
 	f.autoMergeNodeID = nodeID
 	return f.autoMergeErr
+}
+
+func (f *fakeGitHub) MergePullRequest(_ context.Context, number int, expectedHeadSHA string) (work.PullRequestMergeResult, error) {
+	f.mergeNumber, f.mergeExpectedSHA = number, expectedHeadSHA
+	return f.mergeResult, f.mergeErr
 }
 
 type fakePods struct {
@@ -1338,6 +1348,49 @@ func TestEnablePullRequestAutoMergeFailsTheActivityWhenGitHubDoes(t *testing.T) 
 
 	if _, err := e.ExecuteActivity(a.EnablePullRequestAutoMerge, "PR_1"); err == nil {
 		t.Fatal("want an error when the github client cannot enable auto-merge")
+	}
+}
+
+func TestMergePullRequestPassesTheNumberAndReviewedHeadThrough(t *testing.T) {
+	t.Parallel()
+
+	gh := &fakeGitHub{mergeResult: work.PullRequestMergeResult{
+		Outcome:  work.PullRequestMergeConfirmed,
+		MergeSHA: "merge-sha",
+	}}
+	d := deps()
+	d.GitHub = gh
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.MergePullRequest)
+
+	var result work.PullRequestMergeResult
+	value, err := e.ExecuteActivity(a.MergePullRequest, MergePullRequestInput{PullRequestNumber: 9, ExpectedHeadSHA: "reviewed-head"})
+	if err != nil {
+		t.Fatalf("executing MergePullRequest: %v", err)
+	}
+	if err := value.Get(&result); err != nil {
+		t.Fatalf("MergePullRequest: %v", err)
+	}
+	if gh.mergeNumber != 9 || gh.mergeExpectedSHA != "reviewed-head" {
+		t.Fatalf("merge input = #%d at %q, want #9 at reviewed-head", gh.mergeNumber, gh.mergeExpectedSHA)
+	}
+	if result.Outcome != work.PullRequestMergeConfirmed || result.MergeSHA != "merge-sha" {
+		t.Fatalf("result = %+v, want confirmed merge-sha", result)
+	}
+}
+
+func TestMergePullRequestPreservesTheGitHubRetryTaxonomy(t *testing.T) {
+	t.Parallel()
+
+	d := deps()
+	d.GitHub = &fakeGitHub{mergeErr: permanent(github.ErrAuth)}
+	a := mustNew(t, d)
+
+	_, err := a.MergePullRequest(t.Context(), MergePullRequestInput{PullRequestNumber: 9, ExpectedHeadSHA: "reviewed-head"})
+	app := appErrorOf(t, err)
+	if app.Type() != ErrTypeAuth || !app.NonRetryable() {
+		t.Fatalf("merge error = type %q non-retryable %v, want permanent auth classification", app.Type(), app.NonRetryable())
 	}
 }
 

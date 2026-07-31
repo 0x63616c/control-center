@@ -129,3 +129,51 @@ const (
 	// UsageMeasured records usage captured from the provider terminal envelope.
 	UsageMeasured UsageState = "measured"
 )
+
+// PullRequestState is GitHub's authoritative lifecycle state for a pull request.
+type PullRequestState string
+
+const (
+	// PullRequestStateOpen records a pull request GitHub still accepts changes to.
+	PullRequestStateOpen PullRequestState = "open"
+	// PullRequestStateClosed records a pull request GitHub no longer accepts changes to.
+	PullRequestStateClosed PullRequestState = "closed"
+)
+
+// PullRequestMergeability is GitHub's current mergeability assessment.
+type PullRequestMergeability string
+
+const (
+	// PullRequestMergeabilityUnknown records an assessment GitHub is still computing.
+	PullRequestMergeabilityUnknown PullRequestMergeability = "unknown"
+	// PullRequestMergeabilityMergeable records a branch GitHub can merge.
+	PullRequestMergeabilityMergeable PullRequestMergeability = "mergeable"
+	// PullRequestMergeabilityConflicting records a textual Git conflict.
+	PullRequestMergeabilityConflicting PullRequestMergeability = "conflicting"
+)
+
+// PullRequestMergeOutcome is the result of asking GitHub to merge one reviewed head.
+type PullRequestMergeOutcome string
+
+const (
+	// PullRequestMergeConfirmed records GitHub's authoritative confirmation and merge SHA.
+	PullRequestMergeConfirmed PullRequestMergeOutcome = "confirmed"
+	// PullRequestMergeClosedUnmerged records a pull request closed without a confirmed merge.
+	PullRequestMergeClosedUnmerged PullRequestMergeOutcome = "closed_unmerged"
+	// PullRequestMergeTextConflict records a textual conflict requiring implementation work.
+	PullRequestMergeTextConflict PullRequestMergeOutcome = "text_conflict"
+	// PullRequestMergeHeadChanged records a head SHA different from the reviewed SHA.
+	PullRequestMergeHeadChanged PullRequestMergeOutcome = "head_changed"
+	// PullRequestMergeBaseRefreshRequired records policy requiring a refreshed base.
+	PullRequestMergeBaseRefreshRequired PullRequestMergeOutcome = "base_refresh_required"
+	// PullRequestMergeRetryableAmbiguity records an inconclusive GitHub answer.
+	PullRequestMergeRetryableAmbiguity PullRequestMergeOutcome = "retryable_ambiguity"
+)
+
+// PullRequestMergeResult is the typed result of an exact-head merge request.
+type PullRequestMergeResult struct {
+	Outcome     PullRequestMergeOutcome
+	MergeSHA    string
+	PullRequest PullRequest
+	Diagnostic  string
+}

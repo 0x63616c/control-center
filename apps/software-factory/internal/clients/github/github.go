@@ -224,14 +224,7 @@ func (c *Client) PullRequestForBranch(ctx context.Context, branch string) (work.
 	}
 
 	c.log.Info("found the run's pull request", "branch", branch, "pull_request", pr.GetNumber())
-	return work.PullRequest{
-		Number: pr.GetNumber(),
-		URL:    pr.GetHTMLURL(),
-		Draft:  pr.GetDraft(),
-		NodeID: pr.GetNodeID(),
-		Title:  pr.GetTitle(),
-		Body:   pr.GetBody(),
-	}, true, nil
+	return pullRequestFromGitHub(pr), true, nil
 }
 
 // defaultBranch resolves the repository's default branch — the base every
@@ -308,14 +301,7 @@ func (c *Client) createPullRequest(ctx context.Context, branch, title, body stri
 	}
 
 	c.log.InfoContext(ctx, "opened the run's pull request", "branch", branch, "pull_request", pr.GetNumber())
-	return work.PullRequest{
-		Number: pr.GetNumber(),
-		URL:    pr.GetHTMLURL(),
-		Draft:  pr.GetDraft(),
-		NodeID: pr.GetNodeID(),
-		Title:  pr.GetTitle(),
-		Body:   pr.GetBody(),
-	}, nil
+	return pullRequestFromGitHub(pr), nil
 }
 
 // editPullRequest rewrites an existing pull request's title and body.
@@ -331,14 +317,61 @@ func (c *Client) editPullRequest(ctx context.Context, existing work.PullRequest,
 	}
 
 	c.log.InfoContext(ctx, "edited the run's pull request", "pull_request", existing.Number)
+	updated := pullRequestFromGitHub(pr)
+	updated.Number = existing.Number
+	updated.URL = existing.URL
+	updated.NodeID = existing.NodeID
+	if updated.State == "" {
+		updated.State = existing.State
+	}
+	if updated.HeadSHA == "" {
+		updated.HeadSHA = existing.HeadSHA
+	}
+	if updated.BaseSHA == "" {
+		updated.BaseSHA = existing.BaseSHA
+	}
+	if updated.MergeSHA == "" {
+		updated.MergeSHA = existing.MergeSHA
+	}
+	return updated, nil
+}
+
+func pullRequestFromGitHub(pr *gh.PullRequest) work.PullRequest {
 	return work.PullRequest{
-		Number: existing.Number,
-		URL:    existing.URL,
-		Draft:  pr.GetDraft(),
-		NodeID: existing.NodeID,
-		Title:  pr.GetTitle(),
-		Body:   pr.GetBody(),
-	}, nil
+		Number:       pr.GetNumber(),
+		URL:          pr.GetHTMLURL(),
+		State:        restPullRequestState(pr.GetState()),
+		HeadSHA:      pr.GetHead().GetSHA(),
+		BaseSHA:      pr.GetBase().GetSHA(),
+		Mergeability: restMergeability(pr.GetMergeableState()),
+		MergeSHA:     pr.GetMergeCommitSHA(),
+		Draft:        pr.GetDraft(),
+		NodeID:       pr.GetNodeID(),
+		Title:        pr.GetTitle(),
+		Body:         pr.GetBody(),
+	}
+}
+
+func restPullRequestState(state string) work.PullRequestState {
+	switch state {
+	case "open":
+		return work.PullRequestStateOpen
+	case "closed":
+		return work.PullRequestStateClosed
+	default:
+		return ""
+	}
+}
+
+func restMergeability(state string) work.PullRequestMergeability {
+	switch state {
+	case "clean":
+		return work.PullRequestMergeabilityMergeable
+	case "dirty":
+		return work.PullRequestMergeabilityConflicting
+	default:
+		return work.PullRequestMergeabilityUnknown
+	}
 }
 
 // PostComment adds a comment to an issue or pull request. Pull requests use

@@ -121,6 +121,10 @@ type GitHub interface {
 	// MarkPullRequestReadyForReview makes a draft pull request reviewable.
 	MarkPullRequestReadyForReview(ctx context.Context, nodeID string) error
 
+	// MergePullRequest asks GitHub to squash-merge exactly expectedHeadSHA.
+	// Its typed result distinguishes semantic feedback from a confirmed merge.
+	MergePullRequest(ctx context.Context, number int, expectedHeadSHA string) (work.PullRequestMergeResult, error)
+
 	// EnablePullRequestAutoMerge arms a pull request to squash-merge itself
 	// once its required approval and checks are satisfied. Callers must only
 	// call this once the pull request is already out of draft.
