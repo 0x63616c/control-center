@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
@@ -35,8 +36,9 @@ type Store struct {
 	runs map[string]store.Run
 
 	// steps and attempts are keyed by the identity their row carries: a Step
-	// has no Ticket, so its key never does either.
-	steps    map[stepKey]bool
+	// has no Ticket, so its key never does either. steps' value is its
+	// created_at, matching the real store's ORDER BY created_at.
+	steps    map[stepKey]time.Time
 	attempts map[attemptKey]store.Attempt
 
 	transcripts map[attemptKey]store.Transcript
@@ -80,7 +82,7 @@ func New(opts ...Option) *Store {
 		tickets:      make(map[store.TicketID]store.Ticket),
 		edges:        make(map[store.TicketID]map[store.TicketID]bool),
 		runs:         make(map[string]store.Run),
-		steps:        make(map[stepKey]bool),
+		steps:        make(map[stepKey]time.Time),
 		attempts:     make(map[attemptKey]store.Attempt),
 		transcripts:  make(map[attemptKey]store.Transcript),
 	}

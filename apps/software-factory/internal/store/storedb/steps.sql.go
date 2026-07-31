@@ -31,8 +31,7 @@ func (q *Queries) RecordStep(ctx context.Context, arg RecordStepParams) error {
 }
 
 const stepsForRun = `-- name: StepsForRun :many
-SELECT run_id, stage, turn FROM step WHERE run_id = $1
-ORDER BY CASE stage WHEN 'plan' THEN 0 WHEN 'implement' THEN 1 WHEN 'review' THEN 2 END, turn
+SELECT run_id, stage, turn, created_at FROM step WHERE run_id = $1 ORDER BY created_at
 `
 
 func (q *Queries) StepsForRun(ctx context.Context, runID pgtype.UUID) ([]Step, error) {
@@ -44,7 +43,12 @@ func (q *Queries) StepsForRun(ctx context.Context, runID pgtype.UUID) ([]Step, e
 	var items []Step
 	for rows.Next() {
 		var i Step
-		if err := rows.Scan(&i.RunID, &i.Stage, &i.Turn); err != nil {
+		if err := rows.Scan(
+			&i.RunID,
+			&i.Stage,
+			&i.Turn,
+			&i.CreatedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

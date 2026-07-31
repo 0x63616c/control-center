@@ -29,5 +29,4 @@ RETURNING *;
 SELECT * FROM attempt WHERE run_id = $1 AND stage = $2 AND turn = $3 ORDER BY attempt_no;
 
 -- name: AttemptsForRun :many
-SELECT * FROM attempt WHERE run_id = $1
-ORDER BY CASE stage WHEN 'plan' THEN 0 WHEN 'implement' THEN 1 WHEN 'review' THEN 2 END, turn, attempt_no;
+SELECT * FROM attempt WHERE run_id = $1 ORDER BY started_at, attempt_no;
