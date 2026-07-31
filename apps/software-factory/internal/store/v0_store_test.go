@@ -188,6 +188,88 @@ func TestConfirmedMergeReconcilesCancellationThatCommittedFirst(t *testing.T) {
 	}
 }
 
+func TestConfirmedMergeFencesSuccessorThatClaimedReopenedTicket(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	ticket, err := s.CreateTicket(ctx, "successor claim before confirmed merge", "", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	startedAt := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	firstRunID := newTestRunID(t)
+	if _, err := s.ClaimAndStartRun(ctx, store.ClaimRunInput{TicketID: ticket.ID, RunID: firstRunID, StartedAt: startedAt}); err != nil {
+		t.Fatalf("ClaimAndStartRun(first): %v", err)
+	}
+	if _, err := s.StartStep(ctx, store.StartStepInput{RunID: firstRunID, Ordinal: 1, Kind: work.StepMergePullRequest, StartedAt: startedAt}); err != nil {
+		t.Fatalf("StartStep(first merge): %v", err)
+	}
+	if _, err := s.CancelRun(ctx, store.CancelRunInput{RunID: firstRunID, TicketID: ticket.ID, EndedAt: startedAt.Add(time.Minute)}); err != nil {
+		t.Fatalf("CancelRun(first): %v", err)
+	}
+
+	secondRunID := newTestRunID(t)
+	if _, err := s.ClaimAndStartRun(ctx, store.ClaimRunInput{TicketID: ticket.ID, RunID: secondRunID, StartedAt: startedAt.Add(2 * time.Minute)}); err != nil {
+		t.Fatalf("ClaimAndStartRun(second): %v", err)
+	}
+	if _, err := s.StartStep(ctx, store.StartStepInput{RunID: secondRunID, Ordinal: 1, Kind: work.StepImplement, StartedAt: startedAt.Add(2 * time.Minute)}); err != nil {
+		t.Fatalf("StartStep(second implement): %v", err)
+	}
+	secondAttemptID := store.TargetAttemptID{RunID: secondRunID, StepOrdinal: 1, AttemptNo: 1}
+	if _, err := s.StartAgentAttempt(ctx, store.StartAgentAttemptInput{ID: secondAttemptID, AgentStage: work.AgentStageImplement, Model: work.Model{Name: "m", Effort: "medium"}, UsageState: work.UsageUnknown, StartedAt: startedAt.Add(2 * time.Minute)}); err != nil {
+		t.Fatalf("StartAgentAttempt(second): %v", err)
+	}
+	if err := s.BindCheckpointCapability(ctx, secondAttemptID, "second-capability"); err != nil {
+		t.Fatalf("BindCheckpointCapability(second): %v", err)
+	}
+	if _, err := s.StartStep(ctx, store.StartStepInput{RunID: secondRunID, Ordinal: 2, Kind: work.StepMergePullRequest, StartedAt: startedAt.Add(2 * time.Minute)}); err != nil {
+		t.Fatalf("StartStep(second merge): %v", err)
+	}
+
+	confirmedAt := startedAt.Add(3 * time.Minute)
+	start := make(chan struct{})
+	mergeResults := make(chan store.TerminalResult, 1)
+	mergeErrors := make(chan error, 1)
+	checkpointErrors := make(chan error, 1)
+	go func() {
+		<-start
+		result, mergeErr := s.FinalizeConfirmedMerge(ctx, store.ConfirmedMergeInput{RunID: firstRunID, TicketID: ticket.ID, StepOrdinal: 1, ReviewedHead: "first-head", MergeSHA: "first-merge", EndedAt: confirmedAt})
+		mergeResults <- result
+		mergeErrors <- mergeErr
+	}()
+	go func() {
+		<-start
+		_, checkpointErr := s.CheckpointAgentAttempt(ctx, store.AgentCheckpointInput{ID: secondAttemptID, Capability: "second-capability", ThreadID: "second-thread", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured, EndedAt: confirmedAt, Result: []byte(`{"kind":"done"}`), Transcript: targetTranscript()})
+		checkpointErrors <- checkpointErr
+	}()
+	close(start)
+	result, err := <-mergeResults, <-mergeErrors
+	if err != nil {
+		t.Fatalf("FinalizeConfirmedMerge(first after successor claim): %v", err)
+	}
+	if checkpointErr := <-checkpointErrors; checkpointErr != nil && !errors.Is(checkpointErr, store.ErrRunOwnership) {
+		t.Fatalf("racing CheckpointAgentAttempt(second) error = %v, want success before fence or ErrRunOwnership after it", checkpointErr)
+	}
+	if result.Ticket.State != store.TicketDone || result.Ticket.ActiveRunID != "" || result.Run.TargetOutcome != work.RunOutcomeSucceeded || result.Run.MergeSHA != "first-merge" {
+		t.Fatalf("confirmed result = %+v, want first Run succeeded and Ticket done", result)
+	}
+	secondRun, err := s.Run(ctx, secondRunID)
+	if err != nil {
+		t.Fatalf("Run(second): %v", err)
+	}
+	if secondRun.TargetOutcome != work.RunOutcomeCanceled {
+		t.Fatalf("second Run outcome = %q, want canceled fence", secondRun.TargetOutcome)
+	}
+
+	_, err = s.CheckpointAgentAttempt(ctx, store.AgentCheckpointInput{ID: secondAttemptID, Capability: "second-capability", ThreadID: "second-thread", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured, EndedAt: confirmedAt.Add(time.Minute), Result: []byte(`{"kind":"done"}`), Transcript: targetTranscript()})
+	if !errors.Is(err, store.ErrRunOwnership) {
+		t.Fatalf("CheckpointAgentAttempt(second after fence) error = %v, want ErrRunOwnership", err)
+	}
+	_, err = s.FinalizeConfirmedMerge(ctx, store.ConfirmedMergeInput{RunID: secondRunID, TicketID: ticket.ID, StepOrdinal: 2, ReviewedHead: "second-head", MergeSHA: "second-merge", EndedAt: confirmedAt.Add(time.Minute)})
+	if !errors.Is(err, store.ErrRunOwnership) {
+		t.Fatalf("FinalizeConfirmedMerge(second after fence) error = %v, want ErrRunOwnership", err)
+	}
+}
+
 func TestConfirmedMergeWinsCancellationRace(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

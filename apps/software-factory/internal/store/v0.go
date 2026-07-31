@@ -593,6 +593,36 @@ func reconcileConfirmedMergeAfterCancellation(
 	runID pgtype.UUID,
 	in ConfirmedMergeInput,
 ) (TerminalResult, error) {
+	observedTicket, err := q.Ticket(ctx, runRow.TicketID)
+	if err != nil {
+		return TerminalResult{}, fmt.Errorf("reconciling confirmed merge: reading Ticket owner: %w", wrapQueryErr(err))
+	}
+	var successorRunID pgtype.UUID
+	var successorLocked bool
+	if observedTicket.State == TicketActive.String() && observedTicket.ActiveRunID.Valid {
+		successorRunID = observedTicket.ActiveRunID
+		successor, successorErr := q.TargetRunForUpdate(ctx, successorRunID)
+		if successorErr != nil {
+			return TerminalResult{}, fmt.Errorf("reconciling confirmed merge: locking successor Run: %w", wrapQueryErr(successorErr))
+		}
+		if successor.TicketID != runRow.TicketID || successor.TargetOutcome.Valid {
+			return TerminalResult{}, fmt.Errorf("reconciling confirmed merge: successor is not fenceable: %w", ErrRunOwnership)
+		}
+		successorLocked = true
+	}
+	ticketOwner, err := q.TargetTicketForUpdate(ctx, runRow.TicketID)
+	if err != nil {
+		return TerminalResult{}, fmt.Errorf("reconciling confirmed merge: locking Ticket owner: %w", wrapQueryErr(err))
+	}
+	switch {
+	case ticketOwner.State == TicketOpen.String() && !ticketOwner.ActiveRunID.Valid && !successorLocked:
+	case ticketOwner.State == TicketActive.String() && ticketOwner.ActiveRunID.Valid && successorLocked && ticketOwner.ActiveRunID == successorRunID:
+		if _, err := q.CompleteTargetRunCanceled(ctx, storedb.CompleteTargetRunCanceledParams{ID: successorRunID, EndedAt: pgTimestamp(in.EndedAt)}); err != nil {
+			return TerminalResult{}, fmt.Errorf("reconciling confirmed merge: fencing successor Run: %w", wrapQueryErr(err))
+		}
+	default:
+		return TerminalResult{}, fmt.Errorf("reconciling confirmed merge: Ticket ownership changed: %w", ErrRunOwnership)
+	}
 	stepResult, err := confirmedMergeStepResult(in.MergeSHA)
 	if err != nil {
 		return TerminalResult{}, err
@@ -604,9 +634,14 @@ func reconcileConfirmedMergeAfterCancellation(
 	if err != nil {
 		return TerminalResult{}, fmt.Errorf("reconciling confirmed merge: completing canceled run: %w", wrapQueryErr(err))
 	}
-	ticketRow, err := q.CompleteCanceledTargetTicket(ctx, runRow.TicketID)
+	var ticketRow storedb.Ticket
+	if successorLocked {
+		ticketRow, err = q.CompleteTargetTicket(ctx, storedb.CompleteTargetTicketParams{ID: runRow.TicketID, ActiveRunID: successorRunID})
+	} else {
+		ticketRow, err = q.CompleteCanceledTargetTicket(ctx, runRow.TicketID)
+	}
 	if err != nil {
-		return TerminalResult{}, fmt.Errorf("reconciling confirmed merge: a later Run owns the Ticket: %w", ErrRunOwnership)
+		return TerminalResult{}, fmt.Errorf("reconciling confirmed merge: completing Ticket: %w", ErrRunOwnership)
 	}
 	ticket, err := ticketFromRow(ticketRow)
 	if err != nil {
