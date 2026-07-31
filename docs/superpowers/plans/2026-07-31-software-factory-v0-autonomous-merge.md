@@ -289,11 +289,12 @@ belongs to PR 8 after production cutover.
 
 **Branch:** `codex/software-factory-v0-policy-ci`  
 **Depends on:** PR 1  
-**Acceptance:** F01-F03, F08-F12, F14, A07-A10  
+**Capability prerequisites for:** F01-F03, F08-F12, F14, A07-A10
+
 **Primary files:**
 
 - `internal/work/` target Run Policy and Agent Stage types
-- `internal/activities/ci.go`
+- `internal/activities/{ci,await_ci}.go`
 - `internal/activities/errors.go`
 - `internal/clients/github/checks.go`
 - focused workflow/activity tests
@@ -312,14 +313,21 @@ belongs to PR 8 after production cutover.
   and teardown named policies rather than generic `StageAttempts` and
   `ControlAttempts`.
 - [ ] Reserve semantic deadline versus hard workflow/finalization deadline.
-- [ ] Replace the target `ObserveCI` loop with `AwaitCI`: one GitHub snapshot
-  per activity try and a retryable expected-wait error carrying a 15-second
-  `NextRetryDelay`.
+- [ ] Add the target `AwaitCI` activity beside legacy `ObserveCI`: one GitHub
+  snapshot per activity try and a retryable expected-wait error carrying a
+  15-second `NextRetryDelay`.
 - [ ] Query check runs by exact commit SHA and evaluate only the configured
   required set. Unrelated green checks cannot hide an absent, pending, or red
   required check. Retain bounded failure evidence for the next Implement Step.
-- [ ] Prove native activity retries do not consume Review or Agent Attempt
-  budgets.
+- [ ] Keep PR 3 accountable for the immutable resolved policy values and their
+  validation, the retryable activity error and `NextRetryDelay`, and exact-SHA
+  snapshot evaluation including bounded red-check evidence.
+
+PR 3 does not invent the target workflow in order to claim orchestration
+coverage early. PR 5 owns scheduling `AwaitCI` with the target
+`ActivityOptions`, converting its `ScheduleToClose` timeout into the persisted
+`ci_unobserved` Result, and proving that native activity retries consume no
+additional Step, Review Step, or Agent Attempt budget.
 
 ## PR 4: Run Worker execution, credentials, checkpoints, and real Session proof
 
@@ -398,6 +406,10 @@ pin its image and keep the suite hermetic.
   the terminal checkpoint before choosing the next Step.
 - [ ] Implement plan, implement, exact-SHA CI, fresh review, ready, and
   exact-head squash merge through Confirmed Merge.
+- [ ] Schedule `AwaitCI` with the immutable target `ActivityOptions`, convert a
+  `ScheduleToClose` timeout into the persisted `ci_unobserved` Result, and
+  prove native activity retries create no additional Step and consume neither
+  Review Step nor Agent Attempt budget.
 - [ ] Resume the implementer thread after CI failure, review findings, textual
   conflict, or base refresh. Every new reviewer is fresh and receives explicit
   structured context.

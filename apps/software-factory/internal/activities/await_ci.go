@@ -77,15 +77,20 @@ func reduceRequiredChecks(checks []work.CheckRun, required []string) (green bool
 		byName[check.Name] = append(byName[check.Name], check)
 	}
 
-	var red []work.CheckFailure
+	var (
+		red     []work.CheckFailure
+		waiting bool
+	)
 	for _, name := range required {
 		runs := byName[name]
 		if len(runs) == 0 {
-			return false, nil
+			waiting = true
+			continue
 		}
 		for _, check := range runs {
 			if !check.Completed || check.Superseded() {
-				return false, nil
+				waiting = true
+				continue
 			}
 			if !check.Green() {
 				red = append(red, work.CheckFailure{
@@ -95,6 +100,9 @@ func reduceRequiredChecks(checks []work.CheckRun, required []string) (green bool
 		}
 	}
 	if len(red) == 0 {
+		if waiting {
+			return false, nil
+		}
 		return true, []work.CheckFailure{}
 	}
 	return false, red

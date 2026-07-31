@@ -103,6 +103,48 @@ func TestAwaitCIReturnsRequiredRedEvidenceWithoutLettingUnrelatedGreenPass(t *te
 	}
 }
 
+func TestAwaitCIRedWinsWhenAnotherRequiredCheckIsPendingOrAbsent(t *testing.T) {
+	t.Parallel()
+
+	for name, required := range map[string][]string{
+		"red before pending": {"red", "pending"},
+		"pending before red": {"pending", "red"},
+		"red before absent":  {"red", "absent"},
+		"absent before red":  {"absent", "red"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			gh := &targetChecksGitHub{checks: []work.CheckRun{
+				{Name: "pending", Completed: false},
+				{Name: "red", Completed: true, Conclusion: "failure", FailureFingerprint: "failure-id", FailureEvidence: "bounded failure"},
+			}}
+			d := deps()
+			d.GitHub = gh
+			e := env(t)
+			a := mustNew(t, d)
+			e.RegisterActivity(a.AwaitCI)
+
+			value, err := e.ExecuteActivity(a.AwaitCI, AwaitCIInput{CommitSHA: "abc123", RequiredChecks: required})
+			if err != nil {
+				t.Fatalf("AwaitCI: %v", err)
+			}
+			var out AwaitCIOutput
+			if err := value.Get(&out); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if out.Green || len(out.RedFailures) != 1 {
+				t.Fatalf("out = %+v, want the required red result despite another incomplete check", out)
+			}
+			if got := out.RedFailures[0]; got.Name != "red" || got.Fingerprint != "failure-id" || got.Evidence != "bounded failure" {
+				t.Fatalf("failure = %+v, want preserved bounded red evidence", got)
+			}
+			if gh.calls != 1 {
+				t.Fatalf("github calls = %d, want one complete snapshot", gh.calls)
+			}
+		})
+	}
+}
+
 type targetChecksGitHub struct {
 	fakeGitHub
 	checks    []work.CheckRun
