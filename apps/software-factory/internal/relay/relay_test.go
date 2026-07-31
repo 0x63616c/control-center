@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -9,11 +10,13 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/config"
 )
@@ -83,6 +86,46 @@ func TestServerErrorRetriesThreeTimesAndClientErrorDoesNotRetry(t *testing.T) {
 			poster.waitForPosts(t, scenario.want)
 		})
 	}
+}
+
+func TestClientRejectionIsRecordedAsGivenUpWithoutRetrying(t *testing.T) {
+	poster := newFakePoster(http.StatusBadRequest)
+	registry := prometheus.NewRegistry()
+	var logs bytes.Buffer
+	handler := NewHandler(
+		[]byte("secret"),
+		targets()[:1],
+		poster,
+		instantClock{},
+		slog.New(slog.NewTextHandler(&logs, nil)),
+		registry,
+	)
+	handler.forward(context.Background(), targets()[0], Delivery{DeliveryID: "delivery-4xx", Event: "push"})
+	if count := poster.count(); count != 1 {
+		t.Fatalf("forward attempts = %d, want 1", count)
+	}
+	if got := testutil.ToFloat64(handler.metrics.givenUp.WithLabelValues("one")); got != 1 {
+		t.Fatalf("forwards given up = %v, want 1", got)
+	}
+	if !strings.Contains(logs.String(), "target=one") || !strings.Contains(logs.String(), "delivery_id=delivery-4xx") || !strings.Contains(logs.String(), "event=push") {
+		t.Fatalf("log = %q, want target, delivery id, and event", logs.String())
+	}
+}
+
+func TestConfiguredSecondTargetIsForwardedWithoutChangingHandlerCode(t *testing.T) {
+	t.Setenv("LISTEN_ADDR", ":8080")
+	t.Setenv("METRICS_ADDR", ":9464")
+	t.Setenv("GITHUB_BOT_APP__WEBHOOK_SECRET", "secret")
+	t.Setenv("RELAY_TARGETS", `[{"name":"control-center","url":"http://control-center"},{"name":"software-factory","url":"http://software-factory"}]`)
+	configuration, err := config.LoadRelay()
+	if err != nil {
+		t.Fatalf("LoadRelay: %v", err)
+	}
+	poster := newFakePoster(http.StatusNoContent)
+	handler := newTestHandler(poster, configuration.Targets)
+	handler.ServeHTTP(httptest.NewRecorder(), signedRequest([]byte("{}")))
+	poster.waitForTargetPosts(t, "control-center", 1)
+	poster.waitForTargetPosts(t, "software-factory", 1)
 }
 
 func TestResponseReturnsBeforeSlowForwardCompletes(t *testing.T) {
@@ -165,7 +208,6 @@ func (p *fakePoster) waitForPosts(t *testing.T, want int) {
 func (p *fakePoster) waitForTargetPosts(t *testing.T, target string, want int) {
 	t.Helper()
 	for {
-		<-p.started
 		p.mu.Lock()
 		count := 0
 		for _, post := range p.posts {
@@ -177,6 +219,7 @@ func (p *fakePoster) waitForTargetPosts(t *testing.T, target string, want int) {
 		if count >= want {
 			return
 		}
+		<-p.started
 	}
 }
 

@@ -89,7 +89,7 @@ that run/deploy, `packages/` = things you import); product features live under
   disposable per-ticket pod. It opens a PR and stops; merging stays human. Carries its own
   `AGENTS.md`, `docs/SoftwareStyle.md` and `.golangci.yml`, scoped to that tree and binding
   on nothing else — do not cite them in a review of TypeScript. Nests (`cmd/`, `internal/`,
-  `images/{worker,sandbox}/`) where the rest of `apps/*` is flat, deliberately: it is one
+  `images/{worker,sandbox,relay}/`) where the rest of `apps/*` is flat, deliberately: it is one
   product with several components and one Go module.
 - `packages/api` - Browser-safe type bridge that re-exports the API router type only.
 - `packages/core` - Owns the `device_state` table: schema, the `DeviceStateStore` interface, pg + in-memory adapters, and the desired/reported merge logic.

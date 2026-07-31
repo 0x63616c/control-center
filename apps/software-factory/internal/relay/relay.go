@@ -122,8 +122,13 @@ func (h *Handler) forward(ctx context.Context, target config.RelayTarget, delive
 		h.metrics.attempts.WithLabelValues(target.Name, attemptOutcome(status, err)).Inc()
 		h.metrics.duration.WithLabelValues(target.Name).Observe(h.clock.Now().Sub(startedAt).Seconds())
 
-		if err == nil && status < http.StatusInternalServerError {
-			return
+		if err == nil {
+			if status < http.StatusBadRequest {
+				return
+			}
+			if status < http.StatusInternalServerError {
+				break
+			}
 		}
 		if attempt == maxAttempts-1 {
 			break

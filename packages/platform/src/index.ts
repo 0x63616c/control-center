@@ -32,7 +32,7 @@ export function genId(prefix: string, options?: { length?: number }): string {
 }
 
 // "software-factory" is a product for IMAGE-NAMING purposes and for nothing
-// else (ADR-0011): its two images are www-software-factory-{worker,sandbox}
+// else (ADR-0011): its three images are www-software-factory-{worker,sandbox,relay}
 // rather than components of control-center, and this is the one place that
 // spelling is derived. It ships no web/api image, has no CNPG database and is
 // not part of the control-center deploy, so it is deliberately EXCLUDED from

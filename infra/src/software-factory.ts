@@ -191,12 +191,13 @@ const temporalUiBaseUrl = (): string =>
 export interface SoftwareFactoryArgs {
   provider: k8s.Provider;
   /**
-   * Decrypted vault (vault.ts): the GHCR pull token (both images are private)
+   * Decrypted vault (vault.ts): the GHCR pull token (the worker and sandbox
+   * images are private; the separately installed relay has its own copy)
    * and the www-software-factory-bot App credential set. NOT the codex
    * credential — see CODEX_AUTH_SECRET_NAME.
    */
   vault: Record<string, string>;
-  /** Per-service GHCR digest pins from CI, for both software-factory images. */
+  /** Per-service GHCR digest pins from CI, for worker and sandbox images. */
   imageDigests: ImageDigests;
   /**
    * On a production cluster, refuse to render a mutable `:main` ref. Same rule
