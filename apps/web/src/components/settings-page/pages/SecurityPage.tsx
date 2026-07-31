@@ -15,15 +15,21 @@
 
 import { useEffect, useState } from "react";
 import {
+  MAX_LOCK_SCREEN_BLUR_PERCENT,
+  MIN_LOCK_SCREEN_BLUR_PERCENT,
   PIN_LENGTH,
   PIN_PAD_LAYOUT_LABEL,
   PIN_PAD_LAYOUTS,
+  setLockScreenBlurPercent,
+  setLockScreenEnabled,
   setPinPadLayout,
   useSettings,
 } from "../../../lib/settings";
 import { PinChangeModal } from "../../pin/PinChangeModal";
 import { Segmented } from "../../ui/Segmented";
-import { ChevronValue, RowShell, SectionCard } from "../blocks";
+import { Slider } from "../../ui/Slider";
+import { Switch } from "../../ui/Switch";
+import { ChevronValue, RowShell, SectionCard, SliderRow } from "../blocks";
 
 /** How long the row echoes "Changed" before falling back to the masked value.
  *  It is the second confirmation, not the only one , the dialog's own success
@@ -61,7 +67,7 @@ const LAYOUT_BLURB: Record<(typeof PIN_PAD_LAYOUTS)[number], string> = {
 type PinRowState = { kind: "idle" } | { kind: "changing" } | { kind: "confirmed" };
 
 export function SecurityPage() {
-  const { pinPadLayout } = useSettings();
+  const { pinPadLayout, lockScreenEnabled, lockScreenBlurPercent } = useSettings();
   const [row, setRow] = useState<PinRowState>({ kind: "idle" });
 
   // Clear the row's echo on a timer, and on unmount, so navigating away and
@@ -124,6 +130,36 @@ export function SecurityPage() {
               />
             }
           />,
+        ]}
+      </SectionCard>
+      <SectionCard title="Lock screen">
+        {[
+          <RowShell
+            key="enabled"
+            label="Lock when panel dims"
+            sub="Require your PIN before the panel wakes."
+            control={
+              <Switch
+                label="Lock when panel dims"
+                checked={lockScreenEnabled}
+                onChange={setLockScreenEnabled}
+              />
+            }
+          />,
+          ...(lockScreenEnabled
+            ? [
+                <SliderRow key="blur">
+                  <Slider
+                    label="Background blur"
+                    value={lockScreenBlurPercent}
+                    min={MIN_LOCK_SCREEN_BLUR_PERCENT}
+                    max={MAX_LOCK_SCREEN_BLUR_PERCENT}
+                    format={(value) => `${value}%`}
+                    onChange={setLockScreenBlurPercent}
+                  />
+                </SliderRow>,
+              ]
+            : []),
         ]}
       </SectionCard>
       <PinChangeModal

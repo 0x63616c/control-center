@@ -36,6 +36,7 @@ export interface CollectedApp {
   tiles: CollectedTile[];
   guestExposed: boolean;
   sensitive: boolean;
+  private: boolean;
   source: "feature" | "registry";
 }
 
@@ -264,6 +265,7 @@ export async function collect(): Promise<AppModel> {
       })),
       guestExposed: Boolean(m.guestExposed),
       sensitive: Boolean(m.sensitive),
+      private: Boolean(m.private),
       source: "feature",
     });
 
@@ -440,6 +442,7 @@ export async function collect(): Promise<AppModel> {
       ],
       guestExposed: false,
       sensitive: Boolean((t as { sensitive?: boolean }).sensitive),
+      private: false,
       source: "registry",
     }),
   );

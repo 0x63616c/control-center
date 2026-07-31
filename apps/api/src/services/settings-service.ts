@@ -9,6 +9,8 @@ import {
   BRIGHTNESS_MIN,
   DIM_MAX,
   DIM_MIN,
+  LOCK_SCREEN_BLUR_MAX_PERCENT,
+  LOCK_SCREEN_BLUR_MIN_PERCENT,
   PIN_PAD_LAYOUTS,
   SETTINGS_DEFAULTS,
   SNAP_MODES,
@@ -37,6 +39,12 @@ export const settingsSchema = z.object({
   idleDimEnabled: z.boolean(),
   idleDimTimeoutMs: z.number().min(TIMEOUT_MIN_MS).max(TIMEOUT_MAX_MS),
   idleDimLevel: z.number().min(DIM_MIN).max(DIM_MAX),
+  lockScreenEnabled: z.boolean(),
+  lockScreenBlurPercent: z
+    .number()
+    .int()
+    .min(LOCK_SCREEN_BLUR_MIN_PERCENT)
+    .max(LOCK_SCREEN_BLUR_MAX_PERCENT),
   showFps: z.boolean(),
   showBuildBadge: z.boolean(),
   showBuildNumber: z.boolean(),

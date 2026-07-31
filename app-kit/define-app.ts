@@ -29,6 +29,8 @@ export interface AppManifest {
   tiles: TileSpec[];
   guestExposed?: boolean;
   sensitive?: boolean;
+  /** Require a fresh PIN for every app opening, independent of session unlock. */
+  private?: boolean;
 }
 
 /** Brand + pass-through. The manifest is authored inline; codegen collects it. */

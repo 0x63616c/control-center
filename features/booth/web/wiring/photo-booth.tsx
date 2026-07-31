@@ -12,8 +12,8 @@
  * gallery simply shows its empty state until the first list resolves.
  *
  * Remove is soft under the hood (bytes stay on disk); `remove` invalidates the
- * whole `list` key on settle so the grid re-settles. No PIN , the booth is a
- * play surface, not a camera-monitoring one.
+ * whole `list` key on settle so the grid re-settles. The manifest's private
+ * gate protects this whole surface before its camera or gallery mounts.
  */
 
 import type { DetailVariant, TileDetailPageEntry } from "@/components/tiles/detail/types";

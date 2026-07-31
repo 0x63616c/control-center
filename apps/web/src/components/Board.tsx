@@ -44,9 +44,12 @@ import {
   useBoardViewport,
   useUserPanSignal,
 } from "./hooks/useBoard";
+import { Icon } from "./Icon";
+import { LockScreenOverlay } from "./LockScreenOverlay";
 import { MINIMAP_LEFT, MINIMAP_TOP, MINIMAP_WIDTH, Minimap } from "./Minimap";
 import { NotChargingBanner } from "./NotChargingBanner";
 import { PlaceholderTile } from "./PlaceholderTile";
+import { PinGateModal } from "./pin/PinGateModal";
 import { SettingsButton } from "./SettingsButton";
 import { TimeSuiteBanner } from "./TimeSuiteBanner";
 import { getTileDetailEntry } from "./tiles/detail/registry";
@@ -288,6 +291,12 @@ export function Board() {
   // the panel is dimmed, relocked, and homed. Drives the DimOverlay wake shield
   // and the backlight below.
   const sessionPhase = panelSession.usePhase();
+  const [unlockPromptOpen, setUnlockPromptOpen] = useState(false);
+  const lockScreenActive = sessionPhase === "ended" && settings.lockScreenEnabled;
+
+  useEffect(() => {
+    if (sessionPhase === "active") setUnlockPromptOpen(false);
+  }, [sessionPhase]);
 
   // Tile placement, computed once from the registry defaults (positions come
   // straight from TILE_REGISTRY coords, collisions resolved by the scanline in
@@ -743,7 +752,27 @@ export function Board() {
               }}
             >
               <BoundedTile>
-                <TileComponent />
+                {entry.private ? (
+                  <div
+                    data-testid={`private-tile-${entry.id}`}
+                    style={{
+                      height: "100%",
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 10,
+                      background: "var(--tile)",
+                      color: "var(--ink-2)",
+                      fontFamily: "var(--ui)",
+                    }}
+                  >
+                    <Icon name="lock" s={24} />
+                    <span>{entry.label}</span>
+                  </div>
+                ) : (
+                  <TileComponent />
+                )}
               </BoundedTile>
             </div>
           );
@@ -793,7 +822,21 @@ export function Board() {
       </div>
       {/* Idle dim tap-shield (native only). Sits above the board + its chrome but
           below modals (which portal to <body>) so it swallows the wake tap. */}
-      <DimOverlay active={sessionPhase === "ended"} onWake={wake} />
+      <DimOverlay active={sessionPhase === "ended" && !settings.lockScreenEnabled} onWake={wake} />
+      <LockScreenOverlay
+        active={lockScreenActive}
+        blurPercent={settings.lockScreenBlurPercent}
+        onRequestUnlock={() => setUnlockPromptOpen(true)}
+      />
+      <PinGateModal
+        open={unlockPromptOpen}
+        title="Panel"
+        onClose={() => setUnlockPromptOpen(false)}
+        onSuccess={() => {
+          panelSession.unlock();
+          wake();
+        }}
+      />
       {/* Full-page detail path (store-driven). Registers with modal-open-store,
           so the existing modalOpen freeze/bail logic covers it automatically. */}
       <TileDetailHost />

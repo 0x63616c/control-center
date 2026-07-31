@@ -15,6 +15,8 @@ import {
   BRIGHTNESS_MIN,
   DIM_MAX,
   DIM_MIN,
+  LOCK_SCREEN_BLUR_MAX_PERCENT,
+  LOCK_SCREEN_BLUR_MIN_PERCENT,
   SETTINGS_DEFAULTS,
   SNAP_MODES,
   TIMEOUT_MAX_MS,
@@ -69,5 +71,16 @@ describe("settings contract", () => {
     expect(() => settingsSchema.parse({ ...DEFAULTS, idleDimLevel: DIM_MAX + 0.01 })).toThrow();
     expect(() => settingsSchema.parse({ ...DEFAULTS, idleDimLevel: DIM_MIN - 0.001 })).toThrow();
     expect(DIM_MAX).toBeLessThan(BRIGHTNESS_MAX);
+  });
+
+  it("enforces the lock-screen blur percentage contract", () => {
+    expect(
+      settingsSchema.parse({ ...DEFAULTS, lockScreenBlurPercent: LOCK_SCREEN_BLUR_MIN_PERCENT }),
+    ).toMatchObject({ lockScreenBlurPercent: 0 });
+    expect(
+      settingsSchema.parse({ ...DEFAULTS, lockScreenBlurPercent: LOCK_SCREEN_BLUR_MAX_PERCENT }),
+    ).toMatchObject({ lockScreenBlurPercent: 100 });
+    expect(() => settingsSchema.parse({ ...DEFAULTS, lockScreenBlurPercent: -1 })).toThrow();
+    expect(() => settingsSchema.parse({ ...DEFAULTS, lockScreenBlurPercent: 101 })).toThrow();
   });
 });

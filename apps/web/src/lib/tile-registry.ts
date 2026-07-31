@@ -38,6 +38,8 @@ export type TileRegistryEntry = {
   // The tile the board opens centered on and resettles to when idle. Exactly one
   // entry sets this (the Clock); the board falls back to the first entry.
   home?: boolean;
+  /** A whole-app fresh PIN gate, unlike detail-level `sensitive`. */
+  private: boolean;
 };
 
 // One entry per real tile, free-placed in the world by world-cell coords. The
@@ -94,6 +96,7 @@ function manifestToEntries(m: AppManifest): TileRegistryEntry[] {
       worldRow: tile.worldRow,
       cols: tile.cols,
       rows: tile.rows,
+      private: Boolean(m.private),
       ...(tile.home ? { home: true as const } : {}),
     };
   });
@@ -121,4 +124,8 @@ export function registryEntryForComponent(
 ): TileRegistryEntry | undefined {
   if (!component) return undefined;
   return componentMap.get(component);
+}
+
+export function registryEntryForTileId(tileId: string): TileRegistryEntry | undefined {
+  return TILE_REGISTRY.find((entry) => entry.id === tileId);
 }
