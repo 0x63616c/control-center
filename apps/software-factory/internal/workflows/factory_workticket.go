@@ -332,6 +332,12 @@ func (r *factoryTicketRun) recordAttempt(
 // the same reason: a transcript is forensics, not the run's actual work, and
 // the tokens a stage spent are already spent whether or not its transcript
 // makes it home.
+//
+// Every caller must call recordAttempt for key first (software-factory#602):
+// the transcript table's foreign key requires attempt (run_id, stage, turn,
+// attempt_no) to already exist, and unlike the store insert itself, that
+// constraint violation is not something this best-effort call can route
+// around — a transcript this call is never told exists.
 func (r *factoryTicketRun) persistTranscript(ctx workflow.Context, key work.StageKey, transcript work.Transcript) {
 	control := workflow.WithActivityOptions(ctx, r.controlOptions())
 	const attemptNo = 1

@@ -178,8 +178,12 @@ func (r *factoryTicketRun) runFactoryPlanTurn(
 	}
 
 	r.usage = r.usage.Add(out.Usage)
-	r.persistTranscript(ctx, key, out.Transcript)
+	// recordAttempt before persistTranscript: transcript's foreign key
+	// requires the attempt row to already exist (see persistTranscript's own
+	// doc comment on why the reverse order is a schema violation, not a
+	// swallowed failure worth tolerating).
 	r.recordAttempt(ctx, key, model, startedAt, out.Usage, stageUsageAlwaysMeasured, store.AttemptSucceeded)
+	r.persistTranscript(ctx, key, out.Transcript)
 	return out.Result, nil
 }
 
@@ -203,8 +207,10 @@ func (r *factoryTicketRun) runFactoryImplementTurn(
 	}
 
 	r.usage = r.usage.Add(out.Usage)
-	r.persistTranscript(ctx, key, out.Transcript)
+	// recordAttempt before persistTranscript: see runFactoryPlanTurn's
+	// comment on the same ordering.
 	r.recordAttempt(ctx, key, model, startedAt, out.Usage, stageUsageAlwaysMeasured, store.AttemptSucceeded)
+	r.persistTranscript(ctx, key, out.Transcript)
 	return out.Result, nil
 }
 
@@ -227,8 +233,10 @@ func (r *factoryTicketRun) runFactoryReviewTurn(
 	}
 
 	r.usage = r.usage.Add(out.Usage)
-	r.persistTranscript(ctx, key, out.Transcript)
+	// recordAttempt before persistTranscript: see runFactoryPlanTurn's
+	// comment on the same ordering.
 	r.recordAttempt(ctx, key, model, startedAt, out.Usage, stageUsageAlwaysMeasured, store.AttemptSucceeded)
+	r.persistTranscript(ctx, key, out.Transcript)
 	return out.Result, nil
 }
 
