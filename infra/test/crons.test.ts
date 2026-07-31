@@ -56,12 +56,17 @@ const byName = (specs: CronSpec[], name: string) => specs.find((s) => s.name ===
 describe("cronSpecs: the declared CronJob set", () => {
   // Every retention purge is deliberately ABSENT: they migrated to Temporal
   // Schedules (ADR-0008, issue #260); only infra-level crons render CronJobs.
-  test("declares map-extract and both product backups (no purges, no image-prune, no cert-renew)", () => {
+  test("declares map-extract, product backups, and the payload blob backup (no purges, no image-prune, no cert-renew)", () => {
     const names = crons
       .cronSpecs(NAS)
       .map((c) => c.name)
       .sort();
-    expect(names).toEqual(["map-extract", "pg-backup", "software-factory-pg-backup"]);
+    expect(names).toEqual([
+      "map-extract",
+      "pg-backup",
+      "software-factory-blobs-backup",
+      "software-factory-pg-backup",
+    ]);
   });
 
   test("docker-image-prune does NOT exist (kubelet image GC replaces it)", () => {
@@ -70,6 +75,37 @@ describe("cronSpecs: the declared CronJob set", () => {
 
   test("portal-cert-renew does NOT exist (cert-manager owns TLS renewal)", () => {
     expect(byName(crons.cronSpecs(NAS), "portal-cert-renew")).toBeUndefined();
+  });
+});
+
+describe("software-factory-blobs-backup", () => {
+  const backup = () => byName(crons.cronSpecs(NAS), "software-factory-blobs-backup");
+
+  test("takes a nightly archive from the NAS blob path to the NAS backup path", () => {
+    const spec = backup();
+    expect(spec?.namespaceName).toBe("software-factory");
+    expect(spec?.schedule).toBe("30 1 * * *");
+    expect(spec?.image).toBe("alpine:3.20");
+    expect(spec?.command?.join("\n")).toContain("tar -C /source -czf");
+    expect(spec?.volumes).toEqual([
+      {
+        mountPath: "/source",
+        nfs: { server: NAS, path: "/volume1/Homelab" },
+        readOnly: true,
+        subPath: "software-factory/blobs",
+      },
+      {
+        mountPath: "/backup",
+        nfs: { server: NAS, path: "/volume1/Homelab" },
+        subPath: "backups/world-wide-webb/software-factory/blobs",
+      },
+    ]);
+  });
+
+  test("fails rather than claiming a partial archive completed", () => {
+    const command = backup()?.command?.join("\n") ?? "";
+    expect(command).toContain("set -e");
+    expect(command).toContain('mv "$tmp" "$out"');
   });
 });
 

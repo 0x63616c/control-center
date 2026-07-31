@@ -320,7 +320,7 @@ describe("the worker Deployment (#343)", () => {
   });
 
   test("names the Temporal frontend var the way LoadWorker spells it", async () => {
-    // LoadWorker requires all eight and defaults none, so a misnamed variable
+    // LoadWorker requires all eleven and defaults none, so a misnamed variable
     // is not a degraded worker — it is a CrashLoopBackOff on first start.
     // TEMPORAL_ADDRESS was the original mistake and reads perfectly plausibly.
     const [container] = (await deploymentSpec()).template.spec.containers;

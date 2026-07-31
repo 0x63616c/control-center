@@ -553,7 +553,7 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
                   },
                   { name: "GITHUB_APP_PRIVATE_KEY_PEM_FILE", value: APP_PRIVATE_KEY_MOUNT },
                   // TEMPORAL_HOST_PORT, not TEMPORAL_ADDRESS: the name is
-                  // config.LoadWorker's, which requires all eight of these and
+                  // config.LoadWorker's, which requires all eleven of these and
                   // defaults none, so a misnamed one is not a degraded worker
                   // but a CrashLoopBackOff on the first start.
                   { name: "TEMPORAL_HOST_PORT", value: TEMPORAL_FRONTEND_CLUSTER_ADDRESS },
