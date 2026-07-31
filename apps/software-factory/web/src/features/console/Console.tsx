@@ -109,7 +109,10 @@ function SortHeader({
     >
       <button type="button" className="sort-button" onClick={() => onSort(column)}>
         {label}
-        {active && <span aria-hidden="true"> {sortDir === "asc" ? "↑" : "↓"}</span>}
+        {/* Always present so activating a sort never shifts the column. */}
+        <span className="sort-arrow" aria-hidden="true">
+          {active ? (sortDir === "asc" ? "↑" : "↓") : ""}
+        </span>
       </button>
     </th>
   );

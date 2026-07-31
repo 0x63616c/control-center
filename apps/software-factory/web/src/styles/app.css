@@ -207,6 +207,11 @@ a:hover {
 .sort-button:hover {
   color: var(--text);
 }
+.sort-arrow {
+  display: inline-block;
+  width: 1.1ch;
+  margin-left: 3px;
+}
 .ticket-table th {
   text-align: left;
   font-size: 0.75rem;
