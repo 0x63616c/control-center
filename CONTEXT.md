@@ -213,6 +213,13 @@ Run in its workflow input. It is immutable for that Run. A new worker rollout pu
 for future Runs to the dispatcher before its workers begin polling task queues.
 _Avoid_: live config, mutable workflow config, Temporal version.
 
+**Policy Publication** _(target)_:
+The acknowledged Update-With-Start handshake by which a worker supplies its resolved Run Policy to
+the dispatcher before polling task queues. A stable fingerprint of the resolved policy deduplicates
+equivalent publications; Git SHA is audit metadata only. `APPLIED` and `ALREADY_CURRENT` permit
+worker startup, while any genuine publication failure prevents it.
+_Avoid_: policy signal, Git-SHA ordering, best-effort config refresh.
+
 **Dispatch Wait** _(target)_:
 The dispatcher's expected wait for a dispatchable Ticket, implemented by a polling activity whose
 no-work result uses Temporal activity retry and a bounded next-retry delay. Its intermediate retries

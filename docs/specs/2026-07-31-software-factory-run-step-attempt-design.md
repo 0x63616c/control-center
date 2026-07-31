@@ -624,57 +624,52 @@ The simplest Update payload under discussion has this shape:
 
 ```text
 RunPolicyUpdate
+  request_id
+  policy_fingerprint
   git_sha
   policy
 ```
 
-The working duplicate rules are:
+`policy_fingerprint` is a stable hash of the complete resolved policy. It is
+the deduplication identity. Git SHA is retained only as audit metadata; it does
+not order publications and it does not decide whether two policies are equal.
+`request_id` identifies one worker publication call and remains stable when
+that caller retries an ambiguous transport failure.
+
+The dispatcher applies non-duplicate Updates in the order Temporal delivers
+them. The latest accepted policy therefore wins. There is no separate policy
+revision or deployment-order comparison.
+
+The three worker-startup outcomes are:
 
 ```text
-same current Git SHA + same policy -> duplicate; reject or no-op
-same Git SHA + different policy    -> inconsistent deployment; reject and fail startup
-different Git SHA                  -> apply and acknowledge
+APPLIED          -> this Update changed the current policy; start polling
+ALREADY_CURRENT  -> an identical policy is already current; start polling
+FAILED           -> publication or validation genuinely failed; do not poll
 ```
 
-The worker may treat the typed duplicate result as successful publication,
-because the desired policy is already current. A validator rejection is useful
-here rather than accepting an unchanged Update merely for acknowledgement: it
-avoids adding another accepted Update to workflow history. The handler itself
-must be synchronous and contain no await points, or otherwise use workflow-safe
-serialization, so two policy writes cannot interleave.
+`ALREADY_CURRENT` must be distinguishable from genuine failure because it is a
+successful startup condition. Prefer returning it as a typed validator
+rejection so an unchanged publication does not add an accepted Update to
+workflow history. The worker recognizes only that specific typed rejection as
+success. Invalid policy, Temporal unavailability, timeout without a conclusive
+retry, or any other error keeps the worker out of the task queue and should
+fail startup.
 
-The exact identity and ordering rule is not decided. In particular, "same SHA
-as the current policy" and "a SHA that has ever been seen" have materially
-different behavior:
-
-- Rejecting only the current SHA permits an intentional rollback to an older
-  SHA, but a stale older worker that publishes later can also restore that
-  older policy.
-- Rejecting every previously seen SHA prevents that stale-worker case, but it
-  also prevents an intentional redeployment of an older SHA from making its
-  policy current.
-
-Update serializes and acknowledges arrivals; it does not independently know
-which deployment is newer. One possible refinement is a deployment-wide
-Rollout ID or monotonically ordered deployment revision, distinct from the Git
-SHA and shared by every replica in one rollout. Another is to rely on the
-startup gate and deployment lifecycle if they make an older unseen worker
-impossible. This must be resolved from the actual deployment behavior before
-adding another identity to the model.
-
-The dispatcher must carry whichever current identity and deduplication state
-is chosen when it continues as new.
+The handler must be synchronous and contain no await points, or otherwise use
+workflow-safe serialization, so two policy writes cannot interleave. The
+dispatcher carries the current policy and fingerprint when it continues as
+new.
 
 The alternatives considered were:
 
 - A Signal is insufficient because publication needs validation and an
   acknowledged result before the worker begins polling.
-- A policy fingerprint can make byte-identical publications easy to deduplicate
-  and detect a surprising policy change under one Git SHA, but it identifies
-  content rather than deployment order.
-- Git SHA alone is simple and may be sufficient if policy is a pure function of
-  the build and the startup gate makes a previously unseen stale worker
-  impossible. It cannot itself express deployment order.
+- Git SHA is the wrong deduplication identity because runtime-resolved policy
+  can change independently of code, while two different builds may resolve to
+  exactly the same policy.
+- A Rollout ID or numeric policy revision is unnecessary for last-arrival-wins
+  semantics.
 
 ## Dispatcher waiting model
 
@@ -760,9 +755,9 @@ be deliberately relocated:
     while replacing generic `StageAttempts` and `ControlAttempts` fields with
     explicit domain budgets and named technical retry policies.
 18. Publish the worker's current policy to the singleton dispatcher with an
-    acknowledged Update-With-Start, reject duplicate or inconsistent
-    publications, and make successful publication a worker-startup gate. The
-    final publication identity and deployment-order rule remain open.
+    acknowledged Update-With-Start, deduplicate the resolved policy by a stable
+    content fingerprint, and make `APPLIED` or `ALREADY_CURRENT` a
+    worker-startup gate before task-queue polling.
 19. Wait for dispatchable Tickets through an activity whose expected no-work
     result uses Temporal activity retry with a ten-second `NextRetryDelay`.
 20. Remove workflow-timer-driven idle polling from the dispatcher and separate
@@ -797,10 +792,6 @@ The retry-driven wait and acknowledged policy publication are the direction.
 The following implementation boundaries still need decisions or code-level
 verification:
 
-- Whether Git SHA plus policy equality is sufficient publication identity, or
-  whether the deployment must supply a Rollout ID or ordered revision.
-- Whether duplicate means only "same as current" or "seen at any time," and how
-  that choice interacts with intentional deployment of an older Git SHA.
 - Whether child-workflow Futures completely replace the completion signal and
   periodic `DescribeRun` reconciliation, including ambiguous child starts and
   worker restarts.
