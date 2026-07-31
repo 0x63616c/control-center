@@ -92,6 +92,14 @@ const accessName = (host: string) =>
 // autoRedirectToIdentity as managed defaults, so declaring them here would show a
 // spurious update. sessionDuration is the exception (www-178): we deliberately
 // override CF's 24h default so a human login/OTP lasts 30 days.
+//
+// accessAppAuds (#593): each app's audience tag, keyed by domain, exported
+// below so the home-server Pulumi project can read a consumer's AUD via
+// StackReference instead of a hand-pasted vault secret. The audience is
+// derived infra state minted by THIS resource, not a value anyone should be
+// copying into secrets/vault.yaml by hand.
+const accessAppAuds: Record<string, pulumi.Output<string>> = {};
+
 for (const app of desiredAccessApps(zoneName, applyAccessGate)) {
   const name = accessName(app.domain);
   const cfApp = new cloudflare.ZeroTrustAccessApplication(
@@ -110,6 +118,7 @@ for (const app of desiredAccessApps(zoneName, applyAccessGate)) {
     },
     opts,
   );
+  accessAppAuds[app.domain] = cfApp.aud;
 
   for (const policy of app.policies) {
     new cloudflare.ZeroTrustAccessPolicy(
@@ -223,3 +232,10 @@ export const summary = {
   ingressHosts: desiredIngressRules(zoneName).map((r) => r.hostname),
   cnames: desiredCnames(zoneName).map((c) => c.hostname),
 };
+
+// Consumed cross-project by infra/program.ts via `pulumi.StackReference`
+// (#593) — e.g. the software-factory API needs `factory.<zone>`'s AUD to
+// validate Access JWTs, and reading it here rather than a vault secret means
+// a recreated app (a destructive replace, since `tag` and `domain` are
+// immutable) can never leave a stale AUD silently accepted downstream.
+export { accessAppAuds };

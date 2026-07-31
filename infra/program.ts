@@ -7,6 +7,7 @@
 // CI deploy: SOPS_AGE_KEY injected from AGE_PRIVATE_KEY GitHub secret.
 
 import * as pulumi from "@pulumi/pulumi";
+import { controlCenterProductManifest } from "@www/platform";
 import { installAgentSandboxCrds } from "./src/agent-sandbox.ts";
 import { installCertManager, issuePortalCertificate } from "./src/certmanager.ts";
 import { makeCluster } from "./src/cluster.ts";
@@ -212,10 +213,36 @@ if (target.substrate === "talos") {
   // worker Deployment itself (#343). The SANDBOX image is deliberately not a
   // workload here — the worker creates those pods at runtime from the
   // digest-pinned ref it is handed.
+  //
+  // The factory's Cloudflare Access application (factory.<zone>) is minted by
+  // the SEPARATE world-wide-webb-cloudflare Pulumi project (infra/cloudflare/
+  // program.ts), not this one. Its audience tag is read here via
+  // StackReference rather than a hand-pasted vault secret (#593): it's
+  // derived infra state, not a secret anyone should be copying into
+  // secrets/vault.yaml. `getOutput` (not `requireOutput`) is deliberate — on
+  // this project's first apply after this wiring lands, deploy-cloudflare has
+  // not run since the app was declared, so the cloudflare stack's
+  // `accessAppAuds` output has no entry for this hostname yet, and this
+  // resolves to "" rather than throwing. installSoftwareFactory's api
+  // Deployment carries `pulumi.com/skipAwait` for exactly that gap: cmd/api
+  // already refuses to start on an empty audience (config.LoadAPI), so an
+  // empty AUD can never mean the API serves traffic unauthenticated, and the
+  // next deploy after deploy-cloudflare has run once picks up the real value
+  // with no further action.
+  const cloudflareStack = new pulumi.StackReference(
+    `${pulumi.getOrganization()}/world-wide-webb-cloudflare/prod`,
+  );
+  const factoryAccessAud = cloudflareStack
+    .getOutput("accessAppAuds")
+    .apply(
+      (auds: Record<string, string> | undefined) =>
+        auds?.[controlCenterProductManifest().factoryConsole.exposure.hostname] ?? "",
+    );
   installSoftwareFactory({
     provider: cluster.provider,
     namespace: cluster.namespaces["software-factory"],
     vault,
+    accessAud: factoryAccessAud,
     imageDigests,
     nasNfsServer,
     requireImageDigestPins: shouldRequireImageDigestPins(stackName) && !coldStart,
