@@ -221,11 +221,26 @@ load fans out into orchestration-plane queries.
 
 ### The write path
 
-Activities write to Postgres as the Run happens — the same seam, and the same places in the
-workflow, where the code currently posts and edits GitHub status comments. There is
-**no exporter** that tails Temporal histories and projects them after the fact: it would be
-eventually consistent, so an in-flight Run would be invisible or stale, and "what's in
-flight" is the first question this whole design exists to answer.
+Activities write to Postgres as the Run happens, at the same points in the workflow where the
+code posts and edits GitHub status comments today. There is **no exporter** that tails Temporal
+histories and projects them after the fact: it would be eventually consistent, so an in-flight
+Run would be invisible or stale, and "what's in flight" is the first question this whole design
+exists to answer.
+
+**Recording only exists on the Ticket-backed path, and cannot be retrofitted onto the
+GitHub-backed one.** This is a correction: an earlier draft of this section read as though the
+existing pipeline could start recording first, and two agents working from it stopped and said
+why, correctly. `run` has a foreign key to `ticket`, and a Run of a GitHub issue has no Ticket
+row — there is nothing valid to point it at. Making one would mean either synthesising Ticket
+rows for GitHub issues, which is the mirror this ADR rejects, or dropping the foreign key, which
+gives up the integrity that makes the record worth querying.
+
+So the ordering is forced, and it is the opposite of what that draft implied: the second
+dispatcher and ticket workflow (see *Cutover*) come **first**, because they are what create
+Tickets, Runs and Steps at all. Recording, transcript persistence and the dispatcher's own state
+row are built **on that path**, not on the one being replaced. The GitHub-backed pipeline keeps
+its status comments, unchanged, until it is retired — it never gains a database record, and it
+was never going to be able to have one.
 
 Recording is therefore a Temporal **activity**, with everything that implies: it retries under
 a policy, and a database outage lasting longer than that policy **stalls the Run at that
@@ -252,6 +267,11 @@ Two facts make the move cheap and safe, both read out of `internal/work/transcri
 - `PersistTranscript` is already the single durable-write chokepoint. Pointing it at the
   database instead of the NFS sink is a change at an existing seam, not new plumbing: no
   sandbox credentials, no second mount, no new trust boundary.
+
+A transcript row belongs to an Attempt, so this follows the same forced ordering as the rest of
+the record (see *The write path*): it lands on the Ticket-backed path, after Attempts exist. The
+GitHub-backed pipeline keeps writing to NFS until it is retired, and the volume is removed with
+it rather than before it.
 
 Stored compressed, one row per Attempt, downloadable through the API. **Kept forever** — a
 heavy year is single-digit megabytes, and the house preference is to keep data until its
@@ -583,5 +603,6 @@ Do not invent answers to these while implementing. Raise them.
 | Having the factory read control-center's webhook table | Crosses the isolation boundary the factory's own namespace exists to enforce. |
 | Server-sent events or WebSockets in v0 | Polling cannot break; SSE earns its keep only for live tailing, which is deferred. |
 | Changing the existing dispatcher and ticket workflow in place, with a drain | The factory cannot perform it: merging deploys, so it would remove the work source underneath its own in-flight Run and orphan the ticket describing the change. Superseded by running a second pair side by side — see *Cutover*. |
+| Recording Runs from the GitHub-backed pipeline | `run` has a foreign key to `ticket`, and a GitHub-issue Run has no Ticket row. The only ways through are synthesising Tickets for issues — the mirror this ADR rejects — or dropping the foreign key and giving up the integrity that makes the record queryable. |
 | Reusing the `work-ticket-` prefix with new Ticket ids | Temporal only refuses a second *open* run under an ID, so a closed one is reusable; small-integer Ticket ids would silently share a history with the run for the GitHub issue of that number. |
 | Keeping a summary comment on GitHub after cutover | Data stays ours; a partial trail in a system we no longer treat as authoritative invites reading it as one. |
