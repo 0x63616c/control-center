@@ -12,7 +12,7 @@ import (
 // TicketCreator files a new Ticket. The API ticket that accepts a create
 // request is this method's caller.
 type TicketCreator interface {
-	CreateTicket(ctx context.Context, title, body string) (Ticket, error)
+	CreateTicket(ctx context.Context, title, body string, blockedBy []TicketID) (Ticket, error)
 }
 
 // TicketReader reads one Ticket, or every Ticket in a state.
@@ -43,9 +43,21 @@ type ReadyTicketLister interface {
 	ReadyTickets(ctx context.Context) ([]Ticket, error)
 }
 
-// CreateTicket files a new Ticket in TicketOpen.
-func (s *Store) CreateTicket(ctx context.Context, title, body string) (Ticket, error) {
-	row, err := s.q.CreateTicket(ctx, storedb.CreateTicketParams{
+// CreateTicket files a new Ticket in TicketOpen with all of its declared
+// blockers. The ticket and its edges commit together so a ready-ticket query
+// can never observe a declared blockerless Ticket.
+func (s *Store) CreateTicket(ctx context.Context, title, body string, blockers []TicketID) (Ticket, error) {
+	if s.begin == nil {
+		return Ticket{}, fmt.Errorf("creating ticket %q: store cannot begin a transaction", title)
+	}
+	tx, err := s.begin.Begin(ctx)
+	if err != nil {
+		return Ticket{}, fmt.Errorf("creating ticket %q: beginning transaction: %w", title, wrapQueryErr(err))
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	q := s.q.WithTx(tx)
+	row, err := q.CreateTicket(ctx, storedb.CreateTicketParams{
 		Title: title,
 		Body:  body,
 		State: TicketOpen.String(),
@@ -53,7 +65,23 @@ func (s *Store) CreateTicket(ctx context.Context, title, body string) (Ticket, e
 	if err != nil {
 		return Ticket{}, fmt.Errorf("creating ticket %q: %w", title, wrapQueryErr(err))
 	}
-	return ticketFromRow(row)
+	ticket, err := ticketFromRow(row)
+	if err != nil {
+		return Ticket{}, fmt.Errorf("creating ticket %q: parsing stored ticket: %w", title, err)
+	}
+	for _, blocker := range blockers {
+		encoded, edgeErr := q.AddTicketDependencyIfAcyclic(ctx, storedb.AddTicketDependencyIfAcyclicParams{Column1: int64(ticket.ID), Column2: int64(blocker)})
+		if edgeErr != nil {
+			return Ticket{}, fmt.Errorf("creating ticket %d with blocker %d: %w", ticket.ID, blocker, wrapQueryErr(edgeErr))
+		}
+		if encoded != "" {
+			return Ticket{}, fmt.Errorf("creating ticket %d with blocker %d: dependency would create cycle %s", ticket.ID, blocker, encoded)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Ticket{}, fmt.Errorf("creating ticket %d: committing transaction: %w", ticket.ID, wrapQueryErr(err))
+	}
+	return ticket, nil
 }
 
 // Ticket reads one Ticket by id.

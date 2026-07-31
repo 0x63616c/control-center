@@ -237,6 +237,14 @@ components:
           format: uri
           readOnly: true
           type: string
+        blockedBy:
+          description: Tickets that must be done before this Ticket is ready.
+          items:
+            format: int64
+            type: integer
+          type:
+            - array
+            - "null"
         body:
           description: The Ticket's supporting detail.
           type: string

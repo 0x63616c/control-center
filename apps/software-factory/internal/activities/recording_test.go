@@ -58,7 +58,7 @@ func TestRecordingLifecycleWritesOneRunRowOneStepRowAndOneAttemptRow(t *testing.
 	ctx := context.Background()
 	started := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
 
-	ticket, err := fake.CreateTicket(ctx, "a ticket", "body")
+	ticket, err := fake.CreateTicket(ctx, "a ticket", "body", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestTwoImplementTurnsRecordTwoStepsNotOneCounter(t *testing.T) {
 	ctx := context.Background()
 	runID := "019fb000-0000-7000-8000-000000000005"
 
-	ticket, err := fake.CreateTicket(ctx, "t", "b")
+	ticket, err := fake.CreateTicket(ctx, "t", "b", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}

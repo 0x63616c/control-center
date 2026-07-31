@@ -53,7 +53,7 @@ func TestGetTicketRunsRollsUpUsageAndFlagsIncompleteRuns(t *testing.T) {
 	fake := storefake.New()
 	service := New("test-build", nil, fake)
 
-	ticket, err := fake.CreateTicket(ctx, "T", "body")
+	ticket, err := fake.CreateTicket(ctx, "T", "body", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestDownloadAttemptTranscriptDecompressesGzip(t *testing.T) {
 	fake := storefake.New()
 	service := New("test-build", nil, fake)
 
-	ticket, err := fake.CreateTicket(ctx, "T", "body")
+	ticket, err := fake.CreateTicket(ctx, "T", "body", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
@@ -186,11 +186,11 @@ func TestDownloadAttemptTranscriptForWrongTicketIs404(t *testing.T) {
 	fake := storefake.New()
 	service := New("test-build", nil, fake)
 
-	_, err := fake.CreateTicket(ctx, "A", "body")
+	_, err := fake.CreateTicket(ctx, "A", "body", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket(A): %v", err)
 	}
-	other, err := fake.CreateTicket(ctx, "B", "body")
+	other, err := fake.CreateTicket(ctx, "B", "body", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket(B): %v", err)
 	}

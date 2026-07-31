@@ -70,8 +70,9 @@ type ticketInput struct {
 
 type createTicketInput struct {
 	Body struct {
-		Title string `json:"title" minLength:"1" doc:"The concise title describing the Ticket work."`
-		Body  string `json:"body" doc:"The Ticket's supporting detail."`
+		Title     string  `json:"title" minLength:"1" doc:"The concise title describing the Ticket work."`
+		Body      string  `json:"body" doc:"The Ticket's supporting detail."`
+		BlockedBy []int64 `json:"blockedBy,omitempty" doc:"Tickets that must be done before this Ticket is ready."`
 	}
 }
 
@@ -345,7 +346,15 @@ func (service *Service) createTicket(ctx context.Context, input *createTicketInp
 	if service.tickets == nil {
 		return nil, clientError(http.StatusServiceUnavailable, "store_unavailable", "ticket store is not configured")
 	}
-	ticket, err := service.tickets.CreateTicket(ctx, input.Body.Title, input.Body.Body)
+	blockers := make([]store.TicketID, 0, len(input.Body.BlockedBy))
+	for _, id := range input.Body.BlockedBy {
+		blocker := store.TicketID(id)
+		if _, err := service.ticket(ctx, blocker); err != nil {
+			return nil, ticketStoreError(err)
+		}
+		blockers = append(blockers, blocker)
+	}
+	ticket, err := service.tickets.CreateTicket(ctx, input.Body.Title, input.Body.Body, blockers)
 	if err != nil {
 		return nil, ticketStoreError(err)
 	}

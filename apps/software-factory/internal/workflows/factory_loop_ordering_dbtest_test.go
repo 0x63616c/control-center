@@ -85,7 +85,7 @@ func TestRunFactoryPlanTurnRecordsTheAttemptBeforePersistingItsTranscriptAgainst
 	s := newRealStoreForFactoryLoopTest(t)
 	ctx := context.Background()
 
-	ticket, err := s.CreateTicket(ctx, "ordering", "b")
+	ticket, err := s.CreateTicket(ctx, "ordering", "b", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}

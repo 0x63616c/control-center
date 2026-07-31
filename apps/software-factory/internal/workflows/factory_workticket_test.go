@@ -90,7 +90,7 @@ func newFactoryTicketHarness(t *testing.T) *factoryTicketHarness {
 	})
 
 	fake := storefake.New()
-	ticket, err := fake.CreateTicket(context.Background(), "a factory ticket", "do the thing")
+	ticket, err := fake.CreateTicket(context.Background(), "a factory ticket", "do the thing", nil)
 	if err != nil {
 		t.Fatalf("seeding a ticket: %v", err)
 	}
