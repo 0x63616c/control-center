@@ -317,3 +317,52 @@ func TestRecordingIsIdempotentAgainstARealDatabase(t *testing.T) {
 		t.Fatalf("Attempts = %d, want exactly one — a retry must not duplicate", len(steps.Steps[0].Attempts))
 	}
 }
+
+// TestPutTranscriptIsIdempotentAgainstARealDatabase proves, against a real
+// Postgres, that persisting the same Attempt's transcript twice — an
+// activity retry — does not violate the transcript table's primary key
+// (software-factory#550's own ON CONFLICT DO NOTHING fix to #543's plain
+// insert).
+func TestPutTranscriptIsIdempotentAgainstARealDatabase(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	ticket, err := s.CreateTicket(ctx, "transcript owner", "b")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	runID := newTestRunID(t)
+	startedAt := time.Date(2026, 7, 31, 9, 0, 0, 0, time.UTC)
+	if _, err := s.StartRun(ctx, runID, ticket.ID, startedAt); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	key := work.StageKey{RunID: runID, Stage: work.StagePlan, Turn: 1}
+	if err := s.RecordStep(ctx, key); err != nil {
+		t.Fatalf("RecordStep: %v", err)
+	}
+	if _, err := s.RecordAttempt(ctx, key, 1, work.Model{Name: "m", Effort: "medium"}, work.Usage{}, true, startedAt); err != nil {
+		t.Fatalf("RecordAttempt: %v", err)
+	}
+
+	transcript := store.Transcript{
+		Key: key, AttemptNo: 1,
+		CompressedBytes:       []byte("compressed"),
+		Compression:           "gzip",
+		UncompressedSizeBytes: 9,
+		Checksum:              []byte{1, 2, 3},
+	}
+	if err := s.PutTranscript(ctx, transcript); err != nil {
+		t.Fatalf("PutTranscript: %v", err)
+	}
+	if err := s.PutTranscript(ctx, transcript); err != nil {
+		t.Fatalf("retried PutTranscript: %v", err)
+	}
+
+	got, err := s.Transcript(ctx, key, 1)
+	if err != nil {
+		t.Fatalf("Transcript: %v", err)
+	}
+	if string(got.CompressedBytes) != "compressed" {
+		t.Fatalf("CompressedBytes = %q, want %q", got.CompressedBytes, "compressed")
+	}
+}
