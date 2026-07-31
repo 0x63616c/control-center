@@ -2,6 +2,9 @@
 
 Status: **working design**
 
+Behavior companion:
+[v0 acceptance-test contract](./2026-07-31-software-factory-v0-acceptance-test-contract.md)
+
 This document records the software factory lifecycle design discussion as of
 2026-07-31. It is intentionally not yet an ADR. The v0 completion boundary is
 now fixed at a confirmed merge; the remaining questions concern implementation
