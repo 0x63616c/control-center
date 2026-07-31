@@ -25,7 +25,7 @@ func (f *Store) RecordWebhookDeliveryAndTransition(_ context.Context, deliveryID
 	if !ok || ticket.State != from {
 		return store.WebhookDeliveryStale, nil
 	}
-	if ticket.State == store.TicketActive || ticket.State == store.TicketDone || to == store.TicketActive {
+	if ticket.State == store.TicketActive || (ticket.State == store.TicketDone && to != store.TicketDone) || to == store.TicketActive {
 		return store.WebhookDeliveryStale, nil
 	}
 	ticket.State = to

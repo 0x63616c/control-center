@@ -116,14 +116,17 @@ func (f *Store) StartAgentAttempt(_ context.Context, in store.StartAgentAttemptI
 	if !f.targetRunOwnedLocked(in.ID.RunID) {
 		return store.AgentAttempt{}, fmt.Errorf("starting agent attempt: %w", store.ErrRunOwnership)
 	}
+	step, ok := f.targetSteps[targetStepKey{runID: in.ID.RunID, ordinal: in.ID.StepOrdinal}]
+	if !ok {
+		return store.AgentAttempt{}, fmt.Errorf("starting agent attempt %s: %w", in.ID, store.ErrAgentAttemptStep)
+	}
 	if attempt, ok := f.targetAttempts[in.ID]; ok {
-		if attempt.AgentStage != in.AgentStage || attempt.Model != in.Model || attempt.UsageState != in.UsageState || !attempt.StartedAt.Equal(in.StartedAt) {
+		if step.State != work.StepStateRunning || attempt.AgentStage != in.AgentStage || attempt.Model != in.Model || attempt.UsageState != in.UsageState || !attempt.StartedAt.Equal(in.StartedAt) {
 			return store.AgentAttempt{}, fmt.Errorf("starting agent attempt: conflicting retry: %w", work.ErrPermanent)
 		}
 		return attempt, nil
 	}
-	step, ok := f.targetSteps[targetStepKey{runID: in.ID.RunID, ordinal: in.ID.StepOrdinal}]
-	if !ok || !in.AgentStage.MatchesStep(step.Kind) {
+	if step.State != work.StepStateRunning || !in.AgentStage.MatchesStep(step.Kind) {
 		return store.AgentAttempt{}, fmt.Errorf("starting agent attempt %s: %w", in.ID, store.ErrAgentAttemptStep)
 	}
 	attempt := store.AgentAttempt{ID: in.ID, AgentStage: in.AgentStage, Model: in.Model, State: work.AgentAttemptRunning, UsageState: in.UsageState, StartedAt: in.StartedAt}

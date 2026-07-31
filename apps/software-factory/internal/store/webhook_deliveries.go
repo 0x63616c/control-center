@@ -16,7 +16,8 @@ type WebhookDeliveryOutcome int
 
 const (
 	// WebhookDeliveryApplied means this delivery id had not been seen before,
-	// and the named Ticket transition applied.
+	// and the named Ticket transition applied. A same-state transition is an
+	// applied idempotent write for a new delivery, including done to done.
 	WebhookDeliveryApplied WebhookDeliveryOutcome = iota
 	// WebhookDeliveryDuplicate means this delivery id was already recorded —
 	// GitHub's "Redeliver" button or the relay's own retry, and nothing here
@@ -43,6 +44,8 @@ type WebhookDeliveryRecorder interface {
 // respond to GitHub only after this returns: acknowledging the delivery and
 // durably having acted on it become the same fact, so there is no window
 // after acknowledgement in which the effect could still be lost.
+// A same-state transition counts as applied: it is the idempotent effect named
+// by a new delivery, while a different transition out of done remains stale.
 //
 // A Store that cannot begin its own transaction (built over a bare pgx.Tx, or
 // a fake with no beginner) cannot serve this method; see New's doc comment.

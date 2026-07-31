@@ -57,6 +57,13 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 		if outcome != store.WebhookDeliveryStale {
 			t.Fatalf("webhook outcome = %v, want stale", outcome)
 		}
+		outcome, err = s.RecordWebhookDeliveryAndTransition(ctx, "terminal-retry-delivery-"+uuid.NewString(), done.ID, store.TicketDone, store.TicketDone)
+		if err != nil {
+			t.Fatalf("RecordWebhookDeliveryAndTransition(done -> done): %v", err)
+		}
+		if outcome != store.WebhookDeliveryApplied {
+			t.Fatalf("webhook done -> done outcome = %v, want applied idempotent transition", outcome)
+		}
 		stored, err := s.Ticket(ctx, done.ID)
 		if err != nil {
 			t.Fatalf("Ticket(done): %v", err)
@@ -160,6 +167,47 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 					t.Fatalf("StartAgentAttempt error = %v, want ErrAgentAttemptStep", err)
 				}
 			})
+		}
+	})
+
+	t.Run("agent attempt rejects a completed parent step", func(t *testing.T) {
+		s, _, runID, startedAt := claimedRun(t, newStore(t))
+		ctx := context.Background()
+		if _, err := s.StartStep(ctx, store.StartStepInput{RunID: runID, Ordinal: 1, Kind: work.StepPlan, StartedAt: startedAt}); err != nil {
+			t.Fatalf("StartStep: %v", err)
+		}
+		if _, err := s.CompleteStep(ctx, runID, 1, startedAt.Add(time.Minute), []byte(`{"kind":"planned"}`)); err != nil {
+			t.Fatalf("CompleteStep: %v", err)
+		}
+		_, err := s.StartAgentAttempt(ctx, store.StartAgentAttemptInput{
+			ID:         store.TargetAttemptID{RunID: runID, StepOrdinal: 1, AttemptNo: 1},
+			AgentStage: work.AgentStagePlan,
+			Model:      work.Model{Name: "contract-model", Effort: "medium"},
+			UsageState: work.UsageUnknown,
+			StartedAt:  startedAt.Add(2 * time.Minute),
+		})
+		if !errors.Is(err, store.ErrAgentAttemptStep) {
+			t.Fatalf("StartAgentAttempt under completed Step error = %v, want ErrAgentAttemptStep", err)
+		}
+
+		if _, err := s.StartStep(ctx, store.StartStepInput{RunID: runID, Ordinal: 2, Kind: work.StepPlan, StartedAt: startedAt}); err != nil {
+			t.Fatalf("StartStep(retry parent): %v", err)
+		}
+		retryInput := store.StartAgentAttemptInput{
+			ID:         store.TargetAttemptID{RunID: runID, StepOrdinal: 2, AttemptNo: 1},
+			AgentStage: work.AgentStagePlan,
+			Model:      work.Model{Name: "contract-model", Effort: "medium"},
+			UsageState: work.UsageUnknown,
+			StartedAt:  startedAt,
+		}
+		if _, err := s.StartAgentAttempt(ctx, retryInput); err != nil {
+			t.Fatalf("StartAgentAttempt(running parent): %v", err)
+		}
+		if _, err := s.CompleteStep(ctx, runID, 2, startedAt.Add(time.Minute), []byte(`{"kind":"planned"}`)); err != nil {
+			t.Fatalf("CompleteStep(retry parent): %v", err)
+		}
+		if _, err := s.StartAgentAttempt(ctx, retryInput); !errors.Is(err, work.ErrPermanent) {
+			t.Fatalf("StartAgentAttempt retry under completed Step error = %v, want permanent rejection", err)
 		}
 	})
 

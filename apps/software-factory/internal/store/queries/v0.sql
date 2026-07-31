@@ -78,7 +78,7 @@ INSERT INTO run_agent_attempt (
     usage_state, started_at
 ) SELECT $1, $2, $3, $4, $5, $6, 'running', $7, $8
 FROM run_step
-WHERE run_id = $1 AND ordinal = $2 AND kind = $4
+WHERE run_id = $1 AND ordinal = $2 AND kind = $4 AND state = 'running'
   AND EXISTS (
       SELECT 1 FROM run
       JOIN ticket ON ticket.id = run.ticket_id
