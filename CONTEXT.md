@@ -197,3 +197,11 @@ _Avoid_: CI status without a head SHA, failed-check fingerprint alone.
 **Agent Stage**:
 The kind of agent work performed by an agent-backed Step: `plan`, `implement`, or `review`.
 _Avoid_: Step, phase.
+
+**Sandbox GitHub Credential**:
+A short-lived, repository-scoped GitHub App installation token minted by the worker and written
+into a sandbox's Git credential store and `gh` configuration. It lets the agent use GitHub without
+giving the sandbox the App private key. The worker renews it immediately before every Agent Attempt;
+it must never pass through Temporal workflow history. It is separate from the worker's GitHub API
+authentication and from the agent's Codex OAuth credential.
+_Avoid_: GitHub token (ambiguous), Codex credential.

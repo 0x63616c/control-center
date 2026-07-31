@@ -377,6 +377,48 @@ the console then show a useful name without exposing implementation chatter.
 Database-recording activities are deliberately not Steps. Otherwise recording
 a Step would require recording the recording Step recursively.
 
+## Sandbox GitHub credential lifetime
+
+This work must also remove the current one-hour GitHub credential failure
+mode.
+
+The worker currently mints one repository-scoped GitHub App installation
+token while cloning the repository, then writes that token into both the
+sandbox's Git credential store and `gh` configuration. GitHub caps the token's
+lifetime at approximately one hour, but the sandbox and Run can live much
+longer. Nothing replaces either credential file during the Run. A later agent
+execution can therefore receive an otherwise healthy sandbox whose GitHub
+credential has expired. In particular, `git push` then fails inside `codex
+exec`, where the workflow sees only the agent's resulting tool failure rather
+than a classifiable GitHub activity error.
+
+This is distinct from the Codex OAuth credential. The worker already owns the
+rotation and sandbox handoff protocol for that credential. "GitHub token"
+must not be used as an ambiguous name for both mechanisms.
+
+The target invariant is:
+
+> Every agent execution that may use Git or `gh` starts with a newly minted
+> sandbox GitHub credential with enough remaining lifetime for the entire
+> authorized execution.
+
+Minting remains worker-owned because the GitHub App private key must not enter
+the sandbox. The new token must be written into both sandbox credential files
+without putting the token in Temporal workflow input, output, or history. This
+credential handoff supports an agent-backed Step; it is not itself a
+user-meaningful Step.
+
+The renewal boundary is every Agent Attempt. A worker-side supporting activity
+mints and installs the credential immediately before the sandbox-side agent
+activity starts. This is stricter than renewal per Step: every new agent-backed
+Step receives a fresh credential for Agent Attempt 1, and a later Agent Attempt
+within the same Step receives another one even if it begins much later.
+
+Native activity retries do not mint another token because they remain part of
+the same authorized Agent Attempt. The permitted total duration of one Agent
+Attempt, including its retries, must therefore remain safely below the
+installation token's lifetime.
+
 ## Retry and Agent Attempt policy
 
 There are two deliberately separate policies:
@@ -445,6 +487,19 @@ These remain different concepts:
 - The existing implement and review turn ceilings are progress budgets, not
   retry counts.
 
+## Review-cycle budget
+
+This is decided:
+
+> A Run may execute at most five Review Steps.
+
+Each completed Review Step consumes one of the five review cycles whether it
+returns no findings or requests another Implement Step. Activity retries of
+that Review Step do not consume another cycle, and Agent Attempts within that
+Step do not consume another review cycle. CI-red Implement Steps that occur
+before the next Review Step are governed by the separate implementation and
+total Agent Attempt budgets.
+
 ## Existing assumptions that must change
 
 This reaches further than a database migration:
@@ -481,6 +536,10 @@ This reaches further than a database migration:
 9. Keep Agent Attempt status separate from the Step's domain Result.
 10. Keep native activity-try history in Temporal rather than duplicating it in
     Postgres.
+11. Renew the sandbox GitHub credential during a Run before agent execution;
+    never rely on the credential minted during the initial clone remaining
+    valid.
+12. Permit at most five Review Steps in one Run.
 
 ## Parked questions
 
@@ -504,3 +563,6 @@ The policy categories and ownership are proposed above, but the exact maximum
 Agent Attempts, backoff, and possibly-chargeable execution limits are not yet fixed.
 They should be decided using concrete failure scenarios rather than copying the
 current six-stage-attempt and five-control-attempt defaults.
+
+This decision must also set enough headroom between an Agent Attempt's total
+duration and the approximately one-hour sandbox GitHub credential lifetime.
