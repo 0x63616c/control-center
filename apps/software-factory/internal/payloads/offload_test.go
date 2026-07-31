@@ -149,6 +149,20 @@ func TestOffloadLayerSurfacesStoreErrors(t *testing.T) {
 	}
 }
 
+func BenchmarkOffloadLayerEncode(b *testing.B) {
+	store := blobs.NewMemStore()
+	codec := codecFor(newOffloadLayer(store))
+	payloads := []*commonpb.Payload{offloadPayload()}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		if _, err := codec.Encode(payloads); err != nil {
+			b.Fatalf("encode: %v", err)
+		}
+	}
+}
+
 var errOffloadStore = errors.New("store unavailable")
 
 type recordingStore struct {
