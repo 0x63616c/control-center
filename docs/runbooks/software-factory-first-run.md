@@ -198,7 +198,8 @@ sessions own branches you cannot see (AGENTS.md).
 
 ## 7. Retire `grind-tickets` (gated on §6)
 
-Only once a run has reached `propose` on its own. Then, one PR, `Fixes #345`:
+Only once a run has reached `propose` on its own. Then, one PR, `Refs #345`; manually close
+that GitHub Issue after merge with the normal PR-and-SHA comment:
 
 - [ ] delete `.claude/workflows/grind-tickets.js`
 - [ ] AGENTS.md — the `auto` label bullet still says `grind-tickets` draws from

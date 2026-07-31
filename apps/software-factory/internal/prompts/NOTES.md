@@ -168,10 +168,9 @@ that an override at one site is not read as licence to ignore the rest.
   `implement`'s "push the branch before you finish" is **not** in `AGENTS.md` and is
   load-bearing — the pushed branch is the durable state the workflow's `OpenOrUpdatePullRequest`
   activity acts on after every turn, so a lost pod costs a re-clone rather than the ticket.
-  `Fixes #N` moved from the old `propose.md` into `implement.md`'s `body` guidance so the
-  resolved issue intentionally auto-closes when its PR merges. The prompt confines that
-  closing reference to the canonical linked-issue section, preventing incidental prose or
-  commit messages from triggering an unrelated closure.
+  The factory's `implement.md` uses a `T-…` reference for its own Ticket and forbids GitHub
+  closing keywords. A factory Ticket number can overlap a GitHub Issue number, so a GitHub
+  closing keyword could close an unrelated GitHub Issue when the PR merges.
 - **Whether a later turn should read the codebase.** Never mentioned in either direction.
   `review` is told to verify against the repository as it actually is, which encourages
   reading without framing it as unusual.

@@ -67,8 +67,8 @@ Hard house rules you MUST obey:
 - Fixed panel size 1366x1024, not responsive.
 - NEVER \`git add -A\` or \`git add .\` - concurrent sessions share checkouts and you will
   swallow their uncommitted work. Stage explicit paths only, then verify with \`git show --stat HEAD\`.
-- NEVER write "Fixes #N"/"Closes #N" in a commit message. A resolved issue closes when the
-  canonical \`Fixes #N\` reference in its PR description merges; use no closing keywords elsewhere.
+- NEVER write closing keywords such as "Fixes #N"/"Closes #N" in a commit message or PR
+  description. Use the canonical \`Refs #N\` field, then manually close a resolved issue after merge.
 - Commit messages are written in NORMAL English prose, not compressed/caveman style.
 - Do not run background jobs or yield waiting on anything. Everything foreground and bounded.
 
@@ -382,8 +382,8 @@ if (ready.length === 0) {
 // branch-and-PR by default (#120), so an unattended workflow must not be the one
 // exception that still writes to main. Nothing here merges, so there is also
 // nothing to rebuild or deploy-verify - those phases went with the push. A human
-// merging the PR triggers the deploy and GitHub auto-closes an issue whose
-// canonical PR-description field says `Fixes #N` (AGENTS.md).
+// merging the PR triggers the deploy; the resolved GitHub Issue is manually
+// closed afterward with the PR and merge SHA (AGENTS.md).
 //
 // Serialized rather than parallel: these branches share one checkout and the
 // worktrees they came from, and concurrent pushes race.
@@ -414,8 +414,9 @@ worktree - \`git -C ${REPO} worktree list\` and \`git -C ${REPO} branch --list $
    Build \`<file>\` from \`.github/pull_request_template.md\`. Complete every applicable
    section with the branch's current facts: describe the behavior and relevant changed areas,
    explain why, and list exact verification commands with their real outcomes. Reference the
-   resolved issue as \`Fixes #${r.ticket}\` in the template's canonical linked-issue section.
-   Never use closing keywords in commit messages or incidental PR prose. Keep the Screenshot
+   resolved issue as \`Refs #${r.ticket}\` in the template's canonical linked-issue section.
+   Never use closing keywords in commit messages or PR prose; close the issue manually after merge.
+   Keep the Screenshot
    section for UI work with real visual evidence; delete it when there is no UI change. Never
    manufacture command output or visual evidence.
 5. Watch CI on the PR to a real conclusion: \`gh pr checks <pr-number> --watch\`. Record the
@@ -447,5 +448,5 @@ return {
   implemented: impls.map((r) => ({ ticket: r.ticket, status: r.status, files: r.filesChanged, notes: r.notes })),
   notLanded: notLanded.map((r) => ({ ticket: r.ticket, why: r.notes })),
   proposed,
-  summary: `${opened.length} PR(s) opened for review. Nothing merged or deployed; linked issues auto-close when their PRs merge.`,
+  summary: `${opened.length} PR(s) opened for review. Nothing merged or deployed; resolved issues are manually closed after merge.`,
 }

@@ -122,15 +122,15 @@ means a GitHub issue - same thing, one vocabulary.
 - One issue per request, even when several arrive together, so they close
   independently. Brain dumps record their origin (e.g. `item #22`) in the body;
   those numbers are not GitHub issue numbers.
-- **Merged to `main` is done - GitHub auto-closes the resolved ticket then.** Do
+- **Merged to `main` is done - close the resolved GitHub Issue manually then.** Do
   not hold an issue open pending prod verification; that just accumulates a backlog
-  of done-but-open tickets. If the change turns out broken, file a NEW issue.
-- **Close resolved issues through the PR template.** Put `Fixes #N` only in the
-  canonical linked-issue section of a PR description; GitHub closes it and records
-  the merge timeline event when the PR merges into the default branch. Never put
-  closing keywords in commit messages or incidental PR prose, where a phrase such
-  as `then close #N` can accidentally close an unrelated issue. Use a neutral
-  reference for related issues the PR does not resolve.
+  of done-but-open tickets. Run `gh issue close N --comment "Resolved by PR #<pr>: <title>; merge <sha>"`
+  so the closure records the PR, title, and merge SHA. If the change turns out broken, file
+  a NEW issue.
+- **Reference resolved issues through the PR template.** Put `Refs #N` in the
+  canonical linked-issue section of a PR description. Never put `Fixes #N`,
+  `Closes #N`, or other closing keywords in commit messages or any PR-description
+  prose, where an incidental stale number can close an unrelated issue.
 
 ## Workflow
 
@@ -166,8 +166,8 @@ means a GitHub issue - same thing, one vocabulary.
 - **Branch -> PR -> merge is the default for all work, including agent work.**
   Create a worktree/branch named after the task, commit there, and open a PR
   against `main` (`gh pr create`, using the PR template). Use its canonical
-  linked-issue field (`Fixes #N`) for every issue the PR resolves; see the
-  issue-tracking rule above for the required scope of closing keywords.
+  linked-issue field (`Refs #N`) for every issue the PR resolves; see the
+  issue-tracking rule above for manual closure after merge.
 - **Commit and push extremely often, without asking.** Commit each coherent
   change (passing test, working slice, doc update); never batch. Push the
   branch immediately - the push target is now the PR branch, not `main`.
