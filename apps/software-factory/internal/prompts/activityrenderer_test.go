@@ -20,7 +20,7 @@ func TestActivityRendererMatchesTheUnderlyingRenderer(t *testing.T) {
 	detail := ticket()
 	prior := everyDocument()
 
-	prompt, schema, err := adapter.Render(stage, detail, prior)
+	prompt, schema, err := adapter.Render(work.StageKey{Ticket: detail.Number, RunID: "r", Stage: stage, Turn: 1}, detail, prior)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestActivityRendererSchemaMatchesEachStagesOwnFile(t *testing.T) {
 			t.Fatalf("reading %s: %v", file, err)
 		}
 
-		_, schema, err := adapter.Render(stage, detail, prior)
+		_, schema, err := adapter.Render(work.StageKey{Ticket: detail.Number, RunID: "r", Stage: stage, Turn: 1}, detail, prior)
 		if err != nil {
 			t.Fatalf("Render(%s): %v", stage, err)
 		}
@@ -102,7 +102,7 @@ func TestActivityRendererFailsLikeTheRendererItWraps(t *testing.T) {
 	t.Parallel()
 
 	adapter := NewActivityRenderer(newTestRenderer(t))
-	_, _, err := adapter.Render(work.StagePlan, work.TicketDetail{}, work.PriorTurns{})
+	_, _, err := adapter.Render(work.StageKey{Stage: work.StagePlan, Turn: 1}, work.TicketDetail{}, work.PriorTurns{})
 	if err == nil {
 		t.Fatal("Render with an empty ticket detail: want an error, got nil")
 	}

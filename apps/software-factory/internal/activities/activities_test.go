@@ -235,11 +235,13 @@ type fakePrompts struct {
 	decode func(stage work.Stage, result []byte) (work.StageOutput, error)
 
 	sawStage work.Stage
+	sawKey   work.StageKey
 	sawPrior work.PriorTurns
 }
 
-func (f *fakePrompts) Render(stage work.Stage, _ work.TicketDetail, prior work.PriorTurns) (string, []byte, error) {
-	f.sawStage = stage
+func (f *fakePrompts) Render(key work.StageKey, _ work.TicketDetail, prior work.PriorTurns) (string, []byte, error) {
+	f.sawStage = key.Stage
+	f.sawKey = key
 	f.sawPrior = prior
 	return f.prompt, f.schema, f.err
 }

@@ -650,7 +650,7 @@ func stageOutputUnmarshalJSON(data []byte, out *stageOutput) error {
 func (a *Activities) runStage(ctx context.Context, in stageInput) (stageOutput, error) {
 	log := activity.GetLogger(ctx)
 
-	prompt, schema, err := a.deps.Prompts.Render(in.Key.Stage, in.Detail, in.Prior)
+	prompt, schema, err := a.deps.Prompts.Render(in.Key, in.Detail, in.Prior)
 	if err != nil {
 		return stageOutput{}, fail(ctx, fmt.Sprintf("rendering the prompt for %s", in.Key), err)
 	}

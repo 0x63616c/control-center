@@ -39,6 +39,47 @@ type PriorTurns struct {
 	// previous turn, to keep a finding's id stable across a fresh thread with
 	// no memory of raising it) read this same value.
 	LatestReview StageOutput
+
+	// ReviewLedger is what EVERY earlier review turn raised and cleared, in
+	// turn order, oldest first — empty before review has run this run. Only
+	// the review prompt reads it.
+	//
+	// It is the one exception to this type's "latest turn only" shape, and it
+	// is bounded rather than open-ended: review turns are hard-capped at
+	// MaxReviewTurns and each entry is a handful of one-line strings, so the
+	// ledger's whole size is a constant, not a function of run length. That
+	// is precisely what the implement turns have no analogue of — implement
+	// runs up to MaxImplementTurnsPerWindow*MaxReviewTurns times carrying a
+	// full report each, which is the O(N^2) history this type was built to
+	// stop. A ledger of implement reports would reintroduce it; a ledger of
+	// at most MaxReviewTurns finding lists cannot.
+	//
+	// LatestReview does not subsume it. LatestReview is one turn's document;
+	// the ledger is the run's whole review memory, and without it a turn's
+	// instruction to reuse a finding id "character for character" holds only
+	// against its immediate predecessor. A defect raised on turn 1, fixed,
+	// and regressed by turn 3's implement would be minted a fresh id, which
+	// reads to the workflow's progress detection as new work rather than a
+	// loop.
+	ReviewLedger []ReviewTurnRecord
+}
+
+// ReviewTurnRecord is one past review turn, compacted to what a later turn
+// needs to not repeat it: which turn it was, what it raised, and what it
+// checked and would keep. The document itself is deliberately absent — the
+// ledger is memory, not a transcript.
+type ReviewTurnRecord struct {
+	// Turn is the 1-indexed review turn this record is of.
+	Turn int
+
+	// Findings is every finding that turn raised, blocking and advisory
+	// alike. Advisory ones are kept because an advisory finding a later turn
+	// re-raises as blocking is the same defect and must reuse its id.
+	Findings []Finding
+
+	// Verified is that turn's "checked and would keep" list. See
+	// ReviewOutput.Verified for the run this field was built out of.
+	Verified []string
 }
 
 // priorTurnsWire is PriorTurns' own JSON shape: each field a pointer, absent
@@ -54,10 +95,14 @@ type PriorTurns struct {
 // each field here is a pointer instead: nil serialises as a JSON absence
 // (omitempty), which UnmarshalJSON reads back as the zero StageOutput
 // PriorTurns already treats as "hasn't run yet" everywhere else.
+// ReviewLedger needs none of that: it is an ordinary slice with no
+// zero-value guard of its own, so it encodes and decodes as itself, absent
+// when empty.
 type priorTurnsWire struct {
-	Plan            *StageOutput `json:"plan,omitempty"`
-	LatestImplement *StageOutput `json:"latestImplement,omitempty"`
-	LatestReview    *StageOutput `json:"latestReview,omitempty"`
+	Plan            *StageOutput       `json:"plan,omitempty"`
+	LatestImplement *StageOutput       `json:"latestImplement,omitempty"`
+	LatestReview    *StageOutput       `json:"latestReview,omitempty"`
+	ReviewLedger    []ReviewTurnRecord `json:"reviewLedger,omitempty"`
 }
 
 // MarshalJSON encodes only the turns that have actually happened, so a run's
@@ -74,6 +119,7 @@ func (p PriorTurns) MarshalJSON() ([]byte, error) {
 	if p.LatestReview.Value() != nil {
 		wire.LatestReview = &p.LatestReview
 	}
+	wire.ReviewLedger = p.ReviewLedger
 	return json.Marshal(wire)
 }
 
@@ -94,5 +140,6 @@ func (p *PriorTurns) UnmarshalJSON(data []byte) error {
 	if wire.LatestReview != nil {
 		p.LatestReview = *wire.LatestReview
 	}
+	p.ReviewLedger = wire.ReviewLedger
 	return nil
 }

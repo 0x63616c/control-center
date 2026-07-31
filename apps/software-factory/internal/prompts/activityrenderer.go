@@ -29,13 +29,13 @@ func NewActivityRenderer(renderer *Renderer) *ActivityRenderer {
 // Render renders a stage's prompt and returns it with that stage's own
 // output schema, looked up by stageSchema.
 func (a *ActivityRenderer) Render(
-	stage work.Stage, detail work.TicketDetail, prior work.PriorTurns,
+	key work.StageKey, detail work.TicketDetail, prior work.PriorTurns,
 ) (prompt string, schema []byte, err error) {
-	prompt, err = a.renderer.Render(Input{Stage: stage, Ticket: detail, Prior: prior})
+	prompt, err = a.renderer.Render(Input{Stage: key.Stage, Turn: key.Turn, Ticket: detail, Prior: prior})
 	if err != nil {
 		return "", nil, err
 	}
-	file, err := stageSchema(stage)
+	file, err := stageSchema(key.Stage)
 	if err != nil {
 		return "", nil, err
 	}

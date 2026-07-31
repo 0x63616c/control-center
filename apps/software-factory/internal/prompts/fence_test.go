@@ -60,7 +60,7 @@ func documentsFor(stage work.Stage) int {
 	case work.StageImplement:
 		return 3 // plan, previous_implement_report, review_findings
 	case work.StageReview:
-		return 2 // implementation_report, previous_review_findings
+		return 3 // implementation_report, previous_review_findings, review_ledger
 	}
 	return 0
 }

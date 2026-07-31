@@ -207,14 +207,14 @@ func TestBuildStageInputProducesTheDeclaredVariableNames(t *testing.T) {
 	}{
 		{stage: work.StagePlan, want: nil},
 		{stage: work.StageImplement, want: []string{"plan", "previous_implement_report", "review_findings"}},
-		{stage: work.StageReview, want: []string{"implementation_report", "previous_review_findings"}},
+		{stage: work.StageReview, want: []string{"implementation_report", "previous_review_findings", "review_ledger"}},
 	}
 
 	for _, tc := range cases {
 		t.Run(string(tc.stage), func(t *testing.T) {
 			t.Parallel()
 
-			in, err := buildStageInput(tc.stage, prior)
+			in, err := buildStageInput(tc.stage, 1, prior)
 			if err != nil {
 				t.Fatalf("buildStageInput(%s): %v", tc.stage, err)
 			}
