@@ -20,12 +20,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
-	"go.temporal.io/sdk/client"
 	tlog "go.temporal.io/sdk/log"
 
 	factoryapi "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/api"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/api/auth"
-	temporalclient "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/temporal"
+	temporalapi "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/temporal"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/config"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/database"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
@@ -107,11 +106,11 @@ func run() error {
 		return fmt.Errorf("opening PostgreSQL pool for ticket API: %w", err)
 	}
 	defer pool.Close()
-	temporal, err := client.Dial(client.Options{
+	temporal, err := temporalapi.Dial(temporalapi.Options{
 		HostPort:  cfg.TemporalHostPort,
 		Namespace: cfg.TemporalNamespace,
 		Logger:    tlog.NewStructuredLogger(logger),
-	})
+	}, nil, nil)
 	if err != nil {
 		return fmt.Errorf("dialling Temporal at %s in namespace %s: %w", cfg.TemporalHostPort, cfg.TemporalNamespace, err)
 	}
@@ -141,7 +140,7 @@ func run() error {
 	// authenticates each delivery itself, by HMAC, exactly as the relay does.
 	// Every other path stays behind Cloudflare Access or the in-cluster bearer.
 	mux.Handle("/v1/hooks/github", webhook.NewHandler(cfg.WebhookSecret, ticketStore, logger, registry))
-	mux.Handle("/", authentication.Wrap(factoryapi.New(buildVersion, temporalclient.NewCommands(temporal), ticketStore).Handler()))
+	mux.Handle("/", authentication.Wrap(factoryapi.New(buildVersion, temporalapi.NewCommands(temporal), ticketStore).Handler()))
 
 	listener, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {

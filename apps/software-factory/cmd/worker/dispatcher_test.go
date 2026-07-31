@@ -8,13 +8,12 @@ import (
 	"reflect"
 	"testing"
 
-	"go.temporal.io/sdk/client"
-
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/temporal"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/workflows"
 )
 
-// fakeWorkflowRun is the minimal client.WorkflowRun a test needs: an ID pair,
+// fakeWorkflowRun is the minimal temporal.WorkflowRun a test needs: an ID pair,
 // nothing else. ensureFactoryDispatcher never calls Get.
 type fakeWorkflowRun struct {
 	id, runID string
@@ -27,23 +26,23 @@ func (f fakeWorkflowRun) Get(context.Context, interface{}) error {
 	panic("ensureFactoryDispatcher must not block on the dispatcher's result: it never returns")
 }
 
-func (f fakeWorkflowRun) GetWithOptions(context.Context, interface{}, client.WorkflowRunGetOptions) error {
+func (f fakeWorkflowRun) GetWithOptions(context.Context, interface{}, temporal.WorkflowRunGetOptions) error {
 	panic("not used by ensureFactoryDispatcher")
 }
 
 // fakeStarter records what ensureFactoryDispatcher asked Temporal to start.
 type fakeStarter struct {
-	gotOptions  client.StartWorkflowOptions
+	gotOptions  temporal.StartWorkflowOptions
 	gotWorkflow interface{}
 	gotArgs     []interface{}
 
-	run client.WorkflowRun
+	run temporal.WorkflowRun
 	err error
 }
 
 func (f *fakeStarter) ExecuteWorkflow(
-	_ context.Context, options client.StartWorkflowOptions, workflow interface{}, args ...interface{},
-) (client.WorkflowRun, error) {
+	_ context.Context, options temporal.StartWorkflowOptions, workflow interface{}, args ...interface{},
+) (temporal.WorkflowRun, error) {
 	f.gotOptions, f.gotWorkflow, f.gotArgs = options, workflow, args
 	return f.run, f.err
 }

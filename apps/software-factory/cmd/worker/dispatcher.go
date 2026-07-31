@@ -3,10 +3,10 @@ package main
 import (
 	"context"
 
-	"go.temporal.io/sdk/client"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/temporal"
 )
 
-// dispatcherStarter is the one method this needs off client.Client, named the
+// dispatcherStarter is the one method this needs off temporal.Client, named the
 // way internal/clients/runs narrows DescribeWorkflowExecution: a test can
 // fake it without a Temporal connection.
 //
@@ -18,5 +18,5 @@ import (
 // durable. Start-if-absent on boot is the shape that matches a singleton whose
 // state must survive the worker that started it.
 type dispatcherStarter interface {
-	ExecuteWorkflow(ctx context.Context, options client.StartWorkflowOptions, workflow interface{}, args ...interface{}) (client.WorkflowRun, error)
+	ExecuteWorkflow(ctx context.Context, options temporal.StartWorkflowOptions, workflow interface{}, args ...interface{}) (temporal.WorkflowRun, error)
 }

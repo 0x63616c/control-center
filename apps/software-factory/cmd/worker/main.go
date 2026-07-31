@@ -22,7 +22,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
-	"go.temporal.io/sdk/client"
 	tlog "go.temporal.io/sdk/log"
 	"go.temporal.io/sdk/worker"
 
@@ -31,6 +30,7 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/k8s"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/runs"
+	temporalapi "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/temporal"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/config"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/prompts"
@@ -139,11 +139,11 @@ func run() error {
 	}()
 	defer stopServer(server, logger)
 
-	temporal, err := client.Dial(client.Options{
+	temporal, err := temporalapi.Dial(temporalapi.Options{
 		HostPort:  cfg.TemporalHostPort,
 		Namespace: cfg.TemporalNamespace,
 		Logger:    tlog.NewStructuredLogger(logger),
-	})
+	}, nil, metrics)
 	if err != nil {
 		return fmt.Errorf("dialling Temporal at %s in namespace %s: %w", cfg.TemporalHostPort, cfg.TemporalNamespace, err)
 	}
@@ -286,7 +286,7 @@ func register(
 // shape as ensureDispatcher, on the disjoint FactoryDispatcherWorkflowID
 // singleton.
 func ensureFactoryDispatcher(ctx context.Context, c dispatcherStarter, logger *slog.Logger) error {
-	run, err := c.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
+	run, err := c.ExecuteWorkflow(ctx, temporalapi.StartWorkflowOptions{
 		ID:        work.FactoryDispatcherWorkflowID,
 		TaskQueue: work.TaskQueue,
 	}, workflows.FactoryDispatcher, workflows.FactoryDispatcherInput{
@@ -318,7 +318,7 @@ func ensureFactoryDispatcher(ctx context.Context, c dispatcherStarter, logger *s
 // own doc comment, and constructing a second would be a second client holding
 // a second watch on the same pods.
 func newActivities(
-	cfg config.Worker, temporal client.Client, renderer *prompts.Renderer, metrics *telemetry.Metrics, logger *slog.Logger,
+	cfg config.Worker, temporal temporalapi.Client, renderer *prompts.Renderer, metrics *telemetry.Metrics, logger *slog.Logger,
 	dispatcherState activities.DispatcherStateWriter,
 ) (*activities.Activities, error) {
 	clk := clock.System{}
@@ -381,7 +381,7 @@ func buildDeps(
 	transcriptSink activities.TranscriptSink,
 	renderer *prompts.Renderer,
 	metrics *telemetry.Metrics,
-	temporal client.Client,
+	temporal temporalapi.Client,
 	tokenSource activities.TokenSource,
 	dispatcherState activities.DispatcherStateWriter,
 	clk clock.Clock,
