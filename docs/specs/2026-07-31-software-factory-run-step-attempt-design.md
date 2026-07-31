@@ -975,6 +975,26 @@ conservative, leaving history headroom for the finite drain rather than forcing
 the application to guess at a value such as 10,000 events. The temporary pause
 in new dispatch is an accepted tradeoff for a much simpler rollover protocol.
 
+Draining also removes the reason the current dispatcher gives Ticket children
+`PARENT_CLOSE_POLICY_ABANDON`: children no longer need to outlive a parent that
+continues as new. Set their parent-close policy explicitly to
+`PARENT_CLOSE_POLICY_REQUEST_CANCEL`, not the default `TERMINATE`. Consequently,
+canceling, terminating, failing, or timing out the dispatcher requests
+cancellation of every live `WorkOnTicket` child, while an ordinary worker
+process restart closes neither workflow and Temporal resumes both normally.
+Pausing or draining is the control for stopping new dispatch while allowing
+existing Runs to continue; canceling the dispatcher means canceling the whole
+owned tree.
+
+`WorkOnTicket` must treat requested cancellation as a durable outcome. From a
+disconnected workflow context, it atomically records the Run as canceled and
+returns the Ticket from `working` to `open` if that Run still owns the working
+Ticket. It then performs bounded Run Worker teardown, with the orphan sweeper as
+fallback, before returning the cancellation error. The conditional ownership
+check prevents a late cancellation from reopening a Ticket whose confirmed
+merge was already committed as `done`. This replaces the current behavior that
+cleans up but strands a canceled Ticket in `working`.
+
 The existing tick also bundles work that is not ready-Ticket polling and must
 be deliberately relocated:
 
@@ -1057,6 +1077,10 @@ be deliberately relocated:
     mode: start no new Tickets, finish and reconcile all in-flight Runs, then
     roll over carrying only the latest resolved policy. Do not use a custom
     event-count threshold or serialize live child state into the new execution.
+32. Replace the dispatcher's child `ABANDON` policy with explicit
+    `REQUEST_CANCEL`. Dispatcher cancellation owns the whole child tree;
+    canceled Runs are durably recorded, their still-owned Tickets return from
+    `working` to `open`, and Run Worker teardown retains its sweeper fallback.
 
 ## Parked questions
 
