@@ -16,7 +16,7 @@
 
 import * as k8s from "@pulumi/kubernetes";
 import * as pulumi from "@pulumi/pulumi";
-import { controlCenterProductManifest, softwareFactoryProductManifest } from "@www/platform";
+import { softwareFactoryProductManifest } from "@www/platform";
 import { DEFAULT_METRICS_PORT, METRICS_PATH } from "@www/platform/metrics/port";
 import { GHCR_PULL_SECRET_NAME } from "./ghcr-pull-secrets.ts";
 import {

@@ -317,22 +317,26 @@ func TestFactoryDispatcherAppliesAnUpdateConfigSignal(t *testing.T) {
 	}
 }
 
-// TestFactoryDispatcherKeepsRunningWhenAnUpdateConfigSignalIsUnusable proves a
-// bad update is refused rather than adopted: a dispatcher that took an invalid
-// cap would stop being the concurrency control it exists to be.
-func TestFactoryDispatcherKeepsRunningWhenAnUpdateConfigSignalIsUnusable(t *testing.T) {
+// TestFactoryDispatcherRefusesAnUnusableUpdateWhole proves a bad update is
+// refused entire rather than partly adopted: work.Config.Apply validates the
+// result, so a message that also carries a cap above the ceiling must not
+// unpause the dispatcher on its way to being rejected.
+func TestFactoryDispatcherRefusesAnUnusableUpdateWhole(t *testing.T) {
 	t.Parallel()
 
 	h := newFactoryDispatcherHarness(t)
-	h.config.MaxInFlight = 1
+	h.config.MaxInFlight = 2
+	h.config.Paused = true
 	h.tickets = readyTickets(1, 2, 3)
-	bad := 0
+	resume := false
+	absurd := 11 // above work's ceiling of 10
 	h.at(45*time.Second, func() {
-		h.env.SignalWorkflow(workflows.SignalUpdateConfig, work.ConfigUpdate{MaxInFlight: &bad})
+		h.env.SignalWorkflow(workflows.SignalUpdateConfig,
+			work.ConfigUpdate{Paused: &resume, MaxInFlight: &absurd})
 	})
 	h.run()
 
-	if len(h.started) != 1 {
-		t.Fatalf("started %v, want 1 — an unusable update must leave the cap alone", h.started)
+	if len(h.started) != 0 {
+		t.Fatalf("started %v, want none — an update that fails validation must be refused whole, unpause included", h.started)
 	}
 }
