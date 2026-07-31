@@ -573,8 +573,13 @@ This reaches further than a database migration:
 - The 24-hour Run budget is calculated from the maximum number of agent
   invocations only. Do not finalize that calculation until the merged versus
   deployed completion boundary is settled.
-- Changing the workflow's activity and retry command sequence requires a
-  Temporal `workflow.GetVersion` compatibility branch for existing histories.
+
+## Existing workflow histories
+
+Migration and replay compatibility for workflows started before this redesign
+are out of scope. Implement the new workflow as a clean cutover. Do not add
+`workflow.GetVersion` branches or preserve the old activity command sequence
+for existing histories as part of this work.
 
 ## Current design direction
 
@@ -601,6 +606,9 @@ This reaches further than a database migration:
     backoff, coefficient 2, and a 5-minute maximum interval.
 16. Keep agent heartbeats tied to progress events, with a 5-minute heartbeat
     timeout and no independent process-liveness heartbeat.
+17. Replace generic `StageAttempts` and `ControlAttempts` inputs with named,
+    code-owned technical retry policies. Existing workflow histories do not
+    constrain that replacement.
 
 ## Parked questions
 
