@@ -147,3 +147,97 @@ _Avoid_: scheduled task, timer.
 Live control of playback devices — Apple TV and the Sonos sound system (transport, volume,
 grouping, app launch, favourites). Backed by one live-queried API slice; no download or storage.
 _Avoid_: media, playback (too broad), sound.
+
+## Software factory
+
+**Ticket**:
+A unit of requested work owned by the software factory and stored in its own database.
+_Avoid_: Issue, GitHub issue.
+
+**Confirmed Merge** _(target)_:
+GitHub's authoritative confirmation that the reviewed pull request was merged, identified by its
+merge SHA. It is the v0 terminal business outcome and says nothing about deployment.
+_Avoid_: Merge accepted, closed pull request, deployed.
+
+**Done Ticket** _(target)_:
+A Ticket whose Run reached a Confirmed Merge. In v0 it satisfies dependency edges even though
+deployment is observed, if at all, outside that Ticket's Run.
+_Avoid_: Deployed Ticket.
+
+**Run**:
+One attempt to complete a whole Ticket, represented by one `WorkOnTicket` Temporal workflow
+execution.
+_Avoid_: Job, session.
+
+**Run Worker** _(target)_:
+One generation of the ephemeral execution worker assigned exclusively to one Run. It owns that
+Run's checkout, tools, and activity execution while active. A Run normally has one generation;
+permanent loss may create one replacement at a time from the same pinned image, resuming after a
+durable Step boundary without resetting the Run or its budgets.
+_Avoid_: Sandbox, agent pod, shared worker.
+
+**Step**:
+One independently executed unit of workflow work inside a Run. A Step has exactly one primary
+operation. Temporal may retry that operation without creating another Step or Agent Attempt.
+_Avoid_: Phase, every Temporal activity.
+
+**Agent Attempt**:
+One workflow-authorized agent execution within one agent-backed Step, potentially spanning native
+activity retries and technical resumes. Its identity is scoped to the Step, not to a Codex thread:
+Agent Attempt 1 of a new Step may deliberately continue a thread from an earlier Step. Start another
+Attempt within the same Step only when the preceding execution cannot be recovered and the workflow
+explicitly authorizes another. Infrastructure Steps do not have Agent Attempts.
+_Avoid_: Activity retry, Turn, semantic rework.
+
+**Agent Thread**:
+The model provider's conversation identity. An Agent Thread may carry implementer context across
+multiple Steps and Agent Attempts, while reviewers deliberately start fresh Threads. It is not a
+unit of work or retry budget.
+_Avoid_: Agent Attempt, Step.
+
+**Activity Retry**:
+Temporal repeating the same Step operation after a transient execution failure. An activity retry
+does not create a Step or Agent Attempt; an agent activity retry reconciles or resumes the same
+Agent Attempt. Its detailed history belongs to Temporal, not the software factory's domain history.
+_Avoid_: Agent Attempt, semantic rework.
+
+**Step Result**:
+The authoritative domain answer discovered or produced by a completed Step. It
+is distinct from Agent Attempt status and activity execution status.
+_Avoid_: Agent Attempt status, activity failure, error.
+
+**CI Result**:
+The Step Result from observing CI for one exact pull-request head SHA: green, red with bounded
+failure evidence, or unobserved. A CI-triggered Implement Step receives this Result explicitly;
+resuming the implementer's Agent Thread is not a substitute for the handoff.
+_Avoid_: CI status without a head SHA, failed-check fingerprint alone.
+
+**Agent Stage**:
+The kind of agent work performed by an agent-backed Step: `plan`, `implement`, or `review`.
+_Avoid_: Step, phase.
+
+**Run Worker GitHub Credential** _(target)_:
+A short-lived, repository-scoped GitHub App installation token installed into a Run Worker's Git
+and `gh` configuration. It is renewed before every Agent Attempt and every 30 minutes while active,
+never enters Temporal history, and is distinct from both worker GitHub authentication and Codex OAuth.
+_Avoid_: GitHub token (ambiguous), Codex credential.
+
+**Run Policy** _(target)_:
+The complete, resolved set of domain budgets, timeouts, and technical retry behavior supplied to a
+Run in its workflow input. It is immutable for that Run. A new worker rollout publishes the policy
+for future Runs to the dispatcher before its workers begin polling task queues.
+_Avoid_: live config, mutable workflow config, Temporal version.
+
+**Policy Publication** _(target)_:
+The acknowledged Update-With-Start handshake by which a worker supplies its resolved Run Policy to
+the dispatcher before polling task queues. A stable fingerprint of the resolved policy deduplicates
+equivalent publications; Git SHA is audit metadata only. `APPLIED` and `ALREADY_CURRENT` permit
+worker startup, while any genuine publication failure prevents it.
+_Avoid_: policy signal, Git-SHA ordering, best-effort config refresh.
+
+**Dispatch Wait** _(target)_:
+The dispatcher's expected wait for a dispatchable Ticket, implemented by a polling activity whose
+no-work result uses Temporal activity retry and a bounded next-retry delay. Its intermediate retries
+do not create Steps, Agent Attempts, or Postgres history and must not be treated as operational
+failures.
+_Avoid_: Ticket Step, dispatcher error, workflow timer poll.
