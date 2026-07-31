@@ -947,9 +947,33 @@ an outstanding wait when a state change makes it unnecessary.
 
 This eliminates idle-time history growth, but it does not make the dispatcher
 literally history-free. Accepted policy Updates and actual child starts and
-completions still create history. A rare high-water-mark `ContinueAsNew` may
-therefore remain as a safety mechanism; it should no longer be the normal cost
-of polling every ten seconds.
+completions still create history. Retain `ContinueAsNew` as a safety mechanism,
+but let Temporal decide when it is becoming appropriate through
+`workflow.GetInfo(ctx).GetContinueAsNewSuggested()`. Do not maintain an
+application-owned event-count threshold.
+
+When Temporal suggests continuing as new, the dispatcher enters a draining
+mode instead of immediately rolling over:
+
+```text
+dispatching
+  -> Temporal suggests ContinueAsNew
+  -> draining: stop claiming or starting new Tickets
+  -> wait for every already-started Ticket workflow to finish
+  -> drain its completion handling until in-flight is empty
+  -> ContinueAsNew with the current resolved policy
+  -> dispatching in the new execution
+```
+
+The dispatcher does not schedule `AwaitDispatchableTickets` while draining and
+cancels an outstanding wait activity when it enters that mode. It continues to
+process child completions, any required reconciliation, and acknowledged policy
+Updates. The latest accepted resolved policy is carried into the new execution.
+No child Future or in-flight Run state crosses the boundary because rollover
+only occurs from the clean, empty state. Temporal's suggestion is intentionally
+conservative, leaving history headroom for the finite drain rather than forcing
+the application to guess at a value such as 10,000 events. The temporary pause
+in new dispatch is an accepted tradeoff for a much simpler rollover protocol.
 
 The existing tick also bundles work that is not ready-Ticket polling and must
 be deliberately relocated:
@@ -1029,6 +1053,10 @@ be deliberately relocated:
     semantic work ends; after the terminal transaction commits, bounded Run
     Worker teardown may fall back to an orphan sweeper without changing the
     Ticket outcome.
+31. When Temporal suggests `ContinueAsNew`, put the dispatcher into draining
+    mode: start no new Tickets, finish and reconcile all in-flight Runs, then
+    roll over carrying only the latest resolved policy. Do not use a custom
+    event-count threshold or serialize live child state into the new execution.
 
 ## Parked questions
 
@@ -1077,11 +1105,10 @@ verification:
 
 - Whether child-workflow Futures completely replace the completion signal and
   periodic `DescribeRun` reconciliation, including ambiguous child starts and
-  worker restarts.
+  worker restarts. Regardless of that normal-operation choice, no Future or
+  in-flight Run crosses `ContinueAsNew` because the dispatcher drains first.
 - Which maintenance workflow or Schedule owns orphaned Run Worker sweeping and how
   it derives the set of live Runs.
-- Whether a rare event-count safety threshold should retain
-  `ContinueAsNew` after polling-driven history growth is gone.
 - The per-query timeout and retry policy for real dispatcher database errors,
   independently of the ten-second expected no-work delay.
 
