@@ -1,4 +1,4 @@
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
 import type { ConsoleResponse } from "@/api/generated";
 import { StatePill, ticketStatus } from "@/components/StatePill";
 
@@ -63,6 +63,122 @@ function ticketBlockers(ticket: Ticket) {
   );
 }
 
+// Sort control: the default is the live-work-first state ordering; clicking
+// Created/Updated cycles that column desc -> asc -> back to default.
+type SortKey = "state" | "createdAt" | "updatedAt";
+type SortDir = "desc" | "asc";
+
+function sortTickets(tickets: Ticket[], key: SortKey, dir: SortDir): Ticket[] {
+  const sorted = [...tickets];
+  if (key === "state") {
+    sorted.sort(
+      (a, b) => (STATE_ORDER[ticketStatus(a)] ?? 9) - (STATE_ORDER[ticketStatus(b)] ?? 9),
+    );
+    return sorted;
+  }
+  sorted.sort((a, b) => {
+    const delta = new Date(a[key]).getTime() - new Date(b[key]).getTime();
+    return dir === "asc" ? delta : -delta;
+  });
+  return sorted;
+}
+
+function SortHeader({
+  label,
+  column,
+  sortKey,
+  sortDir,
+  onSort,
+}: {
+  label: string;
+  column: SortKey;
+  sortKey: SortKey;
+  sortDir: SortDir;
+  onSort: (column: SortKey) => void;
+}) {
+  const active = sortKey === column;
+  return (
+    <th
+      scope="col"
+      aria-sort={active ? (sortDir === "asc" ? "ascending" : "descending") : undefined}
+    >
+      <button type="button" className="sort-button" onClick={() => onSort(column)}>
+        {label}
+        {active && <span aria-hidden="true"> {sortDir === "asc" ? "↑" : "↓"}</span>}
+      </button>
+    </th>
+  );
+}
+
+function TicketTable({ tickets }: { readonly tickets: Ticket[] }) {
+  const [sortKey, setSortKey] = useState<SortKey>("state");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  function onSort(column: SortKey) {
+    if (sortKey !== column) {
+      setSortKey(column);
+      setSortDir("desc");
+    } else if (sortDir === "desc") {
+      setSortDir("asc");
+    } else {
+      setSortKey("state");
+      setSortDir("desc");
+    }
+  }
+
+  const sorted = sortTickets(tickets, sortKey, sortDir);
+  return (
+    <table className="ticket-table">
+      <thead>
+        <tr>
+          <th scope="col">Ticket</th>
+          <th scope="col">State</th>
+          <SortHeader
+            label="Created"
+            column="createdAt"
+            sortKey={sortKey}
+            sortDir={sortDir}
+            onSort={onSort}
+          />
+          <SortHeader
+            label="Updated"
+            column="updatedAt"
+            sortKey={sortKey}
+            sortDir={sortDir}
+            onSort={onSort}
+          />
+        </tr>
+      </thead>
+      <tbody>
+        {sorted.map((ticket) => {
+          const blockers = ticketBlockers(ticket);
+          return (
+            <Fragment key={ticket.id}>
+              <tr id={`ticket-${ticket.id}`}>
+                <td>
+                  <a href={`#/tickets/${ticket.id}`}>
+                    #{ticket.id} {ticket.title}
+                  </a>
+                </td>
+                <td>
+                  <StatePill ticket={ticket} />
+                </td>
+                <td className="row-meta">{updatedAgo(ticket.createdAt)}</td>
+                <td className="row-meta">{updatedAgo(ticket.updatedAt)}</td>
+              </tr>
+              {blockers && (
+                <tr className="ticket-table-blockers">
+                  <td colSpan={4}>{blockers}</td>
+                </tr>
+              )}
+            </Fragment>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
 function Snapshot({
   snapshot,
   unconfirmedMessage,
@@ -71,9 +187,7 @@ function Snapshot({
   readonly unconfirmedMessage?: string;
 }) {
   const { factory, dispatcher } = snapshot;
-  const tickets = [...(snapshot.tickets ?? [])].sort(
-    (a, b) => (STATE_ORDER[ticketStatus(a)] ?? 9) - (STATE_ORDER[ticketStatus(b)] ?? 9),
-  );
+  const tickets = snapshot.tickets ?? [];
   const inFlight = dispatcher.inFlight ?? [];
   const candidates = dispatcher.candidates ?? [];
   return (
@@ -172,40 +286,7 @@ function Snapshot({
           {tickets.length === 0 ? (
             <p className="section-empty">No Tickets have been recorded.</p>
           ) : (
-            <table className="ticket-table">
-              <thead>
-                <tr>
-                  <th scope="col">Ticket</th>
-                  <th scope="col">State</th>
-                  <th scope="col">Updated</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tickets.map((ticket) => {
-                  const blockers = ticketBlockers(ticket);
-                  return (
-                    <Fragment key={ticket.id}>
-                      <tr id={`ticket-${ticket.id}`}>
-                        <td>
-                          <a href={`#/tickets/${ticket.id}`}>
-                            #{ticket.id} {ticket.title}
-                          </a>
-                        </td>
-                        <td>
-                          <StatePill ticket={ticket} />
-                        </td>
-                        <td className="row-meta">{updatedAgo(ticket.updatedAt)}</td>
-                      </tr>
-                      {blockers && (
-                        <tr className="ticket-table-blockers">
-                          <td colSpan={3}>{blockers}</td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
+            <TicketTable tickets={tickets} />
           )}
         </section>
       </main>

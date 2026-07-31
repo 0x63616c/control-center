@@ -196,6 +196,17 @@ a:hover {
   border-collapse: collapse;
   font-size: 0.9rem;
 }
+.sort-button {
+  all: unset;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+}
+.sort-button:hover {
+  color: var(--text);
+}
 .ticket-table th {
   text-align: left;
   font-size: 0.75rem;
