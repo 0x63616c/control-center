@@ -22,7 +22,15 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
 )
 
-const softwareFactoryTemporalNamespace = "software-factory"
+const (
+	controlCenterTemporalNamespace   = "control-center"
+	softwareFactoryTemporalNamespace = "software-factory"
+)
+
+var allowedTemporalNamespaces = map[string]struct{}{
+	controlCenterTemporalNamespace:   {},
+	softwareFactoryTemporalNamespace: {},
+}
 
 func main() {
 	if err := run(); err != nil {
@@ -75,9 +83,10 @@ func newHandler(store blobs.Store, origins []string) http.Handler {
 	codec := payloads.Handler(store, telemetry.NewMetrics(prometheus.NewRegistry()))
 	mux := http.NewServeMux()
 	// Temporal UI 2.52.1 appends /encode or /decode to the configured endpoint
-	// without expanding {namespace}. Serve that literal segment while also
-	// accepting a future expanded software-factory path; the X-Namespace check
-	// prevents the cluster-level UI setting from decoding another namespace.
+	// without expanding {namespace}. The endpoint is cluster-level, so it must
+	// also accept control-center payloads. Those have no codec encoding metadata
+	// and the decoder passes them through unchanged. An explicit allowlist keeps
+	// the codec from becoming a decoder for future namespaces by accident.
 	mux.Handle("/{namespace}/encode", softwareFactoryCodec(codec))
 	mux.Handle("/{namespace}/decode", softwareFactoryCodec(codec))
 	mux.HandleFunc("/healthz", func(writer http.ResponseWriter, _ *http.Request) {
@@ -89,11 +98,11 @@ func newHandler(store blobs.Store, origins []string) http.Handler {
 func softwareFactoryCodec(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		pathNamespace := request.PathValue("namespace")
-		if pathNamespace != "{namespace}" && pathNamespace != softwareFactoryTemporalNamespace {
+		if pathNamespace != "{namespace}" && pathNamespace != softwareFactoryTemporalNamespace && pathNamespace != controlCenterTemporalNamespace {
 			http.NotFound(writer, request)
 			return
 		}
-		if request.Header.Get("X-Namespace") != softwareFactoryTemporalNamespace {
+		if _, allowed := allowedTemporalNamespaces[request.Header.Get("X-Namespace")]; !allowed {
 			http.Error(writer, "namespace is not allowed", http.StatusForbidden)
 			return
 		}

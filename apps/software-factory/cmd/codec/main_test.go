@@ -88,11 +88,16 @@ func TestCORSPreflightAllowsTheConfiguredOrigin(t *testing.T) {
 	}
 }
 
-func TestLiteralNamespaceCodecRouteOnlyServesSoftwareFactory(t *testing.T) {
+func TestLiteralNamespaceCodecRoutePassesThroughControlCenterPayloads(t *testing.T) {
 	t.Parallel()
 
 	handler := newHandler(blobs.NewMemStore(), []string{"https://temporal.example"})
-	body, err := protojson.Marshal(&commonpb.Payloads{})
+	original, err := converter.GetDefaultDataConverter().ToPayload("control center payload")
+	if err != nil {
+		t.Fatalf("default ToPayload() error = %v", err)
+	}
+	want := &commonpb.Payloads{Payloads: []*commonpb.Payload{original}}
+	body, err := protojson.Marshal(want)
 	if err != nil {
 		t.Fatalf("marshal request: %v", err)
 	}
@@ -105,20 +110,31 @@ func TestLiteralNamespaceCodecRouteOnlyServesSoftwareFactory(t *testing.T) {
 		t.Errorf("software-factory POST /{namespace}/decode status = %d, want %d", allowedResponse.Code, http.StatusOK)
 	}
 
+	controlCenter := httptest.NewRequest(http.MethodPost, "/{namespace}/decode", bytes.NewReader(body))
+	controlCenter.Header.Set("X-Namespace", controlCenterTemporalNamespace)
+	controlCenterResponse := httptest.NewRecorder()
+	handler.ServeHTTP(controlCenterResponse, controlCenter)
+	if controlCenterResponse.Code != http.StatusOK {
+		t.Errorf("control-center POST /{namespace}/decode status = %d, want %d", controlCenterResponse.Code, http.StatusOK)
+	}
+	if got := decodePayloads(t, controlCenterResponse); !proto.Equal(got, want) {
+		t.Errorf("control-center payloads = %v, want %v", got, want)
+	}
+
 	denied := httptest.NewRequest(http.MethodPost, "/{namespace}/decode", bytes.NewReader(body))
-	denied.Header.Set("X-Namespace", "control-center")
+	denied.Header.Set("X-Namespace", "unregistered")
 	deniedResponse := httptest.NewRecorder()
 	handler.ServeHTTP(deniedResponse, denied)
 	if deniedResponse.Code != http.StatusForbidden {
-		t.Errorf("control-center POST /{namespace}/decode status = %d, want %d", deniedResponse.Code, http.StatusForbidden)
+		t.Errorf("unregistered POST /{namespace}/decode status = %d, want %d", deniedResponse.Code, http.StatusForbidden)
 	}
 
-	wrongPath := httptest.NewRequest(http.MethodPost, "/control-center/decode", bytes.NewReader(body))
+	wrongPath := httptest.NewRequest(http.MethodPost, "/unregistered/decode", bytes.NewReader(body))
 	wrongPath.Header.Set("X-Namespace", softwareFactoryTemporalNamespace)
 	wrongPathResponse := httptest.NewRecorder()
 	handler.ServeHTTP(wrongPathResponse, wrongPath)
 	if wrongPathResponse.Code != http.StatusNotFound {
-		t.Errorf("POST /control-center/decode status = %d, want %d", wrongPathResponse.Code, http.StatusNotFound)
+		t.Errorf("POST /unregistered/decode status = %d, want %d", wrongPathResponse.Code, http.StatusNotFound)
 	}
 }
 
