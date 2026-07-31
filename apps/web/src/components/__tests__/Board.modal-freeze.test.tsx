@@ -35,7 +35,11 @@ vi.mock("../../lib/tile-registry", () => {
     rows: 2,
     home: true,
   };
-  return { TILE_REGISTRY: [self], HOME_TILE: self };
+  return {
+    TILE_REGISTRY: [self],
+    HOME_TILE: self,
+    registryEntryForTileId: (id: string) => (id === self.id ? self : undefined),
+  };
 });
 vi.mock("../ConnectionLostBanner", () => ({ ConnectionLostBanner: () => null }));
 vi.mock("../DevOverlayHud", () => ({ DevOverlayHud: () => null }));
