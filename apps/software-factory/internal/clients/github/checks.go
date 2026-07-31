@@ -94,7 +94,7 @@ func (c *Client) checkFailureFingerprint(ctx context.Context, run *gh.CheckRun) 
 			Message:         annotation.GetMessage(),
 			RawDetails:      annotation.GetRawDetails(),
 		}
-		if genericGitHubActionsAnnotation(candidate) {
+		if !identifyingAnnotation(candidate) {
 			continue
 		}
 		detail.Annotations = append(detail.Annotations, candidate)
@@ -121,10 +121,14 @@ func (c *Client) checkFailureFingerprint(ctx context.Context, run *gh.CheckRun) 
 // normally near the end, but an unbounded log is not a safe CI observation.
 const jobLogMaxBytes = 2 << 20
 
-// actionsLogFailureFingerprint obtains a Go test identity when a GitHub
-// Actions check's Checks API payload is only its generic exit-code message.
-// Actions-log access is an optional enrichment: an unavailable log leaves the
-// check unidentified so rule 1 cannot mistake it for a proven repeat.
+// actionsLogFailureFingerprint obtains an identity from the job log when a
+// GitHub Actions check's Checks API payload is only its generic exit-code
+// message. Failing Go tests are the strongest identity; a job that is not a
+// Go test run — a generator drift gate, a lint step — is identified by the
+// error lines the runner logged instead. Actions-log access is an optional
+// enrichment: an unavailable log, or a log carrying nothing beyond the
+// generic exit-code line, leaves the check unidentified so rule 1 cannot
+// mistake it for a proven repeat.
 func (c *Client) actionsLogFailureFingerprint(ctx context.Context, run *gh.CheckRun) (string, error) {
 	jobID, ok := actionsJobID(run.GetDetailsURL())
 	if !ok {
@@ -140,18 +144,68 @@ func (c *Client) actionsLogFailureFingerprint(ctx context.Context, run *gh.Check
 		return "", nil
 	}
 
-	failedTests := failedGoTests(log)
-	if len(failedTests) == 0 {
+	if failedTests := failedGoTests(log); len(failedTests) > 0 {
+		encoded, err := json.Marshal(struct {
+			FailedTests []string `json:"failed_tests"`
+		}{FailedTests: failedTests})
+		if err != nil {
+			return "", fmt.Errorf("serializing failed Go tests for check %q: %w", run.GetName(), err)
+		}
+		digest := sha256.Sum256(encoded)
+		return hex.EncodeToString(digest[:]), nil
+	}
+
+	errorLines := loggedErrorLines(log)
+	if len(errorLines) == 0 {
 		return "", nil
 	}
 	encoded, err := json.Marshal(struct {
-		FailedTests []string `json:"failed_tests"`
-	}{FailedTests: failedTests})
+		ErrorLines []string `json:"error_lines"`
+	}{ErrorLines: errorLines})
 	if err != nil {
-		return "", fmt.Errorf("serializing failed Go tests for check %q: %w", run.GetName(), err)
+		return "", fmt.Errorf("serializing logged errors for check %q: %w", run.GetName(), err)
 	}
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:]), nil
+}
+
+// loggedErrorLines returns the distinct error messages a GitHub Actions job
+// logged through its `##[error]` workflow command, sorted so log ordering
+// cannot move the identity.
+//
+// The runner's generic exit-code line and its run-cancellation lines are
+// dropped: both appear identically whatever failed, so a job whose log holds
+// nothing else stays deliberately unidentified rather than acquiring a
+// change-independent identity.
+func loggedErrorLines(log string) []string {
+	const marker = "##[error]"
+
+	seen := make(map[string]struct{})
+	for _, line := range strings.Split(log, "\n") {
+		at := strings.Index(line, marker)
+		if at < 0 {
+			continue
+		}
+		message := strings.TrimSpace(line[at+len(marker):])
+		if message == "" || genericExitCodeMessage(message) || cancellationMessage(message) {
+			continue
+		}
+		seen[message] = struct{}{}
+	}
+
+	messages := make([]string, 0, len(seen))
+	for message := range seen {
+		messages = append(messages, message)
+	}
+	sort.Strings(messages)
+	return messages
+}
+
+// cancellationMessage reports the runner's own messages for a run GitHub
+// cancelled, most often because a newer push superseded it.
+func cancellationMessage(message string) bool {
+	return message == "The operation was canceled." ||
+		strings.HasPrefix(message, "Canceling since a higher priority waiting request")
 }
 
 func actionsJobID(detailsURL string) (int64, bool) {
@@ -302,12 +356,42 @@ type checkAnnotationDetail struct {
 	RawDetails      string `json:"raw_details"`
 }
 
-// genericGitHubActionsAnnotation filters the workflow runner's stock exit
-// annotation. It does not identify the failed command, unlike an annotation
-// with a title, raw details, or a more specific message.
-func genericGitHubActionsAnnotation(annotation checkAnnotationDetail) bool {
-	return annotation.Title == "" && annotation.RawDetails == "" &&
-		annotation.Message == "Process completed with exit code 1."
+// identifyingAnnotation reports whether an annotation says anything about
+// what failed on this turn specifically.
+//
+// Two kinds are excluded. Anything that is not failure-level — the runner's
+// standing Node-version deprecation warning is on every job in this
+// repository — is identical on every turn of every check, so keeping it
+// would give a check a stable identity that no code change can ever move,
+// and rule 1 would read the second red turn as stagnation whatever the agent
+// did. The runner's stock exit-code annotation is failure-level but says
+// only that some step exited non-zero, not which one or why.
+func identifyingAnnotation(annotation checkAnnotationDetail) bool {
+	if annotation.AnnotationLevel != "failure" {
+		return false
+	}
+	return annotation.Title != "" || annotation.RawDetails != "" ||
+		!genericExitCodeMessage(annotation.Message)
+}
+
+// genericExitCodeMessage reports the runner's stock "a step exited non-zero"
+// message, whatever the code.
+func genericExitCodeMessage(message string) bool {
+	const prefix = "Process completed with exit code "
+	code, ok := strings.CutPrefix(message, prefix)
+	if !ok {
+		return false
+	}
+	code, ok = strings.CutSuffix(code, ".")
+	if !ok || code == "" {
+		return false
+	}
+	for _, r := range code {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func annotationKey(annotation checkAnnotationDetail) string {

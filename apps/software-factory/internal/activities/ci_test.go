@@ -191,3 +191,50 @@ func (f *pollingFakeGitHub) ChecksForRef(context.Context, string) ([]work.CheckR
 	f.n++
 	return f.onCall(f.n)
 }
+
+func TestObserveCIWaitsOutASupersededRunRatherThanCallingItRed(t *testing.T) {
+	t.Parallel()
+
+	// The concurrency group cancels an older run when a newer push replaces
+	// it. Reporting that cancel as a red check would charge a turn, and a
+	// second cancel would decline the ticket for "no progress", for
+	// something the change under test did not cause.
+	superseded := []work.CheckRun{
+		{Name: "build", Completed: true, Conclusion: "success"},
+		{Name: "test", Completed: true, Conclusion: "cancelled"},
+	}
+	replacement := []work.CheckRun{
+		{Name: "build", Completed: true, Conclusion: "success"},
+		{Name: "test", Completed: true, Conclusion: "success"},
+	}
+
+	gh := &pollingFakeGitHub{
+		fakeGitHub: fakeGitHub{},
+		onCall: func(n int) ([]work.CheckRun, error) {
+			if n < 2 {
+				return superseded, nil
+			}
+			return replacement, nil
+		},
+	}
+	d := deps()
+	d.GitHub = gh
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.ObserveCI)
+
+	val, err := e.ExecuteActivity(a.ObserveCI, ObserveCIInput{Branch: "b", Bound: time.Hour})
+	if err != nil {
+		t.Fatalf("ObserveCI: %v", err)
+	}
+	var out ObserveCIOutput
+	if err := val.Get(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !out.Concluded || !out.Green {
+		t.Fatalf("out = %+v, want the superseding run's green result", out)
+	}
+	if len(out.RedChecks) != 0 {
+		t.Fatalf("RedChecks = %v, want none: a cancelled run is not a failure", out.RedChecks)
+	}
+}

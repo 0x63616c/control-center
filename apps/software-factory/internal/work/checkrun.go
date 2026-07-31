@@ -46,3 +46,14 @@ type CheckFailure struct {
 func (c CheckRun) Green() bool {
 	return c.Completed && (c.Conclusion == "success" || c.Conclusion == "neutral" || c.Conclusion == "skipped")
 }
+
+// Superseded reports whether GitHub cancelled this check run rather than
+// letting it reach a verdict.
+//
+// A cancelled run is almost always the workflow concurrency group killing an
+// older run because a newer push replaced it, so it says nothing about the
+// change under test. It is neither green nor a failure this loop may charge
+// against a turn: ObserveCI keeps polling for the run that superseded it.
+func (c CheckRun) Superseded() bool {
+	return c.Completed && c.Conclusion == "cancelled"
+}
