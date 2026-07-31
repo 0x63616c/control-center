@@ -33,8 +33,8 @@ Running it for the first time, and stopping it:
 ## Layout
 
 One Go module rooted here, not one per component, because more components are expected and
-splitting a module later is cheap while unsplitting is not. A second Go binary becomes
-another `cmd/<name>/` sharing `internal/`.
+splitting a module later is cheap while unsplitting is not. A third Go binary is `cmd/api/`;
+run `scripts/regenerate.sh` to refresh its committed API artefacts.
 
 ```
 cmd/worker/        composition root: manual DI, graceful shutdown
