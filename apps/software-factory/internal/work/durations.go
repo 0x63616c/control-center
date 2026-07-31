@@ -37,6 +37,20 @@ const (
 	// a continued five-minute-silent event stream is still treated as dead.
 	StageHeartbeatTimeout = 5 * time.Minute
 
+	// StageRetryInitialInterval is the delay before a stage's first retry.
+	// Temporal multiplies it by StageRetryBackoffCoefficient after each
+	// failure, giving transient provider-capacity failures room to clear.
+	StageRetryInitialInterval = time.Second
+
+	// StageRetryBackoffCoefficient gives transient provider failures
+	// progressively wider recovery windows without waiting five minutes after
+	// the first failure.
+	StageRetryBackoffCoefficient = 5.0
+
+	// StageRetryMaximumInterval caps the fifth retry delay so a sustained
+	// outage cannot make one stage wait ever longer.
+	StageRetryMaximumInterval = 5 * time.Minute
+
 	// MaxRunDuration is the workflow run timeout for one ticket: above
 	// RunPolicy.RunBudget()'s worst case (MaxStageInvocations stage
 	// invocations at MaxStageDuration each — 19 hours today), with room for

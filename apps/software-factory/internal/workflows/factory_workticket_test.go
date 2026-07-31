@@ -3,6 +3,7 @@ package workflows_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
@@ -54,10 +55,14 @@ type factoryTicketHarness struct {
 	// review, keyed by review turn (1-indexed). A turn not present raises no
 	// findings.
 	review map[int][]work.Finding
+	// reviewFailures makes the review activity fail retryably this many times
+	// before returning its configured findings.
+	reviewFailures int
 
 	// what it did.
 	implementTurns   []work.StageKey
 	reviewTurns      []work.StageKey
+	reviewAttempts   []time.Time
 	created          int
 	sandboxInputs    []activities.CreateSandboxInput
 	cloned           []work.SandboxID
@@ -163,6 +168,10 @@ func (h *factoryTicketHarness) run() {
 	env.OnActivity(acts.RunReview, mock.Anything, mock.Anything).
 		Return(func(_ context.Context, in activities.RunReviewInput) (*activities.RunReviewOutput, error) {
 			h.reviewTurns = append(h.reviewTurns, in.Key)
+			h.reviewAttempts = append(h.reviewAttempts, env.Now())
+			if len(h.reviewAttempts) <= h.reviewFailures {
+				return nil, temporal.NewApplicationError("selected model is at capacity", "Transient")
+			}
 			return reviewOutput(nil, h.review[in.Key.Turn]...), nil
 		})
 
@@ -434,6 +443,27 @@ func TestFactoryWorkTicketReviewFindingsStayWorkingUntilTheyClear(t *testing.T) 
 	}
 	if len(h.reviewTurns) != 2 {
 		t.Fatalf("review turns = %v, want 2 — one that found something, one that confirmed it was fixed", h.reviewTurns)
+	}
+}
+
+func TestFactoryWorkTicketRetriesATransientStageFiveTimesWithExponentialBackoff(t *testing.T) {
+	t.Parallel()
+
+	h := newFactoryTicketHarness(t)
+	h.reviewFailures = 5
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+	if got, want := len(h.reviewAttempts), 6; got != want {
+		t.Fatalf("review attempts = %d, want %d", got, want)
+	}
+	for i, want := range []time.Duration{time.Second, 5 * time.Second, 25 * time.Second, 125 * time.Second, 5 * time.Minute} {
+		got := h.reviewAttempts[i+1].Sub(h.reviewAttempts[i])
+		if got != want {
+			t.Fatalf("review retry %d delay = %s, want %s", i+1, got, want)
+		}
 	}
 }
 
