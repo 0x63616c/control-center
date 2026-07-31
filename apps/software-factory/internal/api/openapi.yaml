@@ -16,6 +16,27 @@ components:
       required:
         - version
       type: object
+    CreateTicketInputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CreateTicketInputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        body:
+          description: The Ticket's supporting detail.
+          type: string
+        title:
+          description: The concise title describing the Ticket work.
+          minLength: 1
+          type: string
+      required:
+        - title
+        - body
+      type: object
     ErrorDetail:
       additionalProperties: false
       properties:
@@ -56,6 +77,9 @@ components:
             - https://example.com/error-log/abc123
           format: uri
           type: string
+        reason:
+          description: Stable machine-readable reason for the error.
+          type: string
         status:
           description: HTTP status code
           examples:
@@ -74,6 +98,8 @@ components:
             - https://example.com/errors/example
           format: uri
           type: string
+      required:
+        - reason
       type: object
     MaxInFlightInputBody:
       additionalProperties: false
@@ -92,6 +118,129 @@ components:
           type: integer
       required:
         - maxInFlight
+      type: object
+    StateTicketInputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/StateTicketInputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        state:
+          description: "The target lifecycle state: open, working, review, done, or failed."
+          type: string
+      required:
+        - state
+      type: object
+    TicketResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TicketResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        blockers:
+          description: Tickets that must be done before this Ticket is ready.
+          items:
+            $ref: "#/components/schemas/TicketSummary"
+          type:
+            - array
+            - "null"
+        blocks:
+          description: Tickets this Ticket prevents from becoming ready.
+          items:
+            $ref: "#/components/schemas/TicketSummary"
+          type:
+            - array
+            - "null"
+        body:
+          description: The Ticket's supporting detail.
+          type: string
+        createdAt:
+          description: The Ticket creation time in RFC3339 UTC.
+          type: string
+        id:
+          description: The Ticket identifier.
+          format: int64
+          type: integer
+        ready:
+          description: Whether this open Ticket has only done dependencies.
+          type: boolean
+        state:
+          description: The Ticket lifecycle state.
+          type: string
+        title:
+          description: The Ticket title.
+          type: string
+        updatedAt:
+          description: The Ticket's latest update time in RFC3339 UTC.
+          type: string
+      required:
+        - id
+        - title
+        - body
+        - state
+        - ready
+        - blockers
+        - blocks
+        - createdAt
+        - updatedAt
+      type: object
+    TicketSummary:
+      additionalProperties: false
+      properties:
+        createdAt:
+          description: The Ticket creation time in RFC3339 UTC.
+          type: string
+        id:
+          description: The Ticket identifier.
+          format: int64
+          type: integer
+        ready:
+          description: Whether this open Ticket has only done dependencies.
+          type: boolean
+        state:
+          description: The Ticket lifecycle state.
+          type: string
+        title:
+          description: The Ticket title.
+          type: string
+        updatedAt:
+          description: The Ticket's latest update time in RFC3339 UTC.
+          type: string
+      required:
+        - id
+        - title
+        - state
+        - ready
+        - createdAt
+        - updatedAt
+      type: object
+    TicketsOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TicketsOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        tickets:
+          description: Tickets matching the requested filters.
+          items:
+            $ref: "#/components/schemas/TicketSummary"
+          type:
+            - array
+            - "null"
+      required:
+        - tickets
       type: object
   securitySchemes:
     cloudflareAccess:
@@ -173,6 +322,155 @@ paths:
                 $ref: "#/components/schemas/ErrorModel"
           description: Error
       summary: Resume the factory
+  /v1/tickets:
+    get:
+      description: Lists Tickets with optional state and derived ready filters.
+      operationId: get-v1-tickets
+      parameters:
+        - description: Limit results to this lifecycle state.
+          explode: false
+          in: query
+          name: state
+          schema:
+            description: Limit results to this lifecycle state.
+            type: string
+        - description: "Limit results by derived readiness: true or false."
+          explode: false
+          in: query
+          name: ready
+          schema:
+            description: "Limit results by derived readiness: true or false."
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketsOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: List Tickets
+    post:
+      description: Files a new open Ticket.
+      operationId: post-v1-tickets
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTicketInputBody"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketResponse"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Create a Ticket
+  /v1/tickets/{ticketID}:
+    get:
+      description: Returns the Ticket, both dependency directions, and derived readiness.
+      operationId: get-v1-tickets-by-ticket-id
+      parameters:
+        - description: The Ticket identifier.
+          in: path
+          name: ticketID
+          required: true
+          schema:
+            description: The Ticket identifier.
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketResponse"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Read a Ticket
+  /v1/tickets/{ticketID}/blockers/{blockerTicketID}:
+    delete:
+      description: Removes a dependency edge when it exists.
+      operationId: delete-v1-tickets-by-ticket-id-blockers-by-blocker-ticket-id
+      parameters:
+        - description: The Ticket identifier that is blocked.
+          in: path
+          name: ticketID
+          required: true
+          schema:
+            description: The Ticket identifier that is blocked.
+            format: int64
+            minimum: 1
+            type: integer
+        - description: The Ticket identifier that must be done first.
+          in: path
+          name: blockerTicketID
+          required: true
+          schema:
+            description: The Ticket identifier that must be done first.
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "204":
+          description: No Content
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Remove a Ticket blocker
+    put:
+      description: Records that the first Ticket is blocked by the second.
+      operationId: put-v1-tickets-by-ticket-id-blockers-by-blocker-ticket-id
+      parameters:
+        - description: The Ticket identifier that is blocked.
+          in: path
+          name: ticketID
+          required: true
+          schema:
+            description: The Ticket identifier that is blocked.
+            format: int64
+            minimum: 1
+            type: integer
+        - description: The Ticket identifier that must be done first.
+          in: path
+          name: blockerTicketID
+          required: true
+          schema:
+            description: The Ticket identifier that must be done first.
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "204":
+          description: No Content
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Add a Ticket blocker
   /v1/tickets/{ticketID}/cancel:
     post:
       description: Success means Temporal accepted cancellation of the ticket workflow. This endpoint does not wait for cleanup or database state to become observable.
@@ -197,6 +495,40 @@ paths:
                 $ref: "#/components/schemas/ErrorModel"
           description: Error
       summary: Cancel a ticket run
+  /v1/tickets/{ticketID}/state:
+    patch:
+      description: Moves a Ticket through its legal lifecycle transitions.
+      operationId: patch-v1-tickets-by-ticket-id-state
+      parameters:
+        - description: The Ticket identifier.
+          in: path
+          name: ticketID
+          required: true
+          schema:
+            description: The Ticket identifier.
+            format: int64
+            minimum: 1
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StateTicketInputBody"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketResponse"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Update Ticket state
   /v1/tickets/{ticketID}/work:
     post:
       description: Success means Temporal accepted an empty UpdateConfig signal that wakes the dispatcher without changing configuration. This endpoint does not poll for observable state.

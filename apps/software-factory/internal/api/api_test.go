@@ -2,12 +2,14 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store/storefake"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
@@ -15,6 +17,104 @@ type commandFake struct {
 	updates  []work.ConfigUpdate
 	canceled []int
 	err      error
+}
+
+func TestTicketsCreateDependenciesAndReadiness(t *testing.T) {
+	t.Parallel()
+	service := New("test-build", nil, storefake.New())
+	create := func(title string) int64 {
+		t.Helper()
+		response := ticketRequest(t, service, http.MethodPost, "/v1/tickets", `{"title":"`+title+`","body":"detail"}`)
+		if response.Code != http.StatusOK {
+			t.Fatalf("create %s status = %d: %s", title, response.Code, response.Body.String())
+		}
+		var body struct {
+			ID        int64  `json:"id"`
+			State     string `json:"state"`
+			CreatedAt string `json:"createdAt"`
+		}
+		if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+			t.Fatalf("decode create: %v", err)
+		}
+		if body.State != "open" || !strings.HasSuffix(body.CreatedAt, "Z") {
+			t.Fatalf("created ticket = %#v, want open with UTC timestamp", body)
+		}
+		return body.ID
+	}
+	a, b, c := create("A"), create("B"), create("C")
+	if response := ticketRequest(t, service, http.MethodPut, "/v1/tickets/2/blockers/1", ""); response.Code != http.StatusNoContent {
+		t.Fatalf("add A -> B = %d: %s", response.Code, response.Body.String())
+	}
+	if response := ticketRequest(t, service, http.MethodPut, "/v1/tickets/2/blockers/1", ""); response.Code != http.StatusNoContent {
+		t.Fatalf("idempotent A -> B = %d: %s", response.Code, response.Body.String())
+	}
+	if response := ticketRequest(t, service, http.MethodPut, "/v1/tickets/3/blockers/2", ""); response.Code != http.StatusNoContent {
+		t.Fatalf("add B -> C = %d: %s", response.Code, response.Body.String())
+	}
+	response := ticketRequest(t, service, http.MethodPut, "/v1/tickets/1/blockers/3", "")
+	if response.Code != http.StatusConflict || ticketErrorReason(t, response) != "cycle" {
+		t.Fatalf("transitive cycle = (%d, %s), want distinguishable conflict", response.Code, response.Body.String())
+	}
+	response = ticketRequest(t, service, http.MethodPut, "/v1/tickets/1/blockers/1", "")
+	if response.Code != http.StatusBadRequest || ticketErrorReason(t, response) != "self_dependency" {
+		t.Fatalf("self edge = (%d, %s)", response.Code, response.Body.String())
+	}
+	response = ticketRequest(t, service, http.MethodPatch, "/v1/tickets/1/state", `{"state":"done"}`)
+	if response.Code != http.StatusConflict || ticketErrorReason(t, response) != "illegal_transition" {
+		t.Fatalf("illegal transition = (%d, %s)", response.Code, response.Body.String())
+	}
+	if a != 1 || b != 2 || c != 3 {
+		t.Fatalf("ticket ids = %d, %d, %d, want 1, 2, 3", a, b, c)
+	}
+}
+
+// TestValidationAndUnexpectedErrorsCarryAReason proves every error response
+// this package can produce satisfies the OpenAPI ErrorModel schema's required
+// "reason" field — not only the ones this package deliberately raises through
+// ticketError, but Huma's own request-validation failures and the built-in
+// huma.ErrorNNN helpers used by the pre-existing factory-command routes. See
+// the huma.NewError override in api.go.
+func TestValidationAndUnexpectedErrorsCarryAReason(t *testing.T) {
+	t.Parallel()
+	service := New("test-build", nil, storefake.New())
+
+	response := ticketRequest(t, service, http.MethodPatch, "/v1/tickets/1/state", `{"state":"not-a-state"}`)
+	if response.Code != http.StatusUnprocessableEntity || ticketErrorReason(t, response) == "" {
+		t.Fatalf("malformed state = (%d, %s), want a 422 carrying a reason", response.Code, response.Body.String())
+	}
+
+	response = ticketRequest(t, service, http.MethodPost, "/v1/factory/max-in-flight", `{"maxInFlight":0}`)
+	if response.Code != http.StatusUnprocessableEntity || ticketErrorReason(t, response) == "" {
+		t.Fatalf("out-of-range maxInFlight = (%d, %s), want a 422 carrying a reason", response.Code, response.Body.String())
+	}
+
+	unconfigured := New("test-build", nil)
+	response = ticketRequest(t, unconfigured, http.MethodGet, "/v1/tickets/1", "")
+	if response.Code != http.StatusServiceUnavailable || ticketErrorReason(t, response) != "store_unavailable" {
+		t.Fatalf("unconfigured store = (%d, %s), want store_unavailable", response.Code, response.Body.String())
+	}
+}
+
+func ticketRequest(t *testing.T, service *Service, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	if body != "" {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	response := httptest.NewRecorder()
+	service.Handler().ServeHTTP(response, request)
+	return response
+}
+
+func ticketErrorReason(t *testing.T, response *httptest.ResponseRecorder) string {
+	t.Helper()
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	return body.Reason
 }
 
 func (fake *commandFake) UpdateConfig(_ context.Context, update work.ConfigUpdate) error {

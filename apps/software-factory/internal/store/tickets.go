@@ -2,9 +2,11 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store/storedb"
+	"github.com/jackc/pgx/v5"
 )
 
 // TicketCreator files a new Ticket. The API ticket that accepts a create
@@ -16,12 +18,23 @@ type TicketCreator interface {
 // TicketReader reads one Ticket, or every Ticket in a state.
 type TicketReader interface {
 	Ticket(ctx context.Context, id TicketID) (Ticket, error)
+	Tickets(ctx context.Context) ([]Ticket, error)
 	TicketsByState(ctx context.Context, state TicketState) ([]Ticket, error)
+}
+
+// Tickets lists every Ticket, ordered by id.
+func (s *Store) Tickets(ctx context.Context) ([]Ticket, error) {
+	rows, err := s.q.Tickets(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing tickets: %w", wrapQueryErr(err))
+	}
+	return ticketsFromRows(rows)
 }
 
 // TicketStateWriter moves a Ticket to a new state.
 type TicketStateWriter interface {
 	UpdateTicketState(ctx context.Context, id TicketID, state TicketState) (Ticket, error)
+	TransitionTicketState(ctx context.Context, id TicketID, from, to TicketState) (Ticket, error)
 }
 
 // ReadyTicketLister lists the Tickets the dispatcher may start next: open,
@@ -35,7 +48,7 @@ func (s *Store) CreateTicket(ctx context.Context, title, body string) (Ticket, e
 	row, err := s.q.CreateTicket(ctx, storedb.CreateTicketParams{
 		Title: title,
 		Body:  body,
-		State: string(TicketOpen),
+		State: TicketOpen.String(),
 	})
 	if err != nil {
 		return Ticket{}, fmt.Errorf("creating ticket %q: %w", title, wrapQueryErr(err))
@@ -47,6 +60,9 @@ func (s *Store) CreateTicket(ctx context.Context, title, body string) (Ticket, e
 func (s *Store) Ticket(ctx context.Context, id TicketID) (Ticket, error) {
 	row, err := s.q.Ticket(ctx, int64(id))
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Ticket{}, fmt.Errorf("reading ticket %d: %w", id, ErrNotFound)
+		}
 		return Ticket{}, fmt.Errorf("reading ticket %d: %w", id, wrapQueryErr(err))
 	}
 	return ticketFromRow(row)
@@ -54,7 +70,7 @@ func (s *Store) Ticket(ctx context.Context, id TicketID) (Ticket, error) {
 
 // TicketsByState lists every Ticket in state, ordered by id.
 func (s *Store) TicketsByState(ctx context.Context, state TicketState) ([]Ticket, error) {
-	rows, err := s.q.TicketsByState(ctx, string(state))
+	rows, err := s.q.TicketsByState(ctx, state.String())
 	if err != nil {
 		return nil, fmt.Errorf("listing %s tickets: %w", state, wrapQueryErr(err))
 	}
@@ -65,10 +81,22 @@ func (s *Store) TicketsByState(ctx context.Context, state TicketState) ([]Ticket
 func (s *Store) UpdateTicketState(ctx context.Context, id TicketID, state TicketState) (Ticket, error) {
 	row, err := s.q.UpdateTicketState(ctx, storedb.UpdateTicketStateParams{
 		ID:    int64(id),
-		State: string(state),
+		State: state.String(),
 	})
 	if err != nil {
 		return Ticket{}, fmt.Errorf("moving ticket %d to %s: %w", id, state, wrapQueryErr(err))
+	}
+	return ticketFromRow(row)
+}
+
+// TransitionTicketState atomically moves id only when it remains in from.
+func (s *Store) TransitionTicketState(ctx context.Context, id TicketID, from, to TicketState) (Ticket, error) {
+	row, err := s.q.TransitionTicketState(ctx, storedb.TransitionTicketStateParams{ID: int64(id), State: from.String(), State_2: to.String()})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Ticket{}, fmt.Errorf("transitioning ticket %d from %s to %s: %w", id, from, to, ErrNotFound)
+		}
+		return Ticket{}, fmt.Errorf("transitioning ticket %d from %s to %s: %w", id, from, to, wrapQueryErr(err))
 	}
 	return ticketFromRow(row)
 }
@@ -87,9 +115,9 @@ func (s *Store) ReadyTickets(ctx context.Context) ([]Ticket, error) {
 // ticketFromRow parses a stored row into a Ticket, the one place a row's
 // state string becomes a typed TicketState.
 func ticketFromRow(row storedb.Ticket) (Ticket, error) {
-	state := TicketState(row.State)
-	if !state.Valid() {
-		return Ticket{}, fmt.Errorf("ticket %d: stored state %q is not a known TicketState", row.ID, row.State)
+	state, err := ParseTicketState(row.State)
+	if err != nil {
+		return Ticket{}, fmt.Errorf("ticket %d: stored state %q is not a known TicketState: %w", row.ID, row.State, err)
 	}
 	return Ticket{
 		ID:        TicketID(row.ID),

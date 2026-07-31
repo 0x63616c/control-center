@@ -15,6 +15,8 @@
 package store
 
 import (
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
@@ -36,21 +38,31 @@ type TicketID int64
 // database's wall, and Valid is Go's. Neither is a formality — a state read
 // out of a row is trusted afterwards precisely because it passed one of these
 // on the way in.
-type TicketState string
+type TicketState struct{ value ticketStateValue }
+
+type ticketStateValue uint8
 
 // The five ticket states ADR-0012 fixes. No others exist.
 const (
+	ticketStateOpen ticketStateValue = iota + 1
+	ticketStateWorking
+	ticketStateReview
+	ticketStateDone
+	ticketStateFailed
+)
+
+var (
 	// TicketOpen is filed, not started.
-	TicketOpen TicketState = "open"
+	TicketOpen = TicketState{value: ticketStateOpen}
 	// TicketWorking means a Run is in flight.
-	TicketWorking TicketState = "working"
+	TicketWorking = TicketState{value: ticketStateWorking}
 	// TicketReview means a Run produced a pull request; waiting on a human.
-	TicketReview TicketState = "review"
+	TicketReview = TicketState{value: ticketStateReview}
 	// TicketDone is terminal, and satisfies dependencies.
-	TicketDone TicketState = "done"
+	TicketDone = TicketState{value: ticketStateDone}
 	// TicketFailed is terminal, and does not satisfy dependencies. Never
 	// auto-retried — a human moves a Ticket back to TicketOpen.
-	TicketFailed TicketState = "failed"
+	TicketFailed = TicketState{value: ticketStateFailed}
 )
 
 // Valid reports whether s is one of the five states the schema enforces.
@@ -58,6 +70,83 @@ func (s TicketState) Valid() bool {
 	switch s {
 	case TicketOpen, TicketWorking, TicketReview, TicketDone, TicketFailed:
 		return true
+	default:
+		return false
+	}
+}
+
+// String returns the one wire/database spelling of s.
+func (s TicketState) String() string {
+	switch s {
+	case TicketOpen:
+		return "open"
+	case TicketWorking:
+		return "working"
+	case TicketReview:
+		return "review"
+	case TicketDone:
+		return "done"
+	case TicketFailed:
+		return "failed"
+	default:
+		return ""
+	}
+}
+
+// ParseTicketState converts the one wire/database spelling of a state into a
+// known domain value. Callers pass the result onwards rather than validating
+// strings at each layer.
+func ParseTicketState(value string) (TicketState, error) {
+	switch value {
+	case "open":
+		return TicketOpen, nil
+	case "working":
+		return TicketWorking, nil
+	case "review":
+		return TicketReview, nil
+	case "done":
+		return TicketDone, nil
+	case "failed":
+		return TicketFailed, nil
+	default:
+		return TicketState{}, fmt.Errorf("%q is not a TicketState", value)
+	}
+}
+
+// UnmarshalText parses a query or path state once at the HTTP boundary.
+func (s *TicketState) UnmarshalText(value []byte) error {
+	parsed, err := ParseTicketState(string(value))
+	if err != nil {
+		return err
+	}
+	*s = parsed
+	return nil
+}
+
+// UnmarshalJSON parses a JSON state once at the HTTP boundary.
+func (s *TicketState) UnmarshalJSON(value []byte) error {
+	var wire string
+	if err := json.Unmarshal(value, &wire); err != nil {
+		return fmt.Errorf("decode TicketState: %w", err)
+	}
+	return s.UnmarshalText([]byte(wire))
+}
+
+// CanTransitionTo reports whether moving from one state to another follows
+// the Ticket lifecycle. Keeping this table here makes lifecycle policy a
+// domain decision rather than a property of any HTTP handler.
+func (s TicketState) CanTransitionTo(next TicketState) bool {
+	switch s {
+	case TicketOpen:
+		return next == TicketWorking
+	case TicketWorking:
+		return next == TicketReview || next == TicketFailed
+	case TicketReview:
+		return next == TicketDone || next == TicketFailed
+	case TicketFailed:
+		return next == TicketOpen
+	case TicketDone:
+		return false
 	default:
 		return false
 	}

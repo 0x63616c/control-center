@@ -12,6 +12,7 @@ import (
 const addTicketDependency = `-- name: AddTicketDependency :exec
 INSERT INTO ticket_edge (blocker_ticket_id, blocked_ticket_id)
 VALUES ($1, $2)
+ON CONFLICT DO NOTHING
 `
 
 type AddTicketDependencyParams struct {
@@ -24,6 +25,40 @@ type AddTicketDependencyParams struct {
 func (q *Queries) AddTicketDependency(ctx context.Context, arg AddTicketDependencyParams) error {
 	_, err := q.db.Exec(ctx, addTicketDependency, arg.BlockerTicketID, arg.BlockedTicketID)
 	return err
+}
+
+const addTicketDependencyIfAcyclic = `-- name: AddTicketDependencyIfAcyclic :one
+WITH RECURSIVE graph_lock AS (
+    SELECT pg_advisory_xact_lock(547)
+), reachable(node_id, path) AS (
+    SELECT $1::bigint, ARRAY[$1::bigint] FROM graph_lock
+    UNION ALL
+    SELECT e.blocked_ticket_id, r.path || e.blocked_ticket_id
+    FROM reachable r
+    JOIN ticket_edge e ON e.blocker_ticket_id = r.node_id
+    WHERE NOT e.blocked_ticket_id = ANY(r.path)
+), inserted AS (
+    INSERT INTO ticket_edge (blocker_ticket_id, blocked_ticket_id)
+    SELECT $2, $1
+    WHERE NOT EXISTS (SELECT 1 FROM reachable WHERE path @> ARRAY[$2::bigint])
+    ON CONFLICT DO NOTHING
+)
+SELECT COALESCE((SELECT array_to_string(path, ',') FROM reachable WHERE path @> ARRAY[$2::bigint] LIMIT 1), '')::text
+`
+
+type AddTicketDependencyIfAcyclicParams struct {
+	Column1 int64
+	Column2 int64
+}
+
+// A transaction-scoped advisory lock serializes edge writers while this
+// statement checks and writes, so concurrent requests cannot interleave into
+// a cycle. The graph is small and edge writes are rare.
+func (q *Queries) AddTicketDependencyIfAcyclic(ctx context.Context, arg AddTicketDependencyIfAcyclicParams) (string, error) {
+	row := q.db.QueryRow(ctx, addTicketDependencyIfAcyclic, arg.Column1, arg.Column2)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const removeTicketDependency = `-- name: RemoveTicketDependency :exec
@@ -109,4 +144,33 @@ func (q *Queries) TicketBlocks(ctx context.Context, blockerTicketID int64) ([]Ti
 		return nil, err
 	}
 	return items, nil
+}
+
+const ticketDependencyPath = `-- name: TicketDependencyPath :one
+WITH RECURSIVE reachable(node_id, path) AS (
+    SELECT $1::bigint, ARRAY[$1::bigint]
+    UNION ALL
+    SELECT e.blocked_ticket_id, r.path || e.blocked_ticket_id
+    FROM reachable r
+    JOIN ticket_edge e ON e.blocker_ticket_id = r.node_id
+    WHERE NOT e.blocked_ticket_id = ANY(r.path)
+)
+SELECT array_to_string(path, ',')
+FROM reachable
+WHERE path @> ARRAY[$2::bigint]
+LIMIT 1
+`
+
+type TicketDependencyPathParams struct {
+	Column1 int64
+	Column2 int64
+}
+
+// Follows blocker -> blocked edges from start to target. A path means adding
+// target -> start would close a dependency cycle.
+func (q *Queries) TicketDependencyPath(ctx context.Context, arg TicketDependencyPathParams) (string, error) {
+	row := q.db.QueryRow(ctx, ticketDependencyPath, arg.Column1, arg.Column2)
+	var array_to_string string
+	err := row.Scan(&array_to_string)
+	return array_to_string, err
 }

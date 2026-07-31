@@ -9,9 +9,17 @@ SELECT * FROM ticket WHERE id = $1;
 -- name: TicketsByState :many
 SELECT * FROM ticket WHERE state = $1 ORDER BY id;
 
+-- name: Tickets :many
+SELECT * FROM ticket ORDER BY id;
+
 -- name: UpdateTicketState :one
 UPDATE ticket SET state = $2, updated_at = CURRENT_TIMESTAMP
 WHERE id = $1
+RETURNING *;
+
+-- name: TransitionTicketState :one
+UPDATE ticket SET state = $3, updated_at = CURRENT_TIMESTAMP
+WHERE id = $1 AND state = $2
 RETURNING *;
 
 -- name: ReadyTickets :many

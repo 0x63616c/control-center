@@ -64,20 +64,24 @@ func TestMiddlewareRefusesSandboxBearerForEveryFactoryCommand(t *testing.T) {
 	middleware := newMiddleware(t, server.URL, "worker-token", "sandbox-token")
 	handler := middleware.Wrap(factoryapi.New("test-build", nil).Handler())
 
-	for _, path := range []string{
-		"/v1/factory/pause",
-		"/v1/factory/resume",
-		"/v1/factory/max-in-flight",
-		"/v1/tickets/42/cancel",
-		"/v1/tickets/42/work",
+	for _, requestTarget := range []struct{ method, path string }{
+		{http.MethodPost, "/v1/factory/pause"},
+		{http.MethodPost, "/v1/factory/resume"},
+		{http.MethodPost, "/v1/factory/max-in-flight"},
+		{http.MethodPost, "/v1/tickets/42/cancel"},
+		{http.MethodPost, "/v1/tickets/42/work"},
+		{http.MethodPost, "/v1/tickets"},
+		{http.MethodPatch, "/v1/tickets/42/state"},
+		{http.MethodPut, "/v1/tickets/42/blockers/43"},
+		{http.MethodDelete, "/v1/tickets/42/blockers/43"},
 	} {
-		t.Run(path, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodPost, path, nil)
+		t.Run(requestTarget.method+" "+requestTarget.path, func(t *testing.T) {
+			request := httptest.NewRequest(requestTarget.method, requestTarget.path, nil)
 			request.Header.Set("Authorization", "Bearer sandbox-token")
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, request)
 			if response.Code != http.StatusUnauthorized {
-				t.Fatalf("POST %s status = %d, want %d", path, response.Code, http.StatusUnauthorized)
+				t.Fatalf("%s %s status = %d, want %d", requestTarget.method, requestTarget.path, response.Code, http.StatusUnauthorized)
 			}
 		})
 	}

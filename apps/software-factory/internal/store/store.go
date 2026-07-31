@@ -10,6 +10,9 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+// ErrNotFound reports that a requested store record does not exist.
+var ErrNotFound = errors.New("store record not found")
+
 // Store is the factory's Postgres store. Its methods are grouped into the
 // narrow interfaces declared alongside them (TicketReader, TicketWriter,
 // RunRecorder, and so on) by the consumer need each one serves — a caller

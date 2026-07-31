@@ -50,6 +50,18 @@ export interface BuildOutputBody {
   version: string;
 }
 
+export interface CreateTicketInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** The Ticket's supporting detail. */
+  body: string;
+  /**
+   * The concise title describing the Ticket work.
+   * @minLength 1
+   */
+  title: string;
+}
+
 export interface ErrorDetail {
   /** Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id' */
   location?: string;
@@ -73,6 +85,8 @@ export interface ErrorModel {
   errors?: ErrorModelErrors;
   /** A URI reference that identifies the specific occurrence of the problem. */
   instance?: string;
+  /** Stable machine-readable reason for the error. */
+  reason: string;
   /** HTTP status code */
   status?: number;
   /** A short, human-readable summary of the problem type. This value should not change between occurrences of the error. */
@@ -90,6 +104,84 @@ export interface MaxInFlightInputBody {
    */
   maxInFlight: number;
 }
+
+export interface StateTicketInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** The target lifecycle state: open, working, review, done, or failed. */
+  state: string;
+}
+
+/**
+ * Tickets that must be done before this Ticket is ready.
+ */
+export type TicketResponseBlockers = TicketSummary[] | null;
+
+/**
+ * Tickets this Ticket prevents from becoming ready.
+ */
+export type TicketResponseBlocks = TicketSummary[] | null;
+
+export interface TicketResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** Tickets that must be done before this Ticket is ready. */
+  blockers: TicketResponseBlockers;
+  /** Tickets this Ticket prevents from becoming ready. */
+  blocks: TicketResponseBlocks;
+  /** The Ticket's supporting detail. */
+  body: string;
+  /** The Ticket creation time in RFC3339 UTC. */
+  createdAt: string;
+  /** The Ticket identifier. */
+  id: number;
+  /** Whether this open Ticket has only done dependencies. */
+  ready: boolean;
+  /** The Ticket lifecycle state. */
+  state: string;
+  /** The Ticket title. */
+  title: string;
+  /** The Ticket's latest update time in RFC3339 UTC. */
+  updatedAt: string;
+}
+
+export interface TicketSummary {
+  /** The Ticket creation time in RFC3339 UTC. */
+  createdAt: string;
+  /** The Ticket identifier. */
+  id: number;
+  /** Whether this open Ticket has only done dependencies. */
+  ready: boolean;
+  /** The Ticket lifecycle state. */
+  state: string;
+  /** The Ticket title. */
+  title: string;
+  /** The Ticket's latest update time in RFC3339 UTC. */
+  updatedAt: string;
+}
+
+/**
+ * Tickets matching the requested filters.
+ */
+export type TicketsOutputBodyTickets = TicketSummary[] | null;
+
+export interface TicketsOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** Tickets matching the requested filters. */
+  tickets: TicketsOutputBodyTickets;
+}
+
+export type GetV1TicketsParams = {
+  /**
+   * Limit results to this lifecycle state.
+   */
+  state?: string;
+  /**
+   * Limit results by derived readiness: true or false.
+   */
+  ready?: string;
+};
 
 /**
  * @summary Get v1 build
@@ -401,6 +493,502 @@ export const usePostV1FactoryResume = <TError = AxiosError<ErrorModel>, TContext
 };
 
 /**
+ * Lists Tickets with optional state and derived ready filters.
+ * @summary List Tickets
+ */
+export const getV1Tickets = (
+  params?: GetV1TicketsParams,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<TicketsOutputBody>> => {
+  return axios.get(`/v1/tickets`, {
+    ...options,
+    params: { ...params, ...options?.params },
+  });
+};
+
+export const getGetV1TicketsQueryKey = (params?: GetV1TicketsParams) => {
+  return [`/v1/tickets`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetV1TicketsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getV1Tickets>>,
+  TError = AxiosError<ErrorModel>,
+>(
+  params?: GetV1TicketsParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof getV1Tickets>>, TError, TData>>;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetV1TicketsQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getV1Tickets>>> = ({ signal }) =>
+    getV1Tickets(params, { signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getV1Tickets>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetV1TicketsQueryResult = NonNullable<Awaited<ReturnType<typeof getV1Tickets>>>;
+export type GetV1TicketsQueryError = AxiosError<ErrorModel>;
+
+export function useGetV1Tickets<
+  TData = Awaited<ReturnType<typeof getV1Tickets>>,
+  TError = AxiosError<ErrorModel>,
+>(
+  params: undefined | GetV1TicketsParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof getV1Tickets>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getV1Tickets>>,
+          TError,
+          Awaited<ReturnType<typeof getV1Tickets>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useGetV1Tickets<
+  TData = Awaited<ReturnType<typeof getV1Tickets>>,
+  TError = AxiosError<ErrorModel>,
+>(
+  params?: GetV1TicketsParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof getV1Tickets>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getV1Tickets>>,
+          TError,
+          Awaited<ReturnType<typeof getV1Tickets>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useGetV1Tickets<
+  TData = Awaited<ReturnType<typeof getV1Tickets>>,
+  TError = AxiosError<ErrorModel>,
+>(
+  params?: GetV1TicketsParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof getV1Tickets>>, TError, TData>>;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+/**
+ * @summary List Tickets
+ */
+
+export function useGetV1Tickets<
+  TData = Awaited<ReturnType<typeof getV1Tickets>>,
+  TError = AxiosError<ErrorModel>,
+>(
+  params?: GetV1TicketsParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof getV1Tickets>>, TError, TData>>;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getGetV1TicketsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Files a new open Ticket.
+ * @summary Create a Ticket
+ */
+export const postV1Tickets = (
+  createTicketInputBody: NonReadonly<CreateTicketInputBody>,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<TicketResponse>> => {
+  return axios.post(`/v1/tickets`, createTicketInputBody, options);
+};
+
+export const getPostV1TicketsMutationOptions = <
+  TError = AxiosError<ErrorModel>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof postV1Tickets>>,
+    TError,
+    { data: NonReadonly<CreateTicketInputBody> },
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof postV1Tickets>>,
+  TError,
+  { data: NonReadonly<CreateTicketInputBody> },
+  TContext
+> => {
+  const mutationKey = ["postV1Tickets"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof postV1Tickets>>,
+    { data: NonReadonly<CreateTicketInputBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return postV1Tickets(data, axiosOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PostV1TicketsMutationResult = NonNullable<Awaited<ReturnType<typeof postV1Tickets>>>;
+export type PostV1TicketsMutationBody = NonReadonly<CreateTicketInputBody>;
+export type PostV1TicketsMutationError = AxiosError<ErrorModel>;
+
+/**
+ * @summary Create a Ticket
+ */
+export const usePostV1Tickets = <TError = AxiosError<ErrorModel>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof postV1Tickets>>,
+      TError,
+      { data: NonReadonly<CreateTicketInputBody> },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof postV1Tickets>>,
+  TError,
+  { data: NonReadonly<CreateTicketInputBody> },
+  TContext
+> => {
+  const mutationOptions = getPostV1TicketsMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
+ * Returns the Ticket, both dependency directions, and derived readiness.
+ * @summary Read a Ticket
+ */
+export const getV1TicketsByTicketId = (
+  ticketID: number,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<TicketResponse>> => {
+  return axios.get(`/v1/tickets/${ticketID}`, options);
+};
+
+export const getGetV1TicketsByTicketIdQueryKey = (ticketID?: number) => {
+  return [`/v1/tickets/${ticketID}`] as const;
+};
+
+export const getGetV1TicketsByTicketIdQueryOptions = <
+  TData = Awaited<ReturnType<typeof getV1TicketsByTicketId>>,
+  TError = AxiosError<ErrorModel>,
+>(
+  ticketID: number,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getV1TicketsByTicketId>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetV1TicketsByTicketIdQueryKey(ticketID);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getV1TicketsByTicketId>>> = ({ signal }) =>
+    getV1TicketsByTicketId(ticketID, { signal, ...axiosOptions });
+
+  return { queryKey, queryFn, enabled: !!ticketID, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getV1TicketsByTicketId>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetV1TicketsByTicketIdQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getV1TicketsByTicketId>>
+>;
+export type GetV1TicketsByTicketIdQueryError = AxiosError<ErrorModel>;
+
+export function useGetV1TicketsByTicketId<
+  TData = Awaited<ReturnType<typeof getV1TicketsByTicketId>>,
+  TError = AxiosError<ErrorModel>,
+>(
+  ticketID: number,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getV1TicketsByTicketId>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getV1TicketsByTicketId>>,
+          TError,
+          Awaited<ReturnType<typeof getV1TicketsByTicketId>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useGetV1TicketsByTicketId<
+  TData = Awaited<ReturnType<typeof getV1TicketsByTicketId>>,
+  TError = AxiosError<ErrorModel>,
+>(
+  ticketID: number,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getV1TicketsByTicketId>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getV1TicketsByTicketId>>,
+          TError,
+          Awaited<ReturnType<typeof getV1TicketsByTicketId>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useGetV1TicketsByTicketId<
+  TData = Awaited<ReturnType<typeof getV1TicketsByTicketId>>,
+  TError = AxiosError<ErrorModel>,
+>(
+  ticketID: number,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getV1TicketsByTicketId>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+/**
+ * @summary Read a Ticket
+ */
+
+export function useGetV1TicketsByTicketId<
+  TData = Awaited<ReturnType<typeof getV1TicketsByTicketId>>,
+  TError = AxiosError<ErrorModel>,
+>(
+  ticketID: number,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getV1TicketsByTicketId>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getGetV1TicketsByTicketIdQueryOptions(ticketID, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Removes a dependency edge when it exists.
+ * @summary Remove a Ticket blocker
+ */
+export const deleteV1TicketsByTicketIdBlockersByBlockerTicketId = (
+  ticketID: number,
+  blockerTicketID: number,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<void>> => {
+  return axios.delete(`/v1/tickets/${ticketID}/blockers/${blockerTicketID}`, options);
+};
+
+export const getDeleteV1TicketsByTicketIdBlockersByBlockerTicketIdMutationOptions = <
+  TError = AxiosError<ErrorModel>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteV1TicketsByTicketIdBlockersByBlockerTicketId>>,
+    TError,
+    { ticketID: number; blockerTicketID: number },
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteV1TicketsByTicketIdBlockersByBlockerTicketId>>,
+  TError,
+  { ticketID: number; blockerTicketID: number },
+  TContext
+> => {
+  const mutationKey = ["deleteV1TicketsByTicketIdBlockersByBlockerTicketId"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteV1TicketsByTicketIdBlockersByBlockerTicketId>>,
+    { ticketID: number; blockerTicketID: number }
+  > = (props) => {
+    const { ticketID, blockerTicketID } = props ?? {};
+
+    return deleteV1TicketsByTicketIdBlockersByBlockerTicketId(
+      ticketID,
+      blockerTicketID,
+      axiosOptions,
+    );
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteV1TicketsByTicketIdBlockersByBlockerTicketIdMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteV1TicketsByTicketIdBlockersByBlockerTicketId>>
+>;
+
+export type DeleteV1TicketsByTicketIdBlockersByBlockerTicketIdMutationError =
+  AxiosError<ErrorModel>;
+
+/**
+ * @summary Remove a Ticket blocker
+ */
+export const useDeleteV1TicketsByTicketIdBlockersByBlockerTicketId = <
+  TError = AxiosError<ErrorModel>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof deleteV1TicketsByTicketIdBlockersByBlockerTicketId>>,
+      TError,
+      { ticketID: number; blockerTicketID: number },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof deleteV1TicketsByTicketIdBlockersByBlockerTicketId>>,
+  TError,
+  { ticketID: number; blockerTicketID: number },
+  TContext
+> => {
+  const mutationOptions =
+    getDeleteV1TicketsByTicketIdBlockersByBlockerTicketIdMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
+ * Records that the first Ticket is blocked by the second.
+ * @summary Add a Ticket blocker
+ */
+export const putV1TicketsByTicketIdBlockersByBlockerTicketId = (
+  ticketID: number,
+  blockerTicketID: number,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<void>> => {
+  return axios.put(`/v1/tickets/${ticketID}/blockers/${blockerTicketID}`, undefined, options);
+};
+
+export const getPutV1TicketsByTicketIdBlockersByBlockerTicketIdMutationOptions = <
+  TError = AxiosError<ErrorModel>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof putV1TicketsByTicketIdBlockersByBlockerTicketId>>,
+    TError,
+    { ticketID: number; blockerTicketID: number },
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof putV1TicketsByTicketIdBlockersByBlockerTicketId>>,
+  TError,
+  { ticketID: number; blockerTicketID: number },
+  TContext
+> => {
+  const mutationKey = ["putV1TicketsByTicketIdBlockersByBlockerTicketId"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof putV1TicketsByTicketIdBlockersByBlockerTicketId>>,
+    { ticketID: number; blockerTicketID: number }
+  > = (props) => {
+    const { ticketID, blockerTicketID } = props ?? {};
+
+    return putV1TicketsByTicketIdBlockersByBlockerTicketId(ticketID, blockerTicketID, axiosOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PutV1TicketsByTicketIdBlockersByBlockerTicketIdMutationResult = NonNullable<
+  Awaited<ReturnType<typeof putV1TicketsByTicketIdBlockersByBlockerTicketId>>
+>;
+
+export type PutV1TicketsByTicketIdBlockersByBlockerTicketIdMutationError = AxiosError<ErrorModel>;
+
+/**
+ * @summary Add a Ticket blocker
+ */
+export const usePutV1TicketsByTicketIdBlockersByBlockerTicketId = <
+  TError = AxiosError<ErrorModel>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof putV1TicketsByTicketIdBlockersByBlockerTicketId>>,
+      TError,
+      { ticketID: number; blockerTicketID: number },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof putV1TicketsByTicketIdBlockersByBlockerTicketId>>,
+  TError,
+  { ticketID: number; blockerTicketID: number },
+  TContext
+> => {
+  const mutationOptions =
+    getPutV1TicketsByTicketIdBlockersByBlockerTicketIdMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
  * Success means Temporal accepted cancellation of the ticket workflow. This endpoint does not wait for cleanup or database state to become observable.
  * @summary Cancel a ticket run
  */
@@ -477,6 +1065,88 @@ export const usePostV1TicketsByTicketIdCancel = <
   TContext
 > => {
   const mutationOptions = getPostV1TicketsByTicketIdCancelMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
+ * Moves a Ticket through its legal lifecycle transitions.
+ * @summary Update Ticket state
+ */
+export const patchV1TicketsByTicketIdState = (
+  ticketID: number,
+  stateTicketInputBody: NonReadonly<StateTicketInputBody>,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<TicketResponse>> => {
+  return axios.patch(`/v1/tickets/${ticketID}/state`, stateTicketInputBody, options);
+};
+
+export const getPatchV1TicketsByTicketIdStateMutationOptions = <
+  TError = AxiosError<ErrorModel>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof patchV1TicketsByTicketIdState>>,
+    TError,
+    { ticketID: number; data: NonReadonly<StateTicketInputBody> },
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof patchV1TicketsByTicketIdState>>,
+  TError,
+  { ticketID: number; data: NonReadonly<StateTicketInputBody> },
+  TContext
+> => {
+  const mutationKey = ["patchV1TicketsByTicketIdState"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof patchV1TicketsByTicketIdState>>,
+    { ticketID: number; data: NonReadonly<StateTicketInputBody> }
+  > = (props) => {
+    const { ticketID, data } = props ?? {};
+
+    return patchV1TicketsByTicketIdState(ticketID, data, axiosOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PatchV1TicketsByTicketIdStateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof patchV1TicketsByTicketIdState>>
+>;
+export type PatchV1TicketsByTicketIdStateMutationBody = NonReadonly<StateTicketInputBody>;
+export type PatchV1TicketsByTicketIdStateMutationError = AxiosError<ErrorModel>;
+
+/**
+ * @summary Update Ticket state
+ */
+export const usePatchV1TicketsByTicketIdState = <
+  TError = AxiosError<ErrorModel>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof patchV1TicketsByTicketIdState>>,
+      TError,
+      { ticketID: number; data: NonReadonly<StateTicketInputBody> },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof patchV1TicketsByTicketIdState>>,
+  TError,
+  { ticketID: number; data: NonReadonly<StateTicketInputBody> },
+  TContext
+> => {
+  const mutationOptions = getPatchV1TicketsByTicketIdStateMutationOptions(options);
 
   return useMutation(mutationOptions, queryClient);
 };

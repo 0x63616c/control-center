@@ -111,7 +111,7 @@ func (f *Store) Ticket(_ context.Context, id store.TicketID) (store.Ticket, erro
 	defer f.mu.Unlock()
 	t, ok := f.tickets[id]
 	if !ok {
-		return store.Ticket{}, fmt.Errorf("ticket %d: %w", id, errNotFound)
+		return store.Ticket{}, fmt.Errorf("ticket %d: %w", id, store.ErrNotFound)
 	}
 	return t, nil
 }
@@ -130,6 +130,18 @@ func (f *Store) TicketsByState(_ context.Context, state store.TicketState) ([]st
 	return out, nil
 }
 
+// Tickets lists every Ticket, ordered by id.
+func (f *Store) Tickets(_ context.Context) ([]store.Ticket, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]store.Ticket, 0, len(f.tickets))
+	for _, ticket := range f.tickets {
+		out = append(out, ticket)
+	}
+	sortTickets(out)
+	return out, nil
+}
+
 // UpdateTicketState moves ticket id to state.
 func (f *Store) UpdateTicketState(_ context.Context, id store.TicketID, state store.TicketState) (store.Ticket, error) {
 	f.mu.Lock()
@@ -142,6 +154,20 @@ func (f *Store) UpdateTicketState(_ context.Context, id store.TicketID, state st
 	t.UpdatedAt = f.clk.Now()
 	f.tickets[id] = t
 	return t, nil
+}
+
+// TransitionTicketState atomically moves a Ticket only from the expected state.
+func (f *Store) TransitionTicketState(_ context.Context, id store.TicketID, from, to store.TicketState) (store.Ticket, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ticket, ok := f.tickets[id]
+	if !ok || ticket.State != from {
+		return store.Ticket{}, fmt.Errorf("ticket %d: %w", id, store.ErrNotFound)
+	}
+	ticket.State = to
+	ticket.UpdatedAt = f.clk.Now()
+	f.tickets[id] = ticket
+	return ticket, nil
 }
 
 // ReadyTickets lists every open Ticket whose direct dependencies are all
@@ -187,6 +213,20 @@ func (f *Store) AddTicketDependency(_ context.Context, blocker, blocked store.Ti
 	return nil
 }
 
+// AddTicketDependencyIfAcyclic atomically mirrors the PostgreSQL graph write.
+func (f *Store) AddTicketDependencyIfAcyclic(_ context.Context, blocker, blocked store.TicketID) ([]store.TicketID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if path := f.ticketDependencyPathLocked(blocked, blocker); len(path) > 0 {
+		return path, nil
+	}
+	if f.edges[blocker] == nil {
+		f.edges[blocker] = make(map[store.TicketID]bool)
+	}
+	f.edges[blocker][blocked] = true
+	return nil, nil
+}
+
 // RemoveTicketDependency removes a previously recorded dependency edge.
 func (f *Store) RemoveTicketDependency(_ context.Context, blocker, blocked store.TicketID) error {
 	f.mu.Lock()
@@ -219,6 +259,34 @@ func (f *Store) TicketBlocks(_ context.Context, ticket store.TicketID) ([]store.
 	}
 	sortTickets(out)
 	return out, nil
+}
+
+// TicketDependencyPath returns the existing blocker-to-blocked path from
+// from to to, or nil when the graph has none.
+func (f *Store) TicketDependencyPath(_ context.Context, from, to store.TicketID) ([]store.TicketID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.ticketDependencyPathLocked(from, to), nil
+}
+
+func (f *Store) ticketDependencyPathLocked(from, to store.TicketID) []store.TicketID {
+	queue := [][]store.TicketID{{from}}
+	seen := map[store.TicketID]bool{from: true}
+	for len(queue) > 0 {
+		path := queue[0]
+		queue = queue[1:]
+		last := path[len(path)-1]
+		if last == to {
+			return path
+		}
+		for next := range f.edges[last] {
+			if !seen[next] {
+				seen[next] = true
+				queue = append(queue, append(append([]store.TicketID(nil), path...), next))
+			}
+		}
+	}
+	return nil
 }
 
 func sortTickets(tickets []store.Ticket) {
