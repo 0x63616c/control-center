@@ -137,6 +137,38 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 		}
 	})
 
+	t.Run("run identity belongs to exactly one ticket", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		first, err := s.CreateTicket(ctx, "first target owner", "", nil)
+		if err != nil {
+			t.Fatalf("CreateTicket(first): %v", err)
+		}
+		second, err := s.CreateTicket(ctx, "second target owner", "", nil)
+		if err != nil {
+			t.Fatalf("CreateTicket(second): %v", err)
+		}
+		runID := uuid.NewString()
+		startedAt := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+		claim := store.ClaimRunInput{TicketID: first.ID, RunID: runID, StartedAt: startedAt}
+		if _, err := s.ClaimAndStartRun(ctx, claim); err != nil {
+			t.Fatalf("ClaimAndStartRun(first): %v", err)
+		}
+		if _, err := s.ClaimAndStartRun(ctx, claim); err != nil {
+			t.Fatalf("ClaimAndStartRun(exact retry): %v", err)
+		}
+		if _, err := s.ClaimAndStartRun(ctx, store.ClaimRunInput{TicketID: second.ID, RunID: runID, StartedAt: startedAt}); !errors.Is(err, work.ErrPermanent) {
+			t.Fatalf("ClaimAndStartRun(reused run identity) error = %v, want permanent", err)
+		}
+		stored, err := s.Ticket(ctx, second.ID)
+		if err != nil {
+			t.Fatalf("Ticket(second): %v", err)
+		}
+		if stored.State != store.TicketOpen || stored.ActiveRunID != "" {
+			t.Fatalf("second Ticket = %+v, want unchanged open Ticket", stored)
+		}
+	})
+
 	t.Run("agent attempt requires its agent step", func(t *testing.T) {
 		s, _, runID, startedAt := claimedRun(t, newStore(t))
 		ctx := context.Background()
@@ -268,7 +300,7 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 		}
 	})
 
-	t.Run("agent checkpoint", func(t *testing.T) {
+	t.Run("agent checkpoint persists running progress before terminal evidence", func(t *testing.T) {
 		s, _, runID, startedAt := claimedRun(t, newStore(t))
 		ctx := context.Background()
 		if _, err := s.StartStep(ctx, store.StartStepInput{RunID: runID, Ordinal: 1, Kind: work.StepImplement, StartedAt: startedAt}); err != nil {
@@ -281,12 +313,40 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 		if err := s.BindCheckpointCapability(ctx, attemptID, "contract-capability"); err != nil {
 			t.Fatalf("BindCheckpointCapability: %v", err)
 		}
+		running := store.AgentCheckpointInput{
+			ID: attemptID, Capability: "contract-capability", ThreadID: "thread-1",
+			State: work.AgentAttemptRunning, UsageState: work.UsageMeasured,
+			Usage:      work.Usage{InputTokens: 3, CachedInputTokens: 1, OutputTokens: 2, ReasoningTokens: 1},
+			Transcript: &store.TargetTranscript{CompressedBytes: []byte("partial transcript"), Compression: "zstd", UncompressedSizeBytes: 18, Checksum: []byte("partial-checksum")},
+		}
+		if _, err := s.CheckpointAgentAttempt(ctx, running); err != nil {
+			t.Fatalf("CheckpointAgentAttempt(running): %v", err)
+		}
+		if _, err := s.CheckpointAgentAttempt(ctx, running); err != nil {
+			t.Fatalf("CheckpointAgentAttempt(running exact retry): %v", err)
+		}
+		detail, err := s.TargetRunDetail(ctx, runID)
+		if err != nil {
+			t.Fatalf("TargetRunDetail(running checkpoint): %v", err)
+		}
+		if len(detail.Steps) != 1 || len(detail.Steps[0].Attempts) != 1 {
+			t.Fatalf("TargetRunDetail(running checkpoint) = %+v, want one Attempt", detail)
+		}
+		persisted := detail.Steps[0].Attempts[0]
+		if persisted.State != work.AgentAttemptRunning || !persisted.EndedAt.IsZero() || persisted.ProviderThreadID != running.ThreadID || persisted.Usage != running.Usage || !persisted.TranscriptPresent {
+			t.Fatalf("running checkpoint = %+v, want durable non-terminal progress", persisted)
+		}
+		running.ThreadID = "different-thread"
+		if _, err := s.CheckpointAgentAttempt(ctx, running); !errors.Is(err, work.ErrPermanent) {
+			t.Fatalf("CheckpointAgentAttempt(running conflict) error = %v, want permanent", err)
+		}
+
 		checkpoint := store.AgentCheckpointInput{
 			ID: attemptID, Capability: "contract-capability", ThreadID: "thread-1",
 			State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured,
 			Usage:   work.Usage{InputTokens: 3, CachedInputTokens: 1, OutputTokens: 2, ReasoningTokens: 1},
 			EndedAt: startedAt.Add(time.Minute), Result: []byte(`{"kind":"done"}`),
-			Transcript: &store.TargetTranscript{CompressedBytes: []byte("transcript"), Compression: "zstd", UncompressedSizeBytes: 10, Checksum: []byte("checksum")},
+			Transcript: &store.TargetTranscript{CompressedBytes: []byte("terminal transcript"), Compression: "zstd", UncompressedSizeBytes: 19, Checksum: []byte("terminal-checksum")},
 		}
 		if _, err := s.CheckpointAgentAttempt(ctx, checkpoint); err != nil {
 			t.Fatalf("CheckpointAgentAttempt: %v", err)

@@ -390,7 +390,11 @@ INSERT INTO run_agent_transcript (
     run_id, step_ordinal, attempt_no, compressed_bytes, compression,
     uncompressed_size_bytes, checksum
 ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-ON CONFLICT (run_id, step_ordinal, attempt_no) DO NOTHING
+ON CONFLICT (run_id, step_ordinal, attempt_no) DO UPDATE SET
+    compressed_bytes = EXCLUDED.compressed_bytes,
+    compression = EXCLUDED.compression,
+    uncompressed_size_bytes = EXCLUDED.uncompressed_size_bytes,
+    checksum = EXCLUDED.checksum
 `
 
 type PutTargetAgentTranscriptParams struct {

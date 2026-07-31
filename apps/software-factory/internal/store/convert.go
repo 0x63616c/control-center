@@ -34,6 +34,15 @@ func pgTimestamp(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t.UTC().Truncate(time.Microsecond), Valid: true}
 }
 
+// pgOptionalTimestamp converts a zero instant to SQL NULL and any other instant
+// to its UTC microsecond representation.
+func pgOptionalTimestamp(t time.Time) pgtype.Timestamptz {
+	if t.IsZero() {
+		return pgtype.Timestamptz{}
+	}
+	return pgTimestamp(t)
+}
+
 // timeFromPg converts a required timestamptz column back to time.Time.
 func timeFromPg(t pgtype.Timestamptz) time.Time {
 	if !t.Valid {

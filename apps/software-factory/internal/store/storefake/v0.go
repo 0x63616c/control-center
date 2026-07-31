@@ -17,6 +17,9 @@ import (
 func (f *Store) ClaimAndStartRun(_ context.Context, in store.ClaimRunInput) (store.ClaimRunResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if existing, exists := f.runs[in.RunID]; exists && existing.TicketID != in.TicketID {
+		return store.ClaimRunResult{}, fmt.Errorf("claiming ticket %d: run id belongs to another ticket: %w", in.TicketID, work.ErrPermanent)
+	}
 	ticket, ok := f.tickets[in.TicketID]
 	if !ok {
 		return store.ClaimRunResult{}, fmt.Errorf("ticket %d: %w", in.TicketID, store.ErrNotFound)
@@ -175,6 +178,12 @@ func (f *Store) CheckpointAgentAttempt(_ context.Context, in store.AgentCheckpoi
 		}
 		return attempt, nil
 	}
+	if in.State == work.AgentAttemptRunning && attempt.ProviderThreadID != "" {
+		if !runningAgentCheckpointMatches(attempt, in) || !targetTranscriptMatches(f.targetTranscripts[in.ID], in.Transcript) {
+			return store.AgentAttempt{}, fmt.Errorf("checkpoint: conflicting running checkpoint: %w", work.ErrPermanent)
+		}
+		return attempt, nil
+	}
 	attempt.ProviderThreadID, attempt.State, attempt.FailureKind, attempt.UsageState, attempt.Usage, attempt.EndedAt, attempt.Result = in.ThreadID, in.State, in.FailureKind, in.UsageState, in.Usage, in.EndedAt, in.Result
 	attempt.TranscriptPresent = in.Transcript != nil
 	f.targetAttempts[in.ID] = attempt
@@ -192,6 +201,10 @@ func terminalAgentCheckpointMatches(attempt store.AgentAttempt, in store.AgentCh
 		attempt.Usage == in.Usage &&
 		attempt.EndedAt.Equal(in.EndedAt) &&
 		jsonEqual(attempt.Result, in.Result)
+}
+
+func runningAgentCheckpointMatches(attempt store.AgentAttempt, in store.AgentCheckpointInput) bool {
+	return terminalAgentCheckpointMatches(attempt, in) && in.State == work.AgentAttemptRunning && in.EndedAt.IsZero() && len(in.Result) == 0
 }
 
 func targetTranscriptMatches(current store.TargetTranscript, in *store.TargetTranscript) bool {

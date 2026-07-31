@@ -393,7 +393,7 @@ func (s *Store) StartAgentAttempt(ctx context.Context, in StartAgentAttemptInput
 	return agentAttemptFromRow(row), nil
 }
 
-// AgentCheckpointInput is the terminal durable checkpoint written by a scoped Run Worker capability.
+// AgentCheckpointInput is durable running progress or terminal evidence written by a scoped Run Worker capability.
 type AgentCheckpointInput struct {
 	ID          TargetAttemptID
 	Capability  string
@@ -588,7 +588,17 @@ func (s *Store) CheckpointAgentAttempt(ctx context.Context, in AgentCheckpointIn
 		}
 		return agentAttemptFromRow(current), nil
 	}
-	row, err := q.CheckpointTargetAgentAttempt(ctx, storedb.CheckpointTargetAgentAttemptParams{RunID: id, StepOrdinal: int32(in.ID.StepOrdinal), AttemptNo: int32(in.ID.AttemptNo), ProviderThreadID: in.ThreadID, State: string(in.State), FailureKind: string(in.FailureKind), UsageState: string(in.UsageState), InputTokens: in.Usage.InputTokens, CachedInputTokens: in.Usage.CachedInputTokens, OutputTokens: in.Usage.OutputTokens, ReasoningTokens: in.Usage.ReasoningTokens, EndedAt: pgTimestamp(in.EndedAt), Result: in.Result})
+	if in.State == work.AgentAttemptRunning && current.ProviderThreadID != "" {
+		storedTranscript, transcriptErr := q.TargetAgentTranscript(ctx, storedb.TargetAgentTranscriptParams{RunID: id, StepOrdinal: int32(in.ID.StepOrdinal), AttemptNo: int32(in.ID.AttemptNo)})
+		if !runningAgentCheckpointMatches(current, in) || !targetTranscriptMatchesOptional(storedTranscript, transcriptErr, in.Transcript) {
+			return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: conflicting running checkpoint: %w", work.ErrPermanent)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: committing retry: %w", wrapQueryErr(err))
+		}
+		return agentAttemptFromRow(current), nil
+	}
+	row, err := q.CheckpointTargetAgentAttempt(ctx, storedb.CheckpointTargetAgentAttemptParams{RunID: id, StepOrdinal: int32(in.ID.StepOrdinal), AttemptNo: int32(in.ID.AttemptNo), ProviderThreadID: in.ThreadID, State: string(in.State), FailureKind: string(in.FailureKind), UsageState: string(in.UsageState), InputTokens: in.Usage.InputTokens, CachedInputTokens: in.Usage.CachedInputTokens, OutputTokens: in.Usage.OutputTokens, ReasoningTokens: in.Usage.ReasoningTokens, EndedAt: pgOptionalTimestamp(in.EndedAt), Result: in.Result})
 	if err != nil {
 		return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt %s: %w", in.ID, wrapQueryErr(err))
 	}
@@ -923,6 +933,18 @@ func (in AgentCheckpointInput) Validate() error {
 	if in.UsageState != work.UsageUnknown && in.UsageState != work.UsageMeasured {
 		return fmt.Errorf("checkpointing agent attempt %s: usage state is required: %w", in.ID, work.ErrPermanent)
 	}
+	if in.State == work.AgentAttemptRunning {
+		if in.ThreadID == "" {
+			return fmt.Errorf("checkpointing agent attempt %s: provider identity is required: %w", in.ID, work.ErrPermanent)
+		}
+		if !in.EndedAt.IsZero() || len(in.Result) != 0 {
+			return fmt.Errorf("checkpointing agent attempt %s: running checkpoint cannot be terminal: %w", in.ID, work.ErrPermanent)
+		}
+		return nil
+	}
+	if in.EndedAt.IsZero() {
+		return fmt.Errorf("checkpointing agent attempt %s: terminal time is required: %w", in.ID, work.ErrPermanent)
+	}
 	if in.State != work.AgentAttemptSucceeded {
 		return nil
 	}
@@ -954,6 +976,17 @@ func terminalAgentCheckpointMatches(current storedb.RunAgentAttempt, in AgentChe
 		current.ReasoningTokens == in.Usage.ReasoningTokens &&
 		timeFromPg(current.EndedAt).Equal(in.EndedAt.Truncate(time.Microsecond)) &&
 		jsonEqual(current.Result, in.Result)
+}
+
+func runningAgentCheckpointMatches(current storedb.RunAgentAttempt, in AgentCheckpointInput) bool {
+	return terminalAgentCheckpointMatches(current, in) && in.State == work.AgentAttemptRunning && in.EndedAt.IsZero() && len(in.Result) == 0
+}
+
+func targetTranscriptMatchesOptional(current storedb.RunAgentTranscript, err error, in *TargetTranscript) bool {
+	if in == nil {
+		return errors.Is(err, pgx.ErrNoRows)
+	}
+	return err == nil && targetTranscriptMatches(current, *in)
 }
 
 func targetTranscriptMatches(current storedb.RunAgentTranscript, in TargetTranscript) bool {
