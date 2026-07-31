@@ -98,14 +98,16 @@
   ],
 
   // `tilt` is the dev-stack binary invoked by the root `dev` script; not an npm dep.
-  // `security` is the macOS Keychain CLI used by vault.ts to retrieve the age
-  // private key at runtime; not an npm dep (CC-k8t7).
+  // (vault.ts also spawns the macOS `security` CLI to read the age private key,
+  // CC-k8t7, but that call is a template-string exec, not a package.json script,
+  // so knip's binaries check never saw it and an ignore entry for it was dead
+  // config - knip itself flagged it stale.)
   // `kubectl` is spawned by the infra ghcr-pull-secret preflight to read live
   // Secrets during `pulumi up`; a system binary on the deploy runner, not an npm dep.
   // `openssl` is spawned by the guest-server TLS test to generate a throwaway
   // self-signed cert at run time (never committed, see guest-server.test.ts);
   // a system binary on macOS/CI Linux images, not an npm dep.
-  "ignoreBinaries": ["tilt", "scripts/check-rename-identity.py", "security", "kubectl", "openssl"],
+  "ignoreBinaries": ["tilt", "scripts/check-rename-identity.py", "kubectl", "openssl"],
 
   "workspaces": {
     ".": {
