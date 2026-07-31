@@ -125,20 +125,41 @@ func TestReviewFindingsSchemaAndDecoderDeclareTheSameFields(t *testing.T) {
 	}
 }
 
-// TestVerifiedIsOptionalInTheReviewSchema pins the one asymmetry on purpose:
-// verified carries no control flow, so a turn that omits it must not fail the
-// stage. Making it required would turn a whole run red over a field nothing
-// branches on. See work.ReviewOutput.Verified.
-func TestVerifiedIsOptionalInTheReviewSchema(t *testing.T) {
+// TestEveryStageSchemaRequiresEveryPropertyItDeclares is the regression test
+// for #576: review.schema.json declared "verified" as a property but left it
+// out of the top-level "required" array, which reads as "optional" to a
+// human but is not a shape codex's structured-output mode accepts at all —
+// it rejects a schema where "required" omits any declared property before
+// spending a single token, on every stage's every turn, not just review's.
+//
+// verified itself stays semantically optional: a turn that finds nothing to
+// name in it answers with an empty array, which costs nothing and branches
+// on nothing (see work.ReviewOutput.Verified). That is what "optional" has
+// to mean here — every property present in "required", with an empty value
+// standing in for "nothing to say" — never a property missing from
+// "required" outright.
+func TestEveryStageSchemaRequiresEveryPropertyItDeclares(t *testing.T) {
 	t.Parallel()
 
-	doc := readSchema(t, "templates/review.schema.json")
-	for _, name := range doc.Required {
-		if name == "verified" {
-			t.Error("review.schema.json requires verified; it is advisory and must stay optional")
-		}
+	files := []string{
+		"templates/plan.schema.json",
+		"templates/implement.schema.json",
+		"templates/review.schema.json",
 	}
-	if _, ok := doc.Properties["verified"]; !ok {
-		t.Error("review.schema.json does not declare verified, so no review turn is ever told to answer with it")
+	for _, file := range files {
+		t.Run(file, func(t *testing.T) {
+			t.Parallel()
+
+			doc := readSchema(t, file)
+			required := make(map[string]bool, len(doc.Required))
+			for _, name := range doc.Required {
+				required[name] = true
+			}
+			for name := range doc.Properties {
+				if !required[name] {
+					t.Errorf("%s declares %q but does not require it; codex's structured-output mode rejects a schema where \"required\" omits a declared property", file, name)
+				}
+			}
+		})
 	}
 }

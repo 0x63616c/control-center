@@ -4,7 +4,7 @@
   "description": "What the review stage returns: its document, plus every finding it raised.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["document", "findings"],
+  "required": ["document", "findings", "verified"],
   "properties": {
     "document": {
       "type": "string",
