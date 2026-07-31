@@ -299,12 +299,12 @@ Permanent Run Worker loss is different from a main-worker deploy. Session
 failure returns control to `WorkOnTicket`, which creates a new worker generation
 from the Run Policy's same pinned image, reconstructs the branch from durable
 Git state, and resumes after the latest completed Step. Completed Steps and
-cumulative budgets never reset. If the interrupted Agent Attempt cannot be
-resumed from durable provider state, it ends failed and a new Agent Attempt may
-be authorized inside the same Step only while the existing Run-wide budget
-allows it. Making implementer thread state recoverable across a fresh
-filesystem remains an implementation prerequisite rather than an assumption
-that local files survived.
+cumulative budgets never reset. The target Codex CLI cannot resume the
+interrupted provider thread by ID on the replacement's fresh filesystem. The
+incomplete Agent Attempt therefore ends failed under `A12`/`I08`, and a new
+Agent Attempt may be authorized inside the same Step only while the existing
+Run-wide budget allows it. The design never assumes that local provider files
+or unpushed repository state survived.
 
 The Run Worker registers clone, agent execution, pull-request synchronization,
 GitHub reads/writes, CI waiting, readying, and merge. The main worker registers
@@ -458,13 +458,13 @@ next slot from the cumulative five-Review-Step budget as well as its Agent
 Attempt. A second merge conflict continues from those new totals; neither
 counter resets.
 
-That Implement Step resumes the existing implementer Agent Thread rather than
-starting a context-free agent. It receives the authoritative merge outcome as
-structured input: the pull request, the exact reviewed head SHA, the target
-branch and its current head SHA, and the bounded conflict diagnostics available
-from GitHub. The shared Run Worker workspace and resumed thread preserve the
-implementation context, while the explicit merge handoff tells the implementer
-what changed after review.
+While its Run Worker generation survives, that Implement Step resumes the
+existing implementer Agent Thread rather than starting a context-free agent. It
+receives the authoritative merge outcome as structured input: the pull request,
+the exact reviewed head SHA, the target branch and its current head SHA, and the
+bounded conflict diagnostics available from GitHub. The shared Run Worker
+workspace and resumed thread preserve the implementation context, while the
+explicit merge handoff tells the implementer what changed after review.
 
 The new Implement Step begins at Agent Attempt 1 because Agent Attempt numbers
 are scoped to one Step. That local numbering is not a budget reset: the Run's
@@ -811,12 +811,15 @@ soon as Codex yields a provider thread identity, and again when it reaches a
 terminal result, the trusted Run Worker activity writes a checkpoint through a
 narrow per-Run API capability. The API persists thread identity, terminal
 envelope, usage state, and transcript before the activity acknowledges
-success. A retry or replacement first reads that record and otherwise resumes
-the execution's thread where possible. Only the workflow may allocate a new
-Agent Attempt ID and authorize another potentially chargeable execution. The
-per-Run capability is minted inside provisioning, stored hashed with Run
-ownership, mounted from a Secret, and cannot finalize a Ticket or mutate
-another Run.
+success. A retry first reads that record and may resume the execution's thread
+while the same Run Worker generation and provider state survive. A replacement
+also reconciles the record, but the target Codex CLI cannot resume that thread
+by ID from its fresh filesystem. Without a completed terminal result, the
+replacement fails the incomplete Attempt and waits for explicit workflow
+authorization under `A12`/`I08`. Only the workflow may allocate a new Agent
+Attempt ID and authorize another potentially chargeable execution. The per-Run
+capability is minted inside provisioning, stored hashed with Run ownership,
+mounted from a Secret, and cannot finalize a Ticket or mutate another Run.
 
 Repository-affine effects have a separate durable Git/PR checkpoint. After a
 successful push or pull-request synchronization, the Run Worker atomically
@@ -1372,13 +1375,13 @@ The following code-level policy still needs verification:
 ### Run Worker capabilities and failure
 
 The ownership, credential delivery, recording, and routing model is settled.
-Fresh-filesystem provider resume is an explicit pre-implementation capability
-gate, not a settled Codex capability. Before building the Run Worker, a
-black-box test against the exact target Codex CLI must capture thread identity,
-kill execution at controlled points, and resume from a new process on a fresh
-filesystem. If it cannot do that, A02/I08 and the Attempt recovery behavior
-must be revised explicitly before PR 4; implementation must not silently rely
-on local files surviving or substitute another execution model.
+The pre-implementation black-box gate against the exact target Codex CLI
+captured thread identity, killed execution before and after identity, and tried
+to resume from a new process on a fresh filesystem. Provider-ID-only resume was
+unavailable in both resumable-looking cases. `A02` is therefore limited to a
+surviving Run Worker generation, while permanent worker loss follows
+`A12`/`I08`. Implementation must not persist Codex rollout directories, assume
+local files survive, or silently substitute another execution model.
 
 These remaining implementation details still need a security and failure-mode
 pass:

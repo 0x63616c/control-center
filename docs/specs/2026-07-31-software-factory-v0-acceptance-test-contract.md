@@ -151,7 +151,7 @@ reconciliation are removed.
 | ID | Given | When | Then |
 | --- | --- | --- | --- |
 | A01 | A new agent-backed Step starts | Agent Attempt 1 is authorized | The workflow records the Step and Attempt before persisting any transcript that references them |
-| A02 | An implementer Step follows CI failure, review findings, or merge conflict | Its Agent Attempt starts | It resumes the established implementer Agent Thread while remaining a new Step with Agent Attempt number 1 |
+| A02 | An implementer Step follows CI failure, review findings, or merge conflict while its Run Worker generation survives | Its Agent Attempt starts | It resumes the established implementer Agent Thread on that generation while remaining a new Step with Agent Attempt number 1 |
 | A03 | A Review Step starts | A prior reviewer Thread exists | The Step starts a fresh reviewer Thread and receives the required explicit handoff data rather than relying on conversation memory |
 | A04 | An agent activity try starts | GitHub credentials were minted earlier | A main-control activity updates the per-generation Secret, the Run Worker observes its non-secret revision, and per-command Git/`gh` readers use the current projected token before execution |
 | A05 | One agent activity try remains active for 30 minutes | Renewal time arrives | The projected Secret is renewed without pod exec, remote file copy, restarting the Agent Attempt, or exposing the token in workflow history or a long-lived environment variable |
@@ -162,6 +162,12 @@ reconciliation are removed.
 | A10 | One activity try runs for 55 minutes | It has not completed | That try reaches Start-To-Close timeout while the Agent Attempt retains whatever Schedule-To-Close time remains |
 | A11 | A completed agent result was checkpointed through the per-Run API but the activity response was lost | A retry starts | The activity reads and returns the durable result without running or charging the model again |
 | A12 | An agent execution cannot be resumed and no completed result exists | The workflow still has budget | The current Agent Attempt ends failed and the workflow explicitly creates the next Attempt number before another fresh execution |
+
+`A02` thread continuation is scoped to a surviving Run Worker generation. The
+target Codex CLI does not resume a thread by provider ID from a fresh
+filesystem. Permanent Run Worker loss therefore follows `A12` and `I08`: the
+incomplete Attempt ends failed, and only explicit workflow authorization may
+start a fresh Attempt inside the existing Run-wide budget.
 
 ## Cancellation, timeout, and irreversibility
 
@@ -241,10 +247,12 @@ These scenarios run against real migrated Postgres, not only `storefake`.
 
 The per-Run API checkpoint is the durable recovery seam. It records the
 provider thread identity as soon as Codex exposes it and stores the terminal
-envelope, usage state, and transcript before activity acknowledgement. A
-replacement checks out the last pushed branch and attempts provider-thread
-resume. If the provider cannot resume, `I08` is the safe behavior; the system
-never claims that the same process or unpushed filesystem state survived.
+envelope, usage state, and transcript before activity acknowledgement. An
+activity retry may resume that thread only while the same Run Worker generation
+and its provider state survive. A replacement checks out the last pushed branch
+but cannot use the provider ID alone to resume from its fresh filesystem; it
+follows `A12` and `I08` for an incomplete Attempt. The system never claims that
+the same process or unpushed filesystem state survived.
 
 ## Console, webhook, and infrastructure behavior
 
