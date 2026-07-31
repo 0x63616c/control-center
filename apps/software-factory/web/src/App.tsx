@@ -1,13 +1,6 @@
-import { BuildStatus } from "@/features/build-status/BuildStatus";
-import { useBuildStatus } from "@/features/build-status/useBuildStatus";
+import { Console } from "@/features/console/Console";
+import { useConsole } from "@/features/console/useConsole";
 
 export function App() {
-  const buildStatus = useBuildStatus();
-
-  return (
-    <main>
-      <h1>Software Factory</h1>
-      <BuildStatus state={buildStatus} />
-    </main>
-  );
+  return <Console state={useConsole()} />;
 }

@@ -16,6 +16,145 @@ components:
       required:
         - version
       type: object
+    ConsoleDispatcher:
+      additionalProperties: false
+      properties:
+        ageSeconds:
+          format: int64
+          type: integer
+        candidates:
+          items:
+            format: int64
+            type: integer
+          type:
+            - array
+            - "null"
+        freeSlots:
+          format: int64
+          type: integer
+        inFlight:
+          items:
+            $ref: "#/components/schemas/ConsoleInFlight"
+          type:
+            - array
+            - "null"
+        stale:
+          type: boolean
+        writtenAt:
+          type: string
+      required:
+        - inFlight
+        - candidates
+        - freeSlots
+        - writtenAt
+        - ageSeconds
+        - stale
+      type: object
+    ConsoleFactory:
+      additionalProperties: false
+      properties:
+        breakerOpen:
+          type: boolean
+        breakerOpenUntil:
+          type: string
+        breakerReason:
+          type: string
+        configError:
+          type: string
+        maxInFlight:
+          format: int64
+          type: integer
+        pauseReason:
+          type: string
+        paused:
+          type: boolean
+      required:
+        - paused
+        - pauseReason
+        - maxInFlight
+        - configError
+        - breakerOpen
+        - breakerReason
+        - breakerOpenUntil
+      type: object
+    ConsoleInFlight:
+      additionalProperties: false
+      properties:
+        issueNumber:
+          format: int64
+          type: integer
+        runID:
+          type: string
+        startedAt:
+          type: string
+      required:
+        - issueNumber
+        - runID
+        - startedAt
+      type: object
+    ConsoleResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ConsoleResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        dispatcher:
+          $ref: "#/components/schemas/ConsoleDispatcher"
+        factory:
+          $ref: "#/components/schemas/ConsoleFactory"
+        tickets:
+          items:
+            $ref: "#/components/schemas/ConsoleTicket"
+          type:
+            - array
+            - "null"
+      required:
+        - factory
+        - dispatcher
+        - tickets
+      type: object
+    ConsoleTicket:
+      additionalProperties: false
+      properties:
+        blockers:
+          description: Tickets preventing this Ticket from becoming ready.
+          items:
+            $ref: "#/components/schemas/TicketSummary"
+          type:
+            - array
+            - "null"
+        createdAt:
+          description: The Ticket creation time in RFC3339 UTC.
+          type: string
+        id:
+          description: The Ticket identifier.
+          format: int64
+          type: integer
+        ready:
+          description: Whether this open Ticket is ready.
+          type: boolean
+        state:
+          description: The Ticket lifecycle state.
+          type: string
+        title:
+          description: The Ticket title.
+          type: string
+        updatedAt:
+          description: The Ticket's latest update time in RFC3339 UTC.
+          type: string
+      required:
+        - id
+        - title
+        - state
+        - ready
+        - createdAt
+        - updatedAt
+        - blockers
+      type: object
     CreateTicketInputBody:
       additionalProperties: false
       properties:
@@ -274,6 +413,24 @@ paths:
                 $ref: "#/components/schemas/ErrorModel"
           description: Error
       summary: Get v1 build
+  /v1/console:
+    get:
+      description: Returns the dispatcher-recorded legacy Issue decision and derived Ticket blockers without recomputing dispatch selection in the browser.
+      operationId: get-v1-console
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConsoleResponse"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Read console snapshot
   /v1/factory/max-in-flight:
     post:
       description: Success means Temporal accepted the UpdateConfig signal. The dispatcher applies this configuration on its next tick; this endpoint does not poll for observable state.

@@ -26,15 +26,36 @@ afterEach(() => {
 });
 
 describe("App", () => {
-  it("renders the build version returned by the generated client", async () => {
-    vi.mocked(axios.get).mockResolvedValueOnce({ data: { version: "abc1234" } });
+  it("renders the dispatcher snapshot returned by the generated client", async () => {
+    vi.mocked(axios.get).mockResolvedValueOnce({
+      data: {
+        factory: {
+          paused: false,
+          pauseReason: "",
+          maxInFlight: 3,
+          configError: "",
+          breakerOpen: false,
+          breakerReason: "",
+          breakerOpenUntil: "0001-01-01T00:00:00Z",
+        },
+        dispatcher: {
+          inFlight: [],
+          candidates: [555],
+          freeSlots: 2,
+          writtenAt: "2026-07-31T12:00:00Z",
+          ageSeconds: 0,
+          stale: false,
+        },
+        tickets: [],
+      },
+    });
 
     renderWithClient();
 
     await waitFor(() => {
-      expect(screen.getByTestId("build-status")).toHaveTextContent("abc1234");
+      expect(screen.getByRole("heading", { name: "Next" })).toBeInTheDocument();
     });
-    expect(axios.get).toHaveBeenCalledWith("/v1/build", expect.anything());
+    expect(axios.get).toHaveBeenCalledWith("/v1/console", expect.anything());
   });
 
   it("shows an honest error instead of fake data when the API is unreachable", async () => {
