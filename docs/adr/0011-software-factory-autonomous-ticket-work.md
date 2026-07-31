@@ -368,7 +368,7 @@ cluster is #327.
 
 ## One nested directory, one Go module
 
-`apps/software-factory/` holds the whole product: the Go module at its root and both images
+`apps/software-factory/` holds the whole product: the Go module at its root and all three images
 under `images/`. This nests where every other `apps/*` entry is flat, and one module serves
 what will be several binaries — both chosen for the same reason, that more components are
 expected here and the alternatives are worse under growth. Flat siblings would spread
@@ -377,11 +377,11 @@ and the lint config before there is anything to fragment. Splitting a module lat
 cheap; unsplitting is not.
 
 The nesting is free because nothing in this repo globs `apps/*` — every CI path filter,
-Dockerfile path and bun workspace is enumerated by name. It costs one thing: both images
+Dockerfile path and bun workspace is enumerated by name. It costs one thing: all three images
 sit behind the single path filter `apps/software-factory/**`, so a worker-only change
-rebuilds the sandbox. Per-image filters were rejected as the expensive direction to be
-wrong in — the two share the argv contract, and this repo has already shipped stale images
-from digests that a filter did not catch.
+rebuilds the sandbox and relay. Per-image filters were rejected as the expensive direction
+to be wrong in — the shared module has already shipped stale images from digests that a
+filter did not catch.
 
 ## Go standards are scoped to this directory
 
@@ -427,7 +427,8 @@ achieves the same isolation with one login and no volumes.
 
 A second language toolchain enters CI alongside the five mechanical touchpoints any new app
 needs — path filter, build job, `needs:`, digest collection, `IMAGE_REPOSITORIES` — and
-there are two images, the Go worker and the sandbox runner, so those touchpoints double.
+there are three images, the Go worker, sandbox runner, and stateless webhook relay, so
+those touchpoints must cover each image.
 `software-factory` becomes its own product via `defineProduct`, so its images are
 `www-software-factory-*` rather than components of `control-center`.
 

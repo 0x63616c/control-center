@@ -508,9 +508,8 @@ jobs:
           cache-scope: map-provision
 
 
-  # The software factory's two images (ADR-0011, #342). One path filter serves
-  # both, so a worker-only edit rebuilds the sandbox — the cheap direction to be
-  # wrong in, and the reason `apps/software-factory/**` is a single filter.
+  # The software factory module's three images. One path filter serves all of
+  # them, so a shared edit cannot leave an existing component stale.
   #
   # No BUILD_HASH/BUILD_TIME build-args: neither image renders a build badge.
   build-software-factory-worker:
@@ -567,6 +566,23 @@ jobs:
           docker image inspect --format 'sandbox image size: {{.Size}} bytes' sf-sandbox:ci
           apps/software-factory/images/sandbox/smoke.sh sf-sandbox:ci
 
+  build-software-factory-relay:
+    needs: [changes]
+    if: needs.changes.outputs.softwarefactory == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: prod
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and push webhook relay image
+        uses: ./.github/actions/build-product-image
+        env:
+          SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
+        with:
+          image: www-software-factory-relay
+          dockerfile: apps/software-factory/images/relay/Dockerfile
+          cache-scope: software-factory-relay
+
 
   # After the images build on main, deploy to the home-server Talos cluster with
   # `pulumi up` (www-j934.14). The runner joins the tailnet with an EPHEMERAL
@@ -596,6 +612,7 @@ jobs:
         build-map-provision,
         build-software-factory-worker,
         build-software-factory-sandbox,
+        build-software-factory-relay,
         test-software-factory,
       ]
     # always() lets us run even when some build jobs were skipped (no changes).
@@ -688,7 +705,7 @@ jobs:
           # KEY is product-component scoped and matches the Pulumi imageDigests
           # config key, while repo names use full product slugs.
           declare -A out=()
-          for entry in www-control-center-web:control-center-web www-control-center-manage:control-center-manage www-control-center-api:control-center-api www-control-center-worker:control-center-worker www-control-center-temporal-worker:control-center-temporal-worker www-control-center-map-provision:control-center-map-provision www-software-factory-worker:software-factory-worker www-software-factory-sandbox:software-factory-sandbox; do
+          for entry in www-control-center-web:control-center-web www-control-center-manage:control-center-manage www-control-center-api:control-center-api www-control-center-worker:control-center-worker www-control-center-temporal-worker:control-center-temporal-worker www-control-center-map-provision:control-center-map-provision www-software-factory-worker:software-factory-worker www-software-factory-sandbox:software-factory-sandbox www-software-factory-relay:software-factory-relay; do
             repo="${entry%%:*}"
             name="${entry#*:}"
             d=$(docker buildx imagetools inspect "ghcr.io/0x63616c/$repo:main" --format '{{.Manifest.Digest}}' 2>/dev/null || true)

@@ -144,12 +144,13 @@ this is in the App settings UI:
 5. Commit the re-encrypted `secrets/vault.yaml`, push, merge. The deploy rolls
    the k8s Secret.
 
-⚠️ **Rotating the webhook secret opens a gap.** The running api verifies against
-the old secret until the deploy lands, so deliveries in that window get a 401 —
-and GitHub does **not** retry them automatically. Afterwards, open the App's
-*Advanced → Recent Deliveries* and hit **Redeliver** on anything that failed.
-Replaying is safe: `incoming_webhook` is keyed on the delivery id, so a
-redelivery cannot duplicate a row.
+⚠️ **Rotating the webhook secret opens a gap.** The public webhook relay and
+its control-center API consumer both verify against the old secret until the
+deploy lands, so deliveries in that window get a 401 — and GitHub does **not**
+retry them automatically. Afterwards, open the App's *Advanced → Recent
+Deliveries* and hit **Redeliver** on anything that failed. Replaying is safe:
+`incoming_webhook` is keyed on the delivery id, so a redelivery cannot duplicate
+a row.
 
 The private key and client secret have no such window — nothing in the cluster
 reads them yet.

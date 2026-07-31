@@ -32,7 +32,7 @@ export function genId(prefix: string, options?: { length?: number }): string {
 }
 
 // "software-factory" is a product for IMAGE-NAMING purposes and for nothing
-// else (ADR-0011): its two images are www-software-factory-{worker,sandbox}
+// else (ADR-0011): its three images are www-software-factory-{worker,sandbox,relay}
 // rather than components of control-center, and this is the one place that
 // spelling is derived. It ships no web/api image, has no CNPG database and is
 // not part of the control-center deploy, so it is deliberately EXCLUDED from
@@ -477,8 +477,10 @@ export function controlCenterServiceSecretUsages(): Record<
     ASC_KEY_ID: secretCatalog.appStoreConnect.keyId,
     ASC_ISSUER_ID: secretCatalog.appStoreConnect.issuerId,
     ASC_KEY_CONTENT: secretCatalog.appStoreConnect.p8Content,
-    // GitHub webhook signature verification (#126). Only the api serves the
-    // endpoint, but api/worker secret sets are kept in lockstep (www-51hf.35).
+    // GitHub webhook signature verification (#126). The public hooks. host now
+    // terminates at the webhook relay, which is the outermost HMAC boundary;
+    // the api still verifies the same signature in-cluster as defence in depth.
+    // api/worker secret sets are kept in lockstep (www-51hf.35).
     GITHUB_BOT_WEBHOOK_SECRET: secretCatalog.githubBot.webhookSecret,
     // Deploys-tile poller. Only the worker reads it, but api/worker secret sets
     // are kept in lockstep (www-51hf.35), so it appears in both.
@@ -740,9 +742,9 @@ export type ControlCenterProductManifest = Readonly<{
   dsm: Readonly<{
     exposure: WebExposure;
   }>;
-  // The public GitHub webhook host (#126). Served by the api workload, but it
+  // The public GitHub webhook host (#126). Served by the webhook relay, but it
   // is NOT the api's exposure: api stays `internalService` for in-cluster
-  // traffic and gains this one public hostname that the tunnel maps to it.
+  // traffic while the tunnel maps this hostname to the relay.
   // Owned here because every other public name in this system is owned here.
   hooks: Readonly<{
     exposure: WebExposure;

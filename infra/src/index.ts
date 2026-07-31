@@ -58,3 +58,5 @@ export {
   OBSERVABILITY_NAMESPACE,
   PROMETHEUS_DATASOURCE_UID,
 } from "./observability/index.ts";
+export type { WebhookRelayArgs, WebhookRelayResources } from "./webhook-relay.ts";
+export { installWebhookRelay, WEBHOOK_RELAY_NAMESPACE } from "./webhook-relay.ts";

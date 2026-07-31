@@ -68,9 +68,11 @@ export const ENV = defineEnv({
   HOME_RADIUS_MILES: num().default(1).forRuntime("api").forFeatures("tesla"),
 
   // ── GitHub webhooks (hooks) ───────────────────────────────────────────────
-  // The shared secret GitHub signs every delivery with. Required: hooks. is a
-  // PUBLIC host with no Cloudflare Access in front, so this HMAC is the only
-  // auth boundary — booting the api without it would open a write endpoint.
+  // The shared secret GitHub signs every delivery with. hooks. is a PUBLIC host
+  // with no Cloudflare Access in front, so this HMAC is the auth boundary: the
+  // webhook relay verifies it first at the public edge, and the api verifies it
+  // again in-cluster as defence in depth. Required for both — booting the api
+  // without it would open a write endpoint.
   GITHUB_BOT_WEBHOOK_SECRET: secret().required().forRuntime("api").forFeatures("hooks"),
 
   // ── Tesla (ac, tesla) ─────────────────────────────────────────────────────
