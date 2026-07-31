@@ -226,8 +226,17 @@ func (f *Store) FinalizeConfirmedMerge(_ context.Context, in store.ConfirmedMerg
 	if !ok || step.Kind != work.StepMergePullRequest || step.State != work.StepStateRunning {
 		return store.TerminalResult{}, fmt.Errorf("merge: %w", store.ErrMergeStep)
 	}
+	var successorRunID string
 	if run.TargetOutcome == work.RunOutcomeCanceled {
-		if ticket.State != store.TicketOpen || ticket.ActiveRunID != "" {
+		switch {
+		case ticket.State == store.TicketOpen && ticket.ActiveRunID == "":
+		case ticket.State == store.TicketActive && ticket.ActiveRunID != "" && ticket.ActiveRunID != in.RunID:
+			successor, successorExists := f.runs[ticket.ActiveRunID]
+			if !successorExists || successor.TicketID != in.TicketID || successor.TargetOutcome != "" {
+				return store.TerminalResult{}, fmt.Errorf("merge: %w", store.ErrRunOwnership)
+			}
+			successorRunID = ticket.ActiveRunID
+		default:
 			return store.TerminalResult{}, fmt.Errorf("merge: %w", store.ErrRunOwnership)
 		}
 	} else if ticket.State != store.TicketActive || ticket.ActiveRunID != in.RunID {
@@ -243,8 +252,13 @@ func (f *Store) FinalizeConfirmedMerge(_ context.Context, in store.ConfirmedMerg
 	step.State, step.EndedAt, step.Result = work.StepStateCompleted, in.EndedAt, result
 	f.targetSteps[stepKey] = step
 	if run.TargetOutcome == work.RunOutcomeCanceled {
+		if successorRunID != "" {
+			successor := f.runs[successorRunID]
+			successor.TargetOutcome, successor.EndedAt = work.RunOutcomeCanceled, in.EndedAt
+			f.runs[successorRunID] = successor
+		}
 		run.TargetOutcome, run.ReviewedHead, run.MergeSHA, run.EndedAt = work.RunOutcomeSucceeded, in.ReviewedHead, in.MergeSHA, in.EndedAt
-		ticket.State, ticket.UpdatedAt = store.TicketDone, f.clk.Now()
+		ticket.State, ticket.ActiveRunID, ticket.UpdatedAt = store.TicketDone, "", f.clk.Now()
 		f.runs[in.RunID], f.tickets[in.TicketID] = run, ticket
 		return store.TerminalResult{Ticket: ticket, Run: run}, nil
 	}

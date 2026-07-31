@@ -182,6 +182,32 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 		}
 	})
 
+	t.Run("confirmed merge fences successor owner", func(t *testing.T) {
+		s, ticket, firstRunID, startedAt := claimedRun(t, newStore(t))
+		ctx := context.Background()
+		if _, err := s.StartStep(ctx, store.StartStepInput{RunID: firstRunID, Ordinal: 1, Kind: work.StepMergePullRequest, StartedAt: startedAt}); err != nil {
+			t.Fatalf("StartStep(first merge): %v", err)
+		}
+		if _, err := s.CancelRun(ctx, store.CancelRunInput{RunID: firstRunID, TicketID: ticket.ID, EndedAt: startedAt.Add(time.Minute)}); err != nil {
+			t.Fatalf("CancelRun(first): %v", err)
+		}
+		secondRunID := uuid.NewString()
+		if _, err := s.ClaimAndStartRun(ctx, store.ClaimRunInput{TicketID: ticket.ID, RunID: secondRunID, StartedAt: startedAt.Add(2 * time.Minute)}); err != nil {
+			t.Fatalf("ClaimAndStartRun(second): %v", err)
+		}
+		result, err := s.FinalizeConfirmedMerge(ctx, store.ConfirmedMergeInput{RunID: firstRunID, TicketID: ticket.ID, StepOrdinal: 1, ReviewedHead: "first-head", MergeSHA: "first-merge", EndedAt: startedAt.Add(3 * time.Minute)})
+		if err != nil {
+			t.Fatalf("FinalizeConfirmedMerge(first): %v", err)
+		}
+		second, err := s.TargetRunDetail(ctx, secondRunID)
+		if err != nil {
+			t.Fatalf("TargetRunDetail(second): %v", err)
+		}
+		if result.Ticket.State != store.TicketDone || result.Ticket.ActiveRunID != "" || second.Run.TargetOutcome != work.RunOutcomeCanceled {
+			t.Fatalf("successor fence = result %+v, second %+v; want done Ticket and canceled successor", result, second.Run)
+		}
+	})
+
 	t.Run("confirmed merge requires merge step", func(t *testing.T) {
 		s, ticket, runID, startedAt := claimedRun(t, newStore(t))
 		ctx := context.Background()
