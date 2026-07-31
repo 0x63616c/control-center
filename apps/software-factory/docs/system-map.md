@@ -59,7 +59,12 @@ The configured defaults are owned by `work.DefaultConfig` and
 15-minute breaker cooldown, a 30-minute orphan grace, and `gpt-5.6-terra` at
 medium effort unless a stage override is configured.
 
-The HTTP API (`internal/api`) is the only browser-reachable control entrypoint.
+The HTTP API (`internal/api`) is reached at `factory.worldwidewebb.co` through
+Cloudflare Access. The tunnel targets the namespace-local `web` Service; nginx
+serves the console and proxies `/api/*` to the namespace-local `api` Service.
+The API applies migrations before its readiness endpoint can answer. Both API and
+console run without Kubernetes credentials or transcript storage; only the worker
+mounts the Kubernetes token and transcript volume.
 Its authenticated write commands use `internal/clients/temporal.Commands` to
 send the dispatcher's existing `workflows.SignalUpdateConfig` signal (pause,
 resume, max-in-flight, or an empty update that wakes the next tick); the

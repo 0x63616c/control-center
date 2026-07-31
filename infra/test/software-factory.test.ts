@@ -33,12 +33,19 @@ const vault = {
   GITHUB_BOT_APP__APP_ID: "1",
   GITHUB_BOT_APP__INSTALLATION_ID: "2",
   GITHUB_BOT_APP__PRIVATE_KEY_PEM: "mock-base64-pem",
+  SOFTWARE_FACTORY_POSTGRES__PASSWORD: "mock-postgres-password",
+  SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN: "mock-worker-bearer",
+  SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN: "mock-sandbox-bearer",
+  SOFTWARE_FACTORY_CLOUDFLARE_ACCESS__TEAM_DOMAIN: "example.cloudflareaccess.com",
+  SOFTWARE_FACTORY_CLOUDFLARE_ACCESS__AUD: "mock-audience",
 };
 
 const digests = {
   "software-factory-worker": `sha256:${"a".repeat(64)}`,
   "software-factory-sandbox": `sha256:${"b".repeat(64)}`,
   "software-factory-relay": `sha256:${"c".repeat(64)}`,
+  "software-factory-api": `sha256:${"d".repeat(64)}`,
+  "software-factory-console": `sha256:${"e".repeat(64)}`,
 };
 
 const namespace = new k8s.core.v1.Namespace("software-factory-test-namespace", {
@@ -89,9 +96,14 @@ interface Container {
   env: {
     name: string;
     value?: string;
-    valueFrom?: { fieldRef?: { fieldPath?: string } };
+    valueFrom?: { fieldRef?: { fieldPath?: string }; secretKeyRef?: { name: string; key: string } };
   }[];
   volumeMounts: { name: string; mountPath: string; subPath?: string }[];
+  readinessProbe?: { httpGet?: { path: string; port: string } };
+  securityContext?: {
+    allowPrivilegeEscalation?: boolean;
+    capabilities?: { drop?: string[] };
+  };
 }
 interface PodSpec {
   serviceAccountName?: string;
@@ -349,6 +361,65 @@ describe("image digest pins (#342)", () => {
     // image-digests.test.ts: serviceSpecs must not demand software-factory's
     // pins, or a broken sandbox build blocks the house's deploy.
     expect(() => install(digests, true)).not.toThrow();
+  });
+});
+
+describe("factory API and console workloads (#554)", () => {
+  test("keep the API private behind a console Service and harden both pods", async () => {
+    const resources = install(digests, true);
+    const apiService = await get<{
+      type: string;
+      ports: { name: string; port: number; targetPort: number }[];
+    }>(resources.apiService, "spec");
+    const webService = await get<{
+      type: string;
+      ports: { name: string; port: number; targetPort: number }[];
+    }>(resources.webService, "spec");
+    const api = await get<DeploymentSpec>(resources.api, "spec");
+    const web = await get<DeploymentSpec>(resources.web, "spec");
+
+    expect(apiService.type).toBe("ClusterIP");
+    expect(apiService.ports).toEqual([{ name: "http", port: 8080, targetPort: 8080 }]);
+    expect(webService.type).toBe("ClusterIP");
+    expect(webService.ports).toEqual([{ name: "http", port: 80, targetPort: 8080 }]);
+    for (const spec of [api.template.spec, web.template.spec]) {
+      expect(spec.serviceAccountName).toBeUndefined();
+      expect(spec.automountServiceAccountToken).toBe(false);
+      expect(spec.securityContext?.runAsUser).toBeDefined();
+    }
+    const [apiContainer] = api.template.spec.containers;
+    for (const deployment of [api, web]) {
+      const [container] = deployment.template.spec.containers;
+      expect(container.securityContext?.allowPrivilegeEscalation).toBe(false);
+      expect(container.securityContext?.capabilities?.drop).toEqual(["ALL"]);
+    }
+    expect(apiContainer.image).toBe(
+      `ghcr.io/0x63616c/www-software-factory-api@${digests["software-factory-api"]}`,
+    );
+    expect(apiContainer.env.map((env) => env.name)).toEqual(
+      expect.arrayContaining([
+        "SOFTWARE_FACTORY_DATABASE_PASSWORD",
+        "SOFTWARE_FACTORY_DATABASE_HOST",
+        "SOFTWARE_FACTORY_DATABASE_NAME",
+        "SOFTWARE_FACTORY_DATABASE_USER",
+        "CLOUDFLARE_ACCESS_TEAM_DOMAIN",
+        "CLOUDFLARE_ACCESS_AUD",
+        "SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN",
+        "SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN",
+        "TEMPORAL_HOST_PORT",
+        "TEMPORAL_NAMESPACE",
+      ]),
+    );
+    expect(apiContainer.readinessProbe?.httpGet).toEqual({ path: "/healthz", port: "http" });
+    expect(
+      apiContainer.env.find((env) => env.name === "SOFTWARE_FACTORY_DATABASE_PASSWORD")?.valueFrom
+        ?.secretKeyRef,
+    ).toEqual({ name: "software-factory-postgres-auth", key: "password" });
+    for (const deployment of [api, web]) {
+      expect(
+        deployment.template.spec.containers.flatMap((container) => container.volumeMounts ?? []),
+      ).not.toContainEqual(expect.objectContaining({ name: "transcripts" }));
+    }
   });
 });
 

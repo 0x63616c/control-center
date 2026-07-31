@@ -41,7 +41,7 @@ RUN bun run --cwd apps/software-factory/web build
 
 
 # Stage 2: nginx serves the static bundle and proxies /api to the api.
-FROM nginx:1.27-alpine AS runtime
+FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
 
 RUN rm /etc/nginx/conf.d/default.conf
 

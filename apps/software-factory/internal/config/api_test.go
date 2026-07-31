@@ -20,6 +20,30 @@ func TestLoadAPIRequiresDatabaseURL(t *testing.T) {
 	}
 }
 
+func TestLoadAPIBuildsDatabaseURLFromCNPGAuthSecretValues(t *testing.T) {
+	t.Setenv(envAPIDatabaseURL, "")
+	t.Setenv(envAPIDatabaseUser, "software_factory")
+	t.Setenv(envAPIDatabasePassword, "a password/with?characters")
+	t.Setenv(envAPIDatabaseHost, "software-factory-postgres-rw")
+	t.Setenv(envAPIDatabaseName, "software_factory")
+	t.Setenv(envAPIListenAddr, ":8080")
+	t.Setenv(envAPIMetricsAddr, ":9090")
+	t.Setenv(envAccessTeamDomain, "test.cloudflareaccess.com")
+	t.Setenv(envAccessAudience, "test-audience")
+	t.Setenv(envAPIWorkerBearer, "test-worker-bearer")
+	t.Setenv(envAPISandboxBearer, "test-sandbox-bearer")
+	t.Setenv(envAPITemporalHost, "temporal:7233")
+	t.Setenv(envAPITemporalNS, "software-factory")
+
+	cfg, err := LoadAPI()
+	if err != nil {
+		t.Fatalf("LoadAPI() error = %v", err)
+	}
+	if got, want := cfg.DatabaseURL, "postgresql://software_factory:a%20password%2Fwith%3Fcharacters@software-factory-postgres-rw:5432/software_factory?sslmode=disable"; got != want {
+		t.Fatalf("DatabaseURL = %q, want %q", got, want)
+	}
+}
+
 func TestLoadAPIParsesAccessEndpoints(t *testing.T) {
 	t.Setenv(envAPIDatabaseURL, "postgres://example")
 	t.Setenv(envAPIListenAddr, ":8080")

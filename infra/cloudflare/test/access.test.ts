@@ -20,6 +20,7 @@ describe("desiredAccessApps", () => {
       // The two LAN appliances (#292): putting them on the tunnel gives them an
       // internet-facing hostname, so their Access app is not optional.
       "dsm.worldwidewebb.co",
+      "factory.worldwidewebb.co",
       "grafana.worldwidewebb.co",
       "ha.worldwidewebb.co",
       // manage has no login of its own — this app IS its authentication.
@@ -43,6 +44,7 @@ describe("desiredAccessApps", () => {
       "app.worldwidewebb.co",
       "db-ui.worldwidewebb.co",
       "dsm.worldwidewebb.co",
+      "factory.worldwidewebb.co",
       "grafana.worldwidewebb.co",
       "ha.worldwidewebb.co",
       "hooks.worldwidewebb.co",
@@ -143,6 +145,27 @@ describe("desiredAccessApps", () => {
         decision: "non_identity",
         include: { configKey: "kioskTokenId", kind: "service-token-config" },
         name: "kiosk-service-token",
+        precedence: 1,
+      },
+      {
+        decision: "allow",
+        include: { configKey: "allowedEmail", kind: "email-config" },
+        name: "email-otp",
+        precedence: 2,
+      },
+    ]);
+  });
+
+  test("factory allows a human OTP login and factory callers with its dedicated service token", () => {
+    const factory = desiredAccessApps(ZONE).find(
+      (entry) => entry.domain === "factory.worldwidewebb.co",
+    );
+
+    expect(factory?.policies).toEqual([
+      {
+        decision: "non_identity",
+        include: { configKey: "factoryServiceTokenId", kind: "service-token-config" },
+        name: "factory-service-token",
         precedence: 1,
       },
       {

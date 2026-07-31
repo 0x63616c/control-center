@@ -13,6 +13,7 @@ describe("Control Center platform representation", () => {
 
     expect(manifest.product.slug).toBe("control-center");
     expect(manifest.app.exposure.hostname).toBe("app.worldwidewebb.co");
+    expect(manifest.factoryConsole.exposure.hostname).toBe("factory.worldwidewebb.co");
   });
 
   test("declares every Control Center service the manifest owns", () => {
@@ -61,6 +62,7 @@ describe("Control Center platform representation", () => {
       serviceHost: "control-center-postgres-rw",
       nasSubPath: "backups/postgres",
     });
+    expect("console" in manifest).toBe(false);
   });
 });
 

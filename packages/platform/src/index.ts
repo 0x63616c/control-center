@@ -31,10 +31,8 @@ export function genId(prefix: string, options?: { length?: number }): string {
   return `${prefix}_${randomHex(length)}`;
 }
 
-// "software-factory" (ADR-0011) owns three images —
-// www-software-factory-{worker,sandbox,relay} — and a product database. This is
-// the one place that spelling is derived. It ships no web/API workload and uses
-// no service secrets, so those declarations remain deliberately absent.
+// "software-factory" (ADR-0011) owns worker, sandbox, relay, API, and console
+// images plus its product database. This is the one place that spelling is derived.
 export const productSlugs = ["control-center", "captive-portal", "software-factory"] as const;
 
 export type ProductSlug = (typeof productSlugs)[number];
@@ -358,6 +356,26 @@ export const secretCatalog = {
       "Software Factory API sandbox bearer",
       "token",
       "SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN",
+    ),
+    cloudflareAccessTeamDomain: secret(
+      "Software Factory Cloudflare Access",
+      "team domain",
+      "SOFTWARE_FACTORY_CLOUDFLARE_ACCESS__TEAM_DOMAIN",
+    ),
+    cloudflareAccessAudience: secret(
+      "Software Factory Cloudflare Access",
+      "audience",
+      "SOFTWARE_FACTORY_CLOUDFLARE_ACCESS__AUD",
+    ),
+    cloudflareAccessServiceTokenClientID: secret(
+      "Software Factory Cloudflare Access",
+      "service token client id",
+      "SOFTWARE_FACTORY_CLOUDFLARE_ACCESS__SERVICE_TOKEN_CLIENT_ID",
+    ),
+    cloudflareAccessServiceTokenClientSecret: secret(
+      "Software Factory Cloudflare Access",
+      "service token client secret",
+      "SOFTWARE_FACTORY_CLOUDFLARE_ACCESS__SERVICE_TOKEN_CLIENT_SECRET",
     ),
   },
   github: {
@@ -710,6 +728,11 @@ export type ControlCenterProductManifest = Readonly<{
   app: Readonly<{
     exposure: WebExposure;
   }>;
+  // The factory console runs in its own namespace, but public hostnames are
+  // centrally owned here alongside other cross-product origins.
+  factoryConsole: Readonly<{
+    exposure: WebExposure;
+  }>;
   // The Temporal web UI. Declared here rather than in `services` because it is
   // NOT a control-center workload: it runs in the `temporal` namespace from an
   // upstream image (infra/src/temporal.ts), and `services` drives control-center
@@ -788,6 +811,11 @@ export function controlCenterProductManifest(): ControlCenterProductManifest {
     target,
     app: {
       exposure: privateWeb(target, { host: "app" }),
+    },
+    factoryConsole: {
+      // Single label under the zone, so Universal SSL's one-label wildcard
+      // covers it (see webHostname).
+      exposure: privateWeb(target, { host: "factory" }),
     },
     temporalUi: {
       // Single label under the zone, so Universal SSL's one-label wildcard
@@ -887,5 +915,10 @@ export function softwareFactoryProductManifest(): SoftwareFactoryProductManifest
     schedule: "0 1 * * *",
   });
 
-  return { product, target, database, backup };
+  return {
+    product,
+    target,
+    database,
+    backup,
+  };
 }

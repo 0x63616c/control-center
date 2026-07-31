@@ -20,7 +20,7 @@ import {
 const ZONE = "worldwidewebb.co";
 
 describe("desiredIngressRules", () => {
-  test("declares the product-derived app + temporal-ui + grafana hosts as the only ingress hosts", () => {
+  test("declares the product-derived private hosts, including the factory console, as ingress hosts", () => {
     const byHost = Object.fromEntries(
       desiredIngressRules(ZONE).map((r) => [r.hostname, r.service]),
     );
@@ -28,6 +28,7 @@ describe("desiredIngressRules", () => {
       "app.worldwidewebb.co",
       "db-ui.worldwidewebb.co",
       "dsm.worldwidewebb.co",
+      "factory.worldwidewebb.co",
       "grafana.worldwidewebb.co",
       "ha.worldwidewebb.co",
       "hooks.worldwidewebb.co",
@@ -59,6 +60,10 @@ describe("desiredIngressRules", () => {
     expect(byHost["manage.worldwidewebb.co"]).toBe(
       "http://manage.control-center.svc.cluster.local:80",
     );
+    expect(byHost["factory.worldwidewebb.co"]).toBe(
+      "http://web.software-factory.svc.cluster.local:80",
+    );
+    expect(byHost["api.worldwidewebb.co"]).toBeUndefined();
     expect(byHost["dashboard.worldwidewebb.co"]).toBeUndefined();
     expect(byHost["storybook.worldwidewebb.co"]).toBeUndefined();
     expect(byHost["drizzle.worldwidewebb.co"]).toBeUndefined();
@@ -171,6 +176,7 @@ describe("desiredCnames", () => {
       "app.worldwidewebb.co",
       "db-ui.worldwidewebb.co",
       "dsm.worldwidewebb.co",
+      "factory.worldwidewebb.co",
       "grafana.worldwidewebb.co",
       "ha.worldwidewebb.co",
       "hooks.worldwidewebb.co",

@@ -142,7 +142,8 @@ jobs:
               - 'apps/map-provision/**'
             # Software factory (ADR-0011): a self-contained Go module sharing no
             # code with the TypeScript workspace, so it rebuilds solely on its
-            # own tree. Deliberately NOT split per image — see the output above.
+            # own tree. Worker, sandbox, relay, and API deliberately share this
+            # filter: a shared-module edit must never ship one stale Go image.
             # `web/**` is excluded: it's a separate TypeScript app (ADR-0012,
             # #553) with its own filter below, and a console-only change must
             # not rebuild/retest the Go images.
@@ -589,8 +590,9 @@ jobs:
           cache-scope: map-provision
 
 
-  # The software factory module's three images. One path filter serves all of
-  # them, so a shared edit cannot leave an existing component stale.
+  # The software factory module's four Go images. One path filter serves all of
+  # them, so a shared edit cannot leave an existing Go component stale; the
+  # TypeScript console has its own filter below.
   #
   # No BUILD_HASH/BUILD_TIME build-args: neither image renders a build badge.
   build-software-factory-worker:
@@ -664,6 +666,23 @@ jobs:
           dockerfile: apps/software-factory/images/relay/Dockerfile
           cache-scope: software-factory-relay
 
+  build-software-factory-api:
+    needs: [changes]
+    if: needs.changes.outputs.softwarefactory == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: prod
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build and push software-factory API image
+        uses: ./.github/actions/build-product-image
+        env:
+          SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
+        with:
+          image: www-software-factory-api
+          dockerfile: apps/software-factory/images/api/Dockerfile
+          cache-scope: software-factory-api
+
   # The console (ADR-0012, #553): a TypeScript SPA, built like any other bun
   # workspace image (build-manage's shape), not like the Go images above , its
   # own filter (`softwarefactoryweb`) and its own Dockerfile context (repo
@@ -719,6 +738,7 @@ jobs:
         build-software-factory-worker,
         build-software-factory-sandbox,
         build-software-factory-relay,
+        build-software-factory-api,
         build-software-factory-console,
         test-software-factory,
         check-software-factory-generated,
@@ -813,7 +833,7 @@ jobs:
           # KEY is product-component scoped and matches the Pulumi imageDigests
           # config key, while repo names use full product slugs.
           declare -A out=()
-          for entry in www-control-center-web:control-center-web www-control-center-manage:control-center-manage www-control-center-api:control-center-api www-control-center-worker:control-center-worker www-control-center-temporal-worker:control-center-temporal-worker www-control-center-map-provision:control-center-map-provision www-software-factory-worker:software-factory-worker www-software-factory-sandbox:software-factory-sandbox www-software-factory-relay:software-factory-relay; do
+          for entry in www-control-center-web:control-center-web www-control-center-manage:control-center-manage www-control-center-api:control-center-api www-control-center-worker:control-center-worker www-control-center-temporal-worker:control-center-temporal-worker www-control-center-map-provision:control-center-map-provision www-software-factory-worker:software-factory-worker www-software-factory-sandbox:software-factory-sandbox www-software-factory-relay:software-factory-relay www-software-factory-api:software-factory-api www-software-factory-console:software-factory-console; do
             repo="${entry%%:*}"
             name="${entry#*:}"
             d=$(docker buildx imagetools inspect "ghcr.io/0x63616c/$repo:main" --format '{{.Manifest.Digest}}' 2>/dev/null || true)

@@ -30,6 +30,7 @@
 //   tunnelSecret                               the managed tunnel's password;
 //                          REPLACE-FORCING, so never rotate it in place
 //   allowedEmail                               the OTP allow email (PII; SECRET config)
+//   factoryServiceTokenId                      factory caller service-token ID (SECRET config)
 
 import * as cloudflare from "@pulumi/cloudflare";
 import * as pulumi from "@pulumi/pulumi";

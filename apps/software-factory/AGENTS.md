@@ -62,7 +62,7 @@ images/
 This nests where the rest of `apps/*` is flat. That is deliberate: `software-factory` is one
 product with several components, and nothing in the repo globs `apps/*` — every CI path
 filter, Dockerfile path and bun workspace is enumerated by name, so the nesting costs
-nothing. All three images build off the single path filter
+nothing. The Go worker, sandbox, relay, and API images build off the single path filter
 `apps/software-factory/**`; a change therefore rebuilds the worker, sandbox, and
 relay together, which prevents a shared module edit from shipping a stale image.
 

@@ -26,6 +26,15 @@ describe("secret catalog and service usage", () => {
     );
   });
 
+  test("records the factory caller's Cloudflare service-token credentials", () => {
+    expect(secretCatalog.softwareFactory.cloudflareAccessServiceTokenClientID.vaultKey).toBe(
+      "SOFTWARE_FACTORY_CLOUDFLARE_ACCESS__SERVICE_TOKEN_CLIENT_ID",
+    );
+    expect(secretCatalog.softwareFactory.cloudflareAccessServiceTokenClientSecret.vaultKey).toBe(
+      "SOFTWARE_FACTORY_CLOUDFLARE_ACCESS__SERVICE_TOKEN_CLIENT_SECRET",
+    );
+  });
+
   test("derives service scoped secret mount metadata from product context", () => {
     const usage = defineServiceSecretUsage(defineProduct("control-center"), "api", {
       HA_TOKEN: secretCatalog.homeAssistant.token,
