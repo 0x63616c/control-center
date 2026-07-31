@@ -59,11 +59,11 @@ func TestStoreCarriesATicketThroughItsWholeLifecycle(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	blocker, err := s.CreateTicket(ctx, "upstream", "do this first")
+	blocker, err := s.CreateTicket(ctx, "upstream", "do this first", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket(blocker): %v", err)
 	}
-	blocked, err := s.CreateTicket(ctx, "downstream", "needs upstream done")
+	blocked, err := s.CreateTicket(ctx, "downstream", "needs upstream done", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket(blocked): %v", err)
 	}
@@ -238,6 +238,49 @@ func TestStoreCarriesATicketThroughItsWholeLifecycle(t *testing.T) {
 	}
 }
 
+func TestCreateTicketCommitsDeclaredBlockersWithTheTicket(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	upstream, err := s.CreateTicket(ctx, "upstream", "finish first", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket(upstream): %v", err)
+	}
+	downstream, err := s.CreateTicket(ctx, "downstream", "wait", []store.TicketID{upstream.ID})
+	if err != nil {
+		t.Fatalf("CreateTicket(downstream): %v", err)
+	}
+
+	blockers, err := s.TicketBlockers(ctx, downstream.ID)
+	if err != nil {
+		t.Fatalf("TicketBlockers(downstream): %v", err)
+	}
+	if len(blockers) != 1 || blockers[0].ID != upstream.ID {
+		t.Fatalf("TicketBlockers(downstream) = %+v, want [%d]", blockers, upstream.ID)
+	}
+	ready, err := s.ReadyTickets(ctx)
+	if err != nil {
+		t.Fatalf("ReadyTickets: %v", err)
+	}
+	if containsTicket(ready, downstream.ID) {
+		t.Fatalf("ReadyTickets() = %+v, want downstream excluded until upstream is done", ready)
+	}
+	before, err := s.Tickets(ctx)
+	if err != nil {
+		t.Fatalf("Tickets before rejected create: %v", err)
+	}
+	if _, err := s.CreateTicket(ctx, "invalid", "missing blocker", []store.TicketID{999999999}); err == nil {
+		t.Fatal("CreateTicket with missing blocker succeeded")
+	}
+	after, err := s.Tickets(ctx)
+	if err != nil {
+		t.Fatalf("Tickets after rejected create: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("Tickets after rejected create = %+v, want no ticket persisted", after)
+	}
+}
+
 // TestAddTicketDependencyRejectsATicketBlockingItself proves the schema's own
 // wall — ticket_edge_not_self_check — surfaces through Store as a
 // non-retryable error, per SoftwareStyle's error taxonomy: bad input from a
@@ -246,7 +289,7 @@ func TestAddTicketDependencyRejectsATicketBlockingItself(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	ticket, err := s.CreateTicket(ctx, "self", "b")
+	ticket, err := s.CreateTicket(ctx, "self", "b", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
@@ -285,7 +328,7 @@ func TestRecordingIsIdempotentAgainstARealDatabase(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	ticket, err := s.CreateTicket(ctx, "recorded", "b")
+	ticket, err := s.CreateTicket(ctx, "recorded", "b", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
@@ -337,7 +380,7 @@ func TestPutTranscriptIsIdempotentAgainstARealDatabase(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	ticket, err := s.CreateTicket(ctx, "transcript owner", "b")
+	ticket, err := s.CreateTicket(ctx, "transcript owner", "b", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
@@ -386,7 +429,7 @@ func TestRecordWebhookDeliveryAndTransitionAgainstARealDatabase(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	ticket, err := s.CreateTicket(ctx, "webhook ticket", "b")
+	ticket, err := s.CreateTicket(ctx, "webhook ticket", "b", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
@@ -437,7 +480,7 @@ func TestRecordWebhookDeliveryAndTransitionIsStaleWhenTheTicketAlreadyMovedOn(t 
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	ticket, err := s.CreateTicket(ctx, "already done", "b")
+	ticket, err := s.CreateTicket(ctx, "already done", "b", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}

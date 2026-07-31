@@ -15,11 +15,11 @@ func TestRecordWebhookDeliveryAndTransitionAppliesOnceAndUnblocksDownstream(t *t
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	upstream, err := s.CreateTicket(ctx, "upstream", "merged first")
+	upstream, err := s.CreateTicket(ctx, "upstream", "merged first", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket(upstream): %v", err)
 	}
-	downstream, err := s.CreateTicket(ctx, "downstream", "needs upstream done")
+	downstream, err := s.CreateTicket(ctx, "downstream", "needs upstream done", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket(downstream): %v", err)
 	}
@@ -85,7 +85,7 @@ func TestRecordWebhookDeliveryAndTransitionRecordsDeliveryEvenWhenTheTicketMoved
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	ticket, err := s.CreateTicket(ctx, "solo", "no dependency")
+	ticket, err := s.CreateTicket(ctx, "solo", "no dependency", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}

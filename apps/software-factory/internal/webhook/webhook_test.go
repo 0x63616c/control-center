@@ -236,7 +236,7 @@ func TestMethodNotAllowedForNonPost(t *testing.T) {
 
 func mustTicket(t *testing.T, fake *storefake.Store, state store.TicketState) store.Ticket {
 	t.Helper()
-	ticket, err := fake.CreateTicket(context.Background(), "a ticket", "body")
+	ticket, err := fake.CreateTicket(context.Background(), "a ticket", "body", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}

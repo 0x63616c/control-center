@@ -175,9 +175,16 @@ export interface ConsoleTicket {
   updatedAt: string;
 }
 
+/**
+ * Tickets that must be done before this Ticket is ready.
+ */
+export type CreateTicketInputBodyBlockedBy = number[] | null;
+
 export interface CreateTicketInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** Tickets that must be done before this Ticket is ready. */
+  blockedBy?: CreateTicketInputBodyBlockedBy;
   /** The Ticket's supporting detail. */
   body: string;
   /**

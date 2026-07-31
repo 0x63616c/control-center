@@ -19,11 +19,11 @@ func TestFakeStoreCarriesATicketThroughItsWholeLifecycle(t *testing.T) {
 	ctx := context.Background()
 	s := storefake.New()
 
-	blocker, err := s.CreateTicket(ctx, "upstream", "do this first")
+	blocker, err := s.CreateTicket(ctx, "upstream", "do this first", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket(blocker): %v", err)
 	}
-	blocked, err := s.CreateTicket(ctx, "downstream", "needs upstream done")
+	blocked, err := s.CreateTicket(ctx, "downstream", "needs upstream done", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket(blocked): %v", err)
 	}
@@ -142,6 +142,47 @@ func TestFakeStoreCarriesATicketThroughItsWholeLifecycle(t *testing.T) {
 	}
 }
 
+func TestFakeStoreCreatesTicketWithDeclaredBlockersAtomically(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+
+	upstream, err := s.CreateTicket(ctx, "upstream", "finish first", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket(upstream): %v", err)
+	}
+	downstream, err := s.CreateTicket(ctx, "downstream", "wait", []store.TicketID{upstream.ID})
+	if err != nil {
+		t.Fatalf("CreateTicket(downstream): %v", err)
+	}
+
+	ready, err := s.ReadyTickets(ctx)
+	if err != nil {
+		t.Fatalf("ReadyTickets: %v", err)
+	}
+	if len(ready) != 1 || ready[0].ID != upstream.ID {
+		t.Fatalf("ReadyTickets() = %+v, want only upstream", ready)
+	}
+	if _, err := s.CreateTicket(ctx, "invalid", "missing blocker", []store.TicketID{999}); err == nil {
+		t.Fatal("CreateTicket with missing blocker succeeded")
+	}
+	tickets, err := s.Tickets(ctx)
+	if err != nil {
+		t.Fatalf("Tickets: %v", err)
+	}
+	if len(tickets) != 2 {
+		t.Fatalf("Tickets() = %+v, want only the two committed tickets", tickets)
+	}
+
+	blockers, err := s.TicketBlockers(ctx, downstream.ID)
+	if err != nil {
+		t.Fatalf("TicketBlockers(downstream): %v", err)
+	}
+	if len(blockers) != 1 || blockers[0].ID != upstream.ID {
+		t.Fatalf("TicketBlockers(downstream) = %+v, want [%d]", blockers, upstream.ID)
+	}
+}
+
 // A resumed attempt reports Measured false with a zero Usage, and that must
 // stay distinguishable from a real zero-token measurement (#426) — the reason
 // Measured exists on Attempt at all.
@@ -150,7 +191,7 @@ func TestFakeStoreDistinguishesUnmeasuredFromZero(t *testing.T) {
 	ctx := context.Background()
 	s := storefake.New()
 
-	ticket, err := s.CreateTicket(ctx, "t", "b")
+	ticket, err := s.CreateTicket(ctx, "t", "b", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
@@ -188,27 +229,27 @@ func TestFakeStoreDerivesReadinessFromEveryDirectBlocker(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	s := storefake.New()
-	done, err := s.CreateTicket(ctx, "done", "")
+	done, err := s.CreateTicket(ctx, "done", "", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket(done): %v", err)
 	}
-	open, err := s.CreateTicket(ctx, "open", "")
+	open, err := s.CreateTicket(ctx, "open", "", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket(open): %v", err)
 	}
-	failed, err := s.CreateTicket(ctx, "failed", "")
+	failed, err := s.CreateTicket(ctx, "failed", "", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket(failed): %v", err)
 	}
-	mixed, err := s.CreateTicket(ctx, "mixed", "")
+	mixed, err := s.CreateTicket(ctx, "mixed", "", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket(mixed): %v", err)
 	}
-	onlyDone, err := s.CreateTicket(ctx, "only done", "")
+	onlyDone, err := s.CreateTicket(ctx, "only done", "", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket(onlyDone): %v", err)
 	}
-	onlyFailed, err := s.CreateTicket(ctx, "only failed", "")
+	onlyFailed, err := s.CreateTicket(ctx, "only failed", "", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket(onlyFailed): %v", err)
 	}
@@ -242,11 +283,11 @@ func TestFakeStoreRecordWebhookDeliveryAndTransitionAppliesOnceAndUnblocksDownst
 	ctx := context.Background()
 	s := storefake.New()
 
-	upstream, err := s.CreateTicket(ctx, "upstream", "merged first")
+	upstream, err := s.CreateTicket(ctx, "upstream", "merged first", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket(upstream): %v", err)
 	}
-	downstream, err := s.CreateTicket(ctx, "downstream", "needs upstream done")
+	downstream, err := s.CreateTicket(ctx, "downstream", "needs upstream done", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket(downstream): %v", err)
 	}

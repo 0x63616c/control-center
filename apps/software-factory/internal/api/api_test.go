@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -94,6 +95,54 @@ func TestTicketsCreateDependenciesAndReadiness(t *testing.T) {
 	}
 	if a != 1 || b != 2 || c != 3 {
 		t.Fatalf("ticket ids = %d, %d, %d, want 1, 2, 3", a, b, c)
+	}
+}
+
+func TestCreateTicketAttachesDeclaredBlockersBeforeItIsVisible(t *testing.T) {
+	t.Parallel()
+	service := New("test-build", nil, storefake.New())
+
+	upstream := ticketRequest(t, service, http.MethodPost, "/v1/tickets", `{"title":"upstream","body":"finish first"}`)
+	if upstream.Code != http.StatusOK {
+		t.Fatalf("create upstream = %d: %s", upstream.Code, upstream.Body.String())
+	}
+	var upstreamBody struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.NewDecoder(upstream.Body).Decode(&upstreamBody); err != nil {
+		t.Fatalf("decode upstream: %v", err)
+	}
+
+	downstream := ticketRequest(t, service, http.MethodPost, "/v1/tickets", `{"title":"downstream","body":"wait","blockedBy":[`+strconv.FormatInt(upstreamBody.ID, 10)+`]}`)
+	if downstream.Code != http.StatusOK {
+		t.Fatalf("create downstream = %d: %s", downstream.Code, downstream.Body.String())
+	}
+	var downstreamBody ticketResponse
+	if err := json.NewDecoder(downstream.Body).Decode(&downstreamBody); err != nil {
+		t.Fatalf("decode downstream: %v", err)
+	}
+	if downstreamBody.Ready || len(downstreamBody.Blockers) != 1 || downstreamBody.Blockers[0].ID != upstreamBody.ID {
+		t.Fatalf("created downstream = %#v, want its upstream blocker and ready false", downstreamBody)
+	}
+
+	ready := ticketRequest(t, service, http.MethodGet, "/v1/tickets?ready=true", "")
+	if ready.Code != http.StatusOK || strings.Contains(ready.Body.String(), `"id":2`) {
+		t.Fatalf("ready tickets = (%d, %s), want downstream excluded", ready.Code, ready.Body.String())
+	}
+	for _, state := range []string{"working", "review", "done"} {
+		response := ticketRequest(t, service, http.MethodPatch, "/v1/tickets/"+strconv.FormatInt(upstreamBody.ID, 10)+"/state", `{"state":"`+state+`"}`)
+		if response.Code != http.StatusOK {
+			t.Fatalf("move upstream to %s = %d: %s", state, response.Code, response.Body.String())
+		}
+	}
+	ready = ticketRequest(t, service, http.MethodGet, "/v1/tickets?ready=true", "")
+	if ready.Code != http.StatusOK || !strings.Contains(ready.Body.String(), `"id":`+strconv.FormatInt(downstreamBody.ID, 10)) {
+		t.Fatalf("ready tickets after upstream done = (%d, %s), want downstream included", ready.Code, ready.Body.String())
+	}
+
+	missing := ticketRequest(t, service, http.MethodPost, "/v1/tickets", `{"title":"missing blocker","body":"wait","blockedBy":[999]}`)
+	if missing.Code != http.StatusNotFound || ticketErrorReason(t, missing) != "not_found" {
+		t.Fatalf("create with missing blocker = (%d, %s), want not_found", missing.Code, missing.Body.String())
 	}
 }
 

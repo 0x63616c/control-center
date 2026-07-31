@@ -92,15 +92,31 @@ func New(opts ...Option) *Store {
 	return f
 }
 
-// CreateTicket files a new Ticket in store.TicketOpen.
-func (f *Store) CreateTicket(_ context.Context, title, body string) (store.Ticket, error) {
+// CreateTicket files a new Ticket with all of its declared blockers. It does
+// not publish the Ticket until every edge has been validated, matching the
+// real store's transaction boundary.
+func (f *Store) CreateTicket(_ context.Context, title, body string, blockers []store.TicketID) (store.Ticket, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	id := store.TicketID(f.nextTicketID)
-	f.nextTicketID++
+	for _, blocker := range blockers {
+		if _, ok := f.tickets[blocker]; !ok {
+			return store.Ticket{}, fmt.Errorf("creating ticket %d with blocker %d: %w", id, blocker, store.ErrNotFound)
+		}
+		if path := f.ticketDependencyPathLocked(id, blocker); len(path) > 0 {
+			return store.Ticket{}, fmt.Errorf("creating ticket %d with blocker %d: dependency would create cycle", id, blocker)
+		}
+	}
 	now := f.clk.Now()
 	t := store.Ticket{ID: id, Title: title, Body: body, State: store.TicketOpen, CreatedAt: now, UpdatedAt: now}
 	f.tickets[id] = t
+	for _, blocker := range blockers {
+		if f.edges[blocker] == nil {
+			f.edges[blocker] = make(map[store.TicketID]bool)
+		}
+		f.edges[blocker][id] = true
+	}
+	f.nextTicketID++
 	return t, nil
 }
 
