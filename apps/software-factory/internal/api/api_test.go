@@ -27,4 +27,9 @@ func TestBuildEndpointAndOpenAPI(t *testing.T) {
 	if !strings.Contains(string(spec), "openapi: 3.1.0") || !strings.Contains(string(spec), "/v1/build:") {
 		t.Fatalf("OpenAPIYAML() = %s, want OpenAPI 3.1 build path", spec)
 	}
+	for _, requirement := range []string{"cloudflareAccess:", "Cf-Access-Jwt-Assertion", "inClusterBearer:", "scheme: bearer"} {
+		if !strings.Contains(string(spec), requirement) {
+			t.Fatalf("OpenAPIYAML() missing security requirement %q", requirement)
+		}
+	}
 }

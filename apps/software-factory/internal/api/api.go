@@ -25,7 +25,19 @@ type buildOutput struct {
 // root so this package does not need to learn about build metadata policy.
 func New(version string) *Service {
 	mux := http.NewServeMux()
-	api := humago.New(mux, huma.DefaultConfig("Software Factory API", version))
+	configuration := huma.DefaultConfig("Software Factory API", version)
+	configuration.Components.SecuritySchemes = map[string]*huma.SecurityScheme{
+		"cloudflareAccess": {
+			Type: "apiKey", In: "header", Name: "Cf-Access-Jwt-Assertion",
+			Description: "Cloudflare Access JWT assertion.",
+		},
+		"inClusterBearer": {
+			Type: "http", Scheme: "bearer",
+			Description: "Static bearer for in-cluster worker or sandbox callers.",
+		},
+	}
+	configuration.Security = []map[string][]string{{"cloudflareAccess": {}}, {"inClusterBearer": {}}}
+	api := humago.New(mux, configuration)
 	huma.Get(api, "/v1/build", func(_ context.Context, _ *struct{}) (*buildOutput, error) {
 		output := &buildOutput{}
 		output.Body.Version = version

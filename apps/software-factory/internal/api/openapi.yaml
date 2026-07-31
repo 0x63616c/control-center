@@ -75,6 +75,16 @@ components:
           format: uri
           type: string
       type: object
+  securitySchemes:
+    cloudflareAccess:
+      description: Cloudflare Access JWT assertion.
+      in: header
+      name: Cf-Access-Jwt-Assertion
+      type: apiKey
+    inClusterBearer:
+      description: Static bearer for in-cluster worker or sandbox callers.
+      scheme: bearer
+      type: http
 info:
   title: Software Factory API
   version: development
@@ -97,3 +107,6 @@ paths:
                 $ref: "#/components/schemas/ErrorModel"
           description: Error
       summary: Get v1 build
+security:
+  - cloudflareAccess: []
+  - inClusterBearer: []

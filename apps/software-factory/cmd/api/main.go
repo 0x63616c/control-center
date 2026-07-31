@@ -22,6 +22,7 @@ import (
 	"github.com/spf13/cobra"
 
 	factoryapi "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/api"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/api/auth"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/config"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/database"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
@@ -71,6 +72,16 @@ func run() error {
 		return fmt.Errorf("reading API configuration: %w", err)
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
+	authentication, err := auth.New(auth.Options{
+		AccessIssuer:   cfg.AccessIssuer,
+		AccessAudience: cfg.AccessAudience,
+		AccessCertsURL: cfg.AccessCertsURL,
+		WorkerBearer:   cfg.WorkerBearer,
+		SandboxBearer:  cfg.SandboxBearer,
+	})
+	if err != nil {
+		return fmt.Errorf("starting API authentication: %w", err)
+	}
 
 	db, err := sql.Open("pgx", cfg.DatabaseURL)
 	if err != nil {
@@ -93,15 +104,17 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("listening for metrics on %s (METRICS_ADDR): %w", cfg.MetricsAddr, err)
 	}
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
 	go func() {
-		if err := http.Serve(metricsListener, promhttp.HandlerFor(registry, promhttp.HandlerOpts{})); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := http.Serve(metricsListener, metricsMux); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("the metrics server stopped", slog.String("error", err.Error()))
 		}
 	}()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
-	mux.Handle("/", factoryapi.New(buildVersion).Handler())
+	mux.Handle("/", authentication.Wrap(factoryapi.New(buildVersion).Handler()))
 
 	listener, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
