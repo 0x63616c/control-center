@@ -30,6 +30,7 @@ const TOUCHED = [
   "WIFI_PASSWORD",
   "WIFI_GUEST_SSID",
   "GITHUB_BOT_WEBHOOK_SECRET",
+  "WEBHOOK_RELAY_TARGETS",
 ];
 
 // The full set of api-runtime required keys, with valid values — a prod boot
@@ -221,6 +222,19 @@ describe("assertEnv fail-fast (against the real manifest)", () => {
     const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
     try {
       expect(() => assertEnv("api")).not.toThrow();
+      expect(exit).not.toHaveBeenCalled();
+    } finally {
+      exit.mockRestore();
+    }
+  });
+
+  it("does NOT require a database URL for the stateless webhook relay", () => {
+    process.env.APP_ENV = "production";
+    process.env.GITHUB_BOT_WEBHOOK_SECRET = "hook-secret";
+    process.env.WEBHOOK_RELAY_TARGETS = "[]";
+    const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    try {
+      expect(() => assertEnv("webhook-relay")).not.toThrow();
       expect(exit).not.toHaveBeenCalled();
     } finally {
       exit.mockRestore();

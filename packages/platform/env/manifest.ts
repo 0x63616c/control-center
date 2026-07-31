@@ -36,7 +36,10 @@ export const ENV = defineEnv({
   METRICS_PORT: int().default(DEFAULT_METRICS_PORT),
 
   // ── Database (11 features + core) ─────────────────────────────────────────
-  DATABASE_URL: pgUrl().required().devDefault("postgresql://cc:cc@localhost:5432/controlcenter"),
+  DATABASE_URL: pgUrl()
+    .required()
+    .devDefault("postgresql://cc:cc@localhost:5432/controlcenter")
+    .forRuntime("api", "worker"),
 
   // ── Home Assistant (ac, ctrl, dogcam, tesla, tv) ──────────────────────────
   HA_URL: url().default("http://homeassistant.local:8123"),
@@ -69,8 +72,8 @@ export const ENV = defineEnv({
 
   // ── GitHub webhooks (hooks) ───────────────────────────────────────────────
   // The shared secret GitHub signs every delivery with. Required: hooks. is a
-  // PUBLIC host with no Cloudflare Access in front, so this HMAC is the only
-  // auth boundary — booting the api without it would open a write endpoint.
+  // PUBLIC host with no Cloudflare Access in front, so the relay HMAC is the
+  // auth boundary. The API remains an in-cluster consumer and verifies again.
   GITHUB_BOT_WEBHOOK_SECRET: secret()
     .required()
     .forRuntime("api", "webhook-relay")
