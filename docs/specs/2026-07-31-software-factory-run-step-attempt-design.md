@@ -431,10 +431,13 @@ If a scheduled renewal exhausts its own native activity retries, the workflow
 cancels and fails the Agent Attempt rather than allowing it to continue toward
 an unauthenticated Git operation.
 
-The Agent Attempt has a 55-minute total timeout across all native activity
-tries. This is an operational bound on stuck or expensive work, not an
-authentication limitation. Periodic credential renewal deliberately supports
-raising that timeout later without redesigning sandbox authentication.
+Each agent activity try has a 55-minute `StartToClose` timeout. The whole Agent
+Attempt has a 90-minute `ScheduleToClose` timeout across queueing, execution,
+retry backoff, and all native activity tries. This gives a provider outage time
+to recover without multiplying the worst case into ten independent 55-minute
+windows. These are operational bounds on stuck or expensive work, not
+authentication limitations. The periodic credential loop remains active for
+the whole Agent Attempt and renews at minutes 30 and 60 when necessary.
 
 ## Retry and Agent Attempt policy
 
@@ -488,10 +491,12 @@ immediately, the approximate try start times are:
 ```
 
 This gives a provider or selected model that remains unavailable for around
-ten minutes time to recover without rapidly consuming the retry budget. A
-`ScheduleToClose` timeout enforces the Agent Attempt's 55-minute total across
-execution and backoff; `StartToClose` alone would incorrectly grant each try a
-fresh 55-minute timeout.
+ten minutes time to recover without rapidly consuming the retry budget. Each
+try has up to 55 minutes from `StartToClose`, while the Agent Attempt's
+90-minute `ScheduleToClose` timeout bounds queueing, execution, backoff, and
+all ten tries together. If failures happen quickly enough to consume the full
+backoff schedule, a final successful try can still receive its full 55-minute
+execution window without allowing the Attempt to run indefinitely.
 
 Provider or model unavailability is retryable within this policy. Explicit
 authentication failures are permanent for the Agent Attempt, and provider
@@ -499,6 +504,13 @@ rate limits end the Run through the dispatcher cooldown path rather than
 spending ten retries. Every retry reconciles or resumes the same Agent Attempt
 and Agent Thread; it must not silently begin another potentially chargeable
 agent execution.
+
+Agent activities use a five-minute progress heartbeat timeout. Codex activity
+events record heartbeats; there is deliberately no separate periodic
+process-liveness heartbeat. Five minutes without a progress event means the
+current activity try is considered stalled and enters the native retry policy.
+The elapsed execution and retry backoff still count toward the Agent Attempt's
+90-minute `ScheduleToClose` limit.
 
 The Run has one deliberately simple agent-execution budget:
 
@@ -583,9 +595,12 @@ This reaches further than a database migration:
     rely on the credential minted during the initial clone remaining valid.
 12. Permit at most five Review Steps in one Run.
 13. Permit at most 25 Agent Attempts across all agent-backed Steps in one Run.
-14. Bound each Agent Attempt to 55 minutes across all native activity tries.
+14. Bound each agent activity try to 55 minutes from `StartToClose` and the
+    whole Agent Attempt to 90 minutes from `ScheduleToClose`.
 15. Give agent activities ten total native tries with 10-second exponential
     backoff, coefficient 2, and a 5-minute maximum interval.
+16. Keep agent heartbeats tied to progress events, with a 5-minute heartbeat
+    timeout and no independent process-liveness heartbeat.
 
 ## Parked questions
 
@@ -605,7 +620,7 @@ can simply end the Run and Ticket as failed without prescribing remediation.
 
 ### Retry-policy values
 
-The Agent Attempt timeout and agent-activity retry policy are fixed above.
+The Agent Attempt timeouts, heartbeat, and agent-activity retry policy are fixed above.
 Exact retry counts, backoff, and timeouts for infrastructure activities remain
 undecided. They should be chosen from concrete failure scenarios rather than
 inheriting the current five-control-attempt default wholesale.
