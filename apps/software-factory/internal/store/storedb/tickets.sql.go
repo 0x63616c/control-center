@@ -94,6 +94,37 @@ func (q *Queries) Ticket(ctx context.Context, id int64) (Ticket, error) {
 	return i, err
 }
 
+const tickets = `-- name: Tickets :many
+SELECT id, title, body, state, created_at, updated_at FROM ticket ORDER BY id
+`
+
+func (q *Queries) Tickets(ctx context.Context) ([]Ticket, error) {
+	rows, err := q.db.Query(ctx, tickets)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Ticket
+	for rows.Next() {
+		var i Ticket
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Body,
+			&i.State,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const ticketsByState = `-- name: TicketsByState :many
 SELECT id, title, body, state, created_at, updated_at FROM ticket WHERE state = $1 ORDER BY id
 `
@@ -123,6 +154,32 @@ func (q *Queries) TicketsByState(ctx context.Context, state string) ([]Ticket, e
 		return nil, err
 	}
 	return items, nil
+}
+
+const transitionTicketState = `-- name: TransitionTicketState :one
+UPDATE ticket SET state = $3, updated_at = CURRENT_TIMESTAMP
+WHERE id = $1 AND state = $2
+RETURNING id, title, body, state, created_at, updated_at
+`
+
+type TransitionTicketStateParams struct {
+	ID      int64
+	State   string
+	State_2 string
+}
+
+func (q *Queries) TransitionTicketState(ctx context.Context, arg TransitionTicketStateParams) (Ticket, error) {
+	row := q.db.QueryRow(ctx, transitionTicketState, arg.ID, arg.State, arg.State_2)
+	var i Ticket
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Body,
+		&i.State,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const updateTicketState = `-- name: UpdateTicketState :one

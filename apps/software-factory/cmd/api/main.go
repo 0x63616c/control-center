@@ -28,7 +28,9 @@ import (
 	temporalclient "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/temporal"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/config"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/database"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const buildVersion = "development"
@@ -99,6 +101,11 @@ func run() error {
 	if err := database.ApplyMigrations(ctx, db); err != nil {
 		return fmt.Errorf("applying PostgreSQL migrations before API startup: %w", err)
 	}
+	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("opening PostgreSQL pool for ticket API: %w", err)
+	}
+	defer pool.Close()
 	temporal, err := client.Dial(client.Options{
 		HostPort:  cfg.TemporalHostPort,
 		Namespace: cfg.TemporalNamespace,
@@ -126,7 +133,7 @@ func run() error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
-	mux.Handle("/", authentication.Wrap(factoryapi.New(buildVersion, temporalclient.NewCommands(temporal)).Handler()))
+	mux.Handle("/", authentication.Wrap(factoryapi.New(buildVersion, temporalclient.NewCommands(temporal), store.New(pool)).Handler()))
 
 	listener, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {

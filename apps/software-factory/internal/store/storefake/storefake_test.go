@@ -177,3 +177,60 @@ func TestFakeStoreDistinguishesUnmeasuredFromZero(t *testing.T) {
 		t.Fatal("measured attempt reports Measured = false, want true")
 	}
 }
+
+func TestFakeStoreDerivesReadinessFromEveryDirectBlocker(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	done, err := s.CreateTicket(ctx, "done", "")
+	if err != nil {
+		t.Fatalf("CreateTicket(done): %v", err)
+	}
+	open, err := s.CreateTicket(ctx, "open", "")
+	if err != nil {
+		t.Fatalf("CreateTicket(open): %v", err)
+	}
+	failed, err := s.CreateTicket(ctx, "failed", "")
+	if err != nil {
+		t.Fatalf("CreateTicket(failed): %v", err)
+	}
+	mixed, err := s.CreateTicket(ctx, "mixed", "")
+	if err != nil {
+		t.Fatalf("CreateTicket(mixed): %v", err)
+	}
+	onlyDone, err := s.CreateTicket(ctx, "only done", "")
+	if err != nil {
+		t.Fatalf("CreateTicket(onlyDone): %v", err)
+	}
+	onlyFailed, err := s.CreateTicket(ctx, "only failed", "")
+	if err != nil {
+		t.Fatalf("CreateTicket(onlyFailed): %v", err)
+	}
+	if _, err := s.UpdateTicketState(ctx, done.ID, store.TicketDone); err != nil {
+		t.Fatalf("UpdateTicketState(done): %v", err)
+	}
+	if _, err := s.UpdateTicketState(ctx, failed.ID, store.TicketFailed); err != nil {
+		t.Fatalf("UpdateTicketState(failed): %v", err)
+	}
+	for _, edge := range [][2]store.TicketID{{done.ID, mixed.ID}, {open.ID, mixed.ID}, {done.ID, onlyDone.ID}, {failed.ID, onlyFailed.ID}} {
+		if err := s.AddTicketDependency(ctx, edge[0], edge[1]); err != nil {
+			t.Fatalf("AddTicketDependency(%d, %d): %v", edge[0], edge[1], err)
+		}
+	}
+	ready, err := s.ReadyTickets(ctx)
+	if err != nil {
+		t.Fatalf("ReadyTickets: %v", err)
+	}
+	if containsID(ready, mixed.ID) || containsID(ready, onlyFailed.ID) || !containsID(ready, onlyDone.ID) {
+		t.Fatalf("ReadyTickets() = %+v, want only-done ready and mixed/failed blocked", ready)
+	}
+}
+
+func containsID(tickets []store.Ticket, id store.TicketID) bool {
+	for _, ticket := range tickets {
+		if ticket.ID == id {
+			return true
+		}
+	}
+	return false
+}
