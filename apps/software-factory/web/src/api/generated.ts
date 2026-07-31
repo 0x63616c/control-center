@@ -243,7 +243,7 @@ export interface RunOutput {
 export interface StateTicketInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** The target lifecycle state: open, working, review, done, or failed. */
+  /** The lifecycle state: open, active, working, review, done, or failed. Active is owned by a target Run; working and review belong to the legacy workflow. */
   state: string;
 }
 
