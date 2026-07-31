@@ -367,6 +367,16 @@ export const secretCatalog = {
       "audience",
       "SOFTWARE_FACTORY_CLOUDFLARE_ACCESS__AUD",
     ),
+    cloudflareAccessServiceTokenClientID: secret(
+      "Software Factory Cloudflare Access",
+      "service token client id",
+      "SOFTWARE_FACTORY_CLOUDFLARE_ACCESS__SERVICE_TOKEN_CLIENT_ID",
+    ),
+    cloudflareAccessServiceTokenClientSecret: secret(
+      "Software Factory Cloudflare Access",
+      "service token client secret",
+      "SOFTWARE_FACTORY_CLOUDFLARE_ACCESS__SERVICE_TOKEN_CLIENT_SECRET",
+    ),
   },
   github: {
     ghcrPat: secret("GitHub Personal Access Token", "token", "GITHUB_PERSONAL_ACCESS_TOKEN__TOKEN"),
@@ -718,6 +728,11 @@ export type ControlCenterProductManifest = Readonly<{
   app: Readonly<{
     exposure: WebExposure;
   }>;
+  // The factory console runs in its own namespace, but public hostnames are
+  // centrally owned here alongside other cross-product origins.
+  factoryConsole: Readonly<{
+    exposure: WebExposure;
+  }>;
   // The Temporal web UI. Declared here rather than in `services` because it is
   // NOT a control-center workload: it runs in the `temporal` namespace from an
   // upstream image (infra/src/temporal.ts), and `services` drives control-center
@@ -797,6 +812,11 @@ export function controlCenterProductManifest(): ControlCenterProductManifest {
     app: {
       exposure: privateWeb(target, { host: "app" }),
     },
+    factoryConsole: {
+      // Single label under the zone, so Universal SSL's one-label wildcard
+      // covers it (see webHostname).
+      exposure: privateWeb(target, { host: "factory" }),
+    },
     temporalUi: {
       // Single label under the zone, so Universal SSL's one-label wildcard
       // covers it (see webHostname).
@@ -875,7 +895,6 @@ export type SoftwareFactoryProductManifest = Readonly<{
   target: HomelabTarget;
   database: ProductDatabase;
   backup: DatabaseBackup;
-  console: Readonly<{ exposure: WebExposure }>;
 }>;
 
 /** The factory's empty durable record, kept separate from its Go application wiring. */
@@ -901,10 +920,5 @@ export function softwareFactoryProductManifest(): SoftwareFactoryProductManifest
     target,
     database,
     backup,
-    console: {
-      // Single label under the zone, so Universal SSL's one-label wildcard
-      // covers it (see webHostname).
-      exposure: privateWeb(target, { host: "factory" }),
-    },
   };
 }

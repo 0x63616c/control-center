@@ -96,7 +96,7 @@ interface Container {
   env: {
     name: string;
     value?: string;
-    valueFrom?: { fieldRef?: { fieldPath?: string } };
+    valueFrom?: { fieldRef?: { fieldPath?: string }; secretKeyRef?: { name: string; key: string } };
   }[];
   volumeMounts: { name: string; mountPath: string; subPath?: string }[];
   readinessProbe?: { httpGet?: { path: string; port: string } };
@@ -398,7 +398,10 @@ describe("factory API and console workloads (#554)", () => {
     );
     expect(apiContainer.env.map((env) => env.name)).toEqual(
       expect.arrayContaining([
-        "SOFTWARE_FACTORY_DATABASE_URL",
+        "SOFTWARE_FACTORY_DATABASE_PASSWORD",
+        "SOFTWARE_FACTORY_DATABASE_HOST",
+        "SOFTWARE_FACTORY_DATABASE_NAME",
+        "SOFTWARE_FACTORY_DATABASE_USER",
         "CLOUDFLARE_ACCESS_TEAM_DOMAIN",
         "CLOUDFLARE_ACCESS_AUD",
         "SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN",
@@ -408,6 +411,10 @@ describe("factory API and console workloads (#554)", () => {
       ]),
     );
     expect(apiContainer.readinessProbe?.httpGet).toEqual({ path: "/healthz", port: "http" });
+    expect(
+      apiContainer.env.find((env) => env.name === "SOFTWARE_FACTORY_DATABASE_PASSWORD")?.valueFrom
+        ?.secretKeyRef,
+    ).toEqual({ name: "software-factory-postgres-auth", key: "password" });
     for (const deployment of [api, web]) {
       expect(
         deployment.template.spec.containers.flatMap((container) => container.volumeMounts ?? []),

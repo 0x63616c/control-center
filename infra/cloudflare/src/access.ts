@@ -8,11 +8,7 @@
 // endpoint fails account-owned tokens by design). It already carries the account
 // + zone scopes incl. DNS:Edit. Don't re-trip the /user verify dead end.
 
-import {
-  controlCenterProductManifest,
-  type ProductServiceDeclaration,
-  softwareFactoryProductManifest,
-} from "@www/platform";
+import { controlCenterProductManifest, type ProductServiceDeclaration } from "@www/platform";
 
 // kioskTokenId: the CF service token *id* (UUID) for the kiosk token — NOT
 // the client_id (.access suffix). Access policies reference token_id; the
@@ -144,7 +140,6 @@ export function accessAppsForPrivateWeb(
  */
 export function desiredAccessApps(zone: string, includeGate = false): DesiredAccessApp[] {
   const ccManifest = controlCenterProductManifest();
-  const factoryManifest = softwareFactoryProductManifest();
 
   const baseApps: DesiredAccessApp[] = [
     // Private-web products: the CC app (app.worldwidewebb.co, product-derived from
@@ -179,7 +174,7 @@ export function desiredAccessApps(zone: string, includeGate = false): DesiredAcc
       // Factory needs both Service Auth for headless callers and an Allow
       // policy so a browser can rely on the Cloudflare Access JWT.
       {
-        exposure: factoryManifest.console.exposure,
+        exposure: ccManifest.factoryConsole.exposure,
         policies: ["factory-service-token", "email-otp"],
       },
     ]),

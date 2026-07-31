@@ -15,11 +15,7 @@
 // captive-portal is intentionally absent from BOTH: it is LAN-only, reached over
 // the OrbStack LoadBalancer on the mini's en1 (DESIGN §5a), never tunneled.
 
-import {
-  controlCenterProductManifest,
-  type ProductServiceDeclaration,
-  softwareFactoryProductManifest,
-} from "@www/platform";
+import { controlCenterProductManifest, type ProductServiceDeclaration } from "@www/platform";
 
 /** The CNAME target every tunnel-routed hostname points at. */
 export function tunnelCnameTarget(tunnelId: string): string {
@@ -124,7 +120,6 @@ export function cloudflareRoutesForExposures(
 
 function productRoutes(): CloudflareRoutes {
   const cc = controlCenterProductManifest();
-  const factory = softwareFactoryProductManifest();
 
   const sources: CloudflareExposureSource[] = [
     {
@@ -201,7 +196,7 @@ function productRoutes(): CloudflareRoutes {
       comment: "platform:home assistant web ui route (#75)",
     },
     {
-      exposure: factory.console.exposure,
+      exposure: cc.factoryConsole.exposure,
       // The console serves the SPA and proxies /api/* to the private API Service;
       // exposing the API directly would create a second Access boundary.
       origin: "http://web.software-factory.svc.cluster.local:80",

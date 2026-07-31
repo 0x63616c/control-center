@@ -237,6 +237,7 @@ export interface SoftwareFactoryResources {
  */
 export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFactoryResources {
   const { provider, namespace, vault, imageDigests, nasNfsServer, requireImageDigestPins } = args;
+  const factory = softwareFactoryProductManifest();
   const opts = { provider };
 
   if (requireImageDigestPins) assertImageDigestPins("software-factory", imageDigests);
@@ -626,7 +627,6 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
                   { name: "TEMPORAL_HOST_PORT", value: TEMPORAL_FRONTEND_CLUSTER_ADDRESS },
                   { name: "TEMPORAL_NAMESPACE", value: SOFTWARE_FACTORY_TEMPORAL_NAMESPACE },
                   ...[
-                    "SOFTWARE_FACTORY_DATABASE_URL",
                     "CLOUDFLARE_ACCESS_TEAM_DOMAIN",
                     "CLOUDFLARE_ACCESS_AUD",
                     "SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN",
@@ -635,6 +635,15 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
                     name,
                     valueFrom: { secretKeyRef: { name: API_SECRET_NAME, key: name } },
                   })),
+                  { name: "SOFTWARE_FACTORY_DATABASE_USER", value: factory.database.owner },
+                  { name: "SOFTWARE_FACTORY_DATABASE_HOST", value: factory.database.rwServiceName },
+                  { name: "SOFTWARE_FACTORY_DATABASE_NAME", value: factory.database.databaseName },
+                  {
+                    name: "SOFTWARE_FACTORY_DATABASE_PASSWORD",
+                    valueFrom: {
+                      secretKeyRef: { name: factory.database.authSecretName, key: "password" },
+                    },
+                  },
                 ],
                 readinessProbe: {
                   httpGet: { path: "/healthz", port: "http" },
@@ -740,21 +749,16 @@ function createAPISecret(
   namespaceName: pulumi.Input<string>,
   opts: pulumi.CustomResourceOptions,
 ): k8s.core.v1.Secret {
-  const factory = softwareFactoryProductManifest();
   const fromVault = (key: string): string => {
     const value = vault[key];
     if (!value) throw new Error(`software-factory: vault key ${key} not found`);
     return value;
   };
-  const databasePassword = encodeURIComponent(fromVault(factory.database.auth.password.vaultKey));
   return new k8s.core.v1.Secret(
     API_SECRET_NAME,
     {
       metadata: { name: API_SECRET_NAME, namespace: namespaceName },
       stringData: {
-        SOFTWARE_FACTORY_DATABASE_URL: pulumi.secret(
-          `postgresql://${factory.database.owner}:${databasePassword}@${factory.database.rwServiceName}:5432/${factory.database.databaseName}?sslmode=disable`,
-        ),
         CLOUDFLARE_ACCESS_TEAM_DOMAIN: pulumi.secret(
           fromVault("SOFTWARE_FACTORY_CLOUDFLARE_ACCESS__TEAM_DOMAIN"),
         ),

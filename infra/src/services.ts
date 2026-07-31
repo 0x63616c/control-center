@@ -77,7 +77,7 @@ const IMAGE_REPOSITORIES = {
   // shape validation, same CI collection — so a sandbox is as reproducible as
   // the worker that created it, rather than resolving `:main` at 3am. `relay`
   // is the separately deployed platform webhook edge, but shares this product
-  // image/digest registry so CI pins all three module images together.
+  // image/digest registry so CI pins every Go module image together.
   "software-factory-worker": {
     product: "software-factory",
     digestKey: softwareFactoryProduct.imageDigestKey("worker"),
