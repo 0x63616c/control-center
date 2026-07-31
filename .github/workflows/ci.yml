@@ -394,6 +394,36 @@ jobs:
           version: v2.12.2
           working-directory: apps/software-factory
 
+  # Generated API artefacts are committed. Regenerate before diffing so this
+  # stops a spec or client change from reaching deploy without its contract.
+  check-software-factory-generated:
+    needs: [changes]
+    if: needs.changes.outputs.softwarefactory == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v7
+        with:
+          # Keep the nested module as the single Go-version authority.
+          go-version-file: apps/software-factory/go.mod
+          # This nested module owns its own go.sum; root discovery misses it.
+          cache-dependency-path: apps/software-factory/go.sum
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.19
+      - name: Install SQL generator
+        uses: sqlc-dev/setup-sqlc@v4
+        with:
+          sqlc-version: 1.31.1
+      - name: Install client generator
+        run: bun install --frozen-lockfile
+        working-directory: apps/software-factory/web
+      - name: Regenerate and check committed artefacts
+        run: |
+          apps/software-factory/scripts/regenerate.sh
+          git diff --exit-code
+
   # Build jobs depend on `changes` ONLY, not on test/typecheck. They run
   # concurrently with the test suite instead of queueing behind it (measured
   # 180s off the critical path, because the build fan-in is shorter than the
@@ -640,6 +670,7 @@ jobs:
         build-software-factory-sandbox,
         build-software-factory-relay,
         test-software-factory,
+        check-software-factory-generated,
       ]
     # always() lets us run even when some build jobs were skipped (no changes).
     # We proceed when: on main, an app OR infra changed, and no build failed.

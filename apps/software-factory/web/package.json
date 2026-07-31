@@ -1,0 +1,14 @@
+{
+  "name": "@software-factory/web-generated-client",
+  "private": true,
+  "scripts": {
+    "generate:api": "orval --config orval.config.js"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "5.90.20",
+    "axios": "1.13.6"
+  },
+  "devDependencies": {
+    "orval": "7.20.0"
+  }
+}
