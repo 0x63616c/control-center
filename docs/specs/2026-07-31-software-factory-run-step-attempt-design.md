@@ -353,6 +353,14 @@ It first reconciles an existing result and otherwise resumes the existing agent
 thread where possible. Only the workflow may allocate a new Agent Attempt ID
 and authorize another potentially chargeable run.
 
+Postgres does not store one row per native activity try. Temporal owns that
+low-level operational history. Postgres remains authoritative for the Step's
+state and Result and for every Agent Attempt. The console therefore does not
+need Temporal to determine product state, but it may link to Temporal for
+activity-retry diagnostics. A retry count or latest transient failure may be
+copied onto the Step later as a convenience summary without making activity
+tries domain entities.
+
 Recording writes themselves can keep automatic Temporal retries. They are
 persistence plumbing, not Ticket work. They should become mandatory: currently
 Step and Agent Attempt writes are logged and ignored after exhausting retries,
@@ -427,6 +435,8 @@ This reaches further than a database migration:
 7. Keep semantic-rework budgets separate from infrastructure retry policy.
 8. Give every Step exactly one primary operation.
 9. Keep Agent Attempt status separate from the Step's domain Result.
+10. Keep native activity-try history in Temporal rather than duplicating it in
+    Postgres.
 
 ## Parked questions
 

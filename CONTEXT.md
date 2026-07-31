@@ -172,7 +172,7 @@ _Avoid_: Activity retry, Turn, semantic rework.
 **Activity Retry**:
 Temporal repeating the same Step operation after a transient execution failure. An activity retry
 does not create a Step or Agent Attempt; an agent activity retry reconciles or resumes the same
-Agent Attempt.
+Agent Attempt. Its detailed history belongs to Temporal, not the software factory's domain history.
 _Avoid_: Agent Attempt, semantic rework.
 
 **Step Result**:
