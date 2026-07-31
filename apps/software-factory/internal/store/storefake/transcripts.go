@@ -11,7 +11,11 @@ import (
 func (f *Store) PutTranscript(_ context.Context, t store.Transcript) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.transcripts[attemptKey{stepKey: stepKeyOf(t.Key), attemptNo: t.AttemptNo}] = t
+	key := attemptKey{stepKey: stepKeyOf(t.Key), attemptNo: t.AttemptNo}
+	if _, exists := f.transcripts[key]; exists {
+		return nil
+	}
+	f.transcripts[key] = t
 	return nil
 }
 

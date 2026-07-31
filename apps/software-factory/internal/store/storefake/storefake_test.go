@@ -136,6 +136,38 @@ func TestFakeStoreCarriesATicketThroughItsWholeLifecycle(t *testing.T) {
 	}
 }
 
+func TestFakeStoreKeepsTheFirstTranscriptWhenPersistenceIsRetried(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := storefake.New()
+	key := work.StageKey{RunID: "run-1", Stage: work.StagePlan, Turn: 1}
+	first := store.Transcript{
+		Key: key, AttemptNo: 1, CompressedBytes: []byte("first"), Compression: "gzip",
+		UncompressedSizeBytes: 5, Checksum: []byte("first"),
+	}
+	if err := s.PutTranscript(ctx, first); err != nil {
+		t.Fatalf("PutTranscript(first): %v", err)
+	}
+	retry := store.Transcript{
+		Key: key, AttemptNo: 1, CompressedBytes: []byte("second"), Compression: "gzip",
+		UncompressedSizeBytes: 6, Checksum: []byte("second"),
+	}
+	if err := s.PutTranscript(ctx, retry); err != nil {
+		t.Fatalf("PutTranscript(retry): %v", err)
+	}
+
+	got, err := s.Transcript(ctx, key, 1)
+	if err != nil {
+		t.Fatalf("Transcript: %v", err)
+	}
+	if string(got.CompressedBytes) != string(first.CompressedBytes) ||
+		got.UncompressedSizeBytes != first.UncompressedSizeBytes ||
+		string(got.Checksum) != string(first.Checksum) {
+		t.Fatalf("Transcript after retry = %+v, want the first write %+v", got, first)
+	}
+}
+
 // A resumed attempt reports Measured false with a zero Usage, and that must
 // stay distinguishable from a real zero-token measurement (#426) — the reason
 // Measured exists on Attempt at all.

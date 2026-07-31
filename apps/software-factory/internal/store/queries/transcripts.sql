@@ -2,7 +2,8 @@
 INSERT INTO transcript (
     run_id, stage, turn, attempt_no,
     compressed_bytes, compression, uncompressed_size_bytes, checksum
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (run_id, stage, turn, attempt_no) DO NOTHING;
 
 -- name: Transcript :one
 SELECT * FROM transcript
