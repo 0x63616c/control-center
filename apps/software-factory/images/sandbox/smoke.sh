@@ -118,6 +118,38 @@ check "pinned tool versions" 0 \
     echo "codex $codex_version | bun $bun_version | bunx $bunx_version | node $node_version | $go_version | $git_version"
   '
 
+# A real Playwright page screenshot proves that the browser bundle is outside
+# the masked /work mount, that uid 1000 can discover it, and that Chromium's
+# shared libraries are complete. The CLI launches headless by default; a native
+# browser window or its tab chrome would require a separate display/compositor
+# and is not what Playwright page screenshots capture.
+check "Playwright Chromium writes a non-empty headless screenshot" 0 \
+  /usr/bin/env sh -c '
+    screenshot=/tmp/sandbox-playwright-smoke.png
+    rm -f "$screenshot"
+    test "$PLAYWRIGHT_BROWSERS_PATH" = /ms-playwright
+    bunx --yes playwright@1.60.0 screenshot \
+      "data:text/html,%3Ch1%3Esandbox%20screenshot%3C%2Fh1%3E" \
+      "$screenshot"
+    test -s "$screenshot"
+  '
+
+# `install-deps chromium` supplies Xvfb on Trixie; the Dockerfile adds xauth,
+# which `xvfb-run` needs and the resolver does not. Keep a headed browser open
+# under a display larger than the 1366x1024 panel viewport: the acceptance
+# checklist calls out that browser chrome otherwise steals vertical pixels.
+# Playwright's `open` command is headed unless PWTEST_CLI_HEADLESS is set, and
+# `timeout` must therefore expire. A launch failure exits before 5 seconds and
+# fails this check instead of being mistaken for a working display.
+check "Playwright opens a headed 1366x1024 Chromium window under Xvfb" 124 \
+  /usr/bin/env sh -c '
+    timeout 5 xvfb-run -a -s "-screen 0 1400x1100x24" \
+      bunx --yes playwright@1.60.0 open \
+        --viewport-size "1366,1024" \
+        --user-data-dir /tmp/sandbox-playwright-headed-profile \
+        "data:text/html,%3Ch1%3Eheaded%20sandbox%20browser%3C%2Fh1%3E"
+  '
+
 # Vitest's forks pool reaches this exact Bun compatibility path. Checking only
 # `node` on PATH would miss a broken Bun-to-Node handoff.
 check "Bun can fork a Node child" 0 \
