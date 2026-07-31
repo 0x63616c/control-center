@@ -3,9 +3,9 @@
 #
 # Part of the local-lvm cutover (ADR-0009, docs/runbooks/local-lvm-cutover.md).
 #
-# THE NIGHTLY pg-backup CRON DUMPS ONLY control_center. The temporal,
-# temporal_visibility and home_assistant databases have NO other backup —
-# through the cutover wipe, this script's dumps are their only lifeline.
+# THE NIGHTLY product backup CronJobs dump control_center and software_factory.
+# The temporal, temporal_visibility, and home_assistant databases have NO other
+# backup — through the cutover wipe, this script's dumps are their only lifeline.
 #
 # Data path: pg_dump|gzip runs INSIDE each CNPG primary, writing onto its own
 # PVC (node disk); a hostPath+NFS pod then copies node-side to the NAS and
@@ -30,6 +30,7 @@ NS="kube-system"
 # namespace/CNPG-primary-pod/database
 DUMPS=(
   control-center/control-center-postgres-1/control_center
+  software-factory/software-factory-postgres-1/software_factory
   temporal/temporal-postgres-1/temporal
   temporal/temporal-postgres-1/temporal_visibility
   home-assistant/home-assistant-postgres-1/home_assistant
@@ -87,11 +88,14 @@ for entry in "${DUMPS[@]}"; do
   rest="${entry#*/}"
   primary="${rest%%/*}"
   db="${rest#*/}"
-  # home_assistant is legitimately near-empty: HA's recorder writes SQLite in
-  # the ha-config PVC (rsynced by backup-pvcs.sh); the CNPG database has no
-  # tables. Everything else must be a real dump.
+  # home_assistant and the newly declared, still-empty software_factory
+  # database are legitimately near-empty. HA's recorder writes SQLite in the
+  # ha-config PVC (rsynced by backup-pvcs.sh); every other database must have a
+  # meaningful dump.
   min_size=1000
-  [ "$db" = "home_assistant" ] && min_size=200
+  case "$db" in
+    home_assistant | software_factory) min_size=200 ;;
+  esac
   kubectl -n "$NS" exec "$POD" -- sh -ec "
     mkdir -p /nas/${STAGING_SUBDIR}/dumps
     src=\$(ls -d /data/pvc-*_${ns}_${primary%-1}-1 2>/dev/null | head -1)

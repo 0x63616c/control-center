@@ -45,9 +45,10 @@ Every command runs from the repo root of the accumulated branch
 - [ ] `scripts/storage-migration/backup-pvcs.sh` — rsyncs every local-path
       PVC dir to `backups/world-wide-webb/storage-migration/<date>/pvc-files/`.
 - [ ] `scripts/storage-migration/dump-temporal-dbs.sh` — pg_dumps
-      control_center, temporal, temporal_visibility, home_assistant into
+      control_center, software_factory, temporal, temporal_visibility,
+      home_assistant into
       `<date>/dumps/`. **The nightly pg-backup cron covers ONLY
-      control_center; these dumps are the other three databases' only
+      control_center and software_factory; these dumps are the other three databases' only
       lifeline.**
 - [ ] VERIFY (all must pass before anything destructive):
   - every dump file size > 0 and `gunzip -t` clean (the dump script asserts
@@ -113,7 +114,8 @@ Every command runs from the repo root of the accumulated branch
       schema-setup Jobs Complete.
 - [ ] Postgres (order matters: schema jobs FIRST for temporal):
       `gunzip -c dumps/<db>.sql.gz | kubectl -n <ns> exec -i <primary> -c postgres -- psql -U postgres -d <db>`
-      for control_center, temporal, temporal_visibility, home_assistant
+      for control_center, software_factory, temporal, temporal_visibility,
+      home_assistant
       (fetch dumps from the NAS staging dir).
 - [ ] File PVCs: `scripts/storage-migration/restore-pvcs.sh <date>` (workloads
       that mount them should still be at 0 replicas / not yet scaled).
