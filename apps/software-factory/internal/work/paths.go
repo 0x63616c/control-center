@@ -162,6 +162,21 @@ func WorkflowID(ticketNumber int) string {
 	return fmt.Sprintf("work-ticket-%d", ticketNumber)
 }
 
+// FactoryTicketWorkflowID is the Temporal claim for a factory-owned Ticket.
+// Its prefix is deliberately disjoint from WorkflowID: a completed legacy
+// issue run may be reused by Temporal, so sharing the old namespace would
+// make two unrelated tickets share one history lineage.
+func FactoryTicketWorkflowID(ticketID int64) string {
+	return fmt.Sprintf("factory-ticket-%d", ticketID)
+}
+
+// FactoryTicketBranchName names a Ticket-backed run's branch. It cannot
+// collide with BranchName, which reserves software-factory/ticket-* for
+// GitHub issue runs.
+func FactoryTicketBranchName(ticketID int64, runID string) string {
+	return path.Join("software-factory", "factory-ticket-"+strconv.FormatInt(ticketID, 10), runID)
+}
+
 // DispatcherWorkflowID is the one dispatcher's Temporal workflow ID.
 //
 // It is a constant rather than derived from anything, because there is
@@ -170,6 +185,10 @@ func WorkflowID(ticketNumber int) string {
 // an already-running execution rather than erroring on it — is what makes
 // that idempotent. A second spelling anywhere would be a second dispatcher.
 const DispatcherWorkflowID = "software-factory-dispatcher"
+
+// FactoryDispatcherWorkflowID is the singleton Ticket-backed dispatcher.
+// One spelling is one dispatcher; the legacy dispatcher remains separate.
+const FactoryDispatcherWorkflowID = "software-factory-ticket-dispatcher"
 
 // statusMarkerPrefix opens every status marker. It carries a version so the
 // grammar can change without a new run adopting an old run's comment by

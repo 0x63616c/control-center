@@ -10,7 +10,7 @@ import (
 // replaces the one variable it is about.
 func completeEnv() map[string]string {
 	return map[string]string{
-		"SOFTWARE_FACTORY_DATABASE_URL":  "postgres://factory:password@postgres/factory",
+		"SOFTWARE_FACTORY_DATABASE_URL":  "postgresql://software_factory@software-factory-postgres-rw:5432/software_factory?sslmode=disable",
 		"TEMPORAL_HOST_PORT":             "temporal-frontend.temporal:7233",
 		"TEMPORAL_NAMESPACE":             "software-factory",
 		"SANDBOX_NAMESPACE":              "software-factory",
@@ -82,7 +82,7 @@ func TestLoadWorkerReadsTheWholeEnvironment(t *testing.T) {
 	}
 
 	switch {
-	case got.DatabaseURL != "postgres://factory:password@postgres/factory":
+	case got.DatabaseURL != "postgresql://software_factory@software-factory-postgres-rw:5432/software_factory?sslmode=disable":
 		t.Errorf("DatabaseURL = %q", got.DatabaseURL)
 	case got.TemporalHostPort != "temporal-frontend.temporal:7233":
 		t.Errorf("TemporalHostPort = %q", got.TemporalHostPort)

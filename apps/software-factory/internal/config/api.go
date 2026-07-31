@@ -9,19 +9,19 @@ import (
 )
 
 const (
-	envAPIDatabaseURL      = "SOFTWARE_FACTORY_DATABASE_URL"
-	envAPIDatabaseUser     = "SOFTWARE_FACTORY_DATABASE_USER"
-	envAPIDatabasePassword = "SOFTWARE_FACTORY_DATABASE_PASSWORD"
-	envAPIDatabaseHost     = "SOFTWARE_FACTORY_DATABASE_HOST"
-	envAPIDatabaseName     = "SOFTWARE_FACTORY_DATABASE_NAME"
-	envAPIListenAddr       = "API_ADDR"
-	envAPIMetricsAddr      = "METRICS_ADDR"
-	envAccessTeamDomain    = "CLOUDFLARE_ACCESS_TEAM_DOMAIN"
-	envAccessAudience      = "CLOUDFLARE_ACCESS_AUD"
-	envAPIWorkerBearer     = "SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN"
-	envAPISandboxBearer    = "SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN"
-	envAPITemporalHost     = "TEMPORAL_HOST_PORT"
-	envAPITemporalNS       = "TEMPORAL_NAMESPACE"
+	envDatabaseURL      = "SOFTWARE_FACTORY_DATABASE_URL"
+	envDatabaseUser     = "SOFTWARE_FACTORY_DATABASE_USER"
+	envDatabasePassword = "SOFTWARE_FACTORY_DATABASE_PASSWORD"
+	envDatabaseHost     = "SOFTWARE_FACTORY_DATABASE_HOST"
+	envDatabaseName     = "SOFTWARE_FACTORY_DATABASE_NAME"
+	envAPIListenAddr    = "API_ADDR"
+	envAPIMetricsAddr   = "METRICS_ADDR"
+	envAccessTeamDomain = "CLOUDFLARE_ACCESS_TEAM_DOMAIN"
+	envAccessAudience   = "CLOUDFLARE_ACCESS_AUD"
+	envAPIWorkerBearer  = "SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN"
+	envAPISandboxBearer = "SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN"
+	envAPITemporalHost  = "TEMPORAL_HOST_PORT"
+	envAPITemporalNS    = "TEMPORAL_NAMESPACE"
 )
 
 // API is the parsed startup configuration for the factory API process.
@@ -42,15 +42,11 @@ type API struct {
 // LoadAPI parses all API process configuration before any external work begins.
 func LoadAPI() (API, error) {
 	teamDomain := os.Getenv(envAccessTeamDomain)
-	databaseURL := os.Getenv(envAPIDatabaseURL)
+	databaseURL := os.Getenv(envDatabaseURL)
 	if strings.TrimSpace(databaseURL) == "" {
-		user := os.Getenv(envAPIDatabaseUser)
-		password := os.Getenv(envAPIDatabasePassword)
-		host := os.Getenv(envAPIDatabaseHost)
-		name := os.Getenv(envAPIDatabaseName)
-		if user != "" && password != "" && host != "" && name != "" {
-			databaseURL = (&url.URL{Scheme: "postgresql", User: url.UserPassword(user, password), Host: host + ":5432", Path: name, RawQuery: "sslmode=disable"}).String()
-		}
+		databaseURL = databaseURLFromParts(
+			os.Getenv(envDatabaseUser), os.Getenv(envDatabasePassword),
+			os.Getenv(envDatabaseHost), os.Getenv(envDatabaseName))
 	}
 	cfg := API{
 		DatabaseURL:       databaseURL,
@@ -63,7 +59,7 @@ func LoadAPI() (API, error) {
 		TemporalNamespace: os.Getenv(envAPITemporalNS),
 	}
 	for _, required := range []struct{ name, value string }{
-		{envAPIDatabaseURL, cfg.DatabaseURL},
+		{envDatabaseURL, cfg.DatabaseURL},
 		{envAPIListenAddr, cfg.ListenAddr},
 		{envAPIMetricsAddr, cfg.MetricsAddr},
 		{envAccessTeamDomain, teamDomain},
