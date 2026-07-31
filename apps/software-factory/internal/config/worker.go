@@ -16,6 +16,8 @@ import (
 // travels as a Temporal signal so it can change without a deploy, and a second
 // copy of them here would be a second answer to "what is it running under".
 type Worker struct {
+	// DatabaseURL is the factory CNPG connection used for queryable projections.
+	DatabaseURL string
 	// TemporalHostPort is the frontend to dial, host:port.
 	TemporalHostPort string
 
@@ -113,6 +115,7 @@ const (
 // error at all.
 const (
 	envTemporalHostPort       = "TEMPORAL_HOST_PORT"
+	envDatabaseURL            = "SOFTWARE_FACTORY_DATABASE_URL"
 	envTemporalNamespace      = "TEMPORAL_NAMESPACE"
 	envSandboxNamespace       = "SANDBOX_NAMESPACE"
 	envSandboxImage           = "SANDBOX_IMAGE"
@@ -132,6 +135,7 @@ const (
 // deliberately: it is the one input with a safe default.
 func workerEnvNames() []string {
 	return []string{
+		envDatabaseURL,
 		envTemporalHostPort,
 		envTemporalNamespace,
 		envSandboxNamespace,
@@ -152,6 +156,7 @@ func workerEnvNames() []string {
 // at the first poll.
 func (w Worker) Validate() error {
 	required := map[string]string{
+		envDatabaseURL:            w.DatabaseURL,
 		envTemporalHostPort:       w.TemporalHostPort,
 		envTemporalNamespace:      w.TemporalNamespace,
 		envSandboxNamespace:       w.SandboxNamespace,
@@ -179,6 +184,7 @@ func (w Worker) Validate() error {
 // does nothing, which is the failure that costs a morning.
 func LoadWorker() (Worker, error) {
 	cfg := Worker{
+		DatabaseURL:       os.Getenv(envDatabaseURL),
 		TemporalHostPort:  os.Getenv(envTemporalHostPort),
 		TemporalNamespace: os.Getenv(envTemporalNamespace),
 		SandboxNamespace:  os.Getenv(envSandboxNamespace),
@@ -221,6 +227,7 @@ func orDefault(name, fallback string) string {
 // file to fix their Deployment.
 func describeWorkerRequirement(err error) error {
 	purposes := map[string]string{
+		envDatabaseURL:            "the factory Postgres connection used to write dispatcher state",
 		envTemporalHostPort:       "the Temporal frontend to dial, host:port",
 		envTemporalNamespace:      "the Temporal namespace this service's workflows live in",
 		envSandboxNamespace:       "the Kubernetes namespace per-ticket sandbox pods are created in",

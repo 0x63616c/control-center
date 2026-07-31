@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	enums "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/temporal"
@@ -153,7 +154,9 @@ type dispatcher struct {
 	// own goroutine and cannot ask for the time, so the breaker state it
 	// reports is as of the last tick — at most one poll interval stale, and
 	// honest about it.
-	now time.Time
+	now        time.Time
+	candidates []int
+	freeSlots  int
 }
 
 func newDispatcher(in DispatcherInput) *dispatcher {
@@ -188,6 +191,7 @@ func (d *dispatcher) tick(ctx workflow.Context) {
 	d.pruneFinished()
 	d.sweep(ctx)
 	d.start(ctx)
+	d.recordState(ctx)
 }
 
 // wait blocks until the poll interval elapses, a signal arrives, or the
@@ -287,6 +291,8 @@ func (d *dispatcher) liveRunIDs() []string {
 // start takes on as much new work as the cap, the pause and the breaker allow.
 func (d *dispatcher) start(ctx workflow.Context) {
 	log := workflow.GetLogger(ctx)
+	d.candidates = nil
+	d.freeSlots = 0
 
 	if d.config.Paused {
 		log.Debug("paused, starting nothing", "reason", d.config.PauseReason)
@@ -301,6 +307,7 @@ func (d *dispatcher) start(ctx workflow.Context) {
 	if free <= 0 {
 		return
 	}
+	d.freeSlots = free
 
 	activityCtx := workflow.WithActivityOptions(ctx, d.activityOptions())
 	var tickets []work.Ticket
@@ -338,10 +345,28 @@ func (d *dispatcher) start(ctx workflow.Context) {
 			log.Debug("skipped a ticket whose auto label is no longer present", "ticket", ticket.Number)
 			continue
 		}
+		d.candidates = append(d.candidates, ticket.Number)
 
 		if d.claim(ctx, ticket) {
 			free--
 		}
+	}
+}
+
+// recordState persists the post-tick decision. A database outage is visible in
+// workflow logs but cannot stop supervision of unrelated GitHub-backed runs.
+func (d *dispatcher) recordState(ctx workflow.Context) {
+	inFlight := make([]work.InFlightTicket, 0, len(d.inFlight))
+	for _, ticket := range sortedTickets(d.inFlight) {
+		inFlight = append(inFlight, d.inFlight[ticket])
+	}
+	state := store.DispatcherState{
+		Config: d.config, Tuning: d.tuning, Breaker: d.breaker, ConfigError: d.configError,
+		InFlight: inFlight, Candidates: append([]int(nil), d.candidates...), FreeSlots: d.freeSlots, WrittenAt: d.now,
+	}
+	activityCtx := workflow.WithActivityOptions(ctx, d.activityOptions())
+	if err := workflow.ExecuteActivity(activityCtx, acts.RecordDispatcherState, state).Get(ctx, nil); err != nil {
+		workflow.GetLogger(ctx).Error("dispatcher state recording failed", "error", err)
 	}
 }
 

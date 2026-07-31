@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"go.temporal.io/sdk/activity"
@@ -24,16 +25,17 @@ import (
 // fields keep the composition root readable and New still validates once, so
 // nothing about the "no usable-but-invalid zero value" guarantee is weakened.
 type Deps struct {
-	GitHub      GitHub
-	Pods        PodLifecycle
-	Repo        RepoCloner
-	Stages      StageRunner
-	Transcripts TranscriptSink
-	Prompts     PromptRenderer
-	Status      StatusRenderer
-	Runs        RunLookup
-	Sweeper     SandboxSweeper
-	Metrics     Metrics
+	GitHub          GitHub
+	Pods            PodLifecycle
+	Repo            RepoCloner
+	Stages          StageRunner
+	Transcripts     TranscriptSink
+	Prompts         PromptRenderer
+	Status          StatusRenderer
+	Runs            RunLookup
+	Sweeper         SandboxSweeper
+	Metrics         Metrics
+	DispatcherState DispatcherStateWriter
 
 	// RepoURL is the ticket repository's clone URL. It is deploy-time config,
 	// like Sandbox: built once from the App's own owner/repo at the composition
@@ -126,6 +128,17 @@ func New(deps Deps) (*Activities, error) {
 		return nil, fmt.Errorf("activities need a usable sandbox template: %w", err)
 	}
 	return &Activities{deps: deps}, nil
+}
+
+// RecordDispatcherState writes one post-tick dispatcher projection.
+func (a *Activities) RecordDispatcherState(ctx context.Context, state store.DispatcherState) error {
+	if a.deps.DispatcherState == nil {
+		return fail(ctx, "recording dispatcher state", fmt.Errorf("dispatcher state writer is not configured"))
+	}
+	if err := a.deps.DispatcherState.PutDispatcherState(ctx, state); err != nil {
+		return fail(ctx, "recording dispatcher state", err)
+	}
+	return nil
 }
 
 // SandboxDeps are what a sandbox pod's embedded worker needs to host RunStage

@@ -12,7 +12,7 @@ import (
 )
 
 const dispatcherState = `-- name: DispatcherState :one
-SELECT singleton, paused, max_in_flight, breaker_open_until, breaker_reason, in_flight, next_ticket_id, written_at FROM dispatcher_state WHERE singleton = TRUE
+SELECT singleton, config, tuning, breaker, config_error, in_flight, candidates, free_slots, written_at FROM dispatcher_state WHERE singleton = TRUE
 `
 
 func (q *Queries) DispatcherState(ctx context.Context) (DispatcherState, error) {
@@ -20,12 +20,13 @@ func (q *Queries) DispatcherState(ctx context.Context) (DispatcherState, error) 
 	var i DispatcherState
 	err := row.Scan(
 		&i.Singleton,
-		&i.Paused,
-		&i.MaxInFlight,
-		&i.BreakerOpenUntil,
-		&i.BreakerReason,
+		&i.Config,
+		&i.Tuning,
+		&i.Breaker,
+		&i.ConfigError,
 		&i.InFlight,
-		&i.NextTicketID,
+		&i.Candidates,
+		&i.FreeSlots,
 		&i.WrittenAt,
 	)
 	return i, err
@@ -33,34 +34,37 @@ func (q *Queries) DispatcherState(ctx context.Context) (DispatcherState, error) 
 
 const putDispatcherState = `-- name: PutDispatcherState :exec
 UPDATE dispatcher_state
-SET paused = $1,
-    max_in_flight = $2,
-    breaker_open_until = $3,
-    breaker_reason = $4,
+SET config = $1,
+    tuning = $2,
+    breaker = $3,
+    config_error = $4,
     in_flight = $5,
-    next_ticket_id = $6,
-    written_at = $7
+    candidates = $6,
+    free_slots = $7,
+    written_at = $8
 WHERE singleton = TRUE
 `
 
 type PutDispatcherStateParams struct {
-	Paused           bool
-	MaxInFlight      int32
-	BreakerOpenUntil pgtype.Timestamptz
-	BreakerReason    pgtype.Text
-	InFlight         []byte
-	NextTicketID     pgtype.Int8
-	WrittenAt        pgtype.Timestamptz
+	Config      []byte
+	Tuning      []byte
+	Breaker     []byte
+	ConfigError string
+	InFlight    []byte
+	Candidates  []byte
+	FreeSlots   int32
+	WrittenAt   pgtype.Timestamptz
 }
 
 func (q *Queries) PutDispatcherState(ctx context.Context, arg PutDispatcherStateParams) error {
 	_, err := q.db.Exec(ctx, putDispatcherState,
-		arg.Paused,
-		arg.MaxInFlight,
-		arg.BreakerOpenUntil,
-		arg.BreakerReason,
+		arg.Config,
+		arg.Tuning,
+		arg.Breaker,
+		arg.ConfigError,
 		arg.InFlight,
-		arg.NextTicketID,
+		arg.Candidates,
+		arg.FreeSlots,
 		arg.WrittenAt,
 	)
 	return err

@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store/storedb"
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
 // DispatcherStateReader reads the single dispatcher_state row.
@@ -25,47 +24,74 @@ func (s *Store) DispatcherState(ctx context.Context) (DispatcherState, error) {
 	if err != nil {
 		return DispatcherState{}, fmt.Errorf("reading dispatcher state: %w", wrapQueryErr(err))
 	}
-	var inFlight []InFlightTicket
-	if len(row.InFlight) > 0 {
-		if err := json.Unmarshal(row.InFlight, &inFlight); err != nil {
-			return DispatcherState{}, fmt.Errorf("reading dispatcher state: decoding in_flight: %w", err)
+	var state DispatcherState
+	for _, field := range []struct {
+		name string
+		raw  []byte
+		into any
+	}{
+		{name: "config", raw: row.Config, into: &state.Config},
+		{name: "tuning", raw: row.Tuning, into: &state.Tuning},
+		{name: "breaker", raw: row.Breaker, into: &state.Breaker},
+		{name: "in_flight", raw: row.InFlight, into: &state.InFlight},
+		{name: "candidates", raw: row.Candidates, into: &state.Candidates},
+	} {
+		if err := json.Unmarshal(field.raw, field.into); err != nil {
+			return DispatcherState{}, fmt.Errorf("reading dispatcher state: decoding %s: %w", field.name, err)
 		}
 	}
-	return DispatcherState{
-		Paused:      row.Paused,
-		MaxInFlight: int(row.MaxInFlight),
-		Breaker: work.Breaker{
-			OpenUntil: timeFromPg(row.BreakerOpenUntil),
-			Reason:    textFromPg(row.BreakerReason),
-		},
-		InFlight:     inFlight,
-		NextTicketID: ticketIDFromPg(row.NextTicketID),
-		WrittenAt:    timeFromPg(row.WrittenAt),
-	}, nil
+	state.ConfigError = row.ConfigError
+	state.FreeSlots = int(row.FreeSlots)
+	state.WrittenAt = timeFromPg(row.WrittenAt)
+	return state, nil
 }
 
 // PutDispatcherState overwrites the single dispatcher_state row with state.
 // The dispatcher calls this once per tick, per ADR-0012 — it is the write
 // that finally makes "what is it going to work on next" answerable.
 func (s *Store) PutDispatcherState(ctx context.Context, state DispatcherState) error {
-	// in_flight's CHECK constraint requires a JSON array, never JSON null, so a
-	// nil slice must still encode as "[]" rather than json.Marshal's default.
-	inFlight := []byte("[]")
-	if len(state.InFlight) > 0 {
-		encoded, err := json.Marshal(state.InFlight)
-		if err != nil {
-			return fmt.Errorf("writing dispatcher state: encoding in_flight: %w", err)
+	encode := func(name string, value any, array bool) ([]byte, error) {
+		if array {
+			switch name {
+			case "in_flight":
+				if len(state.InFlight) == 0 {
+					return []byte("[]"), nil
+				}
+			case "candidates":
+				if len(state.Candidates) == 0 {
+					return []byte("[]"), nil
+				}
+			}
 		}
-		inFlight = encoded
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return nil, fmt.Errorf("writing dispatcher state: encoding %s: %w", name, err)
+		}
+		return encoded, nil
 	}
-	err := s.q.PutDispatcherState(ctx, storedb.PutDispatcherStateParams{
-		Paused:           state.Paused,
-		MaxInFlight:      int32(state.MaxInFlight),
-		BreakerOpenUntil: pgOptionalTimestamp(state.Breaker.OpenUntil),
-		BreakerReason:    pgOptionalText(state.Breaker.Reason),
-		InFlight:         inFlight,
-		NextTicketID:     pgOptionalTicketID(state.NextTicketID),
-		WrittenAt:        pgTimestamp(state.WrittenAt),
+	config, err := encode("config", state.Config, false)
+	if err != nil {
+		return err
+	}
+	tuning, err := encode("tuning", state.Tuning, false)
+	if err != nil {
+		return err
+	}
+	breaker, err := encode("breaker", state.Breaker, false)
+	if err != nil {
+		return err
+	}
+	inFlight, err := encode("in_flight", state.InFlight, true)
+	if err != nil {
+		return err
+	}
+	candidates, err := encode("candidates", state.Candidates, true)
+	if err != nil {
+		return err
+	}
+	err = s.q.PutDispatcherState(ctx, storedb.PutDispatcherStateParams{
+		Config: config, Tuning: tuning, Breaker: breaker, ConfigError: state.ConfigError,
+		InFlight: inFlight, Candidates: candidates, FreeSlots: int32(state.FreeSlots), WrittenAt: pgTimestamp(state.WrittenAt),
 	})
 	if err != nil {
 		return fmt.Errorf("writing dispatcher state: %w", wrapQueryErr(err))

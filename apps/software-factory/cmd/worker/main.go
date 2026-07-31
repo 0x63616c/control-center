@@ -18,6 +18,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"go.temporal.io/sdk/client"
@@ -33,6 +34,7 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/config"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/prompts"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/status"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/transcripts"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
@@ -87,6 +89,11 @@ func run() error {
 	}
 
 	logger := newLogger(cfg.LogLevel)
+	pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("constructing the dispatcher-state database pool: %w", err)
+	}
+	defer pool.Close()
 	bridgeKlog(logger)
 
 	// Read at startup rather than by the dispatcher itself, so a configuration
@@ -140,7 +147,7 @@ func run() error {
 		return err
 	}
 
-	acts, err := newActivities(cfg, temporal, renderer, metrics, logger)
+	acts, err := newActivities(cfg, temporal, renderer, metrics, logger, store.New(pool))
 	if err != nil {
 		return fmt.Errorf("building the activity set: %w", err)
 	}
@@ -261,7 +268,7 @@ func register(w worker.Worker, acts *activities.Activities, dispatcher work.Conf
 // own doc comment, and constructing a second would be a second client holding
 // a second watch on the same pods.
 func newActivities(
-	cfg config.Worker, temporal client.Client, renderer *prompts.Renderer, metrics *telemetry.Metrics, logger *slog.Logger,
+	cfg config.Worker, temporal client.Client, renderer *prompts.Renderer, metrics *telemetry.Metrics, logger *slog.Logger, dispatcherState activities.DispatcherStateWriter,
 ) (*activities.Activities, error) {
 	clk := clock.System{}
 
@@ -289,7 +296,9 @@ func newActivities(
 		return nil, fmt.Errorf("building the codex credential source: %w", err)
 	}
 
-	return activities.New(buildDeps(cfg, ghCfg, ghClient, sandboxes, transcriptSink, renderer, metrics, temporal, tokenSource, clk, logger))
+	deps := buildDeps(cfg, ghCfg, ghClient, sandboxes, transcriptSink, renderer, metrics, temporal, tokenSource, clk, logger)
+	deps.DispatcherState = dispatcherState
+	return activities.New(deps)
 }
 
 // buildDeps assembles activities.Deps from clients newActivities already

@@ -182,28 +182,16 @@ type StepDetail struct {
 	Attempts []Attempt
 }
 
-// InFlightTicket is one Ticket the new dispatcher believes is being worked.
-//
-// It is a distinct type from internal/work.InFlightTicket, whose Ticket field
-// is a GitHub issue number: ADR-0012's cutover runs a second dispatcher
-// alongside the first, reading TicketIDs from this store rather than issue
-// numbers, and the two in-flight sets are never interchangeable.
-type InFlightTicket struct {
-	TicketID  TicketID  `json:"ticketId"`
-	RunID     string    `json:"runId"`
-	StartedAt time.Time `json:"startedAt"`
-}
-
-// DispatcherState is what the (new, ADR-0012) dispatcher knows, written once
-// each tick — the single row that finally answers "what is it going to work
-// on next", which nothing answers today.
+// DispatcherState is the legacy GitHub dispatcher's post-tick decision. The
+// database remains a projection while GitHub is its work source, so the
+// in-flight and candidate values intentionally use GitHub issue numbers.
 type DispatcherState struct {
-	Paused      bool
-	MaxInFlight int
-	// Breaker is the zero Breaker (never tripped) until the dispatcher trips it.
-	Breaker  work.Breaker
-	InFlight []InFlightTicket
-	// NextTicketID is 0 if the dispatcher has no candidate.
-	NextTicketID TicketID
-	WrittenAt    time.Time
+	Config      work.Config
+	Tuning      work.DispatcherTuning
+	Breaker     work.Breaker
+	ConfigError string
+	InFlight    []work.InFlightTicket
+	Candidates  []int
+	FreeSlots   int
+	WrittenAt   time.Time
 }

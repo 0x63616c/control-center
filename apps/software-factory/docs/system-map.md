@@ -63,8 +63,9 @@ The HTTP API (`internal/api`) is the only browser-reachable control entrypoint.
 Its authenticated write commands use `internal/clients/temporal.Commands` to
 send the dispatcher's existing `workflows.SignalUpdateConfig` signal (pause,
 resume, max-in-flight, or an empty update that wakes the next tick); the
-console never connects to Temporal. `workflows.QueryStatus` remains the one
-status query, while cancelling a ticket asks Temporal to cancel the
+console never connects to Temporal. The console reads the dispatcher_state
+Postgres projection, written after each tick with the effective config,
+in-flight runs, and ordered eligible candidates. Cancelling a ticket asks Temporal to cancel the
 `work.WorkflowID` run so its disconnected cleanup can delete the sandbox.
 Command acceptance means Temporal accepted the request, not that the database
 has observed its effect.

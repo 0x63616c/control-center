@@ -87,20 +87,22 @@ CREATE TABLE transcript (
 
 CREATE TABLE dispatcher_state (
     singleton BOOLEAN PRIMARY KEY DEFAULT TRUE,
-    paused BOOLEAN NOT NULL,
-    max_in_flight INTEGER NOT NULL,
-    breaker_open_until TIMESTAMPTZ,
-    breaker_reason TEXT,
+    config JSONB NOT NULL DEFAULT '{}'::JSONB,
+    tuning JSONB NOT NULL DEFAULT '{}'::JSONB,
+    breaker JSONB NOT NULL DEFAULT '{}'::JSONB,
+    config_error TEXT NOT NULL DEFAULT '',
     in_flight JSONB NOT NULL DEFAULT '[]'::JSONB,
-    next_ticket_id BIGINT REFERENCES ticket (id) ON DELETE SET NULL,
+    candidates JSONB NOT NULL DEFAULT '[]'::JSONB,
+    free_slots INTEGER NOT NULL DEFAULT 0,
     written_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT dispatcher_state_singleton_check CHECK (singleton),
-    CONSTRAINT dispatcher_state_max_in_flight_check CHECK (max_in_flight >= 1),
-    CONSTRAINT dispatcher_state_in_flight_array_check CHECK (JSONB_TYPEOF(in_flight) = 'array')
+    CONSTRAINT dispatcher_state_in_flight_array_check CHECK (JSONB_TYPEOF(in_flight) = 'array'),
+    CONSTRAINT dispatcher_state_candidates_array_check CHECK (JSONB_TYPEOF(candidates) = 'array'),
+    CONSTRAINT dispatcher_state_free_slots_check CHECK (free_slots >= 0)
 );
 
-INSERT INTO dispatcher_state (singleton, paused, max_in_flight)
-VALUES (TRUE, FALSE, 3);
+INSERT INTO dispatcher_state (singleton)
+VALUES (TRUE);
 
 -- +goose Down
 DROP TABLE dispatcher_state;

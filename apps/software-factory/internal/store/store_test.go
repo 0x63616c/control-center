@@ -210,8 +210,10 @@ func TestStoreCarriesATicketThroughItsWholeLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DispatcherState: %v", err)
 	}
-	state.Paused = true
-	state.InFlight = []store.InFlightTicket{{TicketID: blocked.ID, RunID: runID, StartedAt: startedAt}}
+	state.Config = work.DefaultConfig()
+	state.Config.Paused = true
+	state.InFlight = []work.InFlightTicket{{Ticket: 551, RunID: runID, StartedAt: startedAt}}
+	state.Candidates = []int{552}
 	state.WrittenAt = endedAt
 	if err := s.PutDispatcherState(ctx, state); err != nil {
 		t.Fatalf("PutDispatcherState: %v", err)
@@ -220,10 +222,10 @@ func TestStoreCarriesATicketThroughItsWholeLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DispatcherState after write: %v", err)
 	}
-	if !readState.Paused {
-		t.Fatal("DispatcherState().Paused = false, want true after PutDispatcherState")
+	if !readState.Config.Paused {
+		t.Fatal("DispatcherState().Config.Paused = false, want true after PutDispatcherState")
 	}
-	if len(readState.InFlight) != 1 || readState.InFlight[0].TicketID != blocked.ID {
+	if len(readState.InFlight) != 1 || readState.InFlight[0].Ticket != 551 {
 		t.Fatalf("DispatcherState().InFlight = %+v, want the one in-flight ticket back", readState.InFlight)
 	}
 }

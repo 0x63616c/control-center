@@ -10,6 +10,7 @@ import (
 // replaces the one variable it is about.
 func completeEnv() map[string]string {
 	return map[string]string{
+		"SOFTWARE_FACTORY_DATABASE_URL":  "postgres://factory:password@postgres/factory",
 		"TEMPORAL_HOST_PORT":             "temporal-frontend.temporal:7233",
 		"TEMPORAL_NAMESPACE":             "software-factory",
 		"SANDBOX_NAMESPACE":              "software-factory",

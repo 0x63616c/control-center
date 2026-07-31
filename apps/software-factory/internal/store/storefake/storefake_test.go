@@ -120,9 +120,9 @@ func TestFakeStoreCarriesATicketThroughItsWholeLifecycle(t *testing.T) {
 	}
 
 	state := store.DispatcherState{
-		MaxInFlight: 2,
-		InFlight:    []store.InFlightTicket{{TicketID: blocked.ID, RunID: runID, StartedAt: startedAt}},
-		WrittenAt:   endedAt,
+		Config:    work.DefaultConfig(),
+		InFlight:  []work.InFlightTicket{{Ticket: 551, RunID: runID, StartedAt: startedAt}},
+		WrittenAt: endedAt,
 	}
 	if err := s.PutDispatcherState(ctx, state); err != nil {
 		t.Fatalf("PutDispatcherState: %v", err)
@@ -131,7 +131,7 @@ func TestFakeStoreCarriesATicketThroughItsWholeLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DispatcherState: %v", err)
 	}
-	if len(readState.InFlight) != 1 || readState.InFlight[0].TicketID != blocked.ID {
+	if len(readState.InFlight) != 1 || readState.InFlight[0].Ticket != 551 {
 		t.Fatalf("DispatcherState().InFlight = %+v, want the one in-flight ticket back", readState.InFlight)
 	}
 }
