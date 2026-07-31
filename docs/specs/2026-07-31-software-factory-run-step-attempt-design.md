@@ -37,7 +37,7 @@ here.
 
 ### Non-technical assumptions
 
-- **Admission is authorization.** Any Ticket admitted to the factory is safe
+- **Agreed: admission is authorization.** Any Ticket admitted to the factory is safe
   to take through an unattended merge; v0 needs no separate per-Ticket human
   approval switch.
 - **Internal review is sufficient.** A clean independent agent Review Step,
