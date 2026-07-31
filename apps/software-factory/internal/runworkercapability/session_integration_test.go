@@ -275,7 +275,8 @@ func sessionEvidenceWorkflow(ctx workflow.Context, in sessionWorkflowInput) (ses
 	if err := workflow.ExecuteActivity(otherCtx, sessionActivityName, second).Get(otherCtx, &result.OtherRoot); err != nil {
 		return sessionEvidence{}, fmt.Errorf("probing other private root: %w", err)
 	}
-	if err := workflow.ExecuteActivity(ctx, controlActivityName).Get(ctx, &result.Control); err != nil {
+	controlCtx := mainControlActivityContext(ctx)
+	if err := workflow.ExecuteActivity(controlCtx, controlActivityName).Get(controlCtx, &result.Control); err != nil {
 		return sessionEvidence{}, fmt.Errorf("running main-control activity: %w", err)
 	}
 	return result, nil
@@ -299,7 +300,8 @@ func sessionRestartWorkflow(ctx workflow.Context, in sessionWorkflowInput) (sess
 	if err := workflow.ExecuteActivity(sessionCtx, sessionActivityName, second).Get(sessionCtx, &result.Second); err != nil {
 		return sessionEvidence{}, fmt.Errorf("running second private activity: %w", err)
 	}
-	if err := workflow.ExecuteActivity(ctx, controlActivityName).Get(ctx, &result.Control); err != nil {
+	controlCtx := mainControlActivityContext(ctx)
+	if err := workflow.ExecuteActivity(controlCtx, controlActivityName).Get(controlCtx, &result.Control); err != nil {
 		return sessionEvidence{}, fmt.Errorf("running main-control activity: %w", err)
 	}
 	return result, nil
@@ -325,7 +327,8 @@ func sessionLossWorkflow(ctx workflow.Context, in sessionLossInput) (sessionLoss
 	} else {
 		result.Failure = err.Error()
 	}
-	if err := workflow.ExecuteActivity(ctx, controlActivityName).Get(ctx, &result.Control); err != nil {
+	controlCtx := mainControlActivityContext(ctx)
+	if err := workflow.ExecuteActivity(controlCtx, controlActivityName).Get(controlCtx, &result.Control); err != nil {
 		return sessionLossEvidence{}, fmt.Errorf("running main-control activity after Session loss: %w", err)
 	}
 
@@ -349,6 +352,13 @@ func sessionLossWorkflow(ctx workflow.Context, in sessionLossInput) (sessionLoss
 func privateActivityContext(ctx workflow.Context, privateQueue string) workflow.Context {
 	return workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 		TaskQueue:           privateQueue,
+		StartToCloseTimeout: time.Minute,
+		RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: 1},
+	})
+}
+
+func mainControlActivityContext(ctx workflow.Context) workflow.Context {
+	return workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 		StartToCloseTimeout: time.Minute,
 		RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: 1},
 	})
