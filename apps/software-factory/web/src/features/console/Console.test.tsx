@@ -61,9 +61,13 @@ describe("Console", () => {
     );
 
     expect(screen.getByRole("alert")).toHaveTextContent("will not unblock without human action");
-    expect(screen.getByRole("link", { name: /Ticket 1: Failed upstream/ })).toHaveAttribute(
-      "href",
-      "#ticket-1",
-    );
+    // Two links now share this accessible name: the blocker note's in-page
+    // jump to the blocking Ticket's own row (`#ticket-1`), and that row's own
+    // link to its detail view (`#/tickets/1`, #556). Assert the jump link
+    // specifically, by its href, rather than assuming there is only one.
+    const jumpLink = screen
+      .getAllByRole("link", { name: /Ticket 1: Failed upstream/ })
+      .find((link) => link.getAttribute("href") === "#ticket-1");
+    expect(jumpLink).toBeDefined();
   });
 });

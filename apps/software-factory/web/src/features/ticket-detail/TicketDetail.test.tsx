@@ -1,9 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import {
+  fixtureAttempt,
+  fixtureRun,
+  fixtureStep,
+  fixtureTicket,
+  fixtureUnmeasuredAttempt,
+} from "@/features/ticket-detail/fixtures";
 import { TicketDetail } from "@/features/ticket-detail/TicketDetail";
 import type { TicketDetailState } from "@/features/ticket-detail/useTicketDetail";
-import { fixtureAttempt, fixtureRun, fixtureStep, fixtureTicket, fixtureUnmeasuredAttempt } from "@/features/ticket-detail/fixtures";
 
 // Every render needs a QueryClientProvider: AttemptRow renders
 // TranscriptViewer for any Attempt with hasTranscript, and that component
@@ -54,7 +60,10 @@ describe("TicketDetail", () => {
         fixtureRun({
           steps: [
             fixtureStep({
-              attempts: [fixtureAttempt({ attemptNo: 1, result: "failed" }), fixtureAttempt({ attemptNo: 2 })],
+              attempts: [
+                fixtureAttempt({ attemptNo: 1, result: "failed" }),
+                fixtureAttempt({ attemptNo: 2 }),
+              ],
             }),
           ],
         }),
@@ -70,7 +79,12 @@ describe("TicketDetail", () => {
       runs: [
         fixtureRun({
           steps: [
-            fixtureStep({ attempts: [fixtureAttempt({ attemptNo: 1 }), fixtureUnmeasuredAttempt({ attemptNo: 2 })] }),
+            fixtureStep({
+              attempts: [
+                fixtureAttempt({ attemptNo: 1 }),
+                fixtureUnmeasuredAttempt({ attemptNo: 2 }),
+              ],
+            }),
           ],
         }),
       ],
@@ -88,7 +102,12 @@ describe("TicketDetail", () => {
       runs: [
         fixtureRun({
           steps: [
-            fixtureStep({ attempts: [fixtureAttempt({ attemptNo: 1 }), fixtureUnmeasuredAttempt({ attemptNo: 2 })] }),
+            fixtureStep({
+              attempts: [
+                fixtureAttempt({ attemptNo: 1 }),
+                fixtureUnmeasuredAttempt({ attemptNo: 2 }),
+              ],
+            }),
           ],
         }),
       ],
@@ -103,7 +122,11 @@ describe("TicketDetail", () => {
     renderReady({
       kind: "ready",
       ticket: fixtureTicket(),
-      runs: [fixtureRun({ steps: [fixtureStep({ attempts: [fixtureAttempt({ hasTranscript: false })] })] })],
+      runs: [
+        fixtureRun({
+          steps: [fixtureStep({ attempts: [fixtureAttempt({ hasTranscript: false })] })],
+        }),
+      ],
     });
     expect(screen.getByText(/No transcript stored/)).toBeInTheDocument();
     expect(screen.queryByText("Download transcript")).not.toBeInTheDocument();
@@ -113,7 +136,11 @@ describe("TicketDetail", () => {
     renderReady({
       kind: "ready",
       ticket: fixtureTicket(),
-      runs: [fixtureRun({ steps: [fixtureStep({ attempts: [fixtureAttempt({ hasTranscript: true })] })] })],
+      runs: [
+        fixtureRun({
+          steps: [fixtureStep({ attempts: [fixtureAttempt({ hasTranscript: true })] })],
+        }),
+      ],
     });
     expect(screen.getByText("Download transcript")).toBeInTheDocument();
   });
@@ -122,8 +149,19 @@ describe("TicketDetail", () => {
     renderReady({
       kind: "ready",
       ticket: fixtureTicket({
-        blockers: [{ id: 40, title: "Upstream", state: "done", ready: false, createdAt: "", updatedAt: "" }],
-        blocks: [{ id: 58, title: "Downstream", state: "open", ready: false, createdAt: "", updatedAt: "" }],
+        blockers: [
+          { id: 40, title: "Upstream", state: "done", ready: false, createdAt: "", updatedAt: "" },
+        ],
+        blocks: [
+          {
+            id: 58,
+            title: "Downstream",
+            state: "open",
+            ready: false,
+            createdAt: "",
+            updatedAt: "",
+          },
+        ],
       }),
       runs: [],
     });
@@ -135,7 +173,13 @@ describe("TicketDetail", () => {
     renderReady({
       kind: "ready",
       ticket: fixtureTicket(),
-      runs: [fixtureRun({ outcome: "failed", failureKind: "rate-limit", endedAt: "2026-07-31T11:00:00Z" })],
+      runs: [
+        fixtureRun({
+          outcome: "failed",
+          failureKind: "rate-limit",
+          endedAt: "2026-07-31T11:00:00Z",
+        }),
+      ],
     });
     expect(document.body).not.toHaveTextContent(/\$|USD|cost/i);
   });

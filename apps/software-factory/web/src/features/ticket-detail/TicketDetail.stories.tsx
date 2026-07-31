@@ -1,5 +1,4 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { TicketDetail } from "@/features/ticket-detail/TicketDetail";
 import {
   fixtureAttempt,
   fixtureRun,
@@ -7,6 +6,7 @@ import {
   fixtureTicket,
   fixtureUnmeasuredAttempt,
 } from "@/features/ticket-detail/fixtures";
+import { TicketDetail } from "@/features/ticket-detail/TicketDetail";
 
 const meta = {
   title: "TicketDetail/TicketDetail",
@@ -52,7 +52,13 @@ export const MultiTurnRun: Story = {
             fixtureStep({
               stage: "implement",
               turn: 2,
-              attempts: [fixtureAttempt({ attemptNo: 1, startedAt: "2026-07-31T11:00:00Z", endedAt: "2026-07-31T11:32:00Z" })],
+              attempts: [
+                fixtureAttempt({
+                  attemptNo: 1,
+                  startedAt: "2026-07-31T11:00:00Z",
+                  endedAt: "2026-07-31T11:32:00Z",
+                }),
+              ],
             }),
             fixtureStep({ stage: "review", turn: 1 }),
           ],
@@ -75,7 +81,11 @@ export const StepWithSeveralAttempts: Story = {
             fixtureStep({
               attempts: [
                 fixtureAttempt({ attemptNo: 1, result: "failed", endedAt: "2026-07-31T10:05:00Z" }),
-                fixtureAttempt({ attemptNo: 2, startedAt: "2026-07-31T10:05:00Z", endedAt: "2026-07-31T10:52:00Z" }),
+                fixtureAttempt({
+                  attemptNo: 2,
+                  startedAt: "2026-07-31T10:05:00Z",
+                  endedAt: "2026-07-31T10:52:00Z",
+                }),
               ],
             }),
           ],
@@ -96,7 +106,10 @@ export const UnmeasuredAttempt: Story = {
         fixtureRun({
           steps: [
             fixtureStep({
-              attempts: [fixtureAttempt({ attemptNo: 1 }), fixtureUnmeasuredAttempt({ attemptNo: 2 })],
+              attempts: [
+                fixtureAttempt({ attemptNo: 1 }),
+                fixtureUnmeasuredAttempt({ attemptNo: 2 }),
+              ],
             }),
           ],
         }),
@@ -166,10 +179,24 @@ export const WithDependencies: Story = {
       kind: "ready",
       ticket: fixtureTicket({
         blockers: [
-          { id: 40, title: "Ticket detail API", state: "done", ready: false, createdAt: "2026-07-25T00:00:00Z", updatedAt: "2026-07-29T00:00:00Z" },
+          {
+            id: 40,
+            title: "Ticket detail API",
+            state: "done",
+            ready: false,
+            createdAt: "2026-07-25T00:00:00Z",
+            updatedAt: "2026-07-29T00:00:00Z",
+          },
         ],
         blocks: [
-          { id: 58, title: "Ticket-backed dispatcher", state: "open", ready: false, createdAt: "2026-07-28T00:00:00Z", updatedAt: "2026-07-28T00:00:00Z" },
+          {
+            id: 58,
+            title: "Ticket-backed dispatcher",
+            state: "open",
+            ready: false,
+            createdAt: "2026-07-28T00:00:00Z",
+            updatedAt: "2026-07-28T00:00:00Z",
+          },
         ],
       }),
       runs: [fixtureRun()],
