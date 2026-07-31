@@ -22,6 +22,8 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
 )
 
+const softwareFactoryTemporalNamespace = "software-factory"
+
 func main() {
 	if err := run(); err != nil {
 		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("the codec service stopped", slog.String("error", err.Error()))
@@ -72,12 +74,31 @@ func run() error {
 func newHandler(store blobs.Store, origins []string) http.Handler {
 	codec := payloads.Handler(store, telemetry.NewMetrics(prometheus.NewRegistry()))
 	mux := http.NewServeMux()
-	mux.Handle("/encode", codec)
-	mux.Handle("/decode", codec)
+	// Temporal UI 2.52.1 appends /encode or /decode to the configured endpoint
+	// without expanding {namespace}. Serve that literal segment while also
+	// accepting a future expanded software-factory path; the X-Namespace check
+	// prevents the cluster-level UI setting from decoding another namespace.
+	mux.Handle("/{namespace}/encode", softwareFactoryCodec(codec))
+	mux.Handle("/{namespace}/decode", softwareFactoryCodec(codec))
 	mux.HandleFunc("/healthz", func(writer http.ResponseWriter, _ *http.Request) {
 		writer.WriteHeader(http.StatusOK)
 	})
 	return cors(origins, mux)
+}
+
+func softwareFactoryCodec(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		pathNamespace := request.PathValue("namespace")
+		if pathNamespace != "{namespace}" && pathNamespace != softwareFactoryTemporalNamespace {
+			http.NotFound(writer, request)
+			return
+		}
+		if request.Header.Get("X-Namespace") != softwareFactoryTemporalNamespace {
+			http.Error(writer, "namespace is not allowed", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(writer, request)
+	})
 }
 
 func cors(origins []string, next http.Handler) http.Handler {
@@ -94,7 +115,8 @@ func cors(origins []string, next http.Handler) http.Handler {
 
 		writer.Header().Set("Access-Control-Allow-Origin", origin)
 		writer.Header().Set("Access-Control-Allow-Methods", http.MethodPost)
-		writer.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Namespace")
+		writer.Header().Set("Access-Control-Allow-Credentials", "true")
 		writer.Header().Set("Vary", "Origin")
 		if request.Method == http.MethodOptions {
 			writer.WriteHeader(http.StatusNoContent)

@@ -225,6 +225,9 @@ describe("installTemporal (issue #124, talos-only)", () => {
 
     expect(endpoint).toContain("codec.worldwidewebb.co");
     expect(endpoint).toContain("{namespace}");
+    expect(envValue(spec.template.spec.containers[0], "TEMPORAL_CODEC_INCLUDE_CREDENTIALS")).toBe(
+      "true",
+    );
   });
 
   // Issue #325. Namespace registration is a list, not a hardcoded pair: adding
