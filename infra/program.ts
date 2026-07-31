@@ -207,13 +207,14 @@ if (target.substrate === "talos") {
     vault,
     imageDigests,
   });
-  // The software factory (ADR-0011): its k8s namespace (#325), the worker's
+  // The software factory (ADR-0011): its shared k8s namespace, the worker's
   // ServiceAccount + namespace-scoped Role, its NFS transcript volume, and the
   // worker Deployment itself (#343). The SANDBOX image is deliberately not a
   // workload here — the worker creates those pods at runtime from the
   // digest-pinned ref it is handed.
   installSoftwareFactory({
     provider: cluster.provider,
+    namespace: cluster.namespaces["software-factory"],
     vault,
     imageDigests,
     nasNfsServer,
@@ -239,8 +240,9 @@ if (target.substrate === "talos") {
     vault,
     nasNfsServer,
   });
-  // pgAdmin (issue #65): declarative multi-database web GUI over the 3 CNPG
-  // clusters above. No new CNPG operator/cluster of its own, so it only needs
+  // pgAdmin (issue #65): declarative multi-database web GUI over its three
+  // configured CNPG clusters. The Software Factory database is deliberately
+  // not a target yet. No new CNPG operator/cluster of its own, so it only needs
   // `vault` (it reads the same passwords control-center/home-assistant/
   // temporal already mint). No explicit dependsOn on those clusters: pgAdmin
   // only registers server definitions at startup, it does not eagerly

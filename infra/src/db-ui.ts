@@ -1,6 +1,7 @@
 // pgAdmin4, hand-written, the same shape as temporal.ts's temporal-ui: a
-// declarative multi-database web SQL/GUI client for the 3 CNPG Postgres
-// clusters already in the stack (control-center, home-assistant, temporal),
+// declarative multi-database web SQL/GUI client for its three configured CNPG
+// Postgres clusters (control-center, home-assistant, temporal). Software
+// Factory intentionally is not a pgAdmin target yet,
 // reachable at db-ui.worldwidewebb.co (issue #65).
 //
 // Why pgAdmin over CloudBeaver/Adminer/Metabase: its connection list can be
@@ -183,7 +184,7 @@ export interface DbUiResources {
 
 /**
  * @public - installs the db-ui namespace and a single pgAdmin4 pod
- * pre-configured with the 3 CNPG clusters. Consumed by program.ts, gated to
+ * pre-configured with its three configured CNPG clusters. Consumed by program.ts, gated to
  * the "talos" substrate.
  */
 export function installDbUi(args: DbUiArgs): DbUiResources {

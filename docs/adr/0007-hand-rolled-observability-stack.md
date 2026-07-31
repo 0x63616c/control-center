@@ -31,7 +31,7 @@ kubernetes-mixin's native output is already a `groups:` file. The vendored rules
 manifests with alerting rules stripped.
 
 **CNPG's `enablePodMonitor` → a scrape job on `cnpg.io/podRole=instance`.** One job covers all
-three databases with no per-cluster config, relabelling `cnpg.io/cluster` into `cluster_name`.
+four CNPG clusters with no per-cluster config, relabelling `cnpg.io/cluster` into `cluster_name`.
 CloudNativePG has deprecated that field and now recommends managing scraping yourself, so this is
 the supported path rather than a workaround.
 

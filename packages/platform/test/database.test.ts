@@ -52,4 +52,18 @@ describe("product CNPG database primitive", () => {
     expect(database.auth.kind).toBe("database-owned-basic-auth");
     expect(database.auth.secretName).toBe("cc-postgres-auth");
   });
+
+  test("resolves Software Factory database auth from the secret catalogue", () => {
+    const database = defineProductDatabase(defineProduct("software-factory"), homelabTarget, {
+      size: "1Gi",
+    });
+
+    expect(database).toMatchObject({
+      databaseName: "software_factory",
+      auth: {
+        kind: "database-owned-basic-auth",
+        password: { vaultKey: "SOFTWARE_FACTORY_POSTGRES__PASSWORD" },
+      },
+    });
+  });
 });

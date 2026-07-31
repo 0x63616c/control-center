@@ -12,7 +12,11 @@
 
 import * as k8s from "@pulumi/kubernetes";
 import * as pulumi from "@pulumi/pulumi";
-import { controlCenterProductManifest, type ProductDatabase } from "@www/platform";
+import {
+  controlCenterProductManifest,
+  type ProductDatabase,
+  softwareFactoryProductManifest,
+} from "@www/platform";
 import type { InfraNamespaceName } from "./cluster.ts";
 
 export interface CnpgArgs {
@@ -32,13 +36,10 @@ export interface CnpgResources {
   cluster: k8s.apiextensions.CustomResource;
 }
 
-// captive-portal's database + retainedLegacyDatabases REMOVED (SDD track 0,
-// Task 6): its CNPG clusters + namespace were torn down after a copy of its
-// one live row was folded into control_center and a final pg_dump was taken.
-// captivePortalProductManifest() itself still exists in @www/platform (pruned
-// in Task 7+8), just no longer called from here.
+// Captive Portal remains retired. Every product database declared here has an
+// InfraNamespaceName and receives the common CNPG lifecycle.
 function productDatabases(): ProductDatabase[] {
-  return [controlCenterProductManifest().database];
+  return [controlCenterProductManifest().database, softwareFactoryProductManifest().database];
 }
 
 function createAuthSecret(
@@ -120,11 +121,6 @@ export function installCnpg(args: CnpgArgs): CnpgResources {
   );
 
   const databases = productDatabases();
-  // ProductDatabase.product is typed as the full platform ProductSlug (still
-  // includes "captive-portal" , its @www/platform identity survives until
-  // Task 7+8), but productDatabases() above only ever returns control-center
-  // now, and InfraNamespaceName deliberately excludes "captive-portal" (Task
-  // 6 removed its namespace). Cast rather than widen InfraNamespaceName back.
   const authSecrets = databases.map((database) =>
     createAuthSecret(database, vault, namespaces[database.product as InfraNamespaceName], opts),
   );

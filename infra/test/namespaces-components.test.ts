@@ -33,7 +33,11 @@ describe("cluster namespaces", () => {
   test("creates product-owned namespaces plus the cloudflare namespace", async () => {
     const res = cluster.makeCluster("test-context");
 
-    expect(Object.keys(res.namespaces).sort()).toEqual(["cloudflare", "control-center"]);
+    expect(Object.keys(res.namespaces).sort()).toEqual([
+      "cloudflare",
+      "control-center",
+      "software-factory",
+    ]);
 
     const controlCenterMeta = await get<{ name: string }>(
       res.namespaces["control-center"],
@@ -42,6 +46,11 @@ describe("cluster namespaces", () => {
     const cloudflareMeta = await get<{ name: string }>(res.namespaces.cloudflare, "metadata");
     expect(controlCenterMeta.name).toBe("control-center");
     expect(cloudflareMeta.name).toBe("cloudflare");
+    const softwareFactoryMeta = await get<{ name: string }>(
+      res.namespaces["software-factory"],
+      "metadata",
+    );
+    expect(softwareFactoryMeta.name).toBe("software-factory");
   });
 });
 
