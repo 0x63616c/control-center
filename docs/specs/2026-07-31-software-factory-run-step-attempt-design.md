@@ -333,6 +333,14 @@ next slot from the cumulative five-Review-Step budget as well as its Agent
 Attempt. A second merge conflict continues from those new totals; neither
 counter resets.
 
+That Implement Step resumes the existing implementer Agent Thread rather than
+starting a context-free agent. It receives the authoritative merge outcome as
+structured input: the pull request, the exact reviewed head SHA, the target
+branch and its current head SHA, and the bounded conflict diagnostics available
+from GitHub. The shared Run Worker workspace and resumed thread preserve the
+implementation context, while the explicit merge handoff tells the implementer
+what changed after review.
+
 The new Implement Step begins at Agent Attempt 1 because Agent Attempt numbers
 are scoped to one Step. That local numbering is not a budget reset: the Run's
 total authorized Agent Attempts remains cumulative. Native activity-retry
@@ -380,6 +388,25 @@ names and opaque fingerprints for workflow progress detection, then discards
 the underlying annotations and log evidence after hashing them. The next
 implement prompt receives the plan, previous implement report, and latest
 review findings, but no CI Result.
+
+Merge conflicts follow the same handoff rule:
+
+```text
+Step: merge_pull_request
+  input: pull request P at reviewed head SHA H against target head SHA B1
+  Result: merge_conflict after the target branch advanced to SHA B2,
+          with bounded GitHub conflict diagnostics
+
+Step: implement
+  reason: merge_conflict
+  input: the authoritative merge Result for P, H, and B2
+  Agent Attempt 1 resumes implementer Thread A
+```
+
+The implementer reconciles the branch with the current target branch and pushes
+the correction. The workflow then runs CI and a fresh reviewer again before it
+may make another merge request. This is not a fresh Run and does not reset any
+cumulative limit.
 
 ## CI waiting
 
