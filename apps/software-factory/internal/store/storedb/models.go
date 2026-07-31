@@ -52,9 +52,10 @@ type Run struct {
 }
 
 type Step struct {
-	RunID pgtype.UUID
-	Stage string
-	Turn  int32
+	RunID     pgtype.UUID
+	Stage     string
+	Turn      int32
+	CreatedAt pgtype.Timestamptz
 }
 
 type Ticket struct {

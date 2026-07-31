@@ -14,11 +14,15 @@ func stepKeyOf(key work.StageKey) stepKey {
 }
 
 // RecordStep records that a Step happened. Idempotent, matching the real
-// store's ON CONFLICT DO NOTHING.
+// store's ON CONFLICT DO NOTHING: a retry recording the same Step again does
+// not restamp created_at.
 func (f *Store) RecordStep(_ context.Context, key work.StageKey) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.steps[stepKeyOf(key)] = true
+	sk := stepKeyOf(key)
+	if _, ok := f.steps[sk]; !ok {
+		f.steps[sk] = f.clk.Now()
+	}
 	return nil
 }
 
@@ -71,7 +75,8 @@ func (f *Store) AttemptsForStep(_ context.Context, key work.StageKey) ([]store.A
 	return out, nil
 }
 
-// AttemptsForRun lists every Attempt recorded for runID, across every Step.
+// AttemptsForRun lists every Attempt recorded for runID, across every Step,
+// ordered by started_at then attempt_no, matching the real store's query.
 func (f *Store) AttemptsForRun(_ context.Context, runID string) ([]store.Attempt, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -82,11 +87,8 @@ func (f *Store) AttemptsForRun(_ context.Context, runID string) ([]store.Attempt
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].Key.Stage != out[j].Key.Stage {
-			return out[i].Key.Stage < out[j].Key.Stage
-		}
-		if out[i].Key.Turn != out[j].Key.Turn {
-			return out[i].Key.Turn < out[j].Key.Turn
+		if !out[i].StartedAt.Equal(out[j].StartedAt) {
+			return out[i].StartedAt.Before(out[j].StartedAt)
 		}
 		return out[i].AttemptNo < out[j].AttemptNo
 	})
