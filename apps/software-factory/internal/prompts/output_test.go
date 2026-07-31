@@ -165,7 +165,7 @@ func TestDecodeIsExhaustiveOverPipeline(t *testing.T) {
 			case work.StageImplement:
 				fixture = `{"report":"r","blocked":false,"blocked_reason":"","title":"t","body":"b"}`
 			case work.StageReview:
-				fixture = `{"document":"d","findings":[]}`
+				fixture = `{"document":"d","verified":[],"findings":[]}`
 			}
 
 			got, err := Decode(stage, []byte(fixture))
@@ -182,7 +182,7 @@ func TestDecodeIsExhaustiveOverPipeline(t *testing.T) {
 func TestReviewReadsFindings(t *testing.T) {
 	t.Parallel()
 
-	got, err := Decode(work.StageReview, []byte(`{"document":"looks good","findings":[`+
+	got, err := Decode(work.StageReview, []byte(`{"document":"looks good","verified":[],"findings":[`+
 		`{"id":"work/control.go-missing-nil-check","blocking":true,"summary":"a nil check is missing"},`+
 		`{"id":"work/style-nit","blocking":false,"summary":"a naming nit"}]}`))
 	if err != nil {
@@ -209,7 +209,7 @@ func TestReviewReadsFindings(t *testing.T) {
 func TestReviewAcceptsNoFindingsAsACleanPass(t *testing.T) {
 	t.Parallel()
 
-	got, err := Decode(work.StageReview, []byte(`{"document":"clean pass","findings":[]}`))
+	got, err := Decode(work.StageReview, []byte(`{"document":"clean pass","verified":[],"findings":[]}`))
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestReviewAcceptsNoFindingsAsACleanPass(t *testing.T) {
 func TestReviewRefusesAFindingWithNoID(t *testing.T) {
 	t.Parallel()
 
-	_, err := Decode(work.StageReview, []byte(`{"document":"d","findings":[{"id":"","blocking":true,"summary":"s"}]}`))
+	_, err := Decode(work.StageReview, []byte(`{"document":"d","verified":[],"findings":[{"id":"","blocking":true,"summary":"s"}]}`))
 	if err == nil {
 		t.Fatal("Decode accepted a finding with an empty id; sameness across turns cannot be judged on one")
 	}
@@ -231,7 +231,7 @@ func TestReviewRefusesAFindingWithNoID(t *testing.T) {
 func TestReviewRefusesAnUnknownTopLevelKey(t *testing.T) {
 	t.Parallel()
 
-	_, err := Decode(work.StageReview, []byte(`{"document":"d","findings":[],"verdict":"approve"}`))
+	_, err := Decode(work.StageReview, []byte(`{"document":"d","verified":[],"findings":[],"verdict":"approve"}`))
 	if err == nil {
 		t.Fatal("Decode accepted a field the review envelope does not have")
 	}
@@ -241,7 +241,7 @@ func TestReviewRefusesAnUnknownFindingKey(t *testing.T) {
 	t.Parallel()
 
 	_, err := Decode(work.StageReview, []byte(
-		`{"document":"d","findings":[{"id":"f1","blocking":true,"summary":"s","severity":"high"}]}`))
+		`{"document":"d","verified":[],"findings":[{"id":"f1","blocking":true,"summary":"s","severity":"high"}]}`))
 	if err == nil {
 		t.Fatal("Decode accepted a finding field the schema does not have")
 	}
@@ -276,8 +276,7 @@ func TestImplementAllowsAnEmptyTitleAndBodyWhenBlocked(t *testing.T) {
 }
 
 // TestDecodeReadsTheReviewsVerifiedList holds the field a later review turn
-// is shown so it does not re-litigate a file an earlier turn cleared. It is
-// optional in the schema, so both branches matter.
+// is shown so it does not re-litigate a file an earlier turn cleared.
 func TestDecodeReadsTheReviewsVerifiedList(t *testing.T) {
 	t.Parallel()
 
@@ -295,13 +294,12 @@ func TestDecodeReadsTheReviewsVerifiedList(t *testing.T) {
 	}
 }
 
-// TestDecodeAcceptsAReviewThatVerifiedNothing: verified carries no control
-// flow, so a turn that omits it is not a stage that failed. Making it
-// required would turn the whole run red over a field nothing branches on.
-func TestDecodeAcceptsAReviewThatVerifiedNothing(t *testing.T) {
+// TestDecodeReadsAnEmptyVerifiedList covers the required wire shape for a
+// review that verified nothing.
+func TestDecodeReadsAnEmptyVerifiedList(t *testing.T) {
 	t.Parallel()
 
-	got, err := Decode(work.StageReview, []byte(`{"document":"d","findings":[]}`))
+	got, err := Decode(work.StageReview, []byte(`{"document":"d","verified":[],"findings":[]}`))
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
@@ -309,7 +307,7 @@ func TestDecodeAcceptsAReviewThatVerifiedNothing(t *testing.T) {
 	if !ok {
 		t.Fatalf("Value() is %T, want work.ReviewOutput", got.Value())
 	}
-	if review.Verified != nil {
-		t.Errorf("Verified = %+v, want nil", review.Verified)
+	if len(review.Verified) != 0 {
+		t.Errorf("Verified = %+v, want an empty list", review.Verified)
 	}
 }

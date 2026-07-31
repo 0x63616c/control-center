@@ -48,11 +48,10 @@ type findingEnvelope struct {
 // reviewEnvelope is codex's wire shape for the review stage: its document,
 // every finding it raised, and what it checked and would keep.
 //
-// Verified is optional where document and findings are required, because it
-// carries no control flow: a turn that omits it has told a later turn
-// nothing, which is the same position every turn was in before the field
-// existed. Findings are what the workflow steers on and are required by the
-// schema.
+// Verified is advisory, but it must be required on the wire: Codex strict
+// structured output requires every declared schema property in required. An
+// empty list says the review verified nothing; findings are what the workflow
+// steers on.
 type reviewEnvelope struct {
 	Document json.RawMessage   `json:"document"`
 	Findings []findingEnvelope `json:"findings"`

@@ -125,20 +125,40 @@ func TestReviewFindingsSchemaAndDecoderDeclareTheSameFields(t *testing.T) {
 	}
 }
 
-// TestVerifiedIsOptionalInTheReviewSchema pins the one asymmetry on purpose:
-// verified carries no control flow, so a turn that omits it must not fail the
-// stage. Making it required would turn a whole run red over a field nothing
-// branches on. See work.ReviewOutput.Verified.
-func TestVerifiedIsOptionalInTheReviewSchema(t *testing.T) {
+// TestEveryPipelineSchemaRequiresEveryDeclaredProperty protects Codex's
+// strict structured-output contract. A field can be semantically advisory,
+// but strict mode still requires it to appear in required; an empty value
+// represents its absence of content.
+func TestEveryPipelineSchemaRequiresEveryDeclaredProperty(t *testing.T) {
 	t.Parallel()
 
-	doc := readSchema(t, "templates/review.schema.json")
-	for _, name := range doc.Required {
-		if name == "verified" {
-			t.Error("review.schema.json requires verified; it is advisory and must stay optional")
-		}
+	for _, stage := range work.Pipeline() {
+		t.Run(string(stage), func(t *testing.T) {
+			t.Parallel()
+
+			file, err := stageSchema(stage)
+			if err != nil {
+				t.Fatalf("stageSchema(%s): %v", stage, err)
+			}
+			assertEveryDeclaredPropertyIsRequired(t, file, readSchema(t, file), "$")
+		})
 	}
-	if _, ok := doc.Properties["verified"]; !ok {
-		t.Error("review.schema.json does not declare verified, so no review turn is ever told to answer with it")
+}
+
+func assertEveryDeclaredPropertyIsRequired(t *testing.T, file string, doc schemaDoc, path string) {
+	t.Helper()
+
+	required := make(map[string]struct{}, len(doc.Required))
+	for _, name := range doc.Required {
+		required[name] = struct{}{}
+	}
+	for name, property := range doc.Properties {
+		if _, ok := required[name]; !ok {
+			t.Errorf("%s %s declares property %q without requiring it", file, path, name)
+		}
+		assertEveryDeclaredPropertyIsRequired(t, file, property, path+".properties."+name)
+	}
+	if doc.Items != nil {
+		assertEveryDeclaredPropertyIsRequired(t, file, *doc.Items, path+".items")
 	}
 }
