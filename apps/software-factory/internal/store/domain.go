@@ -47,6 +47,7 @@ const (
 	ticketStateOpen ticketStateValue = iota + 1
 	ticketStateWorking
 	ticketStateReview
+	ticketStateActive
 	ticketStateDone
 	ticketStateFailed
 )
@@ -58,6 +59,8 @@ var (
 	TicketWorking = TicketState{value: ticketStateWorking}
 	// TicketReview means a Run produced a pull request; waiting on a human.
 	TicketReview = TicketState{value: ticketStateReview}
+	// TicketActive means a target Run owns the Ticket through ActiveRunID.
+	TicketActive = TicketState{value: ticketStateActive}
 	// TicketDone is terminal, and satisfies dependencies.
 	TicketDone = TicketState{value: ticketStateDone}
 	// TicketFailed is terminal, and does not satisfy dependencies. Never
@@ -68,7 +71,7 @@ var (
 // Valid reports whether s is one of the five states the schema enforces.
 func (s TicketState) Valid() bool {
 	switch s {
-	case TicketOpen, TicketWorking, TicketReview, TicketDone, TicketFailed:
+	case TicketOpen, TicketWorking, TicketReview, TicketActive, TicketDone, TicketFailed:
 		return true
 	default:
 		return false
@@ -84,6 +87,8 @@ func (s TicketState) String() string {
 		return "working"
 	case TicketReview:
 		return "review"
+	case TicketActive:
+		return "active"
 	case TicketDone:
 		return "done"
 	case TicketFailed:
@@ -104,6 +109,8 @@ func ParseTicketState(value string) (TicketState, error) {
 		return TicketWorking, nil
 	case "review":
 		return TicketReview, nil
+	case "active":
+		return TicketActive, nil
 	case "done":
 		return TicketDone, nil
 	case "failed":
@@ -153,6 +160,8 @@ func (s TicketState) CanTransitionTo(next TicketState) bool {
 		return next == TicketReview || next == TicketFailed
 	case TicketReview:
 		return next == TicketDone || next == TicketFailed
+	case TicketActive:
+		return next == TicketDone || next == TicketOpen || next == TicketFailed
 	case TicketFailed:
 		return next == TicketOpen
 	case TicketDone:
@@ -169,12 +178,15 @@ func (s TicketState) CanTransitionTo(next TicketState) bool {
 // Source field: ADR-0012 records that one is trivially backfilled if a second
 // origin ever exists, and adding it now would be speculative.
 type Ticket struct {
-	ID        TicketID
-	Title     string
-	Body      string
-	State     TicketState
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID    TicketID
+	Title string
+	Body  string
+	State TicketState
+	// ActiveRunID is the target Run which currently owns an active Ticket.
+	// It remains empty for legacy workflow states and terminal Tickets.
+	ActiveRunID string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // InFlightTicket is one Ticket the Ticket-driven FactoryDispatcher believes is
@@ -274,6 +286,12 @@ type Run struct {
 	EndedAt time.Time
 	Outcome work.Outcome
 	Failure work.FailureKind
+	// TargetOutcome and TargetFailure are additive until the cutover removes
+	// the legacy outcome vocabulary.
+	TargetOutcome work.RunOutcome
+	TargetFailure work.RunFailureKind
+	ReviewedHead  string
+	MergeSHA      string
 }
 
 // Step is one instance of a Stage inside a Run — exactly internal/work's

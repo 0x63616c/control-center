@@ -12,7 +12,7 @@ import (
 const createTicket = `-- name: CreateTicket :one
 INSERT INTO ticket (title, body, state)
 VALUES ($1, $2, $3)
-RETURNING id, title, body, state, created_at, updated_at
+RETURNING id, title, body, state, created_at, updated_at, active_run_id
 `
 
 type CreateTicketParams struct {
@@ -31,12 +31,13 @@ func (q *Queries) CreateTicket(ctx context.Context, arg CreateTicketParams) (Tic
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ActiveRunID,
 	)
 	return i, err
 }
 
 const readyTickets = `-- name: ReadyTickets :many
-SELECT t.id, t.title, t.body, t.state, t.created_at, t.updated_at FROM ticket t
+SELECT t.id, t.title, t.body, t.state, t.created_at, t.updated_at, t.active_run_id FROM ticket t
 WHERE t.state = 'open'
   AND NOT EXISTS (
     SELECT 1 FROM ticket_edge e
@@ -65,6 +66,7 @@ func (q *Queries) ReadyTickets(ctx context.Context) ([]Ticket, error) {
 			&i.State,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ActiveRunID,
 		); err != nil {
 			return nil, err
 		}
@@ -77,7 +79,7 @@ func (q *Queries) ReadyTickets(ctx context.Context) ([]Ticket, error) {
 }
 
 const ticket = `-- name: Ticket :one
-SELECT id, title, body, state, created_at, updated_at FROM ticket WHERE id = $1
+SELECT id, title, body, state, created_at, updated_at, active_run_id FROM ticket WHERE id = $1
 `
 
 func (q *Queries) Ticket(ctx context.Context, id int64) (Ticket, error) {
@@ -90,12 +92,13 @@ func (q *Queries) Ticket(ctx context.Context, id int64) (Ticket, error) {
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ActiveRunID,
 	)
 	return i, err
 }
 
 const tickets = `-- name: Tickets :many
-SELECT id, title, body, state, created_at, updated_at FROM ticket ORDER BY id
+SELECT id, title, body, state, created_at, updated_at, active_run_id FROM ticket ORDER BY id
 `
 
 func (q *Queries) Tickets(ctx context.Context) ([]Ticket, error) {
@@ -114,6 +117,7 @@ func (q *Queries) Tickets(ctx context.Context) ([]Ticket, error) {
 			&i.State,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ActiveRunID,
 		); err != nil {
 			return nil, err
 		}
@@ -126,7 +130,7 @@ func (q *Queries) Tickets(ctx context.Context) ([]Ticket, error) {
 }
 
 const ticketsByState = `-- name: TicketsByState :many
-SELECT id, title, body, state, created_at, updated_at FROM ticket WHERE state = $1 ORDER BY id
+SELECT id, title, body, state, created_at, updated_at, active_run_id FROM ticket WHERE state = $1 ORDER BY id
 `
 
 func (q *Queries) TicketsByState(ctx context.Context, state string) ([]Ticket, error) {
@@ -145,6 +149,7 @@ func (q *Queries) TicketsByState(ctx context.Context, state string) ([]Ticket, e
 			&i.State,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ActiveRunID,
 		); err != nil {
 			return nil, err
 		}
@@ -159,7 +164,7 @@ func (q *Queries) TicketsByState(ctx context.Context, state string) ([]Ticket, e
 const transitionTicketState = `-- name: TransitionTicketState :one
 UPDATE ticket SET state = $3, updated_at = CURRENT_TIMESTAMP
 WHERE id = $1 AND state = $2
-RETURNING id, title, body, state, created_at, updated_at
+RETURNING id, title, body, state, created_at, updated_at, active_run_id
 `
 
 type TransitionTicketStateParams struct {
@@ -178,6 +183,7 @@ func (q *Queries) TransitionTicketState(ctx context.Context, arg TransitionTicke
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ActiveRunID,
 	)
 	return i, err
 }
@@ -185,7 +191,7 @@ func (q *Queries) TransitionTicketState(ctx context.Context, arg TransitionTicke
 const updateTicketState = `-- name: UpdateTicketState :one
 UPDATE ticket SET state = $2, updated_at = CURRENT_TIMESTAMP
 WHERE id = $1
-RETURNING id, title, body, state, created_at, updated_at
+RETURNING id, title, body, state, created_at, updated_at, active_run_id
 `
 
 type UpdateTicketStateParams struct {
@@ -203,6 +209,7 @@ func (q *Queries) UpdateTicketState(ctx context.Context, arg UpdateTicketStatePa
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ActiveRunID,
 	)
 	return i, err
 }

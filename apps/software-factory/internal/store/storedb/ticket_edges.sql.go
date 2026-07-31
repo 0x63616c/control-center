@@ -77,7 +77,7 @@ func (q *Queries) RemoveTicketDependency(ctx context.Context, arg RemoveTicketDe
 }
 
 const ticketBlockers = `-- name: TicketBlockers :many
-SELECT blocker.id, blocker.title, blocker.body, blocker.state, blocker.created_at, blocker.updated_at FROM ticket_edge e
+SELECT blocker.id, blocker.title, blocker.body, blocker.state, blocker.created_at, blocker.updated_at, blocker.active_run_id FROM ticket_edge e
 JOIN ticket blocker ON blocker.id = e.blocker_ticket_id
 WHERE e.blocked_ticket_id = $1
 ORDER BY blocker.id
@@ -100,6 +100,7 @@ func (q *Queries) TicketBlockers(ctx context.Context, blockedTicketID int64) ([]
 			&i.State,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ActiveRunID,
 		); err != nil {
 			return nil, err
 		}
@@ -112,7 +113,7 @@ func (q *Queries) TicketBlockers(ctx context.Context, blockedTicketID int64) ([]
 }
 
 const ticketBlocks = `-- name: TicketBlocks :many
-SELECT blocked.id, blocked.title, blocked.body, blocked.state, blocked.created_at, blocked.updated_at FROM ticket_edge e
+SELECT blocked.id, blocked.title, blocked.body, blocked.state, blocked.created_at, blocked.updated_at, blocked.active_run_id FROM ticket_edge e
 JOIN ticket blocked ON blocked.id = e.blocked_ticket_id
 WHERE e.blocker_ticket_id = $1
 ORDER BY blocked.id
@@ -135,6 +136,7 @@ func (q *Queries) TicketBlocks(ctx context.Context, blockerTicketID int64) ([]Ti
 			&i.State,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ActiveRunID,
 		); err != nil {
 			return nil, err
 		}

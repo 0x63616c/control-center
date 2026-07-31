@@ -1,0 +1,83 @@
+package activities
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
+)
+
+// TargetRunRecorder is the complete mandatory persistence door for the target
+// WorkOnTicket workflow. Recording failure is returned to Temporal for retry;
+// no target boundary is logged and ignored.
+type TargetRunRecorder interface {
+	store.TargetRunClaimer
+	store.TargetStepRecorder
+	store.TargetAgentRecorder
+	store.TargetTerminalRecorder
+}
+
+// TargetRecordingActivities adapts target Store persistence to Temporal activities.
+type TargetRecordingActivities struct{ store TargetRunRecorder }
+
+// NewTargetRecordingActivities builds the mandatory target recording activity set.
+func NewTargetRecordingActivities(recorder TargetRunRecorder) (*TargetRecordingActivities, error) {
+	if recorder == nil {
+		return nil, fmt.Errorf("target recording activities: a TargetRunRecorder is required")
+	}
+	return &TargetRecordingActivities{store: recorder}, nil
+}
+
+// ClaimAndStartRun persists target ownership before provisioning can begin.
+func (a *TargetRecordingActivities) ClaimAndStartRun(ctx context.Context, in store.ClaimRunInput) (store.ClaimRunResult, error) {
+	result, err := a.store.ClaimAndStartRun(ctx, in)
+	if err != nil {
+		return store.ClaimRunResult{}, fail(ctx, fmt.Sprintf("claiming ticket %d", in.TicketID), err)
+	}
+	return result, nil
+}
+
+// StartStep persists a target Step before its primary operation starts.
+func (a *TargetRecordingActivities) StartStep(ctx context.Context, in store.StartStepInput) (store.RunStep, error) {
+	step, err := a.store.StartStep(ctx, in)
+	if err != nil {
+		return store.RunStep{}, fail(ctx, fmt.Sprintf("starting step %d of run %s", in.Ordinal, in.RunID), err)
+	}
+	return step, nil
+}
+
+// StartAgentAttempt persists authorization before an agent can produce a transcript.
+func (a *TargetRecordingActivities) StartAgentAttempt(ctx context.Context, in store.StartAgentAttemptInput) (store.AgentAttempt, error) {
+	attempt, err := a.store.StartAgentAttempt(ctx, in)
+	if err != nil {
+		return store.AgentAttempt{}, fail(ctx, fmt.Sprintf("starting agent attempt %d", in.AttemptNo), err)
+	}
+	return attempt, nil
+}
+
+// CheckpointAgentAttempt records terminal agent data before acknowledgement.
+func (a *TargetRecordingActivities) CheckpointAgentAttempt(ctx context.Context, in store.AgentCheckpointInput) (store.AgentAttempt, error) {
+	attempt, err := a.store.CheckpointAgentAttempt(ctx, in)
+	if err != nil {
+		return store.AgentAttempt{}, fail(ctx, fmt.Sprintf("checkpointing agent attempt %d", in.AttemptNo), err)
+	}
+	return attempt, nil
+}
+
+// FinalizeConfirmedMerge commits the irreversible terminal outcome.
+func (a *TargetRecordingActivities) FinalizeConfirmedMerge(ctx context.Context, in store.ConfirmedMergeInput) (store.TerminalResult, error) {
+	result, err := a.store.FinalizeConfirmedMerge(ctx, in)
+	if err != nil {
+		return store.TerminalResult{}, fail(ctx, fmt.Sprintf("finalizing confirmed merge for run %s", in.RunID), err)
+	}
+	return result, nil
+}
+
+// CancelRun conditionally records cancellation without reopening later owners.
+func (a *TargetRecordingActivities) CancelRun(ctx context.Context, in store.CancelRunInput) (store.TerminalResult, error) {
+	result, err := a.store.CancelRun(ctx, in)
+	if err != nil {
+		return store.TerminalResult{}, fail(ctx, fmt.Sprintf("canceling run %s", in.RunID), err)
+	}
+	return result, nil
+}

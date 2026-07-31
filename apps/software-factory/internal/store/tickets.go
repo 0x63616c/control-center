@@ -148,12 +148,13 @@ func ticketFromRow(row storedb.Ticket) (Ticket, error) {
 		return Ticket{}, fmt.Errorf("ticket %d: stored state %q is not a known TicketState: %w", row.ID, row.State, err)
 	}
 	return Ticket{
-		ID:        TicketID(row.ID),
-		Title:     row.Title,
-		Body:      row.Body,
-		State:     state,
-		CreatedAt: timeFromPg(row.CreatedAt),
-		UpdatedAt: timeFromPg(row.UpdatedAt),
+		ID:          TicketID(row.ID),
+		Title:       row.Title,
+		Body:        row.Body,
+		State:       state,
+		ActiveRunID: runIDString(row.ActiveRunID),
+		CreatedAt:   timeFromPg(row.CreatedAt),
+		UpdatedAt:   timeFromPg(row.UpdatedAt),
 	}, nil
 }
 
