@@ -1394,6 +1394,20 @@ func TestMergePullRequestPreservesTheGitHubRetryTaxonomy(t *testing.T) {
 	}
 }
 
+func TestMergePullRequestKeepsRepositoryPolicyRetryableForOperatorRepair(t *testing.T) {
+	t.Parallel()
+
+	d := deps()
+	d.GitHub = &fakeGitHub{mergeErr: fmt.Errorf("review required: %w", github.ErrRuleset)}
+	a := mustNew(t, d)
+
+	_, err := a.MergePullRequest(t.Context(), MergePullRequestInput{PullRequestNumber: 9, ExpectedHeadSHA: "reviewed-head"})
+	app := appErrorOf(t, err)
+	if app.Type() != ErrTypeRuleset || app.NonRetryable() {
+		t.Fatalf("merge error = type %q non-retryable %v, want retryable ruleset classification", app.Type(), app.NonRetryable())
+	}
+}
+
 func TestPostPullRequestCommentPostsAgainstThePullRequestNumber(t *testing.T) {
 	t.Parallel()
 

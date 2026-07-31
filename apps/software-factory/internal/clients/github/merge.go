@@ -71,6 +71,9 @@ func (c *Client) MergePullRequest(ctx context.Context, number int, expectedHeadS
 			MergeSHA: merged.GetSHA(),
 		}, nil
 	}
+	if mergePermissionRejected(err) {
+		return work.PullRequestMergeResult{}, rulesetRejected(op, err)
+	}
 	if err != nil && !mergeResponseNeedsReconciliation(ctx, err) {
 		return work.PullRequestMergeResult{}, classify(ctx, op, err)
 	}
@@ -86,7 +89,21 @@ func (c *Client) MergePullRequest(ctx context.Context, number int, expectedHeadS
 		return work.PullRequestMergeResult{}, fmt.Errorf("%s: reconciling the ambiguous merge response: %w", op, reconcileErr)
 	}
 
-	return classifyMergeState(state, expectedHeadSHA, mergeMessage(err, merged)), nil
+	diagnostic := mergeMessage(err, merged)
+	result := classifyMergeState(state, expectedHeadSHA, diagnostic)
+	if result.Outcome == work.PullRequestMergeRetryableAmbiguity && repositoryPolicyRejected(diagnostic) {
+		return work.PullRequestMergeResult{}, rulesetRejected(op, errors.New(diagnostic))
+	}
+	return result, nil
+}
+
+func mergePermissionRejected(err error) bool {
+	var response *gh.ErrorResponse
+	return errors.As(err, &response) && response.Response.StatusCode == http.StatusForbidden
+}
+
+func rulesetRejected(op string, cause error) error {
+	return fmt.Errorf("%s: %w: %w", op, ErrRuleset, cause)
 }
 
 // mergeResponseNeedsReconciliation identifies responses whose HTTP outcome
@@ -167,6 +184,12 @@ func classifyMergeState(state graphQLPullRequest, expectedHeadSHA, diagnostic st
 		pr.MergeSHA = state.MergeCommit.SHA
 	}
 
+	if state.Merged && pr.HeadSHA == "" {
+		return work.PullRequestMergeResult{Outcome: work.PullRequestMergeRetryableAmbiguity, PullRequest: pr, Diagnostic: "github reported merged without the pull request head sha"}
+	}
+	if state.Merged && pr.HeadSHA != expectedHeadSHA {
+		return work.PullRequestMergeResult{Outcome: work.PullRequestMergeHeadChanged, PullRequest: pr, Diagnostic: diagnostic}
+	}
 	if state.Merged && pr.MergeSHA != "" {
 		return work.PullRequestMergeResult{Outcome: work.PullRequestMergeConfirmed, MergeSHA: pr.MergeSHA, PullRequest: pr}
 	}
@@ -226,4 +249,13 @@ func baseRefreshRequired(diagnostic string) bool {
 	return strings.Contains(diagnostic, "base branch was modified") ||
 		strings.Contains(diagnostic, "base branch must be up to date") ||
 		strings.Contains(diagnostic, "not up to date")
+}
+
+func repositoryPolicyRejected(diagnostic string) bool {
+	diagnostic = strings.ToLower(diagnostic)
+	return strings.Contains(diagnostic, "approving review is required") ||
+		strings.Contains(diagnostic, "review required") ||
+		strings.Contains(diagnostic, "protected branch") ||
+		strings.Contains(diagnostic, "required status check") ||
+		strings.Contains(diagnostic, "ruleset")
 }

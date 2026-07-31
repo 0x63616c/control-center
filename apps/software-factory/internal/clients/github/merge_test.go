@@ -69,6 +69,27 @@ func TestMergePullRequestConfirmsAMergeOnlyFromGraphQLMergedAndMergeCommit(t *te
 	}
 }
 
+func TestMergePullRequestDoesNotConfirmADifferentHeadMergedAfterALostResponse(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newStub(t)
+	s.handle("PUT "+mergePath, func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusConflict, "merge response lost")
+	})
+	s.handle("POST /graphql", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"repository": map[string]any{"pullRequest": reconciledPullRequest("CLOSED", "replacement-head", "MERGEABLE", true, "replacement-merge")}}})
+	})
+	c, _ := s.client(t)
+
+	result, err := c.MergePullRequest(t.Context(), 9, "reviewed-head")
+	if err != nil {
+		t.Fatalf("MergePullRequest: %v", err)
+	}
+	if result.Outcome != work.PullRequestMergeHeadChanged || result.MergeSHA != "" {
+		t.Fatalf("result = %+v, want head-changed without confirming the replacement merge", result)
+	}
+}
+
 func TestMergePullRequestDoesNotTreatClosedOrMergeSHAAloneAsAConfirmedMerge(t *testing.T) {
 	t.Parallel()
 
@@ -90,6 +111,124 @@ func TestMergePullRequestDoesNotTreatClosedOrMergeSHAAloneAsAConfirmedMerge(t *t
 	}
 	if result.Outcome != work.PullRequestMergeClosedUnmerged {
 		t.Fatalf("result = %+v, want closed-unmerged", result)
+	}
+}
+
+func TestMergePullRequestDoesNotConfirmA200ResponseWithMergedFalse(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newStub(t)
+	s.handle("PUT "+mergePath, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"merged": false, "sha": "", "message": "Pull Request is not mergeable"})
+	})
+	s.handle("POST /graphql", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"repository": map[string]any{"pullRequest": reconciledPullRequest("OPEN", "reviewed-head", "UNKNOWN", false, "")}}})
+	})
+	c, _ := s.client(t)
+
+	result, err := c.MergePullRequest(t.Context(), 9, "reviewed-head")
+	if err != nil {
+		t.Fatalf("MergePullRequest: %v", err)
+	}
+	if result.Outcome != work.PullRequestMergeRetryableAmbiguity || result.Diagnostic != "Pull Request is not mergeable" {
+		t.Fatalf("result = %+v, want retryable ambiguity with GitHub's diagnostic", result)
+	}
+}
+
+func TestMergePullRequestDoesNotConfirmA200ResponseMissingTheMergeSHA(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newStub(t)
+	s.handle("PUT "+mergePath, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"merged": true, "message": "Pull Request successfully merged"})
+	})
+	s.handle("POST /graphql", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"repository": map[string]any{"pullRequest": reconciledPullRequest("CLOSED", "reviewed-head", "MERGEABLE", true, "")}}})
+	})
+	c, _ := s.client(t)
+
+	result, err := c.MergePullRequest(t.Context(), 9, "reviewed-head")
+	if err != nil {
+		t.Fatalf("MergePullRequest: %v", err)
+	}
+	if result.Outcome != work.PullRequestMergeRetryableAmbiguity || result.MergeSHA != "" {
+		t.Fatalf("result = %+v, want retryable ambiguity without a merge SHA", result)
+	}
+}
+
+func TestMergePullRequestClassifiesAForbiddenMergeAsRepairableRepositoryPolicy(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newStub(t)
+	s.handle("PUT "+mergePath, func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusForbidden, "Resource not accessible by integration")
+	})
+	c, _ := s.client(t)
+
+	_, err := c.MergePullRequest(t.Context(), 9, "reviewed-head")
+	if err == nil {
+		t.Fatal("MergePullRequest succeeded despite a permission rejection")
+	}
+	if !errors.Is(err, ErrRuleset) || errors.Is(err, work.ErrPermanent) || errors.Is(err, ErrAuth) {
+		t.Fatalf("error = %v, want a retryable repository-policy classification distinct from bad credentials", err)
+	}
+}
+
+func TestMergePullRequestClassifiesPolicyRefusalsAfterAuthoritativeReconciliation(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		status  int
+		message string
+	}{
+		"405 review required": {
+			status:  http.StatusMethodNotAllowed,
+			message: "At least 1 approving review is required by reviewers with write access.",
+		},
+		"409 protected branch": {
+			status:  http.StatusConflict,
+			message: "Protected branch update failed for refs/heads/main.",
+		},
+		"422 required check": {
+			status:  http.StatusUnprocessableEntity,
+			message: `Required status check "test-software-factory" is expected.`,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			s, _ := newStub(t)
+			s.handle("PUT "+mergePath, func(w http.ResponseWriter, _ *http.Request) {
+				writeError(w, tc.status, tc.message)
+			})
+			s.handle("POST /graphql", func(w http.ResponseWriter, _ *http.Request) {
+				writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"repository": map[string]any{"pullRequest": reconciledPullRequest("OPEN", "reviewed-head", "MERGEABLE", false, "")}}})
+			})
+			c, _ := s.client(t)
+
+			_, err := c.MergePullRequest(t.Context(), 9, "reviewed-head")
+			if err == nil {
+				t.Fatal("MergePullRequest succeeded despite repository policy")
+			}
+			if !errors.Is(err, ErrRuleset) || errors.Is(err, work.ErrPermanent) {
+				t.Fatalf("error = %v, want retryable repository-policy classification", err)
+			}
+		})
+	}
+}
+
+func TestMergePullRequestKeepsBadCredentialsDistinctFromRepositoryPolicy(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newStub(t)
+	s.handle("PUT "+mergePath, func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusUnauthorized, "Bad credentials")
+	})
+	c, _ := s.client(t)
+
+	_, err := c.MergePullRequest(t.Context(), 9, "reviewed-head")
+	if !errors.Is(err, ErrAuth) || !errors.Is(err, work.ErrPermanent) || errors.Is(err, ErrRuleset) {
+		t.Fatalf("error = %v, want permanent bad-credential classification", err)
 	}
 }
 
