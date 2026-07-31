@@ -189,6 +189,36 @@ func TestDurationBucketsCoverAWholeStageTimeout(t *testing.T) {
 	t.Error("no software_factory_stage_duration_seconds was registered")
 }
 
+func TestPayloadLayerAppliedRecordsBytesAndDurationByEncoding(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	telemetry.NewMetrics(reg).PayloadLayerApplied("binary/zstd", 12, 5, time.Second)
+
+	want := `
+# HELP software_factory_payload_layer_bytes_in_total Bytes received by a payload codec layer.
+# TYPE software_factory_payload_layer_bytes_in_total counter
+software_factory_payload_layer_bytes_in_total{encoding="binary/zstd"} 12
+# HELP software_factory_payload_layer_bytes_out_total Bytes emitted by a payload codec layer.
+# TYPE software_factory_payload_layer_bytes_out_total counter
+software_factory_payload_layer_bytes_out_total{encoding="binary/zstd"} 5
+`
+	if err := testutil.CollectAndCompare(reg, strings.NewReader(want),
+		"software_factory_payload_layer_bytes_in_total",
+		"software_factory_payload_layer_bytes_out_total"); err != nil {
+		t.Error(err)
+	}
+
+	family := gatherFamily(t, reg, "software_factory_payload_layer_duration_seconds")
+	histogram := family.GetMetric()[0].GetHistogram()
+	if got := histogram.GetSampleCount(); got != 1 {
+		t.Errorf("duration count = %d, want 1", got)
+	}
+	if got := histogram.GetSampleSum(); got != 1 {
+		t.Errorf("duration sum = %v, want 1", got)
+	}
+}
+
 func TestRegisteringTwiceIsACrashRatherThanASilentSecondSetOfCounters(t *testing.T) {
 	t.Parallel()
 
