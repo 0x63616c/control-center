@@ -689,6 +689,22 @@ jobs:
           dockerfile: apps/software-factory/images/blobs/Dockerfile
           cache-scope: software-factory-blobs
 
+  build-software-factory-codec:
+    needs: [changes]
+    if: needs.changes.outputs.softwarefactory == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build and push codec service image
+        uses: ./.github/actions/build-product-image
+        env:
+          SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
+        with:
+          image: www-software-factory-codec
+          dockerfile: apps/software-factory/images/codec/Dockerfile
+          cache-scope: software-factory-codec
+
   # The console (ADR-0012, #553): a TypeScript SPA, built like any other bun
   # workspace image (build-manage's shape), not like the Go images above , its
   # own filter (`softwarefactoryweb`) and its own Dockerfile context (repo
