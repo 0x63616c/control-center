@@ -76,45 +76,10 @@ type PodLifecycle interface {
 // step's comment in place, so the type says PostStatus and EditStatus and
 // cannot express arbitrary commenting.
 type GitHub interface {
-	// ListAutoTickets returns the open issues labelled `auto`. The label means
-	// this ticket wants machine work and none has been delivered.
-	ListAutoTickets(ctx context.Context) ([]work.Ticket, error)
-
-	// AutoLabelPresent reads one issue and reports whether it still carries
-	// `auto`. It guards dispatch against a stale label-filtered list result.
-	AutoLabelPresent(ctx context.Context, issue int) (bool, error)
-
-	// TicketDetail returns one ticket with the discussion on it: what was
-	// asked, plus the corrections that arrived afterwards. A plan built from
-	// the issue body alone is a plan built from the first draft of the ask.
-	//
-	// By number rather than "the ticket being worked", because the stage that
-	// follows a reference in an issue body needs exactly this, for a different
-	// issue. It reads and writes nothing, which is why it does not widen what
-	// this seam can DO — the narrowness the rest of this interface is built for
-	// is about writes.
-	TicketDetail(ctx context.Context, number int) (work.TicketDetail, error)
-
-	// PostStatus opens one of the run's status comments, or adopts it if this
-	// run already opened it. The body carries the marker that says which.
-	PostStatus(ctx context.Context, issue int, body string) (work.CommentID, error)
-
-	// PostDuplicateWorkflowIDRejection posts or adopts the terminal comment
-	// for a ticket whose workflow ID was already used. Unlike ordinary status,
-	// it refuses to post while the App's author identity is unknown: this
-	// comment can retry on every poll until auto is cleared, so a duplicate is
-	// not an acceptable degraded outcome.
-	PostDuplicateWorkflowIDRejection(ctx context.Context, issue int, body string) (work.CommentID, error)
-
-	// EditStatus rewrites that comment in place as the run progresses.
-	EditStatus(ctx context.Context, id work.CommentID, body string) error
-
-	// ClearAutoLabel removes `auto`, which the machine does when it has opened
-	// a PR or given up. A human re-adds it to request another pass.
-	ClearAutoLabel(ctx context.Context, issue int) error
-
-	// MarkFailed adds the terminal failure marker to an issue or pull request.
-	MarkFailed(ctx context.Context, target int) error
+	// PostComment adds a comment to an issue or pull request. Pull requests
+	// use GitHub's issues endpoint for comments, so number is the resource's
+	// shared number in either case.
+	PostComment(ctx context.Context, number int, body string) error
 
 	// PullRequestForBranch reports the open pull request on a branch, if there
 	// is one.
@@ -274,15 +239,6 @@ type PromptRenderer interface {
 	// workflow's own outcome decision, which continues to ask GitHub rather
 	// than trust any stage's output — see GitHub.PullRequestForBranch.
 	Decode(stage work.Stage, result []byte) (work.StageOutput, error)
-}
-
-// StatusRenderer turns a run's state into the body of its status comment.
-//
-// Separate from the thing that posts it for the same reason: the wording of a
-// status comment changes far more often than the decision to report one.
-type StatusRenderer interface {
-	Render(report work.StatusReport) string
-	RenderDuplicateWorkflowID(rejection work.DuplicateWorkflowExecution) string
 }
 
 // RunLookup answers whether a ticket's workflow is still open.

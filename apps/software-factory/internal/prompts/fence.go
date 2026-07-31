@@ -9,7 +9,7 @@ import (
 
 // fenceTag opens and closes the region of a prompt holding the issue's own
 // words. The nonce is appended to it, so the tags a prompt actually carries are
-// `<untrusted-issue-text-7f3a91…>` and its closing form.
+// `<untrusted-ticket-text-7f3a91…>` and its closing form.
 //
 // The tag alone would be a fixed literal, and a fixed literal is one an issue
 // body can write. Text after a forged closing tag lands as un-fenced prose
@@ -18,7 +18,7 @@ import (
 // tag-shaped string from untrusted text, so the literal cannot be written at
 // all, and the nonce means that even a tag reconstructed some way strip cannot
 // see does not match the one the model was shown.
-const fenceTag = "untrusted-issue-text-"
+const fenceTag = "untrusted-ticket-text-"
 
 // documentTag opens and closes a document an earlier stage handed forward.
 //
@@ -71,7 +71,7 @@ func mintNonce(entropy io.Reader) (string, error) {
 // document — removing it is what stops the leak becoming a forged fence.
 //
 // The tag name goes too, and that half needs no leak to matter: an issue body
-// containing `</untrusted-issue-text-0000000000000000>` would otherwise reach
+// containing `</untrusted-ticket-text-0000000000000000>` would otherwise reach
 // the model verbatim, and whether a model checks the nonce on a closing tag it
 // has already seen is an assumption about an LLM rather than a mechanism. With
 // the tag name removed, no second tag-shaped string exists to check.

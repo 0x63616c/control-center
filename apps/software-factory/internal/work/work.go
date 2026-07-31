@@ -157,59 +157,24 @@ func Pipeline() []Stage {
 // object or a filesystem path — which is why the types that touch those things
 // take a ticket number rather than this struct.
 type Ticket struct {
-	// Number is the GitHub issue number and the identity of the whole run.
+	// Number is the Ticket's own id and the identity of the whole run.
 	Number int
 	Title  string
 	Body   string
 }
 
-// TicketComment is one comment on a ticket's thread.
+// TicketDetail is a Ticket as one run's stages read it.
 //
-// Author and Body are attacker-controllable for exactly the reason Ticket's
-// are, and one step further: anyone who can comment on an issue chooses Body,
-// and no membership is required to comment on a public repository's issue. It
-// carries the same prohibition — never a shell, a command argument, a
-// Kubernetes object or a filesystem path.
-type TicketComment struct {
-	// Author is the commenter's GitHub login. It is here so a reader — human or
-	// model — can weigh who said something, not so anything can authorise on it.
-	Author string
-	Body   string
-}
-
-// TicketDetail is a ticket together with the discussion on it: what the ticket
-// asks for, plus the corrections and clarifications that arrived afterwards.
-//
-// It is a separate type from Ticket rather than more fields on it, because the
-// two are read at different prices and by different callers. Listing eligible
-// tickets is a poll that runs every few seconds and needs one request per page;
-// a thread costs its own paged read per ticket. Folding them together would
-// make the poll either pay for threads nobody asked for, or hand back a Ticket
-// whose empty Comments means "none" and "not fetched" at once.
-//
-// The run's own status comments are not in Comments. It posts one per step and
-// edits them as it goes, and a planner handed those reads our progress updates
-// back as requirements.
+// It is a separate type from Ticket rather than more fields on it because the
+// two are read at different prices and by different callers: listing eligible
+// Tickets is a poll, and a run reads one Ticket once and carries it through
+// every stage so all three plan against the same ask.
 type TicketDetail struct {
 	Ticket
-
-	// Comments is the thread in the order it was written, oldest first.
-	Comments []TicketComment
-
-	// CommentsOmitted counts the comments dropped from the middle of a thread
-	// too long to carry. It is a field rather than a silent truncation so a
-	// caller rendering this into a prompt can say the thread was trimmed —
-	// which is the difference between a model knowing it lacks context and a
-	// model believing it has all of it.
-	CommentsOmitted int
 }
 
 // SandboxID identifies one ticket's disposable pod.
 type SandboxID string
-
-// CommentID identifies one status comment of a run, which the run edits in
-// place as that step progresses.
-type CommentID int64
 
 // Model names the model and reasoning effort a stage runs at. Per-stage
 // overrides exist so the adversarial reviewer can be given different blind

@@ -18,23 +18,30 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// listIssues registers an empty issue list, the cheapest API call a test can
-// make to observe the auth planes underneath it.
-func listIssues(s *stub) {
-	s.handle(fmt.Sprintf("GET /repos/%s/%s/issues", testOwner, testRepo), func(w http.ResponseWriter, _ *http.Request) {
+// listPulls registers an empty pull request list, the cheapest API call a test
+// can make to observe the auth planes underneath it.
+func listPulls(s *stub) {
+	s.handle(fmt.Sprintf("GET /repos/%s/%s/pulls", testOwner, testRepo), func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, []any{})
 	})
+}
+
+// anAuthenticatedCall makes one ordinary authenticated request, so a test can
+// assert on the auth planes underneath it without caring which endpoint it is.
+func anAuthenticatedCall(c *Client) error {
+	_, _, err := c.PullRequestForBranch(context.Background(), "a-branch")
+	return err
 }
 
 func TestMintsAnAppJWTWithTheIssuerAndAWindowHeldOffGitHubsLimitsAtBothEnds(t *testing.T) {
 	t.Parallel()
 
 	s, clk := newStub(t)
-	listIssues(s)
+	listPulls(s)
 	c, _ := s.client(t)
 
-	if _, err := c.ListAutoTickets(context.Background()); err != nil {
-		t.Fatalf("ListAutoTickets returned an unexpected error: %v", err)
+	if err := anAuthenticatedCall(c); err != nil {
+		t.Fatalf("an authenticated call returned an unexpected error: %v", err)
 	}
 
 	raw := strings.TrimPrefix(s.first(t, fmt.Sprintf("POST /app/installations/%d/access_tokens", testInstallationID)).Auth, "Bearer ")
@@ -74,11 +81,11 @@ func TestSignsTheAppJWTWithTheConfiguredPrivateKey(t *testing.T) {
 	t.Parallel()
 
 	s, _ := newStub(t)
-	listIssues(s)
+	listPulls(s)
 	c, _ := s.client(t)
 
-	if _, err := c.ListAutoTickets(context.Background()); err != nil {
-		t.Fatalf("ListAutoTickets returned an unexpected error: %v", err)
+	if err := anAuthenticatedCall(c); err != nil {
+		t.Fatalf("an authenticated call returned an unexpected error: %v", err)
 	}
 	raw := strings.TrimPrefix(s.first(t, fmt.Sprintf("POST /app/installations/%d/access_tokens", testInstallationID)).Auth, "Bearer ")
 
@@ -96,14 +103,14 @@ func TestExchangesTheAppJWTForAnInstallationToken(t *testing.T) {
 	t.Parallel()
 
 	s, _ := newStub(t)
-	listIssues(s)
+	listPulls(s)
 	c, _ := s.client(t)
 
-	if _, err := c.ListAutoTickets(context.Background()); err != nil {
-		t.Fatalf("ListAutoTickets returned an unexpected error: %v", err)
+	if err := anAuthenticatedCall(c); err != nil {
+		t.Fatalf("an authenticated call returned an unexpected error: %v", err)
 	}
 
-	api := s.first(t, fmt.Sprintf("GET /repos/%s/%s/issues", testOwner, testRepo))
+	api := s.first(t, fmt.Sprintf("GET /repos/%s/%s/pulls", testOwner, testRepo))
 	if want := "Bearer installation-token-1"; api.Auth != want {
 		t.Errorf("api call Authorization = %q, want the exchanged token %q", api.Auth, want)
 	}
@@ -113,15 +120,15 @@ func TestReusesTheCachedInstallationTokenUntilTheRefreshSkew(t *testing.T) {
 	t.Parallel()
 
 	s, clk := newStub(t)
-	listIssues(s)
+	listPulls(s)
 	c, _ := s.client(t)
 
-	if _, err := c.ListAutoTickets(context.Background()); err != nil {
-		t.Fatalf("first ListAutoTickets: %v", err)
+	if err := anAuthenticatedCall(c); err != nil {
+		t.Fatalf("first authenticated call: %v", err)
 	}
 	clk.Advance(30 * time.Minute)
-	if _, err := c.ListAutoTickets(context.Background()); err != nil {
-		t.Fatalf("second ListAutoTickets: %v", err)
+	if err := anAuthenticatedCall(c); err != nil {
+		t.Fatalf("second authenticated call: %v", err)
 	}
 
 	if got := s.count(fmt.Sprintf("POST /app/installations/%d/access_tokens", testInstallationID)); got != 1 {
@@ -133,16 +140,16 @@ func TestRefreshesTheInstallationTokenOnceItIsInsideTheRefreshSkew(t *testing.T)
 	t.Parallel()
 
 	s, clk := newStub(t)
-	listIssues(s)
+	listPulls(s)
 	c, _ := s.client(t)
 
-	if _, err := c.ListAutoTickets(context.Background()); err != nil {
-		t.Fatalf("first ListAutoTickets: %v", err)
+	if err := anAuthenticatedCall(c); err != nil {
+		t.Fatalf("first authenticated call: %v", err)
 	}
 	// Four minutes short of expiry, inside the five-minute skew.
 	clk.Advance(56 * time.Minute)
-	if _, err := c.ListAutoTickets(context.Background()); err != nil {
-		t.Fatalf("second ListAutoTickets: %v", err)
+	if err := anAuthenticatedCall(c); err != nil {
+		t.Fatalf("second authenticated call: %v", err)
 	}
 
 	if got := s.count(fmt.Sprintf("POST /app/installations/%d/access_tokens", testInstallationID)); got != 2 {
@@ -163,15 +170,15 @@ func TestRefreshesAnInstallationTokenThatHasAlreadyExpired(t *testing.T) {
 	t.Parallel()
 
 	s, clk := newStub(t)
-	listIssues(s)
+	listPulls(s)
 	c, _ := s.client(t)
 
-	if _, err := c.ListAutoTickets(context.Background()); err != nil {
-		t.Fatalf("first ListAutoTickets: %v", err)
+	if err := anAuthenticatedCall(c); err != nil {
+		t.Fatalf("first authenticated call: %v", err)
 	}
 	clk.Advance(2 * time.Hour)
-	if _, err := c.ListAutoTickets(context.Background()); err != nil {
-		t.Fatalf("second ListAutoTickets: %v", err)
+	if err := anAuthenticatedCall(c); err != nil {
+		t.Fatalf("second authenticated call: %v", err)
 	}
 
 	if got := s.count(fmt.Sprintf("POST /app/installations/%d/access_tokens", testInstallationID)); got != 2 {
@@ -183,7 +190,7 @@ func TestServesOneRefreshToConcurrentCallers(t *testing.T) {
 	t.Parallel()
 
 	s, _ := newStub(t)
-	listIssues(s)
+	listPulls(s)
 	c, _ := s.client(t)
 
 	var wg sync.WaitGroup
@@ -191,8 +198,8 @@ func TestServesOneRefreshToConcurrentCallers(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := c.ListAutoTickets(context.Background()); err != nil {
-				t.Errorf("ListAutoTickets returned an unexpected error: %v", err)
+			if err := anAuthenticatedCall(c); err != nil {
+				t.Errorf("an authenticated call returned an unexpected error: %v", err)
 			}
 		}()
 	}
@@ -207,7 +214,7 @@ func TestDoesNotCacheAFailedExchange(t *testing.T) {
 	t.Parallel()
 
 	s, _ := newStub(t)
-	listIssues(s)
+	listPulls(s)
 	failures := 0
 	exchange := s.exchange
 	s.exchange = func(w http.ResponseWriter, r *http.Request) {
@@ -220,11 +227,11 @@ func TestDoesNotCacheAFailedExchange(t *testing.T) {
 	}
 	c, _ := s.client(t)
 
-	if _, err := c.ListAutoTickets(context.Background()); err == nil {
-		t.Fatal("ListAutoTickets succeeded despite a failed token exchange")
+	if err := anAuthenticatedCall(c); err == nil {
+		t.Fatal("the authenticated call succeeded despite a failed token exchange")
 	}
-	if _, err := c.ListAutoTickets(context.Background()); err != nil {
-		t.Fatalf("second ListAutoTickets: %v", err)
+	if err := anAuthenticatedCall(c); err != nil {
+		t.Fatalf("second authenticated call: %v", err)
 	}
 	if got := s.count(fmt.Sprintf("POST /app/installations/%d/access_tokens", testInstallationID)); got != 2 {
 		t.Errorf("exchanged the app jwt %d times, want 2 — a failed exchange must cache nothing", got)
@@ -274,13 +281,13 @@ func TestReportsARejectedAppJWTAsAPermanentAuthFailure(t *testing.T) {
 	t.Parallel()
 
 	s, _ := newStub(t)
-	listIssues(s)
+	listPulls(s)
 	s.exchange = func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusUnauthorized, "A JSON web token could not be decoded")
 	}
 	c, _ := s.client(t)
 
-	_, err := c.ListAutoTickets(context.Background())
+	err := anAuthenticatedCall(c)
 	assertPermanent(t, err, ErrAuth)
 }
 
@@ -288,13 +295,13 @@ func TestReportsAMissingInstallationAsAPermanentAuthFailure(t *testing.T) {
 	t.Parallel()
 
 	s, _ := newStub(t)
-	listIssues(s)
+	listPulls(s)
 	s.exchange = func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "Not Found")
 	}
 	c, _ := s.client(t)
 
-	_, err := c.ListAutoTickets(context.Background())
+	err := anAuthenticatedCall(c)
 	assertPermanent(t, err, ErrAuth)
 }
 
@@ -302,11 +309,11 @@ func TestNeverLogsAToken(t *testing.T) {
 	t.Parallel()
 
 	s, _ := newStub(t)
-	listIssues(s)
+	listPulls(s)
 	c, logs := s.client(t)
 
-	if _, err := c.ListAutoTickets(context.Background()); err != nil {
-		t.Fatalf("ListAutoTickets returned an unexpected error: %v", err)
+	if err := anAuthenticatedCall(c); err != nil {
+		t.Fatalf("an authenticated call returned an unexpected error: %v", err)
 	}
 	if _, err := c.InstallationToken(context.Background()); err != nil {
 		t.Fatalf("InstallationToken returned an unexpected error: %v", err)
@@ -328,11 +335,11 @@ func TestDoesNotAuthenticateTheTokenExchangeWithAnInstallationToken(t *testing.T
 	t.Parallel()
 
 	s, _ := newStub(t)
-	listIssues(s)
+	listPulls(s)
 	c, _ := s.client(t)
 
-	if _, err := c.ListAutoTickets(context.Background()); err != nil {
-		t.Fatalf("ListAutoTickets returned an unexpected error: %v", err)
+	if err := anAuthenticatedCall(c); err != nil {
+		t.Fatalf("an authenticated call returned an unexpected error: %v", err)
 	}
 
 	exchangePath := fmt.Sprintf("POST /app/installations/%d/access_tokens", testInstallationID)

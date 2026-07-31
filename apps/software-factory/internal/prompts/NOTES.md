@@ -77,11 +77,11 @@ because the fallback sentence is fenced exactly like real content would be.
 
 ### `{{fence_nonce}}` — two requirements on the worker
 
-The fence tags are `<untrusted-issue-text-{{fence_nonce}}>` and its closing form. Both
+The fence tags are `<untrusted-ticket-text-{{fence_nonce}}>` and its closing form. Both
 requirements are on the worker rendering the prompt, and the prompt cannot enforce either:
 
 1. **Generate a fresh random nonce per run** (a short hex token is enough — the tags read
-   `<untrusted-issue-text-7f3a91>`) and interpolate the same value into both tags.
+   `<untrusted-ticket-text-7f3a91>`) and interpolate the same value into both tags.
 2. **Strip every occurrence of that nonce from `{{ticket_title}}`, `{{ticket_body}}` and
    `{{ticket_comments}}` before interpolating them.** Without this the nonce is pointless
    the moment it appears in a prompt an attacker can read back. With a fixed literal tag,
@@ -187,7 +187,7 @@ that an override at one site is not read as licence to ignore the rest.
 
 1. **Handoff documents are fenced, and the fence is bytes rather than judgement.** `strip` and
    `checkFence` compare under ASCII case folding and remove the tag names as well as the nonce,
-   so neither a case-flipped leaked nonce nor a bare `</untrusted-issue-text-…>` written into an
+   so neither a case-flipped leaked nonce nor a bare `</untrusted-ticket-text-…>` written into an
    issue body reaches a model as a second tag-shaped string. Handoff documents get a fence of
    their own (`untrusted-prior-document-…`), because a planner that quotes a malicious issue
    body otherwise carries that quote into `implement` — the one stage holding a GitHub App

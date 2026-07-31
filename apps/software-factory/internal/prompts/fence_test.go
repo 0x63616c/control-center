@@ -131,21 +131,7 @@ func TestRenderStripsTheNonceOutOfEveryPieceOfUntrustedText(t *testing.T) {
 			}},
 		},
 		{
-			name: "in a comment body",
-			in: Input{Stage: work.StagePlan, Ticket: work.TicketDetail{
-				Ticket:   work.Ticket{Number: 1, Title: "t", Body: "b"},
-				Comments: []work.TicketComment{{Author: "drive-by", Body: forged}},
-			}},
-		},
-		{
-			name: "in a comment author's login",
-			in: Input{Stage: work.StagePlan, Ticket: work.TicketDetail{
-				Ticket:   work.Ticket{Number: 1, Title: "t", Body: "b"},
-				Comments: []work.TicketComment{{Author: forged, Body: "looks good"}},
-			}},
-		},
-		{
-			// A plan that quotes a malicious issue body carries that text into
+			// A plan that quotes a malicious Ticket body carries that text into
 			// every later stage, so a handoff document is untrusted too.
 			name: "in a prior stage's document",
 			in: Input{Stage: work.StageImplement, Ticket: ticket(), Prior: work.PriorTurns{
@@ -415,13 +401,6 @@ func TestRenderStripsTheNonceWhateverCaseItIsWrittenIn(t *testing.T) {
 			name: "in the title",
 			in: Input{Stage: work.StagePlan, Ticket: work.TicketDetail{
 				Ticket: work.Ticket{Number: 1, Title: "fix login " + forged, Body: "b"},
-			}},
-		},
-		{
-			name: "in a comment",
-			in: Input{Stage: work.StagePlan, Ticket: work.TicketDetail{
-				Ticket:   work.Ticket{Number: 1, Title: "t", Body: "b"},
-				Comments: []work.TicketComment{{Author: "drive-by", Body: forged}},
 			}},
 		},
 		{

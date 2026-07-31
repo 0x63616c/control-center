@@ -1,99 +1,6 @@
 package work
 
-import (
-	"fmt"
-	"time"
-)
-
-// StatusReport is everything a run's status comment says about itself at one
-// moment.
-//
-// It is data rather than prose so the thing that renders it and the thing that
-// posts it are different modules, and so a workflow can decide *what* to report
-// without knowing how a comment is worded. Rendering is not a workflow's job:
-// prose changes far more often than orchestration, and a wording change must
-// not be a workflow change.
-//
-// The ticket appears as a number and nothing else. Title and body are
-// attacker-controllable, and a status comment is posted *on* the issue that
-// carries them, so repeating them buys nothing and would put chosen text on a
-// path that does not need it.
-type StatusReport struct {
-	TicketNumber int
-
-	// Step is which of a run's comments this is. A run keeps one comment per
-	// step — pickup, one per stage, and the outcome — each identified by its
-	// own marker, rather than one comment rewritten from start to finish. That
-	// is what lets a reader scroll a ticket and see the run happen.
-	Step StatusStep
-
-	// State is where that step has got to. It is explicit rather than inferred
-	// from which other fields are set: "a stage report with a reason is a
-	// failure" is the kind of rule that is true until someone reports a reason
-	// for something else.
-	State StepState
-
-	// Model is what the stage ran on, and empty for the steps that are not a
-	// stage.
-	Model Model
-
-	// StartedAt and EndedAt bound the step. EndedAt is zero while it is still
-	// running. Both come from workflow time, so a replay renders the same
-	// comment it rendered the first time.
-	StartedAt time.Time
-	EndedAt   time.Time
-
-	// RunID is Temporal's RunID, which is both the link to the run and what
-	// makes the comment's marker this run's. See StatusMarker.
-	RunID string
-
-	// Stage is the stage this report is about, and empty for the pickup and
-	// outcome steps.
-	Stage Stage
-
-	// Outcome is empty while the run is still going.
-	Outcome Outcome
-
-	// PullRequestURL is the pull request the run opened, set only on the
-	// outcome report when Outcome is OutcomeProposed. It is the URL GitHub's
-	// API returned for the branch the worker named — never a value read out
-	// of a stage's own result file, which is model output derived from an
-	// issue an attacker may have written (#371).
-	PullRequestURL string
-
-	// Usage is the run's total so far, so cost is visible where the work is
-	// reviewed rather than only in a dashboard.
-	Usage Usage
-
-	// Detail is free text — a failure's reason, or what the run is waiting on.
-	// Nothing branches on it.
-	Detail string
-
-	// Comment is the comment to edit, and zero means this step has none yet. It
-	// is per step, not per run: a stage's comment is posted when the stage
-	// starts and edited when it ends, and no step can edit another's.
-	Comment CommentID
-}
-
-// StepState is how far one status step has got.
-type StepState string
-
-const (
-	// StepRunning is a step that has started and not finished.
-	StepRunning StepState = "running"
-	// StepSucceeded is a step that finished cleanly.
-	StepSucceeded StepState = "succeeded"
-	// StepFailed is a step that did not.
-	StepFailed StepState = "failed"
-)
-
-// DuplicateWorkflowExecution identifies the execution that already consumed a
-// ticket's one permitted workflow ID.
-type DuplicateWorkflowExecution struct {
-	TicketNumber int
-	WorkflowID   string
-	RunID        string
-}
+import "fmt"
 
 // RunState is what a lookup of a ticket's workflow found.
 //
@@ -157,45 +64,21 @@ func (t SandboxTemplate) Validate() error {
 	return nil
 }
 
-// Spec returns the pod spec for one run's sandbox on the GitHub-issue-backed
-// pipeline (WorkTicket).
+// SpecForFactoryTicket returns the pod spec for one run's sandbox.
 //
 // The branch is derived here rather than passed in, so the name the sandbox
 // pushes to and the name the worker later queries GitHub for come from one
 // call. A caller that could supply its own would be a caller that could supply
-// a different one. SandboxTaskQueue is derived the same way and for the same
+// a different one — the drift that produced #603, where a run pushed to one
+// branch while its workflow asked GitHub to open a pull request against
+// another and GitHub rejected the head ref as unresolvable (422 Field:head
+// Code:invalid). SandboxTaskQueue is derived the same way and for the same
 // reason (#434, D1/D2): the queue this run's pod polls and the queue
 // workflow.CreateSession names must be the exact same computation, not two
 // call sites that happen to agree today.
-func (t SandboxTemplate) Spec(ticketNumber int, runID string) SandboxSpec {
-	return t.spec(ticketNumber, runID, BranchName(ticketNumber, runID))
-}
-
-// SpecForFactoryTicket returns the pod spec for one run's sandbox on the
-// Ticket-backed pipeline (ADR-0012, FactoryWorkTicket) — identical to Spec,
-// except SF_BRANCH names FactoryTicketBranchName's branch rather than
-// BranchName's.
-//
-// This is #603: CreateSandbox is the one shared activity both pipelines call
-// (ADR-0012's "same sandbox, session and stage machinery, reused unchanged"),
-// but until this method existed it always baked BranchName's legacy branch
-// into SF_BRANCH regardless of which pipeline was asking. A Ticket-backed run
-// pushed its work to that legacy branch while its own workflow loop asked
-// GitHub to open a pull request against FactoryTicketBranchName's branch —
-// which nothing had ever pushed — so GitHub's create-PR call rejected the
-// head ref as unresolvable (422 Field:head Code:invalid). Two independent
-// computations of "the branch" is exactly the drift Spec's own doc comment
-// warns about; this keeps it to one call per pipeline instead of one call
-// that silently assumed there was only one pipeline.
 func (t SandboxTemplate) SpecForFactoryTicket(ticketID int64, runID string) SandboxSpec {
 	ticketNumber := int(ticketID)
-	return t.spec(ticketNumber, runID, FactoryTicketBranchName(ticketID, runID))
-}
-
-// spec is Spec and SpecForFactoryTicket's shared builder, parameterised only
-// by which branch-naming scheme the caller already resolved — everything else
-// about the pod is identical between the two pipelines.
-func (t SandboxTemplate) spec(ticketNumber int, runID, branch string) SandboxSpec {
+	branch := FactoryTicketBranchName(ticketID, runID)
 	env := make(map[string]string, len(t.Env)+2)
 	for k, v := range t.Env {
 		env[k] = v

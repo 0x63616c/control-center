@@ -43,16 +43,17 @@ plan turned out unimplementable — say so in the first line.
 
 Your answer also has `title` and `body` fields, separate from the document: the pull request
 title and description for the branch as it now stands. Make `title` a clean descriptive title
-without an issue-number prefix; the workflow prepends `#<issue-number> ` when it opens or
+without a Ticket-number prefix; the workflow prepends `T-<ticket-number> ` when it opens or
 updates the pull request. The workflow opens the pull request from these after your first
 successful push, and edits it to match on every later turn — write them as the pull request a
 human will read right now, not as a diff against what you said last turn. Build `body` from
 `.github/pull_request_template.md`: complete every applicable section with the branch's current
 facts, including the behavioral change and relevant changed areas, why it matters, and exact
-verification commands with their real outcomes. Reference the issue as
-`Fixes #{{ticket_number}}`, which intentionally auto-closes the issue when this pull request
-merges into the default branch. Put this closing reference only in the template's canonical
-linked-issue section; never use closing keywords in commit messages or incidental PR prose.
+verification commands with their real outcomes. Reference the Ticket as `T-{{ticket_number}}`
+in the template's linked-issue section. **Never write a GitHub closing keyword** — `Fixes`,
+`Closes`, `Resolves` — anywhere in the title, body or a commit message: this Ticket is not a
+GitHub issue, and `Fixes #{{ticket_number}}` would close whatever unrelated issue happens to
+carry that number. The factory closes its own Ticket when this pull request merges.
 Keep the Screenshot section for UI work only; delete the Screenshot section when there is no UI change.
 Never manufacture command output or visual evidence.
 Leave both `title` and `body` empty only when `blocked` is true and nothing was pushed worth describing.

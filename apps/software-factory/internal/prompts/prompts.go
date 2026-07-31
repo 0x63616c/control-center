@@ -164,10 +164,9 @@ func (in Input) staticValues() (map[string]string, int, error) {
 	}
 
 	values := map[string]string{
-		"ticket_number":   strconv.Itoa(in.Ticket.Number),
-		"ticket_title":    in.Ticket.Title,
-		"ticket_body":     body(in.Ticket),
-		"ticket_comments": comments(in.Ticket),
+		"ticket_number": strconv.Itoa(in.Ticket.Number),
+		"ticket_title":  in.Ticket.Title,
+		"ticket_body":   body(in.Ticket),
 	}
 
 	stageInput, err := buildStageInput(in.Stage, in.Turn, in.Prior)
@@ -242,40 +241,4 @@ func truncate(text string, limit int) (string, bool) {
 // which happened.
 func truncationNotice(was, kept int) string {
 	return fmt.Sprintf("\n\n(This text was truncated here: it is %d bytes and this prompt carries the first %d.)", was, kept)
-}
-
-// comments renders the issue's thread, oldest first.
-//
-// The thread is carried because a brain-dump issue's actual clarification
-// usually arrives in it. The run's own status comment is not here — GitHub's
-// seam filters it before this — so a planner is never handed our progress
-// updates as requirements.
-func comments(detail work.TicketDetail) string {
-	if len(detail.Comments) == 0 && detail.CommentsOmitted == 0 {
-		return "(This issue has no comments.)"
-	}
-
-	var out strings.Builder
-	out.WriteString("Comments on the issue, oldest first:\n")
-	if detail.CommentsOmitted > 0 {
-		// A model that knows the thread was trimmed can say its plan rests on
-		// part of it. A model that does not, cannot.
-		fmt.Fprintf(&out, "\n(%d comments from the middle of this thread are not shown.)\n", detail.CommentsOmitted)
-	}
-	remaining := maxUntrustedBytes
-	for i, comment := range detail.Comments {
-		if remaining <= 0 {
-			// The thread ran past what a prompt carries. Say how much is
-			// missing rather than ending mid-conversation.
-			fmt.Fprintf(&out, "\n(%d further comments are not shown: the thread is longer than one prompt carries.)\n", len(detail.Comments)-i)
-			break
-		}
-		text, cut := truncate(comment.Body, remaining)
-		remaining -= len(text)
-		if cut {
-			text += truncationNotice(len(comment.Body), len(text))
-		}
-		fmt.Fprintf(&out, "\n@%s wrote:\n\n%s\n", comment.Author, text)
-	}
-	return out.String()
 }

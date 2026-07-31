@@ -147,32 +147,22 @@ func (k StageKey) String() string {
 	return fmt.Sprintf("ticket #%d stage %s turn %d run %s", k.Ticket, k.Stage, k.Turn, k.RunID)
 }
 
-// WorkflowID is the Temporal workflow ID for a ticket's run.
-//
-// Starting a workflow with this ID *is* the claim on the ticket: Temporal
-// refuses a second execution with an open run under the same ID, so uniqueness
-// here replaces a lease table or an advisory lock. Nothing else may construct
-// this string — a second spelling would be a second claim.
-//
-// It assumes one repository. Working tickets from more than one would need the
-// repository in the ID, and changing the scheme once runs are in flight would
-// orphan open workflows and let their tickets be claimed twice, so that change
-// costs a drain rather than a deploy.
-func WorkflowID(ticketNumber int) string {
-	return fmt.Sprintf("work-ticket-%d", ticketNumber)
-}
-
 // FactoryTicketWorkflowID is the Temporal claim for a factory-owned Ticket.
-// Its prefix is deliberately disjoint from WorkflowID: a completed legacy
-// issue run may be reused by Temporal, so sharing the old namespace would
-// make two unrelated tickets share one history lineage.
+//
+// Starting a workflow with this ID *is* the claim: Temporal refuses a second
+// execution with an open run under the same ID, so uniqueness here replaces a
+// lease table or an advisory lock. Nothing else may construct this string — a
+// second spelling would be a second claim.
+//
+// Its `factory-ticket-` prefix is deliberately disjoint from the retired
+// `work-ticket-` scheme (#559): Temporal lets a closed run's ID be reused, so
+// sharing that namespace would have let a small Ticket id share a history
+// lineage with the GitHub issue of the same number.
 func FactoryTicketWorkflowID(ticketID int64) string {
 	return fmt.Sprintf("factory-ticket-%d", ticketID)
 }
 
-// FactoryTicketBranchName names a Ticket-backed run's branch. It cannot
-// collide with BranchName, which reserves software-factory/ticket-* for
-// GitHub issue runs.
+// FactoryTicketBranchName names a Ticket-backed run's branch.
 func FactoryTicketBranchName(ticketID int64, runID string) string {
 	return path.Join("software-factory", "factory-ticket-"+strconv.FormatInt(ticketID, 10), runID)
 }
@@ -209,76 +199,14 @@ func ParseFactoryTicketBranchName(branch string) (ticketID int64, ok bool) {
 	return id, true
 }
 
-// DispatcherWorkflowID is the one dispatcher's Temporal workflow ID.
+// FactoryDispatcherWorkflowID is the one dispatcher's Temporal workflow ID.
 //
 // It is a constant rather than derived from anything, because there is
 // exactly one dispatcher: the composition root starts a workflow with this ID
 // on every boot, and Temporal's default StartWorkflowOptions — reused across
 // an already-running execution rather than erroring on it — is what makes
 // that idempotent. A second spelling anywhere would be a second dispatcher.
-const DispatcherWorkflowID = "software-factory-dispatcher"
-
-// FactoryDispatcherWorkflowID is the singleton Ticket-backed dispatcher.
-// One spelling is one dispatcher; the legacy dispatcher remains separate.
 const FactoryDispatcherWorkflowID = "software-factory-ticket-dispatcher"
-
-// statusMarkerPrefix opens every status marker. It carries a version so the
-// grammar can change without a new run adopting an old run's comment by
-// accident.
-const statusMarkerPrefix = "<!-- software-factory:status v1 run="
-
-// StatusStep names which of a run's status comments a marker identifies.
-//
-// A run appends a comment per step rather than editing one comment for the
-// whole run, so the marker has to identify the comment and not merely the run:
-// without the step, every step's create-or-adopt would match the first comment
-// the run posted and the run would overwrite its own history.
-type StatusStep string
-
-// The steps that are not stages: a run opens with one and ends with one.
-const (
-	// StepPickup is the comment announcing the run and its Temporal run.
-	StepPickup StatusStep = "pickup"
-	// StepOutcome is the comment carrying the PR or the reason there is none,
-	// plus the run's token totals.
-	StepOutcome StatusStep = "outcome"
-)
-
-// StageStep is the step a stage's own status comment occupies.
-//
-// One comment per stage, not per attempt — the same identity StageKey carries.
-// A retried stage therefore adopts and edits the comment it already posted
-// rather than appending a second one for work the reader already saw start.
-func StageStep(stage Stage) StatusStep {
-	return StatusStep("stage-" + stage)
-}
-
-// StatusMarker is the first line of one status comment, and the only thing that
-// identifies the comment as that run's, at that step.
-//
-// Nothing else may construct this string — a second spelling would be a second
-// comment. It lives here rather than beside either the renderer that emits it
-// or the client that matches it, because those are two packages and this is one
-// fact; whichever of them owned it, the other would hold a copy.
-//
-// It is an HTML comment so it renders as nothing, and it carries the RunID so a
-// previous run's status comments never match and stay on the issue as history.
-func StatusMarker(runID string, step StatusStep) string {
-	return statusMarkerPrefix + runID + " step=" + string(step) + " -->"
-}
-
-// StatusMarkerIn returns the marker line of a rendered status body.
-//
-// Only the first line counts. A human quoting a status comment reproduces its
-// marker further down, and matching that would let a run adopt a comment it did
-// not write.
-func StatusMarkerIn(body string) (string, bool) {
-	line, _, _ := strings.Cut(body, "\n")
-	if !strings.HasPrefix(line, statusMarkerPrefix) || !strings.HasSuffix(line, " -->") {
-		return "", false
-	}
-	return line, true
-}
 
 // StagePaths are the files one stage attempt reads and writes in the sandbox.
 type StagePaths struct {

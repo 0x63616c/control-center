@@ -27,19 +27,10 @@ import (
 // --- fakes -----------------------------------------------------------------
 
 type fakeGitHub struct {
-	tickets          []work.Ticket
-	detail           work.TicketDetail
-	autoLabelPresent bool
-
-	postErr, editErr, labelErr, failedErr, listErr, detailErr, autoLabelErr error
+	postErr error
 
 	postedTo   int
 	postedBody string
-	editedID   work.CommentID
-	editedBody string
-	cleared    []int
-	failed     []int
-	nextID     work.CommentID
 
 	pr          work.PullRequest
 	prFound     bool
@@ -68,40 +59,9 @@ type fakeGitHub struct {
 	autoMergeErr    error
 }
 
-func (f *fakeGitHub) ListAutoTickets(context.Context) ([]work.Ticket, error) {
-	return f.tickets, f.listErr
-}
-
-func (f *fakeGitHub) AutoLabelPresent(_ context.Context, _ int) (bool, error) {
-	return f.autoLabelPresent, f.autoLabelErr
-}
-
-func (f *fakeGitHub) TicketDetail(_ context.Context, _ int) (work.TicketDetail, error) {
-	return f.detail, f.detailErr
-}
-
-func (f *fakeGitHub) PostStatus(_ context.Context, issue int, body string) (work.CommentID, error) {
-	f.postedTo, f.postedBody = issue, body
-	return f.nextID, f.postErr
-}
-
-func (f *fakeGitHub) PostDuplicateWorkflowIDRejection(ctx context.Context, issue int, body string) (work.CommentID, error) {
-	return f.PostStatus(ctx, issue, body)
-}
-
-func (f *fakeGitHub) EditStatus(_ context.Context, id work.CommentID, body string) error {
-	f.editedID, f.editedBody = id, body
-	return f.editErr
-}
-
-func (f *fakeGitHub) ClearAutoLabel(_ context.Context, issue int) error {
-	f.cleared = append(f.cleared, issue)
-	return f.labelErr
-}
-
-func (f *fakeGitHub) MarkFailed(_ context.Context, target int) error {
-	f.failed = append(f.failed, target)
-	return f.failedErr
+func (f *fakeGitHub) PostComment(_ context.Context, number int, body string) error {
+	f.postedTo, f.postedBody = number, body
+	return f.postErr
 }
 
 func (f *fakeGitHub) InstallationToken(context.Context) (work.SandboxCredential, error) {
@@ -266,23 +226,6 @@ func (f *fakePrompts) Decode(stage work.Stage, result []byte) (work.StageOutput,
 	}
 }
 
-// fakeStatus renders a report to something a test can recognise without
-// depending on the real wording, which A3 owns.
-type fakeStatus struct {
-	saw          work.StatusReport
-	sawRejection work.DuplicateWorkflowExecution
-}
-
-func (f *fakeStatus) Render(report work.StatusReport) string {
-	f.saw = report
-	return fmt.Sprintf("run %s stage %s", report.RunID, report.Stage)
-}
-
-func (f *fakeStatus) RenderDuplicateWorkflowID(rejection work.DuplicateWorkflowExecution) string {
-	f.sawRejection = rejection
-	return "duplicate workflow notice"
-}
-
 type fakeRuns struct {
 	state work.RunState
 	err   error
@@ -374,7 +317,6 @@ func deps() Deps {
 		Stages:          &fakeStages{},
 		Transcripts:     &fakeTranscript{},
 		Prompts:         &fakePrompts{},
-		Status:          &fakeStatus{},
 		Runs:            &fakeRuns{},
 		Sweeper:         &fakeSweeper{},
 		Metrics:         &fakeMetrics{},
@@ -414,7 +356,7 @@ func TestNewNamesEveryDependencyItIsMissing(t *testing.T) {
 		t.Fatal("a set of activities with no dependencies must not construct")
 	}
 	for _, name := range []string{
-		"GitHub", "Pods", "Repo", "Stages", "Transcripts", "Prompts", "Status", "Runs", "Sweeper", "Metrics",
+		"GitHub", "Pods", "Repo", "Stages", "Transcripts", "Prompts", "Runs", "Sweeper", "Metrics",
 		"DispatcherState", "TokenSource", "Clock", "Log",
 	} {
 		if !strings.Contains(err.Error(), name) {
@@ -499,206 +441,6 @@ func TestNewRefusesToConstructWithNoRepositoryToClone(t *testing.T) {
 }
 
 // --- github activities -----------------------------------------------------
-
-func TestAutoLabelPresentReturnsThePointReadResult(t *testing.T) {
-	t.Parallel()
-
-	gh := &fakeGitHub{autoLabelPresent: true}
-	d := deps()
-	d.GitHub = gh
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.AutoLabelPresent)
-
-	val, err := e.ExecuteActivity(a.AutoLabelPresent, 328)
-	if err != nil {
-		t.Fatalf("AutoLabelPresent: %v", err)
-	}
-
-	var present bool
-	if err := val.Get(&present); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if !present {
-		t.Fatal("a current auto label must be returned to the dispatcher")
-	}
-}
-
-func TestAutoLabelPresentSurfacesAnAuthFailureAsTheTypeThatPausesTheDispatcher(t *testing.T) {
-	t.Parallel()
-
-	gh := &fakeGitHub{autoLabelErr: fmt.Errorf("reading: %w (%w): %w", github.ErrAuth, work.ErrPermanent, errors.New("403"))}
-	d := deps()
-	d.GitHub = gh
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.AutoLabelPresent)
-
-	_, err := e.ExecuteActivity(a.AutoLabelPresent, 328)
-	if err == nil {
-		t.Fatal("an auth failure must fail the activity")
-	}
-	if got := FailureKindOf(err); got != work.FailureAuth {
-		t.Fatalf("FailureKindOf = %q, want %q — this is what pauses the dispatcher", got, work.FailureAuth)
-	}
-}
-
-func TestReportStatusPostsWhenNoCommentExistsYet(t *testing.T) {
-	t.Parallel()
-
-	gh := &fakeGitHub{nextID: 77}
-	d := deps()
-	d.GitHub = gh
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.ReportStatus)
-
-	val, err := e.ExecuteActivity(a.ReportStatus, work.StatusReport{TicketNumber: 328, RunID: "run-1", Stage: work.StagePlan})
-	if err != nil {
-		t.Fatalf("ReportStatus: %v", err)
-	}
-
-	var id work.CommentID
-	if err := val.Get(&id); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if id != 77 || gh.postedTo != 328 {
-		t.Fatalf("posted to %d returning %d, want 328 / 77", gh.postedTo, id)
-	}
-	if gh.editedID != 0 {
-		t.Fatal("a run with no comment must not edit one")
-	}
-}
-
-func TestReportStatusEditsTheCommentTheRunAlreadyPosted(t *testing.T) {
-	t.Parallel()
-
-	gh := &fakeGitHub{}
-	d := deps()
-	d.GitHub = gh
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.ReportStatus)
-
-	val, err := e.ExecuteActivity(a.ReportStatus, work.StatusReport{TicketNumber: 328, RunID: "run-1", Comment: 77})
-	if err != nil {
-		t.Fatalf("ReportStatus: %v", err)
-	}
-
-	var id work.CommentID
-	if err := val.Get(&id); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if gh.editedID != 77 || id != 77 {
-		t.Fatalf("edited %d returning %d, want 77 both — one comment per run, edited in place", gh.editedID, id)
-	}
-	if gh.postedTo != 0 {
-		t.Fatal("a run that has already posted must not post a second comment")
-	}
-}
-
-func TestClearAutoLabelSurfacesAnAuthFailureAsTheTypeThatPausesTheDispatcher(t *testing.T) {
-	t.Parallel()
-
-	gh := &fakeGitHub{labelErr: fmt.Errorf("clearing: %w (%w): %w", github.ErrAuth, work.ErrPermanent, errors.New("403"))}
-	d := deps()
-	d.GitHub = gh
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.ClearAutoLabel)
-
-	_, err := e.ExecuteActivity(a.ClearAutoLabel, 328)
-	if err == nil {
-		t.Fatal("an auth failure must fail the activity")
-	}
-	if got := FailureKindOf(err); got != work.FailureAuth {
-		t.Fatalf("FailureKindOf = %q, want %q — this is what pauses the dispatcher", got, work.FailureAuth)
-	}
-}
-
-func TestLabelFailureMarksTheIssueAndItsPullRequest(t *testing.T) {
-	t.Parallel()
-
-	gh := &fakeGitHub{}
-	d := deps()
-	d.GitHub = gh
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.LabelFailure)
-
-	if _, err := e.ExecuteActivity(a.LabelFailure, LabelFailureInput{TicketNumber: 328, PullRequestNumber: 9}); err != nil {
-		t.Fatalf("LabelFailure: %v", err)
-	}
-	if got, want := fmt.Sprint(gh.failed), "[328 9]"; got != want {
-		t.Fatalf("marked %s, want %s", got, want)
-	}
-}
-
-func TestLabelFailureMarksOnlyTheIssueBeforeAPullRequestExists(t *testing.T) {
-	t.Parallel()
-
-	gh := &fakeGitHub{}
-	d := deps()
-	d.GitHub = gh
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.LabelFailure)
-
-	if _, err := e.ExecuteActivity(a.LabelFailure, LabelFailureInput{TicketNumber: 328}); err != nil {
-		t.Fatalf("LabelFailure: %v", err)
-	}
-	if got, want := fmt.Sprint(gh.failed), "[328]"; got != want {
-		t.Fatalf("marked %s, want %s", got, want)
-	}
-}
-
-func TestLabelFailurePreservesTheGitHubFailureKind(t *testing.T) {
-	t.Parallel()
-
-	gh := &fakeGitHub{failedErr: fmt.Errorf("labelling: %w (%w): %w", github.ErrAuth, work.ErrPermanent, errors.New("403"))}
-	d := deps()
-	d.GitHub = gh
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.LabelFailure)
-
-	_, err := e.ExecuteActivity(a.LabelFailure, LabelFailureInput{TicketNumber: 328, PullRequestNumber: 9})
-	if err == nil {
-		t.Fatal("an auth failure must fail the activity")
-	}
-	if got := FailureKindOf(err); got != work.FailureAuth {
-		t.Fatalf("FailureKindOf = %q, want %q", got, work.FailureAuth)
-	}
-	if !strings.Contains(err.Error(), "issue #328") {
-		t.Fatalf("error %q does not identify the failed target", err)
-	}
-	if got, want := fmt.Sprint(gh.failed), "[328]"; got != want {
-		t.Fatalf("marked %s, want %s after the first target fails", got, want)
-	}
-}
-
-func TestRejectDuplicateWorkflowIDPostsBeforeClearingAuto(t *testing.T) {
-	t.Parallel()
-
-	gh := &fakeGitHub{}
-	status := &fakeStatus{}
-	d := deps()
-	d.GitHub, d.Status = gh, status
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.RejectDuplicateWorkflowID)
-
-	in := work.DuplicateWorkflowExecution{TicketNumber: 328, WorkflowID: "work-ticket-328", RunID: "run-1"}
-	if _, err := e.ExecuteActivity(a.RejectDuplicateWorkflowID, in); err != nil {
-		t.Fatalf("RejectDuplicateWorkflowID: %v", err)
-	}
-	if status.sawRejection != in || gh.postedTo != 328 || gh.postedBody != "duplicate workflow notice" {
-		t.Fatalf("rendered %+v and posted #%d %q, want %+v / #328 / duplicate notice", status.sawRejection, gh.postedTo, gh.postedBody, in)
-	}
-	if len(gh.cleared) != 1 || gh.cleared[0] != 328 {
-		t.Fatalf("cleared %v, want [328] after posting the notice", gh.cleared)
-	}
-}
 
 // --- sandbox lifecycle -----------------------------------------------------
 
@@ -828,44 +570,15 @@ func TestCreateSandboxTellsTheSandboxWhichBranchToPush(t *testing.T) {
 	}
 
 	// The same branch the worker will later ask GitHub about. A sandbox that
-	// pushed somewhere else would produce a pull request nothing can find, and
-	// every run would report itself blocked having done the work.
-	want := work.BranchName(328, "run-1")
+	// pushed somewhere else would produce a pull request nothing can find —
+	// which is #603, where the two computations disagreed and GitHub rejected
+	// the head ref outright.
+	want := work.FactoryTicketBranchName(328, "run-1")
 	if got := pods.created[0].Env[work.SandboxBranchEnv]; got != want {
 		t.Fatalf("%s = %q, want %q", work.SandboxBranchEnv, got, want)
 	}
 	if _, kept := pods.created[0].Env["CODEX_HOME"]; !kept {
 		t.Fatal("the template's own environment must survive")
-	}
-}
-
-func TestCreateSandboxTellsTheSandboxWhichBranchToPushOnTheTicketBackedPipeline(t *testing.T) {
-	t.Parallel()
-
-	// #603: CreateSandbox is the one activity both pipelines share, so
-	// TicketBacked is what has to steer SF_BRANCH toward
-	// FactoryTicketBranchName's branch instead of BranchName's — the branch
-	// factoryImplementReviewLoop actually asks GitHub about. Getting this wrong
-	// is exactly how the Ticket-backed pipeline's first production run failed
-	// to open a pull request: `implement` pushed one branch and the workflow
-	// asked GitHub about another, and GitHub rejected the head ref outright.
-	pods := &fakePods{}
-	d := deps()
-	d.Pods = pods
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.CreateSandbox)
-
-	if _, err := e.ExecuteActivity(a.CreateSandbox, CreateSandboxInput{
-		TicketNumber: 1, RunID: "run-1", RunTimeout: 5 * time.Hour, TicketBacked: true,
-	}); err != nil {
-		t.Fatalf("CreateSandbox: %v", err)
-	}
-
-	want := work.FactoryTicketBranchName(1, "run-1")
-	if got := pods.created[0].Env[work.SandboxBranchEnv]; got != want {
-		t.Fatalf("%s = %q, want %q (the Ticket-backed branch, not %q)",
-			work.SandboxBranchEnv, got, want, work.BranchName(1, "run-1"))
 	}
 }
 
@@ -1282,66 +995,6 @@ func TestRunPlanDoesNotStartTheStageWhenTheTranscriptCannotBeOpened(t *testing.T
 	}
 }
 
-// --- transcript relay --------------------------------------------------
-
-func TestPersistTranscriptWritesTheWholeDocumentThroughTheDurableSink(t *testing.T) {
-	t.Parallel()
-
-	sink := &fakeTranscript{}
-	d := deps()
-	d.Transcripts = sink
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.PersistTranscript)
-
-	key := work.StageKey{Ticket: 328, RunID: "run-1", Stage: work.StagePlan}
-	transcript := work.Transcript(`{"type":"turn.started"}` + "\n")
-	if _, err := e.ExecuteActivity(a.PersistTranscript, PersistTranscriptInput{Key: key, Transcript: transcript}); err != nil {
-		t.Fatalf("PersistTranscript: %v", err)
-	}
-
-	if sink.buf.String() != string(transcript) {
-		t.Fatalf("durable sink = %q, want %q", sink.buf.String(), string(transcript))
-	}
-	if !sink.closed.Load() {
-		t.Fatal("the durable transcript must be closed")
-	}
-}
-
-func TestPersistTranscriptFailsLoudlyWhenTheDurableSinkCannotBeOpened(t *testing.T) {
-	t.Parallel()
-
-	sink := &fakeTranscript{openErr: errors.New("no such volume")}
-	d := deps()
-	d.Transcripts = sink
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.PersistTranscript)
-
-	key := work.StageKey{Ticket: 328, RunID: "run-1", Stage: work.StagePlan}
-	_, err := e.ExecuteActivity(a.PersistTranscript, PersistTranscriptInput{Key: key, Transcript: work.Transcript("x")})
-	if err == nil {
-		t.Fatal("an unopenable durable sink must fail the activity")
-	}
-}
-
-func TestPersistTranscriptFailsLoudlyWhenTheWriteItselfFails(t *testing.T) {
-	t.Parallel()
-
-	sink := &fakeTranscript{writeErr: errors.New("volume full")}
-	d := deps()
-	d.Transcripts = sink
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.PersistTranscript)
-
-	key := work.StageKey{Ticket: 328, RunID: "run-1", Stage: work.StagePlan}
-	_, err := e.ExecuteActivity(a.PersistTranscript, PersistTranscriptInput{Key: key, Transcript: work.Transcript("x")})
-	if err == nil {
-		t.Fatal("a write failure against the durable sink must fail the activity — unlike RunStage's own local write, there is no in-memory copy of this record left anywhere else")
-	}
-}
-
 // --- reconcile and sweep ---------------------------------------------------
 
 func TestDescribeRunAsksAboutTheWorkflowIDItWasGiven(t *testing.T) {
@@ -1354,7 +1007,7 @@ func TestDescribeRunAsksAboutTheWorkflowIDItWasGiven(t *testing.T) {
 	a := mustNew(t, d)
 	e.RegisterActivity(a.DescribeRun)
 
-	val, err := e.ExecuteActivity(a.DescribeRun, work.WorkflowID(328))
+	val, err := e.ExecuteActivity(a.DescribeRun, work.FactoryTicketWorkflowID(328))
 	if err != nil {
 		t.Fatalf("DescribeRun: %v", err)
 	}
@@ -1363,7 +1016,7 @@ func TestDescribeRunAsksAboutTheWorkflowIDItWasGiven(t *testing.T) {
 	if err := val.Get(&state); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if runs.saw != "work-ticket-328" || !state.Open || state.RunID != "run-9" {
+	if runs.saw != "factory-ticket-328" || !state.Open || state.RunID != "run-9" {
 		t.Fatalf("looked up %q, got %+v", runs.saw, state)
 	}
 }
@@ -1684,7 +1337,7 @@ func TestEnablePullRequestAutoMergeFailsTheActivityWhenGitHubDoes(t *testing.T) 
 	}
 }
 
-func TestPostPullRequestCommentReusesPostStatusAgainstThePullRequestNumber(t *testing.T) {
+func TestPostPullRequestCommentPostsAgainstThePullRequestNumber(t *testing.T) {
 	t.Parallel()
 
 	gh := &fakeGitHub{}

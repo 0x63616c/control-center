@@ -294,3 +294,45 @@ func TestFactoryDispatcherCarriesInFlightAcrossContinueAsNew(t *testing.T) {
 		t.Fatalf("continued InFlight = %+v, want ticket 7 carried forward", next.InFlight)
 	}
 }
+
+// TestFactoryDispatcherAppliesAnUpdateConfigSignal is the control surface the
+// factory has left once the GitHub-backed dispatcher is gone (#559): there is
+// no DISPATCHER_CONFIG environment variable behind this dispatcher, so pausing
+// it, resuming it and changing its cap are the UpdateConfig signal or nothing.
+func TestFactoryDispatcherAppliesAnUpdateConfigSignal(t *testing.T) {
+	t.Parallel()
+
+	h := newFactoryDispatcherHarness(t)
+	h.config.MaxInFlight = 2
+	h.config.Paused = true
+	h.tickets = readyTickets(1, 2)
+	resume := false
+	h.at(45*time.Second, func() {
+		h.env.SignalWorkflow(workflows.SignalUpdateConfig, work.ConfigUpdate{Paused: &resume})
+	})
+	h.run()
+
+	if len(h.started) != 2 {
+		t.Fatalf("started %v, want 2 — the resume signal must reach a paused dispatcher", h.started)
+	}
+}
+
+// TestFactoryDispatcherKeepsRunningWhenAnUpdateConfigSignalIsUnusable proves a
+// bad update is refused rather than adopted: a dispatcher that took an invalid
+// cap would stop being the concurrency control it exists to be.
+func TestFactoryDispatcherKeepsRunningWhenAnUpdateConfigSignalIsUnusable(t *testing.T) {
+	t.Parallel()
+
+	h := newFactoryDispatcherHarness(t)
+	h.config.MaxInFlight = 1
+	h.tickets = readyTickets(1, 2, 3)
+	bad := 0
+	h.at(45*time.Second, func() {
+		h.env.SignalWorkflow(workflows.SignalUpdateConfig, work.ConfigUpdate{MaxInFlight: &bad})
+	})
+	h.run()
+
+	if len(h.started) != 1 {
+		t.Fatalf("started %v, want 1 — an unusable update must leave the cap alone", h.started)
+	}
+}
