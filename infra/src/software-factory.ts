@@ -210,6 +210,16 @@ export interface SoftwareFactoryArgs {
    * credential — see CODEX_AUTH_SECRET_NAME.
    */
   vault: Record<string, string>;
+  /**
+   * The `factory.<zone>` Cloudflare Access application's audience tag
+   * (#593). Sourced by the caller from the world-wide-webb-cloudflare
+   * project's `accessAppAuds` stack output, NOT the vault — it's infra state
+   * minted by that Access application, not a secret to hand-paste. May
+   * resolve to "" before that application has been created; see the api
+   * Deployment's `pulumi.com/skipAwait` annotation and createAPISecret for
+   * why that never means the API serves traffic unauthenticated.
+   */
+  accessAud: pulumi.Input<string>;
   /** Per-service GHCR digest pins from CI, for every factory image. */
   imageDigests: ImageDigests;
   /**
@@ -244,7 +254,15 @@ export interface SoftwareFactoryResources {
  * creates those pods itself at runtime, from the digest-pinned ref below.
  */
 export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFactoryResources {
-  const { provider, namespace, vault, imageDigests, nasNfsServer, requireImageDigestPins } = args;
+  const {
+    provider,
+    namespace,
+    vault,
+    accessAud,
+    imageDigests,
+    nasNfsServer,
+    requireImageDigestPins,
+  } = args;
   const factory = softwareFactoryProductManifest();
   const opts = { provider };
 
@@ -281,7 +299,7 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
   );
 
   const workerSecret = createWorkerSecret(vault, namespaceName, inNamespace);
-  const apiSecret = createAPISecret(vault, namespaceName, inNamespace);
+  const apiSecret = createAPISecret(vault, accessAud, namespaceName, inNamespace);
 
   const serviceAccount = new k8s.core.v1.ServiceAccount(
     WORKER_SERVICE_ACCOUNT,
@@ -608,7 +626,26 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
   const api = new k8s.apps.v1.Deployment(
     "software-factory-api",
     {
-      metadata: { name: "software-factory-api", namespace: namespaceName, labels: apiLabels },
+      metadata: {
+        name: "software-factory-api",
+        namespace: namespaceName,
+        labels: apiLabels,
+        // skipAwait (#593): on the FIRST apply after the factory's Access
+        // application is wired up, `accessAud` can still be "" — the
+        // separate world-wide-webb-cloudflare project hasn't minted
+        // `factory.<zone>` yet, so there's nothing to read via
+        // StackReference. cmd/api's own config.LoadAPI (apps/software-factory
+        // /internal/config/api.go) already refuses to start on an empty
+        // audience rather than skip validation, so that apply would
+        // otherwise CrashLoopBackOff forever and fail `pulumi up` on THIS
+        // Deployment's rollout — reintroducing the exact whole-cluster
+        // deadlock this AUD wiring exists to break. Same precedent as Plex's
+        // GPU-pending skipAwait (services.ts) for a workload that cannot yet
+        // become Ready. Once the AUD is real, the pod comes up healthy same
+        // as any other deploy; this annotation just stops a still-missing
+        // AUD from blocking the rest of the cluster's convergence.
+        annotations: { "pulumi.com/skipAwait": "true" },
+      },
       spec: {
         replicas: 1,
         selector: { matchLabels: apiLabels },
@@ -763,6 +800,7 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
 
 function createAPISecret(
   vault: Record<string, string>,
+  accessAud: pulumi.Input<string>,
   namespaceName: pulumi.Input<string>,
   opts: pulumi.CustomResourceOptions,
 ): k8s.core.v1.Secret {
@@ -779,7 +817,13 @@ function createAPISecret(
         CLOUDFLARE_ACCESS_TEAM_DOMAIN: pulumi.secret(
           fromVault("SOFTWARE_FACTORY_CLOUDFLARE_ACCESS__TEAM_DOMAIN"),
         ),
-        CLOUDFLARE_ACCESS_AUD: pulumi.secret(fromVault("SOFTWARE_FACTORY_CLOUDFLARE_ACCESS__AUD")),
+        // NOT a vault key (#593): the audience is derived infra state minted
+        // by the world-wide-webb-cloudflare project's Access application, read
+        // via StackReference by the caller (infra/program.ts) and passed in
+        // here. May be "" before that app exists yet — see the api
+        // Deployment's `pulumi.com/skipAwait` annotation above for why that
+        // can never mean the API serves traffic unauthenticated.
+        CLOUDFLARE_ACCESS_AUD: pulumi.secret(accessAud),
         SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN: pulumi.secret(
           fromVault("SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN"),
         ),

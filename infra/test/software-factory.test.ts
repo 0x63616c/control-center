@@ -37,8 +37,12 @@ const vault = {
   SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN: "mock-worker-bearer",
   SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN: "mock-sandbox-bearer",
   SOFTWARE_FACTORY_CLOUDFLARE_ACCESS__TEAM_DOMAIN: "example.cloudflareaccess.com",
-  SOFTWARE_FACTORY_CLOUDFLARE_ACCESS__AUD: "mock-audience",
 };
+
+// NOT a vault key (#593): the caller (infra/program.ts) sources this from the
+// world-wide-webb-cloudflare stack's `accessAppAuds` output via
+// StackReference, not the vault. See SoftwareFactoryArgs.accessAud.
+const accessAud = "mock-audience";
 
 const digests = {
   "software-factory-worker": `sha256:${"a".repeat(64)}`,
@@ -52,11 +56,16 @@ const namespace = new k8s.core.v1.Namespace("software-factory-test-namespace", {
   metadata: { name: "software-factory" },
 });
 
-const install = (imageDigests: Record<string, string> = {}, requireImageDigestPins = false) =>
+const install = (
+  imageDigests: Record<string, string> = {},
+  requireImageDigestPins = false,
+  accessAudOverride: pulumi.Input<string> = accessAud,
+) =>
   softwareFactory.installSoftwareFactory({
     provider: new k8s.Provider("test", { context: "x" }),
     namespace,
     vault,
+    accessAud: accessAudOverride,
     imageDigests,
     nasNfsServer: "192.168.0.218",
     requireImageDigestPins,
@@ -438,6 +447,42 @@ describe("factory API and console workloads (#554)", () => {
         deployment.template.spec.containers.flatMap((container) => container.volumeMounts ?? []),
       ).not.toContainEqual(expect.objectContaining({ name: "transcripts" }));
     }
+  });
+});
+
+describe("Cloudflare Access AUD bootstrap (#593)", () => {
+  test("wires the caller-supplied AUD through to the API Secret, not the vault", async () => {
+    // The caller (infra/program.ts) sources this from the
+    // world-wide-webb-cloudflare stack's `accessAppAuds` output via
+    // StackReference — asserting the value flows straight through, unlike
+    // CLOUDFLARE_ACCESS_TEAM_DOMAIN which is still `fromVault`.
+    const stringData = await get<Record<string, string>>(install().apiSecret, "stringData");
+    expect(stringData.CLOUDFLARE_ACCESS_AUD).toBe(accessAud);
+    expect(stringData.CLOUDFLARE_ACCESS_TEAM_DOMAIN).toBe("example.cloudflareaccess.com");
+  });
+
+  test("an empty AUD (the app doesn't exist yet) does not throw or block the rest of the stack", () => {
+    // Before world-wide-webb-cloudflare's deploy-cloudflare has ever created
+    // factory.<zone>, the StackReference read in infra/program.ts resolves to
+    // "" rather than throwing (see its `getOutput` vs `requireOutput` note).
+    // installSoftwareFactory must accept that gracefully — a throw here would
+    // abort the ENTIRE cluster's `pulumi up`, which is the whole-cluster
+    // deadlock this AUD wiring exists to break.
+    expect(() => install(digests, true, "")).not.toThrow();
+  });
+
+  test("marks the API Deployment skipAwait, so a still-missing AUD can't fail the apply", async () => {
+    // cmd/api's config.LoadAPI (apps/software-factory/internal/config/api.go)
+    // refuses to start on an empty CLOUDFLARE_ACCESS_AUD — correct fail-closed
+    // behavior, but it means the pod CrashLoopBackOffs for as long as the AUD
+    // is unresolved. Without skipAwait, Pulumi would wait for that Deployment
+    // to become Ready and fail the whole `pulumi up` on timeout — reproducing
+    // the exact deadlock from #593, just one resource over.
+    const metadata = await get<{ annotations?: Record<string, string> }>(
+      install(digests, true, "").api,
+      "metadata",
+    );
+    expect(metadata.annotations?.["pulumi.com/skipAwait"]).toBe("true");
   });
 });
 
