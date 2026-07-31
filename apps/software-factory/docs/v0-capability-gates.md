@@ -28,10 +28,17 @@ thread/resume failed: no rollout found for thread id 019fba39-129a-7c81-a1d5-415
 
 Conclusion: **fresh-filesystem resume is not proved and is currently
 unavailable for a completed thread with the target Codex CLI/authentication
-mode.** This already fails the prerequisite more strongly than a kill-point
-experiment could: a normally completed provider thread cannot be resumed after
-the worker filesystem is discarded. No controlled-kill variants were run,
-because they cannot turn that failed prerequisite into evidence of recovery.
+mode.** The harness also starts a second process, waits until it emits
+`thread.started`, kills its container, and attempts the same fresh-filesystem
+resume. That case is recorded separately in the harness output. Killing before
+`thread.started` has no recovery identity to test.
+
+The safe v0 boundary is therefore explicit: A02 thread continuation is only
+within a surviving Run Worker generation. Permanent worker loss follows A12 and
+I08: the incomplete Attempt ends failed, its durable transcript/usage evidence
+is retained where captured, and the workflow may authorize a fresh Attempt
+within its existing Run-wide budget. Do not persist Codex rollout directories,
+and do not claim cross-filesystem provider resume.
 
 Run the reproducible gate without exposing the credential value:
 
@@ -41,8 +48,8 @@ apps/software-factory/scripts/verify-v0-codex-resume.sh \
 ```
 
 The script exits non-zero when resume is unavailable and prints only the image,
-thread ID, terminal usage summary, exit codes, and final resume error. It does
-not persist the raw transcript.
+thread IDs, terminal usage summary, exit codes, and final resume errors. It
+does not persist the raw transcript.
 
 ## Temporal Session harness
 
@@ -64,5 +71,8 @@ go test -race -tags=integration ./internal/runworkercapability
 ```
 
 This proves affinity and main-worker restart behavior only. It intentionally
-does not claim replacement-worker recovery after permanent Session loss; that
-requires the Run Worker/checkpoint implementation blocked on the Codex gate.
+also stops the active private worker, verifies that the Session reports failure
+while main-control work remains callable, then creates a replacement Session
+on a separately registered private worker. It proves Temporal's routing and
+failure boundary, not production checkpoint reconciliation or a resumed Codex
+execution.
