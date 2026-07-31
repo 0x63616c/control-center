@@ -26,6 +26,9 @@ export const Z_LAYER = {
    *  never be the surface that is buried while still taking input. */
   pinDialog: 130,
 
+  /** Idle lock's live blurred glass, below its PIN dialog but above pages. */
+  lockScreen: 120,
+
   /** Panel-level modes that outrank ordinary UI: the level bubble, the
    *  screen-cleaning lockout, and the board's own gesture layer above them. */
   levelOverlay: 200,

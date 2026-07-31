@@ -11,6 +11,7 @@ import { PhotoBoothTile } from "./web";
  */
 export default defineApp({
   id: "tile_booth",
+  private: true,
   tiles: [
     {
       id: "tile_booth",

@@ -8,6 +8,7 @@ import {
   PIN_LENGTH,
   resetSettings,
   setAccent,
+  setLockScreenBlurPercent,
   setPinCode,
   setPinPadLayout,
   setShowMinimap,
@@ -34,6 +35,11 @@ describe("settings defaults", () => {
     // The pad moves out of the box (#287/#291), and since #302 it moves per
     // keypress , see the api-side default for why.
     expect(s.pinPadLayout).toBe("scrambled-per-key");
+  });
+
+  it("defaults the lock screen to enabled with a slight blur", () => {
+    expect(read().current.lockScreenEnabled).toBe(true);
+    expect(read().current.lockScreenBlurPercent).toBe(10);
   });
 
   it("defaults showBuildNumber to false (opt-in, native-only)", () => {
@@ -88,6 +94,15 @@ describe("minimap setter", () => {
   it("toggles showMinimap", () => {
     act(() => setShowMinimap(false));
     expect(read().current.showMinimap).toBe(false);
+  });
+});
+
+describe("lock-screen blur setter", () => {
+  it("clamps the value to the 0–100% contract", () => {
+    act(() => setLockScreenBlurPercent(140));
+    expect(read().current.lockScreenBlurPercent).toBe(100);
+    act(() => setLockScreenBlurPercent(-3));
+    expect(read().current.lockScreenBlurPercent).toBe(0);
   });
 });
 

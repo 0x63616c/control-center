@@ -13,6 +13,7 @@ export interface GeneratedTile {
   home: boolean;
   guestExposed: boolean;
   sensitive: boolean;
+  private: boolean;
   source: "feature" | "registry";
 }
 
@@ -28,6 +29,7 @@ export const GENERATED_TILES: readonly GeneratedTile[] = [
     home: false,
     guestExposed: false,
     sensitive: false,
+    private: false,
     source: "feature",
   },
   {
@@ -41,6 +43,7 @@ export const GENERATED_TILES: readonly GeneratedTile[] = [
     home: false,
     guestExposed: false,
     sensitive: false,
+    private: true,
     source: "feature",
   },
   {
@@ -54,6 +57,7 @@ export const GENERATED_TILES: readonly GeneratedTile[] = [
     home: true,
     guestExposed: false,
     sensitive: false,
+    private: false,
     source: "feature",
   },
   {
@@ -67,6 +71,7 @@ export const GENERATED_TILES: readonly GeneratedTile[] = [
     home: false,
     guestExposed: false,
     sensitive: false,
+    private: false,
     source: "feature",
   },
   {
@@ -80,6 +85,7 @@ export const GENERATED_TILES: readonly GeneratedTile[] = [
     home: false,
     guestExposed: false,
     sensitive: false,
+    private: false,
     source: "feature",
   },
   {
@@ -93,6 +99,7 @@ export const GENERATED_TILES: readonly GeneratedTile[] = [
     home: false,
     guestExposed: false,
     sensitive: false,
+    private: false,
     source: "feature",
   },
   {
@@ -106,6 +113,7 @@ export const GENERATED_TILES: readonly GeneratedTile[] = [
     home: false,
     guestExposed: false,
     sensitive: false,
+    private: false,
     source: "feature",
   },
   {
@@ -119,6 +127,7 @@ export const GENERATED_TILES: readonly GeneratedTile[] = [
     home: false,
     guestExposed: false,
     sensitive: false,
+    private: false,
     source: "feature",
   },
   {
@@ -132,6 +141,7 @@ export const GENERATED_TILES: readonly GeneratedTile[] = [
     home: false,
     guestExposed: true,
     sensitive: false,
+    private: false,
     source: "feature",
   },
   {
@@ -145,6 +155,7 @@ export const GENERATED_TILES: readonly GeneratedTile[] = [
     home: false,
     guestExposed: false,
     sensitive: false,
+    private: false,
     source: "feature",
   },
   {
@@ -158,6 +169,7 @@ export const GENERATED_TILES: readonly GeneratedTile[] = [
     home: false,
     guestExposed: false,
     sensitive: false,
+    private: false,
     source: "feature",
   },
   {
@@ -171,6 +183,7 @@ export const GENERATED_TILES: readonly GeneratedTile[] = [
     home: false,
     guestExposed: false,
     sensitive: false,
+    private: false,
     source: "feature",
   },
   {
@@ -184,6 +197,7 @@ export const GENERATED_TILES: readonly GeneratedTile[] = [
     home: false,
     guestExposed: false,
     sensitive: false,
+    private: false,
     source: "feature",
   },
   {
@@ -197,6 +211,7 @@ export const GENERATED_TILES: readonly GeneratedTile[] = [
     home: false,
     guestExposed: false,
     sensitive: false,
+    private: false,
     source: "feature",
   },
   {
@@ -210,6 +225,7 @@ export const GENERATED_TILES: readonly GeneratedTile[] = [
     home: false,
     guestExposed: false,
     sensitive: false,
+    private: false,
     source: "feature",
   },
   {
@@ -223,6 +239,7 @@ export const GENERATED_TILES: readonly GeneratedTile[] = [
     home: false,
     guestExposed: false,
     sensitive: false,
+    private: false,
     source: "feature",
   },
   {
@@ -236,6 +253,7 @@ export const GENERATED_TILES: readonly GeneratedTile[] = [
     home: false,
     guestExposed: false,
     sensitive: false,
+    private: false,
     source: "feature",
   },
   {
@@ -249,6 +267,7 @@ export const GENERATED_TILES: readonly GeneratedTile[] = [
     home: false,
     guestExposed: false,
     sensitive: false,
+    private: false,
     source: "feature",
   },
   {
@@ -262,6 +281,7 @@ export const GENERATED_TILES: readonly GeneratedTile[] = [
     home: false,
     guestExposed: false,
     sensitive: false,
+    private: false,
     source: "feature",
   },
   {
@@ -275,6 +295,7 @@ export const GENERATED_TILES: readonly GeneratedTile[] = [
     home: false,
     guestExposed: false,
     sensitive: false,
+    private: false,
     source: "feature",
   },
 ];

@@ -22,6 +22,25 @@ it("defineApp brands and passes through the manifest", () => {
   expect((m as Record<symbol, unknown>)[APP_BRAND]).toBe(true);
 });
 
+it("preserves the manifest-level private app gate", () => {
+  const m = defineApp({
+    id: "private-demo",
+    private: true,
+    tiles: [
+      {
+        id: "private-demo",
+        label: "Demo",
+        component: Dummy,
+        worldCol: 0,
+        worldRow: 0,
+        cols: 1,
+        rows: 1,
+      },
+    ],
+  });
+  expect(m.private).toBe(true);
+});
+
 it("supports multiple tiles per app, with home readable per-tile", () => {
   const m = defineApp({
     id: "demo",

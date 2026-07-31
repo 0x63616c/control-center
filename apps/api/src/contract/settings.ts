@@ -85,6 +85,9 @@ export const DIM_MAX = 0.99;
 export const BRIGHTNESS_MIN = 0.01;
 export const BRIGHTNESS_MAX = 1;
 
+export const LOCK_SCREEN_BLUR_MIN_PERCENT = 0;
+export const LOCK_SCREEN_BLUR_MAX_PERCENT = 100;
+
 // ─── defaults ─────────────────────────────────────────────────────────────────
 
 /** Every SYNCED setting and its default , the baseline the server returns when
@@ -98,6 +101,8 @@ export const SETTINGS_DEFAULTS = {
   idleDimEnabled: true,
   idleDimTimeoutMs: 600_000,
   idleDimLevel: 0.25,
+  lockScreenEnabled: true,
+  lockScreenBlurPercent: 10,
   showFps: false,
   showBuildBadge: true,
   showBuildNumber: false,

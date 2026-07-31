@@ -38,7 +38,11 @@ vi.mock("../../lib/tile-registry", () => {
     rows: 2,
     home: true,
   };
-  return { TILE_REGISTRY: [fake], HOME_TILE: fake };
+  return {
+    TILE_REGISTRY: [fake],
+    HOME_TILE: fake,
+    registryEntryForTileId: (id: string) => (id === fake.id ? fake : undefined),
+  };
 });
 vi.mock("../ConnectionLostBanner", () => ({ ConnectionLostBanner: () => null }));
 vi.mock("../DevOverlayHud", () => ({ DevOverlayHud: () => null }));
@@ -73,7 +77,12 @@ vi.mock("../../lib/sound", () => ({
 }));
 
 import { __resetSessionForTests, panelSession } from "../../lib/panel-session";
-import { resetSettings, setIdleDimEnabled, setIdleDimTimeoutMs } from "../../lib/settings";
+import {
+  resetSettings,
+  setIdleDimEnabled,
+  setIdleDimTimeoutMs,
+  setLockScreenEnabled,
+} from "../../lib/settings";
 import { closeSettings, openSettings } from "../../lib/settings-overlay-store";
 import {
   addAlarm,
@@ -87,6 +96,9 @@ beforeEach(() => {
   __resetSessionForTests();
   resetSettings();
   setIdleDimEnabled(true);
+  // Existing cases cover the retained plain-dim fallback. Lock behavior has its
+  // own focused cases below.
+  setLockScreenEnabled(false);
   setIdleDimTimeoutMs(TIMEOUT_MS);
   // jsdom has no scrollTo; the glide-home jumpTo calls it directly (no fallback).
   Object.defineProperty(HTMLElement.prototype, "scrollTo", {
@@ -132,6 +144,23 @@ function captureScrollTo(stage: HTMLElement) {
 }
 
 describe("Board panel-session wiring", () => {
+  it("shows the PIN-gated lock screen at session end and wakes only after a correct PIN", () => {
+    setLockScreenEnabled(true);
+    render(<Board />);
+    act(() => vi.advanceTimersByTime(TIMEOUT_MS));
+
+    const overlay = screen.getByTestId("lock-screen-overlay");
+    expect(screen.queryByTestId("dim-overlay")).toBeNull();
+    fireEvent.click(overlay);
+    expect(screen.getByTestId("pin-gate-backdrop")).toBeTruthy();
+    expect(panelSession.phase()).toBe("ended");
+
+    for (const digit of "000000") fireEvent.click(screen.getByRole("button", { name: digit }));
+    act(() => vi.advanceTimersByTime(250));
+    expect(panelSession.phase()).toBe("active");
+    expect(panelSession.isUnlocked()).toBe(true);
+    expect(screen.queryByTestId("lock-screen-overlay")).toBeNull();
+  });
   it("ends the session after the idle timeout: dims, glides home, relocks", () => {
     render(<Board />);
     const stage = document.getElementById("stage") as HTMLElement;

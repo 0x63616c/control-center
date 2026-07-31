@@ -18,6 +18,8 @@ import {
   BRIGHTNESS_MIN,
   DIM_MAX,
   DIM_MIN,
+  LOCK_SCREEN_BLUR_MAX_PERCENT,
+  LOCK_SCREEN_BLUR_MIN_PERCENT,
   PIN_PAD_LAYOUTS,
   type PinPadLayout,
   SETTINGS_DEFAULTS,
@@ -79,6 +81,10 @@ export interface Settings {
   idleDimTimeoutMs: number;
   /** Dim target as a 0..1 brightness fraction. Clamped to [0.01, 0.99]. */
   idleDimLevel: number;
+  /** Whether idle dimming presents a PIN-gated lock screen. */
+  lockScreenEnabled: boolean;
+  /** Backdrop blur strength for the idle lock screen, 0–100%. */
+  lockScreenBlurPercent: number;
   /** Show the live FPS readout (top-right). */
   showFps: boolean;
   /** Show the build-hash + age badge (bottom-left). */
@@ -125,6 +131,8 @@ export const MIN_DIM_LEVEL = DIM_MIN; // 1 %
 export const MAX_DIM_LEVEL = DIM_MAX; // 99 %
 export const MIN_BRIGHTNESS = BRIGHTNESS_MIN; // 1 %
 export const MAX_BRIGHTNESS = BRIGHTNESS_MAX; // 100 %
+export const MIN_LOCK_SCREEN_BLUR_PERCENT = LOCK_SCREEN_BLUR_MIN_PERCENT;
+export const MAX_LOCK_SCREEN_BLUR_PERCENT = LOCK_SCREEN_BLUR_MAX_PERCENT;
 export const PIN_LENGTH = 6;
 export const DEFAULT_PIN = SETTINGS_DEFAULTS.pinCode;
 
@@ -143,6 +151,8 @@ const KEYS = {
   idleDimEnabled: "cc-idle-dim-enabled",
   idleDimTimeoutMs: "cc-idle-dim-timeout-ms",
   idleDimLevel: "cc-idle-dim-level",
+  lockScreenEnabled: "cc-lock-screen-enabled",
+  lockScreenBlurPercent: "cc-lock-screen-blur-percent",
   showFps: "cc-show-fps",
   showBuildBadge: "cc-show-build-badge",
   showBuildNumber: "cc-show-build-number",
@@ -186,6 +196,14 @@ export function clampBrightness(level: number): number {
   return Math.min(MAX_BRIGHTNESS, Math.max(MIN_BRIGHTNESS, level));
 }
 
+function clampLockScreenBlurPercent(percent: number): number {
+  if (!Number.isFinite(percent)) return DEFAULTS.lockScreenBlurPercent;
+  return Math.min(
+    MAX_LOCK_SCREEN_BLUR_PERCENT,
+    Math.max(MIN_LOCK_SCREEN_BLUR_PERCENT, Math.round(percent)),
+  );
+}
+
 // ─── best-effort localStorage IO ──────────────────────────────────────────────
 
 function readRaw(key: string): string | null {
@@ -217,6 +235,8 @@ function loadInitial(): Settings {
   const enabled = readRaw(KEYS.idleDimEnabled);
   const timeout = readRaw(KEYS.idleDimTimeoutMs);
   const level = readRaw(KEYS.idleDimLevel);
+  const lockScreenEnabled = readRaw(KEYS.lockScreenEnabled);
+  const lockScreenBlurPercent = readRaw(KEYS.lockScreenBlurPercent);
   const fps = readRaw(KEYS.showFps);
   const snap = readRaw(KEYS.snapMode);
   const buildBadge = readRaw(KEYS.showBuildBadge);
@@ -238,6 +258,12 @@ function loadInitial(): Settings {
     idleDimTimeoutMs:
       timeout === null ? DEFAULTS.idleDimTimeoutMs : clampIdleTimeoutMs(Number(timeout)),
     idleDimLevel: level === null ? DEFAULTS.idleDimLevel : clampDimLevel(Number(level)),
+    lockScreenEnabled:
+      lockScreenEnabled === null ? DEFAULTS.lockScreenEnabled : lockScreenEnabled === "true",
+    lockScreenBlurPercent:
+      lockScreenBlurPercent === null
+        ? DEFAULTS.lockScreenBlurPercent
+        : clampLockScreenBlurPercent(Number(lockScreenBlurPercent)),
     showFps: fps === null ? DEFAULTS.showFps : fps === "true",
     showBuildBadge: buildBadge === null ? DEFAULTS.showBuildBadge : buildBadge === "true",
     showBuildNumber: buildNumber === null ? DEFAULTS.showBuildNumber : buildNumber === "true",
@@ -370,6 +396,15 @@ export function setIdleDimTimeoutMs(ms: number): void {
 export function setIdleDimLevel(level: number): void {
   const clamped = clampDimLevel(level);
   patch("idleDimLevel", clamped, String(clamped));
+}
+
+export function setLockScreenEnabled(value: boolean): void {
+  patch("lockScreenEnabled", value, String(value));
+}
+
+export function setLockScreenBlurPercent(percent: number): void {
+  const clamped = clampLockScreenBlurPercent(percent);
+  patch("lockScreenBlurPercent", clamped, String(clamped));
 }
 
 // Not exported (#64): the three overlay fields used to have their own Debug-page

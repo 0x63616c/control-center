@@ -30,6 +30,7 @@ interface RenderableTile {
   home: boolean;
   guestExposed: boolean;
   sensitive: boolean;
+  private: boolean;
   source: "feature" | "registry";
 }
 
@@ -46,6 +47,7 @@ function renderTile(t: RenderableTile): string {
     `    home: ${t.home},`,
     `    guestExposed: ${t.guestExposed},`,
     `    sensitive: ${t.sensitive},`,
+    `    private: ${t.private},`,
     `    source: ${JSON.stringify(t.source)},`,
     "  },",
   ].join("\n");
@@ -65,6 +67,7 @@ export function renderTiles(model: AppModel): string {
       home: t.home,
       guestExposed: a.guestExposed,
       sensitive: a.sensitive,
+      private: a.private,
       source: a.source,
     })),
   );
@@ -83,6 +86,7 @@ export interface GeneratedTile {
   home: boolean;
   guestExposed: boolean;
   sensitive: boolean;
+  private: boolean;
   source: "feature" | "registry";
 }
 

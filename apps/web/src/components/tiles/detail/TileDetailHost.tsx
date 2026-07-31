@@ -18,6 +18,7 @@ import { interaction } from "../../../lib/log/interaction";
 import { registerOpenModal } from "../../../lib/modal-open-store";
 import { panelSession } from "../../../lib/panel-session";
 import { closeTileDetail, openTileDetail, useTileDetail } from "../../../lib/tile-detail-store";
+import { registryEntryForTileId } from "../../../lib/tile-registry";
 import { PinGateModal } from "../../pin/PinGateModal";
 import { VariantSwitcher } from "../views/VariantSwitcher";
 import { getTileDetailEntry } from "./registry";
@@ -57,8 +58,12 @@ export function GatedTileDetail({
   initialSlug: string | undefined;
 }) {
   const sensitive = entry.sensitive ?? false;
+  const isPrivate = registryEntryForTileId(entry.tileId)?.private ?? false;
   const unlocked = panelSession.useIsUnlocked();
-  const needsGate = sensitive && !unlocked;
+  const [privateUnlocked, setPrivateUnlocked] = useState(false);
+  const needsPrivateGate = isPrivate && !privateUnlocked;
+  const needsSensitiveGate = sensitive && !unlocked;
+  const needsGate = needsPrivateGate || needsSensitiveGate;
 
   return (
     <>
@@ -68,7 +73,10 @@ export function GatedTileDetail({
           title={entry.title}
           // A cancelled gate abandons the open , back to the board.
           onClose={closeTileDetail}
-          onSuccess={() => panelSession.unlock()}
+          onSuccess={() => {
+            if (needsPrivateGate) setPrivateUnlocked(true);
+            else panelSession.unlock();
+          }}
         />
       )}
       {!needsGate && <TileDetailPage entry={entry} initialSlug={initialSlug} />}

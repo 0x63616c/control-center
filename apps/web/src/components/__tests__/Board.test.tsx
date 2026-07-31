@@ -21,7 +21,11 @@ vi.mock("../../lib/tile-registry", () => {
     rows: 2,
     home: true,
   };
-  return { TILE_REGISTRY: [fake], HOME_TILE: fake };
+  return {
+    TILE_REGISTRY: [fake],
+    HOME_TILE: fake,
+    registryEntryForTileId: (id: string) => (id === fake.id ? fake : undefined),
+  };
 });
 vi.mock("../ConnectionLostBanner", () => ({ ConnectionLostBanner: () => null }));
 vi.mock("../DevOverlayHud", () => ({ DevOverlayHud: () => null }));
