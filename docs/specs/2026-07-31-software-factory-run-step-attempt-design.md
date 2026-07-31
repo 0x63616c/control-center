@@ -197,6 +197,40 @@ The Run's current phase is derived from its currently running Step. A separate
 mutable phase history is not needed because it would duplicate and potentially
 disagree with the Step history.
 
+## Step reasons and handoffs
+
+A Step created in response to an earlier Result must receive that Result as
+structured input. Resuming an Agent Thread preserves conversation context, but
+it does not tell the agent what an external system discovered after the
+previous Step finished.
+
+In particular, red CI creates a new `implement` Step:
+
+```text
+Step: implement
+  Agent Attempt 1 on implementer Thread A
+  Result: changes pushed
+
+Step: observe_ci
+  Result: ci_red for head SHA H, with failed checks
+
+Step: implement
+  reason: ci_failure
+  input: the authoritative CI Result for H
+  Agent Attempt 1 resumes implementer Thread A
+```
+
+The CI-triggered Implement Step must receive the exact checked head SHA and
+actionable evidence for every failed check. The evidence must be bounded and
+treated as untrusted prompt input. Passing only the preceding implementation
+report is insufficient: the implementer authored that report before CI ran.
+
+The current system does not meet this requirement. It retains failed-check
+names and opaque fingerprints for workflow progress detection, then discards
+the underlying annotations and log evidence after hashing them. The next
+implement prompt receives the plan, previous implement report, and latest
+review findings, but no CI Result.
+
 ## Step boundary
 
 This is decided:

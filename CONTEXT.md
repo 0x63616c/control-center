@@ -188,6 +188,12 @@ The authoritative domain answer discovered or produced by a completed Step. It
 is distinct from Agent Attempt status and activity execution status.
 _Avoid_: Agent Attempt status, activity failure, error.
 
+**CI Result**:
+The Step Result from observing CI for one exact pull-request head SHA: green, red with bounded
+failure evidence, or unobserved. A CI-triggered Implement Step receives this Result explicitly;
+resuming the implementer's Agent Thread is not a substitute for the handoff.
+_Avoid_: CI status without a head SHA, failed-check fingerprint alone.
+
 **Agent Stage**:
 The kind of agent work performed by an agent-backed Step: `plan`, `implement`, or `review`.
 _Avoid_: Step, phase.
