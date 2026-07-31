@@ -97,6 +97,9 @@ ARG GH_SHA256=83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60
 # fires on one and not the other teaches people to distrust the wall.
 ARG GOLANGCI_LINT_VERSION=2.12.2
 ARG GOLANGCI_LINT_SHA256=8df580d2670fed8fa984aac0507099af8df275e665215f5c7a2ae3943893a553
+# sqlc lets an agent regenerate committed Go query code after SQL changes.
+ARG SQLC_VERSION=1.31.1
+ARG SQLC_SHA256=497ae4fcdfa64c5b0c311ffe4c2bd991e43991e82e5367792ed78bc2dca27354
 # Playwright must match the exact version in bun.lock. Its Chromium registry has
 # three archives: Chrome for headed use, the headless shell Playwright launches
 # by default, and ffmpeg for video support. Pin all three, rather than trusting
@@ -183,6 +186,14 @@ RUN curl -fsSL -o /tmp/golangci-lint.tar.gz \
     && install -m 0755 "/tmp/golangci-lint-${GOLANGCI_LINT_VERSION}-linux-amd64/golangci-lint" /usr/local/bin/golangci-lint \
     && rm -rf /tmp/golangci-lint.tar.gz "/tmp/golangci-lint-${GOLANGCI_LINT_VERSION}-linux-amd64" \
     && golangci-lint --version
+
+RUN curl -fsSL -o /tmp/sqlc.tar.gz \
+        "https://github.com/sqlc-dev/sqlc/releases/download/v${SQLC_VERSION}/sqlc_${SQLC_VERSION}_linux_amd64.tar.gz" \
+    && echo "${SQLC_SHA256}  /tmp/sqlc.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/sqlc.tar.gz -C /tmp \
+    && install -m 0755 /tmp/sqlc /usr/local/bin/sqlc \
+    && rm -rf /tmp/sqlc.tar.gz /tmp/sqlc \
+    && sqlc version
 
 # Let Playwright's pinned dependency resolver, rather than a hand-maintained
 # list of shared libraries, choose the Debian Trixie packages Chromium needs.

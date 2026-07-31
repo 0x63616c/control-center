@@ -30,6 +30,8 @@ E1 (#341) left these undecided. Decided here:
 - **`golangci-lint`**, pinned to the same version CI pins
   (`.github/workflows/ci.yml`, `version: v2.12.2`) — a lint rule that fires in
   CI and not in the sandbox teaches people to distrust the wall.
+- **`sqlc`** — checksum-pinned so agents can regenerate committed Go query code
+  after SQL changes.
 - **Playwright Chromium** — the exact `playwright@1.60.0` browser registry
   bundle, including Chromium, its headless shell, and ffmpeg, is extracted to
   root-owned `/ms-playwright` and discovered through
