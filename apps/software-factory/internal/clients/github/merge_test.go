@@ -1,8 +1,10 @@
 package github
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -12,6 +14,21 @@ import (
 
 const mergePath = "/repos/" + testOwner + "/" + testRepo + "/pulls/9/merge"
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+type closeErrorBody struct {
+	io.ReadCloser
+	err error
+}
+
+func (b closeErrorBody) Close() error {
+	return errors.Join(b.ReadCloser.Close(), b.err)
+}
+
 func TestMergePullRequestSquashesTheExpectedHeadAndConfirmsTheReturnedSHA(t *testing.T) {
 	t.Parallel()
 
@@ -19,7 +36,7 @@ func TestMergePullRequestSquashesTheExpectedHeadAndConfirmsTheReturnedSHA(t *tes
 	s.handle("PUT "+mergePath, func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"merged": true, "sha": "merge-sha"})
 	})
-	c, _ := s.client(t)
+	c, logs := s.client(t)
 
 	result, err := c.MergePullRequest(t.Context(), 9, "reviewed-head")
 	if err != nil {
@@ -28,6 +45,7 @@ func TestMergePullRequestSquashesTheExpectedHeadAndConfirmsTheReturnedSHA(t *tes
 	if result.Outcome != work.PullRequestMergeConfirmed || result.MergeSHA != "merge-sha" {
 		t.Fatalf("result = %+v, want a confirmed merge-sha", result)
 	}
+	assertMergeOutcomeLog(t, logs, work.PullRequestMergeConfirmed, "merge-sha")
 
 	sent := decodeBody(t, s.first(t, "PUT "+mergePath))
 	if sent["merge_method"] != "squash" || sent["sha"] != "reviewed-head" || len(sent) != 2 {
@@ -58,7 +76,7 @@ func TestMergePullRequestConfirmsAMergeOnlyFromGraphQLMergedAndMergeCommit(t *te
 			"mergeCommit": map[string]any{"oid": "merge-sha"},
 		}}}})
 	})
-	c, _ := s.client(t)
+	c, logs := s.client(t)
 
 	result, err := c.MergePullRequest(t.Context(), 9, "reviewed-head")
 	if err != nil {
@@ -67,6 +85,7 @@ func TestMergePullRequestConfirmsAMergeOnlyFromGraphQLMergedAndMergeCommit(t *te
 	if result.Outcome != work.PullRequestMergeConfirmed || result.MergeSHA != "merge-sha" {
 		t.Fatalf("result = %+v, want authoritative confirmed merge", result)
 	}
+	assertMergeOutcomeLog(t, logs, work.PullRequestMergeConfirmed, "merge-sha")
 }
 
 func TestMergePullRequestDoesNotConfirmADifferentHeadMergedAfterALostResponse(t *testing.T) {
@@ -124,7 +143,7 @@ func TestMergePullRequestDoesNotConfirmA200ResponseWithMergedFalse(t *testing.T)
 	s.handle("POST /graphql", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"repository": map[string]any{"pullRequest": reconciledPullRequest("OPEN", "reviewed-head", "UNKNOWN", false, "")}}})
 	})
-	c, _ := s.client(t)
+	c, logs := s.client(t)
 
 	result, err := c.MergePullRequest(t.Context(), 9, "reviewed-head")
 	if err != nil {
@@ -133,6 +152,7 @@ func TestMergePullRequestDoesNotConfirmA200ResponseWithMergedFalse(t *testing.T)
 	if result.Outcome != work.PullRequestMergeRetryableAmbiguity || result.Diagnostic != "Pull Request is not mergeable" {
 		t.Fatalf("result = %+v, want retryable ambiguity with GitHub's diagnostic", result)
 	}
+	assertMergeOutcomeLog(t, logs, work.PullRequestMergeRetryableAmbiguity, "")
 }
 
 func TestMergePullRequestDoesNotConfirmA200ResponseMissingTheMergeSHA(t *testing.T) {
@@ -163,7 +183,7 @@ func TestMergePullRequestClassifiesAForbiddenMergeAsRepairableRepositoryPolicy(t
 	s.handle("PUT "+mergePath, func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusForbidden, "Resource not accessible by integration")
 	})
-	c, _ := s.client(t)
+	c, logs := s.client(t)
 
 	_, err := c.MergePullRequest(t.Context(), 9, "reviewed-head")
 	if err == nil {
@@ -172,6 +192,7 @@ func TestMergePullRequestClassifiesAForbiddenMergeAsRepairableRepositoryPolicy(t
 	if !errors.Is(err, ErrRuleset) || errors.Is(err, work.ErrPermanent) || errors.Is(err, ErrAuth) {
 		t.Fatalf("error = %v, want a retryable repository-policy classification distinct from bad credentials", err)
 	}
+	assertMergeFailureLog(t, logs)
 }
 
 func TestMergePullRequestClassifiesPolicyRefusalsAfterAuthoritativeReconciliation(t *testing.T) {
@@ -283,6 +304,68 @@ func TestMergePullRequestPreservesARateLimitsTemporalRetryClassification(t *test
 	}
 }
 
+func TestMergePullRequestReportsGraphQLBodyCloseErrorsWithoutDiscardingDecodeErrors(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		status        int
+		response      string
+		wantPriorText string
+	}{
+		"after a valid response": {
+			response: `{"data":{"repository":{"pullRequest":{"number":9,"id":"PR_kwDOtest9","state":"OPEN","headRefOid":"reviewed-head","baseRefOid":"base-sha","mergeable":"UNKNOWN","merged":false,"mergeCommit":null}}}}`,
+		},
+		"alongside a decode error": {
+			response:      `{"data":`,
+			wantPriorText: "decoding the graphql response",
+		},
+		"alongside a classified response error": {
+			status:        http.StatusBadGateway,
+			response:      `{"message":"upstream unavailable"}`,
+			wantPriorText: "502 upstream unavailable",
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			s, _ := newStub(t)
+			s.handle("PUT "+mergePath, func(w http.ResponseWriter, _ *http.Request) {
+				writeError(w, http.StatusConflict, "merge response lost")
+			})
+			s.handle("POST /graphql", func(w http.ResponseWriter, _ *http.Request) {
+				if tc.status != 0 {
+					w.WriteHeader(tc.status)
+				}
+				_, _ = io.WriteString(w, tc.response)
+			})
+
+			closeErr := errors.New("closing injected response body")
+			base := http.DefaultTransport
+			transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				response, err := base.RoundTrip(request)
+				if err == nil && request.URL.Path == "/graphql" {
+					response.Body = closeErrorBody{ReadCloser: response.Body, err: closeErr}
+				}
+				return response, err
+			})
+			c, _ := s.clientWithOptions(t, WithHTTPClient(&http.Client{Transport: transport}))
+
+			_, err := c.MergePullRequest(t.Context(), 9, "reviewed-head")
+			if !errors.Is(err, closeErr) {
+				t.Fatalf("error = %v, want the response-body close error", err)
+			}
+			if !strings.Contains(err.Error(), "closing the graphql response") {
+				t.Fatalf("error = %v, want close operation context", err)
+			}
+			if tc.wantPriorText != "" && !strings.Contains(err.Error(), tc.wantPriorText) {
+				t.Fatalf("error = %v, want preserved prior error containing %q", err, tc.wantPriorText)
+			}
+		})
+	}
+}
+
 func TestMergePullRequestClassifiesAnUnmergedReconciliation(t *testing.T) {
 	t.Parallel()
 
@@ -347,4 +430,61 @@ func reconciledPullRequest(state, head, mergeable string, merged bool, mergeSHA 
 		pr["mergeCommit"] = map[string]any{"oid": mergeSHA}
 	}
 	return pr
+}
+
+func assertMergeOutcomeLog(t *testing.T, logs *bytes.Buffer, outcome work.PullRequestMergeOutcome, mergeSHA string) {
+	t.Helper()
+
+	matches := matchingLogRecords(t, logs, "classified pull request merge outcome")
+	if len(matches) != 1 {
+		t.Fatalf("merge outcome logs = %v, want exactly one; all logs: %s", matches, logs.String())
+	}
+
+	record := matches[0]
+	if record["pull_request"] != float64(9) || record["expected_head_sha"] != "reviewed-head" || record["outcome"] != string(outcome) {
+		t.Fatalf("merge outcome log = %v, want pull request 9 at reviewed-head with outcome %s", record, outcome)
+	}
+	gotMergeSHA, hasMergeSHA := record["merge_sha"]
+	if mergeSHA == "" && hasMergeSHA {
+		t.Fatalf("merge outcome log = %v, want no merge_sha for a non-confirmed outcome", record)
+	}
+	if mergeSHA != "" && (!hasMergeSHA || gotMergeSHA != mergeSHA) {
+		t.Fatalf("merge outcome log = %v, want merge_sha %q", record, mergeSHA)
+	}
+}
+
+func assertMergeFailureLog(t *testing.T, logs *bytes.Buffer) {
+	t.Helper()
+
+	matches := matchingLogRecords(t, logs, "pull request merge failed")
+	if len(matches) != 1 {
+		t.Fatalf("merge failure logs = %v, want exactly one; all logs: %s", matches, logs.String())
+	}
+	record := matches[0]
+	if record["pull_request"] != float64(9) || record["expected_head_sha"] != "reviewed-head" || record["outcome"] != "failed" {
+		t.Fatalf("merge failure log = %v, want pull request 9 at reviewed-head with failed outcome", record)
+	}
+	if _, exists := record["merge_sha"]; exists {
+		t.Fatalf("merge failure log = %v, want no merge_sha", record)
+	}
+}
+
+func matchingLogRecords(t *testing.T, logs *bytes.Buffer, message string) []map[string]any {
+	t.Helper()
+
+	decoder := json.NewDecoder(bytes.NewReader(logs.Bytes()))
+	var matches []map[string]any
+	for {
+		var record map[string]any
+		err := decoder.Decode(&record)
+		if errors.Is(err, io.EOF) {
+			return matches
+		}
+		if err != nil {
+			t.Fatalf("decoding log record: %v", err)
+		}
+		if record["msg"] == message {
+			matches = append(matches, record)
+		}
+	}
 }

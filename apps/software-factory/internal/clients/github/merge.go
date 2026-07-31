@@ -58,7 +58,7 @@ type graphQLPullRequest struct {
 func (c *Client) MergePullRequest(ctx context.Context, number int, expectedHeadSHA string) (work.PullRequestMergeResult, error) {
 	op := fmt.Sprintf("squash-merging pull request #%d at %s", number, expectedHeadSHA)
 	if number <= 0 || expectedHeadSHA == "" {
-		return work.PullRequestMergeResult{}, permanent(op, ErrInvalid, errors.New("pull request number and expected head sha are required"))
+		return c.recordMergeError(ctx, number, expectedHeadSHA, permanent(op, ErrInvalid, errors.New("pull request number and expected head sha are required")))
 	}
 
 	merged, _, err := c.api.PullRequests.Merge(ctx, c.owner, c.repo, number, "", &gh.PullRequestOptions{
@@ -66,16 +66,16 @@ func (c *Client) MergePullRequest(ctx context.Context, number int, expectedHeadS
 		SHA:         expectedHeadSHA,
 	})
 	if err == nil && merged.GetMerged() && merged.GetSHA() != "" {
-		return work.PullRequestMergeResult{
+		return c.recordMergeOutcome(ctx, number, expectedHeadSHA, work.PullRequestMergeResult{
 			Outcome:  work.PullRequestMergeConfirmed,
 			MergeSHA: merged.GetSHA(),
-		}, nil
+		})
 	}
 	if mergePermissionRejected(err) {
-		return work.PullRequestMergeResult{}, rulesetRejected(op, err)
+		return c.recordMergeError(ctx, number, expectedHeadSHA, rulesetRejected(op, err))
 	}
 	if err != nil && !mergeResponseNeedsReconciliation(ctx, err) {
-		return work.PullRequestMergeResult{}, classify(ctx, op, err)
+		return c.recordMergeError(ctx, number, expectedHeadSHA, classify(ctx, op, err))
 	}
 
 	// A merge response is an at-least-once boundary. GitHub can accept it while
@@ -84,17 +84,56 @@ func (c *Client) MergePullRequest(ctx context.Context, number int, expectedHeadS
 	state, reconcileErr := c.pullRequestMergeState(ctx, number)
 	if reconcileErr != nil {
 		if err == nil {
-			return work.PullRequestMergeResult{}, reconcileErr
+			return c.recordMergeError(ctx, number, expectedHeadSHA, reconcileErr)
 		}
-		return work.PullRequestMergeResult{}, fmt.Errorf("%s: reconciling the ambiguous merge response: %w", op, reconcileErr)
+		return c.recordMergeError(ctx, number, expectedHeadSHA, fmt.Errorf("%s: reconciling the ambiguous merge response: %w", op, reconcileErr))
 	}
 
 	diagnostic := mergeMessage(err, merged)
 	result := classifyMergeState(state, expectedHeadSHA, diagnostic)
 	if result.Outcome == work.PullRequestMergeRetryableAmbiguity && repositoryPolicyRejected(diagnostic) {
-		return work.PullRequestMergeResult{}, rulesetRejected(op, errors.New(diagnostic))
+		return c.recordMergeError(ctx, number, expectedHeadSHA, rulesetRejected(op, errors.New(diagnostic)))
 	}
+	return c.recordMergeOutcome(ctx, number, expectedHeadSHA, result)
+}
+
+func (c *Client) recordMergeOutcome(
+	ctx context.Context,
+	number int,
+	expectedHeadSHA string,
+	result work.PullRequestMergeResult,
+) (work.PullRequestMergeResult, error) {
+	if result.Outcome == work.PullRequestMergeConfirmed {
+		c.log.InfoContext(ctx, "classified pull request merge outcome",
+			"pull_request", number,
+			"expected_head_sha", expectedHeadSHA,
+			"outcome", result.Outcome,
+			"merge_sha", result.MergeSHA,
+		)
+		return result, nil
+	}
+
+	c.log.InfoContext(ctx, "classified pull request merge outcome",
+		"pull_request", number,
+		"expected_head_sha", expectedHeadSHA,
+		"outcome", result.Outcome,
+	)
 	return result, nil
+}
+
+func (c *Client) recordMergeError(
+	ctx context.Context,
+	number int,
+	expectedHeadSHA string,
+	err error,
+) (work.PullRequestMergeResult, error) {
+	c.log.ErrorContext(ctx, "pull request merge failed",
+		"pull_request", number,
+		"expected_head_sha", expectedHeadSHA,
+		"outcome", "failed",
+		"error", err,
+	)
+	return work.PullRequestMergeResult{}, err
 }
 
 func mergePermissionRejected(err error) bool {
@@ -129,7 +168,7 @@ func mergeResponseNeedsReconciliation(ctx context.Context, err error) bool {
 	return true
 }
 
-func (c *Client) pullRequestMergeState(ctx context.Context, number int) (graphQLPullRequest, error) {
+func (c *Client) pullRequestMergeState(ctx context.Context, number int) (state graphQLPullRequest, err error) {
 	op := fmt.Sprintf("reading authoritative merge state for pull request #%d", number)
 	body, err := json.Marshal(graphQLRequest{
 		Query: pullRequestMergeStateQuery,
@@ -153,8 +192,19 @@ func (c *Client) pullRequestMergeState(ctx context.Context, number int) (graphQL
 	if err != nil {
 		return graphQLPullRequest{}, fmt.Errorf("%s: %w", op, err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if checked := gh.CheckResponse(resp); checked != nil {
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("%s: closing the graphql response: %w", op, closeErr))
+		}
+	}()
+
+	// CheckResponse consumes and replaces the body on a non-2xx response. Put
+	// the original body back so the defer closes the network response whose
+	// close error matters, rather than the in-memory replacement.
+	responseBody := resp.Body
+	checked := gh.CheckResponse(resp)
+	resp.Body = responseBody
+	if checked != nil {
 		return graphQLPullRequest{}, classify(ctx, op, checked)
 	}
 
