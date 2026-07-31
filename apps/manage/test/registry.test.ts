@@ -51,6 +51,21 @@ describe("registry", () => {
     }
   });
 
+  it("lists the owned Software Factory console under Code without widening the extension allowlist", () => {
+    const factory = TOOLS.find((tool) => tool.id === "factory");
+
+    expect(factory).toEqual({
+      id: "factory",
+      label: "Software Factory",
+      url: "https://factory.worldwidewebb.co",
+      color: "#6366f1",
+      mark: "SF",
+      group: "Code",
+      needsExtension: false,
+    });
+    expect(extensionHosts()).not.toContain("factory.worldwidewebb.co");
+  });
+
   it("does not list storybook — the workload was deleted, the pane would 502", () => {
     expect(TOOLS.map((tool) => tool.id)).not.toContain("storybook");
     expect(TOOLS.map(toolHost)).not.toContain("storybook.worldwidewebb.co");
