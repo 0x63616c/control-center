@@ -35,9 +35,9 @@ describe("desiredIngressRules", () => {
       "temporal-ui.worldwidewebb.co",
       "unifi.worldwidewebb.co",
     ]);
-    // #126: the public webhook receiver, served by the in-cluster api.
-    // Cross-namespace: cloudflared runs in `cloudflare`, the api Service lives in
-    // `control-center`, so only the FQDN resolves. A short name here 502s.
+    // #126: the public webhook relay forwards to the in-cluster API consumer.
+    // Cross-namespace: cloudflared runs in `cloudflare`, the relay Service lives
+    // in `webhook-relay`, so only the FQDN resolves. A short name here 502s.
     expect(byHost["hooks.worldwidewebb.co"]).toBe(
       "http://relay.webhook-relay.svc.cluster.local:8080",
     );
