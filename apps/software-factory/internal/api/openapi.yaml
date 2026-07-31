@@ -88,82 +88,6 @@ components:
       required:
         - version
       type: object
-    ConsoleDispatcher:
-      additionalProperties: false
-      properties:
-        ageSeconds:
-          format: int64
-          type: integer
-        candidates:
-          items:
-            format: int64
-            type: integer
-          type:
-            - array
-            - "null"
-        freeSlots:
-          format: int64
-          type: integer
-        inFlight:
-          items:
-            $ref: "#/components/schemas/ConsoleInFlight"
-          type:
-            - array
-            - "null"
-        stale:
-          type: boolean
-        writtenAt:
-          type: string
-      required:
-        - inFlight
-        - candidates
-        - freeSlots
-        - writtenAt
-        - ageSeconds
-        - stale
-      type: object
-    ConsoleFactory:
-      additionalProperties: false
-      properties:
-        breakerOpen:
-          type: boolean
-        breakerOpenUntil:
-          type: string
-        breakerReason:
-          type: string
-        configError:
-          type: string
-        maxInFlight:
-          format: int64
-          type: integer
-        pauseReason:
-          type: string
-        paused:
-          type: boolean
-      required:
-        - paused
-        - pauseReason
-        - maxInFlight
-        - configError
-        - breakerOpen
-        - breakerReason
-        - breakerOpenUntil
-      type: object
-    ConsoleInFlight:
-      additionalProperties: false
-      properties:
-        issueNumber:
-          format: int64
-          type: integer
-        runID:
-          type: string
-        startedAt:
-          type: string
-      required:
-        - issueNumber
-        - runID
-        - startedAt
-      type: object
     ConsoleResponse:
       additionalProperties: false
       properties:
@@ -174,10 +98,6 @@ components:
           format: uri
           readOnly: true
           type: string
-        dispatcher:
-          $ref: "#/components/schemas/ConsoleDispatcher"
-        factory:
-          $ref: "#/components/schemas/ConsoleFactory"
         tickets:
           items:
             $ref: "#/components/schemas/ConsoleTicket"
@@ -185,8 +105,6 @@ components:
             - array
             - "null"
       required:
-        - factory
-        - dispatcher
         - tickets
       type: object
     ConsoleTicket:
@@ -639,7 +557,7 @@ paths:
       summary: Get v1 build
   /v1/console:
     get:
-      description: Returns the dispatcher-recorded legacy Issue decision and derived Ticket blockers without recomputing dispatch selection in the browser.
+      description: Returns every Ticket with its derived readiness and blockers.
       operationId: get-v1-console
       responses:
         "200":

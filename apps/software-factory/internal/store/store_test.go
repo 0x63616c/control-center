@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"slices"
 	"testing"
 	"time"
 
@@ -205,36 +204,6 @@ func TestStoreCarriesATicketThroughItsWholeLifecycle(t *testing.T) {
 	}
 	if len(detail.Steps) != 1 || len(detail.Steps[0].Attempts) != 1 {
 		t.Fatalf("RunDetail().Steps = %+v, want exactly one step with one attempt", detail.Steps)
-	}
-
-	state, err := s.DispatcherState(ctx)
-	if err != nil {
-		t.Fatalf("DispatcherState: %v", err)
-	}
-	state.Config = work.DefaultConfig()
-	state.Config.Paused = true
-	state.InFlight = []work.InFlightTicket{{Ticket: 551, RunID: runID, StartedAt: startedAt}}
-	state.Candidates = []int{552, 553}
-	state.FreeSlots = 1
-	state.WrittenAt = endedAt
-	if err := s.PutDispatcherState(ctx, state); err != nil {
-		t.Fatalf("PutDispatcherState: %v", err)
-	}
-	readState, err := s.DispatcherState(ctx)
-	if err != nil {
-		t.Fatalf("DispatcherState after write: %v", err)
-	}
-	if !readState.Config.Paused {
-		t.Fatal("DispatcherState().Config.Paused = false, want true after PutDispatcherState")
-	}
-	if len(readState.InFlight) != 1 || readState.InFlight[0].Ticket != 551 {
-		t.Fatalf("DispatcherState().InFlight = %+v, want the one in-flight ticket back", readState.InFlight)
-	}
-	if !slices.Equal(readState.Candidates, []int{552, 553}) {
-		t.Fatalf("DispatcherState().Candidates = %v, want [552 553]", readState.Candidates)
-	}
-	if readState.FreeSlots != 1 {
-		t.Fatalf("DispatcherState().FreeSlots = %d, want 1", readState.FreeSlots)
 	}
 }
 

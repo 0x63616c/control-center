@@ -17,17 +17,18 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
-func TestConsoleSnapshotShowsTheDispatcherDecisionInItsRecordedOrder(t *testing.T) {
+func TestConsoleSnapshotListsTicketsWithReadinessAndBlockers(t *testing.T) {
 	t.Parallel()
 	now := clocktest.NewFake(time.Date(2026, time.July, 31, 12, 0, 0, 0, time.UTC))
 	fake := storefake.New(storefake.WithClock(now))
-	if err := fake.PutDispatcherState(context.Background(), store.DispatcherState{
-		Config:     work.DefaultConfig(),
-		Candidates: []int{555, 444},
-		FreeSlots:  1,
-		WrittenAt:  now.Now(),
-	}); err != nil {
-		t.Fatalf("store dispatcher state: %v", err)
+	ctx := context.Background()
+	blocker, err := fake.CreateTicket(ctx, "blocker", "", nil)
+	if err != nil {
+		t.Fatalf("create blocker ticket: %v", err)
+	}
+	blocked, err := fake.CreateTicket(ctx, "blocked", "", []store.TicketID{blocker.ID})
+	if err != nil {
+		t.Fatalf("create blocked ticket: %v", err)
 	}
 
 	response := ticketRequest(t, newWithClock("test-build", nil, now, fake), http.MethodGet, "/v1/console", "")
@@ -38,8 +39,23 @@ func TestConsoleSnapshotShowsTheDispatcherDecisionInItsRecordedOrder(t *testing.
 	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
 		t.Fatalf("decode console snapshot: %v", err)
 	}
-	if body.Dispatcher.FreeSlots != 1 || len(body.Dispatcher.Candidates) != 2 || body.Dispatcher.Candidates[0] != 555 || body.Dispatcher.Candidates[1] != 444 {
-		t.Fatalf("dispatcher = %#v, want recorded free slots and candidate order", body.Dispatcher)
+	if len(body.Tickets) != 2 {
+		t.Fatalf("console tickets = %#v, want both tickets", body.Tickets)
+	}
+	var blockedItem *consoleTicket
+	for i := range body.Tickets {
+		if body.Tickets[i].ID == int64(blocked.ID) {
+			blockedItem = &body.Tickets[i]
+		}
+	}
+	if blockedItem == nil {
+		t.Fatalf("console tickets = %#v, want the blocked ticket", body.Tickets)
+	}
+	if blockedItem.Ready {
+		t.Fatal("the blocked ticket must not report ready while its blocker is open")
+	}
+	if len(blockedItem.Blockers) != 1 || blockedItem.Blockers[0].ID != int64(blocker.ID) {
+		t.Fatalf("blocked ticket's blockers = %#v, want the one blocker", blockedItem.Blockers)
 	}
 }
 

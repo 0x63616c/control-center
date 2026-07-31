@@ -93,17 +93,15 @@ func run() error {
 
 	// Pinged before anything else starts, matching cmd/api: SoftwareStyle
 	// tenet 7 (fail fast, fail helpful). An unreachable database would
-	// otherwise start a dispatcher that looks healthy and fails its
-	// RecordDispatcherState activity every tick forever, silently, instead of
-	// crash-looping loudly at boot with the reason in its logs.
+	// otherwise start a worker that looks healthy and fails every store
+	// activity silently, instead of crash-looping loudly at boot with the
+	// reason in its logs.
 	//
-	// One pool, one *store.Store, for both dispatchers: the legacy one's
-	// per-tick dispatcher_state row (#551) and ADR-0012's Ticket-driven
-	// pipeline (Tickets, Runs, Steps, Attempts, transcripts) below both read
-	// and write the same factory Postgres. cmd/api already applies this
-	// service's migrations at its own boot and is deployed ahead of this
-	// worker (#554), so the worker only needs to dial and ping — it does not
-	// re-run ApplyMigrations.
+	// One pool, one *store.Store: ADR-0012's Ticket-driven pipeline (Tickets,
+	// Runs, Steps, Attempts, transcripts) reads and writes the factory
+	// Postgres through it. cmd/api already applies this service's migrations
+	// at its own boot and is deployed ahead of this worker (#554), so the
+	// worker only needs to dial and ping — it does not re-run ApplyMigrations.
 	dbPool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
 	if err != nil {
 		return fmt.Errorf("constructing the factory database pool: %w", err)
@@ -158,7 +156,7 @@ func run() error {
 		return err
 	}
 
-	acts, err := newActivities(cfg, temporal, renderer, metrics, logger, factoryStore)
+	acts, err := newActivities(cfg, temporal, renderer, metrics, logger)
 	if err != nil {
 		return fmt.Errorf("building the activity set: %w", err)
 	}
@@ -319,7 +317,6 @@ func ensureFactoryDispatcher(ctx context.Context, c dispatcherStarter, logger *s
 // a second watch on the same pods.
 func newActivities(
 	cfg config.Worker, temporal client.Client, renderer *prompts.Renderer, metrics *telemetry.Metrics, logger *slog.Logger,
-	dispatcherState activities.DispatcherStateWriter,
 ) (*activities.Activities, error) {
 	clk := clock.System{}
 
@@ -348,7 +345,7 @@ func newActivities(
 	}
 
 	return activities.New(buildDeps(
-		cfg, ghCfg, ghClient, sandboxes, transcriptSink, renderer, metrics, temporal, tokenSource, dispatcherState, clk, logger,
+		cfg, ghCfg, ghClient, sandboxes, transcriptSink, renderer, metrics, temporal, tokenSource, clk, logger,
 	))
 }
 
@@ -383,7 +380,6 @@ func buildDeps(
 	metrics *telemetry.Metrics,
 	temporal client.Client,
 	tokenSource activities.TokenSource,
-	dispatcherState activities.DispatcherStateWriter,
 	clk clock.Clock,
 	logger *slog.Logger,
 ) activities.Deps {
@@ -425,11 +421,6 @@ func buildDeps(
 		Runs:        runs.New(temporal),
 		Sweeper:     sandboxes,
 		Metrics:     metrics,
-
-		// DispatcherState is the store row the dispatcher writes its post-tick
-		// projection to (#551) — the console will eventually read this instead
-		// of querying Temporal for status.
-		DispatcherState: dispatcherState,
 
 		// TokenSource fetches and refreshes the codex credential; CreateSandbox
 		// hands what it yields straight to Pods.Create, which turns it into a

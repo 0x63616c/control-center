@@ -10,14 +10,6 @@ import (
 // TicketActivities is the narrow Postgres activity set used only by the
 // Ticket-backed workflows. Keeping it separate prevents the GitHub workflow
 // from acquiring a dependency on factory Ticket rows.
-//
-// It deliberately does not depend on store.DispatcherStateWriter: that writer
-// owns the single dispatcher_state row the legacy dispatcher already writes
-// every tick (#551), shaped around GitHub issue numbers
-// (store.DispatcherState's own doc comment). This dispatcher pointing at that
-// same row is later work, not part of standing the second pipeline up — doing
-// it now would mean two dispatchers racing to overwrite one row with two
-// different shapes of "what am I doing".
 type TicketActivities struct {
 	store interface {
 		store.ReadyTicketLister

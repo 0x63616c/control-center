@@ -21,7 +21,5 @@ var (
 	_ store.AttemptReader           = (*Store)(nil)
 	_ store.TranscriptWriter        = (*Store)(nil)
 	_ store.TranscriptReader        = (*Store)(nil)
-	_ store.DispatcherStateReader   = (*Store)(nil)
-	_ store.DispatcherStateWriter   = (*Store)(nil)
 	_ store.WebhookDeliveryRecorder = (*Store)(nil)
 )

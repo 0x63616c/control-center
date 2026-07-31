@@ -16,7 +16,6 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codexauth"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock/clocktest"
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"go.temporal.io/sdk/activity"
@@ -267,23 +266,6 @@ func (f *fakeSweeper) SweepOrphans(_ context.Context, live []string, minAge time
 	return f.deleted, f.err
 }
 
-// fakeDispatcherState stands in for the store: it records the last state
-// written and can be told to fail, without opening a database.
-type fakeDispatcherState struct {
-	written store.DispatcherState
-	puts    int
-	err     error
-}
-
-func (f *fakeDispatcherState) PutDispatcherState(_ context.Context, state store.DispatcherState) error {
-	f.puts++
-	if f.err != nil {
-		return f.err
-	}
-	f.written = state
-	return nil
-}
-
 // fakeTokenSource stands in for codexauth.Source: it yields a fixed document
 // or a fixed error, and records whether it was called.
 type fakeTokenSource struct {
@@ -311,21 +293,20 @@ func template() work.SandboxTemplate {
 
 func deps() Deps {
 	return Deps{
-		GitHub:          &fakeGitHub{},
-		Pods:            &fakePods{},
-		Repo:            &fakeRepo{},
-		Stages:          &fakeStages{},
-		Transcripts:     &fakeTranscript{},
-		Prompts:         &fakePrompts{},
-		Runs:            &fakeRuns{},
-		Sweeper:         &fakeSweeper{},
-		Metrics:         &fakeMetrics{},
-		DispatcherState: &fakeDispatcherState{},
-		TokenSource:     &fakeTokenSource{},
-		Log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Clock:           clocktest.NewFake(time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)),
-		Sandbox:         template(),
-		RepoURL:         "https://github.com/0x63616c/world-wide-webb.git",
+		GitHub:      &fakeGitHub{},
+		Pods:        &fakePods{},
+		Repo:        &fakeRepo{},
+		Stages:      &fakeStages{},
+		Transcripts: &fakeTranscript{},
+		Prompts:     &fakePrompts{},
+		Runs:        &fakeRuns{},
+		Sweeper:     &fakeSweeper{},
+		Metrics:     &fakeMetrics{},
+		TokenSource: &fakeTokenSource{},
+		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Clock:       clocktest.NewFake(time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)),
+		Sandbox:     template(),
+		RepoURL:     "https://github.com/0x63616c/world-wide-webb.git",
 	}
 }
 
@@ -357,7 +338,7 @@ func TestNewNamesEveryDependencyItIsMissing(t *testing.T) {
 	}
 	for _, name := range []string{
 		"GitHub", "Pods", "Repo", "Stages", "Transcripts", "Prompts", "Runs", "Sweeper", "Metrics",
-		"DispatcherState", "TokenSource", "Clock", "Log",
+		"TokenSource", "Clock", "Log",
 	} {
 		if !strings.Contains(err.Error(), name) {
 			t.Fatalf("error %q does not name the missing %s", err, name)
@@ -1437,62 +1418,5 @@ func TestRunPlanOutputRefusesThePreThisStepShape(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Document") {
 		t.Fatalf("the error must name the field that no longer exists, got: %v", err)
-	}
-}
-
-// --- RecordDispatcherState --------------------------------------------------
-
-func TestRecordDispatcherStateWritesWhatItWasGiven(t *testing.T) {
-	t.Parallel()
-
-	writer := &fakeDispatcherState{}
-	d := deps()
-	d.DispatcherState = writer
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.RecordDispatcherState)
-
-	config := work.DefaultConfig()
-	config.Paused = true
-	in := store.DispatcherState{
-		Config:     config,
-		InFlight:   []work.InFlightTicket{{Ticket: 551, RunID: "run-1"}},
-		Candidates: []int{552, 553},
-		FreeSlots:  1,
-	}
-
-	if _, err := e.ExecuteActivity(a.RecordDispatcherState, in); err != nil {
-		t.Fatalf("RecordDispatcherState: %v", err)
-	}
-	if writer.puts != 1 {
-		t.Fatalf("PutDispatcherState calls = %d, want 1", writer.puts)
-	}
-	if !writer.written.Config.Paused {
-		t.Fatal("the store did not receive the config the activity was given")
-	}
-	if len(writer.written.Candidates) != 2 || writer.written.Candidates[0] != 552 {
-		t.Fatalf("the store did not receive the candidates the activity was given, got %v", writer.written.Candidates)
-	}
-}
-
-// TestRecordDispatcherStateSurfacesAWriteFailure proves a database outage is
-// reported rather than swallowed — the dispatcher workflow (#551) decides
-// what to do with it, but the activity must not hide it.
-func TestRecordDispatcherStateSurfacesAWriteFailure(t *testing.T) {
-	t.Parallel()
-
-	writer := &fakeDispatcherState{err: errors.New("connection refused")}
-	d := deps()
-	d.DispatcherState = writer
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.RecordDispatcherState)
-
-	_, err := e.ExecuteActivity(a.RecordDispatcherState, store.DispatcherState{})
-	if err == nil {
-		t.Fatal("a store write failure must fail the activity")
-	}
-	if !strings.Contains(err.Error(), "recording dispatcher state") {
-		t.Fatalf("error %q does not name the operation", err)
 	}
 }

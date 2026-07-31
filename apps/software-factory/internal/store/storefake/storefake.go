@@ -6,9 +6,9 @@
 // SoftwareStyle's floor, *no unit test touches the real world*, without
 // standing up Postgres. It reproduces the schema's invariants (state
 // transitions the check constraints allow, the direct-dependency ready(T)
-// definition, the single dispatcher_state row) in memory, not just its
-// method signatures — a fake that only matched the interface and not the
-// behaviour would let a caller's tests pass against a lie.
+// definition) in memory, not just its method signatures — a fake that only
+// matched the interface and not the behaviour would let a caller's tests
+// pass against a lie.
 package storefake
 
 import (
@@ -41,9 +41,6 @@ type Store struct {
 
 	transcripts map[attemptKey]store.Transcript
 
-	dispatcherState     store.DispatcherState
-	dispatcherStateSeen bool
-
 	webhookDeliveries map[string]bool
 }
 
@@ -70,9 +67,7 @@ type attemptKey struct {
 }
 
 // New returns an empty Store, seeded the way a freshly migrated database is:
-// no tickets, and one dispatcher_state row at its migration defaults — a zero
-// Config and Breaker, exactly as migration 00002's seed row and 00003's added
-// columns leave it until the dispatcher's first tick overwrites it for real.
+// no tickets, no runs, no steps.
 func New(opts ...Option) *Store {
 	f := &Store{
 		clk:          clock.System{},
@@ -87,8 +82,6 @@ func New(opts ...Option) *Store {
 	for _, opt := range opts {
 		opt(f)
 	}
-	f.dispatcherState = store.DispatcherState{WrittenAt: f.clk.Now()}
-	f.dispatcherStateSeen = true
 	return f
 }
 

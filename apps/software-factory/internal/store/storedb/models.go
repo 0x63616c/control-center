@@ -27,17 +27,6 @@ type Attempt struct {
 	Result          pgtype.Text
 }
 
-type DispatcherState struct {
-	Singleton   bool
-	InFlight    []byte
-	WrittenAt   pgtype.Timestamptz
-	Config      []byte
-	ConfigError string
-	Breaker     []byte
-	Candidates  []byte
-	FreeSlots   int32
-}
-
 type MigrationProbe struct {
 	Present bool
 }

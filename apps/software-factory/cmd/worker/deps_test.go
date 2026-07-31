@@ -14,7 +14,6 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock/clocktest"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/config"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/prompts"
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/transcripts"
 )
@@ -68,7 +67,6 @@ func TestBuildDepsSatisfiesActivitiesNew(t *testing.T) {
 		telemetry.NewMetrics(prometheus.NewRegistry()),
 		nil, // client.Client: runs.New only stores it, it is never dialled here
 		(*codexauth.Source)(nil),
-		(*store.Store)(nil),
 		clocktest.NewFake(time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)),
 		discardLogger(),
 	)

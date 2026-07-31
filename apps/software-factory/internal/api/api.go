@@ -28,9 +28,8 @@ type Service struct {
 }
 
 // factoryStore is the small persistence door the whole HTTP contract needs:
-// Tickets and their dependency graph, the dispatcher's last-written state,
-// plus the Runs, Steps, Attempts and transcripts recorded against them
-// (ADR-0012's console detail view).
+// Tickets and their dependency graph, plus the Runs, Steps, Attempts and
+// transcripts recorded against them (ADR-0012's console detail view).
 type factoryStore interface {
 	store.TicketCreator
 	store.TicketReader
@@ -38,7 +37,6 @@ type factoryStore interface {
 	store.ReadyTicketLister
 	store.TicketDependencyWriter
 	store.TicketDependencyReader
-	store.DispatcherStateReader
 	store.RunLister
 	store.RunReader
 	store.TranscriptReader
@@ -110,36 +108,7 @@ type consoleOutput struct{ Body consoleResponse }
 
 // consoleResponse is the one-screen, read-only operational view of the factory.
 type consoleResponse struct {
-	Factory    consoleFactory    `json:"factory"`
-	Dispatcher consoleDispatcher `json:"dispatcher"`
-	Tickets    []consoleTicket   `json:"tickets"`
-}
-
-type consoleFactory struct {
-	Paused           bool   `json:"paused"`
-	PauseReason      string `json:"pauseReason"`
-	MaxInFlight      int    `json:"maxInFlight"`
-	ConfigError      string `json:"configError"`
-	BreakerOpen      bool   `json:"breakerOpen"`
-	BreakerReason    string `json:"breakerReason"`
-	BreakerOpenUntil string `json:"breakerOpenUntil"`
-}
-
-// consoleDispatcher deliberately names legacy GitHub Issue data rather than
-// Ticket data: ADR-0012 forbids treating the two identifiers as interchangeable.
-type consoleDispatcher struct {
-	InFlight   []consoleInFlight `json:"inFlight"`
-	Candidates []int             `json:"candidates"`
-	FreeSlots  int               `json:"freeSlots"`
-	WrittenAt  string            `json:"writtenAt"`
-	AgeSeconds int64             `json:"ageSeconds"`
-	Stale      bool              `json:"stale"`
-}
-
-type consoleInFlight struct {
-	IssueNumber int    `json:"issueNumber"`
-	RunID       string `json:"runID"`
-	StartedAt   string `json:"startedAt"`
+	Tickets []consoleTicket `json:"tickets"`
 }
 
 type consoleTicket struct {
@@ -266,7 +235,7 @@ func newWithClock(version string, commands commandClient, serviceClock clock.Clo
 		output.Body.Version = version
 		return output, nil
 	})
-	huma.Get(api, "/v1/console", service.console, commandOperation("Read console snapshot", "Returns the dispatcher-recorded legacy Issue decision and derived Ticket blockers without recomputing dispatch selection in the browser."))
+	huma.Get(api, "/v1/console", service.console, commandOperation("Read console snapshot", "Returns every Ticket with its derived readiness and blockers."))
 	huma.Post(api, "/v1/factory/pause", service.pause, commandOperation("Pause the factory", "Success means Temporal accepted the UpdateConfig signal. The dispatcher applies this configuration on its next tick; this endpoint does not poll for observable state."))
 	huma.Post(api, "/v1/factory/resume", service.resume, commandOperation("Resume the factory", "Success means Temporal accepted the UpdateConfig signal. The dispatcher applies this configuration on its next tick; this endpoint does not poll for observable state."))
 	huma.Post(api, "/v1/factory/max-in-flight", service.setMaxInFlight, commandOperation("Set factory max in flight", "Success means Temporal accepted the UpdateConfig signal. The dispatcher applies this configuration on its next tick; this endpoint does not poll for observable state."))
@@ -290,10 +259,6 @@ func (service *Service) console(ctx context.Context, _ *struct{}) (*consoleOutpu
 	if service.tickets == nil {
 		return nil, clientError(http.StatusServiceUnavailable, "store_unavailable", "ticket store is not configured")
 	}
-	state, err := service.tickets.DispatcherState(ctx)
-	if err != nil {
-		return nil, ticketStoreError(err)
-	}
 	tickets, err := service.tickets.Tickets(ctx)
 	if err != nil {
 		return nil, ticketStoreError(err)
@@ -306,25 +271,7 @@ func (service *Service) console(ctx context.Context, _ *struct{}) (*consoleOutpu
 	for _, ticket := range ready {
 		readySet[ticket.ID] = true
 	}
-	now := service.clock.Now()
-	age := now.Sub(state.WrittenAt)
-	if age < 0 {
-		age = 0
-	}
-	pollInterval := state.Config.PollInterval()
-	if pollInterval <= 0 {
-		pollInterval = work.DefaultConfig().PollInterval()
-	}
-	output := &consoleOutput{Body: consoleResponse{
-		Factory: consoleFactory{
-			Paused: state.Config.Paused, PauseReason: state.Config.PauseReason, MaxInFlight: state.Config.MaxInFlight,
-			ConfigError: state.ConfigError, BreakerOpen: state.Breaker.OpenAt(now), BreakerReason: state.Breaker.Reason, BreakerOpenUntil: wireTime(state.Breaker.OpenUntil),
-		},
-		Dispatcher: consoleDispatcher{Candidates: append([]int(nil), state.Candidates...), FreeSlots: state.FreeSlots, WrittenAt: wireTime(state.WrittenAt), AgeSeconds: int64(age.Seconds()), Stale: age > 2*pollInterval},
-	}}
-	for _, inFlight := range state.InFlight {
-		output.Body.Dispatcher.InFlight = append(output.Body.Dispatcher.InFlight, consoleInFlight{IssueNumber: inFlight.Ticket, RunID: inFlight.RunID, StartedAt: wireTime(inFlight.StartedAt)})
-	}
+	output := &consoleOutput{}
 	for _, ticket := range tickets {
 		summary := ticketSummaryFrom(ticket, readySet[ticket.ID])
 		item := consoleTicket{ID: summary.ID, Title: summary.Title, State: summary.State, Ready: summary.Ready, CreatedAt: summary.CreatedAt, UpdatedAt: summary.UpdatedAt}

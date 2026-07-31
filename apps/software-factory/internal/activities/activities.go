@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock"
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"go.temporal.io/sdk/activity"
@@ -34,10 +33,6 @@ type Deps struct {
 	Runs        RunLookup
 	Sweeper     SandboxSweeper
 	Metrics     Metrics
-
-	// DispatcherState records the dispatcher's per-tick projection (#551), the
-	// store row the console will eventually read instead of querying Temporal.
-	DispatcherState DispatcherStateWriter
 
 	// RepoURL is the ticket repository's clone URL. It is deploy-time config,
 	// like Sandbox: built once from the App's own owner/repo at the composition
@@ -108,9 +103,6 @@ func New(deps Deps) (*Activities, error) {
 	if deps.Metrics == nil {
 		missing = append(missing, "Metrics")
 	}
-	if deps.DispatcherState == nil {
-		missing = append(missing, "DispatcherState")
-	}
 	if deps.TokenSource == nil {
 		missing = append(missing, "TokenSource")
 	}
@@ -130,16 +122,6 @@ func New(deps Deps) (*Activities, error) {
 		return nil, fmt.Errorf("activities need a usable sandbox template: %w", err)
 	}
 	return &Activities{deps: deps}, nil
-}
-
-// RecordDispatcherState writes one post-tick dispatcher projection (#551) —
-// I/O, and therefore an activity rather than something the workflow does
-// itself (SoftwareStyle tenet 10).
-func (a *Activities) RecordDispatcherState(ctx context.Context, state store.DispatcherState) error {
-	if err := a.deps.DispatcherState.PutDispatcherState(ctx, state); err != nil {
-		return fail(ctx, "recording dispatcher state", err)
-	}
-	return nil
 }
 
 // SandboxDeps are what a sandbox pod's embedded worker needs to host RunStage
