@@ -16,6 +16,7 @@ INSERT INTO transcript (
     run_id, stage, turn, attempt_no,
     compressed_bytes, compression, uncompressed_size_bytes, checksum
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (run_id, stage, turn, attempt_no) DO NOTHING
 `
 
 type PutTranscriptParams struct {
@@ -29,6 +30,9 @@ type PutTranscriptParams struct {
 	Checksum              []byte
 }
 
+// Idempotent: an activity retry persisting the same Attempt's transcript
+// again is a no-op, not a constraint violation — the same reasoning as
+// RecordStep's own ON CONFLICT DO NOTHING.
 func (q *Queries) PutTranscript(ctx context.Context, arg PutTranscriptParams) error {
 	_, err := q.db.Exec(ctx, putTranscript,
 		arg.RunID,
