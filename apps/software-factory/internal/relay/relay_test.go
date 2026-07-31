@@ -34,9 +34,12 @@ func TestValidSignatureReturnsNoContentAndForwardsEveryTarget(t *testing.T) {
 
 func TestInvalidSignatureReturnsUnauthorizedAndForwardsNothing(t *testing.T) {
 	poster := newFakePoster(http.StatusNoContent)
-	handler := newTestHandler(poster, targets())
+	var logs bytes.Buffer
+	handler := NewHandler([]byte("secret"), targets(), poster, instantClock{}, slog.New(slog.NewTextHandler(&logs, nil)), prometheus.NewRegistry())
 	request := httptest.NewRequest(http.MethodPost, "/github", nil)
 	request.Header.Set("x-hub-signature-256", "sha256=not-a-signature")
+	request.Header.Set("x-github-delivery", "delivery-rejected")
+	request.Header.Set("x-github-event", "push")
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusUnauthorized {
@@ -44,6 +47,46 @@ func TestInvalidSignatureReturnsUnauthorizedAndForwardsNothing(t *testing.T) {
 	}
 	if count := poster.count(); count != 0 {
 		t.Fatalf("posts = %d, want 0", count)
+	}
+	if !strings.Contains(logs.String(), "delivery_id=delivery-rejected") || !strings.Contains(logs.String(), "event=push") {
+		t.Fatalf("log = %q, want delivery id and event", logs.String())
+	}
+}
+
+func TestAcceptedAndForwardedDeliveryLogsTargetsWithoutPayload(t *testing.T) {
+	const payload = `{"secret":"attacker-controlled-payload"}`
+	const deliveryID = "delivery-observable"
+	const event = "pull_request"
+	poster := newFakePoster(http.StatusAccepted)
+	logs := newSynchronizedLogBuffer(3)
+	handler := NewHandler([]byte("secret"), targets(), poster, instantClock{}, slog.New(slog.NewTextHandler(logs, nil)), prometheus.NewRegistry())
+	request := signedRequest([]byte(payload))
+	request.Header.Set("x-github-delivery", deliveryID)
+	request.Header.Set("x-github-event", event)
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+	logs.waitForRecords(t, 3)
+
+	output := logs.String()
+	for _, want := range []string{"github webhook accepted", "delivery_id=" + deliveryID, "event=" + event} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("log = %q, want %q", output, want)
+		}
+	}
+	for _, target := range targets() {
+		wantTarget := "target=" + target.Name
+		found := false
+		for _, line := range strings.Split(output, "\n") {
+			if strings.Contains(line, "github webhook forwarded") && strings.Contains(line, wantTarget) && strings.Contains(line, "status=202") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("log = %q, want forwarded record for %q with status 202", output, target.Name)
+		}
+	}
+	if strings.Contains(output, payload) {
+		t.Fatalf("log = %q, must not contain payload", output)
 	}
 }
 
@@ -162,6 +205,41 @@ type fakePoster struct {
 	statuses map[string]int
 	started  chan struct{}
 	release  chan struct{}
+}
+
+type synchronizedLogBuffer struct {
+	mu      sync.Mutex
+	buffer  bytes.Buffer
+	records chan struct{}
+}
+
+func newSynchronizedLogBuffer(recordCount int) *synchronizedLogBuffer {
+	return &synchronizedLogBuffer{records: make(chan struct{}, recordCount)}
+}
+
+func (b *synchronizedLogBuffer) Write(value []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	count, err := b.buffer.Write(value)
+	b.records <- struct{}{}
+	return count, err
+}
+
+func (b *synchronizedLogBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.String()
+}
+
+func (b *synchronizedLogBuffer) waitForRecords(t *testing.T, want int) {
+	t.Helper()
+	for range want {
+		select {
+		case <-b.records:
+		case <-t.Context().Done():
+			t.Fatal("timed out waiting for webhook log records")
+		}
+	}
 }
 
 type recordedPost struct {

@@ -91,7 +91,11 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 
 	body, err := io.ReadAll(http.MaxBytesReader(writer, request.Body, maxBodyBytes))
 	if err != nil || !validSignature(request.Header.Get("x-hub-signature-256"), body, h.secret) {
-		h.logger.Warn("github webhook rejected", slog.String("reason", "invalid_signature"))
+		h.logger.Warn("github webhook rejected",
+			slog.String("reason", "invalid_signature"),
+			slog.String("delivery_id", request.Header.Get("x-github-delivery")),
+			slog.String("event", request.Header.Get("x-github-event")),
+		)
 		h.metrics.rejected.Inc()
 		writer.WriteHeader(http.StatusUnauthorized)
 		return
@@ -106,6 +110,10 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		ContentType: request.Header.Get("content-type"),
 	}
 	h.metrics.received.Inc()
+	h.logger.Info("github webhook accepted",
+		slog.String("delivery_id", delivery.DeliveryID),
+		slog.String("event", delivery.Event),
+	)
 	writer.WriteHeader(http.StatusNoContent)
 
 	for _, target := range h.targets {
@@ -121,6 +129,12 @@ func (h *Handler) forward(ctx context.Context, target config.RelayTarget, delive
 		cancel()
 		h.metrics.attempts.WithLabelValues(target.Name, attemptOutcome(status, err)).Inc()
 		h.metrics.duration.WithLabelValues(target.Name).Observe(h.clock.Now().Sub(startedAt).Seconds())
+		h.logger.Info("github webhook forwarded",
+			slog.String("target", target.Name),
+			slog.Int("status", status),
+			slog.String("delivery_id", delivery.DeliveryID),
+			slog.String("event", delivery.Event),
+		)
 
 		if err == nil {
 			if status < http.StatusBadRequest {
