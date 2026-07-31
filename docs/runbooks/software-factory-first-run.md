@@ -239,6 +239,16 @@ curl -X POST localhost:18090/          # 404 — the root is NOT the webhook pat
 A 401 there is a pass: it proves routing, signature verification and logging
 all work, and it emits `github webhook rejected reason=invalid_signature`.
 
+For a live GitHub delivery, correlate the relay's JSON records with GitHub using
+`delivery_id` and `event`. The relay emits three lifecycle records without ever
+including the payload body:
+
+- `github webhook accepted` after signature verification.
+- `github webhook forwarded` after each target responds, with that target and
+  response `status` (a transport failure has status `0`). Retries produce one
+  forwarded record for each attempt.
+- `github webhook rejected` with its `reason` when signature verification fails.
+
 GitHub's own delivery record is the authority on whether anything was sent, and
 unlike pod logs it survives a redeploy. Note the repository has **no** webhooks
 (`gh api repos/0x63616c/world-wide-webb/hooks` returns `[]`) — deliveries come
