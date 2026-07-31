@@ -27,6 +27,101 @@ scope because they can prevent the workflow from completing its merge.
 An optional human-approval mode is also outside this version. Successful Runs
 are fully unattended.
 
+## Provisional assumption register
+
+These are the premises currently underneath the design, including premises
+that the implementation must make true. They are written explicitly so they
+can be aligned with the product owner and then attacked by a fresh-context
+critic. They are not additional settled decisions merely because they appear
+here.
+
+### Non-technical assumptions
+
+- **Admission is authorization.** Any Ticket admitted to the factory is safe
+  to take through an unattended merge; v0 needs no separate per-Ticket human
+  approval switch.
+- **Internal review is sufficient.** A clean independent agent Review Step,
+  following green CI for the same head SHA, is enough product authorization to
+  request the merge.
+- **Ticket design handles semantic ordering.** Ticket dependencies and how work
+  is decomposed are expected to prevent known semantic conflicts. The runtime
+  design only promises to detect and repair textual Git merge conflicts.
+- **Merged is done.** A confirmed merge is useful enough to satisfy dependency
+  edges even though production deployment has not been observed. Later deploy
+  failure neither reopens the Ticket nor retroactively changes its result.
+- **Post-merge repair is new work.** If merged code later proves broken, a
+  future mechanism creates or selects a new repair Ticket; v0 does not revert,
+  roll back, or resume the completed Run.
+- **Squash is universal.** Factory-authored pull requests need no merge strategy
+  other than squash.
+- **Cancellation means retryable interruption.** Canceling the dispatcher owns
+  and cancels its current Runs. A canceled Run returns its still-owned Ticket
+  to `open`, rather than classifying the Ticket itself as failed.
+- **Pause preserves work.** Operators who want dispatch to stop without
+  interrupting current Runs will pause or drain the dispatcher, not cancel it.
+- **The agreed budgets are affordable.** Five Review Steps and 25 total Agent
+  Attempts are acceptable upper bounds for cost and elapsed time in one Run.
+- **Rare drain pauses are acceptable.** Temporarily admitting no new Tickets
+  while a dispatcher drains before `ContinueAsNew` is an acceptable throughput
+  tradeoff.
+
+### Technical assumptions
+
+- **GitHub authorization will change.** The GitHub App and repository ruleset
+  can be changed so the App may merge without a Code Owner approval while the
+  intended CI protections still apply. This is not true of the current setup,
+  whose App deliberately lacks bypass authority.
+- **GitHub can enforce the reviewed head.** The merge request supplies the
+  reviewed head SHA, and only `merged: true` plus a merge SHA proves success.
+  An ambiguous response can be reconciled by rereading the pull request.
+- **Verdicts are SHA-scoped.** CI and internal review results can be associated
+  with an exact PR head. Any head change invalidates those verdicts and sends
+  the new head through CI and review again.
+- **Merge refusal is classifiable.** GitHub responses and follow-up reads give
+  enough information to distinguish a textual conflict, a changed head, an
+  already-completed merge, a ruleset or permission rejection, and a transient
+  infrastructure failure.
+- **Run Worker affinity is real.** After the main worker provisions a Run
+  Worker, `CreateSession` on its private task queue pins every activity from
+  clone through the terminal Run action to that exact worker and filesystem.
+- **The Run Worker can hold the required capabilities.** It can execute Git,
+  Codex, GitHub, CI observation, persistence, and merge activities without
+  Kubernetes exec or remote file copying. Exact capability scoping remains a
+  parked security-design question.
+- **Rotated credentials reach live processes.** A GitHub installation token can
+  be refreshed before every Agent Attempt and every 30 minutes during an active
+  Attempt, and the agent-facing Git process will use the new value without
+  putting the token in Temporal history.
+- **Durable boundaries are idempotent.** Ticket claims, Step and Attempt
+  recording, PR synchronization, merge reconciliation, terminal recording,
+  dependency satisfaction, and cancellation finalization all have stable
+  identities or ownership checks that make activity retries safe.
+- **Cancellation finalization can be atomic.** Postgres can conditionally mark
+  the owning Run canceled and move only its still-`working` Ticket to `open`, so
+  a late cancellation cannot reopen a Ticket already committed as `done`.
+- **A repeated Run can adopt existing Git state.** After cancellation reopens a
+  Ticket, the next Run can safely discover and continue or supersede its
+  existing branch and pull request instead of assuming a pristine first run.
+- **Expected waiting belongs in activity retry state.** `AwaitDispatchableTickets`
+  and `AwaitCI` can use retryable waiting results without producing workflow
+  history per poll or operational-error noise.
+- **Draining has enough history headroom.** Temporal's
+  `GetContinueAsNewSuggested()` arrives early enough for the finite set of
+  already-started children to complete or reconcile before hard history limits
+  are reached.
+- **Parent cancellation is cooperative.** `REQUEST_CANCEL` lets each
+  `WorkOnTicket` run its disconnected finalization. Direct child termination
+  remains exceptional and relies on reconciliation plus orphan cleanup because
+  terminated workflow code cannot finalize itself.
+- **The merge webhook is not authoritative for v0 completion.** Removing the
+  factory's pull-request-closed completion consumer does not remove another
+  required behavior; the relay infrastructure can remain without that event.
+- **Deployment is outside the Run's consistency boundary.** Nothing needed to
+  mark a Ticket `done` depends on a production rollout signal.
+- **Old workflow compatibility is intentionally excluded.** The redesigned
+  command sequence may replace existing behavior without `workflow.GetVersion`;
+  no pre-redesign open history has to replay through the new implementation.
+
 ## Established surrounding direction
 
 The current direction for the merge flow is:
