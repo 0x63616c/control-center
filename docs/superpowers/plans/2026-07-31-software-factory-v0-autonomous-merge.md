@@ -173,7 +173,7 @@ and this implementation graph.
 
 **Branch:** `codex/software-factory-v0-capability-gates`  
 **Depends on:** PR 0  
-**Acceptance:** A02, I02-I05, I08  
+**Acceptance:** capability prerequisites for A02/I02-I05/I08
 **Produces:** executable evidence, not production behavior.
 
 ### Behavior to prove
@@ -198,7 +198,9 @@ and this implementation graph.
   substitute a different execution model.
 
 This PR is deliberately a gate. It may add hermetic test fixtures and harness
-code, but it must not switch production registrations or runtime behavior.
+code, but it must not switch production registrations or runtime behavior. It
+does not claim the `WorkOnTicket` recovery behavior itself; PRs 4 and 5 remain
+responsible for Agent Attempt, Git checkpoint, budget, and workflow recovery.
 
 ## PR 1: durable domain and Store foundation
 
