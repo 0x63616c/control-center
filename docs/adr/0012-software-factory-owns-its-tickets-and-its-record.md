@@ -452,17 +452,52 @@ land durably at stage end).
 
 ## Cutover
 
-The claim scheme changes. `work/paths.go` states the consequence plainly: *"changing the
-scheme once runs are in flight would orphan open workflows and let their tickets be claimed
-twice, so that change costs a drain rather than a deploy."* Today's workflow ID is built from
-the GitHub issue number; Ticket ids are ours.
+**The factory has to keep working tickets while it builds its own replacement.** That single
+constraint decides the shape of the cutover, and it rules out changing the existing pipeline in
+place.
 
-So: pause the dispatcher, let the in-flight Runs finish (the cap is 2), deploy, unpause. The
-workflow ID stays self-describing by construction, keyed on the Ticket id instead.
+An in-place change cannot be performed by the factory at all. Merging deploys, so the running
+dispatcher's work source would change underneath its own in-flight Run; the ticket describing
+the change lives in GitHub and would become invisible the instant it landed; and the workflow
+ID scheme would shift mid-run and orphan it. The factory would be sawing off the branch it is
+standing on.
 
-Dual-reading both GitHub `auto` issues and Tickets during a transition was rejected: two claim
-schemes live at once, two places to look when something is not picked up, and a second system
-to build, test and then delete.
+So the new pipeline arrives as a **second dispatcher and a second ticket workflow**, registered
+on the same worker and the same task queue, reading `ready` Tickets from Postgres. The existing
+pair is not modified. Adding a workflow type does not touch any running execution, so there is
+no non-determinism hazard, no drain, and nothing orphaned. The two run side by side, on disjoint
+work sources and disjoint workflow-ID spaces.
+
+**Cutover is then an operational act with no code in it**: pause the old dispatcher with the
+`UpdateConfig` signal that already exists. Rollback is pausing the new one and unpausing the
+old. Neither requires a deploy. Deleting the old path is a separate, later change, made once the
+new one has actually worked real tickets in production — merged is not the same as exercised.
+
+Two costs, accepted: each dispatcher holds its own concurrency cap against one shared Codex
+quota, so the new one starts capped at 1; and the old code lives on until it is retired.
+
+This supersedes an earlier decision in this ADR's own drafting, which specified an in-place
+change with a drain and rejected running both. That rejection was wrong, and worth recording
+rather than quietly editing away: it treated the transition as a choice between one store and
+two, when the real constraint is that the factory cannot merge a change that removes the work
+source it is currently reading. Two disjoint sources for a bounded period is not the split-brain
+this ADR rejects elsewhere — that objection is about two stores claiming truth about *one* piece
+of work, which never happens here.
+
+### The workflow ID scheme
+
+`work/paths.go` states that starting a workflow with the ticket's ID **is** the claim — it
+replaces a lease table — and that nothing else may construct that string.
+
+The new scheme is **`factory-ticket-<ticket-id>`**: a different prefix, not merely a different
+number. Temporal refuses a second *open* run under one ID, but a closed one does not block
+reuse — so small-integer Ticket ids under the old `work-ticket-` prefix would silently share an
+ID lineage with historical runs for the GitHub issue of the same number. One workflow ID, two
+unrelated pieces of work, one history. A distinct prefix makes the two spaces provably disjoint
+for every input, and greppable apart.
+
+That frees Ticket ids to be small human-friendly integers, which matters more than it sounds:
+`T-14` is something a person can say out loud, and a UUID is not.
 
 **The factory stops posting to GitHub entirely.** No pickup comment, no per-step comment, no
 outcome comment. Progress lives in the database and the console, and `internal/status/`'s
@@ -547,5 +582,6 @@ Do not invent answers to these while implementing. Raise them.
 | A second GitHub App for inbound events | A second identity to create, install and rotate, when a relay in front of the one App suffices. |
 | Having the factory read control-center's webhook table | Crosses the isolation boundary the factory's own namespace exists to enforce. |
 | Server-sent events or WebSockets in v0 | Polling cannot break; SSE earns its keep only for live tailing, which is deferred. |
-| Dual-reading GitHub and Tickets during cutover | Two claim schemes live at once; a second system to build and delete. |
+| Changing the existing dispatcher and ticket workflow in place, with a drain | The factory cannot perform it: merging deploys, so it would remove the work source underneath its own in-flight Run and orphan the ticket describing the change. Superseded by running a second pair side by side — see *Cutover*. |
+| Reusing the `work-ticket-` prefix with new Ticket ids | Temporal only refuses a second *open* run under an ID, so a closed one is reusable; small-integer Ticket ids would silently share a history with the run for the GitHub issue of that number. |
 | Keeping a summary comment on GitHub after cutover | Data stays ours; a partial trail in a system we no longer treat as authoritative invites reading it as one. |
