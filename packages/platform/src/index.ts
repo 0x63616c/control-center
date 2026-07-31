@@ -349,6 +349,16 @@ export const secretCatalog = {
       "password",
       "SOFTWARE_FACTORY_POSTGRES__PASSWORD",
     ),
+    workerBearerToken: secret(
+      "Software Factory API worker bearer",
+      "token",
+      "SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN",
+    ),
+    sandboxBearerToken: secret(
+      "Software Factory API sandbox bearer",
+      "token",
+      "SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN",
+    ),
   },
   github: {
     ghcrPat: secret("GitHub Personal Access Token", "token", "GITHUB_PERSONAL_ACCESS_TOKEN__TOKEN"),
