@@ -13,7 +13,7 @@ import (
 
 const (
 	defaultHTTPClientTimeout = 30 * time.Second
-	responseSnippetLimit    = 4 << 10
+	responseSnippetLimit     = 4 << 10
 )
 
 type httpStore struct {
