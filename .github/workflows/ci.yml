@@ -60,7 +60,7 @@ jobs:
       softwarefactory: ${{ steps.filter.outputs.softwarefactory }}
       any_app: ${{ steps.filter.outputs.any_app }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # No deploy-marker baseline (www-j934.14): `pulumi up` is
       # declarative-convergent, so the latest green run always reconciles the
@@ -68,7 +68,7 @@ jobs:
       # marker that kept Swarm's push-range model from stranding commits is
       # obsolete. dorny defaults to the push range on same-branch pushes and the
       # default-branch diff on feature branches, which is exactly what we want.
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -170,7 +170,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.2.19
@@ -263,14 +263,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.2.19
       - name: Install deps
         run: bun install --frozen-lockfile
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         id: playwright-cache
         with:
           path: ~/.cache/ms-playwright
@@ -296,7 +296,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.2.19
@@ -354,7 +354,7 @@ jobs:
       run:
         working-directory: apps/software-factory
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-go@v7
         with:
           # Read from go.mod so the toolchain has exactly one declared version,
@@ -370,7 +370,7 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Generate SQL code
-        uses: sqlc-dev/setup-sqlc@v4
+        uses: sqlc-dev/setup-sqlc@v5
         with:
           sqlc-version: 1.31.1
       - name: Check committed SQL codegen
@@ -402,7 +402,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-go@v7
         with:
           # Keep the nested module as the single Go-version authority.
@@ -413,7 +413,7 @@ jobs:
         with:
           bun-version: 1.2.19
       - name: Install SQL generator
-        uses: sqlc-dev/setup-sqlc@v4
+        uses: sqlc-dev/setup-sqlc@v5
         with:
           sqlc-version: 1.31.1
       - name: Install client generator
@@ -445,7 +445,7 @@ jobs:
     timeout-minutes: 25
     environment: prod
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # The Docker builder image has no .git, so the commit timestamp must be
       # computed here (where the repo is checked out) and passed in as a build-arg.
@@ -474,7 +474,7 @@ jobs:
     timeout-minutes: 25
     environment: prod
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Build and push manage image
         uses: ./.github/actions/build-product-image
@@ -493,7 +493,7 @@ jobs:
     timeout-minutes: 25
     environment: prod
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Build and push api image
         uses: ./.github/actions/build-product-image
@@ -514,7 +514,7 @@ jobs:
     timeout-minutes: 25
     environment: prod
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Build and push worker image
         uses: ./.github/actions/build-product-image
@@ -533,7 +533,7 @@ jobs:
     timeout-minutes: 25
     environment: prod
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Build and push temporal-worker image
         uses: ./.github/actions/build-product-image
@@ -552,7 +552,7 @@ jobs:
     timeout-minutes: 25
     environment: prod
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Build and push map-provision image
         uses: ./.github/actions/build-product-image
@@ -575,7 +575,7 @@ jobs:
     timeout-minutes: 25
     environment: prod
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Build and push software-factory worker image
         uses: ./.github/actions/build-product-image
@@ -594,7 +594,7 @@ jobs:
     timeout-minutes: 25
     environment: prod
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Build and push software-factory sandbox image
         uses: ./.github/actions/build-product-image
@@ -629,7 +629,7 @@ jobs:
     timeout-minutes: 25
     environment: prod
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Build and push webhook relay image
         uses: ./.github/actions/build-product-image
         env:
@@ -686,7 +686,7 @@ jobs:
     # appears on PR runners (CC-k8t7 age-key = skeleton key for all 114 secrets).
     environment: prod
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Decrypt vault, the ONLY step that touches AGE_PRIVATE_KEY. Installs sops
       # + age, decrypts secrets/vault.yaml, and masks each value before exporting.
@@ -749,7 +749,7 @@ jobs:
       # the www-czg digest-pin guarantee, now config-driven via the Pulumi
       # program rather than an external webhook.
       - name: Log in to ghcr.io (read manifests)
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -783,7 +783,7 @@ jobs:
       # (ephemeral: true + the action's post-step). No long-lived tailnet creds
       # live on the runner, only the single-use OAuth-minted key.
       - name: Connect to Tailscale (ephemeral)
-        uses: tailscale/github-action@v3
+        uses: tailscale/github-action@v4
         with:
           oauth-client-id: ${{ env.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ env.TS_OAUTH_SECRET }}
@@ -799,7 +799,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Install Pulumi CLI
-        uses: pulumi/actions@v6
+        uses: pulumi/actions@v7
 
       # Write the kubeconfig the Pulumi k8s provider uses to reach the home-server
       # kube-apiserver over the tailnet (www-j934.9 produces this secret).
@@ -893,7 +893,7 @@ jobs:
     timeout-minutes: 10
     environment: prod
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Decrypt only PULUMI_ACCESS_TOKEN from the vault (the sole secret this
       # job needs off the AGE key; the Cloudflare-specific config lives
@@ -919,7 +919,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Install Pulumi CLI
-        uses: pulumi/actions@v6
+        uses: pulumi/actions@v7
 
       - name: pulumi up (Cloudflare edge state)
         working-directory: infra/cloudflare
@@ -955,7 +955,7 @@ jobs:
     timeout-minutes: 5
     environment: prod
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Send ntfy notification
         env:

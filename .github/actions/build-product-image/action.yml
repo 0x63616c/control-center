@@ -34,7 +34,7 @@ runs:
         } >> "$GITHUB_OUTPUT"
 
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      uses: docker/setup-buildx-action@v4
 
     - name: Log in to GHCR
       uses: ./.github/actions/ghcr-login
@@ -42,7 +42,7 @@ runs:
         SOPS_AGE_KEY: ${{ env.SOPS_AGE_KEY }}
 
     - name: Build and push image
-      uses: docker/build-push-action@v6
+      uses: docker/build-push-action@v7
       with:
         context: ${{ inputs.context }}
         file: ${{ inputs.dockerfile }}

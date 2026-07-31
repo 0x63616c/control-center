@@ -43,7 +43,7 @@ jobs:
       run:
         working-directory: apps/web/ios
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Decrypt vault — the only step touching AGE_PRIVATE_KEY. No set -x here.
       - name: Decrypt vault (SOPS+age)
