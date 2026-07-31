@@ -78,8 +78,10 @@ here.
   intended CI protections still apply. This is not true of the current setup,
   whose App deliberately lacks bypass authority.
 - **GitHub can enforce the reviewed head.** The merge request supplies the
-  reviewed head SHA, and only `merged: true` plus a merge SHA proves success.
-  An ambiguous response can be reconciled by rereading the pull request.
+  reviewed head SHA, and only an authoritative `merged: true` observation plus
+  a merge SHA proves success. After an ambiguous response, reconciliation uses
+  GitHub's merged endpoint or GraphQL `merged` plus `mergeCommit`; a closed PR
+  or populated REST `merge_commit_sha` alone is not proof.
 - **Agreed: verdicts are SHA-scoped.** CI and internal review results can be associated
   with an exact PR head. Any head change invalidates those verdicts and sends
   the new head through CI and review again.
@@ -91,10 +93,11 @@ here.
   `CreateSession` on its private task queue pins every activity to that exact
   worker and filesystem. Permanent loss may create one replacement generation
   from the same pinned image and durable Step boundary.
-- **The Run Worker can hold the required capabilities.** It can execute Git,
-  Codex, GitHub, CI observation, persistence, and merge activities without
-  Kubernetes exec or remote file copying. Exact capability scoping remains a
-  parked security-design question.
+- **The Run Worker can hold the required execution capabilities.** It can
+  execute Git, Codex, GitHub, CI observation, and merge activities without
+  Kubernetes exec or remote file copying. Claim, durable recording,
+  finalization, provisioning, and cleanup remain main-control activities so
+  Session loss cannot remove the workflow's recovery path.
 - **Rotated credentials reach live processes.** A GitHub installation token can
   be refreshed before every Agent Attempt and every 30 minutes during an active
   Attempt, and the agent-facing Git process will use the new value without
@@ -113,10 +116,13 @@ here.
 - **Expected waiting belongs in activity retry state.** `AwaitDispatchableTickets`
   and `AwaitCI` can use retryable waiting results without producing workflow
   history per poll or operational-error noise.
-- **Draining has enough history headroom.** Temporal's
-  `GetContinueAsNewSuggested()` arrives early enough for the finite set of
-  already-started children to complete or reconcile before hard history limits
-  are reached.
+- **Draining has bounded work.** Temporal's `GetContinueAsNewSuggested()`
+  arrives with enough headroom for the finite set of already-started children
+  and a bounded number of policy Updates. Once draining begins, duplicate
+  policy publications are rejected as already current and non-duplicate
+  publications are capped. Later changes receive a typed `DRAINING` rejection
+  and retry against the continued execution, so waiting on long-lived children
+  adds no unbounded parent history and does not cancel those children.
 - **Parent cancellation is cooperative.** `REQUEST_CANCEL` lets each
   `WorkOnTicket` run its disconnected finalization. Direct child termination
   remains exceptional and relies on reconciliation plus orphan cleanup because
@@ -126,9 +132,12 @@ here.
   required behavior; the relay infrastructure can remain without that event.
 - **Deployment is outside the Run's consistency boundary.** Nothing needed to
   mark a Ticket `done` depends on a production rollout signal.
-- **Old workflow compatibility is intentionally excluded.** The redesigned
-  command sequence may replace existing behavior without `workflow.GetVersion`;
-  no pre-redesign open history has to replay through the new implementation.
+- **Old workflow compatibility is intentionally excluded through cutover.** No
+  redesigned command sequence uses `workflow.GetVersion`. Before deployment,
+  an operator runbook pauses admission, disables auto-merge on every old
+  factory PR, cancels or terminates every old Ticket Run and the old
+  dispatcher, reconciles each nonterminal Ticket back to `open`, and proves no
+  pre-redesign execution remains open. Only then may the new worker deploy.
 
 ## Established surrounding direction
 
@@ -140,8 +149,9 @@ The current direction for the merge flow is:
    `merge_method: squash`. Squash is the only supported merge method.
 4. Treat only an HTTP success response with `merged: true` and a returned merge
    SHA as a confirmed merge.
-5. Re-read the pull request after an ambiguous response so a lost response does
-   not cause the workflow to guess.
+5. Re-read authoritative merged state after an ambiguous response so a lost
+   response does not cause the workflow to guess. Closed state alone is not a
+   successful merge.
 6. If the head changed, rerun CI and internal review for the new head.
 7. If GitHub reports a textual conflict, return to implementation, merge the
    latest `main` into the branch, resolve the conflict, rerun CI and review, and
@@ -175,8 +185,10 @@ not mean the change has deployed.
 This is decided:
 
 > The `WorkOnTicket` workflow provisions one active Run Worker, creates a
-> Temporal Session with it immediately, and executes every Run activity from
-> repository clone through the final Run action on that worker. Permanent
+> Temporal Session with it immediately, and executes every filesystem- or
+> repository-affine Run activity from repository clone through merge on that
+> worker. Mandatory Store recording and terminal finalization remain available
+> on the main worker. Permanent
 > worker loss creates a replacement from the same pinned image and resumes
 > after the latest durable Step boundary.
 
@@ -202,13 +214,14 @@ Main worker
         v
 Run Worker generation, fixed image
   clone repository
-  record Run, Steps, and Agent Attempts
   plan / implement / review
   sync pull request
   await CI
-  renew credentials
   mark pull request ready
   merge pull request
+        |
+        |     main-control activities persist every Step/Attempt boundary,
+        |     refresh the projected credential Secret, and finalize outcomes
         |
         +-- permanent worker loss
         |     main worker deletes/sweeps the lost generation
@@ -219,16 +232,20 @@ Run Worker generation, fixed image
         |
         v
 Main worker
+  atomically record confirmed merge, Run success, and Ticket done
   CompleteSession
   delete Run Worker
   perform fallback cleanup
 ```
 
-The Ticket claim must precede provisioning so two racing Runs cannot both
-create workers for the same Ticket. Provisioning and cleanup remain on the
-main worker because a Run Worker cannot reliably create and delete itself.
-Everything between successful Session creation and Session completion uses a
-context derived from `sessionCtx`.
+The Ticket claim and Run creation are one Store transaction that establishes
+an explicit `active_run_id` ownership token before provisioning, so two racing
+Runs cannot both create workers and a stale Run cannot finalize a later one's
+Ticket. Provisioning, mandatory Store boundaries, terminal/cancellation
+finalization, credential-Secret rotation, and cleanup remain on the main
+worker because they must survive Session loss. Filesystem- and
+repository-affine operations between successful Session creation and Session
+completion use a context derived from `sessionCtx`.
 
 `CreateSession` does not create a Kubernetes pod and does not inspect
 Kubernetes readiness. Our code creates the pod, derives
@@ -247,17 +264,16 @@ The conceptual workflow shape is:
 func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (WorkOnTicketResult, error) {
     control := workflow.WithActivityOptions(ctx, provisioningOptions(in.Policy))
 
-    ticket, err := claimTicket(control, in.TicketID)
+    ticket, durable, err := claimTicketAndStartRun(control, in.TicketID)
     if err != nil {
         return WorkOnTicketResult{}, err
     }
 
-    durable := loadRunPosition(control, in.TicketID)
     for generation := 1; ; generation++ {
         workerID := createRunWorker(control, in, generation)
         sessionCtx := createRunWorkerSession(ctx, in, generation)
 
-        result, runErr := executeRunFrom(sessionCtx, in, ticket, durable)
+        result, runErr := executeRunFrom(ctx, sessionCtx, in, ticket, durable)
         workflow.CompleteSession(sessionCtx)
         deleteRunWorker(ctx, workerID)
 
@@ -290,20 +306,20 @@ allows it. Making implementer thread state recoverable across a fresh
 filesystem remains an implementation prerequisite rather than an assumption
 that local files survived.
 
-The Run Worker registers every Run activity, including clone, agent execution,
-recording, GitHub operations, CI waiting, and merge. The main worker retains
-only dispatcher, provisioning, and cleanup capabilities. Clone and file
-operations execute locally, so the remaining Kubernetes `pods/exec` and remote
-file-transfer machinery can be removed.
+The Run Worker registers clone, agent execution, pull-request synchronization,
+GitHub reads/writes, CI waiting, readying, and merge. The main worker registers
+dispatcher, claim/record/finalize, credential-Secret rotation, provisioning,
+and cleanup activities. Clone and file operations execute locally, so the
+remaining Kubernetes `pods/exec` and remote file-transfer machinery can be
+removed only during the final quiesced activation. Additive Run Worker releases
+must retain them and the legacy sandbox image for still-live old workflows.
 
 All agent stages receive the same writable working environment. Plan and
 review may remain semantically read-only through their prompts, but this is
 not enforced by separate filesystem partitions. Codex already runs with its
 own approvals and sandbox bypassed; the Run Worker pod, resource limits,
-credentials, and network policy are the execution boundary. The exact way to
-grant the Run Worker its broader GitHub, database, and future tool capabilities
-without unnecessarily exposing control credentials to the agent remains an
-implementation design question.
+credentials, and network policy are the execution boundary. It receives no
+database credential or GitHub App private key.
 
 ## Core model
 
@@ -524,12 +540,15 @@ sleeps for 15 seconds while checks are pending, heartbeats, and repeats until
 its own internal bound expires. Move this to the same retry-backed waiting
 pattern selected for the dispatcher.
 
-The target `AwaitCI` activity performs one bounded GitHub read per activity
-try:
+The target `AwaitCI` activity performs one bounded GitHub read for the exact
+candidate head SHA per activity try. `RunPolicy` supplies a non-empty explicit
+set of required checks; unrelated green checks are retained for diagnostics
+but cannot satisfy, mask, or replace a missing required check:
 
 ```text
-checks green or red -> return the authoritative CI Result
-checks absent, pending, or superseded
+all required checks green -> return the authoritative green CI Result
+any required check red    -> return the authoritative red CI Result
+required check absent, pending, or superseded
                     -> retryable CINotConcluded
                        with NextRetryDelay = 15 seconds
 ```
@@ -629,6 +648,23 @@ including results such as `ci_red`, `merge_conflict`, or `blocked`. It becomes
 error occurs, or an agent-backed Step cannot start another permitted Agent
 Attempt.
 
+The persisted terminal vocabulary is closed and deliberately coarser than a
+raw error string:
+
+| Record | Values |
+| --- | --- |
+| Run outcome | `succeeded`, `canceled`, `exhausted`, `failed` |
+| Run failure kind | `invalid_input`, `agent_unrecoverable`, `agent_attempt_budget`, `review_budget`, `ci_unobserved`, `github_auth`, `github_ruleset`, `github_unavailable`, `run_worker_unavailable`, `persistence_unavailable`, `infrastructure` |
+| Step state | `running`, `completed`, `failed` |
+| Agent Attempt state | `running`, `succeeded`, `failed` |
+| Usage state | `unknown`, `measured` |
+
+Step Result is kind-specific structured data rather than one global enum. For
+example, `await_ci` may store `ci_green`, `ci_red`, or `ci_unobserved`, while
+`merge_pull_request` may store `merged`, `merge_conflict`, `head_changed`,
+`base_refresh_required`, or `closed_unmerged`. Raw bounded diagnostics remain
+attached to the Result or failure record without becoming control vocabulary.
+
 This keeps three questions separate:
 
 ```text
@@ -717,11 +753,14 @@ The target invariant is:
 > Run Worker GitHub credential and remains supplied with a valid credential for
 > the entire authorized execution.
 
-Minting remains worker-owned because the GitHub App private key must not enter
-the Run Worker. The new token must be written into both credential files
-without putting the token in Temporal workflow input, output, or history. This
-credential handoff supports an agent-backed Step; it is not itself a
-user-meaningful Step.
+Minting remains main-worker-owned because the GitHub App private key must not
+enter the Run Worker. A main-control activity mints the token and atomically
+updates the Run Worker's per-generation Kubernetes Secret. The pod mounts the
+Secret as a directory, never with `subPath`, so kubelet projects later Secret
+revisions without exec or file transfer. The activity returns only a non-secret
+revision and expiry, never the token. A small Run Worker activity waits until
+that revision is visible before agent execution begins. This credential
+handoff is supporting machinery, not a user-meaningful Step.
 
 The renewal lifecycle is scoped to every Agent Attempt. A worker-side
 supporting activity mints and installs the credential immediately before the
@@ -730,13 +769,14 @@ the workflow runs the agent activity and a credential-renewal loop
 concurrently. The loop mints and installs another credential every 30 minutes
 and stops when the Agent Attempt finishes.
 
-The agent receives a replacement without restarting. Git's configured
-credential helper reads its credential file for each remote operation, and
-each new `gh` process reads `hosts.yml` through `GH_CONFIG_DIR`. Each file must
-be written to a sibling temporary file with mode `0600` and atomically renamed
-into place. A command already using the previous token may finish with it;
-because renewal occurs halfway through the one-hour lifetime, both old and new
-tokens remain valid across the replacement window.
+The agent receives a replacement without restarting. Git uses a credential
+helper that reads the current projected token file for every remote operation.
+The Run Worker places a `gh` launcher earlier on `PATH`; each invocation reads
+the same current token file into that child process and then execs the real
+binary. No long-lived Codex environment variable contains a token. Kubernetes
+owns atomic projection of the Secret directory. A command already using the
+previous token may finish with it; renewal at 30 minutes leaves overlap before
+the previous token's expiry.
 
 The renewal activity must combine minting and installation so the token never
 appears in Temporal workflow input, output, or history. It may return
@@ -766,9 +806,26 @@ There are two deliberately separate policies:
    logic and creates another Agent Attempt row.
 
 An activity retry of agent work must be idempotent around its Agent Attempt ID.
-It first reconciles an existing result and otherwise resumes the execution's
-thread where possible. Only the workflow may allocate a new Agent Attempt ID
-and authorize another potentially chargeable execution.
+Before Codex starts, the main worker durably creates the Step and Attempt. As
+soon as Codex yields a provider thread identity, and again when it reaches a
+terminal result, the trusted Run Worker activity writes a checkpoint through a
+narrow per-Run API capability. The API persists thread identity, terminal
+envelope, usage state, and transcript before the activity acknowledges
+success. A retry or replacement first reads that record and otherwise resumes
+the execution's thread where possible. Only the workflow may allocate a new
+Agent Attempt ID and authorize another potentially chargeable execution. The
+per-Run capability is minted inside provisioning, stored hashed with Run
+ownership, mounted from a Secret, and cannot finalize a Ticket or mutate
+another Run.
+
+Repository-affine effects have a separate durable Git/PR checkpoint. After a
+successful push or pull-request synchronization, the Run Worker atomically
+records the branch, pushed head SHA, observed base SHA, PR number and node ID,
+and the completed Step Result before the activity acknowledges success. A
+retry or replacement reconciles GitHub with that checkpoint first. Therefore a
+worker that dies after GitHub accepts the write but before Temporal receives
+the response neither repeats the effect blindly nor regresses to an older
+head.
 
 Postgres does not store one row per native activity try. Temporal owns that
 low-level operational history. Postgres remains authoritative for the Step's
@@ -920,14 +977,31 @@ This reaches further than a database migration:
   invocations only. Recalculate it against the v0 merge-terminal workflow; it
   must not reserve time for deployment observation.
 
-## Existing workflow histories
+## Existing workflow histories and cutover
 
 Do not use `workflow.GetVersion` to migrate workflows started before this
-redesign. Run policy is resolved before a workflow starts and passed in its
-arguments, so each workflow executes against the immutable policy snapshot it
-began with. Changes to policy defaults apply to newly started workflows rather
-than mutating workflows already in flight. Migration of older workflow
-histories is out of scope for this work.
+redesign. Instead, deployment is gated by a one-time cutover runbook:
+
+1. pause the old dispatcher and prove it admits no new Tickets;
+2. inventory every open old dispatcher/Ticket execution and factory PR;
+3. disable GitHub auto-merge on every unmerged factory PR so an old Run cannot
+   merge after ownership moves;
+4. cancel cooperative Runs, terminate any remainder, and terminate the old
+   dispatcher;
+5. transactionally return all old `working` and `review` Tickets to `open`
+   without marking those Runs successful; and
+6. prove there are no open pre-redesign workflows before deploying the new
+   command sequence.
+
+Postgres history is preserved separately. Additive releases use a dual-read
+compatibility projection because legacy workflows may create `(stage, turn)`
+rows after the first target schema migration. Only after the cutover inventory
+is empty does an idempotent final backfill copy every remaining legacy Step,
+Attempt, and transcript into the ordinal model, verify counts and ordering, and
+switch reads to the target projection. Excluding Temporal history migration
+does not authorize deleting the console's durable history.
+After cutover, every new Run still receives an immutable Run Policy snapshot in
+its workflow arguments.
 
 ## Run policy snapshot
 
@@ -943,6 +1017,9 @@ activity policies. For example, the agent-execution policy owns its two
 timeouts, heartbeat, retry count, and backoff; credential renewal and durable
 recording each own their separate retry policy. These are resolved values in
 the workflow input, not mutable configuration read during workflow execution.
+The policy also contains the exact non-empty required-check set used by
+`AwaitCI`; a Run with no required checks is invalid rather than implicitly
+green.
 
 ## Publishing policy to the dispatcher
 
@@ -953,13 +1030,20 @@ receives that policy in `WorkOnTicketInput`. Starting new workers therefore
 does not update an already-running dispatcher, including after the dispatcher
 continues as new.
 
-The target is an acknowledged startup handshake:
+The target is an acknowledged startup handshake without a first-worker
+deadlock. The process has two Temporal workers: a small control worker polling
+a dedicated dispatcher task queue, and the ordinary main worker polling Run
+workflow and main-activity queues.
 
 1. Resolve the complete `RunPolicy` in the worker process.
-2. Publish it with Temporal Update-With-Start using the dispatcher's stable
+2. Start the control worker, which registers only the dispatcher workflow.
+3. Publish it with Temporal Update-With-Start using the dispatcher's stable
    workflow ID and `WorkflowIDConflictPolicy_USE_EXISTING`.
-3. Wait for the Update to be accepted and completed.
-4. Only then allow that worker process to poll the factory task queues.
+4. Set Temporal's Update ID to this publication's stable `request_id`, so a
+   retry after a lost response is the same protocol operation rather than a
+   merely similar payload.
+5. Wait for the Update to be accepted and completed.
+6. Only then start the main worker and allow Run work or activities to poll.
 
 This makes publication a startup gate rather than a best-effort background
 signal. A malformed policy is rejected by the Update validator. The caller
@@ -976,11 +1060,13 @@ RunPolicyUpdate
   policy
 ```
 
-`policy_fingerprint` is a stable hash of the complete resolved policy. It is
-the deduplication identity. Git SHA is retained only as audit metadata; it does
-not order publications and it does not decide whether two policies are equal.
-`request_id` identifies one worker publication call and remains stable when
-that caller retries an ambiguous transport failure.
+`policy_fingerprint` is a stable hash of the complete resolved policy and lets
+the handler return `ALREADY_CURRENT`. It is not the Temporal Update ID: a
+policy may intentionally move A to B and later back to A. Git SHA is retained
+only as audit metadata; it does not order publications and it does not decide
+whether two policies are equal. `request_id` identifies one worker publication
+call, is the Temporal Update ID, and remains stable when that caller retries an
+ambiguous transport failure.
 
 The dispatcher applies non-duplicate Updates in the order Temporal delivers
 them. The latest accepted policy therefore wins. There is no separate policy
@@ -1144,7 +1230,8 @@ be deliberately relocated:
     timeout and no independent process-liveness heartbeat.
 17. Keep a resolved, immutable `RunPolicy` snapshot in the workflow arguments,
     while replacing generic `StageAttempts` and `ControlAttempts` fields with
-    explicit domain budgets and named technical retry policies.
+    explicit domain budgets, a non-empty required-check set, and named
+    technical retry policies.
 18. Publish the worker's current policy to the singleton dispatcher with an
     acknowledged Update-With-Start, deduplicate the resolved policy by a stable
     content fingerprint, and make `APPLIED` or `ALREADY_CURRENT` a
@@ -1158,11 +1245,14 @@ be deliberately relocated:
 22. Create one Run Worker after claiming the Ticket, then immediately use
     `CreateSession` on its private task queue instead of separately polling
     Kubernetes readiness.
-23. Execute every Run activity from clone through the terminal Run action with
-    a context derived from that Session, leaving only provisioning and cleanup
-    on the main worker.
-24. Remove Kubernetes `pods/exec` and remote file transfer from normal Run
-    execution; commands and files remain local to the Run Worker.
+23. Execute every filesystem- and repository-affine activity from clone
+    through merge with a context derived from the Session. Keep claim,
+    recording, credential-Secret rotation, terminal/cancellation finalization,
+    provisioning, and cleanup on the main worker so Session loss cannot remove
+    recovery.
+24. Remove Kubernetes `pods/exec` and remote file transfer from target Run
+    execution, but retain the legacy machinery until the final quiesced
+    activation; target commands and files remain local to the Run Worker.
 25. Give every agent stage the same writable execution environment, while
     retaining role-specific behavioral instructions in prompts.
 26. Replace `ObserveCI`'s internal sleep loop with `AwaitCI`: one short GitHub
@@ -1196,23 +1286,41 @@ be deliberately relocated:
 34. Recover permanent Session loss inside the same Run by creating one
     replacement Run Worker at a time from the same pinned image and resuming
     after the latest durable Step boundary without resetting budgets.
-35. Treat GitHub permission and ruleset rejection as repairable infrastructure:
+35. Checkpoint branch, pushed head, observed base, PR identity, and the
+    completed repository-affine Step Result before acknowledging Git/PR
+    effects; reconcile that checkpoint before repeating an ambiguous write.
+36. Treat GitHub permission and ruleset rejection as repairable infrastructure:
     retry with bounded backoff until the Run deadline, then use the existing
     `failed` Ticket state and preserve the specific Run failure kind.
-36. Give a post-cancellation Run a fresh branch and pull request, carry useful
+37. Give a post-cancellation Run a fresh branch and pull request, carry useful
     prior commits forward, and ensure the superseded unmerged pull request is
     no longer merge-authorized.
-37. Use the existing `failed` Ticket state for infrastructure that cannot
+38. Use the existing `failed` Ticket state for infrastructure that cannot
     recover before its Run deadline, while preserving the specific
     infrastructure failure kind on the Run rather than adding another coarse
     Ticket state.
-38. Rename the coarse Ticket state `working` to `active`; detailed progress is
+39. Rename the coarse Ticket state `working` to `active`; detailed progress is
     expressed by the current Step rather than another coarse Ticket state.
-39. Derive current phase from the persisted Step lifecycle instead of storing
+40. Derive current phase from the persisted Step lifecycle instead of storing
     a duplicate mutable `run.phase` projection.
-40. Run a dedicated `MaintainFactory` workflow from a Temporal Schedule to
+41. Run a dedicated `MaintainFactory` workflow from a Temporal Schedule to
     reconcile both abandoned Ticket ownership and orphaned Run Workers after a
     Ticket workflow is directly terminated; do not use passive lease expiry.
+42. Give every active Ticket an explicit owning Run ID. Claim and Run creation
+    are atomic; success, cancellation, manual retry, and maintenance all
+    predicate on that owner.
+43. Bootstrap policy publication through a separate dispatcher control queue,
+    using the publication request ID as Temporal's Update ID before the main
+    worker begins polling.
+44. Deliver renewable GitHub credentials through an updateable projected
+    Secret directory and per-command Git/`gh` readers; do not use pod exec,
+    remote copying, a long-lived token environment variable, or the App key in
+    the Run Worker.
+45. Persist an Agent Attempt's provider identity, terminal result, usage state,
+    and transcript through a narrow per-Run API capability before acknowledging
+    activity success, so retries and replacement workers can reconcile it.
+46. Perform an explicit quiesce/reconcile cutover before deploying the new
+    command sequence, while preserving historical Postgres Run data.
 
 ## Parked questions
 
@@ -1263,20 +1371,24 @@ The following code-level policy still needs verification:
 
 ### Run Worker capabilities and failure
 
-The ownership and routing model is settled. These implementation details still
-need a security and failure-mode pass:
+The ownership, credential delivery, recording, and routing model is settled.
+Fresh-filesystem provider resume is an explicit pre-implementation capability
+gate, not a settled Codex capability. Before building the Run Worker, a
+black-box test against the exact target Codex CLI must capture thread identity,
+kill execution at controlled points, and resume from a new process on a fresh
+filesystem. If it cannot do that, A02/I08 and the Attempt recovery behavior
+must be revised explicitly before PR 4; implementation must not silently rely
+on local files surviving or substitute another execution model.
 
-- How the Run Worker mints or receives GitHub App installation credentials and
-  renews them locally without placing secrets in Temporal history or needlessly
-  exposing the App private key to the agent process.
-- How recording activities receive database capability while preserving the
-  intended blast radius of agent-authored commands.
-- How transcript data leaves the ephemeral Run Worker durably.
-- What durable provider and transcript artifact allows an implementer Agent
-  Thread to resume on a replacement Run Worker's fresh filesystem. The safe
-  fallback is a failed incomplete Attempt followed by a newly authorized
-  Attempt within the existing budget, not rerunning completed Steps.
+These remaining implementation details still need a security and failure-mode
+pass:
+
+- The exact per-Run API-capability representation and revocation path. It may
+  checkpoint only its own Agent Attempt and transcript; it cannot finalize a
+  Ticket or mutate another Run.
+- The exact provider metadata and lifecycle semantics proven by the capability
+  gate. The safe fallback remains a failed incomplete Attempt followed by a
+  newly authorized Attempt within the existing budget, not rerunning completed
+  Steps.
 - Which additional tools, including a future Temporal CLI, belong in the Run
   Worker image and what authority the agent receives when invoking them.
-- Which main-worker fallback records terminal failure when the Session itself
-  is unavailable and therefore cannot execute its own recording activity.
