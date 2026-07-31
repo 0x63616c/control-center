@@ -789,7 +789,9 @@ jobs:
           oauth-secret: ${{ env.TS_OAUTH_SECRET }}
           tags: tag:ci
           # Ephemeral node so it's removed from the tailnet when the runner exits.
-          args: --accept-routes
+          # No `args:` — v4 passes --accept-routes itself, and repeating it here
+          # makes `tailscale up` reject the whole invocation ("invalid boolean
+          # flag accept-routes: flag provided multiple times").
 
       - uses: oven-sh/setup-bun@v2
         with:
