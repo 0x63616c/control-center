@@ -1,8 +1,6 @@
 import { Fragment } from "react";
 import type { ConsoleResponse } from "@/api/generated";
 import { StatePill, ticketStatus } from "@/components/StatePill";
-import { TemporalLink } from "@/components/TemporalLink";
-import { temporalTicketUrl } from "@/lib/temporal";
 
 export type ConsoleState =
   | { kind: "loading" }
@@ -63,13 +61,6 @@ function ticketBlockers(ticket: Ticket) {
       </ul>
     </div>
   );
-}
-
-// Working, review and failed Tickets have (or had) a live workflow worth a
-// direct Temporal link; open/done ones do not.
-function temporalLink(ticket: Ticket) {
-  if (!["working", "review", "failed"].includes(ticket.state)) return null;
-  return <TemporalLink href={temporalTicketUrl(ticket.id)} />;
 }
 
 function Snapshot({
@@ -197,7 +188,6 @@ function Snapshot({
                   <th scope="col">Ticket</th>
                   <th scope="col">State</th>
                   <th scope="col">Updated</th>
-                  <th scope="col" aria-label="Temporal link" />
                 </tr>
               </thead>
               <tbody>
@@ -215,11 +205,10 @@ function Snapshot({
                           <StatePill ticket={ticket} />
                         </td>
                         <td className="row-meta">{updatedAgo(ticket.updatedAt)}</td>
-                        <td className="ticket-table-links">{temporalLink(ticket)}</td>
                       </tr>
                       {blockers && (
                         <tr className="ticket-table-blockers">
-                          <td colSpan={4}>{blockers}</td>
+                          <td colSpan={3}>{blockers}</td>
                         </tr>
                       )}
                     </Fragment>

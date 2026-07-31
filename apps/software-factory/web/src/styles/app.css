@@ -300,9 +300,12 @@ a:hover {
 .ticket-page header.ticket-head {
   margin-block: 12px 4px;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+}
+.ticket-head .spacer {
+  flex: 1;
 }
 .ticket-page h1 {
   margin: 0;
