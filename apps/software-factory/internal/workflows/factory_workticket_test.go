@@ -56,17 +56,25 @@ type factoryTicketHarness struct {
 	review map[int][]work.Finding
 
 	// what it did.
-	implementTurns []work.StageKey
-	reviewTurns    []work.StageKey
-	created        int
-	cloned         []work.SandboxID
-	deleted        []work.SandboxID
-	drafted        []string
-	markedReady    []string
-	autoMerged     []string
-	openOrUpdate   int
-	done           workflows.FactoryTicketDone
-	sawDone        bool
+	implementTurns   []work.StageKey
+	reviewTurns      []work.StageKey
+	created          int
+	sandboxInputs    []activities.CreateSandboxInput
+	cloned           []work.SandboxID
+	deleted          []work.SandboxID
+	drafted          []string
+	markedReady      []string
+	autoMerged       []string
+	openOrUpdate     int
+	pullRequestInput []activities.OpenOrUpdatePullRequestInput
+	done             workflows.FactoryTicketDone
+	sawDone          bool
+
+	// callOrder records, in the order they actually ran, every "CreateSandbox"
+	// and "OpenOrUpdatePullRequest" call — what #603's acceptance test reads to
+	// prove the push happens before the pull request is requested, not merely
+	// that both happened at some point.
+	callOrder []string
 }
 
 func newFactoryTicketHarness(t *testing.T) *factoryTicketHarness {
@@ -120,7 +128,9 @@ func (h *factoryTicketHarness) run() {
 	env := h.env
 
 	env.OnActivity(acts.CreateSandbox, mock.Anything, mock.Anything).
-		Return(func(_ context.Context, _ activities.CreateSandboxInput) (work.SandboxID, error) {
+		Return(func(_ context.Context, in activities.CreateSandboxInput) (work.SandboxID, error) {
+			h.sandboxInputs = append(h.sandboxInputs, in)
+			h.callOrder = append(h.callOrder, "CreateSandbox")
 			if h.sandboxErr != nil {
 				return "", h.sandboxErr
 			}
@@ -162,6 +172,8 @@ func (h *factoryTicketHarness) run() {
 	env.OnActivity(acts.OpenOrUpdatePullRequest, mock.Anything, mock.Anything).
 		Return(func(_ context.Context, in activities.OpenOrUpdatePullRequestInput) (work.PullRequest, error) {
 			h.openOrUpdate++
+			h.pullRequestInput = append(h.pullRequestInput, in)
+			h.callOrder = append(h.callOrder, "OpenOrUpdatePullRequest")
 			return work.PullRequest{
 				Number: 9, URL: "https://github.com/o/r/pull/9", NodeID: "PR_node9",
 				Title: in.Title, Body: in.Body, Draft: h.pullRequestDraft,
@@ -239,6 +251,72 @@ func TestFactoryWorkTicketClaimsTheTicketBeforeCreatingAnything(t *testing.T) {
 	}
 	if h.created != 1 {
 		t.Fatalf("created %d sandboxes, want 1", h.created)
+	}
+}
+
+// TestFactoryWorkTicketPushesTheSameBranchItOpensAPullRequestAgainst is #603's
+// acceptance test: the branch CreateSandbox tells the sandbox to push
+// (Env[work.SandboxBranchEnv], via CreateSandboxInput.TicketBacked) must be
+// the exact branch the loop later asks GitHub to open a pull request against
+// — and CreateSandbox, which is what makes the push happen (the sandbox's own
+// CloneRepo activity pushes SF_BRANCH before returning), must run before
+// OpenOrUpdatePullRequest for that to mean anything. Before #603 was fixed,
+// CreateSandboxInput carried no TicketBacked field, SF_BRANCH was always
+// BranchName's legacy branch, and this run's implement turn pushed a branch
+// nothing that follows ever asked GitHub about — the exact shape of "github
+// rejected the request as malformed... Field:head Code:invalid" from
+// production.
+func TestFactoryWorkTicketPushesTheSameBranchItOpensAPullRequestAgainst(t *testing.T) {
+	t.Parallel()
+
+	h := newFactoryTicketHarness(t)
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+
+	if len(h.sandboxInputs) != 1 {
+		t.Fatalf("CreateSandbox called %d times, want 1", len(h.sandboxInputs))
+	}
+	if !h.sandboxInputs[0].TicketBacked {
+		t.Fatal("CreateSandboxInput.TicketBacked must be true on the Ticket-backed pipeline, or SF_BRANCH names the wrong pipeline's branch")
+	}
+	if len(h.pullRequestInput) == 0 {
+		t.Fatal("OpenOrUpdatePullRequest was never called")
+	}
+
+	// This is the branch SpecForFactoryTicket bakes into SF_BRANCH — computed
+	// independently here, the same way the production bug was two independent
+	// computations disagreeing.
+	runID := h.done.RunID
+	if !h.sawDone {
+		t.Fatal("the run never reported done; cannot recover its RunID to check the branch against")
+	}
+	wantBranch := work.FactoryTicketBranchName(int64(h.ticket), runID)
+	for i, in := range h.pullRequestInput {
+		if in.Branch != wantBranch {
+			t.Fatalf("OpenOrUpdatePullRequest call %d asked about branch %q, want %q (the branch this run's sandbox was told to push)",
+				i, in.Branch, wantBranch)
+		}
+	}
+
+	// The push itself happens inside CloneRepo, which cannot even run until
+	// CreateSandbox has returned this run's sandbox — so CreateSandbox
+	// ordering first in callOrder is what "the head branch is pushed before
+	// the pull request is requested" actually reduces to for this workflow.
+	if len(h.callOrder) < 2 || h.callOrder[0] != "CreateSandbox" {
+		t.Fatalf("call order = %v, want CreateSandbox before any OpenOrUpdatePullRequest", h.callOrder)
+	}
+	firstPR := -1
+	for i, name := range h.callOrder {
+		if name == "OpenOrUpdatePullRequest" {
+			firstPR = i
+			break
+		}
+	}
+	if firstPR <= 0 {
+		t.Fatalf("call order = %v, want CreateSandbox to precede the first OpenOrUpdatePullRequest", h.callOrder)
 	}
 }
 
