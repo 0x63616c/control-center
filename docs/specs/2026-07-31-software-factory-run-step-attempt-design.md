@@ -3,6 +3,9 @@
 Status: **working design**
 
 Behavior companion:
+[Software factory v0 acceptance-test contract](./2026-07-31-software-factory-v0-acceptance-test-contract.md)
+
+Behavior companion:
 [v0 acceptance-test contract](./2026-07-31-software-factory-v0-acceptance-test-contract.md)
 
 This document records the software factory lifecycle design discussion as of
@@ -84,9 +87,10 @@ here.
   enough information to distinguish a textual conflict, a changed head, an
   already-completed merge, a ruleset or permission rejection, and a transient
   infrastructure failure.
-- **Run Worker affinity is real.** After the main worker provisions a Run
-  Worker, `CreateSession` on its private task queue pins every activity from
-  clone through the terminal Run action to that exact worker and filesystem.
+- **Run Worker affinity is real.** Within one worker generation,
+  `CreateSession` on its private task queue pins every activity to that exact
+  worker and filesystem. Permanent loss may create one replacement generation
+  from the same pinned image and durable Step boundary.
 - **The Run Worker can hold the required capabilities.** It can execute Git,
   Codex, GitHub, CI observation, persistence, and merge activities without
   Kubernetes exec or remote file copying. Exact capability scoping remains a
@@ -102,9 +106,10 @@ here.
 - **Cancellation finalization can be atomic.** Postgres can conditionally mark
   the owning Run canceled and move only its still-`working` Ticket to `open`, so
   a late cancellation cannot reopen a Ticket already committed as `done`.
-- **Agreed: a repeated Run can adopt existing Git state.** After cancellation reopens a
-  Ticket, the next Run can safely discover and continue or supersede its
-  existing branch and pull request instead of assuming a pristine first run.
+- **Agreed: a repeated Run supersedes existing Git state.** After cancellation
+  reopens a Ticket, the next Run owns a fresh branch and pull request, carries
+  useful commits forward, and prevents the old unmerged pull request from
+  remaining merge-authorized.
 - **Expected waiting belongs in activity retry state.** `AwaitDispatchableTickets`
   and `AwaitCI` can use retryable waiting results without producing workflow
   history per poll or operational-error noise.
@@ -165,19 +170,23 @@ failed -> open   (manual retry)
 `done` means GitHub has confirmed the merge and returned its merge SHA. It does
 not mean the change has deployed.
 
-## One Run Worker for the whole Run
+## One active Run Worker at a time
 
 This is decided:
 
-> The `WorkOnTicket` workflow provisions one Run Worker, creates a Temporal
-> Session with it immediately, and executes every Run activity from repository
-> clone through the final Run action on that same worker.
+> The `WorkOnTicket` workflow provisions one active Run Worker, creates a
+> Temporal Session with it immediately, and executes every Run activity from
+> repository clone through the final Run action on that worker. Permanent
+> worker loss creates a replacement from the same pinned image and resumes
+> after the latest durable Step boundary.
 
 `Run Worker` replaces `Sandbox` in the target vocabulary. The pod is not a
 restricted place into which the main worker remotely executes selected agent
 commands. It is the Run's execution worker: it owns the checkout, tools,
-credentials, local process handles, and activity implementations for the
-Run's lifetime.
+credentials, local process handles, and activity implementations while that
+worker generation is active. A Run normally has one generation. Replacement
+is recovery inside the same Run, never permission to run two generations
+concurrently or to adopt a newly deployed image.
 
 The target flow is:
 
@@ -191,7 +200,7 @@ Main worker
   CreateSession on the Run's private task queue
         |
         v
-Run Worker, one fixed pod and image
+Run Worker generation, fixed image
   clone repository
   record Run, Steps, and Agent Attempts
   plan / implement / review
@@ -200,6 +209,13 @@ Run Worker, one fixed pod and image
   renew credentials
   mark pull request ready
   merge pull request
+        |
+        +-- permanent worker loss
+        |     main worker deletes/sweeps the lost generation
+        |     creates a replacement from the same image
+        |     creates a new Session
+        |     restores Git and durable Step state
+        |     resumes after the latest completed Step
         |
         v
 Main worker
@@ -236,37 +252,20 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (WorkOnTicketResul
         return WorkOnTicketResult{}, err
     }
 
-    runID := workflow.GetInfo(ctx).WorkflowExecution.RunID
-    var workerID work.RunWorkerID
-    if err := workflow.ExecuteActivity(control, acts.CreateRunWorker,
-        activities.CreateRunWorkerInput{
-            TicketID: in.TicketID,
-            RunID: runID,
-            RunTimeout: in.Policy.RunTimeout,
-        }).Get(ctx, &workerID); err != nil {
-        return WorkOnTicketResult{}, err
-    }
+    durable := loadRunPosition(control, in.TicketID)
+    for generation := 1; ; generation++ {
+        workerID := createRunWorker(control, in, generation)
+        sessionCtx := createRunWorkerSession(ctx, in, generation)
 
-    queue := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-        TaskQueue: work.RunWorkerTaskQueue(runID),
-    })
-    sessionCtx, err := workflow.CreateSession(queue, &workflow.SessionOptions{
-        CreationTimeout: in.Policy.RunWorkerCreationTimeout,
-        ExecutionTimeout: in.Policy.RunTimeout,
-    })
-    if err != nil {
+        result, runErr := executeRunFrom(sessionCtx, in, ticket, durable)
+        workflow.CompleteSession(sessionCtx)
         deleteRunWorker(ctx, workerID)
-        return WorkOnTicketResult{}, err
-    }
 
-    result, runErr := executeRun(sessionCtx, in, ticket, workerID)
-    workflow.CompleteSession(sessionCtx)
-
-    cleanupErr := deleteRunWorker(ctx, workerID)
-    if runErr == nil && cleanupErr != nil {
-        runErr = cleanupErr
+        if !isPermanentSessionLoss(runErr) {
+            return result, runErr
+        }
+        durable = loadRunPosition(control, in.TicketID)
     }
-    return result, runErr
 }
 ```
 
@@ -279,6 +278,17 @@ worker. The Session pins its activities, not its workflow tasks. A main-worker
 deploy can therefore replay the deterministic orchestration code, but it
 cannot replace an active Run Worker's activity implementations or interrupt a
 long-running activity merely by rolling the main worker Deployment.
+
+Permanent Run Worker loss is different from a main-worker deploy. Session
+failure returns control to `WorkOnTicket`, which creates a new worker generation
+from the Run Policy's same pinned image, reconstructs the branch from durable
+Git state, and resumes after the latest completed Step. Completed Steps and
+cumulative budgets never reset. If the interrupted Agent Attempt cannot be
+resumed from durable provider state, it ends failed and a new Agent Attempt may
+be authorized inside the same Step only while the existing Run-wide budget
+allows it. Making implementer thread state recoverable across a fresh
+filesystem remains an implementation prerequisite rather than an assumption
+that local files survived.
 
 The Run Worker registers every Run activity, including clone, agent execution,
 recording, GitHub operations, CI waiting, and merge. The main worker retains
@@ -1096,10 +1106,10 @@ cleans up but strands a canceled Ticket in `working`.
 The existing tick also bundles work that is not ready-Ticket polling and must
 be deliberately relocated:
 
-- Prefer observing child-workflow Futures for normal completion instead of
-  repeatedly describing active Runs. Whether the existing completion signal
-  and reconciliation pass can then be removed still needs verification against
-  crash and ambiguous-start cases.
+- Observe child-workflow Futures as the authoritative completion mechanism.
+  Remove the custom completion signal and periodic `DescribeRun`
+  reconciliation; Temporal reconstructs Futures on replay, and draining means
+  no live Future crosses `ContinueAsNew`.
 - Move orphaned Run Worker sweeping to a separate maintenance workflow or Temporal
   Schedule rather than waking the dispatcher for it. That design still needs a
   durable source of truth for which Runs are live.
@@ -1172,13 +1182,29 @@ be deliberately relocated:
     Worker teardown may fall back to an orphan sweeper without changing the
     Ticket outcome.
 31. When Temporal suggests `ContinueAsNew`, put the dispatcher into draining
-    mode: start no new Tickets, finish and reconcile all in-flight Runs, then
+    mode: start no new Tickets, await all in-flight child Futures, then
     roll over carrying only the latest resolved policy. Do not use a custom
     event-count threshold or serialize live child state into the new execution.
 32. Replace the dispatcher's child `ABANDON` policy with explicit
     `REQUEST_CANCEL`. Dispatcher cancellation owns the whole child tree;
     canceled Runs are durably recorded, their still-owned Tickets return from
     `working` to `open`, and Run Worker teardown retains its sweeper fallback.
+33. Use Temporal child Futures as the dispatcher's sole normal completion
+    mechanism; remove custom completion signals and `DescribeRun`
+    reconciliation.
+34. Recover permanent Session loss inside the same Run by creating one
+    replacement Run Worker at a time from the same pinned image and resuming
+    after the latest durable Step boundary without resetting budgets.
+35. Treat GitHub permission and ruleset rejection as repairable infrastructure:
+    retry with bounded backoff until the Run deadline, then use the existing
+    `failed` Ticket state and preserve the specific Run failure kind.
+36. Give a post-cancellation Run a fresh branch and pull request, carry useful
+    prior commits forward, and ensure the superseded unmerged pull request is
+    no longer merge-authorized.
+37. Use the existing `failed` Ticket state for infrastructure that cannot
+    recover before its Run deadline, while preserving the specific
+    infrastructure failure kind on the Run rather than adding another coarse
+    Ticket state.
 
 ## Parked questions
 
@@ -1225,10 +1251,6 @@ The retry-driven wait and acknowledged policy publication are the direction.
 The following implementation boundaries still need decisions or code-level
 verification:
 
-- Whether child-workflow Futures completely replace the completion signal and
-  periodic `DescribeRun` reconciliation, including ambiguous child starts and
-  worker restarts. Regardless of that normal-operation choice, no Future or
-  in-flight Run crosses `ContinueAsNew` because the dispatcher drains first.
 - Which maintenance workflow or Schedule owns orphaned Run Worker sweeping and how
   it derives the set of live Runs.
 - The per-query timeout and retry policy for real dispatcher database errors,
@@ -1245,9 +1267,10 @@ need a security and failure-mode pass:
 - How recording activities receive database capability while preserving the
   intended blast radius of agent-authored commands.
 - How transcript data leaves the ephemeral Run Worker durably.
-- Whether a failed Session fails the Run immediately or provisions a
-  replacement Run Worker using the same pinned image and resumes from durable
-  Step state.
+- What durable provider and transcript artifact allows an implementer Agent
+  Thread to resume on a replacement Run Worker's fresh filesystem. The safe
+  fallback is a failed incomplete Attempt followed by a newly authorized
+  Attempt within the existing budget, not rerunning completed Steps.
 - Which additional tools, including a future Temporal CLI, belong in the Run
   Worker image and what authority the agent receives when invoking them.
 - Which main-worker fallback records terminal failure when the Session itself

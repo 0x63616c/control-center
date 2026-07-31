@@ -170,8 +170,10 @@ execution.
 _Avoid_: Job, session.
 
 **Run Worker** _(target)_:
-The ephemeral execution worker assigned exclusively to one Run. It owns that Run's checkout,
-tools, and activity execution until the Run ends.
+One generation of the ephemeral execution worker assigned exclusively to one Run. It owns that
+Run's checkout, tools, and activity execution while active. A Run normally has one generation;
+permanent loss may create one replacement at a time from the same pinned image, resuming after a
+durable Step boundary without resetting the Run or its budgets.
 _Avoid_: Sandbox, agent pod, shared worker.
 
 **Step**:

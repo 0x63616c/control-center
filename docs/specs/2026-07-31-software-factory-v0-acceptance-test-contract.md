@@ -63,7 +63,8 @@ Every scenario below protects at least one of these invariants.
 4. A native activity retry never creates semantic work: no new Step, Review
    cycle, or Agent Attempt unless the workflow explicitly authorizes one.
 5. All Run activities from clone through the terminal action execute on one
-   Run Worker and one writable filesystem.
+   active Run Worker generation and one writable filesystem at a time. A
+   replacement uses the same pinned image and resumes from durable state.
 6. The Postgres Run history contains every Step and every agent execution, but
    not Temporal's individual activity tries.
 7. Once GitHub has authoritatively confirmed the merge, durable success
@@ -88,27 +89,23 @@ Every scenario below protects at least one of these invariants.
 | D05 | No Ticket is dispatchable | `AwaitDispatchableTickets` queries Postgres | It returns the expected retryable no-work condition with a 10-second next delay and produces neither an operational error nor a workflow event per retry |
 | D06 | Dispatchable Tickets exist below the concurrency cap | The wait activity returns them | The dispatcher starts children in stable order until the cap is full, and each child receives the current immutable Run Policy |
 | D07 | The dispatcher is paused or at capacity | Time passes and Tickets become ready | It does not schedule a dispatch wait it cannot use and starts no child |
-| D08 | A current child finishes | Its completion is observed | Exactly that Run releases its slot; a stale completion from an older Run ID cannot release the current owner's slot |
+| D08 | A current child finishes | Its child Future resolves | Exactly that Run releases its slot; no completion signal or `DescribeRun` reconciliation is required |
 | D09 | Temporal does not suggest Continue-As-New | Children start and finish | The dispatcher continues normally without an application-owned event-count threshold |
 | D10 | Temporal suggests Continue-As-New while children are live | The dispatcher handles the suggestion | It enters draining, cancels any outstanding dispatch wait, admits no new Tickets, and continues processing Updates and child completion |
 | D11 | A draining dispatcher receives another valid policy | Its final child later finishes | It continues as new only after `inFlight` is empty and carries the latest accepted resolved policy, with no child Future or live Run state |
 | D12 | The dispatcher is canceled with live children | The parent closes | Each child receives a cancellation request; none is abandoned or abruptly terminated by parent-close policy |
 
-### Dispatcher decision still required
-
-`D08` deliberately does not prescribe whether the normal completion mechanism
-is only a child Future, a completion signal plus reconciliation, or another
-single abstraction. The design must choose one public completion contract
-before its red test is written. The acceptance requirement is that capacity is
-released promptly for the current Run and cannot remain stuck or be released
-by stale evidence.
+Child Futures are the only normal completion mechanism. Temporal reconstructs
+them on replay, and the drained rollover guarantees no live Future crosses
+`ContinueAsNew`. The custom completion signal and periodic `DescribeRun`
+reconciliation are removed.
 
 ## `WorkOnTicket` happy path
 
 | ID | Given | When | Then |
 | --- | --- | --- | --- |
 | W01 | One open Ticket | Two Runs race to claim it | Exactly one atomically moves it to `working`; the loser creates no Run Worker and performs no GitHub write |
-| W02 | A Run owns a `working` Ticket | The workflow starts execution | The main worker provisions one Run Worker and `CreateSession` is the readiness handoff; there is no separate readiness poll |
+| W02 | A Run owns a `working` Ticket | The workflow starts execution | The main worker provisions one active Run Worker generation and `CreateSession` is the readiness handoff; there is no separate readiness poll |
 | W03 | The Session is ready | Run execution begins | Clone is the first Run activity and executes inside the Session on the private Run Worker |
 | W04 | A repository has been cloned | Plan, implementation, CI, and review succeed | Postgres exposes one ordered Step per primary operation and Agent Attempts only beneath agent-backed Steps |
 | W05 | Implementation pushed a head SHA | The workflow opens or updates the PR | The PR is draft and the workflow records the authoritative PR identity and exact head SHA from GitHub, not from model prose |
@@ -132,17 +129,10 @@ by stale evidence.
 | F06 | The merge request's response is lost | A follow-up PR read reports merge SHA `M1` | The workflow reconciles a Confirmed Merge and finalizes once rather than issuing semantically new work |
 | F07 | The merge response is ambiguous and a follow-up read says the PR remains open at `H1` | The activity retries | It remains the same Merge Step and does not consume an Agent Attempt or Review cycle |
 | F08 | GitHub returns a transient network or availability failure | Temporal retries the operation | It remains the same Step; a later success produces one durable Step Result |
-| F09 | GitHub returns a permission or ruleset rejection | The response is classified | The workflow does not mislabel it as a textual conflict or send it to the implementer |
+| F09 | GitHub returns a permission or ruleset rejection | The response is classified | The workflow does not mislabel it as a textual conflict or spend semantic budget; it retries with bounded backoff for operator repair until the Run deadline, then records infrastructure failure and moves the Ticket to existing state `failed` |
 | F10 | Five Review Steps have already completed and another review would be required | The workflow evaluates the loop | The Run ends exhausted without starting Review Step six or requesting merge |
 | F11 | 25 Agent Attempts have been authorized and another fresh execution would be required | The workflow evaluates the retry | The Run ends exhausted without creating or running Agent Attempt 26 |
 | F12 | An agent activity experiences technical failures but successfully resumes the same authorized execution | Temporal retries it | The Run records one Agent Attempt, not one Attempt per activity try |
-
-### Merge rejection decision still required
-
-`F09` needs a terminal behavior. The recommended contract is: a non-transient
-authorization or ruleset rejection fails the Run as an infrastructure/configuration
-failure, leaves the PR draft, and leaves the Ticket `failed`; it does not spend
-semantic budgets. This must be accepted or replaced before implementation.
 
 ## Agent execution and credential behavior
 
@@ -173,6 +163,7 @@ semantic budgets. This must be accepted or replaced before implementation.
 | C06 | A child is directly terminated and cannot run workflow finalization | Maintenance reconciliation observes the closed Run | The orphan Run Worker is removed and the owned `working` Ticket eventually becomes dispatchable again without pretending the terminated Run completed normally |
 | C07 | Cancellation finalization retries after its transaction committed but before the activity response arrived | The retry executes | It returns the same canceled outcome and does not create another Run result or invalid state transition |
 | C08 | Cancellation and success finalization race | Postgres serializes their ownership checks | The durable outcome is never both `done` and reopened; Confirmed Merge is the irreversible winner whenever it exists |
+| C09 | A canceled Run left an unmerged branch or PR | A later Run reclaims the reopened Ticket | The later Run creates a fresh Run-owned branch and PR, carries useful commits forward, and ensures the old PR cannot remain merge-authorized |
 
 ### Termination reconciliation decision still required
 
@@ -210,7 +201,7 @@ These scenarios run against real migrated Postgres, not only `storefake`.
 | G05 | GitHub reports the PR already merged at `M1` after a lost response | Reconciliation reads it | The client returns the authoritative merge SHA and head identity needed for idempotent finalization |
 | G06 | GitHub reports merge conflict | The error is classified | The result is a textual-conflict domain result with bounded diagnostics, not a retryable outage |
 | G07 | GitHub reports expected-head mismatch | The error is classified | The result identifies a changed head and does not authorize the replacement SHA |
-| G08 | GitHub reports permission or ruleset refusal | The error is classified | The result is permanent infrastructure/configuration failure, not conflict or model failure |
+| G08 | GitHub reports permission or ruleset refusal | The error is classified | The result is repairable infrastructure/configuration rejection, not conflict or model failure, so workflow policy can wait until its deadline |
 | G09 | GitHub returns rate-limit or transient server failure | The error is classified | Temporal may retry it according to the GitHub activity policy |
 | G10 | The workflow marks the PR ready | The GitHub request succeeds | Draft state is removed without requesting a human reviewer or enabling GitHub auto-merge |
 
@@ -222,17 +213,17 @@ These scenarios run against real migrated Postgres, not only `storefake`.
 | I02 | A Session is established | Clone, agent, CI, GitHub, credential, and terminal recording activities execute | Every activity reports the same Run Worker identity and observes the same filesystem marker |
 | I03 | The main worker is redeployed while a Run is active | Workflow tasks move to the replacement main worker | Session activities remain on the original pinned Run Worker and policy snapshot |
 | I04 | Another Run Worker is polling its own private queue | The first Run schedules Session activities | No activity executes on the second Run Worker |
-| I05 | The active Run Worker disappears | The Session heartbeat expires | The Run follows one explicit, tested recovery policy rather than hanging or silently executing on a shared worker |
+| I05 | The active Run Worker disappears | The Session heartbeat expires | `WorkOnTicket` provisions one replacement from the same pinned image, creates a new Session, restores durable Git and Step state, and resumes after the latest completed Step without resetting budgets |
 | I06 | Run Worker creation succeeds but Session creation times out | Cleanup runs | The created worker is deleted or becomes discoverable to the orphan sweeper; no Ticket is falsely marked successful |
 | I07 | The Session completes | Teardown begins | No later Run activity is scheduled on the completed Session |
+| I08 | Worker loss interrupts an Agent Attempt whose provider state cannot be restored | Recovery reaches the incomplete Step | The interrupted Attempt ends failed and a new Attempt may start only within the existing Run-wide budget; completed Steps never rerun |
 
-### Session failure decision still required
+### Session recovery prerequisite
 
-`I05` is intentionally blocked. The design currently parks whether to fail the
-Run or provision a replacement Run Worker and resume from durable Step state.
-No implementation may choose this accidentally. The recommended v0 contract
-is to fail/cancel that Run, return the Ticket to `open`, and let a new Run adopt
-the branch and PR. Replacement-in-place can be designed later.
+`I05` is decided, but its recovery artifact still needs implementation design.
+The reviewer must challenge how an implementer Agent Thread becomes resumable
+on a fresh filesystem. If provider state cannot be made durable, `I08` is the
+safe behavior; the system must not claim that the same process survived.
 
 ## Console, webhook, and infrastructure behavior
 
