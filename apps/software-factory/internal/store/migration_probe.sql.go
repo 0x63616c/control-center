@@ -10,7 +10,10 @@ import (
 )
 
 const migrationProbeExists = `-- name: MigrationProbeExists :one
-SELECT EXISTS (SELECT 1 FROM migration_probe) AS exists
+SELECT EXISTS (
+    SELECT FROM pg_catalog.pg_tables
+    WHERE schemaname = 'public' AND tablename = 'migration_probe'
+) AS exists
 `
 
 func (q *Queries) MigrationProbeExists(ctx context.Context) (bool, error) {
