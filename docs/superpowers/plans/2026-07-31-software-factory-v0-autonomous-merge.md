@@ -137,6 +137,7 @@ flowchart LR
     P1 --> P3["PR 3: policy, retries, AwaitCI"]
     P05 --> P4["PR 4: Run Worker foundation"]
     P1 --> P4
+    P2 --> P4
     P3 --> P4
     P1 --> P5["PR 5: WorkOnTicket"]
     P2 --> P5
@@ -321,7 +322,7 @@ belongs to PR 8 after production cutover.
 ## PR 4: Run Worker execution, credentials, checkpoints, and real Session proof
 
 **Branch:** `codex/software-factory-v0-run-worker`  
-**Depends on:** PRs 0.5, 1, and 3  
+**Depends on:** PRs 0.5, 1, 2, and 3
 **Acceptance:** A02, A04-A06, A11-A12, I01-I09, O05, O06  
 **Primary files:**
 
