@@ -13,6 +13,7 @@ func completeSandboxWorkerEnv() map[string]string {
 		"TEMPORAL_HOST_PORT": "temporal-frontend.temporal:7233",
 		"TEMPORAL_NAMESPACE": "software-factory",
 		"SANDBOX_TASK_QUEUE": "software-factory-sandbox-b6f1e2b2-1c1e-4b1a-9c1a-1234567890ab",
+		"BLOBS_URL":          "http://blobs:8080",
 	}
 }
 
@@ -69,6 +70,8 @@ func TestLoadSandboxWorkerReadsTheWholeEnvironment(t *testing.T) {
 		t.Errorf("TemporalNamespace = %q", got.TemporalNamespace)
 	case got.TaskQueue != "software-factory-sandbox-b6f1e2b2-1c1e-4b1a-9c1a-1234567890ab":
 		t.Errorf("TaskQueue = %q", got.TaskQueue)
+	case got.BlobsURL != "http://blobs:8080":
+		t.Errorf("BlobsURL = %q", got.BlobsURL)
 	case got.LogLevel != slog.LevelInfo:
 		t.Errorf("LogLevel = %v, want the default %v", got.LogLevel, slog.LevelInfo)
 	}
