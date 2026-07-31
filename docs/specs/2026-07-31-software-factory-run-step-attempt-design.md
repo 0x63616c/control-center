@@ -598,6 +598,139 @@ timeouts, heartbeat, retry count, and backoff; credential renewal and durable
 recording each own their separate retry policy. These are resolved values in
 the workflow input, not mutable configuration read during workflow execution.
 
+## Publishing policy to the dispatcher
+
+The factory dispatcher is a long-lived singleton workflow. Today the worker
+constructs `DefaultRunPolicy()` when it ensures that dispatcher exists, the
+dispatcher stores the policy in its own workflow input, and every child Run
+receives that policy in `FactoryWorkTicketInput`. Starting new workers therefore
+does not update an already-running dispatcher, including after the dispatcher
+continues as new.
+
+The target is an acknowledged startup handshake:
+
+1. Resolve the complete `RunPolicy` in the worker process.
+2. Publish it with Temporal Update-With-Start using the dispatcher's stable
+   workflow ID and `WorkflowIDConflictPolicy_USE_EXISTING`.
+3. Wait for the Update to be accepted and completed.
+4. Only then allow that worker process to poll the factory task queues.
+
+This makes publication a startup gate rather than a best-effort background
+signal. A malformed policy is rejected by the Update validator. The caller
+receives an explicit answer, and rejected Updates do not add events to workflow
+history.
+
+The simplest Update payload under discussion has this shape:
+
+```text
+RunPolicyUpdate
+  git_sha
+  policy
+```
+
+The working duplicate rules are:
+
+```text
+same current Git SHA + same policy -> duplicate; reject or no-op
+same Git SHA + different policy    -> inconsistent deployment; reject and fail startup
+different Git SHA                  -> apply and acknowledge
+```
+
+The worker may treat the typed duplicate result as successful publication,
+because the desired policy is already current. A validator rejection is useful
+here rather than accepting an unchanged Update merely for acknowledgement: it
+avoids adding another accepted Update to workflow history. The handler itself
+must be synchronous and contain no await points, or otherwise use workflow-safe
+serialization, so two policy writes cannot interleave.
+
+The exact identity and ordering rule is not decided. In particular, "same SHA
+as the current policy" and "a SHA that has ever been seen" have materially
+different behavior:
+
+- Rejecting only the current SHA permits an intentional rollback to an older
+  SHA, but a stale older worker that publishes later can also restore that
+  older policy.
+- Rejecting every previously seen SHA prevents that stale-worker case, but it
+  also prevents an intentional redeployment of an older SHA from making its
+  policy current.
+
+Update serializes and acknowledges arrivals; it does not independently know
+which deployment is newer. One possible refinement is a deployment-wide
+Rollout ID or monotonically ordered deployment revision, distinct from the Git
+SHA and shared by every replica in one rollout. Another is to rely on the
+startup gate and deployment lifecycle if they make an older unseen worker
+impossible. This must be resolved from the actual deployment behavior before
+adding another identity to the model.
+
+The dispatcher must carry whichever current identity and deduplication state
+is chosen when it continues as new.
+
+The alternatives considered were:
+
+- A Signal is insufficient because publication needs validation and an
+  acknowledged result before the worker begins polling.
+- A policy fingerprint can make byte-identical publications easy to deduplicate
+  and detect a surprising policy change under one Git SHA, but it identifies
+  content rather than deployment order.
+- Git SHA alone is simple and may be sufficient if policy is a pure function of
+  the build and the startup gate makes a previously unseen stale worker
+  impossible. It cannot itself express deployment order.
+
+## Dispatcher waiting model
+
+The current dispatcher owns a workflow-level polling loop. Each tick drains
+signals and child completions, reconciles in-flight work, sweeps orphaned
+sandboxes, queries for ready Tickets, starts children, and sleeps on a Temporal
+timer. A ten-second idle poll therefore grows workflow history forever and
+forces `ContinueAsNew` based primarily on the passage of time.
+
+Replace the ready-Ticket portion with a long-lived polling activity whose retry
+state represents expected waiting:
+
+```text
+AwaitDispatchableTickets
+  tickets found -> return a non-empty batch
+  no tickets    -> return retryable NoDispatchableTickets
+                   with NextRetryDelay = 10 seconds
+```
+
+Temporal does not add each intermediate activity retry to workflow event
+history. The activity should have a short `StartToClose` timeout for each
+database query, unlimited attempts, and no `ScheduleToClose` timeout because an
+idle dispatcher is allowed to wait indefinitely. `NextRetryDelay` controls the
+normal ten-second no-work cadence. Genuine transient database failures use a
+separate exponential infrastructure-retry delay, while malformed input and
+other permanent failures stop the activity.
+
+`NoDispatchableTickets` is an expected waiting condition. It must not be
+reported as an operational error in alerts, logs, metrics, or the console. The
+retries are Temporal orchestration machinery, not Ticket Steps, Agent Attempts,
+or Postgres history rows.
+
+The dispatcher workflow should select over the wait-activity Future, accepted
+policy Updates, and child-workflow completions. It should not schedule the wait
+activity while paused or already at concurrency capacity, and it should cancel
+an outstanding wait when a state change makes it unnecessary.
+
+This eliminates idle-time history growth, but it does not make the dispatcher
+literally history-free. Accepted policy Updates and actual child starts and
+completions still create history. A rare high-water-mark `ContinueAsNew` may
+therefore remain as a safety mechanism; it should no longer be the normal cost
+of polling every ten seconds.
+
+The existing tick also bundles work that is not ready-Ticket polling and must
+be deliberately relocated:
+
+- Prefer observing child-workflow Futures for normal completion instead of
+  repeatedly describing active Runs. Whether the existing completion signal
+  and reconciliation pass can then be removed still needs verification against
+  crash and ambiguous-start cases.
+- Move orphan-sandbox sweeping to a separate maintenance workflow or Temporal
+  Schedule rather than waking the dispatcher for it. That design still needs a
+  durable source of truth for which Runs are live.
+- Receive policy publication through the acknowledged Update handler described
+  above.
+
 ## Current design direction
 
 1. Generalize Step around `kind + ordinal`.
@@ -626,6 +759,14 @@ the workflow input, not mutable configuration read during workflow execution.
 17. Keep a resolved, immutable `RunPolicy` snapshot in the workflow arguments,
     while replacing generic `StageAttempts` and `ControlAttempts` fields with
     explicit domain budgets and named technical retry policies.
+18. Publish the worker's current policy to the singleton dispatcher with an
+    acknowledged Update-With-Start, reject duplicate or inconsistent
+    publications, and make successful publication a worker-startup gate. The
+    final publication identity and deployment-order rule remain open.
+19. Wait for dispatchable Tickets through an activity whose expected no-work
+    result uses Temporal activity retry with a ten-second `NextRetryDelay`.
+20. Remove workflow-timer-driven idle polling from the dispatcher and separate
+    child completion observation and orphan cleanup from ready-Ticket polling.
 
 ## Parked questions
 
@@ -649,3 +790,23 @@ The Agent Attempt timeouts, heartbeat, and agent-activity retry policy are fixed
 Exact retry counts, backoff, and timeouts for infrastructure activities remain
 undecided. They should be chosen from concrete failure scenarios rather than
 inheriting the current five-control-attempt default wholesale.
+
+### Dispatcher decomposition
+
+The retry-driven wait and acknowledged policy publication are the direction.
+The following implementation boundaries still need decisions or code-level
+verification:
+
+- Whether Git SHA plus policy equality is sufficient publication identity, or
+  whether the deployment must supply a Rollout ID or ordered revision.
+- Whether duplicate means only "same as current" or "seen at any time," and how
+  that choice interacts with intentional deployment of an older Git SHA.
+- Whether child-workflow Futures completely replace the completion signal and
+  periodic `DescribeRun` reconciliation, including ambiguous child starts and
+  worker restarts.
+- Which maintenance workflow or Schedule owns orphan-sandbox sweeping and how
+  it derives the set of live Runs.
+- Whether a rare event-count safety threshold should retain
+  `ContinueAsNew` after polling-driven history growth is gone.
+- The per-query timeout and retry policy for real dispatcher database errors,
+  independently of the ten-second expected no-work delay.

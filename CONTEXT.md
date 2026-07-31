@@ -206,3 +206,16 @@ while that Attempt is active, it renews the credential every 30 minutes. The tok
 through Temporal workflow history. It is separate from the worker's GitHub API authentication and
 from the agent's Codex OAuth credential.
 _Avoid_: GitHub token (ambiguous), Codex credential.
+
+**Run Policy** _(target)_:
+The complete, resolved set of domain budgets, timeouts, and technical retry behavior supplied to a
+Run in its workflow input. It is immutable for that Run. A new worker rollout publishes the policy
+for future Runs to the dispatcher before its workers begin polling task queues.
+_Avoid_: live config, mutable workflow config, Temporal version.
+
+**Dispatch Wait** _(target)_:
+The dispatcher's expected wait for a dispatchable Ticket, implemented by a polling activity whose
+no-work result uses Temporal activity retry and a bounded next-retry delay. Its intermediate retries
+do not create Steps, Agent Attempts, or Postgres history and must not be treated as operational
+failures.
+_Avoid_: Ticket Step, dispatcher error, workflow timer poll.
