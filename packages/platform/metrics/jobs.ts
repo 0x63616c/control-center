@@ -2,7 +2,7 @@
  * Durable-queue job instrumentation (#214), wired into `claimOne` in
  * @www/core's job queue — the one place a job is actually claimed and run.
  *
- * Labelled by job TYPE only (`notify`, `youtube_ingest`, …), which is a small
+ * Labelled by job TYPE only (`notify`, …), which is a small
  * closed set declared in code. The job ROW id is deliberately absent: it is
  * unbounded and monotonically growing, i.e. the textbook way to blow up a TSDB.
  */
@@ -30,9 +30,8 @@ const duration = new Histogram({
   name: "www_job_duration_seconds",
   help: "Queue job run duration in seconds, by job type.",
   labelNames: LABELS,
-  // Jobs span an APNs push (milliseconds) to a yt-dlp download whose declared
-  // ceiling is an hour, so these buckets are logarithmic across that range
-  // rather than crowding one end.
+  // Jobs span quick notifications through longer bounded background work, so
+  // these buckets remain logarithmic across that range.
   buckets: [0.05, 0.25, 1, 5, 15, 60, 300, 900, 1800, 3600],
   registers: [metricsRegistry],
 });

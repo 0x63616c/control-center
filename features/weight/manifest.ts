@@ -14,7 +14,7 @@ import { WeightTile, WeightTileView } from "./web";
  * The weight-ingest interval cycle (apps/api/src/services/weight-service.ts,
  * 15s HA poll) is NOT part of this app — it stays hand-wired in apps/worker,
  * importing this feature's schema/service directly. The S1 job-handler seam
- * only covers queue jobs (notify, youtube_ingest), not interval cycles.
+ * only covers queue jobs (such as notify), not interval cycles.
  */
 export default defineApp({
   id: "tile_weight",

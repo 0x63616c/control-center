@@ -59,24 +59,6 @@ FROM weather_daily_reading;
 SELECT 'check' AS check, 'lamp_mode' AS name;
 SELECT * FROM lamp_mode ORDER BY 1;
 
--- Media metadata: sources + items. Cascade FK (media_item.source_id -> media_source)
--- means a partial restore would orphan items; verify referential integrity holds.
-SELECT 'check' AS check, 'media_source.summary' AS name;
-SELECT count(*) AS sources FROM media_source;
-
-SELECT 'check' AS check, 'media_item.by_status' AS name;
-SELECT status, count(*) AS rows
-FROM media_item
-GROUP BY status
-ORDER BY status;
-
-SELECT 'check' AS check, 'media_item.orphans' AS name;  -- MUST be 0 rows
-SELECT mi.id
-FROM media_item mi
-LEFT JOIN media_source ms ON ms.id = mi.source_id
-WHERE ms.id IS NULL
-ORDER BY mi.id;
-
 -- Job queue safety: the async job table must NOT carry stale locked/running rows
 -- across a cutover (a job locked by a now-dead worker would never be reclaimed in
 -- a way the operator expects). Report by status + any still-locked rows so the

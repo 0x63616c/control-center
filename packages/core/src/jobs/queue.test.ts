@@ -22,7 +22,7 @@ import { claimOne, enqueueJob, type JobQueueDb, type JobSpec, releaseInFlightJob
 declare module "@www/core" {
   interface JobTypeRegistry {
     notify: { notificationId: string };
-    youtube_ingest: { mediaItemId: string; videoId: string };
+    test_job: { taskId: string };
     my_job: { foo?: string };
   }
 }
@@ -197,11 +197,11 @@ describe("claimOne , single-type claim", () => {
   });
 
   it("never claims a job whose run_after is in the future", async () => {
-    // Prod-safety: the youtube_ingest backlog is parked on run_after. Dropping
-    // this predicate would immediately start 93 downloads.
+    // Jobs can be deliberately deferred. Dropping this predicate would claim
+    // them before their requested run time.
     await claimOne(
       db,
-      spec("youtube_ingest", async () => {}, 1000),
+      spec("test_job", async () => {}, 1000),
     );
     expect(logContains("run_after <= now()")).toBe(true);
   });
@@ -350,16 +350,15 @@ describe("releaseInFlightJobs", () => {
   });
 
   it("aborts the in-flight handler and requeues the row for immediate reclaim", async () => {
-    // The deploy case: SIGTERM lands mid-download. Without this the row sits at
-    // `running` until the reaper's lease (maxMs + grace) expires , 65 minutes
-    // of dead time for youtube_ingest, on every push to main.
-    mockState.claimedRow = makeRow({ id: 42, type: "youtube_ingest" });
+    // The deploy case: SIGTERM lands mid-job. Without this the row remains
+    // `running` until its reaper lease expires.
+    mockState.claimedRow = makeRow({ id: 42, type: "test_job" });
     let aborted = false;
 
     const claim = claimOne(
       db,
       spec(
-        "youtube_ingest",
+        "test_job",
         (_payload, signal) =>
           new Promise<void>((_resolve, reject) => {
             signal.addEventListener("abort", () => {

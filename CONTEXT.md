@@ -131,8 +131,8 @@ iteration (the desired-state-is-truth pattern). A named subtype of Worker Cycle.
 _Avoid_: reconciler, syncer.
 
 **Queue Job**:
-A unit of work claimed from the shared work queue by a worker and run once — as opposed to a
-recurring Worker Cycle. Job types include notification delivery and media ingest.
+ A unit of work claimed from the shared work queue by a worker and run once — as opposed to a
+recurring Worker Cycle. Job types include notification delivery.
 _Avoid_: task, message, cycle.
 
 **Cron**:
@@ -147,9 +147,3 @@ _Avoid_: scheduled task, timer.
 Live control of playback devices — Apple TV and the Sonos sound system (transport, volume,
 grouping, app launch, favourites). Backed by one live-queried API slice; no download or storage.
 _Avoid_: media, playback (too broad), sound.
-
-**Media Ingest**:
-The download-and-enrich pipeline: sources (YouTube playlists and collections) are polled, each
-video moves through queued → ready as it is downloaded and its metadata enriched, and the results
-are stored. A Queue Job and poller concern, unrelated to AV Control despite the shared word.
-_Avoid_: media, downloads, library.

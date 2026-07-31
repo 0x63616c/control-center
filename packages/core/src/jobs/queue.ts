@@ -120,9 +120,8 @@ const RELEASE_TIMEOUT_MS = 10_000;
  * Requeue every job this process currently holds, for a *graceful* shutdown.
  *
  * Deploys are routine here (every push to main replaces the worker pod), and a
- * pod replaced mid-download otherwise leaves its row at `running` until the
- * reaper's lease expires , maxMs + grace, which is 65 minutes for
- * youtube_ingest. Releasing on SIGTERM turns that into seconds.
+ * pod replaced mid-job otherwise leaves its row at `running` until the reaper's
+ * lease expires. Releasing on SIGTERM turns that into seconds.
  *
  * `attempts` is decremented because claimOne incremented it at claim time and
  * no real attempt occurred , a deploy is not the job's fault. That cannot mask
@@ -130,8 +129,8 @@ const RELEASE_TIMEOUT_MS = 10_000;
  * survives long enough to handle. An OOM kill or eviction is SIGKILL, never
  * reaches here, and is still caught by the reaper's max_attempts ceiling.
  *
- * The abort comes first so a subprocess (yt-dlp) dies cleanly and flushes its
- * `.part` file, which the requeued attempt then resumes from.
+ * The abort comes first so a handler can stop its work before the row is
+ * released for another worker.
  *
  * Returns the number of rows released.
  */
@@ -204,7 +203,7 @@ export async function releaseInFlightJobsWithTimeout(
  * handler).
  *
  * The timeout is enforced twice on purpose. The AbortSignal lets the handler
- * cancel real work (killing a yt-dlp subprocess); the Promise.race guarantees
+ * cancel real work; the Promise.race guarantees
  * the row is marked failed even if a handler ignores the signal. Without the
  * race a hung handler would hold the row at `running` until the reaper swept it.
  *

@@ -17,7 +17,7 @@ import { jobWorker, reapStaleJobs, staleJobReaper } from "./runner";
 declare module "@www/core" {
   interface JobTypeRegistry {
     notify: { notificationId: string };
-    youtube_ingest: { mediaItemId: string; videoId: string };
+    test_job: { taskId: string };
   }
 }
 
@@ -101,18 +101,18 @@ describe("jobWorker", () => {
   });
 
   it("gives each type an independent worker, so one cannot claim another's rows", async () => {
-    const ingest = jobWorker(db, { type: "youtube_ingest", handler: noop, maxMs: 3_600_000 });
+    const ingest = jobWorker(db, { type: "test_job", handler: noop, maxMs: 3_600_000 });
     await ingest.run();
-    expect(queueMock.claims).toEqual([{ type: "youtube_ingest", maxMs: 3_600_000 }]);
+    expect(queueMock.claims).toEqual([{ type: "test_job", maxMs: 3_600_000 }]);
   });
 });
 
 describe("reapStaleJobs", () => {
-  const specs: JobSpec[] = [{ type: "youtube_ingest", handler: noop, maxMs: 60_000 }];
+  const specs: JobSpec[] = [{ type: "test_job", handler: noop, maxMs: 60_000 }];
 
   it("only ever requeues rows already at status='running'", async () => {
-    // Prod-safety: the parked youtube_ingest backlog sits at `queued`. A reaper
-    // that touched `queued` rows would unpark 93 downloads.
+    // Deferred jobs can sit at `queued`. A reaper that touched `queued` rows
+    // would run them before their requested time.
     dbMock.returningRows = [[]];
     await reapStaleJobs(db, specs);
     const [sqlIssued] = dbMock.executeLog;
@@ -124,7 +124,7 @@ describe("reapStaleJobs", () => {
     dbMock.returningRows = [[]];
     await reapStaleJobs(db, specs);
     const [sqlIssued] = dbMock.executeLog;
-    expect(sqlIssued).toContain("youtube_ingest");
+    expect(sqlIssued).toContain("test_job");
     expect(sqlIssued).toContain("locked_at <");
     // maxMs (60s) + the 5 minute grace, in seconds. Anchored with the closing
     // paren so this can't also match 3600 or 360000.
@@ -145,7 +145,7 @@ describe("reapStaleJobs", () => {
     dbMock.returningRows = [[{ exhausted: false }], [{ exhausted: false }, { exhausted: false }]];
     const reaped = await reapStaleJobs(db, [
       { type: "notify", handler: noop, maxMs: 60_000 },
-      { type: "youtube_ingest", handler: noop, maxMs: 3_600_000 },
+      { type: "test_job", handler: noop, maxMs: 3_600_000 },
     ]);
     expect(dbMock.executeLog).toHaveLength(2);
     expect(reaped).toBe(3);
@@ -192,7 +192,7 @@ describe("staleJobReaper", () => {
     dbMock.returningRows = [[], []];
     const w = staleJobReaper(db, [
       { type: "notify", handler: noop, maxMs: 1000 },
-      { type: "youtube_ingest", handler: noop, maxMs: 1000 },
+      { type: "test_job", handler: noop, maxMs: 1000 },
     ]);
     await w.run();
     expect(dbMock.executeLog).toHaveLength(2);

@@ -97,13 +97,6 @@ export const ascBuildStatus = pgTable("asc_build_status", {
   fetchedAtUtc: timestamp("fetched_at_utc", { withTimezone: true }).notNull().defaultNow(),
 });
 
-// Media ingest pipeline tables (www-kp4k) were FOLDED into the sound feature
-// (Track C, Wave 6): media_source/media_item now live in
-// features/sound/schema.ts and reach drizzle-kit via the generated schema
-// barrel (features/_generated/schema.gen.ts). apps/api/src/services/
-// youtube-ingest-service.ts (the app-level youtube_ingest job handler) imports
-// mediaItem from @features/sound/schema.
-
 // ─── Captive portal (www-q002) ──────────────────────────────────────────────
 // The portal_rate_limit + portal_authorization tables + PORTAL_RATE_LIMIT_ID
 // were FOLDED into the guest-wifi feature (Track C, C7): they now live in

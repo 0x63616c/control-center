@@ -3,13 +3,13 @@ import { index, integer, jsonb, pgTable, serial, text, timestamp } from "drizzle
 // Generic durable job queue (www-kp4k.12; relocated into @www/core at S1). Any
 // background work that needs at-least-once delivery, per-attempt retry
 // backoff, and a typed handler registry registers here. `notify` and
-// `youtube_ingest` are the first consumers; future async work (transcode,
+// `notify` is the current consumer; future async work (transcode,
 // backups) registers a handler and gets retry + observability for free.
 export const job = pgTable(
   "job",
   {
     id: serial("id").primaryKey(),
-    // Stable string identifying the handler (e.g. 'notify', 'youtube_ingest').
+    // Stable string identifying the handler (e.g. 'notify').
     type: text("type").notNull(),
     // Arbitrary JSON input consumed by the handler, schema is handler-specific.
     payload: jsonb("payload").notNull(),

@@ -3,14 +3,14 @@
  * builds its db from its own {@link config} slice and the shared
  * `createFeatureDb` + `createPgDeviceStateStore` + `createPgIntegrationSyncStore`
  * substrate in `@www/core`, rather than importing apps/api's db singleton
- * (mirror features/ctrl/db.ts). `db` is also the raw drizzle handle used by
- * ingest.ts/poller.ts for direct mediaSource/mediaItem reads+writes.
+ * (mirror features/ctrl/db.ts).
  */
 import { createFeatureDb, createPgDeviceStateStore, createPgIntegrationSyncStore } from "@www/core";
 import { config } from "./config";
-import * as schema from "./schema";
 
-export const db = createFeatureDb(config.DATABASE_URL, schema);
+// This feature owns no tables. The shared state stores still need a typed
+// Drizzle handle, and createFeatureDb explicitly supports an empty schema.
+const db = createFeatureDb(config.DATABASE_URL, {});
 
 /** The prod device-state store for this feature (pg adapter, used by the volume enforcer). */
 export const deviceStateStore = createPgDeviceStateStore(db);
