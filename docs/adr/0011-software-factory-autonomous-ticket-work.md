@@ -265,7 +265,7 @@ are stored rather than shipped.
 
 Stages get 60 minutes each to start with, deliberately generous until real timings exist;
 the workflow run timeout sits above their sum and `activeDeadlineSeconds` above that, so
-Kubernetes never kills a pod Temporal still believes in. Activities heartbeat at 1 minute —
+Kubernetes never kills a pod Temporal still believes in. Activities heartbeat at 5 minutes —
 that is what makes a 60-minute activity cancellable rather than a black box. Cheap
 activities (labels, comments, pod lifecycle) get short timeouts and more retries; stages get
 few, because a retry is a full re-exploration and quota is the binding cost. Rate-limit and

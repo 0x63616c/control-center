@@ -118,7 +118,7 @@ workflow context so cancellation does not strand the sandbox.
 | bound | value |
 |---|---:|
 | stage timeout | 60 minutes |
-| stage heartbeat timeout | 1 minute |
+| stage heartbeat timeout | 5 minutes |
 | stage activity attempts | 2 |
 | run timeout | 24 hours |
 | sandbox `activeDeadlineSeconds` | 25 hours |

@@ -27,16 +27,15 @@ const (
 	// so this constant is the only place it is written.
 	MaxStageDuration = 60 * time.Minute
 
-	// StageHeartbeatTimeout is how long a stage may emit nothing before it is
+	// StageHeartbeatTimeout is how long a stage may emit no event before it is
 	// treated as dead rather than slow.
 	//
-	// ADR-0011: "Activities heartbeat at 1 minute — that is what makes a
-	// 60-minute activity cancellable rather than a black box." The heartbeat is
-	// driven by the stage's own event stream, so this is also an assertion
-	// about codex: a model turn that emits no event for a minute would be
-	// killed as dead. That is the number to revisit first if real runs show
-	// long silent turns.
-	StageHeartbeatTimeout = time.Minute
+	// Each emitted stage event records the activity heartbeat, so this timeout
+	// bounds time to the first event as well as silence between later events;
+	// it is not an independent periodic liveness signal. Five minutes lets
+	// codex work through a large prompt before it can emit its first event, but
+	// a continued five-minute-silent event stream is still treated as dead.
+	StageHeartbeatTimeout = 5 * time.Minute
 
 	// MaxRunDuration is the workflow run timeout for one ticket: above
 	// RunPolicy.RunBudget()'s worst case (MaxStageInvocations stage
