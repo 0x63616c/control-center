@@ -88,9 +88,10 @@ const accessName = (host: string) =>
   host.replace(`.${zoneName}`, "").replace("*", "wildcard").replaceAll(".", "-");
 
 // --- Access apps + policies ---
-// The provider DERIVES selfHostedDomains from `name` and treats appLauncherVisible /
-// autoRedirectToIdentity as managed defaults, so declaring them here would show a
-// spurious update. sessionDuration is the exception (www-178): we deliberately
+// The provider derives selfHostedDomains from `name` for single-domain apps, so
+// declaring it there would show a spurious update. The Temporal UI/codec pair is
+// the deliberate exception: it needs one multi-domain app to share an Access
+// session. sessionDuration is another exception (www-178): we deliberately
 // override CF's 24h default so a human login/OTP lasts 30 days.
 //
 // accessAppAuds (#593): each app's audience tag, keyed by domain, exported
@@ -125,6 +126,20 @@ for (const app of desiredAccessApps(zoneName, applyAccessGate)) {
       // self-hosted app: "domain or destinations must be set (12130)". The
       // imported legacy apps had it populated from import; new ones must set it.
       domain: app.domain,
+      ...(app.domains.length > 1 ? { selfHostedDomains: [...app.domains] } : {}),
+      ...(app.cors
+        ? {
+            corsHeaders: [
+              {
+                allowCredentials: app.cors.allowCredentials,
+                allowedHeaders: [...app.cors.allowedHeaders],
+                allowedMethods: [...app.cors.allowedMethods],
+                allowedOrigins: [...app.cors.allowedOrigins],
+                maxAge: app.cors.maxAge,
+              },
+            ],
+          }
+        : {}),
       type: app.type,
       httpOnlyCookieAttribute: true,
       sessionDuration: "720h",

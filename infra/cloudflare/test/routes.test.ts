@@ -26,6 +26,7 @@ describe("desiredIngressRules", () => {
     );
     expect(Object.keys(byHost).sort()).toEqual([
       "app.worldwidewebb.co",
+      "codec.worldwidewebb.co",
       "db-ui.worldwidewebb.co",
       "dsm.worldwidewebb.co",
       "factory.worldwidewebb.co",
@@ -46,6 +47,9 @@ describe("desiredIngressRules", () => {
     // cluster-local FQDN resolves the Service in `temporal`.
     expect(byHost["temporal-ui.worldwidewebb.co"]).toBe(
       "http://temporal-ui.temporal.svc.cluster.local:8080",
+    );
+    expect(byHost["codec.worldwidewebb.co"]).toBe(
+      "http://codec.software-factory.svc.cluster.local:8080",
     );
     expect(byHost["db-ui.worldwidewebb.co"]).toBe("http://db-ui.db-ui.svc.cluster.local:80");
     // #209: same cross-NAMESPACE rule — the Grafana Service lives in
@@ -174,6 +178,7 @@ describe("desiredCnames", () => {
       .sort();
     expect(hosts).toEqual([
       "app.worldwidewebb.co",
+      "codec.worldwidewebb.co",
       "db-ui.worldwidewebb.co",
       "dsm.worldwidewebb.co",
       "factory.worldwidewebb.co",

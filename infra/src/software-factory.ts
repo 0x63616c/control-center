@@ -16,7 +16,7 @@
 
 import * as k8s from "@pulumi/kubernetes";
 import * as pulumi from "@pulumi/pulumi";
-import { softwareFactoryProductManifest } from "@www/platform";
+import { controlCenterProductManifest, softwareFactoryProductManifest } from "@www/platform";
 import { DEFAULT_METRICS_PORT, METRICS_PATH } from "@www/platform/metrics/port";
 import { GHCR_PULL_SECRET_NAME } from "./ghcr-pull-secrets.ts";
 import {
@@ -756,7 +756,10 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
                   { name: "BLOBS_URL", value: BLOBS_URL },
                   {
                     name: "CODEC_CORS_ORIGINS",
-                    value: "https://temporal-ui.worldwidewebb.co,http://localhost:8080",
+                    value: [
+                      `https://${controlCenterProductManifest().temporalUi.exposure.hostname}`,
+                      "http://localhost:8080",
+                    ].join(","),
                   },
                   { name: "LISTEN_ADDR", value: `:${CODEC_PORT}` },
                 ],

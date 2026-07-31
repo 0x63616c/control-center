@@ -33,10 +33,22 @@ type DesiredAccessPolicy = Readonly<{
   include: AccessInclude;
 }>;
 
+type AccessCors = Readonly<{
+  allowCredentials: boolean;
+  allowedHeaders: readonly string[];
+  allowedMethods: readonly string[];
+  allowedOrigins: readonly string[];
+  maxAge: number;
+}>;
+
 /** A desired Access application: one gated domain plus its explicit policies. */
 export interface DesiredAccessApp {
   // The single hostname this app gates.
   domain: string;
+  // Every browser hostname sharing the same Access session and policy.
+  domains: readonly string[];
+  // Cloudflare answers credentialed preflights before the request reaches an origin.
+  cors?: AccessCors;
   // The app type as CF models it (the live apps are self_hosted).
   type: "self_hosted";
   policies: readonly DesiredAccessPolicy[];
@@ -55,9 +67,15 @@ export type PrivateWebAccessSource = Readonly<{
   policies: readonly ("email-otp" | "kiosk-service-token" | "factory-service-token")[];
 }>;
 
-function accessApp(domain: string, policies: readonly DesiredAccessPolicy[]): DesiredAccessApp {
+function accessApp(
+  domain: string,
+  policies: readonly DesiredAccessPolicy[],
+  options: Readonly<{ domains?: readonly string[]; cors?: AccessCors }> = {},
+): DesiredAccessApp {
   return {
     domain,
+    domains: options.domains ?? [domain],
+    ...(options.cors ? { cors: options.cors } : {}),
     type: "self_hosted",
     policies,
     tag: OWNERSHIP_TAG,
@@ -140,17 +158,27 @@ export function accessAppsForPrivateWeb(
  */
 export function desiredAccessApps(zone: string, includeGate = false): DesiredAccessApp[] {
   const ccManifest = controlCenterProductManifest();
+  const temporalUiOrigin = `https://${ccManifest.temporalUi.exposure.hostname}`;
 
   const baseApps: DesiredAccessApp[] = [
+    // A single Access app shares the UI's session cookie with its codec host.
+    // Cloudflare handles the credentialed OPTIONS request before forwarding the
+    // subsequent POST to the codec origin.
+    accessApp(ccManifest.temporalUi.exposure.hostname, [emailOtpPolicy()], {
+      domains: [ccManifest.temporalUi.exposure.hostname, ccManifest.codec.exposure.hostname],
+      cors: {
+        allowCredentials: true,
+        allowedHeaders: ["Content-Type", "X-Namespace"],
+        allowedMethods: ["POST"],
+        allowedOrigins: [temporalUiOrigin],
+        maxAge: 86_400,
+      },
+    }),
     // Private-web products: the CC app (app.worldwidewebb.co, product-derived from
     // the platform manifest) uses a kiosk service-token (iPad wall panel, not
     // human login) plus an email-OTP fallback for browser access (CC-d15).
     ...accessAppsForPrivateWeb([
       { exposure: ccManifest.app.exposure, policies: ["kiosk-service-token", "email-otp"] },
-      // Temporal UI: email-OTP ONLY, deliberately no kiosk service token. The
-      // wall panel has no business reaching it, and the UI can terminate and
-      // reset running workflows — so it stays behind a human login.
-      { exposure: ccManifest.temporalUi.exposure, policies: ["email-otp"] },
       // pgAdmin (#65): same treatment as Temporal UI — a database admin
       // surface with full read/write, no kiosk business reaching it.
       { exposure: ccManifest.dbUi.exposure, policies: ["email-otp"] },

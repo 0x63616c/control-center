@@ -733,6 +733,12 @@ export type ControlCenterProductManifest = Readonly<{
   factoryConsole: Readonly<{
     exposure: WebExposure;
   }>;
+  // The software-factory payload codec runs in its own namespace but serves a
+  // browser-facing Temporal UI integration, so its hostname follows the same
+  // central ownership rule as the factory console and Temporal UI.
+  codec: Readonly<{
+    exposure: WebExposure;
+  }>;
   // The Temporal web UI. Declared here rather than in `services` because it is
   // NOT a control-center workload: it runs in the `temporal` namespace from an
   // upstream image (infra/src/temporal.ts), and `services` drives control-center
@@ -816,6 +822,9 @@ export function controlCenterProductManifest(): ControlCenterProductManifest {
       // Single label under the zone, so Universal SSL's one-label wildcard
       // covers it (see webHostname).
       exposure: privateWeb(target, { host: "factory" }),
+    },
+    codec: {
+      exposure: privateWeb(target, { host: "codec" }),
     },
     temporalUi: {
       // Single label under the zone, so Universal SSL's one-label wildcard

@@ -123,6 +123,16 @@ describe("software factory payload blob infrastructure", () => {
     expect(codec.template.spec.containers[0]?.volumeMounts).toBeUndefined();
   });
 
+  test("allows browser codec requests only from the Temporal UI origin", async () => {
+    const codec = await get<DeploymentSpec>(install().codec, "spec");
+    const corsOrigins = codec.template.spec.containers[0]?.env.find(
+      (env) => env.name === "CODEC_CORS_ORIGINS",
+    )?.value;
+
+    expect(corsOrigins).toContain("https://temporal-ui.worldwidewebb.co");
+    expect(corsOrigins).not.toBe("*");
+  });
+
   test("wires the in-namespace blob URL into the worker", async () => {
     const worker = await get<DeploymentSpec>(install().worker, "spec");
     expect(worker.template.spec.containers[0]?.env).toContainEqual({

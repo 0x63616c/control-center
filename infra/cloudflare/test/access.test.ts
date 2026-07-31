@@ -7,7 +7,7 @@ import { accessAppsForPrivateWeb, desiredAccessApps } from "../src/access.ts";
 const ZONE = "worldwidewebb.co";
 
 describe("desiredAccessApps", () => {
-  test("DEFAULT (gate off): the product app route, but NO wildcard floor or hooks lock", () => {
+  test("DEFAULT (gate off): the product app route, but NO wildcard floor, hooks lock, or standalone codec app", () => {
     // www-b6ad: the not-yet-live gate additions (the *.<zone> default-deny floor
     // and the hooks CI lock) are off by default, so the floor can never block a
     // currently-public host (live dashboard) before it has an explicit bypass.
@@ -97,6 +97,24 @@ describe("desiredAccessApps", () => {
         precedence: 1,
       },
     ]);
+  });
+
+  test("Temporal UI and codec share one credentialed CORS Access application", () => {
+    const ui = desiredAccessApps(ZONE, true).find(
+      (entry) => entry.domain === "temporal-ui.worldwidewebb.co",
+    );
+
+    expect(
+      desiredAccessApps(ZONE, true).find((entry) => entry.domain === "codec.worldwidewebb.co"),
+    ).toBeUndefined();
+    expect(ui?.domains).toEqual(["temporal-ui.worldwidewebb.co", "codec.worldwidewebb.co"]);
+    expect(ui?.cors).toEqual({
+      allowCredentials: true,
+      allowedHeaders: ["Content-Type", "X-Namespace"],
+      allowedMethods: ["POST"],
+      allowedOrigins: ["https://temporal-ui.worldwidewebb.co"],
+      maxAge: 86400,
+    });
   });
 
   test("grafana is human-login only — NEVER reachable with the kiosk token", () => {

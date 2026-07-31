@@ -28,7 +28,7 @@ func TestDecodeRoundTripsAnOffloadedPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("codec ToPayload() error = %v", err)
 	}
-	response := servePayloads(t, newHandler(store, []string{"https://temporal.example"}), "/decode", &commonpb.Payloads{Payloads: []*commonpb.Payload{encoded}})
+	response := servePayloads(t, newHandler(store, []string{"https://temporal.example"}), "/{namespace}/decode", &commonpb.Payloads{Payloads: []*commonpb.Payload{encoded}})
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("POST /decode status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
@@ -48,11 +48,11 @@ func TestEncodeRoute(t *testing.T) {
 		t.Fatalf("default ToPayload() error = %v", err)
 	}
 	handler := newHandler(store, []string{"https://temporal.example"})
-	encoded := servePayloads(t, handler, "/encode", &commonpb.Payloads{Payloads: []*commonpb.Payload{original}})
+	encoded := servePayloads(t, handler, "/{namespace}/encode", &commonpb.Payloads{Payloads: []*commonpb.Payload{original}})
 	if encoded.Code != http.StatusOK {
 		t.Fatalf("POST /encode status = %d, want %d: %s", encoded.Code, http.StatusOK, encoded.Body.String())
 	}
-	decoded := servePayloads(t, handler, "/decode", decodePayloads(t, encoded))
+	decoded := servePayloads(t, handler, "/{namespace}/decode", decodePayloads(t, encoded))
 	if decoded.Code != http.StatusOK {
 		t.Fatalf("POST /decode status = %d, want %d: %s", decoded.Code, http.StatusOK, decoded.Body.String())
 	}
@@ -79,6 +79,46 @@ func TestCORSPreflightAllowsTheConfiguredOrigin(t *testing.T) {
 	}
 	if got := response.Header().Get("Access-Control-Allow-Methods"); got != http.MethodPost {
 		t.Errorf("Access-Control-Allow-Methods = %q, want %q", got, http.MethodPost)
+	}
+	if got := response.Header().Get("Access-Control-Allow-Headers"); got != "Content-Type, X-Namespace" {
+		t.Errorf("Access-Control-Allow-Headers = %q, want namespace header", got)
+	}
+	if got := response.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
+		t.Errorf("Access-Control-Allow-Credentials = %q, want true", got)
+	}
+}
+
+func TestLiteralNamespaceCodecRouteOnlyServesSoftwareFactory(t *testing.T) {
+	t.Parallel()
+
+	handler := newHandler(blobs.NewMemStore(), []string{"https://temporal.example"})
+	body, err := protojson.Marshal(&commonpb.Payloads{})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	allowed := httptest.NewRequest(http.MethodPost, "/{namespace}/decode", bytes.NewReader(body))
+	allowed.Header.Set("X-Namespace", "software-factory")
+	allowedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(allowedResponse, allowed)
+	if allowedResponse.Code != http.StatusOK {
+		t.Errorf("software-factory POST /{namespace}/decode status = %d, want %d", allowedResponse.Code, http.StatusOK)
+	}
+
+	denied := httptest.NewRequest(http.MethodPost, "/{namespace}/decode", bytes.NewReader(body))
+	denied.Header.Set("X-Namespace", "control-center")
+	deniedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(deniedResponse, denied)
+	if deniedResponse.Code != http.StatusForbidden {
+		t.Errorf("control-center POST /{namespace}/decode status = %d, want %d", deniedResponse.Code, http.StatusForbidden)
+	}
+
+	wrongPath := httptest.NewRequest(http.MethodPost, "/control-center/decode", bytes.NewReader(body))
+	wrongPath.Header.Set("X-Namespace", softwareFactoryTemporalNamespace)
+	wrongPathResponse := httptest.NewRecorder()
+	handler.ServeHTTP(wrongPathResponse, wrongPath)
+	if wrongPathResponse.Code != http.StatusNotFound {
+		t.Errorf("POST /control-center/decode status = %d, want %d", wrongPathResponse.Code, http.StatusNotFound)
 	}
 }
 
@@ -121,6 +161,7 @@ func servePayloads(t *testing.T, handler http.Handler, path string, payloads *co
 		t.Fatalf("marshal request: %v", err)
 	}
 	request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+	request.Header.Set("X-Namespace", softwareFactoryTemporalNamespace)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
