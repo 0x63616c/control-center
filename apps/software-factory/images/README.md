@@ -117,12 +117,15 @@ path, not just editing a number.
 
 ```sh
 docker build --platform linux/amd64 -f apps/software-factory/images/sandbox/Dockerfile -t sf-sandbox:local .
-apps/software-factory/images/sandbox/smoke.sh sf-sandbox:local
+apps/software-factory/images/sandbox/smoke.sh sf-sandbox:local "$PWD"
 ```
 
 `smoke.sh` mounts a tmpfs over `/work`, because that is what the pod's emptyDir
 does to it. Anything baked under `/work` is masked at runtime; running the
 checks without the mount passes on an image that fails in the cluster.
+When passed a repository checkout, it also copies that checkout into the writable
+`/work/repo` and runs the Go-selected `bun run check` path as uid 1000. This
+verifies that Bun's stage shell resolves the image's Go toolchain on `PATH`.
 It also launches the baked Playwright Chromium against a `data:` URL and asserts
 the resulting PNG is non-empty, then keeps a headed Chromium window open under
 Xvfb at a display size that leaves room for browser chrome.

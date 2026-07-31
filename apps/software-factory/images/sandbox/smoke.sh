@@ -12,16 +12,23 @@
 # anything baked under /work at build time is MASKED at runtime. Running these
 # without the mount would pass on an image that fails in the cluster.
 #
-# Usage: images/sandbox/smoke.sh [image]
+# Usage: images/sandbox/smoke.sh [image] [repository]
 set -euo pipefail
 
 IMG="${1:-sf-sandbox:local}"
+REPO_DIR="${2:-}"
+if [ -n "$REPO_DIR" ]; then
+  REPO_DIR="$(cd -- "$REPO_DIR" && pwd)"
+fi
 # /work is mounted the way a kubelet mounts an emptyDir under `fsGroup: 1000`:
 # owned root:1000, setgid, GROUP-writable — NOT owned by the sandbox uid. The
 # difference is load-bearing. A uid-owned tmpfs passes checks that the real pod
 # fails, which is exactly how a permission bug reaches the first live ticket.
 RUN=(docker run --rm --platform linux/amd64
   --tmpfs "/work:uid=0,gid=1000,mode=2775")
+if [ -n "$REPO_DIR" ]; then
+  RUN+=(--mount "type=bind,src=$REPO_DIR,dst=/mnt/repo,readonly")
+fi
 
 fail=0
 check() { # check <name> <expected-exit> <cmd...>
@@ -117,6 +124,21 @@ check "pinned tool versions" 0 \
 
     echo "codex $codex_version | bun $bun_version | bunx $bunx_version | node $node_version | $go_version | $git_version"
   '
+
+# The reported failure only occurs when Bun inherits the stage shell's PATH.
+# Run the repository's real check from a writable clone, never from the
+# read-only host mount, and add one valid untracked Go file to select its Go
+# branch without depending on the checkout's fetch depth or changed files.
+if [ -n "$REPO_DIR" ]; then
+  check "bun run check resolves Go on PATH" 0 \
+    /usr/bin/env sh -c '
+      cp -R /mnt/repo/. /work/repo
+      cd /work/repo
+      git update-ref refs/remotes/origin/main HEAD
+      printf "package main\n" > apps/software-factory/cmd/sandbox-worker/path_smoke.go
+      bun run check
+    '
+fi
 
 # A real Playwright page screenshot proves that the browser bundle is outside
 # the masked /work mount, that uid 1000 can discover it, and that Chromium's
