@@ -7,7 +7,6 @@ import (
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/config"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestApplyMigrationsCreatesProbeTable(t *testing.T) {
@@ -31,13 +30,13 @@ func TestApplyMigrationsCreatesProbeTable(t *testing.T) {
 		t.Fatalf("apply embedded migrations: %v", err)
 	}
 
-	pool, err := pgxpool.New(ctx, databaseURL)
+	store, err := store.New(ctx, databaseURL)
 	if err != nil {
 		t.Fatalf("open PostgreSQL pool: %v", err)
 	}
-	t.Cleanup(pool.Close)
+	t.Cleanup(store.Close)
 
-	exists, err := store.New(pool).MigrationProbeExists(ctx)
+	exists, err := store.MigrationProbeExists(ctx)
 	if err != nil {
 		t.Fatalf("query migration probe table: %v", err)
 	}

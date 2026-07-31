@@ -3,7 +3,7 @@
 //   sqlc v1.31.1
 // source: migration_probe.sql
 
-package store
+package sqlc
 
 import (
 	"context"

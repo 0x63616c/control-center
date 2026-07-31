@@ -40,6 +40,7 @@ another `cmd/<name>/` sharing `internal/`.
 cmd/worker/        composition root: manual DI, graceful shutdown
 internal/
   work/            domain vocabulary — every seam is expressed in these types
+  store/           Postgres record door with private sqlc output and in-memory fakes
   config/          the only place os.Getenv is legal
   clock/           the only place time.Now is legal
   telemetry/       logging + Prometheus, injected
