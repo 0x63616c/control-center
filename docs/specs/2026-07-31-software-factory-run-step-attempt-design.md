@@ -460,17 +460,19 @@ The initial activity-retry direction is:
 | Merge | Reconcile after ambiguous failure; conflicts and head changes are domain outcomes, not retryable transport errors. |
 | Recording writes | Retry firmly; fail the Run if its durable history cannot be written. |
 
-For agent work, consider two limits:
+The Run has one deliberately simple agent-execution budget:
 
-```text
-maximum Agent Attempts
-maximum possibly-chargeable executions
-```
+> A Run may authorize at most 25 Agent Attempts in total.
 
-A retry that safely resumes an existing result should not consume the same
-budget as another full agent execution because it remains the same Agent
-Attempt. A timeout where the system cannot prove whether the agent ran should
-count as potentially chargeable.
+Plan, Implement, and Review Agent Attempts all consume the same budget. The
+workflow allocates an Agent Attempt before scheduling its execution, so an
+ambiguous timeout still consumes that Attempt even when the system cannot
+prove how much work ran. The workflow must end the Run as exhausted rather
+than authorize Agent Attempt 26.
+
+There is no separate possibly-chargeable-execution budget. An activity retry
+that reconciles or resumes the same authorized execution remains part of the
+same Agent Attempt and does not consume another slot.
 
 These remain different concepts:
 
@@ -540,6 +542,7 @@ This reaches further than a database migration:
     never rely on the credential minted during the initial clone remaining
     valid.
 12. Permit at most five Review Steps in one Run.
+13. Permit at most 25 Agent Attempts across all agent-backed Steps in one Run.
 
 ## Parked questions
 
@@ -559,10 +562,10 @@ can simply end the Run and Ticket as failed without prescribing remediation.
 
 ### Retry-policy values
 
-The policy categories and ownership are proposed above, but the exact maximum
-Agent Attempts, backoff, and possibly-chargeable execution limits are not yet fixed.
-They should be decided using concrete failure scenarios rather than copying the
-current six-stage-attempt and five-control-attempt defaults.
+The policy categories and ownership are proposed above, but exact activity
+retry counts, backoff, and timeouts are not yet fixed. They should be decided
+using concrete failure scenarios rather than copying the current
+six-stage-attempt and five-control-attempt defaults.
 
 This decision must also set enough headroom between an Agent Attempt's total
 duration and the approximately one-hour sandbox GitHub credential lifetime.
