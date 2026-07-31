@@ -315,7 +315,6 @@ The workflow generates monotonically increasing ordinals:
  9 review
 10 mark_pull_request_ready
 11 merge_pull_request
-12 cleanup_workspace
 ```
 
 `kind` says what happened. `ordinal` says where it happened.
@@ -545,7 +544,6 @@ acts.AwaitCI
 acts.RunReview
 acts.MarkPullRequestReady
 acts.MergePullRequest
-acts.DeleteWorkspace
 ```
 
 A private workflow helper can wrap those activities with Step recording:
@@ -677,6 +675,36 @@ persistence plumbing, not Ticket work. They should become mandatory: currently
 Step and Agent Attempt writes are logged and ignored after exhausting retries,
 despite the system's stated goal that the console is authoritative.
 
+Critical recording activities use finite per-try timeouts and no attempt cap.
+They retry for the remaining workflow lifetime with capped backoff. A temporary
+Postgres outage pauses orchestration at the persistence boundary; it does not
+skip the record, start another Step, or turn into a fresh Run.
+
+The workflow must not start an externally effective operation until its Step
+and, when applicable, Agent Attempt start are durable. It must not make the
+next domain decision until the preceding Result is durable. After a confirmed
+merge, one idempotent database transaction records the merge Step Result and
+merge SHA, marks the Run successful, marks the Ticket `done`, and satisfies its
+dependency edges. Temporal retries that transaction until it commits or the
+workflow's reserved finalization window is exhausted; it never requests the
+merge again merely because the recording activity retried.
+
+The Run's semantic-work deadline and its hard workflow timeout must therefore
+be different. New Steps stop before the semantic-work deadline. A separate
+finalization buffer remains available for mandatory recording after the last
+domain Result. The exact buffer is still a policy decision. If the system later
+permits the hard timeout to expire after GitHub has confirmed a merge, it will
+also need a reconciler that can finish the idempotent database transaction from
+the authoritative GitHub state; it must never reopen the merged Ticket as new
+work.
+
+Run Worker teardown has a different durability requirement. After the merged
+Run is finalized, `WorkOnTicket` completes its Session and asks the main worker
+to delete the Run Worker and its temporary resources with bounded retries. If
+those retries are exhausted, an orphan sweeper owns the deletion. Teardown is
+not a Step, does not delay the Ticket's `done` transition, and cannot reverse
+the successful Run.
+
 The initial activity-retry direction is:
 
 | Work | Initial policy |
@@ -687,7 +715,8 @@ The initial activity-retry direction is:
 | Invalid, permanent, or authentication failures | Never retry within the Step. |
 | Rate limiting | Stop the Run and let the dispatcher cooldown policy handle it. |
 | Merge | Reconcile after ambiguous failure; conflicts and head changes are domain outcomes, not retryable transport errors. |
-| Recording writes | Retry firmly; fail the Run if its durable history cannot be written. |
+| Recording writes | Retry without an attempt cap inside the workflow lifetime; never cross an unrecorded domain boundary. |
+| Run Worker teardown | Retry for a bounded interval, then transfer responsibility to the orphan sweeper without reversing the Ticket outcome. |
 
 Agent activities use at most ten native activity tries in one Agent Attempt:
 the initial try plus nine retries. The retry interval starts at 10 seconds,
@@ -995,6 +1024,11 @@ be deliberately relocated:
     SHA, mark the Run and Ticket successful after durable recording, satisfy
     dependency edges, and perform only cleanup afterward. Do not wait for or
     infer deployment state inside `WorkOnTicket`.
+30. Make critical database recording a mandatory, idempotent persistence
+    boundary with no activity-attempt cap. Reserve finalization time after
+    semantic work ends; after the terminal transaction commits, bounded Run
+    Worker teardown may fall back to an orphan sweeper without changing the
+    Ticket outcome.
 
 ## Parked questions
 
