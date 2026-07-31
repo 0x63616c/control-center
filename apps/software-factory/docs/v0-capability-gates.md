@@ -15,29 +15,40 @@ against every captured stdout/stderr file inside a mode-restricted temporary
 directory, prints no matches or values, and deletes the directory on exit.
 
 The first process emitted `thread.started` with thread ID
-`019fba53-ad6b-7630-a7ac-9b0f774ed9be`, completed successfully, and ended with
+`019fba69-606e-73a0-97bb-10a563253354`, completed successfully, and ended with
 a `turn.completed` envelope containing numeric `input_tokens`,
 `cached_input_tokens`, `output_tokens`, and `reasoning_output_tokens`. Its
-JSONL stdout is transcript material that a caller can stream while the process
-runs; it is independent of the discarded `/work` filesystem.
+JSONL stdout crossed an HTTP boundary one event at a time into a separately
+built and separately running append-only sink. The sink fsyncs every accepted
+event before returning. It had received events while the target container was
+still running, retained all four events after Docker removed the container and
+its `/work` filesystem, and still exposed the terminal envelope and usage.
+This is the executable shape of the planned trusted Run Worker to per-Run
+checkpoint API boundary; it is not the production Store implementation.
 
 A second, fresh target-image process was given that exact ID through
 `codex exec resume <id> -`. It failed before producing a resumed turn:
 
 ```text
-thread/resume failed: no rollout found for thread id 019fba53-ad6b-7630-a7ac-9b0f774ed9be
+thread/resume failed: no rollout found for thread id 019fba69-606e-73a0-97bb-10a563253354
 ```
 
 Conclusion: **fresh-filesystem resume is not proved and is currently
 unavailable for a completed thread with the target Codex CLI/authentication
-mode.** A controlled pre-identity probe killed its container with exit 137
-while the target entrypoint was held before starting Codex and verified that no
-`thread.started` event existed. A second probe captured thread ID
-`019fba53-ca62-77b0-b053-40837e65f5c4`, killed that container with exit 137
+mode.** The controlled pre-identity probe starts the actual target `codex exec`
+process with an open FIFO withholding prompt bytes and EOF. The container
+wrapper records the live child PID and `/proc/<pid>/exe`; Docker process
+inspection independently verifies the `codex exec` command before the harness
+kills it with exit 137. On this Apple Silicon host, the amd64 executable appears
+through Docker Desktop's Rosetta path. The probe found zero rollout files and
+no `thread.started` event. A second probe captured thread ID
+`019fba69-8afe-7e31-bbac-9c8ae48d3075`, killed that container with exit 137
 immediately after `thread.started`, and received the same `no rollout found`
-error from a fresh container. The terminal envelope, required usage fields,
-both kill points, and negative disclosure scan were all verified; the harness
-fails if any one of those required probes does not occur.
+error from a fresh container. The actual pre-identity process, absence of
+resumable state, incremental sink delivery, post-deletion sink survival,
+terminal envelope, required usage fields, both kill points, and negative
+disclosure scan were all verified; the harness fails if any required probe does
+not occur.
 
 The safe v0 boundary is therefore explicit: A02 thread continuation is only
 within a surviving Run Worker generation. Permanent worker loss follows A12 and
@@ -53,10 +64,11 @@ apps/software-factory/scripts/verify-v0-codex-resume.sh \
   sf-sandbox:local /path/to/auth.json
 ```
 
-The script exits non-zero when either resume is unavailable or any required
-probe is missing. It prints only the image, thread IDs, terminal usage summary,
-verification booleans, exit codes, and final resume errors. It does not persist
-the raw transcript.
+The script builds its narrow event-sink helper, exits non-zero when either
+resume is unavailable or any required probe is missing, and prints only the
+image, thread IDs, event count, terminal usage summary, verification booleans,
+exit codes, and final resume errors. The temporary sink store is independent of
+the worker filesystem and is deleted only when the overall harness exits.
 
 ## Temporal Session harness
 
@@ -64,13 +76,15 @@ the raw transcript.
 real Temporal CLI dev server (`testsuite.StartDevServer`), not the unit
 `TestWorkflowEnvironment`. It pins the dev-server download to CLI `v1.8.1`.
 The harness starts one main worker and two separately registered private
-workers, then proves a Session's two repository-affine activities both run on
-the selected private worker. The first activity writes a real filesystem
-marker and the second reads the same value from that file. A main-control
-activity still runs on the main worker. A second scenario stops and replaces
-the main worker between the two Session activities; both retain the original
-private-worker identity and filesystem marker, while the main-control activity
-runs on the replacement main worker.
+workers as distinct helper subprocesses. Each helper receives only a marker
+name and resolves it under its own configured temporary root. The first worker
+writes and reads `repository-state-v1` across two Session activities; both
+results report its identity and OS process ID. A direct activity on the second
+worker reports its different identity/process and that the same marker name is
+absent from its root. A main-control activity still runs on the main worker. A
+second scenario stops and replaces the main worker between the two Session
+activities; both retain the original private-worker process, root marker, and
+identity, while the main-control activity runs on the replacement main worker.
 
 Run it with:
 
@@ -80,9 +94,12 @@ go test -race -tags=integration ./internal/runworkercapability
 ```
 
 This proves affinity and main-worker restart behavior only. It intentionally
-also stops the active private worker, verifies that the Session reports failure
-while main-control work remains callable, then creates a replacement Session
-whose activity reports the separately registered replacement worker identity.
+also stops the active private-worker subprocess, verifies that the Session
+reports failure while main-control work remains callable, then creates a
+replacement Session on a new helper process and second root. Its first activity
+proves the original marker is absent from that root; its next activity writes
+and reads `replacement-state-v1` while reporting the replacement identity and
+process ID.
 It proves Temporal's filesystem/routing capabilities and failure boundary. It
 does not prove domain Agent Attempt closure, Git restoration, budget
 preservation, `WorkOnTicket` recovery, or resumed Codex execution; those remain

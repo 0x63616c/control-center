@@ -3,19 +3,26 @@
 package runworkercapability
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
-	"sync"
+	"syscall"
 	"testing"
 	"time"
 
 	"go.temporal.io/sdk/activity"
-	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
+
+	temporalclient "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/temporal"
 )
 
 const (
@@ -27,67 +34,78 @@ const (
 	controlActivityName = "capability-control-activity"
 )
 
+var (
+	privateHelperMode     = flag.Bool("capability-private-worker-helper", false, "run as a private worker helper")
+	privateHelperTemporal = flag.String("capability-temporal-host-port", "", "Temporal frontend for the helper")
+	privateHelperQueue    = flag.String("capability-private-queue", "", "private queue for the helper")
+	privateHelperIdentity = flag.String("capability-private-identity", "", "private worker identity")
+	privateHelperRoot     = flag.String("capability-private-root", "", "isolated filesystem root")
+)
+
 type sessionActivityInput struct {
-	MarkerPath string
+	MarkerName string
 	Marker     string
 	Write      bool
 }
 
 type sessionActivityEvidence struct {
-	Worker string
-	Marker string
+	Worker    string
+	ProcessID int
+	Found     bool
+	Marker    string
 }
 
 type sessionWorkflowInput struct {
 	PrivateQueue string
-	MarkerPath   string
+	OtherQueue   string
+	MarkerName   string
 	Marker       string
 }
 
 type sessionEvidence struct {
-	First   sessionActivityEvidence
-	Second  sessionActivityEvidence
-	Control string
+	First     sessionActivityEvidence
+	Second    sessionActivityEvidence
+	OtherRoot sessionActivityEvidence
+	Control   string
 }
 
 type sessionLossInput struct {
-	FirstQueue            string
-	ReplacementQueue      string
-	FirstMarkerPath       string
-	ReplacementMarkerPath string
-	Marker                string
+	FirstQueue        string
+	ReplacementQueue  string
+	MarkerName        string
+	FirstMarker       string
+	ReplacementMarker string
 }
 
 type sessionLossEvidence struct {
-	First       sessionActivityEvidence
-	Failure     string
-	Control     string
-	Replacement sessionActivityEvidence
+	First             sessionActivityEvidence
+	Failure           string
+	Control           string
+	ReplacementBefore sessionActivityEvidence
+	Replacement       sessionActivityEvidence
 }
 
-func TestSessionPinsRepositoryWorkToItsPrivateWorker(t *testing.T) {
+type privateWorkerProcess struct {
+	cmd     *exec.Cmd
+	output  bytes.Buffer
+	stopped bool
+}
+
+func TestSessionPinsRepositoryWorkToOneIsolatedPrivateWorker(t *testing.T) {
 	server := startServer(t)
-	markerPath := filepath.Join(t.TempDir(), "repository.marker")
+	rootOne := t.TempDir()
+	rootTwo := t.TempDir()
+	startWorker(t, mainCapabilityWorker(server.Client()))
+	privateOne := startPrivateWorkerProcess(t, server.FrontendHostPort(), privateQueueOne, "private-one", rootOne)
+	privateTwo := startPrivateWorkerProcess(t, server.FrontendHostPort(), privateQueueTwo, "private-two", rootTwo)
 
-	mainWorker := worker.New(server.Client(), mainQueue, worker.Options{})
-	mainWorker.RegisterWorkflow(sessionEvidenceWorkflow)
-	mainWorker.RegisterActivityWithOptions(
-		func(context.Context) (string, error) { return "main-control", nil },
-		activity.RegisterOptions{Name: controlActivityName},
-	)
-	startWorker(t, mainWorker)
-
-	privateOne := privateWorker(server.Client(), privateQueueOne, "private-one", nil)
-	privateTwo := privateWorker(server.Client(), privateQueueTwo, "private-two", nil)
-	startWorker(t, privateOne)
-	startWorker(t, privateTwo)
-
-	run, err := server.Client().ExecuteWorkflow(context.Background(), client.StartWorkflowOptions{
+	run, err := server.Client().ExecuteWorkflow(context.Background(), temporalclient.StartWorkflowOptions{
 		ID:        "session-capability-affinity",
 		TaskQueue: mainQueue,
 	}, sessionEvidenceWorkflow, sessionWorkflowInput{
 		PrivateQueue: privateQueueOne,
-		MarkerPath:   markerPath,
+		OtherQueue:   privateQueueTwo,
+		MarkerName:   "repository.marker",
 		Marker:       "repository-state-v1",
 	})
 	if err != nil {
@@ -98,50 +116,47 @@ func TestSessionPinsRepositoryWorkToItsPrivateWorker(t *testing.T) {
 	if err := run.Get(context.Background(), &evidence); err != nil {
 		t.Fatalf("getting workflow result: %v", err)
 	}
-
-	if evidence.First.Worker != "private-one" || evidence.Second.Worker != "private-one" {
-		t.Fatalf("session activities = %#v, want both on private-one", evidence)
+	if evidence.First.Worker != "private-one" || evidence.Second.Worker != "private-one" ||
+		evidence.First.ProcessID != privateOne.processID() || evidence.Second.ProcessID != privateOne.processID() {
+		t.Fatalf("Session activity routing = %#v, want both in private-one process %d", evidence, privateOne.processID())
 	}
-	if evidence.First.Marker != "repository-state-v1" || evidence.Second.Marker != "repository-state-v1" {
-		t.Fatalf("filesystem marker evidence = %#v, want both activities to observe repository-state-v1", evidence)
+	if !evidence.First.Found || !evidence.Second.Found ||
+		evidence.First.Marker != "repository-state-v1" || evidence.Second.Marker != "repository-state-v1" {
+		t.Fatalf("private-one filesystem marker evidence = %#v", evidence)
+	}
+	if evidence.OtherRoot.Worker != "private-two" || evidence.OtherRoot.ProcessID != privateTwo.processID() ||
+		evidence.OtherRoot.Found {
+		t.Fatalf("private-two isolation probe = %#v, want marker absent in process %d", evidence.OtherRoot, privateTwo.processID())
 	}
 	if evidence.Control != "main-control" {
 		t.Fatalf("main-control activity = %q, want main-control", evidence.Control)
 	}
 }
 
-func TestSessionSurvivesAMainWorkerRestart(t *testing.T) {
+func TestSessionStaysOnItsPrivateProcessAcrossAMainWorkerRestart(t *testing.T) {
 	server := startServer(t)
-	markerPath := filepath.Join(t.TempDir(), "repository.marker")
+	rootOne := t.TempDir()
 	mainWorker := mainCapabilityWorker(server.Client())
 	if err := mainWorker.Start(); err != nil {
 		t.Fatalf("starting initial main worker: %v", err)
 	}
+	privateOne := startPrivateWorkerProcess(t, server.FrontendHostPort(), privateQueueOne, "private-one", rootOne)
 
-	firstPrivateActivity := make(chan struct{}, 1)
-	private := privateWorker(server.Client(), privateQueueOne, "private-one", firstPrivateActivity)
-	startWorker(t, private)
-
-	run, err := server.Client().ExecuteWorkflow(context.Background(), client.StartWorkflowOptions{
+	run, err := server.Client().ExecuteWorkflow(context.Background(), temporalclient.StartWorkflowOptions{
 		ID:        "session-capability-main-restart",
 		TaskQueue: mainQueue,
 	}, sessionRestartWorkflow, sessionWorkflowInput{
 		PrivateQueue: privateQueueOne,
-		MarkerPath:   markerPath,
+		MarkerName:   "repository.marker",
 		Marker:       "repository-state-v1",
 	})
 	if err != nil {
 		t.Fatalf("starting workflow: %v", err)
 	}
-	select {
-	case <-firstPrivateActivity:
-	case <-time.After(10 * time.Second):
-		t.Fatal("first private activity did not complete")
-	}
+	waitForFile(t, filepath.Join(rootOne, "repository.marker"), "first private activity marker")
 
 	mainWorker.Stop()
-	replacement := mainCapabilityWorker(server.Client())
-	startWorker(t, replacement)
+	startWorker(t, mainCapabilityWorker(server.Client()))
 	if err := server.Client().SignalWorkflow(context.Background(), run.GetID(), run.GetRunID(), "continue", "resume"); err != nil {
 		t.Fatalf("signalling workflow after main-worker restart: %v", err)
 	}
@@ -151,44 +166,37 @@ func TestSessionSurvivesAMainWorkerRestart(t *testing.T) {
 		t.Fatalf("getting workflow result: %v", err)
 	}
 	if evidence.First.Worker != "private-one" || evidence.Second.Worker != "private-one" ||
+		evidence.First.ProcessID != privateOne.processID() || evidence.Second.ProcessID != privateOne.processID() ||
 		evidence.First.Marker != "repository-state-v1" || evidence.Second.Marker != "repository-state-v1" ||
 		evidence.Control != "main-control" {
 		t.Fatalf("evidence after main-worker restart = %#v", evidence)
 	}
 }
 
-func TestSessionFailureLeavesMainControlAvailableForAReplacement(t *testing.T) {
+func TestSessionLossLeavesMainControlAndRoutesAReplacementToItsOwnRoot(t *testing.T) {
 	server := startServer(t)
-	markerDir := t.TempDir()
+	rootOne := t.TempDir()
+	rootTwo := t.TempDir()
 	startWorker(t, mainCapabilityWorker(server.Client()))
+	privateOne := startPrivateWorkerProcess(t, server.FrontendHostPort(), privateQueueOne, "private-one", rootOne)
 
-	firstPrivateActivity := make(chan struct{}, 1)
-	private := privateWorker(server.Client(), privateQueueOne, "private-one", firstPrivateActivity)
-	if err := private.Start(); err != nil {
-		t.Fatalf("starting initial private worker: %v", err)
-	}
-
-	run, err := server.Client().ExecuteWorkflow(context.Background(), client.StartWorkflowOptions{
+	run, err := server.Client().ExecuteWorkflow(context.Background(), temporalclient.StartWorkflowOptions{
 		ID:        "session-capability-worker-loss",
 		TaskQueue: mainQueue,
 	}, sessionLossWorkflow, sessionLossInput{
-		FirstQueue:            privateQueueOne,
-		ReplacementQueue:      privateQueueTwo,
-		FirstMarkerPath:       filepath.Join(markerDir, "first.marker"),
-		ReplacementMarkerPath: filepath.Join(markerDir, "replacement.marker"),
-		Marker:                "repository-state-v1",
+		FirstQueue:        privateQueueOne,
+		ReplacementQueue:  privateQueueTwo,
+		MarkerName:        "repository.marker",
+		FirstMarker:       "repository-state-v1",
+		ReplacementMarker: "replacement-state-v1",
 	})
 	if err != nil {
 		t.Fatalf("starting workflow: %v", err)
 	}
-	select {
-	case <-firstPrivateActivity:
-	case <-time.After(10 * time.Second):
-		t.Fatal("first private activity did not complete")
-	}
+	waitForFile(t, filepath.Join(rootOne, "repository.marker"), "first private activity marker")
 
-	private.Stop()
-	startWorker(t, privateWorker(server.Client(), privateQueueTwo, "private-replacement", nil))
+	privateOne.stop(t)
+	privateTwo := startPrivateWorkerProcess(t, server.FrontendHostPort(), privateQueueTwo, "private-replacement", rootTwo)
 	if err := server.Client().SignalWorkflow(context.Background(), run.GetID(), run.GetRunID(), "continue", "resume"); err != nil {
 		t.Fatalf("signalling workflow after private-worker loss: %v", err)
 	}
@@ -197,14 +205,54 @@ func TestSessionFailureLeavesMainControlAvailableForAReplacement(t *testing.T) {
 	if err := run.Get(context.Background(), &evidence); err != nil {
 		t.Fatalf("getting workflow result: %v", err)
 	}
-	if evidence.First.Worker != "private-one" || evidence.Replacement.Worker != "private-replacement" ||
-		evidence.First.Marker != "repository-state-v1" || evidence.Replacement.Marker != "repository-state-v1" ||
-		evidence.Control != "main-control" {
-		t.Fatalf("session-loss recovery evidence = %#v", evidence)
+	if evidence.First.Worker != "private-one" || evidence.First.ProcessID != privateOne.processID() ||
+		evidence.First.Marker != "repository-state-v1" {
+		t.Fatalf("initial Session evidence = %#v", evidence.First)
 	}
-	if evidence.Failure == "" {
-		t.Fatal("lost private worker did not surface a Session failure")
+	if evidence.Failure == "" || evidence.Control != "main-control" {
+		t.Fatalf("Session-loss control evidence = %#v", evidence)
 	}
+	if evidence.ReplacementBefore.Worker != "private-replacement" ||
+		evidence.ReplacementBefore.ProcessID != privateTwo.processID() || evidence.ReplacementBefore.Found {
+		t.Fatalf("replacement pre-write isolation evidence = %#v", evidence.ReplacementBefore)
+	}
+	if evidence.Replacement.Worker != "private-replacement" ||
+		evidence.Replacement.ProcessID != privateTwo.processID() || !evidence.Replacement.Found ||
+		evidence.Replacement.Marker != "replacement-state-v1" {
+		t.Fatalf("replacement routing evidence = %#v", evidence.Replacement)
+	}
+}
+
+func TestPrivateWorkerHelperProcess(t *testing.T) {
+	if !*privateHelperMode {
+		return
+	}
+	hostPort := *privateHelperTemporal
+	queue := *privateHelperQueue
+	identity := *privateHelperIdentity
+	root := *privateHelperRoot
+	if hostPort == "" || queue == "" || identity == "" || root == "" {
+		t.Fatal("private worker helper environment is incomplete")
+	}
+
+	c, err := temporalclient.Dial(temporalclient.Options{HostPort: hostPort}, nil, nil)
+	if err != nil {
+		t.Fatalf("dialling Temporal: %v", err)
+	}
+	defer c.Close()
+	w := privateWorker(c, queue, identity, root)
+	if err := w.Start(); err != nil {
+		t.Fatalf("starting private worker: %v", err)
+	}
+	defer w.Stop()
+	if err := os.WriteFile(filepath.Join(root, ".worker-ready"), []byte("ready"), 0o600); err != nil {
+		t.Fatalf("writing helper ready marker: %v", err)
+	}
+
+	interrupt := make(chan os.Signal, 1)
+	signal.Notify(interrupt, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(interrupt)
+	<-interrupt
 }
 
 func sessionEvidenceWorkflow(ctx workflow.Context, in sessionWorkflowInput) (sessionEvidence, error) {
@@ -215,13 +263,17 @@ func sessionEvidenceWorkflow(ctx workflow.Context, in sessionWorkflowInput) (ses
 	defer workflow.CompleteSession(sessionCtx)
 
 	var result sessionEvidence
-	first := sessionActivityInput{MarkerPath: in.MarkerPath, Marker: in.Marker, Write: true}
+	first := sessionActivityInput{MarkerName: in.MarkerName, Marker: in.Marker, Write: true}
 	if err := workflow.ExecuteActivity(sessionCtx, sessionActivityName, first).Get(sessionCtx, &result.First); err != nil {
 		return sessionEvidence{}, fmt.Errorf("running first private activity: %w", err)
 	}
-	second := sessionActivityInput{MarkerPath: in.MarkerPath, Marker: in.Marker}
+	second := sessionActivityInput{MarkerName: in.MarkerName}
 	if err := workflow.ExecuteActivity(sessionCtx, sessionActivityName, second).Get(sessionCtx, &result.Second); err != nil {
 		return sessionEvidence{}, fmt.Errorf("running second private activity: %w", err)
+	}
+	otherCtx := privateActivityContext(ctx, in.OtherQueue)
+	if err := workflow.ExecuteActivity(otherCtx, sessionActivityName, second).Get(otherCtx, &result.OtherRoot); err != nil {
+		return sessionEvidence{}, fmt.Errorf("probing other private root: %w", err)
 	}
 	if err := workflow.ExecuteActivity(ctx, controlActivityName).Get(ctx, &result.Control); err != nil {
 		return sessionEvidence{}, fmt.Errorf("running main-control activity: %w", err)
@@ -237,13 +289,13 @@ func sessionRestartWorkflow(ctx workflow.Context, in sessionWorkflowInput) (sess
 	defer workflow.CompleteSession(sessionCtx)
 
 	var result sessionEvidence
-	first := sessionActivityInput{MarkerPath: in.MarkerPath, Marker: in.Marker, Write: true}
+	first := sessionActivityInput{MarkerName: in.MarkerName, Marker: in.Marker, Write: true}
 	if err := workflow.ExecuteActivity(sessionCtx, sessionActivityName, first).Get(sessionCtx, &result.First); err != nil {
 		return sessionEvidence{}, fmt.Errorf("running first private activity: %w", err)
 	}
 	var continueRun string
 	workflow.GetSignalChannel(ctx, "continue").Receive(ctx, &continueRun)
-	second := sessionActivityInput{MarkerPath: in.MarkerPath, Marker: in.Marker}
+	second := sessionActivityInput{MarkerName: in.MarkerName}
 	if err := workflow.ExecuteActivity(sessionCtx, sessionActivityName, second).Get(sessionCtx, &result.Second); err != nil {
 		return sessionEvidence{}, fmt.Errorf("running second private activity: %w", err)
 	}
@@ -261,15 +313,15 @@ func sessionLossWorkflow(ctx workflow.Context, in sessionLossInput) (sessionLoss
 	defer workflow.CompleteSession(sessionCtx)
 
 	var result sessionLossEvidence
-	first := sessionActivityInput{MarkerPath: in.FirstMarkerPath, Marker: in.Marker, Write: true}
+	first := sessionActivityInput{MarkerName: in.MarkerName, Marker: in.FirstMarker, Write: true}
 	if err := workflow.ExecuteActivity(sessionCtx, sessionActivityName, first).Get(sessionCtx, &result.First); err != nil {
 		return sessionLossEvidence{}, fmt.Errorf("running first private activity: %w", err)
 	}
 	var continueRun string
 	workflow.GetSignalChannel(ctx, "continue").Receive(ctx, &continueRun)
-	read := sessionActivityInput{MarkerPath: in.FirstMarkerPath, Marker: in.Marker}
+	read := sessionActivityInput{MarkerName: in.MarkerName}
 	if err := workflow.ExecuteActivity(sessionCtx, sessionActivityName, read).Get(sessionCtx, nil); err == nil {
-		return sessionLossEvidence{}, fmt.Errorf("lost Session unexpectedly accepted another activity")
+		return sessionLossEvidence{}, errors.New("lost Session unexpectedly accepted another activity")
 	} else {
 		result.Failure = err.Error()
 	}
@@ -282,26 +334,35 @@ func sessionLossWorkflow(ctx workflow.Context, in sessionLossInput) (sessionLoss
 		return sessionLossEvidence{}, fmt.Errorf("creating replacement session: %w", err)
 	}
 	defer workflow.CompleteSession(replacementSession)
-	replacement := sessionActivityInput{MarkerPath: in.ReplacementMarkerPath, Marker: in.Marker, Write: true}
-	if err := workflow.ExecuteActivity(replacementSession, sessionActivityName, replacement).Get(replacementSession, &result.Replacement); err != nil {
+	if err := workflow.ExecuteActivity(replacementSession, sessionActivityName, read).
+		Get(replacementSession, &result.ReplacementBefore); err != nil {
+		return sessionLossEvidence{}, fmt.Errorf("probing replacement private root: %w", err)
+	}
+	replacement := sessionActivityInput{MarkerName: in.MarkerName, Marker: in.ReplacementMarker, Write: true}
+	if err := workflow.ExecuteActivity(replacementSession, sessionActivityName, replacement).
+		Get(replacementSession, &result.Replacement); err != nil {
 		return sessionLossEvidence{}, fmt.Errorf("running replacement private activity: %w", err)
 	}
 	return result, nil
 }
 
-func createCapabilitySession(ctx workflow.Context, privateQueue string) (workflow.Context, error) {
-	privateCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+func privateActivityContext(ctx workflow.Context, privateQueue string) workflow.Context {
+	return workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 		TaskQueue:           privateQueue,
 		StartToCloseTimeout: time.Minute,
+		RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: 1},
 	})
-	return workflow.CreateSession(privateCtx, &workflow.SessionOptions{
+}
+
+func createCapabilitySession(ctx workflow.Context, privateQueue string) (workflow.Context, error) {
+	return workflow.CreateSession(privateActivityContext(ctx, privateQueue), &workflow.SessionOptions{
 		ExecutionTimeout: time.Minute,
 		CreationTimeout:  time.Minute,
 		HeartbeatTimeout: time.Second,
 	})
 }
 
-func mainCapabilityWorker(c client.Client) worker.Worker {
+func mainCapabilityWorker(c temporalclient.Client) worker.Worker {
 	w := worker.New(c, mainQueue, worker.Options{})
 	w.RegisterWorkflow(sessionEvidenceWorkflow)
 	w.RegisterWorkflow(sessionRestartWorkflow)
@@ -313,31 +374,117 @@ func mainCapabilityWorker(c client.Client) worker.Worker {
 	return w
 }
 
-func privateWorker(c client.Client, queue, identity string, started chan<- struct{}) worker.Worker {
+func privateWorker(c temporalclient.Client, queue, identity, root string) worker.Worker {
 	w := worker.New(c, queue, worker.Options{
 		EnableSessionWorker:               true,
 		MaxConcurrentSessionExecutionSize: 1,
 	})
-	var once sync.Once
 	w.RegisterActivityWithOptions(
 		func(_ context.Context, in sessionActivityInput) (sessionActivityEvidence, error) {
-			if started != nil {
-				once.Do(func() { started <- struct{}{} })
+			markerPath, err := privateMarkerPath(root, in.MarkerName)
+			if err != nil {
+				return sessionActivityEvidence{}, err
 			}
 			if in.Write {
-				if err := os.WriteFile(in.MarkerPath, []byte(in.Marker), 0o600); err != nil {
+				if err := os.WriteFile(markerPath, []byte(in.Marker), 0o600); err != nil {
 					return sessionActivityEvidence{}, fmt.Errorf("writing filesystem marker: %w", err)
 				}
 			}
-			marker, err := os.ReadFile(in.MarkerPath)
+			evidence := sessionActivityEvidence{Worker: identity, ProcessID: os.Getpid()}
+			marker, err := os.ReadFile(markerPath)
+			if errors.Is(err, os.ErrNotExist) {
+				return evidence, nil
+			}
 			if err != nil {
 				return sessionActivityEvidence{}, fmt.Errorf("reading filesystem marker: %w", err)
 			}
-			return sessionActivityEvidence{Worker: identity, Marker: string(marker)}, nil
+			evidence.Found = true
+			evidence.Marker = string(marker)
+			return evidence, nil
 		},
 		activity.RegisterOptions{Name: sessionActivityName},
 	)
 	return w
+}
+
+func privateMarkerPath(root, name string) (string, error) {
+	if name == "" || filepath.IsAbs(name) || filepath.Base(name) != name {
+		return "", fmt.Errorf("marker name %q must be one relative path element", name)
+	}
+	return filepath.Join(root, name), nil
+}
+
+func startPrivateWorkerProcess(t *testing.T, hostPort, queue, identity, root string) *privateWorkerProcess {
+	t.Helper()
+	process := &privateWorkerProcess{}
+	process.cmd = exec.Command(
+		os.Args[0],
+		"-test.run=^TestPrivateWorkerHelperProcess$",
+		"-test.count=1",
+		"-capability-private-worker-helper=true",
+		"-capability-temporal-host-port="+hostPort,
+		"-capability-private-queue="+queue,
+		"-capability-private-identity="+identity,
+		"-capability-private-root="+root,
+	)
+	process.cmd.Stdout = &process.output
+	process.cmd.Stderr = &process.output
+	if err := process.cmd.Start(); err != nil {
+		t.Fatalf("starting %s helper process: %v", identity, err)
+	}
+	t.Cleanup(func() { process.stop(t) })
+	waitForFile(t, filepath.Join(root, ".worker-ready"), identity+" ready marker")
+	return process
+}
+
+func (p *privateWorkerProcess) processID() int {
+	return p.cmd.Process.Pid
+}
+
+func (p *privateWorkerProcess) stop(t *testing.T) {
+	t.Helper()
+	if p.stopped {
+		return
+	}
+	p.stopped = true
+	if err := p.cmd.Process.Signal(os.Interrupt); err != nil {
+		t.Errorf("interrupting private worker process %d: %v", p.processID(), err)
+		return
+	}
+	done := make(chan error, 1)
+	go func() { done <- p.cmd.Wait() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("private worker process %d stopped with %v; output: %s", p.processID(), err, p.output.String())
+		}
+	case <-time.After(10 * time.Second):
+		if err := p.cmd.Process.Kill(); err != nil {
+			t.Errorf("killing stuck private worker process %d: %v", p.processID(), err)
+		}
+		<-done
+		t.Errorf("private worker process %d did not stop in time; output: %s", p.processID(), p.output.String())
+	}
+}
+
+func waitForFile(t *testing.T, path, description string) {
+	t.Helper()
+	deadline := time.NewTimer(10 * time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(25 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("checking %s: %v", description, err)
+		}
+		select {
+		case <-deadline.C:
+			t.Fatalf("timed out waiting for %s", description)
+		case <-tick.C:
+		}
+	}
 }
 
 func startServer(t *testing.T) *testsuite.DevServer {
