@@ -9,6 +9,7 @@
     "axios": "1.13.6"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.0",
     "orval": "7.20.0"
   }
 }
