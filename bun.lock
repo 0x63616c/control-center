@@ -152,6 +152,20 @@
         "vitest": "^3.2.4",
       },
     },
+    "apps/webhook-relay": {
+      "name": "@www/webhook-relay",
+      "version": "0.0.0",
+      "dependencies": {
+        "@www/logger": "workspace:*",
+        "@www/platform": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.3.13",
+        "typescript": "^5.9.3",
+        "vitest": "^3.2.4",
+      },
+    },
     "apps/worker": {
       "name": "@control-center/worker",
       "version": "0.0.0",
@@ -1245,6 +1259,8 @@
     "@www/platform": ["@www/platform@workspace:packages/platform"],
 
     "@www/theme": ["@www/theme@workspace:packages/theme"],
+
+    "@www/webhook-relay": ["@www/webhook-relay@workspace:apps/webhook-relay"],
 
     "@www/worker-runtime": ["@www/worker-runtime@workspace:packages/worker-runtime"],
 

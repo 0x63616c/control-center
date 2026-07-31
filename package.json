@@ -10,6 +10,7 @@
     "apps/temporal-worker",
     "apps/storybook",
     "apps/map-provision",
+    "apps/webhook-relay",
     "packages/*",
     "infra",
     "infra/unifi",

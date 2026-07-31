@@ -25,7 +25,7 @@ import { defineEnv } from "./registry";
 export const ENV = defineEnv({
   // ── Infra / process ──────────────────────────────────────────────────────
   NODE_ENV: enumOf("development", "production", "test").default("development"),
-  PORT: int().default(4201).forRuntime("api"),
+  PORT: int().default(4201).forRuntime("api", "webhook-relay"),
   BUILD_HASH: str().default("dev"),
   // Prometheus exposition listener (#214). A DEDICATED port on every backend
   // runtime, never a route on the service's own port: the api's :4201 is mapped
@@ -71,7 +71,11 @@ export const ENV = defineEnv({
   // The shared secret GitHub signs every delivery with. Required: hooks. is a
   // PUBLIC host with no Cloudflare Access in front, so this HMAC is the only
   // auth boundary — booting the api without it would open a write endpoint.
-  GITHUB_BOT_WEBHOOK_SECRET: secret().required().forRuntime("api").forFeatures("hooks"),
+  GITHUB_BOT_WEBHOOK_SECRET: secret()
+    .required()
+    .forRuntime("api", "webhook-relay")
+    .forFeatures("hooks"),
+  WEBHOOK_RELAY_TARGETS: str().required().forRuntime("webhook-relay"),
 
   // ── Tesla (ac, tesla) ─────────────────────────────────────────────────────
   TESLA_ENTITY_PREFIX: str().default("evee").forRuntime("api").forFeatures("tesla"),

@@ -24,3 +24,9 @@ export {
   metricsRegistry,
 } from "./registry";
 export { type MetricsServer, type MetricsServerOptions, startMetricsServer } from "./server";
+export {
+  observeWebhookRelayDelivery,
+  observeWebhookRelayForward,
+  observeWebhookRelayGiveUp,
+  observeWebhookRelayRejected,
+} from "./webhook-relay";

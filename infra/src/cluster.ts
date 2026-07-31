@@ -24,7 +24,7 @@ export const CLOUDFLARE_NAMESPACE = "cloudflare";
 // `Record<InfraNamespaceName, …>` consumer , eso, cnpg, crons, ghcr-pull-secrets
 // , for a namespace that wants none of them.
 export type InfraNamespaceName =
-  | Exclude<ProductSlug, "captive-portal" | "software-factory">
+  | Exclude<ProductSlug, "captive-portal" | "software-factory" | "webhook-relay">
   | typeof CLOUDFLARE_NAMESPACE;
 export type InfraNamespaces = Readonly<Record<InfraNamespaceName, k8s.core.v1.Namespace>>;
 

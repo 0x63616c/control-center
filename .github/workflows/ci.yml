@@ -116,6 +116,10 @@ jobs:
               - 'features/**'
               - 'packages/**'
               - 'bun.lock'
+            webhookrelay:
+              - 'apps/webhook-relay/**'
+              - 'packages/**'
+              - 'bun.lock'
             # infra-only changes (the Pulumi program + workload specs) deploy
             # with NO image rebuild: the deploy job runs `pulumi up`, which must
             # converge an infra-only diff (e.g. a resource cap or env change).
@@ -135,6 +139,7 @@ jobs:
             # own tree.
             mapprovision:
               - 'apps/map-provision/**'
+              - 'apps/webhook-relay/**'
             # Software factory (ADR-0011): a self-contained Go module sharing no
             # code with the TypeScript workspace, so it rebuilds solely on its
             # own tree. Deliberately NOT split per image — see the output above.
@@ -503,6 +508,23 @@ jobs:
           dockerfile: apps/map-provision/Dockerfile
           cache-scope: map-provision
 
+  build-webhook-relay:
+    needs: [changes]
+    if: needs.changes.outputs.webhookrelay == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: prod
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and push webhook relay image
+        uses: ./.github/actions/build-product-image
+        env:
+          SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
+        with:
+          image: www-webhook-relay-relay
+          dockerfile: apps/webhook-relay/Dockerfile
+          cache-scope: webhook-relay
+
 
   # The software factory's two images (ADR-0011, #342). One path filter serves
   # both, so a worker-only edit rebuilds the sandbox — the cheap direction to be
@@ -588,6 +610,7 @@ jobs:
         build-worker,
         build-temporal-worker,
         build-map-provision,
+        build-webhook-relay,
         build-software-factory-worker,
         build-software-factory-sandbox,
         test-software-factory,
@@ -682,7 +705,7 @@ jobs:
           # KEY is product-component scoped and matches the Pulumi imageDigests
           # config key, while repo names use full product slugs.
           declare -A out=()
-          for entry in www-control-center-web:control-center-web www-control-center-manage:control-center-manage www-control-center-api:control-center-api www-control-center-worker:control-center-worker www-control-center-temporal-worker:control-center-temporal-worker www-control-center-map-provision:control-center-map-provision www-software-factory-worker:software-factory-worker www-software-factory-sandbox:software-factory-sandbox; do
+          for entry in www-control-center-web:control-center-web www-control-center-manage:control-center-manage www-control-center-api:control-center-api www-control-center-worker:control-center-worker www-control-center-temporal-worker:control-center-temporal-worker www-control-center-map-provision:control-center-map-provision www-webhook-relay-relay:webhook-relay-relay www-software-factory-worker:software-factory-worker www-software-factory-sandbox:software-factory-sandbox; do
             repo="${entry%%:*}"
             name="${entry#*:}"
             d=$(docker buildx imagetools inspect "ghcr.io/0x63616c/$repo:main" --format '{{.Manifest.Digest}}' 2>/dev/null || true)

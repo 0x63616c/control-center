@@ -11,6 +11,7 @@ export default defineConfig({
       "apps/web",
       "apps/manage",
       "apps/worker",
+      "apps/webhook-relay",
       "packages/core",
       "packages/logger",
       "packages/platform",

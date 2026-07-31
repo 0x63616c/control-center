@@ -15,6 +15,7 @@ COPY apps/api/package.json ./apps/api/package.json
 COPY apps/worker/package.json ./apps/worker/package.json
 COPY apps/temporal-worker/package.json ./apps/temporal-worker/package.json
 COPY apps/map-provision/package.json ./apps/map-provision/package.json
+COPY apps/webhook-relay/package.json ./apps/webhook-relay/package.json
 COPY apps/storybook/package.json ./apps/storybook/package.json
 COPY packages/api/package.json ./packages/api/package.json
 COPY packages/core/package.json ./packages/core/package.json

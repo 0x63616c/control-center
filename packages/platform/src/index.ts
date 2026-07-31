@@ -38,7 +38,12 @@ export function genId(prefix: string, options?: { length?: number }): string {
 // not part of the control-center deploy, so it is deliberately EXCLUDED from
 // cluster.ts's InfraNamespaceName — see the comment there. Adding it here does
 // not enrol it in ESO, CNPG, crons or GHCR pull secrets.
-export const productSlugs = ["control-center", "captive-portal", "software-factory"] as const;
+export const productSlugs = [
+  "control-center",
+  "captive-portal",
+  "software-factory",
+  "webhook-relay",
+] as const;
 
 export type ProductSlug = (typeof productSlugs)[number];
 
@@ -577,6 +582,8 @@ function databasePasswordFor(product: ProductIdentity): SecretCatalogEntry {
       // product that has none, which is a programming error rather than a
       // missing catalog entry.
       throw new Error("software-factory has no product database");
+    case "webhook-relay":
+      throw new Error("webhook-relay has no product database");
   }
   return assertNever(product.slug);
 }
@@ -740,7 +747,7 @@ export type ControlCenterProductManifest = Readonly<{
   dsm: Readonly<{
     exposure: WebExposure;
   }>;
-  // The public GitHub webhook host (#126). Served by the api workload, but it
+  // The public GitHub webhook host (#126). Served by the webhook-relay workload, but it
   // is NOT the api's exposure: api stays `internalService` for in-cluster
   // traffic and gains this one public hostname that the tunnel maps to it.
   // Owned here because every other public name in this system is owned here.
@@ -802,6 +809,7 @@ export function controlCenterProductManifest(): ControlCenterProductManifest {
       exposure: privateWeb(target, { host: "dsm" }),
     },
     hooks: {
+      // Served by the webhook-relay workload, which owns the public HMAC boundary.
       // PUBLIC on purpose: GitHub posts here from the internet and would be
       // 403'd by Access. Auth is the HMAC in features/hooks/service.ts.
       exposure: publicWeb(target, { host: "hooks" }),

@@ -30,6 +30,7 @@ export type OwnedWorkloadSpec = WorkloadSpec & { namespaceName: InfraNamespaceNa
 
 const controlCenterProduct = defineProduct("control-center");
 const softwareFactoryProduct = defineProduct("software-factory");
+const webhookRelayProduct = defineProduct("webhook-relay");
 
 const IMAGE_REPOSITORIES = {
   api: {
@@ -85,6 +86,11 @@ const IMAGE_REPOSITORIES = {
     product: "software-factory",
     digestKey: softwareFactoryProduct.imageDigestKey("sandbox"),
     repository: softwareFactoryProduct.imageRepository("sandbox"),
+  },
+  "webhook-relay-relay": {
+    product: "webhook-relay",
+    digestKey: webhookRelayProduct.imageDigestKey("relay"),
+    repository: webhookRelayProduct.imageRepository("relay"),
   },
 } as const satisfies Record<
   string,
