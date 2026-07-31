@@ -31,7 +31,8 @@ func (q *Queries) RecordStep(ctx context.Context, arg RecordStepParams) error {
 }
 
 const stepsForRun = `-- name: StepsForRun :many
-SELECT run_id, stage, turn FROM step WHERE run_id = $1 ORDER BY stage, turn
+SELECT run_id, stage, turn FROM step WHERE run_id = $1
+ORDER BY CASE stage WHEN 'plan' THEN 0 WHEN 'implement' THEN 1 WHEN 'review' THEN 2 END, turn
 `
 
 func (q *Queries) StepsForRun(ctx context.Context, runID pgtype.UUID) ([]Step, error) {

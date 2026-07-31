@@ -6,4 +6,5 @@ VALUES ($1, $2, $3)
 ON CONFLICT (run_id, stage, turn) DO NOTHING;
 
 -- name: StepsForRun :many
-SELECT * FROM step WHERE run_id = $1 ORDER BY stage, turn;
+SELECT * FROM step WHERE run_id = $1
+ORDER BY CASE stage WHEN 'plan' THEN 0 WHEN 'implement' THEN 1 WHEN 'review' THEN 2 END, turn;

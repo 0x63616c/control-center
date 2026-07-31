@@ -12,7 +12,8 @@ import (
 )
 
 const attemptsForRun = `-- name: AttemptsForRun :many
-SELECT run_id, stage, turn, attempt_no, model, effort, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, measured, started_at, ended_at, result FROM attempt WHERE run_id = $1 ORDER BY stage, turn, attempt_no
+SELECT run_id, stage, turn, attempt_no, model, effort, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, measured, started_at, ended_at, result FROM attempt WHERE run_id = $1
+ORDER BY CASE stage WHEN 'plan' THEN 0 WHEN 'implement' THEN 1 WHEN 'review' THEN 2 END, turn, attempt_no
 `
 
 func (q *Queries) AttemptsForRun(ctx context.Context, runID pgtype.UUID) ([]Attempt, error) {
