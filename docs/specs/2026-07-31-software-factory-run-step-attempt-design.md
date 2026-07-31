@@ -197,6 +197,46 @@ The Run's current phase is derived from its currently running Step. A separate
 mutable phase history is not needed because it would duplicate and potentially
 disagree with the Step history.
 
+## Step boundary
+
+This is decided:
+
+> A Step is one independently attempted and retried unit of workflow work.
+
+A Step has exactly one primary operation. Executions of that primary operation
+are the Step's Attempts. This normally produces a one-to-one relationship
+between a user-meaningful Step and a named Temporal activity, but it does not
+mean every Temporal activity is a Step.
+
+For example, workspace preparation contains independently meaningful retry
+boundaries and is recorded as separate Steps:
+
+```text
+Phase: Preparing
+  Step: create_sandbox
+  Step: wait_for_sandbox_ready
+  Step: clone_repository
+```
+
+Each can fail independently, has its own timeout and retry behavior, and is
+useful to identify precisely in the console. The broader `Preparing` phase is a
+display grouping derived from the current Step, not another history stream.
+
+A Step may use supporting activities when they serve the same indivisible goal,
+are not independently interesting to an operator, and do not own a separate
+retry policy. For example, finding an existing pull request can support a
+`sync_pull_request` Step without becoming a separate Step.
+
+Persistence and orchestration plumbing are not Steps. This includes activities
+such as `RecordStep`, `RecordAttemptStart`, `RecordAttemptEnd`, and
+`RecordRunEnd`, plus workflow timers used for retry backoff. Otherwise recording
+a Step would recursively require another recorded Step.
+
+If several operations each need their own retry policy or independently useful
+outcome, they are separate Steps. If several low-level operations truly form
+one retryable goal, prefer deepening them behind one named, idempotent primary
+activity.
+
 ## Temporal activity names
 
 Do not introduce a generic Temporal activity such as `ExecuteStep`.
@@ -247,11 +287,11 @@ For agent activities, `runAgentStep` can be a thin layer over the same primitive
 that adds model, usage, transcript, and thread information. It is not a second
 Step system.
 
-Aim for one user-meaningful Step to have one primary named activity. Where the
-workflow currently uses multiple low-level activities for one action, for
-example `FindPullRequest` followed by `OpenOrUpdatePullRequest`, deepen that
-operation into one idempotent `SyncPullRequest` activity. Both Temporal and the
-console then show a useful name without exposing implementation chatter.
+A user-meaningful Step has one primary named activity. Where the workflow
+currently uses multiple low-level activities for one action, for example
+`FindPullRequest` followed by `OpenOrUpdatePullRequest`, deepen that operation
+into one idempotent `SyncPullRequest` activity when practical. Both Temporal and
+the console then show a useful name without exposing implementation chatter.
 
 Database-recording activities are deliberately not Steps. Otherwise recording
 a Step would require recording the recording Step recursively.
@@ -342,6 +382,8 @@ This reaches further than a database migration:
 5. Keep concrete, well-named Temporal activities.
 6. Move retries into a workflow-owned, persisted Attempt loop.
 7. Keep semantic-rework budgets separate from infrastructure retry policy.
+8. Give every Step exactly one primary operation; its executions are the Step's
+   Attempts.
 
 ## Parked questions
 
