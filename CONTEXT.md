@@ -167,6 +167,11 @@ _Avoid_: Phase, every Temporal activity.
 One execution of a Step's primary operation for identical logical work.
 _Avoid_: Turn, semantic rework.
 
+**Step Result**:
+The authoritative domain answer discovered or produced by a completed Step. It
+is distinct from Attempt status and is returned only by a successful Attempt.
+_Avoid_: Attempt status, error.
+
 **Agent Stage**:
 The kind of agent work performed by an agent-backed Step: `plan`, `implement`, or `review`.
 _Avoid_: Step, phase.

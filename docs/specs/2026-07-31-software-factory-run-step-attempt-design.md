@@ -89,7 +89,7 @@ step
   state
   started_at
   ended_at
-  outcome
+  result_code
 
 attempt
   step_id
@@ -236,6 +236,46 @@ If several operations each need their own retry policy or independently useful
 outcome, they are separate Steps. If several low-level operations truly form
 one retryable goal, prefer deepening them behind one named, idempotent primary
 activity.
+
+## Attempt status and Step Result
+
+This is decided:
+
+> Attempt status says whether one execution worked. Step Result says what the
+> operation authoritatively discovered or produced.
+
+A successful Attempt does not imply that the workflow achieved its desired
+business result. It means the Step's primary operation completed and returned
+an authoritative answer.
+
+For example:
+
+| Step | Attempt status | Step Result | Workflow decision |
+| --- | --- | --- | --- |
+| `observe_ci` | `succeeded` | `ci_green` | Continue to review. |
+| `observe_ci` | `succeeded` | `ci_red` | Create another `implement` Step. |
+| `merge_pull_request` | `succeeded` | `merged` | Continue past the merge boundary. |
+| `merge_pull_request` | `succeeded` | `merge_conflict` | Create another `implement` Step. |
+| `implement` | `succeeded` | `blocked` | End the Run without retrying identical work. |
+| Any primary operation | `failed` | none | Apply the Step's retry policy. |
+
+A timeout, crashed process, or transport failure is an Attempt execution
+failure. A red CI result or merge conflict is not. Retrying the former may
+create another Attempt of the same Step; responding to the latter creates a
+different Step or ends the Run.
+
+A Step is `running` while an Attempt or its retry wait is active. It becomes
+`completed` when an Attempt returns a domain Result, including results such as
+`ci_red`, `merge_conflict`, or `blocked`. It becomes `failed` only when its
+Attempt budget is exhausted or an execution error is non-retryable.
+
+This keeps three questions separate:
+
+```text
+Attempt status = did this execution work?
+Step Result    = what did the operation discover or produce?
+Workflow       = what Step should happen next?
+```
 
 ## Temporal activity names
 
@@ -384,6 +424,7 @@ This reaches further than a database migration:
 7. Keep semantic-rework budgets separate from infrastructure retry policy.
 8. Give every Step exactly one primary operation; its executions are the Step's
    Attempts.
+9. Keep Attempt execution status separate from the Step's domain Result.
 
 ## Parked questions
 
@@ -407,17 +448,3 @@ The policy categories and ownership are proposed above, but the exact maximum
 Attempts, backoff, and possibly-chargeable execution limits are not yet fixed.
 They should be decided using concrete failure scenarios rather than copying the
 current six-stage-attempt and five-control-attempt defaults.
-
-### Step outcome vocabulary
-
-The design still needs to settle the exact distinction between:
-
-- Attempt execution success or failure;
-- Step completion and outcome;
-- a domain result such as `merge_conflict` that completed successfully as an
-  API interaction but did not achieve the Step's goal;
-- whether a failed Step may be handled by the workflow and followed by another
-  Step without failing the Run.
-
-This distinction should be made explicit in types and schema rather than hidden
-inside prose or free-form error strings.
