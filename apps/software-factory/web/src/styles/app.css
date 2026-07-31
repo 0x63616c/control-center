@@ -25,6 +25,23 @@
   box-sizing: border-box;
 }
 
+/* Dark scrollbars everywhere, including inside scrollable cards. */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--surface-2);
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -331,12 +348,13 @@ a:hover {
   font-size: 1.2rem;
 }
 .ticket-body {
-  max-width: 78ch;
   margin-top: 12px;
   padding: 14px 18px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--surface);
+  max-height: 45vh;
+  overflow-y: auto;
 }
 .ticket-body > :first-child {
   margin-top: 0;
