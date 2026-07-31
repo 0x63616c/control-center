@@ -26,6 +26,7 @@ import (
 	"go.temporal.io/sdk/worker"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codex"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/k8s"
@@ -121,6 +122,10 @@ func run() error {
 	// construction of the metrics that record into it is a crash in
 	// production; that is why both live here and are passed down.
 	registry, metrics := newObservability()
+	blobStore, err := blobs.NewHTTPStore(cfg.BlobsURL, nil)
+	if err != nil {
+		return fmt.Errorf("opening HTTP blob store: %w", err)
+	}
 
 	// Bound before the worker starts, so a port already in use is a startup
 	// failure with a clear message rather than a worker that runs unmonitored.
@@ -143,7 +148,7 @@ func run() error {
 		HostPort:  cfg.TemporalHostPort,
 		Namespace: cfg.TemporalNamespace,
 		Logger:    tlog.NewStructuredLogger(logger),
-	}, nil, metrics)
+	}, blobStore, metrics)
 	if err != nil {
 		return fmt.Errorf("dialling Temporal at %s in namespace %s: %w", cfg.TemporalHostPort, cfg.TemporalNamespace, err)
 	}

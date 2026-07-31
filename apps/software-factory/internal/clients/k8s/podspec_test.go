@@ -9,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/config"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
@@ -250,6 +251,20 @@ func TestBuildPodPassesTheBlobURLWithoutAddingAVolume(t *testing.T) {
 		}
 	}
 	t.Errorf("sandbox env does not contain %s", work.SandboxBlobsURLEnv)
+}
+
+func TestBuildPodEnablesDecodeOnlyPayloadCodecSupport(t *testing.T) {
+	t.Parallel()
+
+	for _, env := range sandboxContainer(t, mustBuild(t, validSpec())).Env {
+		if env.Name == config.PayloadCodecModeEnv {
+			if env.Value != "decode-only" {
+				t.Errorf("%s = %q, want decode-only", config.PayloadCodecModeEnv, env.Value)
+			}
+			return
+		}
+	}
+	t.Errorf("sandbox env does not contain %s", config.PayloadCodecModeEnv)
 }
 
 func TestBuildPodRejectsAnUnknownSandboxEnvKey(t *testing.T) {

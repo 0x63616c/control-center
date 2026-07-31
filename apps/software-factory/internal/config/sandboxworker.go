@@ -34,6 +34,10 @@ type SandboxWorker struct {
 	// which queue it is polling.
 	TaskQueue string
 
+	// BlobsURL is the in-cluster payload blob API used to decode blob-backed
+	// Temporal payloads.
+	BlobsURL string
+
 	// LogLevel is the level everything in this process logs at.
 	LogLevel slog.Level
 }
@@ -52,6 +56,7 @@ func sandboxWorkerEnvNames() []string {
 		work.SandboxTemporalHostPortEnv,
 		work.SandboxTemporalNamespaceEnv,
 		work.SandboxTaskQueueEnv,
+		work.SandboxBlobsURLEnv,
 	}
 }
 
@@ -61,6 +66,7 @@ func (w SandboxWorker) Validate() error {
 		work.SandboxTemporalHostPortEnv:  w.TemporalHostPort,
 		work.SandboxTemporalNamespaceEnv: w.TemporalNamespace,
 		work.SandboxTaskQueueEnv:         w.TaskQueue,
+		work.SandboxBlobsURLEnv:          w.BlobsURL,
 	}
 	for _, name := range sandboxWorkerEnvNames() {
 		if strings.TrimSpace(required[name]) == "" {
@@ -83,6 +89,7 @@ func LoadSandboxWorker() (SandboxWorker, error) {
 		TemporalHostPort:  os.Getenv(work.SandboxTemporalHostPortEnv),
 		TemporalNamespace: os.Getenv(work.SandboxTemporalNamespaceEnv),
 		TaskQueue:         os.Getenv(work.SandboxTaskQueueEnv),
+		BlobsURL:          os.Getenv(work.SandboxBlobsURLEnv),
 	}
 	if err := cfg.Validate(); err != nil {
 		return SandboxWorker{}, describeSandboxWorkerRequirement(err)
@@ -103,6 +110,7 @@ func describeSandboxWorkerRequirement(err error) error {
 		work.SandboxTemporalHostPortEnv:  "the Temporal frontend to dial, host:port",
 		work.SandboxTemporalNamespaceEnv: "the Temporal namespace this pod's workflow run lives in",
 		work.SandboxTaskQueueEnv:         "this pod's own per-ticket task queue, computed by CreateSandbox and read back here",
+		work.SandboxBlobsURLEnv:          "the in-cluster payload blob API used to decode Temporal payloads",
 	}
 	for name, purpose := range purposes {
 		if strings.Contains(err.Error(), name) {

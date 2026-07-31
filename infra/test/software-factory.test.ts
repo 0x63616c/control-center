@@ -329,6 +329,14 @@ describe("the worker Deployment (#343)", () => {
     expect(names).not.toContain("TEMPORAL_ADDRESS");
   });
 
+  test("enables decode-only payload codec support before any worker writes blobs", async () => {
+    const [container] = (await deploymentSpec()).template.spec.containers;
+
+    expect(container.env.find((env) => env.name === "PAYLOAD_CODEC_MODE")?.value).toBe(
+      "decode-only",
+    );
+  });
+
   test("binds the metrics and health server, which are one address", async () => {
     // METRICS_ADDR carries /metrics AND /healthz, so an absent value costs
     // observability and liveness together.

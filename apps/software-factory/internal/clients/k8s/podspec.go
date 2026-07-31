@@ -10,6 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/config"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
@@ -190,6 +191,13 @@ func buildPod(spec work.SandboxSpec, o options) (*corev1.Pod, error) {
 		imagePullSecrets = []corev1.LocalObjectReference{{Name: o.imagePullSecretName}}
 	}
 
+	env := make(map[string]string, len(spec.Env)+1)
+	for key, value := range spec.Env {
+		env[key] = value
+	}
+	// Every sandbox must read blob-backed payloads before any worker can write them.
+	env[config.PayloadCodecModeEnv] = "decode-only"
+
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
@@ -221,7 +229,7 @@ func buildPod(spec work.SandboxSpec, o options) (*corev1.Pod, error) {
 				// env vars set below (work.SandboxTemporalHostPortEnv,
 				// work.SandboxTemporalNamespaceEnv, work.SandboxTaskQueueEnv).
 				Command:   []string{sandboxWorkerBinaryPath},
-				Env:       sortedEnv(spec.Env),
+				Env:       sortedEnv(env),
 				Resources: resources,
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: workVolumeName, MountPath: work.SandboxRoot},

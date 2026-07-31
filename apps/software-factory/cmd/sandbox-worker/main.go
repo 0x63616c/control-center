@@ -37,6 +37,7 @@ import (
 	"go.temporal.io/sdk/worker"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codex"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/local"
 	temporalapi "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/temporal"
@@ -93,12 +94,16 @@ func run() error {
 		return fmt.Errorf("reading the sandbox worker's configuration: %w", err)
 	}
 	logger := newLogger(cfg.LogLevel)
+	blobStore, err := blobs.NewHTTPStore(cfg.BlobsURL, nil)
+	if err != nil {
+		return fmt.Errorf("opening HTTP blob store: %w", err)
+	}
 
 	temporal, err := temporalapi.Dial(temporalapi.Options{
 		HostPort:  cfg.TemporalHostPort,
 		Namespace: cfg.TemporalNamespace,
 		Logger:    tlog.NewStructuredLogger(logger),
-	}, nil, nil)
+	}, blobStore, nil)
 	if err != nil {
 		return fmt.Errorf("dialling Temporal at %s in namespace %s: %w", cfg.TemporalHostPort, cfg.TemporalNamespace, err)
 	}
