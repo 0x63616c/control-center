@@ -253,11 +253,11 @@ YAML) is gitignored for the same reason.
 ## Upgrading the node (`talosctl upgrade`)
 
 **Always pass `--drain=false`.** The default `--drain=true` cordons the node and
-evicts its pods, and on this cluster that **never finishes**: three
+evicts its pods, and on this cluster that **never finishes**: four
 single-replica CloudNativePG clusters carry PDBs with `minAvailable: 1` and so
 `ALLOWED DISRUPTIONS: 0` — `control-center-postgres-primary`,
-`home-assistant-postgres-primary`, `temporal-postgres-primary`. A single-node
-cluster has nowhere to move them, so the drain loops on
+`software-factory-postgres-primary`, `home-assistant-postgres-primary`, and
+`temporal-postgres-primary`. A single-node cluster has nowhere to move them, so the drain loops on
 `evicting pod …-postgres-1` until the client's 5-minute global timeout, and the
 reboot is never triggered.
 
@@ -290,7 +290,7 @@ trusting the client's report.
 3-8 minute figure quoted elsewhere in this repo describes a **full POST boot**
 and is not a comparable sample.
 
-After it returns, check the three postgres clusters explicitly — `--drain=false`
+After it returns, check the four postgres clusters explicitly — `--drain=false`
 means their primaries were killed ungracefully and recovered by WAL replay, so
 `Running` alone is not the check:
 
