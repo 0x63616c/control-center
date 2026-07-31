@@ -51,6 +51,8 @@ const digests = {
   "software-factory-relay": `sha256:${"c".repeat(64)}`,
   "software-factory-api": `sha256:${"d".repeat(64)}`,
   "software-factory-console": `sha256:${"e".repeat(64)}`,
+  "software-factory-blobs": `sha256:${"f".repeat(64)}`,
+  "software-factory-codec": `sha256:${"0".repeat(64)}`,
 };
 
 const namespace = new k8s.core.v1.Namespace("software-factory-test-namespace", {

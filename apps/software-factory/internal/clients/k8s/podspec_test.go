@@ -227,10 +227,29 @@ func TestBuildPodAcceptsTheKnownSandboxEnvKeys(t *testing.T) {
 		work.SandboxTaskQueueEnv:         "software-factory-sandbox-run-1",
 		work.SandboxTemporalHostPortEnv:  "temporal-frontend.temporal:7233",
 		work.SandboxTemporalNamespaceEnv: "software-factory",
+		work.SandboxBlobsURLEnv:          "http://blobs:8080",
 	}
 	if _, err := buildPod(spec, defaultOptions()); err != nil {
 		t.Fatalf("buildPod returned an unexpected error for the known env keys: %v", err)
 	}
+}
+
+func TestBuildPodPassesTheBlobURLWithoutAddingAVolume(t *testing.T) {
+	t.Parallel()
+
+	spec := validSpec()
+	spec.Env = map[string]string{work.SandboxBlobsURLEnv: "http://blobs:8080"}
+	pod := mustBuild(t, spec)
+
+	for _, env := range sandboxContainer(t, pod).Env {
+		if env.Name == work.SandboxBlobsURLEnv {
+			if env.Value != "http://blobs:8080" {
+				t.Errorf("BLOBS_URL = %q, want the in-cluster blob service URL", env.Value)
+			}
+			return
+		}
+	}
+	t.Errorf("sandbox env does not contain %s", work.SandboxBlobsURLEnv)
 }
 
 func TestBuildPodRejectsAnUnknownSandboxEnvKey(t *testing.T) {

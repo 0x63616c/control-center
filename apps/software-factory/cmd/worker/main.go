@@ -409,6 +409,7 @@ func buildDeps(
 			// to be given separately for no reason.
 			work.SandboxTemporalHostPortEnv:  cfg.TemporalHostPort,
 			work.SandboxTemporalNamespaceEnv: cfg.TemporalNamespace,
+			work.SandboxBlobsURLEnv:          cfg.BlobsURL,
 		},
 	}
 

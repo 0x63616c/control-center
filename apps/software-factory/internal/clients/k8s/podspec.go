@@ -47,7 +47,7 @@ const sandboxWorkerBinaryPath = "/usr/local/bin/sandbox-worker"
 // directives aside), so a key that reaches buildPod outside this set is
 // treated as a configuration bug, not silently passed through. Set from
 // cmd/worker/main.go's static SandboxTemplate.Env (work.CodexHomeEnv,
-// work.GhConfigDirEnv, and — new for #434 step 3 — the two Temporal env vars
+// work.GhConfigDirEnv, the Temporal env vars, and the blob API URL
 // the pod's own embedded worker dials with) and from work.SandboxTemplate.Spec
 // per ticket (work.SandboxBranchEnv, work.SandboxTaskQueueEnv).
 var allowedSandboxEnvKeys = map[string]bool{
@@ -57,6 +57,7 @@ var allowedSandboxEnvKeys = map[string]bool{
 	work.SandboxTaskQueueEnv:         true,
 	work.SandboxTemporalHostPortEnv:  true,
 	work.SandboxTemporalNamespaceEnv: true,
+	work.SandboxBlobsURLEnv:          true,
 }
 
 // maxPodNameLength is Kubernetes' DNS-1123 label limit, which a pod name is.
