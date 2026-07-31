@@ -118,9 +118,15 @@ const (
 // quote them, and an error naming an input that does not exist is worse than no
 // error at all.
 const (
-	// envDatabaseURL reuses DatabaseURLEnv (database.go), the one spelling of
-	// this variable name, rather than a second literal that could drift from it.
-	envDatabaseURL            = DatabaseURLEnv
+	// envDatabaseURL is the same spelling as config.DatabaseURLEnv
+	// (database.go) and config's own envAPIDatabaseURL (api.go): one Postgres,
+	// one variable name, whichever process reads it. A literal here rather
+	// than a reference to DatabaseURLEnv, because
+	// scripts/test-worker-env-parity.sh greps workerEnvNames() for a string
+	// literal assigned to each identifier it names, by design (D1, #340) — a
+	// bare reference would silently drop out of that check's required set
+	// instead of failing loudly.
+	envDatabaseURL            = "SOFTWARE_FACTORY_DATABASE_URL"
 	envTemporalHostPort       = "TEMPORAL_HOST_PORT"
 	envTemporalNamespace      = "TEMPORAL_NAMESPACE"
 	envSandboxNamespace       = "SANDBOX_NAMESPACE"
