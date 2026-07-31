@@ -45,6 +45,21 @@ func (f *Store) Run(_ context.Context, runID string) (store.Run, error) {
 	return run, nil
 }
 
+// RunsForTicket lists every Run of ticket, most recent (latest StartedAt)
+// first, matching the real store's ORDER BY started_at DESC.
+func (f *Store) RunsForTicket(_ context.Context, ticket store.TicketID) ([]store.Run, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []store.Run
+	for _, run := range f.runs {
+		if run.TicketID == ticket {
+			out = append(out, run)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
+	return out, nil
+}
+
 // RunDetail reads a Run together with every Step and Attempt recorded
 // against it.
 func (f *Store) RunDetail(ctx context.Context, runID string) (store.RunDetail, error) {

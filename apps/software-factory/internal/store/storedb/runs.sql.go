@@ -61,6 +61,39 @@ func (q *Queries) Run(ctx context.Context, id pgtype.UUID) (Run, error) {
 	return i, err
 }
 
+const runsForTicket = `-- name: RunsForTicket :many
+SELECT id, ticket_id, started_at, ended_at, outcome, failure_kind FROM run WHERE ticket_id = $1 ORDER BY started_at DESC
+`
+
+// Most recent first: the console's ticket detail view leads with the
+// current or latest Run.
+func (q *Queries) RunsForTicket(ctx context.Context, ticketID int64) ([]Run, error) {
+	rows, err := q.db.Query(ctx, runsForTicket, ticketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Run
+	for rows.Next() {
+		var i Run
+		if err := rows.Scan(
+			&i.ID,
+			&i.TicketID,
+			&i.StartedAt,
+			&i.EndedAt,
+			&i.Outcome,
+			&i.FailureKind,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const startRun = `-- name: StartRun :one
 INSERT INTO run (id, ticket_id, started_at)
 VALUES ($1, $2, $3)

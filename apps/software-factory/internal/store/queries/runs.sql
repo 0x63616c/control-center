@@ -16,3 +16,8 @@ RETURNING *;
 
 -- name: Run :one
 SELECT * FROM run WHERE id = $1;
+
+-- name: RunsForTicket :many
+-- Most recent first: the console's ticket detail view leads with the
+-- current or latest Run.
+SELECT * FROM run WHERE ticket_id = $1 ORDER BY started_at DESC;

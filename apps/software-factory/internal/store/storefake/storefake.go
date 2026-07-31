@@ -291,8 +291,12 @@ func sortTickets(tickets []store.Ticket) {
 }
 
 // errNotFound reports that no row matched the request, the fake's analogue of
-// the real store's pgx.ErrNoRows.
-var errNotFound = fmt.Errorf("not found")
+// the real store's pgx.ErrNoRows. It is store.ErrNotFound itself, not a
+// look-alike: a caller (the API's ticketStoreError, for one) matches on that
+// sentinel with errors.Is, and a fake that raised a different error here
+// would pass its own tests while lying to every caller that runs against a
+// real database.
+var errNotFound = store.ErrNotFound
 
 // notFoundf wraps errNotFound with context, the fake's equivalent of the real
 // store's per-query %w wrapping.

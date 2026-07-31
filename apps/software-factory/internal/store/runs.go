@@ -2,11 +2,13 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store/storedb"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+	"github.com/jackc/pgx/v5"
 )
 
 // RunStarter starts a new Run for a Ticket. The workflow's opening activity is
@@ -26,6 +28,12 @@ type RunEnder interface {
 type RunReader interface {
 	Run(ctx context.Context, runID string) (Run, error)
 	RunDetail(ctx context.Context, runID string) (RunDetail, error)
+}
+
+// RunLister lists every Run of a Ticket, most recent first — the console
+// ticket detail view's top level.
+type RunLister interface {
+	RunsForTicket(ctx context.Context, ticket TicketID) ([]Run, error)
 }
 
 // StartRun records that ticket's Run runID began at startedAt.
@@ -71,9 +79,25 @@ func (s *Store) Run(ctx context.Context, runID string) (Run, error) {
 	}
 	row, err := s.q.Run(ctx, id)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Run{}, fmt.Errorf("reading run %s: %w", runID, ErrNotFound)
+		}
 		return Run{}, fmt.Errorf("reading run %s: %w", runID, wrapQueryErr(err))
 	}
 	return runFromRow(row), nil
+}
+
+// RunsForTicket lists every Run of ticket, most recent first.
+func (s *Store) RunsForTicket(ctx context.Context, ticket TicketID) ([]Run, error) {
+	rows, err := s.q.RunsForTicket(ctx, int64(ticket))
+	if err != nil {
+		return nil, fmt.Errorf("listing runs for ticket %d: %w", ticket, wrapQueryErr(err))
+	}
+	runs := make([]Run, 0, len(rows))
+	for _, row := range rows {
+		runs = append(runs, runFromRow(row))
+	}
+	return runs, nil
 }
 
 // RunDetail reads a Run together with every Step it has recorded and every
@@ -134,4 +158,5 @@ var (
 	_ RunStarter = (*Store)(nil)
 	_ RunEnder   = (*Store)(nil)
 	_ RunReader  = (*Store)(nil)
+	_ RunLister  = (*Store)(nil)
 )

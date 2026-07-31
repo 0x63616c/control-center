@@ -2,10 +2,12 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store/storedb"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+	"github.com/jackc/pgx/v5"
 )
 
 // TranscriptWriter stores one Attempt's compressed transcript. PersistTranscript
@@ -19,6 +21,17 @@ type TranscriptWriter interface {
 // the API.
 type TranscriptReader interface {
 	Transcript(ctx context.Context, key work.StageKey, attemptNo int) (Transcript, error)
+	TranscriptKeysForRun(ctx context.Context, runID string) ([]TranscriptKey, error)
+}
+
+// TranscriptKey identifies one Attempt that has a transcript, without the
+// transcript's own bytes — the console's run detail view uses this to render
+// "no transcript" for an Attempt this set does not contain, at the cost of
+// one small query rather than one per-Attempt fetch of a compressed blob.
+type TranscriptKey struct {
+	Stage     work.Stage
+	Turn      int
+	AttemptNo int
 }
 
 // PutTranscript stores t. A transcript belongs to exactly one Attempt, which
@@ -58,6 +71,9 @@ func (s *Store) Transcript(ctx context.Context, key work.StageKey, attemptNo int
 		AttemptNo: int32(attemptNo),
 	})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Transcript{}, fmt.Errorf("reading transcript for attempt %d of step %s: %w", attemptNo, key, ErrNotFound)
+		}
 		return Transcript{}, fmt.Errorf("reading transcript for attempt %d of step %s: %w", attemptNo, key, wrapQueryErr(err))
 	}
 	return Transcript{
@@ -68,6 +84,24 @@ func (s *Store) Transcript(ctx context.Context, key work.StageKey, attemptNo int
 		UncompressedSizeBytes: row.UncompressedSizeBytes,
 		Checksum:              row.Checksum,
 	}, nil
+}
+
+// TranscriptKeysForRun lists every Attempt of runID that has a stored
+// transcript.
+func (s *Store) TranscriptKeysForRun(ctx context.Context, runID string) ([]TranscriptKey, error) {
+	id, err := pgUUID(runID)
+	if err != nil {
+		return nil, fmt.Errorf("listing transcript keys for run %s: %w", runID, err)
+	}
+	rows, err := s.q.TranscriptKeysForRun(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("listing transcript keys for run %s: %w", runID, wrapQueryErr(err))
+	}
+	keys := make([]TranscriptKey, 0, len(rows))
+	for _, row := range rows {
+		keys = append(keys, TranscriptKey{Stage: work.Stage(row.Stage), Turn: int(row.Turn), AttemptNo: int(row.AttemptNo)})
+	}
+	return keys, nil
 }
 
 var (

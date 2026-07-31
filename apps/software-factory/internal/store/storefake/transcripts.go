@@ -26,3 +26,17 @@ func (f *Store) Transcript(_ context.Context, key work.StageKey, attemptNo int) 
 	}
 	return t, nil
 }
+
+// TranscriptKeysForRun lists every Attempt of runID that has a stored
+// transcript.
+func (f *Store) TranscriptKeysForRun(_ context.Context, runID string) ([]store.TranscriptKey, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []store.TranscriptKey
+	for ak := range f.transcripts {
+		if ak.runID == runID {
+			out = append(out, store.TranscriptKey{Stage: ak.stage, Turn: ak.turn, AttemptNo: ak.attemptNo})
+		}
+	}
+	return out, nil
+}
