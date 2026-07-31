@@ -210,3 +210,37 @@ Only once a run has reached `propose` on its own. Then, one PR, `Fixes #345`:
 
 Until then it stays. It is the working tool, and the thing replacing it has
 never run.
+
+## Debugging a webhook that did not arrive
+
+Reading relay logs after the fact does not work, and will mislead you. Deploys
+roll the relay pod, so the pod that handled the delivery is usually gone by the
+time you look — an empty log then reads as "GitHub sent nothing" when it only
+means "this pod started after the event". `kubectl logs -n webhook-relay
+deploy/relay` also picks a single pod when more than one is running.
+
+Follow the live pod instead, and trigger the event while watching:
+
+```sh
+kubectl get pods -n webhook-relay                 # note the pod name
+kubectl logs -n webhook-relay <pod> -f --tail=0   # then merge/open the PR
+```
+
+To confirm the relay itself is healthy without waiting for GitHub, probe it
+in-cluster. It routes on exact paths, so the reply tells you where you hit:
+
+```sh
+kubectl port-forward -n webhook-relay svc/relay 18090:8080
+curl -X POST localhost:18090/github    # 401 invalid_signature = healthy
+curl -X POST localhost:18090/healthz   # 405
+curl -X POST localhost:18090/          # 404 — the root is NOT the webhook path
+```
+
+A 401 there is a pass: it proves routing, signature verification and logging
+all work, and it emits `github webhook rejected reason=invalid_signature`.
+
+GitHub's own delivery record is the authority on whether anything was sent, and
+unlike pod logs it survives a redeploy. Note the repository has **no** webhooks
+(`gh api repos/0x63616c/world-wide-webb/hooks` returns `[]`) — deliveries come
+from the **GitHub App's** webhook, so check the App's settings and its recent
+deliveries, not the repo's.
