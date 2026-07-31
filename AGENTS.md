@@ -125,12 +125,12 @@ means a GitHub issue - same thing, one vocabulary.
 - **Merged to `main` is done - GitHub auto-closes the resolved ticket then.** Do
   not hold an issue open pending prod verification; that just accumulates a backlog
   of done-but-open tickets. If the change turns out broken, file a NEW issue.
-- **Close resolved issues through the PR template.** Put `Fixes #N` only in the
-  canonical linked-issue section of a PR description; GitHub closes it and records
-  the merge timeline event when the PR merges into the default branch. Never put
-  closing keywords in commit messages or incidental PR prose, where a phrase such
-  as `then close #N` can accidentally close an unrelated issue. Use a neutral
-  reference for related issues the PR does not resolve.
+- **Close resolved issues by hand, never by keyword.** Reference the issue in
+  the PR description as `Refs #N`, not `Fixes #N`/`Closes #N`/`Resolves #N` -
+  those keywords auto-close on a bare number match anywhere in the PR body,
+  including commit messages or incidental prose (a phrase like `then close #N`
+  has closed an unrelated issue before). After the PR merges, close the issue
+  with `gh issue close`.
 
 ## Workflow
 
@@ -165,9 +165,9 @@ means a GitHub issue - same thing, one vocabulary.
     Stale worktrees are reaped by an hourly prune job.
 - **Branch -> PR -> merge is the default for all work, including agent work.**
   Create a worktree/branch named after the task, commit there, and open a PR
-  against `main` (`gh pr create`, using the PR template). Use its canonical
-  linked-issue field (`Fixes #N`) for every issue the PR resolves; see the
-  issue-tracking rule above for the required scope of closing keywords.
+  against `main` (`gh pr create`, using the PR template). Reference every
+  issue the PR resolves as `Refs #N` and close it by hand after merge; see
+  the issue-tracking rule above for why closing keywords are banned.
 - **Commit and push extremely often, without asking.** Commit each coherent
   change (passing test, working slice, doc update); never batch. Push the
   branch immediately - the push target is now the PR branch, not `main`.

@@ -6,13 +6,12 @@
 
 ## Why / linked issue
 
-<!-- Explain why this change is needed, then link every resolved issue as
-     Fixes #N. GitHub closes that issue automatically when this PR merges into
-     the default branch. Put closing keywords only in this canonical linked-
-     issue section: never in commit messages or incidental PR prose. Use a
-     neutral reference for related issues this PR does not resolve. -->
+<!-- Explain why this change is needed, then reference every resolved issue as
+     Refs #N. Do not use closing keywords (Fixes/Closes/Resolves) anywhere in
+     this PR - GitHub auto-closes on a bare number match and has closed the
+     wrong issue before. Close resolved issues by hand after merge. -->
 
-Fixes #
+Refs #
 
 ## How it was verified
 
