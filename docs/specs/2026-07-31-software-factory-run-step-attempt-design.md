@@ -477,6 +477,29 @@ The initial activity-retry direction is:
 | Merge | Reconcile after ambiguous failure; conflicts and head changes are domain outcomes, not retryable transport errors. |
 | Recording writes | Retry firmly; fail the Run if its durable history cannot be written. |
 
+Agent activities use at most ten native activity tries in one Agent Attempt:
+the initial try plus nine retries. The retry interval starts at 10 seconds,
+doubles after each failure, and is capped at 5 minutes. If failures occur
+immediately, the approximate try start times are:
+
+```text
+00:00  00:10  00:30  01:10  02:30
+05:10  10:10  15:10  20:10  25:10
+```
+
+This gives a provider or selected model that remains unavailable for around
+ten minutes time to recover without rapidly consuming the retry budget. A
+`ScheduleToClose` timeout enforces the Agent Attempt's 55-minute total across
+execution and backoff; `StartToClose` alone would incorrectly grant each try a
+fresh 55-minute timeout.
+
+Provider or model unavailability is retryable within this policy. Explicit
+authentication failures are permanent for the Agent Attempt, and provider
+rate limits end the Run through the dispatcher cooldown path rather than
+spending ten retries. Every retry reconciles or resumes the same Agent Attempt
+and Agent Thread; it must not silently begin another potentially chargeable
+agent execution.
+
 The Run has one deliberately simple agent-execution budget:
 
 > A Run may authorize at most 25 Agent Attempts in total.
@@ -561,6 +584,8 @@ This reaches further than a database migration:
 12. Permit at most five Review Steps in one Run.
 13. Permit at most 25 Agent Attempts across all agent-backed Steps in one Run.
 14. Bound each Agent Attempt to 55 minutes across all native activity tries.
+15. Give agent activities ten total native tries with 10-second exponential
+    backoff, coefficient 2, and a 5-minute maximum interval.
 
 ## Parked questions
 
@@ -580,10 +605,7 @@ can simply end the Run and Ticket as failed without prescribing remediation.
 
 ### Retry-policy values
 
-The policy categories and ownership are proposed above, but exact activity
-retry counts, backoff, and infrastructure-activity timeouts are not yet fixed.
-They should be decided using concrete failure scenarios rather than copying
-the current six-stage-attempt and five-control-attempt defaults.
-
-The Agent Attempt timeout is fixed at 55 minutes. Exact activity retry counts
-and backoff within that total duration remain undecided.
+The Agent Attempt timeout and agent-activity retry policy are fixed above.
+Exact retry counts, backoff, and timeouts for infrastructure activities remain
+undecided. They should be chosen from concrete failure scenarios rather than
+inheriting the current five-control-attempt default wholesale.
