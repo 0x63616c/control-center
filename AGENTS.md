@@ -9,6 +9,14 @@
 - **Beads (`bd`) dropped 2026-07-11.** Never create or query `bd` tickets. Archive:
   `docs/beads-archive/` - `OPEN-IDEAS.md` (unfinished ideas), `beads-export.jsonl`
   (raw dump). Pull ideas from there.
+- **software-factory Tickets are a separate system from GitHub Issues** - use the
+  `/create-ticket` skill for GitHub issues, and `scripts/create-ticket.sh
+  --title "..." --body-file FILE [--blocker ID]...` to file a factory Ticket
+  against `factory.worldwidewebb.co`. Factory Tickets carry no labels and their
+  body must be self-contained (the factory can't read GitHub) but still open
+  with a `## Original ask (verbatim)` block same as issues. The script decrypts
+  the worker bearer token from `secrets/vault.yaml` via `sops` and port-forwards
+  to the in-cluster API - never prints the token.
 - Read the `docs/writing-scalable-typescript/` guide (start at its `README.md`)
   before writing or reviewing TS/TSX. It is docs, not an invokable skill.
 - **`apps/software-factory/` is Go and has its own standards**, in its nested
