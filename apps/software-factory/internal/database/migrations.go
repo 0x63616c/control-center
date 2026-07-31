@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"io/fs"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -18,7 +19,11 @@ var migrations embed.FS
 
 // ApplyMigrations applies every pending embedded PostgreSQL migration.
 func ApplyMigrations(ctx context.Context, db *sql.DB) error {
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations)
+	migrationFiles, err := fs.Sub(migrations, "migrations")
+	if err != nil {
+		return fmt.Errorf("open embedded migrations: %w", err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrationFiles)
 	if err != nil {
 		return fmt.Errorf("create migration provider: %w", err)
 	}
