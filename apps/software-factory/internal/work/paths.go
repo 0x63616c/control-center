@@ -1,10 +1,14 @@
 package work
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"path"
 	"strconv"
 	"strings"
+
+	"go.temporal.io/sdk/converter"
 )
 
 // SandboxRoot is where a stage's working files live inside the sandbox.
@@ -13,6 +17,56 @@ import (
 // detail of whatever runs the stage: the image's entrypoint creates it, and the
 // worker writes into it. Changing it means changing both.
 const SandboxRoot = "/work"
+
+// PayloadKey names one offloaded Temporal payload.
+//
+// Namespace and WorkflowID come from the serialisation context the SDK supplies
+// when encoding. They are empty when it supplies none, which is supported: a
+// payload codec may legitimately be called without context.
+//
+// Digest is the lowercase SHA-256 hex digest of the exact stored bytes. Content
+// addressing makes retry writes idempotent and collapses identical payloads.
+type PayloadKey struct {
+	Namespace  string
+	WorkflowID string
+	Digest     string
+}
+
+// NewPayloadKey derives a content-addressed key for stored.
+func NewPayloadKey(sc converter.SerializationContext, stored []byte) PayloadKey {
+	sum := sha256.Sum256(stored)
+	key := PayloadKey{Digest: hex.EncodeToString(sum[:])}
+
+	switch context := sc.(type) {
+	case converter.WorkflowSerializationContext:
+		key.Namespace = context.Namespace
+		key.WorkflowID = context.WorkflowID
+	case converter.ActivitySerializationContext:
+		key.Namespace = context.Namespace
+		key.WorkflowID = context.WorkflowID
+	}
+
+	if !isPathElement(key.Namespace) || !isPathElement(key.WorkflowID) {
+		key.Namespace = ""
+		key.WorkflowID = ""
+	}
+
+	return key
+}
+
+// String renders the payload's validated path within the payloads bucket.
+func (k PayloadKey) String() string {
+	if k.Namespace == "" || k.WorkflowID == "" {
+		return "_unkeyed/" + k.Digest
+	}
+
+	return k.Namespace + "/" + k.WorkflowID + "/" + k.Digest
+}
+
+func isPathElement(value string) bool {
+	return value != "" && value != "." && value != ".." &&
+		!strings.Contains(value, "/") && !strings.Contains(value, "\\")
+}
 
 // RepoDir is where the ticket's repository is checked out inside the sandbox,
 // and the directory a stage's `codex exec` must run in.
