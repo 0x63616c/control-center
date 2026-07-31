@@ -469,7 +469,6 @@ jobs:
     if: needs.changes.outputs.web == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    environment: prod
     steps:
       - uses: actions/checkout@v5
 
@@ -498,7 +497,6 @@ jobs:
     if: needs.changes.outputs.manage == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    environment: prod
     steps:
       - uses: actions/checkout@v5
 
@@ -517,7 +515,6 @@ jobs:
     if: needs.changes.outputs.api == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    environment: prod
     steps:
       - uses: actions/checkout@v5
 
@@ -538,7 +535,6 @@ jobs:
     if: needs.changes.outputs.worker == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    environment: prod
     steps:
       - uses: actions/checkout@v5
 
@@ -557,7 +553,6 @@ jobs:
     if: needs.changes.outputs.temporalworker == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    environment: prod
     steps:
       - uses: actions/checkout@v5
 
@@ -576,7 +571,6 @@ jobs:
     if: needs.changes.outputs.mapprovision == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    environment: prod
     steps:
       - uses: actions/checkout@v5
 
@@ -600,7 +594,6 @@ jobs:
     if: needs.changes.outputs.softwarefactory == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    environment: prod
     steps:
       - uses: actions/checkout@v5
 
@@ -619,7 +612,6 @@ jobs:
     if: needs.changes.outputs.softwarefactory == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    environment: prod
     steps:
       - uses: actions/checkout@v5
 
@@ -654,7 +646,6 @@ jobs:
     if: needs.changes.outputs.softwarefactory == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    environment: prod
     steps:
       - uses: actions/checkout@v5
       - name: Build and push webhook relay image
@@ -671,7 +662,6 @@ jobs:
     if: needs.changes.outputs.softwarefactory == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    environment: prod
     steps:
       - uses: actions/checkout@v5
       - name: Build and push software-factory API image
@@ -693,7 +683,6 @@ jobs:
     if: needs.changes.outputs.softwarefactoryweb == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    environment: prod
     steps:
       - uses: actions/checkout@v5
 
@@ -753,9 +742,10 @@ jobs:
       !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Protected environment: AGE_PRIVATE_KEY is scoped to this env so it never
-    # appears on PR runners (CC-k8t7 age-key = skeleton key for all 114 secrets).
-    environment: prod
+    # Protected environment (main-branch only): AGE_PRIVATE_KEY also lives as a
+    # plain repo secret for the build-* jobs above, which don't deploy anything;
+    # this job actually touches the cluster, so it stays gated to `production`.
+    environment: production
     steps:
       - uses: actions/checkout@v5
 
@@ -964,7 +954,7 @@ jobs:
       !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    environment: prod
+    environment: production
     steps:
       - uses: actions/checkout@v5
 
@@ -1026,7 +1016,7 @@ jobs:
     if: always() && github.ref_name == 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    environment: prod
+    environment: production
     steps:
       - uses: actions/checkout@v5
 

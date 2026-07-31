@@ -56,14 +56,10 @@ starts as many as its in-flight cap allows. Starting the child workflow with ID
 workflow with the same ID. See `workflows/factory_dispatcher.go` and
 `work.FactoryTicketWorkflowID`.
 
-**`dispatcher_state` currently has no writer.** The row and its
-`RecordDispatcherState` activity were written by the retired GitHub-backed
-dispatcher (#551); `FactoryDispatcher` never recorded it, and #559 deleted the
-only caller. The activity, `activities.DispatcherStateWriter` and the store
-table are all still present and still exercised by their own tests, but nothing
-in a running factory writes a row. Wiring it is not a repoint: that row's
-`InFlight` is `[]work.InFlightTicket`, keyed by a GitHub issue number, while
-this dispatcher's in-flight set is keyed by `store.TicketID`.
+**`dispatcher_state` is retired.** The row and its `RecordDispatcherState`
+activity were written by the retired GitHub-backed dispatcher (#551), and #559
+deleted the only caller. The console no longer reads or exposes that stale
+GitHub-Issue projection; its list is derived only from factory Tickets.
 
 The configured defaults are owned by `work.DefaultFactoryConfig` and
 `work.DefaultDispatcherTuning`: one in flight, a 30-second poll interval, a
