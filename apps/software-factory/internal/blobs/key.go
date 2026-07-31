@@ -1,4 +1,4 @@
-// Package blobs defines the typed, validation-only namespace for stored blobs.
+// Package blobs defines durable names for stored blobs.
 package blobs
 
 import (
@@ -6,20 +6,22 @@ import (
 	"strings"
 )
 
-// Bucket is what a blob is for. It is a closed set: a new bucket is a
-// deliberate edit to this file, never a string a caller invents.
+// Bucket identifies what a blob is for. Buckets are a closed set because their
+// names define the top-level on-disk layout.
 type Bucket string
 
-// BucketPayloads holds payload blobs.
-const BucketPayloads Bucket = "payloads"
+const (
+	// BucketPayloads contains payload blobs.
+	BucketPayloads Bucket = "payloads"
+)
 
 // Key names one blob.
 type Key struct {
 	Bucket Bucket
-	Path   string // Slash-separated; never a leading or trailing slash.
+	Path   string // Path is slash-separated with no leading or trailing slash.
 }
 
-// NewKey constructs a validated blob key.
+// NewKey creates a valid blob key.
 func NewKey(bucket Bucket, path string) (Key, error) {
 	if err := validate(bucket, path); err != nil {
 		return Key{}, err
@@ -28,7 +30,7 @@ func NewKey(bucket Bucket, path string) (Key, error) {
 	return Key{Bucket: bucket, Path: path}, nil
 }
 
-// ParseKey parses the external <bucket>/<path> representation of a key.
+// ParseKey parses a blob key in its string form.
 func ParseKey(value string) (Key, error) {
 	bucket, path, found := strings.Cut(value, "/")
 	if !found {
@@ -43,9 +45,9 @@ func ParseKey(value string) (Key, error) {
 	return key, nil
 }
 
-// String returns the canonical <bucket>/<path> representation of k.
-func (k Key) String() string {
-	return string(k.Bucket) + "/" + k.Path
+// String returns the string form of a blob key.
+func (key Key) String() string {
+	return string(key.Bucket) + "/" + key.Path
 }
 
 func validate(bucket Bucket, path string) error {
@@ -58,19 +60,19 @@ func validate(bucket Bucket, path string) error {
 	if path == "" {
 		return fmt.Errorf("blob path is empty")
 	}
-	if strings.Contains(path, "\\") {
-		return fmt.Errorf("blob path %q contains a backslash", path)
-	}
 	if strings.HasPrefix(path, "/") || strings.HasSuffix(path, "/") {
 		return fmt.Errorf("blob path %q has a leading or trailing slash", path)
+	}
+	if strings.Contains(path, "\\") {
+		return fmt.Errorf("blob path %q contains a backslash", path)
 	}
 
 	for _, element := range strings.Split(path, "/") {
 		switch element {
 		case "":
-			return fmt.Errorf("blob path %q contains an empty element", path)
+			return fmt.Errorf("blob path %q has an empty element", path)
 		case ".", "..":
-			return fmt.Errorf("blob path %q contains reserved element %q", path, element)
+			return fmt.Errorf("blob path %q contains traversal element %q", path, element)
 		}
 	}
 

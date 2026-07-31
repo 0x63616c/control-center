@@ -75,12 +75,7 @@ func (f *Store) RunDetail(ctx context.Context, runID string) (store.RunDetail, e
 			keys = append(keys, k)
 		}
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].stage != keys[j].stage {
-			return keys[i].stage < keys[j].stage
-		}
-		return keys[i].turn < keys[j].turn
-	})
+	sort.Slice(keys, func(i, j int) bool { return f.steps[keys[i]].Before(f.steps[keys[j]]) })
 
 	details := make([]store.StepDetail, 0, len(keys))
 	for _, k := range keys {

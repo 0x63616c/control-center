@@ -79,8 +79,9 @@ type RunPolicy struct {
 	// derived so this cannot quietly disagree with the numbers D1 declares.
 	RunTimeout time.Duration
 
-	// StageAttempts is deliberately small: a stage retry is a full
-	// re-exploration of the repository, and quota is the binding cost.
+	// StageAttempts is deliberately bounded: a stage retry is a full
+	// re-exploration of the repository, but brief provider-capacity failures
+	// must have enough attempts to clear without failing the whole Ticket.
 	StageAttempts int32
 
 	// ControlTimeout and ControlAttempts govern the cheap activities — status
@@ -101,7 +102,7 @@ func DefaultRunPolicy() RunPolicy {
 		StageTimeout:          MaxStageDuration,
 		StageHeartbeatTimeout: StageHeartbeatTimeout,
 		RunTimeout:            MaxRunDuration,
-		StageAttempts:         2,
+		StageAttempts:         6,
 		ControlTimeout:        2 * time.Minute,
 		ControlAttempts:       5,
 	}

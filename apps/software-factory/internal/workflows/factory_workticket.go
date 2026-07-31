@@ -381,7 +381,12 @@ func (r *factoryTicketRun) stageOptions() workflow.ActivityOptions {
 	return workflow.ActivityOptions{
 		StartToCloseTimeout: r.in.Policy.StageTimeout,
 		HeartbeatTimeout:    r.in.Policy.StageHeartbeatTimeout,
-		RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: r.in.Policy.StageAttempts},
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:    work.StageRetryInitialInterval,
+			BackoffCoefficient: work.StageRetryBackoffCoefficient,
+			MaximumInterval:    work.StageRetryMaximumInterval,
+			MaximumAttempts:    r.in.Policy.StageAttempts,
+		},
 	}
 }
 

@@ -115,7 +115,7 @@ strand the sandbox.
 |---|---:|
 | stage timeout | 60 minutes |
 | stage heartbeat timeout | 5 minutes |
-| stage activity attempts | 2 |
+| stage activity retries | bounded exponential backoff; see `work.DefaultRunPolicy` and `work.StageRetry*` |
 | run timeout | 24 hours |
 | sandbox `activeDeadlineSeconds` | 25 hours |
 | control activity timeout / attempts | 2 minutes / 5 |
@@ -222,8 +222,9 @@ Stage calls are Session-bound to the run-specific sandbox queue, which only
 that sandbox pod polls; main-queue registration does not make the main worker
 an executor for those Session-bound stage calls.
 
-The stage activity retry policy is still two attempts, but it applies on the
-Session's run-specific sandbox queue. A rollout of the main worker can resume
+The stage activity retry policy uses the bounded exponential backoff owned by
+`work.DefaultRunPolicy` and `work.StageRetry*`, and it applies on the Session's
+run-specific sandbox queue. A rollout of the main worker can resume
 workflow/control work without itself consuming a stage attempt. A sandbox-pod
 loss instead fails the Session (`workflow.ErrSessionFailed`); the pod's
 `emptyDir`, including the checkout and any unrelayed transcript, is gone and
