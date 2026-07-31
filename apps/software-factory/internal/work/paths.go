@@ -177,6 +177,38 @@ func FactoryTicketBranchName(ticketID int64, runID string) string {
 	return path.Join("software-factory", "factory-ticket-"+strconv.FormatInt(ticketID, 10), runID)
 }
 
+// factoryTicketBranchPrefix is FactoryTicketBranchName's own middle segment
+// prefix, named once so the parser below cannot drift from the constructor it
+// inverts.
+const factoryTicketBranchPrefix = "factory-ticket-"
+
+// ParseFactoryTicketBranchName recovers the TicketID FactoryTicketBranchName
+// encoded into a branch name, or false if branch was not built by that
+// function.
+//
+// branch is attacker-controllable — it arrives off a GitHub pull_request
+// webhook payload, which anyone who can open a pull request against this repo
+// controls. Parsing it this strictly (three slash-separated segments, an
+// exact literal prefix, a decimal integer with no sign or leading zero) means
+// a crafted branch name can only ever resolve to a genuine positive TicketID
+// or fail closed; it can never be coerced into resolving to the wrong Ticket
+// or into anything this package's callers would have to sanitise further.
+func ParseFactoryTicketBranchName(branch string) (ticketID int64, ok bool) {
+	parts := strings.Split(branch, "/")
+	if len(parts) != 3 || parts[0] != "software-factory" || parts[2] == "" {
+		return 0, false
+	}
+	digits, hasPrefix := strings.CutPrefix(parts[1], factoryTicketBranchPrefix)
+	if !hasPrefix || digits == "" || (len(digits) > 1 && digits[0] == '0') {
+		return 0, false
+	}
+	id, err := strconv.ParseInt(digits, 10, 64)
+	if err != nil || id <= 0 {
+		return 0, false
+	}
+	return id, true
+}
+
 // DispatcherWorkflowID is the one dispatcher's Temporal workflow ID.
 //
 // It is a constant rather than derived from anything, because there is

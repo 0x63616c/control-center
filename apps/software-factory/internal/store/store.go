@@ -7,11 +7,21 @@ import (
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store/storedb"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // ErrNotFound reports that a requested store record does not exist.
 var ErrNotFound = errors.New("store record not found")
+
+// beginner is satisfied by *pgxpool.Pool (and by pgx.Conn), never by a bare
+// pgx.Tx or a fake — it is what lets RecordWebhookDeliveryAndTransition open
+// its own transaction without this package importing pgxpool, which would
+// otherwise force every test double to grow a fake connection pool just to
+// satisfy a method most of them never call.
+type beginner interface {
+	Begin(ctx context.Context) (pgx.Tx, error)
+}
 
 // Store is the factory's Postgres store. Its methods are grouped into the
 // narrow interfaces declared alongside them (TicketReader, TicketWriter,
@@ -21,14 +31,21 @@ var ErrNotFound = errors.New("store record not found")
 // Construction is manual: New takes the one thing every method needs — a
 // connection to query — and nothing else.
 type Store struct {
-	q *storedb.Queries
+	q     *storedb.Queries
+	begin beginner
 }
 
 // New wraps db as a Store. db is typically a *pgxpool.Pool; storedb.DBTX is
 // the interface that both it and a pgx.Tx satisfy, so a caller that needs a
-// transaction can pass one instead.
+// transaction can pass one instead. A Store built over a bare pgx.Tx (or
+// anything else that cannot begin its own transaction) simply cannot serve
+// RecordWebhookDeliveryAndTransition — see that method's own doc comment.
 func New(db storedb.DBTX) *Store {
-	return &Store{q: storedb.New(db)}
+	s := &Store{q: storedb.New(db)}
+	if b, ok := db.(beginner); ok {
+		s.begin = b
+	}
+	return s
 }
 
 // MigrationProbeExists reports whether the migration probe table exists. It

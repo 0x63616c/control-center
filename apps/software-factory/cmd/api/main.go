@@ -30,6 +30,7 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/database"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/webhook"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -131,9 +132,16 @@ func run() error {
 		}
 	}()
 
+	ticketStore := store.New(pool)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
-	mux.Handle("/", authentication.Wrap(factoryapi.New(buildVersion, temporalclient.NewCommands(temporal), store.New(pool)).Handler()))
+	// The webhook consumer (#557) is deliberately NOT behind authentication.Wrap:
+	// its caller is the relay (#535), not a human or an agent, and it
+	// authenticates each delivery itself, by HMAC, exactly as the relay does.
+	// Every other path stays behind Cloudflare Access or the in-cluster bearer.
+	mux.Handle("/v1/hooks/github", webhook.NewHandler(cfg.WebhookSecret, ticketStore, logger, registry))
+	mux.Handle("/", authentication.Wrap(factoryapi.New(buildVersion, temporalclient.NewCommands(temporal), ticketStore).Handler()))
 
 	listener, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {

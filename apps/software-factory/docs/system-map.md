@@ -171,6 +171,31 @@ The durable record locations are:
 `ticketRun.persistTranscript` deliberately runs on the main worker queue and
 is best-effort: a transcript relay failure does not discard a run's work.
 
+## How the factory learns a pull request merged (#557)
+
+The pipeline above never polls GitHub for pull request state. The public
+webhook relay (#535, `apps/software-factory/cmd/relay`) verifies each GitHub
+delivery once and forwards it, independently, to every configured target;
+`internal/webhook.Handler` is the factory's own target, mounted at
+`/v1/hooks/github` on the factory API — deliberately outside the API's
+Cloudflare Access/bearer middleware, since its caller is the relay rather than
+a human or an agent, and it authenticates each delivery itself, by HMAC
+(duplicating the relay's own verification until #532 closes the in-cluster
+network hole; see `internal/webhook`'s own doc comment).
+
+It acts on exactly one thing: a `pull_request` `closed` event whose branch
+`internal/work.ParseFactoryTicketBranchName` resolves to a factory Ticket.
+`store.RecordWebhookDeliveryAndTransition` records the GitHub delivery id and
+applies the Ticket's `review -> done` (merged) or `review -> failed` (closed
+unmerged) transition in one Postgres transaction, so acknowledging the
+delivery and having durably acted on it are the same fact — there is no window
+after the response in which the effect could still be lost, and no separate
+queue or worker is needed. `done` is what ADR-0012's `ready(T)` reads to
+unblock a Ticket's dependents; this is the only thing in the factory that ever
+sets it. This is unrelated to the legacy pipeline's own PR lifecycle described
+under "Where a human is required" below, which still relies on GitHub
+auto-merge and carries no Ticket to transition.
+
 ## Sandbox and retries
 
 `CreateSandbox` creates one `restartPolicy: Never` pod per ticket. It has an

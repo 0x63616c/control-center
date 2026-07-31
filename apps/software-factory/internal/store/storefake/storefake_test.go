@@ -232,6 +232,55 @@ func TestFakeStoreDerivesReadinessFromEveryDirectBlocker(t *testing.T) {
 	}
 }
 
+// TestFakeStoreRecordWebhookDeliveryAndTransitionAppliesOnceAndUnblocksDownstream
+// keeps the fake honest against the real store's transactional behaviour
+// (store.TestRecordWebhookDeliveryAndTransitionAppliesOnceAndUnblocksDownstream):
+// a delivery applies its transition exactly once, and a redelivery of the
+// same id is a no-op.
+func TestFakeStoreRecordWebhookDeliveryAndTransitionAppliesOnceAndUnblocksDownstream(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+
+	upstream, err := s.CreateTicket(ctx, "upstream", "merged first")
+	if err != nil {
+		t.Fatalf("CreateTicket(upstream): %v", err)
+	}
+	downstream, err := s.CreateTicket(ctx, "downstream", "needs upstream done")
+	if err != nil {
+		t.Fatalf("CreateTicket(downstream): %v", err)
+	}
+	if err := s.AddTicketDependency(ctx, upstream.ID, downstream.ID); err != nil {
+		t.Fatalf("AddTicketDependency: %v", err)
+	}
+	if _, err := s.UpdateTicketState(ctx, upstream.ID, store.TicketReview); err != nil {
+		t.Fatalf("UpdateTicketState(upstream, review): %v", err)
+	}
+
+	outcome, err := s.RecordWebhookDeliveryAndTransition(ctx, "delivery-1", upstream.ID, store.TicketReview, store.TicketDone)
+	if err != nil {
+		t.Fatalf("RecordWebhookDeliveryAndTransition: %v", err)
+	}
+	if outcome != store.WebhookDeliveryApplied {
+		t.Fatalf("outcome = %v, want WebhookDeliveryApplied", outcome)
+	}
+	ready, err := s.ReadyTickets(ctx)
+	if err != nil {
+		t.Fatalf("ReadyTickets: %v", err)
+	}
+	if !containsID(ready, downstream.ID) {
+		t.Fatalf("ReadyTickets() = %+v, want downstream ready as a consequence of upstream done", ready)
+	}
+
+	outcome, err = s.RecordWebhookDeliveryAndTransition(ctx, "delivery-1", upstream.ID, store.TicketReview, store.TicketDone)
+	if err != nil {
+		t.Fatalf("RecordWebhookDeliveryAndTransition (redelivery): %v", err)
+	}
+	if outcome != store.WebhookDeliveryDuplicate {
+		t.Fatalf("redelivery outcome = %v, want WebhookDeliveryDuplicate", outcome)
+	}
+}
+
 func containsID(tickets []store.Ticket, id store.TicketID) bool {
 	for _, ticket := range tickets {
 		if ticket.ID == id {

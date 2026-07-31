@@ -18,6 +18,51 @@ func TestFactoryTicketWorkflowIDsUseADisjointNamespace(t *testing.T) {
 	}
 }
 
+func TestParseFactoryTicketBranchNameInvertsTheConstructor(t *testing.T) {
+	t.Parallel()
+
+	for _, id := range []int64{1, 7, 99, 123456} {
+		for _, runID := range []string{"019a3f2c-7b1e-4f9a-9c2d-3e5f6a7b8c9d", "run"} {
+			branch := FactoryTicketBranchName(id, runID)
+			got, ok := ParseFactoryTicketBranchName(branch)
+			if !ok {
+				t.Fatalf("ParseFactoryTicketBranchName(%q) ok = false, want true", branch)
+			}
+			if got != id {
+				t.Errorf("ParseFactoryTicketBranchName(%q) = %d, want %d", branch, got, id)
+			}
+		}
+	}
+}
+
+func TestParseFactoryTicketBranchNameRejectsAnythingElse(t *testing.T) {
+	t.Parallel()
+
+	// branch is attacker-controllable: it arrives off a pull_request webhook
+	// payload from anyone who can open a PR against this repo. Every case here
+	// must fail closed rather than resolve to some TicketID.
+	cases := []string{
+		"",
+		"main",
+		"software-factory/ticket-42/run", // legacy GitHub-issue branch, disjoint prefix
+		"software-factory/factory-ticket-/run",
+		"software-factory/factory-ticket-abc/run",
+		"software-factory/factory-ticket-42",        // missing run segment
+		"software-factory/factory-ticket-42/run/rm", // extra segment
+		"software-factory/factory-ticket-42/",       // empty run segment
+		"software-factory/factory-ticket-0/run",     // not a positive TicketID
+		"software-factory/factory-ticket--1/run",    // signed
+		"software-factory/factory-ticket-01/run",    // leading zero
+		"SOFTWARE-FACTORY/factory-ticket-42/run",    // case must match exactly
+		"other-prefix/factory-ticket-42/run",
+	}
+	for _, branch := range cases {
+		if id, ok := ParseFactoryTicketBranchName(branch); ok {
+			t.Errorf("ParseFactoryTicketBranchName(%q) = (%d, true), want ok = false", branch, id)
+		}
+	}
+}
+
 func TestFactoryDispatcherStartsWithOneTicketAtATime(t *testing.T) {
 	t.Parallel()
 

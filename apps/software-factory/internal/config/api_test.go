@@ -15,8 +15,25 @@ func TestLoadAPIRequiresDatabaseURL(t *testing.T) {
 	t.Setenv(envAPISandboxBearer, "test-sandbox-bearer")
 	t.Setenv(envAPITemporalHost, "temporal:7233")
 	t.Setenv(envAPITemporalNS, "software-factory")
+	t.Setenv(envAPIWebhookSecret, "test-webhook-secret")
 	if _, err := LoadAPI(); err == nil || !strings.Contains(err.Error(), envAPIDatabaseURL) {
 		t.Fatalf("LoadAPI() error = %v, want missing %s", err, envAPIDatabaseURL)
+	}
+}
+
+func TestLoadAPIRequiresWebhookSecret(t *testing.T) {
+	t.Setenv(envAPIDatabaseURL, "postgres://example")
+	t.Setenv(envAPIListenAddr, ":8080")
+	t.Setenv(envAPIMetricsAddr, ":9090")
+	t.Setenv(envAccessTeamDomain, "test.cloudflareaccess.com")
+	t.Setenv(envAccessAudience, "test-audience")
+	t.Setenv(envAPIWorkerBearer, "test-worker-bearer")
+	t.Setenv(envAPISandboxBearer, "test-sandbox-bearer")
+	t.Setenv(envAPITemporalHost, "temporal:7233")
+	t.Setenv(envAPITemporalNS, "software-factory")
+	t.Setenv(envAPIWebhookSecret, "")
+	if _, err := LoadAPI(); err == nil || !strings.Contains(err.Error(), envAPIWebhookSecret) {
+		t.Fatalf("LoadAPI() error = %v, want missing %s", err, envAPIWebhookSecret)
 	}
 }
 
@@ -34,6 +51,7 @@ func TestLoadAPIBuildsDatabaseURLFromCNPGAuthSecretValues(t *testing.T) {
 	t.Setenv(envAPISandboxBearer, "test-sandbox-bearer")
 	t.Setenv(envAPITemporalHost, "temporal:7233")
 	t.Setenv(envAPITemporalNS, "software-factory")
+	t.Setenv(envAPIWebhookSecret, "test-webhook-secret")
 
 	cfg, err := LoadAPI()
 	if err != nil {
@@ -54,6 +72,7 @@ func TestLoadAPIParsesAccessEndpoints(t *testing.T) {
 	t.Setenv(envAPISandboxBearer, "test-sandbox-bearer")
 	t.Setenv(envAPITemporalHost, "temporal:7233")
 	t.Setenv(envAPITemporalNS, "software-factory")
+	t.Setenv(envAPIWebhookSecret, "test-webhook-secret")
 
 	cfg, err := LoadAPI()
 	if err != nil {
@@ -74,6 +93,7 @@ func TestLoadAPIRejectsMalformedAccessDomain(t *testing.T) {
 	t.Setenv(envAPISandboxBearer, "test-sandbox-bearer")
 	t.Setenv(envAPITemporalHost, "temporal:7233")
 	t.Setenv(envAPITemporalNS, "software-factory")
+	t.Setenv(envAPIWebhookSecret, "test-webhook-secret")
 
 	if _, err := LoadAPI(); err == nil || !strings.Contains(err.Error(), envAccessTeamDomain) {
 		t.Fatalf("LoadAPI() error = %v, want malformed %s", err, envAccessTeamDomain)

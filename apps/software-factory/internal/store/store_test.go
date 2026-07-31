@@ -376,3 +376,84 @@ func TestPutTranscriptIsIdempotentAgainstARealDatabase(t *testing.T) {
 		t.Fatalf("CompressedBytes = %q, want %q", got.CompressedBytes, "compressed")
 	}
 }
+
+// TestRecordWebhookDeliveryAndTransitionAgainstARealDatabase proves the
+// transactional idempotency #557 needs against real Postgres, not just
+// storefake's in-memory mirror: a fresh delivery applies the Ticket
+// transition, and redelivering the same id is a no-op that neither errors
+// nor repeats the transition.
+func TestRecordWebhookDeliveryAndTransitionAgainstARealDatabase(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	ticket, err := s.CreateTicket(ctx, "webhook ticket", "b")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	if _, err := s.TransitionTicketState(ctx, ticket.ID, store.TicketOpen, store.TicketWorking); err != nil {
+		t.Fatalf("TransitionTicketState(open, working): %v", err)
+	}
+	if _, err := s.TransitionTicketState(ctx, ticket.ID, store.TicketWorking, store.TicketReview); err != nil {
+		t.Fatalf("TransitionTicketState(working, review): %v", err)
+	}
+
+	deliveryID := "delivery-" + newTestRunID(t)
+	outcome, err := s.RecordWebhookDeliveryAndTransition(ctx, deliveryID, ticket.ID, store.TicketReview, store.TicketDone)
+	if err != nil {
+		t.Fatalf("RecordWebhookDeliveryAndTransition: %v", err)
+	}
+	if outcome != store.WebhookDeliveryApplied {
+		t.Fatalf("outcome = %v, want WebhookDeliveryApplied", outcome)
+	}
+	got, err := s.Ticket(ctx, ticket.ID)
+	if err != nil {
+		t.Fatalf("Ticket: %v", err)
+	}
+	if got.State != store.TicketDone {
+		t.Fatalf("ticket state = %s, want done", got.State)
+	}
+
+	outcome, err = s.RecordWebhookDeliveryAndTransition(ctx, deliveryID, ticket.ID, store.TicketReview, store.TicketDone)
+	if err != nil {
+		t.Fatalf("redelivered RecordWebhookDeliveryAndTransition: %v", err)
+	}
+	if outcome != store.WebhookDeliveryDuplicate {
+		t.Fatalf("redelivered outcome = %v, want WebhookDeliveryDuplicate", outcome)
+	}
+	got, err = s.Ticket(ctx, ticket.ID)
+	if err != nil {
+		t.Fatalf("Ticket after redelivery: %v", err)
+	}
+	if got.State != store.TicketDone {
+		t.Fatalf("ticket state after redelivery = %s, want still done", got.State)
+	}
+}
+
+// TestRecordWebhookDeliveryAndTransitionIsStaleWhenTheTicketAlreadyMovedOn
+// proves a delivery still gets recorded seen even when the Ticket is no
+// longer in the expected `from` state — a human, or an earlier delivery,
+// already moved it.
+func TestRecordWebhookDeliveryAndTransitionIsStaleWhenTheTicketAlreadyMovedOn(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	ticket, err := s.CreateTicket(ctx, "already done", "b")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+
+	outcome, err := s.RecordWebhookDeliveryAndTransition(ctx, "delivery-"+newTestRunID(t), ticket.ID, store.TicketReview, store.TicketDone)
+	if err != nil {
+		t.Fatalf("RecordWebhookDeliveryAndTransition: %v", err)
+	}
+	if outcome != store.WebhookDeliveryStale {
+		t.Fatalf("outcome = %v, want WebhookDeliveryStale", outcome)
+	}
+	got, err := s.Ticket(ctx, ticket.ID)
+	if err != nil {
+		t.Fatalf("Ticket: %v", err)
+	}
+	if got.State != store.TicketOpen {
+		t.Fatalf("ticket state = %s, want unchanged (open)", got.State)
+	}
+}
