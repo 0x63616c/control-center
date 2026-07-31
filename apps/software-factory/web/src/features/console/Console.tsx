@@ -25,6 +25,11 @@ function updatedAgo(iso: string): string {
   return `${Math.floor(seconds / 86_400)}d ago`;
 }
 
+// Age shows the short relative form with the full local timestamp on hover.
+function Age({ iso }: { readonly iso: string }) {
+  return <span title={new Date(iso).toLocaleString()}>{updatedAgo(iso)}</span>;
+}
+
 // The state the machine is actively responsible for comes first; terminal
 // states last, so the top of the board is always the live work.
 const STATE_ORDER: Record<string, number> = {
@@ -163,8 +168,12 @@ function TicketTable({ tickets }: { readonly tickets: Ticket[] }) {
                 <td>
                   <StatePill ticket={ticket} />
                 </td>
-                <td className="row-meta">{updatedAgo(ticket.createdAt)}</td>
-                <td className="row-meta">{updatedAgo(ticket.updatedAt)}</td>
+                <td className="row-meta">
+                  <Age iso={ticket.createdAt} />
+                </td>
+                <td className="row-meta">
+                  <Age iso={ticket.updatedAt} />
+                </td>
               </tr>
               {blockers && (
                 <tr className="ticket-table-blockers">
