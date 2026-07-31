@@ -336,6 +336,20 @@ jobs:
     if: needs.changes.outputs.softwarefactory == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: software_factory
+          POSTGRES_PASSWORD: software_factory
+          POSTGRES_DB: software_factory
+        options: >-
+          --health-cmd "pg_isready -U software_factory -d software_factory"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
     defaults:
       run:
         working-directory: apps/software-factory
@@ -355,10 +369,22 @@ jobs:
         run: go build ./...
       - name: Vet
         run: go vet ./...
+      - name: Generate SQL code
+        uses: sqlc-dev/setup-sqlc@v4
+        with:
+          sqlc-version: 1.31.1
+      - name: Check committed SQL codegen
+        run: |
+          sqlc generate
+          git diff --exit-code -- internal/store
       - name: Test (race detector)
         # -race because the stage runner streams output while the activity
         # heartbeats on it, so concurrency is inherent rather than incidental.
-        run: go test -race ./...
+        # -v makes the migration-proving test visible as a PASS rather than a
+        # local SKIP in the authoritative CI log.
+        run: go test -race -v ./...
+        env:
+          SOFTWARE_FACTORY_DATABASE_URL: postgresql://software_factory:software_factory@localhost:5432/software_factory?sslmode=disable
       - name: Lint (golangci-lint)
         uses: golangci/golangci-lint-action@v9
         with:
