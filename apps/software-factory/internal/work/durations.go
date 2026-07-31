@@ -47,8 +47,8 @@ const (
 	// the first failure.
 	StageRetryBackoffCoefficient = 5.0
 
-	// StageRetryMaximumInterval caps the fifth retry delay so a sustained
-	// outage cannot make one stage wait ever longer.
+	// StageRetryMaximumInterval caps later retry delays so a sustained outage
+	// cannot make one stage wait ever longer.
 	StageRetryMaximumInterval = 5 * time.Minute
 
 	// MaxRunDuration is the workflow run timeout for one ticket: above
