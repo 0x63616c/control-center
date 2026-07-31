@@ -10,6 +10,7 @@ require (
 	github.com/google/go-github/v78 v78.0.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.9.2
+	github.com/klauspost/compress v1.19.0
 	github.com/pressly/goose/v3 v3.26.0
 	github.com/prometheus/client_golang v1.24.0
 	github.com/prometheus/client_model v0.6.2
