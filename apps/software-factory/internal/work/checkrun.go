@@ -18,6 +18,10 @@ type CheckRun struct {
 	// It is meaningful for completed non-green checks only.
 	FailureFingerprint string
 
+	// FailureEvidence is bounded diagnostic output for a failed check. It is
+	// untrusted and only target AwaitCI carries it to the next Implement Step.
+	FailureEvidence string
+
 	// Completed is whether this check run has finished — GitHub's own
 	// "completed" status, as opposed to "queued" or "in_progress". A run
 	// that has not completed has no meaningful Conclusion yet.
@@ -35,6 +39,7 @@ type CheckRun struct {
 type CheckFailure struct {
 	Name        string
 	Fingerprint string
+	Evidence    string
 }
 
 // Green reports whether this check run's conclusion counts as passing.

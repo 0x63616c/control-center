@@ -60,6 +60,10 @@ const (
 	// failure arriving at a workflow has a type it can switch on rather than a
 	// Go type name that changes when someone rewraps an error.
 	ErrTypeTransient = "Transient"
+
+	// ErrTypeCINotConcluded is an expected retryable wait. AwaitCI sets its
+	// exact next retry delay so pending CI never enters a workflow poll loop.
+	ErrTypeCINotConcluded = "CINotConcluded"
 )
 
 // fail translates this service's error vocabulary into Temporal's, once.
