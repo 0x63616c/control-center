@@ -3,7 +3,12 @@ import { defineProduct, productSlugs } from "../src/index.ts";
 
 describe("product identity", () => {
   test("defines the platform products", () => {
-    expect(productSlugs).toEqual(["control-center", "captive-portal", "software-factory"]);
+    expect(productSlugs).toEqual([
+      "control-center",
+      "captive-portal",
+      "software-factory",
+      "webhook-relay",
+    ]);
   });
 
   // Image naming is the ONLY thing software-factory's product identity is for
