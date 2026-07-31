@@ -168,6 +168,16 @@ func (s *Store) StartStep(ctx context.Context, in StartStepInput) (RunStep, erro
 	}
 	row, err := s.q.StartTargetStep(ctx, storedb.StartTargetStepParams{RunID: runID, Ordinal: int32(in.Ordinal), Kind: string(in.Kind), Iteration: int32(in.Iteration), Reason: in.Reason, StartedAt: pgTimestamp(in.StartedAt)})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			owned, ownershipErr := s.q.TargetRunOwned(ctx, runID)
+			if ownershipErr != nil {
+				return RunStep{}, fmt.Errorf("starting step %d of run %s: checking ownership: %w", in.Ordinal, in.RunID, wrapQueryErr(ownershipErr))
+			}
+			if !owned {
+				return RunStep{}, fmt.Errorf("starting step %d of run %s: %w", in.Ordinal, in.RunID, ErrRunOwnership)
+			}
+			return RunStep{}, fmt.Errorf("starting step %d of run %s: conflicting retry: %w", in.Ordinal, in.RunID, work.ErrPermanent)
+		}
 		return RunStep{}, fmt.Errorf("starting step %d of run %s: %w", in.Ordinal, in.RunID, wrapQueryErr(err))
 	}
 	return runStepFromRow(row), nil
@@ -181,6 +191,23 @@ func (s *Store) CompleteStep(ctx context.Context, runID string, ordinal int, end
 	}
 	row, err := s.q.CompleteTargetStep(ctx, storedb.CompleteTargetStepParams{RunID: id, Ordinal: int32(ordinal), EndedAt: pgTimestamp(endedAt), Result: result})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			owned, ownershipErr := s.q.TargetRunOwned(ctx, id)
+			if ownershipErr != nil {
+				return RunStep{}, fmt.Errorf("completing step %d of run %s: checking ownership: %w", ordinal, runID, wrapQueryErr(ownershipErr))
+			}
+			if !owned {
+				return RunStep{}, fmt.Errorf("completing step %d of run %s: %w", ordinal, runID, ErrRunOwnership)
+			}
+			_, stepErr := s.q.TargetStep(ctx, storedb.TargetStepParams{RunID: id, Ordinal: int32(ordinal)})
+			if errors.Is(stepErr, pgx.ErrNoRows) {
+				return RunStep{}, fmt.Errorf("completing step %d of run %s: %w", ordinal, runID, ErrNotFound)
+			}
+			if stepErr != nil {
+				return RunStep{}, fmt.Errorf("completing step %d of run %s: reading retry: %w", ordinal, runID, wrapQueryErr(stepErr))
+			}
+			return RunStep{}, fmt.Errorf("completing step %d of run %s: conflicting retry: %w", ordinal, runID, work.ErrPermanent)
+		}
 		return RunStep{}, fmt.Errorf("completing step %d of run %s: %w", ordinal, runID, wrapQueryErr(err))
 	}
 	return runStepFromRow(row), nil
@@ -341,6 +368,20 @@ func (s *Store) StartAgentAttempt(ctx context.Context, in StartAgentAttemptInput
 	row, err := s.q.StartTargetAgentAttempt(ctx, storedb.StartTargetAgentAttemptParams{RunID: id, StepOrdinal: int32(in.ID.StepOrdinal), AttemptNo: int32(in.ID.AttemptNo), AgentStage: string(in.AgentStage), Model: in.Model.Name, Effort: in.Model.Effort, UsageState: string(in.UsageState), StartedAt: pgTimestamp(in.StartedAt)})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			owned, ownershipErr := s.q.TargetRunOwned(ctx, id)
+			if ownershipErr != nil {
+				return AgentAttempt{}, fmt.Errorf("starting agent attempt %s: checking ownership: %w", in.ID, wrapQueryErr(ownershipErr))
+			}
+			if !owned {
+				return AgentAttempt{}, fmt.Errorf("starting agent attempt %s: %w", in.ID, ErrRunOwnership)
+			}
+			_, attemptErr := s.q.TargetAgentAttempt(ctx, storedb.TargetAgentAttemptParams{RunID: id, StepOrdinal: int32(in.ID.StepOrdinal), AttemptNo: int32(in.ID.AttemptNo)})
+			if attemptErr == nil {
+				return AgentAttempt{}, fmt.Errorf("starting agent attempt %s: conflicting retry: %w", in.ID, work.ErrPermanent)
+			}
+			if !errors.Is(attemptErr, pgx.ErrNoRows) {
+				return AgentAttempt{}, fmt.Errorf("starting agent attempt %s: reading retry: %w", in.ID, wrapQueryErr(attemptErr))
+			}
 			return AgentAttempt{}, fmt.Errorf("starting agent attempt %s: %w", in.ID, ErrAgentAttemptStep)
 		}
 		return AgentAttempt{}, fmt.Errorf("starting agent attempt %s: %w", in.ID, wrapQueryErr(err))
@@ -405,9 +446,20 @@ func (s *Store) CheckpointGitEffect(ctx context.Context, in GitCheckpointInput) 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := s.q.WithTx(tx)
+	run, err := q.TargetRunForUpdate(ctx, id)
+	if err != nil {
+		return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: reading run: %w", wrapQueryErr(err))
+	}
+	ticket, err := q.TargetTicketForUpdate(ctx, run.TicketID)
+	if err != nil {
+		return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: reading ticket: %w", wrapQueryErr(err))
+	}
+	if run.TargetOutcome.Valid || ticket.State != TicketActive.String() || runIDString(ticket.ActiveRunID) != in.RunID {
+		return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: %w", ErrRunOwnership)
+	}
 	previous, previousErr := q.TargetGitCheckpoint(ctx, id)
 	if previousErr == nil {
-		if previous.StepOrdinal > int32(in.StepOrdinal) || (previous.StepOrdinal == int32(in.StepOrdinal) && (previous.PushedHead != in.PushedHead || previous.PullRequestNumber != int32(in.PullRequestNumber))) {
+		if previous.StepOrdinal > int32(in.StepOrdinal) || (previous.StepOrdinal == int32(in.StepOrdinal) && !gitCheckpointMatches(previous, in.GitCheckpoint)) {
 			return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: older or conflicting checkpoint: %w", work.ErrPermanent)
 		}
 	} else if !errors.Is(previousErr, pgx.ErrNoRows) {
@@ -437,6 +489,23 @@ func (s *Store) BindCheckpointCapability(ctx context.Context, attemptID TargetAt
 		RunID: id, StepOrdinal: int32(attemptID.StepOrdinal), AttemptNo: int32(attemptID.AttemptNo), CheckpointCapabilityHash: pgOptionalText(capabilityHash(attemptID, capability)),
 	})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			owned, ownershipErr := s.q.TargetRunOwned(ctx, id)
+			if ownershipErr != nil {
+				return fmt.Errorf("binding checkpoint capability to %s: checking ownership: %w", attemptID, wrapQueryErr(ownershipErr))
+			}
+			if !owned {
+				return fmt.Errorf("binding checkpoint capability to %s: %w", attemptID, ErrRunOwnership)
+			}
+			_, attemptErr := s.q.TargetAgentAttempt(ctx, storedb.TargetAgentAttemptParams{RunID: id, StepOrdinal: int32(attemptID.StepOrdinal), AttemptNo: int32(attemptID.AttemptNo)})
+			if errors.Is(attemptErr, pgx.ErrNoRows) {
+				return fmt.Errorf("binding checkpoint capability to %s: %w", attemptID, ErrNotFound)
+			}
+			if attemptErr != nil {
+				return fmt.Errorf("binding checkpoint capability to %s: reading retry: %w", attemptID, wrapQueryErr(attemptErr))
+			}
+			return fmt.Errorf("binding checkpoint capability to %s: conflicting retry: %w", attemptID, work.ErrPermanent)
+		}
 		return fmt.Errorf("binding checkpoint capability to %s: %w", attemptID, wrapQueryErr(err))
 	}
 	return nil
@@ -468,7 +537,7 @@ func (s *Store) CheckpointAgentAttempt(ctx context.Context, in AgentCheckpointIn
 	if err != nil {
 		return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: reading ticket: %w", wrapQueryErr(err))
 	}
-	if ticket.State != TicketActive.String() || runIDString(ticket.ActiveRunID) != in.ID.RunID {
+	if run.TargetOutcome.Valid || ticket.State != TicketActive.String() || runIDString(ticket.ActiveRunID) != in.ID.RunID {
 		return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: %w", ErrRunOwnership)
 	}
 	current, err := q.TargetAgentAttemptForUpdate(ctx, storedb.TargetAgentAttemptForUpdateParams{
@@ -713,6 +782,9 @@ func (s *Store) ReconcileAbandonedRun(ctx context.Context, runID string, ticketI
 		return false, fmt.Errorf("reconciling abandoned run: reading run: %w", wrapQueryErr(err))
 	}
 	if run.TicketID != int64(ticketID) || run.TargetOutcome.Valid {
+		if run.TargetOutcome.Valid {
+			return false, fmt.Errorf("reconciling abandoned run: %w", ErrRunOwnership)
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return false, fmt.Errorf("reconciling abandoned run: committing no-op: %w", wrapQueryErr(err))
 		}
@@ -750,6 +822,23 @@ func (s *Store) CancelRun(ctx context.Context, in CancelRunInput) (TerminalResul
 	if runRow.TicketID != int64(in.TicketID) {
 		return TerminalResult{}, fmt.Errorf("canceling run: %w", ErrRunOwnership)
 	}
+	if runRow.TargetOutcome.Valid && runRow.TargetOutcome.String == string(work.RunOutcomeCanceled) {
+		ticketRow, ticketErr := q.TargetTicketForUpdate(ctx, int64(in.TicketID))
+		if ticketErr != nil {
+			return TerminalResult{}, fmt.Errorf("canceling run retry: reading ticket: %w", wrapQueryErr(ticketErr))
+		}
+		if ticketRow.State != TicketOpen.String() || ticketRow.ActiveRunID.Valid {
+			return TerminalResult{}, fmt.Errorf("canceling run retry: %w", ErrRunOwnership)
+		}
+		ticket, parseErr := ticketFromRow(ticketRow)
+		if parseErr != nil {
+			return TerminalResult{}, parseErr
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return TerminalResult{}, fmt.Errorf("canceling run retry: committing: %w", wrapQueryErr(err))
+		}
+		return TerminalResult{Ticket: ticket, Run: runFromRow(runRow)}, nil
+	}
 	if runRow.TargetOutcome.Valid && runRow.TargetOutcome.String != string(work.RunOutcomeCanceled) {
 		ticketRow, ticketErr := q.TargetTicketForUpdate(ctx, int64(in.TicketID))
 		if ticketErr != nil {
@@ -764,11 +853,16 @@ func (s *Store) CancelRun(ctx context.Context, in CancelRunInput) (TerminalResul
 		}
 		return TerminalResult{Ticket: ticket, Run: runFromRow(runRow)}, nil
 	}
-	if !runRow.TargetOutcome.Valid {
-		runRow, err = q.CompleteTargetRunCanceled(ctx, storedb.CompleteTargetRunCanceledParams{ID: id, EndedAt: pgTimestamp(in.EndedAt)})
-		if err != nil {
-			return TerminalResult{}, fmt.Errorf("canceling run: completing: %w", wrapQueryErr(err))
-		}
+	ticketOwner, err := q.TargetTicketForUpdate(ctx, int64(in.TicketID))
+	if err != nil {
+		return TerminalResult{}, fmt.Errorf("canceling run: reading ticket owner: %w", wrapQueryErr(err))
+	}
+	if ticketOwner.State != TicketActive.String() || ticketOwner.ActiveRunID != id {
+		return TerminalResult{}, fmt.Errorf("canceling run: %w", ErrRunOwnership)
+	}
+	runRow, err = q.CompleteTargetRunCanceled(ctx, storedb.CompleteTargetRunCanceledParams{ID: id, EndedAt: pgTimestamp(in.EndedAt)})
+	if err != nil {
+		return TerminalResult{}, fmt.Errorf("canceling run: completing: %w", wrapQueryErr(err))
 	}
 	ticketRow, err := q.ReopenTargetTicket(ctx, storedb.ReopenTargetTicketParams{ID: int64(in.TicketID), ActiveRunID: id})
 	if err != nil {
@@ -834,6 +928,16 @@ func targetTranscriptMatches(current storedb.RunAgentTranscript, in TargetTransc
 		current.Compression == in.Compression &&
 		current.UncompressedSizeBytes == in.UncompressedSizeBytes &&
 		bytes.Equal(current.Checksum, in.Checksum)
+}
+
+func gitCheckpointMatches(current storedb.RunGitCheckpoint, in GitCheckpoint) bool {
+	return current.StepOrdinal == int32(in.StepOrdinal) &&
+		current.Branch == in.Branch &&
+		current.PushedHead == in.PushedHead &&
+		current.ObservedBase == in.ObservedBase &&
+		current.PullRequestNumber == int32(in.PullRequestNumber) &&
+		current.PullRequestNodeID == in.PullRequestNodeID &&
+		jsonEqual(current.StepResult, in.StepResult)
 }
 
 func jsonEqual(left, right json.RawMessage) bool {

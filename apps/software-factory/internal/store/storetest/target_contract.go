@@ -25,6 +25,7 @@ type TargetStore interface {
 	TargetRunDetail(context.Context, string) (store.TargetRunDetail, error)
 	BindCheckpointCapability(context.Context, store.TargetAttemptID, string) error
 	CheckpointGitEffect(context.Context, store.GitCheckpointInput) (store.GitCheckpoint, error)
+	ReconcileAbandonedRun(context.Context, string, store.TicketID) (bool, error)
 }
 
 // RunTargetConflictContract verifies that a Store accepts exact retries and
@@ -82,6 +83,63 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 					t.Fatalf("StartAgentAttempt error = %v, want ErrAgentAttemptStep", err)
 				}
 			})
+		}
+	})
+
+	t.Run("step and attempt retries are exact and completion time is immutable", func(t *testing.T) {
+		s, _, runID, startedAt := claimedRun(t, newStore(t))
+		ctx := context.Background()
+		stepInput := store.StartStepInput{RunID: runID, Ordinal: 1, Kind: work.StepImplement, Iteration: 1, Reason: "first implementation", StartedAt: startedAt}
+		if _, err := s.StartStep(ctx, stepInput); err != nil {
+			t.Fatalf("StartStep: %v", err)
+		}
+		if _, err := s.StartStep(ctx, stepInput); err != nil {
+			t.Fatalf("StartStep(exact retry): %v", err)
+		}
+		for _, conflict := range []store.StartStepInput{
+			{RunID: runID, Ordinal: 1, Kind: work.StepReview, Iteration: 1, Reason: "first implementation", StartedAt: startedAt},
+			{RunID: runID, Ordinal: 1, Kind: work.StepImplement, Iteration: 2, Reason: "first implementation", StartedAt: startedAt},
+			{RunID: runID, Ordinal: 1, Kind: work.StepImplement, Iteration: 1, Reason: "different reason", StartedAt: startedAt},
+			{RunID: runID, Ordinal: 1, Kind: work.StepImplement, Iteration: 1, Reason: "first implementation", StartedAt: startedAt.Add(time.Second)},
+		} {
+			if _, err := s.StartStep(ctx, conflict); !errors.Is(err, work.ErrPermanent) {
+				t.Fatalf("StartStep(conflict %+v) error = %v, want permanent", conflict, err)
+			}
+		}
+
+		attemptInput := store.StartAgentAttemptInput{ID: store.TargetAttemptID{RunID: runID, StepOrdinal: 1, AttemptNo: 1}, AgentStage: work.AgentStageImplement, Model: work.Model{Name: "contract-model", Effort: "medium"}, UsageState: work.UsageUnknown, StartedAt: startedAt}
+		if _, err := s.StartAgentAttempt(ctx, attemptInput); err != nil {
+			t.Fatalf("StartAgentAttempt: %v", err)
+		}
+		if _, err := s.StartAgentAttempt(ctx, attemptInput); err != nil {
+			t.Fatalf("StartAgentAttempt(exact retry): %v", err)
+		}
+		for _, conflict := range []store.StartAgentAttemptInput{
+			{ID: attemptInput.ID, AgentStage: work.AgentStageReview, Model: attemptInput.Model, UsageState: attemptInput.UsageState, StartedAt: attemptInput.StartedAt},
+			{ID: attemptInput.ID, AgentStage: attemptInput.AgentStage, Model: work.Model{Name: "other-model", Effort: "medium"}, UsageState: attemptInput.UsageState, StartedAt: attemptInput.StartedAt},
+			{ID: attemptInput.ID, AgentStage: attemptInput.AgentStage, Model: work.Model{Name: "contract-model", Effort: "high"}, UsageState: attemptInput.UsageState, StartedAt: attemptInput.StartedAt},
+			{ID: attemptInput.ID, AgentStage: attemptInput.AgentStage, Model: attemptInput.Model, UsageState: work.UsageMeasured, StartedAt: attemptInput.StartedAt},
+			{ID: attemptInput.ID, AgentStage: attemptInput.AgentStage, Model: attemptInput.Model, UsageState: attemptInput.UsageState, StartedAt: attemptInput.StartedAt.Add(time.Second)},
+		} {
+			if _, err := s.StartAgentAttempt(ctx, conflict); !errors.Is(err, work.ErrPermanent) {
+				t.Fatalf("StartAgentAttempt(conflict %+v) error = %v, want permanent", conflict, err)
+			}
+		}
+
+		firstEndedAt := startedAt.Add(time.Minute)
+		result := []byte(`{"kind":"implemented"}`)
+		if _, err := s.CompleteStep(ctx, runID, 1, firstEndedAt, result); err != nil {
+			t.Fatalf("CompleteStep: %v", err)
+		}
+		retry, err := s.CompleteStep(ctx, runID, 1, firstEndedAt.Add(time.Minute), result)
+		if err != nil {
+			t.Fatalf("CompleteStep(exact retry): %v", err)
+		}
+		if !retry.EndedAt.Equal(firstEndedAt) {
+			t.Fatalf("CompleteStep retry ended_at = %s, want original %s", retry.EndedAt, firstEndedAt)
+		}
+		if _, err := s.CompleteStep(ctx, runID, 1, firstEndedAt.Add(2*time.Minute), []byte(`{"kind":"different"}`)); !errors.Is(err, work.ErrPermanent) {
+			t.Fatalf("CompleteStep(conflict) error = %v, want permanent", err)
 		}
 	})
 
@@ -154,8 +212,17 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 		if _, err := s.CheckpointGitEffect(ctx, checkpoint); err != nil {
 			t.Fatalf("CheckpointGitEffect: %v", err)
 		}
+		firstCompletedAt := checkpoint.CompletedAt
+		checkpoint.CompletedAt = checkpoint.CompletedAt.Add(time.Minute)
 		if _, err := s.CheckpointGitEffect(ctx, checkpoint); err != nil {
 			t.Fatalf("CheckpointGitEffect(exact retry): %v", err)
+		}
+		detail, err := s.TargetRunDetail(ctx, runID)
+		if err != nil {
+			t.Fatalf("TargetRunDetail: %v", err)
+		}
+		if len(detail.Steps) != 1 || !detail.Steps[0].Step.EndedAt.Equal(firstCompletedAt) {
+			t.Fatalf("Git checkpoint retry Step = %+v, want original ended_at %s", detail.Steps, firstCompletedAt)
 		}
 		checkpoint.PullRequestNumber = 8
 		if _, err := s.CheckpointGitEffect(ctx, checkpoint); !errors.Is(err, work.ErrPermanent) {
@@ -195,6 +262,29 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 		if _, err := s.ClaimAndStartRun(ctx, store.ClaimRunInput{TicketID: ticket.ID, RunID: secondRunID, StartedAt: startedAt.Add(2 * time.Minute)}); err != nil {
 			t.Fatalf("ClaimAndStartRun(second): %v", err)
 		}
+		secondStep := store.StartStepInput{RunID: secondRunID, Ordinal: 1, Kind: work.StepImplement, StartedAt: startedAt.Add(2 * time.Minute)}
+		if _, err := s.StartStep(ctx, secondStep); err != nil {
+			t.Fatalf("StartStep(second implement): %v", err)
+		}
+		secondAttempt := store.StartAgentAttemptInput{ID: store.TargetAttemptID{RunID: secondRunID, StepOrdinal: 1, AttemptNo: 1}, AgentStage: work.AgentStageImplement, Model: work.Model{Name: "contract-model", Effort: "medium"}, UsageState: work.UsageUnknown, StartedAt: startedAt.Add(2 * time.Minute)}
+		if _, err := s.StartAgentAttempt(ctx, secondAttempt); err != nil {
+			t.Fatalf("StartAgentAttempt(second): %v", err)
+		}
+		if err := s.BindCheckpointCapability(ctx, secondAttempt.ID, "second-capability"); err != nil {
+			t.Fatalf("BindCheckpointCapability(second): %v", err)
+		}
+		secondGitStep := store.StartStepInput{RunID: secondRunID, Ordinal: 2, Kind: work.StepSyncPullRequest, StartedAt: startedAt.Add(2 * time.Minute)}
+		if _, err := s.StartStep(ctx, secondGitStep); err != nil {
+			t.Fatalf("StartStep(second git): %v", err)
+		}
+		secondGit := store.GitCheckpointInput{GitCheckpoint: store.GitCheckpoint{RunID: secondRunID, StepOrdinal: 2, Branch: "factory/second", PushedHead: "second-head", ObservedBase: "base", PullRequestNumber: 2, PullRequestNodeID: "node-2", StepResult: []byte(`{"kind":"synced"}`)}, CompletedAt: startedAt.Add(2 * time.Minute)}
+		if _, err := s.CheckpointGitEffect(ctx, secondGit); err != nil {
+			t.Fatalf("CheckpointGitEffect(second): %v", err)
+		}
+		secondMergeStep := store.StartStepInput{RunID: secondRunID, Ordinal: 3, Kind: work.StepMergePullRequest, StartedAt: startedAt.Add(2 * time.Minute)}
+		if _, err := s.StartStep(ctx, secondMergeStep); err != nil {
+			t.Fatalf("StartStep(second merge): %v", err)
+		}
 		result, err := s.FinalizeConfirmedMerge(ctx, store.ConfirmedMergeInput{RunID: firstRunID, TicketID: ticket.ID, StepOrdinal: 1, ReviewedHead: "first-head", MergeSHA: "first-merge", EndedAt: startedAt.Add(3 * time.Minute)})
 		if err != nil {
 			t.Fatalf("FinalizeConfirmedMerge(first): %v", err)
@@ -206,6 +296,30 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 		if result.Ticket.State != store.TicketDone || result.Ticket.ActiveRunID != "" || second.Run.TargetOutcome != work.RunOutcomeCanceled {
 			t.Fatalf("successor fence = result %+v, second %+v; want done Ticket and canceled successor", result, second.Run)
 		}
+		assertOwnership := func(operation string, err error) {
+			t.Helper()
+			if !errors.Is(err, store.ErrRunOwnership) {
+				t.Fatalf("%s after fence error = %v, want ErrRunOwnership", operation, err)
+			}
+		}
+		_, err = s.StartStep(ctx, store.StartStepInput{RunID: secondRunID, Ordinal: 4, Kind: work.StepPlan, StartedAt: startedAt.Add(4 * time.Minute)})
+		assertOwnership("StartStep", err)
+		_, err = s.CompleteStep(ctx, secondRunID, 1, startedAt.Add(4*time.Minute), []byte(`{"kind":"implemented"}`))
+		assertOwnership("CompleteStep", err)
+		secondAttempt.ID.AttemptNo = 2
+		_, err = s.StartAgentAttempt(ctx, secondAttempt)
+		assertOwnership("StartAgentAttempt", err)
+		assertOwnership("BindCheckpointCapability", s.BindCheckpointCapability(ctx, store.TargetAttemptID{RunID: secondRunID, StepOrdinal: 1, AttemptNo: 1}, "second-capability"))
+		_, err = s.CheckpointAgentAttempt(ctx, store.AgentCheckpointInput{ID: store.TargetAttemptID{RunID: secondRunID, StepOrdinal: 1, AttemptNo: 1}, Capability: "second-capability", ThreadID: "second-thread", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured, EndedAt: startedAt.Add(4 * time.Minute), Result: []byte(`{"kind":"done"}`), Transcript: &store.TargetTranscript{CompressedBytes: []byte("transcript"), Compression: "zstd", UncompressedSizeBytes: 10, Checksum: []byte("checksum")}})
+		assertOwnership("CheckpointAgentAttempt", err)
+		_, err = s.CheckpointGitEffect(ctx, secondGit)
+		assertOwnership("CheckpointGitEffect", err)
+		_, err = s.CancelRun(ctx, store.CancelRunInput{RunID: secondRunID, TicketID: ticket.ID, EndedAt: startedAt.Add(4 * time.Minute)})
+		assertOwnership("CancelRun", err)
+		_, err = s.FinalizeConfirmedMerge(ctx, store.ConfirmedMergeInput{RunID: secondRunID, TicketID: ticket.ID, StepOrdinal: 3, ReviewedHead: "second-head", MergeSHA: "second-merge", EndedAt: startedAt.Add(4 * time.Minute)})
+		assertOwnership("FinalizeConfirmedMerge", err)
+		_, err = s.ReconcileAbandonedRun(ctx, secondRunID, ticket.ID)
+		assertOwnership("ReconcileAbandonedRun", err)
 	})
 
 	t.Run("confirmed merge requires merge step", func(t *testing.T) {

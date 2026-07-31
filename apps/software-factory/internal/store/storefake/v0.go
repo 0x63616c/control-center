@@ -41,8 +41,14 @@ func (f *Store) ClaimAndStartRun(_ context.Context, in store.ClaimRunInput) (sto
 func (f *Store) StartStep(_ context.Context, in store.StartStepInput) (store.RunStep, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if !f.targetRunOwnedLocked(in.RunID) {
+		return store.RunStep{}, fmt.Errorf("starting step: %w", store.ErrRunOwnership)
+	}
 	k := targetStepKey{runID: in.RunID, ordinal: in.Ordinal}
 	if step, ok := f.targetSteps[k]; ok {
+		if step.Kind != in.Kind || step.Iteration != in.Iteration || step.Reason != in.Reason || !step.StartedAt.Equal(in.StartedAt) {
+			return store.RunStep{}, fmt.Errorf("starting step: conflicting retry: %w", work.ErrPermanent)
+		}
 		return step, nil
 	}
 	step := store.RunStep{RunID: in.RunID, Ordinal: in.Ordinal, Kind: in.Kind, Iteration: in.Iteration, Reason: in.Reason, State: work.StepStateRunning, StartedAt: in.StartedAt}
@@ -54,10 +60,19 @@ func (f *Store) StartStep(_ context.Context, in store.StartStepInput) (store.Run
 func (f *Store) CompleteStep(_ context.Context, runID string, ordinal int, endedAt time.Time, result json.RawMessage) (store.RunStep, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if !f.targetRunOwnedLocked(runID) {
+		return store.RunStep{}, fmt.Errorf("completing step: %w", store.ErrRunOwnership)
+	}
 	k := targetStepKey{runID: runID, ordinal: ordinal}
 	step, ok := f.targetSteps[k]
 	if !ok {
 		return store.RunStep{}, fmt.Errorf("step %d: %w", ordinal, store.ErrNotFound)
+	}
+	if step.State != work.StepStateRunning {
+		if step.State == work.StepStateCompleted && jsonEqual(step.Result, result) {
+			return step, nil
+		}
+		return store.RunStep{}, fmt.Errorf("completing step: conflicting retry: %w", work.ErrPermanent)
 	}
 	step.State, step.EndedAt, step.Result = work.StepStateCompleted, endedAt, result
 	f.targetSteps[k] = step
@@ -98,12 +113,18 @@ func (f *Store) TargetRunDetail(_ context.Context, runID string) (store.TargetRu
 func (f *Store) StartAgentAttempt(_ context.Context, in store.StartAgentAttemptInput) (store.AgentAttempt, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if !f.targetRunOwnedLocked(in.ID.RunID) {
+		return store.AgentAttempt{}, fmt.Errorf("starting agent attempt: %w", store.ErrRunOwnership)
+	}
+	if attempt, ok := f.targetAttempts[in.ID]; ok {
+		if attempt.AgentStage != in.AgentStage || attempt.Model != in.Model || attempt.UsageState != in.UsageState || !attempt.StartedAt.Equal(in.StartedAt) {
+			return store.AgentAttempt{}, fmt.Errorf("starting agent attempt: conflicting retry: %w", work.ErrPermanent)
+		}
+		return attempt, nil
+	}
 	step, ok := f.targetSteps[targetStepKey{runID: in.ID.RunID, ordinal: in.ID.StepOrdinal}]
 	if !ok || !in.AgentStage.MatchesStep(step.Kind) {
 		return store.AgentAttempt{}, fmt.Errorf("starting agent attempt %s: %w", in.ID, store.ErrAgentAttemptStep)
-	}
-	if attempt, ok := f.targetAttempts[in.ID]; ok {
-		return attempt, nil
 	}
 	attempt := store.AgentAttempt{ID: in.ID, AgentStage: in.AgentStage, Model: in.Model, State: work.AgentAttemptRunning, UsageState: in.UsageState, StartedAt: in.StartedAt}
 	f.targetAttempts[in.ID] = attempt
@@ -114,8 +135,15 @@ func (f *Store) StartAgentAttempt(_ context.Context, in store.StartAgentAttemptI
 func (f *Store) BindCheckpointCapability(_ context.Context, attemptID store.TargetAttemptID, capability string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if _, ok := f.targetAttempts[attemptID]; !ok {
+	if !f.targetRunOwnedLocked(attemptID.RunID) {
+		return fmt.Errorf("binding checkpoint capability: %w", store.ErrRunOwnership)
+	}
+	attempt, ok := f.targetAttempts[attemptID]
+	if !ok {
 		return fmt.Errorf("attempt %s: %w", attemptID, store.ErrNotFound)
+	}
+	if attempt.State != work.AgentAttemptRunning || (f.capabilityHash[attemptID] != "" && f.capabilityHash[attemptID] != capability) {
+		return fmt.Errorf("binding checkpoint capability: conflicting retry: %w", work.ErrPermanent)
 	}
 	f.capabilityHash[attemptID] = capability
 	return nil
@@ -128,12 +156,7 @@ func (f *Store) CheckpointAgentAttempt(_ context.Context, in store.AgentCheckpoi
 	if err := in.Validate(); err != nil {
 		return store.AgentAttempt{}, err
 	}
-	run, ok := f.runs[in.ID.RunID]
-	if !ok {
-		return store.AgentAttempt{}, fmt.Errorf("checkpoint: %w", store.ErrRunOwnership)
-	}
-	ticket, ok := f.tickets[run.TicketID]
-	if !ok || ticket.State != store.TicketActive || ticket.ActiveRunID != in.ID.RunID {
+	if !f.targetRunOwnedLocked(in.ID.RunID) {
 		return store.AgentAttempt{}, fmt.Errorf("checkpoint: %w", store.ErrRunOwnership)
 	}
 	if f.capabilityHash[in.ID] != in.Capability {
@@ -194,8 +217,16 @@ func jsonEqual(left, right json.RawMessage) bool {
 func (f *Store) CheckpointGitEffect(_ context.Context, in store.GitCheckpointInput) (store.GitCheckpoint, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if previous, ok := f.targetGit[in.RunID]; ok && (previous.StepOrdinal > in.StepOrdinal || (previous.StepOrdinal == in.StepOrdinal && (previous.PushedHead != in.PushedHead || previous.PullRequestNumber != in.PullRequestNumber))) {
-		return store.GitCheckpoint{}, fmt.Errorf("checkpoint: %w", work.ErrPermanent)
+	if !f.targetRunOwnedLocked(in.RunID) {
+		return store.GitCheckpoint{}, fmt.Errorf("checkpoint: %w", store.ErrRunOwnership)
+	}
+	if previous, ok := f.targetGit[in.RunID]; ok {
+		if previous.StepOrdinal > in.StepOrdinal || (previous.StepOrdinal == in.StepOrdinal && !gitCheckpointMatches(previous, in.GitCheckpoint)) {
+			return store.GitCheckpoint{}, fmt.Errorf("checkpoint: %w", work.ErrPermanent)
+		}
+		if previous.StepOrdinal == in.StepOrdinal {
+			return previous, nil
+		}
 	}
 	f.targetGit[in.RunID] = in.GitCheckpoint
 	k := targetStepKey{runID: in.RunID, ordinal: in.StepOrdinal}
@@ -277,14 +308,21 @@ func (f *Store) CancelRun(_ context.Context, in store.CancelRunInput) (store.Ter
 		return store.TerminalResult{}, fmt.Errorf("cancel: %w", store.ErrRunOwnership)
 	}
 	ticket := f.tickets[in.TicketID]
-	if run.TargetOutcome == "" {
-		run.TargetOutcome, run.EndedAt = work.RunOutcomeCanceled, in.EndedAt
-		if ticket.State == store.TicketActive && ticket.ActiveRunID == in.RunID {
-			ticket.State, ticket.ActiveRunID, ticket.UpdatedAt = store.TicketOpen, "", f.clk.Now()
-			f.tickets[in.TicketID] = ticket
+	if run.TargetOutcome == work.RunOutcomeCanceled {
+		if ticket.State != store.TicketOpen || ticket.ActiveRunID != "" {
+			return store.TerminalResult{}, fmt.Errorf("cancel: %w", store.ErrRunOwnership)
 		}
-		f.runs[in.RunID] = run
+		return store.TerminalResult{Ticket: ticket, Run: run}, nil
 	}
+	if run.TargetOutcome != "" {
+		return store.TerminalResult{Ticket: ticket, Run: run}, nil
+	}
+	if ticket.State != store.TicketActive || ticket.ActiveRunID != in.RunID {
+		return store.TerminalResult{}, fmt.Errorf("cancel: %w", store.ErrRunOwnership)
+	}
+	run.TargetOutcome, run.EndedAt = work.RunOutcomeCanceled, in.EndedAt
+	ticket.State, ticket.ActiveRunID, ticket.UpdatedAt = store.TicketOpen, "", f.clk.Now()
+	f.tickets[in.TicketID], f.runs[in.RunID] = ticket, run
 	return store.TerminalResult{Ticket: f.tickets[in.TicketID], Run: f.runs[in.RunID]}, nil
 }
 
@@ -293,8 +331,11 @@ func (f *Store) ReconcileAbandonedRun(_ context.Context, runID string, ticketID 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	run, ok := f.runs[runID]
-	if !ok || run.TicketID != ticketID || run.TargetOutcome != "" {
+	if !ok || run.TicketID != ticketID {
 		return false, nil
+	}
+	if run.TargetOutcome != "" {
+		return false, fmt.Errorf("reconcile: %w", store.ErrRunOwnership)
 	}
 	ticket := f.tickets[ticketID]
 	if ticket.State != store.TicketActive || ticket.ActiveRunID != runID {
@@ -303,6 +344,19 @@ func (f *Store) ReconcileAbandonedRun(_ context.Context, runID string, ticketID 
 	ticket.State, ticket.ActiveRunID, ticket.UpdatedAt = store.TicketOpen, "", f.clk.Now()
 	f.tickets[ticketID] = ticket
 	return true, nil
+}
+
+func (f *Store) targetRunOwnedLocked(runID string) bool {
+	run, ok := f.runs[runID]
+	if !ok || run.TargetOutcome != "" {
+		return false
+	}
+	ticket, ok := f.tickets[run.TicketID]
+	return ok && ticket.State == store.TicketActive && ticket.ActiveRunID == runID
+}
+
+func gitCheckpointMatches(current, in store.GitCheckpoint) bool {
+	return current.StepOrdinal == in.StepOrdinal && current.Branch == in.Branch && current.PushedHead == in.PushedHead && current.ObservedBase == in.ObservedBase && current.PullRequestNumber == in.PullRequestNumber && current.PullRequestNodeID == in.PullRequestNodeID && jsonEqual(current.StepResult, in.StepResult)
 }
 
 var (

@@ -40,6 +40,13 @@ func (q *Queries) ActivateTargetTicket(ctx context.Context, arg ActivateTargetTi
 const bindTargetAttemptCapability = `-- name: BindTargetAttemptCapability :one
 UPDATE run_agent_attempt SET checkpoint_capability_hash = $4
 WHERE run_id = $1 AND step_ordinal = $2 AND attempt_no = $3 AND state = 'running'
+  AND (checkpoint_capability_hash IS NULL OR checkpoint_capability_hash = $4)
+  AND EXISTS (
+      SELECT 1 FROM run
+      JOIN ticket ON ticket.id = run.ticket_id
+      WHERE run.id = $1 AND run.target_outcome IS NULL
+        AND ticket.state = 'active' AND ticket.active_run_id = run.id
+  )
 RETURNING run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, provider_thread_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result, checkpoint_capability_hash
 `
 
@@ -277,8 +284,17 @@ func (q *Queries) CompleteTargetRunSuccess(ctx context.Context, arg CompleteTarg
 }
 
 const completeTargetStep = `-- name: CompleteTargetStep :one
-UPDATE run_step SET state = 'completed', ended_at = $3, result = $4
+UPDATE run_step SET
+    state = 'completed',
+    ended_at = CASE WHEN run_step.state = 'running' THEN $3 ELSE run_step.ended_at END,
+    result = CASE WHEN run_step.state = 'running' THEN $4 ELSE run_step.result END
 WHERE run_id = $1 AND ordinal = $2
+  AND EXISTS (
+      SELECT 1 FROM run
+      JOIN ticket ON ticket.id = run.ticket_id
+      WHERE run.id = $1 AND run.target_outcome IS NULL
+        AND ticket.state = 'active' AND ticket.active_run_id = run.id
+  )
   AND (state = 'running' OR (state = 'completed' AND result = $4))
 RETURNING run_id, ordinal, kind, iteration, reason, state, started_at, ended_at, result
 `
@@ -413,7 +429,14 @@ ON CONFLICT (run_id) DO UPDATE SET
     pull_request_number = EXCLUDED.pull_request_number,
     pull_request_node_id = EXCLUDED.pull_request_node_id,
     step_result = EXCLUDED.step_result
-WHERE run_git_checkpoint.step_ordinal <= EXCLUDED.step_ordinal
+WHERE run_git_checkpoint.step_ordinal < EXCLUDED.step_ordinal
+   OR (run_git_checkpoint.step_ordinal = EXCLUDED.step_ordinal
+       AND run_git_checkpoint.branch = EXCLUDED.branch
+       AND run_git_checkpoint.pushed_head = EXCLUDED.pushed_head
+       AND run_git_checkpoint.observed_base = EXCLUDED.observed_base
+       AND run_git_checkpoint.pull_request_number = EXCLUDED.pull_request_number
+       AND run_git_checkpoint.pull_request_node_id = EXCLUDED.pull_request_node_id
+       AND run_git_checkpoint.step_result = EXCLUDED.step_result)
 RETURNING run_id, step_ordinal, branch, pushed_head, observed_base, pull_request_number, pull_request_node_id, step_result
 `
 
@@ -523,7 +546,18 @@ INSERT INTO run_agent_attempt (
 ) SELECT $1, $2, $3, $4, $5, $6, 'running', $7, $8
 FROM run_step
 WHERE run_id = $1 AND ordinal = $2 AND kind = $4
+  AND EXISTS (
+      SELECT 1 FROM run
+      JOIN ticket ON ticket.id = run.ticket_id
+      WHERE run.id = $1 AND run.target_outcome IS NULL
+        AND ticket.state = 'active' AND ticket.active_run_id = run.id
+  )
 ON CONFLICT (run_id, step_ordinal, attempt_no) DO UPDATE SET run_id = run_agent_attempt.run_id
+WHERE run_agent_attempt.agent_stage = EXCLUDED.agent_stage
+  AND run_agent_attempt.model = EXCLUDED.model
+  AND run_agent_attempt.effort = EXCLUDED.effort
+  AND run_agent_attempt.usage_state = EXCLUDED.usage_state
+  AND run_agent_attempt.started_at = EXCLUDED.started_at
 RETURNING run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, provider_thread_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result, checkpoint_capability_hash
 `
 
@@ -575,8 +609,18 @@ func (q *Queries) StartTargetAgentAttempt(ctx context.Context, arg StartTargetAg
 
 const startTargetStep = `-- name: StartTargetStep :one
 INSERT INTO run_step (run_id, ordinal, kind, iteration, reason, state, started_at)
-VALUES ($1, $2, $3, $4, $5, 'running', $6)
+SELECT $1, $2, $3, $4, $5, 'running', $6
+WHERE EXISTS (
+    SELECT 1 FROM run
+    JOIN ticket ON ticket.id = run.ticket_id
+    WHERE run.id = $1 AND run.target_outcome IS NULL
+      AND ticket.state = 'active' AND ticket.active_run_id = run.id
+)
 ON CONFLICT (run_id, ordinal) DO UPDATE SET run_id = run_step.run_id
+WHERE run_step.kind = EXCLUDED.kind
+  AND run_step.iteration = EXCLUDED.iteration
+  AND run_step.reason = EXCLUDED.reason
+  AND run_step.started_at = EXCLUDED.started_at
 RETURNING run_id, ordinal, kind, iteration, reason, state, started_at, ended_at, result
 `
 
@@ -609,6 +653,43 @@ func (q *Queries) StartTargetStep(ctx context.Context, arg StartTargetStepParams
 		&i.StartedAt,
 		&i.EndedAt,
 		&i.Result,
+	)
+	return i, err
+}
+
+const targetAgentAttempt = `-- name: TargetAgentAttempt :one
+SELECT run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, provider_thread_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result, checkpoint_capability_hash FROM run_agent_attempt
+WHERE run_id = $1 AND step_ordinal = $2 AND attempt_no = $3
+`
+
+type TargetAgentAttemptParams struct {
+	RunID       pgtype.UUID
+	StepOrdinal int32
+	AttemptNo   int32
+}
+
+func (q *Queries) TargetAgentAttempt(ctx context.Context, arg TargetAgentAttemptParams) (RunAgentAttempt, error) {
+	row := q.db.QueryRow(ctx, targetAgentAttempt, arg.RunID, arg.StepOrdinal, arg.AttemptNo)
+	var i RunAgentAttempt
+	err := row.Scan(
+		&i.RunID,
+		&i.StepOrdinal,
+		&i.AttemptNo,
+		&i.AgentStage,
+		&i.Model,
+		&i.Effort,
+		&i.State,
+		&i.FailureKind,
+		&i.ProviderThreadID,
+		&i.UsageState,
+		&i.InputTokens,
+		&i.CachedInputTokens,
+		&i.OutputTokens,
+		&i.ReasoningTokens,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.Result,
+		&i.CheckpointCapabilityHash,
 	)
 	return i, err
 }
@@ -757,6 +838,48 @@ func (q *Queries) TargetRunForUpdate(ctx context.Context, id pgtype.UUID) (Run, 
 		&i.TargetFailureKind,
 		&i.ReviewedHead,
 		&i.MergeSha,
+	)
+	return i, err
+}
+
+const targetRunOwned = `-- name: TargetRunOwned :one
+SELECT EXISTS (
+    SELECT 1 FROM run
+    JOIN ticket ON ticket.id = run.ticket_id
+    WHERE run.id = $1 AND run.target_outcome IS NULL
+      AND ticket.state = 'active' AND ticket.active_run_id = run.id
+)
+`
+
+func (q *Queries) TargetRunOwned(ctx context.Context, id pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, targetRunOwned, id)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const targetStep = `-- name: TargetStep :one
+SELECT run_id, ordinal, kind, iteration, reason, state, started_at, ended_at, result FROM run_step WHERE run_id = $1 AND ordinal = $2
+`
+
+type TargetStepParams struct {
+	RunID   pgtype.UUID
+	Ordinal int32
+}
+
+func (q *Queries) TargetStep(ctx context.Context, arg TargetStepParams) (RunStep, error) {
+	row := q.db.QueryRow(ctx, targetStep, arg.RunID, arg.Ordinal)
+	var i RunStep
+	err := row.Scan(
+		&i.RunID,
+		&i.Ordinal,
+		&i.Kind,
+		&i.Iteration,
+		&i.Reason,
+		&i.State,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.Result,
 	)
 	return i, err
 }
