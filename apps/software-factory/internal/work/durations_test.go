@@ -21,6 +21,14 @@ func TestAHeartbeatTimeoutCanFireWithinAStage(t *testing.T) {
 	}
 }
 
+func TestStageHeartbeatTimeoutAllowsFiveMinutesForFirstEvent(t *testing.T) {
+	t.Parallel()
+
+	if want := 5 * time.Minute; StageHeartbeatTimeout != want {
+		t.Errorf("StageHeartbeatTimeout = %s, want %s", StageHeartbeatTimeout, want)
+	}
+}
+
 func TestARunCanContainItsStages(t *testing.T) {
 	t.Parallel()
 
