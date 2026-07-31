@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store/storedb"
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
 // DispatcherStateReader reads the single dispatcher_state row.
@@ -25,52 +24,75 @@ func (s *Store) DispatcherState(ctx context.Context) (DispatcherState, error) {
 	if err != nil {
 		return DispatcherState{}, fmt.Errorf("reading dispatcher state: %w", wrapQueryErr(err))
 	}
-	var inFlight []InFlightTicket
-	if len(row.InFlight) > 0 {
-		if err := json.Unmarshal(row.InFlight, &inFlight); err != nil {
-			return DispatcherState{}, fmt.Errorf("reading dispatcher state: decoding in_flight: %w", err)
+
+	var state DispatcherState
+	for _, field := range []struct {
+		name string
+		raw  []byte
+		into any
+	}{
+		{name: "config", raw: row.Config, into: &state.Config},
+		{name: "breaker", raw: row.Breaker, into: &state.Breaker},
+		{name: "in_flight", raw: row.InFlight, into: &state.InFlight},
+		{name: "candidates", raw: row.Candidates, into: &state.Candidates},
+	} {
+		if err := json.Unmarshal(field.raw, field.into); err != nil {
+			return DispatcherState{}, fmt.Errorf("reading dispatcher state: decoding %s: %w", field.name, err)
 		}
 	}
-	return DispatcherState{
-		Paused:      row.Paused,
-		MaxInFlight: int(row.MaxInFlight),
-		Breaker: work.Breaker{
-			OpenUntil: timeFromPg(row.BreakerOpenUntil),
-			Reason:    textFromPg(row.BreakerReason),
-		},
-		InFlight:     inFlight,
-		NextTicketID: ticketIDFromPg(row.NextTicketID),
-		WrittenAt:    timeFromPg(row.WrittenAt),
-	}, nil
+	state.ConfigError = row.ConfigError
+	state.FreeSlots = int(row.FreeSlots)
+	state.WrittenAt = timeFromPg(row.WrittenAt)
+	return state, nil
 }
 
 // PutDispatcherState overwrites the single dispatcher_state row with state.
-// The dispatcher calls this once per tick, per ADR-0012 — it is the write
-// that finally makes "what is it going to work on next" answerable.
+// The dispatcher calls this once per tick (#551) — it is the write that
+// finally makes "what is it going to work on next" answerable.
 func (s *Store) PutDispatcherState(ctx context.Context, state DispatcherState) error {
-	// in_flight's CHECK constraint requires a JSON array, never JSON null, so a
-	// nil slice must still encode as "[]" rather than json.Marshal's default.
-	inFlight := []byte("[]")
-	if len(state.InFlight) > 0 {
-		encoded, err := json.Marshal(state.InFlight)
-		if err != nil {
-			return fmt.Errorf("writing dispatcher state: encoding in_flight: %w", err)
-		}
-		inFlight = encoded
+	config, err := json.Marshal(state.Config)
+	if err != nil {
+		return fmt.Errorf("writing dispatcher state: encoding config: %w", err)
 	}
-	err := s.q.PutDispatcherState(ctx, storedb.PutDispatcherStateParams{
-		Paused:           state.Paused,
-		MaxInFlight:      int32(state.MaxInFlight),
-		BreakerOpenUntil: pgOptionalTimestamp(state.Breaker.OpenUntil),
-		BreakerReason:    pgOptionalText(state.Breaker.Reason),
-		InFlight:         inFlight,
-		NextTicketID:     pgOptionalTicketID(state.NextTicketID),
-		WrittenAt:        pgTimestamp(state.WrittenAt),
+	breaker, err := json.Marshal(state.Breaker)
+	if err != nil {
+		return fmt.Errorf("writing dispatcher state: encoding breaker: %w", err)
+	}
+	// in_flight and candidates each carry a JSONB array CHECK constraint, never
+	// JSON null, so a nil slice must still encode as "[]" rather than
+	// json.Marshal's default for a nil slice.
+	inFlight, err := marshalJSONArray(state.InFlight)
+	if err != nil {
+		return fmt.Errorf("writing dispatcher state: encoding in_flight: %w", err)
+	}
+	candidates, err := marshalJSONArray(state.Candidates)
+	if err != nil {
+		return fmt.Errorf("writing dispatcher state: encoding candidates: %w", err)
+	}
+
+	err = s.q.PutDispatcherState(ctx, storedb.PutDispatcherStateParams{
+		Config:      config,
+		ConfigError: state.ConfigError,
+		Breaker:     breaker,
+		InFlight:    inFlight,
+		Candidates:  candidates,
+		FreeSlots:   int32(state.FreeSlots),
+		WrittenAt:   pgTimestamp(state.WrittenAt),
 	})
 	if err != nil {
 		return fmt.Errorf("writing dispatcher state: %w", wrapQueryErr(err))
 	}
 	return nil
+}
+
+// marshalJSONArray encodes a slice as a JSON array, "[]" for a nil or empty
+// one rather than json.Marshal's "null" — the shape dispatcher_state's array
+// CHECK constraints require.
+func marshalJSONArray[T any](values []T) ([]byte, error) {
+	if len(values) == 0 {
+		return []byte("[]"), nil
+	}
+	return json.Marshal(values)
 }
 
 var (

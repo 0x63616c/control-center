@@ -34,16 +34,6 @@ func pgTimestamp(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t.UTC(), Valid: true}
 }
 
-// pgOptionalTimestamp converts an instant to a nullable timestamptz column
-// value. The zero time.Time means "not set" and stores SQL NULL, matching
-// EndedAt's meaning on Run and Attempt: absent until the row is ended.
-func pgOptionalTimestamp(t time.Time) pgtype.Timestamptz {
-	if t.IsZero() {
-		return pgtype.Timestamptz{}
-	}
-	return pgTimestamp(t)
-}
-
 // timeFromPg converts a required timestamptz column back to time.Time.
 func timeFromPg(t pgtype.Timestamptz) time.Time {
 	if !t.Valid {
@@ -68,22 +58,4 @@ func textFromPg(t pgtype.Text) string {
 		return ""
 	}
 	return t.String
-}
-
-// pgOptionalTicketID converts a TicketID to a nullable bigint column value.
-// Zero means "none" and stores SQL NULL, matching DispatcherState's
-// NextTicketID meaning "no candidate".
-func pgOptionalTicketID(id TicketID) pgtype.Int8 {
-	if id == 0 {
-		return pgtype.Int8{}
-	}
-	return pgtype.Int8{Int64: int64(id), Valid: true}
-}
-
-// ticketIDFromPg converts a nullable bigint column back to a TicketID, 0 for NULL.
-func ticketIDFromPg(v pgtype.Int8) TicketID {
-	if !v.Valid {
-		return 0
-	}
-	return TicketID(v.Int64)
 }

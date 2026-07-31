@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/workflows"
 	"github.com/stretchr/testify/mock"
@@ -41,13 +42,15 @@ type dispatcherHarness struct {
 	historyLength    int
 	runFor           time.Duration
 	callbacks        []delayedCallback
+	recordStateErr   error
 
 	// what it did.
-	started     []int
-	described   []string
-	labelChecks []int
-	sweeps      []activities.SweepInput
-	rejections  []work.DuplicateWorkflowExecution
+	started        []int
+	described      []string
+	labelChecks    []int
+	sweeps         []activities.SweepInput
+	rejections     []work.DuplicateWorkflowExecution
+	recordedStates []store.DispatcherState
 }
 
 type delayedCallback struct {
@@ -127,6 +130,12 @@ func (h *dispatcherHarness) run() {
 			h.rejections = append(h.rejections, rejection)
 			h.autoLabelPresent[rejection.TicketNumber] = false
 			return nil
+		})
+
+	env.OnActivity(acts.RecordDispatcherState, mock.Anything, mock.Anything).
+		Return(func(_ context.Context, state store.DispatcherState) error {
+			h.recordedStates = append(h.recordedStates, state)
+			return h.recordStateErr
 		})
 
 	// Starting a run makes that ticket's workflow open, which is what a
@@ -901,5 +910,118 @@ func TestDispatcherReconcilesInAFixedOrderSoAReplayMatches(t *testing.T) {
 			t.Fatalf("reconciled %v — the in-flight set must be walked in a fixed order, not map order",
 				h.described[:tickets])
 		}
+	}
+}
+
+// --- RecordDispatcherState (#551) -------------------------------------------
+
+// TestDispatcherRecordsItsStateAfterEveryTick proves the write happens once
+// per tick — not once per run — and that what it writes is this tick's own
+// config, in-flight set and free slots, not the input it started from.
+func TestDispatcherRecordsItsStateAfterEveryTick(t *testing.T) {
+	t.Parallel()
+
+	h := newDispatcherHarness(t)
+	h.config.MaxInFlight = 2
+	h.config.PollIntervalSeconds = 30
+	h.inFlight = []work.InFlightTicket{{Ticket: 1, RunID: "run-1"}}
+	h.runs["work-ticket-1"] = work.RunState{Open: true, RunID: "run-1"}
+	h.runFor = 75 * time.Second
+	h.run()
+
+	// Ticks at t=0, 30s, 60s before the 75s cancel — at least three, one per
+	// poll interval, not one for the whole run.
+	if len(h.recordedStates) < 3 {
+		t.Fatalf("recorded %d states, want at least 3 — one per tick, not one per run", len(h.recordedStates))
+	}
+	last := h.recordedStates[len(h.recordedStates)-1]
+	if last.Config.MaxInFlight != 2 {
+		t.Fatalf("recorded Config.MaxInFlight = %d, want 2", last.Config.MaxInFlight)
+	}
+	if len(last.InFlight) != 1 || last.InFlight[0].Ticket != 1 {
+		t.Fatalf("recorded InFlight = %+v, want the one in-flight ticket", last.InFlight)
+	}
+	if last.FreeSlots != 1 {
+		t.Fatalf("recorded FreeSlots = %d, want 1 (cap 2, one in flight)", last.FreeSlots)
+	}
+}
+
+// TestDispatcherRecordsCandidatesInClaimOrderNotEveryAutoTicket proves the
+// recorded candidate list is what start() actually would claim next, in
+// order — not merely every ticket ListAutoTickets returned. Ticket 1 is
+// already in flight, ticket 2 has no current auto label, and ticket 3 is
+// genuinely eligible: only 3 belongs in the recorded candidates.
+func TestDispatcherRecordsCandidatesInClaimOrderNotEveryAutoTicket(t *testing.T) {
+	t.Parallel()
+
+	h := newDispatcherHarness(t)
+	h.config.MaxInFlight = 3
+	h.inFlight = []work.InFlightTicket{{Ticket: 1, RunID: "run-1"}}
+	h.runs["work-ticket-1"] = work.RunState{Open: true, RunID: "run-1"}
+	h.tickets = tickets(1, 2, 3)
+	h.autoLabelPresent[2] = false
+	// Cancelled after the first tick, not h.runFor = 0: that leaves no cancel
+	// timer registered at all (env's own `if h.runFor > 0` guard), which loops
+	// this workflow forever rather than ending it after one tick.
+	h.runFor = time.Second
+	h.run()
+
+	if len(h.recordedStates) != 1 {
+		t.Fatalf("recorded %d states, want exactly 1 for a single tick", len(h.recordedStates))
+	}
+	got := h.recordedStates[0].Candidates
+	if !slices.Equal(got, []int{3}) {
+		t.Fatalf("recorded Candidates = %v, want [3] — ticket 1 is already in flight and ticket 2 has no auto "+
+			"label, neither is a candidate the dispatcher would actually claim", got)
+	}
+}
+
+// TestDispatcherRecordsNoCandidatesWhilePaused proves a tick that decides to
+// start nothing reports that honestly, rather than a stale candidate list
+// left over from before the pause.
+func TestDispatcherRecordsNoCandidatesWhilePaused(t *testing.T) {
+	t.Parallel()
+
+	h := newDispatcherHarness(t)
+	h.config.Paused = true
+	h.tickets = tickets(1, 2)
+	h.runFor = time.Second
+	h.run()
+
+	if len(h.recordedStates) != 1 {
+		t.Fatalf("recorded %d states, want exactly 1", len(h.recordedStates))
+	}
+	got := h.recordedStates[0]
+	if len(got.Candidates) != 0 {
+		t.Fatalf("recorded Candidates = %v, want none — a paused tick computes nothing", got.Candidates)
+	}
+	if got.FreeSlots != 0 {
+		t.Fatalf("recorded FreeSlots = %d, want 0 while paused", got.FreeSlots)
+	}
+	if !got.Config.Paused {
+		t.Fatal("recorded Config.Paused = false, want true")
+	}
+}
+
+// TestDispatcherSurvivesAFailureToRecordItsState proves the write failure
+// this ticket's design explicitly weighs does not halt the dispatcher: a
+// database outage must not take every in-flight ticket's supervision down
+// with it. The dispatcher keeps reconciling and starting work on later ticks.
+func TestDispatcherSurvivesAFailureToRecordItsState(t *testing.T) {
+	t.Parallel()
+
+	h := newDispatcherHarness(t)
+	h.recordStateErr = errors.New("connection refused")
+	h.config.PollIntervalSeconds = 30
+	h.tickets = tickets(1)
+	h.runFor = 45 * time.Second
+	h.run()
+
+	if len(h.started) != 1 || h.started[0] != 1 {
+		t.Fatalf("started %v, want [1] — a failing state write must not stop the dispatcher from working tickets",
+			h.started)
+	}
+	if len(h.recordedStates) == 0 {
+		t.Fatal("the activity must still be invoked even though it fails, or the failure is untested")
 	}
 }

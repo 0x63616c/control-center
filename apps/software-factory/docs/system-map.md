@@ -48,11 +48,23 @@ exhausted CI/review progress, or an activity failure terminates the run.
 ### Dispatcher
 
 `DispatcherWorkflow` is a timer loop, not a Temporal Schedule. It reconciles
-known child workflows, prunes completed work, sweeps orphaned sandboxes, then
-lists and starts eligible `auto` tickets while below its in-flight cap. Starting
-the child workflow with ID `work-ticket-<n>` is the claim: Temporal will not
-allow another open workflow with the same ID. See `workflows/dispatcher.go` and
-the `work.WorkflowID` helpers.
+known child workflows, prunes completed work, sweeps orphaned sandboxes, lists
+and starts eligible `auto` tickets while below its in-flight cap, then records
+its own post-tick decision (#551). Starting the child workflow with ID
+`work-ticket-<n>` is the claim: Temporal will not allow another open workflow
+with the same ID. See `workflows/dispatcher.go` and the `work.WorkflowID`
+helpers.
+
+That fifth step, `recordState`, writes the single `dispatcher_state` row
+(`internal/store`) with the config and breaker it ran under, what it holds a
+slot for, and the eligible candidates it computed this tick in claim order —
+the decision nothing recorded before #551. A write failure is logged and
+swallowed rather than failing the tick: this row is a queryable projection
+nobody reads yet, and halting the whole timer loop over it would stop every
+in-flight ticket's reconcile and sweep along with it. Nothing here changes
+what tickets get worked; `dispatcher_state` intentionally still keys on GitHub
+issue numbers, because this dispatcher still reads GitHub issues, not Tickets
+from that store.
 
 The configured defaults are owned by `work.DefaultConfig` and
 `work.DefaultDispatcherTuning`: three in flight, a 30-second poll interval, a
@@ -69,8 +81,13 @@ Its authenticated write commands use `internal/clients/temporal.Commands` to
 send the dispatcher's existing `workflows.SignalUpdateConfig` signal (pause,
 resume, max-in-flight, or an empty update that wakes the next tick); the
 console never connects to Temporal. `workflows.QueryStatus` remains the one
-status query, while cancelling a ticket asks Temporal to cancel the
-`work.WorkflowID` run so its disconnected cleanup can delete the sandbox.
+status query — ADR-0012 retires it once the console reads `dispatcher_state`
+instead, but #551 kept it: `docs/runbooks/software-factory-first-run.md`
+documents it as one of the two levers (alongside `UpdateConfig`) an operator
+has today with no console yet, and removing an operator's only way to see
+what is happening is explicitly out of scope for a ticket that only writes a
+row. Cancelling a ticket asks Temporal to cancel the `work.WorkflowID` run so
+its disconnected cleanup can delete the sandbox.
 Command acceptance means Temporal accepted the request, not that the database
 has observed its effect.
 

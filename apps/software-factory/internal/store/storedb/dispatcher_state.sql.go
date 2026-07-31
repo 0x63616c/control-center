@@ -12,7 +12,7 @@ import (
 )
 
 const dispatcherState = `-- name: DispatcherState :one
-SELECT singleton, paused, max_in_flight, breaker_open_until, breaker_reason, in_flight, next_ticket_id, written_at FROM dispatcher_state WHERE singleton = TRUE
+SELECT singleton, in_flight, written_at, config, config_error, breaker, candidates, free_slots FROM dispatcher_state WHERE singleton = TRUE
 `
 
 func (q *Queries) DispatcherState(ctx context.Context) (DispatcherState, error) {
@@ -20,47 +20,47 @@ func (q *Queries) DispatcherState(ctx context.Context) (DispatcherState, error) 
 	var i DispatcherState
 	err := row.Scan(
 		&i.Singleton,
-		&i.Paused,
-		&i.MaxInFlight,
-		&i.BreakerOpenUntil,
-		&i.BreakerReason,
 		&i.InFlight,
-		&i.NextTicketID,
 		&i.WrittenAt,
+		&i.Config,
+		&i.ConfigError,
+		&i.Breaker,
+		&i.Candidates,
+		&i.FreeSlots,
 	)
 	return i, err
 }
 
 const putDispatcherState = `-- name: PutDispatcherState :exec
 UPDATE dispatcher_state
-SET paused = $1,
-    max_in_flight = $2,
-    breaker_open_until = $3,
-    breaker_reason = $4,
-    in_flight = $5,
-    next_ticket_id = $6,
+SET config = $1,
+    config_error = $2,
+    breaker = $3,
+    in_flight = $4,
+    candidates = $5,
+    free_slots = $6,
     written_at = $7
 WHERE singleton = TRUE
 `
 
 type PutDispatcherStateParams struct {
-	Paused           bool
-	MaxInFlight      int32
-	BreakerOpenUntil pgtype.Timestamptz
-	BreakerReason    pgtype.Text
-	InFlight         []byte
-	NextTicketID     pgtype.Int8
-	WrittenAt        pgtype.Timestamptz
+	Config      []byte
+	ConfigError string
+	Breaker     []byte
+	InFlight    []byte
+	Candidates  []byte
+	FreeSlots   int32
+	WrittenAt   pgtype.Timestamptz
 }
 
 func (q *Queries) PutDispatcherState(ctx context.Context, arg PutDispatcherStateParams) error {
 	_, err := q.db.Exec(ctx, putDispatcherState,
-		arg.Paused,
-		arg.MaxInFlight,
-		arg.BreakerOpenUntil,
-		arg.BreakerReason,
+		arg.Config,
+		arg.ConfigError,
+		arg.Breaker,
 		arg.InFlight,
-		arg.NextTicketID,
+		arg.Candidates,
+		arg.FreeSlots,
 		arg.WrittenAt,
 	)
 	return err

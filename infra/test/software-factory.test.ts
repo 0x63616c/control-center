@@ -341,6 +341,24 @@ describe("the worker Deployment (#343)", () => {
     expect(container.env.find((e) => e.name === "METRICS_ADDR")?.value).toBe(":9464");
   });
 
+  test("wires the dispatcher's database URL through the worker Secret, not a plain env value", async () => {
+    // config.LoadWorker's one required database input (#551): the dispatcher's
+    // RecordDispatcherState activity writes through this connection. It rides
+    // the worker Secret like GITHUB_APP_ID does, never a literal, because
+    // Pulumi composed it from the vault password bridged into the CNPG auth
+    // Secret (cnpg.ts's createAuthSecret) for this same database.
+    const [container] = (await deploymentSpec()).template.spec.containers;
+    const databaseURL = container.env.find((e) => e.name === "SOFTWARE_FACTORY_DATABASE_URL");
+    expect(databaseURL?.value).toBeUndefined();
+    expect(databaseURL?.valueFrom?.secretKeyRef?.name).toBe("software-factory-worker-secrets");
+    expect(databaseURL?.valueFrom?.secretKeyRef?.key).toBe("DATABASE_URL");
+
+    const stringData = await get<Record<string, string>>(install().workerSecret, "stringData");
+    expect(stringData.DATABASE_URL).toBe(
+      "postgres://postgres:mock-postgres-password@software-factory-postgres-rw:5432/software_factory",
+    );
+  });
+
   test("points the App private key env at the mounted FILE, not at a value", async () => {
     // The key is multi-line and base64-encoded in the vault; internal/config
     // reads it from a path.

@@ -271,28 +271,30 @@ type StepDetail struct {
 	Attempts []Attempt
 }
 
-// InFlightTicket is one Ticket the new dispatcher believes is being worked.
-//
-// It is a distinct type from internal/work.InFlightTicket, whose Ticket field
-// is a GitHub issue number: ADR-0012's cutover runs a second dispatcher
-// alongside the first, reading TicketIDs from this store rather than issue
-// numbers, and the two in-flight sets are never interchangeable.
-type InFlightTicket struct {
-	TicketID  TicketID  `json:"ticketId"`
-	RunID     string    `json:"runId"`
-	StartedAt time.Time `json:"startedAt"`
-}
-
-// DispatcherState is what the (new, ADR-0012) dispatcher knows, written once
-// each tick — the single row that finally answers "what is it going to work
-// on next", which nothing answers today.
+// DispatcherState is the legacy GitHub-backed dispatcher's post-tick
+// decision (#551): what it is running under, what it holds a slot for, and
+// what it would claim next. It intentionally uses internal/work's own types
+// and GitHub issue numbers rather than a TicketID — this ticket's scope is
+// explicit that the dispatcher still reads GitHub issues, not Tickets from
+// this store; switching its work source is the later cutover ticket.
+// ADR-0012's second, Ticket-reading dispatcher is what eventually points at
+// this same row instead.
 type DispatcherState struct {
-	Paused      bool
-	MaxInFlight int
+	// Config is the operator surface this tick ran under: paused, the
+	// concurrency cap, poll interval, orphan grace, breaker cooldown, and the
+	// model each stage runs on.
+	Config work.Config
+	// ConfigError is why the last signalled update was rejected, empty if none
+	// was.
+	ConfigError string
 	// Breaker is the zero Breaker (never tripped) until the dispatcher trips it.
-	Breaker  work.Breaker
-	InFlight []InFlightTicket
-	// NextTicketID is 0 if the dispatcher has no candidate.
-	NextTicketID TicketID
-	WrittenAt    time.Time
+	Breaker work.Breaker
+	// InFlight is the tickets this tick believes are being worked.
+	InFlight []work.InFlightTicket
+	// Candidates is the eligible `auto` tickets this tick computed, in the
+	// order it would claim them — the one thing nothing records today.
+	Candidates []int
+	// FreeSlots is how many of Config.MaxInFlight were open this tick.
+	FreeSlots int
+	WrittenAt time.Time
 }

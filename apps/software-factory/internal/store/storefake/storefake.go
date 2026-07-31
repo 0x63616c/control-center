@@ -67,13 +67,10 @@ type attemptKey struct {
 	attemptNo int
 }
 
-// defaultMaxInFlight mirrors the seed row migration 00002 inserts, so a fake
-// store starts in the same state a freshly migrated database does rather than
-// with no dispatcher_state row at all.
-const defaultMaxInFlight = 3
-
 // New returns an empty Store, seeded the way a freshly migrated database is:
-// no tickets, and one dispatcher_state row at its migration defaults.
+// no tickets, and one dispatcher_state row at its migration defaults — a zero
+// Config and Breaker, exactly as migration 00002's seed row and 00003's added
+// columns leave it until the dispatcher's first tick overwrites it for real.
 func New(opts ...Option) *Store {
 	f := &Store{
 		clk:          clock.System{},
@@ -88,7 +85,7 @@ func New(opts ...Option) *Store {
 	for _, opt := range opts {
 		opt(f)
 	}
-	f.dispatcherState = store.DispatcherState{MaxInFlight: defaultMaxInFlight, WrittenAt: f.clk.Now()}
+	f.dispatcherState = store.DispatcherState{WrittenAt: f.clk.Now()}
 	f.dispatcherStateSeen = true
 	return f
 }

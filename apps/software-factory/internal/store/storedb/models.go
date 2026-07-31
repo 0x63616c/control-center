@@ -28,14 +28,14 @@ type Attempt struct {
 }
 
 type DispatcherState struct {
-	Singleton        bool
-	Paused           bool
-	MaxInFlight      int32
-	BreakerOpenUntil pgtype.Timestamptz
-	BreakerReason    pgtype.Text
-	InFlight         []byte
-	NextTicketID     pgtype.Int8
-	WrittenAt        pgtype.Timestamptz
+	Singleton   bool
+	InFlight    []byte
+	WrittenAt   pgtype.Timestamptz
+	Config      []byte
+	ConfigError string
+	Breaker     []byte
+	Candidates  []byte
+	FreeSlots   int32
 }
 
 type MigrationProbe struct {
