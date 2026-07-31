@@ -23,6 +23,7 @@ function renderWithClient() {
 
 afterEach(() => {
   vi.resetAllMocks();
+  window.location.hash = "";
 });
 
 describe("App", () => {
@@ -66,5 +67,40 @@ describe("App", () => {
     await waitFor(() => {
       expect(screen.getByRole("alert")).toHaveTextContent("Network Error");
     });
+  });
+
+  // #556: the Ticket detail view is otherwise unreachable dead code without
+  // this — a hash is enough to make it a real, bookmarkable location.
+  it("shows the Ticket detail view for a #/tickets/<id> hash, not the console", async () => {
+    window.location.hash = "#/tickets/42";
+    vi.mocked(axios.get).mockImplementation((url: string) => {
+      if (url === "/v1/tickets/42") {
+        return Promise.resolve({
+          data: {
+            id: 42,
+            title: "Console ticket detail",
+            body: "",
+            state: "working",
+            ready: false,
+            createdAt: "2026-07-31T12:00:00Z",
+            updatedAt: "2026-07-31T12:00:00Z",
+            blockers: [],
+            blocks: [],
+          },
+        });
+      }
+      if (url === "/v1/tickets/42/runs") {
+        return Promise.resolve({ data: { runs: [] } });
+      }
+      return Promise.reject(new Error(`unexpected GET ${url}`));
+    });
+
+    renderWithClient();
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: /42 Console ticket detail/ })).toBeInTheDocument();
+    });
+    expect(screen.getByRole("link", { name: /Back to console/ })).toHaveAttribute("href", "#/");
+    expect(axios.get).not.toHaveBeenCalledWith("/v1/console", expect.anything());
   });
 });

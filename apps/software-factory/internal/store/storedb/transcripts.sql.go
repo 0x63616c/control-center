@@ -79,3 +79,36 @@ func (q *Queries) Transcript(ctx context.Context, arg TranscriptParams) (Transcr
 	)
 	return i, err
 }
+
+const transcriptKeysForRun = `-- name: TranscriptKeysForRun :many
+SELECT stage, turn, attempt_no FROM transcript WHERE run_id = $1
+`
+
+type TranscriptKeysForRunRow struct {
+	Stage     string
+	Turn      int32
+	AttemptNo int32
+}
+
+// The console's run detail view needs to know which Attempts have a
+// transcript to download, without paying for every compressed blob just to
+// render that flag.
+func (q *Queries) TranscriptKeysForRun(ctx context.Context, runID pgtype.UUID) ([]TranscriptKeysForRunRow, error) {
+	rows, err := q.db.Query(ctx, transcriptKeysForRun, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TranscriptKeysForRunRow
+	for rows.Next() {
+		var i TranscriptKeysForRunRow
+		if err := rows.Scan(&i.Stage, &i.Turn, &i.AttemptNo); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

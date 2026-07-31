@@ -11,3 +11,9 @@ ON CONFLICT (run_id, stage, turn, attempt_no) DO NOTHING;
 -- name: Transcript :one
 SELECT * FROM transcript
 WHERE run_id = $1 AND stage = $2 AND turn = $3 AND attempt_no = $4;
+
+-- name: TranscriptKeysForRun :many
+-- The console's run detail view needs to know which Attempts have a
+-- transcript to download, without paying for every compressed blob just to
+-- render that flag.
+SELECT stage, turn, attempt_no FROM transcript WHERE run_id = $1;

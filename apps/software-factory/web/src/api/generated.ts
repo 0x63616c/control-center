@@ -43,6 +43,70 @@ type NonReadonly<T> = [T] extends [UnionToIntersection<T>]
     }
   : DistributeReadOnlyOverUnions<T>;
 
+/**
+ * The part of inputTokens served from the provider's prompt cache. Null when measured is false.
+ */
+export type AttemptOutputCachedInputTokens = number | null;
+
+/**
+ * RFC3339 UTC. Null until the attempt ends.
+ */
+export type AttemptOutputEndedAt = string | null;
+
+/**
+ * The whole input, including cachedInputTokens. Null when measured is false.
+ */
+export type AttemptOutputInputTokens = number | null;
+
+/**
+ * The whole output, including reasoningTokens. Null when measured is false.
+ */
+export type AttemptOutputOutputTokens = number | null;
+
+/**
+ * The part of outputTokens spent reasoning. Null when measured is false.
+ */
+export type AttemptOutputReasoningTokens = number | null;
+
+/**
+ * '', 'succeeded' or 'failed'. Empty means the attempt has not ended yet.
+ */
+export type AttemptOutputResult = (typeof AttemptOutputResult)[keyof typeof AttemptOutputResult];
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const AttemptOutputResult = {
+  "": "",
+  succeeded: "succeeded",
+  failed: "failed",
+} as const;
+
+export interface AttemptOutput {
+  /** Which attempt of this Step this is, starting at 1. */
+  attemptNo: number;
+  /** The part of inputTokens served from the provider's prompt cache. Null when measured is false. */
+  cachedInputTokens: AttemptOutputCachedInputTokens;
+  /** The reasoning effort this attempt ran on. */
+  effort: string;
+  /** RFC3339 UTC. Null until the attempt ends. */
+  endedAt: AttemptOutputEndedAt;
+  /** Whether a transcript is stored for this attempt. */
+  hasTranscript: boolean;
+  /** The whole input, including cachedInputTokens. Null when measured is false. */
+  inputTokens: AttemptOutputInputTokens;
+  /** Whether this attempt actually ran Codex. False means it resumed a stored result: the four token fields below are null, not zero, because nothing ran to measure. */
+  measured: boolean;
+  /** The model this attempt ran on. */
+  model: string;
+  /** The whole output, including reasoningTokens. Null when measured is false. */
+  outputTokens: AttemptOutputOutputTokens;
+  /** The part of outputTokens spent reasoning. Null when measured is false. */
+  reasoningTokens: AttemptOutputReasoningTokens;
+  /** '', 'succeeded' or 'failed'. Empty means the attempt has not ended yet. */
+  result: AttemptOutputResult;
+  /** RFC3339 UTC. */
+  startedAt: string;
+}
+
 export interface BuildOutputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -166,11 +230,104 @@ export interface MaxInFlightInputBody {
   maxInFlight: number;
 }
 
+/**
+ * RFC3339 UTC. Null until the Run ends.
+ */
+export type RunOutputEndedAt = string | null;
+
+/**
+ * '', 'auth', 'rate-limit' or 'other'.
+ */
+export type RunOutputFailureKind = (typeof RunOutputFailureKind)[keyof typeof RunOutputFailureKind];
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const RunOutputFailureKind = {
+  "": "",
+  auth: "auth",
+  "rate-limit": "rate-limit",
+  other: "other",
+} as const;
+
+/**
+ * '', 'proposed', 'blocked', 'exhausted' or 'failed'. Empty until the Run ends.
+ */
+export type RunOutputOutcome = (typeof RunOutputOutcome)[keyof typeof RunOutputOutcome];
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const RunOutputOutcome = {
+  "": "",
+  proposed: "proposed",
+  blocked: "blocked",
+  exhausted: "exhausted",
+  failed: "failed",
+} as const;
+
+/**
+ * This Run's Steps, in pipeline order.
+ */
+export type RunOutputSteps = StepOutput[] | null;
+
+export interface RunOutput {
+  /** RFC3339 UTC. Null until the Run ends. */
+  endedAt: RunOutputEndedAt;
+  /** '', 'auth', 'rate-limit' or 'other'. */
+  failureKind: RunOutputFailureKind;
+  /** Temporal's run id for this Run. */
+  id: string;
+  /** '', 'proposed', 'blocked', 'exhausted' or 'failed'. Empty until the Run ends. */
+  outcome: RunOutputOutcome;
+  /** RFC3339 UTC. */
+  startedAt: string;
+  /** This Run's Steps, in pipeline order. */
+  steps: RunOutputSteps;
+  /** The Ticket this Run belongs to. */
+  ticketId: number;
+  /** Rolled up across this Run's Steps. */
+  usage: UsageOutput;
+}
+
 export interface StateTicketInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /** The target lifecycle state: open, working, review, done, or failed. */
   state: string;
+}
+
+/**
+ * This Step's attempts, oldest first. Usually one; more than one means a machine retry, not semantic re-work.
+ */
+export type StepOutputAttempts = AttemptOutput[] | null;
+
+/**
+ * RFC3339 UTC. Null while its last Attempt is still running.
+ */
+export type StepOutputEndedAt = string | null;
+
+/**
+ * plan, implement, or review.
+ */
+export type StepOutputStage = (typeof StepOutputStage)[keyof typeof StepOutputStage];
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const StepOutputStage = {
+  plan: "plan",
+  implement: "implement",
+  review: "review",
+} as const;
+
+export interface StepOutput {
+  /** This Step's attempts, oldest first. Usually one; more than one means a machine retry, not semantic re-work. */
+  attempts: StepOutputAttempts;
+  /** RFC3339 UTC. Null while its last Attempt is still running. */
+  endedAt: StepOutputEndedAt;
+  /** plan, implement, or review. */
+  stage: StepOutputStage;
+  /** RFC3339 UTC. Its first Attempt's start. */
+  startedAt: string;
+  /** Which turn of Stage this is within the Run, starting at 1 — the headline number: the model was asked to do this work again. */
+  turn: number;
+  /** Rolled up across this Step's Attempts. */
+  usage: UsageOutput;
 }
 
 /**
@@ -206,6 +363,18 @@ export interface TicketResponse {
   updatedAt: string;
 }
 
+/**
+ * This Ticket's Runs, most recent first.
+ */
+export type TicketRunsOutputBodyRuns = RunOutput[] | null;
+
+export interface TicketRunsOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** This Ticket's Runs, most recent first. */
+  runs: TicketRunsOutputBodyRuns;
+}
+
 export interface TicketSummary {
   /** The Ticket creation time in RFC3339 UTC. */
   createdAt: string;
@@ -231,6 +400,19 @@ export interface TicketsOutputBody {
   readonly $schema?: string;
   /** Tickets matching the requested filters. */
   tickets: TicketsOutputBodyTickets;
+}
+
+export interface UsageOutput {
+  /** The part of inputTokens served from the provider's prompt cache. */
+  cachedInputTokens: number;
+  /** False when this total omits at least one unmeasured Attempt; render it as incomplete rather than a confident sum. */
+  complete: boolean;
+  /** The whole input, including cachedInputTokens. */
+  inputTokens: number;
+  /** The whole output, including reasoningTokens. */
+  outputTokens: number;
+  /** The part of outputTokens spent reasoning. */
+  reasoningTokens: number;
 }
 
 export type GetV1TicketsParams = {
@@ -1238,6 +1420,425 @@ export const usePostV1TicketsByTicketIdCancel = <
 
   return useMutation(mutationOptions, queryClient);
 };
+
+/**
+ * Returns every Run of the Ticket, most recent first, each with its Steps and Attempts and rolled-up token usage.
+ * @summary List a Ticket's Runs
+ */
+export const getV1TicketsByTicketIdRuns = (
+  ticketID: number,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<TicketRunsOutputBody>> => {
+  return axios.get(`/v1/tickets/${ticketID}/runs`, options);
+};
+
+export const getGetV1TicketsByTicketIdRunsQueryKey = (ticketID?: number) => {
+  return [`/v1/tickets/${ticketID}/runs`] as const;
+};
+
+export const getGetV1TicketsByTicketIdRunsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getV1TicketsByTicketIdRuns>>,
+  TError = AxiosError<ErrorModel>,
+>(
+  ticketID: number,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getV1TicketsByTicketIdRuns>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetV1TicketsByTicketIdRunsQueryKey(ticketID);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getV1TicketsByTicketIdRuns>>> = ({
+    signal,
+  }) => getV1TicketsByTicketIdRuns(ticketID, { signal, ...axiosOptions });
+
+  return { queryKey, queryFn, enabled: !!ticketID, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getV1TicketsByTicketIdRuns>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetV1TicketsByTicketIdRunsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getV1TicketsByTicketIdRuns>>
+>;
+export type GetV1TicketsByTicketIdRunsQueryError = AxiosError<ErrorModel>;
+
+export function useGetV1TicketsByTicketIdRuns<
+  TData = Awaited<ReturnType<typeof getV1TicketsByTicketIdRuns>>,
+  TError = AxiosError<ErrorModel>,
+>(
+  ticketID: number,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getV1TicketsByTicketIdRuns>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getV1TicketsByTicketIdRuns>>,
+          TError,
+          Awaited<ReturnType<typeof getV1TicketsByTicketIdRuns>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useGetV1TicketsByTicketIdRuns<
+  TData = Awaited<ReturnType<typeof getV1TicketsByTicketIdRuns>>,
+  TError = AxiosError<ErrorModel>,
+>(
+  ticketID: number,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getV1TicketsByTicketIdRuns>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getV1TicketsByTicketIdRuns>>,
+          TError,
+          Awaited<ReturnType<typeof getV1TicketsByTicketIdRuns>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useGetV1TicketsByTicketIdRuns<
+  TData = Awaited<ReturnType<typeof getV1TicketsByTicketIdRuns>>,
+  TError = AxiosError<ErrorModel>,
+>(
+  ticketID: number,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getV1TicketsByTicketIdRuns>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+/**
+ * @summary List a Ticket's Runs
+ */
+
+export function useGetV1TicketsByTicketIdRuns<
+  TData = Awaited<ReturnType<typeof getV1TicketsByTicketIdRuns>>,
+  TError = AxiosError<ErrorModel>,
+>(
+  ticketID: number,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getV1TicketsByTicketIdRuns>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getGetV1TicketsByTicketIdRunsQueryOptions(ticketID, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Returns the Attempt's raw JSONL event stream, decompressed, as a downloadable file.
+ * @summary Download an Attempt's transcript
+ */
+export const listV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscript =
+  (
+    ticketID: number,
+    runID: string,
+    stage: "plan" | "implement" | "review",
+    turn: number,
+    attemptNo: number,
+    options?: AxiosRequestConfig,
+  ): Promise<AxiosResponse<string>> => {
+    return axios.get(
+      `/v1/tickets/${ticketID}/runs/${runID}/stages/${stage}/turns/${turn}/attempts/${attemptNo}/transcript`,
+      {
+        ...options,
+      },
+    );
+  };
+
+export const getListV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscriptQueryKey =
+  (
+    ticketID?: number,
+    runID?: string,
+    stage?: "plan" | "implement" | "review",
+    turn?: number,
+    attemptNo?: number,
+  ) => {
+    return [
+      `/v1/tickets/${ticketID}/runs/${runID}/stages/${stage}/turns/${turn}/attempts/${attemptNo}/transcript`,
+    ] as const;
+  };
+
+export const getListV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscriptQueryOptions =
+  <
+    TData = Awaited<
+      ReturnType<
+        typeof listV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscript
+      >
+    >,
+    TError = AxiosError<ErrorModel>,
+  >(
+    ticketID: number,
+    runID: string,
+    stage: "plan" | "implement" | "review",
+    turn: number,
+    attemptNo: number,
+    options?: {
+      query?: Partial<
+        UseQueryOptions<
+          Awaited<
+            ReturnType<
+              typeof listV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscript
+            >
+          >,
+          TError,
+          TData
+        >
+      >;
+      axios?: AxiosRequestConfig;
+    },
+  ) => {
+    const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+    const queryKey =
+      queryOptions?.queryKey ??
+      getListV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscriptQueryKey(
+        ticketID,
+        runID,
+        stage,
+        turn,
+        attemptNo,
+      );
+
+    const queryFn: QueryFunction<
+      Awaited<
+        ReturnType<
+          typeof listV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscript
+        >
+      >
+    > = ({ signal }) =>
+      listV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscript(
+        ticketID,
+        runID,
+        stage,
+        turn,
+        attemptNo,
+        { signal, ...axiosOptions },
+      );
+
+    return {
+      queryKey,
+      queryFn,
+      enabled: !!(ticketID && runID && stage && turn && attemptNo),
+      ...queryOptions,
+    } as UseQueryOptions<
+      Awaited<
+        ReturnType<
+          typeof listV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscript
+        >
+      >,
+      TError,
+      TData
+    > & { queryKey: DataTag<QueryKey, TData, TError> };
+  };
+
+export type ListV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscriptQueryResult =
+  NonNullable<
+    Awaited<
+      ReturnType<
+        typeof listV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscript
+      >
+    >
+  >;
+export type ListV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscriptQueryError =
+  AxiosError<ErrorModel>;
+
+export function useListV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscript<
+  TData = Awaited<
+    ReturnType<
+      typeof listV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscript
+    >
+  >,
+  TError = AxiosError<ErrorModel>,
+>(
+  ticketID: number,
+  runID: string,
+  stage: "plan" | "implement" | "review",
+  turn: number,
+  attemptNo: number,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<
+          ReturnType<
+            typeof listV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscript
+          >
+        >,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<
+            ReturnType<
+              typeof listV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscript
+            >
+          >,
+          TError,
+          Awaited<
+            ReturnType<
+              typeof listV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscript
+            >
+          >
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useListV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscript<
+  TData = Awaited<
+    ReturnType<
+      typeof listV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscript
+    >
+  >,
+  TError = AxiosError<ErrorModel>,
+>(
+  ticketID: number,
+  runID: string,
+  stage: "plan" | "implement" | "review",
+  turn: number,
+  attemptNo: number,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<
+          ReturnType<
+            typeof listV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscript
+          >
+        >,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<
+            ReturnType<
+              typeof listV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscript
+            >
+          >,
+          TError,
+          Awaited<
+            ReturnType<
+              typeof listV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscript
+            >
+          >
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useListV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscript<
+  TData = Awaited<
+    ReturnType<
+      typeof listV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscript
+    >
+  >,
+  TError = AxiosError<ErrorModel>,
+>(
+  ticketID: number,
+  runID: string,
+  stage: "plan" | "implement" | "review",
+  turn: number,
+  attemptNo: number,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<
+          ReturnType<
+            typeof listV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscript
+          >
+        >,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+/**
+ * @summary Download an Attempt's transcript
+ */
+
+export function useListV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscript<
+  TData = Awaited<
+    ReturnType<
+      typeof listV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscript
+    >
+  >,
+  TError = AxiosError<ErrorModel>,
+>(
+  ticketID: number,
+  runID: string,
+  stage: "plan" | "implement" | "review",
+  turn: number,
+  attemptNo: number,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<
+          ReturnType<
+            typeof listV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscript
+          >
+        >,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions =
+    getListV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscriptQueryOptions(
+      ticketID,
+      runID,
+      stage,
+      turn,
+      attemptNo,
+      options,
+    );
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
 
 /**
  * Moves a Ticket through its legal lifecycle transitions.

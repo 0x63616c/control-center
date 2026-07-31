@@ -145,7 +145,9 @@ function Snapshot({
               {tickets.map((ticket) => (
                 <li id={`ticket-${ticket.id}`} key={ticket.id}>
                   <strong>
-                    Ticket {ticket.id}: {ticket.title}
+                    <a href={`#/tickets/${ticket.id}`}>
+                      Ticket {ticket.id}: {ticket.title}
+                    </a>
                   </strong>
                   <span className={`ticket-state ticket-state-${ticket.state}`}>
                     {ticket.state}

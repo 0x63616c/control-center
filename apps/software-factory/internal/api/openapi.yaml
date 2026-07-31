@@ -1,5 +1,77 @@
 components:
   schemas:
+    AttemptOutput:
+      additionalProperties: false
+      properties:
+        attemptNo:
+          description: Which attempt of this Step this is, starting at 1.
+          format: int64
+          type: integer
+        cachedInputTokens:
+          description: The part of inputTokens served from the provider's prompt cache. Null when measured is false.
+          format: int64
+          type:
+            - integer
+            - "null"
+        effort:
+          description: The reasoning effort this attempt ran on.
+          type: string
+        endedAt:
+          description: RFC3339 UTC. Null until the attempt ends.
+          type:
+            - string
+            - "null"
+        hasTranscript:
+          description: Whether a transcript is stored for this attempt.
+          type: boolean
+        inputTokens:
+          description: The whole input, including cachedInputTokens. Null when measured is false.
+          format: int64
+          type:
+            - integer
+            - "null"
+        measured:
+          description: "Whether this attempt actually ran Codex. False means it resumed a stored result: the four token fields below are null, not zero, because nothing ran to measure."
+          type: boolean
+        model:
+          description: The model this attempt ran on.
+          type: string
+        outputTokens:
+          description: The whole output, including reasoningTokens. Null when measured is false.
+          format: int64
+          type:
+            - integer
+            - "null"
+        reasoningTokens:
+          description: The part of outputTokens spent reasoning. Null when measured is false.
+          format: int64
+          type:
+            - integer
+            - "null"
+        result:
+          description: "'', 'succeeded' or 'failed'. Empty means the attempt has not ended yet."
+          enum:
+            - ""
+            - succeeded
+            - failed
+          type: string
+        startedAt:
+          description: RFC3339 UTC.
+          type: string
+      required:
+        - attemptNo
+        - model
+        - effort
+        - measured
+        - inputTokens
+        - cachedInputTokens
+        - outputTokens
+        - reasoningTokens
+        - startedAt
+        - endedAt
+        - result
+        - hasTranscript
+      type: object
     BuildOutputBody:
       additionalProperties: false
       properties:
@@ -258,6 +330,61 @@ components:
       required:
         - maxInFlight
       type: object
+    RunOutput:
+      additionalProperties: false
+      properties:
+        endedAt:
+          description: RFC3339 UTC. Null until the Run ends.
+          type:
+            - string
+            - "null"
+        failureKind:
+          description: "'', 'auth', 'rate-limit' or 'other'."
+          enum:
+            - ""
+            - auth
+            - rate-limit
+            - other
+          type: string
+        id:
+          description: Temporal's run id for this Run.
+          type: string
+        outcome:
+          description: "'', 'proposed', 'blocked', 'exhausted' or 'failed'. Empty until the Run ends."
+          enum:
+            - ""
+            - proposed
+            - blocked
+            - exhausted
+            - failed
+          type: string
+        startedAt:
+          description: RFC3339 UTC.
+          type: string
+        steps:
+          description: This Run's Steps, in pipeline order.
+          items:
+            $ref: "#/components/schemas/StepOutput"
+          type:
+            - array
+            - "null"
+        ticketId:
+          description: The Ticket this Run belongs to.
+          format: int64
+          type: integer
+        usage:
+          $ref: "#/components/schemas/UsageOutput"
+          description: Rolled up across this Run's Steps.
+      required:
+        - id
+        - ticketId
+        - startedAt
+        - endedAt
+        - outcome
+        - failureKind
+        - steps
+        - usage
+      type: object
     StateTicketInputBody:
       additionalProperties: false
       properties:
@@ -273,6 +400,46 @@ components:
           type: string
       required:
         - state
+      type: object
+    StepOutput:
+      additionalProperties: false
+      properties:
+        attempts:
+          description: This Step's attempts, oldest first. Usually one; more than one means a machine retry, not semantic re-work.
+          items:
+            $ref: "#/components/schemas/AttemptOutput"
+          type:
+            - array
+            - "null"
+        endedAt:
+          description: RFC3339 UTC. Null while its last Attempt is still running.
+          type:
+            - string
+            - "null"
+        stage:
+          description: plan, implement, or review.
+          enum:
+            - plan
+            - implement
+            - review
+          type: string
+        startedAt:
+          description: RFC3339 UTC. Its first Attempt's start.
+          type: string
+        turn:
+          description: "Which turn of Stage this is within the Run, starting at 1 — the headline number: the model was asked to do this work again."
+          format: int64
+          type: integer
+        usage:
+          $ref: "#/components/schemas/UsageOutput"
+          description: Rolled up across this Step's Attempts.
+      required:
+        - stage
+        - turn
+        - startedAt
+        - endedAt
+        - attempts
+        - usage
       type: object
     TicketResponse:
       additionalProperties: false
@@ -331,6 +498,26 @@ components:
         - createdAt
         - updatedAt
       type: object
+    TicketRunsOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TicketRunsOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        runs:
+          description: This Ticket's Runs, most recent first.
+          items:
+            $ref: "#/components/schemas/RunOutput"
+          type:
+            - array
+            - "null"
+      required:
+        - runs
+      type: object
     TicketSummary:
       additionalProperties: false
       properties:
@@ -380,6 +567,35 @@ components:
             - "null"
       required:
         - tickets
+      type: object
+    UsageOutput:
+      additionalProperties: false
+      properties:
+        cachedInputTokens:
+          description: The part of inputTokens served from the provider's prompt cache.
+          format: int64
+          type: integer
+        complete:
+          description: False when this total omits at least one unmeasured Attempt; render it as incomplete rather than a confident sum.
+          type: boolean
+        inputTokens:
+          description: The whole input, including cachedInputTokens.
+          format: int64
+          type: integer
+        outputTokens:
+          description: The whole output, including reasoningTokens.
+          format: int64
+          type: integer
+        reasoningTokens:
+          description: The part of outputTokens spent reasoning.
+          format: int64
+          type: integer
+      required:
+        - inputTokens
+        - cachedInputTokens
+        - outputTokens
+        - reasoningTokens
+        - complete
       type: object
   securitySchemes:
     cloudflareAccess:
@@ -652,6 +868,106 @@ paths:
                 $ref: "#/components/schemas/ErrorModel"
           description: Error
       summary: Cancel a ticket run
+  /v1/tickets/{ticketID}/runs:
+    get:
+      description: Returns every Run of the Ticket, most recent first, each with its Steps and Attempts and rolled-up token usage.
+      operationId: get-v1-tickets-by-ticket-id-runs
+      parameters:
+        - description: The Ticket identifier.
+          in: path
+          name: ticketID
+          required: true
+          schema:
+            description: The Ticket identifier.
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketRunsOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: List a Ticket's Runs
+  /v1/tickets/{ticketID}/runs/{runID}/stages/{stage}/turns/{turn}/attempts/{attemptNo}/transcript:
+    get:
+      description: Returns the Attempt's raw JSONL event stream, decompressed, as a downloadable file.
+      operationId: list-v1-tickets-by-ticket-id-runs-by-run-id-stages-by-stage-turns-by-turn-attempts-by-attempt-no-transcript
+      parameters:
+        - description: The Ticket identifier.
+          in: path
+          name: ticketID
+          required: true
+          schema:
+            description: The Ticket identifier.
+            format: int64
+            minimum: 1
+            type: integer
+        - description: The Run's Temporal run id.
+          in: path
+          name: runID
+          required: true
+          schema:
+            description: The Run's Temporal run id.
+            type: string
+        - description: The Stage of the Step this Attempt belongs to.
+          in: path
+          name: stage
+          required: true
+          schema:
+            description: The Stage of the Step this Attempt belongs to.
+            enum:
+              - plan
+              - implement
+              - review
+            type: string
+        - description: The Step's turn number.
+          in: path
+          name: turn
+          required: true
+          schema:
+            description: The Step's turn number.
+            format: int64
+            minimum: 1
+            type: integer
+        - description: Which attempt of the Step to download.
+          in: path
+          name: attemptNo
+          required: true
+          schema:
+            description: Which attempt of the Step to download.
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                contentEncoding: base64
+                type: string
+          description: OK
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+            Content-Type:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Download an Attempt's transcript
   /v1/tickets/{ticketID}/state:
     patch:
       description: Moves a Ticket through its legal lifecycle transitions.

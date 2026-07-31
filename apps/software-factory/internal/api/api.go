@@ -23,12 +23,15 @@ type Service struct {
 	handler  http.Handler
 	api      huma.API
 	commands commandClient
-	tickets  ticketStore
+	tickets  factoryStore
 	clock    clock.Clock
 }
 
-// ticketStore is the small persistence door the Ticket HTTP contract needs.
-type ticketStore interface {
+// factoryStore is the small persistence door the whole HTTP contract needs:
+// Tickets and their dependency graph, the dispatcher's last-written state,
+// plus the Runs, Steps, Attempts and transcripts recorded against them
+// (ADR-0012's console detail view).
+type factoryStore interface {
 	store.TicketCreator
 	store.TicketReader
 	store.TicketStateWriter
@@ -36,6 +39,9 @@ type ticketStore interface {
 	store.TicketDependencyWriter
 	store.TicketDependencyReader
 	store.DispatcherStateReader
+	store.RunLister
+	store.RunReader
+	store.TranscriptReader
 }
 
 // commandClient is the factory command surface the HTTP handlers need.
@@ -231,11 +237,11 @@ func reasonForStatus(status int) string {
 
 // New constructs the complete HTTP API. Version arrives from the composition
 // root so this package does not need to learn about build metadata policy.
-func New(version string, commands commandClient, ticketStores ...ticketStore) *Service {
+func New(version string, commands commandClient, ticketStores ...factoryStore) *Service {
 	return newWithClock(version, commands, clock.System{}, ticketStores...)
 }
 
-func newWithClock(version string, commands commandClient, serviceClock clock.Clock, ticketStores ...ticketStore) *Service {
+func newWithClock(version string, commands commandClient, serviceClock clock.Clock, ticketStores ...factoryStore) *Service {
 	mux := http.NewServeMux()
 	configuration := huma.DefaultConfig("Software Factory API", version)
 	configuration.Components.SecuritySchemes = map[string]*huma.SecurityScheme{
@@ -271,6 +277,8 @@ func newWithClock(version string, commands commandClient, serviceClock clock.Clo
 	huma.Patch(api, "/v1/tickets/{ticketID}/state", service.updateTicketState, commandOperation("Update Ticket state", "Moves a Ticket through its legal lifecycle transitions."))
 	huma.Put(api, "/v1/tickets/{ticketID}/blockers/{blockerTicketID}", service.addBlocker, commandOperation("Add a Ticket blocker", "Records that the first Ticket is blocked by the second."))
 	huma.Delete(api, "/v1/tickets/{ticketID}/blockers/{blockerTicketID}", service.removeBlocker, commandOperation("Remove a Ticket blocker", "Removes a dependency edge when it exists."))
+	huma.Get(api, "/v1/tickets/{ticketID}/runs", service.getTicketRuns, commandOperation("List a Ticket's Runs", "Returns every Run of the Ticket, most recent first, each with its Steps and Attempts and rolled-up token usage."))
+	huma.Get(api, "/v1/tickets/{ticketID}/runs/{runID}/stages/{stage}/turns/{turn}/attempts/{attemptNo}/transcript", service.getAttemptTranscript, commandOperation("Download an Attempt's transcript", "Returns the Attempt's raw JSONL event stream, decompressed, as a downloadable file."))
 	errorSchema := api.OpenAPI().Components.Schemas.Map()["ErrorModel"]
 	errorSchema.Properties["reason"] = &huma.Schema{Type: "string", Description: "Stable machine-readable reason for the error."}
 	errorSchema.Required = append(errorSchema.Required, "reason")
