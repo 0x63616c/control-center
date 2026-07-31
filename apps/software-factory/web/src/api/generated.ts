@@ -114,42 +114,11 @@ export interface BuildOutputBody {
   version: string;
 }
 
-export type ConsoleDispatcherCandidates = number[] | null;
-
-export type ConsoleDispatcherInFlight = ConsoleInFlight[] | null;
-
-export interface ConsoleDispatcher {
-  ageSeconds: number;
-  candidates: ConsoleDispatcherCandidates;
-  freeSlots: number;
-  inFlight: ConsoleDispatcherInFlight;
-  stale: boolean;
-  writtenAt: string;
-}
-
-export interface ConsoleFactory {
-  breakerOpen: boolean;
-  breakerOpenUntil: string;
-  breakerReason: string;
-  configError: string;
-  maxInFlight: number;
-  pauseReason: string;
-  paused: boolean;
-}
-
-export interface ConsoleInFlight {
-  issueNumber: number;
-  runID: string;
-  startedAt: string;
-}
-
 export type ConsoleResponseTickets = ConsoleTicket[] | null;
 
 export interface ConsoleResponse {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  dispatcher: ConsoleDispatcher;
-  factory: ConsoleFactory;
   tickets: ConsoleResponseTickets;
 }
 
@@ -542,7 +511,7 @@ export function useGetV1Build<
 }
 
 /**
- * Returns the dispatcher-recorded legacy Issue decision and derived Ticket blockers without recomputing dispatch selection in the browser.
+ * Returns every Ticket with its derived readiness and blockers.
  * @summary Read console snapshot
  */
 export const getV1Console = (

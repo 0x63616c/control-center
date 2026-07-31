@@ -27,34 +27,27 @@ afterEach(() => {
 });
 
 describe("App", () => {
-  it("renders the dispatcher snapshot returned by the generated client", async () => {
+  it("renders the console snapshot returned by the generated client", async () => {
     vi.mocked(axios.get).mockResolvedValueOnce({
       data: {
-        factory: {
-          paused: false,
-          pauseReason: "",
-          maxInFlight: 3,
-          configError: "",
-          breakerOpen: false,
-          breakerReason: "",
-          breakerOpenUntil: "0001-01-01T00:00:00Z",
-        },
-        dispatcher: {
-          inFlight: [],
-          candidates: [555],
-          freeSlots: 2,
-          writtenAt: "2026-07-31T12:00:00Z",
-          ageSeconds: 0,
-          stale: false,
-        },
-        tickets: [],
+        tickets: [
+          {
+            id: 555,
+            title: "Ticket 555",
+            state: "open",
+            ready: true,
+            createdAt: "2026-07-31T12:00:00Z",
+            updatedAt: "2026-07-31T12:00:00Z",
+            blockers: [],
+          },
+        ],
       },
     });
 
     renderWithClient();
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Next" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Worked" })).toBeInTheDocument();
     });
     expect(axios.get).toHaveBeenCalledWith("/v1/console", expect.anything());
   });
