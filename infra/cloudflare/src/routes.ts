@@ -202,6 +202,13 @@ function productRoutes(): CloudflareRoutes {
       origin: "http://web.software-factory.svc.cluster.local:80",
       comment: "platform:software factory console route",
     },
+    {
+      exposure: cc.codec.exposure,
+      // The codec runs in the software-factory namespace, so cloudflared
+      // needs the Service FQDN rather than a namespace-local short name.
+      origin: "http://codec.software-factory.svc.cluster.local:8080",
+      comment: "platform:software factory payload codec route",
+    },
   ];
 
   return cloudflareRoutesForExposures(sources);

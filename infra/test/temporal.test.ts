@@ -219,6 +219,14 @@ describe("installTemporal (issue #124, talos-only)", () => {
     expect(cors?.value).toBe("https://temporal-ui.worldwidewebb.co,http://localhost:8080");
   });
 
+  test("the UI sends software-factory payloads to the namespace codec endpoint", async () => {
+    const spec = await get<DeploymentSpec>(install().ui, "spec");
+    const endpoint = envValue(spec.template.spec.containers[0], "TEMPORAL_CODEC_ENDPOINT");
+
+    expect(endpoint).toContain("codec.worldwidewebb.co");
+    expect(endpoint).toContain("{namespace}");
+  });
+
   // Issue #325. Namespace registration is a list, not a hardcoded pair: adding
   // a Temporal namespace is one entry in TEMPORAL_NAMESPACES, and each entry
   // gets its OWN Job so a new namespace never mutates (and so never forces

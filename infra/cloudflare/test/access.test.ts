@@ -16,6 +16,7 @@ describe("desiredAccessApps", () => {
       .sort();
     expect(domains).toEqual([
       "app.worldwidewebb.co",
+      "codec.worldwidewebb.co",
       "db-ui.worldwidewebb.co",
       // The two LAN appliances (#292): putting them on the tunnel gives them an
       // internet-facing hostname, so their Access app is not optional.
@@ -42,6 +43,7 @@ describe("desiredAccessApps", () => {
     expect(domains).toEqual([
       "*.worldwidewebb.co",
       "app.worldwidewebb.co",
+      "codec.worldwidewebb.co",
       "db-ui.worldwidewebb.co",
       "dsm.worldwidewebb.co",
       "factory.worldwidewebb.co",
@@ -90,6 +92,21 @@ describe("desiredAccessApps", () => {
     );
 
     expect(ui?.policies).toEqual([
+      {
+        decision: "allow",
+        include: { configKey: "allowedEmail", kind: "email-config" },
+        name: "email-otp",
+        precedence: 1,
+      },
+    ]);
+  });
+
+  test("codec shares Temporal UI's human-login-only Access policy", () => {
+    const codec = desiredAccessApps(ZONE, true).find(
+      (entry) => entry.domain === "codec.worldwidewebb.co",
+    );
+
+    expect(codec?.policies).toEqual([
       {
         decision: "allow",
         include: { configKey: "allowedEmail", kind: "email-config" },

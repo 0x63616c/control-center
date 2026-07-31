@@ -14,6 +14,7 @@ describe("Control Center platform representation", () => {
     expect(manifest.product.slug).toBe("control-center");
     expect(manifest.app.exposure.hostname).toBe("app.worldwidewebb.co");
     expect(manifest.factoryConsole.exposure.hostname).toBe("factory.worldwidewebb.co");
+    expect(manifest.codec.exposure.hostname).toBe("codec.worldwidewebb.co");
   });
 
   test("declares every Control Center service the manifest owns", () => {

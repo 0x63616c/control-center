@@ -717,6 +717,10 @@ export function installTemporal(args: TemporalArgs): TemporalResources {
                   },
                   { name: "TEMPORAL_UI_PORT", value: String(UI_PORT) },
                   { name: "TEMPORAL_DEFAULT_NAMESPACE", value: TEMPORAL_CLUSTER_NAMESPACE },
+                  {
+                    name: "TEMPORAL_CODEC_ENDPOINT",
+                    value: `https://${controlCenterProductManifest().codec.exposure.hostname}/{namespace}`,
+                  },
                   // Two browser origins, both real: the Cloudflare tunnel host
                   // (the normal way in) and localhost for `kubectl
                   // port-forward` (the way in when the tunnel or Access is the
