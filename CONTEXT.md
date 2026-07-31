@@ -159,18 +159,26 @@ One attempt to complete a whole Ticket, represented by one Temporal workflow exe
 _Avoid_: Job, session.
 
 **Step**:
-One independently attempted and retried unit of workflow work inside a Run. A Step has exactly
-one primary operation whose executions are its Attempts.
+One independently executed unit of workflow work inside a Run. A Step has exactly one primary
+operation. Temporal may retry that operation without creating another Step or Agent Attempt.
 _Avoid_: Phase, every Temporal activity.
 
-**Attempt**:
-One execution of a Step's primary operation for identical logical work.
-_Avoid_: Turn, semantic rework.
+**Agent Attempt**:
+One logical agent run within an agent-backed Step, potentially spanning technical resumes. Start
+another only when the preceding run cannot be resumed and the workflow deliberately starts fresh.
+Infrastructure Steps do not have Agent Attempts.
+_Avoid_: Activity retry, Turn, semantic rework.
+
+**Activity Retry**:
+Temporal repeating the same Step operation after a transient execution failure. An activity retry
+does not create a Step or Agent Attempt; an agent activity retry reconciles or resumes the same
+Agent Attempt.
+_Avoid_: Agent Attempt, semantic rework.
 
 **Step Result**:
 The authoritative domain answer discovered or produced by a completed Step. It
-is distinct from Attempt status and is returned only by a successful Attempt.
-_Avoid_: Attempt status, error.
+is distinct from Agent Attempt status and activity execution status.
+_Avoid_: Agent Attempt status, activity failure, error.
 
 **Agent Stage**:
 The kind of agent work performed by an agent-backed Step: `plan`, `implement`, or `review`.

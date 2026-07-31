@@ -1,4 +1,4 @@
-# Software factory Run, Step, and Attempt design
+# Software factory Run, Step, and Agent Attempt design
 
 Status: **working design**
 
@@ -16,7 +16,7 @@ request ready and explicitly ask GitHub to merge the exact reviewed head SHA.
 This document focuses on the durable Run history needed around that flow:
 
 - one model of Steps for both agent work and infrastructure work;
-- one visible model of machine Attempts and retries;
+- a precise distinction between Temporal activity retries and Agent Attempts;
 - meaningful activity names in Temporal;
 - complete enough Postgres history that the console does not need to query
   Temporal for state.
@@ -62,18 +62,19 @@ failed -> open   (manual retry)
 
 The clean design is:
 
-> A Step is executor-neutral. An Attempt is executor-neutral. Agent-specific
-> information hangs off an Attempt only when that Attempt ran an agent.
+> A Step is executor-neutral. An Agent Attempt exists only when an agent-backed
+> Step starts a fresh logical agent run. A Temporal activity retry is not an
+> Agent Attempt.
 
-Do not add nullable model, token, and transcript fields to every infrastructure
-Attempt.
+Infrastructure Steps do not get synthetic Attempt records. A transient network
+failure while merging, cloning, or observing CI is handled by Temporal's native
+activity retry policy inside the same Step.
 
 ```text
 Ticket
   Run
     Step
-      Attempt
-        AgentAttempt details, when applicable
+      AgentAttempt, when applicable
         Transcript, when applicable
 ```
 
@@ -91,21 +92,16 @@ step
   ended_at
   result_code
 
-attempt
+agent_attempt
   step_id
   attempt_no
   state
   started_at
   ended_at
   failure_kind
-  retry_decision
-
-agent_attempt
-  attempt_id
   agent_stage
   model
   effort
-  execution_mode
   usage_state
   input_tokens
   cached_input_tokens
@@ -114,41 +110,40 @@ agent_attempt
   thread_id
 
 transcript
-  attempt_id
+  agent_attempt_id
   ...
 ```
 
-An infrastructure Attempt only uses the common `attempt` row. An agent Attempt
-also gets an `agent_attempt` row.
+An infrastructure Step has no Agent Attempt rows. An agent-backed Step gets one
+row each time the workflow deliberately starts a whole agent run.
 
 For example:
 
 ```text
 Step: prepare_workspace
-  Attempt 1: failed, transient Kubernetes error
-  Attempt 2: succeeded
+  Activity try 1: transient Kubernetes error
+  Activity try 2: succeeded
+  Agent Attempts: none
 
 Step: implement, iteration 1
-  Attempt 1: failed, heartbeat timeout
+  Agent Attempt 1: failed and cannot be resumed
     Agent: gpt-5.6-terra / medium
     Usage: unknown
-  Attempt 2: succeeded
+  Agent Attempt 2: succeeded as a fresh agent run
     Agent: gpt-5.6-terra / medium
-    Execution: resumed
-    Usage: not applicable
+    Usage: measured
     Transcript: available
 ```
 
-The distinction between `unknown` and `not applicable` improves the existing
-`measured` flag:
+The existing `measured` flag should become an explicit usage state:
 
 - `measured`: the agent ran and usage was captured;
-- `unknown`: it may have run, but usage was lost;
-- `not_applicable`: this Attempt did not run an agent, such as a resumed result.
+- `unknown`: it may have run, but some or all usage was lost.
 
-Today, a resumed Attempt is marked unmeasured, which makes the whole rollup
-unknown. Really, the lost usage belongs to the preceding failed Attempt, while
-the resumed Attempt spent nothing.
+Resuming the same thread or reconciling its existing result does not create a
+new Agent Attempt. The Agent Attempt boundary is crossed only when the workflow
+deliberately gives up on resuming the old run and starts fresh. One Agent
+Attempt may therefore span more than one process or Temporal activity try.
 
 ## Step identity
 
@@ -201,12 +196,13 @@ disagree with the Step history.
 
 This is decided:
 
-> A Step is one independently attempted and retried unit of workflow work.
+> A Step is one independently executed unit of workflow work.
 
-A Step has exactly one primary operation. Executions of that primary operation
-are the Step's Attempts. This normally produces a one-to-one relationship
-between a user-meaningful Step and a named Temporal activity, but it does not
-mean every Temporal activity is a Step.
+A Step has exactly one primary operation. This normally produces a one-to-one
+relationship between a user-meaningful Step and a named Temporal activity, but
+it does not mean every Temporal activity is a Step. Temporal may execute that
+activity more than once under its native retry policy without creating another
+Step or Agent Attempt.
 
 For example, workspace preparation contains independently meaningful retry
 boundaries and is recorded as separate Steps:
@@ -228,53 +224,61 @@ retry policy. For example, finding an existing pull request can support a
 `sync_pull_request` Step without becoming a separate Step.
 
 Persistence and orchestration plumbing are not Steps. This includes activities
-such as `RecordStep`, `RecordAttemptStart`, `RecordAttemptEnd`, and
-`RecordRunEnd`, plus workflow timers used for retry backoff. Otherwise recording
-a Step would recursively require another recorded Step.
+such as `RecordStep`, `RecordAgentAttemptStart`, `RecordAgentAttemptEnd`, and
+`RecordRunEnd`. Otherwise recording a Step would recursively require another
+recorded Step.
 
 If several operations each need their own retry policy or independently useful
 outcome, they are separate Steps. If several low-level operations truly form
 one retryable goal, prefer deepening them behind one named, idempotent primary
 activity.
 
-## Attempt status and Step Result
+## Agent Attempt status and Step Result
 
 This is decided:
 
-> Attempt status says whether one execution worked. Step Result says what the
-> operation authoritatively discovered or produced.
+> Agent Attempt status says what happened to one logical agent run. Step Result
+> says what the Step's operation authoritatively discovered or produced.
 
-A successful Attempt does not imply that the workflow achieved its desired
-business result. It means the Step's primary operation completed and returned
-an authoritative answer.
+A successful activity execution or Agent Attempt does not imply that the
+workflow achieved its desired business result. It means the Step's primary
+operation completed and returned an authoritative answer.
 
 For example:
 
-| Step | Attempt status | Step Result | Workflow decision |
+| Step | Execution status | Step Result | Workflow decision |
 | --- | --- | --- | --- |
 | `observe_ci` | `succeeded` | `ci_green` | Continue to review. |
 | `observe_ci` | `succeeded` | `ci_red` | Create another `implement` Step. |
 | `merge_pull_request` | `succeeded` | `merged` | Continue past the merge boundary. |
 | `merge_pull_request` | `succeeded` | `merge_conflict` | Create another `implement` Step. |
-| `implement` | `succeeded` | `blocked` | End the Run without retrying identical work. |
-| Any primary operation | `failed` | none | Apply the Step's retry policy. |
+| `implement` | Agent Attempt `succeeded` | `blocked` | End the Run without starting another Agent Attempt. |
+| Any primary operation | Activity retries exhausted | none | Fail the Step. |
 
-A timeout, crashed process, or transport failure is an Attempt execution
-failure. A red CI result or merge conflict is not. Retrying the former may
-create another Attempt of the same Step; responding to the latter creates a
-different Step or ends the Run.
+A timeout, worker crash, or transport failure may cause Temporal to retry the
+same activity. That retry is infrastructure recovery, not an Agent Attempt. A
+red CI result or merge conflict is a completed domain Result; responding to it
+creates a different Step or ends the Run.
 
-A Step is `running` while an Attempt or its retry wait is active. It becomes
-`completed` when an Attempt returns a domain Result, including results such as
-`ci_red`, `merge_conflict`, or `blocked`. It becomes `failed` only when its
-Attempt budget is exhausted or an execution error is non-retryable.
+An agent-backed Step may explicitly start another Agent Attempt when the prior
+logical agent run failed and cannot be resumed. That is a workflow decision above
+Temporal's activity retry mechanism. Every retry of the activity for that Agent
+Attempt must carry the same Agent Attempt identity and reconcile or resume it;
+it must never silently start a fresh agent run.
+
+A Step is `running` while its activity, native retry wait, or Agent Attempt is
+active. It becomes `completed` when its operation returns a domain Result,
+including results such as `ci_red`, `merge_conflict`, or `blocked`. It becomes
+`failed` when native activity retries are exhausted, a non-retryable execution
+error occurs, or an agent-backed Step cannot start another permitted Agent
+Attempt.
 
 This keeps three questions separate:
 
 ```text
-Attempt status = did this execution work?
-Step Result    = what did the operation discover or produce?
-Workflow       = what Step should happen next?
+Agent Attempt = did this logical agent run complete?
+Step Result   = what did the operation discover or produce?
+Workflow      = what Step should happen next?
 ```
 
 ## Temporal activity names
@@ -295,8 +299,7 @@ acts.MergePullRequest
 acts.DeleteWorkspace
 ```
 
-A private workflow helper can wrap those activities with Step and Attempt
-recording:
+A private workflow helper can wrap those activities with Step recording:
 
 ```go
 out, err := runStep(
@@ -316,16 +319,14 @@ standard lifecycle around it:
 
 ```text
 begin Step
-  begin Attempt
-    execute named activity
-  finish Attempt
-  decide whether to retry
+  execute named activity with native Temporal retries
 finish Step
 ```
 
 For agent activities, `runAgentStep` can be a thin layer over the same primitive
-that adds model, usage, transcript, and thread information. It is not a second
-Step system.
+that explicitly creates Agent Attempts and adds model, usage, transcript, and
+thread information. Every native activity retry for one Agent Attempt receives
+the same durable Agent Attempt ID. It is not a second Step system.
 
 A user-meaningful Step has one primary named activity. Where the workflow
 currently uses multiple low-level activities for one action, for example
@@ -336,37 +337,32 @@ the console then show a useful name without exposing implementation chatter.
 Database-recording activities are deliberately not Steps. Otherwise recording
 a Step would require recording the recording Step recursively.
 
-## Attempt policy
+## Retry and Agent Attempt policy
 
-The current system is materially incomplete here.
+There are two deliberately separate policies:
 
-The workflow permits up to six Temporal retries for an agent stage and five for
-control work, but Postgres always records `attemptNo = 1`. The code explicitly
-says distinguishing Temporal retries was postponed.
+1. **Activity retry policy** handles transient execution failures using
+   Temporal's native retries. This applies to infrastructure and agent
+   activities. It does not create Agent Attempts.
+2. **Agent Attempt policy** decides whether an agent-backed Step may abandon an
+   unresumable logical agent run and start a fresh one. This is explicit workflow
+   logic and creates another Agent Attempt row.
 
-To retain every Attempt, the workflow must own the retry loop:
-
-1. Set `MaximumAttempts: 1` on the primary Step activity.
-2. Persist Attempt 1 before scheduling it.
-3. Execute the named activity once.
-4. Persist its outcome.
-5. Classify the failure.
-6. Schedule Attempt 2 explicitly when policy permits.
-
-Temporal's automatic retries currently hide intermediate failures from workflow
-code. An explicit loop makes every real Attempt visible in Postgres while
-retaining Temporal durability and replay.
+An activity retry of agent work must be idempotent around its Agent Attempt ID.
+It first reconciles an existing result and otherwise resumes the existing agent
+thread where possible. Only the workflow may allocate a new Agent Attempt ID
+and authorize another potentially chargeable run.
 
 Recording writes themselves can keep automatic Temporal retries. They are
 persistence plumbing, not Ticket work. They should become mandatory: currently
-Step and Attempt writes are logged and ignored after exhausting retries, despite
-the system's stated goal that the console is authoritative.
+Step and Agent Attempt writes are logged and ignored after exhausting retries,
+despite the system's stated goal that the console is authoritative.
 
-The initial retry-policy direction is:
+The initial activity-retry direction is:
 
 | Work | Initial policy |
 | --- | --- |
-| Agent execution | Very conservative; no six potentially chargeable reruns. |
+| Agent activity | Retry transient machinery failures, but never turn a retry into a fresh agent run. |
 | Infrastructure reads | Several transient retries. |
 | Idempotent infrastructure writes | Several transient retries, reconciling existing state first. |
 | Invalid, permanent, or authentication failures | Never retry within the Step. |
@@ -377,17 +373,22 @@ The initial retry-policy direction is:
 For agent work, consider two limits:
 
 ```text
-maximum Attempts
+maximum Agent Attempts
 maximum possibly-chargeable executions
 ```
 
 A retry that safely resumes an existing result should not consume the same
-budget as another full agent execution. A timeout where the system cannot prove
-whether the agent ran should count as potentially chargeable.
+budget as another full agent execution because it remains the same Agent
+Attempt. A timeout where the system cannot prove whether the agent ran should
+count as potentially chargeable.
 
 These remain different concepts:
 
-- An **Attempt** is a machine retry of identical work.
+- An **activity retry** is Temporal repeating the same operation after a
+  transient execution failure.
+- An **Agent Attempt** is one logical agent run, potentially spanning technical
+  resumes. A new one is created only when the
+  previous run cannot be resumed and the workflow deliberately starts fresh.
 - A new `implement` Step after red CI is semantic rework.
 - A new `implement` Step after review findings is semantic rework.
 - The existing implement and review turn ceilings are progress budgets, not
@@ -398,15 +399,17 @@ These remain different concepts:
 This reaches further than a database migration:
 
 - `Step` is currently an alias for agent-only `StageKey`.
-- The database requires every Attempt to have model, effort, tokens, and
-  `measured`.
-- Attempt number is always hard-coded to `1`.
+- The current Attempt table already represents agent execution details, but its
+  name and surrounding model imply that every Step has Attempts.
+- Agent Attempt number is always hard-coded to `1`.
 - Step and Attempt recording is currently best-effort.
-- Usage rollups treat every Attempt as an agent Attempt.
+- Usage rollups already operate on agent execution records and should remain
+  agent-specific.
 - Transcript identity and API routes are based on `stage/turn`.
 - Metrics are agent-stage-specific. They should remain so, with separate
   generic Step metrics if they become useful.
-- `RunPolicy` divides work into `StageAttempts` and `ControlAttempts`.
+- `RunPolicy` conflates limits on fresh agent runs with native activity retry
+  limits through `StageAttempts` and `ControlAttempts`.
 - The 24-hour Run budget is calculated from the maximum number of agent
   invocations only. Do not finalize that calculation until the merged versus
   deployed completion boundary is settled.
@@ -417,14 +420,13 @@ This reaches further than a database migration:
 
 1. Generalize Step around `kind + ordinal`.
 2. Rename the existing Stage concept to AgentStage.
-3. Keep Step and Attempt executor-neutral.
-4. Put agent details in a one-to-zero-or-one AgentAttempt record.
+3. Give only agent-backed Steps Agent Attempts.
+4. Treat a resumed or reconciled agent run as the same Agent Attempt.
 5. Keep concrete, well-named Temporal activities.
-6. Move retries into a workflow-owned, persisted Attempt loop.
+6. Keep transient execution retries in Temporal's native activity retry policy.
 7. Keep semantic-rework budgets separate from infrastructure retry policy.
-8. Give every Step exactly one primary operation; its executions are the Step's
-   Attempts.
-9. Keep Attempt execution status separate from the Step's domain Result.
+8. Give every Step exactly one primary operation.
+9. Keep Agent Attempt status separate from the Step's domain Result.
 
 ## Parked questions
 
@@ -445,6 +447,6 @@ can simply end the Run and Ticket as failed without prescribing remediation.
 ### Retry-policy values
 
 The policy categories and ownership are proposed above, but the exact maximum
-Attempts, backoff, and possibly-chargeable execution limits are not yet fixed.
+Agent Attempts, backoff, and possibly-chargeable execution limits are not yet fixed.
 They should be decided using concrete failure scenarios rather than copying the
 current six-stage-attempt and five-control-attempt defaults.
