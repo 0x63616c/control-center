@@ -576,10 +576,27 @@ This reaches further than a database migration:
 
 ## Existing workflow histories
 
-Migration and replay compatibility for workflows started before this redesign
-are out of scope. Implement the new workflow as a clean cutover. Do not add
-`workflow.GetVersion` branches or preserve the old activity command sequence
-for existing histories as part of this work.
+Do not use `workflow.GetVersion` to migrate workflows started before this
+redesign. Run policy is resolved before a workflow starts and passed in its
+arguments, so each workflow executes against the immutable policy snapshot it
+began with. Changes to policy defaults apply to newly started workflows rather
+than mutating workflows already in flight. Migration of older workflow
+histories is out of scope for this work.
+
+## Run policy snapshot
+
+`RunPolicy` remains part of the workflow arguments. That is intentional: the
+arguments durably record the exact limits, timeouts, and retry behavior that a
+Run began with. A deploy may change the defaults used to construct future
+inputs without silently changing an existing Run during replay.
+
+The shape of `RunPolicy` must change. Remove the generic `StageAttempts` and
+`ControlAttempts` fields, which currently apply one number to unrelated work.
+Replace them with explicit sections for the domain budgets and named technical
+activity policies. For example, the agent-execution policy owns its two
+timeouts, heartbeat, retry count, and backoff; credential renewal and durable
+recording each own their separate retry policy. These are resolved values in
+the workflow input, not mutable configuration read during workflow execution.
 
 ## Current design direction
 
@@ -606,9 +623,9 @@ for existing histories as part of this work.
     backoff, coefficient 2, and a 5-minute maximum interval.
 16. Keep agent heartbeats tied to progress events, with a 5-minute heartbeat
     timeout and no independent process-liveness heartbeat.
-17. Replace generic `StageAttempts` and `ControlAttempts` inputs with named,
-    code-owned technical retry policies. Existing workflow histories do not
-    constrain that replacement.
+17. Keep a resolved, immutable `RunPolicy` snapshot in the workflow arguments,
+    while replacing generic `StageAttempts` and `ControlAttempts` fields with
+    explicit domain budgets and named technical retry policies.
 
 ## Parked questions
 
