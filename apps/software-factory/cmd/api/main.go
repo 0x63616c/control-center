@@ -20,9 +20,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
+	"go.temporal.io/sdk/client"
+	tlog "go.temporal.io/sdk/log"
 
 	factoryapi "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/api"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/api/auth"
+	temporalclient "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/temporal"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/config"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/database"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
@@ -56,7 +59,7 @@ func newCLI(stdout, stderr io.Writer) humacli.CLI {
 }
 
 func writeOpenAPI(writer io.Writer) error {
-	spec, err := factoryapi.New(buildVersion).OpenAPIYAML()
+	spec, err := factoryapi.New(buildVersion, nil).OpenAPIYAML()
 	if err != nil {
 		return fmt.Errorf("generate OpenAPI 3.1 document: %w", err)
 	}
@@ -96,6 +99,15 @@ func run() error {
 	if err := database.ApplyMigrations(ctx, db); err != nil {
 		return fmt.Errorf("applying PostgreSQL migrations before API startup: %w", err)
 	}
+	temporal, err := client.Dial(client.Options{
+		HostPort:  cfg.TemporalHostPort,
+		Namespace: cfg.TemporalNamespace,
+		Logger:    tlog.NewStructuredLogger(logger),
+	})
+	if err != nil {
+		return fmt.Errorf("dialling Temporal at %s in namespace %s: %w", cfg.TemporalHostPort, cfg.TemporalNamespace, err)
+	}
+	defer temporal.Close()
 
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
@@ -114,7 +126,7 @@ func run() error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
-	mux.Handle("/", authentication.Wrap(factoryapi.New(buildVersion).Handler()))
+	mux.Handle("/", authentication.Wrap(factoryapi.New(buildVersion, temporalclient.NewCommands(temporal)).Handler()))
 
 	listener, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {

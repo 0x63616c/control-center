@@ -16,31 +16,37 @@ const (
 	envAccessAudience   = "CLOUDFLARE_ACCESS_AUD"
 	envAPIWorkerBearer  = "SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN"
 	envAPISandboxBearer = "SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN"
+	envAPITemporalHost  = "TEMPORAL_HOST_PORT"
+	envAPITemporalNS    = "TEMPORAL_NAMESPACE"
 )
 
 // API is the parsed startup configuration for the factory API process.
 type API struct {
-	DatabaseURL    string
-	ListenAddr     string
-	MetricsAddr    string
-	LogLevel       slog.Level
-	AccessIssuer   string
-	AccessAudience string
-	AccessCertsURL string
-	WorkerBearer   string
-	SandboxBearer  string
+	DatabaseURL       string
+	ListenAddr        string
+	MetricsAddr       string
+	LogLevel          slog.Level
+	AccessIssuer      string
+	AccessAudience    string
+	AccessCertsURL    string
+	WorkerBearer      string
+	SandboxBearer     string
+	TemporalHostPort  string
+	TemporalNamespace string
 }
 
 // LoadAPI parses all API process configuration before any external work begins.
 func LoadAPI() (API, error) {
 	teamDomain := os.Getenv(envAccessTeamDomain)
 	cfg := API{
-		DatabaseURL:    os.Getenv(envAPIDatabaseURL),
-		ListenAddr:     os.Getenv(envAPIListenAddr),
-		MetricsAddr:    os.Getenv(envAPIMetricsAddr),
-		AccessAudience: os.Getenv(envAccessAudience),
-		WorkerBearer:   os.Getenv(envAPIWorkerBearer),
-		SandboxBearer:  os.Getenv(envAPISandboxBearer),
+		DatabaseURL:       os.Getenv(envAPIDatabaseURL),
+		ListenAddr:        os.Getenv(envAPIListenAddr),
+		MetricsAddr:       os.Getenv(envAPIMetricsAddr),
+		AccessAudience:    os.Getenv(envAccessAudience),
+		WorkerBearer:      os.Getenv(envAPIWorkerBearer),
+		SandboxBearer:     os.Getenv(envAPISandboxBearer),
+		TemporalHostPort:  os.Getenv(envAPITemporalHost),
+		TemporalNamespace: os.Getenv(envAPITemporalNS),
 	}
 	for _, required := range []struct{ name, value string }{
 		{envAPIDatabaseURL, cfg.DatabaseURL},
@@ -50,6 +56,8 @@ func LoadAPI() (API, error) {
 		{envAccessAudience, cfg.AccessAudience},
 		{envAPIWorkerBearer, cfg.WorkerBearer},
 		{envAPISandboxBearer, cfg.SandboxBearer},
+		{envAPITemporalHost, cfg.TemporalHostPort},
+		{envAPITemporalNS, cfg.TemporalNamespace},
 	} {
 		if strings.TrimSpace(required.value) == "" {
 			return API{}, fmt.Errorf("%s is required to start the API", required.name)
