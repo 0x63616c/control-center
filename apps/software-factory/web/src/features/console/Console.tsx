@@ -114,7 +114,13 @@ function Snapshot({
       </header>
       <main className="console-grid">
         <section aria-labelledby="in-flight-heading">
-          <h2 id="in-flight-heading">In flight</h2>
+          <div className="row-line">
+            <h2 id="in-flight-heading">In flight</h2>
+            <span className="spacer" />
+            <span className="in-flight-count">
+              {factory.maxInFlight - dispatcher.freeSlots} / {factory.maxInFlight}
+            </span>
+          </div>
           <p className="section-note">Legacy dispatcher Issues</p>
           {inFlight.length === 0 ? (
             <p className="section-empty">Nothing in flight.</p>

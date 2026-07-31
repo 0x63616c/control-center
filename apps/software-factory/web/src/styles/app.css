@@ -103,6 +103,9 @@ a:hover {
   font-size: 0.8rem;
   color: var(--muted);
 }
+.in-flight-count {
+  font-weight: 600;
+}
 .section-empty {
   color: var(--muted);
   margin: 8px 0 0;
