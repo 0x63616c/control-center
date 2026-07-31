@@ -68,8 +68,8 @@ repo's existing `lefthook.yml`, not importing a second one.
   panic-to-failure per activity, cancellation propagation, retries and full history.
   Building a parallel layer would duplicate the SDK, and inside workflow code it would not
   be replay-safe.
-- **The sqlite / goose / sqlc persistence stack.** We have no database. State lives in
-  Temporal history and a Kubernetes Secret.
+- **The sqlite persistence stack.** The factory uses Postgres with pgx, goose and sqlc;
+  state in Temporal history and a Kubernetes Secret remains deliberately separate.
 - **Layer A / Layer B, standards-as-data, the skills bundle and symlink machinery.** That
   is infrastructure for a program that operates on arbitrary target repos. We are one
   worker, and world-wide-webb already has its own skills convention.

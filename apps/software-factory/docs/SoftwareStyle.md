@@ -71,6 +71,8 @@ Temporal's `testsuite` is **not** the real world — it runs workflows against a
 clock with mocked activities, hermetically. Prefer it to hand-rolled orchestration fakes.
 This is *why* construction is manual: a test hands a fake to a constructor with zero magic.
 
+Database-backed integration tests run in CI and explicitly skip locally when `SOFTWARE_FACTORY_DATABASE_URL` is absent.
+
 ---
 
 ## The tenets
