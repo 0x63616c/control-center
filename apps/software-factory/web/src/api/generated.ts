@@ -4,9 +4,7 @@
  * Software Factory API
  * OpenAPI spec version: development
  */
-import {
-  useQuery
-} from '@tanstack/react-query';
+
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -16,15 +14,11 @@ import type {
   QueryKey,
   UndefinedInitialDataOptions,
   UseQueryOptions,
-  UseQueryResult
-} from '@tanstack/react-query';
-
-import axios from 'axios';
-import type {
-  AxiosError,
-  AxiosRequestConfig,
-  AxiosResponse
-} from 'axios';
+  UseQueryResult,
+} from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import type { AxiosError, AxiosRequestConfig, AxiosResponse } from "axios";
+import axios from "axios";
 
 export interface BuildOutputBody {
   /** A URL to the JSON Schema for this object. */
@@ -66,94 +60,112 @@ export interface ErrorModel {
 
 type AwaitedInput<T> = PromiseLike<T> | T;
 
-      type Awaited<O> = O extends AwaitedInput<infer T> ? T : never;
-
-
-
+type Awaited<O> = O extends AwaitedInput<infer T> ? T : never;
 
 /**
  * @summary Get v1 build
  */
 export const getV1Build = (
-     options?: AxiosRequestConfig
- ): Promise<AxiosResponse<BuildOutputBody>> => {
-    
-    
-    return axios.get(
-      `/v1/build`,options
-    );
-  }
-
-
-
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<BuildOutputBody>> => {
+  return axios.get(`/v1/build`, options);
+};
 
 export const getGetV1BuildQueryKey = () => {
-    return [
-    `/v1/build`
-    ] as const;
-    }
+  return [`/v1/build`] as const;
+};
 
-    
-export const getGetV1BuildQueryOptions = <TData = Awaited<ReturnType<typeof getV1Build>>, TError = AxiosError<ErrorModel>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getV1Build>>, TError, TData>>, axios?: AxiosRequestConfig}
-) => {
+export const getGetV1BuildQueryOptions = <
+  TData = Awaited<ReturnType<typeof getV1Build>>,
+  TError = AxiosError<ErrorModel>,
+>(options?: {
+  query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof getV1Build>>, TError, TData>>;
+  axios?: AxiosRequestConfig;
+}) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
 
-const {query: queryOptions, axios: axiosOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getGetV1BuildQueryKey();
 
-  const queryKey =  queryOptions?.queryKey ?? getGetV1BuildQueryKey();
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getV1Build>>> = ({ signal }) =>
+    getV1Build({ signal, ...axiosOptions });
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getV1Build>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getV1Build>>> = ({ signal }) => getV1Build({ signal, ...axiosOptions });
+export type GetV1BuildQueryResult = NonNullable<Awaited<ReturnType<typeof getV1Build>>>;
+export type GetV1BuildQueryError = AxiosError<ErrorModel>;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getV1Build>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
-}
-
-export type GetV1BuildQueryResult = NonNullable<Awaited<ReturnType<typeof getV1Build>>>
-export type GetV1BuildQueryError = AxiosError<ErrorModel>
-
-
-export function useGetV1Build<TData = Awaited<ReturnType<typeof getV1Build>>, TError = AxiosError<ErrorModel>>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getV1Build>>, TError, TData>> & Pick<
+export function useGetV1Build<
+  TData = Awaited<ReturnType<typeof getV1Build>>,
+  TError = AxiosError<ErrorModel>,
+>(
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof getV1Build>>, TError, TData>> &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getV1Build>>,
           TError,
           Awaited<ReturnType<typeof getV1Build>>
-        > , 'initialData'
-      >, axios?: AxiosRequestConfig}
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetV1Build<TData = Awaited<ReturnType<typeof getV1Build>>, TError = AxiosError<ErrorModel>>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getV1Build>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useGetV1Build<
+  TData = Awaited<ReturnType<typeof getV1Build>>,
+  TError = AxiosError<ErrorModel>,
+>(
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof getV1Build>>, TError, TData>> &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getV1Build>>,
           TError,
           Awaited<ReturnType<typeof getV1Build>>
-        > , 'initialData'
-      >, axios?: AxiosRequestConfig}
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetV1Build<TData = Awaited<ReturnType<typeof getV1Build>>, TError = AxiosError<ErrorModel>>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getV1Build>>, TError, TData>>, axios?: AxiosRequestConfig}
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useGetV1Build<
+  TData = Awaited<ReturnType<typeof getV1Build>>,
+  TError = AxiosError<ErrorModel>,
+>(
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof getV1Build>>, TError, TData>>;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 /**
  * @summary Get v1 build
  */
 
-export function useGetV1Build<TData = Awaited<ReturnType<typeof getV1Build>>, TError = AxiosError<ErrorModel>>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getV1Build>>, TError, TData>>, axios?: AxiosRequestConfig}
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+export function useGetV1Build<
+  TData = Awaited<ReturnType<typeof getV1Build>>,
+  TError = AxiosError<ErrorModel>,
+>(
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof getV1Build>>, TError, TData>>;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getGetV1BuildQueryOptions(options);
 
-  const queryOptions = getGetV1BuildQueryOptions(options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }

@@ -74,7 +74,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("opening PostgreSQL connection: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
