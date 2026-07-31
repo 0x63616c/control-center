@@ -91,6 +91,22 @@ its disconnected cleanup can delete the sandbox.
 Command acceptance means Temporal accepted the request, not that the database
 has observed its effect.
 
+### Pipeline identity namespaces
+
+Two pipelines run side by side with deliberately disjoint identity namespaces:
+
+| pipeline | Temporal workflow ID | branch |
+|---|---|---|
+| Legacy GitHub-issue-backed | [`work-ticket-<n>` (`work.WorkflowID`)](../internal/work/paths.go#L161) | [`software-factory/ticket-<n>/<runID>` (`work.BranchName`)](../internal/work/run.go#L211) |
+| Ticket-backed (ADR-0012) | [`factory-ticket-<id>` (`work.FactoryTicketWorkflowID`)](../internal/work/paths.go#L169) | [`software-factory/factory-ticket-<id>/<runID>` (`work.FactoryTicketBranchName`)](../internal/work/paths.go#L176) |
+
+The workflow-ID prefixes must remain disjoint: Temporal can reuse a closed
+legacy workflow ID, so a shared namespace could let unrelated GitHub issues and
+factory Tickets share a history lineage. The separate branch constructors also
+keep the sandbox branch and the PR head aligned for each pipeline; see
+[`SandboxTemplate.SpecForFactoryTicket`](../internal/work/status.go#L173) for
+the #603 fix.
+
 ### Work ticket and deadlines
 
 `ticketRun.execute` performs setup, creates exactly one Session, runs the one
