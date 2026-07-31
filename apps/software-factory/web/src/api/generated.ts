@@ -9,16 +9,39 @@ import type {
   DataTag,
   DefinedInitialDataOptions,
   DefinedUseQueryResult,
+  MutationFunction,
   QueryClient,
   QueryFunction,
   QueryKey,
   UndefinedInitialDataOptions,
+  UseMutationOptions,
+  UseMutationResult,
   UseQueryOptions,
   UseQueryResult,
 } from "@tanstack/react-query";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type { AxiosError, AxiosRequestConfig, AxiosResponse } from "axios";
 import axios from "axios";
+
+// https://stackoverflow.com/questions/49579094/typescript-conditional-types-filter-out-readonly-properties-pick-only-requir/49579497#49579497
+type IfEquals<X, Y, A = X, B = never> =
+  (<T>() => T extends X ? 1 : 2) extends <T>() => T extends Y ? 1 : 2 ? A : B;
+
+type WritableKeys<T> = {
+  [P in keyof T]-?: IfEquals<{ [Q in P]: T[P] }, { -readonly [Q in P]: T[P] }, P>;
+}[keyof T];
+
+type UnionToIntersection<U> = (U extends any ? (k: U) => void : never) extends (k: infer I) => void
+  ? I
+  : never;
+type DistributeReadOnlyOverUnions<T> = T extends any ? NonReadonly<T> : never;
+
+type Writable<T> = Pick<T, WritableKeys<T>>;
+type NonReadonly<T> = [T] extends [UnionToIntersection<T>]
+  ? {
+      [P in keyof Writable<T>]: T[P] extends object ? NonReadonly<NonNullable<T[P]>> : T[P];
+    }
+  : DistributeReadOnlyOverUnions<T>;
 
 export interface BuildOutputBody {
   /** A URL to the JSON Schema for this object. */
@@ -56,6 +79,16 @@ export interface ErrorModel {
   title?: string;
   /** A URI reference to human-readable documentation for the error. */
   type?: string;
+}
+
+export interface MaxInFlightInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+   * Maximum number of ticket runs the dispatcher may start at once.
+   * @minimum 1
+   */
+  maxInFlight: number;
 }
 
 type AwaitedInput<T> = PromiseLike<T> | T;
@@ -169,3 +202,363 @@ export function useGetV1Build<
 
   return query;
 }
+
+/**
+ * Success means Temporal accepted the UpdateConfig signal. The dispatcher applies this configuration on its next tick; this endpoint does not poll for observable state.
+ * @summary Set factory max in flight
+ */
+export const postV1FactoryMaxInFlight = (
+  maxInFlightInputBody: NonReadonly<MaxInFlightInputBody>,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<void>> => {
+  return axios.post(`/v1/factory/max-in-flight`, maxInFlightInputBody, options);
+};
+
+export const getPostV1FactoryMaxInFlightMutationOptions = <
+  TError = AxiosError<ErrorModel>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof postV1FactoryMaxInFlight>>,
+    TError,
+    { data: NonReadonly<MaxInFlightInputBody> },
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof postV1FactoryMaxInFlight>>,
+  TError,
+  { data: NonReadonly<MaxInFlightInputBody> },
+  TContext
+> => {
+  const mutationKey = ["postV1FactoryMaxInFlight"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof postV1FactoryMaxInFlight>>,
+    { data: NonReadonly<MaxInFlightInputBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return postV1FactoryMaxInFlight(data, axiosOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PostV1FactoryMaxInFlightMutationResult = NonNullable<
+  Awaited<ReturnType<typeof postV1FactoryMaxInFlight>>
+>;
+export type PostV1FactoryMaxInFlightMutationBody = NonReadonly<MaxInFlightInputBody>;
+export type PostV1FactoryMaxInFlightMutationError = AxiosError<ErrorModel>;
+
+/**
+ * @summary Set factory max in flight
+ */
+export const usePostV1FactoryMaxInFlight = <TError = AxiosError<ErrorModel>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof postV1FactoryMaxInFlight>>,
+      TError,
+      { data: NonReadonly<MaxInFlightInputBody> },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof postV1FactoryMaxInFlight>>,
+  TError,
+  { data: NonReadonly<MaxInFlightInputBody> },
+  TContext
+> => {
+  const mutationOptions = getPostV1FactoryMaxInFlightMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
+ * Success means Temporal accepted the UpdateConfig signal. The dispatcher applies this configuration on its next tick; this endpoint does not poll for observable state.
+ * @summary Pause the factory
+ */
+export const postV1FactoryPause = (options?: AxiosRequestConfig): Promise<AxiosResponse<void>> => {
+  return axios.post(`/v1/factory/pause`, undefined, options);
+};
+
+export const getPostV1FactoryPauseMutationOptions = <
+  TError = AxiosError<ErrorModel>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof postV1FactoryPause>>,
+    TError,
+    void,
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<Awaited<ReturnType<typeof postV1FactoryPause>>, TError, void, TContext> => {
+  const mutationKey = ["postV1FactoryPause"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<Awaited<ReturnType<typeof postV1FactoryPause>>, void> = () => {
+    return postV1FactoryPause(axiosOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PostV1FactoryPauseMutationResult = NonNullable<
+  Awaited<ReturnType<typeof postV1FactoryPause>>
+>;
+
+export type PostV1FactoryPauseMutationError = AxiosError<ErrorModel>;
+
+/**
+ * @summary Pause the factory
+ */
+export const usePostV1FactoryPause = <TError = AxiosError<ErrorModel>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof postV1FactoryPause>>,
+      TError,
+      void,
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<Awaited<ReturnType<typeof postV1FactoryPause>>, TError, void, TContext> => {
+  const mutationOptions = getPostV1FactoryPauseMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
+ * Success means Temporal accepted the UpdateConfig signal. The dispatcher applies this configuration on its next tick; this endpoint does not poll for observable state.
+ * @summary Resume the factory
+ */
+export const postV1FactoryResume = (options?: AxiosRequestConfig): Promise<AxiosResponse<void>> => {
+  return axios.post(`/v1/factory/resume`, undefined, options);
+};
+
+export const getPostV1FactoryResumeMutationOptions = <
+  TError = AxiosError<ErrorModel>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof postV1FactoryResume>>,
+    TError,
+    void,
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<Awaited<ReturnType<typeof postV1FactoryResume>>, TError, void, TContext> => {
+  const mutationKey = ["postV1FactoryResume"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof postV1FactoryResume>>,
+    void
+  > = () => {
+    return postV1FactoryResume(axiosOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PostV1FactoryResumeMutationResult = NonNullable<
+  Awaited<ReturnType<typeof postV1FactoryResume>>
+>;
+
+export type PostV1FactoryResumeMutationError = AxiosError<ErrorModel>;
+
+/**
+ * @summary Resume the factory
+ */
+export const usePostV1FactoryResume = <TError = AxiosError<ErrorModel>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof postV1FactoryResume>>,
+      TError,
+      void,
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<Awaited<ReturnType<typeof postV1FactoryResume>>, TError, void, TContext> => {
+  const mutationOptions = getPostV1FactoryResumeMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
+ * Success means Temporal accepted cancellation of the ticket workflow. This endpoint does not wait for cleanup or database state to become observable.
+ * @summary Cancel a ticket run
+ */
+export const postV1TicketsByTicketIdCancel = (
+  ticketID: number,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<void>> => {
+  return axios.post(`/v1/tickets/${ticketID}/cancel`, undefined, options);
+};
+
+export const getPostV1TicketsByTicketIdCancelMutationOptions = <
+  TError = AxiosError<ErrorModel>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof postV1TicketsByTicketIdCancel>>,
+    TError,
+    { ticketID: number },
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof postV1TicketsByTicketIdCancel>>,
+  TError,
+  { ticketID: number },
+  TContext
+> => {
+  const mutationKey = ["postV1TicketsByTicketIdCancel"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof postV1TicketsByTicketIdCancel>>,
+    { ticketID: number }
+  > = (props) => {
+    const { ticketID } = props ?? {};
+
+    return postV1TicketsByTicketIdCancel(ticketID, axiosOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PostV1TicketsByTicketIdCancelMutationResult = NonNullable<
+  Awaited<ReturnType<typeof postV1TicketsByTicketIdCancel>>
+>;
+
+export type PostV1TicketsByTicketIdCancelMutationError = AxiosError<ErrorModel>;
+
+/**
+ * @summary Cancel a ticket run
+ */
+export const usePostV1TicketsByTicketIdCancel = <
+  TError = AxiosError<ErrorModel>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof postV1TicketsByTicketIdCancel>>,
+      TError,
+      { ticketID: number },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof postV1TicketsByTicketIdCancel>>,
+  TError,
+  { ticketID: number },
+  TContext
+> => {
+  const mutationOptions = getPostV1TicketsByTicketIdCancelMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
+ * Success means Temporal accepted an empty UpdateConfig signal that wakes the dispatcher without changing configuration. This endpoint does not poll for observable state.
+ * @summary Nudge the factory
+ */
+export const postV1TicketsByTicketIdWork = (
+  ticketID: number,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<void>> => {
+  return axios.post(`/v1/tickets/${ticketID}/work`, undefined, options);
+};
+
+export const getPostV1TicketsByTicketIdWorkMutationOptions = <
+  TError = AxiosError<ErrorModel>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof postV1TicketsByTicketIdWork>>,
+    TError,
+    { ticketID: number },
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof postV1TicketsByTicketIdWork>>,
+  TError,
+  { ticketID: number },
+  TContext
+> => {
+  const mutationKey = ["postV1TicketsByTicketIdWork"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof postV1TicketsByTicketIdWork>>,
+    { ticketID: number }
+  > = (props) => {
+    const { ticketID } = props ?? {};
+
+    return postV1TicketsByTicketIdWork(ticketID, axiosOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PostV1TicketsByTicketIdWorkMutationResult = NonNullable<
+  Awaited<ReturnType<typeof postV1TicketsByTicketIdWork>>
+>;
+
+export type PostV1TicketsByTicketIdWorkMutationError = AxiosError<ErrorModel>;
+
+/**
+ * @summary Nudge the factory
+ */
+export const usePostV1TicketsByTicketIdWork = <TError = AxiosError<ErrorModel>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof postV1TicketsByTicketIdWork>>,
+      TError,
+      { ticketID: number },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof postV1TicketsByTicketIdWork>>,
+  TError,
+  { ticketID: number },
+  TContext
+> => {
+  const mutationOptions = getPostV1TicketsByTicketIdWorkMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};

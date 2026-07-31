@@ -13,6 +13,8 @@ func TestLoadAPIRequiresDatabaseURL(t *testing.T) {
 	t.Setenv(envAccessAudience, "test-audience")
 	t.Setenv(envAPIWorkerBearer, "test-worker-bearer")
 	t.Setenv(envAPISandboxBearer, "test-sandbox-bearer")
+	t.Setenv(envAPITemporalHost, "temporal:7233")
+	t.Setenv(envAPITemporalNS, "software-factory")
 	if _, err := LoadAPI(); err == nil || !strings.Contains(err.Error(), envAPIDatabaseURL) {
 		t.Fatalf("LoadAPI() error = %v, want missing %s", err, envAPIDatabaseURL)
 	}
@@ -26,6 +28,8 @@ func TestLoadAPIParsesAccessEndpoints(t *testing.T) {
 	t.Setenv(envAccessAudience, "test-audience")
 	t.Setenv(envAPIWorkerBearer, "test-worker-bearer")
 	t.Setenv(envAPISandboxBearer, "test-sandbox-bearer")
+	t.Setenv(envAPITemporalHost, "temporal:7233")
+	t.Setenv(envAPITemporalNS, "software-factory")
 
 	cfg, err := LoadAPI()
 	if err != nil {
@@ -44,6 +48,8 @@ func TestLoadAPIRejectsMalformedAccessDomain(t *testing.T) {
 	t.Setenv(envAccessAudience, "test-audience")
 	t.Setenv(envAPIWorkerBearer, "test-worker-bearer")
 	t.Setenv(envAPISandboxBearer, "test-sandbox-bearer")
+	t.Setenv(envAPITemporalHost, "temporal:7233")
+	t.Setenv(envAPITemporalNS, "software-factory")
 
 	if _, err := LoadAPI(); err == nil || !strings.Contains(err.Error(), envAccessTeamDomain) {
 		t.Fatalf("LoadAPI() error = %v, want malformed %s", err, envAccessTeamDomain)

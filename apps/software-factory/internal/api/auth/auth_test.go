@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	factoryapi "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/api"
 )
 
 const (
@@ -51,6 +53,31 @@ func TestMiddlewareAuthenticatesAccessAndBearerIdentities(t *testing.T) {
 			})).ServeHTTP(response, request)
 			if response.Code != http.StatusNoContent {
 				t.Fatalf("status = %d, want %d", response.Code, http.StatusNoContent)
+			}
+		})
+	}
+}
+
+func TestMiddlewareRefusesSandboxBearerForEveryFactoryCommand(t *testing.T) {
+	key := newRSAKey(t)
+	server := newJWKSServer(t, testJWKS(t, "first", key))
+	middleware := newMiddleware(t, server.URL, "worker-token", "sandbox-token")
+	handler := middleware.Wrap(factoryapi.New("test-build", nil).Handler())
+
+	for _, path := range []string{
+		"/v1/factory/pause",
+		"/v1/factory/resume",
+		"/v1/factory/max-in-flight",
+		"/v1/tickets/42/cancel",
+		"/v1/tickets/42/work",
+	} {
+		t.Run(path, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, path, nil)
+			request.Header.Set("Authorization", "Bearer sandbox-token")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusUnauthorized {
+				t.Fatalf("POST %s status = %d, want %d", path, response.Code, http.StatusUnauthorized)
 			}
 		})
 	}

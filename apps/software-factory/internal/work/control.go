@@ -1,9 +1,16 @@
 package work
 
 import (
+	"errors"
 	"fmt"
 	"time"
 )
+
+// ErrWorkflowNotFound means Temporal has no workflow with the requested ID.
+var ErrWorkflowNotFound = errors.New("temporal workflow not found")
+
+// ErrWorkflowClosed means Temporal found the workflow but it cannot accept the command.
+var ErrWorkflowClosed = errors.New("temporal workflow already closed")
 
 // Config is everything about the dispatcher's behaviour that can change
 // without a deploy: whether it starts work at all, how much at once, how long

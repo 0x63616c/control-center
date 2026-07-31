@@ -59,6 +59,16 @@ The configured defaults are owned by `work.DefaultConfig` and
 15-minute breaker cooldown, a 30-minute orphan grace, and `gpt-5.6-terra` at
 medium effort unless a stage override is configured.
 
+The HTTP API (`internal/api`) is the only browser-reachable control entrypoint.
+Its authenticated write commands use `internal/clients/temporal.Commands` to
+send the dispatcher's existing `workflows.SignalUpdateConfig` signal (pause,
+resume, max-in-flight, or an empty update that wakes the next tick); the
+console never connects to Temporal. `workflows.QueryStatus` remains the one
+status query, while cancelling a ticket asks Temporal to cancel the
+`work.WorkflowID` run so its disconnected cleanup can delete the sandbox.
+Command acceptance means Temporal accepted the request, not that the database
+has observed its effect.
+
 ### Work ticket and deadlines
 
 `ticketRun.execute` performs setup, creates exactly one Session, runs the one

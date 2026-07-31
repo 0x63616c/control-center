@@ -75,6 +75,24 @@ components:
           format: uri
           type: string
       type: object
+    MaxInFlightInputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MaxInFlightInputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        maxInFlight:
+          description: Maximum number of ticket runs the dispatcher may start at once.
+          format: int64
+          minimum: 1
+          type: integer
+      required:
+        - maxInFlight
+      type: object
   securitySchemes:
     cloudflareAccess:
       description: Cloudflare Access JWT assertion.
@@ -107,6 +125,102 @@ paths:
                 $ref: "#/components/schemas/ErrorModel"
           description: Error
       summary: Get v1 build
+  /v1/factory/max-in-flight:
+    post:
+      description: Success means Temporal accepted the UpdateConfig signal. The dispatcher applies this configuration on its next tick; this endpoint does not poll for observable state.
+      operationId: post-v1-factory-max-in-flight
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MaxInFlightInputBody"
+        required: true
+      responses:
+        "204":
+          description: No Content
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Set factory max in flight
+  /v1/factory/pause:
+    post:
+      description: Success means Temporal accepted the UpdateConfig signal. The dispatcher applies this configuration on its next tick; this endpoint does not poll for observable state.
+      operationId: post-v1-factory-pause
+      responses:
+        "204":
+          description: No Content
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Pause the factory
+  /v1/factory/resume:
+    post:
+      description: Success means Temporal accepted the UpdateConfig signal. The dispatcher applies this configuration on its next tick; this endpoint does not poll for observable state.
+      operationId: post-v1-factory-resume
+      responses:
+        "204":
+          description: No Content
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Resume the factory
+  /v1/tickets/{ticketID}/cancel:
+    post:
+      description: Success means Temporal accepted cancellation of the ticket workflow. This endpoint does not wait for cleanup or database state to become observable.
+      operationId: post-v1-tickets-by-ticket-id-cancel
+      parameters:
+        - description: The ticket number whose run is being commanded.
+          in: path
+          name: ticketID
+          required: true
+          schema:
+            description: The ticket number whose run is being commanded.
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "204":
+          description: No Content
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Cancel a ticket run
+  /v1/tickets/{ticketID}/work:
+    post:
+      description: Success means Temporal accepted an empty UpdateConfig signal that wakes the dispatcher without changing configuration. This endpoint does not poll for observable state.
+      operationId: post-v1-tickets-by-ticket-id-work
+      parameters:
+        - description: The ticket number whose run is being commanded.
+          in: path
+          name: ticketID
+          required: true
+          schema:
+            description: The ticket number whose run is being commanded.
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "204":
+          description: No Content
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Nudge the factory
 security:
   - cloudflareAccess: []
   - inClusterBearer: []
