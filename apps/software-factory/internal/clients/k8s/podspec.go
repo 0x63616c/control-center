@@ -195,8 +195,8 @@ func buildPod(spec work.SandboxSpec, o options) (*corev1.Pod, error) {
 	for key, value := range spec.Env {
 		env[key] = value
 	}
-	// Every sandbox must read blob-backed payloads before any worker can write them.
-	env[config.PayloadCodecModeEnv] = "decode-only"
+	// Every sandbox writes blob-backed payloads, matching the worker deployment.
+	env[config.PayloadCodecModeEnv] = "full"
 
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{

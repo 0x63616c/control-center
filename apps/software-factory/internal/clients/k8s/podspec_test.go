@@ -253,13 +253,13 @@ func TestBuildPodPassesTheBlobURLWithoutAddingAVolume(t *testing.T) {
 	t.Errorf("sandbox env does not contain %s", work.SandboxBlobsURLEnv)
 }
 
-func TestBuildPodEnablesDecodeOnlyPayloadCodecSupport(t *testing.T) {
+func TestBuildPodEnablesFullPayloadCodecSupport(t *testing.T) {
 	t.Parallel()
 
 	for _, env := range sandboxContainer(t, mustBuild(t, validSpec())).Env {
 		if env.Name == config.PayloadCodecModeEnv {
-			if env.Value != "decode-only" {
-				t.Errorf("%s = %q, want decode-only", config.PayloadCodecModeEnv, env.Value)
+			if env.Value != "full" {
+				t.Errorf("%s = %q, want full", config.PayloadCodecModeEnv, env.Value)
 			}
 			return
 		}
