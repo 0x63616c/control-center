@@ -34,10 +34,15 @@ func NewKey(bucket Bucket, path string) (Key, error) {
 func ParseKey(value string) (Key, error) {
 	bucket, path, found := strings.Cut(value, "/")
 	if !found {
-		return Key{}, fmt.Errorf("blob key %q has no path", value)
+		return Key{}, fmt.Errorf("parse blob key %q: missing bucket/path separator", value)
 	}
 
-	return NewKey(Bucket(bucket), path)
+	key, err := NewKey(Bucket(bucket), path)
+	if err != nil {
+		return Key{}, fmt.Errorf("parse blob key %q: %w", value, err)
+	}
+
+	return key, nil
 }
 
 // String returns the string form of a blob key.

@@ -41,6 +41,7 @@ func TestParseKeyRejectsMalformed(t *testing.T) {
 		"payloads//x",
 		"payloads/a\\b",
 		"payloads/./x",
+		"payloads/a/../x",
 	}
 
 	for _, testCase := range testCases {
@@ -67,6 +68,7 @@ func TestNewKeyAppliesTheSameValidation(t *testing.T) {
 		{name: "backslash", bucket: BucketPayloads, path: "a\\b"},
 		{name: "current directory", bucket: BucketPayloads, path: "./x"},
 		{name: "parent directory", bucket: BucketPayloads, path: "../etc/passwd"},
+		{name: "nested parent directory", bucket: BucketPayloads, path: "a/../x"},
 	}
 
 	for _, testCase := range testCases {
