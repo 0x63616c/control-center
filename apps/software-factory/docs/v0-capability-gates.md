@@ -76,3 +76,22 @@ while main-control work remains callable, then creates a replacement Session
 on a separately registered private worker. It proves Temporal's routing and
 failure boundary, not production checkpoint reconciliation or a resumed Codex
 execution.
+
+## Legacy replay fixture
+
+`internal/workflows/testdata/factory-dispatcher-paused.json` is an export from
+a real Temporal CLI dev-server execution of the unchanged legacy
+`FactoryDispatcher` registration. It uses valid legacy policy/config input,
+reaches the legacy orphan-sweep activity scheduling path, and is then
+terminated so its history remains finite.
+`TestLegacyFactoryDispatcherHistoryReplays` registers only the unchanged
+legacy workflow with `worker.NewWorkflowReplayer` and replays that checked-in
+JSON export.
+
+Regenerate the fixture only when intentionally refreshing the legacy evidence:
+
+```sh
+cd apps/software-factory
+go test -run TestLegacyFactoryDispatcherHistoryReplays ./internal/runworkercapability \
+  -args -update-legacy-history
+```
