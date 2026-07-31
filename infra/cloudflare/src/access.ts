@@ -33,7 +33,7 @@ type DesiredAccessPolicy = Readonly<{
   include: AccessInclude;
 }>;
 
-export type AccessCors = Readonly<{
+type AccessCors = Readonly<{
   allowCredentials: boolean;
   allowedHeaders: readonly string[];
   allowedMethods: readonly string[];
