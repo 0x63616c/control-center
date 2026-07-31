@@ -1,4 +1,5 @@
 import type { RunOutput } from "@/api/generated";
+import { TemporalLink } from "@/components/TemporalLink";
 import { formatDuration } from "@/features/ticket-detail/duration";
 import { StepList } from "@/features/ticket-detail/StepList";
 import { formatUsage } from "@/features/ticket-detail/usage";
@@ -30,14 +31,7 @@ export function RunCard({ run }: { run: RunOutput }) {
           <span className="row-meta">{formatDuration(run.startedAt, run.endedAt)}</span>
         )}
         <span className="spacer" />
-        <a
-          className="temporal-link"
-          href={temporalRunUrl(run.ticketId, run.id)}
-          target="_blank"
-          rel="noreferrer"
-        >
-          Temporal history ↗
-        </a>
+        <TemporalLink href={temporalRunUrl(run.ticketId, run.id)} />
       </header>
       <p className="usage">Usage: {formatUsage(run.usage)}</p>
       <StepList steps={run.steps ?? []} runId={run.id} ticketId={run.ticketId} />

@@ -1,5 +1,7 @@
+import { Fragment } from "react";
 import type { ConsoleResponse } from "@/api/generated";
 import { StatePill, ticketStatus } from "@/components/StatePill";
+import { TemporalLink } from "@/components/TemporalLink";
 import { temporalTicketUrl } from "@/lib/temporal";
 
 export type ConsoleState =
@@ -14,6 +16,15 @@ function age(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
   return `${Math.floor(seconds / 3600)}h`;
+}
+
+// updatedAgo renders a Ticket's last update as a short age against now. The
+// console refetches on an interval, so "now" moving between renders is the
+// intended behavior here, unlike duration.ts's completed-span rule.
+function updatedAgo(iso: string): string {
+  const seconds = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (seconds < 86_400) return `${age(seconds)} ago`;
+  return `${Math.floor(seconds / 86_400)}d ago`;
 }
 
 // The state the machine is actively responsible for comes first; terminal
@@ -58,16 +69,7 @@ function ticketBlockers(ticket: Ticket) {
 // direct Temporal link; open/done ones do not.
 function temporalLink(ticket: Ticket) {
   if (!["working", "review", "failed"].includes(ticket.state)) return null;
-  return (
-    <a
-      className="temporal-link"
-      href={temporalTicketUrl(ticket.id)}
-      target="_blank"
-      rel="noreferrer"
-    >
-      Temporal ↗
-    </a>
-  );
+  return <TemporalLink href={temporalTicketUrl(ticket.id)} />;
 }
 
 function Snapshot({
@@ -189,23 +191,42 @@ function Snapshot({
           {tickets.length === 0 ? (
             <p className="section-empty">No Tickets have been recorded.</p>
           ) : (
-            <ol className="console-list">
-              {tickets.map((ticket) => (
-                <li id={`ticket-${ticket.id}`} key={ticket.id}>
-                  <div className="row-line">
-                    <strong>
-                      <a href={`#/tickets/${ticket.id}`}>
-                        #{ticket.id} {ticket.title}
-                      </a>
-                    </strong>
-                    <StatePill ticket={ticket} />
-                    <span className="spacer" />
-                    {temporalLink(ticket)}
-                  </div>
-                  {ticketBlockers(ticket)}
-                </li>
-              ))}
-            </ol>
+            <table className="ticket-table">
+              <thead>
+                <tr>
+                  <th scope="col">Ticket</th>
+                  <th scope="col">State</th>
+                  <th scope="col">Updated</th>
+                  <th scope="col" aria-label="Temporal link" />
+                </tr>
+              </thead>
+              <tbody>
+                {tickets.map((ticket) => {
+                  const blockers = ticketBlockers(ticket);
+                  return (
+                    <Fragment key={ticket.id}>
+                      <tr id={`ticket-${ticket.id}`}>
+                        <td>
+                          <a href={`#/tickets/${ticket.id}`}>
+                            #{ticket.id} {ticket.title}
+                          </a>
+                        </td>
+                        <td>
+                          <StatePill ticket={ticket} />
+                        </td>
+                        <td className="row-meta">{updatedAgo(ticket.updatedAt)}</td>
+                        <td className="ticket-table-links">{temporalLink(ticket)}</td>
+                      </tr>
+                      {blockers && (
+                        <tr className="ticket-table-blockers">
+                          <td colSpan={4}>{blockers}</td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
           )}
         </section>
       </main>

@@ -206,6 +206,40 @@ a:hover {
   }
 }
 
+/* ---- Ticket table ---- */
+.ticket-table {
+  width: 100%;
+  margin-top: 10px;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.ticket-table th {
+  text-align: left;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-strong);
+}
+.ticket-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.ticket-table tbody tr:not(.ticket-table-blockers):hover td {
+  background: var(--surface-2);
+}
+.ticket-table-links {
+  text-align: right;
+}
+.ticket-table-blockers td {
+  padding-top: 0;
+}
+.ticket-table-blockers .console-blockers {
+  margin-top: 0;
+}
+
 /* ---- Dispatcher staleness ---- */
 .stale {
   margin: 8px 0 0;
@@ -236,12 +270,18 @@ a:hover {
 
 /* ---- Temporal link ---- */
 .temporal-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 0.8rem;
   color: var(--muted);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 1px 8px;
+  padding: 2px 9px;
   white-space: nowrap;
+}
+.temporal-mark {
+  flex: none;
 }
 .temporal-link:hover {
   color: var(--text);
@@ -269,9 +309,57 @@ a:hover {
   font-size: 1.2rem;
 }
 .ticket-body {
-  color: var(--muted);
   max-width: 72ch;
-  white-space: pre-wrap;
+}
+.ticket-body h1,
+.ticket-body h2,
+.ticket-body h3 {
+  font-size: 1rem;
+  margin: 14px 0 4px;
+}
+.ticket-body p,
+.ticket-body ul,
+.ticket-body ol {
+  margin: 6px 0;
+  color: var(--muted);
+}
+.ticket-body li {
+  margin-block: 2px;
+}
+.ticket-body code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85em;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.ticket-body pre {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+.ticket-body pre code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+.ticket-body blockquote {
+  margin: 6px 0;
+  padding-left: 12px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--muted);
+}
+.ticket-body table {
+  border-collapse: collapse;
+  margin: 8px 0;
+}
+.ticket-body th,
+.ticket-body td {
+  border: 1px solid var(--border);
+  padding: 4px 10px;
 }
 .ticket-deps {
   margin-top: 12px;

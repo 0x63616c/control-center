@@ -1,5 +1,8 @@
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { TicketSummary } from "@/api/generated";
 import { StatePill } from "@/components/StatePill";
+import { TemporalLink } from "@/components/TemporalLink";
 import { RunList } from "@/features/ticket-detail/RunList";
 import type { TicketDetailState } from "@/features/ticket-detail/useTicketDetail";
 import { temporalTicketUrl } from "@/lib/temporal";
@@ -25,16 +28,14 @@ export function TicketDetail({ state }: { state: TicketDetailState }) {
             </h1>
             <StatePill ticket={state.ticket} />
             <span className="spacer" />
-            <a
-              className="temporal-link"
-              href={temporalTicketUrl(state.ticket.id)}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Temporal ↗
-            </a>
+            <TemporalLink href={temporalTicketUrl(state.ticket.id)} />
           </header>
-          <p className="ticket-body">{state.ticket.body}</p>
+          {/* react-markdown emits no raw HTML by default, so a Ticket body
+              can never inject markup — GFM covers the task lists and tables
+              GitHub-style bodies actually use. */}
+          <div className="ticket-body">
+            <Markdown remarkPlugins={[remarkGfm]}>{state.ticket.body}</Markdown>
+          </div>
           <DependencyList title="Blocked by" tickets={state.ticket.blockers} />
           <DependencyList title="Blocks" tickets={state.ticket.blocks} />
           <section>

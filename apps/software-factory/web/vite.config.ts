@@ -24,6 +24,13 @@ export default defineConfig({
       "/api": {
         target: `http://localhost:${apiPort}`,
         changeOrigin: true,
+        // A locally-run cmd/api still authenticates every request; in dev the
+        // proxy supplies the worker bearer (API_DEV_BEARER) so the browser
+        // needs no Cloudflare Access JWT. Unset, nothing is added.
+        headers: process.env.API_DEV_BEARER
+          ? { Authorization: `Bearer ${process.env.API_DEV_BEARER}` }
+          : undefined,
+        rewrite: (path) => path.replace(/^\/api/, ""),
       },
     },
   },
