@@ -2,9 +2,9 @@
 
 `manage.worldwidewebb.co` is Manage, a two-column web app with a grouped sidebar of the tools we operate on
 the left, the selected tool live in a same-page `<iframe>` on the right. It replaces the bookmark
-folder: Control Center, Home Assistant, Plex, Grafana, Temporal, pgAdmin, Storybook, Cloudflare,
-Cloudflare Zero Trust, Pulumi, Tailscale, UniFi, Synology and GitHub in one place, one keystroke
-apart, each keeping its state while you switch away and back.
+folder: Control Center, Home Assistant, Plex, Grafana, Temporal, pgAdmin, Cloudflare, Cloudflare
+Zero Trust, Pulumi, Tailscale, UniFi, Synology, Software Factory and GitHub in one place, one
+keystroke apart, each keeping its state while you switch away and back.
 
 It ships as another control-center *service* (`apps/manage/`), declared in
 `controlCenterProductManifest()` exactly like `storybook`, so its tunnel route and Access app fall
@@ -12,11 +12,16 @@ out of the existing exposure machinery rather than being wired by hand.
 
 ## The one hard problem: frame-deny
 
-Every interesting tool refuses to be framed. Grafana ships `allow_embedding=false`; pgAdmin
-defaults to `X_FRAME_OPTIONS=SAMEORIGIN`; UniFi answers `x-frame-options: SAMEORIGIN` (verified
-live against `192.168.0.1`); Synology DSM sends the same plus a `content-security-policy`
-(verified against `192.168.0.218:5001`); GitHub sends `x-frame-options: deny`. Neither appliance
-exposes a supported toggle.
+Every interesting tool we did not write refuses to be framed. Grafana ships
+`allow_embedding=false`; pgAdmin defaults to `X_FRAME_OPTIONS=SAMEORIGIN`; UniFi answers
+`x-frame-options: SAMEORIGIN` (verified live against `192.168.0.1`); Synology DSM sends the same
+plus a `content-security-policy` (verified against `192.168.0.218:5001`); GitHub sends
+`x-frame-options: deny`. Neither appliance exposes a supported toggle.
+
+A tool we own is the exception, and the Software Factory console is the first: its nginx sets no
+frame-deny header at all, so it frames without the extension and is registered
+`needsExtension: false`. That is the point of owning it — the problem below is about upstreams we
+cannot configure, not about every row in the registry.
 
 That header is not a server-side check. It is an instruction to the *browser*, honoured
 voluntarily. Every design below is a different answer to "who deletes it, and for whom".
