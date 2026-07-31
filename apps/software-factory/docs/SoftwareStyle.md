@@ -210,7 +210,9 @@ because issue titles and bodies are **attacker-controllable text**:
 Do not mint IDs. GitHub issue numbers and Temporal workflow and run IDs already exist and
 are already authoritative. Workflow IDs are self-describing by construction
 (`work-ticket-<n>`). Add a generator seam only if something needs an identity Temporal
-does not already give it.
+does not already give it. Factory-owned Tickets are that exception: their small database
+IDs are authoritative, and their workflow IDs use the disjoint `factory-ticket-<id>`
+namespace so they can never share a Temporal history lineage with GitHub issues.
 
 ## Time and units
 

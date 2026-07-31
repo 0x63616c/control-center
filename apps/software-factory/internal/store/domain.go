@@ -132,6 +132,16 @@ func (s *TicketState) UnmarshalJSON(value []byte) error {
 	return s.UnmarshalText([]byte(wire))
 }
 
+// MarshalJSON writes the one wire/database spelling of s, symmetric with
+// UnmarshalJSON. Required for store.Ticket to cross a Temporal activity
+// boundary at all: the SDK's default data converter is JSON, and TicketState's
+// only field is unexported, so without this a Ticket carrying its State
+// through workflow.ExecuteActivity would encode as "{}" and fail to decode
+// back, not just print oddly.
+func (s TicketState) MarshalJSON() ([]byte, error) {
+	return json.Marshal(s.String())
+}
+
 // CanTransitionTo reports whether moving from one state to another follows
 // the Ticket lifecycle. Keeping this table here makes lifecycle policy a
 // domain decision rather than a property of any HTTP handler.
@@ -165,6 +175,20 @@ type Ticket struct {
 	State     TicketState
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// InFlightTicket is one Ticket the Ticket-driven FactoryDispatcher believes is
+// currently being worked — its own in-memory shape's counterpart,
+// work.InFlightTicket, keyed by a GitHub issue number rather than a TicketID.
+// The two are never interchangeable (ADR-0012's vocabulary table), which is
+// also why this workflow's in-flight set is not persisted through the legacy
+// dispatcher_state row: that row's InFlight is []work.InFlightTicket, shaped
+// around GitHub issue numbers, and the Ticket dispatcher pointing at it is
+// later work, not part of standing the second pipeline up.
+type InFlightTicket struct {
+	TicketID  TicketID
+	RunID     string
+	StartedAt time.Time
 }
 
 // AttemptResult is how an Attempt ended, once it has.

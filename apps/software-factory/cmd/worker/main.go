@@ -96,17 +96,25 @@ func run() error {
 	// otherwise start a dispatcher that looks healthy and fails its
 	// RecordDispatcherState activity every tick forever, silently, instead of
 	// crash-looping loudly at boot with the reason in its logs.
+	//
+	// One pool, one *store.Store, for both dispatchers: the legacy one's
+	// per-tick dispatcher_state row (#551) and ADR-0012's Ticket-driven
+	// pipeline (Tickets, Runs, Steps, Attempts, transcripts) below both read
+	// and write the same factory Postgres. cmd/api already applies this
+	// service's migrations at its own boot and is deployed ahead of this
+	// worker (#554), so the worker only needs to dial and ping — it does not
+	// re-run ApplyMigrations.
 	dbPool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
 	if err != nil {
-		return fmt.Errorf("constructing the dispatcher-state database pool: %w", err)
+		return fmt.Errorf("constructing the factory database pool: %w", err)
 	}
 	defer dbPool.Close()
 	pingCtx, cancelPing := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelPing()
 	if err := dbPool.Ping(pingCtx); err != nil {
-		return fmt.Errorf("pinging the dispatcher-state database before worker startup: %w", err)
+		return fmt.Errorf("pinging the factory database before worker startup: %w", err)
 	}
-	dispatcherStateStore := store.New(dbPool)
+	factoryStore := store.New(dbPool)
 
 	// Read at startup rather than by the dispatcher itself, so a configuration
 	// nobody can run crashloops the pod with the reason in its logs. The same
@@ -159,15 +167,34 @@ func run() error {
 		return err
 	}
 
-	acts, err := newActivities(cfg, temporal, renderer, metrics, logger, dispatcherStateStore)
+	acts, err := newActivities(cfg, temporal, renderer, metrics, logger, factoryStore)
 	if err != nil {
 		return fmt.Errorf("building the activity set: %w", err)
 	}
 
-	// Registration site. The dispatcher and WorkTicket workflows and the
-	// activities that carry out a stage are registered here, on this worker,
-	// and nowhere else — one queue, one worker, one list.
-	register(w, acts, dispatcher, logger)
+	// ADR-0012's second, Ticket-driven activity sets, over the same
+	// factoryStore: they read and write Tickets, Runs, Steps, Attempts and
+	// transcripts, never a GitHub issue or comment.
+	ticketActs, err := activities.NewTicketActivities(factoryStore)
+	if err != nil {
+		return fmt.Errorf("building the ticket activity set: %w", err)
+	}
+	recordingActs, err := activities.NewRecordingActivities(factoryStore)
+	if err != nil {
+		return fmt.Errorf("building the recording activity set: %w", err)
+	}
+	transcriptActs, err := activities.NewTranscriptRecordingActivities(factoryStore)
+	if err != nil {
+		return fmt.Errorf("building the transcript recording activity set: %w", err)
+	}
+
+	// Registration site. Every workflow and activity set this worker runs —
+	// the original GitHub-issue-driven dispatcher and WorkTicket, and the new
+	// Ticket-driven FactoryDispatcher and FactoryWorkTicket alongside them
+	// (ADR-0012's Cutover: "the existing pair is not modified") — is
+	// registered here, on this worker, and nowhere else — one queue, one
+	// worker, one list.
+	register(w, acts, ticketActs, recordingActs, transcriptActs, dispatcher, logger)
 
 	// Idempotent: a worker replica that loses the race to start this simply
 	// attaches to the execution the winner started. See ensureDispatcher's
@@ -175,6 +202,13 @@ func run() error {
 	// by hand.
 	if err := ensureDispatcher(context.Background(), temporal, dispatcher, logger); err != nil {
 		return fmt.Errorf("ensuring the dispatcher is running: %w", err)
+	}
+	// Same idempotent start-on-boot shape, for the new dispatcher's own
+	// singleton workflow ID. It starts capped at 1 in-flight Ticket
+	// (work.DefaultFactoryConfig) because both dispatchers draw on one shared
+	// Codex quota.
+	if err := ensureFactoryDispatcher(context.Background(), temporal, logger); err != nil {
+		return fmt.Errorf("ensuring the factory ticket dispatcher is running: %w", err)
 	}
 
 	logger.Info("worker starting",
@@ -254,16 +288,56 @@ func newObservability() (*prometheus.Registry, *telemetry.Metrics) {
 // function's only job is telling the worker about the result — mixing the two
 // would make "what got registered" and "what got constructed" one lookup
 // instead of two.
-func register(w worker.Worker, acts *activities.Activities, dispatcher work.Config, logger *slog.Logger) {
+func register(
+	w worker.Worker,
+	acts *activities.Activities,
+	ticketActs *activities.TicketActivities,
+	recordingActs *activities.RecordingActivities,
+	transcriptActs *activities.TranscriptRecordingActivities,
+	dispatcher work.Config,
+	logger *slog.Logger,
+) {
 	w.RegisterWorkflow(workflows.WorkTicket)
 	w.RegisterWorkflow(workflows.Dispatcher)
 	w.RegisterActivity(acts)
 
+	// The second, Ticket-driven pair (ADR-0012's Cutover): a distinct
+	// workflow type and a distinct activity struct, registered alongside the
+	// first rather than replacing any of it.
+	w.RegisterWorkflow(workflows.FactoryWorkTicket)
+	w.RegisterWorkflow(workflows.FactoryDispatcher)
+	w.RegisterActivity(ticketActs)
+	w.RegisterActivity(recordingActs)
+	w.RegisterActivity(transcriptActs)
+
 	logger.Info("registrations",
-		slog.Int("workflows", 2),
+		slog.Int("workflows", 4),
 		slog.Int("stages_per_ticket", len(work.Pipeline())),
 		slog.Int("max_in_flight", dispatcher.MaxInFlight),
 	)
+}
+
+// ensureFactoryDispatcher starts the new dispatcher, or attaches to it if a
+// worker before this one already did — the same idempotent start-on-boot
+// shape as ensureDispatcher, on the disjoint FactoryDispatcherWorkflowID
+// singleton.
+func ensureFactoryDispatcher(ctx context.Context, c dispatcherStarter, logger *slog.Logger) error {
+	run, err := c.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
+		ID:        work.FactoryDispatcherWorkflowID,
+		TaskQueue: work.TaskQueue,
+	}, workflows.FactoryDispatcher, workflows.FactoryDispatcherInput{
+		Config: work.DefaultFactoryConfig(),
+		Tuning: work.DefaultDispatcherTuning(),
+		Run:    work.DefaultRunPolicy(),
+	})
+	if err != nil {
+		return fmt.Errorf("starting the factory ticket dispatcher workflow %s: %w", work.FactoryDispatcherWorkflowID, err)
+	}
+
+	logger.Info("factory ticket dispatcher workflow ensured",
+		slog.String("workflow_id", work.FactoryDispatcherWorkflowID),
+		slog.String("run_id", run.GetRunID()))
+	return nil
 }
 
 // newActivities builds the one activity set from concrete clients: GitHub,

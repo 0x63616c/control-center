@@ -5,6 +5,27 @@ import (
 	"testing"
 )
 
+func TestFactoryTicketWorkflowIDsUseADisjointNamespace(t *testing.T) {
+	t.Parallel()
+
+	for _, id := range []int64{0, 1, 7, 99} {
+		if FactoryTicketWorkflowID(id) == WorkflowID(int(id)) {
+			t.Fatalf("Ticket id %d shares a workflow ID with its GitHub issue counterpart", id)
+		}
+		if !strings.HasPrefix(FactoryTicketWorkflowID(id), "factory-ticket-") {
+			t.Fatalf("FactoryTicketWorkflowID(%d) = %q", id, FactoryTicketWorkflowID(id))
+		}
+	}
+}
+
+func TestFactoryDispatcherStartsWithOneTicketAtATime(t *testing.T) {
+	t.Parallel()
+
+	if got := DefaultFactoryConfig().MaxInFlight; got != 1 {
+		t.Fatalf("DefaultFactoryConfig().MaxInFlight = %d, want 1", got)
+	}
+}
+
 func TestStatusMarkerBuildsARunAndStepScopedMarker(t *testing.T) {
 	t.Parallel()
 
