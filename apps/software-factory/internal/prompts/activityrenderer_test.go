@@ -1,6 +1,7 @@
 package prompts
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -105,5 +106,31 @@ func TestActivityRendererFailsLikeTheRendererItWraps(t *testing.T) {
 	_, _, err := adapter.Render(work.StageKey{Stage: work.StagePlan, Turn: 1}, work.TicketDetail{}, work.PriorTurns{})
 	if err == nil {
 		t.Fatal("Render with an empty ticket detail: want an error, got nil")
+	}
+}
+
+// TestActivityRendererRendersTheKeysOwnTurn is why Render takes a StageKey
+// rather than a bare Stage. Every other test here renders turn 1, so an
+// adapter that dropped Turn — or hardcoded it — would be green while every
+// review prompt in production said "turn 0 of 3".
+func TestActivityRendererRendersTheKeysOwnTurn(t *testing.T) {
+	t.Parallel()
+
+	adapter := NewActivityRenderer(newTestRenderer(t))
+	detail := ticket()
+
+	prompt, _, err := adapter.Render(
+		work.StageKey{Ticket: detail.Number, RunID: "r", Stage: work.StageReview, Turn: work.MaxReviewTurns},
+		detail, everyDocument(),
+	)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	want := "turn " + strconv.Itoa(work.MaxReviewTurns) + " of " + strconv.Itoa(work.MaxReviewTurns)
+	if !strings.Contains(prompt, want) {
+		t.Errorf("the rendered review prompt does not say %q: the key's turn did not reach it", want)
+	}
+	if strings.Contains(prompt, "turn 0 of") {
+		t.Error("the rendered review prompt says turn 0: the key's turn was dropped")
 	}
 }

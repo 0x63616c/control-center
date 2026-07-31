@@ -57,10 +57,14 @@ func implementOutput(blocked bool, blockedReason, title, body string) *activitie
 	return &out
 }
 
-func reviewOutput(findings ...work.Finding) *activities.RunReviewOutput {
+// reviewOutput builds one review turn's result: what it raised, and the
+// "checked and would keep" list a later turn reads out of the review ledger.
+func reviewOutput(verified []string, findings ...work.Finding) *activities.RunReviewOutput {
 	var out activities.RunReviewOutput
 	fillStageOutput(&out.Output, &out.Result, &out.ThreadID, &out.Usage,
-		work.NewStageOutput(work.StageReview, work.ReviewOutput{Document: "the review", Findings: findings}))
+		work.NewStageOutput(work.StageReview, work.ReviewOutput{
+			Document: "the review", Findings: findings, Verified: verified,
+		}))
 	out.Transcript = transcriptFor(work.StageReview)
 	return &out
 }
@@ -120,6 +124,10 @@ type ticketHarness struct {
 	// present raises no findings.
 	review map[int][]work.Finding
 
+	// reviewVerified is what each review turn says it checked and would
+	// keep, keyed by turn — the other half of what the ledger carries.
+	reviewVerified map[int][]string
+
 	implementErr error
 	reviewErr    error
 	ciErr        error
@@ -127,6 +135,7 @@ type ticketHarness struct {
 	// what the run did.
 	implementTurns   []work.StageKey
 	reviewTurns      []work.StageKey
+	reviewPriors     []work.PriorTurns
 	created          int
 	cloned           []work.SandboxID
 	deleted          []work.SandboxID
@@ -178,6 +187,7 @@ func newTicketHarness(t *testing.T) *ticketHarness {
 		implement:        map[int]*activities.RunImplementOutput{},
 		ci:               map[int]activities.ObserveCIOutput{},
 		review:           map[int][]work.Finding{},
+		reviewVerified:   map[int][]string{},
 		persisted:        map[work.StageKey]activities.PersistTranscriptInput{},
 		pullRequestDraft: true,
 	}
@@ -281,10 +291,11 @@ func (h *ticketHarness) run() {
 	env.OnActivity(acts.RunReview, mock.Anything, mock.Anything).
 		Return(func(_ context.Context, in activities.RunReviewInput) (*activities.RunReviewOutput, error) {
 			h.reviewTurns = append(h.reviewTurns, in.Key)
+			h.reviewPriors = append(h.reviewPriors, in.Prior)
 			if h.reviewErr != nil {
 				return nil, h.reviewErr
 			}
-			return reviewOutput(h.review[in.Key.Turn]...), nil
+			return reviewOutput(h.reviewVerified[in.Key.Turn], h.review[in.Key.Turn]...), nil
 		})
 
 	env.OnActivity(acts.FindPullRequest, mock.Anything, mock.Anything).
@@ -1201,5 +1212,86 @@ func TestWorkTicketClearsAutoWhenEnablingAutoMergeFailsBecauseThePullRequestIsAl
 	}
 	if h.cleared != 1 {
 		t.Fatalf("cleared the auto label %d times, want one — the pull request is already reviewable and mergeable by hand", h.cleared)
+	}
+}
+
+// TestWorkTicketCarriesEveryReviewTurnForwardInTheLedger is the end-to-end
+// wiring #563 turns on, and the one link the unit tests around narrowPrior
+// and the review prompt cannot cover between them: a real review turn's
+// output has to reach a LATER review turn's activity input.
+//
+// On the run this came from, review turn 1 cleared a file in its "verified
+// and keep" list and turns 2 and 3 each raised a blocking finding against a
+// different line range of it, because each turn was shown only its immediate
+// predecessor's findings and none of its own history.
+func TestWorkTicketCarriesEveryReviewTurnForwardInTheLedger(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.review = map[int][]work.Finding{
+		1: {{ID: "finding-a", Blocking: true, Summary: "one"}},
+		2: {{ID: "finding-b", Blocking: true, Summary: "different"}},
+		// review turn 3 raises nothing: proposes.
+	}
+	h.reviewVerified = map[int][]string{
+		1: {"platform/index.ts: the hooks comment is accurate"},
+	}
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+	if len(h.reviewPriors) != 3 {
+		t.Fatalf("review turns = %d, want 3", len(h.reviewPriors))
+	}
+
+	if got := h.reviewPriors[0].ReviewLedger; len(got) != 0 {
+		t.Errorf("review turn 1 was handed a ledger of %d entries, want none: nothing has run before it", len(got))
+	}
+
+	third := h.reviewPriors[2].ReviewLedger
+	if len(third) != 2 {
+		t.Fatalf("review turn 3 was handed %d ledger entries, want both earlier turns", len(third))
+	}
+	if third[0].Turn != 1 || third[1].Turn != 2 {
+		t.Errorf("ledger turns = %d, %d; want 1, 2 oldest first", third[0].Turn, third[1].Turn)
+	}
+	if len(third[0].Findings) != 1 || third[0].Findings[0].ID != "finding-a" {
+		t.Errorf("turn 3's ledger does not carry turn 1's finding: %+v", third[0].Findings)
+	}
+	if len(third[1].Findings) != 1 || third[1].Findings[0].ID != "finding-b" {
+		t.Errorf("turn 3's ledger does not carry turn 2's finding: %+v", third[1].Findings)
+	}
+	if len(third[0].Verified) != 1 || third[0].Verified[0] != "platform/index.ts: the hooks comment is accurate" {
+		t.Errorf("turn 3's ledger does not carry what turn 1 said it would keep: %+v", third[0].Verified)
+	}
+}
+
+// TestWorkTicketNeverHandsAReviewTurnMoreLedgerThanItsOwnBudget is the bound
+// work.PriorTurns.ReviewLedger's doc comment claims. It is what keeps the
+// ledger from being the O(N^2) activity input that type exists to prevent:
+// review is capped, implement is not, which is why only review has one.
+func TestWorkTicketNeverHandsAReviewTurnMoreLedgerThanItsOwnBudget(t *testing.T) {
+	t.Parallel()
+
+	h := newTicketHarness(t)
+	h.review = map[int][]work.Finding{
+		1: {{ID: "finding-a", Blocking: true, Summary: "one"}},
+		2: {{ID: "finding-b", Blocking: true, Summary: "two"}},
+		3: {{ID: "finding-c", Blocking: true, Summary: "three"}},
+	}
+	h.run()
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+	for i, prior := range h.reviewPriors {
+		if got := len(prior.ReviewLedger); got >= work.MaxReviewTurns {
+			t.Errorf("review turn %d was handed %d ledger entries; a turn can never see more than the %d-1 before it",
+				i+1, got, work.MaxReviewTurns)
+		}
+	}
+	if len(h.implementTurns) == 0 {
+		t.Fatal("no implement turn ran, so this asserted nothing")
 	}
 }
