@@ -11,6 +11,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2/humacli"
@@ -107,8 +109,21 @@ func run() error {
 	}
 	logger.Info("API starting", slog.String("address", cfg.ListenAddr))
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("serving API requests: %w", err)
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- server.Serve(listener) }()
+	shutdown, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	select {
+	case err := <-serveErr:
+		if !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("serving API requests: %w", err)
+		}
+	case <-shutdown.Done():
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(ctx); err != nil {
+			return fmt.Errorf("shutting down API server: %w", err)
+		}
 	}
 	return nil
 }
