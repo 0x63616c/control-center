@@ -13,6 +13,9 @@
 The root `AGENTS.md` still applies here (worktrees, secrets, commit and PR discipline,
 issue tracking). This file **adds** to it; it does not replace it.
 
+`web/` is the console (ADR-0012): a TypeScript SPA, governed by
+`docs/writing-scalable-typescript/`, not by `SoftwareStyle.md` or `.golangci.yml` below.
+
 ## What this is
 
 A Go Temporal worker that autonomously works GitHub issues labelled `auto`: a dispatcher

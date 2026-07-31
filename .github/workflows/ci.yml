@@ -58,6 +58,11 @@ jobs:
       # entrypoint, so "changed together" is closer to true than false, and a
       # missed shared file ships a stale image on green CI.
       softwarefactory: ${{ steps.filter.outputs.softwarefactory }}
+      # The console (ADR-0012, #553): a TypeScript SPA under the same tree,
+      # sharing no code with the Go module , its own filter, so a `web/`-only
+      # change doesn't rebuild/retest the Go images and vice versa. See the
+      # negation on `softwarefactory` below.
+      softwarefactoryweb: ${{ steps.filter.outputs.softwarefactoryweb }}
       any_app: ${{ steps.filter.outputs.any_app }}
     steps:
       - uses: actions/checkout@v5
@@ -138,16 +143,32 @@ jobs:
             # Software factory (ADR-0011): a self-contained Go module sharing no
             # code with the TypeScript workspace, so it rebuilds solely on its
             # own tree. Deliberately NOT split per image — see the output above.
+            # `web/**` is excluded: it's a separate TypeScript app (ADR-0012,
+            # #553) with its own filter below, and a console-only change must
+            # not rebuild/retest the Go images.
             softwarefactory:
               - 'apps/software-factory/**'
+              - '!apps/software-factory/web/**'
+            # The console (ADR-0012, #553): a Vite/React SPA. It's part of the
+            # root bun workspace (`bun install` resolves it, root vitest/knip
+            # cover it), so its filter follows the `manage` shape , its own
+            # tree plus the shared packages/lockfile , rather than the Go
+            # filter above.
+            softwarefactoryweb:
+              - 'apps/software-factory/web/**'
+              - 'packages/**'
+              - 'bun.lock'
             # any_app is true when at least one TypeScript-workspace image
             # needs to be built. An infra-only change is handled by the separate
             # `infra` filter above, and `apps/software-factory/**` is
-            # deliberately NOT listed here: it shares no code with this
-            # workspace (ADR-0011), so it is tracked by its own
-            # `softwarefactory` output and OR'd into the deploy gate alongside
-            # this one. The deploy job fires on
-            # `any_app || infra || softwarefactory`.
+            # deliberately NOT listed here: the Go images (ADR-0011) share no
+            # code with this workspace, so they're tracked by `softwarefactory`;
+            # the console (ADR-0012) is a real member of this bun workspace but
+            # is kept on its own `softwarefactoryweb` output too, so a
+            # console-only change doesn't rebuild every other TypeScript image.
+            # Both are OR'd into the deploy gate alongside this one. The deploy
+            # job fires on `any_app || infra || softwarefactory ||
+            # softwarefactoryweb`.
             any_app:
               - 'apps/web/**'
               - 'apps/manage/**'
@@ -396,9 +417,11 @@ jobs:
 
   # Generated API artefacts are committed. Regenerate before diffing so this
   # stops a spec or client change from reaching deploy without its contract.
+  # Gated on EITHER filter: a Go handler change and a hand-edit of the
+  # committed client/spec both need this drift check.
   check-software-factory-generated:
     needs: [changes]
-    if: needs.changes.outputs.softwarefactory == 'true'
+    if: needs.changes.outputs.softwarefactory == 'true' || needs.changes.outputs.softwarefactoryweb == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -416,9 +439,11 @@ jobs:
         uses: sqlc-dev/setup-sqlc@v5
         with:
           sqlc-version: 1.31.1
-      - name: Install client generator
+      # Full workspace install, not scoped to web/: the console is now a real
+      # bun workspace member (root package.json), so its deps resolve from the
+      # root lockfile like every other app's.
+      - name: Install workspace deps
         run: bun install --frozen-lockfile
-        working-directory: apps/software-factory/web
       - name: Regenerate and check committed artefacts
         run: |
           apps/software-factory/scripts/regenerate.sh
@@ -639,20 +664,45 @@ jobs:
           dockerfile: apps/software-factory/images/relay/Dockerfile
           cache-scope: software-factory-relay
 
+  # The console (ADR-0012, #553): a TypeScript SPA, built like any other bun
+  # workspace image (build-manage's shape), not like the Go images above , its
+  # own filter (`softwarefactoryweb`) and its own Dockerfile context (repo
+  # root, full workspace install). No BUILD_HASH/BUILD_TIME: the console
+  # doesn't render a build badge of its own yet.
+  build-software-factory-console:
+    needs: [changes]
+    if: needs.changes.outputs.softwarefactoryweb == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: prod
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build and push software-factory console image
+        uses: ./.github/actions/build-product-image
+        env:
+          SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
+        with:
+          image: www-software-factory-console
+          dockerfile: apps/software-factory/web/Dockerfile
+          cache-scope: software-factory-console
+
 
   # After the images build on main, deploy to the home-server Talos cluster with
   # `pulumi up` (www-j934.14). The runner joins the tailnet with an EPHEMERAL
   # Tailscale key (auto-revoked when the job ends), reaches the kube-apiserver
   # over the tailnet, and runs the Pulumi program in infra/. CI is the deployer.
   #
-  # Fires on `any_app || infra || softwarefactory`: an image change OR an
-  # infra-only change (a spec tweak with no rebuild) must both converge the
-  # declared stack. software-factory is a THIRD term rather than an `any_app`
-  # entry, because that filter tracks the TypeScript workspace and this tree
-  # shares nothing with it (ADR-0011) — a parallel path, not a collapsed one.
-  # Without it the whole tree tested in CI and never deployed. `pulumi up` is
-  # declarative-convergent, so the latest green run always reconciles prod to the
-  # committed digests, no deploy marker needed (www-bom8 retired).
+  # Fires on `any_app || infra || softwarefactory || softwarefactoryweb`: an
+  # image change OR an infra-only change (a spec tweak with no rebuild) must
+  # both converge the declared stack. software-factory and
+  # software-factory/web are separate THIRD/FOURTH terms rather than `any_app`
+  # entries, because that filter tracks the rest of the TypeScript workspace
+  # and each of these has its own filter for its own reasons (ADR-0011,
+  # ADR-0012) — parallel paths, not collapsed ones. Without them the whole
+  # tree tested in CI and never deployed. `pulumi up` is declarative-convergent,
+  # so the latest green run always reconciles prod to the committed digests,
+  # no deploy marker needed (www-bom8 retired).
   deploy-home-server:
     needs:
       [
@@ -669,6 +719,7 @@ jobs:
         build-software-factory-worker,
         build-software-factory-sandbox,
         build-software-factory-relay,
+        build-software-factory-console,
         test-software-factory,
         check-software-factory-generated,
       ]
@@ -677,7 +728,7 @@ jobs:
     if: |
       always() &&
       github.ref_name == 'main' &&
-      (needs.changes.outputs.any_app == 'true' || needs.changes.outputs.infra == 'true' || needs.changes.outputs.softwarefactory == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)) &&
+      (needs.changes.outputs.any_app == 'true' || needs.changes.outputs.infra == 'true' || needs.changes.outputs.softwarefactory == 'true' || needs.changes.outputs.softwarefactoryweb == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)) &&
       !contains(needs.*.result, 'failure') &&
       !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-latest

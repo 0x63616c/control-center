@@ -50,6 +50,7 @@ const FULL_INSTALL_DOCKERFILES = [
   "apps/worker/Dockerfile",
   "apps/temporal-worker/Dockerfile",
   "apps/web/Dockerfile",
+  "apps/software-factory/web/Dockerfile",
 ];
 
 // --- 3. Parse each Dockerfile for `COPY <src>/package.json` lines ---
