@@ -98,6 +98,20 @@ const accessName = (host: string) =>
 // StackReference instead of a hand-pasted vault secret. The audience is
 // derived infra state minted by THIS resource, not a value anyone should be
 // copying into secrets/vault.yaml by hand.
+//
+// A consumer's FIRST deploy therefore takes two passes, and that is expected:
+// this project only runs after `deploy-home-server` succeeds (see the
+// deploy-cloudflare `needs` in ci.yml), so on pass one the consumer reads an
+// empty AUD, and only on the next run does it see the real one. That is safe
+// because the consumer fails closed — the factory API refuses to start on an
+// empty CLOUDFLARE_ACCESS_AUD rather than serving unauthenticated traffic, and
+// its Deployment carries `pulumi.com/skipAwait` so the resulting CrashLoopBackOff
+// does not fail everything else in the cluster's `pulumi up`.
+//
+// The corollary is a gotcha worth knowing: a change that touches only the
+// consumer (or only the vault) does NOT re-run this project, because the
+// `cloudflareinfra` path filter never fires. A new Access-gated hostname needs
+// at least one commit under `infra/cloudflare/**` before its app exists at all.
 const accessAppAuds: Record<string, pulumi.Output<string>> = {};
 
 for (const app of desiredAccessApps(zoneName, applyAccessGate)) {
