@@ -13,6 +13,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
@@ -23,6 +24,7 @@ type Service struct {
 	api      huma.API
 	commands commandClient
 	tickets  ticketStore
+	clock    clock.Clock
 }
 
 // ticketStore is the small persistence door the Ticket HTTP contract needs.
@@ -33,6 +35,7 @@ type ticketStore interface {
 	store.ReadyTicketLister
 	store.TicketDependencyWriter
 	store.TicketDependencyReader
+	store.DispatcherStateReader
 }
 
 // commandClient is the factory command surface the HTTP handlers need.
@@ -94,6 +97,52 @@ type ticketsOutput struct {
 	Body struct {
 		Tickets []ticketSummary `json:"tickets" doc:"Tickets matching the requested filters."`
 	}
+}
+
+type consoleOutput struct{ Body consoleResponse }
+
+// consoleResponse is the one-screen, read-only operational view of the factory.
+type consoleResponse struct {
+	Factory    consoleFactory    `json:"factory"`
+	Dispatcher consoleDispatcher `json:"dispatcher"`
+	Tickets    []consoleTicket   `json:"tickets"`
+}
+
+type consoleFactory struct {
+	Paused           bool   `json:"paused"`
+	PauseReason      string `json:"pauseReason"`
+	MaxInFlight      int    `json:"maxInFlight"`
+	ConfigError      string `json:"configError"`
+	BreakerOpen      bool   `json:"breakerOpen"`
+	BreakerReason    string `json:"breakerReason"`
+	BreakerOpenUntil string `json:"breakerOpenUntil"`
+}
+
+// consoleDispatcher deliberately names legacy GitHub Issue data rather than
+// Ticket data: ADR-0012 forbids treating the two identifiers as interchangeable.
+type consoleDispatcher struct {
+	InFlight   []consoleInFlight `json:"inFlight"`
+	Candidates []int             `json:"candidates"`
+	FreeSlots  int               `json:"freeSlots"`
+	WrittenAt  string            `json:"writtenAt"`
+	AgeSeconds int64             `json:"ageSeconds"`
+	Stale      bool              `json:"stale"`
+}
+
+type consoleInFlight struct {
+	IssueNumber int    `json:"issueNumber"`
+	RunID       string `json:"runID"`
+	StartedAt   string `json:"startedAt"`
+}
+
+type consoleTicket struct {
+	ID        int64           `json:"id" doc:"The Ticket identifier."`
+	Title     string          `json:"title" doc:"The Ticket title."`
+	State     string          `json:"state" doc:"The Ticket lifecycle state."`
+	Ready     bool            `json:"ready" doc:"Whether this open Ticket is ready."`
+	CreatedAt string          `json:"createdAt" doc:"The Ticket creation time in RFC3339 UTC."`
+	UpdatedAt string          `json:"updatedAt" doc:"The Ticket's latest update time in RFC3339 UTC."`
+	Blockers  []ticketSummary `json:"blockers" doc:"Tickets preventing this Ticket from becoming ready."`
 }
 
 // ticketSummary is the list representation of a Ticket.
@@ -183,6 +232,10 @@ func reasonForStatus(status int) string {
 // New constructs the complete HTTP API. Version arrives from the composition
 // root so this package does not need to learn about build metadata policy.
 func New(version string, commands commandClient, ticketStores ...ticketStore) *Service {
+	return newWithClock(version, commands, clock.System{}, ticketStores...)
+}
+
+func newWithClock(version string, commands commandClient, serviceClock clock.Clock, ticketStores ...ticketStore) *Service {
 	mux := http.NewServeMux()
 	configuration := huma.DefaultConfig("Software Factory API", version)
 	configuration.Components.SecuritySchemes = map[string]*huma.SecurityScheme{
@@ -197,7 +250,7 @@ func New(version string, commands commandClient, ticketStores ...ticketStore) *S
 	}
 	configuration.Security = []map[string][]string{{"cloudflareAccess": {}}, {"inClusterBearer": {}}}
 	api := humago.New(mux, configuration)
-	service := &Service{handler: mux, api: api, commands: commands}
+	service := &Service{handler: mux, api: api, commands: commands, clock: serviceClock}
 	if len(ticketStores) > 0 {
 		service.tickets = ticketStores[0]
 	}
@@ -206,6 +259,7 @@ func New(version string, commands commandClient, ticketStores ...ticketStore) *S
 		output.Body.Version = version
 		return output, nil
 	})
+	huma.Get(api, "/v1/console", service.console, commandOperation("Read console snapshot", "Returns the dispatcher-recorded legacy Issue decision and derived Ticket blockers without recomputing dispatch selection in the browser."))
 	huma.Post(api, "/v1/factory/pause", service.pause, commandOperation("Pause the factory", "Success means Temporal accepted the UpdateConfig signal. The dispatcher applies this configuration on its next tick; this endpoint does not poll for observable state."))
 	huma.Post(api, "/v1/factory/resume", service.resume, commandOperation("Resume the factory", "Success means Temporal accepted the UpdateConfig signal. The dispatcher applies this configuration on its next tick; this endpoint does not poll for observable state."))
 	huma.Post(api, "/v1/factory/max-in-flight", service.setMaxInFlight, commandOperation("Set factory max in flight", "Success means Temporal accepted the UpdateConfig signal. The dispatcher applies this configuration on its next tick; this endpoint does not poll for observable state."))
@@ -221,6 +275,62 @@ func New(version string, commands commandClient, ticketStores ...ticketStore) *S
 	errorSchema.Properties["reason"] = &huma.Schema{Type: "string", Description: "Stable machine-readable reason for the error."}
 	errorSchema.Required = append(errorSchema.Required, "reason")
 	return service
+}
+
+func (service *Service) console(ctx context.Context, _ *struct{}) (*consoleOutput, error) {
+	if service.tickets == nil {
+		return nil, clientError(http.StatusServiceUnavailable, "store_unavailable", "ticket store is not configured")
+	}
+	state, err := service.tickets.DispatcherState(ctx)
+	if err != nil {
+		return nil, ticketStoreError(err)
+	}
+	tickets, err := service.tickets.Tickets(ctx)
+	if err != nil {
+		return nil, ticketStoreError(err)
+	}
+	ready, err := service.tickets.ReadyTickets(ctx)
+	if err != nil {
+		return nil, ticketStoreError(err)
+	}
+	readySet := make(map[store.TicketID]bool, len(ready))
+	for _, ticket := range ready {
+		readySet[ticket.ID] = true
+	}
+	now := service.clock.Now()
+	age := now.Sub(state.WrittenAt)
+	if age < 0 {
+		age = 0
+	}
+	pollInterval := state.Config.PollInterval()
+	if pollInterval <= 0 {
+		pollInterval = work.DefaultConfig().PollInterval()
+	}
+	output := &consoleOutput{Body: consoleResponse{
+		Factory: consoleFactory{
+			Paused: state.Config.Paused, PauseReason: state.Config.PauseReason, MaxInFlight: state.Config.MaxInFlight,
+			ConfigError: state.ConfigError, BreakerOpen: state.Breaker.OpenAt(now), BreakerReason: state.Breaker.Reason, BreakerOpenUntil: wireTime(state.Breaker.OpenUntil),
+		},
+		Dispatcher: consoleDispatcher{Candidates: append([]int(nil), state.Candidates...), FreeSlots: state.FreeSlots, WrittenAt: wireTime(state.WrittenAt), AgeSeconds: int64(age.Seconds()), Stale: age > 2*pollInterval},
+	}}
+	for _, inFlight := range state.InFlight {
+		output.Body.Dispatcher.InFlight = append(output.Body.Dispatcher.InFlight, consoleInFlight{IssueNumber: inFlight.Ticket, RunID: inFlight.RunID, StartedAt: wireTime(inFlight.StartedAt)})
+	}
+	for _, ticket := range tickets {
+		summary := ticketSummaryFrom(ticket, readySet[ticket.ID])
+		item := consoleTicket{ID: summary.ID, Title: summary.Title, State: summary.State, Ready: summary.Ready, CreatedAt: summary.CreatedAt, UpdatedAt: summary.UpdatedAt}
+		if ticket.State == store.TicketOpen && !readySet[ticket.ID] {
+			blockers, blockersErr := service.tickets.TicketBlockers(ctx, ticket.ID)
+			if blockersErr != nil {
+				return nil, ticketStoreError(blockersErr)
+			}
+			for _, blocker := range blockers {
+				item.Blockers = append(item.Blockers, ticketSummaryFrom(blocker, readySet[blocker.ID]))
+			}
+		}
+		output.Body.Tickets = append(output.Body.Tickets, item)
+	}
+	return output, nil
 }
 
 func (service *Service) createTicket(ctx context.Context, input *createTicketInput) (*ticketOutput, error) {

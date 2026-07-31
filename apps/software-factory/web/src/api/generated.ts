@@ -50,6 +50,67 @@ export interface BuildOutputBody {
   version: string;
 }
 
+export type ConsoleDispatcherCandidates = number[] | null;
+
+export type ConsoleDispatcherInFlight = ConsoleInFlight[] | null;
+
+export interface ConsoleDispatcher {
+  ageSeconds: number;
+  candidates: ConsoleDispatcherCandidates;
+  freeSlots: number;
+  inFlight: ConsoleDispatcherInFlight;
+  stale: boolean;
+  writtenAt: string;
+}
+
+export interface ConsoleFactory {
+  breakerOpen: boolean;
+  breakerOpenUntil: string;
+  breakerReason: string;
+  configError: string;
+  maxInFlight: number;
+  pauseReason: string;
+  paused: boolean;
+}
+
+export interface ConsoleInFlight {
+  issueNumber: number;
+  runID: string;
+  startedAt: string;
+}
+
+export type ConsoleResponseTickets = ConsoleTicket[] | null;
+
+export interface ConsoleResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  dispatcher: ConsoleDispatcher;
+  factory: ConsoleFactory;
+  tickets: ConsoleResponseTickets;
+}
+
+/**
+ * Tickets preventing this Ticket from becoming ready.
+ */
+export type ConsoleTicketBlockers = TicketSummary[] | null;
+
+export interface ConsoleTicket {
+  /** Tickets preventing this Ticket from becoming ready. */
+  blockers: ConsoleTicketBlockers;
+  /** The Ticket creation time in RFC3339 UTC. */
+  createdAt: string;
+  /** The Ticket identifier. */
+  id: number;
+  /** Whether this open Ticket is ready. */
+  ready: boolean;
+  /** The Ticket lifecycle state. */
+  state: string;
+  /** The Ticket title. */
+  title: string;
+  /** The Ticket's latest update time in RFC3339 UTC. */
+  updatedAt: string;
+}
+
 export interface CreateTicketInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -281,6 +342,115 @@ export function useGetV1Build<
   queryClient?: QueryClient,
 ): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
   const queryOptions = getGetV1BuildQueryOptions(options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Returns the dispatcher-recorded legacy Issue decision and derived Ticket blockers without recomputing dispatch selection in the browser.
+ * @summary Read console snapshot
+ */
+export const getV1Console = (
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<ConsoleResponse>> => {
+  return axios.get(`/v1/console`, options);
+};
+
+export const getGetV1ConsoleQueryKey = () => {
+  return [`/v1/console`] as const;
+};
+
+export const getGetV1ConsoleQueryOptions = <
+  TData = Awaited<ReturnType<typeof getV1Console>>,
+  TError = AxiosError<ErrorModel>,
+>(options?: {
+  query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof getV1Console>>, TError, TData>>;
+  axios?: AxiosRequestConfig;
+}) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetV1ConsoleQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getV1Console>>> = ({ signal }) =>
+    getV1Console({ signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getV1Console>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetV1ConsoleQueryResult = NonNullable<Awaited<ReturnType<typeof getV1Console>>>;
+export type GetV1ConsoleQueryError = AxiosError<ErrorModel>;
+
+export function useGetV1Console<
+  TData = Awaited<ReturnType<typeof getV1Console>>,
+  TError = AxiosError<ErrorModel>,
+>(
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof getV1Console>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getV1Console>>,
+          TError,
+          Awaited<ReturnType<typeof getV1Console>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useGetV1Console<
+  TData = Awaited<ReturnType<typeof getV1Console>>,
+  TError = AxiosError<ErrorModel>,
+>(
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof getV1Console>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getV1Console>>,
+          TError,
+          Awaited<ReturnType<typeof getV1Console>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useGetV1Console<
+  TData = Awaited<ReturnType<typeof getV1Console>>,
+  TError = AxiosError<ErrorModel>,
+>(
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof getV1Console>>, TError, TData>>;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+/**
+ * @summary Read console snapshot
+ */
+
+export function useGetV1Console<
+  TData = Awaited<ReturnType<typeof getV1Console>>,
+  TError = AxiosError<ErrorModel>,
+>(
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof getV1Console>>, TError, TData>>;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getGetV1ConsoleQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
     queryKey: DataTag<QueryKey, TData, TError>;

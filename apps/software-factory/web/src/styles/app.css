@@ -10,3 +10,97 @@ body {
 #root {
   min-height: 100vh;
 }
+
+.console-header,
+.console-grid,
+.factory-alert {
+  max-width: 1200px;
+  margin-inline: auto;
+  padding-inline: 24px;
+}
+.console-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  padding-block: 32px 20px;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+}
+.console-header h1,
+.console-grid h2 {
+  margin: 0;
+}
+.console-header p,
+.section-note {
+  margin: 6px 0 0;
+  opacity: 0.7;
+}
+.console-header dl {
+  display: flex;
+  gap: 24px;
+  margin: 0;
+}
+.console-header dt {
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+.console-header dd {
+  margin: 2px 0 0;
+  font-weight: 700;
+}
+.console-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  padding-block: 24px;
+}
+.console-grid section {
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 8px;
+  padding: 18px;
+}
+.console-worked {
+  grid-column: 1 / -1;
+}
+.console-list {
+  display: grid;
+  gap: 12px;
+  padding-left: 24px;
+}
+.console-list li {
+  display: grid;
+  gap: 3px;
+}
+.factory-alert,
+.stale,
+.console-blockers-failed {
+  color: #8b1e1e;
+}
+.factory-alert {
+  margin-top: 20px;
+  padding-block: 12px;
+  border: 2px solid currentColor;
+  background: color-mix(in srgb, #d94a4a 14%, transparent);
+}
+.stale {
+  font-weight: 700;
+}
+.ticket-state {
+  width: fit-content;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+.ticket-state-failed {
+  color: #9e2020;
+  font-weight: 700;
+}
+.console-blockers {
+  margin-top: 8px;
+  padding: 8px;
+  border-left: 3px solid currentColor;
+}
+.console-blockers p,
+.console-blockers ul {
+  margin: 0;
+}
