@@ -1,6 +1,6 @@
-import { Fragment, useState } from "react";
+import { useState } from "react";
 import type { ConsoleResponse } from "@/api/generated";
-import { StatePill, ticketStatus } from "@/components/StatePill";
+import { StatePill } from "@/components/StatePill";
 
 export type ConsoleState =
   | { kind: "loading" }
@@ -25,60 +25,15 @@ function updatedAgo(iso: string): string {
   return `${Math.floor(seconds / 86_400)}d ago`;
 }
 
-// The state the machine is actively responsible for comes first; terminal
-// states last, so the top of the board is always the live work.
-const STATE_ORDER: Record<string, number> = {
-  working: 0,
-  review: 1,
-  ready: 2,
-  blocked: 3,
-  failed: 4,
-  done: 5,
-};
-
-function ticketBlockers(ticket: Ticket) {
-  if (ticket.state !== "open" || ticket.ready || !ticket.blockers?.length) return null;
-  const failed = ticket.blockers.filter((blocker) => blocker.state === "failed");
-  return (
-    <div
-      className={failed.length ? "console-blockers console-blockers-failed" : "console-blockers"}
-      role={failed.length ? "alert" : undefined}
-    >
-      <p>
-        {failed.length
-          ? "A failed blocker will not unblock without human action."
-          : "Waiting on Tickets:"}
-      </p>
-      <ul>
-        {ticket.blockers.map((blocker) => (
-          <li key={blocker.id}>
-            <a href={`#ticket-${blocker.id}`}>
-              #{blocker.id} {blocker.title}
-            </a>{" "}
-            <StatePill ticket={blocker} />
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-// Sort control: the default is the live-work-first state ordering; clicking
-// Created/Updated cycles that column desc -> asc -> back to default.
-type SortKey = "state" | "createdAt" | "updatedAt";
+type SortKey = "createdAt" | "updatedAt";
 type SortDir = "desc" | "asc";
 
 function sortTickets(tickets: Ticket[], key: SortKey, dir: SortDir): Ticket[] {
   const sorted = [...tickets];
-  if (key === "state") {
-    sorted.sort(
-      (a, b) => (STATE_ORDER[ticketStatus(a)] ?? 9) - (STATE_ORDER[ticketStatus(b)] ?? 9),
-    );
-    return sorted;
-  }
   sorted.sort((a, b) => {
     const delta = new Date(a[key]).getTime() - new Date(b[key]).getTime();
-    return dir === "asc" ? delta : -delta;
+    if (delta !== 0) return dir === "asc" ? delta : -delta;
+    return dir === "asc" ? a.id - b.id : b.id - a.id;
   });
   return sorted;
 }
@@ -114,18 +69,15 @@ function SortHeader({
 }
 
 function TicketTable({ tickets }: { readonly tickets: Ticket[] }) {
-  const [sortKey, setSortKey] = useState<SortKey>("state");
+  const [sortKey, setSortKey] = useState<SortKey>("createdAt");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   function onSort(column: SortKey) {
     if (sortKey !== column) {
       setSortKey(column);
       setSortDir("desc");
-    } else if (sortDir === "desc") {
-      setSortDir("asc");
     } else {
-      setSortKey("state");
-      setSortDir("desc");
+      setSortDir(sortDir === "desc" ? "asc" : "desc");
     }
   }
 
@@ -154,41 +106,32 @@ function TicketTable({ tickets }: { readonly tickets: Ticket[] }) {
         </tr>
       </thead>
       <tbody>
-        {sorted.map((ticket) => {
-          const blockers = ticketBlockers(ticket);
-          return (
-            <Fragment key={ticket.id}>
-              <tr
-                id={`ticket-${ticket.id}`}
-                className="ticket-row"
-                onClick={() => {
-                  window.location.hash = `#/tickets/${ticket.id}`;
-                }}
-              >
-                <td className="ticket-id">
-                  <a href={`#/tickets/${ticket.id}`}>#{ticket.id}</a>
-                </td>
-                <td>
-                  <a href={`#/tickets/${ticket.id}`}>{ticket.title}</a>
-                </td>
-                <td>
-                  <StatePill ticket={ticket} />
-                </td>
-                <td className="row-meta" title={new Date(ticket.createdAt).toLocaleString()}>
-                  {updatedAgo(ticket.createdAt)}
-                </td>
-                <td className="row-meta" title={new Date(ticket.updatedAt).toLocaleString()}>
-                  {updatedAgo(ticket.updatedAt)}
-                </td>
-              </tr>
-              {blockers && (
-                <tr className="ticket-table-blockers">
-                  <td colSpan={5}>{blockers}</td>
-                </tr>
-              )}
-            </Fragment>
-          );
-        })}
+        {sorted.map((ticket) => (
+          <tr
+            id={`ticket-${ticket.id}`}
+            className="ticket-row"
+            key={ticket.id}
+            onClick={() => {
+              window.location.hash = `#/tickets/${ticket.id}`;
+            }}
+          >
+            <td className="ticket-id">
+              <a href={`#/tickets/${ticket.id}`}>#{ticket.id}</a>
+            </td>
+            <td>
+              <a href={`#/tickets/${ticket.id}`}>{ticket.title}</a>
+            </td>
+            <td>
+              <StatePill ticket={ticket} />
+            </td>
+            <td className="row-meta" title={new Date(ticket.createdAt).toLocaleString()}>
+              {updatedAgo(ticket.createdAt)}
+            </td>
+            <td className="row-meta" title={new Date(ticket.updatedAt).toLocaleString()}>
+              {updatedAgo(ticket.updatedAt)}
+            </td>
+          </tr>
+        ))}
       </tbody>
     </table>
   );
@@ -201,34 +144,9 @@ function Snapshot({
   readonly snapshot: ConsoleResponse;
   readonly unconfirmedMessage?: string;
 }) {
-  const { factory, dispatcher } = snapshot;
   const tickets = snapshot.tickets ?? [];
-  const inFlight = dispatcher.inFlight ?? [];
-  const candidates = dispatcher.candidates ?? [];
   return (
     <>
-      {(factory.paused || factory.breakerOpen || factory.configError) && (
-        <section className="factory-alert" role="alert">
-          {factory.paused && (
-            <>
-              <strong>Factory paused.</strong>{" "}
-              {factory.pauseReason || "No new work will start until it is resumed."}
-            </>
-          )}
-          {factory.breakerOpen && (
-            <>
-              <strong> Breaker tripped.</strong>{" "}
-              {factory.breakerReason || "Dispatcher is temporarily holding work."} Clears at{" "}
-              {factory.breakerOpenUntil}.
-            </>
-          )}
-          {factory.configError && (
-            <>
-              <strong> Configuration rejected.</strong> {factory.configError}
-            </>
-          )}
-        </section>
-      )}
       {unconfirmedMessage && (
         <section className="factory-alert" role="alert">
           <strong>Refresh failed.</strong> Showing the last snapshot, which may no longer be
@@ -236,62 +154,9 @@ function Snapshot({
         </section>
       )}
       <main className="console-grid">
-        <section aria-labelledby="in-flight-heading">
-          <div className="row-line">
-            <h2 id="in-flight-heading">In flight</h2>
-            <span className="spacer" />
-            <span className="in-flight-count">
-              {factory.maxInFlight - dispatcher.freeSlots} / {factory.maxInFlight}
-            </span>
-          </div>
-          <p className="section-note">Legacy dispatcher Issues</p>
-          {inFlight.length === 0 ? (
-            <p className="section-empty">Nothing in flight.</p>
-          ) : (
-            <ol className="console-list">
-              {inFlight.map((item) => (
-                <li key={`${item.issueNumber}-${item.runID}`}>
-                  <div className="row-line">
-                    <strong>Issue #{item.issueNumber}</strong>
-                    <span className="pill pill-working">running</span>
-                  </div>
-                  <span className="row-meta">
-                    Run {item.runID} · started {item.startedAt}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          )}
-        </section>
-        <section aria-labelledby="next-heading">
-          <h2 id="next-heading">Next</h2>
-          <p className="section-note">
-            {dispatcher.freeSlots} free {dispatcher.freeSlots === 1 ? "slot" : "slots"} · last
-            dispatcher write {age(dispatcher.ageSeconds)} ago
-          </p>
-          {dispatcher.stale && (
-            <p className="stale" role="alert">
-              Dispatcher state is stale. The next-work decision may no longer be current.
-            </p>
-          )}
-          {candidates.length === 0 ? (
-            <p className="section-empty">No eligible Issues queued by the dispatcher.</p>
-          ) : (
-            <ol className="console-list">
-              {candidates.map((issueNumber) => (
-                <li key={issueNumber}>
-                  <div className="row-line">
-                    <strong>Issue #{issueNumber}</strong>
-                    <span className="pill pill-open">queued</span>
-                  </div>
-                </li>
-              ))}
-            </ol>
-          )}
-        </section>
         <section className="console-tickets" aria-labelledby="tickets-heading">
           <h2 id="tickets-heading">Tickets</h2>
-          <p className="section-note">Every factory Ticket, live work first</p>
+          <p className="section-note">Every factory Ticket, newest first</p>
           {tickets.length === 0 ? (
             <p className="section-empty">No Tickets have been recorded.</p>
           ) : (

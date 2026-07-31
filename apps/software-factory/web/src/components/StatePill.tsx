@@ -3,7 +3,7 @@
 
 // A Ticket's display status folds `state` and (for open Tickets) `ready`
 // into one word the pill can carry.
-export function ticketStatus(ticket: { state: string; ready: boolean }): string {
+function ticketStatus(ticket: { state: string; ready: boolean }): string {
   if (ticket.state === "open") return ticket.ready ? "ready" : "blocked";
   return ticket.state;
 }

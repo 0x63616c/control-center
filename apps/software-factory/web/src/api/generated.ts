@@ -114,65 +114,12 @@ export interface BuildOutputBody {
   version: string;
 }
 
-export type ConsoleDispatcherCandidates = number[] | null;
-
-export type ConsoleDispatcherInFlight = ConsoleInFlight[] | null;
-
-export interface ConsoleDispatcher {
-  ageSeconds: number;
-  candidates: ConsoleDispatcherCandidates;
-  freeSlots: number;
-  inFlight: ConsoleDispatcherInFlight;
-  stale: boolean;
-  writtenAt: string;
-}
-
-export interface ConsoleFactory {
-  breakerOpen: boolean;
-  breakerOpenUntil: string;
-  breakerReason: string;
-  configError: string;
-  maxInFlight: number;
-  pauseReason: string;
-  paused: boolean;
-}
-
-export interface ConsoleInFlight {
-  issueNumber: number;
-  runID: string;
-  startedAt: string;
-}
-
-export type ConsoleResponseTickets = ConsoleTicket[] | null;
+export type ConsoleResponseTickets = TicketSummary[] | null;
 
 export interface ConsoleResponse {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  dispatcher: ConsoleDispatcher;
-  factory: ConsoleFactory;
   tickets: ConsoleResponseTickets;
-}
-
-/**
- * Tickets preventing this Ticket from becoming ready.
- */
-export type ConsoleTicketBlockers = TicketSummary[] | null;
-
-export interface ConsoleTicket {
-  /** Tickets preventing this Ticket from becoming ready. */
-  blockers: ConsoleTicketBlockers;
-  /** The Ticket creation time in RFC3339 UTC. */
-  createdAt: string;
-  /** The Ticket identifier. */
-  id: number;
-  /** Whether this open Ticket is ready. */
-  ready: boolean;
-  /** The Ticket lifecycle state. */
-  state: string;
-  /** The Ticket title. */
-  title: string;
-  /** The Ticket's latest update time in RFC3339 UTC. */
-  updatedAt: string;
 }
 
 /**
@@ -542,7 +489,7 @@ export function useGetV1Build<
 }
 
 /**
- * Returns the dispatcher-recorded legacy Issue decision and derived Ticket blockers without recomputing dispatch selection in the browser.
+ * Returns the factory Tickets for the console.
  * @summary Read console snapshot
  */
 export const getV1Console = (
