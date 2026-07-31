@@ -124,6 +124,13 @@ func reduceChecks(checks []work.CheckRun) (concluded bool, out ObserveCIOutput) 
 		if !check.Completed {
 			return false, ObserveCIOutput{}
 		}
+		// A superseded run is as inconclusive as one still in flight: the
+		// push that cancelled it has its own run, and reporting the cancel
+		// as red would charge a turn — and, on a second cancel, decline the
+		// ticket for "no progress" — for something the change did not cause.
+		if check.Superseded() {
+			return false, ObserveCIOutput{}
+		}
 		if !check.Green() {
 			redChecks = append(redChecks, check.Name)
 			redFailures = append(redFailures, work.CheckFailure{Name: check.Name, Fingerprint: check.FailureFingerprint})

@@ -146,3 +146,104 @@ func TestFailedGoTestsFallsBackToBareNameWithoutAPackageSummaryLine(t *testing.T
 		t.Fatalf("failedGoTests = %v, want the bare test name when no summary line was logged", tests)
 	}
 }
+
+func TestChecksForRefIgnoresNonFailureAnnotationsAsAnIdentity(t *testing.T) {
+	t.Parallel()
+
+	// Every job in this repository carries the runner's standing Node
+	// deprecation warning. Fingerprinting it would give the check an
+	// identity no code change can move, so rule 1 would read the second red
+	// turn as stagnation whatever the agent did.
+	s, _ := newStub(t)
+	s.handle("GET /repos/"+testOwner+"/"+testRepo+"/commits/"+testBranch+"/check-runs", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"check_runs": []map[string]any{{
+			"id": 91, "name": "check-software-factory-generated", "status": "completed", "conclusion": "failure",
+		}}})
+	})
+	s.handle("GET /repos/"+testOwner+"/"+testRepo+"/check-runs/91/annotations", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, []map[string]any{
+			{"path": ".github", "start_line": 2, "annotation_level": "warning", "message": "Node.js 20 is deprecated."},
+			{"path": ".github", "start_line": 233, "annotation_level": "failure", "message": "Process completed with exit code 1."},
+		})
+	})
+	c, _ := s.client(t)
+
+	checks, err := c.ChecksForRef(t.Context(), testBranch)
+	if err != nil {
+		t.Fatalf("ChecksForRef: %v", err)
+	}
+	if len(checks) != 1 || checks[0].FailureFingerprint != "" {
+		t.Fatalf("checks = %+v, want a failed check without a false failure identity", checks)
+	}
+}
+
+func TestChecksForRefFingerprintsNonGoFailuresFromLoggedErrors(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newStub(t)
+	s.handle("GET /repos/"+testOwner+"/"+testRepo+"/commits/"+testBranch+"/check-runs", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"check_runs": []map[string]any{{
+			"id": 91, "name": "lint", "status": "completed", "conclusion": "failure",
+			"details_url": s.URL + "/" + testOwner + "/" + testRepo + "/actions/runs/100/job/91",
+		}}})
+	})
+	s.handle("GET /repos/"+testOwner+"/"+testRepo+"/check-runs/91/annotations", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, []map[string]any{{
+			"path": ".github", "annotation_level": "failure", "message": "Process completed with exit code 1.",
+		}})
+	})
+	s.handle("GET /repos/"+testOwner+"/"+testRepo+"/actions/jobs/91/logs", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", s.URL+"/job-91.log")
+		w.WriteHeader(http.StatusFound)
+	})
+	s.handle("GET /job-91.log", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("2026-07-30T21:00:00Z ##[error]lint/noUnusedVariables: unused import in web/src/app.ts\n" +
+			"2026-07-30T21:00:00Z ##[error]Process completed with exit code 1.\n"))
+	})
+	c, _ := s.client(t)
+
+	checks, err := c.ChecksForRef(t.Context(), testBranch)
+	if err != nil {
+		t.Fatalf("ChecksForRef: %v", err)
+	}
+	if len(checks) != 1 || checks[0].FailureFingerprint == "" {
+		t.Fatalf("checks = %+v, want the logged error identity for a job that runs no Go tests", checks)
+	}
+}
+
+func TestLoggedErrorLinesDropsRunnerNoise(t *testing.T) {
+	t.Parallel()
+
+	noise := "2026-07-30T21:00:00Z ##[error]Process completed with exit code 1.\n" +
+		"2026-07-30T21:00:00Z ##[error]The operation was canceled.\n" +
+		"2026-07-30T21:00:00Z ##[error]Canceling since a higher priority waiting request for ci-refs/heads/main exists\n"
+	if lines := loggedErrorLines(noise); len(lines) != 0 {
+		t.Fatalf("loggedErrorLines = %v, want none: none of these say what failed", lines)
+	}
+
+	real := noise + "2026-07-30T21:00:00Z ##[error]drift: internal/api/openapi.yaml differs from the committed copy\n"
+	lines := loggedErrorLines(real)
+	if len(lines) != 1 || lines[0] != "drift: internal/api/openapi.yaml differs from the committed copy" {
+		t.Fatalf("loggedErrorLines = %v, want only the identifying error", lines)
+	}
+}
+
+func TestIdentifyingAnnotationAcceptsAnySpecificFailure(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		annotation checkAnnotationDetail
+		want       bool
+	}{
+		"node deprecation warning": {checkAnnotationDetail{AnnotationLevel: "warning", Message: "Node.js 20 is deprecated."}, false},
+		"stock exit code":          {checkAnnotationDetail{AnnotationLevel: "failure", Message: "Process completed with exit code 1."}, false},
+		"stock exit code 2":        {checkAnnotationDetail{AnnotationLevel: "failure", Message: "Process completed with exit code 2."}, false},
+		"named assertion":          {checkAnnotationDetail{AnnotationLevel: "failure", Message: "TestValidate: want 200, got 401"}, true},
+		"titled exit code":         {checkAnnotationDetail{AnnotationLevel: "failure", Title: "drift", Message: "Process completed with exit code 1."}, true},
+	}
+	for name, tc := range cases {
+		if got := identifyingAnnotation(tc.annotation); got != tc.want {
+			t.Errorf("%s: identifyingAnnotation = %v, want %v", name, got, tc.want)
+		}
+	}
+}
