@@ -14,9 +14,17 @@ import (
 	"io"
 	"time"
 
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
+
+// DispatcherStateWriter records the dispatcher's per-tick projection (#551) —
+// the store's own interface, restated here because this package declares
+// every seam it consumes rather than depending on store.Store directly.
+type DispatcherStateWriter interface {
+	PutDispatcherState(ctx context.Context, state store.DispatcherState) error
+}
 
 // StageRunner executes one pipeline stage in a sandbox and returns its
 // structured result. It is the only seam here that is not CRUD, and everything

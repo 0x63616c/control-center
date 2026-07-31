@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	enums "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/temporal"
@@ -154,6 +155,15 @@ type dispatcher struct {
 	// reports is as of the last tick — at most one poll interval stale, and
 	// honest about it.
 	now time.Time
+
+	// candidates and freeSlots are this tick's own decision (#551): the
+	// eligible `auto` tickets start() found, in the order it would claim
+	// them, and how many slots were open when it looked. Both reset at the
+	// top of every start() call, so a tick that computed nothing — paused, or
+	// the breaker open — records that honestly rather than repeating stale
+	// numbers from the last tick that did.
+	candidates []int
+	freeSlots  int
 }
 
 func newDispatcher(in DispatcherInput) *dispatcher {
@@ -188,6 +198,7 @@ func (d *dispatcher) tick(ctx workflow.Context) {
 	d.pruneFinished()
 	d.sweep(ctx)
 	d.start(ctx)
+	d.recordState(ctx)
 }
 
 // wait blocks until the poll interval elapses, a signal arrives, or the
@@ -288,6 +299,12 @@ func (d *dispatcher) liveRunIDs() []string {
 func (d *dispatcher) start(ctx workflow.Context) {
 	log := workflow.GetLogger(ctx)
 
+	// Reset every tick: a tick that computes nothing (paused, breaker open, no
+	// free slots) must report that honestly rather than repeating the last
+	// tick's numbers (#551).
+	d.candidates = nil
+	d.freeSlots = 0
+
 	if d.config.Paused {
 		log.Debug("paused, starting nothing", "reason", d.config.PauseReason)
 		return
@@ -301,6 +318,7 @@ func (d *dispatcher) start(ctx workflow.Context) {
 	if free <= 0 {
 		return
 	}
+	d.freeSlots = free
 
 	activityCtx := workflow.WithActivityOptions(ctx, d.activityOptions())
 	var tickets []work.Ticket
@@ -339,9 +357,50 @@ func (d *dispatcher) start(ctx workflow.Context) {
 			continue
 		}
 
+		// Every check above ran clean, so this is a ticket the dispatcher
+		// would actually claim next — recorded before the claim itself, so a
+		// claim failure still leaves an honest candidate list behind (#551).
+		d.candidates = append(d.candidates, ticket.Number)
+
 		if d.claim(ctx, ticket) {
 			free--
 		}
+	}
+}
+
+// recordState persists this tick's decision as the single dispatcher_state
+// row (#551): what it is running under, what it holds a slot for, and what it
+// would claim next.
+//
+// A write failure is logged and swallowed rather than failing the tick.
+// Correctness > Operability would halt on a broken invariant, but this row is
+// an observability projection, not something a ticket's correctness depends
+// on: nothing downstream reads it yet, and the dispatcher's job is
+// supervising every ticket in flight, not this one row. Halting — or worse,
+// failing the whole long-running Dispatcher execution — over a database blip
+// would stop every in-flight run's reconcile and sweep along with it, which is
+// a far larger correctness cost than one stale observability row. The
+// activity itself still reports the failure loudly (via fail, to Loki and to
+// Temporal's own activity history), so it is visible without being fatal.
+func (d *dispatcher) recordState(ctx workflow.Context) {
+	inFlight := make([]work.InFlightTicket, 0, len(d.inFlight))
+	for _, ticket := range sortedTickets(d.inFlight) {
+		inFlight = append(inFlight, d.inFlight[ticket])
+	}
+
+	state := store.DispatcherState{
+		Config:      d.config,
+		ConfigError: d.configError,
+		Breaker:     d.breaker,
+		InFlight:    inFlight,
+		Candidates:  append([]int(nil), d.candidates...),
+		FreeSlots:   d.freeSlots,
+		WrittenAt:   d.now,
+	}
+
+	activityCtx := workflow.WithActivityOptions(ctx, d.activityOptions())
+	if err := workflow.ExecuteActivity(activityCtx, acts.RecordDispatcherState, state).Get(ctx, nil); err != nil {
+		workflow.GetLogger(ctx).Error("failed to record dispatcher state", "error", err)
 	}
 }
 

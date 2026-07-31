@@ -26,9 +26,17 @@ import {
   type ImageDigests,
 } from "./services.ts";
 import {
+  DATABASE_PORT,
   SOFTWARE_FACTORY_TEMPORAL_NAMESPACE,
   TEMPORAL_FRONTEND_CLUSTER_ADDRESS,
 } from "./temporal.ts";
+
+// The factory's own CNPG database (#540, infra/src/cnpg.ts), read here rather
+// than re-declared: one manifest, one set of names, whichever installer needs
+// them. The worker connects same-namespace, so its rw Service resolves by its
+// bare name — no cross-namespace FQDN needed, unlike temporal-worker's
+// cross-namespace reach into control-center's Postgres.
+const softwareFactoryDatabase = softwareFactoryProductManifest().database;
 
 /**
  * The k8s namespace the software factory's workloads live in. Deliberately the
@@ -526,6 +534,15 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
                   { name: "SANDBOX_IMAGE_PULL_SECRET_NAME", value: GHCR_PULL_SECRET_NAME },
                   { name: "TRANSCRIPTS_ROOT", value: TRANSCRIPTS_MOUNT_PATH },
                   { name: "TEMPORAL_UI_BASE_URL", value: temporalUiBaseUrl() },
+                  // config.LoadWorker's one required database input (#551):
+                  // the dispatcher's per-tick RecordDispatcherState activity
+                  // writes through this connection. Same variable name
+                  // cmd/api reads (internal/config/api.go) — one Postgres,
+                  // one spelling.
+                  {
+                    name: "SOFTWARE_FACTORY_DATABASE_URL",
+                    valueFrom: { secretKeyRef: { name: WORKER_SECRET_NAME, key: "DATABASE_URL" } },
+                  },
                 ],
                 volumeMounts: [
                   {
@@ -793,6 +810,18 @@ function createWorkerSecret(
     return value;
   };
 
+  // Composed here, not split into POSTGRES_HOST + a mounted password file the
+  // way temporal-worker's TypeScript app does: config.LoadWorker requires one
+  // SOFTWARE_FACTORY_DATABASE_URL DSN (the same variable name cmd/api already
+  // reads), and Pulumi already holds the plaintext password from the vault to
+  // bridge into the CNPG auth Secret (cnpg.ts's createAuthSecret) — so it can
+  // compose the one DSN this Go process actually wants, the same way
+  // GITHUB_APP_ID and friends below are composed once here rather than
+  // reconstructed from parts at runtime.
+  const databaseURL = pulumi.secret(
+    pulumi.interpolate`postgres://${softwareFactoryDatabase.owner}:${fromVault(softwareFactoryDatabase.auth.password.vaultKey)}@${softwareFactoryDatabase.rwServiceName}:${DATABASE_PORT}/${softwareFactoryDatabase.databaseName}`,
+  );
+
   return new k8s.core.v1.Secret(
     "software-factory-worker-secrets",
     {
@@ -802,6 +831,7 @@ function createWorkerSecret(
         GITHUB_APP_INSTALLATION_ID: pulumi.secret(fromVault("GITHUB_BOT_APP__INSTALLATION_ID")),
         // Stays base64-encoded on purpose. See APP_PRIVATE_KEY_MOUNT.
         GITHUB_APP_PRIVATE_KEY_PEM: pulumi.secret(fromVault("GITHUB_BOT_APP__PRIVATE_KEY_PEM")),
+        DATABASE_URL: databaseURL,
       },
     },
     opts,

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
 // DispatcherState reads what the dispatcher last wrote about itself.
@@ -14,7 +15,8 @@ func (f *Store) DispatcherState(_ context.Context) (store.DispatcherState, error
 		return store.DispatcherState{}, notFoundf("dispatcher state")
 	}
 	state := f.dispatcherState
-	state.InFlight = append([]store.InFlightTicket(nil), f.dispatcherState.InFlight...)
+	state.InFlight = append([]work.InFlightTicket(nil), f.dispatcherState.InFlight...)
+	state.Candidates = append([]int(nil), f.dispatcherState.Candidates...)
 	return state, nil
 }
 
@@ -22,7 +24,8 @@ func (f *Store) DispatcherState(_ context.Context) (store.DispatcherState, error
 func (f *Store) PutDispatcherState(_ context.Context, state store.DispatcherState) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	state.InFlight = append([]store.InFlightTicket(nil), state.InFlight...)
+	state.InFlight = append([]work.InFlightTicket(nil), state.InFlight...)
+	state.Candidates = append([]int(nil), state.Candidates...)
 	f.dispatcherState = state
 	f.dispatcherStateSeen = true
 	return nil

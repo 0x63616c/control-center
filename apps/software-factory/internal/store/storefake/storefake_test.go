@@ -119,10 +119,13 @@ func TestFakeStoreCarriesATicketThroughItsWholeLifecycle(t *testing.T) {
 		t.Fatalf("RunDetail() attempt result = %q, want %q", detail.Steps[0].Attempts[0].Result, store.AttemptSucceeded)
 	}
 
+	config := work.DefaultConfig()
+	config.MaxInFlight = 2
 	state := store.DispatcherState{
-		MaxInFlight: 2,
-		InFlight:    []store.InFlightTicket{{TicketID: blocked.ID, RunID: runID, StartedAt: startedAt}},
-		WrittenAt:   endedAt,
+		Config:     config,
+		InFlight:   []work.InFlightTicket{{Ticket: 551, RunID: runID, StartedAt: startedAt}},
+		Candidates: []int{552},
+		WrittenAt:  endedAt,
 	}
 	if err := s.PutDispatcherState(ctx, state); err != nil {
 		t.Fatalf("PutDispatcherState: %v", err)
@@ -131,8 +134,11 @@ func TestFakeStoreCarriesATicketThroughItsWholeLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DispatcherState: %v", err)
 	}
-	if len(readState.InFlight) != 1 || readState.InFlight[0].TicketID != blocked.ID {
+	if len(readState.InFlight) != 1 || readState.InFlight[0].Ticket != 551 {
 		t.Fatalf("DispatcherState().InFlight = %+v, want the one in-flight ticket back", readState.InFlight)
+	}
+	if len(readState.Candidates) != 1 || readState.Candidates[0] != 552 {
+		t.Fatalf("DispatcherState().Candidates = %v, want [552]", readState.Candidates)
 	}
 }
 
