@@ -31,13 +31,10 @@ export function genId(prefix: string, options?: { length?: number }): string {
   return `${prefix}_${randomHex(length)}`;
 }
 
-// "software-factory" is a product for IMAGE-NAMING purposes and for nothing
-// else (ADR-0011): its three images are www-software-factory-{worker,sandbox,relay}
-// rather than components of control-center, and this is the one place that
-// spelling is derived. It ships no web/api image, has no CNPG database and is
-// not part of the control-center deploy, so it is deliberately EXCLUDED from
-// cluster.ts's InfraNamespaceName — see the comment there. Adding it here does
-// not enrol it in ESO, CNPG, crons or GHCR pull secrets.
+// "software-factory" (ADR-0011) owns three images —
+// www-software-factory-{worker,sandbox,relay} — and a product database. This is
+// the one place that spelling is derived. It ships no web/API workload and uses
+// no service secrets, so those declarations remain deliberately absent.
 export const productSlugs = ["control-center", "captive-portal", "software-factory"] as const;
 
 export type ProductSlug = (typeof productSlugs)[number];
@@ -346,6 +343,13 @@ export const secretCatalog = {
       "CONTROL_CENTER_POSTGRES__PASSWORD",
     ),
   },
+  softwareFactory: {
+    postgresPassword: secret(
+      "Software Factory Postgres",
+      "password",
+      "SOFTWARE_FACTORY_POSTGRES__PASSWORD",
+    ),
+  },
   github: {
     ghcrPat: secret("GitHub Personal Access Token", "token", "GITHUB_PERSONAL_ACCESS_TOKEN__TOKEN"),
   },
@@ -574,11 +578,7 @@ function databasePasswordFor(product: ProductIdentity): SecretCatalogEntry {
     case "captive-portal":
       return secretCatalog.captivePortal.postgresPassword;
     case "software-factory":
-      // No database, by design (ADR-0011): no CNPG cluster, no owner, no
-      // password. Reaching here means defineProductDatabase was called on a
-      // product that has none, which is a programming error rather than a
-      // missing catalog entry.
-      throw new Error("software-factory has no product database");
+      return secretCatalog.softwareFactory.postgresPassword;
   }
   return assertNever(product.slug);
 }
@@ -850,4 +850,32 @@ export function controlCenterProductManifest(): ControlCenterProductManifest {
     database,
     backup,
   };
+}
+
+export type SoftwareFactoryProductManifest = Readonly<{
+  product: ProductIdentity;
+  target: HomelabTarget;
+  database: ProductDatabase;
+  backup: DatabaseBackup;
+}>;
+
+/** The factory's empty durable record, kept separate from its Go application wiring. */
+export function softwareFactoryProductManifest(): SoftwareFactoryProductManifest {
+  const product = defineProduct("software-factory");
+  const target = homelabTarget;
+  const database = defineProductDatabase(product, target, {
+    authPassword: secretCatalog.softwareFactory.postgresPassword,
+    authSecretName: "software-factory-postgres-auth",
+    clusterName: "software-factory-postgres",
+    // ADR-0012 estimates retained transcripts at single-digit MB/year. ADR-0009
+    // makes this a hard local-LVM reservation, so start honestly and expand online.
+    size: "1Gi",
+  });
+  const backup = defineDatabaseBackup(database, target, {
+    name: "software-factory-pg-backup",
+    nasSubPathParts: ["backups", "world-wide-webb", "software-factory", "postgres"],
+    schedule: "0 1 * * *",
+  });
+
+  return { product, target, database, backup };
 }

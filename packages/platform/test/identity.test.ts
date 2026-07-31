@@ -6,8 +6,7 @@ describe("product identity", () => {
     expect(productSlugs).toEqual(["control-center", "captive-portal", "software-factory"]);
   });
 
-  // Image naming is the ONLY thing software-factory's product identity is for
-  // (ADR-0011): it has no namespace here, no database and no deploy of its own.
+  // Software Factory's product identity derives its worker/sandbox image names.
   test("derives software-factory image identity from the product slug", () => {
     const factory = defineProduct("software-factory");
 

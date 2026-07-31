@@ -2,14 +2,9 @@
 // Temporal worker that works GitHub tickets, and the per-ticket sandboxes it
 // runs agent-authored code in.
 //
-// L1: NOT in cluster.ts's closed InfraNamespaceName map — this module creates
-// its own namespace, the same way homeassistant.ts and temporal.ts do. That map
-// is derived from `ProductSlug`, and while software-factory IS a ProductSlug
-// (for image naming — its images are `www-software-factory-*`), it is excluded
-// from InfraNamespaceName deliberately: it has no CNPG database, no ESO secrets
-// and no part in the control-center deploy, and widening that union would force
-// an entry in every `Record<InfraNamespaceName, …>` consumer for a namespace
-// that needs none of them.
+// The shared cluster namespace map creates this namespace because the factory
+// now owns a CNPG Cluster and nightly database backup. This installer owns the
+// namespace-local worker resources and its sandbox isolation boundary.
 //
 // Why its own namespace at all, rather than running in `control-center`: the
 // sandbox executes code an agent wrote. That boundary wants its own RBAC,
@@ -190,6 +185,8 @@ const temporalUiBaseUrl = (): string =>
 
 export interface SoftwareFactoryArgs {
   provider: k8s.Provider;
+  /** The shared namespace that orders the factory's CNPG and worker resources. */
+  namespace: k8s.core.v1.Namespace;
   /**
    * Decrypted vault (vault.ts): the GHCR pull token (the worker and sandbox
    * images are private; the separately installed relay has its own copy)
@@ -222,25 +219,15 @@ export interface SoftwareFactoryResources {
 }
 
 /**
- * @public - installs the `software-factory` namespace and the worker that runs
- * in it. The sandbox image is deliberately not a workload here: the worker
+ * @public - installs the worker in the shared `software-factory` namespace. The sandbox image is deliberately not a workload here: the worker
  * creates those pods itself at runtime, from the digest-pinned ref below.
  */
 export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFactoryResources {
-  const { provider, vault, imageDigests, nasNfsServer, requireImageDigestPins } = args;
+  const { provider, namespace, vault, imageDigests, nasNfsServer, requireImageDigestPins } = args;
   const opts = { provider };
 
   if (requireImageDigestPins) assertImageDigestPins("software-factory", imageDigests);
 
-  // No Pod Security label: the cluster-default `baseline` applies. The sandbox
-  // needs hardening, not privilege, so nothing here should be relaxing
-  // admission for the whole namespace — anything that needs more has to argue
-  // for it at the point it lands, the way homeassistant.ts does.
-  const namespace = new k8s.core.v1.Namespace(
-    SOFTWARE_FACTORY_NAMESPACE,
-    { metadata: { name: SOFTWARE_FACTORY_NAMESPACE } },
-    opts,
-  );
   const namespaceName = namespace.metadata.name;
   const inNamespace = { ...opts, dependsOn: [namespace] };
 

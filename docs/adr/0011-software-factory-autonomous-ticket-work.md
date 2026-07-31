@@ -342,13 +342,10 @@ rather than a substitute. The storage cost of that choice is deliberately deferr
 revisit ~2027-01. Retention is a per-entry field, so changing it for one namespace is a
 one-word edit.
 
-The **k8s namespace** is `infra/src/software-factory.ts`, a module owning its own namespace
-the way `homeassistant.ts` and `temporal.ts` do, rather than an entry in `cluster.ts`'s
-closed `InfraNamespaceName` map. That map derives from `ProductSlug`, and the software
-factory is not a `@www/platform` product: no web/api image, no CNPG database, no part in the
-control-center deploy. Widening `ProductSlug` to reach it would force an entry in every
-`Record<InfraNamespaceName, …>` consumer — ESO, CNPG, crons, GHCR pull secrets — for a
-namespace that needs none of them.
+The **k8s namespace** is an entry in `cluster.ts`'s closed `InfraNamespaceName` map. Software
+Factory is a `@www/platform` product and its product-owned CNPG Cluster and backup CronJob use
+that shared map; `software-factory.ts` owns only its namespace-local worker resources. It has no
+web/API workload or ESO service-secret usage, so those consumers have no factory declaration.
 
 It carries no Pod Security label, so the cluster-default `baseline` applies. The sandbox
 needs hardening, not privilege; anything wanting `privileged` argues for it where it lands,

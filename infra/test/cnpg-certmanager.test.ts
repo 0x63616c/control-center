@@ -35,10 +35,12 @@ const provider = () => new k8s.Provider("test", { context: "x" });
 // removed the captive-portal CNPG cluster + namespace).
 const mockVault: Record<string, string> = {
   CONTROL_CENTER_POSTGRES__PASSWORD: "mock-cc-pw",
+  SOFTWARE_FACTORY_POSTGRES__PASSWORD: "mock-software-factory-pw",
 };
 
 const testNamespaces = {
   "control-center": "control-center",
+  "software-factory": "software-factory",
   cloudflare: "cloudflare",
 } as const;
 
@@ -84,13 +86,7 @@ describe("installCnpg", () => {
     expect(stringData.username).toBe("postgres");
   });
 
-  // Regression (SDD track 0, Task 6): productDatabases() used to also return
-  // captive-portal's database + its retainedLegacyDatabases (2 extra
-  // Clusters), so installCnpg produced 3 clusters/authSecrets. Its CNPG
-  // cluster + namespace were torn down (one live row copied into
-  // control_center, a final pg_dump taken to the NAS first); this pins that
-  // only the control-center database remains.
-  test("installs exactly the control-center product database (captive-portal's CNPG cluster is gone)", async () => {
+  test("installs the two declared product databases", async () => {
     const res = cnpg.installCnpg({
       provider: provider(),
       namespaces: testNamespaces,
@@ -98,18 +94,18 @@ describe("installCnpg", () => {
       vault: mockVault,
     });
 
-    // One cluster again now #111 is finished: the manifest names it
-    // "control-center-postgres" and the drained legacy "control-center"
-    // Cluster CR was deleted as the migration's final step.
-    expect(res.clusters).toHaveLength(1);
-    expect(res.authSecrets).toHaveLength(1);
+    expect(res.clusters).toHaveLength(2);
+    expect(res.authSecrets).toHaveLength(2);
 
     const clusterSpecs = await Promise.all(
       res.clusters.map((cluster) =>
         get<{ bootstrap: { initdb: { database: string } } }>(cluster, "spec"),
       ),
     );
-    expect(clusterSpecs.map((spec) => spec.bootstrap.initdb.database)).toEqual(["control_center"]);
+    expect(clusterSpecs.map((spec) => spec.bootstrap.initdb.database)).toEqual([
+      "control_center",
+      "software_factory",
+    ]);
   });
 
   test("creates the control-center database resources in its owning namespace", async () => {
@@ -132,6 +128,12 @@ describe("installCnpg", () => {
     );
     expect(secretMetadata.find((m) => m.name === "cc-postgres-auth")?.namespace).toBe(
       "control-center",
+    );
+    expect(clusterMetadata.find((m) => m.name === "software-factory-postgres")?.namespace).toBe(
+      "software-factory",
+    );
+    expect(secretMetadata.find((m) => m.name === "software-factory-postgres-auth")?.namespace).toBe(
+      "software-factory",
     );
   });
 });

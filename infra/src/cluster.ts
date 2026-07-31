@@ -17,14 +17,11 @@ export const CLOUDFLARE_NAMESPACE = "cloudflare";
 // itself still includes it , this Exclude is what actually stops a
 // "captive-portal" k8s Namespace from being created again.
 //
-// "software-factory" is excluded for a different reason (ADR-0011, #343): it IS
-// a live product, but only for image naming. Its namespace is created by
-// software-factory.ts, the way homeassistant.ts and temporal.ts create theirs.
-// Letting it into this union would force an entry in every
-// `Record<InfraNamespaceName, …>` consumer , eso, cnpg, crons, ghcr-pull-secrets
-// , for a namespace that wants none of them.
+// Software Factory is included because its product-owned CNPG Cluster and
+// backup CronJob need the shared namespace map. Captive Portal remains absent:
+// its namespace and database were intentionally retired.
 export type InfraNamespaceName =
-  | Exclude<ProductSlug, "captive-portal" | "software-factory">
+  | Exclude<ProductSlug, "captive-portal">
   | typeof CLOUDFLARE_NAMESPACE;
 export type InfraNamespaces = Readonly<Record<InfraNamespaceName, k8s.core.v1.Namespace>>;
 
@@ -64,6 +61,7 @@ export function makeCluster(context: string = DEFAULT_CONTEXT): ClusterResources
   // back to `[...productSlugs, CLOUDFLARE_NAMESPACE]`.
   const namespaceNames = [
     "control-center",
+    "software-factory",
     CLOUDFLARE_NAMESPACE,
   ] as const satisfies readonly InfraNamespaceName[];
   const namespaces = Object.fromEntries(

@@ -41,9 +41,14 @@ const digests = {
   "software-factory-relay": `sha256:${"c".repeat(64)}`,
 };
 
+const namespace = new k8s.core.v1.Namespace("software-factory-test-namespace", {
+  metadata: { name: "software-factory" },
+});
+
 const install = (imageDigests: Record<string, string> = {}, requireImageDigestPins = false) =>
   softwareFactory.installSoftwareFactory({
     provider: new k8s.Provider("test", { context: "x" }),
+    namespace,
     vault,
     imageDigests,
     nasNfsServer: "192.168.0.218",
@@ -105,9 +110,10 @@ async function deploymentSpec(imageDigests: Record<string, string> = {}): Promis
 }
 
 describe("installSoftwareFactory namespace (ADR-0011, issue #325, talos-only)", () => {
-  test("creates its own 'software-factory' namespace, outside InfraNamespaceName", async () => {
+  test("uses the shared 'software-factory' namespace", async () => {
     const meta = await get<{ name: string }>(install().namespace, "metadata");
     expect(meta.name).toBe("software-factory");
+    expect(install().namespace).toBe(namespace);
     expect(softwareFactory.SOFTWARE_FACTORY_NAMESPACE).toBe("software-factory");
   });
 
