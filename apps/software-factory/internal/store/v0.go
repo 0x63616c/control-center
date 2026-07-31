@@ -22,6 +22,17 @@ var ErrTicketClaimed = errors.New("ticket already has an active run")
 // ErrRunOwnership reports a terminal operation naming a stale owner.
 var ErrRunOwnership = errors.New("run does not own ticket")
 
+// ErrActiveTicketOwnership reports an attempt to create target ownership outside
+// ClaimAndStartRun.
+var ErrActiveTicketOwnership = errors.New("active ticket ownership is store-managed")
+
+// ErrAgentAttemptStep reports an Agent Attempt whose parent is not its matching
+// agent-backed Step.
+var ErrAgentAttemptStep = errors.New("agent attempt requires matching agent step")
+
+// ErrMergeStep reports confirmed merge evidence without its running Merge Step.
+var ErrMergeStep = errors.New("confirmed merge requires running merge step")
+
 // TargetRunClaimer is the target workflow's atomic admission boundary.
 type TargetRunClaimer interface {
 	ClaimAndStartRun(context.Context, ClaimRunInput) (ClaimRunResult, error)
@@ -329,6 +340,9 @@ func (s *Store) StartAgentAttempt(ctx context.Context, in StartAgentAttemptInput
 	}
 	row, err := s.q.StartTargetAgentAttempt(ctx, storedb.StartTargetAgentAttemptParams{RunID: id, StepOrdinal: int32(in.ID.StepOrdinal), AttemptNo: int32(in.ID.AttemptNo), AgentStage: string(in.AgentStage), Model: in.Model.Name, Effort: in.Model.Effort, UsageState: string(in.UsageState), StartedAt: pgTimestamp(in.StartedAt)})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return AgentAttempt{}, fmt.Errorf("starting agent attempt %s: %w", in.ID, ErrAgentAttemptStep)
+		}
 		return AgentAttempt{}, fmt.Errorf("starting agent attempt %s: %w", in.ID, wrapQueryErr(err))
 	}
 	return agentAttemptFromRow(row), nil
@@ -564,7 +578,10 @@ func (s *Store) FinalizeConfirmedMerge(ctx context.Context, in ConfirmedMergeInp
 	if err != nil {
 		return TerminalResult{}, err
 	}
-	if _, err := q.CompleteTargetStep(ctx, storedb.CompleteTargetStepParams{RunID: id, Ordinal: int32(in.StepOrdinal), EndedAt: pgTimestamp(in.EndedAt), Result: stepResult}); err != nil {
+	if _, err := q.CompleteTargetMergeStep(ctx, storedb.CompleteTargetMergeStepParams{RunID: id, Ordinal: int32(in.StepOrdinal), EndedAt: pgTimestamp(in.EndedAt), Result: stepResult}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return TerminalResult{}, fmt.Errorf("finalizing merge: %w", ErrMergeStep)
+		}
 		return TerminalResult{}, fmt.Errorf("finalizing merge: completing step: %w", wrapQueryErr(err))
 	}
 	completedRun, err := q.CompleteTargetRunSuccess(ctx, storedb.CompleteTargetRunSuccessParams{ID: id, ReviewedHead: pgOptionalText(in.ReviewedHead), MergeSha: pgOptionalText(in.MergeSHA), EndedAt: pgTimestamp(in.EndedAt)})
@@ -627,7 +644,10 @@ func reconcileConfirmedMergeAfterCancellation(
 	if err != nil {
 		return TerminalResult{}, err
 	}
-	if _, err := q.CompleteTargetStep(ctx, storedb.CompleteTargetStepParams{RunID: runID, Ordinal: int32(in.StepOrdinal), EndedAt: pgTimestamp(in.EndedAt), Result: stepResult}); err != nil {
+	if _, err := q.CompleteTargetMergeStep(ctx, storedb.CompleteTargetMergeStepParams{RunID: runID, Ordinal: int32(in.StepOrdinal), EndedAt: pgTimestamp(in.EndedAt), Result: stepResult}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return TerminalResult{}, fmt.Errorf("reconciling confirmed merge: %w", ErrMergeStep)
+		}
 		return TerminalResult{}, fmt.Errorf("reconciling confirmed merge: completing step: %w", wrapQueryErr(err))
 	}
 	completedRun, err := q.ReconcileCanceledTargetRunSuccess(ctx, storedb.ReconcileCanceledTargetRunSuccessParams{ID: runID, ReviewedHead: pgOptionalText(in.ReviewedHead), MergeSha: pgOptionalText(in.MergeSHA), EndedAt: pgTimestamp(in.EndedAt)})

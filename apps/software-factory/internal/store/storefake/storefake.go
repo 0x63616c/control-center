@@ -179,6 +179,9 @@ func (f *Store) Tickets(_ context.Context) ([]store.Ticket, error) {
 func (f *Store) UpdateTicketState(_ context.Context, id store.TicketID, state store.TicketState) (store.Ticket, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if state == store.TicketActive {
+		return store.Ticket{}, fmt.Errorf("moving ticket %d to active: %w", id, store.ErrActiveTicketOwnership)
+	}
 	t, ok := f.tickets[id]
 	if !ok {
 		return store.Ticket{}, fmt.Errorf("ticket %d: %w", id, errNotFound)
@@ -193,6 +196,9 @@ func (f *Store) UpdateTicketState(_ context.Context, id store.TicketID, state st
 func (f *Store) TransitionTicketState(_ context.Context, id store.TicketID, from, to store.TicketState) (store.Ticket, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if to == store.TicketActive {
+		return store.Ticket{}, fmt.Errorf("transitioning ticket %d to active: %w", id, store.ErrActiveTicketOwnership)
+	}
 	ticket, ok := f.tickets[id]
 	if !ok || ticket.State != from {
 		return store.Ticket{}, fmt.Errorf("ticket %d: %w", id, store.ErrNotFound)
