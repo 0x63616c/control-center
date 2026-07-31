@@ -9,7 +9,7 @@ import {
   type ImageDigests,
 } from "./services.ts";
 
-export const WEBHOOK_RELAY_NAMESPACE = "webhook-relay";
+const WEBHOOK_RELAY_NAMESPACE = "webhook-relay";
 export function installWebhookRelay(args: {
   provider: k8s.Provider;
   vault: Record<string, string>;
