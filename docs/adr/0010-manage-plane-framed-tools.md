@@ -2,9 +2,9 @@
 
 `manage.worldwidewebb.co` is Manage, a two-column web app with a grouped sidebar of the tools we operate on
 the left, the selected tool live in a same-page `<iframe>` on the right. It replaces the bookmark
-folder: Control Center, Home Assistant, Plex, Grafana, Temporal, pgAdmin, Storybook, Cloudflare,
-Cloudflare Zero Trust, Pulumi, Tailscale, UniFi, Synology and GitHub in one place, one keystroke
-apart, each keeping its state while you switch away and back.
+folder: Control Center, Home Assistant, Plex, Grafana, Temporal, pgAdmin, Cloudflare, Cloudflare
+Zero Trust, Pulumi, Tailscale, UniFi, Synology, Software Factory and GitHub in one place, one
+keystroke apart, each keeping its state while you switch away and back.
 
 It ships as another control-center *service* (`apps/manage/`), declared in
 `controlCenterProductManifest()` exactly like `storybook`, so its tunnel route and Access app fall
