@@ -174,6 +174,42 @@ func (q *Queries) CompleteCanceledTargetTicket(ctx context.Context, id int64) (T
 	return i, err
 }
 
+const completeTargetMergeStep = `-- name: CompleteTargetMergeStep :one
+UPDATE run_step SET state = 'completed', ended_at = $3, result = $4
+WHERE run_id = $1 AND ordinal = $2 AND kind = 'merge_pull_request'
+  AND (state = 'running' OR (state = 'completed' AND result = $4))
+RETURNING run_id, ordinal, kind, iteration, reason, state, started_at, ended_at, result
+`
+
+type CompleteTargetMergeStepParams struct {
+	RunID   pgtype.UUID
+	Ordinal int32
+	EndedAt pgtype.Timestamptz
+	Result  []byte
+}
+
+func (q *Queries) CompleteTargetMergeStep(ctx context.Context, arg CompleteTargetMergeStepParams) (RunStep, error) {
+	row := q.db.QueryRow(ctx, completeTargetMergeStep,
+		arg.RunID,
+		arg.Ordinal,
+		arg.EndedAt,
+		arg.Result,
+	)
+	var i RunStep
+	err := row.Scan(
+		&i.RunID,
+		&i.Ordinal,
+		&i.Kind,
+		&i.Iteration,
+		&i.Reason,
+		&i.State,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.Result,
+	)
+	return i, err
+}
+
 const completeTargetRunCanceled = `-- name: CompleteTargetRunCanceled :one
 UPDATE run SET target_outcome = 'canceled', target_failure_kind = '', ended_at = $2
 WHERE id = $1 AND target_outcome IS NULL
@@ -484,7 +520,9 @@ const startTargetAgentAttempt = `-- name: StartTargetAgentAttempt :one
 INSERT INTO run_agent_attempt (
     run_id, step_ordinal, attempt_no, agent_stage, model, effort, state,
     usage_state, started_at
-) VALUES ($1, $2, $3, $4, $5, $6, 'running', $7, $8)
+) SELECT $1, $2, $3, $4, $5, $6, 'running', $7, $8
+FROM run_step
+WHERE run_id = $1 AND ordinal = $2 AND kind = $4
 ON CONFLICT (run_id, step_ordinal, attempt_no) DO UPDATE SET run_id = run_agent_attempt.run_id
 RETURNING run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, provider_thread_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result, checkpoint_capability_hash
 `

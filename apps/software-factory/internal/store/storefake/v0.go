@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sort"
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
@@ -63,12 +64,43 @@ func (f *Store) CompleteStep(_ context.Context, runID string, ordinal int, ended
 	return step, nil
 }
 
+// TargetRunDetail reads target Steps and their Agent Attempts in durable order.
+func (f *Store) TargetRunDetail(_ context.Context, runID string) (store.TargetRunDetail, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	run, ok := f.runs[runID]
+	if !ok {
+		return store.TargetRunDetail{}, fmt.Errorf("run %s: %w", runID, store.ErrNotFound)
+	}
+	steps := make([]store.TargetStepDetail, 0)
+	for key, step := range f.targetSteps {
+		if key.runID == runID {
+			steps = append(steps, store.TargetStepDetail{Step: step})
+		}
+	}
+	sort.Slice(steps, func(left, right int) bool {
+		return steps[left].Step.Ordinal < steps[right].Step.Ordinal
+	})
+	for index := range steps {
+		for id, attempt := range f.targetAttempts {
+			if id.RunID == runID && id.StepOrdinal == steps[index].Step.Ordinal {
+				steps[index].Attempts = append(steps[index].Attempts, attempt)
+			}
+		}
+		sort.Slice(steps[index].Attempts, func(left, right int) bool {
+			return steps[index].Attempts[left].ID.AttemptNo < steps[index].Attempts[right].ID.AttemptNo
+		})
+	}
+	return store.TargetRunDetail{Run: run, Steps: steps}, nil
+}
+
 // StartAgentAttempt records one agent execution under an existing target Step.
 func (f *Store) StartAgentAttempt(_ context.Context, in store.StartAgentAttemptInput) (store.AgentAttempt, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if _, ok := f.targetSteps[targetStepKey{runID: in.ID.RunID, ordinal: in.ID.StepOrdinal}]; !ok {
-		return store.AgentAttempt{}, fmt.Errorf("step %d: %w", in.ID.StepOrdinal, store.ErrNotFound)
+	step, ok := f.targetSteps[targetStepKey{runID: in.ID.RunID, ordinal: in.ID.StepOrdinal}]
+	if !ok || !in.AgentStage.MatchesStep(step.Kind) {
+		return store.AgentAttempt{}, fmt.Errorf("starting agent attempt %s: %w", in.ID, store.ErrAgentAttemptStep)
 	}
 	if attempt, ok := f.targetAttempts[in.ID]; ok {
 		return attempt, nil
@@ -95,6 +127,14 @@ func (f *Store) CheckpointAgentAttempt(_ context.Context, in store.AgentCheckpoi
 	defer f.mu.Unlock()
 	if err := in.Validate(); err != nil {
 		return store.AgentAttempt{}, err
+	}
+	run, ok := f.runs[in.ID.RunID]
+	if !ok {
+		return store.AgentAttempt{}, fmt.Errorf("checkpoint: %w", store.ErrRunOwnership)
+	}
+	ticket, ok := f.tickets[run.TicketID]
+	if !ok || ticket.State != store.TicketActive || ticket.ActiveRunID != in.ID.RunID {
+		return store.AgentAttempt{}, fmt.Errorf("checkpoint: %w", store.ErrRunOwnership)
 	}
 	if f.capabilityHash[in.ID] != in.Capability {
 		return store.AgentAttempt{}, fmt.Errorf("checkpoint: %w", store.ErrRunOwnership)
@@ -175,23 +215,38 @@ func (f *Store) FinalizeConfirmedMerge(_ context.Context, in store.ConfirmedMerg
 		return store.TerminalResult{}, fmt.Errorf("merge: %w", store.ErrRunOwnership)
 	}
 	ticket := f.tickets[in.TicketID]
-	if run.TargetOutcome != "" {
-		if run.TargetOutcome == work.RunOutcomeCanceled {
-			if ticket.State != store.TicketOpen || ticket.ActiveRunID != "" {
-				return store.TerminalResult{}, fmt.Errorf("merge: %w", store.ErrRunOwnership)
-			}
-			run.TargetOutcome, run.ReviewedHead, run.MergeSHA, run.EndedAt = work.RunOutcomeSucceeded, in.ReviewedHead, in.MergeSHA, in.EndedAt
-			ticket.State, ticket.UpdatedAt = store.TicketDone, f.clk.Now()
-			f.runs[in.RunID], f.tickets[in.TicketID] = run, ticket
-			return store.TerminalResult{Ticket: ticket, Run: run}, nil
-		}
+	if run.TargetOutcome != "" && run.TargetOutcome != work.RunOutcomeCanceled {
 		if run.TargetOutcome != work.RunOutcomeSucceeded || run.MergeSHA != in.MergeSHA || run.ReviewedHead != in.ReviewedHead {
 			return store.TerminalResult{}, fmt.Errorf("merge: %w", work.ErrPermanent)
 		}
 		return store.TerminalResult{Ticket: f.tickets[in.TicketID], Run: run}, nil
 	}
-	if ticket.State != store.TicketActive || ticket.ActiveRunID != in.RunID {
+	stepKey := targetStepKey{runID: in.RunID, ordinal: in.StepOrdinal}
+	step, ok := f.targetSteps[stepKey]
+	if !ok || step.Kind != work.StepMergePullRequest || step.State != work.StepStateRunning {
+		return store.TerminalResult{}, fmt.Errorf("merge: %w", store.ErrMergeStep)
+	}
+	if run.TargetOutcome == work.RunOutcomeCanceled {
+		if ticket.State != store.TicketOpen || ticket.ActiveRunID != "" {
+			return store.TerminalResult{}, fmt.Errorf("merge: %w", store.ErrRunOwnership)
+		}
+	} else if ticket.State != store.TicketActive || ticket.ActiveRunID != in.RunID {
 		return store.TerminalResult{}, fmt.Errorf("merge: %w", store.ErrRunOwnership)
+	}
+	result, err := json.Marshal(struct {
+		Kind     string `json:"kind"`
+		MergeSHA string `json:"merge_sha"`
+	}{Kind: "merged", MergeSHA: in.MergeSHA})
+	if err != nil {
+		return store.TerminalResult{}, fmt.Errorf("encoding confirmed merge result: %w", err)
+	}
+	step.State, step.EndedAt, step.Result = work.StepStateCompleted, in.EndedAt, result
+	f.targetSteps[stepKey] = step
+	if run.TargetOutcome == work.RunOutcomeCanceled {
+		run.TargetOutcome, run.ReviewedHead, run.MergeSHA, run.EndedAt = work.RunOutcomeSucceeded, in.ReviewedHead, in.MergeSHA, in.EndedAt
+		ticket.State, ticket.UpdatedAt = store.TicketDone, f.clk.Now()
+		f.runs[in.RunID], f.tickets[in.TicketID] = run, ticket
+		return store.TerminalResult{Ticket: ticket, Run: run}, nil
 	}
 	run.TargetOutcome, run.ReviewedHead, run.MergeSHA, run.EndedAt = work.RunOutcomeSucceeded, in.ReviewedHead, in.MergeSHA, in.EndedAt
 	ticket.State, ticket.ActiveRunID, ticket.UpdatedAt = store.TicketDone, "", f.clk.Now()

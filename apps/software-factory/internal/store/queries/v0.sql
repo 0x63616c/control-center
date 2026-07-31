@@ -30,6 +30,12 @@ WHERE run_id = $1 AND ordinal = $2
   AND (state = 'running' OR (state = 'completed' AND result = $4))
 RETURNING *;
 
+-- name: CompleteTargetMergeStep :one
+UPDATE run_step SET state = 'completed', ended_at = $3, result = $4
+WHERE run_id = $1 AND ordinal = $2 AND kind = 'merge_pull_request'
+  AND (state = 'running' OR (state = 'completed' AND result = $4))
+RETURNING *;
+
 -- name: TargetStepForRun :many
 SELECT * FROM run_step WHERE run_id = $1 ORDER BY ordinal;
 
@@ -37,7 +43,9 @@ SELECT * FROM run_step WHERE run_id = $1 ORDER BY ordinal;
 INSERT INTO run_agent_attempt (
     run_id, step_ordinal, attempt_no, agent_stage, model, effort, state,
     usage_state, started_at
-) VALUES ($1, $2, $3, $4, $5, $6, 'running', $7, $8)
+) SELECT $1, $2, $3, $4, $5, $6, 'running', $7, $8
+FROM run_step
+WHERE run_id = $1 AND ordinal = $2 AND kind = $4
 ON CONFLICT (run_id, step_ordinal, attempt_no) DO UPDATE SET run_id = run_agent_attempt.run_id
 RETURNING *;
 

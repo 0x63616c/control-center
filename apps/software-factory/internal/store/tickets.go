@@ -107,6 +107,9 @@ func (s *Store) TicketsByState(ctx context.Context, state TicketState) ([]Ticket
 
 // UpdateTicketState moves ticket id to state and returns the updated row.
 func (s *Store) UpdateTicketState(ctx context.Context, id TicketID, state TicketState) (Ticket, error) {
+	if state == TicketActive {
+		return Ticket{}, fmt.Errorf("moving ticket %d to active: %w", id, ErrActiveTicketOwnership)
+	}
 	row, err := s.q.UpdateTicketState(ctx, storedb.UpdateTicketStateParams{
 		ID:    int64(id),
 		State: state.String(),
@@ -119,6 +122,9 @@ func (s *Store) UpdateTicketState(ctx context.Context, id TicketID, state Ticket
 
 // TransitionTicketState atomically moves id only when it remains in from.
 func (s *Store) TransitionTicketState(ctx context.Context, id TicketID, from, to TicketState) (Ticket, error) {
+	if to == TicketActive {
+		return Ticket{}, fmt.Errorf("transitioning ticket %d to active: %w", id, ErrActiveTicketOwnership)
+	}
 	row, err := s.q.TransitionTicketState(ctx, storedb.TransitionTicketStateParams{ID: int64(id), State: from.String(), State_2: to.String()})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

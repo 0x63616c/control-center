@@ -94,6 +94,20 @@ const (
 	AgentStageReview AgentStage = "review"
 )
 
+// MatchesStep reports whether kind is the agent-backed Step for this stage.
+func (s AgentStage) MatchesStep(kind StepKind) bool {
+	switch s {
+	case AgentStagePlan:
+		return kind == StepPlan
+	case AgentStageImplement:
+		return kind == StepImplement
+	case AgentStageReview:
+		return kind == StepReview
+	default:
+		return false
+	}
+}
+
 // AgentAttemptState records one workflow-authorized agent execution.
 type AgentAttemptState string
 
