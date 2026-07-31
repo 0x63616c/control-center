@@ -1,3 +1,12 @@
+// Package workflows holds the two workflows this service runs: a dispatcher
+// that decides what is worked, and a FactoryWorkTicket run per Ticket that
+// works it.
+//
+// Everything here is replayed. Workflow code uses workflow.Now, workflow.Sleep
+// and workflow.Go, never time.Now, time.Sleep or a naked go statement, and it
+// performs no I/O of its own — every effect is an activity. A violation does
+// not fail the build; it corrupts a run days later, which is why the linter's
+// rules on this directory are wider than anywhere else in the module.
 package workflows
 
 import (

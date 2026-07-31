@@ -85,12 +85,3 @@ func red(checks ...string) activities.ObserveCIOutput {
 	}
 	return activities.ObserveCIOutput{Concluded: true, Green: false, RedChecks: checks, RedFailures: failures}
 }
-
-func redFailure(name, fingerprint string) activities.ObserveCIOutput {
-	return activities.ObserveCIOutput{Concluded: true, Green: false, RedChecks: []string{name}, RedFailures: []work.CheckFailure{{Name: name, Fingerprint: fingerprint}}}
-}
-
-// green is a concluded, passing ObserveCIOutput.
-func green() activities.ObserveCIOutput {
-	return activities.ObserveCIOutput{Concluded: true, Green: true}
-}

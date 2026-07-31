@@ -39,22 +39,6 @@ func sameCheckFailures(a, b []work.CheckFailure) bool {
 	return true
 }
 
-// sameCheckNamesSubset preserves the pre-failure-fingerprint version of rule
-// 1 for histories that recorded the old command path. Keep it until no
-// retained WorkTicket history can replay that version.
-func sameCheckNamesSubset(a []string, b []work.CheckFailure) bool {
-	set := make(map[string]struct{}, len(b))
-	for _, failure := range b {
-		set[failure.Name] = struct{}{}
-	}
-	for _, name := range a {
-		if _, ok := set[name]; !ok {
-			return false
-		}
-	}
-	return true
-}
-
 // intersects reports whether a and b share at least one element.
 //
 // This is rule 2: the same blocking review finding id held across two

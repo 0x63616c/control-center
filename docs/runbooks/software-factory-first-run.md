@@ -73,14 +73,14 @@ There is no way to make it go sooner; `WorkNow` was dropped deliberately.
 
 ## 3. Watch it — four windows
 
-**The ticket.** A comment per step, appended as the run goes: pickup, one per
-stage (posted running, edited to done/failed), then the outcome with token
-totals (#331). This is the fastest read on where the run is.
+**The console.** `factory.worldwidewebb.co`, over the run/step/attempt rows the
+run writes to Postgres as it goes. This is the fastest read on where the run is.
+The factory posts nothing to GitHub except the pull request itself (#559).
 
 **Temporal.** `temporal-ui` is ClusterIP with no public hostname:
 
     kubectl -n temporal port-forward svc/temporal-ui 8080:8080
-    # http://localhost:8080 → namespace software-factory → work-ticket-<n>
+    # http://localhost:8080 → namespace software-factory → factory-ticket-<id>
 
 For the CLI, the server image ships **no** `temporal` binary — `/usr/local/bin`
 holds only `temporal-server`. Use a throwaway admin-tools pod:
@@ -117,7 +117,7 @@ arrived in 4 of 5 runs of the form above, and in 1 of 3 of an earlier set.
 `workflow terminate`: the next lever up is 4, which stops every other in-flight
 ticket to stop one. Confirm rather than escalate —
 
-    … --namespace software-factory workflow describe --workflow-id work-ticket-<n>
+    … --namespace software-factory workflow describe --workflow-id factory-ticket-<id>
 
 — and read the status. A missing confirmation costs one more read; the wrong
 inference costs every other run.
@@ -161,17 +161,16 @@ started. On a first run this is where the boring failures live.
 | 403 on pod create / watch / exec | the worker Role is missing a verb — `watch` on `pods`, `get` on `pods/exec` | fix the Role (#343), not the code |
 | worker wedges during startup | the transcript volume mounted `hard`; an unreachable NFS server hangs inside `New` | must be `soft` with bounded `timeo`/`retrans` (#343) |
 | run keeps burning quota while rate-limited | detection is a heuristic on error text — ADR-0011 admits no structured event exists | expect false negatives; abort by hand (§5) |
-| status comment edit 404s | someone deleted the comment | policy is **undecided** (open on #331). Note what happened; do not invent one |
 | a plausible but wrong PR | the system working as designed | close it. This is the cost the design accepts |
 
 ## 5. Abort — four levers, least blast radius first
 
-1. **Remove `auto`.** `gh issue edit <n> --remove-label auto`. Stops new claims;
-   the in-flight run keeps going.
-2. **Pause the dispatcher.** `UpdateConfig` signal with the paused field set —
-   the control surface is one signal and one query (ADR-0011), sendable from the
-   Temporal UI or the CLI pod above. Leaves in-flight tickets running.
-3. **Terminate one ticket.** `workflow terminate --workflow-id work-ticket-<n>`
+1. **Move the Ticket out of `open`.** Stops new claims; the in-flight run keeps
+   going.
+2. **Pause the dispatcher.** `POST /v1/factory/pause` on the API, which sends the
+   `UpdateConfig` signal — also sendable by hand from the Temporal UI or the CLI
+   pod above. Leaves in-flight Tickets running.
+3. **Terminate one Ticket.** `workflow terminate --workflow-id factory-ticket-<id>`
    from the CLI pod. **It often prints nothing even when it worked** (§3) —
    confirm with `workflow describe`, do not assume it failed and reach for 4.
    Its sandbox pod is not reaped by the terminate either — check
@@ -188,11 +187,10 @@ sessions own branches you cannot see (AGENTS.md).
 
 ## 6. Aftermath
 
-- [ ] Calum verifies the merged PR and its throwaway issue auto-closed through the
-      PR's canonical `Fixes #N` reference.
-- [ ] `gh issue edit <n> --remove-label auto`.
-- [ ] Record the run on #345: which stages ran, tokens spent (they are in the
-      outcome comment), what broke, what this file got wrong.
+- [ ] Calum verifies the merged PR, and that the merge webhook moved its Ticket
+      to `done`.
+- [ ] Record the run on #345: which stages ran, tokens spent (they are on the
+      Attempt rows, in the console), what broke, what this file got wrong.
 - [ ] Anything unvalidatable-until-prod that the run **did** validate — the
       `pods/exec` WebSocket→SPDY fallback, `CodeExitError` carrying the real exit
       code, rate-limit detection — gets said plainly on its own ticket. Those are
