@@ -170,7 +170,7 @@ export const TOOLS: readonly Tool[] = [
   // ── Code ─────────────────────────────────────────────────────────────────
   {
     id: "factory",
-    label: "Software Factory",
+    label: "The Software Factory",
     url: "https://factory.worldwidewebb.co",
     color: "#6366f1",
     mark: "SF",

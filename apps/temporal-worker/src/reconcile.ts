@@ -16,6 +16,7 @@
  * up green with nothing ever being scheduled.
  */
 import { type Client, ScheduleAlreadyRunning, ScheduleOverlapPolicy } from "@temporalio/client";
+import type { Duration } from "@temporalio/common";
 import type { Logger } from "@www/logger";
 import type { GeneratedSchedule } from "../../../features/_generated/schedules.gen";
 
@@ -31,7 +32,18 @@ const MANAGED_PREFIX = "app_";
 const LEGACY_SCHEDULE_IDS: readonly string[] = ["health-check"];
 
 const DEFAULT_TIMEZONE = "America/Los_Angeles";
-const DEFAULT_CATCHUP_WINDOW = "1 minute";
+const DEFAULT_CATCHUP_WINDOW: Duration = "1 minute";
+
+/**
+ * Generated schedules carry ms-style duration strings ("30 minutes") but are
+ * typed as plain `string` in schedules.gen.ts; Temporal's Duration is the
+ * ms template-literal union, so plain string no longer assigns now that
+ * real `@types/ms` typings are in the tree. The apps-gen validator is the
+ * owner of the format; this cast just records that contract for TS.
+ */
+function asDuration(value: string): Duration {
+  return value as Duration;
+}
 
 export interface ReconcileSchedulesArgs {
   readonly client: Client;
@@ -52,7 +64,7 @@ export async function reconcileSchedules(args: ReconcileSchedulesArgs): Promise<
       workflowType: s.workflowType,
       taskQueue,
       args: s.argsJson === undefined ? [] : [JSON.parse(s.argsJson) as unknown],
-      ...(s.timeout === undefined ? {} : { workflowExecutionTimeout: s.timeout }),
+      ...(s.timeout === undefined ? {} : { workflowExecutionTimeout: asDuration(s.timeout) }),
     } as const;
     const spec = {
       cronExpressions: [s.cron],
@@ -62,7 +74,8 @@ export async function reconcileSchedules(args: ReconcileSchedulesArgs): Promise<
       // SKIP, always: these are cron-shaped runs; a backlog of catch-up
       // executions tells you nothing the missed-run gap in history doesn't.
       overlap: ScheduleOverlapPolicy.SKIP,
-      catchupWindow: s.catchupWindow ?? DEFAULT_CATCHUP_WINDOW,
+      catchupWindow:
+        s.catchupWindow === undefined ? DEFAULT_CATCHUP_WINDOW : asDuration(s.catchupWindow),
     } as const;
 
     try {
