@@ -43,12 +43,13 @@ func TestAwaitCIReadsOneExactCommitSnapshotAndReturnsGreenRequiredChecks(t *test
 	}
 }
 
-func TestAwaitCIRetriesPendingOrAbsentRequiredChecksAfterFifteenSeconds(t *testing.T) {
+func TestAwaitCIRetriesUnconcludedRequiredChecksAfterFifteenSeconds(t *testing.T) {
 	t.Parallel()
 
 	for name, checks := range map[string][]work.CheckRun{
-		"pending": {{Name: "build", Completed: false}},
-		"absent":  {{Name: "unrelated", Completed: true, Conclusion: "success"}},
+		"pending":   {{Name: "build", Completed: false}},
+		"absent":    {{Name: "unrelated", Completed: true, Conclusion: "success"}},
+		"cancelled": {{Name: "build", Completed: true, Conclusion: "cancelled"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -61,7 +62,7 @@ func TestAwaitCIRetriesPendingOrAbsentRequiredChecksAfterFifteenSeconds(t *testi
 
 			_, err := e.ExecuteActivity(a.AwaitCI, AwaitCIInput{CommitSHA: "abc123", RequiredChecks: []string{"build"}})
 			if err == nil {
-				t.Fatal("pending or absent required CI must request a retry")
+				t.Fatal("unconcluded required CI must request a retry")
 			}
 			var app *temporal.ApplicationError
 			if !errors.As(err, &app) {

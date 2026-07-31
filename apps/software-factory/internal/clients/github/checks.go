@@ -73,7 +73,7 @@ func (c *Client) checksForRef(
 				Completed:  run.GetStatus() == "completed",
 				Conclusion: run.GetConclusion(),
 			}
-			if check.Completed && !check.Green() {
+			if check.Completed && !check.Green() && !check.Superseded() {
 				if includeFailureEvidence {
 					check.FailureEvidence = boundedCheckFailureEvidence(run)
 				}

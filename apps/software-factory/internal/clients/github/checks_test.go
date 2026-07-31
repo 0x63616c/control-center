@@ -68,6 +68,33 @@ func TestChecksForCommitIgnoresUnrelatedNonGreenChecksBeforeReadingTheirDetails(
 	}
 }
 
+func TestChecksForCommitReturnsARequiredCancelledCheckWithoutReadingFailureDetails(t *testing.T) {
+	t.Parallel()
+
+	const sha = "0a1b2c3d4e5f"
+	s, _ := newStub(t)
+	s.handle("GET /repos/"+testOwner+"/"+testRepo+"/commits/"+sha+"/check-runs", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"check_runs": []map[string]any{{
+			"id": 91, "name": "required", "status": "completed", "conclusion": "cancelled",
+		}}})
+	})
+	s.handle("GET /repos/"+testOwner+"/"+testRepo+"/check-runs/91/annotations", func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusInternalServerError, "cancelled check has no failure details")
+	})
+	c, _ := s.client(t)
+
+	checks, err := c.ChecksForCommit(t.Context(), sha, []string{"required"})
+	if err != nil {
+		t.Fatalf("ChecksForCommit: %v", err)
+	}
+	if len(checks) != 1 || !checks[0].Superseded() || checks[0].FailureEvidence != "" || checks[0].FailureFingerprint != "" {
+		t.Fatalf("checks = %+v, want one unenriched required cancelled check", checks)
+	}
+	if got := s.count("GET /repos/" + testOwner + "/" + testRepo + "/check-runs/91/annotations"); got != 0 {
+		t.Fatalf("cancelled-check annotation requests = %d, want none", got)
+	}
+}
+
 func TestChecksForRefFingerprintsFailedOutputAndEveryAnnotation(t *testing.T) {
 	t.Parallel()
 
