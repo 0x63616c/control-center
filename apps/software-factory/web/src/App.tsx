@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { AppHeader } from "@/components/AppHeader";
 import { Console } from "@/features/console/Console";
 import { useConsole } from "@/features/console/useConsole";
 import { TicketDetail } from "@/features/ticket-detail/TicketDetail";
@@ -46,6 +47,10 @@ function TicketDetailRoute({ ticketId }: { readonly ticketId: number }) {
 
 export function App() {
   const ticketId = ticketIdFromHash(useHash());
-  if (ticketId !== null) return <TicketDetailRoute ticketId={ticketId} />;
-  return <ConsoleRoute />;
+  return (
+    <>
+      <AppHeader />
+      {ticketId !== null ? <TicketDetailRoute ticketId={ticketId} /> : <ConsoleRoute />}
+    </>
+  );
 }

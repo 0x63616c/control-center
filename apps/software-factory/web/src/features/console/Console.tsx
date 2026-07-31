@@ -25,11 +25,6 @@ function updatedAgo(iso: string): string {
   return `${Math.floor(seconds / 86_400)}d ago`;
 }
 
-// Age shows the short relative form with the full local timestamp on hover.
-function Age({ iso }: { readonly iso: string }) {
-  return <span title={new Date(iso).toLocaleString()}>{updatedAgo(iso)}</span>;
-}
-
 // The state the machine is actively responsible for comes first; terminal
 // states last, so the top of the board is always the live work.
 const STATE_ORDER: Record<string, number> = {
@@ -139,7 +134,8 @@ function TicketTable({ tickets }: { readonly tickets: Ticket[] }) {
     <table className="ticket-table">
       <thead>
         <tr>
-          <th scope="col">Ticket</th>
+          <th scope="col">ID</th>
+          <th scope="col">Title</th>
           <th scope="col">State</th>
           <SortHeader
             label="Created"
@@ -162,25 +158,32 @@ function TicketTable({ tickets }: { readonly tickets: Ticket[] }) {
           const blockers = ticketBlockers(ticket);
           return (
             <Fragment key={ticket.id}>
-              <tr id={`ticket-${ticket.id}`}>
+              <tr
+                id={`ticket-${ticket.id}`}
+                className="ticket-row"
+                onClick={() => {
+                  window.location.hash = `#/tickets/${ticket.id}`;
+                }}
+              >
+                <td className="ticket-id">
+                  <a href={`#/tickets/${ticket.id}`}>#{ticket.id}</a>
+                </td>
                 <td>
-                  <a href={`#/tickets/${ticket.id}`}>
-                    #{ticket.id} {ticket.title}
-                  </a>
+                  <a href={`#/tickets/${ticket.id}`}>{ticket.title}</a>
                 </td>
                 <td>
                   <StatePill ticket={ticket} />
                 </td>
-                <td className="row-meta">
-                  <Age iso={ticket.createdAt} />
+                <td className="row-meta" title={new Date(ticket.createdAt).toLocaleString()}>
+                  {updatedAgo(ticket.createdAt)}
                 </td>
-                <td className="row-meta">
-                  <Age iso={ticket.updatedAt} />
+                <td className="row-meta" title={new Date(ticket.updatedAt).toLocaleString()}>
+                  {updatedAgo(ticket.updatedAt)}
                 </td>
               </tr>
               {blockers && (
                 <tr className="ticket-table-blockers">
-                  <td colSpan={4}>{blockers}</td>
+                  <td colSpan={5}>{blockers}</td>
                 </tr>
               )}
             </Fragment>
@@ -232,12 +235,6 @@ function Snapshot({
           current: {unconfirmedMessage}
         </section>
       )}
-      <header className="console-header">
-        <h1>The Software Factory</h1>
-        <span className={factory.paused ? "pill pill-blocked" : "pill pill-done"}>
-          {factory.paused ? "Paused" : "Running"}
-        </span>
-      </header>
       <main className="console-grid">
         <section aria-labelledby="in-flight-heading">
           <div className="row-line">
