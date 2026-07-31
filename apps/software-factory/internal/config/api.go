@@ -22,6 +22,7 @@ const (
 	envAPISandboxBearer    = "SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN"
 	envAPITemporalHost     = "TEMPORAL_HOST_PORT"
 	envAPITemporalNS       = "TEMPORAL_NAMESPACE"
+	envAPIWebhookSecret    = "GITHUB_BOT_APP__WEBHOOK_SECRET"
 )
 
 // API is the parsed startup configuration for the factory API process.
@@ -37,6 +38,10 @@ type API struct {
 	SandboxBearer     string
 	TemporalHostPort  string
 	TemporalNamespace string
+	// WebhookSecret is the GitHub App webhook secret internal/webhook verifies
+	// deliveries against — the same secret the relay (#535) verifies with,
+	// duplicated for the reason internal/webhook's own doc comment gives.
+	WebhookSecret []byte
 }
 
 // LoadAPI parses all API process configuration before any external work begins.
@@ -61,6 +66,7 @@ func LoadAPI() (API, error) {
 		SandboxBearer:     os.Getenv(envAPISandboxBearer),
 		TemporalHostPort:  os.Getenv(envAPITemporalHost),
 		TemporalNamespace: os.Getenv(envAPITemporalNS),
+		WebhookSecret:     []byte(os.Getenv(envAPIWebhookSecret)),
 	}
 	for _, required := range []struct{ name, value string }{
 		{envAPIDatabaseURL, cfg.DatabaseURL},
@@ -72,6 +78,7 @@ func LoadAPI() (API, error) {
 		{envAPISandboxBearer, cfg.SandboxBearer},
 		{envAPITemporalHost, cfg.TemporalHostPort},
 		{envAPITemporalNS, cfg.TemporalNamespace},
+		{envAPIWebhookSecret, string(cfg.WebhookSecret)},
 	} {
 		if strings.TrimSpace(required.value) == "" {
 			return API{}, fmt.Errorf("%s is required to start the API", required.name)

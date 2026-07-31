@@ -49,7 +49,7 @@ describe("installWebhookRelay", () => {
     ).toBe(8080);
   });
 
-  test("forwards only to control-center and reads the secret by reference", async () => {
+  test("forwards to control-center and the factory, and reads the secret by reference", async () => {
     const spec = await get<{
       template: {
         spec: {
@@ -68,6 +68,10 @@ describe("installWebhookRelay", () => {
         {
           name: "control-center",
           url: "http://api.control-center.svc.cluster.local:4201/hooks/github",
+        },
+        {
+          name: "software-factory",
+          url: "http://api.software-factory.svc.cluster.local:8080/v1/hooks/github",
         },
       ]),
     );

@@ -12,6 +12,7 @@ import {
   ghcrImage,
   type ImageDigests,
 } from "./services.ts";
+import { FACTORY_WEBHOOK_TARGET_URL } from "./software-factory.ts";
 
 /** WEBHOOK_RELAY_NAMESPACE isolates the public relay from its consumers. */
 export const WEBHOOK_RELAY_NAMESPACE = "webhook-relay";
@@ -112,6 +113,12 @@ export function installWebhookRelay(args: WebhookRelayArgs): WebhookRelayResourc
                         name: "control-center",
                         url: "http://api.control-center.svc.cluster.local:4201/hooks/github",
                       },
+                      // #557: the factory's own webhook consumer, so a merged
+                      // pull request marks its Ticket done. See
+                      // internal/webhook's own doc comment for why it stays
+                      // outside the API's normal auth and verifies the HMAC
+                      // itself.
+                      { name: "software-factory", url: FACTORY_WEBHOOK_TARGET_URL },
                     ]),
                   },
                   {

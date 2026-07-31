@@ -37,6 +37,7 @@ const vault = {
   SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN: "mock-worker-bearer",
   SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN: "mock-sandbox-bearer",
   SOFTWARE_FACTORY_CLOUDFLARE_ACCESS__TEAM_DOMAIN: "example.cloudflareaccess.com",
+  GITHUB_BOT_APP__WEBHOOK_SECRET: "mock-webhook-secret",
 };
 
 // NOT a vault key (#593): the caller (infra/program.ts) sources this from the
@@ -433,6 +434,7 @@ describe("factory API and console workloads (#554)", () => {
         "CLOUDFLARE_ACCESS_AUD",
         "SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN",
         "SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN",
+        "GITHUB_BOT_APP__WEBHOOK_SECRET",
         "TEMPORAL_HOST_PORT",
         "TEMPORAL_NAMESPACE",
       ]),
@@ -442,6 +444,10 @@ describe("factory API and console workloads (#554)", () => {
       apiContainer.env.find((env) => env.name === "SOFTWARE_FACTORY_DATABASE_PASSWORD")?.valueFrom
         ?.secretKeyRef,
     ).toEqual({ name: "software-factory-postgres-auth", key: "password" });
+    expect(
+      apiContainer.env.find((env) => env.name === "GITHUB_BOT_APP__WEBHOOK_SECRET")?.valueFrom
+        ?.secretKeyRef,
+    ).toEqual({ name: "software-factory-api-secrets", key: "GITHUB_BOT_APP__WEBHOOK_SECRET" });
     for (const deployment of [api, web]) {
       expect(
         deployment.template.spec.containers.flatMap((container) => container.volumeMounts ?? []),

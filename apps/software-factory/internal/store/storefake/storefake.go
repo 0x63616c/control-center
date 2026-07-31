@@ -43,6 +43,8 @@ type Store struct {
 
 	dispatcherState     store.DispatcherState
 	dispatcherStateSeen bool
+
+	webhookDeliveries map[string]bool
 }
 
 // Option configures a Store built by New.

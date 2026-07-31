@@ -76,6 +76,15 @@ const API_UID = 65532;
 const WEB_UID = 101;
 
 /**
+ * The factory's GitHub webhook consumer (#557), reached in-cluster only: the
+ * relay (webhook-relay.ts) forwards an authenticated GitHub delivery here as
+ * its second target, alongside control-center's. Exported so the relay names
+ * this URL rather than reconstructing the factory's own namespace, Service
+ * name and port — one fact, one owner.
+ */
+export const FACTORY_WEBHOOK_TARGET_URL = `http://${API_SERVICE_NAME}.${SOFTWARE_FACTORY_NAMESPACE}.svc.cluster.local:${API_PORT}/v1/hooks/github`;
+
+/**
  * Where the App's private key is mounted, and what GITHUB_APP_PRIVATE_KEY_PEM_FILE
  * points at. It holds the BASE64 TEXT of the PEM, not the PEM: the vault stores
  * it encoded (scripts/save-github-bot.sh writes `.pem | @base64`, so a
@@ -685,6 +694,7 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
                     "CLOUDFLARE_ACCESS_AUD",
                     "SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN",
                     "SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN",
+                    "GITHUB_BOT_APP__WEBHOOK_SECRET",
                   ].map((name) => ({
                     name,
                     valueFrom: { secretKeyRef: { name: API_SECRET_NAME, key: name } },
@@ -830,6 +840,11 @@ function createAPISecret(
         SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN: pulumi.secret(
           fromVault("SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN"),
         ),
+        // The same GitHub App webhook secret the relay verifies with
+        // (webhook-relay.ts) — internal/webhook (#557) verifies it a second
+        // time, deliberately, until #532 closes the sandbox network hole; see
+        // that package's own doc comment.
+        GITHUB_BOT_APP__WEBHOOK_SECRET: pulumi.secret(fromVault("GITHUB_BOT_APP__WEBHOOK_SECRET")),
       },
     },
     opts,

@@ -81,3 +81,8 @@ type Transcript struct {
 	UncompressedSizeBytes int64
 	Checksum              []byte
 }
+
+type WebhookDelivery struct {
+	DeliveryID string
+	ReceivedAt pgtype.Timestamptz
+}
