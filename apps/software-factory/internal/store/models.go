@@ -4,6 +4,80 @@
 
 package store
 
+import (
+	"github.com/jackc/pgx/v5/pgtype"
+)
+
+type Attempt struct {
+	RunID     pgtype.UUID
+	Stage     string
+	Turn      int32
+	AttemptNo int32
+	Model     string
+	Effort    string
+	// Includes cached_input_tokens.
+	InputTokens       int64
+	CachedInputTokens int64
+	// Includes reasoning_tokens.
+	OutputTokens    int64
+	ReasoningTokens int64
+	Measured        bool
+	StartedAt       pgtype.Timestamptz
+	EndedAt         pgtype.Timestamptz
+	Result          pgtype.Text
+}
+
+type DispatcherState struct {
+	Singleton        bool
+	Paused           bool
+	MaxInFlight      int32
+	BreakerOpenUntil pgtype.Timestamptz
+	BreakerReason    pgtype.Text
+	InFlight         []byte
+	NextTicketID     pgtype.Int8
+	WrittenAt        pgtype.Timestamptz
+}
+
 type MigrationProbe struct {
 	Present bool
+}
+
+type Run struct {
+	ID          pgtype.UUID
+	TicketID    int64
+	StartedAt   pgtype.Timestamptz
+	EndedAt     pgtype.Timestamptz
+	Outcome     pgtype.Text
+	FailureKind string
+}
+
+type Step struct {
+	RunID pgtype.UUID
+	Stage string
+	Turn  int32
+}
+
+type Ticket struct {
+	ID        int64
+	Title     string
+	Body      string
+	State     string
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
+type TicketEdge struct {
+	BlockerTicketID int64
+	BlockedTicketID int64
+}
+
+type Transcript struct {
+	RunID                 pgtype.UUID
+	Stage                 string
+	Turn                  int32
+	AttemptNo             int32
+	CompressedBytes       []byte
+	Compression           string
+	UncompressedSizeBytes int64
+	Checksum              []byte
 }
