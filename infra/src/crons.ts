@@ -131,6 +131,15 @@ export function haConfigBackupCronSpec(args: {
     name: "ha-config-backup",
     image: "alpine:3.20",
     schedule: "15 1 * * *",
+    // The live `ha-config` PVC (RWO, local-lvm) is already mounted rw by the
+    // running home-assistant pod on the same node; this cron mounts it a
+    // second time read-only. openebs's local-lvm CSI plugin has hit an
+    // idempotency bug on that second NodePublishVolume where the pod wedges
+    // in ContainerCreating forever ("device already mounted"), and
+    // concurrencyPolicy: Forbid then blocks every later scheduled run until
+    // someone manually deletes the stuck pod. Bound the job so a wedge
+    // self-clears instead: the tar itself finishes in seconds.
+    activeDeadlineSeconds: 300,
     // alpine's /bin/sh is busybox ash (no `pipefail`), and this command has no
     // pipe , plain `set -e` is sufficient and correct here, unlike
     // postgresBackupCommand's pg_dump-into-gzip pipe.

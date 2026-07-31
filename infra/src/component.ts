@@ -129,6 +129,11 @@ export interface CronJobSpec {
   volumes?: VolumeSpec[];
   secretName?: string;
   suspend?: boolean;
+  // Job-level wall-clock cap (seconds). Without this, a pod wedged in
+  // ContainerCreating/Running (e.g. a CSI NodePublishVolume idempotency bug
+  // that leaves it stuck forever, #<TBD>) blocks every future scheduled run
+  // under concurrencyPolicy: Forbid until someone manually deletes it.
+  activeDeadlineSeconds?: number;
   extraSecretMounts?: {
     secretName: string;
     mountPath: string;
@@ -247,6 +252,7 @@ interface CronJobArgs {
     failedJobsHistoryLimit: number;
     jobTemplate: {
       spec: {
+        activeDeadlineSeconds?: number;
         template: {
           metadata: { labels: Record<string, string> };
           spec: {
@@ -593,6 +599,9 @@ export function renderCronJob(c: CronJobSpec): RenderedCronJob {
       failedJobsHistoryLimit: 1,
       jobTemplate: {
         spec: {
+          ...(c.activeDeadlineSeconds !== undefined
+            ? { activeDeadlineSeconds: c.activeDeadlineSeconds }
+            : {}),
           template: {
             metadata: { labels },
             spec: {
