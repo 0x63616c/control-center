@@ -584,7 +584,7 @@ jobs:
           cache-scope: map-provision
 
 
-  # The software factory module's four Go images. One path filter serves all of
+  # The software factory module's five Go images. One path filter serves all of
   # them, so a shared edit cannot leave an existing Go component stale; the
   # TypeScript console has its own filter below.
   #
@@ -672,6 +672,22 @@ jobs:
           image: www-software-factory-api
           dockerfile: apps/software-factory/images/api/Dockerfile
           cache-scope: software-factory-api
+
+  build-software-factory-blobs:
+    needs: [changes]
+    if: needs.changes.outputs.softwarefactory == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build and push blob service image
+        uses: ./.github/actions/build-product-image
+        env:
+          SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
+        with:
+          image: www-software-factory-blobs
+          dockerfile: apps/software-factory/images/blobs/Dockerfile
+          cache-scope: software-factory-blobs
 
   # The console (ADR-0012, #553): a TypeScript SPA, built like any other bun
   # workspace image (build-manage's shape), not like the Go images above , its
