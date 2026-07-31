@@ -399,8 +399,8 @@ must not be used as an ambiguous name for both mechanisms.
 The target invariant is:
 
 > Every agent execution that may use Git or `gh` starts with a newly minted
-> sandbox GitHub credential with enough remaining lifetime for the entire
-> authorized execution.
+> sandbox GitHub credential and remains supplied with a valid credential for
+> the entire authorized execution.
 
 Minting remains worker-owned because the GitHub App private key must not enter
 the sandbox. The new token must be written into both sandbox credential files
@@ -408,16 +408,33 @@ without putting the token in Temporal workflow input, output, or history. This
 credential handoff supports an agent-backed Step; it is not itself a
 user-meaningful Step.
 
-The renewal boundary is every Agent Attempt. A worker-side supporting activity
-mints and installs the credential immediately before the sandbox-side agent
-activity starts. This is stricter than renewal per Step: every new agent-backed
-Step receives a fresh credential for Agent Attempt 1, and a later Agent Attempt
-within the same Step receives another one even if it begins much later.
+The renewal lifecycle is scoped to every Agent Attempt. A worker-side
+supporting activity mints and installs the credential immediately before the
+sandbox-side agent activity starts. While that Agent Attempt remains active,
+the workflow runs the agent activity and a credential-renewal loop
+concurrently. The loop mints and installs another credential every 30 minutes
+and stops when the Agent Attempt finishes.
 
-Native activity retries do not mint another token because they remain part of
-the same authorized Agent Attempt. The permitted total duration of one Agent
-Attempt, including its retries, must therefore remain safely below the
-installation token's lifetime.
+The agent receives a replacement without restarting. Git's configured
+credential helper reads its credential file for each remote operation, and
+each new `gh` process reads `hosts.yml` through `GH_CONFIG_DIR`. Each file must
+be written to a sibling temporary file with mode `0600` and atomically renamed
+into place. A command already using the previous token may finish with it;
+because renewal occurs halfway through the one-hour lifetime, both old and new
+tokens remain valid across the replacement window.
+
+The renewal activity must combine minting and installation so the token never
+appears in Temporal workflow input, output, or history. It may return
+non-secret expiry metadata. Native retries of the agent activity do not create
+another renewal loop; the same loop remains active for the whole Agent Attempt.
+If a scheduled renewal exhausts its own native activity retries, the workflow
+cancels and fails the Agent Attempt rather than allowing it to continue toward
+an unauthenticated Git operation.
+
+The Agent Attempt has a 55-minute total timeout across all native activity
+tries. This is an operational bound on stuck or expensive work, not an
+authentication limitation. Periodic credential renewal deliberately supports
+raising that timeout later without redesigning sandbox authentication.
 
 ## Retry and Agent Attempt policy
 
@@ -539,10 +556,11 @@ This reaches further than a database migration:
 10. Keep native activity-try history in Temporal rather than duplicating it in
     Postgres.
 11. Renew the sandbox GitHub credential during a Run before agent execution;
-    never rely on the credential minted during the initial clone remaining
-    valid.
+    continue renewing it every 30 minutes during the Agent Attempt, and never
+    rely on the credential minted during the initial clone remaining valid.
 12. Permit at most five Review Steps in one Run.
 13. Permit at most 25 Agent Attempts across all agent-backed Steps in one Run.
+14. Bound each Agent Attempt to 55 minutes across all native activity tries.
 
 ## Parked questions
 
@@ -563,9 +581,9 @@ can simply end the Run and Ticket as failed without prescribing remediation.
 ### Retry-policy values
 
 The policy categories and ownership are proposed above, but exact activity
-retry counts, backoff, and timeouts are not yet fixed. They should be decided
-using concrete failure scenarios rather than copying the current
-six-stage-attempt and five-control-attempt defaults.
+retry counts, backoff, and infrastructure-activity timeouts are not yet fixed.
+They should be decided using concrete failure scenarios rather than copying
+the current six-stage-attempt and five-control-attempt defaults.
 
-This decision must also set enough headroom between an Agent Attempt's total
-duration and the approximately one-hour sandbox GitHub credential lifetime.
+The Agent Attempt timeout is fixed at 55 minutes. Exact activity retry counts
+and backoff within that total duration remain undecided.
