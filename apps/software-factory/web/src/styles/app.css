@@ -61,10 +61,9 @@ a {
 a:hover {
   color: var(--accent);
 }
-/* Prose links (markdown bodies, blocker notes) keep an underline so they
-   read as links without needing a loud color. */
-.ticket-body a,
-.console-blockers a {
+/* Prose links (markdown bodies) keep an underline so they read as links
+   without needing a loud color. */
+.ticket-body a {
   text-decoration: underline;
   text-underline-offset: 3px;
   text-decoration-color: var(--border-strong);
@@ -128,9 +127,6 @@ a:hover {
   font-size: 0.8rem;
   color: var(--muted);
 }
-.in-flight-count {
-  font-weight: 600;
-}
 .app-title {
   color: var(--text);
 }
@@ -148,30 +144,12 @@ a:hover {
   margin: 8px 0 0;
 }
 
-/* ---- Lists ---- */
-.console-list {
-  display: grid;
-  gap: 8px;
-  margin: 10px 0 0;
-  padding: 0;
-  list-style: none;
-}
-.console-list > li {
-  display: grid;
-  gap: 4px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-2);
-}
+/* ---- Rows ---- */
 .row-line {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-}
-.spacer {
-  flex: 1;
 }
 .row-meta {
   color: var(--muted);
@@ -263,7 +241,7 @@ a:hover {
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
 }
-.ticket-table tbody tr:not(.ticket-table-blockers):hover td {
+.ticket-table tbody tr:hover td {
   background: var(--surface-2);
 }
 .ticket-row {
@@ -271,40 +249,6 @@ a:hover {
 }
 .ticket-table-links {
   text-align: right;
-}
-.ticket-table-blockers td {
-  padding-top: 0;
-}
-.ticket-table-blockers .console-blockers {
-  margin-top: 0;
-}
-
-/* ---- Dispatcher staleness ---- */
-.stale {
-  margin: 8px 0 0;
-  font-weight: 600;
-  color: var(--state-failed);
-}
-
-/* ---- Blockers nested under a ticket ---- */
-.console-blockers {
-  margin-top: 6px;
-  padding: 8px 10px;
-  border-left: 3px solid var(--border-strong);
-  border-radius: 0 6px 6px 0;
-  background: color-mix(in srgb, var(--bg) 60%, transparent);
-  font-size: 0.85rem;
-}
-.console-blockers-failed {
-  border-left-color: var(--state-failed);
-  color: #ffd9d9;
-}
-.console-blockers p,
-.console-blockers ul {
-  margin: 0;
-}
-.console-blockers ul {
-  padding-left: 18px;
 }
 
 /* ---- Temporal link ---- */
