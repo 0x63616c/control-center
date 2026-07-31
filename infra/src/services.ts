@@ -67,7 +67,7 @@ const IMAGE_REPOSITORIES = {
     digestKey: controlCenterProduct.imageDigestKey("temporal-worker"),
     repository: controlCenterProduct.imageRepository("temporal-worker"),
   },
-  // The software-factory module's three images (ADR-0011). A DIFFERENT product, so the
+  // The software-factory module's five images (ADR-0011). A DIFFERENT product, so the
   // keys carry the product prefix and cannot collide with control-center's own
   // `worker` above — `www-software-factory-worker` is not a control-center
   // component.
@@ -92,6 +92,16 @@ const IMAGE_REPOSITORIES = {
     product: "software-factory",
     digestKey: softwareFactoryProduct.imageDigestKey("relay"),
     repository: softwareFactoryProduct.imageRepository("relay"),
+  },
+  "software-factory-api": {
+    product: "software-factory",
+    digestKey: softwareFactoryProduct.imageDigestKey("api"),
+    repository: softwareFactoryProduct.imageRepository("api"),
+  },
+  "software-factory-console": {
+    product: "software-factory",
+    digestKey: softwareFactoryProduct.imageDigestKey("console"),
+    repository: softwareFactoryProduct.imageRepository("console"),
   },
 } as const satisfies Record<
   string,

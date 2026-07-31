@@ -8,12 +8,16 @@
 // endpoint fails account-owned tokens by design). It already carries the account
 // + zone scopes incl. DNS:Edit. Don't re-trip the /user verify dead end.
 
-import { controlCenterProductManifest, type ProductServiceDeclaration } from "@www/platform";
+import {
+  controlCenterProductManifest,
+  type ProductServiceDeclaration,
+  softwareFactoryProductManifest,
+} from "@www/platform";
 
 // kioskTokenId: the CF service token *id* (UUID) for the kiosk token — NOT
 // the client_id (.access suffix). Access policies reference token_id; the
 // client_id is only sent in CF-Access-Client-Id headers by the iOS kiosk app.
-type AccessConfigKey = "allowedEmail" | "ciClientId" | "kioskTokenId";
+type AccessConfigKey = "allowedEmail" | "ciClientId" | "kioskTokenId" | "factoryServiceTokenId";
 
 export type AccessInclude =
   | Readonly<{ kind: "email-config"; configKey: "allowedEmail" }>
@@ -52,7 +56,7 @@ const OWNERSHIP_TAG = "bosun:control-center";
 
 export type PrivateWebAccessSource = Readonly<{
   exposure: ProductServiceDeclaration["exposure"];
-  policies: readonly ("email-otp" | "kiosk-service-token")[];
+  policies: readonly ("email-otp" | "kiosk-service-token" | "factory-service-token")[];
 }>;
 
 function accessApp(domain: string, policies: readonly DesiredAccessPolicy[]): DesiredAccessApp {
@@ -74,8 +78,8 @@ function emailOtpPolicy(): DesiredAccessPolicy {
 }
 
 function serviceTokenPolicy(
-  name: "ci-service-token" | "kiosk-service-token",
-  configKey: "ciClientId" | "kioskTokenId",
+  name: "ci-service-token" | "kiosk-service-token" | "factory-service-token",
+  configKey: "ciClientId" | "kioskTokenId" | "factoryServiceTokenId",
 ): DesiredAccessPolicy {
   return {
     name,
@@ -115,7 +119,9 @@ export function accessAppsForPrivateWeb(
           const policy =
             p === "kiosk-service-token"
               ? serviceTokenPolicy("kiosk-service-token", "kioskTokenId")
-              : emailOtpPolicy();
+              : p === "factory-service-token"
+                ? serviceTokenPolicy("factory-service-token", "factoryServiceTokenId")
+                : emailOtpPolicy();
           return { ...policy, precedence: i + 1 };
         }),
       ),
@@ -138,6 +144,7 @@ export function accessAppsForPrivateWeb(
  */
 export function desiredAccessApps(zone: string, includeGate = false): DesiredAccessApp[] {
   const ccManifest = controlCenterProductManifest();
+  const factoryManifest = softwareFactoryProductManifest();
 
   const baseApps: DesiredAccessApp[] = [
     // Private-web products: the CC app (app.worldwidewebb.co, product-derived from
@@ -169,6 +176,12 @@ export function desiredAccessApps(zone: string, includeGate = false): DesiredAcc
       // internet-facing UniFi and DSM logins. email-OTP only, never a token.
       { exposure: ccManifest.unifi.exposure, policies: ["email-otp"] },
       { exposure: ccManifest.dsm.exposure, policies: ["email-otp"] },
+      // Factory needs both Service Auth for headless callers and an Allow
+      // policy so a browser can rely on the Cloudflare Access JWT.
+      {
+        exposure: factoryManifest.console.exposure,
+        policies: ["factory-service-token", "email-otp"],
+      },
     ]),
   ];
 

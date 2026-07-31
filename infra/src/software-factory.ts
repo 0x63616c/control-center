@@ -1,10 +1,10 @@
-// The `software-factory` k8s namespace and its worker (ADR-0011): the Go
-// Temporal worker that works GitHub tickets, and the per-ticket sandboxes it
-// runs agent-authored code in.
+// The `software-factory` k8s namespace and its workloads (ADR-0011): the Go
+// Temporal worker that works GitHub tickets, its private API and console, and
+// the per-ticket sandboxes the worker creates for agent-authored code.
 //
 // The shared cluster namespace map creates this namespace because the factory
 // now owns a CNPG Cluster and nightly database backup. This installer owns the
-// namespace-local worker resources and its sandbox isolation boundary.
+// namespace-local worker, API, console, and sandbox isolation boundary.
 //
 // Why its own namespace at all, rather than running in `control-center`: the
 // sandbox executes code an agent wrote. That boundary wants its own RBAC,
@@ -16,7 +16,7 @@
 
 import * as k8s from "@pulumi/kubernetes";
 import * as pulumi from "@pulumi/pulumi";
-import { controlCenterProductManifest } from "@www/platform";
+import { controlCenterProductManifest, softwareFactoryProductManifest } from "@www/platform";
 import { DEFAULT_METRICS_PORT, METRICS_PATH } from "@www/platform/metrics/port";
 import { GHCR_PULL_SECRET_NAME } from "./ghcr-pull-secrets.ts";
 import {
@@ -58,6 +58,14 @@ const CODEX_AUTH_SECRET_NAME = "codex-auth";
 
 /** The worker's own config Secret: the GitHub App credential set. */
 const WORKER_SECRET_NAME = "software-factory-worker-secrets";
+const API_SECRET_NAME = "software-factory-api-secrets";
+const API_SERVICE_NAME = "api";
+const WEB_SERVICE_NAME = "web";
+const API_PORT = 8080;
+const WEB_PORT = 80;
+const WEB_CONTAINER_PORT = 8080;
+const API_UID = 65532;
+const WEB_UID = 101;
 
 /**
  * Where the App's private key is mounted, and what GITHUB_APP_PRIVATE_KEY_PEM_FILE
@@ -194,7 +202,7 @@ export interface SoftwareFactoryArgs {
    * credential — see CODEX_AUTH_SECRET_NAME.
    */
   vault: Record<string, string>;
-  /** Per-service GHCR digest pins from CI, for worker and sandbox images. */
+  /** Per-service GHCR digest pins from CI, for every factory image. */
   imageDigests: ImageDigests;
   /**
    * On a production cluster, refuse to render a mutable `:main` ref. Same rule
@@ -210,12 +218,17 @@ export interface SoftwareFactoryResources {
   namespace: k8s.core.v1.Namespace;
   ghcrPullSecret: k8s.core.v1.Secret;
   workerSecret: k8s.core.v1.Secret;
+  apiSecret: k8s.core.v1.Secret;
   serviceAccount: k8s.core.v1.ServiceAccount;
   role: k8s.rbac.v1.Role;
   roleBinding: k8s.rbac.v1.RoleBinding;
   transcriptsVolume: k8s.core.v1.PersistentVolume;
   transcriptsClaim: k8s.core.v1.PersistentVolumeClaim;
   worker: k8s.apps.v1.Deployment;
+  apiService: k8s.core.v1.Service;
+  api: k8s.apps.v1.Deployment;
+  webService: k8s.core.v1.Service;
+  web: k8s.apps.v1.Deployment;
 }
 
 /**
@@ -259,6 +272,7 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
   );
 
   const workerSecret = createWorkerSecret(vault, namespaceName, inNamespace);
+  const apiSecret = createAPISecret(vault, namespaceName, inNamespace);
 
   const serviceAccount = new k8s.core.v1.ServiceAccount(
     WORKER_SERVICE_ACCOUNT,
@@ -560,17 +574,201 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
     { ...inNamespace, dependsOn: [roleBinding, workerSecret, transcriptsClaim, ghcrPullSecret] },
   );
 
+  const apiLabels = { app: "software-factory-api" };
+  const apiService = new k8s.core.v1.Service(
+    API_SERVICE_NAME,
+    {
+      metadata: { name: API_SERVICE_NAME, namespace: namespaceName, labels: apiLabels },
+      spec: {
+        type: "ClusterIP",
+        selector: apiLabels,
+        ports: [{ name: "http", port: API_PORT, targetPort: API_PORT }],
+      },
+    },
+    inNamespace,
+  );
+  const api = new k8s.apps.v1.Deployment(
+    "software-factory-api",
+    {
+      metadata: { name: "software-factory-api", namespace: namespaceName, labels: apiLabels },
+      spec: {
+        replicas: 1,
+        selector: { matchLabels: apiLabels },
+        template: {
+          metadata: {
+            labels: apiLabels,
+            annotations: {
+              "prometheus.io/scrape": "true",
+              "prometheus.io/port": String(DEFAULT_METRICS_PORT),
+              "prometheus.io/path": METRICS_PATH,
+            },
+          },
+          spec: {
+            automountServiceAccountToken: false,
+            imagePullSecrets: [{ name: GHCR_PULL_SECRET_NAME }],
+            securityContext: {
+              runAsNonRoot: true,
+              runAsUser: API_UID,
+              runAsGroup: API_UID,
+              seccompProfile: { type: "RuntimeDefault" },
+            },
+            containers: [
+              {
+                name: API_SERVICE_NAME,
+                image: ghcrImage("software-factory-api", imageDigests),
+                ports: [
+                  { name: "http", containerPort: API_PORT },
+                  { name: "metrics", containerPort: DEFAULT_METRICS_PORT },
+                ],
+                env: [
+                  { name: "API_ADDR", value: `:${API_PORT}` },
+                  { name: "METRICS_ADDR", value: METRICS_ADDR },
+                  { name: "TEMPORAL_HOST_PORT", value: TEMPORAL_FRONTEND_CLUSTER_ADDRESS },
+                  { name: "TEMPORAL_NAMESPACE", value: SOFTWARE_FACTORY_TEMPORAL_NAMESPACE },
+                  ...[
+                    "SOFTWARE_FACTORY_DATABASE_URL",
+                    "CLOUDFLARE_ACCESS_TEAM_DOMAIN",
+                    "CLOUDFLARE_ACCESS_AUD",
+                    "SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN",
+                    "SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN",
+                  ].map((name) => ({
+                    name,
+                    valueFrom: { secretKeyRef: { name: API_SECRET_NAME, key: name } },
+                  })),
+                ],
+                readinessProbe: {
+                  httpGet: { path: "/healthz", port: "http" },
+                  initialDelaySeconds: 1,
+                  periodSeconds: 5,
+                },
+                livenessProbe: {
+                  httpGet: { path: "/healthz", port: "http" },
+                  initialDelaySeconds: 5,
+                  periodSeconds: 10,
+                },
+                securityContext: {
+                  allowPrivilegeEscalation: false,
+                  readOnlyRootFilesystem: true,
+                  capabilities: { drop: ["ALL"] },
+                },
+                resources: {
+                  requests: { cpu: "25m", memory: "64Mi" },
+                  limits: { memory: "128Mi" },
+                },
+              },
+            ],
+          },
+        },
+      },
+    },
+    { ...inNamespace, dependsOn: [ghcrPullSecret, apiSecret, apiService] },
+  );
+
+  const webLabels = { app: "software-factory-web" };
+  const webService = new k8s.core.v1.Service(
+    WEB_SERVICE_NAME,
+    {
+      metadata: { name: WEB_SERVICE_NAME, namespace: namespaceName, labels: webLabels },
+      spec: {
+        type: "ClusterIP",
+        selector: webLabels,
+        ports: [{ name: "http", port: WEB_PORT, targetPort: WEB_CONTAINER_PORT }],
+      },
+    },
+    inNamespace,
+  );
+  const web = new k8s.apps.v1.Deployment(
+    "software-factory-web",
+    {
+      metadata: { name: "software-factory-web", namespace: namespaceName, labels: webLabels },
+      spec: {
+        replicas: 1,
+        selector: { matchLabels: webLabels },
+        template: {
+          metadata: { labels: webLabels },
+          spec: {
+            automountServiceAccountToken: false,
+            imagePullSecrets: [{ name: GHCR_PULL_SECRET_NAME }],
+            securityContext: {
+              runAsNonRoot: true,
+              runAsUser: WEB_UID,
+              runAsGroup: WEB_UID,
+              seccompProfile: { type: "RuntimeDefault" },
+            },
+            containers: [
+              {
+                name: WEB_SERVICE_NAME,
+                image: ghcrImage("software-factory-console", imageDigests),
+                ports: [{ name: "http", containerPort: WEB_CONTAINER_PORT }],
+                volumeMounts: [{ name: "tmp", mountPath: "/tmp" }],
+                securityContext: {
+                  allowPrivilegeEscalation: false,
+                  readOnlyRootFilesystem: true,
+                  capabilities: { drop: ["ALL"] },
+                },
+                resources: { requests: { cpu: "10m", memory: "32Mi" }, limits: { memory: "64Mi" } },
+              },
+            ],
+            volumes: [{ name: "tmp", emptyDir: {} }],
+          },
+        },
+      },
+    },
+    { ...inNamespace, dependsOn: [ghcrPullSecret, webService] },
+  );
+
   return {
     namespace,
     ghcrPullSecret,
     workerSecret,
+    apiSecret,
     serviceAccount,
     role,
     roleBinding,
     transcriptsVolume,
     transcriptsClaim,
     worker,
+    apiService,
+    api,
+    webService,
+    web,
   };
+}
+
+function createAPISecret(
+  vault: Record<string, string>,
+  namespaceName: pulumi.Input<string>,
+  opts: pulumi.CustomResourceOptions,
+): k8s.core.v1.Secret {
+  const factory = softwareFactoryProductManifest();
+  const fromVault = (key: string): string => {
+    const value = vault[key];
+    if (!value) throw new Error(`software-factory: vault key ${key} not found`);
+    return value;
+  };
+  const databasePassword = encodeURIComponent(fromVault(factory.database.auth.password.vaultKey));
+  return new k8s.core.v1.Secret(
+    API_SECRET_NAME,
+    {
+      metadata: { name: API_SECRET_NAME, namespace: namespaceName },
+      stringData: {
+        SOFTWARE_FACTORY_DATABASE_URL: pulumi.secret(
+          `postgresql://${factory.database.owner}:${databasePassword}@${factory.database.rwServiceName}:5432/${factory.database.databaseName}?sslmode=disable`,
+        ),
+        CLOUDFLARE_ACCESS_TEAM_DOMAIN: pulumi.secret(
+          fromVault("SOFTWARE_FACTORY_CLOUDFLARE_ACCESS__TEAM_DOMAIN"),
+        ),
+        CLOUDFLARE_ACCESS_AUD: pulumi.secret(fromVault("SOFTWARE_FACTORY_CLOUDFLARE_ACCESS__AUD")),
+        SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN: pulumi.secret(
+          fromVault("SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN"),
+        ),
+        SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN: pulumi.secret(
+          fromVault("SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN"),
+        ),
+      },
+    },
+    opts,
+  );
 }
 
 /**
