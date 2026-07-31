@@ -64,11 +64,12 @@ func TestClaimAndStartRunSerializesRacingOwners(t *testing.T) {
 	close(errs)
 	var successes, conflicts int
 	for err := range errs {
-		if err == nil {
+		switch {
+		case err == nil:
 			successes++
-		} else if errors.Is(err, store.ErrTicketClaimed) {
+		case errors.Is(err, store.ErrTicketClaimed):
 			conflicts++
-		} else {
+		default:
 			t.Fatalf("claim error = %v", err)
 		}
 	}

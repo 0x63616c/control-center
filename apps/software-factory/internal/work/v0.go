@@ -18,67 +18,100 @@ const (
 type RunFailureKind string
 
 const (
-	RunFailureNone                   RunFailureKind = ""
-	RunFailureInvalidInput           RunFailureKind = "invalid_input"
-	RunFailureAgentUnrecoverable     RunFailureKind = "agent_unrecoverable"
-	RunFailureAgentAttemptBudget     RunFailureKind = "agent_attempt_budget"
-	RunFailureReviewBudget           RunFailureKind = "review_budget"
-	RunFailureCIUnobserved           RunFailureKind = "ci_unobserved"
-	RunFailureGitHubAuth             RunFailureKind = "github_auth"
-	RunFailureGitHubRuleset          RunFailureKind = "github_ruleset"
-	RunFailureGitHubUnavailable      RunFailureKind = "github_unavailable"
-	RunFailureRunWorkerUnavailable   RunFailureKind = "run_worker_unavailable"
+	// RunFailureNone records a terminal outcome without a failure classification.
+	RunFailureNone RunFailureKind = ""
+	// RunFailureInvalidInput records an invalid target Run input.
+	RunFailureInvalidInput RunFailureKind = "invalid_input"
+	// RunFailureAgentUnrecoverable records an agent execution that cannot resume.
+	RunFailureAgentUnrecoverable RunFailureKind = "agent_unrecoverable"
+	// RunFailureAgentAttemptBudget records exhaustion of the Agent Attempt budget.
+	RunFailureAgentAttemptBudget RunFailureKind = "agent_attempt_budget"
+	// RunFailureReviewBudget records exhaustion of the Review Step budget.
+	RunFailureReviewBudget RunFailureKind = "review_budget"
+	// RunFailureCIUnobserved records an unresolved CI observation deadline.
+	RunFailureCIUnobserved RunFailureKind = "ci_unobserved"
+	// RunFailureGitHubAuth records an unrecoverable GitHub authentication failure.
+	RunFailureGitHubAuth RunFailureKind = "github_auth"
+	// RunFailureGitHubRuleset records a GitHub ruleset rejection.
+	RunFailureGitHubRuleset RunFailureKind = "github_ruleset"
+	// RunFailureGitHubUnavailable records an exhausted GitHub availability retry.
+	RunFailureGitHubUnavailable RunFailureKind = "github_unavailable"
+	// RunFailureRunWorkerUnavailable records unavailable Run Worker capacity.
+	RunFailureRunWorkerUnavailable RunFailureKind = "run_worker_unavailable"
+	// RunFailurePersistenceUnavailable records exhausted durable recording retries.
 	RunFailurePersistenceUnavailable RunFailureKind = "persistence_unavailable"
-	RunFailureInfrastructure         RunFailureKind = "infrastructure"
+	// RunFailureInfrastructure records another classified infrastructure failure.
+	RunFailureInfrastructure RunFailureKind = "infrastructure"
 )
 
 // StepKind identifies one executor-neutral target operation.
 type StepKind string
 
 const (
-	StepPrepareRunWorker        StepKind = "prepare_run_worker"
+	// StepPrepareRunWorker creates the Run's execution worker.
+	StepPrepareRunWorker StepKind = "prepare_run_worker"
+	// StepAcquireRunWorkerSession creates the worker-affine Temporal Session.
 	StepAcquireRunWorkerSession StepKind = "acquire_run_worker_session"
-	StepCloneRepository         StepKind = "clone_repository"
-	StepPlan                    StepKind = "plan"
-	StepImplement               StepKind = "implement"
-	StepSyncPullRequest         StepKind = "sync_pull_request"
-	StepAwaitCI                 StepKind = "await_ci"
-	StepReview                  StepKind = "review"
-	StepMarkPullRequestReady    StepKind = "mark_pull_request_ready"
-	StepMergePullRequest        StepKind = "merge_pull_request"
+	// StepCloneRepository clones the Run-owned repository workspace.
+	StepCloneRepository StepKind = "clone_repository"
+	// StepPlan performs the agent planning operation.
+	StepPlan StepKind = "plan"
+	// StepImplement performs one agent implementation operation.
+	StepImplement StepKind = "implement"
+	// StepSyncPullRequest synchronizes authoritative GitHub PR state.
+	StepSyncPullRequest StepKind = "sync_pull_request"
+	// StepAwaitCI observes configured checks for one exact head.
+	StepAwaitCI StepKind = "await_ci"
+	// StepReview performs an independent agent review.
+	StepReview StepKind = "review"
+	// StepMarkPullRequestReady removes draft state without requesting review.
+	StepMarkPullRequestReady StepKind = "mark_pull_request_ready"
+	// StepMergePullRequest asks GitHub to merge an authorized head.
+	StepMergePullRequest StepKind = "merge_pull_request"
 )
 
 // StepState is a target Step lifecycle state.
 type StepState string
 
 const (
-	StepStateRunning   StepState = "running"
+	// StepStateRunning records an active primary operation.
+	StepStateRunning StepState = "running"
+	// StepStateCompleted records a Step with an authoritative Result.
 	StepStateCompleted StepState = "completed"
-	StepStateFailed    StepState = "failed"
+	// StepStateFailed records exhausted or non-retryable execution failure.
+	StepStateFailed StepState = "failed"
 )
 
 // AgentStage is the agent-only vocabulary retained from the legacy Stage.
 type AgentStage string
 
 const (
-	AgentStagePlan      AgentStage = "plan"
+	// AgentStagePlan is the planning agent role.
+	AgentStagePlan AgentStage = "plan"
+	// AgentStageImplement is the code-changing agent role.
 	AgentStageImplement AgentStage = "implement"
-	AgentStageReview    AgentStage = "review"
+	// AgentStageReview is the independent reviewer role.
+	AgentStageReview AgentStage = "review"
 )
 
 // AgentAttemptState records one workflow-authorized agent execution.
 type AgentAttemptState string
 
 const (
-	AgentAttemptRunning   AgentAttemptState = "running"
+	// AgentAttemptRunning records an authorized execution in progress.
+	AgentAttemptRunning AgentAttemptState = "running"
+	// AgentAttemptSucceeded records an agent execution that reached terminal success.
 	AgentAttemptSucceeded AgentAttemptState = "succeeded"
-	AgentAttemptFailed    AgentAttemptState = "failed"
+	// AgentAttemptFailed records an agent execution that cannot continue.
+	AgentAttemptFailed AgentAttemptState = "failed"
 )
 
 // UsageState distinguishes known zero usage from unavailable usage.
 type UsageState string
 
 const (
-	UsageUnknown  UsageState = "unknown"
+	// UsageUnknown records unavailable provider usage rather than zero spend.
+	UsageUnknown UsageState = "unknown"
+	// UsageMeasured records usage captured from the provider terminal envelope.
 	UsageMeasured UsageState = "measured"
 )
