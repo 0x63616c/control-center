@@ -43,10 +43,11 @@ type Store struct {
 
 	transcripts map[attemptKey]store.Transcript
 
-	targetSteps    map[targetStepKey]store.RunStep
-	targetAttempts map[targetAttemptKey]store.AgentAttempt
-	targetGit      map[string]store.GitCheckpoint
-	capabilityHash map[string]string
+	targetSteps       map[targetStepKey]store.RunStep
+	targetAttempts    map[store.TargetAttemptID]store.AgentAttempt
+	targetTranscripts map[store.TargetAttemptID]store.TargetTranscript
+	targetGit         map[string]store.GitCheckpoint
+	capabilityHash    map[store.TargetAttemptID]string
 
 	dispatcherState     store.DispatcherState
 	dispatcherStateSeen bool
@@ -81,29 +82,25 @@ type targetStepKey struct {
 	ordinal int
 }
 
-type targetAttemptKey struct {
-	targetStepKey
-	attemptNo int
-}
-
 // New returns an empty Store, seeded the way a freshly migrated database is:
 // no tickets, and one dispatcher_state row at its migration defaults — a zero
 // Config and Breaker, exactly as migration 00002's seed row and 00003's added
 // columns leave it until the dispatcher's first tick overwrites it for real.
 func New(opts ...Option) *Store {
 	f := &Store{
-		clk:            clock.System{},
-		nextTicketID:   1,
-		tickets:        make(map[store.TicketID]store.Ticket),
-		edges:          make(map[store.TicketID]map[store.TicketID]bool),
-		runs:           make(map[string]store.Run),
-		steps:          make(map[stepKey]time.Time),
-		attempts:       make(map[attemptKey]store.Attempt),
-		transcripts:    make(map[attemptKey]store.Transcript),
-		targetSteps:    make(map[targetStepKey]store.RunStep),
-		targetAttempts: make(map[targetAttemptKey]store.AgentAttempt),
-		targetGit:      make(map[string]store.GitCheckpoint),
-		capabilityHash: make(map[string]string),
+		clk:               clock.System{},
+		nextTicketID:      1,
+		tickets:           make(map[store.TicketID]store.Ticket),
+		edges:             make(map[store.TicketID]map[store.TicketID]bool),
+		runs:              make(map[string]store.Run),
+		steps:             make(map[stepKey]time.Time),
+		attempts:          make(map[attemptKey]store.Attempt),
+		transcripts:       make(map[attemptKey]store.Transcript),
+		targetSteps:       make(map[targetStepKey]store.RunStep),
+		targetAttempts:    make(map[store.TargetAttemptID]store.AgentAttempt),
+		targetTranscripts: make(map[store.TargetAttemptID]store.TargetTranscript),
+		targetGit:         make(map[string]store.GitCheckpoint),
+		capabilityHash:    make(map[store.TargetAttemptID]string),
 	}
 	for _, opt := range opts {
 		opt(f)

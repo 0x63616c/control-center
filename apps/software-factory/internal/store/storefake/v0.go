@@ -1,9 +1,11 @@
 package storefake
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
@@ -65,23 +67,25 @@ func (f *Store) CompleteStep(_ context.Context, runID string, ordinal int, ended
 func (f *Store) StartAgentAttempt(_ context.Context, in store.StartAgentAttemptInput) (store.AgentAttempt, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if _, ok := f.targetSteps[targetStepKey{runID: in.RunID, ordinal: in.StepOrdinal}]; !ok {
-		return store.AgentAttempt{}, fmt.Errorf("step %d: %w", in.StepOrdinal, store.ErrNotFound)
+	if _, ok := f.targetSteps[targetStepKey{runID: in.ID.RunID, ordinal: in.ID.StepOrdinal}]; !ok {
+		return store.AgentAttempt{}, fmt.Errorf("step %d: %w", in.ID.StepOrdinal, store.ErrNotFound)
 	}
-	k := targetAttemptKey{targetStepKey: targetStepKey{runID: in.RunID, ordinal: in.StepOrdinal}, attemptNo: in.AttemptNo}
-	if attempt, ok := f.targetAttempts[k]; ok {
+	if attempt, ok := f.targetAttempts[in.ID]; ok {
 		return attempt, nil
 	}
-	attempt := store.AgentAttempt{RunID: in.RunID, StepOrdinal: in.StepOrdinal, AttemptNo: in.AttemptNo, AgentStage: in.AgentStage, Model: in.Model, State: work.AgentAttemptRunning, UsageState: in.UsageState, StartedAt: in.StartedAt}
-	f.targetAttempts[k] = attempt
+	attempt := store.AgentAttempt{ID: in.ID, AgentStage: in.AgentStage, Model: in.Model, State: work.AgentAttemptRunning, UsageState: in.UsageState, StartedAt: in.StartedAt}
+	f.targetAttempts[in.ID] = attempt
 	return attempt, nil
 }
 
-// SetCheckpointCapabilityHash stores the scoped capability verifier.
-func (f *Store) SetCheckpointCapabilityHash(_ context.Context, runID, hash string) error {
+// BindCheckpointCapability binds one capability to one exact active Attempt.
+func (f *Store) BindCheckpointCapability(_ context.Context, attemptID store.TargetAttemptID, capability string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.capabilityHash[runID] = hash
+	if _, ok := f.targetAttempts[attemptID]; !ok {
+		return fmt.Errorf("attempt %s: %w", attemptID, store.ErrNotFound)
+	}
+	f.capabilityHash[attemptID] = capability
 	return nil
 }
 
@@ -89,24 +93,68 @@ func (f *Store) SetCheckpointCapabilityHash(_ context.Context, runID, hash strin
 func (f *Store) CheckpointAgentAttempt(_ context.Context, in store.AgentCheckpointInput) (store.AgentAttempt, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.capabilityHash[in.RunID] != store.CheckpointCapabilityHash(in.Capability) {
+	if err := in.Validate(); err != nil {
+		return store.AgentAttempt{}, err
+	}
+	if f.capabilityHash[in.ID] != in.Capability {
 		return store.AgentAttempt{}, fmt.Errorf("checkpoint: %w", store.ErrRunOwnership)
 	}
-	k := targetAttemptKey{targetStepKey: targetStepKey{runID: in.RunID, ordinal: in.StepOrdinal}, attemptNo: in.AttemptNo}
-	attempt, ok := f.targetAttempts[k]
+	attempt, ok := f.targetAttempts[in.ID]
 	if !ok {
-		return store.AgentAttempt{}, fmt.Errorf("attempt %d: %w", in.AttemptNo, store.ErrNotFound)
+		return store.AgentAttempt{}, fmt.Errorf("attempt %s: %w", in.ID, store.ErrNotFound)
+	}
+	if attempt.State != work.AgentAttemptRunning {
+		if !terminalAgentCheckpointMatches(attempt, in) || !targetTranscriptMatches(f.targetTranscripts[in.ID], in.Transcript) {
+			return store.AgentAttempt{}, fmt.Errorf("checkpoint: conflicting terminal checkpoint: %w", work.ErrPermanent)
+		}
+		return attempt, nil
 	}
 	attempt.ProviderThreadID, attempt.State, attempt.FailureKind, attempt.UsageState, attempt.Usage, attempt.EndedAt, attempt.Result = in.ThreadID, in.State, in.FailureKind, in.UsageState, in.Usage, in.EndedAt, in.Result
-	f.targetAttempts[k] = attempt
+	attempt.TranscriptPresent = in.Transcript != nil
+	f.targetAttempts[in.ID] = attempt
+	if in.Transcript != nil {
+		f.targetTranscripts[in.ID] = *in.Transcript
+	}
 	return attempt, nil
+}
+
+func terminalAgentCheckpointMatches(attempt store.AgentAttempt, in store.AgentCheckpointInput) bool {
+	return attempt.State == in.State &&
+		attempt.ProviderThreadID == in.ThreadID &&
+		attempt.FailureKind == in.FailureKind &&
+		attempt.UsageState == in.UsageState &&
+		attempt.Usage == in.Usage &&
+		attempt.EndedAt.Equal(in.EndedAt) &&
+		jsonEqual(attempt.Result, in.Result)
+}
+
+func targetTranscriptMatches(current store.TargetTranscript, in *store.TargetTranscript) bool {
+	if in == nil {
+		return len(current.CompressedBytes) == 0 && current.Compression == "" && current.UncompressedSizeBytes == 0 && len(current.Checksum) == 0
+	}
+	return bytes.Equal(current.CompressedBytes, in.CompressedBytes) && current.Compression == in.Compression && current.UncompressedSizeBytes == in.UncompressedSizeBytes && bytes.Equal(current.Checksum, in.Checksum)
+}
+
+func jsonEqual(left, right json.RawMessage) bool {
+	if !json.Valid(left) || !json.Valid(right) {
+		return bytes.Equal(left, right)
+	}
+	var leftValue interface{}
+	var rightValue interface{}
+	if err := json.Unmarshal(left, &leftValue); err != nil {
+		return false
+	}
+	if err := json.Unmarshal(right, &rightValue); err != nil {
+		return false
+	}
+	return reflect.DeepEqual(leftValue, rightValue)
 }
 
 // CheckpointGitEffect stores a monotonic repository recovery checkpoint.
 func (f *Store) CheckpointGitEffect(_ context.Context, in store.GitCheckpointInput) (store.GitCheckpoint, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if previous, ok := f.targetGit[in.RunID]; ok && (previous.StepOrdinal > in.StepOrdinal || (previous.StepOrdinal == in.StepOrdinal && previous.PushedHead != in.PushedHead)) {
+	if previous, ok := f.targetGit[in.RunID]; ok && (previous.StepOrdinal > in.StepOrdinal || (previous.StepOrdinal == in.StepOrdinal && (previous.PushedHead != in.PushedHead || previous.PullRequestNumber != in.PullRequestNumber))) {
 		return store.GitCheckpoint{}, fmt.Errorf("checkpoint: %w", work.ErrPermanent)
 	}
 	f.targetGit[in.RunID] = in.GitCheckpoint
@@ -126,13 +174,22 @@ func (f *Store) FinalizeConfirmedMerge(_ context.Context, in store.ConfirmedMerg
 	if !ok || run.TicketID != in.TicketID {
 		return store.TerminalResult{}, fmt.Errorf("merge: %w", store.ErrRunOwnership)
 	}
+	ticket := f.tickets[in.TicketID]
 	if run.TargetOutcome != "" {
-		if run.TargetOutcome != work.RunOutcomeSucceeded || run.MergeSHA != in.MergeSHA {
+		if run.TargetOutcome == work.RunOutcomeCanceled {
+			if ticket.State != store.TicketOpen || ticket.ActiveRunID != "" {
+				return store.TerminalResult{}, fmt.Errorf("merge: %w", store.ErrRunOwnership)
+			}
+			run.TargetOutcome, run.ReviewedHead, run.MergeSHA, run.EndedAt = work.RunOutcomeSucceeded, in.ReviewedHead, in.MergeSHA, in.EndedAt
+			ticket.State, ticket.UpdatedAt = store.TicketDone, f.clk.Now()
+			f.runs[in.RunID], f.tickets[in.TicketID] = run, ticket
+			return store.TerminalResult{Ticket: ticket, Run: run}, nil
+		}
+		if run.TargetOutcome != work.RunOutcomeSucceeded || run.MergeSHA != in.MergeSHA || run.ReviewedHead != in.ReviewedHead {
 			return store.TerminalResult{}, fmt.Errorf("merge: %w", work.ErrPermanent)
 		}
 		return store.TerminalResult{Ticket: f.tickets[in.TicketID], Run: run}, nil
 	}
-	ticket := f.tickets[in.TicketID]
 	if ticket.State != store.TicketActive || ticket.ActiveRunID != in.RunID {
 		return store.TerminalResult{}, fmt.Errorf("merge: %w", store.ErrRunOwnership)
 	}

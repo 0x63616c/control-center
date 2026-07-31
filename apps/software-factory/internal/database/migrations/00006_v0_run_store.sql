@@ -17,8 +17,7 @@ ALTER TABLE run
     ADD COLUMN target_outcome TEXT,
     ADD COLUMN target_failure_kind TEXT NOT NULL DEFAULT '',
     ADD COLUMN reviewed_head TEXT,
-    ADD COLUMN merge_sha TEXT,
-    ADD COLUMN checkpoint_capability_hash TEXT;
+    ADD COLUMN merge_sha TEXT;
 
 ALTER TABLE run
     ADD CONSTRAINT run_target_outcome_check
@@ -67,6 +66,7 @@ CREATE TABLE run_agent_attempt (
     started_at TIMESTAMPTZ NOT NULL,
     ended_at TIMESTAMPTZ,
     result JSONB,
+    checkpoint_capability_hash TEXT,
     PRIMARY KEY (run_id, step_ordinal, attempt_no),
     FOREIGN KEY (run_id, step_ordinal) REFERENCES run_step (run_id, ordinal) ON DELETE RESTRICT,
     CONSTRAINT run_agent_attempt_number_check CHECK (attempt_no >= 1),
@@ -116,7 +116,6 @@ ALTER TABLE run
     DROP CONSTRAINT run_confirmed_merge_check,
     DROP CONSTRAINT run_target_failure_kind_check,
     DROP CONSTRAINT run_target_outcome_check,
-    DROP COLUMN checkpoint_capability_hash,
     DROP COLUMN merge_sha,
     DROP COLUMN reviewed_head,
     DROP COLUMN target_failure_kind,

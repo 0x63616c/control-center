@@ -37,6 +37,50 @@ func (q *Queries) ActivateTargetTicket(ctx context.Context, arg ActivateTargetTi
 	return i, err
 }
 
+const bindTargetAttemptCapability = `-- name: BindTargetAttemptCapability :one
+UPDATE run_agent_attempt SET checkpoint_capability_hash = $4
+WHERE run_id = $1 AND step_ordinal = $2 AND attempt_no = $3 AND state = 'running'
+RETURNING run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, provider_thread_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result, checkpoint_capability_hash
+`
+
+type BindTargetAttemptCapabilityParams struct {
+	RunID                    pgtype.UUID
+	StepOrdinal              int32
+	AttemptNo                int32
+	CheckpointCapabilityHash pgtype.Text
+}
+
+func (q *Queries) BindTargetAttemptCapability(ctx context.Context, arg BindTargetAttemptCapabilityParams) (RunAgentAttempt, error) {
+	row := q.db.QueryRow(ctx, bindTargetAttemptCapability,
+		arg.RunID,
+		arg.StepOrdinal,
+		arg.AttemptNo,
+		arg.CheckpointCapabilityHash,
+	)
+	var i RunAgentAttempt
+	err := row.Scan(
+		&i.RunID,
+		&i.StepOrdinal,
+		&i.AttemptNo,
+		&i.AgentStage,
+		&i.Model,
+		&i.Effort,
+		&i.State,
+		&i.FailureKind,
+		&i.ProviderThreadID,
+		&i.UsageState,
+		&i.InputTokens,
+		&i.CachedInputTokens,
+		&i.OutputTokens,
+		&i.ReasoningTokens,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.Result,
+		&i.CheckpointCapabilityHash,
+	)
+	return i, err
+}
+
 const checkpointTargetAgentAttempt = `-- name: CheckpointTargetAgentAttempt :one
 UPDATE run_agent_attempt SET
     provider_thread_id = $4,
@@ -50,7 +94,7 @@ UPDATE run_agent_attempt SET
     ended_at = $12,
     result = $13
 WHERE run_id = $1 AND step_ordinal = $2 AND attempt_no = $3
-RETURNING run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, provider_thread_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result
+RETURNING run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, provider_thread_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result, checkpoint_capability_hash
 `
 
 type CheckpointTargetAgentAttemptParams struct {
@@ -104,6 +148,28 @@ func (q *Queries) CheckpointTargetAgentAttempt(ctx context.Context, arg Checkpoi
 		&i.StartedAt,
 		&i.EndedAt,
 		&i.Result,
+		&i.CheckpointCapabilityHash,
+	)
+	return i, err
+}
+
+const completeCanceledTargetTicket = `-- name: CompleteCanceledTargetTicket :one
+UPDATE ticket SET state = 'done', active_run_id = NULL, updated_at = CURRENT_TIMESTAMP
+WHERE id = $1 AND state = 'open' AND active_run_id IS NULL
+RETURNING id, title, body, state, created_at, updated_at, active_run_id
+`
+
+func (q *Queries) CompleteCanceledTargetTicket(ctx context.Context, id int64) (Ticket, error) {
+	row := q.db.QueryRow(ctx, completeCanceledTargetTicket, id)
+	var i Ticket
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Body,
+		&i.State,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ActiveRunID,
 	)
 	return i, err
 }
@@ -111,7 +177,7 @@ func (q *Queries) CheckpointTargetAgentAttempt(ctx context.Context, arg Checkpoi
 const completeTargetRunCanceled = `-- name: CompleteTargetRunCanceled :one
 UPDATE run SET target_outcome = 'canceled', target_failure_kind = '', ended_at = $2
 WHERE id = $1 AND target_outcome IS NULL
-RETURNING id, ticket_id, started_at, ended_at, outcome, failure_kind, target_outcome, target_failure_kind, reviewed_head, merge_sha, checkpoint_capability_hash
+RETURNING id, ticket_id, started_at, ended_at, outcome, failure_kind, target_outcome, target_failure_kind, reviewed_head, merge_sha
 `
 
 type CompleteTargetRunCanceledParams struct {
@@ -133,7 +199,6 @@ func (q *Queries) CompleteTargetRunCanceled(ctx context.Context, arg CompleteTar
 		&i.TargetFailureKind,
 		&i.ReviewedHead,
 		&i.MergeSha,
-		&i.CheckpointCapabilityHash,
 	)
 	return i, err
 }
@@ -142,7 +207,7 @@ const completeTargetRunSuccess = `-- name: CompleteTargetRunSuccess :one
 UPDATE run SET target_outcome = 'succeeded', target_failure_kind = '',
     reviewed_head = $2, merge_sha = $3, ended_at = $4
 WHERE id = $1 AND target_outcome IS NULL
-RETURNING id, ticket_id, started_at, ended_at, outcome, failure_kind, target_outcome, target_failure_kind, reviewed_head, merge_sha, checkpoint_capability_hash
+RETURNING id, ticket_id, started_at, ended_at, outcome, failure_kind, target_outcome, target_failure_kind, reviewed_head, merge_sha
 `
 
 type CompleteTargetRunSuccessParams struct {
@@ -171,7 +236,6 @@ func (q *Queries) CompleteTargetRunSuccess(ctx context.Context, arg CompleteTarg
 		&i.TargetFailureKind,
 		&i.ReviewedHead,
 		&i.MergeSha,
-		&i.CheckpointCapabilityHash,
 	)
 	return i, err
 }
@@ -242,7 +306,7 @@ const insertTargetRun = `-- name: InsertTargetRun :one
 INSERT INTO run (id, ticket_id, started_at)
 VALUES ($1, $2, $3)
 ON CONFLICT (id) DO UPDATE SET id = run.id
-RETURNING id, ticket_id, started_at, ended_at, outcome, failure_kind, target_outcome, target_failure_kind, reviewed_head, merge_sha, checkpoint_capability_hash
+RETURNING id, ticket_id, started_at, ended_at, outcome, failure_kind, target_outcome, target_failure_kind, reviewed_head, merge_sha
 `
 
 type InsertTargetRunParams struct {
@@ -265,7 +329,6 @@ func (q *Queries) InsertTargetRun(ctx context.Context, arg InsertTargetRunParams
 		&i.TargetFailureKind,
 		&i.ReviewedHead,
 		&i.MergeSha,
-		&i.CheckpointCapabilityHash,
 	)
 	return i, err
 }
@@ -354,6 +417,43 @@ func (q *Queries) PutTargetGitCheckpoint(ctx context.Context, arg PutTargetGitCh
 	return i, err
 }
 
+const reconcileCanceledTargetRunSuccess = `-- name: ReconcileCanceledTargetRunSuccess :one
+UPDATE run SET target_outcome = 'succeeded', target_failure_kind = '',
+    reviewed_head = $2, merge_sha = $3, ended_at = $4
+WHERE id = $1 AND target_outcome = 'canceled'
+RETURNING id, ticket_id, started_at, ended_at, outcome, failure_kind, target_outcome, target_failure_kind, reviewed_head, merge_sha
+`
+
+type ReconcileCanceledTargetRunSuccessParams struct {
+	ID           pgtype.UUID
+	ReviewedHead pgtype.Text
+	MergeSha     pgtype.Text
+	EndedAt      pgtype.Timestamptz
+}
+
+func (q *Queries) ReconcileCanceledTargetRunSuccess(ctx context.Context, arg ReconcileCanceledTargetRunSuccessParams) (Run, error) {
+	row := q.db.QueryRow(ctx, reconcileCanceledTargetRunSuccess,
+		arg.ID,
+		arg.ReviewedHead,
+		arg.MergeSha,
+		arg.EndedAt,
+	)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.TicketID,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.Outcome,
+		&i.FailureKind,
+		&i.TargetOutcome,
+		&i.TargetFailureKind,
+		&i.ReviewedHead,
+		&i.MergeSha,
+	)
+	return i, err
+}
+
 const reopenTargetTicket = `-- name: ReopenTargetTicket :one
 UPDATE ticket SET state = 'open', active_run_id = NULL, updated_at = CURRENT_TIMESTAMP
 WHERE id = $1 AND state = 'active' AND active_run_id = $2
@@ -380,27 +480,13 @@ func (q *Queries) ReopenTargetTicket(ctx context.Context, arg ReopenTargetTicket
 	return i, err
 }
 
-const setRunCheckpointCapabilityHash = `-- name: SetRunCheckpointCapabilityHash :exec
-UPDATE run SET checkpoint_capability_hash = $2 WHERE id = $1
-`
-
-type SetRunCheckpointCapabilityHashParams struct {
-	ID                       pgtype.UUID
-	CheckpointCapabilityHash pgtype.Text
-}
-
-func (q *Queries) SetRunCheckpointCapabilityHash(ctx context.Context, arg SetRunCheckpointCapabilityHashParams) error {
-	_, err := q.db.Exec(ctx, setRunCheckpointCapabilityHash, arg.ID, arg.CheckpointCapabilityHash)
-	return err
-}
-
 const startTargetAgentAttempt = `-- name: StartTargetAgentAttempt :one
 INSERT INTO run_agent_attempt (
     run_id, step_ordinal, attempt_no, agent_stage, model, effort, state,
     usage_state, started_at
 ) VALUES ($1, $2, $3, $4, $5, $6, 'running', $7, $8)
 ON CONFLICT (run_id, step_ordinal, attempt_no) DO UPDATE SET run_id = run_agent_attempt.run_id
-RETURNING run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, provider_thread_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result
+RETURNING run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, provider_thread_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result, checkpoint_capability_hash
 `
 
 type StartTargetAgentAttemptParams struct {
@@ -444,6 +530,7 @@ func (q *Queries) StartTargetAgentAttempt(ctx context.Context, arg StartTargetAg
 		&i.StartedAt,
 		&i.EndedAt,
 		&i.Result,
+		&i.CheckpointCapabilityHash,
 	)
 	return i, err
 }
@@ -489,7 +576,7 @@ func (q *Queries) StartTargetStep(ctx context.Context, arg StartTargetStepParams
 }
 
 const targetAgentAttemptForUpdate = `-- name: TargetAgentAttemptForUpdate :one
-SELECT run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, provider_thread_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result FROM run_agent_attempt
+SELECT run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, provider_thread_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result, checkpoint_capability_hash FROM run_agent_attempt
 WHERE run_id = $1 AND step_ordinal = $2 AND attempt_no = $3 FOR UPDATE
 `
 
@@ -520,12 +607,13 @@ func (q *Queries) TargetAgentAttemptForUpdate(ctx context.Context, arg TargetAge
 		&i.StartedAt,
 		&i.EndedAt,
 		&i.Result,
+		&i.CheckpointCapabilityHash,
 	)
 	return i, err
 }
 
 const targetAgentAttemptsForRun = `-- name: TargetAgentAttemptsForRun :many
-SELECT run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, provider_thread_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result FROM run_agent_attempt WHERE run_id = $1 ORDER BY step_ordinal, attempt_no
+SELECT run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, provider_thread_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result, checkpoint_capability_hash FROM run_agent_attempt WHERE run_id = $1 ORDER BY step_ordinal, attempt_no
 `
 
 func (q *Queries) TargetAgentAttemptsForRun(ctx context.Context, runID pgtype.UUID) ([]RunAgentAttempt, error) {
@@ -555,6 +643,7 @@ func (q *Queries) TargetAgentAttemptsForRun(ctx context.Context, runID pgtype.UU
 			&i.StartedAt,
 			&i.EndedAt,
 			&i.Result,
+			&i.CheckpointCapabilityHash,
 		); err != nil {
 			return nil, err
 		}
@@ -564,6 +653,32 @@ func (q *Queries) TargetAgentAttemptsForRun(ctx context.Context, runID pgtype.UU
 		return nil, err
 	}
 	return items, nil
+}
+
+const targetAgentTranscript = `-- name: TargetAgentTranscript :one
+SELECT run_id, step_ordinal, attempt_no, compressed_bytes, compression, uncompressed_size_bytes, checksum FROM run_agent_transcript
+WHERE run_id = $1 AND step_ordinal = $2 AND attempt_no = $3
+`
+
+type TargetAgentTranscriptParams struct {
+	RunID       pgtype.UUID
+	StepOrdinal int32
+	AttemptNo   int32
+}
+
+func (q *Queries) TargetAgentTranscript(ctx context.Context, arg TargetAgentTranscriptParams) (RunAgentTranscript, error) {
+	row := q.db.QueryRow(ctx, targetAgentTranscript, arg.RunID, arg.StepOrdinal, arg.AttemptNo)
+	var i RunAgentTranscript
+	err := row.Scan(
+		&i.RunID,
+		&i.StepOrdinal,
+		&i.AttemptNo,
+		&i.CompressedBytes,
+		&i.Compression,
+		&i.UncompressedSizeBytes,
+		&i.Checksum,
+	)
+	return i, err
 }
 
 const targetGitCheckpoint = `-- name: TargetGitCheckpoint :one
@@ -587,7 +702,7 @@ func (q *Queries) TargetGitCheckpoint(ctx context.Context, runID pgtype.UUID) (R
 }
 
 const targetRunForUpdate = `-- name: TargetRunForUpdate :one
-SELECT id, ticket_id, started_at, ended_at, outcome, failure_kind, target_outcome, target_failure_kind, reviewed_head, merge_sha, checkpoint_capability_hash FROM run WHERE id = $1 FOR UPDATE
+SELECT id, ticket_id, started_at, ended_at, outcome, failure_kind, target_outcome, target_failure_kind, reviewed_head, merge_sha FROM run WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) TargetRunForUpdate(ctx context.Context, id pgtype.UUID) (Run, error) {
@@ -604,7 +719,6 @@ func (q *Queries) TargetRunForUpdate(ctx context.Context, id pgtype.UUID) (Run, 
 		&i.TargetFailureKind,
 		&i.ReviewedHead,
 		&i.MergeSha,
-		&i.CheckpointCapabilityHash,
 	)
 	return i, err
 }

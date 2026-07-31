@@ -74,8 +74,14 @@ ON CONFLICT (run_id, step_ordinal, attempt_no) DO NOTHING;
 SELECT run_id, step_ordinal, attempt_no FROM run_agent_transcript
 WHERE run_id = $1 ORDER BY step_ordinal, attempt_no;
 
--- name: SetRunCheckpointCapabilityHash :exec
-UPDATE run SET checkpoint_capability_hash = $2 WHERE id = $1;
+-- name: TargetAgentTranscript :one
+SELECT * FROM run_agent_transcript
+WHERE run_id = $1 AND step_ordinal = $2 AND attempt_no = $3;
+
+-- name: BindTargetAttemptCapability :one
+UPDATE run_agent_attempt SET checkpoint_capability_hash = $4
+WHERE run_id = $1 AND step_ordinal = $2 AND attempt_no = $3 AND state = 'running'
+RETURNING *;
 
 -- name: TargetGitCheckpoint :one
 SELECT * FROM run_git_checkpoint WHERE run_id = $1;
@@ -102,6 +108,12 @@ UPDATE run SET target_outcome = 'succeeded', target_failure_kind = '',
 WHERE id = $1 AND target_outcome IS NULL
 RETURNING *;
 
+-- name: ReconcileCanceledTargetRunSuccess :one
+UPDATE run SET target_outcome = 'succeeded', target_failure_kind = '',
+    reviewed_head = $2, merge_sha = $3, ended_at = $4
+WHERE id = $1 AND target_outcome = 'canceled'
+RETURNING *;
+
 -- name: CompleteTargetRunCanceled :one
 UPDATE run SET target_outcome = 'canceled', target_failure_kind = '', ended_at = $2
 WHERE id = $1 AND target_outcome IS NULL
@@ -110,6 +122,11 @@ RETURNING *;
 -- name: CompleteTargetTicket :one
 UPDATE ticket SET state = 'done', active_run_id = NULL, updated_at = CURRENT_TIMESTAMP
 WHERE id = $1 AND state = 'active' AND active_run_id = $2
+RETURNING *;
+
+-- name: CompleteCanceledTargetTicket :one
+UPDATE ticket SET state = 'done', active_run_id = NULL, updated_at = CURRENT_TIMESTAMP
+WHERE id = $1 AND state = 'open' AND active_run_id IS NULL
 RETURNING *;
 
 -- name: ReopenTargetTicket :one

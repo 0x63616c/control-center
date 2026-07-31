@@ -1,16 +1,19 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store/storedb"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // ErrTicketClaimed reports that another target Run owns a Ticket.
@@ -174,9 +177,7 @@ func (s *Store) CompleteStep(ctx context.Context, runID string, ordinal int, end
 
 // AgentAttempt is one workflow-authorized agent execution below a target Step.
 type AgentAttempt struct {
-	RunID             string
-	StepOrdinal       int
-	AttemptNo         int
+	ID                TargetAttemptID
 	AgentStage        work.AgentStage
 	Model             work.Model
 	State             work.AgentAttemptState
@@ -188,6 +189,20 @@ type AgentAttempt struct {
 	EndedAt           time.Time
 	Result            json.RawMessage
 	TranscriptPresent bool
+}
+
+// TargetAttemptID is the complete identity of one target Agent Attempt.
+// Keeping it whole prevents a Run-scoped checkpoint capability from being
+// paired with caller-selected Step or Attempt coordinates.
+type TargetAttemptID struct {
+	RunID       string
+	StepOrdinal int
+	AttemptNo   int
+}
+
+// String renders the stable compound identity for diagnostics and hashing.
+func (id TargetAttemptID) String() string {
+	return fmt.Sprintf("%s/step-%d/attempt-%d", id.RunID, id.StepOrdinal, id.AttemptNo)
 }
 
 // TargetStepDetail is a target Step with its agent executions in numeric order.
@@ -226,6 +241,14 @@ func (s *Store) History(ctx context.Context, runID string) (RunHistory, error) {
 	if err != nil {
 		return RunHistory{}, err
 	}
+	transcriptKeys, err := s.TranscriptKeysForRun(ctx, runID)
+	if err != nil {
+		return RunHistory{}, err
+	}
+	transcriptPresent := make(map[TranscriptKey]bool, len(transcriptKeys))
+	for _, key := range transcriptKeys {
+		transcriptPresent[key] = true
+	}
 	steps := make([]TargetStepDetail, 0, len(legacy.Steps))
 	for ordinal, legacyStep := range legacy.Steps {
 		step := RunStep{RunID: runID, Ordinal: ordinal + 1, Kind: work.StepKind(legacyStep.Stage), Iteration: legacyStep.Turn, State: work.StepStateCompleted}
@@ -242,7 +265,7 @@ func (s *Store) History(ctx context.Context, runID string) (RunHistory, error) {
 			if legacyAttempt.Measured {
 				usageState = work.UsageMeasured
 			}
-			attempts = append(attempts, AgentAttempt{RunID: runID, StepOrdinal: ordinal + 1, AttemptNo: legacyAttempt.AttemptNo, AgentStage: work.AgentStage(legacyAttempt.Key.Stage), Model: legacyAttempt.Model, State: state, UsageState: usageState, Usage: legacyAttempt.Usage, StartedAt: legacyAttempt.StartedAt, EndedAt: legacyAttempt.EndedAt})
+			attempts = append(attempts, AgentAttempt{ID: TargetAttemptID{RunID: runID, StepOrdinal: ordinal + 1, AttemptNo: legacyAttempt.AttemptNo}, AgentStage: work.AgentStage(legacyAttempt.Key.Stage), Model: legacyAttempt.Model, State: state, UsageState: usageState, Usage: legacyAttempt.Usage, StartedAt: legacyAttempt.StartedAt, EndedAt: legacyAttempt.EndedAt, TranscriptPresent: transcriptPresent[TranscriptKey{Stage: legacyStep.Stage, Turn: legacyStep.Turn, AttemptNo: legacyAttempt.AttemptNo}]})
 		}
 		steps = append(steps, TargetStepDetail{Step: step, Attempts: attempts})
 	}
@@ -278,8 +301,8 @@ func (s *Store) TargetRunDetail(ctx context.Context, runID string) (TargetRunDet
 	byStep := make(map[int][]AgentAttempt, len(steps))
 	for _, row := range attempts {
 		attempt := agentAttemptFromRow(row)
-		attempt.TranscriptPresent = present[[2]int{attempt.StepOrdinal, attempt.AttemptNo}]
-		byStep[attempt.StepOrdinal] = append(byStep[attempt.StepOrdinal], attempt)
+		attempt.TranscriptPresent = present[[2]int{attempt.ID.StepOrdinal, attempt.ID.AttemptNo}]
+		byStep[attempt.ID.StepOrdinal] = append(byStep[attempt.ID.StepOrdinal], attempt)
 	}
 	detail := TargetRunDetail{Run: run, Steps: make([]TargetStepDetail, 0, len(steps))}
 	for _, row := range steps {
@@ -291,33 +314,29 @@ func (s *Store) TargetRunDetail(ctx context.Context, runID string) (TargetRunDet
 
 // StartAgentAttemptInput authorizes one agent execution under a pre-existing Step.
 type StartAgentAttemptInput struct {
-	RunID       string
-	StepOrdinal int
-	AttemptNo   int
-	AgentStage  work.AgentStage
-	Model       work.Model
-	UsageState  work.UsageState
-	StartedAt   time.Time
+	ID         TargetAttemptID
+	AgentStage work.AgentStage
+	Model      work.Model
+	UsageState work.UsageState
+	StartedAt  time.Time
 }
 
 // StartAgentAttempt persists an agent execution before its transcript can exist.
 func (s *Store) StartAgentAttempt(ctx context.Context, in StartAgentAttemptInput) (AgentAttempt, error) {
-	id, err := pgUUID(in.RunID)
+	id, err := pgUUID(in.ID.RunID)
 	if err != nil {
 		return AgentAttempt{}, fmt.Errorf("starting agent attempt: %w", err)
 	}
-	row, err := s.q.StartTargetAgentAttempt(ctx, storedb.StartTargetAgentAttemptParams{RunID: id, StepOrdinal: int32(in.StepOrdinal), AttemptNo: int32(in.AttemptNo), AgentStage: string(in.AgentStage), Model: in.Model.Name, Effort: in.Model.Effort, UsageState: string(in.UsageState), StartedAt: pgTimestamp(in.StartedAt)})
+	row, err := s.q.StartTargetAgentAttempt(ctx, storedb.StartTargetAgentAttemptParams{RunID: id, StepOrdinal: int32(in.ID.StepOrdinal), AttemptNo: int32(in.ID.AttemptNo), AgentStage: string(in.AgentStage), Model: in.Model.Name, Effort: in.Model.Effort, UsageState: string(in.UsageState), StartedAt: pgTimestamp(in.StartedAt)})
 	if err != nil {
-		return AgentAttempt{}, fmt.Errorf("starting agent attempt %d of step %d: %w", in.AttemptNo, in.StepOrdinal, wrapQueryErr(err))
+		return AgentAttempt{}, fmt.Errorf("starting agent attempt %s: %w", in.ID, wrapQueryErr(err))
 	}
 	return agentAttemptFromRow(row), nil
 }
 
 // AgentCheckpointInput is the terminal durable checkpoint written by a scoped Run Worker capability.
 type AgentCheckpointInput struct {
-	RunID       string
-	StepOrdinal int
-	AttemptNo   int
+	ID          TargetAttemptID
 	Capability  string
 	ThreadID    string
 	State       work.AgentAttemptState
@@ -393,14 +412,18 @@ func (s *Store) CheckpointGitEffect(ctx context.Context, in GitCheckpointInput) 
 	return gitCheckpointFromRow(row), nil
 }
 
-// SetCheckpointCapabilityHash stores the one-way capability verifier for a Run.
-func (s *Store) SetCheckpointCapabilityHash(ctx context.Context, runID, hash string) error {
-	id, err := pgUUID(runID)
+// BindCheckpointCapability hashes and binds one capability to one exact active
+// Agent Attempt. The clear capability is never persisted.
+func (s *Store) BindCheckpointCapability(ctx context.Context, attemptID TargetAttemptID, capability string) error {
+	id, err := pgUUID(attemptID.RunID)
 	if err != nil {
-		return fmt.Errorf("setting checkpoint capability: %w", err)
+		return fmt.Errorf("binding checkpoint capability: %w", err)
 	}
-	if err := s.q.SetRunCheckpointCapabilityHash(ctx, storedb.SetRunCheckpointCapabilityHashParams{ID: id, CheckpointCapabilityHash: pgOptionalText(hash)}); err != nil {
-		return fmt.Errorf("setting checkpoint capability for run %s: %w", runID, wrapQueryErr(err))
+	_, err = s.q.BindTargetAttemptCapability(ctx, storedb.BindTargetAttemptCapabilityParams{
+		RunID: id, StepOrdinal: int32(attemptID.StepOrdinal), AttemptNo: int32(attemptID.AttemptNo), CheckpointCapabilityHash: pgOptionalText(capabilityHash(attemptID, capability)),
+	})
+	if err != nil {
+		return fmt.Errorf("binding checkpoint capability to %s: %w", attemptID, wrapQueryErr(err))
 	}
 	return nil
 }
@@ -410,7 +433,10 @@ func (s *Store) CheckpointAgentAttempt(ctx context.Context, in AgentCheckpointIn
 	if s.begin == nil {
 		return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: store cannot begin a transaction")
 	}
-	id, err := pgUUID(in.RunID)
+	if err := in.Validate(); err != nil {
+		return AgentAttempt{}, err
+	}
+	id, err := pgUUID(in.ID.RunID)
 	if err != nil {
 		return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: %w", err)
 	}
@@ -424,38 +450,47 @@ func (s *Store) CheckpointAgentAttempt(ctx context.Context, in AgentCheckpointIn
 	if err != nil {
 		return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: reading run: %w", wrapQueryErr(err))
 	}
-	if !run.CheckpointCapabilityHash.Valid || run.CheckpointCapabilityHash.String != capabilityHash(in.Capability) {
-		return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: %w", ErrRunOwnership)
-	}
 	ticket, err := q.TargetTicketForUpdate(ctx, run.TicketID)
 	if err != nil {
 		return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: reading ticket: %w", wrapQueryErr(err))
 	}
-	if ticket.State != TicketActive.String() || runIDString(ticket.ActiveRunID) != in.RunID {
+	if ticket.State != TicketActive.String() || runIDString(ticket.ActiveRunID) != in.ID.RunID {
 		return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: %w", ErrRunOwnership)
 	}
 	current, err := q.TargetAgentAttemptForUpdate(ctx, storedb.TargetAgentAttemptForUpdateParams{
-		RunID: id, StepOrdinal: int32(in.StepOrdinal), AttemptNo: int32(in.AttemptNo),
+		RunID: id, StepOrdinal: int32(in.ID.StepOrdinal), AttemptNo: int32(in.ID.AttemptNo),
 	})
 	if err != nil {
 		return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: reading attempt: %w", wrapQueryErr(err))
 	}
+	if !current.CheckpointCapabilityHash.Valid || current.CheckpointCapabilityHash.String != capabilityHash(in.ID, in.Capability) {
+		return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: %w", ErrRunOwnership)
+	}
 	if current.State != string(work.AgentAttemptRunning) {
-		if current.State != string(in.State) || current.ProviderThreadID != in.ThreadID ||
-			current.UsageState != string(in.UsageState) || string(current.Result) != string(in.Result) {
+		if !terminalAgentCheckpointMatches(current, in) {
 			return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: conflicting terminal checkpoint: %w", work.ErrPermanent)
+		}
+		storedTranscript, transcriptErr := q.TargetAgentTranscript(ctx, storedb.TargetAgentTranscriptParams{RunID: id, StepOrdinal: int32(in.ID.StepOrdinal), AttemptNo: int32(in.ID.AttemptNo)})
+		switch {
+		case in.Transcript == nil && errors.Is(transcriptErr, pgx.ErrNoRows):
+		case in.Transcript == nil || errors.Is(transcriptErr, pgx.ErrNoRows):
+			return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: conflicting terminal transcript: %w", work.ErrPermanent)
+		case transcriptErr != nil:
+			return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: reading terminal transcript: %w", wrapQueryErr(transcriptErr))
+		case !targetTranscriptMatches(storedTranscript, *in.Transcript):
+			return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: conflicting terminal transcript: %w", work.ErrPermanent)
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: committing retry: %w", wrapQueryErr(err))
 		}
 		return agentAttemptFromRow(current), nil
 	}
-	row, err := q.CheckpointTargetAgentAttempt(ctx, storedb.CheckpointTargetAgentAttemptParams{RunID: id, StepOrdinal: int32(in.StepOrdinal), AttemptNo: int32(in.AttemptNo), ProviderThreadID: in.ThreadID, State: string(in.State), FailureKind: string(in.FailureKind), UsageState: string(in.UsageState), InputTokens: in.Usage.InputTokens, CachedInputTokens: in.Usage.CachedInputTokens, OutputTokens: in.Usage.OutputTokens, ReasoningTokens: in.Usage.ReasoningTokens, EndedAt: pgTimestamp(in.EndedAt), Result: in.Result})
+	row, err := q.CheckpointTargetAgentAttempt(ctx, storedb.CheckpointTargetAgentAttemptParams{RunID: id, StepOrdinal: int32(in.ID.StepOrdinal), AttemptNo: int32(in.ID.AttemptNo), ProviderThreadID: in.ThreadID, State: string(in.State), FailureKind: string(in.FailureKind), UsageState: string(in.UsageState), InputTokens: in.Usage.InputTokens, CachedInputTokens: in.Usage.CachedInputTokens, OutputTokens: in.Usage.OutputTokens, ReasoningTokens: in.Usage.ReasoningTokens, EndedAt: pgTimestamp(in.EndedAt), Result: in.Result})
 	if err != nil {
-		return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt %d: %w", in.AttemptNo, wrapQueryErr(err))
+		return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt %s: %w", in.ID, wrapQueryErr(err))
 	}
 	if in.Transcript != nil {
-		err = q.PutTargetAgentTranscript(ctx, storedb.PutTargetAgentTranscriptParams{RunID: id, StepOrdinal: int32(in.StepOrdinal), AttemptNo: int32(in.AttemptNo), CompressedBytes: in.Transcript.CompressedBytes, Compression: in.Transcript.Compression, UncompressedSizeBytes: in.Transcript.UncompressedSizeBytes, Checksum: in.Transcript.Checksum})
+		err = q.PutTargetAgentTranscript(ctx, storedb.PutTargetAgentTranscriptParams{RunID: id, StepOrdinal: int32(in.ID.StepOrdinal), AttemptNo: int32(in.ID.AttemptNo), CompressedBytes: in.Transcript.CompressedBytes, Compression: in.Transcript.Compression, UncompressedSizeBytes: in.Transcript.UncompressedSizeBytes, Checksum: in.Transcript.Checksum})
 		if err != nil {
 			return AgentAttempt{}, fmt.Errorf("checkpointing transcript: %w", wrapQueryErr(err))
 		}
@@ -506,6 +541,9 @@ func (s *Store) FinalizeConfirmedMerge(ctx context.Context, in ConfirmedMergeInp
 		return TerminalResult{}, fmt.Errorf("finalizing merge: %w", ErrRunOwnership)
 	}
 	if runRow.TargetOutcome.Valid {
+		if runRow.TargetOutcome.String == string(work.RunOutcomeCanceled) {
+			return reconcileConfirmedMergeAfterCancellation(ctx, tx, q, runRow, id, in)
+		}
 		if runRow.TargetOutcome.String != string(work.RunOutcomeSucceeded) || textFromPg(runRow.MergeSha) != in.MergeSHA || textFromPg(runRow.ReviewedHead) != in.ReviewedHead {
 			return TerminalResult{}, fmt.Errorf("finalizing merge: conflicting terminal result: %w", work.ErrPermanent)
 		}
@@ -522,7 +560,11 @@ func (s *Store) FinalizeConfirmedMerge(ctx context.Context, in ConfirmedMergeInp
 		}
 		return TerminalResult{Ticket: ticket, Run: runFromRow(runRow)}, nil
 	}
-	if _, err := q.CompleteTargetStep(ctx, storedb.CompleteTargetStepParams{RunID: id, Ordinal: int32(in.StepOrdinal), EndedAt: pgTimestamp(in.EndedAt), Result: []byte(`{"kind":"merged","merge_sha":"` + in.MergeSHA + `"}`)}); err != nil {
+	stepResult, err := confirmedMergeStepResult(in.MergeSHA)
+	if err != nil {
+		return TerminalResult{}, err
+	}
+	if _, err := q.CompleteTargetStep(ctx, storedb.CompleteTargetStepParams{RunID: id, Ordinal: int32(in.StepOrdinal), EndedAt: pgTimestamp(in.EndedAt), Result: stepResult}); err != nil {
 		return TerminalResult{}, fmt.Errorf("finalizing merge: completing step: %w", wrapQueryErr(err))
 	}
 	completedRun, err := q.CompleteTargetRunSuccess(ctx, storedb.CompleteTargetRunSuccessParams{ID: id, ReviewedHead: pgOptionalText(in.ReviewedHead), MergeSha: pgOptionalText(in.MergeSHA), EndedAt: pgTimestamp(in.EndedAt)})
@@ -541,6 +583,50 @@ func (s *Store) FinalizeConfirmedMerge(ctx context.Context, in ConfirmedMergeInp
 		return TerminalResult{}, fmt.Errorf("finalizing merge: committing: %w", wrapQueryErr(err))
 	}
 	return TerminalResult{Ticket: ticket, Run: runFromRow(completedRun)}, nil
+}
+
+func reconcileConfirmedMergeAfterCancellation(
+	ctx context.Context,
+	tx pgx.Tx,
+	q *storedb.Queries,
+	runRow storedb.Run,
+	runID pgtype.UUID,
+	in ConfirmedMergeInput,
+) (TerminalResult, error) {
+	stepResult, err := confirmedMergeStepResult(in.MergeSHA)
+	if err != nil {
+		return TerminalResult{}, err
+	}
+	if _, err := q.CompleteTargetStep(ctx, storedb.CompleteTargetStepParams{RunID: runID, Ordinal: int32(in.StepOrdinal), EndedAt: pgTimestamp(in.EndedAt), Result: stepResult}); err != nil {
+		return TerminalResult{}, fmt.Errorf("reconciling confirmed merge: completing step: %w", wrapQueryErr(err))
+	}
+	completedRun, err := q.ReconcileCanceledTargetRunSuccess(ctx, storedb.ReconcileCanceledTargetRunSuccessParams{ID: runID, ReviewedHead: pgOptionalText(in.ReviewedHead), MergeSha: pgOptionalText(in.MergeSHA), EndedAt: pgTimestamp(in.EndedAt)})
+	if err != nil {
+		return TerminalResult{}, fmt.Errorf("reconciling confirmed merge: completing canceled run: %w", wrapQueryErr(err))
+	}
+	ticketRow, err := q.CompleteCanceledTargetTicket(ctx, runRow.TicketID)
+	if err != nil {
+		return TerminalResult{}, fmt.Errorf("reconciling confirmed merge: a later Run owns the Ticket: %w", ErrRunOwnership)
+	}
+	ticket, err := ticketFromRow(ticketRow)
+	if err != nil {
+		return TerminalResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return TerminalResult{}, fmt.Errorf("reconciling confirmed merge: committing: %w", wrapQueryErr(err))
+	}
+	return TerminalResult{Ticket: ticket, Run: runFromRow(completedRun)}, nil
+}
+
+func confirmedMergeStepResult(mergeSHA string) (json.RawMessage, error) {
+	result, err := json.Marshal(struct {
+		Kind     string `json:"kind"`
+		MergeSHA string `json:"merge_sha"`
+	}{Kind: "merged", MergeSHA: mergeSHA})
+	if err != nil {
+		return nil, fmt.Errorf("encoding confirmed merge result: %w", err)
+	}
+	return result, nil
 }
 
 // CancelRunInput names one conditional cancellation finalization.
@@ -647,8 +733,67 @@ func (s *Store) CancelRun(ctx context.Context, in CancelRunInput) (TerminalResul
 	return TerminalResult{Ticket: ticket, Run: runFromRow(runRow)}, nil
 }
 
-func capabilityHash(capability string) string {
-	return fmt.Sprintf("%x", sha256.Sum256([]byte(capability)))
+// Validate reports whether a checkpoint contains the durable evidence its state requires.
+func (in AgentCheckpointInput) Validate() error {
+	if in.State != work.AgentAttemptRunning && in.State != work.AgentAttemptSucceeded && in.State != work.AgentAttemptFailed {
+		return fmt.Errorf("checkpointing agent attempt %s: invalid state: %w", in.ID, work.ErrPermanent)
+	}
+	if in.UsageState != work.UsageUnknown && in.UsageState != work.UsageMeasured {
+		return fmt.Errorf("checkpointing agent attempt %s: usage state is required: %w", in.ID, work.ErrPermanent)
+	}
+	if in.State != work.AgentAttemptSucceeded {
+		return nil
+	}
+	if in.ThreadID == "" {
+		return fmt.Errorf("checkpointing agent attempt %s: provider identity is required: %w", in.ID, work.ErrPermanent)
+	}
+	if len(in.Result) == 0 || !json.Valid(in.Result) {
+		return fmt.Errorf("checkpointing agent attempt %s: terminal result is required: %w", in.ID, work.ErrPermanent)
+	}
+	if in.Transcript == nil || len(in.Transcript.CompressedBytes) == 0 || in.Transcript.Compression == "" || len(in.Transcript.Checksum) == 0 {
+		return fmt.Errorf("checkpointing agent attempt %s: transcript is required: %w", in.ID, work.ErrPermanent)
+	}
+	return nil
+}
+
+func capabilityHash(attemptID TargetAttemptID, capability string) string {
+	material := attemptID.String() + "\x00" + capability
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(material)))
+}
+
+func terminalAgentCheckpointMatches(current storedb.RunAgentAttempt, in AgentCheckpointInput) bool {
+	return current.State == string(in.State) &&
+		current.ProviderThreadID == in.ThreadID &&
+		current.FailureKind == string(in.FailureKind) &&
+		current.UsageState == string(in.UsageState) &&
+		current.InputTokens == in.Usage.InputTokens &&
+		current.CachedInputTokens == in.Usage.CachedInputTokens &&
+		current.OutputTokens == in.Usage.OutputTokens &&
+		current.ReasoningTokens == in.Usage.ReasoningTokens &&
+		timeFromPg(current.EndedAt).Equal(in.EndedAt.Truncate(time.Microsecond)) &&
+		jsonEqual(current.Result, in.Result)
+}
+
+func targetTranscriptMatches(current storedb.RunAgentTranscript, in TargetTranscript) bool {
+	return bytes.Equal(current.CompressedBytes, in.CompressedBytes) &&
+		current.Compression == in.Compression &&
+		current.UncompressedSizeBytes == in.UncompressedSizeBytes &&
+		bytes.Equal(current.Checksum, in.Checksum)
+}
+
+func jsonEqual(left, right json.RawMessage) bool {
+	if !json.Valid(left) || !json.Valid(right) {
+		return bytes.Equal(left, right)
+	}
+	var leftValue interface{}
+	var rightValue interface{}
+	if err := json.Unmarshal(left, &leftValue); err != nil {
+		return false
+	}
+	if err := json.Unmarshal(right, &rightValue); err != nil {
+		return false
+	}
+	return reflect.DeepEqual(leftValue, rightValue)
 }
 
 func runStepFromRow(row storedb.RunStep) RunStep {
@@ -656,15 +801,12 @@ func runStepFromRow(row storedb.RunStep) RunStep {
 }
 
 func agentAttemptFromRow(row storedb.RunAgentAttempt) AgentAttempt {
-	return AgentAttempt{RunID: runIDString(row.RunID), StepOrdinal: int(row.StepOrdinal), AttemptNo: int(row.AttemptNo), AgentStage: work.AgentStage(row.AgentStage), Model: work.Model{Name: row.Model, Effort: row.Effort}, State: work.AgentAttemptState(row.State), FailureKind: work.RunFailureKind(row.FailureKind), ProviderThreadID: row.ProviderThreadID, UsageState: work.UsageState(row.UsageState), Usage: work.Usage{InputTokens: row.InputTokens, CachedInputTokens: row.CachedInputTokens, OutputTokens: row.OutputTokens, ReasoningTokens: row.ReasoningTokens}, StartedAt: timeFromPg(row.StartedAt), EndedAt: timeFromPg(row.EndedAt), Result: row.Result}
+	return AgentAttempt{ID: TargetAttemptID{RunID: runIDString(row.RunID), StepOrdinal: int(row.StepOrdinal), AttemptNo: int(row.AttemptNo)}, AgentStage: work.AgentStage(row.AgentStage), Model: work.Model{Name: row.Model, Effort: row.Effort}, State: work.AgentAttemptState(row.State), FailureKind: work.RunFailureKind(row.FailureKind), ProviderThreadID: row.ProviderThreadID, UsageState: work.UsageState(row.UsageState), Usage: work.Usage{InputTokens: row.InputTokens, CachedInputTokens: row.CachedInputTokens, OutputTokens: row.OutputTokens, ReasoningTokens: row.ReasoningTokens}, StartedAt: timeFromPg(row.StartedAt), EndedAt: timeFromPg(row.EndedAt), Result: row.Result}
 }
 
 func gitCheckpointFromRow(row storedb.RunGitCheckpoint) GitCheckpoint {
 	return GitCheckpoint{RunID: runIDString(row.RunID), StepOrdinal: int(row.StepOrdinal), Branch: row.Branch, PushedHead: row.PushedHead, ObservedBase: row.ObservedBase, PullRequestNumber: int(row.PullRequestNumber), PullRequestNodeID: row.PullRequestNodeID, StepResult: row.StepResult}
 }
-
-// CheckpointCapabilityHash hashes capability without retaining the secret at call sites.
-func CheckpointCapabilityHash(capability string) string { return capabilityHash(capability) }
 
 var (
 	_ TargetRunClaimer       = (*Store)(nil)

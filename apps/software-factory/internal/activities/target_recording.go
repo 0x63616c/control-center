@@ -11,10 +11,12 @@ import (
 // WorkOnTicket workflow. Recording failure is returned to Temporal for retry;
 // no target boundary is logged and ignored.
 type TargetRunRecorder interface {
-	store.TargetRunClaimer
-	store.TargetStepRecorder
-	store.TargetAgentRecorder
-	store.TargetTerminalRecorder
+	ClaimAndStartRun(context.Context, store.ClaimRunInput) (store.ClaimRunResult, error)
+	StartStep(context.Context, store.StartStepInput) (store.RunStep, error)
+	StartAgentAttempt(context.Context, store.StartAgentAttemptInput) (store.AgentAttempt, error)
+	CheckpointAgentAttempt(context.Context, store.AgentCheckpointInput) (store.AgentAttempt, error)
+	FinalizeConfirmedMerge(context.Context, store.ConfirmedMergeInput) (store.TerminalResult, error)
+	CancelRun(context.Context, store.CancelRunInput) (store.TerminalResult, error)
 }
 
 // TargetRecordingActivities adapts target Store persistence to Temporal activities.
@@ -50,7 +52,7 @@ func (a *TargetRecordingActivities) StartStep(ctx context.Context, in store.Star
 func (a *TargetRecordingActivities) StartAgentAttempt(ctx context.Context, in store.StartAgentAttemptInput) (store.AgentAttempt, error) {
 	attempt, err := a.store.StartAgentAttempt(ctx, in)
 	if err != nil {
-		return store.AgentAttempt{}, fail(ctx, fmt.Sprintf("starting agent attempt %d", in.AttemptNo), err)
+		return store.AgentAttempt{}, fail(ctx, fmt.Sprintf("starting agent attempt %s", in.ID), err)
 	}
 	return attempt, nil
 }
@@ -59,7 +61,7 @@ func (a *TargetRecordingActivities) StartAgentAttempt(ctx context.Context, in st
 func (a *TargetRecordingActivities) CheckpointAgentAttempt(ctx context.Context, in store.AgentCheckpointInput) (store.AgentAttempt, error) {
 	attempt, err := a.store.CheckpointAgentAttempt(ctx, in)
 	if err != nil {
-		return store.AgentAttempt{}, fail(ctx, fmt.Sprintf("checkpointing agent attempt %d", in.AttemptNo), err)
+		return store.AgentAttempt{}, fail(ctx, fmt.Sprintf("checkpointing agent attempt %s", in.ID), err)
 	}
 	return attempt, nil
 }

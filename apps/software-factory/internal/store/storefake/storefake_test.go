@@ -7,8 +7,16 @@ import (
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store/storefake"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store/storetest"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
+
+func TestTargetStoreConflictContract(t *testing.T) {
+	t.Parallel()
+	storetest.RunTargetConflictContract(t, func(*testing.T) storetest.TargetStore {
+		return storefake.New()
+	})
+}
 
 // This test never opens a database — it is the one SoftwareStyle requires:
 // every consumer built on top of internal/store must be testable without

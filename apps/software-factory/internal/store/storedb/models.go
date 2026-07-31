@@ -43,37 +43,37 @@ type MigrationProbe struct {
 }
 
 type Run struct {
-	ID                       pgtype.UUID
-	TicketID                 int64
-	StartedAt                pgtype.Timestamptz
-	EndedAt                  pgtype.Timestamptz
-	Outcome                  pgtype.Text
-	FailureKind              string
-	TargetOutcome            pgtype.Text
-	TargetFailureKind        string
-	ReviewedHead             pgtype.Text
-	MergeSha                 pgtype.Text
-	CheckpointCapabilityHash pgtype.Text
+	ID                pgtype.UUID
+	TicketID          int64
+	StartedAt         pgtype.Timestamptz
+	EndedAt           pgtype.Timestamptz
+	Outcome           pgtype.Text
+	FailureKind       string
+	TargetOutcome     pgtype.Text
+	TargetFailureKind string
+	ReviewedHead      pgtype.Text
+	MergeSha          pgtype.Text
 }
 
 type RunAgentAttempt struct {
-	RunID             pgtype.UUID
-	StepOrdinal       int32
-	AttemptNo         int32
-	AgentStage        string
-	Model             string
-	Effort            string
-	State             string
-	FailureKind       string
-	ProviderThreadID  string
-	UsageState        string
-	InputTokens       int64
-	CachedInputTokens int64
-	OutputTokens      int64
-	ReasoningTokens   int64
-	StartedAt         pgtype.Timestamptz
-	EndedAt           pgtype.Timestamptz
-	Result            []byte
+	RunID                    pgtype.UUID
+	StepOrdinal              int32
+	AttemptNo                int32
+	AgentStage               string
+	Model                    string
+	Effort                   string
+	State                    string
+	FailureKind              string
+	ProviderThreadID         string
+	UsageState               string
+	InputTokens              int64
+	CachedInputTokens        int64
+	OutputTokens             int64
+	ReasoningTokens          int64
+	StartedAt                pgtype.Timestamptz
+	EndedAt                  pgtype.Timestamptz
+	Result                   []byte
+	CheckpointCapabilityHash pgtype.Text
 }
 
 type RunAgentTranscript struct {
