@@ -312,7 +312,18 @@ a:hover {
   font-size: 1.2rem;
 }
 .ticket-body {
-  max-width: 72ch;
+  max-width: 78ch;
+  margin-top: 12px;
+  padding: 14px 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.ticket-body > :first-child {
+  margin-top: 0;
+}
+.ticket-body > :last-child {
+  margin-bottom: 0;
 }
 .ticket-body h1,
 .ticket-body h2,
