@@ -113,6 +113,48 @@ export function postgresBackupCronSpec(
 // noticing the duplication.
 const NAS_BACKUP_ROOT = "backups/world-wide-webb";
 
+// Payload blobs are primary data, unlike discardable stage transcripts. This
+// takes a nightly, atomically published archive to the product backup tree.
+// It mounts the NAS paths directly rather than the blobs PVC, preserving the
+// service-only PVC mount boundary declared in software-factory.ts.
+function softwareFactoryBlobsBackupCronSpec(nasNfsServer: string): OwnedCronJobSpec {
+  const sourceMountPath = "/source";
+  const backupMountPath = "/backup";
+  return {
+    name: "software-factory-blobs-backup",
+    namespaceName: "software-factory",
+    image: "alpine:3.20",
+    schedule: "30 1 * * *",
+    command: [
+      "sh",
+      "-c",
+      [
+        "set -e",
+        `out="${backupMountPath}/blobs-$(date +%Y%m%d).tar.gz"`,
+        'tmp="$out.tmp"',
+        'rm -f "$tmp"',
+        `tar -C ${sourceMountPath} -czf "$tmp" .`,
+        'mv "$tmp" "$out"',
+        'echo "wrote $out"',
+      ].join("\n"),
+    ],
+    env: { TZ },
+    volumes: [
+      {
+        mountPath: sourceMountPath,
+        nfs: { server: nasNfsServer, path: "/volume1/Homelab" },
+        readOnly: true,
+        subPath: "software-factory/blobs",
+      },
+      {
+        mountPath: backupMountPath,
+        nfs: { server: nasNfsServer, path: "/volume1/Homelab" },
+        subPath: `${NAS_BACKUP_ROOT}/software-factory/blobs`,
+      },
+    ],
+  };
+}
+
 /**
  * @public - the `ha-config` PVC's daily backup: tars `.storage` + the YAML
  * config files (NOT the recorder history, which lives in the separate
@@ -263,6 +305,7 @@ export function cronSpecs(
     // migration gets explicit review. New product backups use the platform path.
     postgresBackupCronSpec(controlCenterBackup, nasNfsServer),
     postgresBackupCronSpec(softwareFactoryBackup, nasNfsServer),
+    softwareFactoryBlobsBackupCronSpec(nasNfsServer),
   ];
 }
 

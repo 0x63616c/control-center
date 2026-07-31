@@ -50,6 +50,10 @@ type Worker struct {
 	// the pod's own filesystem — which looks like success until the pod goes.
 	TranscriptsRoot string
 
+	// BlobsURL is the in-cluster blob API. It is copied into sandbox pods so
+	// their future payload codec clients use the same durable service.
+	BlobsURL string
+
 	// CodexAuthSecretName is the Kubernetes Secret holding the codex
 	// credential.
 	//
@@ -128,6 +132,7 @@ const (
 	envMetricsAddr            = "METRICS_ADDR"
 	envPodName                = "POD_NAME"
 	envTranscriptsRoot        = "TRANSCRIPTS_ROOT"
+	envBlobsURL               = "BLOBS_URL"
 	envCodexAuthSecret        = "CODEX_AUTH_SECRET_NAME"
 	envSandboxImagePullSecret = "SANDBOX_IMAGE_PULL_SECRET_NAME"
 	envLogLevel               = "LOG_LEVEL"
@@ -148,6 +153,7 @@ func workerEnvNames() []string {
 		envMetricsAddr,
 		envPodName,
 		envTranscriptsRoot,
+		envBlobsURL,
 		envCodexAuthSecret,
 		envSandboxImagePullSecret,
 	}
@@ -168,6 +174,7 @@ func (w Worker) Validate() error {
 		envMetricsAddr:            w.MetricsAddr,
 		envPodName:                w.PodName,
 		envTranscriptsRoot:        w.TranscriptsRoot,
+		envBlobsURL:               w.BlobsURL,
 		envCodexAuthSecret:        w.CodexAuthSecretName,
 		envSandboxImagePullSecret: w.SandboxImagePullSecretName,
 	}
@@ -196,6 +203,7 @@ func LoadWorker() (Worker, error) {
 		PodName:           os.Getenv(envPodName),
 
 		TranscriptsRoot:     os.Getenv(envTranscriptsRoot),
+		BlobsURL:            os.Getenv(envBlobsURL),
 		CodexAuthSecretName: os.Getenv(envCodexAuthSecret),
 
 		SandboxImagePullSecretName: os.Getenv(envSandboxImagePullSecret),
@@ -237,6 +245,7 @@ func describeWorkerRequirement(err error) error {
 		envMetricsAddr:            "the address the metrics and health server listens on",
 		envPodName:                "this pod's own name, from the downward API; it identifies the credential lease holder",
 		envTranscriptsRoot:        "the mount point of the transcript volume, where stage transcripts are written",
+		envBlobsURL:               "the in-cluster payload blob API copied into sandbox pods",
 		envCodexAuthSecret:        "the Kubernetes Secret holding the codex credential; the worker's Role is pinned to this exact name",
 		envSandboxImagePullSecret: "the Kubernetes Secret every sandbox pod authenticates its image pull with; without it a sandbox pod ErrImagePulls against GHCR",
 	}

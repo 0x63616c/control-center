@@ -92,6 +92,10 @@ func TestSandboxTemplateCarriesItsPathEnvironment(t *testing.T) {
 			"work.SandboxTemporalNamespaceEnv: cfg.TemporalNamespace",
 			"the sandbox pod's own embedded worker would dial the wrong namespace, or none",
 		},
+		{
+			"work.SandboxBlobsURLEnv: cfg.BlobsURL",
+			"a later payload codec enablement would give sandbox activities a different blob API than the worker",
+		},
 	} {
 		if !strings.Contains(body, tc.entry) {
 			t.Errorf("buildDeps()'s sandbox template does not set %s; %s", tc.entry, tc.why)

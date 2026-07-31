@@ -69,7 +69,11 @@ const WORKER_SECRET_NAME = "software-factory-worker-secrets";
 const API_SECRET_NAME = "software-factory-api-secrets";
 const API_SERVICE_NAME = "api";
 const WEB_SERVICE_NAME = "web";
+const BLOBS_SERVICE_NAME = "blobs";
+const CODEC_SERVICE_NAME = "codec";
 const API_PORT = 8080;
+const BLOBS_PORT = 8080;
+const CODEC_PORT = 8080;
 const WEB_PORT = 80;
 const WEB_CONTAINER_PORT = 8080;
 const API_UID = 65532;
@@ -127,6 +131,18 @@ const TRANSCRIPTS_SUBPATH = "software-factory/transcripts";
  */
 const TRANSCRIPTS_CAPACITY = "10Gi";
 const TRANSCRIPTS_PV_NAME = `software-factory-transcripts-${TRANSCRIPTS_CAPACITY.toLowerCase()}`;
+
+/**
+ * Payload blobs are primary workflow data: every payload is retained and
+ * content-addressed, with no retention policy yet. Capacity is deliberately
+ * larger than transcripts and embedded in the static PV/PVC name because a
+ * bound static PVC cannot be resized in place.
+ */
+const BLOBS_CAPACITY = "100Gi";
+const BLOBS_PV_NAME = `software-factory-blobs-${BLOBS_CAPACITY.toLowerCase()}`;
+const BLOBS_SUBPATH = "software-factory/blobs";
+const BLOBS_MOUNT_PATH = "/blobs";
+const BLOBS_URL = `http://${BLOBS_SERVICE_NAME}:${BLOBS_PORT}`;
 
 /**
  * SOFT, with a bounded timeout. A hard mount turns an unreachable NAS into a
@@ -231,7 +247,13 @@ export interface SoftwareFactoryResources {
   roleBinding: k8s.rbac.v1.RoleBinding;
   transcriptsVolume: k8s.core.v1.PersistentVolume;
   transcriptsClaim: k8s.core.v1.PersistentVolumeClaim;
+  blobsVolume: k8s.core.v1.PersistentVolume;
+  blobsClaim: k8s.core.v1.PersistentVolumeClaim;
   worker: k8s.apps.v1.Deployment;
+  blobsService: k8s.core.v1.Service;
+  blobs: k8s.apps.v1.Deployment;
+  codecService: k8s.core.v1.Service;
+  codec: k8s.apps.v1.Deployment;
   apiService: k8s.core.v1.Service;
   api: k8s.apps.v1.Deployment;
   webService: k8s.core.v1.Service;
@@ -431,6 +453,40 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
     { ...inNamespace, dependsOn: [namespace, transcriptsVolume] },
   );
 
+  // Statically provisioned RWX on the shared NAS, like transcripts. Soft
+  // mounts are safe here because every blob is content-addressed and verified
+  // on read; a failed write cannot be mistaken for valid content. Retain keeps
+  // primary payload data on the NAS if this PVC is ever deleted.
+  const blobsVolume = new k8s.core.v1.PersistentVolume(
+    BLOBS_PV_NAME,
+    {
+      metadata: { name: BLOBS_PV_NAME },
+      spec: {
+        capacity: { storage: BLOBS_CAPACITY },
+        accessModes: ["ReadWriteMany"],
+        mountOptions: TRANSCRIPTS_MOUNT_OPTIONS,
+        persistentVolumeReclaimPolicy: "Retain",
+        nfs: { server: nasNfsServer, path: TRANSCRIPTS_NFS_EXPORT },
+        storageClassName: "",
+      },
+    },
+    opts,
+  );
+
+  const blobsClaim = new k8s.core.v1.PersistentVolumeClaim(
+    BLOBS_PV_NAME,
+    {
+      metadata: { name: BLOBS_PV_NAME, namespace: namespaceName },
+      spec: {
+        accessModes: ["ReadWriteMany"],
+        storageClassName: "",
+        volumeName: BLOBS_PV_NAME,
+        resources: { requests: { storage: BLOBS_CAPACITY } },
+      },
+    },
+    { ...inNamespace, dependsOn: [namespace, blobsVolume] },
+  );
+
   const workerLabels = { app: WORKER_SERVICE_ACCOUNT };
 
   const worker = new k8s.apps.v1.Deployment(
@@ -497,11 +553,12 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
                   },
                   { name: "GITHUB_APP_PRIVATE_KEY_PEM_FILE", value: APP_PRIVATE_KEY_MOUNT },
                   // TEMPORAL_HOST_PORT, not TEMPORAL_ADDRESS: the name is
-                  // config.LoadWorker's, which requires all eight of these and
+                  // config.LoadWorker's, which requires all eleven of these and
                   // defaults none, so a misnamed one is not a degraded worker
                   // but a CrashLoopBackOff on the first start.
                   { name: "TEMPORAL_HOST_PORT", value: TEMPORAL_FRONTEND_CLUSTER_ADDRESS },
                   { name: "TEMPORAL_NAMESPACE", value: SOFTWARE_FACTORY_TEMPORAL_NAMESPACE },
+                  { name: "BLOBS_URL", value: BLOBS_URL },
                   // Binds the /metrics AND /healthz server, so an absent value
                   // costs observability and liveness together.
                   { name: "METRICS_ADDR", value: METRICS_ADDR },
@@ -585,6 +642,145 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
       },
     },
     { ...inNamespace, dependsOn: [roleBinding, workerSecret, transcriptsClaim, ghcrPullSecret] },
+  );
+
+  const blobsLabels = { app: "software-factory-blobs" };
+  const blobsService = new k8s.core.v1.Service(
+    BLOBS_SERVICE_NAME,
+    {
+      metadata: { name: BLOBS_SERVICE_NAME, namespace: namespaceName, labels: blobsLabels },
+      spec: {
+        type: "ClusterIP",
+        selector: blobsLabels,
+        ports: [{ name: "http", port: BLOBS_PORT, targetPort: BLOBS_PORT }],
+      },
+    },
+    inNamespace,
+  );
+  const blobs = new k8s.apps.v1.Deployment(
+    "software-factory-blobs",
+    {
+      metadata: { name: "software-factory-blobs", namespace: namespaceName, labels: blobsLabels },
+      spec: {
+        replicas: 2,
+        selector: { matchLabels: blobsLabels },
+        template: {
+          metadata: { labels: blobsLabels },
+          spec: {
+            automountServiceAccountToken: false,
+            imagePullSecrets: [{ name: GHCR_PULL_SECRET_NAME }],
+            securityContext: {
+              runAsNonRoot: true,
+              runAsUser: WORKER_UID,
+              runAsGroup: WORKER_UID,
+              fsGroup: WORKER_UID,
+              seccompProfile: { type: "RuntimeDefault" },
+            },
+            containers: [
+              {
+                name: BLOBS_SERVICE_NAME,
+                image: ghcrImage("software-factory-blobs", imageDigests),
+                ports: [{ name: "http", containerPort: BLOBS_PORT }],
+                env: [
+                  { name: "BLOBS_ROOT", value: BLOBS_MOUNT_PATH },
+                  { name: "LISTEN_ADDR", value: `:${BLOBS_PORT}` },
+                ],
+                readinessProbe: {
+                  httpGet: { path: "/healthz", port: "http" },
+                  initialDelaySeconds: 1,
+                  periodSeconds: 5,
+                },
+                volumeMounts: [
+                  { name: "blobs", mountPath: BLOBS_MOUNT_PATH, subPath: BLOBS_SUBPATH },
+                  { name: "tmp", mountPath: "/tmp" },
+                ],
+                securityContext: {
+                  allowPrivilegeEscalation: false,
+                  readOnlyRootFilesystem: true,
+                  capabilities: { drop: ["ALL"] },
+                },
+                resources: {
+                  requests: { cpu: "25m", memory: "64Mi" },
+                  limits: { memory: "128Mi" },
+                },
+              },
+            ],
+            volumes: [
+              { name: "blobs", persistentVolumeClaim: { claimName: BLOBS_PV_NAME } },
+              { name: "tmp", emptyDir: {} },
+            ],
+          },
+        },
+      },
+    },
+    { ...inNamespace, dependsOn: [blobsClaim, blobsService, ghcrPullSecret] },
+  );
+
+  const codecLabels = { app: "software-factory-codec" };
+  const codecService = new k8s.core.v1.Service(
+    CODEC_SERVICE_NAME,
+    {
+      metadata: { name: CODEC_SERVICE_NAME, namespace: namespaceName, labels: codecLabels },
+      spec: {
+        type: "ClusterIP",
+        selector: codecLabels,
+        ports: [{ name: "http", port: CODEC_PORT, targetPort: CODEC_PORT }],
+      },
+    },
+    inNamespace,
+  );
+  const codec = new k8s.apps.v1.Deployment(
+    "software-factory-codec",
+    {
+      metadata: { name: "software-factory-codec", namespace: namespaceName, labels: codecLabels },
+      spec: {
+        replicas: 1,
+        selector: { matchLabels: codecLabels },
+        template: {
+          metadata: { labels: codecLabels },
+          spec: {
+            automountServiceAccountToken: false,
+            imagePullSecrets: [{ name: GHCR_PULL_SECRET_NAME }],
+            securityContext: {
+              runAsNonRoot: true,
+              runAsUser: WORKER_UID,
+              runAsGroup: WORKER_UID,
+              seccompProfile: { type: "RuntimeDefault" },
+            },
+            containers: [
+              {
+                name: CODEC_SERVICE_NAME,
+                image: ghcrImage("software-factory-codec", imageDigests),
+                ports: [{ name: "http", containerPort: CODEC_PORT }],
+                env: [
+                  { name: "BLOBS_URL", value: BLOBS_URL },
+                  {
+                    name: "CODEC_CORS_ORIGINS",
+                    value: "https://temporal-ui.worldwidewebb.co,http://localhost:8080",
+                  },
+                  { name: "LISTEN_ADDR", value: `:${CODEC_PORT}` },
+                ],
+                readinessProbe: {
+                  httpGet: { path: "/healthz", port: "http" },
+                  initialDelaySeconds: 1,
+                  periodSeconds: 5,
+                },
+                securityContext: {
+                  allowPrivilegeEscalation: false,
+                  readOnlyRootFilesystem: true,
+                  capabilities: { drop: ["ALL"] },
+                },
+                resources: {
+                  requests: { cpu: "25m", memory: "64Mi" },
+                  limits: { memory: "128Mi" },
+                },
+              },
+            ],
+          },
+        },
+      },
+    },
+    { ...inNamespace, dependsOn: [codecService, ghcrPullSecret] },
   );
 
   const apiLabels = { app: "software-factory-api" };
@@ -768,7 +964,13 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
     roleBinding,
     transcriptsVolume,
     transcriptsClaim,
+    blobsVolume,
+    blobsClaim,
     worker,
+    blobsService,
+    blobs,
+    codecService,
+    codec,
     apiService,
     api,
     webService,

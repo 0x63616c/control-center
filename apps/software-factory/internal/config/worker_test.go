@@ -18,6 +18,7 @@ func completeEnv() map[string]string {
 		"METRICS_ADDR":                   ":9090",
 		"POD_NAME":                       "software-factory-worker-7d9f8c-abcde",
 		"TRANSCRIPTS_ROOT":               "/transcripts",
+		"BLOBS_URL":                      "http://blobs:8080",
 		"CODEX_AUTH_SECRET_NAME":         "codex-auth",
 		"SANDBOX_IMAGE_PULL_SECRET_NAME": "ghcr-pull",
 	}
@@ -97,6 +98,8 @@ func TestLoadWorkerReadsTheWholeEnvironment(t *testing.T) {
 		t.Errorf("PodName = %q", got.PodName)
 	case got.TranscriptsRoot != "/transcripts":
 		t.Errorf("TranscriptsRoot = %q", got.TranscriptsRoot)
+	case got.BlobsURL != "http://blobs:8080":
+		t.Errorf("BlobsURL = %q", got.BlobsURL)
 	case got.CodexAuthSecretName != "codex-auth":
 		t.Errorf("CodexAuthSecretName = %q", got.CodexAuthSecretName)
 	case got.SandboxImagePullSecretName != "ghcr-pull":

@@ -51,6 +51,8 @@ const digests = {
   "software-factory-relay": `sha256:${"c".repeat(64)}`,
   "software-factory-api": `sha256:${"d".repeat(64)}`,
   "software-factory-console": `sha256:${"e".repeat(64)}`,
+  "software-factory-blobs": `sha256:${"f".repeat(64)}`,
+  "software-factory-codec": `sha256:${"0".repeat(64)}`,
 };
 
 const namespace = new k8s.core.v1.Namespace("software-factory-test-namespace", {
@@ -318,7 +320,7 @@ describe("the worker Deployment (#343)", () => {
   });
 
   test("names the Temporal frontend var the way LoadWorker spells it", async () => {
-    // LoadWorker requires all eight and defaults none, so a misnamed variable
+    // LoadWorker requires all eleven and defaults none, so a misnamed variable
     // is not a degraded worker — it is a CrashLoopBackOff on first start.
     // TEMPORAL_ADDRESS was the original mistake and reads perfectly plausibly.
     const [container] = (await deploymentSpec()).template.spec.containers;

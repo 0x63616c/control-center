@@ -82,7 +82,7 @@ func SandboxTaskQueue(runID string) string {
 // rather than in the template's own Env map.
 const SandboxTaskQueueEnv = "SANDBOX_TASK_QUEUE"
 
-// SandboxTemporalHostPortEnv and SandboxTemporalNamespaceEnv are the
+// SandboxTemporalHostPortEnv, SandboxTemporalNamespaceEnv and SandboxBlobsURLEnv are the
 // environment variables a sandbox pod's embedded worker dials Temporal with.
 //
 // Unlike SandboxTaskQueueEnv these are NOT per-ticket: every sandbox pod in
@@ -99,4 +99,5 @@ const SandboxTaskQueueEnv = "SANDBOX_TASK_QUEUE"
 const (
 	SandboxTemporalHostPortEnv  = "TEMPORAL_HOST_PORT"
 	SandboxTemporalNamespaceEnv = "TEMPORAL_NAMESPACE"
+	SandboxBlobsURLEnv          = "BLOBS_URL"
 )

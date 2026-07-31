@@ -91,7 +91,8 @@ that run/deploy, `packages/` = things you import); product features live under
   on nothing else — do not cite them in a review of TypeScript. Nests (`cmd/`, `internal/`,
   `images/{worker,sandbox,relay,api}/`) where the rest of `apps/*` is flat, deliberately: it is one
   product with several components and one Go module. Its single CI filter builds and pins all
-  five images: the worker, sandbox, stateless webhook relay, API, and console.
+  seven images: the worker, sandbox, stateless webhook relay, API, console,
+  blob service, and codec service.
 - `packages/api` - Browser-safe type bridge that re-exports the API router type only.
 - `packages/core` - Owns the `device_state` table: schema, the `DeviceStateStore` interface, pg + in-memory adapters, and the desired/reported merge logic.
 - `packages/logger` - Shared pino logger with centralized redaction and runtime-safe config.
