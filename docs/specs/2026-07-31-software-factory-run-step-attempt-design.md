@@ -40,13 +40,13 @@ here.
 - **Agreed: admission is authorization.** Any Ticket admitted to the factory is safe
   to take through an unattended merge; v0 needs no separate per-Ticket human
   approval switch.
-- **Internal review is sufficient.** A clean independent agent Review Step,
+- **Agreed: internal review is sufficient.** A clean independent agent Review Step,
   following green CI for the same head SHA, is enough product authorization to
   request the merge.
-- **Ticket design handles semantic ordering.** Ticket dependencies and how work
+- **Agreed: Ticket design handles semantic ordering.** Ticket dependencies and how work
   is decomposed are expected to prevent known semantic conflicts. The runtime
   design only promises to detect and repair textual Git merge conflicts.
-- **Merged is done.** A confirmed merge is useful enough to satisfy dependency
+- **Agreed: merged is done.** A confirmed merge is useful enough to satisfy dependency
   edges even though production deployment has not been observed. Later deploy
   failure neither reopens the Ticket nor retroactively changes its result.
 - **Post-merge repair is new work.** If merged code later proves broken, a
@@ -54,7 +54,7 @@ here.
   roll back, or resume the completed Run.
 - **Squash is universal.** Factory-authored pull requests need no merge strategy
   other than squash.
-- **Cancellation means retryable interruption.** Canceling the dispatcher owns
+- **Agreed: cancellation means retryable interruption.** Canceling the dispatcher owns
   and cancels its current Runs. A canceled Run returns its still-owned Ticket
   to `open`, rather than classifying the Ticket itself as failed.
 - **Pause preserves work.** Operators who want dispatch to stop without
@@ -67,14 +67,14 @@ here.
 
 ### Technical assumptions
 
-- **GitHub authorization will change.** The GitHub App and repository ruleset
+- **Agreed: GitHub authorization will change.** The GitHub App and repository ruleset
   can be changed so the App may merge without a Code Owner approval while the
   intended CI protections still apply. This is not true of the current setup,
   whose App deliberately lacks bypass authority.
 - **GitHub can enforce the reviewed head.** The merge request supplies the
   reviewed head SHA, and only `merged: true` plus a merge SHA proves success.
   An ambiguous response can be reconciled by rereading the pull request.
-- **Verdicts are SHA-scoped.** CI and internal review results can be associated
+- **Agreed: verdicts are SHA-scoped.** CI and internal review results can be associated
   with an exact PR head. Any head change invalidates those verdicts and sends
   the new head through CI and review again.
 - **Merge refusal is classifiable.** GitHub responses and follow-up reads give
@@ -99,7 +99,7 @@ here.
 - **Cancellation finalization can be atomic.** Postgres can conditionally mark
   the owning Run canceled and move only its still-`working` Ticket to `open`, so
   a late cancellation cannot reopen a Ticket already committed as `done`.
-- **A repeated Run can adopt existing Git state.** After cancellation reopens a
+- **Agreed: a repeated Run can adopt existing Git state.** After cancellation reopens a
   Ticket, the next Run can safely discover and continue or supersede its
   existing branch and pull request instead of assuming a pristine first run.
 - **Expected waiting belongs in activity retry state.** `AwaitDispatchableTickets`
