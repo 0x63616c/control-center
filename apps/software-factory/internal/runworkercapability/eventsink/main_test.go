@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,8 @@ import (
 	"path/filepath"
 	"testing"
 )
+
+var errWriteCountResponse = errors.New("write count response")
 
 func TestEventSinkAppendsEachJSONLEventBeforeTheNextRequest(t *testing.T) {
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
@@ -35,7 +38,7 @@ func TestEventSinkAppendsEachJSONLEventBeforeTheNextRequest(t *testing.T) {
 			"{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1}}\n",
 	)
 
-	response, err := http.Get(server.URL + "/count") //nolint:gosec // httptest server is the intended boundary.
+	response, err := http.Get(server.URL + "/count")
 	if err != nil {
 		t.Fatalf("getting sink count: %v", err)
 	}
@@ -51,9 +54,19 @@ func TestEventSinkAppendsEachJSONLEventBeforeTheNextRequest(t *testing.T) {
 	}
 }
 
+func TestEventSinkReportsCountResponseWriteError(t *testing.T) {
+	sink := &eventSink{count: 2}
+
+	err := sink.writeCount(errorResponseWriter{})
+
+	if !errors.Is(err, errWriteCountResponse) {
+		t.Fatalf("writing count response error = %v, want %v", err, errWriteCountResponse)
+	}
+}
+
 func postEvent(t *testing.T, baseURL, event string) {
 	t.Helper()
-	response, err := http.Post(baseURL+"/events", "application/json", bytes.NewBufferString(event)) //nolint:gosec // httptest server is the intended boundary.
+	response, err := http.Post(baseURL+"/events", "application/json", bytes.NewBufferString(event))
 	if err != nil {
 		t.Fatalf("posting event: %v", err)
 	}
@@ -64,6 +77,18 @@ func postEvent(t *testing.T, baseURL, event string) {
 		t.Fatalf("posting event status = %d, want %d", response.StatusCode, http.StatusNoContent)
 	}
 }
+
+type errorResponseWriter struct{}
+
+func (errorResponseWriter) Header() http.Header {
+	return make(http.Header)
+}
+
+func (errorResponseWriter) Write([]byte) (int, error) {
+	return 0, errWriteCountResponse
+}
+
+func (errorResponseWriter) WriteHeader(int) {}
 
 func assertFileContents(t *testing.T, path, point, want string) {
 	t.Helper()

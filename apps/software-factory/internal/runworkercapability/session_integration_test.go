@@ -393,7 +393,7 @@ func privateWorker(c temporalclient.Client, queue, identity, root string) worker
 		func(_ context.Context, in sessionActivityInput) (sessionActivityEvidence, error) {
 			markerPath, err := privateMarkerPath(root, in.MarkerName)
 			if err != nil {
-				return sessionActivityEvidence{}, err
+				return sessionActivityEvidence{}, fmt.Errorf("resolve private marker path: %w", err)
 			}
 			if in.Write {
 				if err := os.WriteFile(markerPath, []byte(in.Marker), 0o600); err != nil {

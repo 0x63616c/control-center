@@ -41,7 +41,9 @@ func (s *eventSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && r.URL.Path == "/events":
 		s.appendEvent(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == "/count":
-		s.writeCount(w)
+		if err := s.writeCount(w); err != nil {
+			slog.ErrorContext(r.Context(), "write event count response", "error", err)
+		}
 	default:
 		http.NotFound(w, r)
 	}
@@ -72,11 +74,14 @@ func (s *eventSink) appendEvent(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *eventSink) writeCount(w http.ResponseWriter) {
+func (s *eventSink) writeCount(w http.ResponseWriter) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	_, _ = fmt.Fprintln(w, strconv.Itoa(s.count))
+	if _, err := fmt.Fprintln(w, strconv.Itoa(s.count)); err != nil {
+		return fmt.Errorf("write count response: %w", err)
+	}
+	return nil
 }
 
 func (s *eventSink) Close() error {
@@ -96,7 +101,7 @@ func main() {
 	}
 }
 
-func run() error {
+func run() (runErr error) {
 	eventsPath := flag.String("events", "", "append-only JSONL output path")
 	readyPath := flag.String("ready", "", "path that receives the listening address")
 	flag.Parse()
@@ -106,9 +111,13 @@ func run() error {
 
 	sink, err := newEventSink(*eventsPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("create event sink: %w", err)
 	}
-	defer sink.Close() //nolint:errcheck // the serving error remains primary.
+	defer func() {
+		if err := sink.Close(); err != nil {
+			runErr = errors.Join(runErr, err)
+		}
+	}()
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
