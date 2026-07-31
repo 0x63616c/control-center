@@ -17,9 +17,6 @@ import (
 func (f *Store) ClaimAndStartRun(_ context.Context, in store.ClaimRunInput) (store.ClaimRunResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if existing, exists := f.runs[in.RunID]; exists && existing.TicketID != in.TicketID {
-		return store.ClaimRunResult{}, fmt.Errorf("claiming ticket %d: run id belongs to another ticket: %w", in.TicketID, work.ErrPermanent)
-	}
 	ticket, ok := f.tickets[in.TicketID]
 	if !ok {
 		return store.ClaimRunResult{}, fmt.Errorf("ticket %d: %w", in.TicketID, store.ErrNotFound)
@@ -32,6 +29,9 @@ func (f *Store) ClaimAndStartRun(_ context.Context, in store.ClaimRunInput) (sto
 	}
 	if ticket.State != store.TicketOpen {
 		return store.ClaimRunResult{}, fmt.Errorf("ticket %d: %w", in.TicketID, store.ErrTicketClaimed)
+	}
+	if existing, exists := f.runs[in.RunID]; exists && existing.TicketID != in.TicketID {
+		return store.ClaimRunResult{}, fmt.Errorf("claiming ticket %d: run id belongs to another ticket: %w", in.TicketID, work.ErrPermanent)
 	}
 	ticket.State, ticket.ActiveRunID, ticket.UpdatedAt = store.TicketActive, in.RunID, f.clk.Now()
 	f.tickets[in.TicketID] = ticket
