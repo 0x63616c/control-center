@@ -17,7 +17,9 @@ import (
 // PostgreSQL Store and its in-memory fake.
 type TargetStore interface {
 	store.TicketCreator
+	store.TicketReader
 	store.TicketStateWriter
+	store.WebhookDeliveryRecorder
 	store.TargetRunClaimer
 	store.TargetStepRecorder
 	store.TargetAgentRecorder
@@ -32,6 +34,49 @@ type TargetStore interface {
 // rejects conflicting terminal evidence in the same way as the real Store.
 func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetStore) {
 	t.Helper()
+	t.Run("done tickets are terminal across every public writer", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		done, err := s.CreateTicket(ctx, "terminal ticket", "", nil)
+		if err != nil {
+			t.Fatalf("CreateTicket(done): %v", err)
+		}
+		if _, err := s.UpdateTicketState(ctx, done.ID, store.TicketDone); err != nil {
+			t.Fatalf("UpdateTicketState(done): %v", err)
+		}
+		if _, err := s.UpdateTicketState(ctx, done.ID, store.TicketOpen); err == nil {
+			t.Fatal("UpdateTicketState(done -> open) succeeded, want terminal-state rejection")
+		}
+		if _, err := s.TransitionTicketState(ctx, done.ID, store.TicketDone, store.TicketFailed); err == nil {
+			t.Fatal("TransitionTicketState(done -> failed) succeeded, want terminal-state rejection")
+		}
+		outcome, err := s.RecordWebhookDeliveryAndTransition(ctx, "terminal-delivery-"+uuid.NewString(), done.ID, store.TicketDone, store.TicketFailed)
+		if err != nil {
+			t.Fatalf("RecordWebhookDeliveryAndTransition(done -> failed): %v", err)
+		}
+		if outcome != store.WebhookDeliveryStale {
+			t.Fatalf("webhook outcome = %v, want stale", outcome)
+		}
+		stored, err := s.Ticket(ctx, done.ID)
+		if err != nil {
+			t.Fatalf("Ticket(done): %v", err)
+		}
+		if stored.State != store.TicketDone {
+			t.Fatalf("Ticket state = %s, want done", stored.State)
+		}
+
+		failed, err := s.CreateTicket(ctx, "retryable failure", "", nil)
+		if err != nil {
+			t.Fatalf("CreateTicket(failed): %v", err)
+		}
+		if _, err := s.UpdateTicketState(ctx, failed.ID, store.TicketFailed); err != nil {
+			t.Fatalf("UpdateTicketState(failed): %v", err)
+		}
+		if _, err := s.TransitionTicketState(ctx, failed.ID, store.TicketFailed, store.TicketOpen); err != nil {
+			t.Fatalf("TransitionTicketState(failed -> open): %v", err)
+		}
+	})
+
 	t.Run("generic ticket state cannot create target ownership", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
@@ -45,11 +90,43 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 		if _, err := s.TransitionTicketState(ctx, ticket.ID, store.TicketOpen, store.TicketActive); !errors.Is(err, store.ErrActiveTicketOwnership) {
 			t.Fatalf("TransitionTicketState(active) error = %v, want ErrActiveTicketOwnership", err)
 		}
+		outcome, err := s.RecordWebhookDeliveryAndTransition(ctx, "active-target-delivery-"+uuid.NewString(), ticket.ID, store.TicketOpen, store.TicketActive)
+		if err != nil {
+			t.Fatalf("RecordWebhookDeliveryAndTransition(open -> active): %v", err)
+		}
+		if outcome != store.WebhookDeliveryStale {
+			t.Fatalf("webhook open -> active outcome = %v, want stale", outcome)
+		}
 		if _, err := s.TransitionTicketState(ctx, ticket.ID, store.TicketOpen, store.TicketWorking); err != nil {
 			t.Fatalf("TransitionTicketState(working): %v", err)
 		}
 		if _, err := s.TransitionTicketState(ctx, ticket.ID, store.TicketWorking, store.TicketReview); err != nil {
 			t.Fatalf("TransitionTicketState(review): %v", err)
+		}
+	})
+
+	t.Run("generic ticket state cannot release target ownership", func(t *testing.T) {
+		s, ticket, runID, _ := claimedRun(t, newStore(t))
+		ctx := context.Background()
+		if _, err := s.UpdateTicketState(ctx, ticket.ID, store.TicketOpen); !errors.Is(err, store.ErrActiveTicketOwnership) {
+			t.Fatalf("UpdateTicketState(active -> open) error = %v, want ErrActiveTicketOwnership", err)
+		}
+		if _, err := s.TransitionTicketState(ctx, ticket.ID, store.TicketActive, store.TicketFailed); !errors.Is(err, store.ErrActiveTicketOwnership) {
+			t.Fatalf("TransitionTicketState(active -> failed) error = %v, want ErrActiveTicketOwnership", err)
+		}
+		outcome, err := s.RecordWebhookDeliveryAndTransition(ctx, "active-owner-delivery-"+uuid.NewString(), ticket.ID, store.TicketActive, store.TicketFailed)
+		if err != nil {
+			t.Fatalf("RecordWebhookDeliveryAndTransition(active -> failed): %v", err)
+		}
+		if outcome != store.WebhookDeliveryStale {
+			t.Fatalf("webhook active -> failed outcome = %v, want stale", outcome)
+		}
+		stored, err := s.Ticket(ctx, ticket.ID)
+		if err != nil {
+			t.Fatalf("Ticket(active): %v", err)
+		}
+		if stored.State != store.TicketActive || stored.ActiveRunID != runID {
+			t.Fatalf("Ticket = %+v, want active owner %s", stored, runID)
 		}
 	})
 
@@ -227,6 +304,34 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 		checkpoint.PullRequestNumber = 8
 		if _, err := s.CheckpointGitEffect(ctx, checkpoint); !errors.Is(err, work.ErrPermanent) {
 			t.Fatalf("CheckpointGitEffect(conflict) error = %v, want permanent", err)
+		}
+	})
+
+	t.Run("git checkpoint requires its owned running step", func(t *testing.T) {
+		s, _, runID, startedAt := claimedRun(t, newStore(t))
+		ctx := context.Background()
+		checkpoint := store.GitCheckpointInput{GitCheckpoint: store.GitCheckpoint{RunID: runID, StepOrdinal: 1, Branch: "factory/contract", PushedHead: "head-1", ObservedBase: "base-1", PullRequestNumber: 7, PullRequestNodeID: "node-7", StepResult: []byte(`{"kind":"synced"}`)}, CompletedAt: startedAt.Add(time.Minute)}
+		if _, err := s.CheckpointGitEffect(ctx, checkpoint); err == nil {
+			t.Fatal("CheckpointGitEffect without Step succeeded")
+		}
+		if _, err := s.StartStep(ctx, store.StartStepInput{RunID: runID, Ordinal: 1, Kind: work.StepSyncPullRequest, StartedAt: startedAt}); err != nil {
+			t.Fatalf("StartStep: %v", err)
+		}
+		if _, err := s.CompleteStep(ctx, runID, 1, startedAt.Add(30*time.Second), []byte(`{"kind":"other"}`)); err != nil {
+			t.Fatalf("CompleteStep: %v", err)
+		}
+		if _, err := s.CheckpointGitEffect(ctx, checkpoint); !errors.Is(err, work.ErrPermanent) {
+			t.Fatalf("CheckpointGitEffect for completed Step error = %v, want permanent", err)
+		}
+		checkpoint.StepOrdinal = 2
+		if _, err := s.StartStep(ctx, store.StartStepInput{RunID: runID, Ordinal: 2, Kind: work.StepSyncPullRequest, StartedAt: startedAt}); err != nil {
+			t.Fatalf("StartStep(same result): %v", err)
+		}
+		if _, err := s.CompleteStep(ctx, runID, 2, startedAt.Add(30*time.Second), checkpoint.StepResult); err != nil {
+			t.Fatalf("CompleteStep(same result): %v", err)
+		}
+		if _, err := s.CheckpointGitEffect(ctx, checkpoint); !errors.Is(err, work.ErrPermanent) {
+			t.Fatalf("CheckpointGitEffect for pre-completed matching Step error = %v, want permanent", err)
 		}
 	})
 

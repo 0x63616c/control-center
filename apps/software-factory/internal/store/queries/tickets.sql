@@ -15,11 +15,16 @@ SELECT * FROM ticket ORDER BY id;
 -- name: UpdateTicketState :one
 UPDATE ticket SET state = $2, updated_at = CURRENT_TIMESTAMP
 WHERE id = $1
+  AND state <> 'active'
+  AND (state <> 'done' OR $2 = 'done')
 RETURNING *;
 
 -- name: TransitionTicketState :one
 UPDATE ticket SET state = $3, updated_at = CURRENT_TIMESTAMP
 WHERE id = $1 AND state = $2
+  AND $3 <> 'active'
+  AND state <> 'active'
+  AND (state <> 'done' OR $3 = 'done')
 RETURNING *;
 
 -- name: ReadyTickets :many

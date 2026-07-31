@@ -10,6 +10,7 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store/storetest"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestTargetStoreConflictContract(t *testing.T) {
@@ -267,6 +268,119 @@ func TestConfirmedMergeFencesSuccessorThatClaimedReopenedTicket(t *testing.T) {
 	_, err = s.FinalizeConfirmedMerge(ctx, store.ConfirmedMergeInput{RunID: secondRunID, TicketID: ticket.ID, StepOrdinal: 2, ReviewedHead: "second-head", MergeSHA: "second-merge", EndedAt: confirmedAt.Add(time.Minute)})
 	if !errors.Is(err, store.ErrRunOwnership) {
 		t.Fatalf("FinalizeConfirmedMerge(second after fence) error = %v, want ErrRunOwnership", err)
+	}
+}
+
+func TestConfirmedMergeRetriesWhenSuccessorClaimsBetweenOwnerObservationAndTicketLock(t *testing.T) {
+	s, pool := newTestStoreAndPool(t)
+	ctx := context.Background()
+	ticket, err := s.CreateTicket(ctx, "successor claims through observed-open gap", "", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	startedAt := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	firstRunID := newTestRunID(t)
+	if _, err := s.ClaimAndStartRun(ctx, store.ClaimRunInput{TicketID: ticket.ID, RunID: firstRunID, StartedAt: startedAt}); err != nil {
+		t.Fatalf("ClaimAndStartRun(first): %v", err)
+	}
+	if _, err := s.StartStep(ctx, store.StartStepInput{RunID: firstRunID, Ordinal: 1, Kind: work.StepMergePullRequest, StartedAt: startedAt}); err != nil {
+		t.Fatalf("StartStep(first merge): %v", err)
+	}
+	if _, err := s.CancelRun(ctx, store.CancelRunInput{RunID: firstRunID, TicketID: ticket.ID, EndedAt: startedAt.Add(time.Minute)}); err != nil {
+		t.Fatalf("CancelRun(first): %v", err)
+	}
+
+	blocker, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin Ticket lock blocker: %v", err)
+	}
+	defer func() { _ = blocker.Rollback(ctx) }()
+	var lockedTicketID int64
+	if err := blocker.QueryRow(ctx, "SELECT id FROM ticket WHERE id = $1 FOR UPDATE", ticket.ID).Scan(&lockedTicketID); err != nil {
+		t.Fatalf("lock Ticket: %v", err)
+	}
+	baseline := ticketLockWaiterCount(t, pool)
+
+	secondRunID := newTestRunID(t)
+	claimErrors := make(chan error, 1)
+	go func() {
+		_, claimErr := s.ClaimAndStartRun(ctx, store.ClaimRunInput{TicketID: ticket.ID, RunID: secondRunID, StartedAt: startedAt.Add(2 * time.Minute)})
+		claimErrors <- claimErr
+	}()
+	waitForTicketLockWaiters(t, pool, baseline+1)
+
+	mergeResults := make(chan store.TerminalResult, 1)
+	mergeErrors := make(chan error, 1)
+	go func() {
+		result, mergeErr := s.FinalizeConfirmedMerge(ctx, store.ConfirmedMergeInput{RunID: firstRunID, TicketID: ticket.ID, StepOrdinal: 1, ReviewedHead: "first-head", MergeSHA: "first-merge", EndedAt: startedAt.Add(3 * time.Minute)})
+		mergeResults <- result
+		mergeErrors <- mergeErr
+	}()
+	waitForTicketLockWaiters(t, pool, baseline+2)
+
+	if err := blocker.Commit(ctx); err != nil {
+		t.Fatalf("release Ticket lock blocker: %v", err)
+	}
+	select {
+	case claimErr := <-claimErrors:
+		if claimErr != nil {
+			t.Fatalf("ClaimAndStartRun(second): %v", claimErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ClaimAndStartRun(second) deadlocked")
+	}
+	var result store.TerminalResult
+	select {
+	case result = <-mergeResults:
+		if mergeErr := <-mergeErrors; mergeErr != nil {
+			t.Fatalf("FinalizeConfirmedMerge(first): %v", mergeErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("FinalizeConfirmedMerge(first) deadlocked")
+	}
+	if result.Ticket.State != store.TicketDone || result.Ticket.ActiveRunID != "" {
+		t.Fatalf("confirmed result Ticket = %+v, want done without owner", result.Ticket)
+	}
+	second, err := s.Run(ctx, secondRunID)
+	if err != nil {
+		t.Fatalf("Run(second): %v", err)
+	}
+	if second.TargetOutcome != work.RunOutcomeCanceled {
+		t.Fatalf("second Run outcome = %q, want canceled fence", second.TargetOutcome)
+	}
+}
+
+func ticketLockWaiterCount(t *testing.T, pool *pgxpool.Pool) int {
+	t.Helper()
+	var count int
+	err := pool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM pg_stat_activity
+		WHERE datname = current_database()
+		  AND wait_event_type = 'Lock'
+		  AND query LIKE '%FROM ticket WHERE id = $1 FOR UPDATE%'
+	`).Scan(&count)
+	if err != nil {
+		t.Fatalf("count Ticket lock waiters: %v", err)
+	}
+	return count
+}
+
+func waitForTicketLockWaiters(t *testing.T, pool *pgxpool.Pool, want int) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if ticketLockWaiterCount(t, pool) >= want {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("Ticket lock waiter count did not reach %d", want)
+		case <-ticker.C:
+		}
 	}
 }
 

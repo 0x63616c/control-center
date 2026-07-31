@@ -33,6 +33,10 @@ var ErrAgentAttemptStep = errors.New("agent attempt requires matching agent step
 // ErrMergeStep reports confirmed merge evidence without its running Merge Step.
 var ErrMergeStep = errors.New("confirmed merge requires running merge step")
 
+var errConfirmedMergeOwnerChanged = errors.New("confirmed merge ticket owner changed while locking")
+
+const confirmedMergeLockAttempts = 8
+
 // TargetRunClaimer is the target workflow's atomic admission boundary.
 type TargetRunClaimer interface {
 	ClaimAndStartRun(context.Context, ClaimRunInput) (ClaimRunResult, error)
@@ -457,13 +461,29 @@ func (s *Store) CheckpointGitEffect(ctx context.Context, in GitCheckpointInput) 
 	if run.TargetOutcome.Valid || ticket.State != TicketActive.String() || runIDString(ticket.ActiveRunID) != in.RunID {
 		return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: %w", ErrRunOwnership)
 	}
+	step, err := q.TargetStepForUpdate(ctx, storedb.TargetStepForUpdateParams{RunID: id, Ordinal: int32(in.StepOrdinal)})
+	if err != nil {
+		return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: reading step: %w", wrapQueryErr(err))
+	}
 	previous, previousErr := q.TargetGitCheckpoint(ctx, id)
 	if previousErr == nil {
 		if previous.StepOrdinal > int32(in.StepOrdinal) || (previous.StepOrdinal == int32(in.StepOrdinal) && !gitCheckpointMatches(previous, in.GitCheckpoint)) {
 			return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: older or conflicting checkpoint: %w", work.ErrPermanent)
 		}
+		if previous.StepOrdinal == int32(in.StepOrdinal) {
+			if step.State != string(work.StepStateCompleted) || !jsonEqual(step.Result, in.StepResult) {
+				return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: conflicting completed step: %w", work.ErrPermanent)
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: committing retry: %w", wrapQueryErr(err))
+			}
+			return gitCheckpointFromRow(previous), nil
+		}
 	} else if !errors.Is(previousErr, pgx.ErrNoRows) {
 		return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: reading checkpoint: %w", wrapQueryErr(previousErr))
+	}
+	if step.State != string(work.StepStateRunning) {
+		return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: step is not running: %w", work.ErrPermanent)
 	}
 	row, err := q.PutTargetGitCheckpoint(ctx, storedb.PutTargetGitCheckpointParams{RunID: id, StepOrdinal: int32(in.StepOrdinal), Branch: in.Branch, PushedHead: in.PushedHead, ObservedBase: in.ObservedBase, PullRequestNumber: int32(in.PullRequestNumber), PullRequestNodeID: in.PullRequestNodeID, StepResult: in.StepResult})
 	if err != nil {
@@ -610,6 +630,16 @@ func (s *Store) FinalizeConfirmedMerge(ctx context.Context, in ConfirmedMergeInp
 	if err != nil {
 		return TerminalResult{}, fmt.Errorf("finalizing merge: %w", err)
 	}
+	for attempt := 0; attempt < confirmedMergeLockAttempts; attempt++ {
+		result, attemptErr := s.finalizeConfirmedMergeAttempt(ctx, id, in)
+		if !errors.Is(attemptErr, errConfirmedMergeOwnerChanged) {
+			return result, attemptErr
+		}
+	}
+	return TerminalResult{}, fmt.Errorf("finalizing merge: Ticket ownership kept changing: %w", ErrRunOwnership)
+}
+
+func (s *Store) finalizeConfirmedMergeAttempt(ctx context.Context, id pgtype.UUID, in ConfirmedMergeInput) (TerminalResult, error) {
 	tx, err := s.begin.Begin(ctx)
 	if err != nil {
 		return TerminalResult{}, fmt.Errorf("finalizing merge: beginning transaction: %w", wrapQueryErr(err))
@@ -692,7 +722,7 @@ func reconcileConfirmedMergeAfterCancellation(
 			return TerminalResult{}, fmt.Errorf("reconciling confirmed merge: locking successor Run: %w", wrapQueryErr(successorErr))
 		}
 		if successor.TicketID != runRow.TicketID || successor.TargetOutcome.Valid {
-			return TerminalResult{}, fmt.Errorf("reconciling confirmed merge: successor is not fenceable: %w", ErrRunOwnership)
+			return TerminalResult{}, errConfirmedMergeOwnerChanged
 		}
 		successorLocked = true
 	}
@@ -707,6 +737,9 @@ func reconcileConfirmedMergeAfterCancellation(
 			return TerminalResult{}, fmt.Errorf("reconciling confirmed merge: fencing successor Run: %w", wrapQueryErr(err))
 		}
 	default:
+		if ticketOwner.State == TicketActive.String() && ticketOwner.ActiveRunID.Valid && !successorLocked {
+			return TerminalResult{}, errConfirmedMergeOwnerChanged
+		}
 		return TerminalResult{}, fmt.Errorf("reconciling confirmed merge: Ticket ownership changed: %w", ErrRunOwnership)
 	}
 	stepResult, err := confirmedMergeStepResult(in.MergeSHA)

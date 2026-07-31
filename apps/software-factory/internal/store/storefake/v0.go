@@ -220,20 +220,28 @@ func (f *Store) CheckpointGitEffect(_ context.Context, in store.GitCheckpointInp
 	if !f.targetRunOwnedLocked(in.RunID) {
 		return store.GitCheckpoint{}, fmt.Errorf("checkpoint: %w", store.ErrRunOwnership)
 	}
+	k := targetStepKey{runID: in.RunID, ordinal: in.StepOrdinal}
+	step, stepExists := f.targetSteps[k]
 	if previous, ok := f.targetGit[in.RunID]; ok {
 		if previous.StepOrdinal > in.StepOrdinal || (previous.StepOrdinal == in.StepOrdinal && !gitCheckpointMatches(previous, in.GitCheckpoint)) {
 			return store.GitCheckpoint{}, fmt.Errorf("checkpoint: %w", work.ErrPermanent)
 		}
 		if previous.StepOrdinal == in.StepOrdinal {
+			if !stepExists || step.State != work.StepStateCompleted || !jsonEqual(step.Result, in.StepResult) {
+				return store.GitCheckpoint{}, fmt.Errorf("checkpoint: conflicting completed step: %w", work.ErrPermanent)
+			}
 			return previous, nil
 		}
 	}
-	f.targetGit[in.RunID] = in.GitCheckpoint
-	k := targetStepKey{runID: in.RunID, ordinal: in.StepOrdinal}
-	if step, ok := f.targetSteps[k]; ok {
-		step.State, step.EndedAt, step.Result = work.StepStateCompleted, in.CompletedAt, in.StepResult
-		f.targetSteps[k] = step
+	if !stepExists {
+		return store.GitCheckpoint{}, fmt.Errorf("checkpoint step %d: %w", in.StepOrdinal, store.ErrNotFound)
 	}
+	if step.State != work.StepStateRunning {
+		return store.GitCheckpoint{}, fmt.Errorf("checkpoint: step is not running: %w", work.ErrPermanent)
+	}
+	f.targetGit[in.RunID] = in.GitCheckpoint
+	step.State, step.EndedAt, step.Result = work.StepStateCompleted, in.CompletedAt, in.StepResult
+	f.targetSteps[k] = step
 	return in.GitCheckpoint, nil
 }
 

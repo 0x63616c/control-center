@@ -69,6 +69,9 @@ SELECT * FROM run_step WHERE run_id = $1 ORDER BY ordinal;
 -- name: TargetStep :one
 SELECT * FROM run_step WHERE run_id = $1 AND ordinal = $2;
 
+-- name: TargetStepForUpdate :one
+SELECT * FROM run_step WHERE run_id = $1 AND ordinal = $2 FOR UPDATE;
+
 -- name: StartTargetAgentAttempt :one
 INSERT INTO run_agent_attempt (
     run_id, step_ordinal, attempt_no, agent_stage, model, effort, state,

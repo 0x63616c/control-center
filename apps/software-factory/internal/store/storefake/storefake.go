@@ -186,6 +186,12 @@ func (f *Store) UpdateTicketState(_ context.Context, id store.TicketID, state st
 	if !ok {
 		return store.Ticket{}, fmt.Errorf("ticket %d: %w", id, errNotFound)
 	}
+	if t.State == store.TicketActive {
+		return store.Ticket{}, fmt.Errorf("moving ticket %d from active: %w", id, store.ErrActiveTicketOwnership)
+	}
+	if t.State == store.TicketDone && state != store.TicketDone {
+		return store.Ticket{}, fmt.Errorf("moving ticket %d from done: %w", id, work.ErrPermanent)
+	}
 	t.State = state
 	t.UpdatedAt = f.clk.Now()
 	f.tickets[id] = t
@@ -202,6 +208,12 @@ func (f *Store) TransitionTicketState(_ context.Context, id store.TicketID, from
 	ticket, ok := f.tickets[id]
 	if !ok || ticket.State != from {
 		return store.Ticket{}, fmt.Errorf("ticket %d: %w", id, store.ErrNotFound)
+	}
+	if ticket.State == store.TicketActive {
+		return store.Ticket{}, fmt.Errorf("transitioning ticket %d from active: %w", id, store.ErrActiveTicketOwnership)
+	}
+	if ticket.State == store.TicketDone && to != store.TicketDone {
+		return store.Ticket{}, fmt.Errorf("transitioning ticket %d from done: %w", id, work.ErrPermanent)
 	}
 	ticket.State = to
 	ticket.UpdatedAt = f.clk.Now()

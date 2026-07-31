@@ -918,6 +918,32 @@ func (q *Queries) TargetStepForRun(ctx context.Context, runID pgtype.UUID) ([]Ru
 	return items, nil
 }
 
+const targetStepForUpdate = `-- name: TargetStepForUpdate :one
+SELECT run_id, ordinal, kind, iteration, reason, state, started_at, ended_at, result FROM run_step WHERE run_id = $1 AND ordinal = $2 FOR UPDATE
+`
+
+type TargetStepForUpdateParams struct {
+	RunID   pgtype.UUID
+	Ordinal int32
+}
+
+func (q *Queries) TargetStepForUpdate(ctx context.Context, arg TargetStepForUpdateParams) (RunStep, error) {
+	row := q.db.QueryRow(ctx, targetStepForUpdate, arg.RunID, arg.Ordinal)
+	var i RunStep
+	err := row.Scan(
+		&i.RunID,
+		&i.Ordinal,
+		&i.Kind,
+		&i.Iteration,
+		&i.Reason,
+		&i.State,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.Result,
+	)
+	return i, err
+}
+
 const targetTicketForUpdate = `-- name: TargetTicketForUpdate :one
 SELECT id, title, body, state, created_at, updated_at, active_run_id FROM ticket WHERE id = $1 FOR UPDATE
 `

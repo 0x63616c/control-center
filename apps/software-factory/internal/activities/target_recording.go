@@ -2,7 +2,9 @@ package activities
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 )
@@ -13,8 +15,10 @@ import (
 type TargetRunRecorder interface {
 	ClaimAndStartRun(context.Context, store.ClaimRunInput) (store.ClaimRunResult, error)
 	StartStep(context.Context, store.StartStepInput) (store.RunStep, error)
+	CompleteStep(context.Context, string, int, time.Time, json.RawMessage) (store.RunStep, error)
 	StartAgentAttempt(context.Context, store.StartAgentAttemptInput) (store.AgentAttempt, error)
 	CheckpointAgentAttempt(context.Context, store.AgentCheckpointInput) (store.AgentAttempt, error)
+	CheckpointGitEffect(context.Context, store.GitCheckpointInput) (store.GitCheckpoint, error)
 	FinalizeConfirmedMerge(context.Context, store.ConfirmedMergeInput) (store.TerminalResult, error)
 	CancelRun(context.Context, store.CancelRunInput) (store.TerminalResult, error)
 }
@@ -48,6 +52,15 @@ func (a *TargetRecordingActivities) StartStep(ctx context.Context, in store.Star
 	return step, nil
 }
 
+// CompleteStep durably closes a target Step before its caller moves on.
+func (a *TargetRecordingActivities) CompleteStep(ctx context.Context, runID string, ordinal int, endedAt time.Time, result json.RawMessage) (store.RunStep, error) {
+	step, err := a.store.CompleteStep(ctx, runID, ordinal, endedAt, result)
+	if err != nil {
+		return store.RunStep{}, fail(ctx, fmt.Sprintf("completing step %d of run %s", ordinal, runID), err)
+	}
+	return step, nil
+}
+
 // StartAgentAttempt persists authorization before an agent can produce a transcript.
 func (a *TargetRecordingActivities) StartAgentAttempt(ctx context.Context, in store.StartAgentAttemptInput) (store.AgentAttempt, error) {
 	attempt, err := a.store.StartAgentAttempt(ctx, in)
@@ -64,6 +77,15 @@ func (a *TargetRecordingActivities) CheckpointAgentAttempt(ctx context.Context, 
 		return store.AgentAttempt{}, fail(ctx, fmt.Sprintf("checkpointing agent attempt %s", in.ID), err)
 	}
 	return attempt, nil
+}
+
+// CheckpointGitEffect records repository recovery state and closes its Step atomically.
+func (a *TargetRecordingActivities) CheckpointGitEffect(ctx context.Context, in store.GitCheckpointInput) (store.GitCheckpoint, error) {
+	checkpoint, err := a.store.CheckpointGitEffect(ctx, in)
+	if err != nil {
+		return store.GitCheckpoint{}, fail(ctx, fmt.Sprintf("checkpointing git effect for run %s step %d", in.RunID, in.StepOrdinal), err)
+	}
+	return checkpoint, nil
 }
 
 // FinalizeConfirmedMerge commits the irreversible terminal outcome.

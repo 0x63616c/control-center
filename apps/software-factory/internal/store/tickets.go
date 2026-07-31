@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store/storedb"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -115,6 +116,9 @@ func (s *Store) UpdateTicketState(ctx context.Context, id TicketID, state Ticket
 		State: state.String(),
 	})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Ticket{}, fmt.Errorf("moving ticket %d to %s: %w", id, state, s.ticketStateWriteError(ctx, id))
+		}
 		return Ticket{}, fmt.Errorf("moving ticket %d to %s: %w", id, state, wrapQueryErr(err))
 	}
 	return ticketFromRow(row)
@@ -128,11 +132,29 @@ func (s *Store) TransitionTicketState(ctx context.Context, id TicketID, from, to
 	row, err := s.q.TransitionTicketState(ctx, storedb.TransitionTicketStateParams{ID: int64(id), State: from.String(), State_2: to.String()})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return Ticket{}, fmt.Errorf("transitioning ticket %d from %s to %s: %w", id, from, to, ErrNotFound)
+			return Ticket{}, fmt.Errorf("transitioning ticket %d from %s to %s: %w", id, from, to, s.ticketStateWriteError(ctx, id))
 		}
 		return Ticket{}, fmt.Errorf("transitioning ticket %d from %s to %s: %w", id, from, to, wrapQueryErr(err))
 	}
 	return ticketFromRow(row)
+}
+
+func (s *Store) ticketStateWriteError(ctx context.Context, id TicketID) error {
+	row, err := s.q.Ticket(ctx, int64(id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return wrapQueryErr(err)
+	}
+	switch row.State {
+	case TicketActive.String():
+		return ErrActiveTicketOwnership
+	case TicketDone.String():
+		return work.ErrPermanent
+	default:
+		return ErrNotFound
+	}
 }
 
 // ReadyTickets lists every open Ticket whose direct dependencies are all
