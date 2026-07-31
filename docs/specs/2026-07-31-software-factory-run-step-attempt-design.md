@@ -104,7 +104,7 @@ here.
   dependency satisfaction, and cancellation finalization all have stable
   identities or ownership checks that make activity retries safe.
 - **Cancellation finalization can be atomic.** Postgres can conditionally mark
-  the owning Run canceled and move only its still-`working` Ticket to `open`, so
+  the owning Run canceled and move only its still-`active` Ticket to `open`, so
   a late cancellation cannot reopen a Ticket already committed as `done`.
 - **Agreed: a repeated Run supersedes existing Git state.** After cancellation
   reopens a Ticket, the next Run owns a fresh branch and pull request, carries
@@ -1096,12 +1096,12 @@ owned tree.
 
 `WorkOnTicket` must treat requested cancellation as a durable outcome. From a
 disconnected workflow context, it atomically records the Run as canceled and
-returns the Ticket from `working` to `open` if that Run still owns the working
+returns the Ticket from `active` to `open` if that Run still owns the active
 Ticket. It then performs bounded Run Worker teardown, with the orphan sweeper as
 fallback, before returning the cancellation error. The conditional ownership
 check prevents a late cancellation from reopening a Ticket whose confirmed
 merge was already committed as `done`. This replaces the current behavior that
-cleans up but strands a canceled Ticket in `working`.
+cleans up but strands a canceled Ticket in `active`.
 
 The existing tick also bundles work that is not ready-Ticket polling and must
 be deliberately relocated:
@@ -1110,9 +1110,10 @@ be deliberately relocated:
   Remove the custom completion signal and periodic `DescribeRun`
   reconciliation; Temporal reconstructs Futures on replay, and draining means
   no live Future crosses `ContinueAsNew`.
-- Move orphaned Run Worker sweeping to a separate maintenance workflow or Temporal
-  Schedule rather than waking the dispatcher for it. That design still needs a
-  durable source of truth for which Runs are live.
+- Run `MaintainFactory` from a Temporal Schedule rather than waking the
+  dispatcher for maintenance. It reconciles closed Ticket Runs that still own
+  `active` Tickets and Run Workers whose Runs are no longer live, using Store
+  ownership checks before reopening a Ticket.
 - Receive policy publication through the acknowledged Update handler described
   above.
 
@@ -1188,7 +1189,7 @@ be deliberately relocated:
 32. Replace the dispatcher's child `ABANDON` policy with explicit
     `REQUEST_CANCEL`. Dispatcher cancellation owns the whole child tree;
     canceled Runs are durably recorded, their still-owned Tickets return from
-    `working` to `open`, and Run Worker teardown retains its sweeper fallback.
+    `active` to `open`, and Run Worker teardown retains its sweeper fallback.
 33. Use Temporal child Futures as the dispatcher's sole normal completion
     mechanism; remove custom completion signals and `DescribeRun`
     reconciliation.
@@ -1205,6 +1206,13 @@ be deliberately relocated:
     recover before its Run deadline, while preserving the specific
     infrastructure failure kind on the Run rather than adding another coarse
     Ticket state.
+38. Rename the coarse Ticket state `working` to `active`; detailed progress is
+    expressed by the current Step rather than another coarse Ticket state.
+39. Derive current phase from the persisted Step lifecycle instead of storing
+    a duplicate mutable `run.phase` projection.
+40. Run a dedicated `MaintainFactory` workflow from a Temporal Schedule to
+    reconcile both abandoned Ticket ownership and orphaned Run Workers after a
+    Ticket workflow is directly terminated; do not use passive lease expiry.
 
 ## Parked questions
 
@@ -1248,11 +1256,8 @@ inheriting the current five-control-attempt default wholesale.
 ### Dispatcher decomposition
 
 The retry-driven wait and acknowledged policy publication are the direction.
-The following implementation boundaries still need decisions or code-level
-verification:
+The following code-level policy still needs verification:
 
-- Which maintenance workflow or Schedule owns orphaned Run Worker sweeping and how
-  it derives the set of live Runs.
 - The per-query timeout and retry policy for real dispatcher database errors,
   independently of the ten-second expected no-work delay.
 

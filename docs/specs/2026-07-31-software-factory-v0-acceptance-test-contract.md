@@ -104,8 +104,8 @@ reconciliation are removed.
 
 | ID | Given | When | Then |
 | --- | --- | --- | --- |
-| W01 | One open Ticket | Two Runs race to claim it | Exactly one atomically moves it to `working`; the loser creates no Run Worker and performs no GitHub write |
-| W02 | A Run owns a `working` Ticket | The workflow starts execution | The main worker provisions one active Run Worker generation and `CreateSession` is the readiness handoff; there is no separate readiness poll |
+| W01 | One open Ticket | Two Runs race to claim it | Exactly one atomically moves it to `active`; the loser creates no Run Worker and performs no GitHub write |
+| W02 | A Run owns an `active` Ticket | The workflow starts execution | The main worker provisions one active Run Worker generation and `CreateSession` is the readiness handoff; there is no separate readiness poll |
 | W03 | The Session is ready | Run execution begins | Clone is the first Run activity and executes inside the Session on the private Run Worker |
 | W04 | A repository has been cloned | Plan, implementation, CI, and review succeed | Postgres exposes one ordered Step per primary operation and Agent Attempts only beneath agent-backed Steps |
 | W05 | Implementation pushed a head SHA | The workflow opens or updates the PR | The PR is draft and the workflow records the authoritative PR identity and exact head SHA from GitHub, not from model prose |
@@ -156,22 +156,23 @@ reconciliation are removed.
 | ID | Given | When | Then |
 | --- | --- | --- | --- |
 | C01 | A Run is canceled before it claims the Ticket | Cancellation is delivered | No Ticket state, Run Worker, Run record, PR, or dependency edge changes |
-| C02 | A Run owns a `working` Ticket but GitHub has not confirmed a merge | Cancellation is delivered | Disconnected finalization atomically records the Run canceled and moves only that Run's still-owned Ticket to `open` |
+| C02 | A Run owns an `active` Ticket but GitHub has not confirmed a merge | Cancellation is delivered | Disconnected finalization atomically records the Run canceled and moves only that Run's still-owned Ticket to `open` |
 | C03 | A Run is canceled during agent execution | The activity receives cancellation | The agent subprocess is stopped, disconnected finalization runs, and bounded Run Worker teardown follows |
 | C04 | GitHub has already returned a Confirmed Merge but terminal Postgres recording has not committed | Cancellation arrives | Success finalization wins: the workflow persists the Confirmed Merge and Ticket `done` before returning; it must not reopen the Ticket |
 | C05 | Terminal success has committed | Cancellation arrives during cleanup | The Ticket remains `done`; cleanup continues within its bounded policy or falls back to the sweeper |
-| C06 | A child is directly terminated and cannot run workflow finalization | Maintenance reconciliation observes the closed Run | The orphan Run Worker is removed and the owned `working` Ticket eventually becomes dispatchable again without pretending the terminated Run completed normally |
+| C06 | A child is directly terminated and cannot run workflow finalization | The scheduled `MaintainFactory` workflow observes the closed Run | The orphan Run Worker is removed and the owned `active` Ticket eventually becomes dispatchable again without pretending the terminated Run completed normally |
 | C07 | Cancellation finalization retries after its transaction committed but before the activity response arrived | The retry executes | It returns the same canceled outcome and does not create another Run result or invalid state transition |
 | C08 | Cancellation and success finalization race | Postgres serializes their ownership checks | The durable outcome is never both `done` and reopened; Confirmed Merge is the irreversible winner whenever it exists |
 | C09 | A canceled Run left an unmerged branch or PR | A later Run reclaims the reopened Ticket | The later Run creates a fresh Run-owned branch and PR, carries useful commits forward, and ensures the old PR cannot remain merge-authorized |
 
-### Termination reconciliation decision still required
+### Termination reconciliation
 
-`C06` requires a durable owner for repair after workflow code can no longer run.
-The orphan Run Worker sweeper alone cannot safely change Ticket state. The
-design must decide whether a maintenance workflow reconciles both resources
-and Ticket ownership, or whether another store-backed lease/timeout makes the
-Ticket eligible again.
+`MaintainFactory` is a dedicated maintenance workflow invoked by a Temporal
+Schedule. It reconciles both sides of abandoned ownership: a closed Ticket Run
+that still owns an `active` Ticket and a Run Worker whose Run is no longer live.
+The repair uses Store ownership checks before reopening the Ticket and removes
+the orphaned Run Worker without representing the terminated Run as successful.
+Passive lease expiry is not the recovery mechanism.
 
 ## Store contract
 
@@ -238,12 +239,12 @@ safe behavior; the system must not claim that the same process survived.
 | O07 | The GitHub App/ruleset configuration is rendered or verified | v0 is deployed | The App can request squash merge without human approval but cannot bypass the required CI checks the design retains |
 | O08 | The old pull-request-closed completion consumer is removed | Other webhook events arrive | The shared relay continues accepting and routing supported events |
 
-### Progress projection decision still required
+### Progress projection
 
-`O01` proves that the console does not need Temporal for domain history, but
-the exact persisted "current phase" projection remains undecided. Before its
-test is written, choose whether it is derived from the latest active Step or
-stored as a Run projection updated transactionally with Step boundaries.
+The console derives current phase from the latest active Step, falling back to
+the latest terminal Step when the Run is between operations. There is no
+separate mutable `run.phase` column: Step lifecycle is the authoritative domain
+history and cannot disagree with a duplicated projection.
 
 ## First vertical TDD slices
 
