@@ -740,9 +740,9 @@ export type ControlCenterProductManifest = Readonly<{
   dsm: Readonly<{
     exposure: WebExposure;
   }>;
-  // The public GitHub webhook host (#126). Served by the api workload, but it
+  // The public GitHub webhook host (#126). Served by the webhook relay, but it
   // is NOT the api's exposure: api stays `internalService` for in-cluster
-  // traffic and gains this one public hostname that the tunnel maps to it.
+  // traffic while the tunnel maps this hostname to the relay.
   // Owned here because every other public name in this system is owned here.
   hooks: Readonly<{
     exposure: WebExposure;

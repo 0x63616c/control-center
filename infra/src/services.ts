@@ -86,6 +86,11 @@ const IMAGE_REPOSITORIES = {
     digestKey: softwareFactoryProduct.imageDigestKey("sandbox"),
     repository: softwareFactoryProduct.imageRepository("sandbox"),
   },
+  "software-factory-relay": {
+    product: "software-factory",
+    digestKey: softwareFactoryProduct.imageDigestKey("relay"),
+    repository: softwareFactoryProduct.imageRepository("relay"),
+  },
 } as const satisfies Record<
   string,
   { product: ProductSlug; digestKey: string; repository: string }

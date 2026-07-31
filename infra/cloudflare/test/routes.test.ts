@@ -39,7 +39,7 @@ describe("desiredIngressRules", () => {
     // Cross-namespace: cloudflared runs in `cloudflare`, the api Service lives in
     // `control-center`, so only the FQDN resolves. A short name here 502s.
     expect(byHost["hooks.worldwidewebb.co"]).toBe(
-      "http://api.control-center.svc.cluster.local:4201",
+      "http://relay.webhook-relay.svc.cluster.local:8080",
     );
     // Cross-NAMESPACE origin: cloudflared runs in control-center, so only the
     // cluster-local FQDN resolves the Service in `temporal`.
@@ -204,7 +204,7 @@ describe("desiredCnames", () => {
     expect(byHost["grafana.worldwidewebb.co"]).toBe("platform:grafana web ui route");
     expect(byHost["ha.worldwidewebb.co"]).toBe("platform:home assistant web ui route (#75)");
     expect(byHost["hooks.worldwidewebb.co"]).toBe(
-      "platform:github webhook receiver (public, HMAC-authenticated)",
+      "platform:github webhook relay (public, HMAC-authenticated)",
     );
     // Task 7 Step C: the flattened app--cc cutover CNAME is retired.
     expect(byHost).not.toHaveProperty("app--cc.worldwidewebb.co");

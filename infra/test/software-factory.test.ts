@@ -38,6 +38,7 @@ const vault = {
 const digests = {
   "software-factory-worker": `sha256:${"a".repeat(64)}`,
   "software-factory-sandbox": `sha256:${"b".repeat(64)}`,
+  "software-factory-relay": `sha256:${"c".repeat(64)}`,
 };
 
 const install = (imageDigests: Record<string, string> = {}, requireImageDigestPins = false) =>

@@ -129,15 +129,15 @@ function productRoutes(): CloudflareRoutes {
     },
     {
       exposure: cc.hooks.exposure,
-      // The api workload serves /hooks/github; the host is public, the origin
-      // is the same in-cluster api every tRPC call already reaches.
+      // The webhook relay verifies once then independently forwards deliveries;
+      // the host remains public because GitHub cannot pass Cloudflare Access.
       //
       // Cross-NAMESPACE origin, so the cluster-local FQDN is required: cloudflared
-      // runs in `cloudflare`, the Service is `api` in `control-center`. A short
+      // runs in `cloudflare`, the Service is `relay` in `webhook-relay`. A short
       // name resolves in the connector's own namespace and 502s (same reason
       // temporal-ui carries an FQDN).
-      origin: "http://api.control-center.svc.cluster.local:4201",
-      comment: "platform:github webhook receiver (public, HMAC-authenticated)",
+      origin: "http://relay.webhook-relay.svc.cluster.local:8080",
+      comment: "platform:github webhook relay (public, HMAC-authenticated)",
     },
     {
       exposure: cc.temporalUi.exposure,

@@ -30,6 +30,7 @@ import {
 import { installSoftwareFactory } from "./src/software-factory.ts";
 import { installTemporal } from "./src/temporal.ts";
 import { loadVault } from "./src/vault.ts";
+import { installWebhookRelay } from "./src/webhook-relay.ts";
 
 const cfg = new pulumi.Config("wwwinfra");
 const kubeContext = cfg.get("kubeContext");
@@ -216,6 +217,12 @@ if (target.substrate === "talos") {
     vault,
     imageDigests,
     nasNfsServer,
+    requireImageDigestPins: shouldRequireImageDigestPins(stackName) && !coldStart,
+  });
+  installWebhookRelay({
+    provider: cluster.provider,
+    vault,
+    imageDigests,
     requireImageDigestPins: shouldRequireImageDigestPins(stackName) && !coldStart,
   });
   // Observability (#33): Prometheus/Grafana/Loki, hand-written like Temporal
