@@ -21,17 +21,13 @@ func newTestRenderer(t *testing.T) *Renderer {
 	return r
 }
 
-// ticket is a detail with one comment, enough to exercise every field the base
-// prompt interpolates.
+// ticket exercises every field the base prompt interpolates.
 func ticket() work.TicketDetail {
 	return work.TicketDetail{
 		Ticket: work.Ticket{
 			Number: 329,
 			Title:  "the three stage prompt templates",
 			Body:   "Define what a plan, an implementation turn and a review turn each contain.",
-		},
-		Comments: []work.TicketComment{
-			{Author: "0x63616c", Body: "keep it simple and let the agents do the heavy lifting"},
 		},
 	}
 }
@@ -131,15 +127,13 @@ func TestRenderPutsEveryPieceOfTicketTextInsideTheFence(t *testing.T) {
 	for _, want := range []string{
 		detail.Title,
 		detail.Body,
-		detail.Comments[0].Author,
-		detail.Comments[0].Body,
 	} {
 		if !strings.Contains(fenced, want) {
 			t.Errorf("ticket text %q is not inside the fence", want)
 		}
 	}
-	if !strings.Contains(got, "#329") {
-		t.Error("the prompt does not name the issue it is for")
+	if !strings.Contains(got, "T-329") {
+		t.Error("the prompt does not name the Ticket it is for")
 	}
 }
 
@@ -329,24 +323,6 @@ func TestRenderRefusesInputItCannotRender(t *testing.T) {
 	}
 }
 
-func TestRenderSaysWhenAThreadWasTrimmed(t *testing.T) {
-	t.Parallel()
-
-	r := newTestRenderer(t)
-	detail := ticket()
-	detail.CommentsOmitted = 12
-
-	got, err := r.Render(Input{Stage: work.StagePlan, Ticket: detail})
-	if err != nil {
-		t.Fatalf("Render: %v", err)
-	}
-	// The difference between a model knowing it lacks context and a model
-	// believing it has all of it.
-	if !strings.Contains(got, "12 comments") {
-		t.Error("the prompt does not say the comment thread was trimmed")
-	}
-}
-
 func TestRenderDeclaresAnAbsenceRatherThanLeavingABlank(t *testing.T) {
 	t.Parallel()
 
@@ -358,14 +334,9 @@ func TestRenderDeclaresAnAbsenceRatherThanLeavingABlank(t *testing.T) {
 		want   string
 	}{
 		{
-			name:   "an issue filed with no description",
+			name:   "a Ticket filed with no description",
 			mutate: func(d *work.TicketDetail) { d.Body = "" },
 			want:   "no description",
-		},
-		{
-			name:   "an issue nobody has commented on",
-			mutate: func(d *work.TicketDetail) { d.Comments = nil },
-			want:   "no comments",
 		},
 	}
 
@@ -426,60 +397,47 @@ func fencedText(t *testing.T, rendered string) (string, bool) {
 	return body, ok
 }
 
-func TestRenderCapsHowMuchIssueTextOnePromptCarries(t *testing.T) {
+func TestRenderCapsHowMuchTicketTextOnePromptCarries(t *testing.T) {
 	t.Parallel()
 
 	r := newTestRenderer(t)
 
 	// Fillers no template contains, so what is counted below is the issue's
 	// text and nothing else.
-	const (
-		bodyFiller    = "qx"
-		commentFiller = "zj"
-	)
+	const bodyFiller = "qx"
 
-	// A GitHub issue body runs to 65536 characters and the seam carries 40
-	// comments, so "the issue as its authors wrote it" is megabytes in the
-	// worst case: an unbounded token spend, and a prompt that overflows the
-	// context window before the stage's own instructions are read.
-	comments := make([]work.TicketComment, 40)
-	for i := range comments {
-		comments[i] = work.TicketComment{Author: "drive-by", Body: strings.Repeat(commentFiller, 25_000)}
-	}
+	// A Ticket body has no length limit of its own, so "the Ticket as its
+	// author wrote it" is megabytes in the worst case: an unbounded token
+	// spend, and a prompt that overflows the context window before the stage's
+	// own instructions are read.
 	rendered, err := r.Render(Input{Stage: work.StagePlan, Ticket: work.TicketDetail{
-		Ticket:   work.Ticket{Number: 1, Title: "t", Body: strings.Repeat(bodyFiller, 100_000)},
-		Comments: comments,
+		Ticket: work.Ticket{Number: 1, Title: "t", Body: strings.Repeat(bodyFiller, 100_000)},
 	}})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 
 	// Counted in units of the filler rather than in bytes of the whole prompt,
-	// so the assertion is about the issue's text and not about how long the
+	// so the assertion is about the Ticket's text and not about how long the
 	// templates happen to be.
 	if got := len(bodyFiller) * strings.Count(rendered, bodyFiller); got > maxUntrustedBytes {
-		t.Errorf("the prompt carries %d bytes of issue body, want at most %d", got, maxUntrustedBytes)
+		t.Errorf("the prompt carries %d bytes of Ticket body, want at most %d", got, maxUntrustedBytes)
 	}
-	if got := len(commentFiller) * strings.Count(rendered, commentFiller); got > maxUntrustedBytes {
-		t.Errorf("the prompt carries %d bytes of comment thread, want at most %d", got, maxUntrustedBytes)
-	}
-	// Cutting text out silently is the failure mode the trimmed-thread notice
-	// already exists to avoid: a stage that does not know it was given part of
-	// the issue will plan as though it had all of it.
-	for _, want := range []string{"truncated", "not shown"} {
-		if !strings.Contains(rendered, want) {
-			t.Errorf("the prompt does not say text was cut (looked for %q)", want)
-		}
+	// Cutting text out silently is the failure mode this notice exists to
+	// avoid: a stage that does not know it was given part of the Ticket will
+	// plan as though it had all of it.
+	if !strings.Contains(rendered, "truncated") {
+		t.Error(`the prompt does not say text was cut (looked for "truncated")`)
 	}
 }
 
-func TestRenderCarriesAnOrdinaryIssueWhole(t *testing.T) {
+func TestRenderCarriesAnOrdinaryTicketWhole(t *testing.T) {
 	t.Parallel()
 
 	r := newTestRenderer(t)
 
-	// The cap is a bound on the pathological case, not a budget every issue is
-	// spent against. A normal ticket arrives intact and says nothing about
+	// The cap is a bound on the pathological case, not a budget every Ticket is
+	// spent against. A normal Ticket arrives intact and says nothing about
 	// truncation.
 	detail := ticket()
 	rendered, err := r.Render(Input{Stage: work.StagePlan, Ticket: detail})
@@ -487,7 +445,7 @@ func TestRenderCarriesAnOrdinaryIssueWhole(t *testing.T) {
 		t.Fatalf("Render: %v", err)
 	}
 	if !strings.Contains(rendered, detail.Body) {
-		t.Error("an ordinary issue body did not reach the prompt whole")
+		t.Error("an ordinary Ticket body did not reach the prompt whole")
 	}
 	if strings.Contains(rendered, "truncated") {
 		t.Error("the prompt claims an ordinary issue was truncated")

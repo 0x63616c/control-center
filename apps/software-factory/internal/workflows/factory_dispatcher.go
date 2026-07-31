@@ -35,11 +35,11 @@ type FactoryTicketDone struct {
 // Ticket dispatcher. Its default cap is one because both dispatchers consume
 // one shared Codex quota; raising it has a direct quota cost.
 //
-// It deliberately carries no Breaker and no config-update signal yet: v0
-// starts paused-never, capped at one, with no operator control surface of
-// its own — extending #548's control commands (which today speak only to
-// the legacy DispatcherWorkflowID) to reach this dispatcher too is later
-// work, not part of standing the second pipeline up.
+// It deliberately carries no Breaker. It does carry a config-update signal:
+// once the GitHub-backed dispatcher was retired (#559) this became the only
+// dispatcher, so SignalUpdateConfig — the API's pause, resume, set-cap and
+// nudge commands — has to land here or the factory has no control surface at
+// all.
 type FactoryDispatcherInput struct {
 	Config   work.Config
 	Tuning   work.DispatcherTuning
@@ -71,10 +71,15 @@ func FactoryDispatcher(ctx workflow.Context, in FactoryDispatcherInput) error {
 	}
 
 	dones := workflow.GetSignalChannel(ctx, SignalFactoryTicketDone)
+	updates := workflow.GetSignalChannel(ctx, SignalUpdateConfig)
 	var lastSweep time.Time
 
 	for {
 		now := workflow.Now(ctx)
+
+		// Applied before anything is decided this tick, so a pause takes
+		// effect on the tick it arrives rather than one later.
+		drainFactoryUpdates(ctx, updates, &in.Config)
 
 		// Phase ordering is load-bearing: drain completions and reconcile
 		// before sweeping or starting, so len(inFlight) reflects what is
@@ -88,9 +93,33 @@ func FactoryDispatcher(ctx workflow.Context, in FactoryDispatcherInput) error {
 			return continueFactoryDispatcherAsNew(ctx, in, inFlight)
 		}
 
-		if !waitFactoryDispatcher(ctx, in.Config.PollInterval(), dones) {
+		if !waitFactoryDispatcher(ctx, in.Config.PollInterval(), dones, updates) {
 			return ctx.Err()
 		}
+	}
+}
+
+// drainFactoryUpdates applies every configuration update that has arrived
+// since the last tick.
+//
+// An update that would make the dispatcher unusable is refused and logged
+// rather than adopted: work.Config.Apply validates the result, and a
+// dispatcher that took an invalid cap would stop being the concurrency
+// control it exists to be. The signal has no way to fail back to its sender
+// — the API's contract is only that Temporal accepted it — so the log line
+// is the whole of the report.
+func drainFactoryUpdates(ctx workflow.Context, updates workflow.ReceiveChannel, config *work.Config) {
+	for {
+		var update work.ConfigUpdate
+		if !updates.ReceiveAsync(&update) {
+			return
+		}
+		next, err := config.Apply(update)
+		if err != nil {
+			workflow.GetLogger(ctx).Error("refused an unusable dispatcher configuration update", "error", err)
+			continue
+		}
+		*config = next
 	}
 }
 
@@ -216,15 +245,18 @@ func startFactoryTickets(ctx workflow.Context, in FactoryDispatcherInput, inFlig
 }
 
 // waitFactoryDispatcher blocks until the poll interval elapses, a completion
-// signal arrives, or the workflow is cancelled. It reports whether the loop
+// signal or a configuration update arrives, or the workflow is cancelled. It reports whether the loop
 // should continue.
-func waitFactoryDispatcher(ctx workflow.Context, pollInterval time.Duration, dones workflow.ReceiveChannel) bool {
+func waitFactoryDispatcher(
+	ctx workflow.Context, pollInterval time.Duration, dones, updates workflow.ReceiveChannel,
+) bool {
 	timerCtx, cancelTimer := workflow.WithCancel(ctx)
 	defer cancelTimer()
 
 	selector := workflow.NewSelector(ctx)
 	selector.AddFuture(workflow.NewTimer(timerCtx, pollInterval), func(workflow.Future) {})
 	selector.AddReceive(dones, func(workflow.ReceiveChannel, bool) {})
+	selector.AddReceive(updates, func(workflow.ReceiveChannel, bool) {})
 	selector.AddReceive(ctx.Done(), func(workflow.ReceiveChannel, bool) {})
 	selector.Select(ctx)
 

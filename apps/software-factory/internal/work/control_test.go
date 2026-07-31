@@ -451,10 +451,9 @@ func TestConfigUpdateMarshalsToTheKeysAnOperatorTypes(t *testing.T) {
 // subscription, so 20-for-2 validates, deploys and empties the rate-limit
 // window before anyone reads a dashboard.
 //
-// The ceiling lives in Validate rather than in the environment loader so both
-// ways in are covered: the starting DISPATCHER_CONFIG and the UpdateConfig
-// signal a running dispatcher takes. A bound on only one of them is a bound on
-// neither.
+// The ceiling lives in Validate so both ways in are covered: the config a
+// dispatcher starts on, and the UpdateConfig signal a running one takes. A
+// bound on only one of them is a bound on neither.
 //
 // The number is written out here rather than taken from the constant, because
 // it is a policy choice and this is what makes moving it a deliberate edit

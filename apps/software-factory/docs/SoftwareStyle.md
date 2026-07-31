@@ -29,7 +29,7 @@ Understand a piece **without loading the whole system**.
 
 ### Correctness — *right thing, loud on failure?*
 Does what it's specified to; when it can't, fails **loud and early**, never limps.
-- **Test:** on a malformed issue or a wedged credential, does it halt with a clear error,
+- **Test:** on a malformed Ticket or a wedged credential, does it halt with a clear error,
   or open a confidently wrong PR?
 - **In code:** parse-don't-validate at boundaries, illegal states unrepresentable, no
   empty catch, no default-to-zero hiding a bug.
@@ -39,7 +39,7 @@ It runs unattended. You must be able to **see** and **stop** it.
 - **Test:** mid-run at 3am — can you tell which ticket is on which stage, why it decided
   what it did, and stop it without leaving a half-pushed branch?
 - **In code:** structured logs at decisions, Temporal history as the audit trail, the
-  status comment on the issue, idempotent stages, clean cancellation.
+  console over the run record in Postgres, idempotent stages, clean cancellation.
 
 ### Economy — *LLM spend and human wait.*
 Real here in a way it usually isn't: every stage costs subscription quota shared with the
@@ -102,8 +102,8 @@ Database-backed integration tests run in CI and explicitly skip locally when `SO
 7. **Fail fast, fail *helpful*.** Config failure at startup → clear message and non-zero
    exit, never a panic dump. A missing credential is a user error, not a programmer bug.
 
-8. **Failures never escape their ticket.** A bad ticket fails its own WorkTicket workflow,
-   visibly, and never takes down the worker or another ticket. Temporal converts an
+8. **Failures never escape their ticket.** A bad Ticket fails its own FactoryWorkTicket
+   workflow, visibly, and never takes down the worker or another ticket. Temporal converts an
    activity panic into a failure for free — don't defeat it with a bare `recover`.
 
 9. **Observability is a platform feature, not a per-call chore.** Logging is baked into the
@@ -154,7 +154,7 @@ Want a rule off? Fix the code, not the config (tenet 2).
 
 ## Construction
 
-- **Parse, don't validate.** Turn external input — GitHub issue bodies, codex JSONL events,
+- **Parse, don't validate.** Turn external input — Ticket bodies, codex JSONL events,
   k8s pod status — into a **typed domain value at the boundary**. Inside, data is valid *by
   type* and never re-checked.
 - **Required deps positional; optional config via functional options.** `New` sets
@@ -165,7 +165,7 @@ Want a rule off? Fix the code, not the config (tenet 2).
 
 - **Never `return err` bare.** Wrap on the way up with context — which ticket, which stage,
   which command.
-- **Error kinds map onto Temporal's taxonomy, not a parallel one.** A malformed issue or an
+- **Error kinds map onto Temporal's taxonomy, not a parallel one.** A malformed Ticket or an
   unusable plan is a **non-retryable** `ApplicationError`; a transient GitHub or Kubernetes
   failure is retryable. One taxonomy.
 - Invariant violations are assertion failures, not control flow.
@@ -194,7 +194,7 @@ Go style guide written without Temporal in mind will mislead you.
 ## Shelling out
 
 Every `codex` invocation goes through one narrow client. The rules are non-negotiable
-because issue titles and bodies are **attacker-controllable text**:
+because Ticket titles and bodies are **attacker-controllable text**:
 
 - **Argv-only.** Arguments are an explicit `[]string`. Never interpolated into
   `sh -c "<string>"`. No shell, no injection surface, no quoting bugs.
@@ -207,12 +207,13 @@ because issue titles and bodies are **attacker-controllable text**:
 
 ## Identity
 
-Do not mint IDs. GitHub issue numbers and Temporal workflow and run IDs already exist and
-are already authoritative. Workflow IDs are self-describing by construction
-(`work-ticket-<n>`). Add a generator seam only if something needs an identity Temporal
-does not already give it. Factory-owned Tickets are that exception: their small database
-IDs are authoritative, and their workflow IDs use the disjoint `factory-ticket-<id>`
-namespace so they can never share a Temporal history lineage with GitHub issues.
+Do not mint IDs beyond the one generator that earns it. Temporal workflow and run IDs
+already exist and are already authoritative, and a Ticket's small database id is minted
+by Postgres. Workflow IDs are self-describing by construction, derived from the Ticket id
+(`factory-ticket-<id>`). That namespace is deliberately disjoint from the retired
+`work-ticket-<n>` scheme, so a Ticket can never share a Temporal history lineage with the
+GitHub issue of the same number. Add another generator seam only if something needs an
+identity neither Postgres nor Temporal already gives it.
 
 ## Time and units
 

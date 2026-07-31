@@ -14,24 +14,16 @@ import (
 )
 
 // The literal strings below are asserted rather than derived. These paths and
-// this ID are a wire format: the workflow ID is the claim on a ticket, and the
+// this ID are a wire format: the workflow ID is the claim on a Ticket, and the
 // sandbox paths are the contract with the sandbox image. Recomputing them the
 // way the code does would assert nothing, so a change that alters them has to
 // change this test too, deliberately.
 
-func TestWorkflowIDIsStableForATicket(t *testing.T) {
+func TestFactoryDispatcherWorkflowIDIsStable(t *testing.T) {
 	t.Parallel()
 
-	if got, want := work.WorkflowID(312), "work-ticket-312"; got != want {
-		t.Errorf("WorkflowID(312) = %q, want %q — this string IS the claim; changing it lets a ticket be claimed twice", got, want)
-	}
-}
-
-func TestDispatcherWorkflowIDIsStable(t *testing.T) {
-	t.Parallel()
-
-	if got, want := work.DispatcherWorkflowID, "software-factory-dispatcher"; got != want {
-		t.Errorf("DispatcherWorkflowID = %q, want %q — the composition root starts on this ID every boot; "+
+	if got, want := work.FactoryDispatcherWorkflowID, "software-factory-ticket-dispatcher"; got != want {
+		t.Errorf("FactoryDispatcherWorkflowID = %q, want %q — the composition root starts on this ID every boot; "+
 			"changing it orphans whatever dispatcher is already running under the old one", got, want)
 	}
 }

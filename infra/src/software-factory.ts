@@ -16,7 +16,7 @@
 
 import * as k8s from "@pulumi/kubernetes";
 import * as pulumi from "@pulumi/pulumi";
-import { controlCenterProductManifest, softwareFactoryProductManifest } from "@www/platform";
+import { softwareFactoryProductManifest } from "@www/platform";
 import { DEFAULT_METRICS_PORT, METRICS_PATH } from "@www/platform/metrics/port";
 import { GHCR_PULL_SECRET_NAME } from "./ghcr-pull-secrets.ts";
 import {
@@ -187,26 +187,6 @@ const TERMINATION_GRACE_SECONDS = 120;
  * variable and defaults nothing, so this value is what actually binds.
  */
 const METRICS_ADDR = `:${DEFAULT_METRICS_PORT}`;
-
-/**
- * The Temporal UI's base URL, for the run link in a ticket's status comment
- * (A3, #331). A3 built `Pickup.RunURL` as pure data — empty renders the run id
- * as plain text, non-empty renders a link — and left the base to F1.
- *
- * It is DERIVED from the platform manifest, not spelled again: the UI is
- * already exposed at `temporal-ui.worldwidewebb.co` through the Cloudflare
- * tunnel and gated by an Access email-OTP app, the same treatment Grafana and
- * pgAdmin get (`infra/cloudflare/src/{routes,access}.ts`). So no new hostname,
- * no Access app and no manual `infra/cloudflare` apply is needed here — the
- * decision this ticket "owed" turns out to have been made and shipped already,
- * and the only thing missing was handing the worker the address.
- *
- * Chosen over leaving it empty because there is no dry-run mode: the first
- * end-to-end run opens a real PR, and whoever watches it wants the history one
- * click away rather than a run id to paste into a URL by hand.
- */
-const temporalUiBaseUrl = (): string =>
-  `https://${controlCenterProductManifest().temporalUi.exposure.hostname}`;
 
 export interface SoftwareFactoryArgs {
   provider: k8s.Provider;
@@ -503,17 +483,6 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
                 name: WORKER_SERVICE_ACCOUNT,
                 image: ghcrImage("software-factory-worker", imageDigests),
                 env: [
-                  // Read ONLY on the dispatcher workflow's first-ever start —
-                  // after that its config lives in workflow state and rides
-                  // ContinueAsNew, so this env var is read, logged, and then
-                  // ignored (see the "dispatcher_starting_config" log in
-                  // cmd/worker/main.go). It makes that one first start come
-                  // up unpaused now that registration is live: recovery
-                  // creates a new dispatcher, and starting it paused would
-                  // silently leave it idle. A redeploy cannot pause or
-                  // unpause a dispatcher that has already started — that is
-                  // an UpdateConfig signal instead.
-                  { name: "DISPATCHER_CONFIG", value: JSON.stringify({ paused: false }) },
                   { name: "GITHUB_OWNER", value: GITHUB_OWNER },
                   { name: "GITHUB_REPO", value: GITHUB_REPO },
                   {
@@ -560,7 +529,6 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
                   // same private GHCR images with the same token.
                   { name: "SANDBOX_IMAGE_PULL_SECRET_NAME", value: GHCR_PULL_SECRET_NAME },
                   { name: "TRANSCRIPTS_ROOT", value: TRANSCRIPTS_MOUNT_PATH },
-                  { name: "TEMPORAL_UI_BASE_URL", value: temporalUiBaseUrl() },
                   // config.LoadWorker's one required database input (#551):
                   // the dispatcher's per-tick RecordDispatcherState activity
                   // writes through this connection. Same variable name

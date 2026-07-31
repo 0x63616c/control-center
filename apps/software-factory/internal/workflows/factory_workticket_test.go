@@ -279,9 +279,6 @@ func TestFactoryWorkTicketPushesTheSameBranchItOpensAPullRequestAgainst(t *testi
 	if len(h.sandboxInputs) != 1 {
 		t.Fatalf("CreateSandbox called %d times, want 1", len(h.sandboxInputs))
 	}
-	if !h.sandboxInputs[0].TicketBacked {
-		t.Fatal("CreateSandboxInput.TicketBacked must be true on the Ticket-backed pipeline, or SF_BRANCH names the wrong pipeline's branch")
-	}
 	if len(h.pullRequestInput) == 0 {
 		t.Fatal("OpenOrUpdatePullRequest was never called")
 	}

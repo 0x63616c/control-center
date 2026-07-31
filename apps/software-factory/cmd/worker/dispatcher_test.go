@@ -15,7 +15,7 @@ import (
 )
 
 // fakeWorkflowRun is the minimal client.WorkflowRun a test needs: an ID pair,
-// nothing else. ensureDispatcher never calls Get.
+// nothing else. ensureFactoryDispatcher never calls Get.
 type fakeWorkflowRun struct {
 	id, runID string
 }
@@ -24,14 +24,14 @@ func (f fakeWorkflowRun) GetID() string    { return f.id }
 func (f fakeWorkflowRun) GetRunID() string { return f.runID }
 
 func (f fakeWorkflowRun) Get(context.Context, interface{}) error {
-	panic("ensureDispatcher must not block on the dispatcher's result: it never returns")
+	panic("ensureFactoryDispatcher must not block on the dispatcher's result: it never returns")
 }
 
 func (f fakeWorkflowRun) GetWithOptions(context.Context, interface{}, client.WorkflowRunGetOptions) error {
-	panic("not used by ensureDispatcher")
+	panic("not used by ensureFactoryDispatcher")
 }
 
-// fakeStarter records what ensureDispatcher asked Temporal to start.
+// fakeStarter records what ensureFactoryDispatcher asked Temporal to start.
 type fakeStarter struct {
 	gotOptions  client.StartWorkflowOptions
 	gotWorkflow interface{}
@@ -52,18 +52,17 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-func TestEnsureDispatcherStartsOnTheOneDispatcherWorkflowID(t *testing.T) {
+func TestEnsureFactoryDispatcherStartsOnTheOneDispatcherWorkflowID(t *testing.T) {
 	t.Parallel()
 
-	fake := &fakeStarter{run: fakeWorkflowRun{id: work.DispatcherWorkflowID, runID: "run-1"}}
-	cfg := work.DefaultConfig()
+	fake := &fakeStarter{run: fakeWorkflowRun{id: work.FactoryDispatcherWorkflowID, runID: "run-1"}}
 
-	if err := ensureDispatcher(context.Background(), fake, cfg, discardLogger()); err != nil {
-		t.Fatalf("ensureDispatcher: %v", err)
+	if err := ensureFactoryDispatcher(context.Background(), fake, discardLogger()); err != nil {
+		t.Fatalf("ensureFactoryDispatcher: %v", err)
 	}
 
-	if fake.gotOptions.ID != work.DispatcherWorkflowID {
-		t.Errorf("StartWorkflowOptions.ID = %q, want %q", fake.gotOptions.ID, work.DispatcherWorkflowID)
+	if fake.gotOptions.ID != work.FactoryDispatcherWorkflowID {
+		t.Errorf("StartWorkflowOptions.ID = %q, want %q", fake.gotOptions.ID, work.FactoryDispatcherWorkflowID)
 	}
 	if fake.gotOptions.TaskQueue != work.TaskQueue {
 		t.Errorf("StartWorkflowOptions.TaskQueue = %q, want %q", fake.gotOptions.TaskQueue, work.TaskQueue)
@@ -76,57 +75,57 @@ func TestEnsureDispatcherStartsOnTheOneDispatcherWorkflowID(t *testing.T) {
 	if fake.gotOptions.WorkflowExecutionErrorWhenAlreadyStarted {
 		t.Error("WorkflowExecutionErrorWhenAlreadyStarted = true, want false: a second replica attaching to the running dispatcher must not error")
 	}
-	if reflect.ValueOf(fake.gotWorkflow).Pointer() != reflect.ValueOf(workflows.Dispatcher).Pointer() {
-		t.Error("ExecuteWorkflow was not called with workflows.Dispatcher")
+	if reflect.ValueOf(fake.gotWorkflow).Pointer() != reflect.ValueOf(workflows.FactoryDispatcher).Pointer() {
+		t.Error("ExecuteWorkflow was not called with workflows.FactoryDispatcher")
 	}
 }
 
-// TestEnsureDispatcherPassesTheLoadedConfig proves the config this call
-// carries is the one LoadDispatcher produced, in case this is the boot that
-// actually starts the workflow. It is ignored by Temporal on every other
-// boot — see ensureDispatcher's doc comment — but this call must offer it
-// regardless, since there is no way to know in advance which boot that is.
-func TestEnsureDispatcherPassesTheLoadedConfig(t *testing.T) {
+// TestEnsureFactoryDispatcherStartsOnTheDefaultFactoryConfig proves the config
+// this call carries is the one the dispatcher would start on, in case this is
+// the boot that actually starts the workflow. It is ignored by Temporal on
+// every other boot — the running dispatcher carries its config in workflow
+// state, and a live change is the UpdateConfig signal the API sends — but this
+// call must offer it regardless, since there is no way to know in advance
+// which boot that is.
+func TestEnsureFactoryDispatcherStartsOnTheDefaultFactoryConfig(t *testing.T) {
 	t.Parallel()
 
 	fake := &fakeStarter{run: fakeWorkflowRun{}}
-	cfg := work.DefaultConfig()
-	cfg.MaxInFlight = 7
 
-	if err := ensureDispatcher(context.Background(), fake, cfg, discardLogger()); err != nil {
-		t.Fatalf("ensureDispatcher: %v", err)
+	if err := ensureFactoryDispatcher(context.Background(), fake, discardLogger()); err != nil {
+		t.Fatalf("ensureFactoryDispatcher: %v", err)
 	}
 
 	if len(fake.gotArgs) != 1 {
-		t.Fatalf("ExecuteWorkflow got %d args, want 1 (the DispatcherInput)", len(fake.gotArgs))
+		t.Fatalf("ExecuteWorkflow got %d args, want 1 (the FactoryDispatcherInput)", len(fake.gotArgs))
 	}
-	in, ok := fake.gotArgs[0].(workflows.DispatcherInput)
+	in, ok := fake.gotArgs[0].(workflows.FactoryDispatcherInput)
 	if !ok {
-		t.Fatalf("ExecuteWorkflow arg[0] is %T, want workflows.DispatcherInput", fake.gotArgs[0])
+		t.Fatalf("ExecuteWorkflow arg[0] is %T, want workflows.FactoryDispatcherInput", fake.gotArgs[0])
 	}
-	if in.Config.MaxInFlight != 7 {
-		t.Errorf("DispatcherInput.Config.MaxInFlight = %d, want 7", in.Config.MaxInFlight)
+	if in.Config != work.DefaultFactoryConfig() {
+		t.Errorf("FactoryDispatcherInput.Config = %+v, want the default factory config", in.Config)
 	}
 	if in.Tuning.MaxHistoryEvents != work.DefaultDispatcherTuning().MaxHistoryEvents {
-		t.Errorf("DispatcherInput.Tuning = %+v, want the default tuning", in.Tuning)
+		t.Errorf("FactoryDispatcherInput.Tuning = %+v, want the default tuning", in.Tuning)
 	}
 }
 
-// TestEnsureDispatcherReturnsAStartFailure proves a real failure — not the
+// TestEnsureFactoryDispatcherReturnsAStartFailure proves a real failure — not the
 // harmless already-started case — reaches the caller, which crashloops the
 // pod on it: a dispatcher that silently never started looks identical to a
 // paused one from outside the process.
-func TestEnsureDispatcherReturnsAStartFailure(t *testing.T) {
+func TestEnsureFactoryDispatcherReturnsAStartFailure(t *testing.T) {
 	t.Parallel()
 
 	sentinel := errors.New("frontend unavailable")
 	fake := &fakeStarter{err: sentinel}
 
-	err := ensureDispatcher(context.Background(), fake, work.DefaultConfig(), discardLogger())
+	err := ensureFactoryDispatcher(context.Background(), fake, discardLogger())
 	if err == nil {
-		t.Fatal("ensureDispatcher: want an error, got nil")
+		t.Fatal("ensureFactoryDispatcher: want an error, got nil")
 	}
 	if !errors.Is(err, sentinel) {
-		t.Errorf("ensureDispatcher error = %v, want it to wrap %v", err, sentinel)
+		t.Errorf("ensureFactoryDispatcher error = %v, want it to wrap %v", err, sentinel)
 	}
 }

@@ -8,9 +8,8 @@ import (
 
 // TestRegisterRegistersBothWorkflowsAndTheActivities is the demonstration
 // register's own doc comment promises and did not yet have: the dispatcher
-// and WorkTicket workflows, and the activity set, actually land on the
-// worker rather than the function staying the one log line it started as
-// (#340). See TestTheWorkerPollsTheQueueTheWorkflowsScheduleOnto for why this
+// and ticket workflows, and the activity sets, actually land on the worker
+// rather than the function staying the one log line it started as (#340). See TestTheWorkerPollsTheQueueTheWorkflowsScheduleOnto for why this
 // is a source-level assertion rather than a run against a live worker: the
 // alternative is a live Temporal, and this file already has that pattern.
 func TestRegisterRegistersBothWorkflowsAndTheActivities(t *testing.T) {
@@ -23,8 +22,8 @@ func TestRegisterRegistersBothWorkflowsAndTheActivities(t *testing.T) {
 	body := extractRegisterBody(t, string(source))
 
 	for _, want := range []string{
-		"w.RegisterWorkflow(workflows.WorkTicket)",
-		"w.RegisterWorkflow(workflows.Dispatcher)",
+		"w.RegisterWorkflow(workflows.FactoryWorkTicket)",
+		"w.RegisterWorkflow(workflows.FactoryDispatcher)",
 		"w.RegisterActivity(",
 	} {
 		if !strings.Contains(body, want) {

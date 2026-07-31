@@ -114,9 +114,8 @@ means a GitHub issue - same thing, one vocabulary.
     `observability` `docs` `tooling` `security`
   - `type/`: `bug` `chore` `feature` `design` `spike` `verify` `question`
   - `auto`: an agent can take this end-to-end unattended. `grind-tickets` draws
-    from this pool; when unsure, leave it off.
-  - `failed`: software-factory adds this lifecycle marker to a failed ticket and
-    any run-owned PR; never select it while filing.
+    from this pool; when unsure, leave it off. software-factory no longer reads
+    it - it works its own Tickets (ADR-0012), not GitHub issues.
   - List below can drift; confirm with
     `gh label list --limit 100 --json name | jq -r '.[].name' | grep -E '^(area|type)/'`
     (repo also carries unrelated default labels like `bug`/`enhancement` - ignore those).

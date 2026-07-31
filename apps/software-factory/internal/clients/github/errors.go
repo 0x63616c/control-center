@@ -141,21 +141,6 @@ func retryAfterIn(h http.Header) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
-// isNotFound reports whether a classified error was a 404.
-func isNotFound(err error) bool { return errors.Is(err, ErrNotFound) }
-
-// messageOf returns what GitHub said, for a log line. Nothing branches on it:
-// those strings are undocumented English prose that can change without a REST
-// version bump, so they are a hint for whoever reads the line at 3am and never
-// a discriminator.
-func messageOf(err error) string {
-	var resp *gh.ErrorResponse
-	if errors.As(err, &resp) {
-		return resp.Message
-	}
-	return err.Error()
-}
-
 // alreadyClassified reports whether an error already carries this package's
 // vocabulary.
 func alreadyClassified(err error) bool {

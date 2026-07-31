@@ -18,18 +18,21 @@ issue tracking). This file **adds** to it; it does not replace it.
 
 ## What this is
 
-A Go Temporal worker that autonomously works GitHub issues labelled `auto`: a dispatcher
-workflow polls for eligible tickets and a WorkTicket workflow per issue runs
-`plan → implement → review`, looping implement/review under turn budgets, each stage a
-`codex exec` inside a disposable per-ticket Kubernetes pod. The workflow itself opens or
+A Go Temporal worker that autonomously works Tickets from its own Postgres (ADR-0012): a
+dispatcher workflow polls for `ready` Tickets and a FactoryWorkTicket workflow per Ticket
+runs `plan → implement → review`, looping implement/review under turn budgets, each stage a
+`codex exec` inside a disposable per-Ticket Kubernetes pod. The workflow itself opens or
 updates the pull request after every push implement makes. Merging stays human.
 
-On an `OutcomeFailed` run, the terminal flow clears `auto` and adds `failed` to
-the issue plus any run-owned PR before posting its existing outcome status.
+It does not read GitHub Issues and posts nothing to them (#559). GitHub owns the pull
+request, CI and merge, and nothing else here. Progress is the run record in Postgres, read
+through the console.
 
 What actually happens end to end — what each stage reads, may write and is trusted for, where
 a human is required, and what is absent: [`docs/system-map.md`](./docs/system-map.md).
-Design and rationale: [ADR-0011](../../docs/adr/0011-software-factory-autonomous-ticket-work.md).
+Design and rationale: [ADR-0011](../../docs/adr/0011-software-factory-autonomous-ticket-work.md),
+superseded on the work source, the record and the console by
+[ADR-0012](../../docs/adr/0012-software-factory-owns-its-tickets-and-its-record.md).
 Running it for the first time, and stopping it:
 [first-run runbook](../../docs/runbooks/software-factory-first-run.md).
 

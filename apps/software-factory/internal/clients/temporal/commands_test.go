@@ -39,14 +39,14 @@ func TestCommandsUseTheSharedWorkflowIDsAndControlSignal(t *testing.T) {
 	if err := commands.UpdateConfig(context.Background(), update); err != nil {
 		t.Fatalf("UpdateConfig() error = %v", err)
 	}
-	if fake.workflowID != work.DispatcherWorkflowID || fake.signal != workflows.SignalUpdateConfig || fake.payload != update {
+	if fake.workflowID != work.FactoryDispatcherWorkflowID || fake.signal != workflows.SignalUpdateConfig || fake.payload != update {
 		t.Fatalf("signal = (%q, %q, %#v), want dispatcher UpdateConfig", fake.workflowID, fake.signal, fake.payload)
 	}
 	if err := commands.CancelTicket(context.Background(), 42); err != nil {
 		t.Fatalf("CancelTicket() error = %v", err)
 	}
-	if fake.canceledID != work.WorkflowID(42) {
-		t.Fatalf("canceled workflow ID = %q, want %q", fake.canceledID, work.WorkflowID(42))
+	if fake.canceledID != work.FactoryTicketWorkflowID(42) {
+		t.Fatalf("canceled workflow ID = %q, want %q", fake.canceledID, work.FactoryTicketWorkflowID(42))
 	}
 }
 

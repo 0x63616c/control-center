@@ -1,5 +1,6 @@
-// Command worker runs the software factory: a Temporal worker that polls for
-// GitHub issues labelled `auto` and takes them from idea to open pull request.
+// Command worker runs the software factory: a Temporal worker that reads
+// ready Tickets from the factory's own Postgres and takes them from idea to
+// open pull request.
 //
 // This file is the composition root, and it is the only place in the service
 // where a concrete client meets an interface that consumes it. Construction is
@@ -33,7 +34,6 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/config"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/prompts"
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/status"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/transcripts"
@@ -116,15 +116,6 @@ func run() error {
 	}
 	factoryStore := store.New(dbPool)
 
-	// Read at startup rather than by the dispatcher itself, so a configuration
-	// nobody can run crashloops the pod with the reason in its logs. The same
-	// JSON arriving later as an UpdateConfig signal has no way to fail back to
-	// whoever sent it, which makes startup the one place this can be loud.
-	dispatcher, err := config.LoadDispatcher()
-	if err != nil {
-		return fmt.Errorf("reading the dispatcher's configuration: %w", err)
-	}
-
 	// The one metrics registry in this process. Prometheus panics on a
 	// duplicate registration, deliberately, so a second registry or a second
 	// construction of the metrics that record into it is a crash in
@@ -188,25 +179,14 @@ func run() error {
 		return fmt.Errorf("building the transcript recording activity set: %w", err)
 	}
 
-	// Registration site. Every workflow and activity set this worker runs —
-	// the original GitHub-issue-driven dispatcher and WorkTicket, and the new
-	// Ticket-driven FactoryDispatcher and FactoryWorkTicket alongside them
-	// (ADR-0012's Cutover: "the existing pair is not modified") — is
+	// Registration site. Every workflow and activity set this worker runs is
 	// registered here, on this worker, and nowhere else — one queue, one
 	// worker, one list.
-	register(w, acts, ticketActs, recordingActs, transcriptActs, dispatcher, logger)
+	register(w, acts, ticketActs, recordingActs, transcriptActs, logger)
 
 	// Idempotent: a worker replica that loses the race to start this simply
-	// attaches to the execution the winner started. See ensureDispatcher's
-	// doc comment for why this happens on every boot rather than once, ever,
-	// by hand.
-	if err := ensureDispatcher(context.Background(), temporal, dispatcher, logger); err != nil {
-		return fmt.Errorf("ensuring the dispatcher is running: %w", err)
-	}
-	// Same idempotent start-on-boot shape, for the new dispatcher's own
-	// singleton workflow ID. It starts capped at 1 in-flight Ticket
-	// (work.DefaultFactoryConfig) because both dispatchers draw on one shared
-	// Codex quota.
+	// attaches to the execution the winner started, which is why it happens on
+	// every boot rather than once, ever, by hand.
 	if err := ensureFactoryDispatcher(context.Background(), temporal, logger); err != nil {
 		return fmt.Errorf("ensuring the factory ticket dispatcher is running: %w", err)
 	}
@@ -221,24 +201,15 @@ func run() error {
 		slog.String("temporal_namespace", cfg.TemporalNamespace),
 		slog.String("sandbox_namespace", cfg.SandboxNamespace),
 		slog.String("pod", cfg.PodName),
-		// The config a dispatcher would START on, which is not the same as the
-		// config a running one is using — hence the name. ADR-0011's dispatcher
-		// is a long-running workflow that continues as new, carrying its config
-		// in workflow state, so after the first start DISPATCHER_CONFIG is
-		// read, validated, logged here, and then ignored.
-		//
-		// Logging it as "the dispatcher's config" is how somebody lowers
-		// maxInFlight to stop eating the rate-limit window, rolls the
-		// Deployment, reads this line back, and believes it — while the live
-		// dispatcher runs on the value it started with days ago. Once C2 lands,
-		// a deploy that means to change a running dispatcher pushes an
-		// UpdateConfig signal; the honest answer for a live system is the
-		// GetStatus query, not this.
+		// The config the dispatcher would START on, which is not the same as
+		// the config a running one is using — hence the name. The dispatcher
+		// is a long-running workflow that continues as new carrying its config
+		// in workflow state, so after the first start this is logged and then
+		// ignored; a live change is the UpdateConfig signal the API sends.
 		slog.Group("dispatcher_starting_config",
-			slog.Bool("paused", dispatcher.Paused),
-			slog.Int("max_in_flight", dispatcher.MaxInFlight),
-			slog.Int64("breaker_cooldown_seconds", dispatcher.BreakerCooldownSeconds),
-			slog.String("default_model", dispatcher.DefaultModel.Name),
+			slog.Bool("paused", work.DefaultFactoryConfig().Paused),
+			slog.Int("max_in_flight", work.DefaultFactoryConfig().MaxInFlight),
+			slog.String("default_model", work.DefaultFactoryConfig().DefaultModel.Name),
 		),
 	)
 
@@ -294,26 +265,19 @@ func register(
 	ticketActs *activities.TicketActivities,
 	recordingActs *activities.RecordingActivities,
 	transcriptActs *activities.TranscriptRecordingActivities,
-	dispatcher work.Config,
 	logger *slog.Logger,
 ) {
-	w.RegisterWorkflow(workflows.WorkTicket)
-	w.RegisterWorkflow(workflows.Dispatcher)
-	w.RegisterActivity(acts)
-
-	// The second, Ticket-driven pair (ADR-0012's Cutover): a distinct
-	// workflow type and a distinct activity struct, registered alongside the
-	// first rather than replacing any of it.
 	w.RegisterWorkflow(workflows.FactoryWorkTicket)
 	w.RegisterWorkflow(workflows.FactoryDispatcher)
+	w.RegisterActivity(acts)
 	w.RegisterActivity(ticketActs)
 	w.RegisterActivity(recordingActs)
 	w.RegisterActivity(transcriptActs)
 
 	logger.Info("registrations",
-		slog.Int("workflows", 4),
+		slog.Int("workflows", 2),
 		slog.Int("stages_per_ticket", len(work.Pipeline())),
-		slog.Int("max_in_flight", dispatcher.MaxInFlight),
+		slog.Int("max_in_flight", work.DefaultFactoryConfig().MaxInFlight),
 	)
 }
 
@@ -458,7 +422,6 @@ func buildDeps(
 		Stages:      codex.NewRunner(sandboxes, sandboxes, codex.NewUnavailableLocker("the main worker has no sandbox-local flock"), logger),
 		Transcripts: transcriptSink,
 		Prompts:     prompts.NewActivityRenderer(renderer),
-		Status:      status.NewRenderer(cfg.TemporalUIBaseURL, cfg.TemporalNamespace),
 		Runs:        runs.New(temporal),
 		Sweeper:     sandboxes,
 		Metrics:     metrics,

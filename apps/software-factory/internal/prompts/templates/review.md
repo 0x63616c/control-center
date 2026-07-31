@@ -9,8 +9,8 @@ You are read-only. You cannot write files and you do not fix anything — a fres
 turn does that, deciding what to act on with your findings as its input. Your document is
 **the review**.
 
-Check the work against the issue above, not only against the report's own account of itself.
-The issue is the specification; where the report and the issue disagree, the issue wins, and
+Check the work against the Ticket above, not only against the report's own account of itself.
+The Ticket is the specification; where the report and the Ticket disagree, the Ticket wins, and
 the report is what tried — and, in your judgement, may have failed — to satisfy it. Say so
 plainly rather than grading the report against its own stated goals. Where it cites a file,
 symbol, command or test result, go and check: the repository is checked out for you at the
@@ -19,7 +19,7 @@ branch this report describes.
 For each finding give the evidence you checked, the concrete failure it would cause, and what
 should change. Order by severity and mark which findings block the work and which are advice.
 Blocking is for what would be wrong to merge — behaviour that is incorrect, a hazard, or a
-place the work does not do what the issue asked. Something that is merely worth improving is
+place the work does not do what the Ticket asked. Something that is merely worth improving is
 advice, and the next `implement` turn is free to take it or leave it. Where a finding sits
 genuinely on the line, block it: this stage exists to be the careful reader, and an advisory
 finding that should have blocked is the more expensive mistake of the two.

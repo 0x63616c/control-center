@@ -1,6 +1,6 @@
 ## Stage: plan
 
-Plan the work required to resolve this issue.
+Plan the work required to resolve this Ticket.
 
 You are read-only. You may read any file and run commands that inspect the repository, but
 you cannot write files and no code is expected from you. Your document is **the plan**.
@@ -10,7 +10,7 @@ The implementer follows this plan directly — there is no separate stage that r
 built rather than at your plan directly. Write for someone competent who has not read what you
 just read: which files change, what they do today, what the change is, and how you know.
 
-The issue may be a specification, or it may be a brain dump — a request quoted verbatim,
+The Ticket may be a specification, or it may be a brain dump — a request quoted verbatim,
 typos and loose ends included. Read it for what is actually being asked, and prefer the
 smallest change that resolves it; a plan the implementer cannot finish is worth less than a
 smaller one it can. Say what you deliberately deferred.

@@ -252,12 +252,6 @@ describe("the worker's Role (#343)", () => {
 });
 
 describe("the worker Deployment (#343)", () => {
-  test("starts a newly created dispatcher unpaused", async () => {
-    const [container] = (await deploymentSpec()).template.spec.containers;
-    const dispatcherConfig = container.env.find((env) => env.name === "DISPATCHER_CONFIG");
-    expect(dispatcherConfig?.value).toBe(JSON.stringify({ paused: false }));
-  });
-
   test("is a single replica with a Recreate strategy", async () => {
     // Two replicas would mean two credential refreshers, and a rolling update
     // over this volume is a deadlock this cluster has already hit.
@@ -308,17 +302,6 @@ describe("the worker Deployment (#343)", () => {
     const ctx = (await deploymentSpec()).template.spec.securityContext;
     expect(ctx?.runAsUser).toBe(65532);
     expect(ctx?.fsGroup).toBe(ctx?.runAsUser);
-  });
-
-  test("hands the worker the Temporal UI base URL, so a run id renders as a link", async () => {
-    // A3 (#331) built Pickup.RunURL as pure data and left the base to F1. The
-    // UI is already tunnel-exposed behind an Access email-OTP app, so this is
-    // derived from the platform manifest rather than spelled a second time —
-    // and empty here would silently downgrade every status comment to an
-    // unclickable run id on the first production run.
-    const [container] = (await deploymentSpec()).template.spec.containers;
-    const base = container.env.find((e) => e.name === "TEMPORAL_UI_BASE_URL");
-    expect(base?.value).toBe("https://temporal-ui.worldwidewebb.co");
   });
 
   test("takes POD_NAME from the downward API, never a literal", async () => {

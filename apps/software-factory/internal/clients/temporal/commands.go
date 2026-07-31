@@ -30,7 +30,7 @@ func NewCommands(temporal client.Client) *Commands {
 
 // UpdateConfig sends the dispatcher's one supported control signal.
 func (commands *Commands) UpdateConfig(ctx context.Context, update work.ConfigUpdate) error {
-	err := commands.client.SignalWorkflow(ctx, work.DispatcherWorkflowID, "", workflows.SignalUpdateConfig, update)
+	err := commands.client.SignalWorkflow(ctx, work.FactoryDispatcherWorkflowID, "", workflows.SignalUpdateConfig, update)
 	if err != nil {
 		return classify("signal dispatcher configuration", err)
 	}
@@ -39,7 +39,7 @@ func (commands *Commands) UpdateConfig(ctx context.Context, update work.ConfigUp
 
 // CancelTicket requests cancellation so the ticket workflow can run its disconnected cleanup.
 func (commands *Commands) CancelTicket(ctx context.Context, ticketID int) error {
-	err := commands.client.CancelWorkflow(ctx, work.WorkflowID(ticketID), "")
+	err := commands.client.CancelWorkflow(ctx, work.FactoryTicketWorkflowID(int64(ticketID)), "")
 	if err != nil {
 		return classify(fmt.Sprintf("cancel ticket %d", ticketID), err)
 	}

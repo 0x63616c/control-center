@@ -50,12 +50,6 @@ type Worker struct {
 	// the pod's own filesystem — which looks like success until the pod goes.
 	TranscriptsRoot string
 
-	// TemporalUIBaseURL is the ORIGIN of the Temporal UI, scheme and host with
-	// no path: whoever builds a run's URL appends the path grammar. The deploy
-	// owns the address, and nothing else in this service learns how the UI
-	// spells a run.
-	TemporalUIBaseURL string
-
 	// CodexAuthSecretName is the Kubernetes Secret holding the codex
 	// credential.
 	//
@@ -134,7 +128,6 @@ const (
 	envMetricsAddr            = "METRICS_ADDR"
 	envPodName                = "POD_NAME"
 	envTranscriptsRoot        = "TRANSCRIPTS_ROOT"
-	envTemporalUIBaseURL      = "TEMPORAL_UI_BASE_URL"
 	envCodexAuthSecret        = "CODEX_AUTH_SECRET_NAME"
 	envSandboxImagePullSecret = "SANDBOX_IMAGE_PULL_SECRET_NAME"
 	envLogLevel               = "LOG_LEVEL"
@@ -155,7 +148,6 @@ func workerEnvNames() []string {
 		envMetricsAddr,
 		envPodName,
 		envTranscriptsRoot,
-		envTemporalUIBaseURL,
 		envCodexAuthSecret,
 		envSandboxImagePullSecret,
 	}
@@ -176,7 +168,6 @@ func (w Worker) Validate() error {
 		envMetricsAddr:            w.MetricsAddr,
 		envPodName:                w.PodName,
 		envTranscriptsRoot:        w.TranscriptsRoot,
-		envTemporalUIBaseURL:      w.TemporalUIBaseURL,
 		envCodexAuthSecret:        w.CodexAuthSecretName,
 		envSandboxImagePullSecret: w.SandboxImagePullSecretName,
 	}
@@ -205,7 +196,6 @@ func LoadWorker() (Worker, error) {
 		PodName:           os.Getenv(envPodName),
 
 		TranscriptsRoot:     os.Getenv(envTranscriptsRoot),
-		TemporalUIBaseURL:   os.Getenv(envTemporalUIBaseURL),
 		CodexAuthSecretName: os.Getenv(envCodexAuthSecret),
 
 		SandboxImagePullSecretName: os.Getenv(envSandboxImagePullSecret),
@@ -247,7 +237,6 @@ func describeWorkerRequirement(err error) error {
 		envMetricsAddr:            "the address the metrics and health server listens on",
 		envPodName:                "this pod's own name, from the downward API; it identifies the credential lease holder",
 		envTranscriptsRoot:        "the mount point of the transcript volume, where stage transcripts are written",
-		envTemporalUIBaseURL:      "the Temporal UI's origin, scheme and host with no path; run URLs are built from it",
 		envCodexAuthSecret:        "the Kubernetes Secret holding the codex credential; the worker's Role is pinned to this exact name",
 		envSandboxImagePullSecret: "the Kubernetes Secret every sandbox pod authenticates its image pull with; without it a sandbox pod ErrImagePulls against GHCR",
 	}

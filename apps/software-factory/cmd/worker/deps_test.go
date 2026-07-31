@@ -48,7 +48,6 @@ func TestBuildDepsSatisfiesActivitiesNew(t *testing.T) {
 		SandboxImage:       "ghcr.io/0x63616c/software-factory-sandbox@sha256:deadbeef",
 		SandboxCPURequest:  "2",
 		SandboxMemoryLimit: "8Gi",
-		TemporalUIBaseURL:  "https://temporal.worldwidewebb.co",
 		TemporalNamespace:  "software-factory",
 		TranscriptsRoot:    "/transcripts",
 	}

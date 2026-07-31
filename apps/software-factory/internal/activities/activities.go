@@ -31,7 +31,6 @@ type Deps struct {
 	Stages      StageRunner
 	Transcripts TranscriptSink
 	Prompts     PromptRenderer
-	Status      StatusRenderer
 	Runs        RunLookup
 	Sweeper     SandboxSweeper
 	Metrics     Metrics
@@ -99,9 +98,6 @@ func New(deps Deps) (*Activities, error) {
 	}
 	if deps.Prompts == nil {
 		missing = append(missing, "Prompts")
-	}
-	if deps.Status == nil {
-		missing = append(missing, "Status")
 	}
 	if deps.Runs == nil {
 		missing = append(missing, "Runs")
@@ -222,107 +218,6 @@ func NewSandboxSide(deps SandboxDeps) (*Activities, error) {
 	}}, nil
 }
 
-// ListAutoTickets returns the open issues asking for machine work.
-func (a *Activities) ListAutoTickets(ctx context.Context) ([]work.Ticket, error) {
-	tickets, err := a.deps.GitHub.ListAutoTickets(ctx)
-	if err != nil {
-		return nil, fail(ctx, "listing tickets labelled auto", err)
-	}
-	activity.GetLogger(ctx).Debug("listed auto tickets", "count", len(tickets))
-	return tickets, nil
-}
-
-// AutoLabelPresent confirms that an issue returned by the label-indexed list
-// still carries `auto` before the dispatcher claims it.
-func (a *Activities) AutoLabelPresent(ctx context.Context, issue int) (bool, error) {
-	present, err := a.deps.GitHub.AutoLabelPresent(ctx, issue)
-	if err != nil {
-		return false, fail(ctx, fmt.Sprintf("checking the auto label on issue #%d", issue), err)
-	}
-	return present, nil
-}
-
-// FetchTicketDetail reads a ticket and the discussion on it.
-//
-// A run reads this once and carries it through every stage, so all five stages
-// plan against the same ask. Re-reading per stage would let a comment posted
-// mid-run change the requirements under a plan that had already been reviewed.
-func (a *Activities) FetchTicketDetail(ctx context.Context, number int) (work.TicketDetail, error) {
-	detail, err := a.deps.GitHub.TicketDetail(ctx, number)
-	if err != nil {
-		return work.TicketDetail{}, fail(ctx, fmt.Sprintf("reading ticket #%d", number), err)
-	}
-	return detail, nil
-}
-
-// ReportStatus posts the run's status comment, or edits the one it already
-// posted, and returns the comment it wrote.
-//
-// One activity rather than a post/edit pair, because "post once then edit"
-// is a rule about the run, and a caller that could choose would eventually
-// choose wrong. The choice is made from the report's own Comment field, which
-// is zero exactly until a comment exists.
-func (a *Activities) ReportStatus(ctx context.Context, report work.StatusReport) (work.CommentID, error) {
-	body := a.deps.Status.Render(report)
-
-	if report.Comment == 0 {
-		id, err := a.deps.GitHub.PostStatus(ctx, report.TicketNumber, body)
-		if err != nil {
-			return 0, fail(ctx, fmt.Sprintf("posting the status comment on issue #%d", report.TicketNumber), err)
-		}
-		return id, nil
-	}
-
-	if err := a.deps.GitHub.EditStatus(ctx, report.Comment, body); err != nil {
-		return report.Comment, fail(ctx, fmt.Sprintf("editing the status comment on issue #%d", report.TicketNumber), err)
-	}
-	return report.Comment, nil
-}
-
-// ClearAutoLabel removes `auto`, which the machine does when it has opened a
-// pull request or given up. A human re-adds it to ask for another pass.
-func (a *Activities) ClearAutoLabel(ctx context.Context, issue int) error {
-	if err := a.deps.GitHub.ClearAutoLabel(ctx, issue); err != nil {
-		return fail(ctx, fmt.Sprintf("clearing the auto label on issue #%d", issue), err)
-	}
-	return nil
-}
-
-// LabelFailureInput names the ticket and, when it exists, run-owned pull
-// request that need a terminal failure marker.
-type LabelFailureInput struct {
-	TicketNumber      int
-	PullRequestNumber int
-}
-
-// LabelFailure marks a failed ticket and its existing run pull request.
-func (a *Activities) LabelFailure(ctx context.Context, in LabelFailureInput) error {
-	if err := a.deps.GitHub.MarkFailed(ctx, in.TicketNumber); err != nil {
-		return fail(ctx, fmt.Sprintf("adding the failed label to issue #%d", in.TicketNumber), err)
-	}
-	if in.PullRequestNumber == 0 {
-		return nil
-	}
-	if err := a.deps.GitHub.MarkFailed(ctx, in.PullRequestNumber); err != nil {
-		return fail(ctx, fmt.Sprintf("adding the failed label to pull request #%d", in.PullRequestNumber), err)
-	}
-	return nil
-}
-
-// RejectDuplicateWorkflowID records that a ticket has already spent its sole
-// workflow ID, then clears auto so the dispatcher does not attempt it again.
-// The fixed marker in the rendered body makes a retry adopt the first comment.
-func (a *Activities) RejectDuplicateWorkflowID(ctx context.Context, rejection work.DuplicateWorkflowExecution) error {
-	body := a.deps.Status.RenderDuplicateWorkflowID(rejection)
-	if _, err := a.deps.GitHub.PostDuplicateWorkflowIDRejection(ctx, rejection.TicketNumber, body); err != nil {
-		return fail(ctx, fmt.Sprintf("posting the duplicate workflow notice on issue #%d", rejection.TicketNumber), err)
-	}
-	if err := a.deps.GitHub.ClearAutoLabel(ctx, rejection.TicketNumber); err != nil {
-		return fail(ctx, fmt.Sprintf("clearing the auto label on issue #%d after duplicate workflow rejection", rejection.TicketNumber), err)
-	}
-	return nil
-}
-
 // CreateSandboxInput asks for one run's pod.
 type CreateSandboxInput struct {
 	TicketNumber int
@@ -336,16 +231,6 @@ type CreateSandboxInput struct {
 	// passed rather than derived because the pod's deadline is deploy config
 	// and the timeout is run policy, and this is the one place both are known.
 	RunTimeout time.Duration
-
-	// TicketBacked selects which pipeline's branch-naming scheme SF_BRANCH gets
-	// baked with: false (the zero value) is the GitHub-issue-backed pipeline
-	// (WorkTicket), true is the Ticket-backed pipeline (ADR-0012,
-	// FactoryWorkTicket). CreateSandbox is the one activity both pipelines
-	// share, so this is the one field that tells it which of SandboxTemplate's
-	// two Spec methods computes a branch its own workflow will actually push
-	// to and later ask GitHub about. See SpecForFactoryTicket's doc comment
-	// for what a wrong answer here does (#603).
-	TicketBacked bool
 }
 
 // CreateSandbox creates the pod this run's stages execute in.
@@ -374,10 +259,7 @@ func (a *Activities) CreateSandbox(ctx context.Context, in CreateSandboxInput) (
 		return "", fail(ctx, fmt.Sprintf("fetching the codex credential for ticket #%d's sandbox", in.TicketNumber), err)
 	}
 
-	spec := a.deps.Sandbox.Spec(in.TicketNumber, in.RunID)
-	if in.TicketBacked {
-		spec = a.deps.Sandbox.SpecForFactoryTicket(int64(in.TicketNumber), in.RunID)
-	}
+	spec := a.deps.Sandbox.SpecForFactoryTicket(int64(in.TicketNumber), in.RunID)
 	id, err := a.deps.Pods.Create(ctx, spec, credential)
 	if err != nil {
 		return "", fail(ctx, fmt.Sprintf("creating the sandbox for ticket #%d", in.TicketNumber), err)
@@ -755,46 +637,6 @@ func (a *Activities) runStage(ctx context.Context, in stageInput) (stageOutput, 
 	}, nil
 }
 
-// PersistTranscriptInput names one stage attempt's transcript and carries its
-// bytes, home from the sandbox that produced them.
-type PersistTranscriptInput struct {
-	Key        work.StageKey
-	Transcript work.Transcript
-}
-
-// PersistTranscript writes one stage attempt's transcript into the durable,
-// NFS-backed transcripts.Sink this activity's own Deps.Transcripts is bound
-// to — the composition root's, never the sandbox's local one.
-//
-// It exists because RunStage no longer runs where that durable sink is
-// reachable: #434's step 3 moved stage execution into the sandbox pod's own
-// process, whose local disk is not durable and must never be NFS (see
-// internal/transcripts.Sink's own doc comment). This activity is what carries
-// the bytes the rest of the way, and it must be scheduled onto the MAIN
-// worker's task queue — internal/workflows/workticket.go's job, not this
-// package's, since ActivityOptions.TaskQueue is set at the call site.
-//
-// It writes the whole transcript in one call rather than streaming it, unlike
-// the original write RunStage's own local sink did line by line: by the time
-// this runs, the stage has already finished and every byte already exists, so
-// there is nothing left to stream incrementally.
-func (a *Activities) PersistTranscript(ctx context.Context, in PersistTranscriptInput) error {
-	w, err := a.deps.Transcripts.Open(ctx, in.Key)
-	if err != nil {
-		return fail(ctx, fmt.Sprintf("opening the durable transcript for %s", in.Key), err)
-	}
-
-	_, writeErr := w.Write(in.Transcript.Bytes())
-	closeErr := w.Close()
-	if writeErr != nil {
-		return fail(ctx, fmt.Sprintf("writing the relayed transcript for %s", in.Key), writeErr)
-	}
-	if closeErr != nil {
-		return fail(ctx, fmt.Sprintf("closing the relayed transcript for %s", in.Key), closeErr)
-	}
-	return nil
-}
-
 // FindPullRequestOutput is what GitHub says is open on a run's branch.
 //
 // Found is a field rather than an empty URL meaning "none", because the two
@@ -934,7 +776,7 @@ func (a *Activities) EnablePullRequestAutoMerge(ctx context.Context, nodeID stri
 // comment is never edited later, so there is nothing here for a marker to
 // let a retry adopt.
 func (a *Activities) PostPullRequestComment(ctx context.Context, pullRequest int, body string) error {
-	if _, err := a.deps.GitHub.PostStatus(ctx, pullRequest, body); err != nil {
+	if err := a.deps.GitHub.PostComment(ctx, pullRequest, body); err != nil {
 		return fail(ctx, fmt.Sprintf("posting a comment on pull request #%d", pullRequest), err)
 	}
 	return nil

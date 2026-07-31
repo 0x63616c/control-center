@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,16 +22,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	gh "github.com/google/go-github/v78/github"
 )
-
-// These are the system labels this client may change. Nothing parameterises
-// them: a general label writer would be an invitation to touch others.
-const (
-	autoLabel   = "auto"
-	failedLabel = "failed"
-)
-
-// issueListAccept matches the header go-github sends for Issues.ListByRepo.
-const issueListAccept = "application/vnd.github.squirrel-girl-preview"
 
 // perPage is GitHub's maximum page size. Every listing here uses it, because
 // the cost of a listing is requests, not rows.
@@ -58,18 +47,6 @@ const (
 
 	// truncationNotice tells a reader the body below is not all of it.
 	truncationNotice = "\n\n_…status truncated…_"
-
-	// maxThreadComments is how many comments of a ticket's discussion
-	// TicketDetail carries. The thread lands in a prompt, and a prompt is
-	// finite; forty is enough to hold a long argument whole and small enough
-	// that the longest thread in this repo's history still leaves room for the
-	// code the stage is meant to be reading.
-	maxThreadComments = 40
-
-	// threadHeadComments is how many of those come from the start. The oldest
-	// comments carry the original intent and the newest carry the latest
-	// correction; it is the middle of a long thread that is restatement.
-	threadHeadComments = maxThreadComments / 2
 )
 
 // Client talks to one repository as the www-software-factory-bot GitHub App.
@@ -202,104 +179,6 @@ func newGitHubClient(hc *http.Client, baseURL string) (*gh.Client, error) {
 	}
 	client.BaseURL = parsed
 	return client, nil
-}
-
-// listedIssue carries the fields the auto-ticket list needs, including the
-// dependency summary omitted from go-github's Issue model.
-type listedIssue struct {
-	Number              int                       `json:"number"`
-	Title               string                    `json:"title"`
-	Body                string                    `json:"body"`
-	PullRequest         *struct{}                 `json:"pull_request"`
-	DependenciesSummary *issueDependenciesSummary `json:"issue_dependencies_summary"`
-}
-
-type issueDependenciesSummary struct {
-	BlockedBy int `json:"blocked_by"`
-}
-
-func listIssuesURL(owner, repo string, opts *gh.IssueListByRepoOptions) string {
-	query := url.Values{
-		"direction": {opts.Direction},
-		"labels":    {strings.Join(opts.Labels, ",")},
-		"per_page":  {strconv.Itoa(opts.ListOptions.PerPage)},
-		"sort":      {opts.Sort},
-		"state":     {opts.State},
-	}
-	if opts.ListOptions.Page != 0 {
-		query.Set("page", strconv.Itoa(opts.ListOptions.Page))
-	}
-	return fmt.Sprintf("repos/%v/%v/issues?%s", owner, repo, query.Encode())
-}
-
-// ListAutoTickets returns the open issues labelled `auto`, oldest first.
-//
-// All or nothing: a failure on any page returns no tickets at all. A partial
-// list would silently shrink the eligible set and read as a quiet backlog
-// rather than as an outage.
-func (c *Client) ListAutoTickets(ctx context.Context) ([]work.Ticket, error) {
-	const op = "listing the open issues labelled auto"
-
-	opts := &gh.IssueListByRepoOptions{
-		State:       "open",
-		Labels:      []string{autoLabel},
-		Sort:        "created",
-		Direction:   "asc",
-		ListOptions: gh.ListOptions{PerPage: perPage},
-	}
-
-	var tickets []work.Ticket
-	for {
-		req, err := c.api.NewRequest(http.MethodGet, listIssuesURL(c.owner, c.repo, opts), nil)
-		if err != nil {
-			return nil, classify(ctx, op, err)
-		}
-		// Match Issues.ListByRepo so this decoder changes only the response shape.
-		req.Header.Set("Accept", issueListAccept)
-
-		var issues []listedIssue
-		resp, err := c.api.Do(ctx, req, &issues)
-		if err != nil {
-			return nil, classify(ctx, op, err)
-		}
-		for _, issue := range issues {
-			// The issues endpoint returns pull requests too, and a PR carrying
-			// `auto` would be fed to the pipeline as a ticket.
-			if issue.PullRequest != nil {
-				continue
-			}
-			if issue.Number == 0 {
-				return nil, fmt.Errorf("%s: github returned an issue with no number", op)
-			}
-			if issue.DependenciesSummary != nil && issue.DependenciesSummary.BlockedBy > 0 {
-				continue
-			}
-			tickets = append(tickets, work.Ticket{
-				Number: issue.Number,
-				Title:  issue.Title,
-				Body:   issue.Body,
-			})
-		}
-		if resp.NextPage == 0 {
-			return tickets, nil
-		}
-		opts.ListOptions.Page = resp.NextPage
-	}
-}
-
-// AutoLabelPresent reads one issue and reports whether it still carries
-// `auto`.
-//
-// The dispatcher uses this primary issue read to reject stale candidates from
-// the label-filtered issue list before it starts a workflow for them.
-func (c *Client) AutoLabelPresent(ctx context.Context, issue int) (bool, error) {
-	op := fmt.Sprintf("reading the auto label on issue #%d", issue)
-
-	current, _, err := c.api.Issues.Get(ctx, c.owner, c.repo, issue)
-	if err != nil {
-		return false, classify(ctx, op, err)
-	}
-	return hasAutoLabel(current), nil
 }
 
 // PullRequestForBranch returns the open pull request whose head is branch, if
@@ -462,327 +341,17 @@ func (c *Client) editPullRequest(ctx context.Context, existing work.PullRequest,
 	}, nil
 }
 
-// TicketDetail returns a ticket with the discussion on it.
-//
-// By number rather than "the ticket being worked", because a stage that follows
-// a reference in an issue body needs exactly this and needs it for a different
-// issue. The run's own status comments are removed — unfiltered, a planner
-// reads our progress updates back as requirements — and a thread longer than
-// the cap keeps its ends and drops its middle.
-func (c *Client) TicketDetail(ctx context.Context, number int) (work.TicketDetail, error) {
-	op := fmt.Sprintf("reading issue #%d and its comments", number)
+// PostComment adds a comment to an issue or pull request. Pull requests use
+// GitHub's issues endpoint for comments, so number is the resource's shared
+// number in either case.
+func (c *Client) PostComment(ctx context.Context, number int, body string) error {
+	op := fmt.Sprintf("posting a comment on #%d", number)
 
-	issue, _, err := c.api.Issues.Get(ctx, c.owner, c.repo, number)
-	if err != nil {
-		return work.TicketDetail{}, classify(ctx, op, err)
-	}
-	if issue.IsPullRequest() {
-		return work.TicketDetail{}, permanent(op, ErrInvalid,
-			fmt.Errorf("#%d is a pull request, not an issue", number))
-	}
-
-	comments, err := c.threadOf(ctx, op, number)
-	if err != nil {
-		return work.TicketDetail{}, err
-	}
-	kept, omitted := trimThread(comments)
-
-	return work.TicketDetail{
-		Ticket: work.Ticket{
-			Number: issue.GetNumber(),
-			Title:  issue.GetTitle(),
-			Body:   issue.GetBody(),
-		},
-		Comments:        kept,
-		CommentsOmitted: omitted,
-	}, nil
-}
-
-// threadOf reads every comment on an issue, oldest first, minus this service's
-// own status comments.
-func (c *Client) threadOf(ctx context.Context, op string, number int) ([]work.TicketComment, error) {
-	botLogin, err := c.botLogin(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	opts := &gh.IssueListCommentsOptions{
-		Sort:        gh.Ptr("created"),
-		Direction:   gh.Ptr("asc"),
-		ListOptions: gh.ListOptions{PerPage: perPage},
-	}
-
-	var thread []work.TicketComment
-	for {
-		comments, resp, err := c.api.Issues.ListComments(ctx, c.owner, c.repo, number, opts)
-		if err != nil {
-			return nil, classify(ctx, op, err)
-		}
-		for _, comment := range comments {
-			author := comment.GetUser().GetLogin()
-			if isOwnStatus(botLogin, author, comment.GetBody()) {
-				continue
-			}
-			thread = append(thread, work.TicketComment{Author: author, Body: comment.GetBody()})
-		}
-		if resp.NextPage == 0 {
-			return thread, nil
-		}
-		opts.Page = resp.NextPage
-	}
-}
-
-// isOwnStatus reports whether a comment is one of this run's status updates,
-// which a planner handed the thread unfiltered would read back as requirements.
-//
-// Authorship decides. The status marker is the fallback for the run where the
-// App's identity could not be resolved, and only then: issue text is
-// attacker-controllable, so a marker match applied to everyone's comments would
-// be a way for a commenter to hide their own text from the stage about to act
-// on the ticket. Losing a stranger's marker-carrying comment while we are blind
-// to our own name is the smaller failure, and the narrower one.
-func isOwnStatus(botLogin, author, body string) bool {
-	if botLogin != "" {
-		return author == botLogin
-	}
-	_, isStatus := work.StatusMarkerIn(body)
-	return isStatus
-}
-
-// trimThread keeps a long thread's ends and reports how much of its middle it
-// dropped.
-func trimThread(thread []work.TicketComment) ([]work.TicketComment, int) {
-	if len(thread) <= maxThreadComments {
-		return thread, 0
-	}
-	tail := maxThreadComments - threadHeadComments
-	kept := make([]work.TicketComment, 0, maxThreadComments)
-	kept = append(kept, thread[:threadHeadComments]...)
-	kept = append(kept, thread[len(thread)-tail:]...)
-	return kept, len(thread) - maxThreadComments
-}
-
-// PostStatus opens one of the run's status comments, or adopts the one this run
-// already opened for that step — the marker in the body decides which.
-//
-// The guarantee is best-effort de-duplication, not exclusion: GitHub offers no
-// conditional create, so two overlapping attempts can both list, both miss and
-// both post. What it buys is that the common case — an activity that succeeded
-// and was retried after dying before it could record that — produces one
-// comment rather than a second, and that a run cannot accumulate a comment per
-// attempt on top of the seven it means to post.
-//
-// Two things about that race got worse when the format moved from one comment
-// per run to one per step, and neither is fixed here.
-//
-// It now runs about seven times per run rather than once, so its odds scale
-// with the number of steps and, once the dispatcher works several tickets at
-// a time, with concurrency as well.
-//
-// And a duplicate is no longer self-evident. When a run edited a single
-// comment, two comments carrying this service's marker were visibly wrong. Now
-// comments are meant to repeat, so a duplicate reads as ordinary — and because
-// EditStatus takes one CommentID, the run edits whichever it adopted and the
-// loser keeps its "### plan — running" body on the ticket for good, claiming a
-// stage is still running long after the run finished.
-//
-// Fixing it means deciding what to do with the loser, and deleting a comment
-// this service posted is an open policy question on #331 rather than something
-// to settle in a doc comment. Until it is settled, this is the failure mode to
-// recognise: a stage comment stuck at "running" with a sibling that completed.
-func (c *Client) PostStatus(ctx context.Context, issue int, body string) (work.CommentID, error) {
-	op := fmt.Sprintf("posting the status comment on issue #%d", issue)
-	body = capBody(body)
-
-	if marker, ok := work.StatusMarkerIn(body); ok {
-		id, found, err := c.findOwnComment(ctx, op, issue, marker)
-		if err != nil {
-			return 0, err
-		}
-		if found {
-			c.log.InfoContext(ctx, "adopted this run's existing status comment",
-				"issue", issue, "comment_id", int64(id))
-			return id, nil
-		}
-	}
-
-	comment, _, err := c.api.Issues.CreateComment(ctx, c.owner, c.repo, issue, &gh.IssueComment{Body: gh.Ptr(body)})
-	if err != nil {
-		return 0, classify(ctx, op, err)
-	}
-	c.log.InfoContext(ctx, "posted the run's status comment", "issue", issue, "comment_id", comment.GetID())
-	return work.CommentID(comment.GetID()), nil
-}
-
-// PostDuplicateWorkflowIDRejection posts or adopts a ticket's one-run notice.
-// It requires a resolved App login before writing: terminal rejection retries
-// can recur while auto remains, and cannot safely degrade to duplicate posts.
-func (c *Client) PostDuplicateWorkflowIDRejection(ctx context.Context, issue int, body string) (work.CommentID, error) {
-	op := fmt.Sprintf("posting the duplicate workflow rejection on issue #%d", issue)
-	body = capBody(body)
-	marker, ok := work.StatusMarkerIn(body)
-	if !ok {
-		return 0, fmt.Errorf("%s: rejection body has no status marker", op)
-	}
-
-	botLogin, err := c.auth.botLogin(ctx)
-	if err != nil {
-		return 0, classify(ctx, op, err)
-	}
-	if botLogin == "" {
-		return 0, fmt.Errorf("%s: GitHub returned an empty bot login", op)
-	}
-
-	id, found, err := c.findCommentByMarker(ctx, op, issue, marker, botLogin)
-	if err != nil {
-		return 0, err
-	}
-	if found {
-		c.log.InfoContext(ctx, "adopted the duplicate workflow rejection comment", "issue", issue, "comment_id", int64(id))
-		return id, nil
-	}
-
-	comment, _, err := c.api.Issues.CreateComment(ctx, c.owner, c.repo, issue, &gh.IssueComment{Body: gh.Ptr(body)})
-	if err != nil {
-		return 0, classify(ctx, op, err)
-	}
-	c.log.InfoContext(ctx, "posted the duplicate workflow rejection comment", "issue", issue, "comment_id", comment.GetID())
-	return work.CommentID(comment.GetID()), nil
-}
-
-// findOwnComment looks for a comment this run already posted: same marker, and
-// written by this App.
-//
-// Newest first, so a run's own comment is almost always on page one and paging
-// usually stops immediately.
-func (c *Client) findOwnComment(ctx context.Context, op string, issue int, marker string) (work.CommentID, bool, error) {
-	botLogin, err := c.botLogin(ctx)
-	if err != nil {
-		return 0, false, err
-	}
-	if botLogin == "" {
-		// Adoption is skipped rather than attempted blind. Any human, and any
-		// other App, can post a comment carrying this marker; without the author
-		// check a run would edit a stranger's comment. A duplicate comment is
-		// the smaller failure.
-		return 0, false, nil
-	}
-
-	return c.findCommentByMarker(ctx, op, issue, marker, botLogin)
-}
-
-// findCommentByMarker finds a comment with marker that the named App wrote.
-func (c *Client) findCommentByMarker(ctx context.Context, op string, issue int, marker, botLogin string) (work.CommentID, bool, error) {
-	opts := &gh.IssueListCommentsOptions{
-		Sort:        gh.Ptr("created"),
-		Direction:   gh.Ptr("desc"),
-		ListOptions: gh.ListOptions{PerPage: perPage},
-	}
-	for {
-		comments, resp, err := c.api.Issues.ListComments(ctx, c.owner, c.repo, issue, opts)
-		if err != nil {
-			return 0, false, classify(ctx, op, err)
-		}
-		for _, comment := range comments {
-			if comment.GetUser().GetLogin() != botLogin {
-				continue
-			}
-			if found, ok := work.StatusMarkerIn(comment.GetBody()); ok && found == marker {
-				return work.CommentID(comment.GetID()), true, nil
-			}
-		}
-		if resp.NextPage == 0 {
-			return 0, false, nil
-		}
-		opts.Page = resp.NextPage
-	}
-}
-
-// botLogin resolves this App's comment author, or reports it as unresolved.
-//
-// An empty login with a nil error is deliberate: failing to learn our own name
-// must not fail a ticket, so callers degrade — they post rather than adopt, and
-// filter a thread by marker alone.
-func (c *Client) botLogin(ctx context.Context) (string, error) {
-	login, err := c.auth.botLogin(ctx)
-	if err != nil {
-		c.log.WarnContext(ctx, "could not resolve this app's own identity; treating every comment as someone else's",
-			"error", err.Error())
-		return "", nil
-	}
-	return login, nil
-}
-
-// EditStatus rewrites the run's status comment in place. Idempotent by
-// construction: writing the same body twice is a no-op.
-func (c *Client) EditStatus(ctx context.Context, id work.CommentID, body string) error {
-	op := fmt.Sprintf("rewriting status comment %d", int64(id))
-
-	_, _, err := c.api.Issues.EditComment(ctx, c.owner, c.repo, int64(id), &gh.IssueComment{Body: gh.Ptr(capBody(body))})
+	comment, _, err := c.api.Issues.CreateComment(ctx, c.owner, c.repo, number, &gh.IssueComment{Body: gh.Ptr(capBody(body))})
 	if err != nil {
 		return classify(ctx, op, err)
 	}
-	return nil
-}
-
-// ClearAutoLabel removes `auto`, which the machine does when it has opened a PR
-// or given up.
-//
-// A 404 is NOT assumed to mean the label was already gone. GitHub answers 404
-// rather than 403 for a resource in a private repository that a token cannot
-// reach, so a revoked installation and a missing grant arrive looking exactly
-// like success. Reported as success, `auto` stays on the issue, the dispatcher
-// re-lists the ticket on its next poll, and it re-runs forever against the
-// quota this whole service is bounded by. So the postcondition is observed
-// rather than assumed: re-read the issue and look.
-func (c *Client) ClearAutoLabel(ctx context.Context, issue int) error {
-	op := fmt.Sprintf("clearing the auto label on issue #%d", issue)
-
-	_, err := c.api.Issues.RemoveLabelForIssue(ctx, c.owner, c.repo, issue, autoLabel)
-	if err == nil {
-		return nil
-	}
-
-	classified := classify(ctx, op, err)
-	if !isNotFound(classified) {
-		return classified
-	}
-
-	// One extra request, on the rare path only.
-	current, _, readErr := c.api.Issues.Get(ctx, c.owner, c.repo, issue)
-	if readErr != nil {
-		verify := classify(ctx, fmt.Sprintf("re-reading issue #%d after a 404 removing the auto label", issue), readErr)
-		if isNotFound(verify) {
-			return permanent(op, ErrNotFound, fmt.Errorf(
-				"github returned 404 and issue #%d cannot be read either: it has been deleted, or this installation can no longer see it", issue))
-		}
-		return verify
-	}
-
-	if hasAutoLabel(current) {
-		// The 404 was never about the label. Deliberately loud: the run fails,
-		// but `auto` is still on the issue, so whatever dispatches tickets will
-		// re-list this one until a human intervenes.
-		c.log.ErrorContext(ctx, "the auto label survived a 404 from its own removal",
-			"issue", issue, "github_message", messageOf(err))
-		return permanent(op, ErrAuth, fmt.Errorf(
-			"github returned 404 but the auto label is still on issue #%d: the installation is likely revoked or lacks issues:write", issue))
-	}
-
-	c.log.InfoContext(ctx, "the auto label was already absent", "issue", issue)
-	return nil
-}
-
-// MarkFailed adds the terminal failure marker to an issue or pull request.
-// Pull requests use GitHub's issues endpoint for labels, so target is the
-// resource's shared number in either case.
-func (c *Client) MarkFailed(ctx context.Context, target int) error {
-	op := fmt.Sprintf("adding the failed label to #%d", target)
-
-	if _, _, err := c.api.Issues.AddLabelsToIssue(ctx, c.owner, c.repo, target, []string{failedLabel}); err != nil {
-		return classify(ctx, op, err)
-	}
-	c.log.InfoContext(ctx, "added the failed label", "target", target)
+	c.log.InfoContext(ctx, "posted a comment", "number", number, "comment_id", comment.GetID())
 	return nil
 }
 
@@ -846,14 +415,4 @@ func capBody(body string) string {
 		cut = cut[:len(cut)-1]
 	}
 	return cut + truncationNotice
-}
-
-// hasAutoLabel reports whether an issue still carries `auto`.
-func hasAutoLabel(issue *gh.Issue) bool {
-	for _, label := range issue.Labels {
-		if label.GetName() == autoLabel {
-			return true
-		}
-	}
-	return false
 }

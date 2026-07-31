@@ -1,5 +1,13 @@
 # Software factory: autonomous ticket work in sandboxed pods
 
+> **Superseded in part by [ADR-0012](./0012-software-factory-owns-its-tickets-and-its-record.md).**
+> The work source, the state store and the progress record described below are no longer
+> GitHub Issues, the `auto` label or issue comments: the factory owns its own Tickets, its
+> own record and its own console, and the GitHub-backed pipeline this ADR specifies was
+> deleted. Everything here about sandboxed pods, the stage pipeline and the trust boundary
+> still describes the running system. This ADR is left as the record of a decision at a
+> point in time; it is not rewritten.
+
 Tickets labelled `auto` are picked up, planned, reviewed, implemented and turned into open
 PRs by a self-hosted service — no human in the loop until the PR exists. It runs as a Go
 Temporal worker in a new `software-factory` k8s namespace on its own `software-factory`

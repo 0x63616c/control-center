@@ -11,16 +11,17 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
-// failList answers the issue list with one prepared failure, so a taxonomy case
-// is exercised over a real round trip rather than against a hand-built error.
+// failList answers the pull request list with one prepared failure, so a
+// taxonomy case is exercised over a real round trip rather than against a
+// hand-built error.
 func failList(t *testing.T, respond http.HandlerFunc) error {
 	t.Helper()
 	s, _ := newStub(t)
-	s.handle("GET "+issuesPath, respond)
+	s.handle("GET "+pullsPath, respond)
 	c, _ := s.client(t)
-	_, err := c.ListAutoTickets(context.Background())
+	_, _, err := c.PullRequestForBranch(context.Background(), "a-branch")
 	if err == nil {
-		t.Fatal("ListAutoTickets succeeded where a failure was prepared")
+		t.Fatal("PullRequestForBranch succeeded where a failure was prepared")
 	}
 	return err
 }
@@ -153,13 +154,13 @@ func TestReturnsContextCancellationUnchanged(t *testing.T) {
 	t.Parallel()
 
 	s, _ := newStub(t)
-	listIssues(s)
+	listPulls(s)
 	c, _ := s.client(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := c.ListAutoTickets(ctx)
+	_, _, err := c.PullRequestForBranch(ctx, "a-branch")
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("error %q is not a cancellation; temporal must see the run being stopped, not a failure", err)
 	}
@@ -178,43 +179,19 @@ func TestNamesTheOperationAndItsSubjectInEveryError(t *testing.T) {
 		want []string
 	}{
 		{
-			name: "listing tickets",
-			path: "GET " + issuesPath,
-			call: func(c *Client) error { _, err := c.ListAutoTickets(context.Background()); return err },
-			want: []string{"listing", "auto"},
-		},
-		{
-			name: "reading an auto label",
-			path: "GET " + issuePath,
-			call: func(c *Client) error { _, err := c.AutoLabelPresent(context.Background(), testIssue); return err },
-			want: []string{"auto label", fmt.Sprintf("#%d", testIssue)},
-		},
-		{
-			name: "posting a status comment",
-			path: "POST " + commentsPath,
+			name: "looking for a pull request",
+			path: "GET " + pullsPath,
 			call: func(c *Client) error {
-				_, err := c.PostStatus(context.Background(), testIssue, "no marker")
+				_, _, err := c.PullRequestForBranch(context.Background(), "a-branch")
 				return err
 			},
-			want: []string{"status comment", fmt.Sprintf("#%d", testIssue)},
+			want: []string{"pull request", "a-branch"},
 		},
 		{
-			name: "rewriting a status comment",
-			path: "PATCH " + commentPath,
-			call: func(c *Client) error { return c.EditStatus(context.Background(), work.CommentID(999), "body") },
-			want: []string{"status comment", "999"},
-		},
-		{
-			name: "clearing the auto label",
-			path: "DELETE " + autoPath,
-			call: func(c *Client) error { return c.ClearAutoLabel(context.Background(), testIssue) },
-			want: []string{"auto label", fmt.Sprintf("#%d", testIssue)},
-		},
-		{
-			name: "reading a ticket",
-			path: "GET " + issuePath,
-			call: func(c *Client) error { _, err := c.TicketDetail(context.Background(), testIssue); return err },
-			want: []string{"issue", fmt.Sprintf("#%d", testIssue)},
+			name: "posting a comment",
+			path: "POST " + commentsPath,
+			call: func(c *Client) error { return c.PostComment(context.Background(), testIssue, "a comment") },
+			want: []string{"comment", fmt.Sprintf("#%d", testIssue)},
 		},
 	}
 

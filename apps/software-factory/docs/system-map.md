@@ -11,14 +11,14 @@ where a model sits, where a human is required — and what is absent.
 ## One glance
 
 ```
-GitHub issue labelled `auto`
+a `ready` Ticket in the factory's own Postgres
         │
         │ dispatcher: one long-running Temporal workflow
-        │ claim: workflow-ID uniqueness on `work-ticket-<n>`
+        │ claim: workflow-ID uniqueness on `factory-ticket-<id>`
         ▼
-work-ticket-<n> (child workflow; one disposable sandbox pod)
+factory-ticket-<id> (child workflow; one disposable sandbox pod)
         │
-        ├─ FetchTicketDetail
+        ├─ TransitionTicketState open → working
         ├─ CreateSandbox → WaitSandboxReady → CloneRepo
         ├─ Create one Temporal Session on this run's sandbox task queue
         ├─ plan (once)
@@ -31,15 +31,16 @@ work-ticket-<n> (child workflow; one disposable sandbox pod)
         │                     │ blocking finding
         │                     └──────────────► a fresh implement window
         │
-        └─ finish: delete sandbox, update labels/status; a clean review makes
-                   the draft PR ready for human review and enables auto-merge
+        └─ finish: delete sandbox, record the run's end and transition the
+                   Ticket; a clean review makes the draft PR ready for human
+                   review and enables auto-merge
         ▼
 human approval → GitHub auto-merges when requirements are satisfied → deploy
 ```
 
 The fixed first pass is `plan → implement → review`, defined by
-`work.Pipeline`. It is not a forward-only schedule: `ticketRun.implementReviewLoop`
-repeats implement while CI is red or unobserved, and starts another CI window
+`work.Pipeline`. It is not a forward-only schedule:
+`factoryTicketRun.factoryImplementReviewLoop` repeats implement while CI is red or unobserved, and starts another CI window
 after a blocking review finding. A blocked implement verdict, stalled or
 exhausted CI/review progress, or an activity failure terminates the run.
 
@@ -47,29 +48,28 @@ exhausted CI/review progress, or an activity failure terminates the run.
 
 ### Dispatcher
 
-`DispatcherWorkflow` is a timer loop, not a Temporal Schedule. It reconciles
-known child workflows, prunes completed work, sweeps orphaned sandboxes, lists
-and starts eligible `auto` tickets while below its in-flight cap, then records
-its own post-tick decision (#551). Starting the child workflow with ID
-`work-ticket-<n>` is the claim: Temporal will not allow another open workflow
-with the same ID. See `workflows/dispatcher.go` and the `work.WorkflowID`
-helpers.
+`FactoryDispatcher` is a timer loop, not a Temporal Schedule. It applies any
+`UpdateConfig` signal that arrived, drains completion signals, reconciles known
+child workflows, sweeps orphaned sandboxes, then lists `ready` Tickets and
+starts as many as its in-flight cap allows. Starting the child workflow with ID
+`factory-ticket-<id>` is the claim: Temporal will not allow another open
+workflow with the same ID. See `workflows/factory_dispatcher.go` and
+`work.FactoryTicketWorkflowID`.
 
-That fifth step, `recordState`, writes the single `dispatcher_state` row
-(`internal/store`) with the config and breaker it ran under, what it holds a
-slot for, and the eligible candidates it computed this tick in claim order —
-the decision nothing recorded before #551. A write failure is logged and
-swallowed rather than failing the tick: this row is a queryable projection
-nobody reads yet, and halting the whole timer loop over it would stop every
-in-flight ticket's reconcile and sweep along with it. Nothing here changes
-what tickets get worked; `dispatcher_state` intentionally still keys on GitHub
-issue numbers, because this dispatcher still reads GitHub issues, not Tickets
-from that store.
+**`dispatcher_state` currently has no writer.** The row and its
+`RecordDispatcherState` activity were written by the retired GitHub-backed
+dispatcher (#551); `FactoryDispatcher` never recorded it, and #559 deleted the
+only caller. The activity, `activities.DispatcherStateWriter` and the store
+table are all still present and still exercised by their own tests, but nothing
+in a running factory writes a row. Wiring it is not a repoint: that row's
+`InFlight` is `[]work.InFlightTicket`, keyed by a GitHub issue number, while
+this dispatcher's in-flight set is keyed by `store.TicketID`.
 
-The configured defaults are owned by `work.DefaultConfig` and
-`work.DefaultDispatcherTuning`: three in flight, a 30-second poll interval, a
-15-minute breaker cooldown, a 30-minute orphan grace, and `gpt-5.6-terra` at
-medium effort unless a stage override is configured.
+The configured defaults are owned by `work.DefaultFactoryConfig` and
+`work.DefaultDispatcherTuning`: one in flight, a 30-second poll interval, a
+30-minute orphan grace, and `gpt-5.6-terra` at medium effort unless a stage
+override is configured. There is no `DISPATCHER_CONFIG` environment variable
+any more — a live change is the `UpdateConfig` signal the API sends.
 
 The HTTP API (`internal/api`) is reached at `factory.worldwidewebb.co` through
 Cloudflare Access. The tunnel targets the namespace-local `web` Service; nginx
@@ -78,40 +78,36 @@ The API applies migrations before its readiness endpoint can answer. Both API an
 console run without Kubernetes credentials or transcript storage; only the worker
 mounts the Kubernetes token and transcript volume.
 Its authenticated write commands use `internal/clients/temporal.Commands` to
-send the dispatcher's existing `workflows.SignalUpdateConfig` signal (pause,
-resume, max-in-flight, or an empty update that wakes the next tick); the
-console never connects to Temporal. `workflows.QueryStatus` remains the one
-status query — ADR-0012 retires it once the console reads `dispatcher_state`
-instead, but #551 kept it: `docs/runbooks/software-factory-first-run.md`
-documents it as one of the two levers (alongside `UpdateConfig`) an operator
-has today with no console yet, and removing an operator's only way to see
-what is happening is explicitly out of scope for a ticket that only writes a
-row. Cancelling a ticket asks Temporal to cancel the `work.WorkflowID` run so
-its disconnected cleanup can delete the sandbox.
+send `workflows.SignalUpdateConfig` to `work.FactoryDispatcherWorkflowID`
+(pause, resume, max-in-flight, or an empty update that wakes the next tick);
+the console never connects to Temporal. Cancelling a Ticket asks Temporal to
+cancel the `work.FactoryTicketWorkflowID` run so its disconnected cleanup can
+delete the sandbox. There is no status query: `workflows.QueryStatus` belonged
+to the retired dispatcher and went with it (#559).
 Command acceptance means Temporal accepted the request, not that the database
 has observed its effect.
 
-### Pipeline identity namespaces
+### Pipeline identity namespace
 
-Two pipelines run side by side with deliberately disjoint identity namespaces:
+One pipeline, one identity namespace:
 
-| pipeline | Temporal workflow ID | branch |
-|---|---|---|
-| Legacy GitHub-issue-backed | [`work-ticket-<n>` (`work.WorkflowID`)](../internal/work/paths.go#L161) | [`software-factory/ticket-<n>/<runID>` (`work.BranchName`)](../internal/work/run.go#L211) |
-| Ticket-backed (ADR-0012) | [`factory-ticket-<id>` (`work.FactoryTicketWorkflowID`)](../internal/work/paths.go#L169) | [`software-factory/factory-ticket-<id>/<runID>` (`work.FactoryTicketBranchName`)](../internal/work/paths.go#L176) |
+| Temporal workflow ID | branch |
+|---|---|
+| `factory-ticket-<id>` (`work.FactoryTicketWorkflowID`) | `software-factory/factory-ticket-<id>/<runID>` (`work.FactoryTicketBranchName`) |
 
-The workflow-ID prefixes must remain disjoint: Temporal can reuse a closed
-legacy workflow ID, so a shared namespace could let unrelated GitHub issues and
-factory Tickets share a history lineage. The separate branch constructors also
-keep the sandbox branch and the PR head aligned for each pipeline; see
-[`SandboxTemplate.SpecForFactoryTicket`](../internal/work/status.go#L173) for
-the #603 fix.
+The `factory-ticket-` prefix must not be reused for anything else, and in
+particular must stay disjoint from the retired `work-ticket-<n>` scheme:
+Temporal can reuse a closed workflow ID, so a small Ticket id under that prefix
+would share a history lineage with the GitHub issue of the same number. One
+branch constructor keeps the sandbox branch and the PR head aligned; see
+`SandboxTemplate.SpecForFactoryTicket` for the #603 fix.
 
 ### Work ticket and deadlines
 
-`ticketRun.execute` performs setup, creates exactly one Session, runs the one
-plan turn, then calls `implementReviewLoop`. Cleanup is run on a disconnected
-workflow context so cancellation does not strand the sandbox.
+`factoryTicketRun.execute` claims the Ticket, performs setup, creates exactly
+one Session, runs the one plan turn, then calls `factoryImplementReviewLoop`.
+Cleanup is run on a disconnected workflow context so cancellation does not
+strand the sandbox.
 
 `work.DefaultRunPolicy` and `work/durations.go` own the deadline ladder:
 
@@ -155,18 +151,18 @@ does not otherwise know the earlier turn.
 
 ### Pull request and CI ownership
 
-After every non-blocked implement return, `implementReviewLoop` calls
+After every non-blocked implement return, `factoryImplementReviewLoop` calls
 `openOrUpdatePullRequest`. Workflow code finds or creates the pull request for
 the branch it named, makes it draft-first, and uses implement's title/body as
 descriptive content; the model supplies no PR identifier and does not execute a
 separate PR-opening stage. `observeCI` runs before review. A clean review ends
-with `OutcomeProposed`; `ticketRun.finish` makes the draft ready for review and
-enables auto-merge. Required GitHub review/approval remains outside the
+with `OutcomeProposed`; `factoryTicketRun.finish` makes the draft ready for
+review, enables auto-merge and transitions the Ticket to `review`. Required GitHub review/approval remains outside the
 pipeline.
 
 ## Prompt fences and records
 
-`internal/prompts/templates/base.md` fences issue title, body, comments, and
+`internal/prompts/templates/base.md` fences Ticket title, body, and
 prior-stage documents with an untrusted-content nonce. The renderer generates
 and removes the nonce from untrusted input, then checks fence counts. This is a
 prompt-injection mitigation, not an authorization boundary: plan, report, and
@@ -178,14 +174,15 @@ The durable record locations are:
 |---|---|
 | workflow decisions and state | Temporal history in the `software-factory` namespace |
 | raw stage event stream | transcript sink under the configured transcript root |
-| human-facing progress | one edited status comment per run step |
-| outcomes and usage | workflow result, outcome comment, and Prometheus metrics |
+| human-facing progress | the console, over the run/step/attempt rows below. The factory posts nothing to GitHub except the pull request itself (ADR-0012, #559). |
+| outcomes and usage | workflow result, Attempt rows, and Prometheus metrics |
 | worker logs | Loki |
-| run/step/attempt rows (ADR-0012) | `internal/store`'s Postgres tables, written through `internal/activities.RecordingActivities` — not yet registered on any task queue. `run.ticket_id` is a NOT NULL foreign key to a factory-owned Ticket, which a GitHub-issue-driven run has no equivalent of and ADR-0012 forbids bridging one for, so `Dispatcher` and `WorkTicket` above are unmodified and do not call it. software-factory#558's Ticket-driven workflow is this record's one intended caller. |
-| transcript rows (ADR-0012) | `internal/store`'s `transcript` table, written through `internal/activities.TranscriptRecordingActivities.PersistTranscriptToStore` — a distinct activity from the `PersistTranscript` row above, and, like `RecordingActivities`, not yet registered on any task queue for the same reason: a transcript row's foreign key requires an Attempt, which only software-factory#558's Ticket-driven workflow ever records. The existing `PersistTranscript`/NFS path above is unmodified and keeps serving the running pipeline until #559 retires it. |
+| run/step/attempt rows (ADR-0012) | `internal/store`'s Postgres tables, written through `internal/activities.RecordingActivities` as the run happens |
+| transcript rows (ADR-0012) | `internal/store`'s `transcript` table, written through `internal/activities.TranscriptRecordingActivities.PersistTranscriptToStore` |
 
-`ticketRun.persistTranscript` deliberately runs on the main worker queue and
-is best-effort: a transcript relay failure does not discard a run's work.
+`factoryTicketRun.persistTranscript` deliberately runs on the main worker queue:
+the stage that produced the bytes ran on the sandbox's own Session queue, and
+the database is reachable only from the main worker.
 
 ## How the factory learns a pull request merged (#557)
 
@@ -245,13 +242,14 @@ headless and do not themselves capture native browser chrome.
 
 ## Where a human is required
 
-1. File the issue and add the `auto` label. The service never adds it.
+1. File the Ticket, through the API or the console. The service never files
+   its own.
 2. Review and approve a successful PR. The workflow opens/updates the draft,
    but approval is a GitHub policy decision.
 3. GitHub auto-merges after approval and any other required checks complete.
    A human can still merge manually if arming auto-merge failed; merging deploys.
-4. Resolve a blocked, exhausted, or failed outcome and re-add `auto` if another
-   machine pass is wanted.
+4. Resolve a blocked, exhausted, or failed outcome and move the Ticket back to
+   `open` if another machine pass is wanted. `failed` never auto-retries.
 5. Re-seed Codex credentials if their refresh credential becomes unusable.
 
 ## Current limitations
@@ -268,7 +266,11 @@ headless and do not themselves capture native browser chrome.
 - A resumed stage can render zero usage as measured because `UsageMeasured` is
   not consumed ([#426][426]).
 - The transcript PV is backed by the wider shared NFS export despite the
-  worker's subpath mount ([#412][412]).
+  worker's subpath mount ([#412][412]). Nothing writes durable transcripts
+  there any more — #559 deleted the `PersistTranscript` activity with the rest
+  of the GitHub-backed pipeline — but the sandbox-local sink and the worker's
+  own mount are still constructed, so the volume is retired by #412 rather than
+  by this change.
 
 ## Open tickets this map makes legible
 

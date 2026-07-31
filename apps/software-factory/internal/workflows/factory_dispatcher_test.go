@@ -294,3 +294,49 @@ func TestFactoryDispatcherCarriesInFlightAcrossContinueAsNew(t *testing.T) {
 		t.Fatalf("continued InFlight = %+v, want ticket 7 carried forward", next.InFlight)
 	}
 }
+
+// TestFactoryDispatcherAppliesAnUpdateConfigSignal is the control surface the
+// factory has left once the GitHub-backed dispatcher is gone (#559): there is
+// no DISPATCHER_CONFIG environment variable behind this dispatcher, so pausing
+// it, resuming it and changing its cap are the UpdateConfig signal or nothing.
+func TestFactoryDispatcherAppliesAnUpdateConfigSignal(t *testing.T) {
+	t.Parallel()
+
+	h := newFactoryDispatcherHarness(t)
+	h.config.MaxInFlight = 2
+	h.config.Paused = true
+	h.tickets = readyTickets(1, 2)
+	resume := false
+	h.at(45*time.Second, func() {
+		h.env.SignalWorkflow(workflows.SignalUpdateConfig, work.ConfigUpdate{Paused: &resume})
+	})
+	h.run()
+
+	if len(h.started) != 2 {
+		t.Fatalf("started %v, want 2 — the resume signal must reach a paused dispatcher", h.started)
+	}
+}
+
+// TestFactoryDispatcherRefusesAnUnusableUpdateWhole proves a bad update is
+// refused entire rather than partly adopted: work.Config.Apply validates the
+// result, so a message that also carries a cap above the ceiling must not
+// unpause the dispatcher on its way to being rejected.
+func TestFactoryDispatcherRefusesAnUnusableUpdateWhole(t *testing.T) {
+	t.Parallel()
+
+	h := newFactoryDispatcherHarness(t)
+	h.config.MaxInFlight = 2
+	h.config.Paused = true
+	h.tickets = readyTickets(1, 2, 3)
+	resume := false
+	absurd := 11 // above work's ceiling of 10
+	h.at(45*time.Second, func() {
+		h.env.SignalWorkflow(workflows.SignalUpdateConfig,
+			work.ConfigUpdate{Paused: &resume, MaxInFlight: &absurd})
+	})
+	h.run()
+
+	if len(h.started) != 0 {
+		t.Fatalf("started %v, want none — an update that fails validation must be refused whole, unpause included", h.started)
+	}
+}
