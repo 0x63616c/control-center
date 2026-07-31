@@ -33,7 +33,8 @@ The current direction for the merge flow is:
 
 1. Run the existing implement, CI, and internal-review loop.
 2. After a clean review, mark the pull request ready.
-3. Explicitly call GitHub's merge API with the reviewed head SHA.
+3. Explicitly call GitHub's merge API with the reviewed head SHA and
+   `merge_method: squash`. Squash is the only supported merge method.
 4. Treat only an HTTP success response with `merged: true` and a returned merge
    SHA as a confirmed merge.
 5. Re-read the pull request after an ambiguous response so a lost response does
@@ -42,6 +43,9 @@ The current direction for the merge flow is:
 7. If GitHub reports a textual conflict, return to implementation, merge the
    latest `main` into the branch, resolve the conflict, rerun CI and review, and
    attempt the merge again.
+
+The merge-conflict path remains inside the same Run. It does not create a new
+Run, replace the Run Worker, or reset any cumulative budget.
 
 The GitHub pull-request webhook is not needed for the normal successful path if
 the workflow performs and confirms the merge itself. The shared webhook relay
@@ -321,6 +325,19 @@ implement, iteration 2, reason: ci_failure
 implement, iteration 3, reason: review_findings
 implement, iteration 4, reason: merge_conflict
 ```
+
+A merge conflict creates another Implement Step in the same Run. Its first
+Agent Attempt consumes the next slot from the Run's cumulative 25-Agent-Attempt
+budget. After implementation and green CI, the next Review Step consumes the
+next slot from the cumulative five-Review-Step budget as well as its Agent
+Attempt. A second merge conflict continues from those new totals; neither
+counter resets.
+
+The new Implement Step begins at Agent Attempt 1 because Agent Attempt numbers
+are scoped to one Step. That local numbering is not a budget reset: the Run's
+total authorized Agent Attempts remains cumulative. Native activity-retry
+counters are likewise scoped to each activity execution and are not semantic
+rework budgets.
 
 Rename the current `Stage` concept to `AgentStage`. `plan`, `implement`, and
 `review` remain valuable as agent-specific vocabulary used by prompts, models,
@@ -942,6 +959,9 @@ be deliberately relocated:
     `ScheduleToClose` bound for the complete wait.
 27. Keep optional human approval out of this version; successful Runs are
     fully unattended.
+28. Request squash merges only, and keep merge-conflict recovery inside the
+    same Run without resetting the five-Review-Step or 25-Agent-Attempt
+    cumulative budgets.
 
 ## Parked questions
 
