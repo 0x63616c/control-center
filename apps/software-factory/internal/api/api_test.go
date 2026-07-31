@@ -9,37 +9,25 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock/clocktest"
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store/storefake"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
-func TestConsoleSnapshotShowsTheDispatcherDecisionInItsRecordedOrder(t *testing.T) {
+func TestConsoleSnapshotDoesNotExposeRetiredDispatcherState(t *testing.T) {
 	t.Parallel()
-	now := clocktest.NewFake(time.Date(2026, time.July, 31, 12, 0, 0, 0, time.UTC))
-	fake := storefake.New(storefake.WithClock(now))
-	if err := fake.PutDispatcherState(context.Background(), store.DispatcherState{
-		Config:     work.DefaultConfig(),
-		Candidates: []int{555, 444},
-		FreeSlots:  1,
-		WrittenAt:  now.Now(),
-	}); err != nil {
-		t.Fatalf("store dispatcher state: %v", err)
-	}
+	fake := storefake.New()
 
-	response := ticketRequest(t, newWithClock("test-build", nil, now, fake), http.MethodGet, "/v1/console", "")
+	response := ticketRequest(t, New("test-build", nil, fake), http.MethodGet, "/v1/console", "")
 	if response.Code != http.StatusOK {
 		t.Fatalf("GET /v1/console = %d: %s", response.Code, response.Body.String())
 	}
-	var body consoleResponse
+	var body map[string]json.RawMessage
 	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
 		t.Fatalf("decode console snapshot: %v", err)
 	}
-	if body.Dispatcher.FreeSlots != 1 || len(body.Dispatcher.Candidates) != 2 || body.Dispatcher.Candidates[0] != 555 || body.Dispatcher.Candidates[1] != 444 {
-		t.Fatalf("dispatcher = %#v, want recorded free slots and candidate order", body.Dispatcher)
+	if _, ok := body["dispatcher"]; ok {
+		t.Fatalf("console response = %s, must not expose retired dispatcher state", response.Body.String())
 	}
 }
 

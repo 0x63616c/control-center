@@ -27,34 +27,26 @@ afterEach(() => {
 });
 
 describe("App", () => {
-  it("renders the dispatcher snapshot returned by the generated client", async () => {
+  it("renders Tickets returned by the generated client", async () => {
     vi.mocked(axios.get).mockResolvedValueOnce({
       data: {
-        factory: {
-          paused: false,
-          pauseReason: "",
-          maxInFlight: 3,
-          configError: "",
-          breakerOpen: false,
-          breakerReason: "",
-          breakerOpenUntil: "0001-01-01T00:00:00Z",
-        },
-        dispatcher: {
-          inFlight: [],
-          candidates: [555],
-          freeSlots: 2,
-          writtenAt: "2026-07-31T12:00:00Z",
-          ageSeconds: 0,
-          stale: false,
-        },
-        tickets: [],
+        tickets: [
+          {
+            id: 1,
+            title: "Factory Ticket",
+            state: "open",
+            ready: true,
+            createdAt: "2026-07-31T12:00:00Z",
+            updatedAt: "2026-07-31T12:00:00Z",
+          },
+        ],
       },
     });
 
     renderWithClient();
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Next" })).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Factory Ticket" })).toBeInTheDocument();
     });
     expect(axios.get).toHaveBeenCalledWith("/v1/console", expect.anything());
   });
@@ -92,11 +84,6 @@ describe("App", () => {
       if (url === "/v1/tickets/42/runs") {
         return Promise.resolve({ data: { runs: [] } });
       }
-      // The shared AppHeader polls the console on every page for the
-      // Running/Paused badge, so the detail view legitimately fetches it.
-      if (url === "/v1/console") {
-        return Promise.reject(new Error("console unavailable"));
-      }
       return Promise.reject(new Error(`unexpected GET ${url}`));
     });
 
@@ -107,6 +94,6 @@ describe("App", () => {
     });
     expect(screen.getByRole("link", { name: /Back to console/ })).toHaveAttribute("href", "#/");
     // The console *page* still must not render on a ticket hash.
-    expect(screen.queryByText("Every factory Ticket, live work first")).not.toBeInTheDocument();
+    expect(screen.queryByText("Every factory Ticket, newest first")).not.toBeInTheDocument();
   });
 });
