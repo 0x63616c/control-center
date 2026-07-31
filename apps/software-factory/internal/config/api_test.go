@@ -6,7 +6,7 @@ import (
 )
 
 func TestLoadAPIRequiresDatabaseURL(t *testing.T) {
-	t.Setenv(envDatabaseURL, "")
+	t.Setenv(envAPIDatabaseURL, "")
 	t.Setenv(envAPIListenAddr, ":8080")
 	t.Setenv(envAPIMetricsAddr, ":9090")
 	t.Setenv(envAccessTeamDomain, "test.cloudflareaccess.com")
@@ -15,17 +15,17 @@ func TestLoadAPIRequiresDatabaseURL(t *testing.T) {
 	t.Setenv(envAPISandboxBearer, "test-sandbox-bearer")
 	t.Setenv(envAPITemporalHost, "temporal:7233")
 	t.Setenv(envAPITemporalNS, "software-factory")
-	if _, err := LoadAPI(); err == nil || !strings.Contains(err.Error(), envDatabaseURL) {
-		t.Fatalf("LoadAPI() error = %v, want missing %s", err, envDatabaseURL)
+	if _, err := LoadAPI(); err == nil || !strings.Contains(err.Error(), envAPIDatabaseURL) {
+		t.Fatalf("LoadAPI() error = %v, want missing %s", err, envAPIDatabaseURL)
 	}
 }
 
 func TestLoadAPIBuildsDatabaseURLFromCNPGAuthSecretValues(t *testing.T) {
-	t.Setenv(envDatabaseURL, "")
-	t.Setenv(envDatabaseUser, "software_factory")
-	t.Setenv(envDatabasePassword, "a password/with?characters")
-	t.Setenv(envDatabaseHost, "software-factory-postgres-rw")
-	t.Setenv(envDatabaseName, "software_factory")
+	t.Setenv(envAPIDatabaseURL, "")
+	t.Setenv(envAPIDatabaseUser, "software_factory")
+	t.Setenv(envAPIDatabasePassword, "a password/with?characters")
+	t.Setenv(envAPIDatabaseHost, "software-factory-postgres-rw")
+	t.Setenv(envAPIDatabaseName, "software_factory")
 	t.Setenv(envAPIListenAddr, ":8080")
 	t.Setenv(envAPIMetricsAddr, ":9090")
 	t.Setenv(envAccessTeamDomain, "test.cloudflareaccess.com")
@@ -45,7 +45,7 @@ func TestLoadAPIBuildsDatabaseURLFromCNPGAuthSecretValues(t *testing.T) {
 }
 
 func TestLoadAPIParsesAccessEndpoints(t *testing.T) {
-	t.Setenv(envDatabaseURL, "postgres://example")
+	t.Setenv(envAPIDatabaseURL, "postgres://example")
 	t.Setenv(envAPIListenAddr, ":8080")
 	t.Setenv(envAPIMetricsAddr, ":9090")
 	t.Setenv(envAccessTeamDomain, "test.cloudflareaccess.com")
@@ -65,7 +65,7 @@ func TestLoadAPIParsesAccessEndpoints(t *testing.T) {
 }
 
 func TestLoadAPIRejectsMalformedAccessDomain(t *testing.T) {
-	t.Setenv(envDatabaseURL, "postgres://example")
+	t.Setenv(envAPIDatabaseURL, "postgres://example")
 	t.Setenv(envAPIListenAddr, ":8080")
 	t.Setenv(envAPIMetricsAddr, ":9090")
 	t.Setenv(envAccessTeamDomain, "https://not-a-domain")

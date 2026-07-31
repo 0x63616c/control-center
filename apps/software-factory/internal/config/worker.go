@@ -16,12 +16,10 @@ import (
 // travels as a Temporal signal so it can change without a deploy, and a second
 // copy of them here would be a second answer to "what is it running under".
 type Worker struct {
-	// DatabaseURL is the factory's own Postgres, ADR-0012's store. It is a
-	// worker-level input, not dispatcher-tunable behaviour: which database to
-	// write Tickets, Runs, Steps and Attempts into is not something a signal
-	// should be able to retarget mid-flight. Both dispatchers — the legacy
-	// one's per-tick state (#551) and this ticket's Tickets/Runs/Steps/
-	// Attempts — share this one connection.
+	// DatabaseURL is the factory Postgres connection the dispatcher writes its
+	// per-tick state to (#551). Same variable name as the API's
+	// (DatabaseURLEnv, database.go) — one Postgres, one spelling, whichever
+	// process is reading it.
 	DatabaseURL string
 
 	// TemporalHostPort is the frontend to dial, host:port.
@@ -197,14 +195,8 @@ func (w Worker) Validate() error {
 // namespace or creates sandboxes in the wrong Kubernetes one looks healthy and
 // does nothing, which is the failure that costs a morning.
 func LoadWorker() (Worker, error) {
-	databaseURL := os.Getenv(envDatabaseURL)
-	if strings.TrimSpace(databaseURL) == "" {
-		databaseURL = databaseURLFromParts(
-			os.Getenv(envDatabaseUser), os.Getenv(envDatabasePassword),
-			os.Getenv(envDatabaseHost), os.Getenv(envDatabaseName))
-	}
 	cfg := Worker{
-		DatabaseURL:       databaseURL,
+		DatabaseURL:       os.Getenv(envDatabaseURL),
 		TemporalHostPort:  os.Getenv(envTemporalHostPort),
 		TemporalNamespace: os.Getenv(envTemporalNamespace),
 		SandboxNamespace:  os.Getenv(envSandboxNamespace),
@@ -247,7 +239,7 @@ func orDefault(name, fallback string) string {
 // file to fix their Deployment.
 func describeWorkerRequirement(err error) error {
 	purposes := map[string]string{
-		envDatabaseURL:            "the factory's own Postgres connection string, or SOFTWARE_FACTORY_DATABASE_{USER,PASSWORD,HOST,NAME} to build one",
+		envDatabaseURL:            "the factory Postgres connection the dispatcher writes its per-tick state to",
 		envTemporalHostPort:       "the Temporal frontend to dial, host:port",
 		envTemporalNamespace:      "the Temporal namespace this service's workflows live in",
 		envSandboxNamespace:       "the Kubernetes namespace per-ticket sandbox pods are created in",

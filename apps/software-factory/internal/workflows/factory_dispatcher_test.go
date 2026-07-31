@@ -19,13 +19,11 @@ import (
 
 // ticketActs is a nil handle used only to name activity methods for the test
 // environment's mocks, the same pattern acts (workticket_test.go) uses for
-// *activities.Activities. recordingActs and transcriptActs (used by
-// factory_workticket_test.go) share this declaration.
-var (
-	ticketActs     *activities.TicketActivities
-	recordingActs  *activities.RecordingActivities
-	transcriptActs *activities.TranscriptRecordingActivities
-)
+// *activities.Activities. factory_workticket_test.go registers real
+// RecordingActivities and TranscriptRecordingActivities against a
+// storefake.Store instead of mocking them, so it needs no nil handle of its
+// own.
+var ticketActs *activities.TicketActivities
 
 // factoryDispatcherHarness runs FactoryDispatcher against fakes — the same
 // harness shape dispatcherHarness (dispatcher_test.go) uses for Dispatcher,
@@ -35,15 +33,16 @@ var (
 type factoryDispatcherHarness struct {
 	env *testsuite.TestWorkflowEnvironment
 
-	config    work.Config
-	tuning    work.DispatcherTuning
-	inFlight  []store.InFlightTicket
-	tickets   []store.Ticket
-	listErr   error
-	runs      map[string]work.RunState
-	sweepErr  error
-	runFor    time.Duration
-	callbacks []delayedFactoryCallback
+	config        work.Config
+	tuning        work.DispatcherTuning
+	inFlight      []store.InFlightTicket
+	tickets       []store.Ticket
+	listErr       error
+	runs          map[string]work.RunState
+	sweepErr      error
+	historyLength int
+	runFor        time.Duration
+	callbacks     []delayedFactoryCallback
 
 	started []store.TicketID
 	sweeps  []activities.SweepInput
@@ -78,6 +77,15 @@ func (h *factoryDispatcherHarness) at(d time.Duration, fn func()) {
 
 func (h *factoryDispatcherHarness) run() {
 	env := h.env
+
+	// The test environment does not grow GetCurrentHistoryLength() on its
+	// own — a real workflow's history grows as commands and events accrue,
+	// but nothing here replays against a real history. SetCurrentHistoryLength
+	// is how a continue-as-new test forces the threshold, the same fake
+	// dispatcherHarness (dispatcher_test.go) uses.
+	if h.historyLength > 0 {
+		env.SetCurrentHistoryLength(h.historyLength)
+	}
 
 	env.OnActivity(ticketActs.ListReadyTickets, mock.Anything).
 		Return(func(context.Context) ([]store.Ticket, error) { return h.tickets, h.listErr })
@@ -274,7 +282,8 @@ func TestFactoryDispatcherCarriesInFlightAcrossContinueAsNew(t *testing.T) {
 
 	h := newFactoryDispatcherHarness(t)
 	h.config.MaxInFlight = 1
-	h.tuning.MaxHistoryEvents = 3
+	h.tuning.MaxHistoryEvents = 1
+	h.historyLength = 100
 	h.inFlight = []store.InFlightTicket{{TicketID: 7, RunID: "run-7"}}
 	h.runs[work.FactoryTicketWorkflowID(7)] = work.RunState{Open: true, RunID: "run-7"}
 	h.runFor = 0

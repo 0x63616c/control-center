@@ -10,21 +10,25 @@ import (
 // TicketActivities is the narrow Postgres activity set used only by the
 // Ticket-backed workflows. Keeping it separate prevents the GitHub workflow
 // from acquiring a dependency on factory Ticket rows.
+//
+// It deliberately does not depend on store.DispatcherStateWriter: that writer
+// owns the single dispatcher_state row the legacy dispatcher already writes
+// every tick (#551), shaped around GitHub issue numbers
+// (store.DispatcherState's own doc comment). This dispatcher pointing at that
+// same row is later work, not part of standing the second pipeline up — doing
+// it now would mean two dispatchers racing to overwrite one row with two
+// different shapes of "what am I doing".
 type TicketActivities struct {
 	store interface {
 		store.ReadyTicketLister
-		store.TicketReader
 		store.TicketStateWriter
-		store.DispatcherStateWriter
 	}
 }
 
 // NewTicketActivities constructs TicketActivities over the factory store.
 func NewTicketActivities(s interface {
 	store.ReadyTicketLister
-	store.TicketReader
 	store.TicketStateWriter
-	store.DispatcherStateWriter
 },
 ) (*TicketActivities, error) {
 	if s == nil {
@@ -42,15 +46,6 @@ func (a *TicketActivities) ListReadyTickets(ctx context.Context) ([]store.Ticket
 	return tickets, nil
 }
 
-// ReadTicket reads title and body for a Ticket-backed run.
-func (a *TicketActivities) ReadTicket(ctx context.Context, id store.TicketID) (store.Ticket, error) {
-	ticket, err := a.store.Ticket(ctx, id)
-	if err != nil {
-		return store.Ticket{}, fail(ctx, fmt.Sprintf("reading factory ticket %d", id), err)
-	}
-	return ticket, nil
-}
-
 // TransitionTicketState applies an owned lifecycle transition atomically.
 func (a *TicketActivities) TransitionTicketState(ctx context.Context, id store.TicketID, from, to store.TicketState) (store.Ticket, error) {
 	ticket, err := a.store.TransitionTicketState(ctx, id, from, to)
@@ -58,12 +53,4 @@ func (a *TicketActivities) TransitionTicketState(ctx context.Context, id store.T
 		return store.Ticket{}, fail(ctx, fmt.Sprintf("moving factory ticket %d from %s to %s", id, from, to), err)
 	}
 	return ticket, nil
-}
-
-// PutFactoryDispatcherState records the Ticket dispatcher's projection.
-func (a *TicketActivities) PutFactoryDispatcherState(ctx context.Context, state store.DispatcherState) error {
-	if err := a.store.PutDispatcherState(ctx, state); err != nil {
-		return fail(ctx, "writing factory dispatcher state", err)
-	}
-	return nil
 }

@@ -10,7 +10,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -33,7 +32,6 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/runs"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/config"
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/database"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/prompts"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/status"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
@@ -98,17 +96,25 @@ func run() error {
 	// otherwise start a dispatcher that looks healthy and fails its
 	// RecordDispatcherState activity every tick forever, silently, instead of
 	// crash-looping loudly at boot with the reason in its logs.
+	//
+	// One pool, one *store.Store, for both dispatchers: the legacy one's
+	// per-tick dispatcher_state row (#551) and ADR-0012's Ticket-driven
+	// pipeline (Tickets, Runs, Steps, Attempts, transcripts) below both read
+	// and write the same factory Postgres. cmd/api already applies this
+	// service's migrations at its own boot and is deployed ahead of this
+	// worker (#554), so the worker only needs to dial and ping — it does not
+	// re-run ApplyMigrations.
 	dbPool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
 	if err != nil {
-		return fmt.Errorf("constructing the dispatcher-state database pool: %w", err)
+		return fmt.Errorf("constructing the factory database pool: %w", err)
 	}
 	defer dbPool.Close()
 	pingCtx, cancelPing := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelPing()
 	if err := dbPool.Ping(pingCtx); err != nil {
-		return fmt.Errorf("pinging the dispatcher-state database before worker startup: %w", err)
+		return fmt.Errorf("pinging the factory database before worker startup: %w", err)
 	}
-	dispatcherStateStore := store.New(dbPool)
+	factoryStore := store.New(dbPool)
 
 	// Read at startup rather than by the dispatcher itself, so a configuration
 	// nobody can run crashloops the pod with the reason in its logs. The same
@@ -152,17 +158,6 @@ func run() error {
 	}
 	defer temporal.Close()
 
-	// ADR-0012's store. It backs only the second, Ticket-driven dispatcher and
-	// workflow registered below — the existing GitHub-issue-driven pair reads
-	// and writes none of this. See newTicketStore's own doc comment for why
-	// this dials and migrates before the worker starts rather than lazily.
-	pool, err := newTicketStore(context.Background(), cfg.DatabaseURL)
-	if err != nil {
-		return fmt.Errorf("connecting the factory's own Postgres store: %w", err)
-	}
-	defer pool.Close()
-	ticketStore := store.New(pool)
-
 	w := worker.New(temporal, work.TaskQueue, worker.Options{
 		WorkerStopTimeout: workerStopTimeout,
 	})
@@ -172,20 +167,23 @@ func run() error {
 		return err
 	}
 
-	acts, err := newActivities(cfg, temporal, renderer, metrics, logger, dispatcherStateStore)
+	acts, err := newActivities(cfg, temporal, renderer, metrics, logger, factoryStore)
 	if err != nil {
 		return fmt.Errorf("building the activity set: %w", err)
 	}
 
-	ticketActs, err := activities.NewTicketActivities(ticketStore)
+	// ADR-0012's second, Ticket-driven activity sets, over the same
+	// factoryStore: they read and write Tickets, Runs, Steps, Attempts and
+	// transcripts, never a GitHub issue or comment.
+	ticketActs, err := activities.NewTicketActivities(factoryStore)
 	if err != nil {
 		return fmt.Errorf("building the ticket activity set: %w", err)
 	}
-	recordingActs, err := activities.NewRecordingActivities(ticketStore)
+	recordingActs, err := activities.NewRecordingActivities(factoryStore)
 	if err != nil {
 		return fmt.Errorf("building the recording activity set: %w", err)
 	}
-	transcriptActs, err := activities.NewTranscriptRecordingActivities(ticketStore)
+	transcriptActs, err := activities.NewTranscriptRecordingActivities(factoryStore)
 	if err != nil {
 		return fmt.Errorf("building the transcript recording activity set: %w", err)
 	}
@@ -317,37 +315,6 @@ func register(
 		slog.Int("stages_per_ticket", len(work.Pipeline())),
 		slog.Int("max_in_flight", dispatcher.MaxInFlight),
 	)
-}
-
-// newTicketStore dials the factory's own Postgres, applies its migrations,
-// and returns the pool store.New wraps.
-//
-// It runs migrations here, at worker boot, the same as cmd/api/main.go does:
-// the worker is the first process ADR-0012's Ticket-driven pipeline runs in,
-// so it cannot assume the API has already stood the schema up, and a second
-// ApplyMigrations call against an already-migrated database is a no-op
-// (internal/database's own contract).
-func newTicketStore(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
-	db, err := sql.Open("pgx", databaseURL)
-	if err != nil {
-		return nil, fmt.Errorf("opening PostgreSQL connection: %w", err)
-	}
-	defer func() { _ = db.Close() }()
-
-	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	if err := db.PingContext(pingCtx); err != nil {
-		return nil, fmt.Errorf("pinging PostgreSQL before worker startup: %w", err)
-	}
-	if err := database.ApplyMigrations(pingCtx, db); err != nil {
-		return nil, fmt.Errorf("applying PostgreSQL migrations before worker startup: %w", err)
-	}
-
-	pool, err := pgxpool.New(ctx, databaseURL)
-	if err != nil {
-		return nil, fmt.Errorf("opening PostgreSQL pool: %w", err)
-	}
-	return pool, nil
 }
 
 // ensureFactoryDispatcher starts the new dispatcher, or attaches to it if a
