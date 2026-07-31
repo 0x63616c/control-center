@@ -15,10 +15,9 @@
  * mirrors `apps:gen`'s `cd apps/web && bun run ...` pattern, so every path here
  * is resolved absolutely from the repo root via import.meta.url, never cwd.
  *
- * SCOPE: this slice only has `tiles.gen.ts` under features/_generated/ (the
- * router/guest-router/schema/crons gen files are deferred to Slice 5). AGGREGATES
- * below lists just that one file so Slice 5 can extend the checked set by
- * appending entries, not restructuring this module.
+ * SCOPE: AGGREGATES covers every current feature aggregate plus the manage
+ * extension allowlist artifacts. Keep this list in lockstep with apps:gen so a
+ * new generated surface cannot land without an authoritative drift check.
  */
 import { readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";

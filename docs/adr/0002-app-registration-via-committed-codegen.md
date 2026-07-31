@@ -4,8 +4,9 @@ An App folder becomes runtime wiring through a committed **codegen** step (`bun 
 globs `features/*/manifest.ts` + the convention facet files (`web.tsx`, `api.ts`, `jobs.ts`,
 `schema.ts`) and emits checked-in `features/_generated/*.gen.ts` aggregates — byte-compatible with
 today's hand-written `TILE_REGISTRY`, `appRouter` literal, and `Worker[]` array. The runtime stays
-100% static. A CI guard (`apps:check`) re-runs codegen into a temp dir and fails if `git diff` on
-`_generated/` is non-empty (the same drift-guard pattern the repo already uses for drizzle-meta).
+100% static. A CI guard (`apps:check`) re-runs codegen in memory and fails when its fresh renders
+do not byte-match the committed generated artifacts (the same drift-guard policy the repo already
+uses for drizzle-meta).
 
 ## Considered options
 

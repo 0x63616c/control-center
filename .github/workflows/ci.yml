@@ -302,6 +302,10 @@ jobs:
           bun-version: 1.2.19
       - name: Install deps
         run: bun install --frozen-lockfile
+      - name: Check committed app codegen
+        # This is the authoritative backstop for committed App and manage-extension
+        # codegen: a local hook is bypassable, and deploy-home-server needs typecheck.
+        run: bun run apps:check
       - name: Typecheck
         run: bun run typecheck
       - name: Dead code (knip, zero-tolerance)
