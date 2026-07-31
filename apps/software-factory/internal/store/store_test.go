@@ -264,3 +264,56 @@ func newTestRunID(t *testing.T) string {
 	t.Helper()
 	return uuid.NewString()
 }
+
+// TestRecordingIsIdempotentAgainstARealDatabase proves, against a real
+// Postgres rather than storefake, that RecordAttempt and StartRun can be
+// safely retried — the queries this ticket added ON CONFLICT ... DO UPDATE
+// to, because an activity retry always resends what the first attempt
+// carried, and the plain inserts #543 shipped would violate their primary
+// keys instead of tolerating that (software-factory#549).
+func TestRecordingIsIdempotentAgainstARealDatabase(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	ticket, err := s.CreateTicket(ctx, "recorded", "b")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	runID := newTestRunID(t)
+	startedAt := time.Date(2026, 7, 31, 9, 0, 0, 0, time.UTC)
+
+	if _, err := s.StartRun(ctx, runID, ticket.ID, startedAt); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	if _, err := s.StartRun(ctx, runID, ticket.ID, startedAt); err != nil {
+		t.Fatalf("retried StartRun: %v", err)
+	}
+
+	key := work.StageKey{RunID: runID, Stage: work.StageImplement, Turn: 1}
+	if err := s.RecordStep(ctx, key); err != nil {
+		t.Fatalf("RecordStep: %v", err)
+	}
+	if err := s.RecordStep(ctx, key); err != nil {
+		t.Fatalf("retried RecordStep: %v", err)
+	}
+
+	model := work.Model{Name: "gpt-5.6-terra", Effort: "medium"}
+	usage := work.Usage{InputTokens: 10, OutputTokens: 5}
+	if _, err := s.RecordAttempt(ctx, key, 1, model, usage, true, startedAt); err != nil {
+		t.Fatalf("RecordAttempt: %v", err)
+	}
+	if _, err := s.RecordAttempt(ctx, key, 1, model, usage, true, startedAt); err != nil {
+		t.Fatalf("retried RecordAttempt: %v", err)
+	}
+
+	steps, err := s.RunDetail(ctx, runID)
+	if err != nil {
+		t.Fatalf("RunDetail: %v", err)
+	}
+	if len(steps.Steps) != 1 {
+		t.Fatalf("Steps = %d, want exactly one — a retry must not duplicate", len(steps.Steps))
+	}
+	if len(steps.Steps[0].Attempts) != 1 {
+		t.Fatalf("Attempts = %d, want exactly one — a retry must not duplicate", len(steps.Steps[0].Attempts))
+	}
+}

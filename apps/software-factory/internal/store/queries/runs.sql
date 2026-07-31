@@ -1,6 +1,12 @@
 -- name: StartRun :one
+-- Idempotent: a retried call starting the same run id again overwrites the
+-- row with the same values (an activity retry always carries what the first
+-- attempt did) rather than violating the primary key.
 INSERT INTO run (id, ticket_id, started_at)
 VALUES ($1, $2, $3)
+ON CONFLICT (id) DO UPDATE SET
+    ticket_id = EXCLUDED.ticket_id,
+    started_at = EXCLUDED.started_at
 RETURNING *;
 
 -- name: EndRun :one

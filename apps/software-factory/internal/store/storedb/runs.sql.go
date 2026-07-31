@@ -64,6 +64,9 @@ func (q *Queries) Run(ctx context.Context, id pgtype.UUID) (Run, error) {
 const startRun = `-- name: StartRun :one
 INSERT INTO run (id, ticket_id, started_at)
 VALUES ($1, $2, $3)
+ON CONFLICT (id) DO UPDATE SET
+    ticket_id = EXCLUDED.ticket_id,
+    started_at = EXCLUDED.started_at
 RETURNING id, ticket_id, started_at, ended_at, outcome, failure_kind
 `
 
@@ -73,6 +76,9 @@ type StartRunParams struct {
 	StartedAt pgtype.Timestamptz
 }
 
+// Idempotent: a retried call starting the same run id again overwrites the
+// row with the same values (an activity retry always carries what the first
+// attempt did) rather than violating the primary key.
 func (q *Queries) StartRun(ctx context.Context, arg StartRunParams) (Run, error) {
 	row := q.db.QueryRow(ctx, startRun, arg.ID, arg.TicketID, arg.StartedAt)
 	var i Run

@@ -143,6 +143,7 @@ The durable record locations are:
 | human-facing progress | one edited status comment per run step |
 | outcomes and usage | workflow result, outcome comment, and Prometheus metrics |
 | worker logs | Loki |
+| run/step/attempt rows (ADR-0012) | `internal/store`'s Postgres tables, written through `internal/activities.RecordingActivities` — not yet registered on any task queue. `run.ticket_id` is a NOT NULL foreign key to a factory-owned Ticket, which a GitHub-issue-driven run has no equivalent of and ADR-0012 forbids bridging one for, so `Dispatcher` and `WorkTicket` above are unmodified and do not call it. software-factory#558's Ticket-driven workflow is this record's one intended caller. |
 
 `ticketRun.persistTranscript` deliberately runs on the main worker queue and
 is best-effort: a transcript relay failure does not discard a run's work.
