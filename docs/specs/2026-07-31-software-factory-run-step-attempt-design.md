@@ -62,9 +62,9 @@ failed -> open   (manual retry)
 
 The clean design is:
 
-> A Step is executor-neutral. An Agent Attempt exists only when an agent-backed
-> Step starts a fresh logical agent run. A Temporal activity retry is not an
-> Agent Attempt.
+> A Step is executor-neutral. An Agent Attempt is one workflow-authorized agent
+> execution of one agent-backed Step. A Temporal activity retry is not an Agent
+> Attempt, and a Codex thread is a separate identity from both.
 
 Infrastructure Steps do not get synthetic Attempt records. A transient network
 failure while merging, cloning, or observing CI is handled by Temporal's native
@@ -128,9 +128,11 @@ Step: prepare_workspace
 Step: implement, iteration 1
   Agent Attempt 1: failed and cannot be resumed
     Agent: gpt-5.6-terra / medium
+    Thread: inherited from an earlier implement Step, when applicable
     Usage: unknown
-  Agent Attempt 2: succeeded as a fresh agent run
+  Agent Attempt 2: succeeded by starting over
     Agent: gpt-5.6-terra / medium
+    Thread: fresh
     Usage: measured
     Transcript: available
 ```
@@ -140,10 +142,13 @@ The existing `measured` flag should become an explicit usage state:
 - `measured`: the agent ran and usage was captured;
 - `unknown`: it may have run, but some or all usage was lost.
 
-Resuming the same thread or reconciling its existing result does not create a
-new Agent Attempt. The Agent Attempt boundary is crossed only when the workflow
-deliberately gives up on resuming the old run and starts fresh. One Agent
-Attempt may therefore span more than one process or Temporal activity try.
+Agent Attempt identity is scoped to its Step. A new agent-backed Step starts at
+Agent Attempt 1 even when it deliberately resumes the implementer's Codex
+thread from an earlier Step. Within that Step, technical activity retries that
+recover the same authorized execution remain the same Agent Attempt. The
+workflow creates Agent Attempt 2 only when it authorizes another execution of
+the same Step after Agent Attempt 1 failed. One Agent Attempt may therefore
+span more than one process or Temporal activity try.
 
 ## Step identity
 
@@ -237,8 +242,9 @@ activity.
 
 This is decided:
 
-> Agent Attempt status says what happened to one logical agent run. Step Result
-> says what the Step's operation authoritatively discovered or produced.
+> Agent Attempt status says what happened to one workflow-authorized agent
+> execution of the Step. Step Result says what the Step's operation
+> authoritatively discovered or produced.
 
 A successful activity execution or Agent Attempt does not imply that the
 workflow achieved its desired business result. It means the Step's primary
@@ -261,10 +267,10 @@ red CI result or merge conflict is a completed domain Result; responding to it
 creates a different Step or ends the Run.
 
 An agent-backed Step may explicitly start another Agent Attempt when the prior
-logical agent run failed and cannot be resumed. That is a workflow decision above
-Temporal's activity retry mechanism. Every retry of the activity for that Agent
-Attempt must carry the same Agent Attempt identity and reconcile or resume it;
-it must never silently start a fresh agent run.
+execution failed and cannot be recovered. That is a workflow decision above
+Temporal's activity retry mechanism. Every retry of the activity for that
+Agent Attempt must carry the same Agent Attempt identity and reconcile or
+resume it; it must never silently authorize another execution.
 
 A Step is `running` while its activity, native retry wait, or Agent Attempt is
 active. It becomes `completed` when its operation returns a domain Result,
@@ -276,7 +282,7 @@ Attempt.
 This keeps three questions separate:
 
 ```text
-Agent Attempt = did this logical agent run complete?
+Agent Attempt = did this authorized agent execution complete?
 Step Result   = what did the operation discover or produce?
 Workflow      = what Step should happen next?
 ```
@@ -345,13 +351,13 @@ There are two deliberately separate policies:
    Temporal's native retries. This applies to infrastructure and agent
    activities. It does not create Agent Attempts.
 2. **Agent Attempt policy** decides whether an agent-backed Step may abandon an
-   unresumable logical agent run and start a fresh one. This is explicit workflow
+   unrecoverable execution and authorize another one. This is explicit workflow
    logic and creates another Agent Attempt row.
 
 An activity retry of agent work must be idempotent around its Agent Attempt ID.
-It first reconciles an existing result and otherwise resumes the existing agent
+It first reconciles an existing result and otherwise resumes the execution's
 thread where possible. Only the workflow may allocate a new Agent Attempt ID
-and authorize another potentially chargeable run.
+and authorize another potentially chargeable execution.
 
 Postgres does not store one row per native activity try. Temporal owns that
 low-level operational history. Postgres remains authoritative for the Step's
@@ -394,9 +400,12 @@ These remain different concepts:
 
 - An **activity retry** is Temporal repeating the same operation after a
   transient execution failure.
-- An **Agent Attempt** is one logical agent run, potentially spanning technical
-  resumes. A new one is created only when the
-  previous run cannot be resumed and the workflow deliberately starts fresh.
+- An **Agent Attempt** is one workflow-authorized execution of one agent-backed
+  Step, potentially spanning technical retries and resumes.
+- A new agent-backed **Step** starts at Agent Attempt 1 even if it resumes a
+  Codex thread from an earlier Step.
+- A later Agent Attempt of the same Step is created only when the previous one
+  cannot be recovered and the workflow deliberately authorizes another.
 - A new `implement` Step after red CI is semantic rework.
 - A new `implement` Step after review findings is semantic rework.
 - The existing implement and review turn ceilings are progress budgets, not
@@ -429,7 +438,8 @@ This reaches further than a database migration:
 1. Generalize Step around `kind + ordinal`.
 2. Rename the existing Stage concept to AgentStage.
 3. Give only agent-backed Steps Agent Attempts.
-4. Treat a resumed or reconciled agent run as the same Agent Attempt.
+4. Scope Agent Attempt identity to one Step, independently of Codex thread
+   identity.
 5. Keep concrete, well-named Temporal activities.
 6. Keep transient execution retries in Temporal's native activity retry policy.
 7. Keep semantic-rework budgets separate from infrastructure retry policy.

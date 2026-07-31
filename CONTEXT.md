@@ -164,10 +164,18 @@ operation. Temporal may retry that operation without creating another Step or Ag
 _Avoid_: Phase, every Temporal activity.
 
 **Agent Attempt**:
-One logical agent run within an agent-backed Step, potentially spanning technical resumes. Start
-another only when the preceding run cannot be resumed and the workflow deliberately starts fresh.
-Infrastructure Steps do not have Agent Attempts.
+One workflow-authorized agent execution within one agent-backed Step, potentially spanning native
+activity retries and technical resumes. Its identity is scoped to the Step, not to a Codex thread:
+Agent Attempt 1 of a new Step may deliberately continue a thread from an earlier Step. Start another
+Attempt within the same Step only when the preceding execution cannot be recovered and the workflow
+explicitly authorizes another. Infrastructure Steps do not have Agent Attempts.
 _Avoid_: Activity retry, Turn, semantic rework.
+
+**Agent Thread**:
+The model provider's conversation identity. An Agent Thread may carry implementer context across
+multiple Steps and Agent Attempts, while reviewers deliberately start fresh Threads. It is not a
+unit of work or retry budget.
+_Avoid_: Agent Attempt, Step.
 
 **Activity Retry**:
 Temporal repeating the same Step operation after a transient execution failure. An activity retry
