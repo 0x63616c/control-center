@@ -92,6 +92,11 @@ describe("App", () => {
       if (url === "/v1/tickets/42/runs") {
         return Promise.resolve({ data: { runs: [] } });
       }
+      // The shared AppHeader polls the console on every page for the
+      // Running/Paused badge, so the detail view legitimately fetches it.
+      if (url === "/v1/console") {
+        return Promise.reject(new Error("console unavailable"));
+      }
       return Promise.reject(new Error(`unexpected GET ${url}`));
     });
 
@@ -101,6 +106,7 @@ describe("App", () => {
       expect(screen.getByRole("heading", { name: /42 Console ticket detail/ })).toBeInTheDocument();
     });
     expect(screen.getByRole("link", { name: /Back to console/ })).toHaveAttribute("href", "#/");
-    expect(axios.get).not.toHaveBeenCalledWith("/v1/console", expect.anything());
+    // The console *page* still must not render on a ticket hash.
+    expect(screen.queryByText("Every factory Ticket, live work first")).not.toBeInTheDocument();
   });
 });

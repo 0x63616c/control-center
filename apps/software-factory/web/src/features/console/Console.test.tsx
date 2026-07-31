@@ -66,7 +66,7 @@ describe("Console", () => {
     // link to its detail view (`#/tickets/1`, #556). Assert the jump link
     // specifically, by its href, rather than assuming there is only one.
     const jumpLink = screen
-      .getAllByRole("link", { name: /Ticket 1: Failed upstream/ })
+      .getAllByRole("link", { name: /#1 Failed upstream/ })
       .find((link) => link.getAttribute("href") === "#ticket-1");
     expect(jumpLink).toBeDefined();
   });

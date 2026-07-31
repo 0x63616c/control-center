@@ -10,9 +10,9 @@ export function StepList({
   runId: string;
   ticketId: number;
 }) {
-  if (steps.length === 0) return <p>No steps recorded yet.</p>;
+  if (steps.length === 0) return <p className="section-empty">No steps recorded yet.</p>;
   return (
-    <ol data-testid="step-list">
+    <ol className="step-list" data-testid="step-list">
       {steps.map((step) => (
         <li key={`${step.stage}-${step.turn}`}>
           <StepRow step={step} runId={runId} ticketId={ticketId} />

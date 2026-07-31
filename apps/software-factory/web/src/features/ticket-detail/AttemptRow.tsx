@@ -8,6 +8,12 @@ function resultLabel(result: string): string {
   return result === "" ? "in progress" : result;
 }
 
+function resultPillClass(result: string): string {
+  if (result === "succeeded") return "pill pill-done";
+  if (result === "failed") return "pill pill-failed";
+  return "pill pill-working";
+}
+
 export function AttemptRow({
   attempt,
   runId,
@@ -24,13 +30,15 @@ export function AttemptRow({
   showAttemptNumber: boolean;
 }) {
   return (
-    <div data-testid="attempt-row">
-      <p>
-        {showAttemptNumber && <>Attempt {attempt.attemptNo} · </>}
-        {formatDuration(attempt.startedAt, attempt.endedAt)} · {resultLabel(attempt.result)} ·{" "}
-        {attempt.model} ({attempt.effort})
-      </p>
-      <p>Usage: {formatAttemptUsage(attempt)}</p>
+    <div className="attempt-row" data-testid="attempt-row">
+      <div className="row-line">
+        {showAttemptNumber && <span>Attempt {attempt.attemptNo}</span>}
+        <span className={resultPillClass(attempt.result)}>{resultLabel(attempt.result)}</span>
+        <span className="row-meta">
+          {formatDuration(attempt.startedAt, attempt.endedAt)} · {attempt.model} ({attempt.effort})
+        </span>
+      </div>
+      <p className="usage">Usage: {formatAttemptUsage(attempt)}</p>
       {attempt.hasTranscript ? (
         <p>
           <a
@@ -48,7 +56,7 @@ export function AttemptRow({
           />
         </p>
       ) : (
-        <p>No transcript stored for this attempt.</p>
+        <p className="row-meta">No transcript stored for this attempt.</p>
       )}
     </div>
   );

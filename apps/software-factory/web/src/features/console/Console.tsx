@@ -1,4 +1,6 @@
+import { Fragment, useState } from "react";
 import type { ConsoleResponse } from "@/api/generated";
+import { StatePill, ticketStatus } from "@/components/StatePill";
 
 export type ConsoleState =
   | { kind: "loading" }
@@ -6,13 +8,35 @@ export type ConsoleState =
   | { kind: "ready"; snapshot: ConsoleResponse }
   | { kind: "refetch-error"; message: string; snapshot: ConsoleResponse };
 
+type Ticket = NonNullable<ConsoleResponse["tickets"]>[number];
+
 function age(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
   return `${Math.floor(seconds / 3600)}h`;
 }
 
-function ticketBlockers(ticket: NonNullable<ConsoleResponse["tickets"]>[number]) {
+// updatedAgo renders a Ticket's last update as a short age against now. The
+// console refetches on an interval, so "now" moving between renders is the
+// intended behavior here, unlike duration.ts's completed-span rule.
+function updatedAgo(iso: string): string {
+  const seconds = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (seconds < 86_400) return `${age(seconds)} ago`;
+  return `${Math.floor(seconds / 86_400)}d ago`;
+}
+
+// The state the machine is actively responsible for comes first; terminal
+// states last, so the top of the board is always the live work.
+const STATE_ORDER: Record<string, number> = {
+  working: 0,
+  review: 1,
+  ready: 2,
+  blocked: 3,
+  failed: 4,
+  done: 5,
+};
+
+function ticketBlockers(ticket: Ticket) {
   if (ticket.state !== "open" || ticket.ready || !ticket.blockers?.length) return null;
   const failed = ticket.blockers.filter((blocker) => blocker.state === "failed");
   return (
@@ -29,13 +53,144 @@ function ticketBlockers(ticket: NonNullable<ConsoleResponse["tickets"]>[number])
         {ticket.blockers.map((blocker) => (
           <li key={blocker.id}>
             <a href={`#ticket-${blocker.id}`}>
-              Ticket {blocker.id}: {blocker.title}
+              #{blocker.id} {blocker.title}
             </a>{" "}
-            <span className={`ticket-state ticket-state-${blocker.state}`}>{blocker.state}</span>
+            <StatePill ticket={blocker} />
           </li>
         ))}
       </ul>
     </div>
+  );
+}
+
+// Sort control: the default is the live-work-first state ordering; clicking
+// Created/Updated cycles that column desc -> asc -> back to default.
+type SortKey = "state" | "createdAt" | "updatedAt";
+type SortDir = "desc" | "asc";
+
+function sortTickets(tickets: Ticket[], key: SortKey, dir: SortDir): Ticket[] {
+  const sorted = [...tickets];
+  if (key === "state") {
+    sorted.sort(
+      (a, b) => (STATE_ORDER[ticketStatus(a)] ?? 9) - (STATE_ORDER[ticketStatus(b)] ?? 9),
+    );
+    return sorted;
+  }
+  sorted.sort((a, b) => {
+    const delta = new Date(a[key]).getTime() - new Date(b[key]).getTime();
+    return dir === "asc" ? delta : -delta;
+  });
+  return sorted;
+}
+
+function SortHeader({
+  label,
+  column,
+  sortKey,
+  sortDir,
+  onSort,
+}: {
+  label: string;
+  column: SortKey;
+  sortKey: SortKey;
+  sortDir: SortDir;
+  onSort: (column: SortKey) => void;
+}) {
+  const active = sortKey === column;
+  return (
+    <th
+      scope="col"
+      aria-sort={active ? (sortDir === "asc" ? "ascending" : "descending") : undefined}
+    >
+      <button type="button" className="sort-button" onClick={() => onSort(column)}>
+        {label}
+        {/* Always present so activating a sort never shifts the column. */}
+        <span className="sort-arrow" aria-hidden="true">
+          {active ? (sortDir === "asc" ? "↑" : "↓") : ""}
+        </span>
+      </button>
+    </th>
+  );
+}
+
+function TicketTable({ tickets }: { readonly tickets: Ticket[] }) {
+  const [sortKey, setSortKey] = useState<SortKey>("state");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  function onSort(column: SortKey) {
+    if (sortKey !== column) {
+      setSortKey(column);
+      setSortDir("desc");
+    } else if (sortDir === "desc") {
+      setSortDir("asc");
+    } else {
+      setSortKey("state");
+      setSortDir("desc");
+    }
+  }
+
+  const sorted = sortTickets(tickets, sortKey, sortDir);
+  return (
+    <table className="ticket-table">
+      <thead>
+        <tr>
+          <th scope="col">ID</th>
+          <th scope="col">Title</th>
+          <th scope="col">State</th>
+          <SortHeader
+            label="Created"
+            column="createdAt"
+            sortKey={sortKey}
+            sortDir={sortDir}
+            onSort={onSort}
+          />
+          <SortHeader
+            label="Updated"
+            column="updatedAt"
+            sortKey={sortKey}
+            sortDir={sortDir}
+            onSort={onSort}
+          />
+        </tr>
+      </thead>
+      <tbody>
+        {sorted.map((ticket) => {
+          const blockers = ticketBlockers(ticket);
+          return (
+            <Fragment key={ticket.id}>
+              <tr
+                id={`ticket-${ticket.id}`}
+                className="ticket-row"
+                onClick={() => {
+                  window.location.hash = `#/tickets/${ticket.id}`;
+                }}
+              >
+                <td className="ticket-id">
+                  <a href={`#/tickets/${ticket.id}`}>#{ticket.id}</a>
+                </td>
+                <td>
+                  <a href={`#/tickets/${ticket.id}`}>{ticket.title}</a>
+                </td>
+                <td>
+                  <StatePill ticket={ticket} />
+                </td>
+                <td className="row-meta" title={new Date(ticket.createdAt).toLocaleString()}>
+                  {updatedAgo(ticket.createdAt)}
+                </td>
+                <td className="row-meta" title={new Date(ticket.updatedAt).toLocaleString()}>
+                  {updatedAgo(ticket.updatedAt)}
+                </td>
+              </tr>
+              {blockers && (
+                <tr className="ticket-table-blockers">
+                  <td colSpan={5}>{blockers}</td>
+                </tr>
+              )}
+            </Fragment>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
 
@@ -80,35 +235,29 @@ function Snapshot({
           current: {unconfirmedMessage}
         </section>
       )}
-      <header className="console-header">
-        <div>
-          <h1>Software Factory</h1>
-          <p>Read-only operational console</p>
-        </div>
-        <dl>
-          <div>
-            <dt>Factory</dt>
-            <dd>{factory.paused ? "Paused" : "Running"}</dd>
-          </div>
-          <div>
-            <dt>Max in flight</dt>
-            <dd>{factory.maxInFlight}</dd>
-          </div>
-        </dl>
-      </header>
       <main className="console-grid">
         <section aria-labelledby="in-flight-heading">
-          <h2 id="in-flight-heading">In flight</h2>
+          <div className="row-line">
+            <h2 id="in-flight-heading">In flight</h2>
+            <span className="spacer" />
+            <span className="in-flight-count">
+              {factory.maxInFlight - dispatcher.freeSlots} / {factory.maxInFlight}
+            </span>
+          </div>
           <p className="section-note">Legacy dispatcher Issues</p>
           {inFlight.length === 0 ? (
-            <p>Nothing in flight.</p>
+            <p className="section-empty">Nothing in flight.</p>
           ) : (
             <ol className="console-list">
               {inFlight.map((item) => (
                 <li key={`${item.issueNumber}-${item.runID}`}>
-                  <strong>Issue #{item.issueNumber}</strong>
-                  <span>Run {item.runID}</span>
-                  <span>Started {item.startedAt}</span>
+                  <div className="row-line">
+                    <strong>Issue #{item.issueNumber}</strong>
+                    <span className="pill pill-working">running</span>
+                  </div>
+                  <span className="row-meta">
+                    Run {item.runID} · started {item.startedAt}
+                  </span>
                 </li>
               ))}
             </ol>
@@ -116,7 +265,7 @@ function Snapshot({
         </section>
         <section aria-labelledby="next-heading">
           <h2 id="next-heading">Next</h2>
-          <p>
+          <p className="section-note">
             {dispatcher.freeSlots} free {dispatcher.freeSlots === 1 ? "slot" : "slots"} · last
             dispatcher write {age(dispatcher.ageSeconds)} ago
           </p>
@@ -126,36 +275,27 @@ function Snapshot({
             </p>
           )}
           {candidates.length === 0 ? (
-            <p>No eligible Issues queued by the dispatcher.</p>
+            <p className="section-empty">No eligible Issues queued by the dispatcher.</p>
           ) : (
             <ol className="console-list">
               {candidates.map((issueNumber) => (
-                <li key={issueNumber}>Issue #{issueNumber}</li>
+                <li key={issueNumber}>
+                  <div className="row-line">
+                    <strong>Issue #{issueNumber}</strong>
+                    <span className="pill pill-open">queued</span>
+                  </div>
+                </li>
               ))}
             </ol>
           )}
         </section>
-        <section className="console-worked" aria-labelledby="worked-heading">
-          <h2 id="worked-heading">Worked</h2>
-          <p className="section-note">Factory Tickets by recorded state</p>
+        <section className="console-tickets" aria-labelledby="tickets-heading">
+          <h2 id="tickets-heading">Tickets</h2>
+          <p className="section-note">Every factory Ticket, live work first</p>
           {tickets.length === 0 ? (
-            <p>No Tickets have been recorded.</p>
+            <p className="section-empty">No Tickets have been recorded.</p>
           ) : (
-            <ol className="console-list">
-              {tickets.map((ticket) => (
-                <li id={`ticket-${ticket.id}`} key={ticket.id}>
-                  <strong>
-                    <a href={`#/tickets/${ticket.id}`}>
-                      Ticket {ticket.id}: {ticket.title}
-                    </a>
-                  </strong>
-                  <span className={`ticket-state ticket-state-${ticket.state}`}>
-                    {ticket.state}
-                  </span>
-                  {ticketBlockers(ticket)}
-                </li>
-              ))}
-            </ol>
+            <TicketTable tickets={tickets} />
           )}
         </section>
       </main>
