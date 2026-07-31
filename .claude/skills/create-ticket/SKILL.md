@@ -5,7 +5,11 @@ description: Use when filing a GitHub issue in this repo, or when the user says 
 
 # create-ticket
 
-"Ticket" = GitHub issue. This repo has one tracker: `gh issue`.
+"Ticket" here = GitHub issue, filed with `gh issue`. This is the human-facing
+tracker and brain-dump inbox - not the same system as software-factory's own
+Tickets (ADR-0012). software-factory no longer reads GitHub issues or the
+`auto` label; it works its own Ticket store. This skill does not create
+software-factory Tickets.
 
 ## Recipe
 
