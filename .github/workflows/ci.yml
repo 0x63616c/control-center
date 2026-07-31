@@ -139,7 +139,6 @@ jobs:
             # own tree.
             mapprovision:
               - 'apps/map-provision/**'
-              - 'apps/webhook-relay/**'
             # Software factory (ADR-0011): a self-contained Go module sharing no
             # code with the TypeScript workspace, so it rebuilds solely on its
             # own tree. Deliberately NOT split per image — see the output above.
@@ -160,6 +159,7 @@ jobs:
               - 'apps/worker/**'
               - 'apps/temporal-worker/**'
               - 'apps/map-provision/**'
+              - 'apps/webhook-relay/**'
               - 'packages/**'
               - 'app-kit/**'
               - 'features/**'
