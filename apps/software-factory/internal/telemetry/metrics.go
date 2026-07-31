@@ -27,10 +27,11 @@ const namespace = "software_factory"
 // metrics here, and a metric that spelled one of them differently would look
 // like a different dimension in every query that joined them.
 const (
-	labelStage   = "stage"
-	labelModel   = "model"
-	labelEffort  = "effort"
-	labelOutcome = "outcome"
+	labelStage    = "stage"
+	labelModel    = "model"
+	labelEffort   = "effort"
+	labelOutcome  = "outcome"
+	labelEncoding = "encoding"
 )
 
 // Outcome is how a stage attempt finished, and the value of the `outcome`
@@ -75,12 +76,15 @@ var durationBuckets = []float64{10, 30, 60, 120, 300, 600, 1200, 1800, 2700, 360
 // type with a method per counter would let a caller record three of the four
 // and leave the series that says how the stage ended with a hole in it.
 type Metrics struct {
-	uncachedInputTokens *prometheus.CounterVec
-	cachedInputTokens   *prometheus.CounterVec
-	outputTokens        *prometheus.CounterVec
-	reasoningTokens     *prometheus.CounterVec
-	stages              *prometheus.CounterVec
-	stageDuration       *prometheus.HistogramVec
+	uncachedInputTokens  *prometheus.CounterVec
+	cachedInputTokens    *prometheus.CounterVec
+	outputTokens         *prometheus.CounterVec
+	reasoningTokens      *prometheus.CounterVec
+	stages               *prometheus.CounterVec
+	stageDuration        *prometheus.HistogramVec
+	payloadLayerBytesIn  *prometheus.CounterVec
+	payloadLayerBytesOut *prometheus.CounterVec
+	payloadLayerDuration *prometheus.HistogramVec
 
 	// bounded caps how many distinct values each label key can export.
 	bounded *boundedLabels
@@ -110,10 +114,29 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help:      "Wall-clock time one stage attempt took.",
 			Buckets:   durationBuckets,
 		}, stageLabels),
+		payloadLayerBytesIn: counter(reg, "payload_layer_bytes_in_total",
+			"Bytes received by a payload codec layer.", []string{labelEncoding}),
+		payloadLayerBytesOut: counter(reg, "payload_layer_bytes_out_total",
+			"Bytes emitted by a payload codec layer.", []string{labelEncoding}),
+		payloadLayerDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "payload_layer_duration_seconds",
+			Help:      "Wall-clock time one payload codec layer operation took.",
+			Buckets:   []float64{0.001, 0.01, 0.1, 1, 5, 10, 30},
+		}, []string{labelEncoding}),
 		bounded: newBoundedLabels(LabelValueLimit),
 	}
 	reg.MustRegister(m.stageDuration)
+	reg.MustRegister(m.payloadLayerDuration)
 	return m
+}
+
+// PayloadLayerApplied records bytes and duration for one payload codec layer operation.
+func (m *Metrics) PayloadLayerApplied(encoding string, bytesIn, bytesOut int, took time.Duration) {
+	labels := prometheus.Labels{labelEncoding: m.bounded.fold(labelEncoding, encoding)}
+	m.payloadLayerBytesIn.With(labels).Add(float64(max(bytesIn, 0)))
+	m.payloadLayerBytesOut.With(labels).Add(float64(max(bytesOut, 0)))
+	m.payloadLayerDuration.With(labels).Observe(took.Seconds())
 }
 
 // StageFinished records one stage attempt: what it spent, how it ended, and how

@@ -33,13 +33,13 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"go.temporal.io/sdk/client"
 	tlog "go.temporal.io/sdk/log"
 	"go.temporal.io/sdk/worker"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codex"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/local"
+	temporalapi "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/temporal"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/config"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/prompts"
@@ -94,11 +94,11 @@ func run() error {
 	}
 	logger := newLogger(cfg.LogLevel)
 
-	temporal, err := client.Dial(client.Options{
+	temporal, err := temporalapi.Dial(temporalapi.Options{
 		HostPort:  cfg.TemporalHostPort,
 		Namespace: cfg.TemporalNamespace,
 		Logger:    tlog.NewStructuredLogger(logger),
-	})
+	}, nil, nil)
 	if err != nil {
 		return fmt.Errorf("dialling Temporal at %s in namespace %s: %w", cfg.TemporalHostPort, cfg.TemporalNamespace, err)
 	}

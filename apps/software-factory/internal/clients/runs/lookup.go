@@ -12,17 +12,16 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/temporal"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	enums "go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/api/workflowservice/v1"
-	"go.temporal.io/sdk/client"
-
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
-// describer is the one method this package uses off client.Client. Named
+// describer is the one method this package uses off temporal.Client. Named
 // narrowly so a test can fake it without holding a Temporal connection —
-// *client.Client's real implementation dials the frontend, which a unit test
+// *temporal.Client's real implementation dials the frontend, which a unit test
 // has none of.
 type describer interface {
 	DescribeWorkflowExecution(ctx context.Context, workflowID, runID string) (*workflowservice.DescribeWorkflowExecutionResponse, error)
@@ -36,7 +35,7 @@ type Lookup struct {
 // New wraps a Temporal client for RunLookup. The client is not this
 // package's to close: it is the same connection the worker polls its task
 // queue on, owned and closed by the composition root.
-func New(c client.Client) *Lookup {
+func New(c temporal.Client) *Lookup {
 	return &Lookup{client: c}
 }
 
