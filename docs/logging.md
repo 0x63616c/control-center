@@ -264,7 +264,7 @@ documentation/validation, but the logger reads `process.env.LOG_LEVEL` directly
 |---------|--------------------------------------------------------------------------------------------------|
 | `error` | an operation was **lost** or a loop/process is degraded: permanently-failed job, no-handler, worker cycle threw, top-level fatal, enforcer/sync cycle failure. Pages-worthy. |
 | `warn`  | recoverable / retried / degraded-but-serving: HA non-2xx, job retry scheduled, command timeout, DB read fell back to "unavailable", missing optional secret (enrichment skipped), 404 webhook, malformed override arg. |
-| `info`  | lifecycle + business outcomes an operator wants in steady state: startup line, shutdown, migrations start/done, request completed (api), job claimed/completed, poller cycle summary, secrets/routes reconcile summary, deploy timing, worker failure→recovery transition. |
+| `info`  | lifecycle + business outcomes an operator wants in steady state: startup line, shutdown, migrations start/done, request completed (api), job claimed/completed, secrets/routes reconcile summary, deploy timing, worker failure→recovery transition. |
 | `debug` | **NEVER USED BY OUR CODE.** Reserved for libraries we don't own. See the rule below. |
 
 ### The no-debug rule
@@ -394,7 +394,7 @@ runtime**, which today swallows every cycle error into invisible in-memory stats
 > The job queue, controls-service, and the
 > enforcers physically live in **`@control-center/api`** and are run by **two** process
 > roots (the api server and the media-worker). To avoid parallel worktrees both
-> editing `jobs/queue.ts` / the poller / ingest and conflicting on every merge,
+> editing `jobs/queue.ts` and conflicting on every merge,
 > **ALL `@control-center/api` domain-service logging is owned by the API ticket only.**
 > Those modules acquire their logger via **`getLogger()`** (see §2) so they bind
 > whichever root is live (`service: "api"` under the api, `service: "media-worker"`
@@ -407,8 +407,8 @@ runtime**, which today swallows every cycle error into invisible in-memory stats
 ### api (`@control-center/api`)
 
 Root logger created once in `server.ts`: `const log = createLogger({ service: "api" })`.
-This ticket **owns all `@control-center/api` domain-service logging** (queue, poller,
-ingest, controls, enforcers, see the §5 ownership note); those modules log via
+This ticket **owns all `@control-center/api` domain-service logging** (queue,
+controls, enforcers, see the §5 ownership note); those modules log via
 **`getLogger()`** so they also bind correctly when the media-worker runs them.
 `server.ts`-owned code uses the threaded `log` / `reqLog` children directly.
 
@@ -465,17 +465,15 @@ Root logger `createLogger({ service: "media-worker" })` in `index.ts`. It owns a
 **copy** of the worker framework (`runtime.ts`/`types.ts`), apply the same
 runtime changes as worker (failure/recovery transitions, periodic stats,
 slow-cycle). **This ticket is scoped to the files media-worker OWNS only**
-(`index.ts` + its `runtime.ts`/`types.ts` copy). The job queue, poller, and
-ingest live in `@control-center/api` and their logging is owned by the **API ticket**
+(`index.ts` + its `runtime.ts`/`types.ts` copy). The job queue lives in
+`@control-center/api` and its logging is owned by the **API ticket**
 (§5 ownership note) via `getLogger()`, those lines fire automatically under the
 `media-worker` root at runtime, so this ticket neither edits nor re-logs them.
 
 **Replace:**
-- `index.ts:78` disk-below-threshold `console.warn` → `log.warn({ freeBytes, thresholdBytes, dir }, "disk below threshold, skipping claim")` (add the numbers).
 - `index.ts:100` startup + `index.ts:108` signal → `info`.
 
 **Add (media-worker-owned files only):**
-- `index.ts hasSufficientDisk` statfs catch → `warn` "statfs failed, assuming sufficient" (dir, err), makes the allow-on-error assumption explicit.
 - runtime cycle catch / 3+ streak → `error` (same runtime changes as worker, above).
 - `index.ts` migrations start/done.
 
@@ -497,7 +495,7 @@ stream to confirm liveness:
 |----------------|-------------------------------------------|------------------------------------------------------------------|
 | api            | `"api started" {port,env}`                | `"request completed" {status,durationMs}` per request            |
 | worker         | `"worker started" {workers:[…]}`          | failure→recovery transitions; enforcer decision CHANGES; 5-min stats snapshot |
-| media-worker   | `"media-worker started" {workers:[…]}`    | `"job claimed"`/`"job completed"`, poller cycle summaries        |
+| media-worker   | `"media-worker started" {workers:[…]}`    | `"job claimed"`/`"job completed"` cycle summaries                |
 
 Liveness contract:
 - **Startup line present** → process booted and configured its logger.
@@ -628,7 +626,7 @@ exception.
    `**/packages/logger/src/**` `noProcessEnv: off` biome override and the
    `packages/logger`-scoped `pino-pretty` knip ignore, see §1, §3.)
 2. **api** lands next: it owns ALL `@control-center/api` domain-service logging (queue,
-   poller, ingest, controls, enforcers) via `getLogger()` (§5 ownership note).
+   controls, enforcers) via `getLogger()` (§5 ownership note).
    This must precede worker/media-worker because those shared files are edited
    here ONLY.
 3. Then **worker / media-worker / bosun** adopt. They are parallel **with each
@@ -643,4 +641,4 @@ exception.
 for all shared `@control-center/api` domain code; worker/media-worker/bosun parallelise
 only among themselves after it lands. Each service ticket is independently
 revertable, but the ordering above avoids parallel worktrees conflicting on
-`jobs/queue.ts` / the poller / ingest.
+`jobs/queue.ts`.
