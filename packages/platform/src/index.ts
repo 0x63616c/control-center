@@ -477,8 +477,10 @@ export function controlCenterServiceSecretUsages(): Record<
     ASC_KEY_ID: secretCatalog.appStoreConnect.keyId,
     ASC_ISSUER_ID: secretCatalog.appStoreConnect.issuerId,
     ASC_KEY_CONTENT: secretCatalog.appStoreConnect.p8Content,
-    // GitHub webhook signature verification (#126). Only the api serves the
-    // endpoint, but api/worker secret sets are kept in lockstep (www-51hf.35).
+    // GitHub webhook signature verification (#126). The public hooks. host now
+    // terminates at the webhook relay, which is the outermost HMAC boundary;
+    // the api still verifies the same signature in-cluster as defence in depth.
+    // api/worker secret sets are kept in lockstep (www-51hf.35).
     GITHUB_BOT_WEBHOOK_SECRET: secretCatalog.githubBot.webhookSecret,
     // Deploys-tile poller. Only the worker reads it, but api/worker secret sets
     // are kept in lockstep (www-51hf.35), so it appears in both.
