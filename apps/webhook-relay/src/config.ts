@@ -14,8 +14,9 @@ const targetsSchema = z
   });
 export type RelayTarget = Readonly<{ name: string; url: string }>;
 export function relayConfig(): Readonly<{ secret: string; targets: readonly RelayTarget[] }> {
+  const env = ENV.pick("GITHUB_BOT_WEBHOOK_SECRET", "WEBHOOK_RELAY_TARGETS");
   return {
-    secret: ENV.GITHUB_BOT_WEBHOOK_SECRET,
-    targets: targetsSchema.parse(JSON.parse(ENV.WEBHOOK_RELAY_TARGETS)),
+    secret: env.GITHUB_BOT_WEBHOOK_SECRET,
+    targets: targetsSchema.parse(JSON.parse(env.WEBHOOK_RELAY_TARGETS)),
   };
 }

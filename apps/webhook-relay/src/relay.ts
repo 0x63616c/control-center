@@ -90,7 +90,10 @@ export function createRelay(options: RelayOptions): (request: Request) => Promis
     const pathname = new URL(request.url).pathname;
     if (pathname === "/health")
       return request.method === "GET" ? new Response("OK") : new Response(null, { status: 405 });
-    if (pathname !== "/github") return new Response(null, { status: 404 });
+    // GitHub's configured URL predates the relay and uses /hooks/github. Keep
+    // that public contract while also allowing the relay-native /github path.
+    if (pathname !== "/github" && pathname !== "/hooks/github")
+      return new Response(null, { status: 404 });
     if (request.method !== "POST") return new Response(null, { status: 405 });
     const body = new Uint8Array(await request.arrayBuffer());
     if (!validSignature(body, request.headers.get("x-hub-signature-256"), options.secret)) {

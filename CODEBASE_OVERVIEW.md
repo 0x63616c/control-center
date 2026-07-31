@@ -83,6 +83,9 @@ that run/deploy, `packages/` = things you import); product features live under
 - `apps/temporal-worker` - Temporal worker (Node, not bun) serving `HealthCheckWorkflow` on the `main` task queue.
 - `apps/storybook` - Thin wrapper delegating to the web Storybook.
 - `apps/map-provision` - Basemap tile provisioner image.
+- `apps/webhook-relay` - Public GitHub webhook HMAC boundary. It immediately
+  acknowledges deliveries then independently forwards raw signed bytes to its
+  configured in-cluster consumers; it has no database or durable queue.
 - `apps/software-factory` - **Go**, not TypeScript, and the only Go in the repo (ADR-0011).
   A Temporal worker that autonomously works issues labelled `auto` through
   `plan → review → revise → implement → propose`, each stage an agent CLI invocation in a

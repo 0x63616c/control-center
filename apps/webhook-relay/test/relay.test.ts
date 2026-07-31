@@ -15,8 +15,23 @@ const headers = {
 };
 const request = (extra: Record<string, string> = {}) =>
   new Request("http://relay/github", { method: "POST", headers: { ...headers, ...extra }, body });
+const legacyRequest = () =>
+  new Request("http://relay/hooks/github", { method: "POST", headers, body });
 
 describe("webhook relay", () => {
+  it("keeps the existing public /hooks/github delivery path", async () => {
+    const fetch = vi.fn<(input: string, init: RequestInit) => Promise<Response>>(
+      async () => new Response(null, { status: 204 }),
+    );
+    const relay = createRelay({
+      secret,
+      targets: [{ name: "control-center", url: "http://control-center" }],
+      fetch,
+      sleep: async () => {},
+    });
+    expect((await relay(legacyRequest())).status).toBe(204);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+  });
   it("returns 204 and forwards the exact bytes and trusted headers to every configured target", async () => {
     const fetch = vi.fn<(input: string, init: RequestInit) => Promise<Response>>(
       async () => new Response(null, { status: 204 }),

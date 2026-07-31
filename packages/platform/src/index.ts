@@ -747,9 +747,8 @@ export type ControlCenterProductManifest = Readonly<{
   dsm: Readonly<{
     exposure: WebExposure;
   }>;
-  // The public GitHub webhook host (#126). Served by the webhook-relay workload, but it
-  // is NOT the api's exposure: api stays `internalService` for in-cluster
-  // traffic and gains this one public hostname that the tunnel maps to it.
+  // The public GitHub webhook host (#126). Served by the webhook-relay workload;
+  // api stays `internalService` and receives only its in-cluster fan-out.
   // Owned here because every other public name in this system is owned here.
   hooks: Readonly<{
     exposure: WebExposure;
@@ -811,7 +810,7 @@ export function controlCenterProductManifest(): ControlCenterProductManifest {
     hooks: {
       // Served by the webhook-relay workload, which owns the public HMAC boundary.
       // PUBLIC on purpose: GitHub posts here from the internet and would be
-      // 403'd by Access. Auth is the HMAC in features/hooks/service.ts.
+      // 403'd by Access. Auth is the HMAC in webhook-relay.
       exposure: publicWeb(target, { host: "hooks" }),
     },
     services: {
