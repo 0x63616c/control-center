@@ -28,20 +28,30 @@ import (
 // annotations needed to identify its failed runs. Polling belongs to the
 // activity, which owns the wait and the bound on it.
 func (c *Client) ChecksForRef(ctx context.Context, ref string) ([]work.CheckRun, error) {
-	return c.checksForRef(ctx, ref, false)
+	return c.checksForRef(ctx, ref, nil, false)
 }
 
 // ChecksForCommit returns one check-run snapshot for exactly commitSHA.
 // GitHub accepts a SHA in the same reference position as a branch; this
-// separate method makes the immutable target-path contract explicit.
-func (c *Client) ChecksForCommit(ctx context.Context, commitSHA string) ([]work.CheckRun, error) {
+// separate method makes the immutable target-path contract explicit. Only
+// required checks are returned or enriched with failure details.
+func (c *Client) ChecksForCommit(ctx context.Context, commitSHA string, requiredChecks []string) ([]work.CheckRun, error) {
 	if strings.TrimSpace(commitSHA) == "" {
 		return nil, fmt.Errorf("listing check runs for an empty commit SHA: %w", work.ErrPermanent)
 	}
-	return c.checksForRef(ctx, commitSHA, true)
+	required := make(map[string]struct{}, len(requiredChecks))
+	for _, name := range requiredChecks {
+		required[name] = struct{}{}
+	}
+	return c.checksForRef(ctx, commitSHA, required, true)
 }
 
-func (c *Client) checksForRef(ctx context.Context, ref string, includeFailureEvidence bool) ([]work.CheckRun, error) {
+func (c *Client) checksForRef(
+	ctx context.Context,
+	ref string,
+	includedChecks map[string]struct{},
+	includeFailureEvidence bool,
+) ([]work.CheckRun, error) {
 	op := fmt.Sprintf("listing check runs for %s", ref)
 
 	opts := &gh.ListCheckRunsOptions{ListOptions: gh.ListOptions{PerPage: perPage}}
@@ -53,6 +63,11 @@ func (c *Client) checksForRef(ctx context.Context, ref string, includeFailureEvi
 			return nil, classify(ctx, op, err)
 		}
 		for _, run := range result.CheckRuns {
+			if includedChecks != nil {
+				if _, included := includedChecks[run.GetName()]; !included {
+					continue
+				}
+			}
 			check := work.CheckRun{
 				Name:       run.GetName(),
 				Completed:  run.GetStatus() == "completed",

@@ -35,7 +35,7 @@ func (a *Activities) AwaitCI(ctx context.Context, in AwaitCIInput) (AwaitCIOutpu
 	if err := validateAwaitCIInput(in); err != nil {
 		return AwaitCIOutput{}, fail(ctx, "awaiting CI", err)
 	}
-	checks, err := a.deps.GitHub.ChecksForCommit(ctx, in.CommitSHA)
+	checks, err := a.deps.GitHub.ChecksForCommit(ctx, in.CommitSHA, in.RequiredChecks)
 	if err != nil {
 		return AwaitCIOutput{}, fail(ctx, fmt.Sprintf("awaiting CI for commit %s", in.CommitSHA), err)
 	}

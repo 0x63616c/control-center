@@ -78,7 +78,7 @@ func (f *fakeGitHub) ChecksForRef(_ context.Context, ref string) ([]work.CheckRu
 	return f.checks, f.checksErr
 }
 
-func (f *fakeGitHub) ChecksForCommit(ctx context.Context, commitSHA string) ([]work.CheckRun, error) {
+func (f *fakeGitHub) ChecksForCommit(ctx context.Context, commitSHA string, _ []string) ([]work.CheckRun, error) {
 	return f.ChecksForRef(ctx, commitSHA)
 }
 

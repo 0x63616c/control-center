@@ -38,6 +38,9 @@ func TestAwaitCIReadsOneExactCommitSnapshotAndReturnsGreenRequiredChecks(t *test
 	if gh.commitSHA != "abc123" || gh.calls != 1 {
 		t.Fatalf("github calls = %d for %q, want one snapshot for abc123", gh.calls, gh.commitSHA)
 	}
+	if len(gh.requiredChecks) != 2 || gh.requiredChecks[0] != "build" || gh.requiredChecks[1] != "lint" {
+		t.Fatalf("required checks = %v, want the configured build and lint checks", gh.requiredChecks)
+	}
 }
 
 func TestAwaitCIRetriesPendingOrAbsentRequiredChecksAfterFifteenSeconds(t *testing.T) {
@@ -147,13 +150,15 @@ func TestAwaitCIRedWinsWhenAnotherRequiredCheckIsPendingOrAbsent(t *testing.T) {
 
 type targetChecksGitHub struct {
 	fakeGitHub
-	checks    []work.CheckRun
-	commitSHA string
-	calls     int
+	checks         []work.CheckRun
+	commitSHA      string
+	requiredChecks []string
+	calls          int
 }
 
-func (f *targetChecksGitHub) ChecksForCommit(_ context.Context, commitSHA string) ([]work.CheckRun, error) {
+func (f *targetChecksGitHub) ChecksForCommit(_ context.Context, commitSHA string, requiredChecks []string) ([]work.CheckRun, error) {
 	f.calls++
 	f.commitSHA = commitSHA
+	f.requiredChecks = append([]string(nil), requiredChecks...)
 	return f.checks, nil
 }

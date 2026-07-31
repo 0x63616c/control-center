@@ -135,9 +135,9 @@ type GitHub interface {
 	// with PullRequestForBranch.
 	ChecksForRef(ctx context.Context, ref string) ([]work.CheckRun, error)
 
-	// ChecksForCommit returns one check-run snapshot for an exact immutable
-	// commit SHA. Target AwaitCI must not substitute a branch or later head.
-	ChecksForCommit(ctx context.Context, commitSHA string) ([]work.CheckRun, error)
+	// ChecksForCommit returns required check runs for an exact immutable commit
+	// SHA. Target AwaitCI must not substitute a branch or later head.
+	ChecksForCommit(ctx context.Context, commitSHA string, requiredChecks []string) ([]work.CheckRun, error)
 }
 
 // RepoCloner checks the ticket's repository out inside its sandbox, on the
