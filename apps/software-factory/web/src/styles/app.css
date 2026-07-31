@@ -349,7 +349,10 @@ a:hover {
 }
 .ticket-body {
   margin-top: 12px;
-  padding: 14px 18px;
+  /* Vertical space lives on the children, not container padding: a scroll
+     container clips overflowing content at its padding edge, which would eat
+     the bottom padding while scrolled. */
+  padding-inline: 18px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--surface);
@@ -357,10 +360,10 @@ a:hover {
   overflow-y: auto;
 }
 .ticket-body > :first-child {
-  margin-top: 0;
+  margin-top: 14px;
 }
 .ticket-body > :last-child {
-  margin-bottom: 0;
+  margin-bottom: 14px;
 }
 .ticket-body h1,
 .ticket-body h2,
