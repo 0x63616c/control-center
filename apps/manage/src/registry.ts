@@ -33,11 +33,11 @@ export interface Tool {
    * has stripped those response headers.
    *
    * False ONLY where we control the response and it carries no frame-deny —
-   * today that is just the control-center nginx. Everything else is third-party
-   * or upstream-configured, so it is marked true and lands in the generated
-   * allowlist. Marking a framable host `true` costs nothing but an extra
-   * allowlist entry; marking a frame-denying host `false` ships a pane that is
-   * permanently blank, so the asymmetry is deliberate.
+   * today that is the control-center and Software Factory nginx origins.
+   * Everything else is third-party or upstream-configured, so it is marked true
+   * and lands in the generated allowlist. Marking a framable host `true` costs
+   * nothing but an extra allowlist entry; marking a frame-denying host `false`
+   * ships a pane that is permanently blank, so the asymmetry is deliberate.
    */
   needsExtension: boolean;
 }
