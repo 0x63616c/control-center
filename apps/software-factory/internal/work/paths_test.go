@@ -3,7 +3,114 @@ package work
 import (
 	"strings"
 	"testing"
+
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
+	"go.temporal.io/sdk/converter"
 )
+
+type unsafePayloadKeyContext struct {
+	name      string
+	namespace string
+	workflow  string
+}
+
+var unsafePayloadKeyContexts = []unsafePayloadKeyContext{
+	{name: "empty namespace", workflow: "workflow"},
+	{name: "empty workflow ID", namespace: "namespace"},
+	{name: "namespace slash", namespace: "namespace/other", workflow: "workflow"},
+	{name: "workflow ID slash", namespace: "namespace", workflow: "workflow/other"},
+	{name: "namespace backslash", namespace: `namespace\x`, workflow: "workflow"},
+	{name: "workflow ID backslash", namespace: "namespace", workflow: `workflow\x`},
+	{name: "namespace dot", namespace: ".", workflow: "workflow"},
+	{name: "workflow ID dot", namespace: "namespace", workflow: "."},
+	{name: "namespace dot dot", namespace: "..", workflow: "workflow"},
+	{name: "workflow ID dot dot", namespace: "namespace", workflow: ".."},
+}
+
+func TestNewPayloadKeyWithoutContextIsUnkeyed(t *testing.T) {
+	t.Parallel()
+
+	key := NewPayloadKey(nil, []byte("stored payload"))
+	const want = "_unkeyed/14be817553264c4c1fb599964dc7ad063d9498dce264ac5e34d1993e455e98ae"
+	if got := key.String(); got != want {
+		t.Errorf("NewPayloadKey(nil, stored).String() = %q, want %q", got, want)
+	}
+}
+
+func TestNewPayloadKeyFromWorkflowContext(t *testing.T) {
+	t.Parallel()
+
+	key := NewPayloadKey(converter.WorkflowSerializationContext{
+		Namespace:  "namespace",
+		WorkflowID: "workflow-id",
+	}, []byte("stored payload"))
+	const want = "namespace/workflow-id/14be817553264c4c1fb599964dc7ad063d9498dce264ac5e34d1993e455e98ae"
+	if got := key.String(); got != want {
+		t.Errorf("NewPayloadKey(workflow context, stored).String() = %q, want %q", got, want)
+	}
+}
+
+func TestNewPayloadKeyFromActivityContext(t *testing.T) {
+	t.Parallel()
+
+	key := NewPayloadKey(converter.ActivitySerializationContext{
+		Namespace:  "namespace",
+		WorkflowID: "workflow-id",
+	}, []byte("stored payload"))
+	const want = "namespace/workflow-id/14be817553264c4c1fb599964dc7ad063d9498dce264ac5e34d1993e455e98ae"
+	if got := key.String(); got != want {
+		t.Errorf("NewPayloadKey(activity context, stored).String() = %q, want %q", got, want)
+	}
+}
+
+func TestPayloadKeyDigestIsSHA256OfStoredBytes(t *testing.T) {
+	t.Parallel()
+
+	key := NewPayloadKey(nil, []byte("payload bytes"))
+	const want = "5043c48a936e796a7d6d31fdebb464e52df0e5d2a855e167ea694015ba1641e7"
+	if key.Digest != want {
+		t.Errorf("NewPayloadKey(nil, stored).Digest = %q, want %q", key.Digest, want)
+	}
+}
+
+func TestNewPayloadKeyRejectsUnsafeContextFields(t *testing.T) {
+	t.Parallel()
+
+	const want = "_unkeyed/14be817553264c4c1fb599964dc7ad063d9498dce264ac5e34d1993e455e98ae"
+	for _, test := range unsafePayloadKeyContexts {
+		t.Run(test.name, func(t *testing.T) {
+			key := NewPayloadKey(converter.WorkflowSerializationContext{
+				Namespace:  test.namespace,
+				WorkflowID: test.workflow,
+			}, []byte("stored payload"))
+			if got := key.String(); got != want {
+				t.Errorf("NewPayloadKey(unsafe context, stored).String() = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestPayloadKeyIsAValidBlobsKeyPath(t *testing.T) {
+	t.Parallel()
+
+	keys := []PayloadKey{
+		NewPayloadKey(nil, []byte("stored payload")),
+		NewPayloadKey(converter.WorkflowSerializationContext{Namespace: "namespace", WorkflowID: "workflow-id"}, []byte("stored payload")),
+		NewPayloadKey(converter.ActivitySerializationContext{Namespace: "namespace", WorkflowID: "workflow-id"}, []byte("stored payload")),
+	}
+	for _, test := range unsafePayloadKeyContexts {
+		keys = append(keys, NewPayloadKey(converter.WorkflowSerializationContext{
+			Namespace:  test.namespace,
+			WorkflowID: test.workflow,
+		}, []byte("stored payload")))
+	}
+
+	for _, key := range keys {
+		if _, err := blobs.NewKey(blobs.BucketPayloads, key.String()); err != nil {
+			t.Errorf("blobs.NewKey(BucketPayloads, %q) returned error: %v", key.String(), err)
+		}
+	}
+}
 
 func TestFactoryTicketWorkflowIDsUseADisjointNamespace(t *testing.T) {
 	t.Parallel()
