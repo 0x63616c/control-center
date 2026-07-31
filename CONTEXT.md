@@ -155,8 +155,14 @@ A unit of requested work owned by the software factory and stored in its own dat
 _Avoid_: Issue, GitHub issue.
 
 **Run**:
-One attempt to complete a whole Ticket, represented by one Temporal workflow execution.
+One attempt to complete a whole Ticket, represented by one `WorkOnTicket` Temporal workflow
+execution.
 _Avoid_: Job, session.
+
+**Run Worker** _(target)_:
+The ephemeral execution worker assigned exclusively to one Run. It owns that Run's checkout,
+tools, and activity execution until the Run ends.
+_Avoid_: Sandbox, agent pod, shared worker.
 
 **Step**:
 One independently executed unit of workflow work inside a Run. A Step has exactly one primary
@@ -198,13 +204,10 @@ _Avoid_: CI status without a head SHA, failed-check fingerprint alone.
 The kind of agent work performed by an agent-backed Step: `plan`, `implement`, or `review`.
 _Avoid_: Step, phase.
 
-**Sandbox GitHub Credential**:
-A short-lived, repository-scoped GitHub App installation token minted by the worker and written
-into a sandbox's Git credential store and `gh` configuration. It lets the agent use GitHub without
-giving the sandbox the App private key. The worker renews it immediately before every Agent Attempt;
-while that Attempt is active, it renews the credential every 30 minutes. The token must never pass
-through Temporal workflow history. It is separate from the worker's GitHub API authentication and
-from the agent's Codex OAuth credential.
+**Run Worker GitHub Credential** _(target)_:
+A short-lived, repository-scoped GitHub App installation token installed into a Run Worker's Git
+and `gh` configuration. It is renewed before every Agent Attempt and every 30 minutes while active,
+never enters Temporal history, and is distinct from both worker GitHub authentication and Codex OAuth.
 _Avoid_: GitHub token (ambiguous), Codex credential.
 
 **Run Policy** _(target)_:

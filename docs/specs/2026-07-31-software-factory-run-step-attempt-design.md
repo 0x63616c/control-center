@@ -24,6 +24,8 @@ This document focuses on the durable Run history needed around that flow:
 Automated revert, rollback, and fix-forward policy are outside this design.
 Semantic conflicts are also outside it. Textual merge conflicts remain in
 scope because they can prevent the workflow from completing its merge.
+An optional human-approval mode is also outside this version. Successful Runs
+are fully unattended.
 
 ## Established surrounding direction
 
@@ -57,6 +59,137 @@ failed -> open   (manual retry)
 
 `review` is removed because there is no longer a human waiting state. Whether
 `done` means merged or deployed is deliberately unresolved below.
+
+## One Run Worker for the whole Run
+
+This is decided:
+
+> The `WorkOnTicket` workflow provisions one Run Worker, creates a Temporal
+> Session with it immediately, and executes every Run activity from repository
+> clone through the final Run action on that same worker.
+
+`Run Worker` replaces `Sandbox` in the target vocabulary. The pod is not a
+restricted place into which the main worker remotely executes selected agent
+commands. It is the Run's execution worker: it owns the checkout, tools,
+credentials, local process handles, and activity implementations for the
+Run's lifetime.
+
+The target flow is:
+
+```text
+Dispatcher
+  starts WorkOnTicket
+
+Main worker
+  claim Ticket
+  create Run Worker pod
+  CreateSession on the Run's private task queue
+        |
+        v
+Run Worker, one fixed pod and image
+  clone repository
+  record Run, Steps, and Agent Attempts
+  plan / implement / review
+  sync pull request
+  await CI
+  renew credentials
+  mark pull request ready
+  merge pull request
+  later deployment work, if selected
+        |
+        v
+Main worker
+  CompleteSession
+  delete Run Worker
+  perform fallback cleanup
+```
+
+The Ticket claim must precede provisioning so two racing Runs cannot both
+create workers for the same Ticket. Provisioning and cleanup remain on the
+main worker because a Run Worker cannot reliably create and delete itself.
+Everything between successful Session creation and Session completion uses a
+context derived from `sessionCtx`.
+
+`CreateSession` does not create a Kubernetes pod and does not inspect
+Kubernetes readiness. Our code creates the pod, derives
+`RunWorkerTaskQueue(runID)`, and supplies that queue both to the pod and to
+`CreateSession`. The Run Worker's embedded Temporal worker starts polling that
+queue with Sessions enabled. Temporal then schedules its internal
+session-creation activity, waits up to `CreationTimeout` for the worker to
+claim it, and returns a Session context whose activities are routed to that
+exact worker. A separate `WaitRunWorkerReady` activity is unnecessary: the
+Session handshake proves the capability the workflow actually needs, namely
+that the embedded worker is connected to Temporal and accepting work.
+
+The conceptual workflow shape is:
+
+```go
+func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (WorkOnTicketResult, error) {
+    control := workflow.WithActivityOptions(ctx, provisioningOptions(in.Policy))
+
+    ticket, err := claimTicket(control, in.TicketID)
+    if err != nil {
+        return WorkOnTicketResult{}, err
+    }
+
+    runID := workflow.GetInfo(ctx).WorkflowExecution.RunID
+    var workerID work.RunWorkerID
+    if err := workflow.ExecuteActivity(control, acts.CreateRunWorker,
+        activities.CreateRunWorkerInput{
+            TicketID: in.TicketID,
+            RunID: runID,
+            RunTimeout: in.Policy.RunTimeout,
+        }).Get(ctx, &workerID); err != nil {
+        return WorkOnTicketResult{}, err
+    }
+
+    queue := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+        TaskQueue: work.RunWorkerTaskQueue(runID),
+    })
+    sessionCtx, err := workflow.CreateSession(queue, &workflow.SessionOptions{
+        CreationTimeout: in.Policy.RunWorkerCreationTimeout,
+        ExecutionTimeout: in.Policy.RunTimeout,
+    })
+    if err != nil {
+        deleteRunWorker(ctx, workerID)
+        return WorkOnTicketResult{}, err
+    }
+
+    result, runErr := executeRun(sessionCtx, in, ticket, workerID)
+    workflow.CompleteSession(sessionCtx)
+
+    cleanupErr := deleteRunWorker(ctx, workerID)
+    if runErr == nil && cleanupErr != nil {
+        runErr = cleanupErr
+    }
+    return result, runErr
+}
+```
+
+`executeRun` derives each Step's activity options from `sessionCtx`. Different
+Steps retain their own timeouts and retry policies, while Temporal overrides
+their destination with the Session's worker-specific queue.
+
+The `WorkOnTicket` workflow function remains registered on the main Temporal
+worker. The Session pins its activities, not its workflow tasks. A main-worker
+deploy can therefore replay the deterministic orchestration code, but it
+cannot replace an active Run Worker's activity implementations or interrupt a
+long-running activity merely by rolling the main worker Deployment.
+
+The Run Worker registers every Run activity, including clone, agent execution,
+recording, GitHub operations, CI waiting, and merge. The main worker retains
+only dispatcher, provisioning, and cleanup capabilities. Clone and file
+operations execute locally, so the remaining Kubernetes `pods/exec` and remote
+file-transfer machinery can be removed.
+
+All agent stages receive the same writable working environment. Plan and
+review may remain semantically read-only through their prompts, but this is
+not enforced by separate filesystem partitions. Codex already runs with its
+own approvals and sandbox bypassed; the Run Worker pod, resource limits,
+credentials, and network policy are the execution boundary. The exact way to
+grant the Run Worker its broader GitHub, database, and future tool capabilities
+without unnecessarily exposing control credentials to the agent remains an
+implementation design question.
 
 ## Core model
 
@@ -120,7 +253,7 @@ row each time the workflow deliberately starts a whole agent run.
 For example:
 
 ```text
-Step: prepare_workspace
+Step: prepare_run_worker
   Activity try 1: transient Kubernetes error
   Activity try 2: succeeded
   Agent Attempts: none
@@ -169,10 +302,10 @@ The workflow generates monotonically increasing ordinals:
  2 plan
  3 implement
  4 sync_pull_request
- 5 observe_ci
+ 5 await_ci
  6 implement
  7 sync_pull_request
- 8 observe_ci
+ 8 await_ci
  9 review
 10 mark_pull_request_ready
 11 merge_pull_request
@@ -211,7 +344,7 @@ Step: implement
   Agent Attempt 1 on implementer Thread A
   Result: changes pushed
 
-Step: observe_ci
+Step: await_ci
   Result: ci_red for head SHA H, with failed checks
 
 Step: implement
@@ -231,6 +364,36 @@ the underlying annotations and log evidence after hashing them. The next
 implement prompt receives the plan, previous implement report, and latest
 review findings, but no CI Result.
 
+## CI waiting
+
+The current `ObserveCI` activity owns a real-clock loop: it queries GitHub,
+sleeps for 15 seconds while checks are pending, heartbeats, and repeats until
+its own internal bound expires. Move this to the same retry-backed waiting
+pattern selected for the dispatcher.
+
+The target `AwaitCI` activity performs one bounded GitHub read per activity
+try:
+
+```text
+checks green or red -> return the authoritative CI Result
+checks absent, pending, or superseded
+                    -> retryable CINotConcluded
+                       with NextRetryDelay = 15 seconds
+```
+
+Use a short `StartToClose` timeout for one GitHub request, unlimited attempts,
+and a `ScheduleToClose` timeout for the whole CI waiting window. Because each
+try is short, no activity heartbeat is needed. If `ScheduleToClose` expires,
+the workflow converts that timeout into the explicit `unobserved` CI Result
+rather than treating it as red or silently inventing success.
+
+Intermediate pending retries do not add one workflow event per poll and do not
+create Steps or Agent Attempts. Real transient GitHub failures use the
+activity's technical backoff; authentication and other permanent failures stop
+the Step. Because `AwaitCI` is scheduled with the Run's Session context, every
+try executes on the same Run Worker and a main-worker deploy cannot replace
+the activity implementation midway through the wait.
+
 ## Step boundary
 
 This is decided:
@@ -248,8 +411,8 @@ boundaries and is recorded as separate Steps:
 
 ```text
 Phase: Preparing
-  Step: create_sandbox
-  Step: wait_for_sandbox_ready
+  Step: create_run_worker
+  Step: acquire_run_worker_session
   Step: clone_repository
 ```
 
@@ -288,8 +451,8 @@ For example:
 
 | Step | Execution status | Step Result | Workflow decision |
 | --- | --- | --- | --- |
-| `observe_ci` | `succeeded` | `ci_green` | Continue to review. |
-| `observe_ci` | `succeeded` | `ci_red` | Create another `implement` Step. |
+| `await_ci` | `succeeded` | `ci_green` | Continue to review. |
+| `await_ci` | `succeeded` | `ci_red` | Create another `implement` Step. |
 | `merge_pull_request` | `succeeded` | `merged` | Continue past the merge boundary. |
 | `merge_pull_request` | `succeeded` | `merge_conflict` | Create another `implement` Step. |
 | `implement` | Agent Attempt `succeeded` | `blocked` | End the Run without starting another Agent Attempt. |
@@ -332,7 +495,7 @@ acts.PrepareWorkspace
 acts.RunPlan
 acts.RunImplement
 acts.SyncPullRequest
-acts.ObserveCI
+acts.AwaitCI
 acts.RunReview
 acts.MarkPullRequestReady
 acts.MergePullRequest
@@ -345,16 +508,16 @@ A private workflow helper can wrap those activities with Step recording:
 out, err := runStep(
     ctx,
     StepSpec{
-        Kind:   work.StepObserveCI,
-        Policy: policies.ObserveCI,
+        Kind:   work.StepAwaitCI,
+        Policy: policies.AwaitCI,
     },
-    acts.ObserveCI,
+    acts.AwaitCI,
     input,
 )
 ```
 
-Because the actual method reference remains `acts.ObserveCI`, Temporal continues
-to show the meaningful `ObserveCI` activity name. The helper provides only the
+Because the actual method reference remains `acts.AwaitCI`, Temporal continues
+to show the meaningful `AwaitCI` activity name. The helper provides only the
 standard lifecycle around it:
 
 ```text
@@ -377,7 +540,7 @@ the console then show a useful name without exposing implementation chatter.
 Database-recording activities are deliberately not Steps. Otherwise recording
 a Step would require recording the recording Step recursively.
 
-## Sandbox GitHub credential lifetime
+## Run Worker GitHub credential lifetime
 
 This work must also remove the current one-hour GitHub credential failure
 mode.
@@ -385,32 +548,32 @@ mode.
 The worker currently mints one repository-scoped GitHub App installation
 token while cloning the repository, then writes that token into both the
 sandbox's Git credential store and `gh` configuration. GitHub caps the token's
-lifetime at approximately one hour, but the sandbox and Run can live much
+lifetime at approximately one hour, but the Run Worker and Run can live much
 longer. Nothing replaces either credential file during the Run. A later agent
-execution can therefore receive an otherwise healthy sandbox whose GitHub
+execution can therefore receive an otherwise healthy Run Worker whose GitHub
 credential has expired. In particular, `git push` then fails inside `codex
 exec`, where the workflow sees only the agent's resulting tool failure rather
 than a classifiable GitHub activity error.
 
 This is distinct from the Codex OAuth credential. The worker already owns the
-rotation and sandbox handoff protocol for that credential. "GitHub token"
+rotation and Run Worker handoff protocol for that credential. "GitHub token"
 must not be used as an ambiguous name for both mechanisms.
 
 The target invariant is:
 
 > Every agent execution that may use Git or `gh` starts with a newly minted
-> sandbox GitHub credential and remains supplied with a valid credential for
+> Run Worker GitHub credential and remains supplied with a valid credential for
 > the entire authorized execution.
 
 Minting remains worker-owned because the GitHub App private key must not enter
-the sandbox. The new token must be written into both sandbox credential files
+the Run Worker. The new token must be written into both credential files
 without putting the token in Temporal workflow input, output, or history. This
 credential handoff supports an agent-backed Step; it is not itself a
 user-meaningful Step.
 
 The renewal lifecycle is scoped to every Agent Attempt. A worker-side
 supporting activity mints and installs the credential immediately before the
-sandbox-side agent activity starts. While that Agent Attempt remains active,
+Run Worker agent activity starts. While that Agent Attempt remains active,
 the workflow runs the agent activity and a credential-renewal loop
 concurrently. The loop mints and installs another credential every 30 minutes
 and stops when the Agent Attempt finishes.
@@ -603,7 +766,7 @@ the workflow input, not mutable configuration read during workflow execution.
 The factory dispatcher is a long-lived singleton workflow. Today the worker
 constructs `DefaultRunPolicy()` when it ensures that dispatcher exists, the
 dispatcher stores the policy in its own workflow input, and every child Run
-receives that policy in `FactoryWorkTicketInput`. Starting new workers therefore
+receives that policy in `WorkOnTicketInput`. Starting new workers therefore
 does not update an already-running dispatcher, including after the dispatcher
 continues as new.
 
@@ -674,8 +837,8 @@ The alternatives considered were:
 ## Dispatcher waiting model
 
 The current dispatcher owns a workflow-level polling loop. Each tick drains
-signals and child completions, reconciles in-flight work, sweeps orphaned
-sandboxes, queries for ready Tickets, starts children, and sleeps on a Temporal
+signals and child completions, reconciles in-flight work, sweeps orphaned Run
+Workers, queries for ready Tickets, starts children, and sleeps on a Temporal
 timer. A ten-second idle poll therefore grows workflow history forever and
 forces `ContinueAsNew` based primarily on the passage of time.
 
@@ -720,7 +883,7 @@ be deliberately relocated:
   repeatedly describing active Runs. Whether the existing completion signal
   and reconciliation pass can then be removed still needs verification against
   crash and ambiguous-start cases.
-- Move orphan-sandbox sweeping to a separate maintenance workflow or Temporal
+- Move orphaned Run Worker sweeping to a separate maintenance workflow or Temporal
   Schedule rather than waking the dispatcher for it. That design still needs a
   durable source of truth for which Runs are live.
 - Receive policy publication through the acknowledged Update handler described
@@ -740,7 +903,7 @@ be deliberately relocated:
 9. Keep Agent Attempt status separate from the Step's domain Result.
 10. Keep native activity-try history in Temporal rather than duplicating it in
     Postgres.
-11. Renew the sandbox GitHub credential during a Run before agent execution;
+11. Renew the Run Worker GitHub credential during a Run before agent execution;
     continue renewing it every 30 minutes during the Agent Attempt, and never
     rely on the credential minted during the initial clone remaining valid.
 12. Permit at most five Review Steps in one Run.
@@ -762,6 +925,23 @@ be deliberately relocated:
     result uses Temporal activity retry with a ten-second `NextRetryDelay`.
 20. Remove workflow-timer-driven idle polling from the dispatcher and separate
     child completion observation and orphan cleanup from ready-Ticket polling.
+21. Rename the Ticket workflow to `WorkOnTicket` and the per-Run execution pod
+    to Run Worker; retire Sandbox as target vocabulary.
+22. Create one Run Worker after claiming the Ticket, then immediately use
+    `CreateSession` on its private task queue instead of separately polling
+    Kubernetes readiness.
+23. Execute every Run activity from clone through the terminal Run action with
+    a context derived from that Session, leaving only provisioning and cleanup
+    on the main worker.
+24. Remove Kubernetes `pods/exec` and remote file transfer from normal Run
+    execution; commands and files remain local to the Run Worker.
+25. Give every agent stage the same writable execution environment, while
+    retaining role-specific behavioral instructions in prompts.
+26. Replace `ObserveCI`'s internal sleep loop with `AwaitCI`: one short GitHub
+    read per activity try, a 15-second `NextRetryDelay`, and a
+    `ScheduleToClose` bound for the complete wait.
+27. Keep optional human approval out of this version; successful Runs are
+    fully unattended.
 
 ## Parked questions
 
@@ -795,9 +975,28 @@ verification:
 - Whether child-workflow Futures completely replace the completion signal and
   periodic `DescribeRun` reconciliation, including ambiguous child starts and
   worker restarts.
-- Which maintenance workflow or Schedule owns orphan-sandbox sweeping and how
+- Which maintenance workflow or Schedule owns orphaned Run Worker sweeping and how
   it derives the set of live Runs.
 - Whether a rare event-count safety threshold should retain
   `ContinueAsNew` after polling-driven history growth is gone.
 - The per-query timeout and retry policy for real dispatcher database errors,
   independently of the ten-second expected no-work delay.
+
+### Run Worker capabilities and failure
+
+The ownership and routing model is settled. These implementation details still
+need a security and failure-mode pass:
+
+- How the Run Worker mints or receives GitHub App installation credentials and
+  renews them locally without placing secrets in Temporal history or needlessly
+  exposing the App private key to the agent process.
+- How recording activities receive database capability while preserving the
+  intended blast radius of agent-authored commands.
+- How transcript data leaves the ephemeral Run Worker durably.
+- Whether a failed Session fails the Run immediately or provisions a
+  replacement Run Worker using the same pinned image and resumes from durable
+  Step state.
+- Which additional tools, including a future Temporal CLI, belong in the Run
+  Worker image and what authority the agent receives when invoking them.
+- Which main-worker fallback records terminal failure when the Session itself
+  is unavailable and therefore cannot execute its own recording activity.
