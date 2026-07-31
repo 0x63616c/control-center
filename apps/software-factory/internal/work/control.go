@@ -112,6 +112,16 @@ func DefaultConfig() Config {
 	}
 }
 
+// DefaultFactoryConfig is the independent starting configuration for the
+// Ticket dispatcher. Both dispatchers draw from one Codex quota, so the new
+// path starts at one in-flight Ticket until production measurement justifies
+// spending more of that shared quota.
+func DefaultFactoryConfig() Config {
+	config := DefaultConfig()
+	config.MaxInFlight = 1
+	return config
+}
+
 // BreakerCooldown is how long the breaker stays open once tripped.
 func (c Config) BreakerCooldown() time.Duration {
 	return time.Duration(c.BreakerCooldownSeconds) * time.Second
