@@ -134,7 +134,8 @@ check "Playwright Chromium writes a non-empty headless screenshot" 0 \
     test -s "$screenshot"
   '
 
-# `install-deps chromium` supplies Xvfb on Trixie. Keep a headed browser open
+# `install-deps chromium` supplies Xvfb on Trixie; the Dockerfile adds xauth,
+# which `xvfb-run` needs and the resolver does not. Keep a headed browser open
 # under a display larger than the 1366x1024 panel viewport: the acceptance
 # checklist calls out that browser chrome otherwise steals vertical pixels.
 # Playwright's `open` command is headed unless PWTEST_CLI_HEADLESS is set, and

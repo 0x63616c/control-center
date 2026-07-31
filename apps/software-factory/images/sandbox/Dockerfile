@@ -188,7 +188,16 @@ RUN curl -fsSL -o /tmp/golangci-lint.tar.gz \
 # list of shared libraries, choose the Debian Trixie packages Chromium needs.
 # The browser archives below are fetched explicitly so this executable payload
 # remains checksum-pinned like every other downloaded tool in the image.
+# `install-deps chromium` supplies Xvfb but not xauth, and `xvfb-run` shells out
+# to xauth to mint the display's auth cookie. Without it the headed smoke check
+# fails with `xvfb-run: error: xauth command not found`. Name it explicitly here
+# rather than relying on the resolver's `tools` set, which does not carry it.
 RUN bunx --yes "playwright@${PLAYWRIGHT_VERSION}" install-deps chromium \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends xauth \
+    && rm -rf /var/lib/apt/lists/* \
+    && command -v xvfb-run >/dev/null \
+    && command -v xauth >/dev/null \
     && rm -rf /root/.bun /root/.cache
 
 RUN curl -fsSL -o /tmp/chrome-linux64.zip \
