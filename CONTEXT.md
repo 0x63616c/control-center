@@ -154,6 +154,16 @@ _Avoid_: media, playback (too broad), sound.
 A unit of requested work owned by the software factory and stored in its own database.
 _Avoid_: Issue, GitHub issue.
 
+**Confirmed Merge** _(target)_:
+GitHub's authoritative confirmation that the reviewed pull request was merged, identified by its
+merge SHA. It is the v0 terminal business outcome and says nothing about deployment.
+_Avoid_: Merge accepted, closed pull request, deployed.
+
+**Done Ticket** _(target)_:
+A Ticket whose Run reached a Confirmed Merge. In v0 it satisfies dependency edges even though
+deployment is observed, if at all, outside that Ticket's Run.
+_Avoid_: Deployed Ticket.
+
 **Run**:
 One attempt to complete a whole Ticket, represented by one `WorkOnTicket` Temporal workflow
 execution.

@@ -3,9 +3,9 @@
 Status: **working design**
 
 This document records the software factory lifecycle design discussion as of
-2026-07-31. It is intentionally not yet an ADR. The remaining questions, most
-notably where `merged` and `deployed` sit in the lifecycle, can still change the
-completion boundary and the Run timeout.
+2026-07-31. It is intentionally not yet an ADR. The v0 completion boundary is
+now fixed at a confirmed merge; the remaining questions concern implementation
+boundaries and infrastructure failure policy rather than deployment waiting.
 
 ## Scope
 
@@ -43,6 +43,8 @@ The current direction for the merge flow is:
 7. If GitHub reports a textual conflict, return to implementation, merge the
    latest `main` into the branch, resolve the conflict, rerun CI and review, and
    attempt the merge again.
+8. After a confirmed merge, durably record the merge SHA, end the Run
+   successfully, mark the Ticket `done`, and satisfy its dependency edges.
 
 The merge-conflict path remains inside the same Run. It does not create a new
 Run, replace the Run Worker, or reset any cumulative budget.
@@ -61,8 +63,9 @@ open -> active -> done
 failed -> open   (manual retry)
 ```
 
-`review` is removed because there is no longer a human waiting state. Whether
-`done` means merged or deployed is deliberately unresolved below.
+`review` is removed because there is no longer a human waiting state. In v0,
+`done` means GitHub has confirmed the merge and returned its merge SHA. It does
+not mean the change has deployed.
 
 ## One Run Worker for the whole Run
 
@@ -99,7 +102,6 @@ Run Worker, one fixed pod and image
   renew credentials
   mark pull request ready
   merge pull request
-  later deployment work, if selected
         |
         v
 Main worker
@@ -497,7 +499,7 @@ For example:
 | --- | --- | --- | --- |
 | `await_ci` | `succeeded` | `ci_green` | Continue to review. |
 | `await_ci` | `succeeded` | `ci_red` | Create another `implement` Step. |
-| `merge_pull_request` | `succeeded` | `merged` | Continue past the merge boundary. |
+| `merge_pull_request` | `succeeded` | `merged` | End domain work successfully; perform only durable recording and cleanup. |
 | `merge_pull_request` | `succeeded` | `merge_conflict` | Create another `implement` Step. |
 | `implement` | Agent Attempt `succeeded` | `blocked` | End the Run without starting another Agent Attempt. |
 | Any primary operation | Activity retries exhausted | none | Fail the Step. |
@@ -778,8 +780,8 @@ This reaches further than a database migration:
 - `RunPolicy` conflates limits on fresh agent runs with native activity retry
   limits through `StageAttempts` and `ControlAttempts`.
 - The 24-hour Run budget is calculated from the maximum number of agent
-  invocations only. Do not finalize that calculation until the merged versus
-  deployed completion boundary is settled.
+  invocations only. Recalculate it against the v0 merge-terminal workflow; it
+  must not reserve time for deployment observation.
 
 ## Existing workflow histories
 
@@ -989,22 +991,42 @@ be deliberately relocated:
 28. Request squash merges only, and keep merge-conflict recovery inside the
     same Run without resetting the five-Review-Step or 25-Agent-Attempt
     cumulative budgets.
+29. Make a confirmed merge the v0 terminal business outcome: persist the merge
+    SHA, mark the Run and Ticket successful after durable recording, satisfy
+    dependency edges, and perform only cleanup afterward. Do not wait for or
+    infer deployment state inside `WorkOnTicket`.
 
 ## Parked questions
 
-### Merged versus deployed
+### Future release reconciliation, outside v0
 
-This still needs a dedicated decision. It determines:
+Deployment observation is explicitly outside `WorkOnTicket` v0. A confirmed
+merge is enough to mark the Ticket `done` and satisfy its dependencies. The Run
+does not poll GitHub Actions for hours or remain active until production
+recovers.
 
-- whether Steps follow `merge_pull_request` in the same Run;
-- whether `done` means merged or deployed;
-- when dependencies become satisfied;
-- how deployment is proven;
-- how long the overall Run timeout must be.
+A later version may introduce a separate long-lived release-reconciliation
+workflow outside any individual Ticket Run. That workflow could continuously
+observe the repository's production pipelines, determine whether merged work
+is progressing through required deployment targets, and create new repair
+Tickets when a release is stuck or failed. It would own release health across
+many merged Tickets rather than extending one Run's lifetime or retroactively
+changing a done Ticket.
 
-No automated revert, rollback, or fix-forward design is required for that
-decision. If deployment observation is included and fails, the initial model
-can simply end the Run and Ticket as failed without prescribing remediation.
+The candidate future release outcomes remain:
+
+- `deployed`: every production target selected for a release completed
+  successfully;
+- `deployment_not_required`: the canonical change classifier selected no
+  production target, rather than a deployment being skipped by failure;
+- `failed`: a required build, test, or selected production deployment failed;
+- `unobserved`: no authoritative terminal release outcome was available.
+
+If that version is designed, it must define a cumulative release boundary so a
+newer `main` run that replaces an older pending run cannot strand the older
+commit's build or deployment work. The proposed terminal release verdict and
+polling protocol are notes for that future design, not v0 requirements. No
+automated revert, rollback, or fix-forward policy is part of v0.
 
 ### Retry-policy values
 
