@@ -107,26 +107,10 @@ function Snapshot({
         </section>
       )}
       <header className="console-header">
-        <div>
-          <h1>Software Factory</h1>
-          <p className="subtitle">Read-only operational console</p>
-        </div>
-        <dl>
-          <div>
-            <dt>Factory</dt>
-            <dd>
-              <span className={factory.paused ? "pill pill-blocked" : "pill pill-done"}>
-                {factory.paused ? "Paused" : "Running"}
-              </span>
-            </dd>
-          </div>
-          <div>
-            <dt>In flight</dt>
-            <dd>
-              {factory.maxInFlight - dispatcher.freeSlots} / {factory.maxInFlight}
-            </dd>
-          </div>
-        </dl>
+        <h1>The Software Factory</h1>
+        <span className={factory.paused ? "pill pill-blocked" : "pill pill-done"}>
+          {factory.paused ? "Paused" : "Running"}
+        </span>
       </header>
       <main className="console-grid">
         <section aria-labelledby="in-flight-heading">
