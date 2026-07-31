@@ -31,7 +31,7 @@ const ticket = (id: number, title: string, state: string) => ({
   createdAt: "2026-07-31T10:00:00Z",
   updatedAt: "2026-07-31T11:00:00Z",
 });
-const meta = { component: Console } satisfies Meta<typeof Console>;
+const meta = { component: Console, tags: ["autodocs"] } satisfies Meta<typeof Console>;
 export default meta;
 type Story = StoryObj<typeof meta>;
 
