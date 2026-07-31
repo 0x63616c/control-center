@@ -839,6 +839,36 @@ func TestCreateSandboxTellsTheSandboxWhichBranchToPush(t *testing.T) {
 	}
 }
 
+func TestCreateSandboxTellsTheSandboxWhichBranchToPushOnTheTicketBackedPipeline(t *testing.T) {
+	t.Parallel()
+
+	// #603: CreateSandbox is the one activity both pipelines share, so
+	// TicketBacked is what has to steer SF_BRANCH toward
+	// FactoryTicketBranchName's branch instead of BranchName's — the branch
+	// factoryImplementReviewLoop actually asks GitHub about. Getting this wrong
+	// is exactly how the Ticket-backed pipeline's first production run failed
+	// to open a pull request: `implement` pushed one branch and the workflow
+	// asked GitHub about another, and GitHub rejected the head ref outright.
+	pods := &fakePods{}
+	d := deps()
+	d.Pods = pods
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.CreateSandbox)
+
+	if _, err := e.ExecuteActivity(a.CreateSandbox, CreateSandboxInput{
+		TicketNumber: 1, RunID: "run-1", RunTimeout: 5 * time.Hour, TicketBacked: true,
+	}); err != nil {
+		t.Fatalf("CreateSandbox: %v", err)
+	}
+
+	want := work.FactoryTicketBranchName(1, "run-1")
+	if got := pods.created[0].Env[work.SandboxBranchEnv]; got != want {
+		t.Fatalf("%s = %q, want %q (the Ticket-backed branch, not %q)",
+			work.SandboxBranchEnv, got, want, work.BranchName(1, "run-1"))
+	}
+}
+
 // --- clone -------------------------------------------------------------
 
 func TestCloneRepoMintsACredentialAndPassesItToTheCloner(t *testing.T) {

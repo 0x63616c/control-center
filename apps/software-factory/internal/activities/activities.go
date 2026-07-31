@@ -336,6 +336,16 @@ type CreateSandboxInput struct {
 	// passed rather than derived because the pod's deadline is deploy config
 	// and the timeout is run policy, and this is the one place both are known.
 	RunTimeout time.Duration
+
+	// TicketBacked selects which pipeline's branch-naming scheme SF_BRANCH gets
+	// baked with: false (the zero value) is the GitHub-issue-backed pipeline
+	// (WorkTicket), true is the Ticket-backed pipeline (ADR-0012,
+	// FactoryWorkTicket). CreateSandbox is the one activity both pipelines
+	// share, so this is the one field that tells it which of SandboxTemplate's
+	// two Spec methods computes a branch its own workflow will actually push
+	// to and later ask GitHub about. See SpecForFactoryTicket's doc comment
+	// for what a wrong answer here does (#603).
+	TicketBacked bool
 }
 
 // CreateSandbox creates the pod this run's stages execute in.
@@ -364,7 +374,11 @@ func (a *Activities) CreateSandbox(ctx context.Context, in CreateSandboxInput) (
 		return "", fail(ctx, fmt.Sprintf("fetching the codex credential for ticket #%d's sandbox", in.TicketNumber), err)
 	}
 
-	id, err := a.deps.Pods.Create(ctx, a.deps.Sandbox.Spec(in.TicketNumber, in.RunID), credential)
+	spec := a.deps.Sandbox.Spec(in.TicketNumber, in.RunID)
+	if in.TicketBacked {
+		spec = a.deps.Sandbox.SpecForFactoryTicket(int64(in.TicketNumber), in.RunID)
+	}
+	id, err := a.deps.Pods.Create(ctx, spec, credential)
 	if err != nil {
 		return "", fail(ctx, fmt.Sprintf("creating the sandbox for ticket #%d", in.TicketNumber), err)
 	}

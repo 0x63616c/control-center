@@ -157,7 +157,8 @@ func (t SandboxTemplate) Validate() error {
 	return nil
 }
 
-// Spec returns the pod spec for one run's sandbox.
+// Spec returns the pod spec for one run's sandbox on the GitHub-issue-backed
+// pipeline (WorkTicket).
 //
 // The branch is derived here rather than passed in, so the name the sandbox
 // pushes to and the name the worker later queries GitHub for come from one
@@ -167,11 +168,39 @@ func (t SandboxTemplate) Validate() error {
 // workflow.CreateSession names must be the exact same computation, not two
 // call sites that happen to agree today.
 func (t SandboxTemplate) Spec(ticketNumber int, runID string) SandboxSpec {
+	return t.spec(ticketNumber, runID, BranchName(ticketNumber, runID))
+}
+
+// SpecForFactoryTicket returns the pod spec for one run's sandbox on the
+// Ticket-backed pipeline (ADR-0012, FactoryWorkTicket) — identical to Spec,
+// except SF_BRANCH names FactoryTicketBranchName's branch rather than
+// BranchName's.
+//
+// This is #603: CreateSandbox is the one shared activity both pipelines call
+// (ADR-0012's "same sandbox, session and stage machinery, reused unchanged"),
+// but until this method existed it always baked BranchName's legacy branch
+// into SF_BRANCH regardless of which pipeline was asking. A Ticket-backed run
+// pushed its work to that legacy branch while its own workflow loop asked
+// GitHub to open a pull request against FactoryTicketBranchName's branch —
+// which nothing had ever pushed — so GitHub's create-PR call rejected the
+// head ref as unresolvable (422 Field:head Code:invalid). Two independent
+// computations of "the branch" is exactly the drift Spec's own doc comment
+// warns about; this keeps it to one call per pipeline instead of one call
+// that silently assumed there was only one pipeline.
+func (t SandboxTemplate) SpecForFactoryTicket(ticketID int64, runID string) SandboxSpec {
+	ticketNumber := int(ticketID)
+	return t.spec(ticketNumber, runID, FactoryTicketBranchName(ticketID, runID))
+}
+
+// spec is Spec and SpecForFactoryTicket's shared builder, parameterised only
+// by which branch-naming scheme the caller already resolved — everything else
+// about the pod is identical between the two pipelines.
+func (t SandboxTemplate) spec(ticketNumber int, runID, branch string) SandboxSpec {
 	env := make(map[string]string, len(t.Env)+2)
 	for k, v := range t.Env {
 		env[k] = v
 	}
-	env[SandboxBranchEnv] = BranchName(ticketNumber, runID)
+	env[SandboxBranchEnv] = branch
 	env[SandboxTaskQueueEnv] = SandboxTaskQueue(runID)
 	return SandboxSpec{
 		TicketNumber:    ticketNumber,

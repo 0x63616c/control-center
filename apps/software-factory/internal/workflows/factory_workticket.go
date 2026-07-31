@@ -130,6 +130,11 @@ func (r *factoryTicketRun) execute(ctx workflow.Context) (FactoryWorkTicketResul
 		TicketNumber: int(r.in.TicketID),
 		RunID:        r.runID,
 		RunTimeout:   r.in.Policy.RunTimeout,
+		// This run's sandbox must be told to push and to be asked about
+		// FactoryTicketBranchName's branch, not BranchName's — the branch this
+		// same run's factoryImplementReviewLoop opens its pull request against.
+		// See CreateSandboxInput.TicketBacked and SpecForFactoryTicket (#603).
+		TicketBacked: true,
 	}
 	if err := workflow.ExecuteActivity(control, acts.CreateSandbox, create).Get(ctx, &r.sandbox); err != nil {
 		return FactoryWorkTicketResult{Outcome: work.OutcomeFailed}, err
