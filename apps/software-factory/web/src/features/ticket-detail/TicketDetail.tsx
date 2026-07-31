@@ -1,6 +1,8 @@
 import type { TicketSummary } from "@/api/generated";
+import { StatePill } from "@/components/StatePill";
 import { RunList } from "@/features/ticket-detail/RunList";
 import type { TicketDetailState } from "@/features/ticket-detail/useTicketDetail";
+import { temporalTicketUrl } from "@/lib/temporal";
 
 // Presentational only, driven by the discriminated union useTicketDetail
 // produces — Storybook and tests exercise every state without a network.
@@ -17,16 +19,22 @@ export function TicketDetail({ state }: { state: TicketDetailState }) {
     case "ready":
       return (
         <article data-testid="ticket-detail">
-          <header>
+          <header className="ticket-head">
             <h1>
               #{state.ticket.id} {state.ticket.title}
             </h1>
-            <p>
-              <strong>{state.ticket.state}</strong>
-              {state.ticket.state === "open" && (state.ticket.ready ? " · ready" : " · blocked")}
-            </p>
+            <StatePill ticket={state.ticket} />
+            <span className="spacer" />
+            <a
+              className="temporal-link"
+              href={temporalTicketUrl(state.ticket.id)}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Temporal ↗
+            </a>
           </header>
-          <p>{state.ticket.body}</p>
+          <p className="ticket-body">{state.ticket.body}</p>
           <DependencyList title="Blocked by" tickets={state.ticket.blockers} />
           <DependencyList title="Blocks" tickets={state.ticket.blocks} />
           <section>
@@ -42,13 +50,15 @@ function DependencyList({ title, tickets }: { title: string; tickets: TicketSumm
   const list = tickets ?? [];
   if (list.length === 0) return null;
   return (
-    <section>
+    <section className="ticket-deps">
       <h3>{title}</h3>
       <ul>
         {list.map((ticket) => (
           <li key={ticket.id}>
-            #{ticket.id} {ticket.title} — {ticket.state}
-            {ticket.state === "open" && (ticket.ready ? " (ready)" : " (blocked)")}
+            <a href={`#/tickets/${ticket.id}`}>
+              #{ticket.id} {ticket.title}
+            </a>{" "}
+            <StatePill ticket={ticket} />
           </li>
         ))}
       </ul>

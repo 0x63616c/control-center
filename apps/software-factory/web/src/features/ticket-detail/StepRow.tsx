@@ -18,14 +18,16 @@ export function StepRow({
 }) {
   const attempts = step.attempts ?? [];
   return (
-    <div data-testid="step-row">
-      <p>
-        <strong>{step.stage}</strong> · turn {step.turn} ·{" "}
-        {formatDuration(step.startedAt, step.endedAt)}
-        {attempts.length > 1 && ` · ${attempts.length} attempts`}
-      </p>
-      <p>Usage: {formatUsage(step.usage)}</p>
-      <ul>
+    <div className="step-row" data-testid="step-row">
+      <div className="row-line">
+        <strong>{step.stage}</strong>
+        <span className="row-meta">
+          · turn {step.turn} · {formatDuration(step.startedAt, step.endedAt)}
+          {attempts.length > 1 && ` · ${attempts.length} attempts`}
+        </span>
+      </div>
+      <p className="usage">Usage: {formatUsage(step.usage)}</p>
+      <ul className="attempt-list">
         {attempts.map((attempt) => (
           <li key={attempt.attemptNo}>
             <AttemptRow

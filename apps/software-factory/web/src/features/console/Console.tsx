@@ -1,4 +1,6 @@
 import type { ConsoleResponse } from "@/api/generated";
+import { StatePill, ticketStatus } from "@/components/StatePill";
+import { temporalTicketUrl } from "@/lib/temporal";
 
 export type ConsoleState =
   | { kind: "loading" }
@@ -6,13 +8,26 @@ export type ConsoleState =
   | { kind: "ready"; snapshot: ConsoleResponse }
   | { kind: "refetch-error"; message: string; snapshot: ConsoleResponse };
 
+type Ticket = NonNullable<ConsoleResponse["tickets"]>[number];
+
 function age(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
   return `${Math.floor(seconds / 3600)}h`;
 }
 
-function ticketBlockers(ticket: NonNullable<ConsoleResponse["tickets"]>[number]) {
+// The state the machine is actively responsible for comes first; terminal
+// states last, so the top of the board is always the live work.
+const STATE_ORDER: Record<string, number> = {
+  working: 0,
+  review: 1,
+  ready: 2,
+  blocked: 3,
+  failed: 4,
+  done: 5,
+};
+
+function ticketBlockers(ticket: Ticket) {
   if (ticket.state !== "open" || ticket.ready || !ticket.blockers?.length) return null;
   const failed = ticket.blockers.filter((blocker) => blocker.state === "failed");
   return (
@@ -29,13 +44,29 @@ function ticketBlockers(ticket: NonNullable<ConsoleResponse["tickets"]>[number])
         {ticket.blockers.map((blocker) => (
           <li key={blocker.id}>
             <a href={`#ticket-${blocker.id}`}>
-              Ticket {blocker.id}: {blocker.title}
+              #{blocker.id} {blocker.title}
             </a>{" "}
-            <span className={`ticket-state ticket-state-${blocker.state}`}>{blocker.state}</span>
+            <StatePill ticket={blocker} />
           </li>
         ))}
       </ul>
     </div>
+  );
+}
+
+// Working, review and failed Tickets have (or had) a live workflow worth a
+// direct Temporal link; open/done ones do not.
+function temporalLink(ticket: Ticket) {
+  if (!["working", "review", "failed"].includes(ticket.state)) return null;
+  return (
+    <a
+      className="temporal-link"
+      href={temporalTicketUrl(ticket.id)}
+      target="_blank"
+      rel="noreferrer"
+    >
+      Temporal ↗
+    </a>
   );
 }
 
@@ -47,7 +78,9 @@ function Snapshot({
   readonly unconfirmedMessage?: string;
 }) {
   const { factory, dispatcher } = snapshot;
-  const tickets = snapshot.tickets ?? [];
+  const tickets = [...(snapshot.tickets ?? [])].sort(
+    (a, b) => (STATE_ORDER[ticketStatus(a)] ?? 9) - (STATE_ORDER[ticketStatus(b)] ?? 9),
+  );
   const inFlight = dispatcher.inFlight ?? [];
   const candidates = dispatcher.candidates ?? [];
   return (
@@ -83,16 +116,22 @@ function Snapshot({
       <header className="console-header">
         <div>
           <h1>Software Factory</h1>
-          <p>Read-only operational console</p>
+          <p className="subtitle">Read-only operational console</p>
         </div>
         <dl>
           <div>
             <dt>Factory</dt>
-            <dd>{factory.paused ? "Paused" : "Running"}</dd>
+            <dd>
+              <span className={factory.paused ? "pill pill-blocked" : "pill pill-done"}>
+                {factory.paused ? "Paused" : "Running"}
+              </span>
+            </dd>
           </div>
           <div>
-            <dt>Max in flight</dt>
-            <dd>{factory.maxInFlight}</dd>
+            <dt>In flight</dt>
+            <dd>
+              {factory.maxInFlight - dispatcher.freeSlots} / {factory.maxInFlight}
+            </dd>
           </div>
         </dl>
       </header>
@@ -101,14 +140,18 @@ function Snapshot({
           <h2 id="in-flight-heading">In flight</h2>
           <p className="section-note">Legacy dispatcher Issues</p>
           {inFlight.length === 0 ? (
-            <p>Nothing in flight.</p>
+            <p className="section-empty">Nothing in flight.</p>
           ) : (
             <ol className="console-list">
               {inFlight.map((item) => (
                 <li key={`${item.issueNumber}-${item.runID}`}>
-                  <strong>Issue #{item.issueNumber}</strong>
-                  <span>Run {item.runID}</span>
-                  <span>Started {item.startedAt}</span>
+                  <div className="row-line">
+                    <strong>Issue #{item.issueNumber}</strong>
+                    <span className="pill pill-working">running</span>
+                  </div>
+                  <span className="row-meta">
+                    Run {item.runID} · started {item.startedAt}
+                  </span>
                 </li>
               ))}
             </ol>
@@ -116,7 +159,7 @@ function Snapshot({
         </section>
         <section aria-labelledby="next-heading">
           <h2 id="next-heading">Next</h2>
-          <p>
+          <p className="section-note">
             {dispatcher.freeSlots} free {dispatcher.freeSlots === 1 ? "slot" : "slots"} · last
             dispatcher write {age(dispatcher.ageSeconds)} ago
           </p>
@@ -126,32 +169,39 @@ function Snapshot({
             </p>
           )}
           {candidates.length === 0 ? (
-            <p>No eligible Issues queued by the dispatcher.</p>
+            <p className="section-empty">No eligible Issues queued by the dispatcher.</p>
           ) : (
             <ol className="console-list">
               {candidates.map((issueNumber) => (
-                <li key={issueNumber}>Issue #{issueNumber}</li>
+                <li key={issueNumber}>
+                  <div className="row-line">
+                    <strong>Issue #{issueNumber}</strong>
+                    <span className="pill pill-open">queued</span>
+                  </div>
+                </li>
               ))}
             </ol>
           )}
         </section>
-        <section className="console-worked" aria-labelledby="worked-heading">
-          <h2 id="worked-heading">Worked</h2>
-          <p className="section-note">Factory Tickets by recorded state</p>
+        <section className="console-tickets" aria-labelledby="tickets-heading">
+          <h2 id="tickets-heading">Tickets</h2>
+          <p className="section-note">Every factory Ticket, live work first</p>
           {tickets.length === 0 ? (
-            <p>No Tickets have been recorded.</p>
+            <p className="section-empty">No Tickets have been recorded.</p>
           ) : (
             <ol className="console-list">
               {tickets.map((ticket) => (
                 <li id={`ticket-${ticket.id}`} key={ticket.id}>
-                  <strong>
-                    <a href={`#/tickets/${ticket.id}`}>
-                      Ticket {ticket.id}: {ticket.title}
-                    </a>
-                  </strong>
-                  <span className={`ticket-state ticket-state-${ticket.state}`}>
-                    {ticket.state}
-                  </span>
+                  <div className="row-line">
+                    <strong>
+                      <a href={`#/tickets/${ticket.id}`}>
+                        #{ticket.id} {ticket.title}
+                      </a>
+                    </strong>
+                    <StatePill ticket={ticket} />
+                    <span className="spacer" />
+                    {temporalLink(ticket)}
+                  </div>
                   {ticketBlockers(ticket)}
                 </li>
               ))}

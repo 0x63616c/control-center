@@ -33,9 +33,11 @@ function ConsoleRoute() {
 
 function TicketDetailRoute({ ticketId }: { readonly ticketId: number }) {
   return (
-    <main>
+    <main className="ticket-page">
       <p>
-        <a href="#/">← Back to console</a>
+        <a className="back-link" href="#/">
+          ← Back to console
+        </a>
       </p>
       <TicketDetail state={useTicketDetail(ticketId)} />
     </main>
