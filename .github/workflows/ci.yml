@@ -459,8 +459,9 @@ jobs:
   # simply never deployed. The only cost is building images for the ~9% of
   # pushes that fail — they are content-addressed and otherwise inert.
   # Each build-* job builds its Dockerfile ONCE, linux/amd64 only, on a native
-  # ubuntu-24.04 runner, and pushes the final tags directly (…:<sha>, plus
-  # …:main on main). The arm64 leg and the merge-* manifest-index jobs were
+  # ubuntu-24.04 runner. Main pushes the final tags directly (…:<sha>, plus
+  # …:main); pull requests build without registry credentials or image pushes.
+  # The arm64 leg and the merge-* manifest-index jobs were
   # dropped when the arm64 Mac mini was retired (2026-07-25) — the home-server
   # Talos node is x86 and is the only deploy target. No setup-qemu-action
   # anywhere: the runner is native, so bun builds never emulate.
@@ -469,7 +470,7 @@ jobs:
     if: needs.changes.outputs.web == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    environment: prod
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'ci' }}
     steps:
       - uses: actions/checkout@v5
 
@@ -498,7 +499,7 @@ jobs:
     if: needs.changes.outputs.manage == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    environment: prod
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'ci' }}
     steps:
       - uses: actions/checkout@v5
 
@@ -517,7 +518,7 @@ jobs:
     if: needs.changes.outputs.api == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    environment: prod
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'ci' }}
     steps:
       - uses: actions/checkout@v5
 
@@ -538,7 +539,7 @@ jobs:
     if: needs.changes.outputs.worker == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    environment: prod
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'ci' }}
     steps:
       - uses: actions/checkout@v5
 
@@ -557,7 +558,7 @@ jobs:
     if: needs.changes.outputs.temporalworker == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    environment: prod
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'ci' }}
     steps:
       - uses: actions/checkout@v5
 
@@ -576,7 +577,7 @@ jobs:
     if: needs.changes.outputs.mapprovision == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    environment: prod
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'ci' }}
     steps:
       - uses: actions/checkout@v5
 
@@ -600,7 +601,7 @@ jobs:
     if: needs.changes.outputs.softwarefactory == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    environment: prod
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'ci' }}
     steps:
       - uses: actions/checkout@v5
 
@@ -619,7 +620,7 @@ jobs:
     if: needs.changes.outputs.softwarefactory == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    environment: prod
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'ci' }}
     steps:
       - uses: actions/checkout@v5
 
@@ -654,7 +655,7 @@ jobs:
     if: needs.changes.outputs.softwarefactory == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    environment: prod
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'ci' }}
     steps:
       - uses: actions/checkout@v5
       - name: Build and push webhook relay image
@@ -671,7 +672,7 @@ jobs:
     if: needs.changes.outputs.softwarefactory == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    environment: prod
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'ci' }}
     steps:
       - uses: actions/checkout@v5
       - name: Build and push software-factory API image
@@ -693,7 +694,7 @@ jobs:
     if: needs.changes.outputs.softwarefactoryweb == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    environment: prod
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'ci' }}
     steps:
       - uses: actions/checkout@v5
 

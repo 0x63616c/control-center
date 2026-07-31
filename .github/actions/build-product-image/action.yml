@@ -1,5 +1,5 @@
 name: Build and push product image (amd64)
-description: Reusable amd64 product image build for CI, with shared GHCR auth/login + Buildx cache settings. Pushes the final tags directly (`:<sha>`, plus `:main` on the main branch) - there is no per-arch child tag and no manifest-merge job, because the only deploy target (the home-server Talos node) is x86.
+description: Reusable amd64 product image build for CI, with shared GHCR auth/login + Buildx cache settings. Main pushes the final tags directly (`:<sha>`, plus `:main`); pull requests build without registry credentials or image pushes. There is no per-arch child tag or manifest-merge job because the only deploy target (the home-server Talos node) is x86.
 inputs:
   image:
     description: Full image repository name without registry, e.g. www-control-center-web
@@ -37,6 +37,7 @@ runs:
       uses: docker/setup-buildx-action@v4
 
     - name: Log in to GHCR
+      if: github.ref_name == 'main'
       uses: ./.github/actions/ghcr-login
       env:
         SOPS_AGE_KEY: ${{ env.SOPS_AGE_KEY }}
@@ -49,7 +50,7 @@ runs:
         # Native amd64 runner, never QEMU-emulated: the home-server Talos node is
         # x86 and is the only deploy target (the arm64 mini was retired 2026-07-25).
         platforms: linux/amd64
-        push: true
+        push: ${{ github.ref_name == 'main' }}
         build-args: ${{ inputs.build-args }}
         tags: ${{ steps.tags.outputs.tags }}
         cache-from: type=gha,scope=${{ inputs.cache-scope }}
