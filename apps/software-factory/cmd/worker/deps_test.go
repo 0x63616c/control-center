@@ -66,7 +66,7 @@ func TestBuildDepsSatisfiesActivitiesNew(t *testing.T) {
 		(*transcripts.Sink)(nil),
 		renderer,
 		telemetry.NewMetrics(prometheus.NewRegistry()),
-		nil, // client.Client: runs.New only stores it, it is never dialled here
+		nil, // temporal.Client: runs.New only stores it, it is never dialled here
 		(*codexauth.Source)(nil),
 		(*store.Store)(nil),
 		clocktest.NewFake(time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)),

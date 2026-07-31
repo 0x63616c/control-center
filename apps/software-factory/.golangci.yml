@@ -102,6 +102,17 @@ linters:
             - pkg: github.com/google/go-github
               desc: "GitHub SDK types are sealed in internal/clients/github (SoftwareStyle: no leaky abstractions)"
 
+        # Temporal client construction and SDK types have one boundary. A dial site that
+        # misses the payload converter can write histories its own worker cannot decode,
+        # so this must be a wall rather than a convention reviewers have to remember.
+        temporal-client-is-sealed:
+          files:
+            - "**/*.go"
+            - "!**/internal/clients/temporal/**"
+          deny:
+            - pkg: go.temporal.io/sdk/client
+              desc: "Temporal client construction and SDK types are sealed in internal/clients/temporal"
+
         # storedb holds exactly what sqlc generates: pgx-flavoured row types and
         # the SQL. internal/store wraps storedb into the store's own domain
         # types (Ticket, Run, Attempt, ...), so it alone may import storedb.
