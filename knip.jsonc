@@ -25,8 +25,13 @@
     // (Slice 5 flips runtime consumers), and generated files are opaque to the
     // dead-code detector just as they are to biome (`.gen.ts` is ignored there too).
     "features/_generated/**",
-    // Factory console scaffolding is generator input/output until the SPA lands.
-    "apps/software-factory/web/orval.config.js",
+    // Generated output, never hand-edited (#553). knip already sees
+    // orval.config.js's edge via the "generate:api" package.json script, so it
+    // needs no ignore entry of its own. generated.ts exports the whole API
+    // surface, most of which has no console page yet (the ticket list and run
+    // detail land in follow-up tickets) , the same "public surface with no
+    // consumer yet" shape as the @public tag above, just for a file knip
+    // cannot annotate a tag onto.
     "apps/software-factory/web/src/api/generated.ts",
     // A HEADLESS App's manifest (#126). Manifests are collected by a build-time
     // glob in scripts/apps-gen.ts, not imported, so the only edge knip can see is
@@ -174,6 +179,11 @@
       // are declared so the generator exports they exercise aren't read as dead.
       "entry": ["e2e/**/*.spec.ts", "test/**/*.test.ts"],
       "ignore": ["extension/**"]
+    },
+    "apps/software-factory/web": {
+      // main.tsx/index.html and *.stories.tsx are auto-detected via the vite
+      // and storybook plugins; colocated *.test.tsx are picked up from
+      // vitest.config.ts's test.include. Nothing else needs declaring yet.
     },
     "apps/web": {
       // Guest portal entry (vite.portal.config.ts -> portal.html -> this file)

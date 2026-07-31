@@ -91,10 +91,6 @@ export interface MaxInFlightInputBody {
   maxInFlight: number;
 }
 
-type AwaitedInput<T> = PromiseLike<T> | T;
-
-type Awaited<O> = O extends AwaitedInput<infer T> ? T : never;
-
 /**
  * @summary Get v1 build
  */

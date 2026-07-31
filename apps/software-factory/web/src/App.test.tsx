@@ -1,0 +1,49 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor } from "@testing-library/react";
+import axios from "axios";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { App } from "@/App";
+
+// Only the transport is a test double. Everything above it , the generated
+// hook, the query wiring, the App component , is the real production chain
+// (#553 acceptance 4: Go type -> OpenAPI -> Orval -> React, no hand-written
+// fetch, no fixture endpoint of our own).
+vi.mock("axios");
+
+function renderWithClient() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>,
+  );
+}
+
+afterEach(() => {
+  vi.resetAllMocks();
+});
+
+describe("App", () => {
+  it("renders the build version returned by the generated client", async () => {
+    vi.mocked(axios.get).mockResolvedValueOnce({ data: { version: "abc1234" } });
+
+    renderWithClient();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("build-status")).toHaveTextContent("abc1234");
+    });
+    expect(axios.get).toHaveBeenCalledWith("/v1/build", expect.anything());
+  });
+
+  it("shows an honest error instead of fake data when the API is unreachable", async () => {
+    vi.mocked(axios.get).mockRejectedValueOnce(new Error("Network Error"));
+
+    renderWithClient();
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("Network Error");
+    });
+  });
+});
