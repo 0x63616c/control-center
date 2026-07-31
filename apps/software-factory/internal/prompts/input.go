@@ -2,6 +2,7 @@ package prompts
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
@@ -11,8 +12,25 @@ import (
 // the ticket and fence nonce every stage gets already. One type per stage:
 // the contract is what the type declares, not an entry in a lookup table.
 type stageInput interface {
-	// templateValues returns this stage's own template placeholder values.
+	// templateValues returns this stage's own handoff DOCUMENTS, keyed by
+	// template placeholder. Every entry must be interpolated inside a
+	// document fence in that stage's template: checkFence counts the fences
+	// in the rendered prompt against len(templateValues), so a value added
+	// here and left unfenced is a refused render rather than untrusted prose
+	// reaching a model bare. Anything that is not a prior stage's document
+	// belongs in scalarValues.
 	templateValues() (map[string]string, error)
+
+	// scalarValues returns this stage's own non-document placeholders —
+	// numbers and other values this system computed itself, which are not
+	// fenced because there is nothing untrusted about them. Nil is the normal
+	// answer; only review has any today.
+	//
+	// The split exists so that the fence count stays exactly the document
+	// count. Before it, every stage value was assumed to be a document, and
+	// adding a plain number to a template failed the render with a fence-count
+	// error that described a security hole that was not there.
+	scalarValues() map[string]string
 }
 
 // missingPrior is the error every stageInput returns when the earlier
@@ -26,6 +44,8 @@ type planInput struct{}
 func (planInput) templateValues() (map[string]string, error) {
 	return map[string]string{}, nil
 }
+
+func (planInput) scalarValues() map[string]string { return nil }
 
 // implementInput is what one implement turn's prompt is rendered from: the
 // plan every turn reads, plus two documents that only exist from the second
@@ -64,6 +84,8 @@ func (in implementInput) templateValues() (map[string]string, error) {
 	}, nil
 }
 
+func (implementInput) scalarValues() map[string]string { return nil }
+
 // previousImplementReportProse declares absence rather than leaving a blank
 // section: a turn that does not know it is the first has no way to tell "no
 // previous report" apart from "the previous report was lost".
@@ -89,6 +111,16 @@ type reviewInput struct {
 	// by showing a turn what the last one raised — see the pipeline-rewrite
 	// spec's "What a finding id is, and how sameness is determined."
 	PreviousReview work.StageOutput
+
+	// Ledger is every earlier review turn this run, oldest first. Where
+	// PreviousReview answers "what did the last turn say", this answers "what
+	// has this run's review already covered" — see work.PriorTurns.ReviewLedger
+	// for why review, alone among the stages, gets a whole-run memory.
+	Ledger []work.ReviewTurnRecord
+
+	// Turn is which review turn this is, 1-indexed, rendered against
+	// work.MaxReviewTurns.
+	Turn int
 }
 
 func (in reviewInput) templateValues() (map[string]string, error) {
@@ -98,7 +130,56 @@ func (in reviewInput) templateValues() (map[string]string, error) {
 	return map[string]string{
 		"implementation_report":    in.Implementation.Prose(),
 		"previous_review_findings": findingsProse(in.PreviousReview),
+		"review_ledger":            ledgerProse(in.Ledger),
 	}, nil
+}
+
+// scalarValues renders review's turn budget. Both are this system's own
+// numbers, never a document, so neither is fenced.
+func (in reviewInput) scalarValues() map[string]string {
+	return map[string]string{
+		"review_turn":      strconv.Itoa(in.Turn),
+		"max_review_turns": strconv.Itoa(work.MaxReviewTurns),
+	}
+}
+
+// ledgerProse renders every earlier review turn's findings and verified list,
+// oldest first, or declares that there is none.
+//
+// It repeats the previous turn's findings, which the prompt also shows on
+// their own under a heading of their own. That redundancy is deliberate: the
+// two sections answer different questions — "what must you keep the id of"
+// versus "what has this run's review already covered" — and a ledger with its
+// most recent entry silently missing would be the more confusing shape to
+// read. Both are bounded by work.MaxReviewTurns.
+func ledgerProse(ledger []work.ReviewTurnRecord) string {
+	if len(ledger) == 0 {
+		return "(No earlier review turns this run: this is review's first turn.)"
+	}
+
+	var b strings.Builder
+	for _, record := range ledger {
+		fmt.Fprintf(&b, "#### Review turn %d\n\nRaised:\n\n", record.Turn)
+		if len(record.Findings) == 0 {
+			b.WriteString("- (nothing)\n")
+		}
+		for _, f := range record.Findings {
+			kind := "advisory"
+			if f.Blocking {
+				kind = "blocking"
+			}
+			fmt.Fprintf(&b, "- id=%s (%s): %s\n", f.ID, kind, f.Summary)
+		}
+		b.WriteString("\nChecked and would keep:\n\n")
+		if len(record.Verified) == 0 {
+			b.WriteString("- (that turn named nothing)\n")
+		}
+		for _, v := range record.Verified {
+			fmt.Fprintf(&b, "- %s\n", v)
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 // findingsProse renders a review turn's findings as prose for a later
@@ -133,8 +214,10 @@ func findingsProse(out work.StageOutput) string {
 // time it reaches here (see PriorTurns' own doc comment for why nothing
 // wider ever crosses the activity boundary).
 //
+// turn is that stage's own 1-indexed turn number; only review reads it.
+//
 // Exhaustive, no default — matches stageTemplate.
-func buildStageInput(stage work.Stage, prior work.PriorTurns) (stageInput, error) {
+func buildStageInput(stage work.Stage, turn int, prior work.PriorTurns) (stageInput, error) {
 	switch stage {
 	case work.StagePlan:
 		return planInput{}, nil
@@ -148,6 +231,8 @@ func buildStageInput(stage work.Stage, prior work.PriorTurns) (stageInput, error
 		return reviewInput{
 			Implementation: prior.LatestImplement,
 			PreviousReview: prior.LatestReview,
+			Ledger:         prior.ReviewLedger,
+			Turn:           turn,
 		}, nil
 	}
 	return nil, fmt.Errorf("no input shape for stage %q", stage)

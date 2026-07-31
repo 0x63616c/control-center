@@ -18,20 +18,13 @@ import (
 	"go.temporal.io/sdk/workflow"
 )
 
-// The implement/review loop's two counters, and how many implement turns one
-// CI window gets before its own counter is exhausted.
-//
-// See the pipeline-rewrite spec's "The turn schedule" for the derivation:
-// maxImplementTurnsPerWindow is ci_turns' ceiling — 5 TOTAL attempts per
-// window, not 5 retries after a free first one — and maxReviewTurns is
-// review_turns' ceiling, which never resets. Together with plan's one
-// invocation they derive work.MaxStageInvocations (1 + 5*3 + 3 = 19), which
-// RunPolicy.RunBudget() and Validate() are held to; this is the other place
-// that arithmetic has to agree with it, so a change to either constant here
-// must update work.MaxStageInvocations too or the two silently disagree.
+// The implement/review loop's two counters, named locally for the loop that
+// counts against them. Both are aliases: work owns the values, because
+// work.MaxStageInvocations is derived from them and the review prompt is
+// rendered with MaxReviewTurns in it. See work.MaxReviewTurns.
 const (
-	maxImplementTurnsPerWindow = 5
-	maxReviewTurns             = 3
+	maxImplementTurnsPerWindow = work.MaxImplementTurnsPerWindow
+	maxReviewTurns             = work.MaxReviewTurns
 )
 
 // acts names the activity methods for workflow.ExecuteActivity. It is always

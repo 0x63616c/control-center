@@ -265,12 +265,30 @@ func lastOutput(outputs []work.StageOutput) work.StageOutput {
 // one stage attempt's activity input is allowed to carry — see
 // work.PriorTurns' own doc comment for why. The full history stays right
 // here, in prior, this function's argument: it never itself crosses into an
-// activity input, only the three values this returns do.
+// activity input, only the values this returns do.
+//
+// The review ledger is the one thing that travels per-turn rather than
+// latest-only, compacted to finding lists and verified lists — bounded by
+// work.MaxReviewTurns, where an implement ledger would not be. Implement's
+// history is still narrowed to its latest turn.
 func narrowPrior(prior map[work.Stage][]work.StageOutput) work.PriorTurns {
+	var ledger []work.ReviewTurnRecord
+	for i, out := range prior[work.StageReview] {
+		review, ok := out.Value().(work.ReviewOutput)
+		if !ok {
+			continue
+		}
+		ledger = append(ledger, work.ReviewTurnRecord{
+			Turn:     i + 1,
+			Findings: review.Findings,
+			Verified: review.Verified,
+		})
+	}
 	return work.PriorTurns{
 		Plan:            lastOutput(prior[work.StagePlan]),
 		LatestImplement: lastOutput(prior[work.StageImplement]),
 		LatestReview:    lastOutput(prior[work.StageReview]),
+		ReviewLedger:    ledger,
 	}
 }
 

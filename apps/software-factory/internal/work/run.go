@@ -15,19 +15,42 @@ import (
 // is a deploy that is wrong, and fails the workflow. Compare with errors.Is.
 var ErrInvalidRun = errors.New("invalid run configuration")
 
+// The implement/review loop's two turn ceilings, and the invocation total
+// they derive.
+//
+// See the pipeline-rewrite spec's "The turn schedule" for the derivation.
+// MaxImplementTurnsPerWindow is ci_turns' ceiling — 5 TOTAL attempts per CI
+// window, not 5 retries after a free first one — and MaxReviewTurns is
+// review_turns' ceiling, which never resets across the run.
+//
+// They live here, beside the arithmetic that summarises them, rather than in
+// internal/workflows where the loop counts against them. Two readers outside
+// that loop need MaxReviewTurns: MaxStageInvocations below, and the review
+// prompt, which tells a review turn which of its allotted turns this is (see
+// internal/prompts/templates/review.md — a turn that does not know it is the
+// last one cannot weigh a blocking finding against the run ending on it).
+const (
+	MaxImplementTurnsPerWindow = 5
+	MaxReviewTurns             = 3
+)
+
 // MaxStageInvocations is the most stage-activity invocations one run's
 // implement/review loop can make before its counters force it to stop —
-// derived, not asserted, in the pipeline-rewrite spec's "The turn schedule":
-// 1 `plan` (runs once) + 15 `implement` (3 CI windows of at most 5 turns
-// each, ci_turns being 5 TOTAL attempts per window, not 5 retries after a
-// free first one) + 3 `review` (review_turns, never resets) = 19.
+// derived, not asserted: 1 `plan` (runs once) + 15 `implement` (one CI window
+// per review turn, each of at most MaxImplementTurnsPerWindow turns) + 3
+// `review` (MaxReviewTurns, never resets) = 19.
 //
-// It is the one place that arithmetic lives. RunPolicy.Validate and
-// RunBudget both reference it rather than repeating "19", so a future
-// retuning of either counter's ceiling has exactly one number to change and
-// a test (TestMaxStageInvocationsMatchesTheDerivedSchedule) that fails if it
-// drifts from the counters it is supposed to summarize.
-const MaxStageInvocations = 19
+// It is the one place that arithmetic lives, and it is computed from the two
+// ceilings rather than repeating their product: RunPolicy.Validate and
+// RunBudget both reference it, so retuning either ceiling above needs no
+// second edit here. Before that it was the literal 19, and the two ceilings
+// carried a comment telling whoever changed them to remember to update it —
+// which is the class of instruction that gets forgotten exactly once.
+//
+// TestMaxStageInvocationsIsStillNineteen pins today's value, so retuning a
+// ceiling is a visible, deliberate edit rather than a silent widening of the
+// deadline ladder MaxRunDuration is derived against.
+const MaxStageInvocations = 1 + MaxImplementTurnsPerWindow*MaxReviewTurns + MaxReviewTurns
 
 // RunPolicy is the timing a WorkTicket run is held to: how long each stage
 // gets, how long it may go quiet, and how often anything is retried.

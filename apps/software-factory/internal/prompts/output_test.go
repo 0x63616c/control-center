@@ -274,3 +274,42 @@ func TestImplementAllowsAnEmptyTitleAndBodyWhenBlocked(t *testing.T) {
 		t.Errorf("got %+v, want an empty title and body on a blocked turn", value)
 	}
 }
+
+// TestDecodeReadsTheReviewsVerifiedList holds the field a later review turn
+// is shown so it does not re-litigate a file an earlier turn cleared. It is
+// optional in the schema, so both branches matter.
+func TestDecodeReadsTheReviewsVerifiedList(t *testing.T) {
+	t.Parallel()
+
+	got, err := Decode(work.StageReview, []byte(
+		`{"document":"d","findings":[],"verified":["relay.go: HMAC verified before forwarding"]}`))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	review, ok := got.Value().(work.ReviewOutput)
+	if !ok {
+		t.Fatalf("Value() is %T, want work.ReviewOutput", got.Value())
+	}
+	if len(review.Verified) != 1 || review.Verified[0] != "relay.go: HMAC verified before forwarding" {
+		t.Errorf("Verified = %+v, want the one entry the envelope carried", review.Verified)
+	}
+}
+
+// TestDecodeAcceptsAReviewThatVerifiedNothing: verified carries no control
+// flow, so a turn that omits it is not a stage that failed. Making it
+// required would turn the whole run red over a field nothing branches on.
+func TestDecodeAcceptsAReviewThatVerifiedNothing(t *testing.T) {
+	t.Parallel()
+
+	got, err := Decode(work.StageReview, []byte(`{"document":"d","findings":[]}`))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	review, ok := got.Value().(work.ReviewOutput)
+	if !ok {
+		t.Fatalf("Value() is %T, want work.ReviewOutput", got.Value())
+	}
+	if review.Verified != nil {
+		t.Errorf("Verified = %+v, want nil", review.Verified)
+	}
+}

@@ -18,14 +18,45 @@ branch this report describes.
 
 For each finding give the evidence you checked, the concrete failure it would cause, and what
 should change. Order by severity and mark which findings block the work and which are advice.
-Also name the parts you verified and would keep — that is what stops the next `implement` turn
-re-touching things that were already right. Say what the work does not cover, especially
-behaviour that would ship untested.
+Blocking is for what would be wrong to merge — behaviour that is incorrect, a hazard, or a
+place the work does not do what the issue asked. Something that is merely worth improving is
+advice, and the next `implement` turn is free to take it or leave it. Where a finding sits
+genuinely on the line, block it: this stage exists to be the careful reader, and an advisory
+finding that should have blocked is the more expensive mistake of the two.
+
+Also name the parts you verified and would keep, in the `verified` array as well as in your
+document — that is what stops the next `implement` turn re-touching things that were already
+right, and it is shown to your own later turns, which are fresh threads that cannot read this
+document. Say what the work does not cover, especially behaviour that would ship untested.
 
 Both directions are failures here. Work that reads well is not work that is correct, so
 finding nothing usually means the review was not done — but inventing findings to look
 thorough sends the next turn off to damage something that worked. If a part is genuinely fine,
 say so in a line and move on.
+
+### Report a defect class, not the instance you happened to open
+
+When a finding is one instance of a class — a claim this change made false, a check missing in
+one place that is missing in others, a call site not migrated among several — search the
+repository for every other instance before you write it up, and raise the class as **one**
+finding listing every location. Grep for the stale phrasing, the retired hostname, the old
+count, the renamed symbol. Do this before you write the finding, not after: the search is
+cheap and you are the only stage that will run it.
+
+A finding that names two files where a search would have found six is a defective finding, and
+it costs the run more than a missed defect would. The next `implement` turn fixes the two you
+named; the turn after that raises the remaining four under a fresh id; and the run spends its
+whole review budget discovering one class of defect a file at a time, terminating exhausted
+with the work almost done. That is not hypothetical — it is what happened on the run this
+instruction was added because of.
+
+### You are on turn {{review_turn}} of {{max_review_turns}}
+
+Review gets {{max_review_turns}} turns in a run and the counter never resets. On the last one,
+a blocking finding ends the run: there is no further `implement` turn, so the branch is
+abandoned as it stands rather than fixed. Weigh that. It does not lower the bar for what
+blocks — shipping something incorrect is still worse than stopping — but it does mean the last
+turn is the wrong place to discover a class of defect you could have swept for on the first.
 
 ### Findings carry an id, and it has to survive across turns
 
@@ -59,4 +90,20 @@ documentation work for a change that has no documentation or skill implication.
 
 <untrusted-prior-document-{{fence_nonce}}>
 {{previous_review_findings}}
+</untrusted-prior-document-{{fence_nonce}}>
+
+### Every earlier review turn this run
+
+What review has already covered this run, oldest turn first. The section above is the last
+turn alone, because that is what your ids are matched against; this is the whole run, so you
+can see what has been looked at before.
+
+Read the "checked and would keep" lines as an earlier turn's verdict, not as a rule you are
+bound by — a part cleared on turn 1 can still be wrong, and the change under review has moved
+since. But if you are about to raise a finding against something an earlier turn cleared, say
+in the finding why that verdict no longer holds. Three turns reaching three different verdicts
+on one file, each without acknowledging the last, is how a run exhausts its budget.
+
+<untrusted-prior-document-{{fence_nonce}}>
+{{review_ledger}}
 </untrusted-prior-document-{{fence_nonce}}>

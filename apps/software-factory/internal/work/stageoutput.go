@@ -161,6 +161,24 @@ type Finding struct {
 type ReviewOutput struct {
 	Document string
 	Findings []Finding
+
+	// Verified names the parts this turn checked and would keep, one short
+	// phrase each — a file, a symbol, a behaviour. The review prompt has
+	// always asked for this in prose; it is structured here so that a LATER
+	// review turn, which is a fresh thread that cannot read this turn's
+	// document, is shown what earlier turns already cleared.
+	//
+	// The failure it exists for is real and cost a run (#535/PR #537): review
+	// turn 1 listed packages/platform/src/index.ts under "verified and keep",
+	// and turns 2 and 3 each raised a blocking finding against a different
+	// line range of that same file. Three turns, one file, three verdicts,
+	// and the run died exhausted. A turn is still free to retract an earlier
+	// turn's verdict — it is shown the list, not bound by it — but it has to
+	// do so knowingly.
+	//
+	// Optional: a turn that omits it is not an error, since the field carries
+	// no control flow. Nothing in the workflow reads it.
+	Verified []string
 }
 
 // Prose returns the document. Findings are structured data for the workflow's

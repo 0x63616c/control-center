@@ -10,6 +10,11 @@
       "type": "string",
       "description": "The stage's whole output, as markdown. Its first line is one sentence summarising the outcome."
     },
+    "verified": {
+      "type": "array",
+      "description": "The parts you checked and would keep, one short phrase each naming the file, symbol or behaviour, e.g. \"packages/platform/src/index.ts: hooks host comment is accurate\". A later review turn is shown this list, so anything named here should not be raised as a finding by a later turn without a stated reason for the change of verdict.",
+      "items": { "type": "string" }
+    },
     "findings": {
       "type": "array",
       "description": "Every finding this turn raised. Empty when the turn found nothing to raise.",

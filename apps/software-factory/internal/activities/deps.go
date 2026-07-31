@@ -244,8 +244,15 @@ type PromptRenderer interface {
 	// state, for progress detection; it narrows to this before building an
 	// activity input, because Temporal records this input into workflow
 	// history on every single stage invocation, and the whole history would
-	// otherwise be shipped, and re-shipped, on every turn.
-	Render(stage work.Stage, detail work.TicketDetail, prior work.PriorTurns) (prompt string, schema []byte, err error)
+	// otherwise be shipped, and re-shipped, on every turn. The one bounded
+	// exception is work.PriorTurns.ReviewLedger; its own doc comment says why
+	// review can hold a whole-run memory when implement cannot.
+	//
+	// key rather than a bare stage, because a prompt can depend on WHICH turn
+	// of that stage it is: review is told it is turn N of
+	// work.MaxReviewTurns, so a turn can weigh a blocking finding against
+	// being the last turn the run will get.
+	Render(key work.StageKey, detail work.TicketDetail, prior work.PriorTurns) (prompt string, schema []byte, err error)
 
 	// Decode unwraps a stage's result envelope into the domain's StageOutput.
 	//

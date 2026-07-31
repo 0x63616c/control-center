@@ -51,6 +51,17 @@ type Input struct {
 	// Stage is the stage being rendered for.
 	Stage work.Stage
 
+	// Turn is which of that stage's own turns this is, 1-indexed — the same
+	// number work.StageKey.Turn carries, which is where callers get it.
+	//
+	// Only review renders it today, and it renders it against
+	// work.MaxReviewTurns: a review turn that cannot tell turn 1 from the
+	// last one cannot weigh a blocking finding against the run ending on it.
+	// Zero is not special-cased, because every real call site has a turn; a
+	// zero would render as "turn 0", which reads as obviously wrong rather
+	// than as plausible.
+	Turn int
+
 	// Ticket is the issue and its thread, as the issue's authors wrote them.
 	// Every field of it is attacker-controlled text and is rendered inside the
 	// fence.
@@ -159,7 +170,7 @@ func (in Input) staticValues() (map[string]string, int, error) {
 		"ticket_comments": comments(in.Ticket),
 	}
 
-	stageInput, err := buildStageInput(in.Stage, in.Prior)
+	stageInput, err := buildStageInput(in.Stage, in.Turn, in.Prior)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -168,6 +179,10 @@ func (in Input) staticValues() (map[string]string, int, error) {
 		return nil, 0, err
 	}
 	for name, value := range stageValues {
+		values[name] = value
+	}
+	// Counted separately below: only stageValues are fenced documents.
+	for name, value := range stageInput.scalarValues() {
 		values[name] = value
 	}
 	return values, len(stageValues), nil

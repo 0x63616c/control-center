@@ -235,11 +235,13 @@ type fakePrompts struct {
 	decode func(stage work.Stage, result []byte) (work.StageOutput, error)
 
 	sawStage work.Stage
+	sawKey   work.StageKey
 	sawPrior work.PriorTurns
 }
 
-func (f *fakePrompts) Render(stage work.Stage, _ work.TicketDetail, prior work.PriorTurns) (string, []byte, error) {
-	f.sawStage = stage
+func (f *fakePrompts) Render(key work.StageKey, _ work.TicketDetail, prior work.PriorTurns) (string, []byte, error) {
+	f.sawStage = key.Stage
+	f.sawKey = key
 	f.sawPrior = prior
 	return f.prompt, f.schema, f.err
 }
@@ -1106,6 +1108,12 @@ func TestRunImplementHandsEveryPriorTurnToTheRenderer(t *testing.T) {
 	// carried only one could not render either at once.
 	if prompts.sawStage != work.StageImplement {
 		t.Fatalf("renderer saw stage %q", prompts.sawStage)
+	}
+	// The WHOLE key, not only its stage: review's prompt is rendered with the
+	// turn number in it ("turn 2 of 3"), so a seam that dropped Turn would
+	// render every review turn as turn zero and no other test would notice.
+	if want := (work.StageKey{Ticket: 328, RunID: "run-1", Stage: work.StageImplement, Turn: 2}); prompts.sawKey != want {
+		t.Fatalf("renderer saw key %+v, want %+v", prompts.sawKey, want)
 	}
 	if prompts.sawPrior.Plan.Prose() != "the plan" {
 		t.Fatalf("renderer saw prior plan %q, want %q", prompts.sawPrior.Plan.Prose(), "the plan")

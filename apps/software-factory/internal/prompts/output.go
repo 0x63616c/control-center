@@ -46,10 +46,17 @@ type findingEnvelope struct {
 }
 
 // reviewEnvelope is codex's wire shape for the review stage: its document,
-// plus every finding it raised.
+// every finding it raised, and what it checked and would keep.
+//
+// Verified is optional where document and findings are required, because it
+// carries no control flow: a turn that omits it has told a later turn
+// nothing, which is the same position every turn was in before the field
+// existed. Findings are what the workflow steers on and are required by the
+// schema.
 type reviewEnvelope struct {
 	Document json.RawMessage   `json:"document"`
 	Findings []findingEnvelope `json:"findings"`
+	Verified []string          `json:"verified"`
 }
 
 // decodeDocumentEnvelope reads a stage's result envelope and returns the one
@@ -154,37 +161,37 @@ func decodeImplementEnvelope(result []byte) (report string, blocked bool, blocke
 // finding present must carry a non-empty id: sameness across turns is exact
 // string equality on it (see work.ReviewOutput), and an empty id would make
 // every such finding compare equal to every other.
-func decodeReviewEnvelope(result []byte) (document string, findings []work.Finding, err error) {
+func decodeReviewEnvelope(result []byte) (document string, findings []work.Finding, verified []string, err error) {
 	var envelope reviewEnvelope
 
 	decoder := json.NewDecoder(bytes.NewReader(result))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&envelope); err != nil {
-		return "", nil, fmt.Errorf("reading the stage's result envelope: %w", err)
+		return "", nil, nil, fmt.Errorf("reading the stage's result envelope: %w", err)
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return "", nil, fmt.Errorf("the stage's result holds more than one envelope; only its final message is its output")
+		return "", nil, nil, fmt.Errorf("the stage's result holds more than one envelope; only its final message is its output")
 	}
 	if envelope.Document == nil {
-		return "", nil, fmt.Errorf("the stage's result has no document field: it returned something other than the envelope it was given")
+		return "", nil, nil, fmt.Errorf("the stage's result has no document field: it returned something other than the envelope it was given")
 	}
 	if string(envelope.Document) == "null" {
-		return "", nil, fmt.Errorf("the stage's result sets document to null: it answered in the envelope and put nothing in it")
+		return "", nil, nil, fmt.Errorf("the stage's result sets document to null: it answered in the envelope and put nothing in it")
 	}
 	if err := json.Unmarshal(envelope.Document, &document); err != nil {
-		return "", nil, fmt.Errorf("reading the stage's document out of its result envelope: %w", err)
+		return "", nil, nil, fmt.Errorf("reading the stage's document out of its result envelope: %w", err)
 	}
 	if strings.TrimSpace(document) == "" {
-		return "", nil, fmt.Errorf("the stage returned an empty document: it produced no handoff at all")
+		return "", nil, nil, fmt.Errorf("the stage returned an empty document: it produced no handoff at all")
 	}
 
 	for i, f := range envelope.Findings {
 		if strings.TrimSpace(f.ID) == "" {
-			return "", nil, fmt.Errorf("finding %d has no id: sameness across turns is exact string equality on it, and an empty id cannot be compared", i)
+			return "", nil, nil, fmt.Errorf("finding %d has no id: sameness across turns is exact string equality on it, and an empty id cannot be compared", i)
 		}
 		findings = append(findings, work.Finding{ID: f.ID, Blocking: f.Blocking, Summary: f.Summary})
 	}
-	return document, findings, nil
+	return document, findings, envelope.Verified, nil
 }
 
 // Decode reads a stage's result envelope — codex's answer to
@@ -218,11 +225,13 @@ func Decode(stage work.Stage, result []byte) (work.StageOutput, error) {
 			Report: report, Blocked: blocked, BlockedReason: blockedReason, Title: title, Body: body,
 		}), nil
 	case work.StageReview:
-		document, findings, err := decodeReviewEnvelope(result)
+		document, findings, verified, err := decodeReviewEnvelope(result)
 		if err != nil {
 			return work.StageOutput{}, err
 		}
-		return work.NewStageOutput(stage, work.ReviewOutput{Document: document, Findings: findings}), nil
+		return work.NewStageOutput(stage, work.ReviewOutput{
+			Document: document, Findings: findings, Verified: verified,
+		}), nil
 	}
 	return work.StageOutput{}, fmt.Errorf("no decoder for stage %q", stage)
 }
