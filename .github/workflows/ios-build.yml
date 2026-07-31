@@ -38,7 +38,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 20
     # Protected environment: AGE_PRIVATE_KEY is gated here (CC-k8t7).
-    environment: prod
+    environment: production
     defaults:
       run:
         working-directory: apps/web/ios
