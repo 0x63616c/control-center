@@ -224,7 +224,7 @@ func TestSessionRunsTheRegisteredRunWorkerActivitiesOnItsPrivateWorker(t *testin
 		TaskQueue: mainQueue,
 	}, productionSessionWorkflow, productionSessionInput{
 		PrivateQueue: privateQueueOne,
-		Branch:       "factory/ticket-42/run",
+		Branch:       work.FactoryTicketBranchName(42, productionRunWorkerIdentity.RunID),
 	})
 	if err != nil {
 		t.Fatalf("starting workflow: %v", err)
@@ -237,7 +237,7 @@ func TestSessionRunsTheRegisteredRunWorkerActivitiesOnItsPrivateWorker(t *testin
 	if evidence.ProcessID != privateOne.processID() || evidence.Identity != productionRunWorkerIdentity {
 		t.Fatalf("Run Worker evidence = %#v, want identity %#v in process %d", evidence, productionRunWorkerIdentity, privateOne.processID())
 	}
-	if !slices.Equal(evidence.Operations, []string{"clone", "ci", "sync", "ready", "merge"}) {
+	if !slices.Equal(evidence.Operations, []string{"clone", "ci", "publish", "sync", "ready", "merge"}) {
 		t.Fatalf("Run Worker operations = %v", evidence.Operations)
 	}
 	if _, err := os.Stat(filepath.Join(rootTwo, productionEvidenceFilename)); err == nil || !errors.Is(err, os.ErrNotExist) {
@@ -719,6 +719,7 @@ func productionRunWorkerActivities(root string) (*activities.RunWorkerActivities
 		Repository:            productionRepository{recorder: recorder},
 		GitHub:                productionGitHub{recorder: recorder},
 		Identity:              productionRunWorkerIdentity,
+		Branch:                work.FactoryTicketBranchName(42, productionRunWorkerIdentity.RunID),
 		RepositoryCheckpoints: repository.open,
 	})
 }
@@ -777,6 +778,13 @@ func (r productionRepository) Prepare(context.Context, string, string) (string, 
 func (r productionRepository) PrepareFromCommit(context.Context, string, string, string) (string, error) {
 	if err := r.recorder.observe("clone_from_commit"); err != nil {
 		return "", fmt.Errorf("recording target repository recovery clone: %w", err)
+	}
+	return "candidate-head", nil
+}
+
+func (r productionRepository) Publish(context.Context, string) (string, error) {
+	if err := r.recorder.observe("publish"); err != nil {
+		return "", fmt.Errorf("recording target repository publication: %w", err)
 	}
 	return "candidate-head", nil
 }

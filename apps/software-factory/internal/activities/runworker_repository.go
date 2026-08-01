@@ -233,7 +233,10 @@ func (a *RunWorkerActivities) TargetSyncPullRequest(ctx context.Context, in Targ
 	if strings.TrimSpace(in.Title) == "" {
 		return work.PullRequest{}, fail(ctx, "synchronizing the target pull request", fmt.Errorf("title is required: %w", work.ErrPermanent))
 	}
-	publishedHead, err := a.deps.Repository.Publish(ctx, in.Step.Branch)
+	if in.Step.Branch != a.deps.Branch {
+		return work.PullRequest{}, fail(ctx, "publishing the target pull request candidate", fmt.Errorf("repository Step branch does not match the Run Worker branch: %w", work.ErrPermanent))
+	}
+	publishedHead, err := a.deps.Repository.Publish(ctx, a.deps.Branch)
 	if err != nil {
 		return work.PullRequest{}, fail(ctx, "publishing the target pull request candidate", err)
 	}

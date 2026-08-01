@@ -127,10 +127,26 @@ func (p *repositoryCheckpointProbe) Checkpoint(_ context.Context, in store.GitCh
 
 func targetRepositoryActivities(repository *targetRepositoryProbe, github *targetGitHubProbe, cp *repositoryCheckpointProbe) *RunWorkerActivities {
 	return &RunWorkerActivities{deps: RunWorkerDeps{
-		Repository: repository, GitHub: github, Identity: targetTestIdentity,
+		Repository: repository, GitHub: github, Identity: targetTestIdentity, Branch: "factory/ticket-42/run",
 		RepositoryCheckpoints: func(work.RunWorkerIdentity) (RepositoryCheckpoint, error) { return cp, nil },
 		Clock:                 repositoryFixedClock{now: time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)},
 	}}
+}
+
+func TestTargetSyncRejectsARepositoryStepForAnotherBranch(t *testing.T) {
+	repository := &targetRepositoryProbe{publishHead: "wrong-head"}
+	github := &targetGitHubProbe{}
+	a := targetRepositoryActivities(repository, github, &repositoryCheckpointProbe{})
+	position := targetPosition(3)
+	position.Branch = "factory/ticket-99/another-run"
+
+	_, err := a.TargetSyncPullRequest(context.Background(), TargetSyncPullRequestInput{Step: position, Title: "title"})
+	if err == nil {
+		t.Fatal("TargetSyncPullRequest accepted a repository Step for another branch")
+	}
+	if len(repository.published) != 0 || github.syncCalls != 0 {
+		t.Fatalf("wrong branch reached repository/GitHub: %#v / %d", repository.published, github.syncCalls)
+	}
 }
 
 func targetPosition(ordinal int) RepositoryStep {

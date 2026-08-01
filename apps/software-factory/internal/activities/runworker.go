@@ -39,6 +39,7 @@ type RunWorkerDeps struct {
 	Repository            TargetRepository
 	GitHub                TargetGitHub
 	Identity              work.RunWorkerIdentity
+	Branch                string
 	RepositoryCheckpoints func(work.RunWorkerIdentity) (RepositoryCheckpoint, error)
 }
 
@@ -53,6 +54,10 @@ func NewRunWorkerActivities(deps RunWorkerDeps) (*RunWorkerActivities, error) {
 	}
 	if err := deps.Identity.Validate(); err != nil {
 		return nil, fmt.Errorf("run worker activities require a valid identity: %w", err)
+	}
+	ticketID, validBranch := work.ParseFactoryTicketBranchName(deps.Branch)
+	if !validBranch || deps.Branch != work.FactoryTicketBranchName(ticketID, deps.Identity.RunID) {
+		return nil, fmt.Errorf("run worker activities require a branch bound to Run %q", deps.Identity.RunID)
 	}
 	return &RunWorkerActivities{deps: deps}, nil
 }

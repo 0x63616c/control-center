@@ -119,7 +119,7 @@ func newActivities(cfg config.RunWorker, logger *slog.Logger) (*activities.RunWo
 		return nil, fmt.Errorf("building projected GitHub client: %w", err)
 	}
 	target, err := activities.NewRunWorkerActivities(activities.RunWorkerDeps{
-		Clock: clock.System{}, Repository: repository, GitHub: githubClient, Identity: cfg.Identity,
+		Clock: clock.System{}, Repository: repository, GitHub: githubClient, Identity: cfg.Identity, Branch: cfg.Branch,
 		RepositoryCheckpoints: func(identity work.RunWorkerIdentity) (activities.RepositoryCheckpoint, error) {
 			return repositoryCheckpointFactory.Open(identity)
 		},
