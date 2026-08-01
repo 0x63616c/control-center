@@ -241,3 +241,16 @@ func TestSetExecutesToolByName(t *testing.T) {
 		t.Fatalf("Execute() result = %+v", result)
 	}
 }
+
+func TestSetReturnsToolErrorForUnknownName(t *testing.T) {
+	t.Parallel()
+
+	set := agenttool.MustSet("coding-read-v1")
+	result, err := set.Execute(context.Background(), "delete_everything", []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !result.IsError || result.Content != `unknown tool "delete_everything"` {
+		t.Fatalf("Execute() result = %+v", result)
+	}
+}

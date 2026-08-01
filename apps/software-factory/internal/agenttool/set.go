@@ -139,5 +139,9 @@ func (s Set) Fingerprint() string {
 
 // Execute dispatches provider arguments to the named typed tool.
 func (s Set) Execute(ctx context.Context, name string, arguments json.RawMessage) (Result, error) {
-	return s.tools[name].Execute(ctx, arguments)
+	tool, ok := s.tools[name]
+	if !ok {
+		return Result{Content: fmt.Sprintf("unknown tool %q", name), IsError: true}, nil
+	}
+	return tool.Execute(ctx, arguments)
 }
