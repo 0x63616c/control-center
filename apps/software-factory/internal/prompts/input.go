@@ -162,7 +162,7 @@ func (in reviewInput) scalarValues() map[string]string {
 func feedbackProse(context work.AgentPromptContext) string {
 	var b strings.Builder
 	if len(context.CIFailures) != 0 {
-		b.WriteString("CI failures for the exact checked candidate:\n\n")
+		fmt.Fprintf(&b, "CI failures for the exact checked candidate %s:\n\n", context.CandidateHeadSHA)
 		for _, failure := range context.CIFailures {
 			fmt.Fprintf(&b, "- check=%s fingerprint=%s: %s\n", failure.Name, failure.Fingerprint, failure.Evidence)
 		}
@@ -171,7 +171,7 @@ func feedbackProse(context work.AgentPromptContext) string {
 		if b.Len() != 0 {
 			b.WriteString("\n")
 		}
-		b.WriteString("Blocking review feedback:\n\n")
+		fmt.Fprintf(&b, "Blocking review feedback for candidate %s:\n\n", context.CandidateHeadSHA)
 		for _, finding := range context.ReviewFindings {
 			kind := "advisory"
 			if finding.Blocking {
@@ -184,7 +184,7 @@ func feedbackProse(context work.AgentPromptContext) string {
 		if b.Len() != 0 {
 			b.WriteString("\n")
 		}
-		fmt.Fprintf(&b, "Merge feedback: outcome=%s reviewed_head=%s current_head=%s current_base=%s\n\n%s\n", context.Merge.Outcome, context.Merge.ReviewedHeadSHA, context.Merge.CurrentHeadSHA, context.Merge.CurrentBaseSHA, context.Merge.Diagnostic)
+		fmt.Fprintf(&b, "Merge feedback for candidate %s: outcome=%s reviewed_head=%s current_head=%s current_base=%s\n\n%s\n", context.CandidateHeadSHA, context.Merge.Outcome, context.Merge.ReviewedHeadSHA, context.Merge.CurrentHeadSHA, context.Merge.CurrentBaseSHA, context.Merge.Diagnostic)
 	}
 	if b.Len() == 0 {
 		return "(No external CI, review, or merge feedback reopened this implementation step.)"
@@ -200,7 +200,8 @@ func feedbackProse(context work.AgentPromptContext) string {
 // two sections answer different questions — "what must you keep the id of"
 // versus "what has this run's review already covered" — and a ledger with its
 // most recent entry silently missing would be the more confusing shape to
-// read. Both are bounded by work.MaxReviewTurns.
+// read. Both are bounded by the immutable review budget the owning workflow
+// passes to this render; target runs pass TargetRunPolicy.MaxReviewSteps.
 func ledgerProse(ledger []work.ReviewTurnRecord) string {
 	if len(ledger) == 0 {
 		return "(No earlier review turns this run: this is review's first turn.)"
