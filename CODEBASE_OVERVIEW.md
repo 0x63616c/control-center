@@ -96,9 +96,10 @@ that run/deploy, `packages/` = things you import); product features live under
   `AGENTS.md`, `docs/SoftwareStyle.md` and `.golangci.yml`, scoped to that tree and binding
   on nothing else - do not cite them in a review of TypeScript. Nests (`cmd/`, `internal/`,
   `images/{worker,run-worker,relay,api,blobs,codec}/`, `web/`) where the rest of `apps/*` is flat, deliberately: it is one
-  product with several components and one Go module. Its single CI filter builds and pins all
-  seven images: the worker, Run Worker, stateless webhook relay, API, console, blob service,
-  and codec service.
+  product with several components and one Go module. During the standalone cutover this source
+  remains temporarily for deletion-after-production-proof checks, but
+  `0x63616c/software-factory` owns the active builds and immutable releases. WWW deploys the
+  checked standalone seven-image manifest; it does not pin locally built `:main` images.
 - `packages/api` - Browser-safe type bridge that re-exports the API router type only.
 - `packages/core` - Owns the `device_state` table: schema, the `DeviceStateStore` interface, pg + in-memory adapters, and the desired/reported merge logic.
 - `packages/logger` - Shared pino logger with centralized redaction and runtime-safe config.
@@ -362,9 +363,11 @@ authoritative over it.
 
 CI path filters are now scoped per app directory (`apps/web/**`, `apps/api/**`,
 `apps/worker/**`, `apps/map-provision/**`), all rebuilding
-on `packages/**`, `features/**`, or `bun.lock` changes too. `apps/software-factory/**` is
-the exception: it shares no code with the workspace, so it gates only on its own tree, and
-its `test-software-factory` job runs the Go toolchain rather than bun. The Tiltfile lives at the repo
+  on `packages/**`, `features/**`, or `bun.lock` changes too. During the standalone cutover,
+  `apps/software-factory/**` is a temporary migration-safety exception: it shares no code with
+  the workspace, so its retained checks gate only on its own tree and use the Go toolchain rather
+  than bun. Those checks do not produce deployment pins; WWW consumes the verified standalone
+  release manifest. The Tiltfile lives at the repo
 root; root `bun run dev` runs `tilt up` directly. Local dev commands
 (`dev:web`, `dev:api`, `dev:worker`, `dev:storybook`, `dev:db`, `ios:*`) live
 on the root `package.json`.

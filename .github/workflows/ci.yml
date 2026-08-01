@@ -263,6 +263,13 @@ jobs:
         # either, prod's required-pin check turns a green merge into a failed
         # deploy, or worse, a target image is never published at all.
         run: bash scripts/test-software-factory-image-ci.sh
+      - name: Software-factory release manifest contract
+        # The standalone release is the producer after extraction. Before the
+        # cutover consumes its artifact, prove that only the exact seven
+        # linux/amd64 repositories and immutable digests can enter Pulumi's map.
+        run: |
+          bash scripts/test-software-factory-release-manifest.sh
+          bash scripts/test-verify-software-factory-release.sh
       - name: Control Center cutover tooling tests
         # Hermetic self-tests of the M7 production-cutover tooling (www-jtp0.7):
         # the red-first preflight gate (refuses cutover until rehearsal/snapshot/
@@ -904,7 +911,7 @@ jobs:
           # KEY is product-component scoped and matches the Pulumi imageDigests
           # config key, while repo names use full product slugs.
           declare -A out=()
-          for entry in www-control-center-web:control-center-web www-control-center-manage:control-center-manage www-control-center-api:control-center-api www-control-center-worker:control-center-worker www-control-center-temporal-worker:control-center-temporal-worker www-control-center-map-provision:control-center-map-provision www-software-factory-worker:software-factory-worker www-software-factory-run-worker:software-factory-run-worker www-software-factory-relay:software-factory-relay www-software-factory-api:software-factory-api www-software-factory-blobs:software-factory-blobs www-software-factory-codec:software-factory-codec www-software-factory-console:software-factory-console; do
+          for entry in www-control-center-web:control-center-web www-control-center-manage:control-center-manage www-control-center-api:control-center-api www-control-center-worker:control-center-worker www-control-center-temporal-worker:control-center-temporal-worker www-control-center-map-provision:control-center-map-provision; do
             repo="${entry%%:*}"
             name="${entry#*:}"
             d=$(docker buildx imagetools inspect "ghcr.io/0x63616c/$repo:main" --format '{{.Manifest.Digest}}' 2>/dev/null || true)
@@ -917,6 +924,13 @@ jobs:
           for k in "${!out[@]}"; do
             json=$(jq -cn --argjson cur "$json" --arg k "$k" --arg v "${out[$k]}" '$cur + {($k): $v}')
           done
+          # Software Factory is an independently released product. Its checked
+          # manifest is the immutable deployment input; WWW never substitutes
+          # a locally built :main digest for a released component.
+          factory_version="$(jq -er .version infra/software-factory-release.json)"
+          factory_json="$(GH_TOKEN='${{ github.token }}' scripts/verify-software-factory-release.sh \
+            "$factory_version" infra/software-factory-release.json)"
+          json="$(jq -cn --argjson app "$json" --argjson factory "$factory_json" '$app + $factory')"
           echo "Image digests: $json"
           echo "map=$json" >> "$GITHUB_OUTPUT"
 
