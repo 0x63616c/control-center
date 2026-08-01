@@ -25,6 +25,8 @@ type AgentWorkflowInput struct {
 type AgentWorkflowState struct {
 	ConversationRef         agent.ConversationRef
 	TranscriptRef           agent.TranscriptRef
+	ResponseFormat          agent.ResponseFormatRef
+	PromptCacheKey          string
 	Usage                   work.Usage
 	UsageMeasured           bool
 	ModelTurns              int
@@ -64,6 +66,8 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (AgentWorkflo
 		}
 		state.ConversationRef = prepared.ConversationRef
 		state.TranscriptRef = prepared.TranscriptRef
+		state.ResponseFormat = prepared.ResponseFormat
+		state.PromptCacheKey = prepared.PromptCacheKey
 		state.UsageMeasured = true
 	} else {
 		state = *input.State
@@ -94,7 +98,7 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (AgentWorkflo
 		var turn agent.ModelTurnResult
 		if err := workflow.ExecuteActivity(mainContext, agent.ModelTurnActivityName, agent.ModelTurnInput{
 			Model: input.Attempt.Model, ToolsetID: input.ToolsetID, ConversationRef: conversationRef,
-			PromptCacheKey: input.CacheKey, ModelTurn: modelTurn,
+			ResponseFormat: state.ResponseFormat, PromptCacheKey: state.PromptCacheKey, ModelTurn: modelTurn,
 			IdempotencyKey: fmt.Sprintf("agent/%s/%s/%d/model/%d", input.Attempt.Key.RunID, input.Attempt.Key.Stage, input.Attempt.Key.Turn, modelTurn),
 		}).Get(ctx, &turn); err != nil {
 			return result, fmt.Errorf("run agent model turn %d: %w", modelTurn, err)

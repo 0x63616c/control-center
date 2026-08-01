@@ -34,6 +34,17 @@ func (store ArtifactStore) LoadText(ctx context.Context, ref TextRef) (string, e
 	return string(value), nil
 }
 
+// StoreResponseSchema persists an immutable structured-output schema.
+func (store ArtifactStore) StoreResponseSchema(ctx context.Context, identity string, value []byte) (ResponseSchemaRef, error) {
+	ref, err := store.put(ctx, identity, "response-schema", value)
+	return ResponseSchemaRef(ref), err
+}
+
+// LoadResponseSchema verifies and loads an immutable structured-output schema.
+func (store ArtifactStore) LoadResponseSchema(ctx context.Context, ref ResponseSchemaRef) ([]byte, error) {
+	return store.get(ctx, ArtifactRef(ref))
+}
+
 // StoreArguments persists immutable provider tool arguments below a workflow identity.
 func (store ArtifactStore) StoreArguments(ctx context.Context, identity string, value []byte) (ArgumentsRef, error) {
 	ref, err := store.put(ctx, identity, "arguments", value)

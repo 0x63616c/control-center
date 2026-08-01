@@ -4,12 +4,30 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
 	agentactivities "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities/agent"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/prompts"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
+
+type recordingPromptRenderer struct {
+	prompt string
+	schema []byte
+	key    work.StageKey
+	detail work.TicketDetail
+	prior  work.PriorTurns
+}
+
+func (renderer *recordingPromptRenderer) Render(key work.StageKey, detail work.TicketDetail, prior work.PriorTurns) (string, []byte, error) {
+	renderer.key, renderer.detail, renderer.prior = key, detail, prior
+	return renderer.prompt, renderer.schema, nil
+}
+
+func (*recordingPromptRenderer) Decode(work.Stage, []byte) (work.StageOutput, error) {
+	return work.StageOutput{}, fmt.Errorf("Decode must not run while preparing")
+}
 
 type decodingPromptRenderer struct{}
 
@@ -76,4 +94,49 @@ func TestFinalizeDecodesEachStageResultFromItsTextReference(t *testing.T) {
 	}
 }
 
+func TestPrepareRendersTheStageAndStoresReferenceBackedModelInput(t *testing.T) {
+	t.Parallel()
+
+	renderer := &recordingPromptRenderer{
+		prompt: "implement the ticket using the available tools",
+		schema: []byte(`{"type":"object","properties":{"report":{"type":"string"}},"required":["report"],"additionalProperties":false}`),
+	}
+	blobStore := blobs.NewMemStore()
+	promptActivities, err := agentactivities.NewPromptActivities(renderer, blobStore)
+	if err != nil {
+		t.Fatalf("NewPromptActivities() error = %v", err)
+	}
+	attempt := activities.StageAttempt{
+		Key:     work.StageKey{Ticket: 7, RunID: "run-7", Stage: work.StageImplement, Turn: 2},
+		Sandbox: "sandbox-7", Model: work.Model{Name: "gpt-test", Effort: "medium"},
+		Detail: work.TicketDetail{Ticket: work.Ticket{Number: 7, Title: "Do the work", Body: "Please ship it"}},
+	}
+	prepared, err := promptActivities.Prepare(t.Context(), agentactivities.PrepareInput{Attempt: attempt, CacheKey: "run-7-implement"})
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	if renderer.key != attempt.Key || renderer.detail != attempt.Detail {
+		t.Fatalf("Render input key=%#v detail=%#v", renderer.key, renderer.detail)
+	}
+	if prepared.PromptCacheKey != "run-7-implement" || prepared.ResponseFormat.Name != "implement_result" {
+		t.Fatalf("Prepare() output = %#v", prepared)
+	}
+	items, err := agent.NewConversationStore(blobStore).Items(t.Context(), prepared.ConversationRef)
+	if err != nil {
+		t.Fatalf("Items() error = %v", err)
+	}
+	if len(items) != 2 || items[0].Kind != agent.ItemInstructions || items[1].Kind != agent.ItemUserText ||
+		items[1].Text != renderer.prompt {
+		t.Fatalf("prepared conversation items = %#v", items)
+	}
+	schema, err := agent.NewArtifactStore(blobStore).LoadResponseSchema(t.Context(), prepared.ResponseFormat.SchemaRef)
+	if err != nil {
+		t.Fatalf("LoadResponseSchema() error = %v", err)
+	}
+	if string(schema) != string(renderer.schema) {
+		t.Fatalf("stored response schema = %s, want %s", schema, renderer.schema)
+	}
+}
+
 var _ agentactivities.PromptRenderer = decodingPromptRenderer{}
+var _ agentactivities.PromptRenderer = (*recordingPromptRenderer)(nil)

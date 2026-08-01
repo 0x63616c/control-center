@@ -22,6 +22,8 @@ type PrepareInput struct {
 type PrepareOutput struct {
 	ConversationRef agent.ConversationRef
 	TranscriptRef   agent.TranscriptRef
+	ResponseFormat  agent.ResponseFormatRef
+	PromptCacheKey  string
 }
 
 // FinalizeInput identifies terminal structured text and its expected stage shape.

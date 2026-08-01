@@ -15,6 +15,39 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
+func TestEncodeRequestIncludesStrictJSONSchemaResponseFormat(t *testing.T) {
+	t.Parallel()
+
+	encoded, err := encodeRequest(TurnRequest{
+		Model: "gpt-test", Instructions: "work carefully", Input: []InputItem{UserText("ship it")},
+		ToolChoice: ToolChoiceAuto, TextVerbosity: TextVerbosityMedium,
+		ResponseFormat: &ResponseFormat{
+			Name:   "implement_result",
+			Schema: json.RawMessage(`{"type":"object","properties":{"report":{"type":"string"}},"required":["report"],"additionalProperties":false}`),
+		},
+	})
+	if err != nil {
+		t.Fatalf("encodeRequest() error = %v", err)
+	}
+	var request struct {
+		Text struct {
+			Format struct {
+				Type   string          `json:"type"`
+				Name   string          `json:"name"`
+				Schema json.RawMessage `json:"schema"`
+				Strict bool            `json:"strict"`
+			} `json:"format"`
+		} `json:"text"`
+	}
+	if err := json.Unmarshal(encoded, &request); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if request.Text.Format.Type != "json_schema" || request.Text.Format.Name != "implement_result" ||
+		!request.Text.Format.Strict || !json.Valid(request.Text.Format.Schema) {
+		t.Fatalf("encoded response format = %#v", request.Text.Format)
+	}
+}
+
 type staticCredentialSource struct {
 	credential Credential
 }

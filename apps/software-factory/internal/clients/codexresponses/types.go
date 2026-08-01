@@ -43,6 +43,12 @@ const (
 	TextVerbosityHigh TextVerbosity = "high"
 )
 
+// ResponseFormat requests one strict JSON-schema final response.
+type ResponseFormat struct {
+	Name   string
+	Schema json.RawMessage
+}
+
 // ReasoningEffort controls how much reasoning the model may perform.
 type ReasoningEffort string
 
@@ -132,6 +138,7 @@ type TurnRequest struct {
 	ParallelToolCalls  bool
 	Reasoning          ReasoningOptions
 	TextVerbosity      TextVerbosity
+	ResponseFormat     *ResponseFormat
 	PromptCacheKey     string
 	IdempotencyKey     string
 	PreviousResponseID string

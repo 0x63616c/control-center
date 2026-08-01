@@ -55,6 +55,11 @@ func TestModelTurnLoadsConversationAndStoresFinalText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Append() error = %v", err)
 	}
+	responseSchema := []byte(`{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"],"additionalProperties":false}`)
+	responseSchemaRef, err := agent.NewArtifactStore(blobStore).StoreResponseSchema(t.Context(), "agent/run-7/plan", responseSchema)
+	if err != nil {
+		t.Fatalf("StoreResponseSchema() error = %v", err)
+	}
 	turner := &fakeTurner{result: codexresponses.TurnResult{
 		Outcome: codexresponses.OutcomeFinalText,
 		Text:    `{"summary":"done"}`,
@@ -73,6 +78,7 @@ func TestModelTurnLoadsConversationAndStoresFinalText(t *testing.T) {
 		Model:           work.Model{Name: "gpt-test", Effort: "medium"},
 		ToolsetID:       "coding-read-v1",
 		ConversationRef: conversationRef,
+		ResponseFormat:  agent.ResponseFormatRef{Name: "plan_result", SchemaRef: responseSchemaRef},
 		PromptCacheKey:  "run-7-plan",
 		ModelTurn:       1,
 		IdempotencyKey:  "agent/run-7/plan/model/1",
@@ -89,6 +95,10 @@ func TestModelTurnLoadsConversationAndStoresFinalText(t *testing.T) {
 	}
 	if turner.request.IdempotencyKey != "agent/run-7/plan/model/1" {
 		t.Fatalf("Turn() idempotency key = %q", turner.request.IdempotencyKey)
+	}
+	if turner.request.ResponseFormat == nil || turner.request.ResponseFormat.Name != "plan_result" ||
+		string(turner.request.ResponseFormat.Schema) != string(responseSchema) {
+		t.Fatalf("Turn() response format = %#v", turner.request.ResponseFormat)
 	}
 	if result.Outcome != agent.OutcomeFinalText || result.ConversationRef.Revision != 1 {
 		t.Fatalf("ModelTurn() result = %#v", result)

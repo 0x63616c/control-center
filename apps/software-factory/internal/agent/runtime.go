@@ -17,12 +17,13 @@ type Limits struct {
 
 // ModelTurnInput routes one provider turn using only bounded metadata and a conversation reference.
 type ModelTurnInput struct {
-	Model           work.Model      `json:"model"`
-	ToolsetID       ToolsetID       `json:"toolset_id"`
-	ConversationRef ConversationRef `json:"conversation_ref"`
-	PromptCacheKey  string          `json:"prompt_cache_key"`
-	ModelTurn       int             `json:"model_turn"`
-	IdempotencyKey  string          `json:"idempotency_key"`
+	Model           work.Model        `json:"model"`
+	ToolsetID       ToolsetID         `json:"toolset_id"`
+	ConversationRef ConversationRef   `json:"conversation_ref"`
+	ResponseFormat  ResponseFormatRef `json:"response_format"`
+	PromptCacheKey  string            `json:"prompt_cache_key"`
+	ModelTurn       int               `json:"model_turn"`
+	IdempotencyKey  string            `json:"idempotency_key"`
 }
 
 // TurnOutcome distinguishes a terminal answer from requested tool calls.
@@ -53,6 +54,15 @@ type OutputRef ArtifactRef
 
 // TranscriptRef identifies one durable provider-neutral agent transcript.
 type TranscriptRef ArtifactRef
+
+// ResponseSchemaRef identifies one immutable provider structured-output schema.
+type ResponseSchemaRef ArtifactRef
+
+// ResponseFormatRef names the strict structured output expected from every model turn.
+type ResponseFormatRef struct {
+	Name      string            `json:"name"`
+	SchemaRef ResponseSchemaRef `json:"schema_ref"`
+}
 
 // PendingToolCall is bounded routing metadata for one provider function call.
 type PendingToolCall struct {

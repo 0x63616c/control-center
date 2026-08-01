@@ -241,7 +241,15 @@ type wireInputContent struct {
 }
 
 type wireText struct {
-	Verbosity TextVerbosity `json:"verbosity"`
+	Verbosity TextVerbosity       `json:"verbosity"`
+	Format    *wireResponseFormat `json:"format,omitempty"`
+}
+
+type wireResponseFormat struct {
+	Type   string          `json:"type"`
+	Name   string          `json:"name"`
+	Schema json.RawMessage `json:"schema"`
+	Strict bool            `json:"strict"`
 }
 
 type wireTool struct {
@@ -253,6 +261,15 @@ type wireTool struct {
 }
 
 func encodeRequest(request TurnRequest) ([]byte, error) {
+	var responseFormat *wireResponseFormat
+	if request.ResponseFormat != nil {
+		if request.ResponseFormat.Name == "" || !json.Valid(request.ResponseFormat.Schema) {
+			return nil, fmt.Errorf("encoding the Codex Responses request: response format needs a name and valid schema")
+		}
+		responseFormat = &wireResponseFormat{
+			Type: "json_schema", Name: request.ResponseFormat.Name, Schema: request.ResponseFormat.Schema, Strict: true,
+		}
+	}
 	if request.Model == "" || request.Instructions == "" || len(request.Input) == 0 {
 		return nil, fmt.Errorf("a Codex Responses turn needs a model, instructions, and input")
 	}
@@ -314,7 +331,7 @@ func encodeRequest(request TurnRequest) ([]byte, error) {
 		ToolChoice:         request.ToolChoice,
 		ParallelToolCalls:  request.ParallelToolCalls,
 		Reasoning:          reasoning,
-		Text:               wireText{Verbosity: request.TextVerbosity},
+		Text:               wireText{Verbosity: request.TextVerbosity, Format: responseFormat},
 		PromptCacheKey:     request.PromptCacheKey,
 		PreviousResponseID: request.PreviousResponseID,
 		Include:            request.Include,

@@ -69,7 +69,11 @@ func (activities *Activities) ModelTurn(ctx context.Context, input agent.ModelTu
 	if err != nil {
 		return agent.ModelTurnResult{}, transientFailure("load model conversation", err)
 	}
-	request, err := modelRequest(input, toolset, items)
+	responseFormat, err := activities.responseFormat(ctx, input.ResponseFormat)
+	if err != nil {
+		return agent.ModelTurnResult{}, err
+	}
+	request, err := modelRequest(input, toolset, items, responseFormat)
 	if err != nil {
 		return agent.ModelTurnResult{}, invalidInput("build model request: %v", err)
 	}
@@ -93,6 +97,26 @@ func (activities *Activities) ModelTurn(ctx context.Context, input agent.ModelTu
 	default:
 		return agent.ModelTurnResult{}, invalidProviderOutcome("model turn has unknown outcome %q", providerResult.Outcome)
 	}
+}
+
+func (activities *Activities) responseFormat(
+	ctx context.Context,
+	ref agent.ResponseFormatRef,
+) (*codexresponses.ResponseFormat, error) {
+	if ref.Name == "" && ref.SchemaRef.Key == "" {
+		return nil, nil
+	}
+	if ref.Name == "" || ref.SchemaRef.Key == "" {
+		return nil, invalidInput("agent response format is incomplete")
+	}
+	schema, err := activities.artifacts.LoadResponseSchema(ctx, ref.SchemaRef)
+	if err != nil {
+		return nil, transientFailure("load agent response schema", err)
+	}
+	if !json.Valid(schema) {
+		return nil, invalidInput("agent response schema is not valid JSON")
+	}
+	return &codexresponses.ResponseFormat{Name: ref.Name, Schema: schema}, nil
 }
 
 func (activities *Activities) storeFinalTurn(
@@ -223,6 +247,7 @@ func modelRequest(
 	input agent.ModelTurnInput,
 	toolset agenttool.Set,
 	items []agent.ConversationItem,
+	responseFormat *codexresponses.ResponseFormat,
 ) (codexresponses.TurnRequest, error) {
 	if err := input.Model.Validate(); err != nil {
 		return codexresponses.TurnRequest{}, fmt.Errorf("validate model turn: %w", err)
@@ -273,6 +298,7 @@ func modelRequest(
 			Summary: codexresponses.ReasoningSummaryAuto,
 		},
 		TextVerbosity:  codexresponses.TextVerbosityMedium,
+		ResponseFormat: responseFormat,
 		PromptCacheKey: input.PromptCacheKey,
 		IdempotencyKey: input.IdempotencyKey,
 		Include:        []string{"reasoning.encrypted_content"},
