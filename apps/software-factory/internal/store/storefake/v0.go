@@ -184,6 +184,15 @@ func (f *Store) FailAgentAttempt(_ context.Context, in store.AgentAttemptFailure
 
 // CheckpointAgentAttempt writes only an Attempt owned by the supplied capability.
 func (f *Store) CheckpointAgentAttempt(_ context.Context, in store.AgentCheckpointInput) (store.AgentAttempt, error) {
+	return f.checkpointAgentAttempt(in, true)
+}
+
+// FinalizeAgentWorkflowAttempt mirrors the main-control immutable evidence path.
+func (f *Store) FinalizeAgentWorkflowAttempt(_ context.Context, in store.AgentCheckpointInput) (store.AgentAttempt, error) {
+	return f.checkpointAgentAttempt(in, false)
+}
+
+func (f *Store) checkpointAgentAttempt(in store.AgentCheckpointInput, requireCapability bool) (store.AgentAttempt, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := in.Validate(); err != nil {
@@ -192,7 +201,7 @@ func (f *Store) CheckpointAgentAttempt(_ context.Context, in store.AgentCheckpoi
 	if !f.targetRunOwnedLocked(in.ID.RunID) {
 		return store.AgentAttempt{}, fmt.Errorf("checkpoint: %w", store.ErrRunOwnership)
 	}
-	if f.capabilityHash[in.ID] != in.Capability {
+	if requireCapability && f.capabilityHash[in.ID] != in.Capability {
 		return store.AgentAttempt{}, fmt.Errorf("checkpoint: %w", store.ErrRunOwnership)
 	}
 	attempt, ok := f.targetAttempts[in.ID]

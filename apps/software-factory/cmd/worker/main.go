@@ -192,10 +192,6 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("building the recording activity set: %w", err)
 	}
-	transcriptActs, err := activities.NewTranscriptRecordingActivities(factoryStore)
-	if err != nil {
-		return fmt.Errorf("building the transcript recording activity set: %w", err)
-	}
 	targetRecordingActs, err := activities.NewTargetRecordingActivities(factoryStore)
 	if err != nil {
 		return fmt.Errorf("building the target recording activity set: %w", err)
@@ -204,9 +200,17 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("building the target recovery activity set: %w", err)
 	}
+	transcriptActs, err := activities.NewTranscriptRecordingActivities(factoryStore)
+	if err != nil {
+		return fmt.Errorf("building the transcript recording activity set: %w", err)
+	}
 	agentTranscriptActs, err := activities.NewAgentTranscriptRecordingActivities(factoryStore, blobStore)
 	if err != nil {
 		return fmt.Errorf("building the agent transcript activity set: %w", err)
+	}
+	targetEvidenceActs, err := activities.NewTargetAgentEvidenceActivities(factoryStore, blobStore)
+	if err != nil {
+		return fmt.Errorf("building the target agent evidence activity set: %w", err)
 	}
 	toolsets, err := agenttools.NewToolsets(work.RepoDir, "model/catalog", blobStore)
 	if err != nil {
@@ -235,8 +239,8 @@ func run() error {
 	// registered here, on this worker, and nowhere else — one queue, one
 	// worker, one list.
 	register(
-		w, acts, runWorkerControl, ticketActs, recordingActs, transcriptActs,
-		targetRecordingActs, targetRecoveryActs, agentTranscriptActs, modelActs, promptActs, logger,
+		w, acts, runWorkerControl, ticketActs, recordingActs, targetRecordingActs, targetRecoveryActs, transcriptActs,
+		agentTranscriptActs, targetEvidenceActs, modelActs, promptActs, logger,
 	)
 
 	// Idempotent: a worker replica that loses the race to start this simply
@@ -320,10 +324,11 @@ func register(
 	runWorkerControl *activities.RunWorkerControlActivities,
 	ticketActs *activities.TicketActivities,
 	recordingActs *activities.RecordingActivities,
-	transcriptActs *activities.TranscriptRecordingActivities,
 	targetRecordingActs *activities.TargetRecordingActivities,
 	targetRecoveryActs *activities.TargetRecoveryActivities,
+	transcriptActs *activities.TranscriptRecordingActivities,
 	agentTranscriptActs *activities.AgentTranscriptRecordingActivities,
+	targetEvidenceActs *activities.TargetAgentEvidenceActivities,
 	modelActs *agentactivities.Activities,
 	promptActs *agentactivities.PromptActivities,
 	logger *slog.Logger,
@@ -352,9 +357,10 @@ func register(
 	w.RegisterActivity(runWorkerControl)
 	w.RegisterActivity(ticketActs)
 	w.RegisterActivity(recordingActs)
-	w.RegisterActivity(transcriptActs)
 	w.RegisterActivity(targetRecordingActs)
 	w.RegisterActivity(targetRecoveryActs)
+	w.RegisterActivity(transcriptActs)
+	w.RegisterActivity(targetEvidenceActs)
 	w.RegisterActivityWithOptions(promptActs.Prepare, activity.RegisterOptions{Name: agent.PrepareActivityName})
 	w.RegisterActivityWithOptions(modelActs.ModelTurn, activity.RegisterOptions{Name: agent.ModelTurnActivityName})
 	w.RegisterActivityWithOptions(modelActs.RecordLifecycle, activity.RegisterOptions{Name: agent.LifecycleActivityName})

@@ -120,7 +120,7 @@ func (activities *ToolActivities) Tool(ctx context.Context, input agent.ToolInpu
 	}
 	if _, err := activities.blobs.Get(ctx, startedKey); err == nil {
 		return agent.ToolOutput{}, temporal.NewNonRetryableApplicationError(
-			"tool execution was interrupted after it started", "AmbiguousToolExecution", nil,
+			"tool execution was interrupted after it started", agent.ErrorTypeAmbiguousToolExecution, nil,
 		)
 	} else if !errors.Is(err, blobs.ErrNotFound) {
 		return agent.ToolOutput{}, transientFailure("load started tool operation", err)

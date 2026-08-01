@@ -1,12 +1,12 @@
 package work
 
 const (
-	// MaxTargetTranscriptUncompressedBytes keeps one Agent Attempt below the
-	// Temporal payload warning boundary while retaining more than the largest
-	// measured production transcript (292 KiB).
+	// MaxTargetTranscriptUncompressedBytes bounds legacy Run Worker checkpoint
+	// evidence. Target-run recovery still reads those rows while the agent
+	// transcript reference path is adopted, so its database contract remains
+	// deliberately independent of AgentWorkflow's blob-backed transcript.
 	MaxTargetTranscriptUncompressedBytes = 320 << 10
-	// MaxTargetTranscriptCompressedBytes is the Store/API defense in depth for
-	// the compressed row carried over the checkpoint protocol.
+	// MaxTargetTranscriptCompressedBytes is the matching durable-row bound.
 	MaxTargetTranscriptCompressedBytes = 384 << 10
 )
 

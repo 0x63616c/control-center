@@ -29,6 +29,7 @@ func TestRegisterExposesTheAgentWorkflowAndMainQueueActivities(t *testing.T) {
 		"w.RegisterWorkflow(workflows.WorkOnTicket)",
 		"w.RegisterActivity(targetRecordingActs)",
 		"w.RegisterActivity(targetRecoveryActs)",
+		"w.RegisterActivity(targetEvidenceActs)",
 		"w.RegisterWorkflowWithOptions(workflows.AgentWorkflow",
 		"agent.PrepareActivityName",
 		"agent.ModelTurnActivityName",

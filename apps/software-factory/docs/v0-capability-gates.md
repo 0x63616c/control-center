@@ -51,12 +51,17 @@ terminal envelope, required usage fields, both kill points, and negative
 disclosure scan were all verified; the harness fails if any required probe does
 not occur.
 
-The safe v0 boundary is therefore explicit: A02 thread continuation is only
-within a surviving Run Worker generation. Permanent worker loss follows A12 and
-I08: the incomplete Attempt ends failed, its durable transcript/usage evidence
-is retained where captured, and the workflow may authorize a fresh Attempt
-within its existing Run-wide budget. Do not persist Codex rollout directories,
-and do not claim cross-filesystem provider resume.
+The safe v0 boundary is therefore explicit: the retired provider-thread model
+had no cross-filesystem resume. Do not persist Codex rollout directories, and
+do not claim provider resume from this evidence.
+
+The target runtime does not use this continuation mechanism. It clones the
+last successful implement `AgentWorkflow` conversation into a new
+attempt-owned identity and appends fresh structured feedback. The main worker
+persists terminal result, usage, and bounded transcript evidence before the
+containing Step completes. A Run Worker loss is classified by the child
+workflow, then recovered or retried under the Run's immutable budget; it never
+reuses a provider thread or a partial failed conversation.
 
 The one-off resume harness was deleted with the CLI runtime. The observations
 above remain historical evidence; they are not a production verification step.
@@ -137,3 +142,14 @@ cd apps/software-factory
 go test -tags=manual -run '^TestExportTargetDispatcherHistory$' \
   ./internal/runworkercapability
 ```
+
+## Target vocabulary cleanup
+
+The deployed additive Store still calls its opaque historical execution column
+`provider_thread_id` and exposes matching checkpoint compatibility fields.
+Target `WorkOnTicket` writes an AgentWorkflow execution identity there only as
+an opaque legacy value; it is not a provider thread and the target API must not
+present it as one. **PR 8** owns the forward migration, regenerated query/API
+contracts, and console rename to `agent_execution_id` (or
+`conversation_identity`) after the legacy checkpoint protocol is quiesced.
+This PR does not partially rename that deployed protocol.

@@ -8,6 +8,7 @@ import (
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
 // PromptActivities owns stage prompt preparation and final result decoding.
@@ -34,22 +35,24 @@ func NewPromptActivities(renderer PromptRenderer, blobStore blobs.Store) (*Promp
 	}, nil
 }
 
-// Prepare renders one stage and persists revision zero plus its response schema.
+// Prepare renders one stage and persists its attempt-owned initial conversation
+// plus response schema. A seeded implement copies immutable prior items into a
+// new lineage before adding the new feedback prompt.
 func (activities *PromptActivities) Prepare(ctx context.Context, input PrepareInput) (PrepareOutput, error) {
-	prompt, schema, err := activities.prompts.Render(input.Attempt.Key, input.Attempt.Detail, input.Attempt.Prior)
+	prompt, schema, err := activities.prompts.Render(input.Attempt.Key, input.Attempt.Detail, input.Attempt.Prior, input.Attempt.PromptContext, input.Attempt.MaxReviewSteps)
 	if err != nil {
 		return PrepareOutput{}, invalidInput("render %s prompt: %v", input.Attempt.Key.Stage, err)
 	}
 	if strings.TrimSpace(prompt) == "" || !json.Valid(schema) {
 		return PrepareOutput{}, invalidInput("render %s prompt returned blank prompt or invalid schema", input.Attempt.Key.Stage)
 	}
-	identity := fmt.Sprintf("agent/%s/%s/%d", input.Attempt.Key.RunID, input.Attempt.Key.Stage, input.Attempt.Key.Turn)
-	conversationRef, err := activities.conversations.Append(ctx, identity, nil, []agent.ConversationItem{
-		{Kind: agent.ItemInstructions, Text: stageAgentInstructions},
-		{Kind: agent.ItemUserText, Text: prompt},
-	})
+	identity, err := agent.ConversationIdentity(input.Identity, input.Attempt.Key)
 	if err != nil {
-		return PrepareOutput{}, transientFailure("store initial agent conversation", err)
+		return PrepareOutput{}, invalidInput("resolve target conversation identity: %v", err)
+	}
+	conversationRef, err := activities.prepareConversation(ctx, identity, input.Attempt.Key, input.Seed, prompt)
+	if err != nil {
+		return PrepareOutput{}, err
 	}
 	schemaRef, err := activities.artifacts.StoreResponseSchema(ctx, identity, schema)
 	if err != nil {
@@ -67,6 +70,50 @@ func (activities *PromptActivities) Prepare(ctx context.Context, input PrepareIn
 		},
 		PromptCacheKey: input.CacheKey,
 	}, nil
+}
+
+func (activities *PromptActivities) prepareConversation(
+	ctx context.Context,
+	identity string,
+	target work.StageKey,
+	seed *agent.ConversationSeed,
+	prompt string,
+) (agent.ConversationRef, error) {
+	if seed == nil {
+		conversationRef, err := activities.conversations.Append(ctx, identity, nil, []agent.ConversationItem{
+			{Kind: agent.ItemInstructions, Text: stageAgentInstructions},
+			{Kind: agent.ItemUserText, Text: prompt},
+		})
+		if err != nil {
+			return agent.ConversationRef{}, transientFailure("store initial agent conversation", err)
+		}
+		return conversationRef, nil
+	}
+	if err := seed.ValidateFor(target); err != nil {
+		return agent.ConversationRef{}, invalidInput("validate conversation seed: %v", err)
+	}
+	actualIdentity, err := activities.conversations.Identity(seed.ConversationRef)
+	if err != nil {
+		return agent.ConversationRef{}, invalidInput("resolve conversation seed identity: %v", err)
+	}
+	if actualIdentity != seed.SourceIdentity {
+		return agent.ConversationRef{}, invalidInput("conversation seed belongs to %q, not %q", actualIdentity, seed.SourceIdentity)
+	}
+	items, err := activities.conversations.Items(ctx, seed.ConversationRef)
+	if err != nil {
+		return agent.ConversationRef{}, invalidInput("load conversation seed: %v", err)
+	}
+	conversationRef, err := activities.conversations.Append(ctx, identity, nil, items)
+	if err != nil {
+		return agent.ConversationRef{}, transientFailure("copy seeded agent conversation", err)
+	}
+	conversationRef, err = activities.conversations.Append(ctx, identity, &conversationRef, []agent.ConversationItem{{
+		Kind: agent.ItemUserText, Text: prompt,
+	}})
+	if err != nil {
+		return agent.ConversationRef{}, transientFailure("append seeded agent prompt", err)
+	}
+	return conversationRef, nil
 }
 
 // Finalize loads terminal model text and decodes the stage's existing result envelope.

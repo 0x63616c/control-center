@@ -114,11 +114,10 @@ Cleanup is run on a disconnected workflow context so cancellation does not
 strand the sandbox.
 
 The child input carries a typed tool target. Current `FactoryWorkTicket` runs
-set `legacy_sandbox`; the dormant `WorkOnTicket`/Run Worker path will provide a
-validated Run ID and generation. The child derives the corresponding private
-queue and carries the target through Continue-As-New, so the Run Worker
-foundation is usable without exposing raw task-queue strings or changing the
-agent loop.
+set `legacy_sandbox`; the additive, still-inactive `WorkOnTicket` path sets a
+validated Run Worker identity. The child derives the corresponding private tool
+queue and carries that target through Continue-As-New, so no raw task-queue
+string crosses a workflow boundary.
 
 `work.DefaultRunPolicy` and `work/durations.go` own the deadline ladder:
 
@@ -161,6 +160,28 @@ Each invocation is a separate child workflow with a deterministic ID of
 blob-backed references, not growing values copied into every history event.
 The bounded `work.PriorTurns` handoff carries the plan, latest implement and
 latest review result into the next semantic stage.
+
+### Inactive target Run path
+
+`WorkOnTicket` is registered for replay and integration tests but is not yet
+dispatched in production. It records an ordinal Step and durable Agent Attempt
+before starting each child `AgentWorkflow`. Its child identity is
+`agent/<run-id>/step/<ordinal>/attempt/<n>`; the same identity owns the
+conversation, transcript, idempotency keys, and main-control evidence record.
+
+The target path uses `TargetRunPolicy.Agent` as immutable child model-turn
+policy: 55-minute start-to-close, 90-minute schedule-to-close, five-minute
+heartbeat, and at most ten retries with 10-second initial, 2x, five-minute-max
+backoff. This does not reinterpret legacy `FactoryWorkTicket` histories, which
+keep the older 2-minute/15-second/three-attempt model policy.
+
+A later implement child copies the complete conversation from the most recent
+successful implement child in the same Run, into a new attempt-owned lineage,
+then appends the structured CI, review, or merge feedback. A review child is
+always unseeded and therefore fresh. Failed children never become a seed. The
+parent renews the projected GitHub credential before a child and every 30
+minutes while it waits; it replaces a lost Run Worker generation only through
+the main-control recovery path.
 
 ### Pull request and CI ownership
 
@@ -232,9 +253,11 @@ plus prompt, model, finalization, lifecycle and transcript activities. The
 sandbox worker registers only the generic typed `agent.tool` activity and
 hosts one concurrent Temporal Session. Tool calls are Session-bound to the
 run-specific sandbox queue, which only that sandbox pod polls. The separately
-named Run Worker image exposes the same typed tool activity plus
-repository-affine activities on a validated run/generation queue;
-`WorkOnTicket` remains inactive until its later vertical workflow slice.
+named Run Worker pod has two isolated workers: its credentialed `run-worker`
+container polls only repository-affine activities, while the credential-free
+`tools` container polls the private `agent.tool` queue. The main worker owns
+direct model calls, prompt/finalization, durable Agent Attempt evidence, and
+credential rotation. `WorkOnTicket` remains inactive until the activation gate.
 
 Each child workflow is parent-owned with request-cancel close policy and waits
 for cancellation. Model activity cancellation closes the HTTP request; tool

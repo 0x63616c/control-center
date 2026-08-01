@@ -9,14 +9,13 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
-// TargetRepository prepares the Run Worker's generation-local checkout.
+// TargetRepository owns the Run Worker's credentialed repository checkout.
 type TargetRepository interface {
 	Prepare(context.Context, string, string) (string, error)
 	PrepareFromCommit(context.Context, string, string, string) (string, error)
 }
 
-// TargetGitHub is the repository-scoped external surface hosted by the Run
-// Worker. Its implementation reads the renewable projected token per request.
+// TargetGitHub is the repository-scoped external surface hosted by a Run Worker.
 type TargetGitHub interface {
 	PullRequestForBranch(context.Context, string) (work.PullRequest, bool, error)
 	OpenOrUpdatePullRequest(context.Context, string, string, string, *work.PullRequest) (work.PullRequest, error)
@@ -26,17 +25,14 @@ type TargetGitHub interface {
 	RetirePullRequest(context.Context, int) (work.PullRequestRetirement, error)
 }
 
-// RepositoryCheckpoint is the generation-scoped recovery boundary for
-// repository-affine Steps. Agent conversations and tool idempotency are owned
-// by AgentWorkflow's blob-backed primitives instead of a provider thread.
+// RepositoryCheckpoint is the generation-scoped recovery boundary for repository steps.
 type RepositoryCheckpoint interface {
 	Load(context.Context) (store.GitCheckpoint, bool, error)
 	Checkpoint(context.Context, store.GitCheckpointInput) (store.GitCheckpoint, error)
 	CheckpointEffect(context.Context, store.GitCheckpointInput) (store.GitCheckpoint, error)
 }
 
-// RunWorkerDeps are the narrow dependencies of repository-affine activities.
-// Typed agent tools are composed and registered separately at cmd/run-worker.
+// RunWorkerDeps are the credentialed repository dependencies of one Run Worker.
 type RunWorkerDeps struct {
 	Clock                 interface{ Now() time.Time }
 	Repository            TargetRepository
@@ -45,12 +41,11 @@ type RunWorkerDeps struct {
 	RepositoryCheckpoints func(work.RunWorkerIdentity) (RepositoryCheckpoint, error)
 }
 
-// RunWorkerActivities are repository-affine target activities. Agent tool
-// execution is deliberately registered as the separately named agent.tool
-// activity so AgentWorkflow can route it to this generation's private queue.
+// RunWorkerActivities holds only workflow-selected, credentialed repository effects.
+// Model-selected tools run in the separate credential-free tools worker.
 type RunWorkerActivities struct{ deps RunWorkerDeps }
 
-// NewRunWorkerActivities validates the repository-affine activity set once.
+// NewRunWorkerActivities constructs repository activities for one generation.
 func NewRunWorkerActivities(deps RunWorkerDeps) (*RunWorkerActivities, error) {
 	if deps.Clock == nil || deps.Repository == nil || deps.GitHub == nil || deps.RepositoryCheckpoints == nil {
 		return nil, fmt.Errorf("run worker activities require clock, repository, GitHub, and repository checkpoints")
