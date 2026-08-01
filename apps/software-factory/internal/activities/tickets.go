@@ -3,9 +3,16 @@ package activities
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
+	"go.temporal.io/sdk/temporal"
 )
+
+// ErrTypeNoDispatchableTickets identifies the expected retryable idle result.
+const ErrTypeNoDispatchableTickets = "NoDispatchableTickets"
+
+const awaitDispatchableTicketsRetryDelay = 10 * time.Second
 
 // TicketActivities is the narrow Postgres activity set used only by the
 // Ticket-backed workflows. Keeping it separate prevents the GitHub workflow
@@ -42,6 +49,22 @@ func (a *TicketActivities) ListReadyTickets(ctx context.Context) ([]store.Ticket
 	tickets, err := a.store.ReadyTickets(ctx)
 	if err != nil {
 		return nil, fail(ctx, "listing ready factory tickets", err)
+	}
+	return tickets, nil
+}
+
+// AwaitDispatchableTickets returns a non-empty batch or an expected retryable
+// wait. Temporal owns the cadence, so idle time does not add workflow timers.
+func (a *TicketActivities) AwaitDispatchableTickets(ctx context.Context) ([]store.Ticket, error) {
+	tickets, err := a.ListReadyTickets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(tickets) == 0 {
+		return nil, temporal.NewApplicationErrorWithOptions(
+			"no dispatchable factory tickets", ErrTypeNoDispatchableTickets,
+			temporal.ApplicationErrorOptions{NextRetryDelay: awaitDispatchableTicketsRetryDelay},
+		)
 	}
 	return tickets, nil
 }

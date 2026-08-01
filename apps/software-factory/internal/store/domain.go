@@ -205,6 +205,17 @@ type InFlightTicket struct {
 	StartedAt time.Time
 }
 
+// ActiveTargetRunOwner is the durable ownership pair maintenance must verify
+// before releasing a Ticket after its Temporal workflow was terminated.
+//
+// It does not claim that the Run is still live. That fact comes from Temporal's
+// strongly consistent execution lookup; this pair is the Store predicate that
+// prevents a stale maintenance pass from reopening a replacement Run's Ticket.
+type ActiveTargetRunOwner struct {
+	TicketID TicketID
+	RunID    string
+}
+
 // AttemptResult is how an Attempt ended, once it has.
 //
 // Empty means the attempt has not ended yet — EndAttempt has not been called

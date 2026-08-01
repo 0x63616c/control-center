@@ -9,19 +9,10 @@ package work
 // that leaves the process has one home; that is the whole reason, and it does
 // not need a second consumer inside the codebase to earn it.
 //
-// It is deliberately NOT read by workflow code. Temporal schedules a child
-// workflow or an activity onto the queue its parent workflow is already on
-// unless told otherwise — verified against go.temporal.io/sdk v1.47.0's source
-// rather than its documentation. Starting a workflow seeds the context with the
-// workflow's own queue (internal/internal_workflow.go:505 for children, :509
-// for activities), and the option setters overwrite it only when the caller
-// passes a non-empty value (internal/workflow.go:2052-2054 and :2710-2712). The
-// field docs say the same (internal/workflow.go:462, internal/activity.go:109).
-//
-// That is why the option builders in internal/workflows omit TaskQueue, and why
-// naming it there would be a mistake rather than a belt-and-braces: it turns one
-// written name into five, which is the precondition for the divergence a single
-// home exists to prevent.
+// Workflow code normally inherits its parent's queue. The target Dispatcher is
+// deliberately different: it runs on TargetDispatcherTaskQueue, while its
+// WorkOnTicket children must run on this queue. The child-options builder names
+// this constant rather than repeating its string.
 //
 // It is a constant rather than configuration for a related reason. A queue name
 // settable per environment would let the worker and whatever schedules onto it
@@ -37,6 +28,10 @@ package work
 // The same fact by the same rule as WorkflowID in paths.go: one name, one home,
 // nothing else may construct it.
 const TaskQueue = "software-factory"
+
+// TargetDispatcherTaskQueue is the inactive control-only queue that serves
+// policy publication before the target main worker begins polling.
+const TargetDispatcherTaskQueue = "software-factory-dispatcher-control"
 
 // sandboxTaskQueuePrefix opens every per-ticket sandbox queue name, so the two
 // families of queue are visually distinct in `temporal task-queue describe`

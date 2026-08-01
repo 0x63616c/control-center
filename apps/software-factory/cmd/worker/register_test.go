@@ -26,6 +26,10 @@ func TestRegisterExposesTheAgentWorkflowAndMainQueueActivities(t *testing.T) {
 	for _, want := range []string{
 		"w.RegisterWorkflow(workflows.FactoryWorkTicket)",
 		"w.RegisterWorkflow(workflows.FactoryDispatcher)",
+		"w.RegisterWorkflow(workflows.WorkOnTicket)",
+		"w.RegisterActivity(targetRecordingActs)",
+		"w.RegisterActivity(targetRecoveryActs)",
+		"w.RegisterActivity(targetEvidenceActs)",
 		"w.RegisterWorkflowWithOptions(workflows.AgentWorkflow",
 		"agent.PrepareActivityName",
 		"agent.ModelTurnActivityName",

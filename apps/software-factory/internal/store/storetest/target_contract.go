@@ -870,6 +870,32 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 			t.Fatalf("Merge Step = %+v, want completed", detail.Steps)
 		}
 	})
+
+	t.Run("maintenance stale owner cannot reopen replacement", func(t *testing.T) {
+		s, ticket, abandonedRunID, startedAt := claimedRun(t, newStore(t))
+		ctx := context.Background()
+		if reopened, err := s.ReconcileAbandonedRun(ctx, abandonedRunID, ticket.ID); err != nil || !reopened {
+			t.Fatalf("ReconcileAbandonedRun(initial) = (%t, %v), want (true, nil)", reopened, err)
+		}
+		replacementRunID := uuid.NewString()
+		if _, err := s.ClaimAndStartRun(ctx, store.ClaimRunInput{TicketID: ticket.ID, RunID: replacementRunID, StartedAt: startedAt.Add(time.Minute)}); err != nil {
+			t.Fatalf("ClaimAndStartRun(replacement): %v", err)
+		}
+		reopened, err := s.ReconcileAbandonedRun(ctx, abandonedRunID, ticket.ID)
+		if err != nil {
+			t.Fatalf("ReconcileAbandonedRun(stale): %v", err)
+		}
+		if reopened {
+			t.Fatal("ReconcileAbandonedRun(stale) reopened replacement-owned Ticket")
+		}
+		current, err := s.Ticket(ctx, ticket.ID)
+		if err != nil {
+			t.Fatalf("Ticket: %v", err)
+		}
+		if current.State != store.TicketActive || current.ActiveRunID != replacementRunID {
+			t.Fatalf("replacement ownership = %+v, want active owner %q", current, replacementRunID)
+		}
+	})
 }
 
 func jsonEquivalent(left, right []byte) bool {

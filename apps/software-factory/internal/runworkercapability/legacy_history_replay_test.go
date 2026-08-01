@@ -9,12 +9,14 @@ import (
 	"go.temporal.io/api/temporalproto"
 	"go.temporal.io/sdk/worker"
 
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/workflows"
 )
 
 const (
 	legacyHistoryFixture                  = "../workflows/testdata/factory-dispatcher-paused.json"
 	legacyFactoryWorkTicketHistoryFixture = "../workflows/testdata/factory-work-ticket-pre-agent.json"
+	targetDispatcherHistoryFixture        = "../workflows/testdata/target-dispatcher-admission.json"
 )
 
 func TestLegacyFactoryDispatcherHistoryReplays(t *testing.T) {
@@ -42,6 +44,21 @@ func TestLegacyFactoryWorkTicketHistoryReplays(t *testing.T) {
 	replayer.RegisterWorkflow(workflows.FactoryWorkTicket)
 	if err := replayer.ReplayWorkflowHistory(nil, history); err != nil {
 		t.Fatalf("replaying %s through FactoryWorkTicket's compatibility branch: %v", legacyFactoryWorkTicketHistoryFixture, err)
+	}
+}
+
+// TestTargetDispatcherHistoryReplays is the compatibility guard for the v0
+// dispatcher before its registration is enabled. Its fixture is deliberately
+// an exported dev-server history, not a testsuite transcript: a future command
+// change must replay the same wait and child-admission sequence Temporal saw.
+func TestTargetDispatcherHistoryReplays(t *testing.T) {
+	history := readHistoryFixture(t, targetDispatcherHistoryFixture)
+	assertRepresentativeTargetDispatcherHistory(t, history)
+
+	replayer := worker.NewWorkflowReplayer()
+	replayer.RegisterWorkflow(workflows.Dispatcher)
+	if err := replayer.ReplayWorkflowHistory(nil, history); err != nil {
+		t.Fatalf("replaying %s through the Dispatcher registration: %v", targetDispatcherHistoryFixture, err)
 	}
 }
 
@@ -82,6 +99,35 @@ func assertPreAgentFactoryWorkTicketHistory(t *testing.T, history *historypb.His
 			"pre-agent history must schedule RunPlan without a Version marker; run_plan_scheduled=%t version_marker_recorded=%t",
 			runPlanScheduled,
 			versionMarkerRecorded,
+		)
+	}
+}
+
+func assertRepresentativeTargetDispatcherHistory(t *testing.T, history *historypb.History) {
+	t.Helper()
+	activityCompleted := false
+	activityRetried := false
+	childStarted := false
+	childUsesMainRunQueue := false
+	childRequestsCancellation := false
+	for _, event := range history.Events {
+		if event.GetEventType() == enums.EVENT_TYPE_ACTIVITY_TASK_COMPLETED {
+			activityCompleted = true
+		}
+		if event.GetEventType() == enums.EVENT_TYPE_ACTIVITY_TASK_STARTED && event.GetActivityTaskStartedEventAttributes().GetAttempt() > 1 {
+			activityRetried = true
+		}
+		if event.GetEventType() == enums.EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED {
+			childStarted = true
+			attributes := event.GetStartChildWorkflowExecutionInitiatedEventAttributes()
+			childUsesMainRunQueue = attributes.GetTaskQueue().GetName() == work.TaskQueue
+			childRequestsCancellation = attributes.GetParentClosePolicy() == enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL
+		}
+	}
+	if !activityCompleted || !activityRetried || !childStarted || !childUsesMainRunQueue || !childRequestsCancellation {
+		t.Fatalf(
+			"target dispatcher history must contain a retried wait, completed dispatch, and child admission on the main run queue that requests cancellation; activity_completed=%t activity_retried=%t child_started=%t child_uses_main_run_queue=%t child_requests_cancellation=%t",
+			activityCompleted, activityRetried, childStarted, childUsesMainRunQueue, childRequestsCancellation,
 		)
 	}
 }
