@@ -4,14 +4,12 @@
      the key files, components, or systems changed when that makes review
      easier. Do not restate the title or paste a commit list. -->
 
-## Why / linked issue
+## Why / linked Ticket
 
-<!-- Explain why this change is needed, then reference every resolved issue as
-     Refs #N. Do not use closing keywords (Fixes/Closes/Resolves) anywhere in
-     this PR - GitHub auto-closes on a bare number match and has closed the
-     wrong issue before. Close resolved issues by hand after merge. -->
+<!-- Explain why this change is needed, then reference the related factory
+     Ticket as Refs T-<id>. The merge webhook records the Ticket as done. -->
 
-Refs #
+Refs T-
 
 ## How it was verified
 

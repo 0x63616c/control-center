@@ -3,20 +3,19 @@
 ## Start Here
 
 - Read `CODEBASE_OVERVIEW.md` first.
-- **Issue tracking is GitHub Issues** (since 2026-07-25), via `gh issue`. It is
-  also the brain-dump inbox: file ideas there rather than losing them in chat.
-  See `## Issue tracking` below for the label scheme and the verbatim rule.
+- **Ticket tracking is software-factory** (since 2026-07-31). It is also the
+  brain-dump inbox: file ideas there rather than losing them in chat. See
+  `## Ticket tracking` below for the verbatim rule.
 - **Beads (`bd`) dropped 2026-07-11.** Never create or query `bd` tickets. Archive:
   `docs/beads-archive/` - `OPEN-IDEAS.md` (unfinished ideas), `beads-export.jsonl`
   (raw dump). Pull ideas from there.
-- **software-factory Tickets are a separate system from GitHub Issues** - use the
-  `/create-ticket` skill for GitHub issues, and `scripts/create-ticket.sh
-  --title "..." --body-file FILE [--blocker ID]...` to file a factory Ticket
-  against `factory.worldwidewebb.co`. Factory Tickets carry no labels and their
-  body must be self-contained (the factory can't read GitHub) but still open
-  with a `## Original ask (verbatim)` block same as issues. The script decrypts
-  the worker bearer token from `secrets/vault.yaml` via `sops` and port-forwards
-  to the in-cluster API - never prints the token.
+- **software-factory Tickets are the only tracker** - use the `/create-ticket`
+  skill, which invokes `scripts/create-ticket.sh --title "..." --body-file FILE
+  [--blocker ID]...` against `factory.worldwidewebb.co`. Tickets carry no labels
+  and their body must be self-contained, opening with a `## Original ask
+  (verbatim)` block. The script decrypts the worker bearer token from
+  `secrets/vault.yaml` via `sops` and port-forwards to the in-cluster API - never
+  prints the token.
 - Read the `docs/writing-scalable-typescript/` guide (start at its `README.md`)
   before writing or reviewing TS/TSX. It is docs, not an invokable skill.
 - **`apps/software-factory/` is Go and has its own standards**, in its nested
@@ -103,42 +102,25 @@
 - Infra-level cron jobs (backups, map-extract) live in `infra/src/crons.ts`; app-level
   scheduled work is Temporal Schedules declared in `features/<id>/temporal.ts` (ADR-0008).
 
-## Issue tracking
+## Ticket tracking
 
-GitHub Issues (`gh issue`) is the tracker and the brain-dump inbox. "Ticket"
-means a GitHub issue - same thing, one vocabulary.
+software-factory Tickets are the tracker and brain-dump inbox. "Ticket" means
+one unit of work in the factory's own record.
 
 - Use the `/create-ticket` skill to file one; it applies the verbatim rule and
-  label scheme below automatically.
-- **Preserve the requester's exact wording.** Every issue body opens with an
+  creates the Ticket through the factory API.
+- **Preserve the requester's exact wording.** Every Ticket body opens with an
   `## Original ask (verbatim)` blockquote holding the request character-for-character
   - typos, trailing fragments and all. Never paraphrase it away. Interpretation goes
   below it, clearly marked as ours. Summarising the ask is the one unacceptable edit.
 - Title is a cleaned-up handle; a one-line description sits above the verbatim block.
-- **Labels: exactly one `area/*` and one `type/*`, plus `auto` when it applies.
-  Nothing else at filing time.** No priority, no status, no milestones, no Projects board -
-  deliberately, so it cannot go stale.
-  - `area/`: `infra` `network` `hardware` `panel-ui` `tiles` `integrations`
-    `observability` `docs` `tooling` `security`
-  - `type/`: `bug` `chore` `feature` `design` `spike` `verify` `question`
-  - `auto`: an agent can take this end-to-end unattended. `grind-tickets` draws
-    from this pool; when unsure, leave it off. software-factory no longer reads
-    it - it works its own Tickets (ADR-0012), not GitHub issues.
-  - List below can drift; confirm with
-    `gh label list --limit 100 --json name | jq -r '.[].name' | grep -E '^(area|type)/'`
-    (repo also carries unrelated default labels like `bug`/`enhancement` - ignore those).
-- One issue per request, even when several arrive together, so they close
-  independently. Brain dumps record their origin (e.g. `item #22`) in the body;
-  those numbers are not GitHub issue numbers.
-- **Merged to `main` is done - GitHub auto-closes the resolved ticket then.** Do
-  not hold an issue open pending prod verification; that just accumulates a backlog
-  of done-but-open tickets. If the change turns out broken, file a NEW issue.
-- **Close resolved issues by hand, never by keyword.** Reference the issue in
-  the PR description as `Refs #N`, not `Fixes #N`/`Closes #N`/`Resolves #N` -
-  those keywords auto-close on a bare number match anywhere in the PR body,
-  including commit messages or incidental prose (a phrase like `then close #N`
-  has closed an unrelated issue before). After the PR merges, close the issue
-  with `gh issue close`.
+- Tickets carry no labels; their state, runs, and dependency edges belong to
+  software-factory. Add a known prerequisite with `--blocker T-<id>`.
+- One Ticket per request, even when several arrive together, so they complete
+  independently. Brain dumps record their origin (for example `item #22`) in the body.
+- A merged PR is done when the factory's merge webhook moves its Ticket to `done`.
+  Do not hold a Ticket open pending production verification. If the change turns
+  out broken, file a new Ticket.
 
 ## Workflow
 
@@ -173,9 +155,8 @@ means a GitHub issue - same thing, one vocabulary.
     Stale worktrees are reaped by an hourly prune job.
 - **Branch -> PR -> merge is the default for all work, including agent work.**
   Create a worktree/branch named after the task, commit there, and open a PR
-  against `main` (`gh pr create`, using the PR template). Reference every
-  issue the PR resolves as `Refs #N` and close it by hand after merge; see
-  the issue-tracking rule above for why closing keywords are banned.
+  against `main` (`gh pr create`, using the PR template). Reference the Ticket
+  as `Refs T-<id>`; the merge webhook records completion in software-factory.
 - **Commit and push extremely often, without asking.** Commit each coherent
   change (passing test, working slice, doc update); never batch. Push the
   branch immediately - the push target is now the PR branch, not `main`.

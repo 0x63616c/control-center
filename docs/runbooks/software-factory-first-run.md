@@ -55,18 +55,28 @@ that defines it lands.
 
 ## 1. The throwaway ticket
 
-File it like any other (`/create-ticket`), with `auto` **withheld** until §2:
+File it like any other (`/create-ticket`). The factory dispatcher claims open
+Tickets without a label gate:
 
-    gh issue create --title "software-factory smoke: <one tiny change>" \
-      --label area/tooling --label type/chore
+    body_file="$(mktemp)"
+    cat >"$body_file" <<'EOF'
+    ## Original ask (verbatim)
+
+    > software-factory smoke: <one tiny change>
+
+    ## Interpretation
+
+    A one-file smoke test with an obvious, harmless result.
+    EOF
+    scripts/create-ticket.sh \
+      --title "software-factory smoke: <one tiny change>" \
+      --body-file "$body_file"
 
 Pick work that touches **one file**, has an obvious right answer, and would be
 harmless if it were merged by accident. It will not be merged — choose as though
 it might.
 
 ## 2. Start it
-
-    gh issue edit <n> --add-label auto
 
 The dispatcher timer-loops every 30s (ADR-0011), so pickup is within a minute.
 There is no way to make it go sooner; `WorkNow` was dropped deliberately.
@@ -75,7 +85,8 @@ There is no way to make it go sooner; `WorkNow` was dropped deliberately.
 
 **The console.** `factory.worldwidewebb.co`, over the run/step/attempt rows the
 run writes to Postgres as it goes. This is the fastest read on where the run is.
-The factory posts nothing to GitHub except the pull request itself (#559).
+The factory records progress in its own console and opens the resulting pull
+request when the run reaches `propose`.
 
 **Temporal.** `temporal-ui` is ClusterIP with no public hostname:
 
@@ -189,20 +200,20 @@ sessions own branches you cannot see (AGENTS.md).
 
 - [ ] Calum verifies the merged PR, and that the merge webhook moved its Ticket
       to `done`.
-- [ ] Record the run on #345: which stages ran, tokens spent (they are on the
-      Attempt rows, in the console), what broke, what this file got wrong.
+- [ ] Record the run on its Ticket: which stages ran, tokens spent (they are on
+      the Attempt rows, in the console), what broke, what this file got wrong.
 - [ ] Anything unvalidatable-until-prod that the run **did** validate — the
       `pods/exec` WebSocket→SPDY fallback, `CodeExitError` carrying the real exit
-      code, rate-limit detection — gets said plainly on its own ticket. Those are
-      open specifically because no test can reach them (#343).
+      code, rate-limit detection — gets said plainly on its own Ticket. Those are
+      open specifically because no test can reach them.
 
 ## 7. Retire `grind-tickets` (gated on §6)
 
-Only once a run has reached `propose` on its own. Then, one PR, `Fixes #345`:
+Only once a run has reached `propose` on its own. Then, one PR referencing its
+factory Ticket:
 
 - [ ] delete `.claude/workflows/grind-tickets.js`
-- [ ] AGENTS.md — the `auto` label bullet still says `grind-tickets` draws from
-      that pool; the worker does now
+- [ ] AGENTS.md — remove any stale `grind-tickets` instructions
 - [ ] ADR-0011's opening already states the workflow is deleted; make that true
       rather than editing it
 

@@ -1,20 +1,17 @@
 # The software factory owns its tickets, its record, and its console
 
-The factory stops being a GitHub-Issues-driven script whose only human-readable output is a
-comment thread. It gains its own **Tickets** in its own Postgres database, its own HTTP API,
-and its own web console. GitHub keeps what GitHub is good at — code, pull requests, CI,
-review, and merge-deploys-prod — and stops being the factory's work queue, its state store,
-and its progress log.
+The factory owns **Tickets** in its own Postgres database, its own HTTP API, and its own web
+console. GitHub remains the code host for pull requests, CI, review, and merge-deploys-prod;
+software-factory is the sole work queue, state store, and progress log.
 
 Three questions have no answer today, and every one of them is an Operability question in the
 sense `apps/software-factory/docs/SoftwareStyle.md` uses the word:
 
-- **What is in flight?** Answerable only by opening Temporal's UI, or by scrolling issues
-  looking for a recent status comment.
+- **What is in flight?** Answerable only by opening Temporal's UI without the factory console.
 - **What is it going to work on next?** Not answerable anywhere. The dispatcher computes
   candidates every 30s and persists that decision nowhere.
 - **What has it worked on, what did each step cost, how many times did it run, and what did
-  it actually say?** Partially answerable, one issue at a time, by a human reading prose.
+  it actually say?** Answerable from the factory's own durable record.
 
 SoftwareStyle already states the standard this fails: *"Operability > Economy. Decision logs,
 transcripts and token accounting cost something. Pay them — you cannot run an unattended
@@ -40,8 +37,7 @@ One word per concept, used consistently everywhere from here on.
 
 | term | meaning |
 |---|---|
-| **Ticket** | A unit of work in *our* store. Ours, not GitHub's. |
-| **Issue** | A GitHub issue. A different thing, in a different system. |
+| **Ticket** | A unit of work in the factory's store. |
 | **Run** | One attempt at a whole Ticket. One Temporal workflow execution. |
 | **Stage** | A *kind* of work: `plan`, `implement`, `review`. |
 | **Step** | One instance of a Stage inside a Run, identified by its turn number. |
@@ -49,23 +45,20 @@ One word per concept, used consistently everywhere from here on.
 | **Console** | The web UI. |
 | **Relay** | The webhook fan-out service. |
 
-"Ticket" and "Issue" are never used interchangeably. Renaming is half the point: the factory's
-unit of work is no longer a GitHub object, and continuing to call it an issue would keep
-inviting the assumption that it is.
+"Ticket" is the only work-tracking term. It names the factory's unit of work and avoids
+confusing it with code-hosting artifacts.
 
-## Tickets replace Issues, for the factory only
+## Tickets are the sole tracker
 
-The factory's work queue, state, and progress record move to our Postgres. GitHub Issues
-remains a personal tracker for human work; it simply stops feeding the factory.
+The factory's work queue, state, and progress record live in our Postgres.
 
 This is a full replacement **within the factory's scope**, not a mirror. Nothing dual-writes.
 There is no sync, no import, no promotion path, and no bridge in v0 — a Ticket is created
-directly through our API and has no GitHub Issue behind it. That eliminates the failure mode
+directly through our API. That eliminates the failure mode
 this design most needed to avoid: two stores each believing they hold the truth about one
 piece of work.
 
-Moving existing `auto` issues into the new system is **out of scope entirely** and is being
-handled separately by hand. Assume the new system starts empty.
+The system starts with Tickets created directly through the factory API.
 
 There is deliberately **no `source` column** on Ticket. If a second origin ever exists, adding
 the column and backfilling every existing row to the then-current value is a trivial
@@ -221,26 +214,18 @@ load fans out into orchestration-plane queries.
 
 ### The write path
 
-Activities write to Postgres as the Run happens, at the same points in the workflow where the
-code posts and edits GitHub status comments today. There is **no exporter** that tails Temporal
+Activities write to Postgres as the Run happens. There is **no exporter** that tails Temporal
 histories and projects them after the fact: it would be eventually consistent, so an in-flight
 Run would be invisible or stale, and "what's in flight" is the first question this whole design
 exists to answer.
 
-**Recording only exists on the Ticket-backed path, and cannot be retrofitted onto the
-GitHub-backed one.** This is a correction: an earlier draft of this section read as though the
-existing pipeline could start recording first, and two agents working from it stopped and said
-why, correctly. `run` has a foreign key to `ticket`, and a Run of a GitHub issue has no Ticket
-row — there is nothing valid to point it at. Making one would mean either synthesising Ticket
-rows for GitHub issues, which is the mirror this ADR rejects, or dropping the foreign key, which
-gives up the integrity that makes the record worth querying.
+**Recording only exists on the Ticket-backed path.** `run` has a foreign key to `ticket`, so
+every Run has a valid, durable work record to point at. That integrity is what makes the record
+worth querying.
 
-So the ordering is forced, and it is the opposite of what that draft implied: the second
-dispatcher and ticket workflow (see *Cutover*) come **first**, because they are what create
-Tickets, Runs and Steps at all. Recording, transcript persistence and the dispatcher's own state
-row are built **on that path**, not on the one being replaced. The GitHub-backed pipeline keeps
-its status comments, unchanged, until it is retired — it never gains a database record, and it
-was never going to be able to have one.
+The dispatcher and ticket workflow (see *Cutover*) come **first**, because they create
+Tickets, Runs and Steps. Recording, transcript persistence and the dispatcher's own state row
+are built on that path.
 
 Recording is therefore a Temporal **activity**, with everything that implies: it retries under
 a policy, and a database outage lasting longer than that policy **stalls the Run at that
@@ -269,9 +254,7 @@ Two facts make the move cheap and safe, both read out of `internal/work/transcri
   sandbox credentials, no second mount, no new trust boundary.
 
 A transcript row belongs to an Attempt, so this follows the same forced ordering as the rest of
-the record (see *The write path*): it lands on the Ticket-backed path, after Attempts exist. The
-GitHub-backed pipeline keeps writing to NFS until it is retired, and the volume is removed with
-it rather than before it.
+the record (see *The write path*): it lands on the Ticket-backed path, after Attempts exist.
 
 Stored compressed, one row per Attempt, downloadable through the API. **Kept forever** — a
 heavy year is single-digit megabytes, and the house preference is to keep data until its
@@ -512,9 +495,9 @@ replaces a lease table — and that nothing else may construct that string.
 The new scheme is **`factory-ticket-<ticket-id>`**: a different prefix, not merely a different
 number. Temporal refuses a second *open* run under one ID, but a closed one does not block
 reuse — so small-integer Ticket ids under the old `work-ticket-` prefix would silently share an
-ID lineage with historical runs for the GitHub issue of the same number. One workflow ID, two
-unrelated pieces of work, one history. A distinct prefix makes the two spaces provably disjoint
-for every input, and greppable apart.
+ID lineage with another unrelated piece of work. One workflow ID, two unrelated pieces of work,
+one history. A distinct prefix makes the spaces provably disjoint for every input, and greppable
+apart.
 
 That frees Ticket ids to be small human-friendly integers, which matters more than it sounds:
 `T-14` is something a person can say out loud, and a UUID is not.
@@ -547,13 +530,9 @@ governs that directory and a TypeScript SPA under a Go style guide is otherwise 
 Two clauses in `apps/software-factory/docs/SoftwareStyle.md` become false and must be updated
 as part of this work rather than left to rot:
 
-1. **Identity.** It currently says *"Do not mint IDs. GitHub issue numbers and Temporal
-   workflow and run IDs already exist and are already authoritative… Add a generator seam only
-   if something needs an identity Temporal does not already give it."* Tickets are exactly
-   that case. Workflow IDs stay self-describing by construction, now derived from the Ticket
-   id.
-2. **Operability.** It lists *"the status comment on the issue"* among the mechanisms that
-   make the system watchable. That mechanism is being deleted; the console replaces it.
+1. **Identity.** Tickets need their own durable identities. Workflow IDs stay self-describing
+   by construction, derived from the Ticket id.
+2. **Operability.** The console is the mechanism that makes the system watchable.
 
 ## Deliberately not decided
 
@@ -565,8 +544,6 @@ Do not invent answers to these while implementing. Raise them.
 - **A mobile capture path.** No progressive web app, no phone-optimised create form, no
   shortcut integration. The console is used on a laptop. Revisit only if it becomes a real
   problem.
-- **Importing existing GitHub Issues.** Handled by hand, separately.
-- **A GitHub Issue → Ticket bridge of any kind**, including label-triggered promotion.
 - **Additional relationship types** — `relates_to`, `duplicates`, parent/child hierarchy.
 - **A generated CLI or MCP server** over the API.
 - **A token table** with per-caller revocation and scoping.
@@ -581,8 +558,6 @@ Do not invent answers to these while implementing. Raise them.
 
 | rejected | why |
 |---|---|
-| Keeping GitHub Issues as the factory's store | The observability gap is structural; the thread is prose, one issue at a time, and cross-run questions have no answer. |
-| A factory-only store with GitHub Issues still authoritative for some factory work | Two stores claiming truth about one piece of work. The rot this design exists to avoid. |
 | Mirroring a promoted Issue instead of owning the Ticket | A sync problem, and sync problems are how you stop knowing what is in flight. |
 | An exporter that projects Temporal history into Postgres | Eventually consistent; in-flight Runs invisible or stale. |
 | Reading Temporal from the UI or the API for *state* | Point lookups do not answer cross-run questions, and Temporal has no TLS or authn (#442). |
@@ -603,6 +578,4 @@ Do not invent answers to these while implementing. Raise them.
 | Having the factory read control-center's webhook table | Crosses the isolation boundary the factory's own namespace exists to enforce. |
 | Server-sent events or WebSockets in v0 | Polling cannot break; SSE earns its keep only for live tailing, which is deferred. |
 | Changing the existing dispatcher and ticket workflow in place, with a drain | The factory cannot perform it: merging deploys, so it would remove the work source underneath its own in-flight Run and orphan the ticket describing the change. Superseded by running a second pair side by side — see *Cutover*. |
-| Recording Runs from the GitHub-backed pipeline | `run` has a foreign key to `ticket`, and a GitHub-issue Run has no Ticket row. The only ways through are synthesising Tickets for issues — the mirror this ADR rejects — or dropping the foreign key and giving up the integrity that makes the record queryable. |
-| Reusing the `work-ticket-` prefix with new Ticket ids | Temporal only refuses a second *open* run under an ID, so a closed one is reusable; small-integer Ticket ids would silently share a history with the run for the GitHub issue of that number. |
-| Keeping a summary comment on GitHub after cutover | Data stays ours; a partial trail in a system we no longer treat as authoritative invites reading it as one. |
+| Reusing the `work-ticket-` prefix with new Ticket ids | Temporal only refuses a second *open* run under an ID, so a closed one is reusable; a distinct prefix prevents unrelated work from sharing history. |
