@@ -58,3 +58,22 @@ func TestMustSetRejectsDuplicateTools(t *testing.T) {
 	}()
 	agenttool.MustSet("coding-read-v1", first, second)
 }
+
+func TestMustSetFingerprintIsStableAcrossRegistrationOrder(t *testing.T) {
+	t.Parallel()
+
+	read := agenttool.Bind(
+		agenttool.Define[readInput]("read_file", "Read a repository file."),
+		func(_ context.Context, _ readInput) (agenttool.Result, error) { return agenttool.Result{}, nil },
+	)
+	exec := agenttool.Bind(
+		agenttool.Define[execInput]("exec_command", "Execute one argv command."),
+		func(_ context.Context, _ execInput) (agenttool.Result, error) { return agenttool.Result{}, nil },
+	)
+
+	forward := agenttool.MustSet("coding-write-v1", read, exec).Fingerprint()
+	reverse := agenttool.MustSet("coding-write-v1", exec, read).Fingerprint()
+	if forward == "" || forward != reverse {
+		t.Fatalf("fingerprints = %q and %q", forward, reverse)
+	}
+}

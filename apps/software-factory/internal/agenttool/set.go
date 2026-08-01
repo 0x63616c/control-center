@@ -2,6 +2,7 @@ package agenttool
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -20,6 +21,7 @@ type Set struct {
 	id             ToolsetID
 	tools          map[string]runtimeTool
 	specifications []Specification
+	fingerprint    string
 }
 
 // MustSet constructs a versioned tool catalogue or panics when its contract is invalid.
@@ -40,6 +42,14 @@ func MustSet(id ToolsetID, tools ...runtimeTool) Set {
 	sort.Slice(set.specifications, func(i, j int) bool {
 		return set.specifications[i].Name < set.specifications[j].Name
 	})
+	canonical, err := json.Marshal(struct {
+		ID             ToolsetID       `json:"id"`
+		Specifications []Specification `json:"specifications"`
+	}{ID: id, Specifications: set.specifications})
+	if err != nil {
+		panic(fmt.Sprintf("agenttool: fingerprint toolset %q: %v", id, err))
+	}
+	set.fingerprint = fmt.Sprintf("sha256:%x", sha256.Sum256(canonical))
 	return set
 }
 
@@ -54,4 +64,9 @@ func (s Set) Specifications() []Specification {
 		}
 	}
 	return specifications
+}
+
+// Fingerprint returns the stable digest of the toolset identity and schemas.
+func (s Set) Fingerprint() string {
+	return s.fingerprint
 }
