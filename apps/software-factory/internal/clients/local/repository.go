@@ -122,6 +122,28 @@ func (r *Repository) PrepareFromCommit(ctx context.Context, cloneURL, branch, co
 	return r.currentHead(ctx)
 }
 
+// Publish pushes the checkout's committed head to its Run-owned branch.
+func (r *Repository) Publish(ctx context.Context, branch string) (string, error) {
+	if err := validateBranch(branch); err != nil {
+		return "", fmt.Errorf("validating target branch: %w", err)
+	}
+	currentBranch, code, err := r.runner.Run(ctx, r.root, []string{"git", "symbolic-ref", "--quiet", "--short", "HEAD"})
+	if err != nil || code != 0 {
+		return "", commandFailure("reading the checked out target branch", code, err)
+	}
+	if strings.TrimSpace(currentBranch) != branch {
+		return "", fmt.Errorf("checked out branch %q does not match Run branch %q: %w", strings.TrimSpace(currentBranch), branch, work.ErrPermanent)
+	}
+	head, err := r.currentHead(ctx)
+	if err != nil {
+		return "", err
+	}
+	if _, code, err := r.runner.Run(ctx, r.root, []string{"git", "push", "origin", "HEAD:refs/heads/" + branch}); err != nil || code != 0 {
+		return "", commandFailure("publishing the committed target head", code, err)
+	}
+	return head, nil
+}
+
 func (r *Repository) prepareCheckout(ctx context.Context, cloneURL string) error {
 	gitDir := filepath.Join(r.root, ".git")
 	_, statErr := os.Stat(gitDir)
@@ -189,6 +211,10 @@ func validateRepositoryInput(cloneURL, branch string) error {
 	if !strings.HasPrefix(cloneURL, "https://github.com/") || !strings.HasSuffix(cloneURL, ".git") || strings.ContainsAny(cloneURL, "\r\n\t @") {
 		return fmt.Errorf("target repository URL is not a GitHub HTTPS clone URL: %w", work.ErrPermanent)
 	}
+	return validateBranch(branch)
+}
+
+func validateBranch(branch string) error {
 	if branch == "" || strings.HasPrefix(branch, "-") || strings.HasSuffix(branch, "/") || strings.Contains(branch, "..") || strings.Contains(branch, "//") || strings.Contains(branch, "@{") {
 		return fmt.Errorf("target branch %q is unsafe: %w", branch, work.ErrPermanent)
 	}

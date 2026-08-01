@@ -20,6 +20,7 @@ func completeRunWorkerEnv() map[string]string {
 		work.RunWorkerMetricsAddrEnv:       ":9090",
 		work.RunWorkerCheckpointAPIURLEnv:  "http://software-factory-api:8080",
 		work.RunWorkerGitHubRepositoryEnv:  "0x63616c/world-wide-webb",
+		work.RunWorkerBranchEnv:            "software-factory/factory-ticket-29/019fb900-0000-7000-8000-000000000001",
 	}
 }
 
@@ -30,6 +31,25 @@ func setRunWorkerEnv(t *testing.T, env map[string]string) {
 	}
 	for name, value := range env {
 		t.Setenv(name, value)
+	}
+}
+
+func TestLoadRunWorkerRequiresTheBranchBoundToItsRun(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		branch string
+	}{
+		{name: "missing", branch: ""},
+		{name: "another run", branch: "software-factory/factory-ticket-29/019fb900-0000-7000-8000-000000000002"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			env := completeRunWorkerEnv()
+			env[work.RunWorkerBranchEnv] = test.branch
+			setRunWorkerEnv(t, env)
+			if _, err := LoadRunWorker(); err == nil || !strings.Contains(err.Error(), work.RunWorkerBranchEnv) {
+				t.Fatalf("LoadRunWorker with %s=%q = %v", work.RunWorkerBranchEnv, test.branch, err)
+			}
+		})
 	}
 }
 
@@ -57,7 +77,7 @@ func TestLoadRunWorkerReadsItsTargetOnlyEnvironment(t *testing.T) {
 	if got.TaskQueue != wantQueue {
 		t.Errorf("TaskQueue = %q, want the queue derived from %+v", got.TaskQueue, got.Identity)
 	}
-	if got.TemporalHostPort == "" || got.TemporalNamespace == "" || got.BlobsURL == "" || got.MetricsAddr != ":9090" || got.CheckpointAPIURL == "" || got.GitHubOwner != "0x63616c" || got.GitHubRepo != "world-wide-webb" {
+	if got.Branch != completeRunWorkerEnv()[work.RunWorkerBranchEnv] || got.TemporalHostPort == "" || got.TemporalNamespace == "" || got.BlobsURL == "" || got.MetricsAddr != ":9090" || got.CheckpointAPIURL == "" || got.GitHubOwner != "0x63616c" || got.GitHubRepo != "world-wide-webb" {
 		t.Errorf("incomplete config: %+v", got)
 	}
 	if got.LogLevel != slog.LevelInfo {

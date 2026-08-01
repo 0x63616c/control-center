@@ -13,6 +13,7 @@ import (
 type TargetRepository interface {
 	Prepare(context.Context, string, string) (string, error)
 	PrepareFromCommit(context.Context, string, string, string) (string, error)
+	Publish(context.Context, string) (string, error)
 }
 
 // TargetGitHub is the repository-scoped external surface hosted by a Run Worker.
@@ -38,6 +39,7 @@ type RunWorkerDeps struct {
 	Repository            TargetRepository
 	GitHub                TargetGitHub
 	Identity              work.RunWorkerIdentity
+	Branch                string
 	RepositoryCheckpoints func(work.RunWorkerIdentity) (RepositoryCheckpoint, error)
 }
 
@@ -52,6 +54,9 @@ func NewRunWorkerActivities(deps RunWorkerDeps) (*RunWorkerActivities, error) {
 	}
 	if err := deps.Identity.Validate(); err != nil {
 		return nil, fmt.Errorf("run worker activities require a valid identity: %w", err)
+	}
+	if !work.FactoryTicketBranchBelongsToRun(deps.Branch, deps.Identity.RunID) {
+		return nil, fmt.Errorf("run worker activities require a branch bound to Run %q", deps.Identity.RunID)
 	}
 	return &RunWorkerActivities{deps: deps}, nil
 }
