@@ -78,6 +78,7 @@ type RunWorkerSpec struct {
 // Kubernetes. Credential's JSON refusal prevents either value from entering
 // Temporal history accidentally.
 type RunWorkerSecretMaterial struct {
+	CodexCredential      CredentialFile
 	GitHubToken          Credential
 	GitHubLogin          string
 	GitHubExpiresAt      time.Time
@@ -100,6 +101,8 @@ const (
 	RunWorkerGitHubLoginFile          = RunWorkerGitHubCredentialDir + "/login"
 	RunWorkerGitHubRevisionFile       = RunWorkerGitHubCredentialDir + "/revision"
 	RunWorkerGitHubExpiresAtFile      = RunWorkerGitHubCredentialDir + "/expires-at"
+	RunWorkerCodexCredentialDir       = "/var/run/secrets/software-factory/codex"
+	RunWorkerCodexCredentialFile      = RunWorkerCodexCredentialDir + "/auth.json"
 	RunWorkerCheckpointCapabilityDir  = "/var/run/secrets/software-factory/checkpoint"
 	RunWorkerCheckpointCapabilityFile = RunWorkerCheckpointCapabilityDir + "/capability"
 )
