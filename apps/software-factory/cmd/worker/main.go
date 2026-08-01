@@ -346,7 +346,7 @@ func register(
 	w.RegisterActivity(targetRecoveryActs)
 	w.RegisterActivity(maintenanceActs)
 	w.RegisterActivity(targetExecutionActs)
-	w.RegisterActivity(targetEvidenceActs)
+	w.RegisterActivityWithOptions(targetEvidenceActs.Finalize, activity.RegisterOptions{Name: activities.TargetAgentEvidenceFinalizeActivityName})
 	w.RegisterActivityWithOptions(promptActs.Prepare, activity.RegisterOptions{Name: agent.PrepareActivityName})
 	w.RegisterActivityWithOptions(modelActs.ModelTurn, activity.RegisterOptions{Name: agent.ModelTurnActivityName})
 	w.RegisterActivityWithOptions(modelActs.RecordLifecycle, activity.RegisterOptions{Name: agent.LifecycleActivityName})

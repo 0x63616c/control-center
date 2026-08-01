@@ -118,6 +118,9 @@ func (activities *PromptActivities) prepareConversation(
 
 // Finalize loads terminal model text and decodes the stage's existing result envelope.
 func (activities *PromptActivities) Finalize(ctx context.Context, input FinalizeInput) (FinalizeOutput, error) {
+	if input.TextRef.Key == "" || input.TextRef.Bytes < 1 || input.TextRef.Digest == "" {
+		return FinalizeOutput{}, invalidProviderOutcome("final model text reference is incomplete")
+	}
 	text, err := activities.artifacts.LoadText(ctx, input.TextRef)
 	if err != nil {
 		return FinalizeOutput{}, transientFailure("load final agent text", err)

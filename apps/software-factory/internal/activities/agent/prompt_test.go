@@ -96,6 +96,20 @@ func TestFinalizeDecodesEachStageResultFromItsTextReference(t *testing.T) {
 	}
 }
 
+func TestFinalizeRejectsAnIncompleteTextReferenceWithoutRetrying(t *testing.T) {
+	t.Parallel()
+	promptActivities, err := agentactivities.NewPromptActivities(decodingPromptRenderer{}, blobs.NewMemStore())
+	if err != nil {
+		t.Fatalf("NewPromptActivities() error = %v", err)
+	}
+	_, err = promptActivities.Finalize(t.Context(), agentactivities.FinalizeInput{Stage: work.StagePlan})
+	var applicationError *temporal.ApplicationError
+	if !errors.As(err, &applicationError) || applicationError.Type() != agent.ErrorTypeInvalidProviderOutcome ||
+		!applicationError.NonRetryable() {
+		t.Fatalf("Finalize() error = %T %v, want non-retryable %q", err, err, agent.ErrorTypeInvalidProviderOutcome)
+	}
+}
+
 func TestPrepareRendersTheStageAndStoresReferenceBackedModelInput(t *testing.T) {
 	t.Parallel()
 

@@ -15,6 +15,12 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
+// TargetAgentEvidenceFinalizeActivityName is the stable Temporal name for
+// persisting one AgentWorkflow outcome. It is explicit because the prompt
+// decoder also has a Finalize method, and method-name registration is
+// ambiguous when both activities share one worker.
+const TargetAgentEvidenceFinalizeActivityName = "target.agent-evidence.finalize"
+
 // TargetAgentEvidenceActivities persists a completed AgentWorkflow's
 // reference-backed evidence to the target-run recovery record.
 type TargetAgentEvidenceActivities struct {
