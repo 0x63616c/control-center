@@ -179,6 +179,6 @@ func mountFactoryAPI(mux *http.ServeMux, authentication routeAuthenticator, fact
 	// The Store authenticates this exact-attempt capability. Requiring the
 	// legacy broad worker bearer as well would give the Run Worker authority the
 	// narrow checkpoint route exists to avoid.
-	mux.Handle(checkpoint.PathPrefix, factory.Handler())
+	mux.Handle(checkpoint.ServeMuxPattern, factory.Handler())
 	mux.Handle("/", authentication.Wrap(factory.Handler()))
 }
