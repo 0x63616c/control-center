@@ -62,7 +62,7 @@ func runCutover(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	grace := flags.Duration("grace-period", 30*time.Second, "cooperative cancellation and termination confirmation window")
 	requireReady := flags.Bool("require-ready", false, "fail unless the final inventory is activation-ready")
 	if err := flags.Parse(args); err != nil {
-		return err
+		return fmt.Errorf("parsing cutover flags: %w", err)
 	}
 	if flags.NArg() != 0 {
 		return fmt.Errorf("unexpected cutover arguments: %v", flags.Args())
@@ -70,7 +70,7 @@ func runCutover(ctx context.Context, args []string, stdout, stderr io.Writer) er
 
 	dependencies, closeRuntime, err := buildLiveDependencies(ctx, stderr)
 	if err != nil {
-		return err
+		return fmt.Errorf("building live cutover dependencies: %w", err)
 	}
 	defer closeRuntime()
 
@@ -79,7 +79,7 @@ func runCutover(ctx context.Context, args []string, stdout, stderr io.Writer) er
 		return fmt.Errorf("writing cutover report: %w", err)
 	}
 	if executeErr != nil {
-		return executeErr
+		return fmt.Errorf("executing cutover: %w", executeErr)
 	}
 	if *requireReady && !report.Ready {
 		return &cutover.NotReadyError{Report: report}
@@ -138,7 +138,7 @@ func runPolicyVerification(args []string, stdin io.Reader, stdout io.Writer) err
 	appID := flags.String("app-id", "", "GitHub App numeric id")
 	branch := flags.String("branch", "main", "deployment branch whose effective rules are verified")
 	if err := flags.Parse(args); err != nil {
-		return err
+		return fmt.Errorf("parsing GitHub policy flags: %w", err)
 	}
 	parsedAppID, err := strconv.ParseInt(*appID, 10, 64)
 	if err != nil || parsedAppID <= 0 {

@@ -1,8 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { AxiosResponse } from "axios";
-import { describe, expect, it } from "vitest";
+import axios, { type AxiosResponse } from "axios";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TranscriptViewer, transcriptQueryKey } from "@/features/ticket-detail/TranscriptViewer";
+
+vi.mock("axios", () => ({ default: { get: vi.fn() } }));
+
+const mockedGet = vi.mocked(axios.get);
 
 const TRANSCRIPT_PATH =
   "/v1/tickets/42/runs/019fb6a0-c159-7a3a-9067-eda7a63a8ac7/steps/1/attempts/1/transcript";
@@ -16,6 +20,8 @@ function renderViewer(queryClient: QueryClient) {
 }
 
 describe("TranscriptViewer", () => {
+  beforeEach(() => mockedGet.mockReset());
+
   it("starts collapsed behind a View transcript button, fetching nothing yet", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     renderViewer(queryClient);
@@ -27,12 +33,14 @@ describe("TranscriptViewer", () => {
     expect(queries).toHaveLength(1);
     expect(queries[0]?.state.fetchStatus).toBe("idle");
     expect(queries[0]?.state.dataUpdateCount).toBe(0);
+    expect(mockedGet).not.toHaveBeenCalled();
   });
 
   it("renders the transcript readably once opened, oldest event first", async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const key = transcriptQueryKey(TRANSCRIPT_PATH);
     const raw = `${JSON.stringify({ event: "start" })}\n${JSON.stringify({ event: "end" })}\n`;
+    mockedGet.mockResolvedValue({ data: raw, status: 200 } as AxiosResponse<string>);
     queryClient.setQueryData(key, { data: raw, status: 200 } as AxiosResponse<string>);
 
     renderViewer(queryClient);
@@ -44,12 +52,11 @@ describe("TranscriptViewer", () => {
   });
 
   it("reports an error rather than hanging when the transcript cannot be fetched", async () => {
+    mockedGet.mockRejectedValueOnce(new Error("offline"));
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     renderViewer(queryClient);
     fireEvent.click(screen.getByRole("button", { name: "View transcript" }));
 
-    // No mock server backs this request in a unit test; it fails for real,
-    // which is exactly the "no network" case this assertion covers.
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent("Could not load transcript"),
     );

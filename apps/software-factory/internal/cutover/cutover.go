@@ -52,10 +52,22 @@ type PullRequest struct {
 
 // LegacyTicket is a Ticket still in the old working/review vocabulary.
 type LegacyTicket struct {
-	ID      int64  `json:"id"`
-	State   string `json:"state"`
-	Version string `json:"version"`
+	ID      int64             `json:"id"`
+	State   LegacyTicketState `json:"state"`
+	Version time.Time         `json:"version"`
 }
+
+// LegacyTicketState is the narrow state vocabulary which cutover can repair.
+type LegacyTicketState string
+
+const (
+	// LegacyTicketOpen is the state after a successful cutover repair.
+	LegacyTicketOpen LegacyTicketState = "open"
+	// LegacyTicketWorking is a ticket owned by a running legacy workflow.
+	LegacyTicketWorking LegacyTicketState = "working"
+	// LegacyTicketReview is a ticket waiting in the legacy review state.
+	LegacyTicketReview LegacyTicketState = "review"
+)
 
 // Inventory is the complete cutover safety view at one instant.
 type Inventory struct {
