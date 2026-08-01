@@ -20,6 +20,7 @@ type RunWorker struct {
 	TemporalHostPort  string
 	TemporalNamespace string
 	BlobsURL          string
+	MetricsAddr       string
 	CheckpointAPIURL  string
 	GitHubOwner       string
 	GitHubRepo        string
@@ -35,6 +36,7 @@ func runWorkerEnvNames() []string {
 		work.RunWorkerTemporalHostPortEnv,
 		work.RunWorkerTemporalNamespaceEnv,
 		work.RunWorkerBlobsURLEnv,
+		work.RunWorkerMetricsAddrEnv,
 		work.RunWorkerCheckpointAPIURLEnv,
 		work.RunWorkerGitHubRepositoryEnv,
 	}
@@ -49,6 +51,7 @@ func (w RunWorker) Validate() error {
 		work.RunWorkerTemporalHostPortEnv:  w.TemporalHostPort,
 		work.RunWorkerTemporalNamespaceEnv: w.TemporalNamespace,
 		work.RunWorkerBlobsURLEnv:          w.BlobsURL,
+		work.RunWorkerMetricsAddrEnv:       w.MetricsAddr,
 		work.RunWorkerCheckpointAPIURLEnv:  w.CheckpointAPIURL,
 		work.RunWorkerGitHubRepositoryEnv:  w.GitHubOwner + "/" + w.GitHubRepo,
 	}
@@ -122,6 +125,7 @@ func LoadRunWorker() (RunWorker, error) {
 		TemporalHostPort:  os.Getenv(work.RunWorkerTemporalHostPortEnv),
 		TemporalNamespace: os.Getenv(work.RunWorkerTemporalNamespaceEnv),
 		BlobsURL:          os.Getenv(work.RunWorkerBlobsURLEnv),
+		MetricsAddr:       os.Getenv(work.RunWorkerMetricsAddrEnv),
 		CheckpointAPIURL:  os.Getenv(work.RunWorkerCheckpointAPIURLEnv),
 		GitHubOwner:       repository[0],
 		GitHubRepo:        repository[1],

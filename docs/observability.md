@@ -167,6 +167,49 @@ cancelled yet, and Prometheus does not carry a series for a counter that never
 incremented. Those panels fill in the moment the thing they measure happens,
 which is the point of them.
 
+### Software factory `AgentWorkflow`
+
+The factory's reusable agent runtime splits one stage across two workers:
+prompt/model/finalization/lifecycle activities on task queue
+`software-factory`, and the typed `agent.tool` activity on a validated
+generation-affine Session queue. Current `FactoryWorkTicket` executions use
+the per-run sandbox queue; the retained Run Worker foundation uses
+`software-factory-run-worker-<run-id>-g<generation>`. `AgentWorkflow` receives
+a typed target and derives one of those names; it never accepts an arbitrary
+task-queue string. Start with the Temporal execution tree:
+`FactoryWorkTicket` owns synchronous children named
+`agent/<run-id>/<stage>/<turn>`. A child waiting on the main queue is a
+provider-side concern; one waiting on its Session queue is a target/tool
+concern.
+
+The durable forensic record is the factory Store, not container logs. Attempt
+rows hold model, measured usage and outcome. Agent transcripts are assembled as
+immutable blob revisions, returned by `TranscriptRef`, then copied into the
+Attempt record after the Attempt exists. Temporal history contains bounded
+references and routing metadata, not the whole conversation or tool output.
+
+Loki logs include run, stage, turn and tool-call identity where available, but
+must not include prompt, response, tool arguments, tool output or OAuth
+credentials. Provider calls run only in the main worker; seeing provider
+authentication material or a model request in `sandbox-worker` logs is a
+security boundary violation. Cancellation should appear as a cancelled child,
+a cancelled model HTTP request or local tool process, followed by the parent's
+disconnected sandbox cleanup.
+
+The main worker exports `software_factory_agent_model_turns_total`, provider
+latency, input/output token and measured-usage counters, conversation-byte
+histograms, lifecycle outcomes, budget exhaustion and activity retries. Tool
+workers export `software_factory_agent_tool_calls_total`, tool latency,
+conversation bytes and retries. Run Worker pods expose `:9090/metrics` and
+carry the standard Prometheus scrape annotations. Labels are bounded to model,
+effort, outcome, tool, activity, source and budget; workflow IDs, call IDs,
+prompts and outputs are deliberately absent.
+
+V1 transcript revisions contain prepared, completed model/tool and finalized
+events. Failure, cancellation and budget outcomes are authoritative in
+Temporal history plus the content-free lifecycle metrics/logs; terminal
+failure transcript events and context compaction are not claimed by V1.
+
 ### SDK metrics (`temporal-sdk-worker`)
 
 Unlike the five server-side dashboards above, `apps/temporal-worker` did not

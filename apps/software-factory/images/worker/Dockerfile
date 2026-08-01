@@ -1,9 +1,10 @@
 # syntax=docker/dockerfile:1
 
-# The software-factory Temporal worker (ADR-0011): the process that polls for
-# `auto` tickets, runs the five stages as execs into per-ticket sandbox pods,
-# and writes transcripts to the NFS volume. It is the first pod in this cluster
-# with Kubernetes API credentials at all.
+# The software-factory Temporal worker (ADR-0011): the process that dispatches
+# factory Tickets, owns each stage's AgentWorkflow child, calls the model and
+# persists reference-backed transcripts. Per-ticket sandbox workers execute
+# only the typed tool activity. This is the first pod in the cluster with the
+# provider credential and the Kubernetes grant used to create those sandboxes.
 #
 # `cmd/worker` landed (D1, #340) and CI builds this image on every change to it
 # — the `build-software-factory-worker` job. The note that used to sit here,
@@ -39,9 +40,8 @@ FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/worker /usr/local/bin/worker
 COPY --from=build /out/factoryctl /usr/local/bin/factoryctl
 
-# 65532 is distroless's `nonroot`. It is a contract with F1's Deployment: the
-# transcript volume is NFS-backed, and its fsGroup must match this uid's group
-# or every transcript Open fails with EACCES.
+# 65532 is distroless's `nonroot`. Agent artifacts go through the blob service,
+# so this process needs no writable repository or transcript volume.
 USER 65532:65532
 
 ENTRYPOINT ["/usr/local/bin/worker"]

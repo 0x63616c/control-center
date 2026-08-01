@@ -41,9 +41,9 @@ type SandboxTemplate struct {
 	// not here, because this struct only holds one of them.
 	DeadlineSeconds int64
 
-	// Env is the sandbox's environment: the ephemeral CODEX_HOME and nothing
-	// secret. Credentials are written as files, by the activity that fetches
-	// them, inside the pod.
+	// Env is the sandbox's non-secret runtime configuration: its private
+	// Temporal queue plus the Temporal and blob endpoints used by typed tools.
+	// Provider credentials remain on the main worker.
 	Env map[string]string
 }
 

@@ -1,1 +1,0 @@
-Return one deterministic fact used to prove the Temporal tool loop.

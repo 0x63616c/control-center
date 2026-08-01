@@ -63,12 +63,6 @@ func (p githubCredentialProbe) InstallationToken(context.Context) (work.SandboxC
 	return p.credential, nil
 }
 
-type codexCredentialProbe struct{ file work.CredentialFile }
-
-func (p codexCredentialProbe) SandboxCredentialFile(context.Context) (work.CredentialFile, error) {
-	return p.file, nil
-}
-
 type capabilityProbe struct {
 	values []work.Credential
 	next   int
@@ -108,7 +102,6 @@ func runWorkerControlHarness(t *testing.T) (*RunWorkerControlActivities, *runWor
 	acts, err := NewRunWorkerControlActivities(RunWorkerControlDeps{
 		Workers:          lifecycle,
 		GitHub:           githubCredentialProbe{credential: work.SandboxCredential{Token: work.NewCredential("github-secret"), Login: "factory[bot]", ExpiresAt: time.Date(2026, 8, 1, 1, 0, 0, 0, time.UTC)}},
-		Codex:            codexCredentialProbe{file: work.NewCredentialFile([]byte("codex-secret"))},
 		Capabilities:     capabilities,
 		Binder:           binder,
 		RepositoryBinder: binder,
@@ -137,7 +130,7 @@ func TestProvisionRunWorkerKeepsCredentialsInsideTheActivity(t *testing.T) {
 	if out.ID != wantID || lifecycle.provisioned.TicketNumber != 42 || lifecycle.provisioned.Image == "" || lifecycle.provisioned.Env[work.SandboxBranchEnv] != in.Branch {
 		t.Fatalf("safe output/spec = %+v / %+v", out, lifecycle.provisioned)
 	}
-	if string(lifecycle.material.CodexCredential.Reveal()) != "codex-secret" || lifecycle.material.GitHubToken.Reveal() != "github-secret" || lifecycle.material.CheckpointCapability.Reveal() != "bootstrap-secret" {
+	if lifecycle.material.GitHubToken.Reveal() != "github-secret" || lifecycle.material.CheckpointCapability.Reveal() != "bootstrap-secret" {
 		t.Fatal("provisioning did not receive all in-process credentials")
 	}
 	if lifecycle.repositoryInstalled.Reveal() != "repository-secret" || binder.repositoryIdentity != in.Identity || binder.repositoryCapability != "repository-secret" {
@@ -193,7 +186,7 @@ func assertHistoryHasNoSecrets(t *testing.T, input, output any) {
 		if err != nil {
 			t.Fatalf("marshal safe activity payload: %v", err)
 		}
-		for _, secret := range [][]byte{[]byte("codex-secret"), []byte("github-secret"), []byte("bootstrap-secret"), []byte("repository-secret"), []byte("attempt-secret"), []byte("already-projected-secret")} {
+		for _, secret := range [][]byte{[]byte("github-secret"), []byte("bootstrap-secret"), []byte("repository-secret"), []byte("attempt-secret"), []byte("already-projected-secret")} {
 			if bytes.Contains(raw, secret) {
 				t.Fatalf("activity payload leaked credential: %s", raw)
 			}

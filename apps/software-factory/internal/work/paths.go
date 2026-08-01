@@ -69,7 +69,7 @@ func isPathElement(value string) bool {
 }
 
 // RepoDir is where the ticket's repository is checked out inside the sandbox,
-// and the directory a stage's `codex exec` must run in.
+// and the working directory repository tools are confined to.
 //
 // It is a subdirectory of SandboxRoot rather than SandboxRoot itself, because
 // the sandbox root also holds this run's scaffolding — .exec/ and the per-stage
@@ -85,53 +85,6 @@ func isPathElement(value string) bool {
 // the cloning process creates is owned by that process, so the clone creates
 // it, and the image's WORKDIR stays at the group-writable SandboxRoot.
 const RepoDir = SandboxRoot + "/repo"
-
-// CodexHomeDir is the ephemeral CODEX_HOME inside the sandbox: where the codex
-// CLI reads its auth.json from, and the only place a sandbox's codex
-// credential is ever written.
-//
-// It is a sibling of RepoDir under SandboxRoot, for the reason RepoDir gives
-// for the git credential file: RepoDir becomes the run's git working tree the
-// moment it is cloned, and a credential file living inside one is one
-// `git add -A` away from being committed into the branch the run pushes.
-const CodexHomeDir = SandboxRoot + "/.codex"
-
-// CodexHomeEnv is the environment variable that tells the codex CLI where to
-// find CodexHomeDir. Like SandboxBranchEnv, it is part of the contract with
-// the sandbox image — the composition root sets it on every sandbox's
-// template, and this is the one place that names it.
-const CodexHomeEnv = "CODEX_HOME"
-
-// CodexAuthFile is where the codex CLI's auth.json lives inside CodexHomeDir —
-// the file codex exec reads on every invocation to authenticate. It is a
-// symlink to CodexAuthSecretMountFile, created by cmd/sandbox-worker at
-// startup — see that constant's own doc comment for why it is not the Secret
-// mount itself.
-const CodexAuthFile = CodexHomeDir + "/auth.json"
-
-// CodexAuthSecretMountFile is where the sandbox's per-ticket credential
-// Secret is actually mounted by Kubernetes — deliberately NOT inside
-// CodexHomeDir, and outside SandboxRoot entirely.
-//
-// A subPath volume mount forces Kubernetes to create any directory that has
-// to host it, as root, before the container's own process ever starts — the
-// same trap RepoDir's own doc comment describes for a WORKDIR the container
-// runtime has to create inside an emptyDir. Mounting the credential Secret
-// directly under CodexHomeDir (D3, #434) made THAT directory root-owned
-// instead of owned by the sandbox uid, and codex needs to write other files
-// there too — a PATH-aliases file, its app-server socket — not just read
-// auth.json out of it. Every one of those writes failed with EACCES in prod
-// run one: "WARNING: proceeding, even though we could not create PATH
-// aliases: Permission denied (os error 13)", then "Error: failed to
-// initialize in-process app-server client: Permission denied (os error 13)".
-//
-// Mounted here instead, cmd/sandbox-worker creates CodexHomeDir itself at
-// startup — an ordinary os.MkdirAll, owned by the uid that made it, like
-// every other directory this process creates under SandboxRoot — and
-// symlinks CodexAuthFile to this path. The credential's bytes are still
-// placed entirely by Kubernetes and never pass through a write this process
-// performs; only CodexHomeDir's own ownership changes.
-const CodexAuthSecretMountFile = "/var/run/secrets/software-factory/codex-auth.json"
 
 // GhConfigDir is the gh CLI's config directory inside the sandbox, and
 // GhHostsFile the credential file it reads out of it.
@@ -152,12 +105,12 @@ const CodexAuthSecretMountFile = "/var/run/secrets/software-factory/codex-auth.j
 // a git working tree, and a credential file inside one is one `git add -A` away
 // from being pushed. NOT $HOME/.config/gh, which is gh's default and would make
 // the image's HOME a silent second contract; GH_CONFIG_DIR names it explicitly,
-// the way CodexHomeEnv does for codex.
+// rather than relying on a process-wide HOME convention.
 const (
 	GhConfigDir = SandboxRoot + "/.gh"
 
 	// GhConfigDirEnv is the environment variable pointing gh at GhConfigDir. Set
-	// on every sandbox's template by the composition root, beside CodexHomeEnv.
+	// on every sandbox's template by the composition root.
 	GhConfigDirEnv = "GH_CONFIG_DIR"
 
 	// GhHostsFile is the file gh reads a host's token from. The name is gh's,
@@ -182,7 +135,7 @@ const (
 //
 // None of the four can carry attacker-controlled text — a ticket number and a
 // turn are both integers, a Temporal RunID is a UUID, and a Stage is one of
-// three constants — so the paths below cannot be steered by anything an issue
+// three constants, so the identity cannot be steered by anything a Ticket
 // author writes.
 type StageKey struct {
 	// Ticket is the GitHub issue number.
@@ -261,46 +214,3 @@ func ParseFactoryTicketBranchName(branch string) (ticketID int64, ok bool) {
 // an already-running execution rather than erroring on it — is what makes
 // that idempotent. A second spelling anywhere would be a second dispatcher.
 const FactoryDispatcherWorkflowID = "software-factory-ticket-dispatcher"
-
-// StagePaths are the files one stage attempt reads and writes in the sandbox.
-type StagePaths struct {
-	// Dir holds everything belonging to this attempt.
-	Dir string
-	// Prompt is the rendered stage prompt, written before the stage starts.
-	// Passing it as a file rather than an argument is what keeps issue text out
-	// of argv.
-	Prompt string
-	// Schema constrains the stage's final message.
-	Schema string
-	// Result is the schema-conforming final message. Its existence is the
-	// stage's completion record: present means done, and the stage must be read
-	// from it rather than re-run.
-	Result string
-	// Lock serialises attempts of this exact stage while they probe and run.
-	// It stays beside Result so no process outside this sandbox needs it.
-	Lock string
-}
-
-// Paths returns where this attempt's files live inside the sandbox.
-func (k StageKey) Paths() StagePaths {
-	dir := path.Join(SandboxRoot, k.RunID, string(k.Stage), strconv.Itoa(k.Turn))
-	return StagePaths{
-		Dir:    dir,
-		Prompt: path.Join(dir, "prompt.md"),
-		Schema: path.Join(dir, "schema.json"),
-		Result: path.Join(dir, "result.json"),
-		Lock:   path.Join(dir, "codex.lock"),
-	}
-}
-
-// TranscriptPath is where this attempt's raw event stream is stored, relative
-// to the transcript volume's root.
-//
-// The volume is mounted on the worker, never on the sandbox: the worker pulls
-// the stream out, so a sandbox holds nothing worth keeping and reaches nothing
-// worth stealing. Keyed by RunID and Turn so a retry, and a later turn of a
-// looping stage, each stay separately inspectable from the attempt they
-// replaced or followed.
-func (k StageKey) TranscriptPath() string {
-	return path.Join(fmt.Sprintf("%d", k.Ticket), k.RunID, fmt.Sprintf("%s.%d.jsonl", k.Stage, k.Turn))
-}

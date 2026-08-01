@@ -5,10 +5,18 @@ import (
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
+)
+
+const (
+	factoryAgentWorkflowChangeID = "factory-agent-workflow-v1"
+	factoryAgentWorkflowVersion  = 1
+	factoryPushRepoChangeID      = "factory-push-repo-v1"
+	factoryPushRepoVersion       = 1
 )
 
 // ticketActs, recordingActs and transcriptActs name the second pipeline's
@@ -103,6 +111,8 @@ type factoryTicketRun struct {
 
 	sandbox work.SandboxID
 	usage   work.Usage
+
+	agentWorkflow bool
 }
 
 // execute is the pipeline: claim the Ticket, stand up its sandbox, run plan
@@ -148,13 +158,18 @@ func (r *factoryTicketRun) execute(ctx workflow.Context) (FactoryWorkTicketResul
 	detail := work.TicketDetail{Ticket: work.Ticket{Number: int(r.in.TicketID), Title: ticket.Title, Body: ticket.Body}}
 	prior := make(map[work.Stage][]work.StageOutput, 3)
 
-	sessionCtx, err := r.createSession(ctx)
-	if err != nil {
-		return FactoryWorkTicketResult{Outcome: work.OutcomeFailed}, err
+	stages := ctx
+	version := workflow.GetVersion(ctx, factoryAgentWorkflowChangeID, workflow.DefaultVersion, factoryAgentWorkflowVersion)
+	if version == workflow.DefaultVersion {
+		sessionCtx, err := r.createSession(ctx)
+		if err != nil {
+			return FactoryWorkTicketResult{Outcome: work.OutcomeFailed}, err
+		}
+		defer workflow.CompleteSession(sessionCtx)
+		stages = workflow.WithActivityOptions(sessionCtx, r.stageOptions())
+	} else {
+		r.agentWorkflow = true
 	}
-	defer workflow.CompleteSession(sessionCtx)
-
-	stages := workflow.WithActivityOptions(sessionCtx, r.stageOptions())
 	ci := workflow.WithActivityOptions(ctx, r.ciOptions())
 
 	planResult, err := r.runFactoryPlanTurn(ctx, stages, detail, prior)
@@ -339,6 +354,17 @@ func (r *factoryTicketRun) persistTranscript(ctx workflow.Context, key work.Stag
 	in := activities.PersistTranscriptToStoreInput{Key: key, AttemptNo: attemptNo, Transcript: transcript}
 	if err := workflow.ExecuteActivity(control, transcriptActs.PersistTranscriptToStore, in).Get(ctx, nil); err != nil {
 		workflow.GetLogger(ctx).Error("could not persist the stage transcript to the store",
+			"step", key.String(), "error", err)
+	}
+}
+
+// persistAgentTranscript stores one child transcript by reference after its Attempt exists.
+func (r *factoryTicketRun) persistAgentTranscript(ctx workflow.Context, key work.StageKey, ref agent.TranscriptRef) {
+	control := workflow.WithActivityOptions(ctx, r.controlOptions())
+	const attemptNo = 1
+	in := activities.PersistAgentTranscriptInput{Key: key, AttemptNo: attemptNo, TranscriptRef: ref}
+	if err := workflow.ExecuteActivity(control, agent.PersistTranscriptActivityName, in).Get(ctx, nil); err != nil {
+		workflow.GetLogger(ctx).Error("could not persist the agent transcript to the store",
 			"step", key.String(), "error", err)
 	}
 }

@@ -32,6 +32,29 @@ const (
 	labelEffort   = "effort"
 	labelOutcome  = "outcome"
 	labelEncoding = "encoding"
+	labelStatus   = "status"
+	labelSource   = "source"
+	labelTool     = "tool"
+	labelActivity = "activity"
+	labelBudget   = "budget"
+)
+
+// AgentOutcome is one bounded provider, tool, or child outcome label.
+type AgentOutcome string
+
+const (
+	// AgentOutcomeFinalText is a provider turn that returned terminal text.
+	AgentOutcomeFinalText AgentOutcome = "final_text"
+	// AgentOutcomeToolCalls is a provider turn that requested tools.
+	AgentOutcomeToolCalls AgentOutcome = "tool_calls"
+	// AgentOutcomeFailed is a provider, tool, or child failure.
+	AgentOutcomeFailed AgentOutcome = "failed"
+	// AgentOutcomeCancelled is cancellation rather than failure.
+	AgentOutcomeCancelled AgentOutcome = "cancelled"
+	// AgentOutcomeSucceeded is a successfully completed tool or child.
+	AgentOutcomeSucceeded AgentOutcome = "succeeded"
+	// AgentOutcomeToolError is a tool-visible, non-infrastructure failure.
+	AgentOutcomeToolError AgentOutcome = "tool_error"
 )
 
 // Outcome is how a stage attempt finished, and the value of the `outcome`
@@ -76,15 +99,26 @@ var durationBuckets = []float64{10, 30, 60, 120, 300, 600, 1200, 1800, 2700, 360
 // type with a method per counter would let a caller record three of the four
 // and leave the series that says how the stage ended with a hole in it.
 type Metrics struct {
-	uncachedInputTokens  *prometheus.CounterVec
-	cachedInputTokens    *prometheus.CounterVec
-	outputTokens         *prometheus.CounterVec
-	reasoningTokens      *prometheus.CounterVec
-	stages               *prometheus.CounterVec
-	stageDuration        *prometheus.HistogramVec
-	payloadLayerBytesIn  *prometheus.CounterVec
-	payloadLayerBytesOut *prometheus.CounterVec
-	payloadLayerDuration *prometheus.HistogramVec
+	uncachedInputTokens    *prometheus.CounterVec
+	cachedInputTokens      *prometheus.CounterVec
+	outputTokens           *prometheus.CounterVec
+	reasoningTokens        *prometheus.CounterVec
+	stages                 *prometheus.CounterVec
+	stageDuration          *prometheus.HistogramVec
+	payloadLayerBytesIn    *prometheus.CounterVec
+	payloadLayerBytesOut   *prometheus.CounterVec
+	payloadLayerDuration   *prometheus.HistogramVec
+	agentModelTurns        *prometheus.CounterVec
+	agentProviderDuration  *prometheus.HistogramVec
+	agentInputTokens       *prometheus.CounterVec
+	agentOutputTokens      *prometheus.CounterVec
+	agentUsageReports      *prometheus.CounterVec
+	agentConversationBytes *prometheus.HistogramVec
+	agentToolCalls         *prometheus.CounterVec
+	agentToolDuration      *prometheus.HistogramVec
+	agentActivityRetries   *prometheus.CounterVec
+	agentBudgetExhaustions *prometheus.CounterVec
+	agentChildOutcomes     *prometheus.CounterVec
 
 	// bounded caps how many distinct values each label key can export.
 	bounded *boundedLabels
@@ -124,11 +158,105 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help:      "Wall-clock time one payload codec layer operation took.",
 			Buckets:   []float64{0.001, 0.01, 0.1, 1, 5, 10, 30},
 		}, []string{labelEncoding}),
+		agentModelTurns: counter(reg, "agent_model_turns_total",
+			"Direct provider turns, by bounded model configuration and outcome.", []string{labelModel, labelEffort, labelOutcome}),
+		agentProviderDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "agent_provider_duration_seconds",
+			Help:      "Wall-clock latency of one direct provider turn.",
+			Buckets:   []float64{0.1, 0.5, 1, 2, 5, 10, 30, 60, 120},
+		}, []string{labelModel, labelEffort, labelOutcome}),
+		agentInputTokens: counter(reg, "agent_input_tokens_total",
+			"Input tokens reported by completed agent model turns.", []string{labelModel, labelEffort}),
+		agentOutputTokens: counter(reg, "agent_output_tokens_total",
+			"Output tokens reported by completed agent model turns.", []string{labelModel, labelEffort}),
+		agentUsageReports: counter(reg, "agent_usage_reports_total",
+			"Completed agent model turns, split by whether provider usage was measured.", []string{labelModel, labelEffort, labelStatus}),
+		agentConversationBytes: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "agent_conversation_bytes",
+			Help:      "Cumulative immutable conversation bytes after a completed model turn or tool call.",
+			Buckets:   prometheus.ExponentialBuckets(1024, 2, 12),
+		}, []string{labelSource}),
+		agentToolCalls: counter(reg, "agent_tool_calls_total",
+			"Sandbox tool calls, by bounded tool name and outcome.", []string{labelTool, labelOutcome}),
+		agentToolDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "agent_tool_duration_seconds",
+			Help:      "Wall-clock duration of one sandbox tool call.",
+			Buckets:   []float64{0.01, 0.05, 0.1, 0.5, 1, 5, 10, 30, 60, 120},
+		}, []string{labelTool, labelOutcome}),
+		agentActivityRetries: counter(reg, "agent_activity_retries_total",
+			"Retried agent activity invocations observed after attempt one.", []string{labelActivity}),
+		agentBudgetExhaustions: counter(reg, "agent_budget_exhaustions_total",
+			"Agent workflows stopped by a fixed resource budget.", []string{labelBudget}),
+		agentChildOutcomes: counter(reg, "agent_child_outcomes_total",
+			"Agent child workflow terminal outcomes observed before return.", []string{labelOutcome}),
 		bounded: newBoundedLabels(LabelValueLimit),
 	}
 	reg.MustRegister(m.stageDuration)
 	reg.MustRegister(m.payloadLayerDuration)
+	reg.MustRegister(m.agentProviderDuration)
+	reg.MustRegister(m.agentConversationBytes)
+	reg.MustRegister(m.agentToolDuration)
 	return m
+}
+
+// AgentToolCall records one sandbox tool invocation at its activity boundary.
+func (m *Metrics) AgentToolCall(tool string, outcome AgentOutcome, conversationBytes int64, took time.Duration) {
+	labels := prometheus.Labels{
+		labelTool:    m.bounded.fold(labelTool, tool),
+		labelOutcome: m.bounded.fold(labelOutcome, string(outcome)),
+	}
+	m.agentToolCalls.With(labels).Inc()
+	m.agentToolDuration.With(labels).Observe(max(took.Seconds(), 0))
+	m.agentConversationBytes.WithLabelValues(m.bounded.fold(labelSource, "tool")).Observe(float64(max(conversationBytes, 0)))
+}
+
+// AgentActivityRetry records one invocation whose Temporal attempt is greater than one.
+func (m *Metrics) AgentActivityRetry(activityName string) {
+	m.agentActivityRetries.WithLabelValues(m.bounded.fold(labelActivity, activityName)).Inc()
+}
+
+// AgentBudgetExhausted records the fixed limit that stopped one child.
+func (m *Metrics) AgentBudgetExhausted(budget string) {
+	m.agentBudgetExhaustions.WithLabelValues(m.bounded.fold(labelBudget, budget)).Inc()
+}
+
+// AgentChildFinished records one terminal child outcome.
+func (m *Metrics) AgentChildFinished(outcome AgentOutcome) {
+	m.agentChildOutcomes.WithLabelValues(m.bounded.fold(labelOutcome, string(outcome))).Inc()
+}
+
+// AgentModelTurn records one direct provider invocation at the activity boundary.
+func (m *Metrics) AgentModelTurn(
+	model work.Model,
+	outcome AgentOutcome,
+	usage work.Usage,
+	usageMeasured bool,
+	conversationBytes int64,
+	took time.Duration,
+) {
+	labels := prometheus.Labels{
+		labelModel:   m.bounded.fold(labelModel, model.Name),
+		labelEffort:  m.bounded.fold(labelEffort, model.Effort),
+		labelOutcome: m.bounded.fold(labelOutcome, string(outcome)),
+	}
+	m.agentModelTurns.With(labels).Inc()
+	m.agentProviderDuration.With(labels).Observe(max(took.Seconds(), 0))
+	usageLabels := prometheus.Labels{labelModel: labels[labelModel], labelEffort: labels[labelEffort]}
+	m.agentInputTokens.With(usageLabels).Add(float64(max(usage.InputTokens, 0)))
+	m.agentOutputTokens.With(usageLabels).Add(float64(max(usage.OutputTokens, 0)))
+	status := "unknown"
+	if usageMeasured {
+		status = "measured"
+	}
+	reportLabels := prometheus.Labels{
+		labelModel: labels[labelModel], labelEffort: labels[labelEffort],
+		labelStatus: m.bounded.fold(labelStatus, status),
+	}
+	m.agentUsageReports.With(reportLabels).Inc()
+	m.agentConversationBytes.WithLabelValues(m.bounded.fold(labelSource, "model")).Observe(float64(max(conversationBytes, 0)))
 }
 
 // PayloadLayerApplied records bytes and duration for one payload codec layer operation.

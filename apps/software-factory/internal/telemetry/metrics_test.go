@@ -303,6 +303,92 @@ func TestAnEmptyModelNameIsLabelledRatherThanLeftBlank(t *testing.T) {
 	}
 }
 
+func TestAgentModelTurnRecordsProviderUsageLatencyAndConversationSize(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	metrics := telemetry.NewMetrics(reg)
+	metrics.AgentModelTurn(
+		planModel,
+		telemetry.AgentOutcomeFinalText,
+		work.Usage{InputTokens: 12, OutputTokens: 3},
+		true,
+		4096,
+		1500*time.Millisecond,
+	)
+
+	want := `
+# HELP software_factory_agent_input_tokens_total Input tokens reported by completed agent model turns.
+# TYPE software_factory_agent_input_tokens_total counter
+software_factory_agent_input_tokens_total{effort="medium",model="gpt-5.6-terra"} 12
+# HELP software_factory_agent_model_turns_total Direct provider turns, by bounded model configuration and outcome.
+# TYPE software_factory_agent_model_turns_total counter
+software_factory_agent_model_turns_total{effort="medium",model="gpt-5.6-terra",outcome="final_text"} 1
+# HELP software_factory_agent_output_tokens_total Output tokens reported by completed agent model turns.
+# TYPE software_factory_agent_output_tokens_total counter
+software_factory_agent_output_tokens_total{effort="medium",model="gpt-5.6-terra"} 3
+# HELP software_factory_agent_usage_reports_total Completed agent model turns, split by whether provider usage was measured.
+# TYPE software_factory_agent_usage_reports_total counter
+software_factory_agent_usage_reports_total{effort="medium",model="gpt-5.6-terra",status="measured"} 1
+`
+	if err := testutil.CollectAndCompare(reg, strings.NewReader(want),
+		"software_factory_agent_model_turns_total",
+		"software_factory_agent_input_tokens_total",
+		"software_factory_agent_output_tokens_total",
+		"software_factory_agent_usage_reports_total",
+	); err != nil {
+		t.Error(err)
+	}
+
+	provider := gatherFamily(t, reg, "software_factory_agent_provider_duration_seconds").GetMetric()[0].GetHistogram()
+	if provider.GetSampleCount() != 1 || provider.GetSampleSum() != 1.5 {
+		t.Errorf("provider duration = count %d sum %v, want count 1 sum 1.5", provider.GetSampleCount(), provider.GetSampleSum())
+	}
+	conversation := gatherFamily(t, reg, "software_factory_agent_conversation_bytes").GetMetric()[0].GetHistogram()
+	if conversation.GetSampleCount() != 1 || conversation.GetSampleSum() != 4096 {
+		t.Errorf("conversation bytes = count %d sum %v, want count 1 sum 4096", conversation.GetSampleCount(), conversation.GetSampleSum())
+	}
+}
+
+func TestAgentToolAndLifecycleMetricsUseBoundedOperationalLabels(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	metrics := telemetry.NewMetrics(reg)
+	metrics.AgentToolCall("read_file", telemetry.AgentOutcomeSucceeded, 8192, 250*time.Millisecond)
+	metrics.AgentActivityRetry("agent.tool")
+	metrics.AgentBudgetExhausted("tool_calls")
+	metrics.AgentChildFinished(telemetry.AgentOutcomeCancelled)
+
+	want := `
+# HELP software_factory_agent_activity_retries_total Retried agent activity invocations observed after attempt one.
+# TYPE software_factory_agent_activity_retries_total counter
+software_factory_agent_activity_retries_total{activity="agent.tool"} 1
+# HELP software_factory_agent_budget_exhaustions_total Agent workflows stopped by a fixed resource budget.
+# TYPE software_factory_agent_budget_exhaustions_total counter
+software_factory_agent_budget_exhaustions_total{budget="tool_calls"} 1
+# HELP software_factory_agent_child_outcomes_total Agent child workflow terminal outcomes observed before return.
+# TYPE software_factory_agent_child_outcomes_total counter
+software_factory_agent_child_outcomes_total{outcome="cancelled"} 1
+# HELP software_factory_agent_tool_calls_total Sandbox tool calls, by bounded tool name and outcome.
+# TYPE software_factory_agent_tool_calls_total counter
+software_factory_agent_tool_calls_total{outcome="succeeded",tool="read_file"} 1
+`
+	if err := testutil.CollectAndCompare(reg, strings.NewReader(want),
+		"software_factory_agent_tool_calls_total",
+		"software_factory_agent_activity_retries_total",
+		"software_factory_agent_budget_exhaustions_total",
+		"software_factory_agent_child_outcomes_total",
+	); err != nil {
+		t.Error(err)
+	}
+
+	toolDuration := gatherFamily(t, reg, "software_factory_agent_tool_duration_seconds").GetMetric()[0].GetHistogram()
+	if toolDuration.GetSampleCount() != 1 || toolDuration.GetSampleSum() != 0.25 {
+		t.Errorf("tool duration = count %d sum %v, want count 1 sum 0.25", toolDuration.GetSampleCount(), toolDuration.GetSampleSum())
+	}
+}
+
 // countSeries is how many label combinations a metric currently has.
 func countSeries(t *testing.T, reg *prometheus.Registry, name string) int {
 	t.Helper()
