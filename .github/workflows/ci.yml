@@ -253,6 +253,12 @@ jobs:
         # no arm64 leg or QEMU emulation creeps back in. The home-server Talos
         # node is the only deploy target and is x86.
         run: bash scripts/test-build-matrix.sh
+      - name: Software-factory image CI coverage guard
+        # `infra/src/services.ts` is the source of truth for factory images.
+        # Every entry needs both a producer and a digest collector: without
+        # either, prod's required-pin check turns a green merge into a failed
+        # deploy, or worse, a target image is never published at all.
+        run: bash scripts/test-software-factory-image-ci.sh
       - name: Control Center cutover tooling tests
         # Hermetic self-tests of the M7 production-cutover tooling (www-jtp0.7):
         # the red-first preflight gate (refuses cutover until rehearsal/snapshot/
@@ -686,6 +692,31 @@ jobs:
           docker image inspect --format 'sandbox image size: {{.Size}} bytes' sf-sandbox:ci
           apps/software-factory/images/sandbox/smoke.sh sf-sandbox:ci
 
+  build-software-factory-run-worker:
+    needs: [changes]
+    if: needs.changes.outputs.softwarefactory == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build and push software-factory Run Worker image
+        uses: ./.github/actions/build-product-image
+        env:
+          SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
+        with:
+          image: www-software-factory-run-worker
+          dockerfile: apps/software-factory/images/run-worker/Dockerfile
+          cache-scope: software-factory-run-worker
+
+      - name: Smoke-test the Run Worker image contract
+        run: |
+          docker buildx build --platform linux/amd64 --load \
+            -f apps/software-factory/images/run-worker/Dockerfile \
+            -t sf-run-worker:ci .
+          docker image inspect --format 'Run Worker image size: {{.Size}} bytes' sf-run-worker:ci
+          apps/software-factory/images/run-worker/smoke.sh sf-run-worker:ci
+
   build-software-factory-relay:
     needs: [changes]
     if: needs.changes.outputs.softwarefactory == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
@@ -803,6 +834,7 @@ jobs:
         build-map-provision,
         build-software-factory-worker,
         build-software-factory-sandbox,
+        build-software-factory-run-worker,
         build-software-factory-relay,
         build-software-factory-api,
         build-software-factory-blobs,
@@ -903,7 +935,7 @@ jobs:
           # KEY is product-component scoped and matches the Pulumi imageDigests
           # config key, while repo names use full product slugs.
           declare -A out=()
-          for entry in www-control-center-web:control-center-web www-control-center-manage:control-center-manage www-control-center-api:control-center-api www-control-center-worker:control-center-worker www-control-center-temporal-worker:control-center-temporal-worker www-control-center-map-provision:control-center-map-provision www-software-factory-worker:software-factory-worker www-software-factory-sandbox:software-factory-sandbox www-software-factory-relay:software-factory-relay www-software-factory-api:software-factory-api www-software-factory-blobs:software-factory-blobs www-software-factory-codec:software-factory-codec www-software-factory-console:software-factory-console; do
+          for entry in www-control-center-web:control-center-web www-control-center-manage:control-center-manage www-control-center-api:control-center-api www-control-center-worker:control-center-worker www-control-center-temporal-worker:control-center-temporal-worker www-control-center-map-provision:control-center-map-provision www-software-factory-worker:software-factory-worker www-software-factory-sandbox:software-factory-sandbox www-software-factory-run-worker:software-factory-run-worker www-software-factory-relay:software-factory-relay www-software-factory-api:software-factory-api www-software-factory-blobs:software-factory-blobs www-software-factory-codec:software-factory-codec www-software-factory-console:software-factory-console; do
             repo="${entry%%:*}"
             name="${entry#*:}"
             d=$(docker buildx imagetools inspect "ghcr.io/0x63616c/$repo:main" --format '{{.Manifest.Digest}}' 2>/dev/null || true)
