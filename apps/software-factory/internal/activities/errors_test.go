@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codex"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"go.temporal.io/sdk/temporal"
@@ -195,54 +194,6 @@ func TestFailureKindOfSeesThroughTheWrappingTemporalAddsOnTheWayToAWorkflow(t *t
 
 	if got := FailureKindOf(wrapped); got != work.FailureAuth {
 		t.Fatalf("FailureKindOf = %q, want %q", got, work.FailureAuth)
-	}
-}
-
-// The codex sentinels are the ones that reach the dispatcher's two levers. B5
-// wraps work.ErrPermanent into both, so an errorTypeOf that did not name them
-// would classify each as an undifferentiated permanent failure — and the
-// dispatcher would neither trip its breaker nor pause.
-
-func TestFailTypesACodexRateLimitSoTheBreakerCanTrip(t *testing.T) {
-	t.Parallel()
-
-	err := fail(t.Context(), "running the plan stage", fmt.Errorf("stage failed: %w", codex.ErrRateLimited))
-
-	app := appErrorOf(t, err)
-	if app.Type() != ErrTypeRateLimit {
-		t.Fatalf("type = %q, want %q — the dispatcher trips its cooldown breaker on this type and nothing else",
-			app.Type(), ErrTypeRateLimit)
-	}
-	if got := FailureKindOf(err); got != work.FailureRateLimit {
-		t.Fatalf("FailureKindOf = %q, want %q", got, work.FailureRateLimit)
-	}
-}
-
-func TestFailTypesACodexAuthFailureSoTheDispatcherPauses(t *testing.T) {
-	t.Parallel()
-
-	err := fail(t.Context(), "running the plan stage", fmt.Errorf("stage failed: %w", codex.ErrAuth))
-
-	app := appErrorOf(t, err)
-	if app.Type() != ErrTypeAuth {
-		t.Fatalf("type = %q, want %q — a dead model credential must stop the system, not be retried per ticket",
-			app.Type(), ErrTypeAuth)
-	}
-	if got := FailureKindOf(err); got != work.FailureAuth {
-		t.Fatalf("FailureKindOf = %q, want %q", got, work.FailureAuth)
-	}
-}
-
-func TestTheCodexSentinelsAreDistinguishedFromEachOther(t *testing.T) {
-	t.Parallel()
-
-	// If both collapsed onto one type, one of B5's two sentinels would be
-	// decoration. They earn their keep by leading to different behaviour.
-	rateLimit := appErrorOf(t, fail(t.Context(), "op", codex.ErrRateLimited)).Type()
-	auth := appErrorOf(t, fail(t.Context(), "op", codex.ErrAuth)).Type()
-
-	if rateLimit == auth {
-		t.Fatalf("both codex sentinels type as %q; the dispatcher would wait out a dead credential forever", rateLimit)
 	}
 }
 

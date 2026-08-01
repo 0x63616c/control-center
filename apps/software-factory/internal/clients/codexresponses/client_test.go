@@ -15,6 +15,39 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
+func TestEncodeRequestIncludesStrictJSONSchemaResponseFormat(t *testing.T) {
+	t.Parallel()
+
+	encoded, err := encodeRequest(TurnRequest{
+		Model: "gpt-test", Instructions: "work carefully", Input: []InputItem{UserText("ship it")},
+		ToolChoice: ToolChoiceAuto, TextVerbosity: TextVerbosityMedium,
+		ResponseFormat: &ResponseFormat{
+			Name:   "implement_result",
+			Schema: json.RawMessage(`{"type":"object","properties":{"report":{"type":"string"}},"required":["report"],"additionalProperties":false}`),
+		},
+	})
+	if err != nil {
+		t.Fatalf("encodeRequest() error = %v", err)
+	}
+	var request struct {
+		Text struct {
+			Format struct {
+				Type   string          `json:"type"`
+				Name   string          `json:"name"`
+				Schema json.RawMessage `json:"schema"`
+				Strict bool            `json:"strict"`
+			} `json:"format"`
+		} `json:"text"`
+	}
+	if err := json.Unmarshal(encoded, &request); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if request.Text.Format.Type != "json_schema" || request.Text.Format.Name != "implement_result" ||
+		!request.Text.Format.Strict || !json.Valid(request.Text.Format.Schema) {
+		t.Fatalf("encoded response format = %#v", request.Text.Format)
+	}
+}
+
 type staticCredentialSource struct {
 	credential Credential
 }
@@ -23,7 +56,9 @@ func TestTurnEncodesAFunctionOutputContinuation(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("session-id") != "workflow-123" || r.Header.Get("x-client-request-id") != "workflow-123" {
+		if r.Header.Get("session-id") != "workflow-123" ||
+			r.Header.Get("x-client-request-id") != "agent/run-7/plan/model/1" ||
+			r.Header.Get("Idempotency-Key") != "agent/run-7/plan/model/1" {
 			t.Errorf("session affinity headers are absent")
 		}
 		var request struct {
@@ -69,6 +104,7 @@ func TestTurnEncodesAFunctionOutputContinuation(t *testing.T) {
 		ToolChoice:         ToolChoiceAuto,
 		TextVerbosity:      TextVerbosityLow,
 		PromptCacheKey:     "workflow-123",
+		IdempotencyKey:     "agent/run-7/plan/model/1",
 	}, nil)
 	if err != nil {
 		t.Fatalf("running continuation: %v", err)
@@ -113,6 +149,44 @@ func TestTurnReportsTerminalFailuresWithoutLeakingProviderBodies(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "credential rejected") {
 		t.Fatalf("error leaked provider body: %v", err)
+	}
+}
+
+func TestTurnClassifiesRateLimitResponses(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":{"type":"rate_limit_error"}}`)
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server.URL)
+	_, err := client.Turn(context.Background(), TurnRequest{
+		Model: "gpt-test", Instructions: "Answer.", Input: []InputItem{UserText("Hello")},
+		ToolChoice: ToolChoiceNone, TextVerbosity: TextVerbosityLow,
+	}, nil)
+	if !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("Turn() error = %v, want ErrRateLimited", err)
+	}
+}
+
+func TestTurnClassifiesAuthenticationResponses(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"error":{"type":"authentication_error"}}`)
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server.URL)
+	_, err := client.Turn(context.Background(), TurnRequest{
+		Model: "gpt-test", Instructions: "Answer.", Input: []InputItem{UserText("Hello")},
+		ToolChoice: ToolChoiceNone, TextVerbosity: TextVerbosityLow,
+	}, nil)
+	if !errors.Is(err, ErrAuth) {
+		t.Fatalf("Turn() error = %v, want ErrAuth", err)
 	}
 }
 

@@ -155,9 +155,9 @@ func TestSandboxFileBlanksTheRefreshTokenAndNeverRemovesIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseCredentialFile: %v", err)
 	}
-	sandbox, err := file.forSandbox()
+	sandbox, err := file.accessOnly()
 	if err != nil {
-		t.Fatalf("forSandbox: %v", err)
+		t.Fatalf("accessOnly: %v", err)
 	}
 
 	var got map[string]json.RawMessage
@@ -193,9 +193,9 @@ func TestSandboxFileCarriesTheRefreshTokensBytesNowhereAtAll(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseCredentialFile: %v", err)
 	}
-	sandbox, err := file.forSandbox()
+	sandbox, err := file.accessOnly()
 	if err != nil {
-		t.Fatalf("forSandbox: %v", err)
+		t.Fatalf("accessOnly: %v", err)
 	}
 
 	if strings.Contains(string(sandbox.Reveal()), distinctive) {
@@ -203,10 +203,10 @@ func TestSandboxFileCarriesTheRefreshTokensBytesNowhereAtAll(t *testing.T) {
 	}
 }
 
-// forSandbox derives; it must not MUTATE what it derives from. The defensive
+// accessOnly derives; it must not MUTATE what it derives from. The defensive
 // copy of f.tokens is the only thing standing between "derive a sandbox copy"
 // and "blank the worker's own live refresh token", and today its absence would
-// be harmless purely by call ordering — on both paths forSandbox runs after the
+// be harmless purely by call ordering — on both paths accessOnly runs after the
 // store.Put. That makes the safety a property of two call sites rather than of
 // this method, and one reordering removes it. Asserting non-mutation here makes
 // the ordering irrelevant: with the map aliased instead of copied, the STORED
@@ -221,8 +221,8 @@ func TestSandboxFileLeavesTheDocumentItDerivedFromUntouched(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseCredentialFile: %v", err)
 	}
-	if _, err := file.forSandbox(); err != nil {
-		t.Fatalf("forSandbox: %v", err)
+	if _, err := file.accessOnly(); err != nil {
+		t.Fatalf("accessOnly: %v", err)
 	}
 
 	if got := file.refresh.Reveal(); got != distinctive {
@@ -267,9 +267,9 @@ func TestSandboxFileChangesNothingButTheRefreshToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseCredentialFile: %v", err)
 	}
-	sandbox, err := file.forSandbox()
+	sandbox, err := file.accessOnly()
 	if err != nil {
-		t.Fatalf("forSandbox: %v", err)
+		t.Fatalf("accessOnly: %v", err)
 	}
 
 	var want, got map[string]any
@@ -302,9 +302,9 @@ func TestSandboxFileLeavesTheRefreshTimestampVerbatim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseCredentialFile: %v", err)
 	}
-	sandbox, err := file.forSandbox()
+	sandbox, err := file.accessOnly()
 	if err != nil {
-		t.Fatalf("forSandbox: %v", err)
+		t.Fatalf("accessOnly: %v", err)
 	}
 
 	var got map[string]any

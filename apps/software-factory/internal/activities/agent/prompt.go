@@ -1,0 +1,96 @@
+package agentactivities
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
+)
+
+// PromptActivities owns stage prompt preparation and final result decoding.
+type PromptActivities struct {
+	prompts       PromptRenderer
+	conversations agent.ConversationStore
+	transcripts   agent.TranscriptStore
+	artifacts     agent.ArtifactStore
+}
+
+const stageAgentInstructions = "Complete the supplied software-factory stage using the available tools. Return the final answer in the required structured format."
+
+// NewPromptActivities constructs the prompt activities over the shared blob store.
+func NewPromptActivities(renderer PromptRenderer, blobStore blobs.Store) (*PromptActivities, error) {
+	if renderer == nil {
+		return nil, fmt.Errorf("agent prompt activities need a prompt renderer")
+	}
+	if blobStore == nil {
+		return nil, fmt.Errorf("agent prompt activities need a blob store")
+	}
+	return &PromptActivities{
+		prompts: renderer, conversations: agent.NewConversationStore(blobStore),
+		transcripts: agent.NewTranscriptStore(blobStore), artifacts: agent.NewArtifactStore(blobStore),
+	}, nil
+}
+
+// Prepare renders one stage and persists revision zero plus its response schema.
+func (activities *PromptActivities) Prepare(ctx context.Context, input PrepareInput) (PrepareOutput, error) {
+	prompt, schema, err := activities.prompts.Render(input.Attempt.Key, input.Attempt.Detail, input.Attempt.Prior)
+	if err != nil {
+		return PrepareOutput{}, invalidInput("render %s prompt: %v", input.Attempt.Key.Stage, err)
+	}
+	if strings.TrimSpace(prompt) == "" || !json.Valid(schema) {
+		return PrepareOutput{}, invalidInput("render %s prompt returned blank prompt or invalid schema", input.Attempt.Key.Stage)
+	}
+	identity := fmt.Sprintf("agent/%s/%s/%d", input.Attempt.Key.RunID, input.Attempt.Key.Stage, input.Attempt.Key.Turn)
+	conversationRef, err := activities.conversations.Append(ctx, identity, nil, []agent.ConversationItem{
+		{Kind: agent.ItemInstructions, Text: stageAgentInstructions},
+		{Kind: agent.ItemUserText, Text: prompt},
+	})
+	if err != nil {
+		return PrepareOutput{}, transientFailure("store initial agent conversation", err)
+	}
+	schemaRef, err := activities.artifacts.StoreResponseSchema(ctx, identity, schema)
+	if err != nil {
+		return PrepareOutput{}, transientFailure("store agent response schema", err)
+	}
+	transcriptRef, err := activities.transcripts.Append(ctx, identity, nil, agent.TranscriptEvent{Type: agent.EventWorkflowPrepared})
+	if err != nil {
+		return PrepareOutput{}, transientFailure("start agent transcript", err)
+	}
+	return PrepareOutput{
+		ConversationRef: conversationRef,
+		TranscriptRef:   transcriptRef,
+		ResponseFormat: agent.ResponseFormatRef{
+			Name: string(input.Attempt.Key.Stage) + "_result", SchemaRef: schemaRef,
+		},
+		PromptCacheKey: input.CacheKey,
+	}, nil
+}
+
+// Finalize loads terminal model text and decodes the stage's existing result envelope.
+func (activities *PromptActivities) Finalize(ctx context.Context, input FinalizeInput) (FinalizeOutput, error) {
+	text, err := activities.artifacts.LoadText(ctx, input.TextRef)
+	if err != nil {
+		return FinalizeOutput{}, transientFailure("load final agent text", err)
+	}
+	result, err := activities.prompts.Decode(input.Stage, []byte(text))
+	if err != nil {
+		return FinalizeOutput{}, invalidProviderOutcome("decode final %s output: %v", input.Stage, err)
+	}
+	output := FinalizeOutput{Result: result, TranscriptRef: input.TranscriptRef}
+	if input.TranscriptRef.Key != "" {
+		identity, err := activities.transcripts.Identity(input.TranscriptRef)
+		if err != nil {
+			return FinalizeOutput{}, invalidInput("resolve final transcript identity: %v", err)
+		}
+		output.TranscriptRef, err = activities.transcripts.Append(
+			ctx, identity, &input.TranscriptRef, agent.TranscriptEvent{Type: agent.EventFinalOutputDecoded},
+		)
+		if err != nil {
+			return FinalizeOutput{}, transientFailure("append final transcript event", err)
+		}
+	}
+	return output, nil
+}

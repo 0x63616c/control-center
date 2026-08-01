@@ -22,11 +22,9 @@ import (
 )
 
 const (
-	runWorkerCodexSecretPrefix      = "run-worker-codex-"
 	runWorkerGitHubSecretPrefix     = "run-worker-github-"
 	runWorkerCheckpointSecretPrefix = "run-worker-checkpoint-"
 	runWorkerRepositorySecretPrefix = "run-worker-repository-"
-	runWorkerCodexAuthKey           = "auth.json"
 	runWorkerGitHubTokenKey         = "token"
 	runWorkerGitHubLoginKey         = "login"
 	runWorkerGitHubRevisionKey      = "revision"
@@ -35,10 +33,6 @@ const (
 	runWorkerCheckpointAttempt      = "software-factory.worldwidewebb.co/checkpoint-attempt"
 	runWorkerRepositoryKey          = "capability"
 )
-
-func runWorkerCodexSecretName(id work.RunWorkerID) string {
-	return runWorkerCodexSecretPrefix + string(id)
-}
 
 func runWorkerGitHubSecretName(id work.RunWorkerID) string {
 	return runWorkerGitHubSecretPrefix + string(id)
@@ -53,7 +47,7 @@ func runWorkerRepositorySecretName(id work.RunWorkerID) string {
 }
 
 func runWorkerSecretNames(id work.RunWorkerID) []string {
-	return []string{runWorkerCodexSecretName(id), runWorkerGitHubSecretName(id), runWorkerCheckpointSecretName(id), runWorkerRepositorySecretName(id)}
+	return []string{runWorkerGitHubSecretName(id), runWorkerCheckpointSecretName(id), runWorkerRepositorySecretName(id)}
 }
 
 // Provision creates one target worker generation and all of its file-only
@@ -88,11 +82,6 @@ func (r *RunWorkers) Provision(ctx context.Context, spec work.RunWorkerSpec, mat
 	// The Pod is created or its complete target contract was proved compatible
 	// before any credential is updated. A retry can therefore never rotate a
 	// live but different generation's Secrets and only then discover the drift.
-	if err := r.putSecret(ctx, runWorkerCodexSecretName(id), labels, map[string][]byte{
-		runWorkerCodexAuthKey: material.CodexCredential.Reveal(),
-	}); err != nil {
-		return "", fmt.Errorf("provisioning Run Worker %s Codex credential: %w", id, err)
-	}
 	if err := r.putSecret(ctx, runWorkerCheckpointSecretName(id), labels, map[string][]byte{
 		runWorkerCheckpointKey: []byte(material.CheckpointCapability.Reveal()),
 	}); err != nil {
@@ -273,10 +262,10 @@ func (r *RunWorkers) Delete(ctx context.Context, identity work.RunWorkerIdentity
 }
 
 func validateRunWorkerSecretMaterial(material work.RunWorkerSecretMaterial) error {
-	if len(material.CodexCredential.Reveal()) == 0 || strings.TrimSpace(material.GitHubToken.Reveal()) == "" ||
+	if strings.TrimSpace(material.GitHubToken.Reveal()) == "" ||
 		strings.TrimSpace(material.GitHubLogin) == "" || material.GitHubExpiresAt.IsZero() ||
 		strings.TrimSpace(material.CheckpointCapability.Reveal()) == "" {
-		return fmt.Errorf("run worker provisioning requires Codex, GitHub, and checkpoint file material: %w", work.ErrPermanent)
+		return fmt.Errorf("run worker provisioning requires GitHub and checkpoint file material: %w", work.ErrPermanent)
 	}
 	return nil
 }
@@ -372,6 +361,7 @@ func runWorkerPodMatches(got, want *corev1.Pod) bool {
 type runWorkerPodContract struct {
 	Name                         string
 	Labels                       map[string]string
+	Annotations                  map[string]string
 	RestartPolicy                corev1.RestartPolicy
 	ActiveDeadlineSeconds        *int64
 	AutomountServiceAccountToken *bool
@@ -391,31 +381,33 @@ type runWorkerContainerContract struct {
 	Command         []string
 	Args            []string
 	Env             []corev1.EnvVar
+	Ports           []corev1.ContainerPort
 	Resources       corev1.ResourceRequirements
 	VolumeMounts    []corev1.VolumeMount
 	SecurityContext *corev1.SecurityContext
 }
 
 func runWorkerPodFingerprint(pod *corev1.Pod) ([sha256.Size]byte, error) {
-	if pod == nil || len(pod.Spec.Containers) != 1 {
-		return [sha256.Size]byte{}, fmt.Errorf("fingerprinting Run Worker pod: expected exactly one container: %w", work.ErrPermanent)
+	if pod == nil || len(pod.Spec.Containers) != 2 {
+		return [sha256.Size]byte{}, fmt.Errorf("fingerprinting Run Worker pod: expected repository and tool containers: %w", work.ErrPermanent)
 	}
-	container := pod.Spec.Containers[0]
 	serviceAccountName := pod.Spec.ServiceAccountName
 	if serviceAccountName == "" {
 		serviceAccountName = "default"
 	}
 	contract := runWorkerPodContract{
-		Name: pod.Name, Labels: pod.Labels, RestartPolicy: pod.Spec.RestartPolicy,
+		Name: pod.Name, Labels: pod.Labels, Annotations: pod.Annotations, RestartPolicy: pod.Spec.RestartPolicy,
 		ActiveDeadlineSeconds: pod.Spec.ActiveDeadlineSeconds, AutomountServiceAccountToken: pod.Spec.AutomountServiceAccountToken,
 		EnableServiceLinks: pod.Spec.EnableServiceLinks, TerminationGracePeriod: pod.Spec.TerminationGracePeriodSeconds,
 		ServiceAccountName: serviceAccountName, SecurityContext: pod.Spec.SecurityContext,
 		ImagePullSecrets: pod.Spec.ImagePullSecrets, Volumes: pod.Spec.Volumes,
-		Containers: []runWorkerContainerContract{{
+	}
+	for _, container := range pod.Spec.Containers {
+		contract.Containers = append(contract.Containers, runWorkerContainerContract{
 			Name: container.Name, Image: container.Image, ImagePullPolicy: container.ImagePullPolicy,
-			Command: container.Command, Args: container.Args, Env: container.Env, Resources: container.Resources,
+			Command: container.Command, Args: container.Args, Env: container.Env, Ports: container.Ports, Resources: container.Resources,
 			VolumeMounts: container.VolumeMounts, SecurityContext: container.SecurityContext,
-		}},
+		})
 	}
 	encoded, err := json.Marshal(contract)
 	if err != nil {

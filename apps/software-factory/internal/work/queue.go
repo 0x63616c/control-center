@@ -64,7 +64,7 @@ func SandboxTaskQueue(runID string) string {
 // worker reads its own SandboxTaskQueue value back from.
 //
 // It is part of the contract with the sandbox image, the same shape as
-// SandboxBranchEnv and CodexHomeEnv: whoever builds the pod's env
+// SandboxBranchEnv and GhConfigDirEnv: whoever builds the pod's env
 // (CreateSandbox, via SandboxTemplate.Spec) computes SandboxTaskQueue(runID)
 // once and sets it here, and cmd/sandbox-worker reads it back rather than
 // recomputing it — the same "read back what CreateSandbox baked in" pattern

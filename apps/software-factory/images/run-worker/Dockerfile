@@ -1,17 +1,14 @@
 # syntax=docker/dockerfile:1
 
-# The target per-Run worker (ADR-0011). The pod starts cmd/run-worker, which
-# polls one generation-specific Temporal Session queue and runs its registered
-# repository-affine activities in this process namespace. Commands and file
-# operations use internal/clients/local, so subprocess cancellation and files
-# are local to the worker; the main worker never reaches this pod through
-# pods/exec.
+# The target per-Run pod (ADR-0011) contains a credentialed repository worker
+# and a credential-free tools worker. They share only /work and poll distinct
+# generation-specific Temporal queues. The main worker never reaches this pod
+# through pods/exec.
 #
 # A shell and the repository toolchain are intentionally present because the
-# agent's job is to run project commands. The Run Worker itself still uses
-# argv-based process execution and never interpolates those commands through a
-# shell. Git and gh reopen the projected GitHub credential at invocation time,
-# so credential renewal does not restart or mutate the long-lived process.
+# agent runs project commands in the tools container. Projected credentials
+# mount only into the repository container, whose activities expose fixed,
+# typed operations rather than arbitrary model-selected argv.
 #
 # amd64 only. The home-server Talos node is the only deploy target and it is
 # x86; CI builds --platform linux/amd64 on a native runner.
@@ -38,20 +35,16 @@ COPY apps/software-factory/ ./
 # does not belong in this image. Same flags images/worker/Dockerfile builds
 # cmd/worker with.
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath -ldflags="-s -w" -o /out/run-worker ./cmd/run-worker
+    go build -trimpath -ldflags="-s -w" -o /out/run-worker ./cmd/run-worker \
+    && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags="-s -w" -o /out/sandbox-worker ./cmd/sandbox-worker
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 2: the per-Run worker runtime.
 FROM debian:trixie-slim
 
-# Pinned by version AND by checksum. A version tag alone is a moving target for
-# a GitHub release asset, and this image executes what it downloads.
-#
-# codex is pinned to the version ADR-0011's auth behaviour was verified against
-# (§"Auth: one refresh token, in exactly one place"). Bumping it means re-testing
-# the blanked-refresh_token path, not just editing this number.
-ARG CODEX_VERSION=0.145.0
-ARG CODEX_SHA256=bfaf13c9ba34f2ad764e4a916c49cf7177aeba329cf0f719e2227566fc8d662a
+# Downloaded tools are pinned by version AND checksum. A version tag alone is a
+# moving target for a GitHub release asset, and this image executes them.
 # bun matches the version CI and the rest of this repo build with
 # (.github/workflows/ci.yml, oven-sh/setup-bun). A ticket's `bun install` must
 # resolve the same lockfile the reviewer's machine does.
@@ -84,8 +77,8 @@ ARG PLAYWRIGHT_FFMPEG_SHA256=ebc74fc5b94830176a3c2914ae96bd8bc7f6a91f4f33890230f
 
 # GNU tar, coreutils (test, cat, printenv, rm) and a shell come from the base
 # image. Added here: git, because repository lifecycle activities check the
-# ticket's repository out and push its branch, and `implement` later commits
-# and pushes to that same checkout; ca-certificates for the OpenAI and GitHub
+# ticket's repository out and publish its branch, while `implement` edits and
+# commits in that checkout; ca-certificates for the OpenAI and GitHub
 # APIs; curl and unzip for the two downloads below; passwd for
 # groupadd/useradd, which trixie-slim omits; gcc and libc6-dev so
 # `CGO_ENABLED=1 go test -race` can link inside this image (#428); Node, because
@@ -122,14 +115,6 @@ RUN apt-get update \
     && command -v node >/dev/null \
     && command -v printenv >/dev/null \
     && command -v rm >/dev/null
-
-RUN curl -fsSL -o /tmp/codex.tar.gz \
-        "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-x86_64-unknown-linux-musl.tar.gz" \
-    && echo "${CODEX_SHA256}  /tmp/codex.tar.gz" | sha256sum -c - \
-    && tar -xzf /tmp/codex.tar.gz -C /tmp \
-    && install -m 0755 /tmp/codex-x86_64-unknown-linux-musl /usr/local/bin/codex \
-    && rm -rf /tmp/codex.tar.gz /tmp/codex-x86_64-unknown-linux-musl \
-    && codex --version
 
 RUN curl -fsSL -o /tmp/gh.tar.gz \
         "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" \
@@ -224,6 +209,7 @@ RUN printf 'package main\nimport "C"\nfunc main() {}\n' > /tmp/cgo_check.go \
 # queue and is what CMD below actually runs. runWorkerBinaryPath in podspec.go
 # is a contract with this exact install path.
 COPY --from=build /out/run-worker /usr/local/bin/run-worker
+COPY --from=build /out/sandbox-worker /usr/local/bin/sandbox-worker
 COPY apps/software-factory/images/run-worker/bin/git-credential-projected /usr/local/bin/git-credential-projected
 COPY apps/software-factory/images/run-worker/bin/gh /usr/local/bin/gh
 
@@ -247,8 +233,8 @@ RUN install -d -o 1000 -g 1000 -m 0755 /work
 ENV HOME=/home/sandbox
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# WORKDIR is the working directory every local `codex exec` inherits because
-# podspec.go sets no container WorkingDir.
+# WORKDIR is the working directory inherited by local typed tool executions
+# because podspec.go sets no container WorkingDir.
 #
 # It is /work — the mount root — and DELIBERATELY NOT the repo checkout, which
 # is the obvious-looking choice and is a trap. A WORKDIR the runtime has to
@@ -264,7 +250,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 # itself is group-writable because the kubelet applies fsGroup 1000 to the
 # emptyDir, and a directory the PROCESS creates under it is owned by the
 # process. So the checkout is created by whatever clones it, at work.RepoDir,
-# and the stage is pointed there with `codex --cd`.
+# and repository tools resolve the checkout at work.RepoDir.
 WORKDIR /work
 USER 1000:1000
 

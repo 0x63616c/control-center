@@ -17,7 +17,6 @@ import (
 
 func validRunWorkerSecrets() work.RunWorkerSecretMaterial {
 	return work.RunWorkerSecretMaterial{
-		CodexCredential:      work.NewCredentialFile([]byte(`{"tokens":{"access_token":"codex-secret"}}`)),
 		GitHubToken:          work.NewCredential("ghs_initial_secret"),
 		GitHubLogin:          "www-software-factory-bot[bot]",
 		GitHubExpiresAt:      time.Date(2026, 7, 31, 19, 0, 0, 0, time.UTC),
@@ -176,7 +175,7 @@ func TestProvisionRunWorkerCreatesPodAndGenerationSecrets(t *testing.T) {
 	if _, err := cs.CoreV1().Pods("software-factory").Get(context.Background(), string(id), metav1.GetOptions{}); err != nil {
 		t.Errorf("pod: %v", err)
 	}
-	for _, name := range []string{runWorkerCodexSecretName(id), runWorkerGitHubSecretName(id), runWorkerCheckpointSecretName(id)} {
+	for _, name := range []string{runWorkerGitHubSecretName(id), runWorkerCheckpointSecretName(id)} {
 		if _, err := cs.CoreV1().Secrets("software-factory").Get(context.Background(), name, metav1.GetOptions{}); err != nil {
 			t.Errorf("secret %s: %v", name, err)
 		}

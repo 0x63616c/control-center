@@ -13,9 +13,11 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/workflows"
 )
 
-const legacyHistoryFixture = "../workflows/testdata/factory-dispatcher-paused.json"
-
-const targetDispatcherHistoryFixture = "../workflows/testdata/target-dispatcher-admission.json"
+const (
+	legacyHistoryFixture                  = "../workflows/testdata/factory-dispatcher-paused.json"
+	legacyFactoryWorkTicketHistoryFixture = "../workflows/testdata/factory-work-ticket-pre-agent.json"
+	targetDispatcherHistoryFixture        = "../workflows/testdata/target-dispatcher-admission.json"
+)
 
 func TestLegacyFactoryDispatcherHistoryReplays(t *testing.T) {
 	history := readLegacyHistoryFixture(t)
@@ -28,12 +30,29 @@ func TestLegacyFactoryDispatcherHistoryReplays(t *testing.T) {
 	}
 }
 
+// TestLegacyFactoryWorkTicketHistoryReplays proves the version gate against a
+// persisted history produced by FactoryWorkTicket before AgentWorkflow
+// existed. The fixture reaches a scheduled RunPlan under the old run-wide
+// Session and is then terminated. Replaying it through today's registration
+// must therefore select workflow.DefaultVersion and reproduce the legacy
+// activity command instead of trying to start a child workflow.
+func TestLegacyFactoryWorkTicketHistoryReplays(t *testing.T) {
+	history := readHistoryFixture(t, legacyFactoryWorkTicketHistoryFixture)
+	assertPreAgentFactoryWorkTicketHistory(t, history)
+
+	replayer := worker.NewWorkflowReplayer()
+	replayer.RegisterWorkflow(workflows.FactoryWorkTicket)
+	if err := replayer.ReplayWorkflowHistory(nil, history); err != nil {
+		t.Fatalf("replaying %s through FactoryWorkTicket's compatibility branch: %v", legacyFactoryWorkTicketHistoryFixture, err)
+	}
+}
+
 // TestTargetDispatcherHistoryReplays is the compatibility guard for the v0
 // dispatcher before its registration is enabled. Its fixture is deliberately
 // an exported dev-server history, not a testsuite transcript: a future command
 // change must replay the same wait and child-admission sequence Temporal saw.
 func TestTargetDispatcherHistoryReplays(t *testing.T) {
-	history := readTargetDispatcherHistoryFixture(t)
+	history := readHistoryFixture(t, targetDispatcherHistoryFixture)
 	assertRepresentativeTargetDispatcherHistory(t, history)
 
 	replayer := worker.NewWorkflowReplayer()
@@ -48,22 +67,40 @@ func readLegacyHistoryFixture(t *testing.T) *historypb.History {
 	return readHistoryFixture(t, legacyHistoryFixture)
 }
 
-func readTargetDispatcherHistoryFixture(t *testing.T) *historypb.History {
+func readHistoryFixture(t *testing.T, path string) *historypb.History {
 	t.Helper()
-	return readHistoryFixture(t, targetDispatcherHistoryFixture)
-}
-
-func readHistoryFixture(t *testing.T, fixture string) *historypb.History {
-	t.Helper()
-	data, err := os.ReadFile(fixture)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("reading %s: %v", fixture, err)
+		t.Fatalf("reading %s: %v", path, err)
 	}
 	history := &historypb.History{}
 	if err := (temporalproto.CustomJSONUnmarshalOptions{}).Unmarshal(data, history); err != nil {
-		t.Fatalf("decoding %s: %v", fixture, err)
+		t.Fatalf("decoding %s: %v", path, err)
 	}
 	return history
+}
+
+func assertPreAgentFactoryWorkTicketHistory(t *testing.T, history *historypb.History) {
+	t.Helper()
+	runPlanScheduled := false
+	versionMarkerRecorded := false
+	for _, event := range history.Events {
+		if attrs := event.GetActivityTaskScheduledEventAttributes(); attrs != nil &&
+			attrs.GetActivityType().GetName() == "RunPlan" {
+			runPlanScheduled = true
+		}
+		if attrs := event.GetMarkerRecordedEventAttributes(); attrs != nil &&
+			attrs.GetMarkerName() == "Version" {
+			versionMarkerRecorded = true
+		}
+	}
+	if !runPlanScheduled || versionMarkerRecorded {
+		t.Fatalf(
+			"pre-agent history must schedule RunPlan without a Version marker; run_plan_scheduled=%t version_marker_recorded=%t",
+			runPlanScheduled,
+			versionMarkerRecorded,
+		)
+	}
 }
 
 func assertRepresentativeTargetDispatcherHistory(t *testing.T, history *historypb.History) {

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -25,65 +24,6 @@ func TestFactoryDispatcherWorkflowIDIsStable(t *testing.T) {
 	if got, want := work.FactoryDispatcherWorkflowID, "software-factory-ticket-dispatcher"; got != want {
 		t.Errorf("FactoryDispatcherWorkflowID = %q, want %q — the composition root starts on this ID every boot; "+
 			"changing it orphans whatever dispatcher is already running under the old one", got, want)
-	}
-}
-
-func TestStagePathsAreDerivedFromTheKeyAlone(t *testing.T) {
-	t.Parallel()
-
-	key := work.StageKey{Ticket: 312, RunID: "0198c2f1", Stage: work.StagePlan, Turn: 1}
-	paths := key.Paths()
-
-	for _, tc := range []struct{ name, got, want string }{
-		{"Dir", paths.Dir, "/work/0198c2f1/plan/1"},
-		{"Prompt", paths.Prompt, "/work/0198c2f1/plan/1/prompt.md"},
-		{"Schema", paths.Schema, "/work/0198c2f1/plan/1/schema.json"},
-		{"Result", paths.Result, "/work/0198c2f1/plan/1/result.json"},
-		{"Lock", paths.Lock, "/work/0198c2f1/plan/1/codex.lock"},
-	} {
-		if tc.got != tc.want {
-			t.Errorf("Paths().%s = %q, want %q", tc.name, tc.got, tc.want)
-		}
-	}
-}
-
-func TestStagePathsExposeOnlyTheFilesTheCurrentRunnerUses(t *testing.T) {
-	t.Parallel()
-
-	pathsType := reflect.TypeFor[work.StagePaths]()
-	if _, found := pathsType.FieldByName("PID"); found {
-		t.Error("StagePaths exposes PID even though resumption only reads result.json")
-	}
-}
-
-func TestStagePathsSeparateRunsOfTheSameStage(t *testing.T) {
-	t.Parallel()
-
-	first := work.StageKey{Ticket: 312, RunID: "run-a", Stage: work.StageImplement, Turn: 1}.Paths()
-	second := work.StageKey{Ticket: 312, RunID: "run-b", Stage: work.StageImplement, Turn: 1}.Paths()
-
-	if first.Result == second.Result {
-		t.Error("two runs of a ticket share a result path; a re-run would read the previous run's output as its own")
-	}
-}
-
-func TestStagePathsSeparateTurnsOfTheSameStage(t *testing.T) {
-	t.Parallel()
-
-	first := work.StageKey{Ticket: 312, RunID: "run-a", Stage: work.StageImplement, Turn: 1}.Paths()
-	second := work.StageKey{Ticket: 312, RunID: "run-a", Stage: work.StageImplement, Turn: 2}.Paths()
-
-	if first.Result == second.Result {
-		t.Error("two turns of a stage share a result path; a Temporal retry of turn 1 could read turn 2's result as its own")
-	}
-}
-
-func TestTranscriptPathKeepsAttemptsSeparatelyInspectable(t *testing.T) {
-	t.Parallel()
-
-	key := work.StageKey{Ticket: 312, RunID: "0198c2f1", Stage: work.StageReview, Turn: 2}
-	if got, want := key.TranscriptPath(), "312/0198c2f1/review.2.jsonl"; got != want {
-		t.Errorf("TranscriptPath() = %q, want %q", got, want)
 	}
 }
 

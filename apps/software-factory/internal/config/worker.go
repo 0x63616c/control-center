@@ -51,15 +51,13 @@ type Worker struct {
 	// a lease nobody can attribute cannot be investigated at 3am.
 	PodName string
 
-	// TranscriptsRoot is where stage transcripts are written, the mount point
-	// of the worker's transcript volume. Read rather than assumed because the
-	// deploy owns the mount path, and a worker writing somewhere else writes to
-	// the pod's own filesystem — which looks like success until the pod goes.
-	TranscriptsRoot string
-
 	// BlobsURL is the in-cluster blob API. It is copied into sandbox pods so
 	// their future payload codec clients use the same durable service.
 	BlobsURL string
+
+	// CodexResponsesEndpoint is the direct subscription-backed model endpoint.
+	// Only the main worker receives it; sandbox pods never call the provider.
+	CodexResponsesEndpoint string
 
 	// CodexAuthSecretName is the Kubernetes Secret holding the codex
 	// credential.
@@ -140,8 +138,8 @@ const (
 	envCheckpointAPIURL       = "CHECKPOINT_API_URL"
 	envMetricsAddr            = "METRICS_ADDR"
 	envPodName                = "POD_NAME"
-	envTranscriptsRoot        = "TRANSCRIPTS_ROOT"
 	envBlobsURL               = "BLOBS_URL"
+	envCodexResponsesEndpoint = "CODEX_RESPONSES_ENDPOINT"
 	envCodexAuthSecret        = "CODEX_AUTH_SECRET_NAME"
 	envSandboxImagePullSecret = "SANDBOX_IMAGE_PULL_SECRET_NAME"
 	envLogLevel               = "LOG_LEVEL"
@@ -163,8 +161,8 @@ func workerEnvNames() []string {
 		envCheckpointAPIURL,
 		envMetricsAddr,
 		envPodName,
-		envTranscriptsRoot,
 		envBlobsURL,
+		envCodexResponsesEndpoint,
 		envCodexAuthSecret,
 		envSandboxImagePullSecret,
 	}
@@ -186,8 +184,8 @@ func (w Worker) Validate() error {
 		envCheckpointAPIURL:       w.CheckpointAPIURL,
 		envMetricsAddr:            w.MetricsAddr,
 		envPodName:                w.PodName,
-		envTranscriptsRoot:        w.TranscriptsRoot,
 		envBlobsURL:               w.BlobsURL,
+		envCodexResponsesEndpoint: w.CodexResponsesEndpoint,
 		envCodexAuthSecret:        w.CodexAuthSecretName,
 		envSandboxImagePullSecret: w.SandboxImagePullSecretName,
 	}
@@ -217,9 +215,9 @@ func LoadWorker() (Worker, error) {
 		MetricsAddr:       os.Getenv(envMetricsAddr),
 		PodName:           os.Getenv(envPodName),
 
-		TranscriptsRoot:     os.Getenv(envTranscriptsRoot),
-		BlobsURL:            os.Getenv(envBlobsURL),
-		CodexAuthSecretName: os.Getenv(envCodexAuthSecret),
+		BlobsURL:               os.Getenv(envBlobsURL),
+		CodexResponsesEndpoint: os.Getenv(envCodexResponsesEndpoint),
+		CodexAuthSecretName:    os.Getenv(envCodexAuthSecret),
 
 		SandboxImagePullSecretName: os.Getenv(envSandboxImagePullSecret),
 	}
@@ -261,8 +259,8 @@ func describeWorkerRequirement(err error) error {
 		envCheckpointAPIURL:       "the in-cluster API used for target Attempt checkpoints",
 		envMetricsAddr:            "the address the metrics and health server listens on",
 		envPodName:                "this pod's own name, from the downward API; it identifies the credential lease holder",
-		envTranscriptsRoot:        "the mount point of the transcript volume, where stage transcripts are written",
 		envBlobsURL:               "the in-cluster payload blob API copied into sandbox pods",
+		envCodexResponsesEndpoint: "the direct subscription-backed Codex Responses endpoint",
 		envCodexAuthSecret:        "the Kubernetes Secret holding the codex credential; the worker's Role is pinned to this exact name",
 		envSandboxImagePullSecret: "the Kubernetes Secret every sandbox pod authenticates its image pull with; without it a sandbox pod ErrImagePulls against GHCR",
 	}

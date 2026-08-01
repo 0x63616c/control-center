@@ -16,9 +16,10 @@ import (
 
 const (
 	runWorkerBinaryPath                 = "/usr/local/bin/run-worker"
+	runWorkerToolBinaryPath             = "/usr/local/bin/sandbox-worker"
 	runWorkerContainerName              = "run-worker"
+	runWorkerToolContainerName          = "tools"
 	runWorkerUID                  int64 = 1000
-	runWorkerCodexVolumeName            = "codex-credential"
 	runWorkerGitHubVolumeName           = "github-credential"
 	runWorkerCheckpointVolumeName       = "checkpoint-capability"
 	runWorkerRepositoryVolumeName       = "repository-checkpoint-capability"
@@ -27,12 +28,12 @@ const (
 var runWorkerSecretMode int32 = 0o440
 
 var allowedRunWorkerEnvKeys = map[string]bool{
-	work.CodexHomeEnv:                  true,
 	work.GhConfigDirEnv:                true,
 	work.SandboxBranchEnv:              true,
 	work.RunWorkerTemporalHostPortEnv:  true,
 	work.RunWorkerTemporalNamespaceEnv: true,
 	work.RunWorkerBlobsURLEnv:          true,
+	work.RunWorkerMetricsAddrEnv:       true,
 	work.RunWorkerCheckpointAPIURLEnv:  true,
 	work.RunWorkerGitHubRepositoryEnv:  true,
 }
@@ -83,6 +84,17 @@ func buildRunWorkerPod(spec work.RunWorkerSpec, o runWorkerOptions) (*corev1.Pod
 	}
 	env[work.RunWorkerTaskQueueEnv] = taskQueue
 	env[config.PayloadCodecModeEnv] = "full"
+	toolTaskQueue, err := work.RunWorkerToolTaskQueue(spec.Identity)
+	if err != nil {
+		return nil, fmt.Errorf("building Run Worker tool task queue: %w", err)
+	}
+	toolEnv := map[string]string{
+		work.SandboxTemporalHostPortEnv:  spec.Env[work.RunWorkerTemporalHostPortEnv],
+		work.SandboxTemporalNamespaceEnv: spec.Env[work.RunWorkerTemporalNamespaceEnv],
+		work.SandboxTaskQueueEnv:         toolTaskQueue,
+		work.SandboxBlobsURLEnv:          spec.Env[work.RunWorkerBlobsURLEnv],
+		config.PayloadCodecModeEnv:       "full",
+	}
 
 	uid := runWorkerUID
 	workSize := resource.NewQuantity(workSizeLimitBytes, resource.BinarySI)
@@ -94,9 +106,15 @@ func buildRunWorkerPod(spec work.RunWorkerSpec, o runWorkerOptions) (*corev1.Pod
 		Requests: corev1.ResourceList{corev1.ResourceCPU: cpu, corev1.ResourceMemory: memory},
 		Limits:   corev1.ResourceList{corev1.ResourceMemory: memory},
 	}
+	repositoryResources := corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("50m"), corev1.ResourceMemory: resource.MustParse("128Mi")},
+		Limits:   corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("256Mi")},
+	}
 	labels := runWorkerLabels(spec)
 	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: string(id), Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: string(id), Labels: labels, Annotations: map[string]string{
+			"prometheus.io/scrape": "true", "prometheus.io/port": "9090", "prometheus.io/path": "/metrics",
+		}},
 		Spec: corev1.PodSpec{
 			RestartPolicy:                 corev1.RestartPolicyNever,
 			ActiveDeadlineSeconds:         ptr(spec.DeadlineSeconds),
@@ -111,10 +129,10 @@ func buildRunWorkerPod(spec work.RunWorkerSpec, o runWorkerOptions) (*corev1.Pod
 				ImagePullPolicy: corev1.PullIfNotPresent,
 				Command:         []string{runWorkerBinaryPath},
 				Env:             sortedEnv(env),
-				Resources:       resources,
+				Ports:           []corev1.ContainerPort{{Name: "metrics", ContainerPort: 9090}},
+				Resources:       repositoryResources,
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: workVolumeName, MountPath: work.SandboxRoot},
-					{Name: runWorkerCodexVolumeName, MountPath: work.RunWorkerCodexCredentialDir, ReadOnly: true},
 					{Name: runWorkerGitHubVolumeName, MountPath: work.RunWorkerGitHubCredentialDir, ReadOnly: true},
 					{Name: runWorkerCheckpointVolumeName, MountPath: work.RunWorkerCheckpointCapabilityDir, ReadOnly: true},
 					{Name: runWorkerRepositoryVolumeName, MountPath: work.RunWorkerRepositoryCapabilityDir, ReadOnly: true},
@@ -127,10 +145,18 @@ func buildRunWorkerPod(spec work.RunWorkerSpec, o runWorkerOptions) (*corev1.Pod
 					Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 					SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 				},
+			}, {
+				Name: runWorkerToolContainerName, Image: spec.Image, ImagePullPolicy: corev1.PullIfNotPresent,
+				Command: []string{runWorkerToolBinaryPath}, Env: sortedEnv(toolEnv), Resources: resources,
+				VolumeMounts: []corev1.VolumeMount{{Name: workVolumeName, MountPath: work.SandboxRoot}},
+				SecurityContext: &corev1.SecurityContext{
+					RunAsNonRoot: ptr(true), RunAsUser: &uid, RunAsGroup: &uid,
+					AllowPrivilegeEscalation: ptr(false), Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+					SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+				},
 			}},
 			Volumes: []corev1.Volume{
 				{Name: workVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: workSize}}},
-				projectedSecretVolume(runWorkerCodexVolumeName, runWorkerCodexSecretName(id)),
 				projectedSecretVolume(runWorkerGitHubVolumeName, runWorkerGitHubSecretName(id)),
 				projectedSecretVolume(runWorkerCheckpointVolumeName, runWorkerCheckpointSecretName(id)),
 				projectedSecretVolume(runWorkerRepositoryVolumeName, runWorkerRepositorySecretName(id)),

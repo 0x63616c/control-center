@@ -1,3 +1,5 @@
+// Package local implements repository operations inside one generation-local
+// Run Worker checkout.
 package local
 
 import (

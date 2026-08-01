@@ -6,13 +6,11 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
-// ActivityRenderer adapts *Renderer to activities.PromptRenderer, so this
-// package satisfies that interface without importing internal/activities —
-// the interface is consumer-side, and this is the implementation the
-// composition root hands it.
+// ActivityRenderer adapts *Renderer to the agent prompt activity's
+// consumer-side interface without importing that activity package.
 //
 // It exists as its own type rather than extra methods on *Renderer because
-// activities.PromptRenderer's Render takes the stage, ticket and prior
+// The agent prompt activity's Render takes the stage, ticket and prior
 // documents positionally and returns a schema alongside the prompt, while
 // Renderer.Render takes one Input and returns the prompt alone — two
 // signatures for the same operation, chosen for two different readers. This
@@ -21,7 +19,7 @@ type ActivityRenderer struct {
 	renderer *Renderer
 }
 
-// NewActivityRenderer wraps a Renderer for the activities package.
+// NewActivityRenderer wraps a Renderer for the agent prompt activities.
 func NewActivityRenderer(renderer *Renderer) *ActivityRenderer {
 	return &ActivityRenderer{renderer: renderer}
 }
@@ -47,8 +45,8 @@ func (a *ActivityRenderer) Render(
 }
 
 // Decode unwraps a stage's result envelope. It forwards to the package-level
-// Decode, which is the whole implementation; this method exists only so
-// *ActivityRenderer satisfies activities.PromptRenderer.
+// Decode, which is the whole implementation; this method exists only so the
+// adapter satisfies the agent activity's prompt interface.
 func (a *ActivityRenderer) Decode(stage work.Stage, result []byte) (work.StageOutput, error) {
 	return Decode(stage, result)
 }

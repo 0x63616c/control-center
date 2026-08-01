@@ -13,6 +13,8 @@ type Bucket string
 const (
 	// BucketPayloads contains payload blobs.
 	BucketPayloads Bucket = "payloads"
+	// BucketConversations contains immutable agent conversation revisions.
+	BucketConversations Bucket = "conversations"
 )
 
 // Key names one blob.
@@ -52,7 +54,7 @@ func (key Key) String() string {
 
 func validate(bucket Bucket, path string) error {
 	switch bucket {
-	case BucketPayloads:
+	case BucketPayloads, BucketConversations:
 	default:
 		return fmt.Errorf("unknown blob bucket %q", bucket)
 	}

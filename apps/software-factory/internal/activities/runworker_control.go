@@ -63,7 +63,6 @@ type RunWorkerTemplate struct {
 type RunWorkerControlDeps struct {
 	Workers          RunWorkerLifecycle
 	GitHub           GitHubCredentialSource
-	Codex            TokenSource
 	Capabilities     CheckpointCapabilityMinter
 	Binder           CheckpointCapabilityBinder
 	RepositoryBinder RepositoryCapabilityBinder
@@ -82,9 +81,6 @@ func NewRunWorkerControlActivities(deps RunWorkerControlDeps) (*RunWorkerControl
 	}
 	if deps.GitHub == nil {
 		missing = append(missing, "GitHub")
-	}
-	if deps.Codex == nil {
-		missing = append(missing, "Codex")
 	}
 	if deps.Capabilities == nil {
 		missing = append(missing, "Capabilities")
@@ -125,10 +121,6 @@ func (a *RunWorkerControlActivities) ProvisionRunWorker(ctx context.Context, in 
 	if err := in.Identity.Validate(); err != nil {
 		return ProvisionRunWorkerOutput{}, fail(ctx, "validating Run Worker provisioning", err)
 	}
-	codexCredential, err := a.deps.Codex.SandboxCredentialFile(ctx)
-	if err != nil {
-		return ProvisionRunWorkerOutput{}, fail(ctx, "fetching the Run Worker Codex credential", err)
-	}
 	githubCredential, err := a.deps.GitHub.InstallationToken(ctx)
 	if err != nil {
 		return ProvisionRunWorkerOutput{}, fail(ctx, "minting the Run Worker GitHub credential", err)
@@ -148,7 +140,7 @@ func (a *RunWorkerControlActivities) ProvisionRunWorker(ctx context.Context, in 
 		return ProvisionRunWorkerOutput{}, fail(ctx, "constructing the Run Worker specification", err)
 	}
 	id, err := a.deps.Workers.Provision(ctx, spec, work.RunWorkerSecretMaterial{
-		CodexCredential: codexCredential, GitHubToken: githubCredential.Token, GitHubLogin: githubCredential.Login,
+		GitHubToken: githubCredential.Token, GitHubLogin: githubCredential.Login,
 		GitHubExpiresAt: githubCredential.ExpiresAt, CheckpointCapability: bootstrapCapability,
 	})
 	if err != nil {

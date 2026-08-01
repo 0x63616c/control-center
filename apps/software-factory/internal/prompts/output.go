@@ -204,8 +204,8 @@ func decodeReviewEnvelope(result []byte) (document string, findings []work.Findi
 // Exhaustive, no default: a fourth stage needs a case here before it
 // compiles, matching stageTemplate and work.decodeStageOutputValue.
 //
-// This must only ever be called from activity code — today, exclusively
-// activities.RunStage. It calls work.NewStageOutput, which panics on a
+// This must only ever be called from activity code, today from the
+// AgentWorkflow finalize activity. It calls work.NewStageOutput, which panics on a
 // stage/shape mismatch; that panic is only safe on the activity side of the
 // workflow/activity boundary (see NewStageOutput's doc comment). Calling
 // Decode from internal/workflows/** would risk a workflow-task panic that
