@@ -65,11 +65,14 @@ type repositoryCheckpointProbe struct {
 	loaded        store.GitCheckpoint
 	found         bool
 	writes        []store.GitCheckpointInput
+	effectWrites  []store.GitCheckpointInput
+	stepWrites    []store.GitCheckpointInput
 	checkpointErr error
 }
 
 func (p *repositoryCheckpointProbe) CheckpointEffect(_ context.Context, in store.GitCheckpointInput) (store.GitCheckpoint, error) {
 	p.writes = append(p.writes, in)
+	p.effectWrites = append(p.effectWrites, in)
 	p.loaded, p.found = in.GitCheckpoint, true
 	err := p.checkpointErr
 	p.checkpointErr = nil
@@ -82,6 +85,7 @@ func (p *repositoryCheckpointProbe) Load(context.Context) (store.GitCheckpoint, 
 
 func (p *repositoryCheckpointProbe) Checkpoint(_ context.Context, in store.GitCheckpointInput) (store.GitCheckpoint, error) {
 	p.writes = append(p.writes, in)
+	p.stepWrites = append(p.stepWrites, in)
 	p.loaded, p.found = in.GitCheckpoint, true
 	err := p.checkpointErr
 	p.checkpointErr = nil
@@ -198,8 +202,38 @@ func TestTargetMergeRetryAfterLostCheckpointResponseDoesNotMergeAgain(t *testing
 	if err != nil {
 		t.Fatalf("TargetMergePullRequest: %v", err)
 	}
-	if github.mergeCalls != 1 || got.Outcome != want.Outcome || got.MergeSHA != want.MergeSHA || len(cp.writes) != 1 {
+	if github.mergeCalls != 1 || got.Outcome != want.Outcome || got.MergeSHA != want.MergeSHA || len(cp.effectWrites) != 1 || len(cp.stepWrites) != 0 {
 		t.Fatalf("merge calls/result = %d / %+v", github.mergeCalls, got)
+	}
+}
+
+func TestTargetMergeNonConfirmedOutcomesCompleteTheStepAndReplayLostCheckpointResponse(t *testing.T) {
+	for _, outcome := range []work.PullRequestMergeOutcome{
+		work.PullRequestMergeClosedUnmerged,
+		work.PullRequestMergeTextConflict,
+		work.PullRequestMergeHeadChanged,
+		work.PullRequestMergeBaseRefreshRequired,
+		work.PullRequestMergeRetryableAmbiguity,
+	} {
+		t.Run(string(outcome), func(t *testing.T) {
+			position := targetPosition(5)
+			want := work.PullRequestMergeResult{Outcome: outcome, Diagnostic: "GitHub did not merge the candidate"}
+			cp := &repositoryCheckpointProbe{checkpointErr: errCheckpointResponseLost}
+			github := &targetGitHubProbe{merge: want}
+			a := targetRepositoryActivities(&targetRepositoryProbe{}, github, cp)
+			in := TargetMergePullRequestInput{Step: position, ExpectedHeadSHA: position.PushedHead}
+
+			if _, err := a.TargetMergePullRequest(context.Background(), in); !errors.Is(err, errCheckpointResponseLost) || github.mergeCalls != 1 || !cp.found {
+				t.Fatalf("first try error/calls/checkpoint = %v / %d / %#v", err, github.mergeCalls, cp.loaded)
+			}
+			got, err := a.TargetMergePullRequest(context.Background(), in)
+			if err != nil {
+				t.Fatalf("TargetMergePullRequest: %v", err)
+			}
+			if github.mergeCalls != 1 || got != want || len(cp.stepWrites) != 1 || len(cp.effectWrites) != 0 {
+				t.Fatalf("merge calls/result/checkpoints = %d / %+v / steps=%d effects=%d", github.mergeCalls, got, len(cp.stepWrites), len(cp.effectWrites))
+			}
+		})
 	}
 }
 

@@ -220,8 +220,17 @@ func (a *RunWorkerActivities) TargetMergePullRequest(ctx context.Context, in Tar
 	if err != nil {
 		return work.PullRequestMergeResult{}, fail(ctx, "merging the target pull request", err)
 	}
-	if err := a.checkpointRepositoryEffect(ctx, cp, in.Step, repositoryEffectMerge, result); err != nil {
-		return work.PullRequestMergeResult{}, fmt.Errorf("checkpointing target pull request merge effect: %w", err)
+	// A confirmed merge must remain recoverable until FinalizeConfirmedMerge
+	// transactionally completes the merge Step alongside the Run and Ticket.
+	// Every other outcome is terminal for this merge attempt, so it completes
+	// its own Step immediately.
+	if result.Outcome == work.PullRequestMergeConfirmed {
+		err = a.checkpointRepositoryEffect(ctx, cp, in.Step, repositoryEffectMerge, result)
+	} else {
+		err = a.checkpointRepositoryResult(ctx, cp, in.Step, repositoryEffectMerge, result)
+	}
+	if err != nil {
+		return work.PullRequestMergeResult{}, fmt.Errorf("checkpointing target pull request merge result: %w", err)
 	}
 	return result, nil
 }
