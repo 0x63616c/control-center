@@ -448,7 +448,7 @@ func agentLifecycleInput(terminalErr error, failure *agent.TerminalFailure) (age
 	}
 	if terminalErr == nil {
 		if failure != nil {
-			return agentactivities.LifecycleInput{Outcome: telemetry.AgentOutcomeFailed, Budget: string(failure.Budget)}, true
+			return agentactivities.LifecycleInput{Outcome: telemetry.AgentOutcomeFailed, Budget: failure.Budget}, true
 		}
 		return agentactivities.LifecycleInput{Outcome: telemetry.AgentOutcomeSucceeded}, true
 	}
