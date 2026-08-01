@@ -40,8 +40,8 @@ const (
 	IdentityAccess IdentityKind = "access"
 	// IdentityWorker is the factory worker's in-cluster bearer.
 	IdentityWorker IdentityKind = "worker"
-	// IdentitySandbox is a sandbox's read-only in-cluster bearer.
-	IdentitySandbox IdentityKind = "sandbox"
+	// IdentityRunWorker is a Run Worker's read-only in-cluster bearer.
+	IdentityRunWorker IdentityKind = "run_worker"
 )
 
 // Identity is the typed caller value available to API handlers.
@@ -109,7 +109,7 @@ func (options Options) validate() error {
 	for name, value := range map[string]string{
 		"access issuer": options.AccessIssuer, "access audience": options.AccessAudience,
 		"access certificates URL": options.AccessCertsURL, "worker bearer": options.WorkerBearer,
-		"sandbox bearer": options.RunWorkerBearer,
+		"run worker bearer": options.RunWorkerBearer,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("%s is required", name)
@@ -142,7 +142,7 @@ func (middleware *Middleware) authenticate(request *http.Request) (Identity, boo
 		return Identity{Kind: IdentityWorker, Scope: ScopeWrite}, true
 	}
 	if subtle.ConstantTimeCompare([]byte(bearer), middleware.runWorkerBearer) == 1 {
-		return Identity{Kind: IdentitySandbox, Scope: ScopeRead}, true
+		return Identity{Kind: IdentityRunWorker, Scope: ScopeRead}, true
 	}
 	return Identity{}, false
 }

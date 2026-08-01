@@ -35,7 +35,7 @@ const vault = {
   GITHUB_BOT_APP__PRIVATE_KEY_PEM: "mock-base64-pem",
   SOFTWARE_FACTORY_POSTGRES__PASSWORD: "mock-postgres-password",
   SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN: "mock-worker-bearer",
-  SOFTWARE_FACTORY_API__RUN_WORKER_BEARER_TOKEN: "mock-run-worker-bearer",
+  SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN: "mock-run-worker-bearer",
   SOFTWARE_FACTORY_CLOUDFLARE_ACCESS__TEAM_DOMAIN: "example.cloudflareaccess.com",
   GITHUB_BOT_APP__WEBHOOK_SECRET: "mock-webhook-secret",
 };
@@ -396,6 +396,13 @@ describe("factory API and console workloads (#554)", () => {
       apiContainer.env.find((env) => env.name === "GITHUB_BOT_APP__WEBHOOK_SECRET")?.valueFrom
         ?.secretKeyRef,
     ).toEqual({ name: "software-factory-api-secrets", key: "GITHUB_BOT_APP__WEBHOOK_SECRET" });
+    expect(
+      apiContainer.env.find((env) => env.name === "SOFTWARE_FACTORY_API__RUN_WORKER_BEARER_TOKEN")
+        ?.valueFrom?.secretKeyRef,
+    ).toEqual({
+      name: "software-factory-api-secrets",
+      key: "SOFTWARE_FACTORY_API__RUN_WORKER_BEARER_TOKEN",
+    });
     for (const deployment of [api, web]) {
       expect(
         deployment.template.spec.containers.flatMap((container) => container.volumeMounts ?? []),

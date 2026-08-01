@@ -811,7 +811,7 @@ components:
       name: Cf-Access-Jwt-Assertion
       type: apiKey
     inClusterBearer:
-      description: Static bearer for in-cluster worker or sandbox callers.
+      description: Static bearer for in-cluster worker or Run Worker callers.
       scheme: bearer
       type: http
     repositoryCheckpointCapability:

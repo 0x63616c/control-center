@@ -208,7 +208,7 @@ func New(version string, commands commandClient, ticketStores ...factoryStore) *
 		},
 		"inClusterBearer": {
 			Type: "http", Scheme: "bearer",
-			Description: "Static bearer for in-cluster worker or sandbox callers.",
+			Description: "Static bearer for in-cluster worker or Run Worker callers.",
 		},
 		"agentCheckpointCapability": {
 			Type: "apiKey", In: "header", Name: checkpoint.CapabilityHeader,

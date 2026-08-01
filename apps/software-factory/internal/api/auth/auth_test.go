@@ -39,7 +39,7 @@ func TestMiddlewareAuthenticatesAccessAndBearerIdentities(t *testing.T) {
 	}{
 		{"access", accessHeader, signedToken(t, key, "first", testAudience, futureExpiry), Identity{Kind: IdentityAccess, Scope: ScopeWrite}},
 		{"worker", "Authorization", "Bearer worker-token", Identity{Kind: IdentityWorker, Scope: ScopeWrite}},
-		{"sandbox", "Authorization", "Bearer sandbox-token", Identity{Kind: IdentitySandbox, Scope: ScopeRead}},
+		{"run worker", "Authorization", "Bearer sandbox-token", Identity{Kind: IdentityRunWorker, Scope: ScopeRead}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodGet, "/v1/build", nil)
