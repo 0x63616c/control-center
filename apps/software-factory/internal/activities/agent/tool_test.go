@@ -2,6 +2,8 @@ package agentactivities_test
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -10,6 +12,9 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agenttool"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock/clocktest"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 type countedInput struct {
@@ -54,8 +59,13 @@ func TestToolRetryReturnsTheRecordedResultWithoutExecutingTwice(t *testing.T) {
 			return agenttool.Result{Content: input.Value}, nil
 		},
 	)
-	activities, err := agentactivities.NewToolActivities(
-		blobStore, clocktest.NewFake(time.Unix(0, 0)), agenttool.MustSet("coding-write-v1", tool),
+	registry := prometheus.NewRegistry()
+	activities, err := agentactivities.NewObservedToolActivities(
+		blobStore,
+		clocktest.NewFake(time.Unix(0, 0)),
+		telemetry.NewMetrics(registry),
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		agenttool.MustSet("coding-write-v1", tool),
 	)
 	if err != nil {
 		t.Fatalf("NewToolActivities() error = %v", err)
@@ -76,6 +86,9 @@ func TestToolRetryReturnsTheRecordedResultWithoutExecutingTwice(t *testing.T) {
 	}
 	if executions != 1 {
 		t.Fatalf("tool executions = %d, want 1", executions)
+	}
+	if got, err := testutil.GatherAndCount(registry, "software_factory_agent_tool_calls_total"); err != nil || got != 1 {
+		t.Fatalf("agent tool metric families = %d, %v; want 1", got, err)
 	}
 	if first != second || first.CallID != "call_1" || first.ConversationRef.Revision != 2 {
 		t.Fatalf("tool results = %#v and %#v", first, second)

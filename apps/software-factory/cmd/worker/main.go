@@ -210,7 +210,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("building the direct Codex Responses client: %w", err)
 	}
-	modelActs, err := agentactivities.NewActivities(turner, blobStore, clk, toolsets...)
+	modelActs, err := agentactivities.NewObservedActivities(turner, blobStore, clk, metrics, logger, toolsets...)
 	if err != nil {
 		return fmt.Errorf("building the agent model activity set: %w", err)
 	}

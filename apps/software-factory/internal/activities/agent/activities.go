@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"strings"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
@@ -13,6 +15,7 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codexresponses"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
@@ -30,6 +33,8 @@ type Activities struct {
 	transcripts   agent.TranscriptStore
 	artifacts     agent.ArtifactStore
 	clock         clock.Clock
+	metrics       AgentMetrics
+	logger        *slog.Logger
 	toolsets      map[agent.ToolsetID]agenttool.Set
 }
 
@@ -39,8 +44,33 @@ type StreamProgress struct {
 	Events    int
 }
 
-// NewActivities constructs production model-side agent activities.
+// NewActivities constructs model-side activities for isolated acceptance harnesses.
+// Production composition uses NewObservedActivities so metrics and structured
+// decision logs cannot be accidentally detached from the served registry.
 func NewActivities(turner Turner, blobStore blobs.Store, clk clock.Clock, toolsets ...agenttool.Set) (*Activities, error) {
+	return newActivities(turner, blobStore, clk, noopAgentMetrics{}, slog.New(slog.NewTextHandler(io.Discard, nil)), toolsets...)
+}
+
+// NewObservedActivities constructs production model-side agent activities.
+func NewObservedActivities(
+	turner Turner,
+	blobStore blobs.Store,
+	clk clock.Clock,
+	metrics AgentMetrics,
+	logger *slog.Logger,
+	toolsets ...agenttool.Set,
+) (*Activities, error) {
+	return newActivities(turner, blobStore, clk, metrics, logger, toolsets...)
+}
+
+func newActivities(
+	turner Turner,
+	blobStore blobs.Store,
+	clk clock.Clock,
+	metrics AgentMetrics,
+	logger *slog.Logger,
+	toolsets ...agenttool.Set,
+) (*Activities, error) {
 	if turner == nil {
 		return nil, fmt.Errorf("agent activities need a model turner")
 	}
@@ -49,6 +79,12 @@ func NewActivities(turner Turner, blobStore blobs.Store, clk clock.Clock, toolse
 	}
 	if clk == nil {
 		return nil, fmt.Errorf("agent activities need a clock")
+	}
+	if metrics == nil {
+		return nil, fmt.Errorf("agent activities need metrics")
+	}
+	if logger == nil {
+		return nil, fmt.Errorf("agent activities need a logger")
 	}
 	byID := make(map[agent.ToolsetID]agenttool.Set, len(toolsets))
 	for _, toolset := range toolsets {
@@ -63,6 +99,8 @@ func NewActivities(turner Turner, blobStore blobs.Store, clk clock.Clock, toolse
 		transcripts:   agent.NewTranscriptStore(blobStore),
 		artifacts:     agent.NewArtifactStore(blobStore),
 		clock:         clk,
+		metrics:       metrics,
+		logger:        logger,
 		toolsets:      byID,
 	}, nil
 }
@@ -85,6 +123,21 @@ func (activities *Activities) ModelTurn(ctx context.Context, input agent.ModelTu
 	if err != nil {
 		return agent.ModelTurnResult{}, invalidInput("build model request: %v", err)
 	}
+	identity, err := activities.conversations.Identity(input.ConversationRef)
+	if err != nil {
+		return agent.ModelTurnResult{}, invalidInput("resolve model conversation identity: %v", err)
+	}
+	attempt := activityAttempt(ctx)
+	if attempt > 1 {
+		activities.metrics.AgentActivityRetry(agent.ModelTurnActivityName)
+	}
+	activities.logger.InfoContext(ctx, "agent model turn started",
+		slog.String("agent", identity),
+		slog.Int("model_turn", input.ModelTurn),
+		slog.Int("activity_attempt", int(attempt)),
+		slog.String("model", input.Model.Name),
+		slog.String("effort", input.Model.Effort),
+	)
 	events := 0
 	started := activities.clock.Now()
 	providerResult, err := activities.turner.Turn(ctx, request, func(event codexresponses.Event) {
@@ -92,11 +145,20 @@ func (activities *Activities) ModelTurn(ctx context.Context, input agent.ModelTu
 		activity.RecordHeartbeat(ctx, StreamProgress{EventType: event.Type, Events: events})
 	})
 	if err != nil {
+		outcome := telemetry.AgentOutcomeFailed
+		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			outcome = telemetry.AgentOutcomeCancelled
+		}
+		took := activities.clock.Now().Sub(started)
+		activities.metrics.AgentModelTurn(input.Model, outcome, work.Usage{}, false, input.ConversationRef.Bytes, took)
+		activities.logger.WarnContext(ctx, "agent model turn failed",
+			slog.String("agent", identity),
+			slog.Int("model_turn", input.ModelTurn),
+			slog.Int("activity_attempt", int(attempt)),
+			slog.String("outcome", string(outcome)),
+			slog.Int64("duration_millis", took.Milliseconds()),
+		)
 		return agent.ModelTurnResult{}, providerFailure(ctx, err)
-	}
-	identity, err := activities.conversations.Identity(input.ConversationRef)
-	if err != nil {
-		return agent.ModelTurnResult{}, invalidInput("resolve model conversation identity: %v", err)
 	}
 	var result agent.ModelTurnResult
 	switch providerResult.Outcome {
@@ -110,11 +172,26 @@ func (activities *Activities) ModelTurn(ctx context.Context, input agent.ModelTu
 	if err != nil {
 		return agent.ModelTurnResult{}, err
 	}
+	outcome := telemetry.AgentOutcomeFinalText
+	if result.Outcome == agent.OutcomeToolCalls {
+		outcome = telemetry.AgentOutcomeToolCalls
+	}
+	took := activities.clock.Now().Sub(started)
+	activities.metrics.AgentModelTurn(input.Model, outcome, result.Usage, result.UsageMeasured, result.ConversationRef.Bytes, took)
+	activities.logger.InfoContext(ctx, "agent model turn completed",
+		slog.String("agent", identity),
+		slog.Int("model_turn", input.ModelTurn),
+		slog.Int("activity_attempt", int(attempt)),
+		slog.String("outcome", string(outcome)),
+		slog.Int("tool_calls", len(result.ToolCalls)),
+		slog.Int64("conversation_bytes", result.ConversationRef.Bytes),
+		slog.Int64("duration_millis", took.Milliseconds()),
+	)
 	if input.TranscriptRef.Key != "" {
 		result.TranscriptRef, err = activities.transcripts.Append(ctx, identity, &input.TranscriptRef, agent.TranscriptEvent{
 			Type: agent.EventModelCompleted, ModelTurn: input.ModelTurn, Outcome: string(result.Outcome),
 			Usage: result.Usage, UsageMeasured: result.UsageMeasured,
-			DurationMillis: activities.clock.Now().Sub(started).Milliseconds(),
+			DurationMillis: took.Milliseconds(),
 		})
 		if err != nil {
 			return agent.ModelTurnResult{}, transientFailure("append model transcript event", err)
@@ -272,6 +349,13 @@ func transientFailure(operation string, err error) error {
 		agent.ErrorTypeTransient,
 		temporal.ApplicationErrorOptions{Cause: err},
 	)
+}
+
+func activityAttempt(ctx context.Context) int32 {
+	if !activity.IsActivity(ctx) {
+		return 1
+	}
+	return activity.GetInfo(ctx).Attempt
 }
 
 func modelRequest(

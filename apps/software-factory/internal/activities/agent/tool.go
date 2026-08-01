@@ -7,12 +7,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agenttool"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
 )
@@ -24,16 +27,45 @@ type ToolActivities struct {
 	conversations agent.ConversationStore
 	transcripts   agent.TranscriptStore
 	clock         clock.Clock
+	metrics       AgentMetrics
+	logger        *slog.Logger
 	toolsets      map[agent.ToolsetID]agenttool.Set
 }
 
 // NewToolActivities constructs the sandbox-side generic tool activity.
 func NewToolActivities(blobStore blobs.Store, clk clock.Clock, toolsets ...agenttool.Set) (*ToolActivities, error) {
+	return newToolActivities(blobStore, clk, noopAgentMetrics{}, slog.New(slog.NewTextHandler(io.Discard, nil)), toolsets...)
+}
+
+// NewObservedToolActivities constructs production sandbox-side tool activities.
+func NewObservedToolActivities(
+	blobStore blobs.Store,
+	clk clock.Clock,
+	metrics AgentMetrics,
+	logger *slog.Logger,
+	toolsets ...agenttool.Set,
+) (*ToolActivities, error) {
+	return newToolActivities(blobStore, clk, metrics, logger, toolsets...)
+}
+
+func newToolActivities(
+	blobStore blobs.Store,
+	clk clock.Clock,
+	metrics AgentMetrics,
+	logger *slog.Logger,
+	toolsets ...agenttool.Set,
+) (*ToolActivities, error) {
 	if blobStore == nil {
 		return nil, fmt.Errorf("agent tool activities need a blob store")
 	}
 	if clk == nil {
 		return nil, fmt.Errorf("agent tool activities need a clock")
+	}
+	if metrics == nil {
+		return nil, fmt.Errorf("agent tool activities need metrics")
+	}
+	if logger == nil {
+		return nil, fmt.Errorf("agent tool activities need a logger")
 	}
 	byID := make(map[agent.ToolsetID]agenttool.Set, len(toolsets))
 	for _, toolset := range toolsets {
@@ -45,7 +77,7 @@ func NewToolActivities(blobStore blobs.Store, clk clock.Clock, toolsets ...agent
 	return &ToolActivities{
 		blobs: blobStore, artifacts: agent.NewArtifactStore(blobStore),
 		conversations: agent.NewConversationStore(blobStore), transcripts: agent.NewTranscriptStore(blobStore),
-		clock: clk, toolsets: byID,
+		clock: clk, metrics: metrics, logger: logger, toolsets: byID,
 	}, nil
 }
 
@@ -58,6 +90,10 @@ func (activities *ToolActivities) Tool(ctx context.Context, input agent.ToolInpu
 	identity, err := activities.conversations.Identity(input.ConversationRef)
 	if err != nil {
 		return agent.ToolOutput{}, invalidInput("resolve tool conversation identity: %v", err)
+	}
+	attempt := activityAttempt(ctx)
+	if attempt > 1 {
+		activities.metrics.AgentActivityRetry(agent.ToolActivityName)
 	}
 	startedKey, completedKey, err := operationKeys(identity, input.ConversationRef.Revision, input.Call.CallID)
 	if err != nil {
@@ -89,9 +125,20 @@ func (activities *ToolActivities) Tool(ctx context.Context, input agent.ToolInpu
 	stopHeartbeat := startToolHeartbeat(ctx, input.Call.Name)
 	defer stopHeartbeat()
 	started := activities.clock.Now()
+	activities.logger.InfoContext(ctx, "agent tool call started",
+		slog.String("agent", identity), slog.String("tool", input.Call.Name),
+		slog.String("call_id", input.Call.CallID), slog.Int("activity_attempt", int(attempt)),
+	)
 	result, err := toolset.Execute(ctx, input.Call.Name, arguments)
 	if err != nil {
-		return agent.ToolOutput{}, err
+		took := activities.clock.Now().Sub(started)
+		activities.metrics.AgentToolCall(input.Call.Name, telemetry.AgentOutcomeFailed, input.ConversationRef.Bytes, took)
+		activities.logger.WarnContext(ctx, "agent tool call failed",
+			slog.String("agent", identity), slog.String("tool", input.Call.Name),
+			slog.String("call_id", input.Call.CallID), slog.Int("activity_attempt", int(attempt)),
+			slog.Int64("duration_millis", took.Milliseconds()),
+		)
+		return agent.ToolOutput{}, transientFailure(fmt.Sprintf("execute agent tool %q", input.Call.Name), err)
 	}
 	conversationRef, err := activities.conversations.Append(ctx, identity, &input.ConversationRef, []agent.ConversationItem{{
 		Kind: agent.ItemFunctionOutput, CallID: input.Call.CallID, Output: result.Content,
@@ -100,10 +147,22 @@ func (activities *ToolActivities) Tool(ctx context.Context, input agent.ToolInpu
 		return agent.ToolOutput{}, transientFailure("store tool output conversation", err)
 	}
 	output := agent.ToolOutput{CallID: input.Call.CallID, ConversationRef: conversationRef, IsError: result.IsError}
+	outcome := telemetry.AgentOutcomeSucceeded
+	if result.IsError {
+		outcome = telemetry.AgentOutcomeToolError
+	}
+	took := activities.clock.Now().Sub(started)
+	activities.metrics.AgentToolCall(input.Call.Name, outcome, conversationRef.Bytes, took)
+	activities.logger.InfoContext(ctx, "agent tool call completed",
+		slog.String("agent", identity), slog.String("tool", input.Call.Name),
+		slog.String("call_id", input.Call.CallID), slog.Int("activity_attempt", int(attempt)),
+		slog.String("outcome", string(outcome)), slog.Int64("conversation_bytes", conversationRef.Bytes),
+		slog.Int64("duration_millis", took.Milliseconds()),
+	)
 	if input.TranscriptRef.Key != "" {
 		output.TranscriptRef, err = activities.transcripts.Append(ctx, identity, &input.TranscriptRef, agent.TranscriptEvent{
 			Type: agent.EventToolCompleted, ToolName: input.Call.Name, CallID: input.Call.CallID,
-			IsError: result.IsError, DurationMillis: activities.clock.Now().Sub(started).Milliseconds(),
+			IsError: result.IsError, DurationMillis: took.Milliseconds(),
 		})
 		if err != nil {
 			return agent.ToolOutput{}, transientFailure("append tool transcript event", err)

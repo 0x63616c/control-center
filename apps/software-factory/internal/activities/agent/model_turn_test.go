@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"reflect"
 	"testing"
 	"time"
@@ -15,7 +17,10 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codexresponses"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock/clocktest"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
@@ -71,10 +76,14 @@ func TestModelTurnLoadsConversationAndStoresFinalText(t *testing.T) {
 		Text:    `{"summary":"done"}`,
 		Usage:   codexresponses.Usage{InputTokens: 12, OutputTokens: 3},
 	}}
-	activities, err := agentactivities.NewActivities(
+	registry := prometheus.NewRegistry()
+	metrics := telemetry.NewMetrics(registry)
+	activities, err := agentactivities.NewObservedActivities(
 		turner,
 		blobStore,
 		clocktest.NewFake(time.Unix(0, 0)),
+		metrics,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		agenttool.MustSet("coding-read-v1"),
 	)
 	if err != nil {
@@ -110,6 +119,9 @@ func TestModelTurnLoadsConversationAndStoresFinalText(t *testing.T) {
 	}
 	if result.Outcome != agent.OutcomeFinalText || result.ConversationRef.Revision != 1 {
 		t.Fatalf("ModelTurn() result = %#v", result)
+	}
+	if got, err := testutil.GatherAndCount(registry, "software_factory_agent_model_turns_total"); err != nil || got != 1 {
+		t.Fatalf("agent model turn metric families = %d, %v; want 1", got, err)
 	}
 	if result.TranscriptRef.Revision != 1 {
 		t.Fatalf("ModelTurn() transcript ref = %#v", result.TranscriptRef)

@@ -1,10 +1,32 @@
 package agentactivities
 
 import (
+	"time"
+
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
+
+// AgentMetrics is the bounded provider-neutral metric surface used by both
+// production activity composition roots.
+type AgentMetrics interface {
+	AgentModelTurn(work.Model, telemetry.AgentOutcome, work.Usage, bool, int64, time.Duration)
+	AgentToolCall(string, telemetry.AgentOutcome, int64, time.Duration)
+	AgentActivityRetry(string)
+	AgentBudgetExhausted(string)
+	AgentChildFinished(telemetry.AgentOutcome)
+}
+
+type noopAgentMetrics struct{}
+
+func (noopAgentMetrics) AgentModelTurn(work.Model, telemetry.AgentOutcome, work.Usage, bool, int64, time.Duration) {
+}
+func (noopAgentMetrics) AgentToolCall(string, telemetry.AgentOutcome, int64, time.Duration) {}
+func (noopAgentMetrics) AgentActivityRetry(string)                                          {}
+func (noopAgentMetrics) AgentBudgetExhausted(string)                                        {}
+func (noopAgentMetrics) AgentChildFinished(telemetry.AgentOutcome)                          {}
 
 // PromptRenderer is the existing product-owned stage prompt and result format.
 type PromptRenderer interface {
