@@ -2,6 +2,7 @@ package agentactivities_test
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codexresponses"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+	"go.temporal.io/sdk/temporal"
 )
 
 type readFileInput struct {
@@ -160,5 +162,63 @@ func TestModelTurnStoresToolArgumentsAndPreservesCallIDs(t *testing.T) {
 	if last.Kind != agent.ItemFunctionCall || last.ID != "fc_1" || last.CallID != "call_1" ||
 		last.Name != "read_file" || !reflect.DeepEqual([]byte(last.Arguments), arguments) {
 		t.Fatalf("stored function call = %#v", last)
+	}
+}
+
+func TestModelTurnRejectsIncompleteProviderOutcomes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		result codexresponses.TurnResult
+	}{
+		{name: "blank final text", result: codexresponses.TurnResult{Outcome: codexresponses.OutcomeFinalText}},
+		{name: "blank provider item id", result: codexresponses.TurnResult{
+			Outcome:   codexresponses.OutcomeToolCalls,
+			ToolCalls: []codexresponses.ToolCall{{CallID: "call_1", Name: "read_file", Arguments: []byte(`{}`)}},
+		}},
+		{name: "blank call id", result: codexresponses.TurnResult{
+			Outcome:   codexresponses.OutcomeToolCalls,
+			ToolCalls: []codexresponses.ToolCall{{ID: "fc_1", Name: "read_file", Arguments: []byte(`{}`)}},
+		}},
+		{name: "blank name", result: codexresponses.TurnResult{
+			Outcome:   codexresponses.OutcomeToolCalls,
+			ToolCalls: []codexresponses.ToolCall{{ID: "fc_1", CallID: "call_1", Arguments: []byte(`{}`)}},
+		}},
+		{name: "invalid arguments", result: codexresponses.TurnResult{
+			Outcome:   codexresponses.OutcomeToolCalls,
+			ToolCalls: []codexresponses.ToolCall{{ID: "fc_1", CallID: "call_1", Name: "read_file", Arguments: []byte(`{`)}},
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			blobStore := blobs.NewMemStore()
+			conversations := agent.NewConversationStore(blobStore)
+			conversationRef, err := conversations.Append(t.Context(), "agent/run-invalid/plan", nil, []agent.ConversationItem{
+				{Kind: agent.ItemInstructions, Text: "Work carefully."},
+				{Kind: agent.ItemUserText, Text: "Design the change."},
+			})
+			if err != nil {
+				t.Fatalf("Append() error = %v", err)
+			}
+			activities, err := agentactivities.NewActivities(
+				&fakeTurner{result: test.result},
+				blobStore,
+				agenttool.MustSet("coding-read-v1"),
+			)
+			if err != nil {
+				t.Fatalf("NewActivities() error = %v", err)
+			}
+
+			_, err = activities.ModelTurn(t.Context(), agent.ModelTurnInput{
+				Model: work.Model{Name: "gpt-test", Effort: "medium"}, ToolsetID: "coding-read-v1",
+				ConversationRef: conversationRef, IdempotencyKey: "agent/run-invalid/plan/model/1",
+			})
+			var applicationError *temporal.ApplicationError
+			if !errors.As(err, &applicationError) || applicationError.Type() != agent.ErrorTypeInvalidProviderOutcome ||
+				!applicationError.NonRetryable() {
+				t.Fatalf("ModelTurn() error = %T %v, want non-retryable %q", err, err, agent.ErrorTypeInvalidProviderOutcome)
+			}
+		})
 	}
 }

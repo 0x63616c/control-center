@@ -3,7 +3,9 @@ package agentactivities
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agenttool"
@@ -11,6 +13,7 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codexresponses"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/temporal"
 )
 
 // Turner is the sealed direct model boundary used by a model-turn activity.
@@ -87,7 +90,7 @@ func (activities *Activities) ModelTurn(ctx context.Context, input agent.ModelTu
 	case codexresponses.OutcomeToolCalls:
 		return activities.storeToolTurn(ctx, input.ConversationRef, identity, providerResult)
 	default:
-		return agent.ModelTurnResult{}, fmt.Errorf("model turn has unknown outcome %q", providerResult.Outcome)
+		return agent.ModelTurnResult{}, invalidProviderOutcome("model turn has unknown outcome %q", providerResult.Outcome)
 	}
 }
 
@@ -97,6 +100,9 @@ func (activities *Activities) storeFinalTurn(
 	identity string,
 	providerResult codexresponses.TurnResult,
 ) (agent.ModelTurnResult, error) {
+	if strings.TrimSpace(providerResult.Text) == "" {
+		return agent.ModelTurnResult{}, invalidProviderOutcome("final-text outcome contains blank text")
+	}
 	conversationRef, err := activities.conversations.Append(ctx, identity, &predecessor, []agent.ConversationItem{{
 		Kind: agent.ItemAssistantText,
 		Text: providerResult.Text,
@@ -127,7 +133,13 @@ func (activities *Activities) storeToolTurn(
 	providerResult codexresponses.TurnResult,
 ) (agent.ModelTurnResult, error) {
 	if len(providerResult.ToolCalls) == 0 {
-		return agent.ModelTurnResult{}, fmt.Errorf("tool-call outcome contains no tool calls")
+		return agent.ModelTurnResult{}, invalidProviderOutcome("tool-call outcome contains no tool calls")
+	}
+	for index, call := range providerResult.ToolCalls {
+		if strings.TrimSpace(call.ID) == "" || strings.TrimSpace(call.CallID) == "" ||
+			strings.TrimSpace(call.Name) == "" || !json.Valid(call.Arguments) {
+			return agent.ModelTurnResult{}, invalidProviderOutcome("tool call %d is incomplete", index)
+		}
 	}
 	pending := make([]agent.PendingToolCall, 0, len(providerResult.ToolCalls))
 	items := make([]agent.ConversationItem, 0, len(providerResult.ToolCalls))
@@ -163,6 +175,14 @@ func (activities *Activities) storeToolTurn(
 		},
 		UsageMeasured: true,
 	}, nil
+}
+
+func invalidProviderOutcome(format string, args ...any) error {
+	return temporal.NewNonRetryableApplicationError(
+		fmt.Sprintf(format, args...),
+		agent.ErrorTypeInvalidProviderOutcome,
+		nil,
+	)
 }
 
 func modelRequest(
