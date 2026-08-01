@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store/storefake"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
@@ -163,10 +164,13 @@ func TestWorkOnTicketConfirmsMergeBeforeBestEffortTeardown(t *testing.T) {
 	if len(h.rotations) != 3 {
 		t.Fatalf("credential rotations = %d, want one per agent attempt", len(h.rotations))
 	}
-	for index, agent := range h.agentInputs {
-		if agent.CredentialRevision.Identity != h.provisioned.Identity || agent.CredentialRevision.Revision != string(rune('1'+index)) {
-			t.Fatalf("agent %s credential expectation = %+v", agent.Stage, agent.CredentialRevision)
+	for index, child := range h.agentInputs {
+		if child.ToolTarget.RunWorkerIdentity != h.provisioned.Identity || child.Identity == "" || child.Identity != h.agentChildIDs[index] {
+			t.Fatalf("agent child %s identity = %q / target %+v", child.Attempt.Key.Stage, child.Identity, child.ToolTarget)
 		}
+	}
+	if len(h.finalizedAttempts) != 3 {
+		t.Fatalf("finalized agent evidence = %+v, want plan, implement, and review before their Steps completed", h.finalizedAttempts)
 	}
 
 	storedTicket, err := recorderStore.Ticket(ctx, ticket.ID)
@@ -251,21 +255,12 @@ func TestWorkOnTicketRepairsRedCIThenReviewsTheNewHead(t *testing.T) {
 			t.Fatalf("step %d kind = %q, want %q", index+1, got, want)
 		}
 	}
-	var implements []activities.TargetAgentInput
-	var reviews []activities.TargetAgentInput
-	for _, agent := range h.agentInputs {
-		switch agent.Stage {
-		case work.AgentStagePlan:
-		case work.AgentStageImplement:
-			implements = append(implements, agent)
-		case work.AgentStageReview:
-			reviews = append(reviews, agent)
-		}
+	implements := agentChildrenAtStage(h.agentInputs, work.StageImplement)
+	reviews := agentChildrenAtStage(h.agentInputs, work.StageReview)
+	if len(implements) != 2 || implements[0].Seed != nil || implements[1].Seed == nil || implements[1].Seed.SourceIdentity != implements[0].Identity || implements[1].Seed.ConversationRef.Key != implements[0].Identity+"/conversation" {
+		t.Fatalf("implement feedback seed = %+v, want the first completed implement conversation", implements)
 	}
-	if len(implements) != 2 || implements[1].PriorProviderThread == nil || implements[1].PriorProviderThread.Identity != h.provisioned.Identity || implements[1].PriorProviderThread.ThreadID != "implement-thread" {
-		t.Fatalf("implement feedback continuation = %+v, want the original implementer thread on generation one", implements)
-	}
-	if len(reviews) != 1 || reviews[0].PromptContext.CandidateHeadSHA != "H2" {
+	if len(reviews) != 1 || reviews[0].Attempt.PromptContext.CandidateHeadSHA != "H2" || reviews[0].Seed != nil {
 		t.Fatalf("reviews = %+v, want one fresh H2 review", reviews)
 	}
 	if h.merge.ExpectedHeadSHA != "H2" {
@@ -305,40 +300,34 @@ func TestWorkOnTicketRepairsBlockingReviewWithFreshCandidateAuthorization(t *tes
 		return activities.AwaitCIOutput{CommitSHA: input.CI.CommitSHA, Green: true}, nil
 	}
 	reviews := 0
-	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
-		if input.Stage != work.AgentStageReview {
-			return targetAgentOutput(t, input.Stage), nil
+	h.agentResult = func(input workflows.AgentWorkflowInput) (workflows.AgentWorkflowResult, error) {
+		result := targetAgentWorkflowResult(t, input)
+		if input.Attempt.Key.Stage != work.StageReview {
+			return result, nil
 		}
 		reviews++
 		if reviews != 1 {
-			return targetAgentOutput(t, input.Stage), nil
+			return result, nil
 		}
-		var result work.StageOutput
+		var output work.StageOutput
 		raw := `{"stage":"review","value":{"document":"blocked","findings":[{"id":"finding_1","blocking":true,"summary":"repair the boundary"}]}}`
-		if err := json.Unmarshal([]byte(raw), &result); err != nil {
-			return activities.TargetAgentOutput{}, err
+		if err := json.Unmarshal([]byte(raw), &output); err != nil {
+			return workflows.AgentWorkflowResult{}, err
 		}
-		return activities.TargetAgentOutput{Output: json.RawMessage(raw), Result: result, ThreadID: "review-thread-1", UsageState: work.UsageMeasured}, nil
+		result.Result = output
+		return result, nil
 	}
 	h.run(in)
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("WorkOnTicket: %v", err)
 	}
 
-	var implements, reviewInputs []activities.TargetAgentInput
-	for _, agent := range h.agentInputs {
-		switch agent.Stage {
-		case work.AgentStagePlan:
-		case work.AgentStageImplement:
-			implements = append(implements, agent)
-		case work.AgentStageReview:
-			reviewInputs = append(reviewInputs, agent)
-		}
+	implements := agentChildrenAtStage(h.agentInputs, work.StageImplement)
+	reviewInputs := agentChildrenAtStage(h.agentInputs, work.StageReview)
+	if len(implements) != 2 || implements[1].Seed == nil || implements[1].Seed.SourceIdentity != implements[0].Identity || implements[1].Attempt.PromptContext.CandidateHeadSHA != "H1" || len(implements[1].Attempt.PromptContext.ReviewFindings) != 1 || implements[1].Attempt.PromptContext.ReviewFindings[0].ID != "finding_1" {
+		t.Fatalf("review-feedback implementation = %+v, want seeded H1 implementer handoff with typed finding", implements)
 	}
-	if len(implements) != 2 || implements[1].PriorProviderThread == nil || implements[1].PriorProviderThread.Identity != h.provisioned.Identity || implements[1].PriorProviderThread.ThreadID != "implement-thread" || implements[1].PromptContext.CandidateHeadSHA != "H1" || len(implements[1].PromptContext.ReviewFindings) != 1 || implements[1].PromptContext.ReviewFindings[0].ID != "finding_1" {
-		t.Fatalf("review-feedback implementation = %+v, want same-generation H1 implementer handoff with typed finding", implements)
-	}
-	if len(h.ciInputs) != 2 || h.ciInputs[0].CI.CommitSHA != "H1" || h.ciInputs[1].CI.CommitSHA != "H2" || len(reviewInputs) != 2 || reviewInputs[0].PromptContext.CandidateHeadSHA != "H1" || reviewInputs[1].PromptContext.CandidateHeadSHA != "H2" || reviewInputs[0].PriorProviderThread != nil || reviewInputs[1].PriorProviderThread != nil {
+	if len(h.ciInputs) != 2 || h.ciInputs[0].CI.CommitSHA != "H1" || h.ciInputs[1].CI.CommitSHA != "H2" || len(reviewInputs) != 2 || reviewInputs[0].Attempt.PromptContext.CandidateHeadSHA != "H1" || reviewInputs[1].Attempt.PromptContext.CandidateHeadSHA != "H2" || reviewInputs[0].Seed != nil || reviewInputs[1].Seed != nil {
 		t.Fatalf("fresh candidate authorization = CI %+v, reviews %+v", h.ciInputs, reviewInputs)
 	}
 	if h.merge.ExpectedHeadSHA != "H2" {
@@ -386,13 +375,8 @@ func TestWorkOnTicketNeverMergesAHeadChangedAfterReview(t *testing.T) {
 	if len(h.mergeInputs) != 2 || h.mergeInputs[0].ExpectedHeadSHA != "H1" || h.mergeInputs[1].ExpectedHeadSHA != "H2" {
 		t.Fatalf("merge requests = %+v, want only H1 then independently authorized H2", h.mergeInputs)
 	}
-	var reviews []activities.TargetAgentInput
-	for _, agent := range h.agentInputs {
-		if agent.Stage == work.AgentStageReview {
-			reviews = append(reviews, agent)
-		}
-	}
-	if len(reviews) != 2 || reviews[0].PromptContext.CandidateHeadSHA != "H1" || reviews[1].PromptContext.CandidateHeadSHA != "H2" || reviews[0].PriorProviderThread != nil || reviews[1].PriorProviderThread != nil || reviews[1].Prior.LatestReview.Value() == nil || len(reviews[1].Prior.ReviewLedger) != 1 {
+	reviews := agentChildrenAtStage(h.agentInputs, work.StageReview)
+	if len(reviews) != 2 || reviews[0].Attempt.PromptContext.CandidateHeadSHA != "H1" || reviews[1].Attempt.PromptContext.CandidateHeadSHA != "H2" || reviews[0].Seed != nil || reviews[1].Seed != nil || reviews[1].Attempt.Prior.LatestReview.Value() == nil || len(reviews[1].Attempt.Prior.ReviewLedger) != 1 {
 		t.Fatalf("review handoffs = %+v, want independent fresh H1 and H2 reviews", reviews)
 	}
 	detail, err := recorderStore.TargetRunDetail(ctx, input.RunID)
@@ -718,9 +702,8 @@ func TestWorkOnTicketClassifiesAnotherCITimeoutAsInfrastructure(t *testing.T) {
 }
 
 // Credential renewal is supporting machinery for one authorized execution,
-// not another Agent Attempt. A long-running implement activity must receive a
-// projected credential renewals at thirty and sixty minutes while its original
-// activity future and durable Attempt remain active.
+// not another Agent Attempt. A long-running implement child must remain the
+// same execution while credentials renew at thirty and sixty minutes.
 func TestWorkOnTicketRenewsCredentialDuringOneActiveAgentAttempt(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -734,9 +717,6 @@ func TestWorkOnTicketRenewsCredentialDuringOneActiveAgentAttempt(t *testing.T) {
 	h.pendingImplement = true
 	h.env.RegisterDelayedCallback(func() {
 		h.pendingImplement = false
-		if err := h.env.CompleteActivity(h.pendingAgentTaskToken, targetAgentOutput(t, work.AgentStageImplement), nil); err != nil {
-			t.Fatalf("CompleteActivity: %v", err)
-		}
 	}, 61*time.Minute)
 	h.run(in)
 	if err := h.env.GetWorkflowError(); err != nil {
@@ -751,16 +731,16 @@ func TestWorkOnTicketRenewsCredentialDuringOneActiveAgentAttempt(t *testing.T) {
 	for _, step := range detail.Steps {
 		attempts += len(step.Attempts)
 	}
-	if attempts != 3 || len(h.rotations) != 5 || len(h.agentInputs) != 3 {
-		t.Fatalf("credential renewal = %d durable attempts, %d rotations, %d activity tries; want the same three attempts, renewals at 30 and 60 minutes, and no agent restart", attempts, len(h.rotations), len(h.agentInputs))
+	implements := agentChildrenAtStage(h.agentInputs, work.StageImplement)
+	if attempts != 3 || len(h.rotations) != 5 || len(h.agentInputs) != 3 || len(implements) != 1 {
+		t.Fatalf("credential renewal = %d durable attempts, %d rotations, %d children (%d implement); want three attempts, renewals at 30 and 60 minutes, and one uninterrupted implement child", attempts, len(h.rotations), len(h.agentInputs), len(implements))
 	}
 }
 
-// A native retry repeats the activity with its durable Attempt identity. It
-// must reconcile that same execution after the projected credential has been
-// observed again, rather than authorizing another Attempt or another renewal
-// lifecycle.
-func TestWorkOnTicketReconcilesNativeAgentRetryWithoutAnotherAttempt(t *testing.T) {
+// Model-turn retries belong to AgentWorkflow. WorkOnTicket starts one child for
+// an authorized Attempt and passes the immutable retry policy through instead
+// of scheduling or retrying a direct agent activity itself.
+func TestWorkOnTicketDelegatesModelTurnRetriesToOneChildPerAttempt(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	s := storefake.New()
@@ -770,28 +750,13 @@ func TestWorkOnTicketReconcilesNativeAgentRetryWithoutAnotherAttempt(t *testing.
 	}
 	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000009", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
 	h := newWorkOnTicketHarness(t, s)
-	implementTries := 0
-	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
-		if input.Stage == work.AgentStageImplement {
-			implementTries++
-			if implementTries == 1 {
-				return targetAgentOutput(t, input.Stage), temporal.NewApplicationError("temporary model transport", activities.ErrTypeTransient, nil)
-			}
-		}
-		return targetAgentOutput(t, input.Stage), nil
-	}
 	h.run(in)
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("WorkOnTicket: %v", err)
 	}
-	var implementInputs []activities.TargetAgentInput
-	for _, input := range h.agentInputs {
-		if input.Stage == work.AgentStageImplement {
-			implementInputs = append(implementInputs, input)
-		}
-	}
-	if len(implementInputs) != 2 || implementInputs[0].AttemptID != implementInputs[1].AttemptID {
-		t.Fatalf("implement retry inputs = %+v, want two activity tries of the same durable Agent Attempt", implementInputs)
+	implements := agentChildrenAtStage(h.agentInputs, work.StageImplement)
+	if len(implements) != 1 || implements[0].ModelTurnPolicy != in.Policy.Agent {
+		t.Fatalf("implement children = %+v, want one child carrying the immutable model-turn retry policy", implements)
 	}
 	detail, err := s.TargetRunDetail(ctx, in.RunID)
 	if err != nil {
@@ -801,16 +766,15 @@ func TestWorkOnTicketReconcilesNativeAgentRetryWithoutAnotherAttempt(t *testing.
 	for _, step := range detail.Steps {
 		attempts += len(step.Attempts)
 	}
-	if attempts != 3 || len(h.rotations) != 3 {
-		t.Fatalf("native retry = %d durable attempts, %d credential lifecycles; want three and three", attempts, len(h.rotations))
+	if attempts != 3 || len(h.agentInputs) != 3 || len(h.rotations) != 3 {
+		t.Fatalf("child delegation = %d durable attempts, %d children, %d credential lifecycles; want three of each", attempts, len(h.agentInputs), len(h.rotations))
 	}
 }
 
-// The Agent policy is only a contract if it reaches Temporal's scheduled
-// activity. These are the bounds that distinguish a silent model from one
-// that continues to report progress, and the retry shape remains technical:
-// it cannot manufacture a second durable Agent Attempt.
-func TestWorkOnTicketSchedulesAgentAttemptsWithAcceptanceTimeouts(t *testing.T) {
+// Every authorized durable Attempt owns exactly one bounded child identity.
+// The identity is also the child's cache/evidence namespace, so retries and
+// artifacts cannot drift onto a different semantic execution.
+func TestWorkOnTicketMapsAuthorizedAttemptsToBoundedChildIdentities(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	s := storefake.New()
@@ -820,32 +784,26 @@ func TestWorkOnTicketSchedulesAgentAttemptsWithAcceptanceTimeouts(t *testing.T) 
 	}
 	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000010", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
 	h := newWorkOnTicketHarness(t, s)
-	var infos []activity.Info
-	h.env.SetOnActivityStartedListener(func(info *activity.Info, _ context.Context, _ converter.EncodedValues) {
-		if info.ActivityType.Name == "RunTargetAgent" {
-			infos = append(infos, *info)
-		}
-	})
-
 	h.run(in)
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("WorkOnTicket: %v", err)
 	}
-	if len(infos) != 3 {
-		t.Fatalf("scheduled agent activities = %d, want plan, implement, and review", len(infos))
+	if len(h.authorized) != 3 || len(h.agentInputs) != 3 || len(h.agentChildIDs) != 3 {
+		t.Fatalf("authorized/children = %d/%d/%d, want one child for plan, implement, and review", len(h.authorized), len(h.agentInputs), len(h.agentChildIDs))
 	}
-	for _, info := range infos {
-		if info.HeartbeatTimeout != 5*time.Minute || info.StartToCloseTimeout != 55*time.Minute || info.ScheduleToCloseTimeout != 90*time.Minute {
-			t.Fatalf("scheduled agent timeouts = heartbeat %s start-to-close %s schedule-to-close %s, want 5m/55m/90m", info.HeartbeatTimeout, info.StartToCloseTimeout, info.ScheduleToCloseTimeout)
+	for index, input := range h.agentInputs {
+		attempt := h.authorized[index].AttemptID
+		want := fmt.Sprintf("agent/%s/step/%d/attempt/%d", attempt.RunID, attempt.StepOrdinal, attempt.AttemptNo)
+		if input.Identity != want || input.CacheKey != want || h.agentChildIDs[index] != want {
+			t.Fatalf("child %d identity = input %q / cache %q / workflow %q, want %q", index, input.Identity, input.CacheKey, h.agentChildIDs[index], want)
 		}
 	}
 }
 
-// The SDK's runtime ActivityInfo intentionally does not promise to echo a
-// RetryPolicy. Exercise Temporal's schedule instead: a continuously
-// unavailable model receives exactly ten technical tries, with the 10s x2
-// backoff capped at five minutes, under the same authorized Attempt.
-func TestWorkOnTicketSchedulesTenAgentRetriesWithTheAcceptanceBackoff(t *testing.T) {
+// The child owns the acceptance retry shape. WorkOnTicket must copy the full
+// policy into every child input without expanding ten model-turn tries into
+// ten parent-level executions.
+func TestWorkOnTicketCarriesAcceptanceBackoffIntoEveryChild(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	s := storefake.New()
@@ -855,33 +813,17 @@ func TestWorkOnTicketSchedulesTenAgentRetriesWithTheAcceptanceBackoff(t *testing
 	}
 	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000013", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
 	h := newWorkOnTicketHarness(t, s)
-	h.deleteErr = nil
-	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
-		return targetAgentOutput(t, input.Stage), temporal.NewApplicationError("model unavailable", activities.ErrTypeTransient, nil)
-	}
-	started := h.env.Now()
-
 	h.run(in)
-	if err := h.env.GetWorkflowError(); err == nil {
-		t.Fatal("WorkOnTicket succeeded after ten unavailable model tries")
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket: %v", err)
 	}
-	if len(h.agentInputs) != 10 {
-		t.Fatalf("scheduled agent tries = %d, want exactly 10", len(h.agentInputs))
+	if len(h.agentInputs) != 3 {
+		t.Fatalf("scheduled children = %d, want exactly plan, implement, and review", len(h.agentInputs))
 	}
 	for _, input := range h.agentInputs {
-		if input.Stage != work.AgentStagePlan || input.AttemptID.AttemptNo != 1 {
-			t.Fatalf("retry input = %+v, want plan Attempt 1 retried natively", input)
+		if input.ModelTurnPolicy != in.Policy.Agent || input.ModelTurnPolicy.Retry.MaximumAttempts != 10 || input.ModelTurnPolicy.Retry.InitialInterval != 10*time.Second || input.ModelTurnPolicy.Retry.BackoffCoefficient != 2 || input.ModelTurnPolicy.Retry.MaximumInterval != 5*time.Minute {
+			t.Fatalf("child model-turn policy = %+v, want acceptance 10s x2 backoff, five-minute cap, ten tries", input.ModelTurnPolicy)
 		}
-	}
-	if elapsed := h.env.Now().Sub(started); elapsed != 25*time.Minute+10*time.Second {
-		t.Fatalf("retry schedule elapsed = %s, want 25m10s from 10s x2 capped at 5m", elapsed)
-	}
-	detail, err := s.TargetRunDetail(ctx, in.RunID)
-	if err != nil {
-		t.Fatalf("TargetRunDetail: %v", err)
-	}
-	if len(detail.Steps) < 4 || len(detail.Steps[3].Attempts) != 1 || detail.Steps[3].Attempts[0].State != work.AgentAttemptFailed || detail.Steps[3].Attempts[0].FailureKind != work.RunFailureInfrastructure {
-		t.Fatalf("unavailable model attempt = %+v, want one durably failed plan Attempt", detail.Steps)
 	}
 }
 
@@ -915,10 +857,9 @@ func TestWorkOnTicketFailsRunningAttemptWithItsActiveStep(t *testing.T) {
 	}
 }
 
-// A heartbeat timeout is a technical retry of the same authorized execution.
-// It cannot create another semantic Agent Attempt or re-run credential setup
-// as if the model had been deliberately asked for fresh work.
-func TestWorkOnTicketRetriesHeartbeatTimeoutWithoutAnotherAttempt(t *testing.T) {
+// AgentWorkflow owns the result until its evidence is durable. WorkOnTicket
+// must finalize each child result before it completes the enclosing Step.
+func TestWorkOnTicketFinalizesChildEvidenceBeforeCompletingAgentStep(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	s := storefake.New()
@@ -928,37 +869,40 @@ func TestWorkOnTicketRetriesHeartbeatTimeoutWithoutAnotherAttempt(t *testing.T) 
 	}
 	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000011", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
 	h := newWorkOnTicketHarness(t, s)
-	implementTries := 0
-	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
-		if input.Stage == work.AgentStageImplement {
-			implementTries++
-			if implementTries == 1 {
-				return targetAgentOutput(t, input.Stage), temporal.NewHeartbeatTimeoutError()
-			}
-		}
-		return targetAgentOutput(t, input.Stage), nil
-	}
-
 	h.run(in)
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("WorkOnTicket: %v", err)
 	}
-	var implementInputs []activities.TargetAgentInput
-	for _, input := range h.agentInputs {
-		if input.Stage == work.AgentStageImplement {
-			implementInputs = append(implementInputs, input)
+	finalizeIndexes := make([]int, 0, 3)
+	for index, name := range h.activityCompletions {
+		if name == "Finalize" {
+			finalizeIndexes = append(finalizeIndexes, index)
 		}
 	}
-	if len(implementInputs) != 2 || implementInputs[0].AttemptID != implementInputs[1].AttemptID {
-		t.Fatalf("heartbeat-timeout retry inputs = %+v, want two tries of one durable Agent Attempt", implementInputs)
+	if len(finalizeIndexes) != 3 || len(h.finalizedAttempts) != 3 {
+		t.Fatalf("finalized evidence = indexes %v / attempts %+v, want all three child results", finalizeIndexes, h.finalizedAttempts)
+	}
+	for _, finalizeIndex := range finalizeIndexes {
+		completed := false
+		for _, name := range h.activityCompletions[finalizeIndex+1:] {
+			if name == "Finalize" {
+				break
+			}
+			if name == "CompleteStep" {
+				completed = true
+				break
+			}
+		}
+		if !completed {
+			t.Fatalf("activity completions = %v, want each Finalize before its agent Step completion", h.activityCompletions)
+		}
 	}
 }
 
-// A provider's durable attempt record can prove an execution was interrupted
-// but not restore its local state. That ends the failed execution and requires
-// a second, explicitly authorized attempt under the same Step; native retries
-// may not turn into unbounded fresh executions.
-func TestWorkOnTicketReplacesAnUnresumableAttemptInsideTheSameStep(t *testing.T) {
+// A classified terminal child failure ends one semantic execution and starts
+// one fresh Attempt under the same Step. The legacy error type is a temporary
+// adapter until the child workflow's typed failure contract lands.
+func TestWorkOnTicketStartsFreshSemanticAttemptOnlyForClassifiedTerminalChildFailure(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	s := storefake.New()
@@ -968,11 +912,12 @@ func TestWorkOnTicketReplacesAnUnresumableAttemptInsideTheSameStep(t *testing.T)
 	}
 	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000012", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
 	h := newWorkOnTicketHarness(t, s)
-	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
-		if input.Stage == work.AgentStageImplement && input.AttemptID.AttemptNo == 1 {
-			return targetAgentOutput(t, input.Stage), temporal.NewNonRetryableApplicationError("provider execution cannot resume", activities.ErrTypeUnresumableIncompleteAttempt, nil)
+	firstImplementIdentity := fmt.Sprintf("agent/%s/step/5/attempt/1", in.RunID)
+	h.agentResult = func(input workflows.AgentWorkflowInput) (workflows.AgentWorkflowResult, error) {
+		if input.Identity == firstImplementIdentity {
+			return targetAgentWorkflowResult(t, input), temporal.NewNonRetryableApplicationError("provider execution cannot resume", activities.ErrTypeUnresumableIncompleteAttempt, nil)
 		}
-		return targetAgentOutput(t, input.Stage), nil
+		return targetAgentWorkflowResult(t, input), nil
 	}
 
 	h.run(in)
@@ -999,10 +944,9 @@ func TestWorkOnTicketReplacesAnUnresumableAttemptInsideTheSameStep(t *testing.T)
 	if len(h.authorized) != 4 || h.authorized[1].AttemptID.AttemptNo != 1 || h.authorized[2].AttemptID.AttemptNo != 2 {
 		t.Fatalf("authorized attempts = %+v, want plan, implement attempt 1, implement attempt 2, and review", h.authorized)
 	}
-	for _, input := range h.agentInputs {
-		if input.Stage == work.AgentStageImplement && input.AttemptID.AttemptNo == 2 && input.PriorProviderThread != nil {
-			t.Fatalf("replacement attempt resumed an unresumable provider thread: %+v", input.PriorProviderThread)
-		}
+	implements := agentChildrenAtStage(h.agentInputs, work.StageImplement)
+	if len(implements) != 2 || implements[0].Identity != firstImplementIdentity || implements[1].Identity != fmt.Sprintf("agent/%s/step/5/attempt/2", in.RunID) || implements[1].Seed != nil {
+		t.Fatalf("replacement children = %+v, want failed attempt 1 followed by a fresh unseeded attempt 2", implements)
 	}
 }
 
@@ -1021,18 +965,15 @@ func TestWorkOnTicketCountsUnresumableReplacementAgainstTheRunWideAttemptBudget(
 	policy.MaxAgentAttempts = 4
 	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000014", Policy: policy, CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
 	h := newWorkOnTicketHarness(t, s)
-	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
-		if input.Stage == work.AgentStageImplement && input.AttemptID.AttemptNo == 1 {
-			return targetAgentOutput(t, input.Stage), temporal.NewNonRetryableApplicationError("provider execution cannot resume", activities.ErrTypeUnresumableIncompleteAttempt, nil)
+	firstImplementIdentity := fmt.Sprintf("agent/%s/step/5/attempt/1", in.RunID)
+	h.agentResult = func(input workflows.AgentWorkflowInput) (workflows.AgentWorkflowResult, error) {
+		if input.Identity == firstImplementIdentity {
+			return targetAgentWorkflowResult(t, input), temporal.NewNonRetryableApplicationError("provider execution cannot resume", activities.ErrTypeUnresumableIncompleteAttempt, nil)
 		}
-		if input.Stage == work.AgentStageReview {
-			var result work.StageOutput
-			if err := json.Unmarshal([]byte(`{"stage":"review","value":{"document":"fix it","findings":[{"id":"blocking","blocking":true,"summary":"fix it"}]}}`), &result); err != nil {
-				return activities.TargetAgentOutput{}, err
-			}
-			return activities.TargetAgentOutput{Output: []byte(`{"stage":"review","value":{"document":"fix it","findings":[{"id":"blocking","blocking":true,"summary":"fix it"}]}}`), Result: result, ThreadID: "review-thread", UsageState: work.UsageMeasured}, nil
+		if input.Attempt.Key.Stage == work.StageReview {
+			return targetBlockingReviewWorkflowResult(t, input), nil
 		}
-		return targetAgentOutput(t, input.Stage), nil
+		return targetAgentWorkflowResult(t, input), nil
 	}
 
 	h.run(in)
@@ -1052,12 +993,12 @@ func TestWorkOnTicketCountsUnresumableReplacementAgainstTheRunWideAttemptBudget(
 	}
 	implements := 0
 	for _, input := range h.agentInputs {
-		if input.Stage == work.AgentStageImplement {
+		if input.Attempt.Key.Stage == work.StageImplement {
 			implements++
 		}
 	}
 	if implements != 2 {
-		t.Fatalf("implement activity inputs = %d, want only the failed attempt and explicit replacement", implements)
+		t.Fatalf("implement child inputs = %d, want only the failed attempt and explicit replacement", implements)
 	}
 }
 
@@ -1077,12 +1018,12 @@ func TestWorkOnTicketReconcilesSameAttemptAfterLostAgentResponse(t *testing.T) {
 	h := newWorkOnTicketHarness(t, s)
 	h.deleteErr = nil
 	providerCalls := 0
-	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
-		if input.Stage == work.AgentStageImplement && input.CredentialRevision.Identity.Generation == 1 {
+	h.agentResult = func(input workflows.AgentWorkflowInput) (workflows.AgentWorkflowResult, error) {
+		if input.Attempt.Key.Stage == work.StageImplement && input.ToolTarget.RunWorkerIdentity.Generation == 1 {
 			providerCalls++
-			return targetAgentOutput(t, input.Stage), temporal.NewNonRetryableApplicationError("Run Worker Session lost", activities.ErrTypeRunWorkerSessionLost, nil)
+			return targetAgentWorkflowResult(t, input), temporal.NewNonRetryableApplicationError("Run Worker Session lost", activities.ErrTypeRunWorkerSessionLost, nil)
 		}
-		return targetAgentOutput(t, input.Stage), nil
+		return targetAgentWorkflowResult(t, input), nil
 	}
 
 	h.run(in)
@@ -1110,21 +1051,17 @@ func TestWorkOnTicketReconcilesSameAttemptAfterLostAgentResponse(t *testing.T) {
 	if len(h.cloneInputs) != 1 || len(h.restoreInputs) != 1 || h.restoreInputs[0].Branch != h.cloneInputs[0].Step.Branch {
 		t.Fatalf("repository replacement restore = clone %+v / restore %+v, want one durable clone Step and one generation-local restore", h.cloneInputs, h.restoreInputs)
 	}
-	implements := make([]activities.TargetAgentInput, 0, 2)
-	for _, input := range h.agentInputs {
-		if input.Stage == work.AgentStageImplement {
-			implements = append(implements, input)
-		}
-	}
-	if providerCalls != 1 || len(implements) != 2 || implements[0].AttemptID.AttemptNo != 1 || implements[0].CredentialRevision.Identity.Generation != 1 || implements[1].AttemptID.AttemptNo != 1 || implements[1].CredentialRevision.Identity.Generation != 2 || implements[1].PriorProviderThread != nil {
-		t.Fatalf("implement recovery = calls %d / inputs %+v, want checkpoint reconciliation of the same Attempt without another provider call", providerCalls, implements)
+	implements := agentChildrenAtStage(h.agentInputs, work.StageImplement)
+	wantIdentity := fmt.Sprintf("agent/%s/step/5/attempt/1", in.RunID)
+	if providerCalls != 1 || len(implements) != 2 || implements[0].Identity != wantIdentity || implements[0].ToolTarget.RunWorkerIdentity.Generation != 1 || implements[1].Identity != wantIdentity || implements[1].ToolTarget.RunWorkerIdentity.Generation != 2 || implements[0].Seed != nil || implements[1].Seed != nil {
+		t.Fatalf("implement recovery = calls %d / inputs %+v, want the same unseeded Attempt identity on generation two without another provider call", providerCalls, implements)
 	}
 	detail, err := s.TargetRunDetail(ctx, in.RunID)
 	if err != nil {
 		t.Fatalf("TargetRunDetail: %v", err)
 	}
-	if len(detail.Steps) != 10 || detail.Steps[3].Step.Kind != work.StepPlan || len(detail.Steps[3].Attempts) != 1 || len(detail.Steps[4].Attempts) != 1 || detail.Steps[4].Attempts[0].State != work.AgentAttemptRunning {
-		t.Fatalf("durable recovery detail = %+v, want completed plan once and the same implementation Attempt reconciled after loss", detail)
+	if len(detail.Steps) != 10 || detail.Steps[3].Step.Kind != work.StepPlan || len(detail.Steps[3].Attempts) != 1 || len(detail.Steps[4].Attempts) != 1 || detail.Steps[4].Attempts[0].State != work.AgentAttemptSucceeded {
+		t.Fatalf("durable recovery detail = %+v, want completed plan once and the same successful implementation Attempt reconciled after loss", detail)
 	}
 }
 
@@ -1138,11 +1075,11 @@ func TestWorkOnTicketDoesNotProvisionReplacementUntilLostGenerationIsDeleted(t *
 	}
 	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000025", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
 	h := newWorkOnTicketHarness(t, s)
-	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
-		if input.Stage == work.AgentStageImplement {
-			return targetAgentOutput(t, input.Stage), temporal.NewNonRetryableApplicationError("Run Worker Session lost", activities.ErrTypeRunWorkerSessionLost, nil)
+	h.agentResult = func(input workflows.AgentWorkflowInput) (workflows.AgentWorkflowResult, error) {
+		if input.Attempt.Key.Stage == work.StageImplement {
+			return targetAgentWorkflowResult(t, input), temporal.NewNonRetryableApplicationError("Run Worker Session lost", activities.ErrTypeRunWorkerSessionLost, nil)
 		}
-		return targetAgentOutput(t, input.Stage), nil
+		return targetAgentWorkflowResult(t, input), nil
 	}
 
 	h.run(in)
@@ -1168,11 +1105,11 @@ func TestWorkOnTicketSerializesSequentialSessionReplacements(t *testing.T) {
 	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000019", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
 	h := newWorkOnTicketHarness(t, s)
 	h.deleteErr = nil
-	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
-		if input.Stage == work.AgentStageImplement && input.CredentialRevision.Identity.Generation < 3 {
-			return targetAgentOutput(t, input.Stage), temporal.NewNonRetryableApplicationError("Run Worker Session lost", activities.ErrTypeRunWorkerSessionLost, nil)
+	h.agentResult = func(input workflows.AgentWorkflowInput) (workflows.AgentWorkflowResult, error) {
+		if input.Attempt.Key.Stage == work.StageImplement && input.ToolTarget.RunWorkerIdentity.Generation < 3 {
+			return targetAgentWorkflowResult(t, input), temporal.NewNonRetryableApplicationError("Run Worker Session lost", activities.ErrTypeRunWorkerSessionLost, nil)
 		}
-		return targetAgentOutput(t, input.Stage), nil
+		return targetAgentWorkflowResult(t, input), nil
 	}
 	h.run(in)
 	if err := h.env.GetWorkflowError(); err != nil {
@@ -1201,6 +1138,10 @@ func TestWorkOnTicketSerializesSequentialSessionReplacements(t *testing.T) {
 	}
 	if len(detail.Steps[4].Attempts) != 1 || detail.Steps[4].Attempts[0].ID.AttemptNo != 1 {
 		t.Fatalf("implementation attempts = %+v, want the same reconciled Attempt across sequential Session losses", detail.Steps[4].Attempts)
+	}
+	implements := agentChildrenAtStage(h.agentInputs, work.StageImplement)
+	if len(implements) != 3 || implements[0].Identity != implements[1].Identity || implements[1].Identity != implements[2].Identity {
+		t.Fatalf("implementation children = %+v, want one Attempt identity replayed across all replacement workers", implements)
 	}
 }
 
@@ -1353,14 +1294,9 @@ func TestWorkOnTicketRecoversCheckpointedPullRequestAfterSessionLoss(t *testing.
 	if len(h.provisionedInputs) != 2 || h.provisionedInputs[1].Identity.Generation != 2 {
 		t.Fatalf("recovery provision = %+v, want generation two", h.provisionedInputs)
 	}
-	implements := make([]activities.TargetAgentInput, 0, 2)
-	for _, input := range h.agentInputs {
-		if input.Stage == work.AgentStageImplement {
-			implements = append(implements, input)
-		}
-	}
-	if len(implements) != 2 || implements[1].CredentialRevision.Identity.Generation != 2 || implements[1].PriorProviderThread != nil {
-		t.Fatalf("post-replacement implementation = %+v, want a fresh generation-two agent without old provider thread", implements)
+	implements := agentChildrenAtStage(h.agentInputs, work.StageImplement)
+	if len(implements) != 2 || implements[1].ToolTarget.RunWorkerIdentity.Generation != 2 || implements[1].Seed == nil || implements[1].Seed.SourceIdentity != implements[0].Identity || implements[1].Seed.ConversationRef != targetAgentWorkflowResult(t, implements[0]).ConversationRef {
+		t.Fatalf("post-replacement implementation = %+v, want generation two seeded from the first completed implementation", implements)
 	}
 	detail, err := s.TargetRunDetail(ctx, in.RunID)
 	if err != nil {
@@ -1484,7 +1420,7 @@ func TestWorkOnTicketCancellationAfterClaimCommitBeforeResponseReopensTicket(t *
 
 // Cancellation after claim is durable core work: it disconnects from the
 // canceled execution, returns only the owned Ticket to open, and tears down
-// the Run Worker after stopping the in-flight agent activity.
+// the Run Worker only after the in-flight child acknowledges cancellation.
 func TestWorkOnTicketCancellationDuringAgentReopensTheOwnedTicket(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -1515,6 +1451,18 @@ func TestWorkOnTicketCancellationDuringAgentReopensTheOwnedTicket(t *testing.T) 
 	}
 	if detail.Run.TargetOutcome != work.RunOutcomeCanceled || len(h.deleted) != int(in.Policy.Teardown.Retry.MaximumAttempts) || h.deleted[0].Identity.Generation != 1 {
 		t.Fatalf("cancellation outcome = run %+v / deletes %+v, want durable cancellation despite bounded teardown failure", detail.Run, h.deleted)
+	}
+	childCanceled, firstDelete := -1, -1
+	for index, operation := range h.controlSequence {
+		if operation == "child-canceled" && childCanceled == -1 {
+			childCanceled = index
+		}
+		if operation == "delete:1" && firstDelete == -1 {
+			firstDelete = index
+		}
+	}
+	if h.agentChildCanceled != 1 || childCanceled < 0 || firstDelete <= childCanceled {
+		t.Fatalf("cancellation sequence = %v (%d child acknowledgements), want WaitForCancellation before worker teardown", h.controlSequence, h.agentChildCanceled)
 	}
 }
 
@@ -1687,15 +1635,11 @@ func TestWorkOnTicketStopsBeforeSixthReviewOrTwentySixthAttempt(t *testing.T) {
 	}
 	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000004", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
 	h := newWorkOnTicketHarness(t, s)
-	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
-		if input.Stage != work.AgentStageReview {
-			return targetAgentOutput(t, input.Stage), nil
+	h.agentResult = func(input workflows.AgentWorkflowInput) (workflows.AgentWorkflowResult, error) {
+		if input.Attempt.Key.Stage != work.StageReview {
+			return targetAgentWorkflowResult(t, input), nil
 		}
-		var result work.StageOutput
-		if err := json.Unmarshal([]byte(`{"stage":"review","value":{"document":"still blocked","findings":[{"id":"same","blocking":true,"summary":"fix it"}]}}`), &result); err != nil {
-			return activities.TargetAgentOutput{}, err
-		}
-		return activities.TargetAgentOutput{Output: []byte(`{"stage":"review","value":{"document":"still blocked","findings":[{"id":"same","blocking":true,"summary":"fix it"}]}}`), Result: result, ThreadID: "review-thread", UsageState: work.UsageMeasured}, nil
+		return targetBlockingReviewWorkflowResult(t, input), nil
 	}
 	h.run(in)
 	if err := h.env.GetWorkflowError(); err == nil {
@@ -1792,20 +1736,12 @@ func TestWorkOnTicketRepairsTextConflictOrStaleBaseWithFreshReview(t *testing.T)
 			if err := h.env.GetWorkflowError(); err != nil {
 				t.Fatalf("WorkOnTicket: %v", err)
 			}
-			var implements, reviews []activities.TargetAgentInput
-			for _, agent := range h.agentInputs {
-				switch agent.Stage {
-				case work.AgentStagePlan:
-				case work.AgentStageImplement:
-					implements = append(implements, agent)
-				case work.AgentStageReview:
-					reviews = append(reviews, agent)
-				}
+			implements := agentChildrenAtStage(h.agentInputs, work.StageImplement)
+			reviews := agentChildrenAtStage(h.agentInputs, work.StageReview)
+			if len(implements) != 2 || implements[1].Seed == nil || implements[1].Seed.SourceIdentity != implements[0].Identity || implements[1].Attempt.PromptContext.Merge == nil || implements[1].Attempt.PromptContext.Merge.Outcome != outcome || implements[1].Attempt.PromptContext.Merge.CurrentBaseSHA != "B2" || implements[1].Attempt.PromptContext.Merge.Diagnostic != "reconcile the branch" {
+				t.Fatalf("merge-feedback implementation = %+v, want seeded typed %s handoff", implements, outcome)
 			}
-			if len(implements) != 2 || implements[1].PriorProviderThread == nil || implements[1].PromptContext.Merge == nil || implements[1].PromptContext.Merge.Outcome != outcome || implements[1].PromptContext.Merge.CurrentBaseSHA != "B2" || implements[1].PromptContext.Merge.Diagnostic != "reconcile the branch" {
-				t.Fatalf("merge-feedback implementation = %+v, want same-generation typed %s handoff", implements, outcome)
-			}
-			if len(reviews) != 2 || reviews[1].PromptContext.CandidateHeadSHA != "H2" || reviews[0].PriorProviderThread != nil || reviews[1].PriorProviderThread != nil {
+			if len(reviews) != 2 || reviews[0].Attempt.PromptContext.CandidateHeadSHA != "H1" || reviews[1].Attempt.PromptContext.CandidateHeadSHA != "H2" || reviews[0].Seed != nil || reviews[1].Seed != nil {
 				t.Fatalf("reviews = %+v, want fresh H1 then H2 reviewers", reviews)
 			}
 			detail, err := s.TargetRunDetail(ctx, in.RunID)
@@ -1826,35 +1762,37 @@ type workOnTicketHarness struct {
 	store workOnTicketStore
 	runID string
 
-	provisioned       activities.ProvisionRunWorkerInput
-	clone             activities.CloneTargetRepositoryInput
-	provisionedInputs []activities.ProvisionRunWorkerInput
-	cloneInputs       []activities.CloneTargetRepositoryInput
-	restoreInputs     []activities.RestoreTargetRepositoryInput
-	restore           func(activities.RestoreTargetRepositoryInput) error
-	controlSequence   []string
-	rotations         []activities.RotateRunWorkerGitHubCredentialInput
-	authorized        []activities.AuthorizeRunWorkerAttemptInput
-	authorizeErr      error
-	checkpointAgents  bool
-	agentInputs       []activities.TargetAgentInput
-	ci                activities.TargetAwaitCIInput
-	ready             activities.TargetMarkPullRequestReadyInput
-	merge             activities.TargetMergePullRequestInput
-	mergeInputs       []activities.TargetMergePullRequestInput
-	deleted           []activities.DeleteRunWorkerInput
-	reviewHead        string
-	deleteErr         error
-	cloneResult       func(activities.CloneTargetRepositoryInput) (activities.CloneTargetRepositoryOutput, error)
+	provisioned         activities.ProvisionRunWorkerInput
+	clone               activities.CloneTargetRepositoryInput
+	provisionedInputs   []activities.ProvisionRunWorkerInput
+	cloneInputs         []activities.CloneTargetRepositoryInput
+	restoreInputs       []activities.RestoreTargetRepositoryInput
+	restore             func(activities.RestoreTargetRepositoryInput) error
+	controlSequence     []string
+	rotations           []activities.RotateRunWorkerGitHubCredentialInput
+	authorized          []activities.AuthorizeRunWorkerAttemptInput
+	authorizeErr        error
+	agentInputs         []workflows.AgentWorkflowInput
+	agentChildIDs       []string
+	agentChildCanceled  int
+	activityCompletions []string
+	finalizedAttempts   []store.TargetAttemptID
+	ci                  activities.TargetAwaitCIInput
+	ready               activities.TargetMarkPullRequestReadyInput
+	merge               activities.TargetMergePullRequestInput
+	mergeInputs         []activities.TargetMergePullRequestInput
+	deleted             []activities.DeleteRunWorkerInput
+	reviewHead          string
+	deleteErr           error
+	cloneResult         func(activities.CloneTargetRepositoryInput) (activities.CloneTargetRepositoryOutput, error)
 
-	syncInputs            []activities.TargetSyncPullRequestInput
-	ciInputs              []activities.TargetAwaitCIInput
-	sync                  func(activities.TargetSyncPullRequestInput) (work.PullRequest, error)
-	awaitCI               func(activities.TargetAwaitCIInput) (activities.AwaitCIOutput, error)
-	mergeResult           func(activities.TargetMergePullRequestInput) (work.PullRequestMergeResult, error)
-	agentResult           func(activities.TargetAgentInput) (activities.TargetAgentOutput, error)
-	pendingImplement      bool
-	pendingAgentTaskToken []byte
+	syncInputs       []activities.TargetSyncPullRequestInput
+	ciInputs         []activities.TargetAwaitCIInput
+	sync             func(activities.TargetSyncPullRequestInput) (work.PullRequest, error)
+	awaitCI          func(activities.TargetAwaitCIInput) (activities.AwaitCIOutput, error)
+	mergeResult      func(activities.TargetMergePullRequestInput) (work.PullRequestMergeResult, error)
+	agentResult      func(workflows.AgentWorkflowInput) (workflows.AgentWorkflowResult, error)
+	pendingImplement bool
 }
 
 type workOnTicketStore interface {
@@ -1878,6 +1816,16 @@ func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore workOnT
 	suite := &testsuite.WorkflowTestSuite{}
 	env := suite.NewTestWorkflowEnvironment()
 	h := &workOnTicketHarness{env: env, store: recorderStore, deleteErr: errors.New("temporary teardown handoff")}
+	env.SetOnChildWorkflowStartedListener(func(info *workflow.Info, _ workflow.Context, _ converter.EncodedValues) {
+		h.agentChildIDs = append(h.agentChildIDs, info.WorkflowExecution.ID)
+	})
+	env.SetOnChildWorkflowCanceledListener(func(*workflow.Info) {
+		h.agentChildCanceled++
+		h.controlSequence = append(h.controlSequence, "child-canceled")
+	})
+	env.SetOnActivityCompletedListener(func(info *activity.Info, _ converter.EncodedValue, _ error) {
+		h.activityCompletions = append(h.activityCompletions, info.ActivityType.Name)
+	})
 	if enableSessionWorker {
 		env.SetWorkerOptions(worker.Options{
 			EnableSessionWorker:               true,
@@ -1895,9 +1843,7 @@ func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore workOnT
 	}
 	env.RegisterActivity(recovery)
 	env.RegisterActivityWithOptions(func(ctx context.Context, input activities.TargetAgentEvidenceInput) error {
-		if !h.checkpointAgents {
-			return nil
-		}
+		h.finalizedAttempts = append(h.finalizedAttempts, input.AttemptID)
 		result, err := json.Marshal(input.Result)
 		if err != nil {
 			return err
@@ -1914,26 +1860,20 @@ func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore workOnT
 		return err
 	}, activity.RegisterOptions{Name: "Finalize"})
 
-	env.RegisterWorkflowWithOptions(func(_ workflow.Context, input workflows.AgentWorkflowInput) (workflows.AgentWorkflowResult, error) {
-		stage := work.AgentStage(input.Attempt.Key.Stage)
-		legacy := activities.TargetAgentInput{
-			TicketNumber: input.Attempt.Key.Ticket, Iteration: input.Attempt.Key.Turn, Stage: stage,
-			Model: input.Attempt.Model, Detail: input.Attempt.Detail, Prior: input.Attempt.Prior,
-			PromptContext: input.Attempt.PromptContext, MaxReviewSteps: input.Attempt.MaxReviewSteps,
+	env.RegisterWorkflowWithOptions(func(ctx workflow.Context, input workflows.AgentWorkflowInput) (workflows.AgentWorkflowResult, error) {
+		h.agentInputs = append(h.agentInputs, input)
+		if input.Attempt.Key.Stage == work.StageReview {
+			h.reviewHead = input.Attempt.PromptContext.CandidateHeadSHA
 		}
-		h.agentInputs = append(h.agentInputs, legacy)
-		if stage == work.AgentStageReview {
-			h.reviewHead = legacy.PromptContext.CandidateHeadSHA
-		}
-		out := targetAgentOutput(t, stage)
-		if h.agentResult != nil {
-			var err error
-			out, err = h.agentResult(legacy)
-			if err != nil {
+		if h.pendingImplement && input.Attempt.Key.Stage == work.StageImplement {
+			if err := workflow.Await(ctx, func() bool { return !h.pendingImplement }); err != nil {
 				return workflows.AgentWorkflowResult{}, err
 			}
 		}
-		return workflows.AgentWorkflowResult{Result: out.Result, Usage: out.Usage, UsageMeasured: out.UsageState == work.UsageMeasured}, nil
+		if h.agentResult != nil {
+			return h.agentResult(input)
+		}
+		return targetAgentWorkflowResult(t, input), nil
 	}, workflow.RegisterOptions{Name: "AgentWorkflow"})
 	env.RegisterActivityWithOptions(
 		func(_ context.Context, in activities.ProvisionRunWorkerInput) (activities.ProvisionRunWorkerOutput, error) {
@@ -1980,9 +1920,6 @@ func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore workOnT
 			if h.authorizeErr != nil {
 				return h.authorizeErr
 			}
-			if !h.checkpointAgents {
-				return nil
-			}
 			if err := h.store.BindCheckpointCapability(ctx, in.AttemptID, workOnTicketCheckpointCapability); err != nil {
 				return fmt.Errorf("binding test checkpoint capability for %s: %w", in.AttemptID, err)
 			}
@@ -1993,53 +1930,9 @@ func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore workOnT
 	env.RegisterActivityWithOptions(
 		func(_ context.Context, in activities.RotateRunWorkerGitHubCredentialInput) (work.RunWorkerCredentialRevision, error) {
 			h.rotations = append(h.rotations, in)
-			return work.RunWorkerCredentialRevision{Revision: string(rune('1' + len(h.rotations) - 1)), ExpiresAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)}, nil
+			return work.RunWorkerCredentialRevision{Revision: strconv.Itoa(len(h.rotations)), ExpiresAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)}, nil
 		},
 		activity.RegisterOptions{Name: "RotateRunWorkerGitHubCredential"},
-	)
-	env.RegisterActivityWithOptions(
-		func(ctx context.Context, in activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
-			h.agentInputs = append(h.agentInputs, in)
-			if in.Stage == work.AgentStageReview {
-				h.reviewHead = in.PromptContext.CandidateHeadSHA
-			}
-			if h.pendingImplement && in.Stage == work.AgentStageImplement {
-				h.pendingAgentTaskToken = activity.GetInfo(ctx).TaskToken
-				return targetAgentOutput(t, in.Stage), activity.ErrResultPending
-			}
-			out := targetAgentOutput(t, in.Stage)
-			var err error
-			if h.agentResult != nil {
-				out, err = h.agentResult(in)
-			}
-			if err != nil {
-				return out, err
-			}
-			if !h.checkpointAgents {
-				return out, nil
-			}
-			_, err = h.store.CheckpointAgentAttempt(ctx, store.AgentCheckpointInput{
-				ID:         in.AttemptID,
-				Capability: workOnTicketCheckpointCapability,
-				ThreadID:   out.ThreadID,
-				State:      work.AgentAttemptSucceeded,
-				UsageState: out.UsageState,
-				Usage:      out.Usage,
-				EndedAt:    targetTestTime,
-				Result:     out.Output,
-				Transcript: &store.TargetTranscript{
-					CompressedBytes:       []byte("test transcript"),
-					Compression:           "zstd",
-					UncompressedSizeBytes: 15,
-					Checksum:              []byte("test-checksum"),
-				},
-			})
-			if err != nil {
-				return out, fmt.Errorf("checkpointing test agent evidence for %s: %w", in.AttemptID, err)
-			}
-			return out, nil
-		},
-		activity.RegisterOptions{Name: "RunTargetAgent"},
 	)
 	env.RegisterActivityWithOptions(
 		func(_ context.Context, in activities.TargetAwaitCIInput) (activities.AwaitCIOutput, error) {
@@ -2142,4 +2035,35 @@ func targetAgentOutput(t *testing.T, stage work.AgentStage) activities.TargetAge
 		t.Fatalf("decode %s output: %v", stage, err)
 	}
 	return activities.TargetAgentOutput{Output: json.RawMessage(raw), Result: result, ThreadID: string(stage) + "-thread", UsageState: work.UsageMeasured}
+}
+
+func targetAgentWorkflowResult(t *testing.T, input workflows.AgentWorkflowInput) workflows.AgentWorkflowResult {
+	t.Helper()
+	out := targetAgentOutput(t, work.AgentStage(input.Attempt.Key.Stage))
+	return workflows.AgentWorkflowResult{
+		Result: out.Result, Usage: out.Usage, UsageMeasured: out.UsageState == work.UsageMeasured,
+		ConversationRef: agent.ConversationRef{Key: input.Identity + "/conversation", Revision: 1, Bytes: 16, Digest: "conversation-digest"},
+		TranscriptRef:   agent.TranscriptRef{Key: input.Identity + "/transcript", Revision: 1, Bytes: 14, Digest: "transcript-digest"},
+	}
+}
+
+func targetBlockingReviewWorkflowResult(t *testing.T, input workflows.AgentWorkflowInput) workflows.AgentWorkflowResult {
+	t.Helper()
+	var result work.StageOutput
+	if err := json.Unmarshal([]byte(`{"stage":"review","value":{"document":"still blocked","findings":[{"id":"same","blocking":true,"summary":"fix it"}]}}`), &result); err != nil {
+		t.Fatalf("decode blocking review output: %v", err)
+	}
+	out := targetAgentWorkflowResult(t, input)
+	out.Result = result
+	return out
+}
+
+func agentChildrenAtStage(inputs []workflows.AgentWorkflowInput, stage work.Stage) []workflows.AgentWorkflowInput {
+	children := make([]workflows.AgentWorkflowInput, 0, len(inputs))
+	for _, input := range inputs {
+		if input.Attempt.Key.Stage == stage {
+			children = append(children, input)
+		}
+	}
+	return children
 }
