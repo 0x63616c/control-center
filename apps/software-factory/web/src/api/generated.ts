@@ -892,7 +892,7 @@ export function useGetV1Console<
 }
 
 /**
- * Success means Temporal accepted the UpdateConfig signal. The dispatcher applies this configuration on its next tick; this endpoint does not poll for observable state.
+ * Success means the target Dispatcher acknowledged the update; the requested policy is current when this returns. Any outstanding dispatch poll is canceled so the policy takes effect immediately.
  * @summary Set factory max in flight
  */
 export const postV1FactoryMaxInFlight = (
@@ -970,7 +970,7 @@ export const usePostV1FactoryMaxInFlight = <TError = AxiosError<ErrorModel>, TCo
 };
 
 /**
- * Success means Temporal accepted the UpdateConfig signal. The dispatcher applies this configuration on its next tick; this endpoint does not poll for observable state.
+ * Success means the target Dispatcher acknowledged the update; the requested policy is current when this returns. Any outstanding dispatch poll is canceled so the policy takes effect immediately.
  * @summary Pause the factory
  */
 export const postV1FactoryPause = (options?: AxiosRequestConfig): Promise<AxiosResponse<void>> => {
@@ -1030,7 +1030,7 @@ export const usePostV1FactoryPause = <TError = AxiosError<ErrorModel>, TContext 
 };
 
 /**
- * Success means Temporal accepted the UpdateConfig signal. The dispatcher applies this configuration on its next tick; this endpoint does not poll for observable state.
+ * Success means the target Dispatcher acknowledged the update; the requested policy is current when this returns. Any outstanding dispatch poll is canceled so the policy takes effect immediately.
  * @summary Resume the factory
  */
 export const postV1FactoryResume = (options?: AxiosRequestConfig): Promise<AxiosResponse<void>> => {
@@ -2931,7 +2931,7 @@ export const usePatchV1TicketsByTicketIdState = <
 };
 
 /**
- * Success means Temporal accepted an empty UpdateConfig signal that wakes the dispatcher without changing configuration. This endpoint does not poll for observable state.
+ * Success means the target Dispatcher acknowledged this Ticket-specific work-now request and scheduled an immediate re-evaluation. Readiness, capacity, and the current admission policy still determine whether the Ticket starts.
  * @summary Nudge the factory
  */
 export const postV1TicketsByTicketIdWork = (

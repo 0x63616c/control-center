@@ -13,6 +13,7 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/workflows"
 	"github.com/stretchr/testify/mock"
+	sdkactivity "go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
@@ -191,6 +192,92 @@ func TestDispatcherDoesNotPollUntilAnUnpausedPolicyIsPublished(t *testing.T) {
 	}
 	if polls != 1 {
 		t.Errorf("dispatch polls = %d, want exactly one after unpausing", polls)
+	}
+}
+
+func TestDispatcherCancelsAnOutstandingPollWhenPaused(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+	canceled := false
+	env.OnActivity(ticketActs.AwaitDispatchableTickets, mock.Anything).After(time.Hour).Return([]store.Ticket{}, nil)
+	env.SetOnActivityCanceledListener(func(info *sdkactivity.Info) {
+		if info.ActivityType.Name == "AwaitDispatchableTickets" {
+			canceled = true
+		}
+	})
+
+	in := targetDispatcherInput()
+	paused := in.Policy
+	paused.Paused = true
+	updates := map[string]workflows.DispatcherPublication{}
+	errs := map[string]error{}
+	env.RegisterDelayedCallback(func() {
+		env.UpdateWorkflow(workflows.UpdateDispatcherPolicy, "pause", dispatcherUpdateCallback("pause", updates, errs), targetDispatcherPolicyUpdate(t, paused))
+	}, time.Second)
+	canceledBeforeWorkflowStop := false
+	env.RegisterDelayedCallback(func() {
+		canceledBeforeWorkflowStop = canceled
+		env.CancelWorkflow()
+	}, 2*time.Second)
+	env.ExecuteWorkflow(workflows.Dispatcher, in)
+
+	if err := env.GetWorkflowError(); !temporal.IsCanceledError(err) {
+		t.Fatalf("Dispatcher error = %v, want cancellation after assertion", err)
+	}
+	if err := errs["pause"]; err != nil {
+		t.Fatalf("pause publication failed: %v", err)
+	}
+	if updates["pause"] != workflows.DispatcherPublicationApplied {
+		t.Errorf("pause publication = %q, want APPLIED", updates["pause"])
+	}
+	if !canceledBeforeWorkflowStop {
+		t.Fatal("pause left the outstanding dispatch poll active")
+	}
+}
+
+func TestDispatcherWorkNowCancelsTheOutstandingPollAndStartsAFreshOne(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+	polls := 0
+	env.OnActivity(ticketActs.AwaitDispatchableTickets, mock.Anything).After(time.Hour).Return([]store.Ticket{}, nil)
+	env.SetOnActivityStartedListener(func(info *sdkactivity.Info, _ context.Context, _ converter.EncodedValues) {
+		if info.ActivityType.Name == "AwaitDispatchableTickets" {
+			polls++
+		}
+	})
+
+	var acknowledgement workflows.DispatcherWorkNowAcknowledgement
+	var updateErr error
+	env.RegisterDelayedCallback(func() {
+		env.UpdateWorkflow(workflows.UpdateDispatcherWorkNow, "work-now-42", &testsuite.TestUpdateCallback{
+			OnReject: func(err error) { updateErr = err },
+			OnAccept: func() {},
+			OnComplete: func(value interface{}, err error) {
+				updateErr = err
+				if err == nil {
+					acknowledgement = value.(workflows.DispatcherWorkNowAcknowledgement)
+				}
+			},
+		}, workflows.DispatcherWorkNowRequest{TicketID: 42})
+	}, time.Second)
+	pollsBeforeWorkflowStop := 0
+	env.RegisterDelayedCallback(func() {
+		pollsBeforeWorkflowStop = polls
+		env.CancelWorkflow()
+	}, 2*time.Second)
+	env.ExecuteWorkflow(workflows.Dispatcher, targetDispatcherInput())
+
+	if err := env.GetWorkflowError(); !temporal.IsCanceledError(err) {
+		t.Fatalf("Dispatcher error = %v, want cancellation after assertion", err)
+	}
+	if updateErr != nil {
+		t.Fatalf("work-now update failed: %v", updateErr)
+	}
+	if acknowledgement != workflows.DispatcherWorkNowAcknowledged {
+		t.Errorf("work-now acknowledgement = %q, want ACKNOWLEDGED", acknowledgement)
+	}
+	if pollsBeforeWorkflowStop != 2 {
+		t.Errorf("dispatch polls before workflow stop = %d, want initial and fresh polls", pollsBeforeWorkflowStop)
 	}
 }
 

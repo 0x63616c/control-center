@@ -53,6 +53,7 @@ func TestTicketAPIProjectsAndFiltersTargetActiveState(t *testing.T) {
 
 type commandFake struct {
 	updates  []work.ConfigUpdate
+	workNow  []int
 	canceled []int
 	err      error
 }
@@ -213,6 +214,11 @@ func (fake *commandFake) UpdateConfig(_ context.Context, update work.ConfigUpdat
 	return fake.err
 }
 
+func (fake *commandFake) WorkNow(_ context.Context, ticketID int) error {
+	fake.workNow = append(fake.workNow, ticketID)
+	return fake.err
+}
+
 func (fake *commandFake) CancelTicket(_ context.Context, ticketID int) error {
 	fake.canceled = append(fake.canceled, ticketID)
 	return fake.err
@@ -289,8 +295,8 @@ func TestCommandsTranslateHTTPRequestsToDispatcherCommands(t *testing.T) {
 		{
 			name: "work now", path: "/v1/tickets/42/work",
 			assert: func(t *testing.T) {
-				if len(commands.updates) != 4 || commands.updates[3] != (work.ConfigUpdate{}) {
-					t.Fatalf("updates = %#v, want empty config update", commands.updates)
+				if len(commands.updates) != 3 || len(commands.workNow) != 1 || commands.workNow[0] != 42 {
+					t.Fatalf("updates = %#v, work-now = %#v, want acknowledged Ticket 42 request", commands.updates, commands.workNow)
 				}
 			},
 		},

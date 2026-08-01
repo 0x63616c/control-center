@@ -861,7 +861,7 @@ paths:
       summary: Read console snapshot
   /v1/factory/max-in-flight:
     post:
-      description: Success means Temporal accepted the UpdateConfig signal. The dispatcher applies this configuration on its next tick; this endpoint does not poll for observable state.
+      description: Success means the target Dispatcher acknowledged the update; the requested policy is current when this returns. Any outstanding dispatch poll is canceled so the policy takes effect immediately.
       operationId: post-v1-factory-max-in-flight
       requestBody:
         content:
@@ -881,7 +881,7 @@ paths:
       summary: Set factory max in flight
   /v1/factory/pause:
     post:
-      description: Success means Temporal accepted the UpdateConfig signal. The dispatcher applies this configuration on its next tick; this endpoint does not poll for observable state.
+      description: Success means the target Dispatcher acknowledged the update; the requested policy is current when this returns. Any outstanding dispatch poll is canceled so the policy takes effect immediately.
       operationId: post-v1-factory-pause
       responses:
         "204":
@@ -895,7 +895,7 @@ paths:
       summary: Pause the factory
   /v1/factory/resume:
     post:
-      description: Success means Temporal accepted the UpdateConfig signal. The dispatcher applies this configuration on its next tick; this endpoint does not poll for observable state.
+      description: Success means the target Dispatcher acknowledged the update; the requested policy is current when this returns. Any outstanding dispatch poll is canceled so the policy takes effect immediately.
       operationId: post-v1-factory-resume
       responses:
         "204":
@@ -1459,7 +1459,7 @@ paths:
       summary: Update Ticket state
   /v1/tickets/{ticketID}/work:
     post:
-      description: Success means Temporal accepted an empty UpdateConfig signal that wakes the dispatcher without changing configuration. This endpoint does not poll for observable state.
+      description: Success means the target Dispatcher acknowledged this Ticket-specific work-now request and scheduled an immediate re-evaluation. Readiness, capacity, and the current admission policy still determine whether the Ticket starts.
       operationId: post-v1-tickets-by-ticket-id-work
       parameters:
         - description: The ticket number whose run is being commanded.

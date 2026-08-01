@@ -68,6 +68,36 @@ func (commands *Commands) UpdateConfig(ctx context.Context, update work.ConfigUp
 	return nil
 }
 
+// WorkNow asks the target Dispatcher to cancel its current long poll and
+// immediately re-evaluate dispatchable work, preserving the requested Ticket
+// in Temporal history.
+func (commands *Commands) WorkNow(ctx context.Context, ticketID int) error {
+	if ticketID < 1 {
+		return fmt.Errorf("work-now ticket ID must be positive")
+	}
+	handle, err := commands.client.UpdateWorkflow(ctx, client.UpdateWorkflowOptions{
+		WorkflowID:   work.TargetDispatcherWorkflowID,
+		UpdateName:   workflows.UpdateDispatcherWorkNow,
+		UpdateID:     "api-work-now-" + uuid.NewString(),
+		Args:         []interface{}{workflows.DispatcherWorkNowRequest{TicketID: int64(ticketID)}},
+		WaitForStage: client.WorkflowUpdateStageCompleted,
+	})
+	if err != nil {
+		return classify("request immediate target dispatch", err)
+	}
+	var acknowledgement workflows.DispatcherWorkNowAcknowledgement
+	if err := handle.Get(ctx, &acknowledgement); err != nil {
+		return classify("wait for immediate target dispatch", err)
+	}
+	if acknowledgement == workflows.DispatcherWorkNowDraining {
+		return fmt.Errorf("target dispatcher is draining: %w", work.ErrWorkflowClosed)
+	}
+	if acknowledgement != workflows.DispatcherWorkNowAcknowledged {
+		return fmt.Errorf("unexpected target work-now acknowledgement %q", acknowledgement)
+	}
+	return nil
+}
+
 // CancelTicket requests cancellation of the target WorkOnTicket execution.
 func (commands *Commands) CancelTicket(ctx context.Context, ticketID int) error {
 	err := commands.client.CancelWorkflow(ctx, work.WorkOnTicketWorkflowID(int64(ticketID)), "")

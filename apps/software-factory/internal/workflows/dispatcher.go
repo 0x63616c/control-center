@@ -16,6 +16,10 @@ import (
 // complete resolved policy before it begins polling the main task queue.
 const UpdateDispatcherPolicy = "publish-dispatcher-policy"
 
+// UpdateDispatcherWorkNow is the acknowledged request to cancel the current
+// long poll and immediately re-evaluate dispatchable work.
+const UpdateDispatcherWorkNow = "dispatch-ticket-work-now"
+
 // QueryDispatcherPolicy returns the current acknowledged target policy.
 const QueryDispatcherPolicy = "target-dispatcher-policy"
 
@@ -60,6 +64,25 @@ type DispatcherPolicyStatus struct {
 	Draining    bool
 }
 
+// DispatcherWorkNowRequest preserves the ticket-specific API request in
+// Temporal history even though the fresh poll re-evaluates all dispatchable
+// Tickets under the current policy.
+type DispatcherWorkNowRequest struct {
+	TicketID int64
+}
+
+// DispatcherWorkNowAcknowledgement is the durable outcome of a wake request.
+type DispatcherWorkNowAcknowledgement string
+
+const (
+	// DispatcherWorkNowAcknowledged means the Dispatcher accepted the request
+	// and scheduled an immediate re-evaluation.
+	DispatcherWorkNowAcknowledged DispatcherWorkNowAcknowledgement = "ACKNOWLEDGED"
+	// DispatcherWorkNowDraining means the current execution cannot start a new
+	// poll because it is rolling over.
+	DispatcherWorkNowDraining DispatcherWorkNowAcknowledgement = "DRAINING"
+)
+
 // Dispatcher admits target WorkOnTicket children. Idle polling is represented
 // by the retry state of AwaitDispatchableTickets, not workflow timers.
 func Dispatcher(ctx workflow.Context, in DispatcherInput) error {
@@ -73,7 +96,7 @@ func Dispatcher(ctx workflow.Context, in DispatcherInput) error {
 	}
 	var wait workflow.Future
 	var cancelWait workflow.CancelFunc
-	policyChanged := workflow.NewBufferedChannel(ctx, 1)
+	wakeRequested := workflow.NewBufferedChannel(ctx, 1)
 	draining := false
 	drainPolicyUpdates := 0
 	if err := workflow.SetQueryHandler(ctx, QueryDispatcherPolicy, func() (DispatcherPolicyStatus, error) {
@@ -106,8 +129,8 @@ func Dispatcher(ctx workflow.Context, in DispatcherInput) error {
 			return DispatcherPublicationDraining, nil
 		}
 		policy, fingerprint = update.Policy, update.Fingerprint
-		if policyChanged.Len() == 0 {
-			policyChanged.Send(ctx, struct{}{})
+		if wakeRequested.Len() == 0 {
+			wakeRequested.Send(ctx, struct{}{})
 		}
 		if draining {
 			drainPolicyUpdates++
@@ -115,6 +138,20 @@ func Dispatcher(ctx workflow.Context, in DispatcherInput) error {
 		return DispatcherPublicationApplied, nil
 	}); err != nil {
 		return fmt.Errorf("registering dispatcher policy update: %w", err)
+	}
+	if err := workflow.SetUpdateHandler(ctx, UpdateDispatcherWorkNow, func(_ workflow.Context, request DispatcherWorkNowRequest) (DispatcherWorkNowAcknowledgement, error) {
+		if request.TicketID < 1 {
+			return "", temporal.NewNonRetryableApplicationError("work-now ticket ID must be positive", activities.ErrTypeInvalid, nil)
+		}
+		if draining {
+			return DispatcherWorkNowDraining, nil
+		}
+		if wakeRequested.Len() == 0 {
+			wakeRequested.Send(ctx, struct{}{})
+		}
+		return DispatcherWorkNowAcknowledged, nil
+	}); err != nil {
+		return fmt.Errorf("registering dispatcher work-now update: %w", err)
 	}
 
 	children := map[store.TicketID]workflow.ChildWorkflowFuture{}
@@ -160,9 +197,13 @@ func Dispatcher(ctx workflow.Context, in DispatcherInput) error {
 			id, child := id, child
 			selector.AddFuture(child, func(workflow.Future) { delete(children, id) })
 		}
-		selector.AddReceive(policyChanged, func(channel workflow.ReceiveChannel, _ bool) {
+		selector.AddReceive(wakeRequested, func(channel workflow.ReceiveChannel, _ bool) {
 			var ignored struct{}
 			channel.Receive(ctx, &ignored)
+			if cancelWait != nil {
+				cancelWait()
+			}
+			wait, cancelWait = nil, nil
 		})
 		selector.AddReceive(ctx.Done(), func(workflow.ReceiveChannel, bool) {})
 		selector.Select(ctx)

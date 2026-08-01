@@ -35,8 +35,8 @@ func (value fakeEncodedPolicy) Get(destination interface{}) error {
 }
 
 type fakeUpdateHandle struct {
-	outcome workflows.DispatcherPublication
-	err     error
+	value interface{}
+	err   error
 }
 
 func (handle fakeUpdateHandle) WorkflowID() string { return work.TargetDispatcherWorkflowID }
@@ -47,11 +47,12 @@ func (handle fakeUpdateHandle) Get(_ context.Context, destination interface{}) e
 	if handle.err != nil {
 		return handle.err
 	}
-	outcome, ok := destination.(*workflows.DispatcherPublication)
-	if !ok {
+	target := reflect.ValueOf(destination)
+	value := reflect.ValueOf(handle.value)
+	if target.Kind() != reflect.Pointer || value.Type() != target.Elem().Type() {
 		return errors.New("unexpected update outcome destination")
 	}
-	*outcome = handle.outcome
+	target.Elem().Set(value)
 	return nil
 }
 
@@ -65,7 +66,7 @@ type fakeCommandClient struct {
 	updateErr     error
 	waitErr       error
 	cancelErr     error
-	outcome       workflows.DispatcherPublication
+	updateValue   interface{}
 }
 
 func (fake *fakeCommandClient) QueryWorkflow(_ context.Context, workflowID, _ string, query string, _ ...interface{}) (converter.EncodedValue, error) {
@@ -81,7 +82,7 @@ func (fake *fakeCommandClient) UpdateWorkflow(_ context.Context, options client.
 	if fake.updateErr != nil {
 		return nil, fake.updateErr
 	}
-	return fakeUpdateHandle{outcome: fake.outcome, err: fake.waitErr}, nil
+	return fakeUpdateHandle{value: fake.updateValue, err: fake.waitErr}, nil
 }
 
 func (fake *fakeCommandClient) CancelWorkflow(_ context.Context, workflowID, _ string) error {
@@ -101,14 +102,11 @@ func TestCommandsApplyTargetDispatcherControls(t *testing.T) {
 		{"pause", work.ConfigUpdate{Paused: &paused}, func(policy work.DispatcherPolicy) bool { return policy.Paused }},
 		{"resume", work.ConfigUpdate{Paused: &resumed}, func(policy work.DispatcherPolicy) bool { return !policy.Paused }},
 		{"maximum in flight", work.ConfigUpdate{MaxInFlight: &maxInFlight}, func(policy work.DispatcherPolicy) bool { return policy.MaxInFlight == maxInFlight }},
-		{"work now", work.ConfigUpdate{}, func(policy work.DispatcherPolicy) bool {
-			return reflect.DeepEqual(policy, work.DefaultDispatcherPolicy())
-		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fake := &fakeCommandClient{
-				status:  workflows.DispatcherPolicyStatus{Policy: work.DefaultDispatcherPolicy()},
-				outcome: workflows.DispatcherPublicationApplied,
+				status:      workflows.DispatcherPolicyStatus{Policy: work.DefaultDispatcherPolicy()},
+				updateValue: workflows.DispatcherPublicationApplied,
 			}
 			if err := (&Commands{client: fake}).UpdateConfig(t.Context(), test.update); err != nil {
 				t.Fatalf("UpdateConfig() error = %v", err)
@@ -129,6 +127,32 @@ func TestCommandsApplyTargetDispatcherControls(t *testing.T) {
 				t.Fatalf("publication fingerprint = %q, want %q (error %v)", publication.Fingerprint, fingerprint, err)
 			}
 		})
+	}
+}
+
+func TestCommandsRequestImmediateWorkForTheTargetTicket(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeCommandClient{updateValue: workflows.DispatcherWorkNowAcknowledged}
+	if err := (&Commands{client: fake}).WorkNow(t.Context(), 42); err != nil {
+		t.Fatalf("WorkNow() error = %v", err)
+	}
+	if fake.update.WorkflowID != work.TargetDispatcherWorkflowID || fake.update.UpdateName != workflows.UpdateDispatcherWorkNow ||
+		fake.update.WaitForStage != client.WorkflowUpdateStageCompleted || !strings.HasPrefix(fake.update.UpdateID, "api-work-now-") {
+		t.Fatalf("update options = %#v", fake.update)
+	}
+	request, ok := fake.update.Args[0].(workflows.DispatcherWorkNowRequest)
+	if !ok || request.TicketID != 42 {
+		t.Fatalf("work-now request = %#v, want Ticket 42", fake.update.Args)
+	}
+}
+
+func TestCommandsTreatDrainingWorkNowAsClosed(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeCommandClient{updateValue: workflows.DispatcherWorkNowDraining}
+	if err := (&Commands{client: fake}).WorkNow(t.Context(), 42); !errors.Is(err, work.ErrWorkflowClosed) {
+		t.Fatalf("WorkNow() error = %v, want workflow closed", err)
 	}
 }
 
