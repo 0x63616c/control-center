@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -26,7 +27,11 @@ import (
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
+	checkpointprotocol "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/checkpoint"
 	temporalclient "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/temporal"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
 //go:embed temporal-cli-version.txt
@@ -130,6 +135,24 @@ type sessionLossEvidence struct {
 	Replacement       sessionActivityEvidence
 }
 
+type productionSessionInput struct {
+	PrivateQueue string
+	Branch       string
+}
+
+const productionEvidenceFilename = "registered-run-worker-evidence.json"
+
+var productionRunWorkerIdentity = work.RunWorkerIdentity{
+	RunID:      "0f466627-b3ae-4ba2-9c96-6ef44ec6f578",
+	Generation: 1,
+}
+
+type productionEvidence struct {
+	Identity   work.RunWorkerIdentity
+	ProcessID  int
+	Operations []string
+}
+
 type privateWorkerProcess struct {
 	cmd     *exec.Cmd
 	output  bytes.Buffer
@@ -186,6 +209,40 @@ func TestSessionPinsRepositoryWorkToOneIsolatedPrivateWorker(t *testing.T) {
 	}
 	if evidence.Control != "main-control" {
 		t.Fatalf("main-control activity = %q, want main-control", evidence.Control)
+	}
+}
+
+func TestSessionRunsTheRegisteredRunWorkerActivitiesOnItsPrivateWorker(t *testing.T) {
+	server := startServer(t)
+	rootOne := t.TempDir()
+	rootTwo := t.TempDir()
+	startWorker(t, mainCapabilityWorker(server.Client(), "main"))
+	privateOne := startPrivateWorkerProcess(t, server.FrontendHostPort(), privateQueueOne, "private-one", rootOne)
+	startPrivateWorkerProcess(t, server.FrontendHostPort(), privateQueueTwo, "private-two", rootTwo)
+
+	run, err := server.Client().ExecuteWorkflow(context.Background(), temporalclient.StartWorkflowOptions{
+		ID:        "session-registered-run-worker-activities",
+		TaskQueue: mainQueue,
+	}, productionSessionWorkflow, productionSessionInput{
+		PrivateQueue: privateQueueOne,
+		Branch:       "factory/ticket-42/run",
+	})
+	if err != nil {
+		t.Fatalf("starting workflow: %v", err)
+	}
+
+	if err := run.Get(context.Background(), nil); err != nil {
+		t.Fatalf("getting workflow result: %v", err)
+	}
+	evidence := readProductionEvidence(t, rootOne)
+	if evidence.ProcessID != privateOne.processID() || evidence.Identity != productionRunWorkerIdentity {
+		t.Fatalf("Run Worker evidence = %#v, want identity %#v in process %d", evidence, productionRunWorkerIdentity, privateOne.processID())
+	}
+	if !slices.Equal(evidence.Operations, []string{"clone", "agent", "ci", "sync", "ready", "merge"}) {
+		t.Fatalf("Run Worker operations = %v", evidence.Operations)
+	}
+	if _, err := os.Stat(filepath.Join(rootTwo, productionEvidenceFilename)); err == nil || !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("other private worker target state error = %v, want absent", err)
 	}
 }
 
@@ -353,7 +410,10 @@ func TestPrivateWorkerHelperProcess(t *testing.T) {
 		t.Fatalf("dialling Temporal: %v", err)
 	}
 	defer c.Close()
-	w := privateWorker(c, queue, identity, root)
+	w, err := privateWorker(c, queue, identity, root)
+	if err != nil {
+		t.Fatalf("composing private worker: %v", err)
+	}
 	if err := w.Start(); err != nil {
 		t.Fatalf("starting private worker: %v", err)
 	}
@@ -400,6 +460,60 @@ func sessionEvidenceWorkflow(ctx workflow.Context, in sessionWorkflowInput) (ses
 		return sessionEvidence{}, fmt.Errorf("running main-control activity: %w", err)
 	}
 	return result, nil
+}
+
+func productionSessionWorkflow(ctx workflow.Context, in productionSessionInput) error {
+	sessionCtx, err := createCapabilitySession(ctx, in.PrivateQueue)
+	if err != nil {
+		return fmt.Errorf("creating production-shaped session: %w", err)
+	}
+	defer workflow.CompleteSession(sessionCtx)
+
+	cloneStep := activities.RepositoryStep{StepOrdinal: 1, Branch: in.Branch, ObservedBase: "base-head"}
+	var clone activities.CloneTargetRepositoryOutput
+	if err := workflow.ExecuteActivity(sessionCtx, "CloneTargetRepository", activities.CloneTargetRepositoryInput{
+		Step: cloneStep, CloneURL: "https://github.com/example/repo.git",
+	}).Get(sessionCtx, &clone); err != nil {
+		return fmt.Errorf("running registered clone activity: %w", err)
+	}
+	if err := workflow.ExecuteActivity(sessionCtx, "RunTargetAgent", activities.TargetAgentInput{
+		AttemptID:    store.TargetAttemptID{RunID: productionRunWorkerIdentity.RunID, StepOrdinal: 2, AttemptNo: 1},
+		TicketNumber: 42,
+		Iteration:    1,
+		Stage:        work.AgentStageImplement,
+		Model:        work.Model{Name: "gpt-5", Effort: "high"},
+	}).Get(sessionCtx, nil); err != nil {
+		return fmt.Errorf("running registered target agent activity: %w", err)
+	}
+	ciStep := activities.RepositoryStep{StepOrdinal: 3, Branch: in.Branch, PushedHead: clone.HeadSHA, ObservedBase: "base-head"}
+	if err := workflow.ExecuteActivity(sessionCtx, "TargetAwaitCI", activities.TargetAwaitCIInput{
+		Step: ciStep,
+		CI:   activities.AwaitCIInput{CommitSHA: clone.HeadSHA, RequiredChecks: []string{"test"}},
+	}).Get(sessionCtx, nil); err != nil {
+		return fmt.Errorf("running registered target CI activity: %w", err)
+	}
+	prStep := activities.RepositoryStep{StepOrdinal: 4, Branch: in.Branch, PushedHead: clone.HeadSHA, ObservedBase: "base-head"}
+	var pullRequest work.PullRequest
+	if err := workflow.ExecuteActivity(sessionCtx, "TargetSyncPullRequest", activities.TargetSyncPullRequestInput{
+		Step: prStep, Title: "Implement ticket", Body: "Ready",
+	}).Get(sessionCtx, &pullRequest); err != nil {
+		return fmt.Errorf("running registered target pull request sync activity: %w", err)
+	}
+	readyStep := activities.RepositoryStep{
+		StepOrdinal: 5, Branch: in.Branch, PushedHead: clone.HeadSHA, ObservedBase: "base-head",
+		PullRequestNumber: pullRequest.Number, PullRequestNodeID: pullRequest.NodeID,
+	}
+	if err := workflow.ExecuteActivity(sessionCtx, "TargetMarkPullRequestReady", activities.TargetMarkPullRequestReadyInput{Step: readyStep}).Get(sessionCtx, nil); err != nil {
+		return fmt.Errorf("running registered target pull request ready activity: %w", err)
+	}
+	mergeStep := readyStep
+	mergeStep.StepOrdinal = 6
+	if err := workflow.ExecuteActivity(sessionCtx, "TargetMergePullRequest", activities.TargetMergePullRequestInput{
+		Step: mergeStep, ExpectedHeadSHA: clone.HeadSHA,
+	}).Get(sessionCtx, nil); err != nil {
+		return fmt.Errorf("running registered target pull request merge activity: %w", err)
+	}
+	return nil
 }
 
 func sessionReadinessWorkflow(ctx workflow.Context, in sessionWorkflowInput) (sessionActivityEvidence, error) {
@@ -532,6 +646,7 @@ func mainCapabilityWorker(c temporalclient.Client, identity string) worker.Worke
 	w.RegisterWorkflow(sessionReadinessWorkflow)
 	w.RegisterWorkflow(sessionRestartWorkflow)
 	w.RegisterWorkflow(sessionLossWorkflow)
+	w.RegisterWorkflow(productionSessionWorkflow)
 	w.RegisterActivityWithOptions(
 		func(context.Context) (string, error) { return identity + "-control", nil },
 		activity.RegisterOptions{Name: controlActivityName},
@@ -547,7 +662,7 @@ func mainCapabilityWorker(c temporalclient.Client, identity string) worker.Worke
 	return w
 }
 
-func privateWorker(c temporalclient.Client, queue, identity, root string) worker.Worker {
+func privateWorker(c temporalclient.Client, queue, identity, root string) (worker.Worker, error) {
 	w := worker.New(c, queue, worker.Options{
 		EnableSessionWorker:               true,
 		MaxConcurrentSessionExecutionSize: 1,
@@ -572,7 +687,12 @@ func privateWorker(c temporalclient.Client, queue, identity, root string) worker
 			activity.RegisterOptions{Name: definition.Name},
 		)
 	}
-	return w
+	target, err := productionRunWorkerActivities(root)
+	if err != nil {
+		return nil, fmt.Errorf("composing registered Run Worker activities: %w", err)
+	}
+	w.RegisterActivity(target)
+	return w, nil
 }
 
 func runSessionActivity(root, identity string, in sessionActivityInput) (sessionActivityEvidence, error) {
@@ -599,6 +719,176 @@ func runSessionActivity(root, identity string, in sessionActivityInput) (session
 	evidence.Found = true
 	evidence.Marker = string(marker)
 	return evidence, nil
+}
+
+func productionRunWorkerActivities(root string) (*activities.RunWorkerActivities, error) {
+	recorder := productionRecorder{root: root, identity: productionRunWorkerIdentity}
+	attempt := &productionAttemptCheckpoint{}
+	repository := &productionRepositoryCheckpoint{}
+	return activities.NewRunWorkerActivities(activities.RunWorkerDeps{
+		Stages:                productionStageRunner{recorder: recorder},
+		Prompts:               productionPrompts{},
+		Checkpoints:           func(store.TargetAttemptID) (activities.AttemptCheckpoint, error) { return attempt, nil },
+		ProviderState:         productionProviderState{},
+		Clock:                 productionClock{},
+		Heartbeat:             func(context.Context) {},
+		Repository:            productionRepository{recorder: recorder},
+		GitHub:                productionGitHub{recorder: recorder},
+		Identity:              productionRunWorkerIdentity,
+		RepositoryCheckpoints: repository.open,
+	})
+}
+
+type productionRecorder struct {
+	root     string
+	identity work.RunWorkerIdentity
+}
+
+func (r productionRecorder) observe(operation string) error {
+	evidence := productionEvidence{Identity: r.identity, ProcessID: os.Getpid()}
+	raw, err := os.ReadFile(filepath.Join(r.root, productionEvidenceFilename))
+	if err == nil {
+		if err := json.Unmarshal(raw, &evidence); err != nil {
+			return fmt.Errorf("decoding production Run Worker evidence: %w", err)
+		}
+		if evidence.Identity != r.identity || evidence.ProcessID != os.Getpid() {
+			return fmt.Errorf("production Run Worker identity or process changed: %w", work.ErrPermanent)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("reading production Run Worker evidence: %w", err)
+	}
+	evidence.Operations = append(evidence.Operations, operation)
+	encoded, err := json.Marshal(evidence)
+	if err != nil {
+		return fmt.Errorf("encoding production Run Worker evidence: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(r.root, productionEvidenceFilename), encoded, 0o600); err != nil {
+		return fmt.Errorf("writing production Run Worker evidence: %w", err)
+	}
+	return nil
+}
+
+func readProductionEvidence(t *testing.T, root string) productionEvidence {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(root, productionEvidenceFilename))
+	if err != nil {
+		t.Fatalf("reading production Run Worker evidence: %v", err)
+	}
+	var evidence productionEvidence
+	if err := json.Unmarshal(raw, &evidence); err != nil {
+		t.Fatalf("decoding production Run Worker evidence: %v", err)
+	}
+	return evidence
+}
+
+type productionRepository struct{ recorder productionRecorder }
+
+func (r productionRepository) Prepare(context.Context, string, string) (string, error) {
+	if err := r.recorder.observe("clone"); err != nil {
+		return "", fmt.Errorf("recording target repository clone: %w", err)
+	}
+	return "candidate-head", nil
+}
+
+type productionStageRunner struct{ recorder productionRecorder }
+
+func (r productionStageRunner) RunTargetStage(_ context.Context, _ work.StageRun, _ string, events work.StageEventSink) (work.StageResult, error) {
+	if err := r.recorder.observe("agent"); err != nil {
+		return work.StageResult{}, fmt.Errorf("recording target agent execution: %w", err)
+	}
+	events([]byte(`{"type":"thread.started","thread_id":"thread-42"}`))
+	return work.StageResult{Output: []byte(`{"report":"implemented","blocked":false,"blocked_reason":"","title":"Implement ticket","body":"Ready"}`), ThreadID: "thread-42", UsageMeasured: true}, nil
+}
+
+type productionPrompts struct{}
+
+func (productionPrompts) Render(work.StageKey, work.TicketDetail, work.PriorTurns) (string, []byte, error) {
+	return "prompt", []byte(`{}`), nil
+}
+
+func (productionPrompts) Decode(stage work.Stage, raw []byte) (work.StageOutput, error) {
+	var output work.ImplementOutput
+	if err := json.Unmarshal(raw, &output); err != nil {
+		return work.StageOutput{}, fmt.Errorf("decoding production target result: %w", err)
+	}
+	return work.NewStageOutput(stage, output), nil
+}
+
+type productionAttemptCheckpoint struct {
+	value checkpointprotocol.Attempt
+	found bool
+}
+
+func (c *productionAttemptCheckpoint) Load(context.Context) (checkpointprotocol.Attempt, bool, error) {
+	return c.value, c.found, nil
+}
+
+func (c *productionAttemptCheckpoint) Checkpoint(_ context.Context, value checkpointprotocol.Attempt) error {
+	c.value, c.found = value, true
+	return nil
+}
+
+type productionProviderState struct{}
+
+func (productionProviderState) Available(context.Context, string) (bool, error) { return true, nil }
+
+type productionClock struct{}
+
+func (productionClock) Now() time.Time { return time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC) }
+
+type productionRepositoryCheckpoint struct {
+	value store.GitCheckpoint
+	found bool
+}
+
+func (c *productionRepositoryCheckpoint) open(identity work.RunWorkerIdentity) (activities.RepositoryCheckpoint, error) {
+	if identity != productionRunWorkerIdentity {
+		return nil, fmt.Errorf("opening repository checkpoint for unexpected identity %#v: %w", identity, work.ErrPermanent)
+	}
+	return c, nil
+}
+
+func (c *productionRepositoryCheckpoint) Load(context.Context) (store.GitCheckpoint, bool, error) {
+	return c.value, c.found, nil
+}
+
+func (c *productionRepositoryCheckpoint) Checkpoint(_ context.Context, value store.GitCheckpointInput) (store.GitCheckpoint, error) {
+	c.value, c.found = value.GitCheckpoint, true
+	return c.value, nil
+}
+
+type productionGitHub struct{ recorder productionRecorder }
+
+func (g productionGitHub) PullRequestForBranch(context.Context, string) (work.PullRequest, bool, error) {
+	return work.PullRequest{}, false, nil
+}
+
+func (g productionGitHub) OpenOrUpdatePullRequest(context.Context, string, string, string, *work.PullRequest) (work.PullRequest, error) {
+	if err := g.recorder.observe("sync"); err != nil {
+		return work.PullRequest{}, fmt.Errorf("recording target pull request sync: %w", err)
+	}
+	return work.PullRequest{Number: 42, NodeID: "PR_kwDO", HeadSHA: "candidate-head", Draft: true}, nil
+}
+
+func (g productionGitHub) MarkPullRequestReadyForReview(context.Context, string) error {
+	if err := g.recorder.observe("ready"); err != nil {
+		return fmt.Errorf("recording target pull request ready: %w", err)
+	}
+	return nil
+}
+
+func (g productionGitHub) MergePullRequest(context.Context, int, string) (work.PullRequestMergeResult, error) {
+	if err := g.recorder.observe("merge"); err != nil {
+		return work.PullRequestMergeResult{}, fmt.Errorf("recording target pull request merge: %w", err)
+	}
+	return work.PullRequestMergeResult{Outcome: work.PullRequestMergeConfirmed, MergeSHA: "merge-head"}, nil
+}
+
+func (g productionGitHub) ChecksForCommit(context.Context, string, []string) ([]work.CheckRun, error) {
+	if err := g.recorder.observe("ci"); err != nil {
+		return nil, fmt.Errorf("recording target CI observation: %w", err)
+	}
+	return []work.CheckRun{{Name: "test", Completed: true, Conclusion: "success"}}, nil
 }
 
 func privateMarkerPath(root, name string) (string, error) {
