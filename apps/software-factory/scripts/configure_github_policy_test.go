@@ -25,6 +25,9 @@ func TestConfigureGitHubPolicyDryRunIsInertAndPlansSafeOrdering(t *testing.T) {
 	if strings.TrimSpace(fixture.mutations(t)) != "" {
 		t.Fatalf("dry-run mutations = %q, want none", fixture.mutations(t))
 	}
+	if strings.Contains(output, `"integration_id"`) {
+		t.Fatalf("checks payload contains integration_id, which GitHub rejects when it is null:\n%s", output)
+	}
 	var report struct {
 		Mode       string `json:"mode"`
 		Operations []struct {

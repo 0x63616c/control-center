@@ -118,7 +118,7 @@ jq -n \
       type:"required_status_checks",
       parameters:{
         do_not_enforce_on_create:false,
-        required_status_checks:[{context:$check,integration_id:null}],
+        required_status_checks:[{context:$check}],
         strict_required_status_checks_policy:false
       }
     }]
