@@ -2,6 +2,7 @@ package agentactivities_test
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	agentactivities "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities/agent"
@@ -11,6 +12,10 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codexresponses"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
+
+type readFileInput struct {
+	Path string `json:"path" jsonschema_description:"Repository-relative path to read."`
+}
 
 type fakeTurner struct {
 	request codexresponses.TurnRequest
@@ -83,5 +88,74 @@ func TestModelTurnLoadsConversationAndStoresFinalText(t *testing.T) {
 	}
 	if text != `{"summary":"done"}` {
 		t.Fatalf("LoadText() = %q", text)
+	}
+}
+
+func TestModelTurnStoresToolArgumentsAndPreservesCallIDs(t *testing.T) {
+	t.Parallel()
+
+	blobStore := blobs.NewMemStore()
+	conversations := agent.NewConversationStore(blobStore)
+	conversationRef, err := conversations.Append(t.Context(), "agent/run-7/implement/1", nil, []agent.ConversationItem{
+		{Kind: agent.ItemInstructions, Text: "Edit carefully."},
+		{Kind: agent.ItemUserText, Text: "Implement the change."},
+	})
+	if err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+	arguments := []byte(`{"path":"internal/work/work.go"}`)
+	turner := &fakeTurner{result: codexresponses.TurnResult{
+		Outcome: codexresponses.OutcomeToolCalls,
+		ToolCalls: []codexresponses.ToolCall{{
+			ID: "fc_1", CallID: "call_1", Name: "read_file", Arguments: arguments,
+		}},
+		Usage: codexresponses.Usage{InputTokens: 20, OutputTokens: 4},
+	}}
+	readFile := agenttool.Bind(
+		agenttool.Define[readFileInput]("read_file", "Read one repository file."),
+		func(_ context.Context, _ readFileInput) (agenttool.Result, error) { return agenttool.Result{}, nil },
+	)
+	activities, err := agentactivities.NewActivities(
+		turner,
+		blobStore,
+		agenttool.MustSet("coding-write-v1", readFile),
+	)
+	if err != nil {
+		t.Fatalf("NewActivities() error = %v", err)
+	}
+
+	result, err := activities.ModelTurn(t.Context(), agent.ModelTurnInput{
+		Model:           work.Model{Name: "gpt-test", Effort: "medium"},
+		ToolsetID:       "coding-write-v1",
+		ConversationRef: conversationRef,
+		PromptCacheKey:  "run-7-implement-1",
+		ModelTurn:       1,
+		IdempotencyKey:  "agent/run-7/implement/1/model/1",
+	})
+	if err != nil {
+		t.Fatalf("ModelTurn() error = %v", err)
+	}
+	if result.Outcome != agent.OutcomeToolCalls || len(result.ToolCalls) != 1 {
+		t.Fatalf("ModelTurn() result = %#v", result)
+	}
+	pending := result.ToolCalls[0]
+	if pending.CallID != "call_1" || pending.Name != "read_file" {
+		t.Fatalf("pending tool call = %#v", pending)
+	}
+	storedArguments, err := agent.NewArtifactStore(blobStore).LoadArguments(t.Context(), pending.ArgumentsRef)
+	if err != nil {
+		t.Fatalf("LoadArguments() error = %v", err)
+	}
+	if !reflect.DeepEqual(storedArguments, arguments) {
+		t.Fatalf("LoadArguments() = %s, want %s", storedArguments, arguments)
+	}
+	items, err := conversations.Items(t.Context(), result.ConversationRef)
+	if err != nil {
+		t.Fatalf("Items() error = %v", err)
+	}
+	last := items[len(items)-1]
+	if last.Kind != agent.ItemFunctionCall || last.ID != "fc_1" || last.CallID != "call_1" ||
+		last.Name != "read_file" || !reflect.DeepEqual([]byte(last.Arguments), arguments) {
+		t.Fatalf("stored function call = %#v", last)
 	}
 }

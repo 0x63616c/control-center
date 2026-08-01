@@ -77,14 +77,27 @@ func (activities *Activities) ModelTurn(ctx context.Context, input agent.ModelTu
 	if err != nil {
 		return agent.ModelTurnResult{}, fmt.Errorf("run direct model turn: %w", err)
 	}
-	if providerResult.Outcome != codexresponses.OutcomeFinalText {
-		return agent.ModelTurnResult{}, fmt.Errorf("model turn outcome %q is not implemented", providerResult.Outcome)
-	}
 	identity, err := activities.conversations.Identity(input.ConversationRef)
 	if err != nil {
 		return agent.ModelTurnResult{}, fmt.Errorf("resolve model conversation identity: %w", err)
 	}
-	conversationRef, err := activities.conversations.Append(ctx, identity, &input.ConversationRef, []agent.ConversationItem{{
+	switch providerResult.Outcome {
+	case codexresponses.OutcomeFinalText:
+		return activities.storeFinalTurn(ctx, input.ConversationRef, identity, providerResult)
+	case codexresponses.OutcomeToolCalls:
+		return activities.storeToolTurn(ctx, input.ConversationRef, identity, providerResult)
+	default:
+		return agent.ModelTurnResult{}, fmt.Errorf("model turn has unknown outcome %q", providerResult.Outcome)
+	}
+}
+
+func (activities *Activities) storeFinalTurn(
+	ctx context.Context,
+	predecessor agent.ConversationRef,
+	identity string,
+	providerResult codexresponses.TurnResult,
+) (agent.ModelTurnResult, error) {
+	conversationRef, err := activities.conversations.Append(ctx, identity, &predecessor, []agent.ConversationItem{{
 		Kind: agent.ItemAssistantText,
 		Text: providerResult.Text,
 	}})
@@ -99,6 +112,51 @@ func (activities *Activities) ModelTurn(ctx context.Context, input agent.ModelTu
 		Outcome:         agent.OutcomeFinalText,
 		ConversationRef: conversationRef,
 		FinalTextRef:    textRef,
+		Usage: work.Usage{
+			InputTokens:  providerResult.Usage.InputTokens,
+			OutputTokens: providerResult.Usage.OutputTokens,
+		},
+		UsageMeasured: true,
+	}, nil
+}
+
+func (activities *Activities) storeToolTurn(
+	ctx context.Context,
+	predecessor agent.ConversationRef,
+	identity string,
+	providerResult codexresponses.TurnResult,
+) (agent.ModelTurnResult, error) {
+	if len(providerResult.ToolCalls) == 0 {
+		return agent.ModelTurnResult{}, fmt.Errorf("tool-call outcome contains no tool calls")
+	}
+	pending := make([]agent.PendingToolCall, 0, len(providerResult.ToolCalls))
+	items := make([]agent.ConversationItem, 0, len(providerResult.ToolCalls))
+	for _, call := range providerResult.ToolCalls {
+		argumentsRef, err := activities.artifacts.StoreArguments(ctx, identity, call.Arguments)
+		if err != nil {
+			return agent.ModelTurnResult{}, fmt.Errorf("store arguments for tool call %q: %w", call.CallID, err)
+		}
+		pending = append(pending, agent.PendingToolCall{
+			CallID:       call.CallID,
+			Name:         call.Name,
+			ArgumentsRef: argumentsRef,
+		})
+		items = append(items, agent.ConversationItem{
+			Kind:      agent.ItemFunctionCall,
+			ID:        call.ID,
+			CallID:    call.CallID,
+			Name:      call.Name,
+			Arguments: append([]byte(nil), call.Arguments...),
+		})
+	}
+	conversationRef, err := activities.conversations.Append(ctx, identity, &predecessor, items)
+	if err != nil {
+		return agent.ModelTurnResult{}, fmt.Errorf("store tool-call model conversation: %w", err)
+	}
+	return agent.ModelTurnResult{
+		Outcome:         agent.OutcomeToolCalls,
+		ConversationRef: conversationRef,
+		ToolCalls:       pending,
 		Usage: work.Usage{
 			InputTokens:  providerResult.Usage.InputTokens,
 			OutputTokens: providerResult.Usage.OutputTokens,

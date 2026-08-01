@@ -34,6 +34,17 @@ func (store ArtifactStore) LoadText(ctx context.Context, ref TextRef) (string, e
 	return string(value), nil
 }
 
+// StoreArguments persists immutable provider tool arguments below a workflow identity.
+func (store ArtifactStore) StoreArguments(ctx context.Context, identity string, value []byte) (ArgumentsRef, error) {
+	ref, err := store.put(ctx, identity, "arguments", value)
+	return ArgumentsRef(ref), err
+}
+
+// LoadArguments verifies and loads immutable provider tool arguments.
+func (store ArtifactStore) LoadArguments(ctx context.Context, ref ArgumentsRef) ([]byte, error) {
+	return store.get(ctx, ArtifactRef(ref))
+}
+
 func (store ArtifactStore) put(ctx context.Context, identity, kind string, value []byte) (ArtifactRef, error) {
 	digestBytes := sha256.Sum256(value)
 	digest := hex.EncodeToString(digestBytes[:])
