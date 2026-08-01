@@ -52,7 +52,7 @@
 
 ## Embedded ownership removal
 
-- [ ] Open a follow-up WWW PR removing `apps/software-factory/` active source.
+- [x] Open WWW PR #674 removing `apps/software-factory/` active source.
 - [x] Remove WWW CI path filters, image builds, code generation, lint, tests,
   and contributor documentation that claim ownership of the embedded product.
 - [x] Retain only deployment/consumer integration that is still required by
