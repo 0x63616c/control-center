@@ -151,6 +151,48 @@ func TestDispatcherAdmitsTicketsUpToCapacityWithPolicySnapshots(t *testing.T) {
 	}
 }
 
+func TestDispatcherRealChildClaimsWithItsTemporalRunID(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+	env.RegisterWorkflow(workflows.WorkOnTicket)
+
+	var claimed store.ClaimRunInput
+	env.RegisterActivityWithOptions(
+		func(_ context.Context, input store.ClaimRunInput) (store.ClaimRunResult, error) {
+			claimed = input
+			return store.ClaimRunResult{}, temporal.NewNonRetryableApplicationError("captured authoritative run ID", activities.ErrTypeInvalid, nil)
+		},
+		sdkactivity.RegisterOptions{Name: "ClaimAndStartRun"},
+	)
+
+	waits := 0
+	env.OnActivity(ticketActs.AwaitDispatchableTickets, mock.Anything).
+		Return(func(context.Context) ([]store.Ticket, error) {
+			waits++
+			if waits == 1 {
+				return []store.Ticket{{ID: 17, Title: "derive child run identity", State: store.TicketOpen}}, nil
+			}
+			return nil, temporal.NewApplicationError("no dispatchable tickets", activities.ErrTypeNoDispatchableTickets)
+		})
+
+	var childRunID string
+	env.SetOnChildWorkflowStartedListener(func(info *workflow.Info, _ workflow.Context, _ converter.EncodedValues) {
+		childRunID = info.WorkflowExecution.RunID
+	})
+	env.RegisterDelayedCallback(env.CancelWorkflow, time.Minute)
+	env.ExecuteWorkflow(workflows.Dispatcher, targetDispatcherInput())
+
+	if err := env.GetWorkflowError(); !temporal.IsCanceledError(err) {
+		t.Fatalf("Dispatcher error = %v, want cancellation after child assertion", err)
+	}
+	if childRunID == "" {
+		t.Fatal("real WorkOnTicket child did not start")
+	}
+	if claimed.RunID != childRunID {
+		t.Fatalf("claimed Run ID = %q, want child Temporal Run ID %q", claimed.RunID, childRunID)
+	}
+}
+
 func TestDispatcherDoesNotPollUntilAnUnpausedPolicyIsPublished(t *testing.T) {
 	suite := &testsuite.WorkflowTestSuite{}
 	env := suite.NewTestWorkflowEnvironment()

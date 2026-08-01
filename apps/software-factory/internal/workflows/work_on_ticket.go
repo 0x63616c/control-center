@@ -33,6 +33,9 @@ var (
 // for one target Ticket workflow.
 type WorkOnTicketInput struct {
 	TicketID store.TicketID
+	// RunID is retained for checked-in replay fixtures and focused workflow
+	// tests. Production admission leaves it empty so WorkOnTicket binds the
+	// durable Run to its authoritative Temporal execution Run ID.
 	RunID    string
 	Policy   work.TargetRunPolicy
 	CloneURL string
@@ -80,6 +83,9 @@ func (e *terminalRunError) Unwrap() error { return e.err }
 // private Run Worker Session, and clones the repository as that Session's
 // first repository-affine activity.
 func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
+	if in.RunID == "" {
+		in.RunID = workflow.GetInfo(ctx).WorkflowExecution.RunID
+	}
 	var claimed store.ClaimRunResult
 	var session *targetRunSession
 	claimedRun := false

@@ -188,6 +188,33 @@ func TestWorkOnTicketConfirmsMergeBeforeBestEffortTeardown(t *testing.T) {
 	}
 }
 
+func TestWorkOnTicketDerivesTheRunIdentityFromItsTemporalExecution(t *testing.T) {
+	t.Parallel()
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+	var claimed store.ClaimRunInput
+	env.RegisterActivityWithOptions(
+		func(_ context.Context, input store.ClaimRunInput) (store.ClaimRunResult, error) {
+			claimed = input
+			return store.ClaimRunResult{}, temporal.NewNonRetryableApplicationError("captured authoritative run ID", activities.ErrTypeInvalid, nil)
+		},
+		activity.RegisterOptions{Name: "ClaimAndStartRun"},
+	)
+	env.ExecuteWorkflow(workflows.WorkOnTicket, workflows.WorkOnTicketInput{
+		TicketID: 1,
+		Policy:   work.DefaultTargetRunPolicy(),
+		CloneURL: "https://github.com/example/repository.git",
+		Model:    work.Model{Name: "gpt-5", Effort: "high"},
+	})
+
+	if err := env.GetWorkflowError(); err == nil {
+		t.Fatal("WorkOnTicket succeeded after the capture activity failed")
+	}
+	if got, want := claimed.RunID, "default-test-run-id"; got != want {
+		t.Fatalf("claimed Run ID = %q, want authoritative Temporal Run ID %q", got, want)
+	}
+}
+
 // A red CI result is completed feedback, not a workflow failure. The next
 // implement Step must be a new durable Step but continue the surviving
 // generation's implementer thread, then send the new authoritative head
