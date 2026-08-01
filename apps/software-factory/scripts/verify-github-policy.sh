@@ -2,11 +2,12 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 --repository OWNER/REPO --app-id ID" >&2
+  echo "usage: $0 --repository OWNER/REPO --app-id ID [--branch BRANCH]" >&2
 }
 
 repository=""
 app_id=""
+branch="main"
 while (($# > 0)); do
   case "$1" in
     --repository)
@@ -17,6 +18,10 @@ while (($# > 0)); do
       app_id="${2:-}"
       shift 2
       ;;
+    --branch)
+      branch="${2:-}"
+      shift 2
+      ;;
     *)
       usage
       exit 2
@@ -24,7 +29,7 @@ while (($# > 0)); do
   esac
 done
 
-if [[ ! "$repository" =~ ^[^/]+/[^/]+$ ]] || [[ ! "$app_id" =~ ^[1-9][0-9]*$ ]]; then
+if [[ ! "$repository" =~ ^[^/]+/[^/]+$ ]] || [[ ! "$app_id" =~ ^[1-9][0-9]*$ ]] || [[ -z "$branch" ]]; then
   usage
   exit 2
 fi
@@ -37,7 +42,7 @@ while IFS= read -r ruleset_id; do
   ruleset_ids+=("$ruleset_id")
 done < <(gh api "repos/${repository}/rulesets?includes_parents=true&per_page=100" --jq '.[].id')
 if ((${#ruleset_ids[@]} == 0)); then
-  echo '[]' | (cd "$(dirname "$0")/.." && go run ./cmd/factoryctl verify-github-policy --app-id "$app_id")
+  echo '[]' | (cd "$(dirname "$0")/.." && go run ./cmd/factoryctl verify-github-policy --app-id "$app_id" --branch "$branch")
   exit $?
 fi
 
@@ -46,4 +51,4 @@ for ruleset_id in "${ruleset_ids[@]}"; do
 done
 
 jq -s '.' "${details_dir}"/*.json |
-  (cd "$(dirname "$0")/.." && go run ./cmd/factoryctl verify-github-policy --app-id "$app_id")
+  (cd "$(dirname "$0")/.." && go run ./cmd/factoryctl verify-github-policy --app-id "$app_id" --branch "$branch")

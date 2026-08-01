@@ -136,6 +136,7 @@ func runPolicyVerification(args []string, stdin io.Reader, stdout io.Writer) err
 	flags := flag.NewFlagSet("factoryctl verify-github-policy", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	appID := flags.String("app-id", "", "GitHub App numeric id")
+	branch := flags.String("branch", "main", "deployment branch whose effective rules are verified")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -148,7 +149,7 @@ func runPolicyVerification(args []string, stdin io.Reader, stdout io.Writer) err
 	if err := decoder.Decode(&rulesets); err != nil {
 		return fmt.Errorf("decoding detailed GitHub rulesets: %w", err)
 	}
-	report := githubpolicy.Verify(rulesets, parsedAppID)
+	report := githubpolicy.Verify(rulesets, parsedAppID, *branch)
 	if err := json.NewEncoder(stdout).Encode(report); err != nil {
 		return fmt.Errorf("writing GitHub policy report: %w", err)
 	}

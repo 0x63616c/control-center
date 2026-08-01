@@ -50,6 +50,7 @@ approved configuration record. Do not print or decrypt the App key.
 apps/software-factory/scripts/verify-github-policy.sh \
   --repository 0x63616c/world-wide-webb \
   --app-id '<github-app-id>' \
+  --branch main \
   >"${cutover_dir}/03-github-policy.json"
 jq . "${cutover_dir}/03-github-policy.json"
 ```

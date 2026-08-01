@@ -3,15 +3,31 @@
 // checks it cannot bypass still gates the merge.
 package githubpolicy
 
-import "sort"
+import (
+	"path"
+	"sort"
+)
 
 // Ruleset is the subset of GitHub's detailed repository-ruleset response the
 // verifier consumes.
 type Ruleset struct {
 	Name         string        `json:"name"`
 	Enforcement  string        `json:"enforcement"`
+	Target       string        `json:"target"`
+	Conditions   Conditions    `json:"conditions"`
 	BypassActors []BypassActor `json:"bypass_actors"`
 	Rules        []Rule        `json:"rules"`
+}
+
+// Conditions contains the target-ref selection attached to a branch ruleset.
+type Conditions struct {
+	RefName RefNameCondition `json:"ref_name"`
+}
+
+// RefNameCondition is GitHub's include/exclude selection for branch refs.
+type RefNameCondition struct {
+	Include []string `json:"include"`
+	Exclude []string `json:"exclude"`
 }
 
 // BypassActor is one actor-level exception attached to a ruleset.
@@ -42,6 +58,7 @@ type StatusCheck struct {
 type Report struct {
 	Version         int      `json:"version"`
 	Ready           bool     `json:"ready"`
+	Branch          string   `json:"branch"`
 	ApprovalRuleset string   `json:"approvalRuleset,omitempty"`
 	ChecksRulesets  []string `json:"checksRulesets"`
 	RequiredChecks  []string `json:"requiredChecks"`
@@ -51,11 +68,11 @@ type Report struct {
 // Verify requires two independently enforced facts: an active approval rule
 // the App can bypass through a PR, and active checks in a ruleset where that
 // App is not a bypass actor.
-func Verify(rulesets []Ruleset, appID int64) Report {
-	report := Report{Version: 1, ChecksRulesets: []string{}, RequiredChecks: []string{}, Missing: []string{}}
+func Verify(rulesets []Ruleset, appID int64, branch string) Report {
+	report := Report{Version: 1, Branch: branch, ChecksRulesets: []string{}, RequiredChecks: []string{}, Missing: []string{}}
 	checks := map[string]struct{}{}
 	for _, ruleset := range rulesets {
-		if ruleset.Enforcement != "active" {
+		if ruleset.Enforcement != "active" || !appliesToBranch(ruleset, branch) {
 			continue
 		}
 		appBypasses := bypasses(ruleset, appID)
@@ -91,6 +108,31 @@ func Verify(rulesets []Ruleset, appID int64) Report {
 	}
 	report.Ready = len(report.Missing) == 0
 	return report
+}
+
+func appliesToBranch(ruleset Ruleset, branch string) bool {
+	if ruleset.Target != "branch" || branch == "" {
+		return false
+	}
+	ref := "refs/heads/" + branch
+	if !matchesAny(ruleset.Conditions.RefName.Include, ref) {
+		return false
+	}
+	return !matchesAny(ruleset.Conditions.RefName.Exclude, ref)
+}
+
+func matchesAny(patterns []string, ref string) bool {
+	for _, pattern := range patterns {
+		switch pattern {
+		case "~ALL", "~DEFAULT_BRANCH":
+			return true
+		}
+		matched, err := path.Match(pattern, ref)
+		if err == nil && matched {
+			return true
+		}
+	}
+	return false
 }
 
 func bypasses(ruleset Ruleset, appID int64) bool {
