@@ -1182,8 +1182,11 @@ func (s *Store) FinalizeRunFailure(ctx context.Context, in RunFailureInput) (Ter
 		return TerminalResult{}, fmt.Errorf("failing run: %w", ErrRunOwnership)
 	}
 	if in.StepOrdinal > 0 {
-		if _, err := q.CompleteTargetStep(ctx, storedb.CompleteTargetStepParams{RunID: id, Ordinal: int32(in.StepOrdinal), EndedAt: pgTimestamp(in.EndedAt), Result: in.StepResult}); err != nil {
-			return TerminalResult{}, fmt.Errorf("failing run: completing step: %w", wrapQueryErr(err))
+		if _, err := q.FailRunningTargetAgentAttempts(ctx, storedb.FailRunningTargetAgentAttemptsParams{RunID: id, StepOrdinal: int32(in.StepOrdinal), FailureKind: string(in.FailureKind), EndedAt: pgTimestamp(in.EndedAt)}); err != nil {
+			return TerminalResult{}, fmt.Errorf("failing run: failing active agent attempts: %w", wrapQueryErr(err))
+		}
+		if _, err := q.FailTargetStep(ctx, storedb.FailTargetStepParams{RunID: id, Ordinal: int32(in.StepOrdinal), EndedAt: pgTimestamp(in.EndedAt), Result: in.StepResult}); err != nil {
+			return TerminalResult{}, fmt.Errorf("failing run: failing step: %w", wrapQueryErr(err))
 		}
 	}
 	if in.Outcome != work.RunOutcomeFailed && in.Outcome != work.RunOutcomeExhausted {

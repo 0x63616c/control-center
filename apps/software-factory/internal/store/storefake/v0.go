@@ -540,7 +540,13 @@ func (f *Store) FinalizeRunFailure(_ context.Context, in store.RunFailureInput) 
 		if !exists || step.State != work.StepStateRunning {
 			return store.TerminalResult{}, fmt.Errorf("failure: %w", store.ErrRunOwnership)
 		}
-		step.State, step.EndedAt, step.Result = work.StepStateCompleted, in.EndedAt, in.StepResult
+		for attemptKey, attempt := range f.targetAttempts {
+			if attemptKey.RunID == in.RunID && attemptKey.StepOrdinal == in.StepOrdinal && attempt.State == work.AgentAttemptRunning {
+				attempt.State, attempt.FailureKind, attempt.EndedAt = work.AgentAttemptFailed, in.FailureKind, in.EndedAt
+				f.targetAttempts[attemptKey] = attempt
+			}
+		}
+		step.State, step.EndedAt, step.Result = work.StepStateFailed, in.EndedAt, in.StepResult
 		f.targetSteps[key] = step
 	}
 	run.TargetOutcome, run.TargetFailure, run.EndedAt = in.Outcome, in.FailureKind, in.EndedAt

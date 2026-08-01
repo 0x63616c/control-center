@@ -151,13 +151,26 @@ func TestFailedRunFinalizationIsIdempotentAndCannotReverseConfirmedMerge(t *test
 	if _, err := s.ClaimAndStartRun(ctx, store.ClaimRunInput{TicketID: ticket.ID, RunID: runID, StartedAt: startedAt}); err != nil {
 		t.Fatalf("ClaimAndStartRun: %v", err)
 	}
-	in := store.RunFailureInput{RunID: runID, TicketID: ticket.ID, Outcome: work.RunOutcomeFailed, FailureKind: work.RunFailureSemanticDeadline, EndedAt: startedAt.Add(time.Minute)}
+	if _, err := s.StartStep(ctx, store.StartStepInput{RunID: runID, Ordinal: 1, Kind: work.StepPlan, StartedAt: startedAt}); err != nil {
+		t.Fatalf("StartStep: %v", err)
+	}
+	if _, err := s.StartAgentAttempt(ctx, store.StartAgentAttemptInput{ID: store.TargetAttemptID{RunID: runID, StepOrdinal: 1, AttemptNo: 1}, AgentStage: work.AgentStagePlan, Model: work.Model{Name: "gpt-5", Effort: "high"}, UsageState: work.UsageUnknown, StartedAt: startedAt}); err != nil {
+		t.Fatalf("StartAgentAttempt: %v", err)
+	}
+	in := store.RunFailureInput{RunID: runID, TicketID: ticket.ID, Outcome: work.RunOutcomeFailed, FailureKind: work.RunFailureSemanticDeadline, StepOrdinal: 1, StepResult: []byte(`{"kind":"semantic_deadline"}`), EndedAt: startedAt.Add(time.Minute)}
 	result, err := s.FinalizeRunFailure(ctx, in)
 	if err != nil {
 		t.Fatalf("FinalizeRunFailure: %v", err)
 	}
 	if result.Ticket.State != store.TicketFailed || result.Ticket.ActiveRunID != "" || result.Run.TargetOutcome != work.RunOutcomeFailed || result.Run.TargetFailure != work.RunFailureSemanticDeadline {
 		t.Fatalf("failed result = %+v, want failed ticket/run with semantic deadline", result)
+	}
+	detail, err := s.TargetRunDetail(ctx, runID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	if len(detail.Steps) != 1 || detail.Steps[0].Step.State != work.StepStateFailed || len(detail.Steps[0].Attempts) != 1 || detail.Steps[0].Attempts[0].State != work.AgentAttemptFailed || detail.Steps[0].Attempts[0].FailureKind != work.RunFailureSemanticDeadline {
+		t.Fatalf("failed history = %+v, want failed Step and running Attempt closed with terminal classification", detail.Steps)
 	}
 	if _, err := s.FinalizeRunFailure(ctx, in); err != nil {
 		t.Fatalf("FinalizeRunFailure retry: %v", err)

@@ -515,8 +515,8 @@ func TestWorkOnTicketFinalizesMergeRetryDeadline(t *testing.T) {
 				t.Fatalf("merge-deadline run = %+v, want failed %s", detail.Run, tc.failure)
 			}
 			for _, step := range detail.Steps {
-				if step.Step.Kind == work.StepMergePullRequest && (step.Step.State != work.StepStateCompleted || string(step.Step.Result) != tc.result) {
-					t.Fatalf("merge-deadline step = %+v, want completed %s", step.Step, tc.result)
+				if step.Step.Kind == work.StepMergePullRequest && (step.Step.State != work.StepStateFailed || string(step.Step.Result) != tc.result) {
+					t.Fatalf("merge-deadline step = %+v, want failed %s", step.Step, tc.result)
 				}
 			}
 		})
@@ -573,8 +573,8 @@ func TestWorkOnTicketRetriesFailedMergeTerminalRecording(t *testing.T) {
 		t.Fatalf("reconciled terminal state = ticket %+v / run %+v, want failed GitHub ruleset", got, detail.Run)
 	}
 	mergeStep := detail.Steps[len(detail.Steps)-1].Step
-	if mergeStep.Kind != work.StepMergePullRequest || mergeStep.State != work.StepStateCompleted || string(mergeStep.Result) != `{"kind":"github_ruleset"}` {
-		t.Fatalf("reconciled merge step = %+v, want completed GitHub ruleset result", mergeStep)
+	if mergeStep.Kind != work.StepMergePullRequest || mergeStep.State != work.StepStateFailed || string(mergeStep.Result) != `{"kind":"github_ruleset"}` {
+		t.Fatalf("reconciled merge step = %+v, want failed GitHub ruleset result", mergeStep)
 	}
 }
 
@@ -659,8 +659,8 @@ func TestWorkOnTicketFinalizesCIScheduleToCloseTimeoutImmediately(t *testing.T) 
 		t.Fatalf("CI-timeout run = %+v, want failed ci_unobserved", detail.Run)
 	}
 	for _, step := range detail.Steps {
-		if step.Step.Kind == work.StepAwaitCI && (step.Step.State != work.StepStateCompleted || string(step.Step.Result) != `{"kind":"ci_unobserved"}`) {
-			t.Fatalf("CI timeout step = %+v, want completed ci_unobserved result", step.Step)
+		if step.Step.Kind == work.StepAwaitCI && (step.Step.State != work.StepStateFailed || string(step.Step.Result) != `{"kind":"ci_unobserved"}`) {
+			t.Fatalf("CI timeout step = %+v, want failed ci_unobserved result", step.Step)
 		}
 		if step.Step.Kind == work.StepReview {
 			t.Fatalf("steps = %+v, want no post-timeout review", detail.Steps)
@@ -711,8 +711,8 @@ func TestWorkOnTicketClassifiesAnotherCITimeoutAsInfrastructure(t *testing.T) {
 	if err := json.Unmarshal(lastStep.Result, &terminalResult); err != nil {
 		t.Fatalf("decode terminal Step result: %v", err)
 	}
-	if lastStep.Kind != work.StepAwaitCI || lastStep.State != work.StepStateCompleted || terminalResult.Kind != "terminal_failure" || terminalResult.StepKind != work.StepAwaitCI || terminalResult.FailureKind != work.RunFailureInfrastructure {
-		t.Fatalf("terminal Step = %+v result %+v, want completed structured infrastructure failure", lastStep, terminalResult)
+	if lastStep.Kind != work.StepAwaitCI || lastStep.State != work.StepStateFailed || terminalResult.Kind != "terminal_failure" || terminalResult.StepKind != work.StepAwaitCI || terminalResult.FailureKind != work.RunFailureInfrastructure {
+		t.Fatalf("terminal Step = %+v result %+v, want failed structured infrastructure result", lastStep, terminalResult)
 	}
 }
 
@@ -881,6 +881,36 @@ func TestWorkOnTicketSchedulesTenAgentRetriesWithTheAcceptanceBackoff(t *testing
 	}
 	if len(detail.Steps) < 4 || len(detail.Steps[3].Attempts) != 1 || detail.Steps[3].Attempts[0].State != work.AgentAttemptFailed || detail.Steps[3].Attempts[0].FailureKind != work.RunFailureInfrastructure {
 		t.Fatalf("unavailable model attempt = %+v, want one durably failed plan Attempt", detail.Steps)
+	}
+}
+
+// Infrastructure can fail after an Agent Attempt is authorized but before an
+// agent activity runs. Terminalization must close both levels as failed so the
+// durable history never presents abandoned work as running or completed.
+func TestWorkOnTicketFailsRunningAttemptWithItsActiveStep(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "attempt infrastructure failure", "close active history", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000033", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.deleteErr = nil
+	h.authorizeErr = temporal.NewNonRetryableApplicationError("checkpoint capability unavailable", activities.ErrTypePermanent, nil)
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err == nil {
+		t.Fatal("WorkOnTicket succeeded after attempt authorization failed")
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	last := detail.Steps[len(detail.Steps)-1]
+	if last.Step.Kind != work.StepPlan || last.Step.State != work.StepStateFailed || len(last.Attempts) != 1 || last.Attempts[0].State != work.AgentAttemptFailed || last.Attempts[0].FailureKind != work.RunFailureInfrastructure {
+		t.Fatalf("terminal agent history = %+v, want failed plan Step and failed infrastructure Attempt", last)
 	}
 }
 
@@ -1804,6 +1834,7 @@ type workOnTicketHarness struct {
 	controlSequence   []string
 	rotations         []activities.RotateRunWorkerGitHubCredentialInput
 	authorized        []activities.AuthorizeRunWorkerAttemptInput
+	authorizeErr      error
 	agentInputs       []activities.TargetAgentInput
 	ci                activities.TargetAwaitCIInput
 	ready             activities.TargetMarkPullRequestReadyInput
@@ -1901,7 +1932,7 @@ func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore workOnT
 	env.RegisterActivityWithOptions(
 		func(_ context.Context, in activities.AuthorizeRunWorkerAttemptInput) error {
 			h.authorized = append(h.authorized, in)
-			return nil
+			return h.authorizeErr
 		},
 		activity.RegisterOptions{Name: "AuthorizeRunWorkerAttempt"},
 	)

@@ -57,6 +57,16 @@ WHERE run_id = $1 AND ordinal = $2
   AND (state = 'running' OR (state = 'completed' AND result = $4))
 RETURNING *;
 
+-- name: FailTargetStep :one
+UPDATE run_step SET state = 'failed', ended_at = $3, result = $4
+WHERE run_id = $1 AND ordinal = $2 AND state = 'running'
+RETURNING *;
+
+-- name: FailRunningTargetAgentAttempts :many
+UPDATE run_agent_attempt SET state = 'failed', failure_kind = $3, ended_at = $4
+WHERE run_id = $1 AND step_ordinal = $2 AND state = 'running'
+RETURNING *;
+
 -- name: CompleteTargetMergeStep :one
 UPDATE run_step SET state = 'completed', ended_at = $3, result = $4
 WHERE run_id = $1 AND ordinal = $2 AND kind = 'merge_pull_request'

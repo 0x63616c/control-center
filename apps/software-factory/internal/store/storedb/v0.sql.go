@@ -421,6 +421,98 @@ func (q *Queries) CompleteTargetTicket(ctx context.Context, arg CompleteTargetTi
 	return i, err
 }
 
+const failRunningTargetAgentAttempts = `-- name: FailRunningTargetAgentAttempts :many
+UPDATE run_agent_attempt SET state = 'failed', failure_kind = $3, ended_at = $4
+WHERE run_id = $1 AND step_ordinal = $2 AND state = 'running'
+RETURNING run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, provider_thread_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result, checkpoint_capability_hash
+`
+
+type FailRunningTargetAgentAttemptsParams struct {
+	RunID       pgtype.UUID
+	StepOrdinal int32
+	FailureKind string
+	EndedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) FailRunningTargetAgentAttempts(ctx context.Context, arg FailRunningTargetAgentAttemptsParams) ([]RunAgentAttempt, error) {
+	rows, err := q.db.Query(ctx, failRunningTargetAgentAttempts,
+		arg.RunID,
+		arg.StepOrdinal,
+		arg.FailureKind,
+		arg.EndedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RunAgentAttempt
+	for rows.Next() {
+		var i RunAgentAttempt
+		if err := rows.Scan(
+			&i.RunID,
+			&i.StepOrdinal,
+			&i.AttemptNo,
+			&i.AgentStage,
+			&i.Model,
+			&i.Effort,
+			&i.State,
+			&i.FailureKind,
+			&i.ProviderThreadID,
+			&i.UsageState,
+			&i.InputTokens,
+			&i.CachedInputTokens,
+			&i.OutputTokens,
+			&i.ReasoningTokens,
+			&i.StartedAt,
+			&i.EndedAt,
+			&i.Result,
+			&i.CheckpointCapabilityHash,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const failTargetStep = `-- name: FailTargetStep :one
+UPDATE run_step SET state = 'failed', ended_at = $3, result = $4
+WHERE run_id = $1 AND ordinal = $2 AND state = 'running'
+RETURNING run_id, ordinal, kind, iteration, reason, state, started_at, ended_at, result
+`
+
+type FailTargetStepParams struct {
+	RunID   pgtype.UUID
+	Ordinal int32
+	EndedAt pgtype.Timestamptz
+	Result  []byte
+}
+
+func (q *Queries) FailTargetStep(ctx context.Context, arg FailTargetStepParams) (RunStep, error) {
+	row := q.db.QueryRow(ctx, failTargetStep,
+		arg.RunID,
+		arg.Ordinal,
+		arg.EndedAt,
+		arg.Result,
+	)
+	var i RunStep
+	err := row.Scan(
+		&i.RunID,
+		&i.Ordinal,
+		&i.Kind,
+		&i.Iteration,
+		&i.Reason,
+		&i.State,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.Result,
+	)
+	return i, err
+}
+
 const failTargetTicket = `-- name: FailTargetTicket :one
 UPDATE ticket SET state = 'failed', active_run_id = NULL, updated_at = CURRENT_TIMESTAMP
 WHERE id = $1 AND state = 'active' AND active_run_id = $2
