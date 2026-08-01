@@ -300,9 +300,10 @@ temporal_cli() {
     --image=temporalio/admin-tools:1.31.2 --command -- \
     temporal --address temporal-server:7233 \
     --namespace software-factory \
-    --codec-endpoint http://codec.software-factory.svc.cluster.local:8080 "$@"
+    --codec-endpoint http://codec.software-factory.svc.cluster.local:8080 "$@" \
+    >/dev/null
   if ! kubectl -n temporal wait --for=jsonpath='{.status.phase}'=Succeeded \
-    "pod/${pod}" --timeout=90s; then
+    "pod/${pod}" --timeout=90s >/dev/null; then
     kubectl -n temporal logs "${pod}" >&2 || true
     kubectl -n temporal delete pod "${pod}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
     return 1
@@ -318,9 +319,9 @@ temporal_cli workflow query \
   --workflow-id software-factory-target-dispatcher \
   --type target-dispatcher-policy \
   --output json >"${gate10_dir}/07-dispatcher-policy-query.json"
-jq -er '.queryResult[0].data' \
-  "${gate10_dir}/07-dispatcher-policy-query.json" |
-  base64 --decode >"${gate10_dir}/07-dispatcher-policy.json"
+jq -e '.queryResult[0]' \
+  "${gate10_dir}/07-dispatcher-policy-query.json" \
+  >"${gate10_dir}/07-dispatcher-policy.json"
 jq -e '
   .Policy.Paused == false and
   .Policy.MaxInFlight == 1 and
