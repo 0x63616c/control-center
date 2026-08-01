@@ -30,6 +30,18 @@ export type OwnedWorkloadSpec = WorkloadSpec & { namespaceName: InfraNamespaceNa
 
 const controlCenterProduct = defineProduct("control-center");
 const softwareFactoryProduct = defineProduct("software-factory");
+type StandaloneSoftwareFactoryComponent =
+  | "api"
+  | "blobs"
+  | "codec"
+  | "console"
+  | "relay"
+  | "run-worker"
+  | "worker";
+
+const standaloneSoftwareFactoryRepository = (
+  component: StandaloneSoftwareFactoryComponent,
+): string => `ghcr.io/0x63616c/software-factory-${component}`;
 
 const IMAGE_REPOSITORIES = {
   api: {
@@ -77,37 +89,37 @@ const IMAGE_REPOSITORIES = {
   "software-factory-worker": {
     product: "software-factory",
     digestKey: softwareFactoryProduct.imageDigestKey("worker"),
-    repository: "ghcr.io/0x63616c/software-factory-worker",
+    repository: standaloneSoftwareFactoryRepository("worker"),
   },
   "software-factory-run-worker": {
     product: "software-factory",
     digestKey: softwareFactoryProduct.imageDigestKey("run-worker"),
-    repository: "ghcr.io/0x63616c/software-factory-run-worker",
+    repository: standaloneSoftwareFactoryRepository("run-worker"),
   },
   "software-factory-relay": {
     product: "software-factory",
     digestKey: softwareFactoryProduct.imageDigestKey("relay"),
-    repository: "ghcr.io/0x63616c/software-factory-relay",
+    repository: standaloneSoftwareFactoryRepository("relay"),
   },
   "software-factory-api": {
     product: "software-factory",
     digestKey: softwareFactoryProduct.imageDigestKey("api"),
-    repository: "ghcr.io/0x63616c/software-factory-api",
+    repository: standaloneSoftwareFactoryRepository("api"),
   },
   "software-factory-console": {
     product: "software-factory",
     digestKey: softwareFactoryProduct.imageDigestKey("console"),
-    repository: "ghcr.io/0x63616c/software-factory-console",
+    repository: standaloneSoftwareFactoryRepository("console"),
   },
   "software-factory-blobs": {
     product: "software-factory",
     digestKey: softwareFactoryProduct.imageDigestKey("blobs"),
-    repository: "ghcr.io/0x63616c/software-factory-blobs",
+    repository: standaloneSoftwareFactoryRepository("blobs"),
   },
   "software-factory-codec": {
     product: "software-factory",
     digestKey: softwareFactoryProduct.imageDigestKey("codec"),
-    repository: "ghcr.io/0x63616c/software-factory-codec",
+    repository: standaloneSoftwareFactoryRepository("codec"),
   },
 } as const satisfies Record<
   string,

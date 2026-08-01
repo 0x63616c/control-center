@@ -173,6 +173,31 @@ release_commit="$(jq -er .commit "${release_manifest}")"
 scripts/verify-software-factory-release.sh \
   "${release_version}" "${release_manifest}" \
   >"${gate10_dir}/07-release-digests.json"
+standalone_ci_run_id="$(gh run list \
+  --repo 0x63616c/software-factory \
+  --workflow .github/workflows/ci.yml \
+  --branch main \
+  --commit "${release_commit}" \
+  --event push \
+  --limit 1 \
+  --json databaseId \
+  --jq '.[0].databaseId')"
+test -n "${standalone_ci_run_id}"
+gh run view "${standalone_ci_run_id}" \
+  --repo 0x63616c/software-factory \
+  --json headSha,status,conclusion,jobs \
+  >"${gate10_dir}/07-standalone-main-actions.json"
+jq -e --arg sha "${release_commit}" '
+  .headSha == $sha and
+  .status == "completed" and
+  .conclusion == "success" and
+  (["verify", "temporal-session", "e2e"] -
+    [.jobs[] | select(.conclusion == "success") | .name] | length) == 0 and
+  ([.jobs[] |
+    select(.name | startswith("images (")) |
+    select(.conclusion == "success")] | length) == 7
+' "${gate10_dir}/07-standalone-main-actions.json"
+
 release_run_id="$(gh run list \
   --repo 0x63616c/software-factory \
   --workflow .github/workflows/release.yml \

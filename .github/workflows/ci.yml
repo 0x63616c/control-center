@@ -927,7 +927,9 @@ jobs:
           # Software Factory is an independently released product. Its checked
           # manifest is the immutable deployment input; WWW never substitutes
           # a locally built :main digest for a released component.
-          factory_json="$(scripts/software-factory-release-manifest.sh infra/software-factory-release.json)"
+          factory_version="$(jq -er .version infra/software-factory-release.json)"
+          factory_json="$(GH_TOKEN='${{ github.token }}' scripts/verify-software-factory-release.sh \
+            "$factory_version" infra/software-factory-release.json)"
           json="$(jq -cn --argjson app "$json" --argjson factory "$factory_json" '$app + $factory')"
           echo "Image digests: $json"
           echo "map=$json" >> "$GITHUB_OUTPUT"

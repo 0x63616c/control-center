@@ -54,9 +54,9 @@ if grep -qE '(^| )www-software-factory-[^ ]+:' <<<"$digest_entries"; then
   exit 1
 fi
 
-grep -Fq 'scripts/software-factory-release-manifest.sh infra/software-factory-release.json' \
+grep -Fq 'scripts/verify-software-factory-release.sh \' \
   "$workflow" || {
-  echo "FAIL: deploy does not source software-factory pins from the checked release" >&2
+  echo "FAIL: deploy does not verify and source the checked software-factory release" >&2
   exit 1
 }
 
