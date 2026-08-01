@@ -160,7 +160,7 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 				return exhaustedAgentAttempts(in.Policy.MaxAgentAttempts)
 			}
 			implementTurn++
-			feedback = work.AgentPromptContext{CIFailures: ci.RedFailures}
+			feedback = work.AgentPromptContext{CandidateHeadSHA: candidate.PushedHead, CIFailures: ci.RedFailures}
 			implement, err = runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result}, feedback, &activities.ProviderThreadContinuation{Identity: identity, ThreadID: implement.ThreadID}, implementTurn)
 			if err != nil {
 				return err
@@ -193,7 +193,7 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 				return exhaustedAgentAttempts(in.Policy.MaxAgentAttempts)
 			}
 			implementTurn++
-			feedback = work.AgentPromptContext{ReviewFindings: findings.Findings}
+			feedback = work.AgentPromptContext{CandidateHeadSHA: candidate.PushedHead, ReviewFindings: findings.Findings}
 			implement, err = runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: latestReview}, feedback, &activities.ProviderThreadContinuation{Identity: identity, ThreadID: implement.ThreadID}, implementTurn)
 			if err != nil {
 				return err
@@ -246,7 +246,7 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 			return exhaustedAgentAttempts(in.Policy.MaxAgentAttempts)
 		}
 		implementTurn++
-		feedback = work.AgentPromptContext{Merge: &work.MergeFeedback{Outcome: merge.Outcome, ReviewedHeadSHA: candidate.PushedHead, CurrentHeadSHA: merge.PullRequest.HeadSHA, CurrentBaseSHA: merge.PullRequest.BaseSHA, Diagnostic: merge.Diagnostic}}
+		feedback = work.AgentPromptContext{CandidateHeadSHA: candidate.PushedHead, Merge: &work.MergeFeedback{Outcome: merge.Outcome, ReviewedHeadSHA: candidate.PushedHead, CurrentHeadSHA: merge.PullRequest.HeadSHA, CurrentBaseSHA: merge.PullRequest.BaseSHA, Diagnostic: merge.Diagnostic}}
 		implement, err = runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: latestReview}, feedback, &activities.ProviderThreadContinuation{Identity: identity, ThreadID: implement.ThreadID}, implementTurn)
 		if err != nil {
 			return err
