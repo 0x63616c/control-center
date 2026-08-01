@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 )
 
 // Result is the provider-neutral outcome of one tool execution.
@@ -31,8 +32,16 @@ func (t *boundTool[T]) Specification() Specification {
 // Execute decodes provider arguments and invokes the typed handler.
 func (t *boundTool[T]) Execute(ctx context.Context, arguments json.RawMessage) (Result, error) {
 	var input T
-	if err := json.NewDecoder(bytes.NewReader(arguments)).Decode(&input); err != nil {
-		return Result{}, fmt.Errorf("decode %q arguments: %w", t.definition.specification.Name, err)
+	decoder := json.NewDecoder(bytes.NewReader(arguments))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		return Result{Content: fmt.Sprintf("invalid arguments: %v", err), IsError: true}, nil
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			err = fmt.Errorf("more than one JSON value")
+		}
+		return Result{Content: fmt.Sprintf("invalid arguments: %v", err), IsError: true}, nil
 	}
 	return t.handler(ctx, input)
 }
