@@ -719,7 +719,7 @@ export function installTemporal(args: TemporalArgs): TemporalResources {
                   { name: "TEMPORAL_DEFAULT_NAMESPACE", value: TEMPORAL_CLUSTER_NAMESPACE },
                   {
                     name: "TEMPORAL_CODEC_ENDPOINT",
-                    value: `https://${controlCenterProductManifest().codec.exposure.hostname}/{namespace}`,
+                    value: `https://${controlCenterProductManifest().codec.exposure.hostname}`,
                   },
                   // The browser must send its Cloudflare Access session cookie
                   // to the separately-originated codec host.

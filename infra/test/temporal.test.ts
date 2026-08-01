@@ -219,12 +219,11 @@ describe("installTemporal (issue #124, talos-only)", () => {
     expect(cors?.value).toBe("https://temporal-ui.worldwidewebb.co,http://localhost:8080");
   });
 
-  test("the UI sends software-factory payloads to the namespace codec endpoint", async () => {
+  test("the UI sends payloads to the codec endpoint", async () => {
     const spec = await get<DeploymentSpec>(install().ui, "spec");
     const endpoint = envValue(spec.template.spec.containers[0], "TEMPORAL_CODEC_ENDPOINT");
 
-    expect(endpoint).toContain("codec.worldwidewebb.co");
-    expect(endpoint).toContain("{namespace}");
+    expect(endpoint).toBe("https://codec.worldwidewebb.co");
     expect(envValue(spec.template.spec.containers[0], "TEMPORAL_CODEC_INCLUDE_CREDENTIALS")).toBe(
       "true",
     );

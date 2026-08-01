@@ -82,26 +82,19 @@ func run() error {
 func newHandler(store blobs.Store, origins []string) http.Handler {
 	codec := payloads.Handler(store, telemetry.NewMetrics(prometheus.NewRegistry()))
 	mux := http.NewServeMux()
-	// Temporal UI 2.52.1 appends /encode or /decode to the configured endpoint
-	// without expanding {namespace}. The endpoint is cluster-level, so it must
-	// also accept control-center payloads. Those have no codec encoding metadata
-	// and the decoder passes them through unchanged. An explicit allowlist keeps
-	// the codec from becoming a decoder for future namespaces by accident.
-	mux.Handle("/{namespace}/encode", softwareFactoryCodec(codec))
-	mux.Handle("/{namespace}/decode", softwareFactoryCodec(codec))
+	// The UI supplies the selected namespace in X-Namespace. The endpoint stays
+	// namespace-agnostic, while the allowlist prevents this shared codec from
+	// decoding a future namespace by accident.
+	mux.Handle("/encode", allowedNamespaceCodec(codec))
+	mux.Handle("/decode", allowedNamespaceCodec(codec))
 	mux.HandleFunc("/healthz", func(writer http.ResponseWriter, _ *http.Request) {
 		writer.WriteHeader(http.StatusOK)
 	})
 	return cors(origins, mux)
 }
 
-func softwareFactoryCodec(next http.Handler) http.Handler {
+func allowedNamespaceCodec(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		pathNamespace := request.PathValue("namespace")
-		if pathNamespace != "{namespace}" && pathNamespace != softwareFactoryTemporalNamespace && pathNamespace != controlCenterTemporalNamespace {
-			http.NotFound(writer, request)
-			return
-		}
 		if _, allowed := allowedTemporalNamespaces[request.Header.Get("X-Namespace")]; !allowed {
 			http.Error(writer, "namespace is not allowed", http.StatusForbidden)
 			return
