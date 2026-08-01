@@ -135,6 +135,37 @@ func TestActivityRendererRendersTheKeysOwnTurn(t *testing.T) {
 	}
 }
 
+// Target runs have a five-review-step budget. That policy must reach the real
+// activity renderer rather than silently falling back to the legacy pipeline's
+// three-turn constant: the fourth and fifth target reviewers need to know
+// they are still within their allotted bounded ledger.
+func TestActivityRendererRendersTheTargetReviewBudgetAtTurnsFourAndFive(t *testing.T) {
+	t.Parallel()
+
+	adapter := NewActivityRenderer(newTestRenderer(t))
+	detail := ticket()
+	for _, turn := range []int{4, 5} {
+		prior := everyDocument()
+		for earlier := 1; earlier < turn; earlier++ {
+			prior.ReviewLedger = append(prior.ReviewLedger, work.ReviewTurnRecord{Turn: earlier})
+		}
+		prompt, _, err := adapter.Render(
+			work.StageKey{Ticket: detail.Number, RunID: "target-run", Stage: work.StageReview, Turn: turn},
+			detail, prior, work.AgentPromptContext{},
+		)
+		if err != nil {
+			t.Fatalf("Render(review turn %d): %v", turn, err)
+		}
+		want := "turn " + strconv.Itoa(turn) + " of 5"
+		if !strings.Contains(prompt, want) {
+			t.Errorf("target review prompt does not say %q:\n%s", want, prompt)
+		}
+		if len(prior.ReviewLedger) != turn-1 {
+			t.Fatalf("review %d ledger = %d entries, want bounded %d", turn, len(prior.ReviewLedger), turn-1)
+		}
+	}
+}
+
 func TestActivityRendererCarriesAuthoritativeAgentPromptContext(t *testing.T) {
 	t.Parallel()
 	adapter := NewActivityRenderer(newTestRenderer(t))
