@@ -16,6 +16,9 @@ scripts/seed-codex-auth.sh --replace        # re-seed over an existing Secret
 scripts/seed-codex-auth.sh --replace -      # re-seed from stdin instead of a file
 ```
 
+After the worker has refreshed a credential, `--check` also accepts its
+worker-owned `refresh_state.json` lease. It still rejects every other extra key.
+
 `software-factory` has a running Deployment as of PR #369 (merged 2026-07-29), so
 this is no longer blocked on anything landing.
 
@@ -155,8 +158,10 @@ kubectl -n software-factory get secret codex-auth \
   -o go-template='{{range $k,$v := .data}}{{$k}}{{"\n"}}{{end}}'
 ```
 
-Expect exactly one line, `auth.json`. If `refresh_state.json` also appears, the
-replace did not happen wholesale — go back to §1.
+Expect `auth.json`, with optional `refresh_state.json`. The latter is the
+worker-owned lease written after a healthy refresh and is not an operator error.
+Any other key is unexpected. `scripts/seed-codex-auth.sh --check` applies this
+same rule without printing a value.
 
 Check the length is plausible:
 
@@ -185,7 +190,7 @@ there, and the unescaped form reads the dot as a field separator and returns
 
 Both commands here were checked against a synthetic `DUMMY-NOT-A-SECRET` file with
 `--dry-run=client`, so nothing reached the cluster: the key listing printed
-`auth.json` and nothing else, and the length came back exactly `4 * ceil(n/3)`.
+`auth.json`, and the length came back exactly `4 * ceil(n/3)`.
 
 > **Never `-o yaml` and never `describe` on a Secret.** Both print `data` in full.
 > `-o json` likewise. The two commands above are the whole safe surface, and both

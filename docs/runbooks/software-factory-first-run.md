@@ -1,8 +1,10 @@
-# Runbook: software-factory first live run (ADR-0011)
+# Historical runbook: software-factory first live run (ADR-0011)
 
-> **NOT YET EXECUTED.** Written ahead of the run so the first attempt is watched
-> rather than discovered. Update it in place afterwards with what actually
-> happened — reality diverging from this file is the point of writing it down.
+> **Superseded.** This is the pre-v0 first-run plan, retained as an operational
+> record. v0 is active. Use
+> [`software-factory-v0-cutover.md`](software-factory-v0-cutover.md) for the
+> current proof procedure and its Gate 10 commands. Do not follow the steps below
+> as a current operating runbook.
 
 The first run opens a **real PR** against this repo. There is no dry-run mode and
 none is being built (Calum, 2026-07-28, #345), so the safety comes from a
