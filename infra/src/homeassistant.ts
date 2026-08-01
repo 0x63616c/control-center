@@ -241,7 +241,7 @@ export function installHomeAssistant(args: HomeAssistantArgs): HomeAssistantReso
               "mkdir -p /etc/crontabs",
               "printf '%s\\n' '15 1 * * * cd /config && tar -czf /backup/ha-config-$(date +\\%Y\\%m\\%d).tar.gz .storage *.yaml' > /etc/crontabs/root",
               "exec crond -f -l 2",
-            ].join("\\n"),
+            ].join("\n"),
           ],
           env: { TZ: "America/Los_Angeles" },
           volumes: [

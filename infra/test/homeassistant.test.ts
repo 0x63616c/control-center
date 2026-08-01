@@ -153,6 +153,8 @@ describe("installHomeAssistant (Task 4, §0.1-§0.4, talos-only)", () => {
     );
     expect(backup?.command?.join("\n")).toContain("crond -f");
     expect(backup?.command?.join("\n")).toContain("tar -czf");
+    expect(backup?.command?.[2]).toContain("\nexec crond -f -l 2");
+    expect(backup?.command?.[2]).not.toContain("\\nexec crond -f -l 2");
     expect(backup?.volumeMounts.map((mount) => mount.mountPath)).toEqual(["/config", "/backup"]);
     expect(new Set(spec.template.spec.volumes.map((volume) => volume.name)).size).toBe(
       spec.template.spec.volumes.length,
