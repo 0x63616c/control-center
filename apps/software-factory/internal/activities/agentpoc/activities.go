@@ -87,7 +87,7 @@ func modelRequest(input base.ModelTurnInput) (codexresponses.TurnRequest, error)
 	return codexresponses.TurnRequest{
 		Model: input.Model, Instructions: agentpocprompt.Instructions(), Input: items, Store: false,
 		Tools: []codexresponses.Tool{{
-			Name: base.PrototypeToolName, Description: "Return one deterministic fact used to prove the Temporal tool loop.",
+			Name: base.PrototypeToolName, Description: agentpocprompt.ToolDescription(),
 			Parameters: agentpocprompt.ToolSchema(),
 		}},
 		ToolChoice: toolChoice, ParallelToolCalls: false,
