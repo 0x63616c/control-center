@@ -714,10 +714,7 @@ func TestWorkOnTicketRenewsCredentialDuringOneActiveAgentAttempt(t *testing.T) {
 	}
 	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000008", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
 	h := newWorkOnTicketHarness(t, s)
-	h.pendingImplement = true
-	h.env.RegisterDelayedCallback(func() {
-		h.pendingImplement = false
-	}, 61*time.Minute)
+	h.implementWait = 61 * time.Minute
 	h.run(in)
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("WorkOnTicket: %v", err)
@@ -788,12 +785,11 @@ func TestWorkOnTicketMapsAuthorizedAttemptsToBoundedChildIdentities(t *testing.T
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("WorkOnTicket: %v", err)
 	}
-	if len(h.authorized) != 3 || len(h.agentInputs) != 3 || len(h.agentChildIDs) != 3 {
-		t.Fatalf("authorized/children = %d/%d/%d, want one child for plan, implement, and review", len(h.authorized), len(h.agentInputs), len(h.agentChildIDs))
+	if len(h.authorized) != 0 || len(h.agentInputs) != 3 || len(h.agentChildIDs) != 3 {
+		t.Fatalf("legacy authorization/children = %d/%d/%d, want no legacy authorization and one child for plan, implement, and review", len(h.authorized), len(h.agentInputs), len(h.agentChildIDs))
 	}
 	for index, input := range h.agentInputs {
-		attempt := h.authorized[index].AttemptID
-		want := fmt.Sprintf("agent/%s/step/%d/attempt/%d", attempt.RunID, attempt.StepOrdinal, attempt.AttemptNo)
+		want := fmt.Sprintf("agent/%s/step/%d/attempt/1", in.RunID, 4+index)
 		if input.Identity != want || input.CacheKey != want || h.agentChildIDs[index] != want {
 			t.Fatalf("child %d identity = input %q / cache %q / workflow %q, want %q", index, input.Identity, input.CacheKey, h.agentChildIDs[index], want)
 		}
@@ -900,8 +896,7 @@ func TestWorkOnTicketFinalizesChildEvidenceBeforeCompletingAgentStep(t *testing.
 }
 
 // A classified terminal child failure ends one semantic execution and starts
-// one fresh Attempt under the same Step. The legacy error type is a temporary
-// adapter until the child workflow's typed failure contract lands.
+// one fresh Attempt under the same Step.
 func TestWorkOnTicketStartsFreshSemanticAttemptOnlyForClassifiedTerminalChildFailure(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -915,7 +910,7 @@ func TestWorkOnTicketStartsFreshSemanticAttemptOnlyForClassifiedTerminalChildFai
 	firstImplementIdentity := fmt.Sprintf("agent/%s/step/5/attempt/1", in.RunID)
 	h.agentResult = func(input workflows.AgentWorkflowInput) (workflows.AgentWorkflowResult, error) {
 		if input.Identity == firstImplementIdentity {
-			return targetAgentWorkflowResult(t, input), temporal.NewNonRetryableApplicationError("provider execution cannot resume", activities.ErrTypeUnresumableIncompleteAttempt, nil)
+			return workflows.AgentWorkflowResult{Failure: &agent.TerminalFailure{Kind: agent.TerminalFailureInvalidProviderOutcome}}, nil
 		}
 		return targetAgentWorkflowResult(t, input), nil
 	}
@@ -941,8 +936,8 @@ func TestWorkOnTicketStartsFreshSemanticAttemptOnlyForClassifiedTerminalChildFai
 	if first, second := implement.Attempts[0], implement.Attempts[1]; first.ID.AttemptNo != 1 || first.State != work.AgentAttemptFailed || first.FailureKind != work.RunFailureAgentUnrecoverable || second.ID.AttemptNo != 2 {
 		t.Fatalf("implement attempts = %+v, want failed unresumable attempt 1 then explicit attempt 2", implement.Attempts)
 	}
-	if len(h.authorized) != 4 || h.authorized[1].AttemptID.AttemptNo != 1 || h.authorized[2].AttemptID.AttemptNo != 2 {
-		t.Fatalf("authorized attempts = %+v, want plan, implement attempt 1, implement attempt 2, and review", h.authorized)
+	if len(h.authorized) != 0 {
+		t.Fatalf("legacy authorization calls = %+v, want none", h.authorized)
 	}
 	implements := agentChildrenAtStage(h.agentInputs, work.StageImplement)
 	if len(implements) != 2 || implements[0].Identity != firstImplementIdentity || implements[1].Identity != fmt.Sprintf("agent/%s/step/5/attempt/2", in.RunID) || implements[1].Seed != nil {
@@ -968,7 +963,7 @@ func TestWorkOnTicketCountsUnresumableReplacementAgainstTheRunWideAttemptBudget(
 	firstImplementIdentity := fmt.Sprintf("agent/%s/step/5/attempt/1", in.RunID)
 	h.agentResult = func(input workflows.AgentWorkflowInput) (workflows.AgentWorkflowResult, error) {
 		if input.Identity == firstImplementIdentity {
-			return targetAgentWorkflowResult(t, input), temporal.NewNonRetryableApplicationError("provider execution cannot resume", activities.ErrTypeUnresumableIncompleteAttempt, nil)
+			return workflows.AgentWorkflowResult{Failure: &agent.TerminalFailure{Kind: agent.TerminalFailureInvalidProviderOutcome}}, nil
 		}
 		if input.Attempt.Key.Stage == work.StageReview {
 			return targetBlockingReviewWorkflowResult(t, input), nil
@@ -1793,6 +1788,7 @@ type workOnTicketHarness struct {
 	mergeResult      func(activities.TargetMergePullRequestInput) (work.PullRequestMergeResult, error)
 	agentResult      func(workflows.AgentWorkflowInput) (workflows.AgentWorkflowResult, error)
 	pendingImplement bool
+	implementWait    time.Duration
 }
 
 type workOnTicketStore interface {
@@ -1844,18 +1840,26 @@ func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore workOnT
 	env.RegisterActivity(recovery)
 	env.RegisterActivityWithOptions(func(ctx context.Context, input activities.TargetAgentEvidenceInput) error {
 		h.finalizedAttempts = append(h.finalizedAttempts, input.AttemptID)
-		result, err := json.Marshal(input.Result)
-		if err != nil {
-			return err
+		result := json.RawMessage(nil)
+		if input.State == work.AgentAttemptSucceeded {
+			var err error
+			result, err = json.Marshal(input.Result)
+			if err != nil {
+				return err
+			}
 		}
 		usageState := work.UsageUnknown
 		if input.UsageMeasured {
 			usageState = work.UsageMeasured
 		}
-		_, err = h.store.CheckpointAgentAttempt(ctx, store.AgentCheckpointInput{
-			ID: input.AttemptID, Capability: workOnTicketCheckpointCapability, ThreadID: input.Identity,
-			State: work.AgentAttemptSucceeded, UsageState: usageState, Usage: input.Usage, EndedAt: input.EndedAt,
-			Result: result, Transcript: &store.TargetTranscript{CompressedBytes: []byte("test transcript"), Compression: "gzip", UncompressedSizeBytes: 15, Checksum: []byte("test-checksum")},
+		var transcript *store.TargetTranscript
+		if input.TranscriptRef.Key != "" {
+			transcript = &store.TargetTranscript{CompressedBytes: []byte("test transcript"), Compression: "gzip", UncompressedSizeBytes: 15, Checksum: []byte("test-checksum")}
+		}
+		_, err := h.store.FinalizeAgentWorkflowAttempt(ctx, store.AgentCheckpointInput{
+			ID: input.AttemptID, ThreadID: input.Identity, State: input.State, FailureKind: input.FailureKind,
+			UsageState: usageState, Usage: input.Usage, EndedAt: input.EndedAt,
+			Result: result, Transcript: transcript,
 		})
 		return err
 	}, activity.RegisterOptions{Name: "Finalize"})
@@ -1864,6 +1868,11 @@ func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore workOnT
 		h.agentInputs = append(h.agentInputs, input)
 		if input.Attempt.Key.Stage == work.StageReview {
 			h.reviewHead = input.Attempt.PromptContext.CandidateHeadSHA
+		}
+		if h.implementWait > 0 && input.Attempt.Key.Stage == work.StageImplement {
+			if err := workflow.NewTimer(ctx, h.implementWait).Get(ctx, nil); err != nil {
+				return workflows.AgentWorkflowResult{}, err
+			}
 		}
 		if h.pendingImplement && input.Attempt.Key.Stage == work.StageImplement {
 			if err := workflow.Await(ctx, func() bool { return !h.pendingImplement }); err != nil {
