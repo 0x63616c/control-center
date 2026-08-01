@@ -193,6 +193,25 @@ func (f *Store) CheckpointAgentAttempt(_ context.Context, in store.AgentCheckpoi
 	return attempt, nil
 }
 
+// LoadAgentCheckpoint authenticates the exact Attempt before returning its durable evidence.
+func (f *Store) LoadAgentCheckpoint(_ context.Context, id store.TargetAttemptID, capability string) (store.AgentAttempt, *store.TargetTranscript, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	attempt, ok := f.targetAttempts[id]
+	if !ok || f.capabilityHash[id] != capability {
+		return store.AgentAttempt{}, nil, false, fmt.Errorf("loading checkpoint: %w", store.ErrRunOwnership)
+	}
+	if attempt.ProviderThreadID == "" {
+		return attempt, nil, false, nil
+	}
+	var transcript *store.TargetTranscript
+	if stored, exists := f.targetTranscripts[id]; exists {
+		copy := stored
+		transcript = &copy
+	}
+	return attempt, transcript, true, nil
+}
+
 func terminalAgentCheckpointMatches(attempt store.AgentAttempt, in store.AgentCheckpointInput) bool {
 	return attempt.State == in.State &&
 		attempt.ProviderThreadID == in.ThreadID &&

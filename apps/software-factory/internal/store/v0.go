@@ -623,6 +623,38 @@ func (s *Store) CheckpointAgentAttempt(ctx context.Context, in AgentCheckpointIn
 	return agentAttemptFromRow(row), nil
 }
 
+// LoadAgentCheckpoint authenticates and reads one Attempt's durable provider
+// evidence. found is false before the provider exposes its first thread ID.
+func (s *Store) LoadAgentCheckpoint(ctx context.Context, attemptID TargetAttemptID, capability string) (AgentAttempt, *TargetTranscript, bool, error) {
+	id, err := pgUUID(attemptID.RunID)
+	if err != nil {
+		return AgentAttempt{}, nil, false, fmt.Errorf("loading agent checkpoint: %w", err)
+	}
+	row, err := s.q.TargetAgentAttempt(ctx, storedb.TargetAgentAttemptParams{RunID: id, StepOrdinal: int32(attemptID.StepOrdinal), AttemptNo: int32(attemptID.AttemptNo)})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return AgentAttempt{}, nil, false, fmt.Errorf("loading agent checkpoint: %w", ErrRunOwnership)
+		}
+		return AgentAttempt{}, nil, false, fmt.Errorf("loading agent checkpoint: %w", wrapQueryErr(err))
+	}
+	if !row.CheckpointCapabilityHash.Valid || row.CheckpointCapabilityHash.String != capabilityHash(attemptID, capability) {
+		return AgentAttempt{}, nil, false, fmt.Errorf("loading agent checkpoint: %w", ErrRunOwnership)
+	}
+	attempt := agentAttemptFromRow(row)
+	if attempt.ProviderThreadID == "" {
+		return attempt, nil, false, nil
+	}
+	transcriptRow, transcriptErr := s.q.TargetAgentTranscript(ctx, storedb.TargetAgentTranscriptParams{RunID: id, StepOrdinal: int32(attemptID.StepOrdinal), AttemptNo: int32(attemptID.AttemptNo)})
+	if transcriptErr != nil && !errors.Is(transcriptErr, pgx.ErrNoRows) {
+		return AgentAttempt{}, nil, false, fmt.Errorf("loading agent checkpoint: reading transcript: %w", wrapQueryErr(transcriptErr))
+	}
+	var transcript *TargetTranscript
+	if transcriptErr == nil {
+		transcript = &TargetTranscript{CompressedBytes: transcriptRow.CompressedBytes, Compression: transcriptRow.Compression, UncompressedSizeBytes: transcriptRow.UncompressedSizeBytes, Checksum: transcriptRow.Checksum}
+	}
+	return attempt, transcript, true, nil
+}
+
 // ConfirmedMergeInput names the immutable merge evidence and its Merge Step.
 type ConfirmedMergeInput struct {
 	RunID        string

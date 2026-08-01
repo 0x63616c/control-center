@@ -18,9 +18,42 @@ import (
 )
 
 type checkpointStoreFake struct {
-	input store.AgentCheckpointInput
-	err   error
-	calls int
+	input      store.AgentCheckpointInput
+	err        error
+	calls      int
+	loaded     store.AgentAttempt
+	transcript *store.TargetTranscript
+	loadFound  bool
+	loadErr    error
+}
+
+func TestAgentCheckpointReadReconcilesDurableTerminalEvidence(t *testing.T) {
+	t.Parallel()
+
+	endedAt := time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)
+	fake := &checkpointStoreFake{
+		loadFound:  true,
+		loaded:     store.AgentAttempt{ProviderThreadID: "thread-9", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured, Usage: work.Usage{InputTokens: 100, OutputTokens: 30}, EndedAt: endedAt, Result: json.RawMessage(`{"kind":"done"}`)},
+		transcript: &store.TargetTranscript{CompressedBytes: []byte("terminal"), Compression: "zstd", UncompressedSizeBytes: 8, Checksum: []byte("checksum")},
+	}
+	request := httptest.NewRequest(http.MethodGet, checkpoint.AttemptPath("0f466627-b3ae-4ba2-9c96-6ef44ec6f578", 4, 2), nil)
+	request.Header.Set(checkpoint.CapabilityHeader, "attempt-two-capability")
+	response := httptest.NewRecorder()
+	NewWithCheckpointStore("test-build", nil, fake).Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("GET checkpoint = %d: %s", response.Code, response.Body.String())
+	}
+	var got checkpoint.Attempt
+	if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode checkpoint: %v", err)
+	}
+	if got.ProviderThreadID != "thread-9" || got.State != work.AgentAttemptSucceeded || got.Transcript == nil || string(got.Transcript.CompressedBytes) != "terminal" {
+		t.Fatalf("GET checkpoint = %+v, want terminal evidence", got)
+	}
+	if strings.Contains(response.Body.String(), "attempt-two-capability") {
+		t.Fatal("GET checkpoint leaked its capability")
+	}
 }
 
 func TestAgentCheckpointStoresTerminalEvidenceBeforeAcknowledgement(t *testing.T) {
@@ -173,6 +206,10 @@ func (fake *checkpointStoreFake) CheckpointAgentAttempt(_ context.Context, input
 	fake.input = input
 	fake.calls++
 	return store.AgentAttempt{ID: input.ID, State: input.State}, fake.err
+}
+
+func (fake *checkpointStoreFake) LoadAgentCheckpoint(_ context.Context, _ store.TargetAttemptID, _ string) (store.AgentAttempt, *store.TargetTranscript, bool, error) {
+	return fake.loaded, fake.transcript, fake.loadFound, fake.loadErr
 }
 
 func TestAgentCheckpointStoresRunningProviderProgressForTheExactAttempt(t *testing.T) {

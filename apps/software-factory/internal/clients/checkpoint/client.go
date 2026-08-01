@@ -92,3 +92,40 @@ func (client *Client) Checkpoint(ctx context.Context, input checkpointprotocol.A
 		return fmt.Errorf("checkpointing Agent Attempt: unexpected HTTP status %d", response.StatusCode)
 	}
 }
+
+// Load reconciles the durable checkpoint before a retry can start provider
+// work. A 204 is an authorized Attempt that has not exposed provider state.
+func (client *Client) Load(ctx context.Context) (_ checkpointprotocol.Attempt, found bool, err error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.endpoint, nil)
+	if err != nil {
+		return checkpointprotocol.Attempt{}, false, fmt.Errorf("loading Agent Attempt checkpoint: building request: %w", err)
+	}
+	request.Header.Set(checkpointprotocol.CapabilityHeader, client.capability)
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return checkpointprotocol.Attempt{}, false, fmt.Errorf("loading Agent Attempt checkpoint: %w", err)
+	}
+	defer func() {
+		if closeErr := response.Body.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("loading Agent Attempt checkpoint: closing response: %w", closeErr))
+		}
+	}()
+	if response.StatusCode == http.StatusNoContent {
+		return checkpointprotocol.Attempt{}, false, nil
+	}
+	if response.StatusCode == http.StatusOK {
+		var attempt checkpointprotocol.Attempt
+		if err := json.NewDecoder(response.Body).Decode(&attempt); err != nil {
+			return checkpointprotocol.Attempt{}, false, fmt.Errorf("loading Agent Attempt checkpoint: decoding evidence: %w", err)
+		}
+		return attempt, true, nil
+	}
+	switch response.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+		return checkpointprotocol.Attempt{}, false, fmt.Errorf("loading Agent Attempt checkpoint: HTTP %d: %w", response.StatusCode, ErrUnauthorized)
+	case http.StatusConflict:
+		return checkpointprotocol.Attempt{}, false, fmt.Errorf("loading Agent Attempt checkpoint: HTTP %d: %w", response.StatusCode, ErrConflict)
+	default:
+		return checkpointprotocol.Attempt{}, false, fmt.Errorf("loading Agent Attempt checkpoint: unexpected HTTP status %d", response.StatusCode)
+	}
+}

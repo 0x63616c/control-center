@@ -67,6 +67,52 @@ func TestCheckpointSendsTerminalEvidenceToItsScopedAttempt(t *testing.T) {
 	}
 }
 
+func TestLoadReadsTheDurableAttemptBeforeAProviderStarts(t *testing.T) {
+	t.Parallel()
+
+	want := terminalCheckpoint()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet {
+			t.Fatalf("method = %s, want GET", request.Method)
+		}
+		if request.Header.Get(checkpointprotocol.CapabilityHeader) != "attempt-capability" {
+			t.Fatal("GET omitted its scoped capability")
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(want)
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := New(server.URL, store.TargetAttemptID{RunID: "0f466627-b3ae-4ba2-9c96-6ef44ec6f578", StepOrdinal: 1, AttemptNo: 1}, "attempt-capability", server.Client())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	got, found, err := client.Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !found || got.ProviderThreadID != want.ProviderThreadID || got.State != want.State || string(got.Result) != string(want.Result) {
+		t.Fatalf("Load = (%+v, %v), want durable terminal checkpoint", got, found)
+	}
+}
+
+func TestLoadReportsAnAuthorizedAttemptWithoutAProviderCheckpoint(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+	client, err := New(server.URL, store.TargetAttemptID{RunID: "0f466627-b3ae-4ba2-9c96-6ef44ec6f578", StepOrdinal: 1, AttemptNo: 1}, "attempt-capability", server.Client())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, found, err := client.Load(context.Background())
+	if err != nil || found {
+		t.Fatalf("Load = (found %v, error %v), want authorized empty checkpoint", found, err)
+	}
+}
+
 func TestCheckpointClassifiesBoundaryFailuresWithoutExposingItsCapability(t *testing.T) {
 	t.Parallel()
 
@@ -159,5 +205,14 @@ func runningCheckpoint() checkpointprotocol.Attempt {
 	return checkpointprotocol.Attempt{
 		ProviderThreadID: "thread-1", State: work.AgentAttemptRunning, UsageState: work.UsageUnknown,
 		Usage: checkpointprotocol.Usage{},
+	}
+}
+
+func terminalCheckpoint() checkpointprotocol.Attempt {
+	endedAt := time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)
+	return checkpointprotocol.Attempt{
+		ProviderThreadID: "thread-1", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured,
+		Usage: checkpointprotocol.Usage{InputTokens: 3, OutputTokens: 2}, EndedAt: &endedAt,
+		Result: json.RawMessage(`{"kind":"done"}`), Transcript: &checkpointprotocol.Transcript{CompressedBytes: []byte("transcript"), Compression: "zstd", UncompressedSizeBytes: 10, Checksum: []byte("sum")},
 	}
 }
