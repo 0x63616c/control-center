@@ -17,10 +17,11 @@ import (
 // Label keys on every sandbox pod. They exist so a sweep can find and attribute
 // a pod by selector, without parsing its name.
 const (
-	labelName      = "app.kubernetes.io/name"
-	labelManagedBy = "app.kubernetes.io/managed-by"
-	labelTicket    = "software-factory.worldwidewebb.co/ticket"
-	labelRunID     = "software-factory.worldwidewebb.co/run-id"
+	labelName       = "app.kubernetes.io/name"
+	labelManagedBy  = "app.kubernetes.io/managed-by"
+	labelTicket     = "software-factory.worldwidewebb.co/ticket"
+	labelRunID      = "software-factory.worldwidewebb.co/run-id"
+	labelGeneration = "software-factory.worldwidewebb.co/generation"
 
 	labelNameValue      = "software-factory-sandbox"
 	labelManagedByValue = "software-factory"

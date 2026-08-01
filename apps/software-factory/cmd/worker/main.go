@@ -371,7 +371,7 @@ func register(
 	)
 
 	logger.Info("registrations",
-		slog.Int("workflows", 3),
+		slog.Int("workflows", 4),
 		slog.Int("stages_per_ticket", len(work.Pipeline())),
 		slog.Int("max_in_flight", work.DefaultFactoryConfig().MaxInFlight),
 	)
