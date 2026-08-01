@@ -13,16 +13,18 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/checkpoint"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
 // Service is the narrow API boundary exposed to composition roots.
 type Service struct {
-	handler  http.Handler
-	api      huma.API
-	commands commandClient
-	tickets  factoryStore
+	handler     http.Handler
+	api         huma.API
+	commands    commandClient
+	tickets     factoryStore
+	checkpoints AgentCheckpointStore
 }
 
 // factoryStore is the small persistence door the whole HTTP contract needs:
@@ -207,6 +209,10 @@ func New(version string, commands commandClient, ticketStores ...factoryStore) *
 			Type: "http", Scheme: "bearer",
 			Description: "Static bearer for in-cluster worker or sandbox callers.",
 		},
+		"agentCheckpointCapability": {
+			Type: "apiKey", In: "header", Name: checkpoint.CapabilityHeader,
+			Description: "A capability scoped to one active Agent Attempt.",
+		},
 	}
 	configuration.Security = []map[string][]string{{"cloudflareAccess": {}}, {"inClusterBearer": {}}}
 	api := humago.New(mux, configuration)
@@ -219,6 +225,7 @@ func New(version string, commands commandClient, ticketStores ...factoryStore) *
 		output.Body.Version = version
 		return output, nil
 	})
+	huma.Put(api, checkpoint.Path, service.checkpointAgentAttempt, checkpointOperation)
 	huma.Get(api, "/v1/console", service.console, commandOperation("Read console snapshot", "Returns the factory Tickets for the console."))
 	huma.Post(api, "/v1/factory/pause", service.pause, commandOperation("Pause the factory", "Success means Temporal accepted the UpdateConfig signal. The dispatcher applies this configuration on its next tick; this endpoint does not poll for observable state."))
 	huma.Post(api, "/v1/factory/resume", service.resume, commandOperation("Resume the factory", "Success means Temporal accepted the UpdateConfig signal. The dispatcher applies this configuration on its next tick; this endpoint does not poll for observable state."))
@@ -236,6 +243,13 @@ func New(version string, commands commandClient, ticketStores ...factoryStore) *
 	errorSchema := api.OpenAPI().Components.Schemas.Map()["ErrorModel"]
 	errorSchema.Properties["reason"] = &huma.Schema{Type: "string", Description: "Stable machine-readable reason for the error."}
 	errorSchema.Required = append(errorSchema.Required, "reason")
+	return service
+}
+
+// NewWithCheckpointStore constructs the API with only the exact-attempt checkpoint write authority.
+func NewWithCheckpointStore(version string, commands commandClient, checkpoints AgentCheckpointStore, ticketStores ...factoryStore) *Service {
+	service := New(version, commands, ticketStores...)
+	service.checkpoints = checkpoints
 	return service
 }
 
