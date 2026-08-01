@@ -8,10 +8,12 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
 )
 
 // ToolsetID identifies one immutable meaning of a tool catalogue.
-type ToolsetID string
+type ToolsetID = agent.ToolsetID
 
 type runtimeTool interface {
 	Specification() Specification

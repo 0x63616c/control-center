@@ -3,6 +3,7 @@ package agent_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -103,4 +104,33 @@ func TestConversationStoreRejectsTheWrongPredecessorAndCorruptContent(t *testing
 			t.Fatalf("Load() error = %v, want digest mismatch", err)
 		}
 	})
+}
+
+func TestLargeConversationCrossesTheWorkflowSeamAsASmallReference(t *testing.T) {
+	t.Parallel()
+
+	const marker = "known-large-conversation-text-that-must-not-enter-history"
+	largeText := strings.Repeat(marker, 20_000)
+	store := agent.NewConversationStore(blobs.NewMemStore())
+	ref, err := store.Append(t.Context(), "agent/run-7/implement/1", nil, []agent.ConversationItem{{
+		Kind: agent.ItemUserText,
+		Text: largeText,
+	}})
+	if err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+	if ref.Bytes < 1_000_000 {
+		t.Fatalf("stored revision bytes = %d, want a large fixture", ref.Bytes)
+	}
+
+	payload, err := json.Marshal(agent.ModelTurnInput{ConversationRef: ref})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if bytes.Contains(payload, []byte(marker)) {
+		t.Fatalf("workflow payload contains conversation text: %s", payload)
+	}
+	if len(payload) >= 512 {
+		t.Fatalf("workflow payload bytes = %d, want less than 512", len(payload))
+	}
 }
