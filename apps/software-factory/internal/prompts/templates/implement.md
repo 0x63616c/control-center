@@ -8,9 +8,9 @@ are working in a disposable per-ticket checkout, not the operator's working copy
 first does not apply here — the branch it would have you create has already been made for
 you. That is the only rule in `AGENTS.md` this stage sets aside.
 
-Push the branch before you finish — `git push -u origin HEAD` if it has no upstream yet. The
-workflow opens or updates the pull request itself, from your title and body below, once you
-push — work you did not push did not happen, and you must never open a pull request yourself.
+Commit the finished change before you return, but do not push it. The workflow publishes the
+exact checked-out branch with a fresh repository credential, then opens or updates the pull
+request from your title and body below. You must never open a pull request yourself.
 
 **This run may call `implement` more than once.** A red build sends you around again in the
 same window; a review that finds a blocking issue sends you around again after it, working
@@ -45,7 +45,7 @@ Your answer also has `title` and `body` fields, separate from the document: the 
 title and description for the branch as it now stands. Make `title` a clean descriptive title
 without a Ticket-number prefix; the workflow prepends `T-<ticket-number> ` when it opens or
 updates the pull request. The workflow opens the pull request from these after your first
-successful push, and edits it to match on every later turn — write them as the pull request a
+successful commit, and edits it to match on every later turn — write them as the pull request a
 human will read right now, not as a diff against what you said last turn. Build `body` from
 `.github/pull_request_template.md`: complete every applicable section with the branch's current
 facts, including the behavioral change and relevant changed areas, why it matters, and exact
@@ -56,7 +56,7 @@ GitHub issue, and `Fixes #{{ticket_number}}` would close whatever unrelated issu
 carry that number. The factory closes its own Ticket when this pull request merges.
 Keep the Screenshot section for UI work only; delete the Screenshot section when there is no UI change.
 Never manufacture command output or visual evidence.
-Leave both `title` and `body` empty only when `blocked` is true and nothing was pushed worth describing.
+Leave both `title` and `body` empty only when `blocked` is true and nothing was committed worth describing.
 
 Your answer also has a `blocked` field and a `blocked_reason` field. Set `blocked` to true if
 you did not complete the work, and give the reason in `blocked_reason`; otherwise leave

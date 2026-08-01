@@ -215,7 +215,7 @@ message"). You will see one of:
 | `the auth.json key does not hold a JSON object` | truncated or wrong file |
 | `auth.json carries no "tokens" object` | not a codex `auth.json` |
 | `auth.json's tokens.access_token is absent / not a string / is blank` | required, non-blank |
-| `auth.json's tokens.refresh_token is … is blank` | **you seeded a sandbox copy, not the real one** — see below |
+| `auth.json's tokens.refresh_token is … is blank` | **you seeded a derived access-only copy, not the durable source** — see below |
 | `codex refresh token was rejected` | seed parsed, token is spent or revoked. Re-run `codex login` |
 | `the secret holding auth.json does not exist` | **you seeded under the wrong name** — the worker looked up `codex-auth` and found nothing. §0 |
 
@@ -229,21 +229,18 @@ wrapping `ErrUnseeded`). A `Forbidden` here would mean something has edited the
 Role or the env var independently of the constant, which is a different bug from
 the one you are probably chasing.
 
-The blank-`refresh_token` case is worth naming because it is the plausible mistake:
-the service *derives* the sandbox copy by blanking `tokens.refresh_token` to `""`,
-never by removing the key. So a blanked file is a valid-looking `auth.json` that
-the CLI will happily parse — it is just the wrong copy. **The stored Secret must
-carry the real, live refresh token.** `authfile.go:44-46` calls this out: "a worker
-holding one has been given the wrong copy."
+The blank-`refresh_token` case is worth naming because it is the plausible
+mistake. The credential source derives an access-only document by blanking
+`tokens.refresh_token` before the direct Responses adapter reads it. That
+derived value is never written into a sandbox and must never be seeded back as
+the durable source. **The stored Secret must carry the real, live refresh
+token.**
 
-**Sandbox side — the composed file inside the pod is malformed.** Different
-signature entirely: `codex exec` exits **1 with completely empty stdout**, the
-cause on stderr only, after retrying roughly **104 times in ~35s** against
-`auth.openai.com`. If you see a stage burn ~35 seconds and produce no output at
-all, that is this, not the worker-side path above. It does not degrade gracefully
-because `OPENAI_API_KEY` is the only `AuthDotJson` field without
-`#[serde(default)]` (verified against `codex-cli rust-v0.145.0`) — a malformed
-file means the sandbox simply never starts.
+**Provider side.** Model calls run on the main worker through the direct
+Responses client. Authentication, rate-limit and provider failures appear as
+typed Temporal activity failures on the active `AgentWorkflow`; there is no
+sandbox-side provider process or stderr stream to inspect. Start with the child
+workflow's model activity and main-worker structured logs.
 
 ---
 
@@ -277,9 +274,8 @@ for a well-formed file. An earlier draft of this runbook gave an 8-day
 condition above is the one that is, so it has been removed rather than left as the
 only uncited number in the file.
 
-**Mode.** The CLI writes `auth.json` `0600` and whatever composes the file inside a
-sandbox should match. A Kubernetes Secret is not a file mode, but anything that
-lands this on disk needs to be `0600`.
+**Mode.** The seed source should remain `0600`. The Kubernetes Secret is read
+only by the main worker; it is not mounted into ticket sandboxes.
 
 **Pulumi must never own this Secret.** The refresh token rotates on first use, so a
 value committed to git or to a stack is a corpse within a day, and a later

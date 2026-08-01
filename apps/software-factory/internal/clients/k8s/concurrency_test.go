@@ -11,7 +11,6 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codex"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
@@ -20,8 +19,6 @@ import (
 // assertions are what keeps the signatures honest.
 var (
 	_ activities.PodLifecycle = (*Sandboxes)(nil)
-	_ codex.PodExecer         = (*Sandboxes)(nil)
-	_ codex.FileTransfer      = (*Sandboxes)(nil)
 )
 
 // answeringStreamer replies from the command it was given rather than from a
@@ -93,7 +90,7 @@ func TestServesConcurrentExecsAndCreatesWithoutADataRace(t *testing.T) {
 
 				spec := validSpec()
 				spec.TicketNumber = w*100 + r + 1
-				if _, err := s.Create(context.Background(), spec, validCredential()); err != nil {
+				if _, err := s.Create(context.Background(), spec); err != nil {
 					errs <- fmt.Errorf("Create(ticket %d): %w", spec.TicketNumber, err)
 				}
 			}

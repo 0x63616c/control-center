@@ -4,25 +4,25 @@ import (
 	"fmt"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/workflow"
 )
 
-// stageUsageAlwaysMeasured stands in for a per-attempt "was this actually
-// measured" bit that activities.stageOutput does not carry today.
-//
-// codex.Runner.RunStage already computes it (work.StageResult.UsageMeasured),
-// but activities.Activities.runStage drops it when building stageOutput —
-// this is #426, ADR-0012's own "Recording" section names it by number and
-// says "nothing reads UsageMeasured" is the bug this ticket's Attempt rows
-// exist to stop reproducing. Fixing #426 means changing the shared
-// stageOutput/RunPlanOutput/RunImplementOutput/RunReviewOutput envelope
-// every caller of runStage — including the unmodified GitHub-issue pipeline
-// — reads, which is out of this ticket's scope. Until then, true is accurate
-// for every attempt this pipeline actually runs (nothing resumes yet), and
-// is a documented placeholder rather than a silent one.
+// stageUsageAlwaysMeasured preserves the value recorded by pre-AgentWorkflow
+// histories. New executions use AgentWorkflowResult.UsageMeasured instead.
 const stageUsageAlwaysMeasured = true
+
+// These names exist only to replay FactoryWorkTicket histories started before
+// AgentWorkflow replaced the stage activities. No worker registers matching
+// implementations in the current deployment.
+const (
+	legacyRunPlanActivityName      = "RunPlan"
+	legacyRunImplementActivityName = "RunImplement"
+	legacyRunReviewActivityName    = "RunReview"
+)
 
 // factoryImplementReviewLoop is implementReviewLoop's counterpart for the
 // Ticket-backed pipeline: the same turn schedule (loop.go's own doc comment
@@ -74,6 +74,11 @@ func (r *factoryTicketRun) factoryImplementReviewLoop(
 					Outcome: work.OutcomeBlocked, Usage: r.usage, PullRequest: pr,
 					Detail: impl.BlockedReason,
 				}, nil
+			}
+			if r.agentWorkflow && workflow.GetVersion(ctx, factoryPushRepoChangeID, workflow.DefaultVersion, factoryPushRepoVersion) != workflow.DefaultVersion {
+				if err := workflow.ExecuteActivity(control, acts.PushRepo, r.sandbox).Get(ctx, nil); err != nil {
+					return FactoryWorkTicketResult{Outcome: work.OutcomeFailed, Usage: r.usage, PullRequest: pr}, fmt.Errorf("push successful implement turn: %w", err)
+				}
 			}
 
 			pullRequestTitle := fmt.Sprintf("T-%d %s", r.in.TicketID, impl.Title)
@@ -170,9 +175,20 @@ func (r *factoryTicketRun) runFactoryPlanTurn(
 	r.recordStep(ctx, key)
 
 	attempt := activities.StageAttempt{Key: key, Sandbox: r.sandbox, Model: model, Detail: detail, Prior: narrowPrior(prior)}
+	if r.agentWorkflow {
+		out, err := r.runAgentStage(ctx, attempt, agent.ToolsetCodingReadV1)
+		if err != nil {
+			r.recordAttempt(ctx, key, model, startedAt, out.Usage, out.UsageMeasured, store.AttemptFailed)
+			return work.StageOutput{}, err
+		}
+		r.usage = r.usage.Add(out.Usage)
+		r.recordAttempt(ctx, key, model, startedAt, out.Usage, out.UsageMeasured, store.AttemptSucceeded)
+		r.persistAgentTranscript(ctx, key, out.TranscriptRef)
+		return out.Result, nil
+	}
 
 	var out activities.RunPlanOutput
-	if err := workflow.ExecuteActivity(stages, acts.RunPlan, activities.NewRunPlanInput(attempt)).Get(ctx, &out); err != nil {
+	if err := workflow.ExecuteActivity(stages, legacyRunPlanActivityName, activities.NewRunPlanInput(attempt)).Get(ctx, &out); err != nil {
 		r.recordAttempt(ctx, key, model, startedAt, out.Usage, stageUsageAlwaysMeasured, store.AttemptFailed)
 		return work.StageOutput{}, err
 	}
@@ -199,9 +215,20 @@ func (r *factoryTicketRun) runFactoryImplementTurn(
 	r.recordStep(ctx, key)
 
 	attempt := activities.StageAttempt{Key: key, Sandbox: r.sandbox, Model: model, Detail: detail, Prior: narrowPrior(prior)}
+	if r.agentWorkflow {
+		out, err := r.runAgentStage(ctx, attempt, agent.ToolsetCodingWriteV1)
+		if err != nil {
+			r.recordAttempt(ctx, key, model, startedAt, out.Usage, out.UsageMeasured, store.AttemptFailed)
+			return work.StageOutput{}, err
+		}
+		r.usage = r.usage.Add(out.Usage)
+		r.recordAttempt(ctx, key, model, startedAt, out.Usage, out.UsageMeasured, store.AttemptSucceeded)
+		r.persistAgentTranscript(ctx, key, out.TranscriptRef)
+		return out.Result, nil
+	}
 
 	var out activities.RunImplementOutput
-	if err := workflow.ExecuteActivity(stages, acts.RunImplement, activities.NewRunImplementInput(attempt)).Get(ctx, &out); err != nil {
+	if err := workflow.ExecuteActivity(stages, legacyRunImplementActivityName, activities.NewRunImplementInput(attempt)).Get(ctx, &out); err != nil {
 		r.recordAttempt(ctx, key, model, startedAt, out.Usage, stageUsageAlwaysMeasured, store.AttemptFailed)
 		return work.StageOutput{}, err
 	}
@@ -225,9 +252,20 @@ func (r *factoryTicketRun) runFactoryReviewTurn(
 	r.recordStep(ctx, key)
 
 	attempt := activities.StageAttempt{Key: key, Sandbox: r.sandbox, Model: model, Detail: detail, Prior: narrowPrior(prior)}
+	if r.agentWorkflow {
+		out, err := r.runAgentStage(ctx, attempt, agent.ToolsetCodingReadV1)
+		if err != nil {
+			r.recordAttempt(ctx, key, model, startedAt, out.Usage, out.UsageMeasured, store.AttemptFailed)
+			return work.StageOutput{}, err
+		}
+		r.usage = r.usage.Add(out.Usage)
+		r.recordAttempt(ctx, key, model, startedAt, out.Usage, out.UsageMeasured, store.AttemptSucceeded)
+		r.persistAgentTranscript(ctx, key, out.TranscriptRef)
+		return out.Result, nil
+	}
 
 	var out activities.RunReviewOutput
-	if err := workflow.ExecuteActivity(stages, acts.RunReview, activities.NewRunReviewInput(attempt)).Get(ctx, &out); err != nil {
+	if err := workflow.ExecuteActivity(stages, legacyRunReviewActivityName, activities.NewRunReviewInput(attempt)).Get(ctx, &out); err != nil {
 		r.recordAttempt(ctx, key, model, startedAt, out.Usage, stageUsageAlwaysMeasured, store.AttemptFailed)
 		return work.StageOutput{}, err
 	}
@@ -238,6 +276,31 @@ func (r *factoryTicketRun) runFactoryReviewTurn(
 	r.recordAttempt(ctx, key, model, startedAt, out.Usage, stageUsageAlwaysMeasured, store.AttemptSucceeded)
 	r.persistTranscript(ctx, key, out.Transcript)
 	return out.Result, nil
+}
+
+func (r *factoryTicketRun) runAgentStage(
+	ctx workflow.Context,
+	attempt activities.StageAttempt,
+	toolsetID agent.ToolsetID,
+) (AgentWorkflowResult, error) {
+	child := workflow.WithChildOptions(ctx, agentChildWorkflowOptions(r.in.Policy, attempt.Key))
+	input := AgentWorkflowInput{
+		Attempt: attempt, ToolsetID: toolsetID,
+		ToolTarget: agent.ToolTarget{Kind: agent.ToolTargetLegacySandbox}, Limits: agent.DefaultLimits(),
+		CacheKey: fmt.Sprintf("agent/%s/%s", r.runID, attempt.Key.Stage),
+	}
+	var result AgentWorkflowResult
+	err := workflow.ExecuteChildWorkflow(child, AgentWorkflow, input).Get(ctx, &result)
+	return result, err
+}
+
+func agentChildWorkflowOptions(policy work.RunPolicy, key work.StageKey) workflow.ChildWorkflowOptions {
+	return workflow.ChildWorkflowOptions{
+		WorkflowID:               agent.WorkflowID(key.RunID, string(key.Stage), key.Turn),
+		WorkflowExecutionTimeout: policy.StageTimeout,
+		WaitForCancellation:      true,
+		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
+	}
 }
 
 // openOrUpdatePullRequest mirrors ticketRun.openOrUpdatePullRequest exactly;

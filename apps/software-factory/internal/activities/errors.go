@@ -5,10 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codex"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codexauth"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"go.temporal.io/sdk/temporal"
 )
@@ -69,23 +67,24 @@ const (
 	// exact next retry delay so pending CI never enters a workflow poll loop.
 	ErrTypeCINotConcluded = "CINotConcluded"
 
-	// ErrTypeUnresumableIncompleteAttempt requires explicit workflow
-	// authorization of another Agent Attempt; native retry must never start fresh.
-	ErrTypeUnresumableIncompleteAttempt = "unresumable_incomplete_attempt"
-	// ErrTypeSemanticDeadline says no new target work may consume the reserved finalization window.
-	ErrTypeSemanticDeadline = "semantic_deadline"
-	// ErrTypeHardDeadline says the absolute target Run execution budget has elapsed.
-	ErrTypeHardDeadline       = "hard_deadline"
-	ErrTypeAgentAttemptBudget = "agent_attempt_budget"
-	ErrTypeReviewBudget       = "review_budget"
-	ErrTypeCIUnobserved       = "ci_unobserved"
-	// ErrTypeRunWorkerSessionLost reports permanent loss of the private Run
-	// Worker Session. The workflow may provision one replacement generation;
-	// this is never a native activity retry.
-	ErrTypeRunWorkerSessionLost = "run_worker_session_lost"
-	// ErrTypePredecessorMergeFenced reports that an older canceled Run's
-	// confirmed merge atomically completed the Ticket and fenced this successor.
+	// ErrTypePredecessorMergeFenced preserves the target-run recovery outcome:
+	// an older canceled run merged before its successor could proceed.
 	ErrTypePredecessorMergeFenced = "predecessor_merge_fenced"
+	// ErrTypeRunWorkerSessionLost identifies a lost generation-affine tool session.
+	ErrTypeRunWorkerSessionLost = "run_worker_session_lost"
+	// ErrTypeAgentAttemptBudget is the target run's semantic agent budget.
+	ErrTypeAgentAttemptBudget = "agent_attempt_budget"
+	// ErrTypeReviewBudget is the target run's semantic review budget.
+	ErrTypeReviewBudget = "review_budget"
+	// ErrTypeCIUnobserved identifies an exhausted exact-head CI observation window.
+	ErrTypeCIUnobserved = "ci_unobserved"
+	// ErrTypeHardDeadline is the target run's absolute execution ceiling.
+	ErrTypeHardDeadline = "hard_deadline"
+	// ErrTypeSemanticDeadline reserves time for terminal recording and cleanup.
+	ErrTypeSemanticDeadline = "semantic_deadline"
+	// ErrTypeUnresumableIncompleteAttempt is retained for target recovery rows
+	// that predate durable AgentWorkflow conversation references.
+	ErrTypeUnresumableIncompleteAttempt = "unresumable_incomplete_attempt"
 )
 
 // fail translates this service's error vocabulary into Temporal's, once.
@@ -139,17 +138,6 @@ func fail(ctx context.Context, op string, err error) error {
 // stops the whole system rather than one ticket.
 func errorTypeOf(err error) string {
 	switch {
-	// codex first, and both of its sentinels named. They resolve to
-	// work.ErrPermanent, so without these two cases they fall through to
-	// ErrTypePermanent — and the dispatcher then cannot tell "the provider is
-	// rate-limiting us" from "the credential is dead". Those call for opposite
-	// responses: wait out a cooldown, or stop and page a human.
-	case errors.Is(err, codex.ErrRateLimited):
-		return ErrTypeRateLimit
-	case errors.Is(err, codex.ErrAuth):
-		return ErrTypeAuth
-	case errors.Is(err, ErrUnresumableIncompleteAttempt):
-		return ErrTypeUnresumableIncompleteAttempt
 	// codexauth.ErrUnseeded means the codex-auth Secret does not exist or does
 	// not parse (#344/#398): every ticket fails identically until a human
 	// seeds it, which is exactly the "stop and page a human" case ErrTypeAuth
@@ -193,25 +181,4 @@ func FailureKindOf(err error) work.FailureKind {
 		}
 	}
 	return work.FailureOther
-}
-
-// outcomeOf names how a failed stage ended, for the metric's outcome label.
-//
-// It classifies through errorTypeOf, not FailureKindOf, and the difference
-// matters: this is called on the error a client just returned, before fail has
-// translated it, so the Temporal type string FailureKindOf reads does not exist
-// yet. Both still descend from errorTypeOf, so the metric and the dispatcher
-// cannot disagree about what an auth failure is.
-func outcomeOf(err error) telemetry.Outcome {
-	if err == nil {
-		return telemetry.OutcomeSuccess
-	}
-	switch errorTypeOf(err) {
-	case ErrTypeAuth:
-		return telemetry.OutcomeAuthFailed
-	case ErrTypeRateLimit:
-		return telemetry.OutcomeRateLimited
-	default:
-		return telemetry.OutcomeFailed
-	}
 }

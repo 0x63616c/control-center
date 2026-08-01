@@ -20,6 +20,7 @@ type TargetRunRecorder interface {
 	StartAgentAttempt(context.Context, store.StartAgentAttemptInput) (store.AgentAttempt, error)
 	FailAgentAttempt(context.Context, store.AgentAttemptFailureInput) (store.AgentAttempt, error)
 	CheckpointAgentAttempt(context.Context, store.AgentCheckpointInput) (store.AgentAttempt, error)
+	FinalizeAgentWorkflowAttempt(context.Context, store.AgentCheckpointInput) (store.AgentAttempt, error)
 	CheckpointGitEffect(context.Context, store.GitCheckpointInput) (store.GitCheckpoint, error)
 	FinalizeConfirmedMerge(context.Context, store.ConfirmedMergeInput) (store.TerminalResult, error)
 	CancelRun(context.Context, store.CancelRunInput) (store.TerminalResult, error)

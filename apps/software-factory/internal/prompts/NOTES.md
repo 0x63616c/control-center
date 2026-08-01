@@ -165,9 +165,9 @@ that an override at one site is not read as licence to ignore the rest.
   issue-label scheme, where things live. Each stage points at `AGENTS.md` once, via the base,
   and stops.
 
-  `implement`'s "push the branch before you finish" is **not** in `AGENTS.md` and is
-  load-bearing — the pushed branch is the durable state the workflow's `OpenOrUpdatePullRequest`
-  activity acts on after every turn, so a lost pod costs a re-clone rather than the ticket.
+  `implement`'s "commit before you finish, but do not push" is **not** in `AGENTS.md` and is
+  load-bearing. The workflow publishes the committed head through a credentialed repository
+  boundary before `OpenOrUpdatePullRequest`, so model-selected commands never receive a token.
   `Fixes #N` moved from the old `propose.md` into `implement.md`'s `body` guidance so the
   resolved issue intentionally auto-closes when its PR merges. The prompt confines that
   closing reference to the canonical linked-issue section, preventing incidental prose or

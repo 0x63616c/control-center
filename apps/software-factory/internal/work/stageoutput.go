@@ -54,7 +54,7 @@ type stageOutputValue interface {
 // which Temporal retries indefinitely by default (this worker leaves
 // WorkflowPanicPolicy unset, whose zero value is BlockWorkflow), wedging the
 // run rather than failing it. prompts.Decode, this function's only caller, is
-// itself only ever invoked from activities.RunStage — see Decode's doc
+// itself only ever invoked from an activity — see Decode's doc
 // comment — and internal/workflows/** is mechanically forbidden from
 // importing internal/prompts at all (.golangci.yml's depguard rule), not
 // merely by convention. If a future stage's decode needs to run somewhere a
@@ -256,7 +256,7 @@ func (o *StageOutput) UnmarshalJSON(data []byte) error {
 // that ships this step. This method only runs once a "Result" key is present,
 // and a pre-this-step activity result has no such key — the field was named
 // Document. Renames are caught a level up, by
-// activities.RunStageOutput.UnmarshalJSON.
+// the legacy stage activity result decoder.
 func decodeStageOutputValue(stage Stage, raw json.RawMessage) (stageOutputValue, error) {
 	switch stage {
 	case StagePlan:

@@ -16,7 +16,7 @@ import (
 // per-ticket sandbox pod, holds no Kubernetes API access and creates nothing
 // — it polls one queue for the run it was created to serve and stops when
 // that pod is deleted, so it has no business reading config a control-plane
-// process needs (SandboxNamespace, SandboxImage, CodexAuthSecretName, and so
+// process needs (SandboxNamespace, SandboxImage, provider credentials, and so
 // on all belong to Worker, never to this).
 type SandboxWorker struct {
 	// TemporalHostPort is the frontend to dial, host:port. Same value the

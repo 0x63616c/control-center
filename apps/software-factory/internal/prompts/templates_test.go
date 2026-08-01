@@ -120,6 +120,29 @@ func TestImplementPromptRequiresTheCanonicalPullRequestDescription(t *testing.T)
 	}
 }
 
+func TestImplementPromptCommitsButLeavesPublicationToTheWorkflow(t *testing.T) {
+	t.Parallel()
+
+	body, err := templates.ReadFile("templates/implement.md")
+	if err != nil {
+		t.Fatalf("reading implement prompt: %v", err)
+	}
+	prompt := string(body)
+	for _, requirement := range []string{
+		"Commit the finished change before you return",
+		"do not push it",
+		"workflow publishes",
+		"fresh repository credential",
+	} {
+		if !strings.Contains(prompt, requirement) {
+			t.Errorf("implement prompt does not require %q", requirement)
+		}
+	}
+	if strings.Contains(prompt, "git push") {
+		t.Fatal("implement prompt still instructs the credential-free model tool container to run git push")
+	}
+}
+
 func TestReviewPromptRequiresDocumentationDriftFindings(t *testing.T) {
 	t.Parallel()
 

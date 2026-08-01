@@ -86,7 +86,16 @@ func (c *Client) Turn(ctx context.Context, request TurnRequest, emit EmitFunc) (
 	req.Header.Set("Content-Type", "application/json")
 	if request.PromptCacheKey != "" {
 		req.Header.Set("session-id", request.PromptCacheKey)
-		req.Header.Set("x-client-request-id", request.PromptCacheKey)
+	}
+	requestID := request.IdempotencyKey
+	if requestID == "" {
+		requestID = request.PromptCacheKey
+	}
+	if requestID != "" {
+		req.Header.Set("x-client-request-id", requestID)
+	}
+	if request.IdempotencyKey != "" {
+		req.Header.Set("Idempotency-Key", request.IdempotencyKey)
 	}
 
 	resp, err := c.httpClient.Do(req)
@@ -97,7 +106,14 @@ func (c *Client) Turn(ctx context.Context, request TurnRequest, emit EmitFunc) (
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		metadata := safeProviderErrorMetadata(body)
-		return TurnResult{}, fmt.Errorf("the Codex Responses endpoint answered HTTP %d%s", resp.StatusCode, metadata)
+		err := fmt.Errorf("the Codex Responses endpoint answered HTTP %d%s", resp.StatusCode, metadata)
+		if resp.StatusCode == http.StatusTooManyRequests {
+			return TurnResult{}, fmt.Errorf("%w: %w", ErrRateLimited, err)
+		}
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return TurnResult{}, fmt.Errorf("%w: %w", ErrAuth, err)
+		}
+		return TurnResult{}, fmt.Errorf("responses request failed: %w", err)
 	}
 
 	result, err := parseStream(resp.Body, emit)
@@ -228,7 +244,15 @@ type wireInputContent struct {
 }
 
 type wireText struct {
-	Verbosity TextVerbosity `json:"verbosity"`
+	Verbosity TextVerbosity       `json:"verbosity"`
+	Format    *wireResponseFormat `json:"format,omitempty"`
+}
+
+type wireResponseFormat struct {
+	Type   string          `json:"type"`
+	Name   string          `json:"name"`
+	Schema json.RawMessage `json:"schema"`
+	Strict bool            `json:"strict"`
 }
 
 type wireTool struct {
@@ -240,6 +264,15 @@ type wireTool struct {
 }
 
 func encodeRequest(request TurnRequest) ([]byte, error) {
+	var responseFormat *wireResponseFormat
+	if request.ResponseFormat != nil {
+		if request.ResponseFormat.Name == "" || !json.Valid(request.ResponseFormat.Schema) {
+			return nil, fmt.Errorf("encoding the Codex Responses request: response format needs a name and valid schema")
+		}
+		responseFormat = &wireResponseFormat{
+			Type: "json_schema", Name: request.ResponseFormat.Name, Schema: request.ResponseFormat.Schema, Strict: true,
+		}
+	}
 	if request.Model == "" || request.Instructions == "" || len(request.Input) == 0 {
 		return nil, fmt.Errorf("a Codex Responses turn needs a model, instructions, and input")
 	}
@@ -301,7 +334,7 @@ func encodeRequest(request TurnRequest) ([]byte, error) {
 		ToolChoice:         request.ToolChoice,
 		ParallelToolCalls:  request.ParallelToolCalls,
 		Reasoning:          reasoning,
-		Text:               wireText{Verbosity: request.TextVerbosity},
+		Text:               wireText{Verbosity: request.TextVerbosity, Format: responseFormat},
 		PromptCacheKey:     request.PromptCacheKey,
 		PreviousResponseID: request.PreviousResponseID,
 		Include:            request.Include,

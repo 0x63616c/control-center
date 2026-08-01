@@ -809,6 +809,18 @@ func (s *Store) FailAgentAttempt(ctx context.Context, in AgentAttemptFailureInpu
 
 // CheckpointAgentAttempt records only the named active Attempt after verifying the Run capability.
 func (s *Store) CheckpointAgentAttempt(ctx context.Context, in AgentCheckpointInput) (AgentAttempt, error) {
+	return s.checkpointAgentAttempt(ctx, in, true)
+}
+
+// FinalizeAgentWorkflowAttempt records immutable child-workflow evidence from
+// the main-control activity. It is deliberately a separate API from the
+// scoped Run Worker checkpoint door: an empty capability never authenticates
+// the old direct-agent protocol.
+func (s *Store) FinalizeAgentWorkflowAttempt(ctx context.Context, in AgentCheckpointInput) (AgentAttempt, error) {
+	return s.checkpointAgentAttempt(ctx, in, false)
+}
+
+func (s *Store) checkpointAgentAttempt(ctx context.Context, in AgentCheckpointInput, requireCapability bool) (AgentAttempt, error) {
 	if s.begin == nil {
 		return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: store cannot begin a transaction")
 	}
@@ -842,7 +854,7 @@ func (s *Store) CheckpointAgentAttempt(ctx context.Context, in AgentCheckpointIn
 	if err != nil {
 		return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: reading attempt: %w", wrapQueryErr(err))
 	}
-	if !current.CheckpointCapabilityHash.Valid || current.CheckpointCapabilityHash.String != capabilityHash(in.ID, in.Capability) {
+	if requireCapability && (!current.CheckpointCapabilityHash.Valid || current.CheckpointCapabilityHash.String != capabilityHash(in.ID, in.Capability)) {
 		return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: %w", ErrRunOwnership)
 	}
 	if current.State != string(work.AgentAttemptRunning) {

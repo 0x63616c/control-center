@@ -20,6 +20,7 @@ import (
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/worker"
+	"go.temporal.io/sdk/workflow"
 )
 
 // TestWorkOnTicketClaimsBeforeProvisioningGenerationOneAndClonesThroughItsSession
@@ -1876,6 +1877,7 @@ func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore workOnT
 	t.Helper()
 	suite := &testsuite.WorkflowTestSuite{}
 	env := suite.NewTestWorkflowEnvironment()
+	h := &workOnTicketHarness{env: env, store: recorderStore, deleteErr: errors.New("temporary teardown handoff")}
 	if enableSessionWorker {
 		env.SetWorkerOptions(worker.Options{
 			EnableSessionWorker:               true,
@@ -1892,8 +1894,47 @@ func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore workOnT
 		t.Fatalf("NewTargetRecoveryActivities: %v", err)
 	}
 	env.RegisterActivity(recovery)
+	env.RegisterActivityWithOptions(func(ctx context.Context, input activities.TargetAgentEvidenceInput) error {
+		if !h.checkpointAgents {
+			return nil
+		}
+		result, err := json.Marshal(input.Result)
+		if err != nil {
+			return err
+		}
+		usageState := work.UsageUnknown
+		if input.UsageMeasured {
+			usageState = work.UsageMeasured
+		}
+		_, err = h.store.CheckpointAgentAttempt(ctx, store.AgentCheckpointInput{
+			ID: input.AttemptID, Capability: workOnTicketCheckpointCapability, ThreadID: input.Identity,
+			State: work.AgentAttemptSucceeded, UsageState: usageState, Usage: input.Usage, EndedAt: input.EndedAt,
+			Result: result, Transcript: &store.TargetTranscript{CompressedBytes: []byte("test transcript"), Compression: "gzip", UncompressedSizeBytes: 15, Checksum: []byte("test-checksum")},
+		})
+		return err
+	}, activity.RegisterOptions{Name: "Finalize"})
 
-	h := &workOnTicketHarness{env: env, store: recorderStore, deleteErr: errors.New("temporary teardown handoff")}
+	env.RegisterWorkflowWithOptions(func(_ workflow.Context, input workflows.AgentWorkflowInput) (workflows.AgentWorkflowResult, error) {
+		stage := work.AgentStage(input.Attempt.Key.Stage)
+		legacy := activities.TargetAgentInput{
+			TicketNumber: input.Attempt.Key.Ticket, Iteration: input.Attempt.Key.Turn, Stage: stage,
+			Model: input.Attempt.Model, Detail: input.Attempt.Detail, Prior: input.Attempt.Prior,
+			PromptContext: input.Attempt.PromptContext, MaxReviewSteps: input.Attempt.MaxReviewSteps,
+		}
+		h.agentInputs = append(h.agentInputs, legacy)
+		if stage == work.AgentStageReview {
+			h.reviewHead = legacy.PromptContext.CandidateHeadSHA
+		}
+		out := targetAgentOutput(t, stage)
+		if h.agentResult != nil {
+			var err error
+			out, err = h.agentResult(legacy)
+			if err != nil {
+				return workflows.AgentWorkflowResult{}, err
+			}
+		}
+		return workflows.AgentWorkflowResult{Result: out.Result, Usage: out.Usage, UsageMeasured: out.UsageState == work.UsageMeasured}, nil
+	}, workflow.RegisterOptions{Name: "AgentWorkflow"})
 	env.RegisterActivityWithOptions(
 		func(_ context.Context, in activities.ProvisionRunWorkerInput) (activities.ProvisionRunWorkerOutput, error) {
 			h.provisioned = in

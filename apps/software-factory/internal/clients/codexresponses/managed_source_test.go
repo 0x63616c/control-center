@@ -10,12 +10,12 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
-type fakeCredentialFileSource struct {
+type fakeManagedCredentialFileSource struct {
 	file work.CredentialFile
 	err  error
 }
 
-func (f fakeCredentialFileSource) SandboxCredentialFile(context.Context) (work.CredentialFile, error) {
+func (f fakeManagedCredentialFileSource) ManagedCredentialFile(context.Context) (work.CredentialFile, error) {
 	return f.file, f.err
 }
 
@@ -30,7 +30,7 @@ func TestManagedCredentialSourceExtractsTheDirectCallCredential(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encoding credential document: %v", err)
 	}
-	source, err := NewManagedCredentialSource(fakeCredentialFileSource{file: work.NewCredentialFile(document)})
+	source, err := NewManagedCredentialSource(fakeManagedCredentialFileSource{file: work.NewCredentialFile(document)})
 	if err != nil {
 		t.Fatalf("constructing source: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestManagedCredentialSourceWrapsItsDependencyErrorWithoutLeakingValues(t *t
 	t.Parallel()
 
 	const secret = "do-not-leak"
-	source, err := NewManagedCredentialSource(fakeCredentialFileSource{err: errors.New("unavailable")})
+	source, err := NewManagedCredentialSource(fakeManagedCredentialFileSource{err: errors.New("unavailable")})
 	if err != nil {
 		t.Fatalf("constructing source: %v", err)
 	}
