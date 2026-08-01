@@ -3,6 +3,7 @@ package activities
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -61,9 +62,10 @@ func (p *targetGitHubProbe) ChecksForCommit(_ context.Context, sha string, requi
 }
 
 type repositoryCheckpointProbe struct {
-	loaded store.GitCheckpoint
-	found  bool
-	writes []store.GitCheckpointInput
+	loaded        store.GitCheckpoint
+	found         bool
+	writes        []store.GitCheckpointInput
+	checkpointErr error
 }
 
 func (p *repositoryCheckpointProbe) Load(context.Context) (store.GitCheckpoint, bool, error) {
@@ -72,7 +74,10 @@ func (p *repositoryCheckpointProbe) Load(context.Context) (store.GitCheckpoint, 
 
 func (p *repositoryCheckpointProbe) Checkpoint(_ context.Context, in store.GitCheckpointInput) (store.GitCheckpoint, error) {
 	p.writes = append(p.writes, in)
-	return in.GitCheckpoint, nil
+	p.loaded, p.found = in.GitCheckpoint, true
+	err := p.checkpointErr
+	p.checkpointErr = nil
+	return in.GitCheckpoint, err
 }
 
 func targetRepositoryActivities(repository *targetRepositoryProbe, github *targetGitHubProbe, cp *repositoryCheckpointProbe) *RunWorkerActivities {
@@ -132,45 +137,59 @@ func TestTargetAwaitCIUsesTheExactCommitAndCompletesItsStep(t *testing.T) {
 	}
 }
 
-func TestTargetSyncRetryAfterAcceptedEffectUsesTheExactDurableResult(t *testing.T) {
+var errCheckpointResponseLost = errors.New("checkpoint response was lost")
+
+func TestTargetSyncRetryAfterLostCheckpointResponseUsesTheExactDurableResult(t *testing.T) {
 	position := targetPosition(3)
 	want := work.PullRequest{Number: 42, NodeID: "PR_node", URL: "https://github.com/example/repo/pull/42"}
-	cp := storedRepositoryEffect(t, position, repositoryEffectSync, want)
-	github := &targetGitHubProbe{pr: work.PullRequest{Number: 99}}
+	cp := &repositoryCheckpointProbe{checkpointErr: errCheckpointResponseLost}
+	github := &targetGitHubProbe{pr: want}
 	a := targetRepositoryActivities(&targetRepositoryProbe{}, github, cp)
-	got, err := a.TargetSyncPullRequest(context.Background(), TargetSyncPullRequestInput{Step: position, Title: "title"})
+	in := TargetSyncPullRequestInput{Step: position, Title: "title"}
+	if _, err := a.TargetSyncPullRequest(context.Background(), in); !errors.Is(err, errCheckpointResponseLost) || github.syncCalls != 1 || !cp.found {
+		t.Fatalf("first try error/calls/checkpoint = %v / %d / %#v", err, github.syncCalls, cp.loaded)
+	}
+	got, err := a.TargetSyncPullRequest(context.Background(), in)
 	if err != nil {
 		t.Fatalf("TargetSyncPullRequest: %v", err)
 	}
-	if github.syncCalls != 0 || got.Number != want.Number || got.NodeID != want.NodeID {
+	if github.syncCalls != 1 || got.Number != want.Number || got.NodeID != want.NodeID || len(cp.writes) != 1 {
 		t.Fatalf("sync calls/result = %d / %+v", github.syncCalls, got)
 	}
 }
 
-func TestTargetReadyRetryAfterAcceptedEffectDoesNotCallGitHubAgain(t *testing.T) {
+func TestTargetReadyRetryAfterLostCheckpointResponseDoesNotCallGitHubAgain(t *testing.T) {
 	position := targetPosition(4)
-	cp := storedRepositoryEffect(t, position, repositoryEffectReady, struct{}{})
+	cp := &repositoryCheckpointProbe{checkpointErr: errCheckpointResponseLost}
 	github := &targetGitHubProbe{}
 	a := targetRepositoryActivities(&targetRepositoryProbe{}, github, cp)
-	if err := a.TargetMarkPullRequestReady(context.Background(), TargetMarkPullRequestReadyInput{Step: position}); err != nil {
+	in := TargetMarkPullRequestReadyInput{Step: position}
+	if err := a.TargetMarkPullRequestReady(context.Background(), in); !errors.Is(err, errCheckpointResponseLost) || github.readyCalls != 1 || !cp.found {
+		t.Fatalf("first try error/calls/checkpoint = %v / %d / %#v", err, github.readyCalls, cp.loaded)
+	}
+	if err := a.TargetMarkPullRequestReady(context.Background(), in); err != nil {
 		t.Fatalf("TargetMarkPullRequestReady: %v", err)
 	}
-	if github.readyCalls != 0 {
+	if github.readyCalls != 1 || len(cp.writes) != 1 {
 		t.Fatalf("ready retried GitHub %d times", github.readyCalls)
 	}
 }
 
-func TestTargetMergeRetryAfterAcceptedEffectDoesNotMergeAgain(t *testing.T) {
+func TestTargetMergeRetryAfterLostCheckpointResponseDoesNotMergeAgain(t *testing.T) {
 	position := targetPosition(5)
 	want := work.PullRequestMergeResult{Outcome: work.PullRequestMergeConfirmed, MergeSHA: "merge-sha"}
-	cp := storedRepositoryEffect(t, position, repositoryEffectMerge, want)
-	github := &targetGitHubProbe{}
+	cp := &repositoryCheckpointProbe{checkpointErr: errCheckpointResponseLost}
+	github := &targetGitHubProbe{merge: want}
 	a := targetRepositoryActivities(&targetRepositoryProbe{}, github, cp)
-	got, err := a.TargetMergePullRequest(context.Background(), TargetMergePullRequestInput{Step: position, ExpectedHeadSHA: position.PushedHead})
+	in := TargetMergePullRequestInput{Step: position, ExpectedHeadSHA: position.PushedHead}
+	if _, err := a.TargetMergePullRequest(context.Background(), in); !errors.Is(err, errCheckpointResponseLost) || github.mergeCalls != 1 || !cp.found {
+		t.Fatalf("first try error/calls/checkpoint = %v / %d / %#v", err, github.mergeCalls, cp.loaded)
+	}
+	got, err := a.TargetMergePullRequest(context.Background(), in)
 	if err != nil {
 		t.Fatalf("TargetMergePullRequest: %v", err)
 	}
-	if github.mergeCalls != 0 || got.Outcome != want.Outcome || got.MergeSHA != want.MergeSHA {
+	if github.mergeCalls != 1 || got.Outcome != want.Outcome || got.MergeSHA != want.MergeSHA || len(cp.writes) != 1 {
 		t.Fatalf("merge calls/result = %d / %+v", github.mergeCalls, got)
 	}
 }

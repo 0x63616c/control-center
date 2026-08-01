@@ -95,6 +95,55 @@ func TestRunTargetAgentRefusesFreshExecutionForUnresumableCheckpoint(t *testing.
 	}
 }
 
+func TestRunTargetAgentResumesPriorImplementerThreadOnTheSameWorkerGeneration(t *testing.T) {
+	t.Parallel()
+	cp := &attemptCheckpointProbe{}
+	runner := &targetStageRunnerProbe{}
+	a, err := NewRunWorkerActivities(RunWorkerDeps{Stages: runner, Prompts: promptProbe{}, Checkpoints: func(store.TargetAttemptID) (AttemptCheckpoint, error) { return cp, nil }, ProviderState: providerStateProbe{available: true}, Clock: fixedClock{now: time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)}, Heartbeat: func(context.Context) {}, Repository: &targetRepositoryProbe{}, GitHub: &targetGitHubProbe{}, Identity: targetTestIdentity, RepositoryCheckpoints: testRepositoryCheckpointFactory})
+	if err != nil {
+		t.Fatalf("NewRunWorkerActivities: %v", err)
+	}
+	in := targetAgentInput()
+	in.AttemptID.StepOrdinal++
+	in.PriorProviderThread = &ProviderThreadContinuation{Identity: targetTestIdentity, ThreadID: "thread-established"}
+	if _, err := a.RunTargetAgent(context.Background(), in); err != nil {
+		t.Fatalf("RunTargetAgent: %v", err)
+	}
+	if runner.calls != 1 || runner.resume != "thread-established" {
+		t.Fatalf("runner calls/resume = %d / %q", runner.calls, runner.resume)
+	}
+}
+
+func TestRunTargetAgentRefusesPriorImplementerThreadFromReplacementGeneration(t *testing.T) {
+	t.Parallel()
+	runner := &targetStageRunnerProbe{}
+	a, err := NewRunWorkerActivities(RunWorkerDeps{Stages: runner, Prompts: promptProbe{}, Checkpoints: func(store.TargetAttemptID) (AttemptCheckpoint, error) { return &attemptCheckpointProbe{}, nil }, ProviderState: providerStateProbe{available: true}, Clock: fixedClock{now: time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)}, Heartbeat: func(context.Context) {}, Repository: &targetRepositoryProbe{}, GitHub: &targetGitHubProbe{}, Identity: targetTestIdentity, RepositoryCheckpoints: testRepositoryCheckpointFactory})
+	if err != nil {
+		t.Fatalf("NewRunWorkerActivities: %v", err)
+	}
+	in := targetAgentInput()
+	in.PriorProviderThread = &ProviderThreadContinuation{Identity: work.RunWorkerIdentity{RunID: targetTestIdentity.RunID, Generation: targetTestIdentity.Generation + 1}, ThreadID: "thread-lost"}
+	_, err = a.RunTargetAgent(context.Background(), in)
+	if !errors.Is(err, ErrUnresumableIncompleteAttempt) || runner.calls != 0 {
+		t.Fatalf("error/calls = %v / %d", err, runner.calls)
+	}
+}
+
+func TestRunTargetAgentRefusesUnavailablePriorImplementerThread(t *testing.T) {
+	t.Parallel()
+	runner := &targetStageRunnerProbe{}
+	a, err := NewRunWorkerActivities(RunWorkerDeps{Stages: runner, Prompts: promptProbe{}, Checkpoints: func(store.TargetAttemptID) (AttemptCheckpoint, error) { return &attemptCheckpointProbe{}, nil }, ProviderState: providerStateProbe{}, Clock: fixedClock{now: time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)}, Heartbeat: func(context.Context) {}, Repository: &targetRepositoryProbe{}, GitHub: &targetGitHubProbe{}, Identity: targetTestIdentity, RepositoryCheckpoints: testRepositoryCheckpointFactory})
+	if err != nil {
+		t.Fatalf("NewRunWorkerActivities: %v", err)
+	}
+	in := targetAgentInput()
+	in.PriorProviderThread = &ProviderThreadContinuation{Identity: targetTestIdentity, ThreadID: "thread-unavailable"}
+	_, err = a.RunTargetAgent(context.Background(), in)
+	if !errors.Is(err, ErrUnresumableIncompleteAttempt) || runner.calls != 0 {
+		t.Fatalf("error/calls = %v / %d", err, runner.calls)
+	}
+}
+
 func TestRunTargetAgentCheckpointsProviderAndTerminalBeforeSuccess(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)

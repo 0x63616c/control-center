@@ -93,13 +93,21 @@ func NewRunWorkerActivities(deps RunWorkerDeps) (*RunWorkerActivities, error) {
 
 // TargetAgentInput names one workflow-authorized target Agent Attempt.
 type TargetAgentInput struct {
-	AttemptID    store.TargetAttemptID
-	TicketNumber int
-	Iteration    int
-	Stage        work.AgentStage
-	Model        work.Model
-	Detail       work.TicketDetail
-	Prior        work.PriorTurns
+	AttemptID           store.TargetAttemptID
+	TicketNumber        int
+	Iteration           int
+	Stage               work.AgentStage
+	Model               work.Model
+	Detail              work.TicketDetail
+	Prior               work.PriorTurns
+	PriorProviderThread *ProviderThreadContinuation
+}
+
+// ProviderThreadContinuation identifies an established implementer thread that
+// may continue only on the Run Worker generation that owns its local state.
+type ProviderThreadContinuation struct {
+	Identity work.RunWorkerIdentity
+	ThreadID string
 }
 
 // TargetAgentOutput contains no credential or transcript; both durable forms
@@ -142,6 +150,18 @@ func (a *RunWorkerActivities) RunTargetAgent(ctx context.Context, in TargetAgent
 		default:
 			return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("reconciling %s", in.AttemptID), fmt.Errorf("unknown durable state %q: %w", stored.State, work.ErrPermanent))
 		}
+	} else if continuation := in.PriorProviderThread; continuation != nil {
+		if in.Stage != work.AgentStageImplement || continuation.Identity != a.deps.Identity || continuation.ThreadID == "" {
+			return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("reconciling prior provider state for %s", in.AttemptID), ErrUnresumableIncompleteAttempt)
+		}
+		available, stateErr := a.deps.ProviderState.Available(ctx, continuation.ThreadID)
+		if stateErr != nil {
+			return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("checking prior provider state for %s", in.AttemptID), stateErr)
+		}
+		if !available {
+			return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("reconciling unavailable prior provider state for %s", in.AttemptID), ErrUnresumableIncompleteAttempt)
+		}
+		resumeThread = continuation.ThreadID
 	}
 
 	stage := work.Stage(in.Stage)
