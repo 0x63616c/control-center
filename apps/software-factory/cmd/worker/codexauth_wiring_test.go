@@ -30,19 +30,9 @@ func TestRunBuildsTheDirectModelCredentialSource(t *testing.T) {
 	}
 }
 
-// TestSandboxTemplateCarriesItsPathEnvironment asserts the sandbox template
-// sets every environment variable the image is a contract with, not left to the
-// deploy to remember: #398 found CODEX_HOME silently absent, with codex exec
-// failing identically to a model failure, and GH_CONFIG_DIR fails the same way
-// — gh falls back to $HOME/.config/gh, finds no credential there, and any
-// gh-dependent step in the sandbox reports itself blocked (#414). Extended
-// for #434 step 3: the sandbox pod's own embedded worker needs the same
-// Temporal frontend and namespace this process itself dials, copied from cfg
-// rather than a second pair of environment variables invented for it.
-//
-// TestBuildDepsSatisfiesActivitiesNew does not cover this — SandboxTemplate's
-// own Validate checks Image, the resource limits and the deadline, never Env.
-func TestSandboxTemplateCarriesItsPathEnvironment(t *testing.T) {
+// TestRunWorkerTemplateCarriesItsEnvironment keeps the activated private
+// worker's deployment contract visible at the composition root.
+func TestRunWorkerTemplateCarriesItsEnvironment(t *testing.T) {
 	t.Parallel()
 
 	source, err := os.ReadFile("main.go")
@@ -52,7 +42,7 @@ func TestSandboxTemplateCarriesItsPathEnvironment(t *testing.T) {
 	// Whitespace-collapsed before matching: gofmt aligns the values of a
 	// multi-entry map literal, so an assertion on the exact spacing would fail
 	// the next time an entry with a longer key is added.
-	body := collapseSpace(extractFuncBody(t, string(source), "func buildDeps("))
+	body := collapseSpace(extractFuncBody(t, string(source), "func newTargetRunWorkerControlActivities("))
 
 	for _, tc := range []struct{ entry, why string }{
 		{
@@ -60,20 +50,20 @@ func TestSandboxTemplateCarriesItsPathEnvironment(t *testing.T) {
 			"gh looks in $HOME/.config/gh instead and finds no credential",
 		},
 		{
-			"work.SandboxTemporalHostPortEnv: cfg.TemporalHostPort",
-			"the sandbox pod's own embedded worker (#434) has no Temporal frontend to dial and CreateSession's CreationTimeout is all a run would ever see",
+			"work.RunWorkerTemporalHostPortEnv: cfg.TemporalHostPort",
+			"the Run Worker has no Temporal frontend to dial",
 		},
 		{
-			"work.SandboxTemporalNamespaceEnv: cfg.TemporalNamespace",
-			"the sandbox pod's own embedded worker would dial the wrong namespace, or none",
+			"work.RunWorkerTemporalNamespaceEnv: cfg.TemporalNamespace",
+			"the Run Worker would dial the wrong namespace, or none",
 		},
 		{
-			"work.SandboxBlobsURLEnv: cfg.BlobsURL",
-			"a later payload codec enablement would give sandbox activities a different blob API than the worker",
+			"work.RunWorkerBlobsURLEnv: cfg.BlobsURL",
+			"the Run Worker would use a different blob API than the main worker",
 		},
 	} {
 		if !strings.Contains(body, tc.entry) {
-			t.Errorf("buildDeps()'s sandbox template does not set %s; %s", tc.entry, tc.why)
+			t.Errorf("the Run Worker template does not set %s; %s", tc.entry, tc.why)
 		}
 	}
 }

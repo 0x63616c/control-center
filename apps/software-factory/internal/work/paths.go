@@ -218,3 +218,11 @@ const FactoryDispatcherWorkflowID = "software-factory-ticket-dispatcher"
 // TargetDispatcherWorkflowID is the stable singleton ID for the inactive v0
 // dispatcher. It stays disjoint from the legacy dispatcher until cutover.
 const TargetDispatcherWorkflowID = "software-factory-target-dispatcher"
+
+// MaintainFactoryScheduleID is the stable Temporal Schedule reconciled on
+// every activated worker boot.
+const MaintainFactoryScheduleID = "software-factory-maintain"
+
+// MaintainFactoryWorkflowID is the business ID prefix for executions started
+// by MaintainFactoryScheduleID. Temporal may append a timestamp for uniqueness.
+const MaintainFactoryWorkflowID = "software-factory-maintain"

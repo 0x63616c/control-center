@@ -160,7 +160,10 @@ func run() error {
 	}
 	defer temporal.Close()
 
-	w := worker.New(temporal, work.TaskQueue, worker.Options{
+	controlWorker := worker.New(temporal, work.TargetDispatcherTaskQueue, worker.Options{
+		WorkerStopTimeout: workerStopTimeout,
+	})
+	mainWorker := worker.New(temporal, work.TaskQueue, worker.Options{
 		WorkerStopTimeout: workerStopTimeout,
 	})
 
@@ -174,11 +177,17 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("building the codex credential source: %w", err)
 	}
-	acts, runWorkerControl, err := newActivities(
-		cfg, temporal, renderer, metrics, logger, factoryStore, factoryStore,
-	)
+	ghCfg, err := config.LoadGitHub()
 	if err != nil {
-		return fmt.Errorf("building the activity set: %w", err)
+		return fmt.Errorf("reading the GitHub App's configuration: %w", err)
+	}
+	ghClient, err := github.New(ghCfg, clk, logger)
+	if err != nil {
+		return fmt.Errorf("building the GitHub client: %w", err)
+	}
+	runWorkerControl, err := newTargetRunWorkerControlActivities(cfg, ghCfg, ghClient, factoryStore, logger)
+	if err != nil {
+		return fmt.Errorf("building the target Run Worker activity set: %w", err)
 	}
 
 	// ADR-0012's second, Ticket-driven activity sets, over the same
@@ -188,10 +197,6 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("building the ticket activity set: %w", err)
 	}
-	recordingActs, err := activities.NewRecordingActivities(factoryStore)
-	if err != nil {
-		return fmt.Errorf("building the recording activity set: %w", err)
-	}
 	targetRecordingActs, err := activities.NewTargetRecordingActivities(factoryStore)
 	if err != nil {
 		return fmt.Errorf("building the target recording activity set: %w", err)
@@ -200,9 +205,13 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("building the target recovery activity set: %w", err)
 	}
-	transcriptActs, err := activities.NewTranscriptRecordingActivities(factoryStore)
+	maintenanceActs, err := activities.NewTargetMaintenanceActivities(factoryStore)
 	if err != nil {
-		return fmt.Errorf("building the transcript recording activity set: %w", err)
+		return fmt.Errorf("building the target maintenance activity set: %w", err)
+	}
+	targetExecutionActs, err := activities.NewTargetExecutionActivities(runs.New(temporal))
+	if err != nil {
+		return fmt.Errorf("building the target execution activity set: %w", err)
 	}
 	agentTranscriptActs, err := activities.NewAgentTranscriptRecordingActivities(factoryStore, blobStore)
 	if err != nil {
@@ -235,20 +244,33 @@ func run() error {
 		return fmt.Errorf("building the agent prompt activity set: %w", err)
 	}
 
-	// Registration site. Every workflow and activity set this worker runs is
-	// registered here, on this worker, and nowhere else — one queue, one
-	// worker, one list.
+	registerControl(controlWorker, ticketActs)
 	register(
-		w, acts, runWorkerControl, ticketActs, recordingActs, targetRecordingActs, targetRecoveryActs, transcriptActs,
+		mainWorker, runWorkerControl, targetRecordingActs, targetRecoveryActs, maintenanceActs, targetExecutionActs,
 		agentTranscriptActs, targetEvidenceActs, modelActs, promptActs, logger,
 	)
 
-	// Idempotent: a worker replica that loses the race to start this simply
-	// attaches to the execution the winner started, which is why it happens on
-	// every boot rather than once, ever, by hand.
-	if err := ensureFactoryDispatcher(context.Background(), temporal, logger); err != nil {
-		return fmt.Errorf("ensuring the factory ticket dispatcher is running: %w", err)
+	activationCtx := context.Background()
+	legacy := temporalapi.NewLegacyController(temporal, cfg.TemporalNamespace, clk)
+	request := defaultDispatcherPolicyPublicationRequest("pending")
+	request.RequestID = "startup-" + request.Fingerprint
+	publisher := targetDispatcherPolicyPublisher{
+		publisher: temporalapi.NewDispatcherPublisher(temporal),
+		input: workflows.DispatcherInput{
+			CloneURL: cloneURL(ghCfg),
+			Model:    work.DefaultFactoryConfig().DefaultModel,
+		},
 	}
+	stopWorkers, err := activateTargetWorkers(
+		activationCtx, controlWorker, mainWorker,
+		func(ctx context.Context) error { return ensureActivationReady(ctx, legacy, factoryStore) },
+		publisher, request,
+		func(ctx context.Context) error { return ensureMaintainFactorySchedule(ctx, temporal) },
+	)
+	if err != nil {
+		return err
+	}
+	defer stopWorkers()
 
 	logger.Info("worker starting",
 		// Two different concepts that happen to share the string
@@ -260,26 +282,13 @@ func run() error {
 		slog.String("temporal_namespace", cfg.TemporalNamespace),
 		slog.String("sandbox_namespace", cfg.SandboxNamespace),
 		slog.String("pod", cfg.PodName),
-		// The config the dispatcher would START on, which is not the same as
-		// the config a running one is using — hence the name. The dispatcher
-		// is a long-running workflow that continues as new carrying its config
-		// in workflow state, so after the first start this is logged and then
-		// ignored; a live change is the UpdateConfig signal the API sends.
-		slog.Group("dispatcher_starting_config",
-			slog.Bool("paused", work.DefaultFactoryConfig().Paused),
-			slog.Int("max_in_flight", work.DefaultFactoryConfig().MaxInFlight),
-			slog.String("default_model", work.DefaultFactoryConfig().DefaultModel.Name),
-		),
+		slog.String("dispatcher_workflow_id", work.TargetDispatcherWorkflowID),
+		slog.String("dispatcher_control_queue", work.TargetDispatcherTaskQueue),
+		slog.String("maintenance_schedule_id", work.MaintainFactoryScheduleID),
 	)
 
-	// Run blocks until SIGINT or SIGTERM, then drains: no new tasks are taken,
-	// and in-flight activities get workerStopTimeout to finish before their
-	// contexts are cancelled. Sandbox pods are deliberately left behind: their
-	// Session workers own stage activities, so this main-worker drain neither
-	// cancels nor resumes them.
-	if err := w.Run(worker.InterruptCh()); err != nil {
-		return fmt.Errorf("running the worker on task queue %s: %w", work.TaskQueue, err)
-	}
+	<-worker.InterruptCh()
+	stopWorkers()
 	logger.Info("worker drained")
 	return nil
 }
@@ -320,46 +329,25 @@ func newObservability() (*prometheus.Registry, *telemetry.Metrics) {
 // instead of two.
 func register(
 	w worker.Worker,
-	acts *activities.Activities,
 	runWorkerControl *activities.RunWorkerControlActivities,
-	ticketActs *activities.TicketActivities,
-	recordingActs *activities.RecordingActivities,
 	targetRecordingActs *activities.TargetRecordingActivities,
 	targetRecoveryActs *activities.TargetRecoveryActivities,
-	transcriptActs *activities.TranscriptRecordingActivities,
+	maintenanceActs *activities.TargetMaintenanceActivities,
+	targetExecutionActs *activities.TargetExecutionActivities,
 	agentTranscriptActs *activities.AgentTranscriptRecordingActivities,
 	targetEvidenceActs *activities.TargetAgentEvidenceActivities,
 	modelActs *agentactivities.Activities,
 	promptActs *agentactivities.PromptActivities,
 	logger *slog.Logger,
 ) {
-	w.RegisterWorkflow(workflows.FactoryWorkTicket)
-	w.RegisterWorkflow(workflows.FactoryDispatcher)
 	w.RegisterWorkflow(workflows.WorkOnTicket)
+	w.RegisterWorkflow(workflows.MaintainFactory)
 	w.RegisterWorkflowWithOptions(workflows.AgentWorkflow, workflow.RegisterOptions{Name: agent.WorkflowName})
-	for _, activityMethod := range []any{
-		acts.CreateSandbox,
-		acts.WaitSandboxReady,
-		acts.CloneRepo,
-		acts.PushRepo,
-		acts.DeleteSandbox,
-		acts.FindPullRequest,
-		acts.OpenOrUpdatePullRequest,
-		acts.ObserveCI,
-		acts.ConvertPullRequestToDraft,
-		acts.MarkPullRequestReadyForReview,
-		acts.EnablePullRequestAutoMerge,
-		acts.DescribeRun,
-		acts.SweepOrphanSandboxes,
-	} {
-		w.RegisterActivity(activityMethod)
-	}
 	w.RegisterActivity(runWorkerControl)
-	w.RegisterActivity(ticketActs)
-	w.RegisterActivity(recordingActs)
 	w.RegisterActivity(targetRecordingActs)
 	w.RegisterActivity(targetRecoveryActs)
-	w.RegisterActivity(transcriptActs)
+	w.RegisterActivity(maintenanceActs)
+	w.RegisterActivity(targetExecutionActs)
 	w.RegisterActivity(targetEvidenceActs)
 	w.RegisterActivityWithOptions(promptActs.Prepare, activity.RegisterOptions{Name: agent.PrepareActivityName})
 	w.RegisterActivityWithOptions(modelActs.ModelTurn, activity.RegisterOptions{Name: agent.ModelTurnActivityName})
@@ -371,84 +359,36 @@ func register(
 	)
 
 	logger.Info("registrations",
-		slog.Int("workflows", 4),
-		slog.Int("stages_per_ticket", len(work.Pipeline())),
-		slog.Int("max_in_flight", work.DefaultFactoryConfig().MaxInFlight),
+		slog.Int("workflows", 3),
+		slog.Int("max_in_flight", work.DefaultDispatcherPolicy().MaxInFlight),
 	)
 }
 
-// ensureFactoryDispatcher starts the new dispatcher, or attaches to it if a
-// worker before this one already did — the same idempotent start-on-boot
-// shape as ensureDispatcher, on the disjoint FactoryDispatcherWorkflowID
-// singleton.
-func ensureFactoryDispatcher(ctx context.Context, c dispatcherStarter, logger *slog.Logger) error {
-	run, err := c.ExecuteWorkflow(ctx, temporalapi.StartWorkflowOptions{
-		ID:        work.FactoryDispatcherWorkflowID,
-		TaskQueue: work.TaskQueue,
-	}, workflows.FactoryDispatcher, workflows.FactoryDispatcherInput{
-		Config: work.DefaultFactoryConfig(),
-		Tuning: work.DefaultDispatcherTuning(),
-		Run:    work.DefaultRunPolicy(),
-	})
-	if err != nil {
-		return fmt.Errorf("starting the factory ticket dispatcher workflow %s: %w", work.FactoryDispatcherWorkflowID, err)
-	}
-
-	logger.Info("factory ticket dispatcher workflow ensured",
-		slog.String("workflow_id", work.FactoryDispatcherWorkflowID),
-		slog.String("run_id", run.GetRunID()))
-	return nil
+func registerControl(w worker.Worker, ticketActs *activities.TicketActivities) {
+	w.RegisterWorkflow(workflows.Dispatcher)
+	w.RegisterActivity(ticketActs.AwaitDispatchableTickets)
 }
 
-// newActivities builds the one activity set from concrete clients: GitHub,
-// the sandbox pods, the run lookup and the sandbox sweep.
-//
-// It is the composition root's other half of "a concrete client meets an
-// interface that consumes it" — main.go's own doc comment — kept out of run()
-// only because the list of clients is long enough to want its own name.
-//
-// One *k8s.Sandboxes instance is shared across three roles (Pods, Repo and
-// Sweeper):
-// it is "the only place this service speaks to the Kubernetes API" per its
-// own doc comment, and constructing a second would be a second client holding
-// a second watch on the same pods.
-func newActivities(
-	cfg config.Worker, temporal temporalapi.Client, renderer *prompts.Renderer, metrics *telemetry.Metrics, logger *slog.Logger,
-	dispatcherState activities.DispatcherStateWriter,
+// newTargetRunWorkerControlActivities builds only the Kubernetes authority the
+// activated Run Worker model needs. It deliberately never constructs the
+// retired sandbox pods/exec and remote repository-transfer client.
+func newTargetRunWorkerControlActivities(
+	cfg config.Worker,
+	ghCfg config.GitHub,
+	ghClient *github.Client,
 	checkpointBinder interface {
 		activities.CheckpointCapabilityBinder
 		activities.RepositoryCapabilityBinder
 	},
-) (*activities.Activities, *activities.RunWorkerControlActivities, error) {
-	clk := clock.System{}
-
-	ghCfg, err := config.LoadGitHub()
-	if err != nil {
-		return nil, nil, fmt.Errorf("reading the GitHub App's configuration: %w", err)
-	}
-	ghClient, err := github.New(ghCfg, clk, logger)
-	if err != nil {
-		return nil, nil, fmt.Errorf("building the GitHub client: %w", err)
-	}
-
-	sandboxes, err := k8s.NewInCluster(cfg.SandboxNamespace, logger, clk, k8s.WithImagePullSecret(cfg.SandboxImagePullSecretName))
-	if err != nil {
-		return nil, nil, fmt.Errorf("building the Kubernetes sandbox client: %w", err)
-	}
-
-	legacy, err := activities.New(buildDeps(
-		cfg, ghCfg, ghClient, sandboxes, temporal, dispatcherState, clk, logger,
-	))
-	if err != nil {
-		return nil, nil, fmt.Errorf("building legacy activities: %w", err)
-	}
+	logger *slog.Logger,
+) (*activities.RunWorkerControlActivities, error) {
 	runWorkers, err := k8s.NewRunWorkersInCluster(cfg.SandboxNamespace, logger, cfg.SandboxImagePullSecretName)
 	if err != nil {
-		return nil, nil, fmt.Errorf("building the Kubernetes Run Worker client: %w", err)
+		return nil, fmt.Errorf("building the Kubernetes Run Worker client: %w", err)
 	}
 	capabilities, err := checkpointclient.NewCapabilityMinter(rand.Reader)
 	if err != nil {
-		return nil, nil, fmt.Errorf("building the checkpoint capability minter: %w", err)
+		return nil, fmt.Errorf("building the checkpoint capability minter: %w", err)
 	}
 	control, err := activities.NewRunWorkerControlActivities(activities.RunWorkerControlDeps{
 		Workers: runWorkers, GitHub: ghClient, Capabilities: capabilities,
@@ -466,72 +406,9 @@ func newActivities(
 		},
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("building the Run Worker control activities: %w", err)
+		return nil, fmt.Errorf("building Run Worker control activities: %w", err)
 	}
-	return legacy, control, nil
-}
-
-// buildDeps assembles activities.Deps from clients newActivities already
-// built. It is pulled out of newActivities, rather than inlined at its one
-// call site, so it can be exercised without dialling Temporal, the in-cluster
-// Kubernetes API or a real GitHub App key — every one of which newActivities
-// itself needs just to get this far. TestBuildDepsSatisfiesActivitiesNew is
-// what that buys: it hands buildDeps a stand-in for every client and asserts
-// the result is a Deps activities.New accepts, which is the whole of what
-// "this seam is wired into the composition root" means. #395 shipped a new
-// Deps field, Repo, that this file did not yet populate; activities.New
-// caught it loudly in a pod's crash loop rather than here, in a test, because
-// this function did not exist to catch it first.
-//
-// One *k8s.Sandboxes is threaded through Pods, Repo and Sweeper deliberately:
-// see the doc on newActivities for why a second instance would be wrong.
-func buildDeps(
-	cfg config.Worker,
-	ghCfg config.GitHub,
-	ghClient activities.GitHub,
-	sandboxes *k8s.Sandboxes,
-	temporal temporalapi.Client,
-	dispatcherState activities.DispatcherStateWriter,
-	clk clock.Clock,
-	logger *slog.Logger,
-) activities.Deps {
-	sandboxTemplate := work.SandboxTemplate{
-		Image:           cfg.SandboxImage,
-		CPURequest:      cfg.SandboxCPURequest,
-		MemoryLimit:     cfg.SandboxMemoryLimit,
-		DeadlineSeconds: work.SandboxDeadlineSeconds,
-		Env: map[string]string{
-			work.GhConfigDirEnv: work.GhConfigDir,
-
-			// The sandbox pod's own embedded Temporal worker (#434 step 3,
-			// cmd/sandbox-worker) dials the exact same frontend and namespace
-			// this process just dialled above — one Temporal cluster, two
-			// kinds of worker — so these are copied from cfg rather than a
-			// second pair of environment variables this process would have
-			// to be given separately for no reason.
-			work.SandboxTemporalHostPortEnv:  cfg.TemporalHostPort,
-			work.SandboxTemporalNamespaceEnv: cfg.TemporalNamespace,
-			work.SandboxBlobsURLEnv:          cfg.BlobsURL,
-		},
-	}
-
-	return activities.Deps{
-		GitHub:  ghClient,
-		Pods:    sandboxes,
-		Repo:    sandboxes,
-		Runs:    runs.New(temporal),
-		Sweeper: sandboxes,
-
-		// DispatcherState is the store row the dispatcher writes its post-tick
-		// projection to (#551) — the console will eventually read this instead
-		// of querying Temporal for status.
-		DispatcherState: dispatcherState,
-
-		Log:     logger,
-		Clock:   clk,
-		Sandbox: sandboxTemplate,
-		RepoURL: cloneURL(ghCfg),
-	}
+	return control, nil
 }
 
 // cloneURL is the HTTPS clone URL for the one repository this service works

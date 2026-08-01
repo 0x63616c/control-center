@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
 // TargetMaintenanceStore is the narrow persistent ownership view the
@@ -21,6 +22,17 @@ type TargetMaintenanceStore interface {
 // the workflow makes the ordering and failure policy explicit.
 type TargetMaintenanceActivities struct{ store TargetMaintenanceStore }
 
+// TargetExecutionLookup is the one Temporal visibility read maintenance needs.
+// It is kept outside the retired legacy activity bundle so activation does not
+// construct sandbox or remote-exec clients merely to describe a workflow.
+type TargetExecutionLookup interface {
+	Describe(context.Context, string) (work.RunState, error)
+}
+
+// TargetExecutionActivities exposes strongly consistent target workflow
+// liveness without importing the legacy sandbox activity surface.
+type TargetExecutionActivities struct{ runs TargetExecutionLookup }
+
 // NewTargetMaintenanceActivities constructs the Store adapter for one
 // maintenance workflow execution.
 func NewTargetMaintenanceActivities(store TargetMaintenanceStore) (*TargetMaintenanceActivities, error) {
@@ -28,6 +40,23 @@ func NewTargetMaintenanceActivities(store TargetMaintenanceStore) (*TargetMainte
 		return nil, fmt.Errorf("target maintenance activities: a store is required")
 	}
 	return &TargetMaintenanceActivities{store: store}, nil
+}
+
+// NewTargetExecutionActivities constructs the target-only liveness adapter.
+func NewTargetExecutionActivities(runs TargetExecutionLookup) (*TargetExecutionActivities, error) {
+	if runs == nil {
+		return nil, fmt.Errorf("target execution activities: a workflow lookup is required")
+	}
+	return &TargetExecutionActivities{runs: runs}, nil
+}
+
+// DescribeRun reports whether the latest execution under workflowID is open.
+func (a *TargetExecutionActivities) DescribeRun(ctx context.Context, workflowID string) (work.RunState, error) {
+	state, err := a.runs.Describe(ctx, workflowID)
+	if err != nil {
+		return work.RunState{}, fail(ctx, fmt.Sprintf("describing target workflow %s", workflowID), err)
+	}
+	return state, nil
 }
 
 // ListActiveTargetRunOwners returns the only ownership pairs maintenance may
