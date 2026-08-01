@@ -6,8 +6,8 @@ import (
 	"time"
 
 	enumspb "go.temporal.io/api/enums/v1"
-	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/temporal"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
@@ -58,7 +58,7 @@ func TestEnsureMaintainFactoryScheduleCreatesTheStableTargetSchedule(t *testing.
 func TestEnsureMaintainFactoryScheduleReplacesAnExistingDefinition(t *testing.T) {
 	t.Parallel()
 	handle := &fakeScheduleHandle{}
-	fake := &fakeScheduleClient{handle: handle, createErr: serviceerror.NewAlreadyExists("exists")}
+	fake := &fakeScheduleClient{handle: handle, createErr: temporal.ErrScheduleAlreadyRunning}
 	if err := EnsureMaintainFactorySchedule(context.Background(), fake); err != nil {
 		t.Fatalf("EnsureMaintainFactorySchedule: %v", err)
 	}
