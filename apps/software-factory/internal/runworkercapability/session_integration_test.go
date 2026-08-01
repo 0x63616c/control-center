@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"syscall"
 	"testing"
 	"time"
@@ -43,12 +44,14 @@ var (
 )
 
 type sessionActivityInput struct {
+	Operation  string
 	MarkerName string
 	Marker     string
 	Write      bool
 }
 
 type sessionActivityEvidence struct {
+	Operation string
 	Worker    string
 	ProcessID int
 	Found     bool
@@ -123,6 +126,10 @@ func TestSessionPinsRepositoryWorkToOneIsolatedPrivateWorker(t *testing.T) {
 	if !evidence.First.Found || !evidence.Second.Found ||
 		evidence.First.Marker != "repository-state-v1" || evidence.Second.Marker != "repository-state-v1" {
 		t.Fatalf("private-one filesystem marker evidence = %#v", evidence)
+	}
+	operations := []string{evidence.First.Operation, evidence.Second.Operation}
+	if !slices.Equal(operations, []string{"clone", "agent"}) {
+		t.Fatalf("repository operation order = %v, want clone then agent", operations)
 	}
 	if evidence.OtherRoot.Worker != "private-two" || evidence.OtherRoot.ProcessID != privateTwo.processID() ||
 		evidence.OtherRoot.Found {
@@ -263,11 +270,11 @@ func sessionEvidenceWorkflow(ctx workflow.Context, in sessionWorkflowInput) (ses
 	defer workflow.CompleteSession(sessionCtx)
 
 	var result sessionEvidence
-	first := sessionActivityInput{MarkerName: in.MarkerName, Marker: in.Marker, Write: true}
+	first := sessionActivityInput{Operation: "clone", MarkerName: in.MarkerName, Marker: in.Marker, Write: true}
 	if err := workflow.ExecuteActivity(sessionCtx, sessionActivityName, first).Get(sessionCtx, &result.First); err != nil {
 		return sessionEvidence{}, fmt.Errorf("running first private activity: %w", err)
 	}
-	second := sessionActivityInput{MarkerName: in.MarkerName}
+	second := sessionActivityInput{Operation: "agent", MarkerName: in.MarkerName}
 	if err := workflow.ExecuteActivity(sessionCtx, sessionActivityName, second).Get(sessionCtx, &result.Second); err != nil {
 		return sessionEvidence{}, fmt.Errorf("running second private activity: %w", err)
 	}
@@ -290,13 +297,13 @@ func sessionRestartWorkflow(ctx workflow.Context, in sessionWorkflowInput) (sess
 	defer workflow.CompleteSession(sessionCtx)
 
 	var result sessionEvidence
-	first := sessionActivityInput{MarkerName: in.MarkerName, Marker: in.Marker, Write: true}
+	first := sessionActivityInput{Operation: "clone", MarkerName: in.MarkerName, Marker: in.Marker, Write: true}
 	if err := workflow.ExecuteActivity(sessionCtx, sessionActivityName, first).Get(sessionCtx, &result.First); err != nil {
 		return sessionEvidence{}, fmt.Errorf("running first private activity: %w", err)
 	}
 	var continueRun string
 	workflow.GetSignalChannel(ctx, "continue").Receive(ctx, &continueRun)
-	second := sessionActivityInput{MarkerName: in.MarkerName}
+	second := sessionActivityInput{Operation: "agent", MarkerName: in.MarkerName}
 	if err := workflow.ExecuteActivity(sessionCtx, sessionActivityName, second).Get(sessionCtx, &result.Second); err != nil {
 		return sessionEvidence{}, fmt.Errorf("running second private activity: %w", err)
 	}
@@ -315,13 +322,13 @@ func sessionLossWorkflow(ctx workflow.Context, in sessionLossInput) (sessionLoss
 	defer workflow.CompleteSession(sessionCtx)
 
 	var result sessionLossEvidence
-	first := sessionActivityInput{MarkerName: in.MarkerName, Marker: in.FirstMarker, Write: true}
+	first := sessionActivityInput{Operation: "clone", MarkerName: in.MarkerName, Marker: in.FirstMarker, Write: true}
 	if err := workflow.ExecuteActivity(sessionCtx, sessionActivityName, first).Get(sessionCtx, &result.First); err != nil {
 		return sessionLossEvidence{}, fmt.Errorf("running first private activity: %w", err)
 	}
 	var continueRun string
 	workflow.GetSignalChannel(ctx, "continue").Receive(ctx, &continueRun)
-	read := sessionActivityInput{MarkerName: in.MarkerName}
+	read := sessionActivityInput{Operation: "agent", MarkerName: in.MarkerName}
 	if err := workflow.ExecuteActivity(sessionCtx, sessionActivityName, read).Get(sessionCtx, nil); err == nil {
 		return sessionLossEvidence{}, errors.New("lost Session unexpectedly accepted another activity")
 	} else {
@@ -341,7 +348,7 @@ func sessionLossWorkflow(ctx workflow.Context, in sessionLossInput) (sessionLoss
 		Get(replacementSession, &result.ReplacementBefore); err != nil {
 		return sessionLossEvidence{}, fmt.Errorf("probing replacement private root: %w", err)
 	}
-	replacement := sessionActivityInput{MarkerName: in.MarkerName, Marker: in.ReplacementMarker, Write: true}
+	replacement := sessionActivityInput{Operation: "restore", MarkerName: in.MarkerName, Marker: in.ReplacementMarker, Write: true}
 	if err := workflow.ExecuteActivity(replacementSession, sessionActivityName, replacement).
 		Get(replacementSession, &result.Replacement); err != nil {
 		return sessionLossEvidence{}, fmt.Errorf("running replacement private activity: %w", err)
@@ -400,7 +407,7 @@ func privateWorker(c temporalclient.Client, queue, identity, root string) worker
 					return sessionActivityEvidence{}, fmt.Errorf("writing filesystem marker: %w", err)
 				}
 			}
-			evidence := sessionActivityEvidence{Worker: identity, ProcessID: os.Getpid()}
+			evidence := sessionActivityEvidence{Operation: in.Operation, Worker: identity, ProcessID: os.Getpid()}
 			marker, err := os.ReadFile(markerPath)
 			if errors.Is(err, os.ErrNotExist) {
 				return evidence, nil
