@@ -521,7 +521,6 @@ func runTargetAgentStep(ctx workflow.Context, session *targetRunSession, in Work
 		return targetAgentStepResult{}, 0, fmt.Errorf("starting %s agent step: %w", stage, err)
 	}
 	recordingCtx := workflow.WithActivityOptions(ctx, targetActivityOptions(in.Policy.Recording))
-	controlCtx := workflow.WithActivityOptions(ctx, targetActivityOptions(in.Policy.Provisioning))
 	credentialCtx := workflow.WithActivityOptions(ctx, targetActivityOptions(in.Policy.CredentialRotation))
 	attemptStartedAt := make(map[int]time.Time, remainingAttempts)
 	for attemptNo := 1; attemptNo <= remainingAttempts; {
@@ -538,9 +537,6 @@ func runTargetAgentStep(ctx workflow.Context, session *targetRunSession, in Work
 			ID: attemptID, AgentStage: stage, Model: in.Model, UsageState: work.UsageUnknown, StartedAt: startedAt,
 		}).Get(recordingCtx, nil); err != nil {
 			return targetAgentStepResult{}, attemptNo - 1, fmt.Errorf("starting %s agent attempt: %w", stage, err)
-		}
-		if err := workflow.ExecuteActivity(controlCtx, runWorkerControlActs.AuthorizeRunWorkerAttempt, activities.AuthorizeRunWorkerAttemptInput{Identity: session.identity, AttemptID: attemptID}).Get(controlCtx, nil); err != nil {
-			return targetAgentStepResult{}, attemptNo, fmt.Errorf("authorizing %s checkpoint capability: %w", stage, err)
 		}
 		var revision work.RunWorkerCredentialRevision
 		if err := workflow.ExecuteActivity(credentialCtx, runWorkerControlActs.RotateRunWorkerGitHubCredential, activities.RotateRunWorkerGitHubCredentialInput{Identity: session.identity}).Get(credentialCtx, &revision); err != nil {
@@ -617,7 +613,7 @@ func runTargetAgentStep(ctx workflow.Context, session *targetRunSession, in Work
 			endedAt := workflow.Now(ctx)
 			if result.TranscriptRef.Key != "" {
 				if evidenceErr := workflow.ExecuteActivity(recordingCtx, targetEvidenceActs.Finalize, activities.TargetAgentEvidenceInput{
-					AttemptID: attemptID, Identity: identity, FailureKind: work.RunFailureAgentUnrecoverable,
+					AttemptID: attemptID, Identity: identity, State: work.AgentAttemptFailed, FailureKind: work.RunFailureAgentUnrecoverable,
 					Usage: result.Usage, UsageMeasured: result.UsageMeasured, TranscriptRef: result.TranscriptRef, EndedAt: endedAt,
 				}).Get(recordingCtx, nil); evidenceErr != nil {
 					return targetAgentStepResult{}, attemptNo, fmt.Errorf("recording terminal %s agent evidence: %w", stage, evidenceErr)
@@ -645,7 +641,7 @@ func runTargetAgentStep(ctx workflow.Context, session *targetRunSession, in Work
 		}
 		endedAt := workflow.Now(ctx)
 		if err := workflow.ExecuteActivity(recordingCtx, targetEvidenceActs.Finalize, activities.TargetAgentEvidenceInput{
-			AttemptID: attemptID, Identity: identity, Result: result.Result, Usage: result.Usage,
+			AttemptID: attemptID, Identity: identity, State: work.AgentAttemptSucceeded, Result: result.Result, Usage: result.Usage,
 			UsageMeasured: result.UsageMeasured, TranscriptRef: result.TranscriptRef, EndedAt: endedAt,
 		}).Get(recordingCtx, nil); err != nil {
 			return targetAgentStepResult{}, attemptNo, fmt.Errorf("checkpointing %s agent evidence: %w", stage, err)
