@@ -183,5 +183,6 @@ func mountFactoryAPI(mux *http.ServeMux, authentication routeAuthenticator, fact
 	mux.Handle(checkpoint.GetServeMuxPattern, factory.Handler())
 	mux.Handle(checkpoint.RepositoryPutServeMuxPattern, factory.Handler())
 	mux.Handle(checkpoint.RepositoryGetServeMuxPattern, factory.Handler())
+	mux.Handle(checkpoint.RepositoryEffectPatchServeMuxPattern, factory.Handler())
 	mux.Handle("/", authentication.Wrap(factory.Handler()))
 }

@@ -60,6 +60,7 @@ type TargetGitHub interface {
 type RepositoryCheckpoint interface {
 	Load(context.Context) (store.GitCheckpoint, bool, error)
 	Checkpoint(context.Context, store.GitCheckpointInput) (store.GitCheckpoint, error)
+	CheckpointEffect(context.Context, store.GitCheckpointInput) (store.GitCheckpoint, error)
 }
 
 // RunWorkerDeps are the narrow dependencies of target agent execution.

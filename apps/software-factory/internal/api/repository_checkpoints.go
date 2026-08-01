@@ -18,6 +18,7 @@ import (
 type RepositoryCheckpointStore interface {
 	LoadRepositoryCheckpoint(context.Context, work.RunWorkerIdentity, string) (store.GitCheckpoint, bool, error)
 	CheckpointRepository(context.Context, store.RepositoryCheckpointInput) (store.GitCheckpoint, error)
+	CheckpointRepositoryEffect(context.Context, store.RepositoryCheckpointInput) (store.GitCheckpoint, error)
 }
 
 type repositoryCheckpointReadInput struct {
@@ -66,6 +67,14 @@ func (service *Service) loadRepositoryCheckpoint(ctx context.Context, input *rep
 }
 
 func (service *Service) checkpointRepository(ctx context.Context, input *repositoryCheckpointInput) (*repositoryCheckpointOutput, error) {
+	return service.writeRepositoryCheckpoint(ctx, input, false)
+}
+
+func (service *Service) checkpointRepositoryEffect(ctx context.Context, input *repositoryCheckpointInput) (*repositoryCheckpointOutput, error) {
+	return service.writeRepositoryCheckpoint(ctx, input, true)
+}
+
+func (service *Service) writeRepositoryCheckpoint(ctx context.Context, input *repositoryCheckpointInput, deferred bool) (*repositoryCheckpointOutput, error) {
 	identity, err := repositoryCheckpointIdentity(input.RunID, input.Generation, input.Capability)
 	if err != nil {
 		return nil, err
@@ -76,7 +85,7 @@ func (service *Service) checkpointRepository(ctx context.Context, input *reposit
 	if input.Body.StepOrdinal <= 0 || strings.TrimSpace(input.Body.Branch) == "" || input.Body.CompletedAt.IsZero() || len(input.Body.StepResult) == 0 || !json.Valid(input.Body.StepResult) {
 		return nil, clientError(http.StatusUnprocessableEntity, "invalid_checkpoint", "repository checkpoint evidence is invalid")
 	}
-	position, err := service.repositoryCheckpoints.CheckpointRepository(ctx, store.RepositoryCheckpointInput{
+	checkpoint := store.RepositoryCheckpointInput{
 		Identity: identity, Capability: input.Capability, CompletedAt: input.Body.CompletedAt.UTC(),
 		GitCheckpoint: store.GitCheckpoint{
 			RunID: input.RunID, StepOrdinal: input.Body.StepOrdinal, Branch: input.Body.Branch,
@@ -84,7 +93,13 @@ func (service *Service) checkpointRepository(ctx context.Context, input *reposit
 			PullRequestNumber: input.Body.PullRequestNumber, PullRequestNodeID: input.Body.PullRequestNodeID,
 			StepResult: input.Body.StepResult,
 		},
-	})
+	}
+	var position store.GitCheckpoint
+	if deferred {
+		position, err = service.repositoryCheckpoints.CheckpointRepositoryEffect(ctx, checkpoint)
+	} else {
+		position, err = service.repositoryCheckpoints.CheckpointRepository(ctx, checkpoint)
+	}
 	if err != nil {
 		return nil, checkpointStoreError(err)
 	}

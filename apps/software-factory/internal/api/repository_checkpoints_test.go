@@ -30,6 +30,11 @@ func (f *repositoryCheckpointStoreFake) CheckpointRepository(_ context.Context, 
 	return input.GitCheckpoint, f.err
 }
 
+func (f *repositoryCheckpointStoreFake) CheckpointRepositoryEffect(_ context.Context, input store.RepositoryCheckpointInput) (store.GitCheckpoint, error) {
+	f.input = input
+	return input.GitCheckpoint, f.err
+}
+
 func TestRepositoryCheckpointRoundTripsGenerationScopedEvidence(t *testing.T) {
 	const runID = "0f466627-b3ae-4ba2-9c96-6ef44ec6f578"
 	completedAt := time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)
