@@ -26,16 +26,6 @@ const testToolsetFingerprint = "sha256:test-toolset"
 
 const testAgentRunID = "019fb900-0000-7000-8000-000000000001"
 
-func TestLegacyAgentWorkflowModelTurnPolicyPreservesPreTargetDefaults(t *testing.T) {
-	t.Parallel()
-	policy := workflows.LegacyAgentWorkflowModelTurnPolicy()
-	if policy.StartToCloseTimeout != 2*time.Minute || policy.ScheduleToCloseTimeout != 2*time.Minute+15*time.Second ||
-		policy.HeartbeatTimeout != 15*time.Second || policy.Retry.InitialInterval != time.Second ||
-		policy.Retry.BackoffCoefficient != 2 || policy.Retry.MaximumInterval != 10*time.Second || policy.Retry.MaximumAttempts != 3 {
-		t.Fatalf("legacy model-turn policy = %#v", policy)
-	}
-}
-
 func TestAgentWorkflowCompletesFromOneFinalModelTurn(t *testing.T) {
 	t.Parallel()
 

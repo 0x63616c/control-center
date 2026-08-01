@@ -8,10 +8,8 @@ import (
 
 // TargetRunPolicy is the immutable resolved policy carried by one target Run.
 //
-// It is deliberately distinct from RunPolicy. Legacy workflows persist
-// RunPolicy in their histories, so replacing its fields would reinterpret open
-// executions on replay. Target workflows receive this value in their input and
-// never consult deployment configuration again.
+// Target workflows receive this value in their input and never consult
+// deployment configuration again.
 type TargetRunPolicy struct {
 	// SemanticDeadline stops new work before the hard workflow deadline so a
 	// terminal result can still be recorded durably.
@@ -126,7 +124,7 @@ func (p RetryPolicy) Validate(name string) error {
 
 // DefaultTargetRunPolicy returns the resolved policy for target Runs. Its
 // literals live here so a Run's input records one complete, replay-stable
-// decision rather than inheriting unrelated legacy StageAttempts settings.
+// decision.
 func DefaultTargetRunPolicy() TargetRunPolicy {
 	return TargetRunPolicy{
 		SemanticDeadline: 23 * time.Hour,
@@ -151,15 +149,6 @@ func DefaultTargetRunPolicy() TargetRunPolicy {
 		CredentialRotation: boundedActivityPolicy(time.Minute, 15*time.Minute, 10*time.Second, 2, 5*time.Minute, 10),
 		Recording:          boundedActivityPolicy(time.Minute, time.Hour, 10*time.Second, 2, 5*time.Minute, 0),
 		Teardown:           boundedActivityPolicy(2*time.Minute, 30*time.Minute, 10*time.Second, 2, 5*time.Minute, 10),
-	}
-}
-
-// DefaultLegacyAgentActivityPolicy returns the explicit AgentWorkflow policy
-// that FactoryWorkTicket used before target Runs supplied their own policy.
-func DefaultLegacyAgentActivityPolicy() AgentActivityPolicy {
-	return AgentActivityPolicy{
-		StartToCloseTimeout: 2 * time.Minute, ScheduleToCloseTimeout: 10 * time.Minute, HeartbeatTimeout: 15 * time.Second,
-		Retry: RetryPolicy{InitialInterval: time.Second, BackoffCoefficient: 2, MaximumInterval: 10 * time.Second, MaximumAttempts: 3},
 	}
 }
 

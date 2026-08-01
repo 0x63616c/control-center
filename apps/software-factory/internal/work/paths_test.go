@@ -175,7 +175,7 @@ func TestParseFactoryTicketBranchNameRejectsAnythingElse(t *testing.T) {
 	}
 }
 
-func TestFactoryDispatcherStartsWithOneTicketAtATime(t *testing.T) {
+func TestTargetDispatcherStartsWithOneTicketAtATime(t *testing.T) {
 	t.Parallel()
 
 	if got := DefaultFactoryConfig().MaxInFlight; got != 1 {
