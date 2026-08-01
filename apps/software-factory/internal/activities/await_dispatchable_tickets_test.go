@@ -21,16 +21,24 @@ func (s *readyTicketStore) ReadyTickets(context.Context) ([]store.Ticket, error)
 	return s.tickets, nil
 }
 
+func (s *readyTicketStore) UpdateTicketState(context.Context, store.TicketID, store.TicketState) (store.Ticket, error) {
+	return store.Ticket{}, nil
+}
+
+func (s *readyTicketStore) TransitionTicketState(context.Context, store.TicketID, store.TicketState, store.TicketState) (store.Ticket, error) {
+	return store.Ticket{}, nil
+}
+
 func TestAwaitDispatchableTicketsUsesRetryForExpectedNoWork(t *testing.T) {
 	t.Parallel()
 
 	backing := &readyTicketStore{}
-	activities, err := activities.NewTicketActivities(backing)
+	acts, err := activities.NewTicketActivities(backing)
 	if err != nil {
 		t.Fatalf("NewTicketActivities: %v", err)
 	}
 
-	_, err = activities.AwaitDispatchableTickets(context.Background())
+	_, err = acts.AwaitDispatchableTickets(context.Background())
 	var application *temporal.ApplicationError
 	if !errors.As(err, &application) {
 		t.Fatalf("AwaitDispatchableTickets error = %T, want retryable ApplicationError: %v", err, err)
@@ -47,12 +55,12 @@ func TestAwaitDispatchableTicketsReturnsTheReadyBatch(t *testing.T) {
 	t.Parallel()
 
 	want := []store.Ticket{{ID: 2, Title: "second"}, {ID: 9, Title: "ninth"}}
-	activities, err := activities.NewTicketActivities(&readyTicketStore{tickets: want})
+	acts, err := activities.NewTicketActivities(&readyTicketStore{tickets: want})
 	if err != nil {
 		t.Fatalf("NewTicketActivities: %v", err)
 	}
 
-	got, err := activities.AwaitDispatchableTickets(context.Background())
+	got, err := acts.AwaitDispatchableTickets(context.Background())
 	if err != nil {
 		t.Fatalf("AwaitDispatchableTickets: %v", err)
 	}

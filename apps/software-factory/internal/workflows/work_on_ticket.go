@@ -37,6 +37,11 @@ type WorkOnTicketInput struct {
 // private Run Worker Session, and clones the repository as that Session's
 // first repository-affine activity.
 func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
+	if in.RunID == "" {
+		// The dispatcher cannot know a child execution's Temporal Run ID until
+		// after admission. Let the child bind its own immutable Store identity.
+		in.RunID = workflow.GetInfo(ctx).WorkflowExecution.RunID
+	}
 	if err := validateWorkOnTicket(in); err != nil {
 		return err
 	}
