@@ -276,7 +276,7 @@ func (r *RunWorkers) putGitHubSecret(ctx context.Context, id work.RunWorkerID, l
 func (r *RunWorkers) updateGitHubSecret(ctx context.Context, secret *corev1.Secret, token work.Credential, login string, expiresAt time.Time) (work.RunWorkerCredentialRevision, error) {
 	current, err := runWorkerGitHubRevision(secret)
 	if err != nil {
-		return work.RunWorkerCredentialRevision{}, err
+		return work.RunWorkerCredentialRevision{}, fmt.Errorf("updating Run Worker GitHub Secret %s revision: %w", secret.Name, err)
 	}
 	revision := current + 1
 	secret.Data = githubSecretData(token, login, expiresAt, revision)

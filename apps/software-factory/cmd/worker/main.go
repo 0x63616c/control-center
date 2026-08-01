@@ -370,7 +370,7 @@ func newActivities(
 		cfg, ghCfg, ghClient, sandboxes, transcriptSink, renderer, metrics, temporal, tokenSource, dispatcherState, clk, logger,
 	))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("building legacy activities: %w", err)
 	}
 	runWorkers, err := k8s.NewRunWorkersInCluster(cfg.SandboxNamespace, logger, cfg.SandboxImagePullSecretName)
 	if err != nil {

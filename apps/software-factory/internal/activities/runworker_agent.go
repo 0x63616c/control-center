@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	checkpointprotocol "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/checkpoint"
@@ -67,6 +68,7 @@ type RunWorkerDeps struct {
 	Prompts               PromptRenderer
 	Checkpoints           func(store.TargetAttemptID) (AttemptCheckpoint, error)
 	ProviderState         ProviderState
+	CredentialRevision    func(context.Context) (string, error)
 	Clock                 interface{ Now() time.Time }
 	Heartbeat             func(context.Context)
 	Repository            TargetRepository
@@ -82,8 +84,8 @@ type RunWorkerActivities struct{ deps RunWorkerDeps }
 
 // NewRunWorkerActivities validates the target agent activity set once.
 func NewRunWorkerActivities(deps RunWorkerDeps) (*RunWorkerActivities, error) {
-	if deps.Stages == nil || deps.Prompts == nil || deps.Checkpoints == nil || deps.ProviderState == nil || deps.Clock == nil || deps.Heartbeat == nil || deps.Repository == nil || deps.GitHub == nil || deps.RepositoryCheckpoints == nil {
-		return nil, fmt.Errorf("run worker activities require stages, prompts, checkpoints, provider state, clock, heartbeat, repository, GitHub, and repository checkpoints")
+	if deps.Stages == nil || deps.Prompts == nil || deps.Checkpoints == nil || deps.ProviderState == nil || deps.CredentialRevision == nil || deps.Clock == nil || deps.Heartbeat == nil || deps.Repository == nil || deps.GitHub == nil || deps.RepositoryCheckpoints == nil {
+		return nil, fmt.Errorf("run worker activities require stages, prompts, checkpoints, provider state, credential revision, clock, heartbeat, repository, GitHub, and repository checkpoints")
 	}
 	if err := deps.Identity.Validate(); err != nil {
 		return nil, fmt.Errorf("run worker activities require a valid identity: %w", err)
@@ -93,13 +95,29 @@ func NewRunWorkerActivities(deps RunWorkerDeps) (*RunWorkerActivities, error) {
 
 // TargetAgentInput names one workflow-authorized target Agent Attempt.
 type TargetAgentInput struct {
-	AttemptID    store.TargetAttemptID
-	TicketNumber int
-	Iteration    int
-	Stage        work.AgentStage
-	Model        work.Model
-	Detail       work.TicketDetail
-	Prior        work.PriorTurns
+	AttemptID           store.TargetAttemptID
+	TicketNumber        int
+	Iteration           int
+	Stage               work.AgentStage
+	Model               work.Model
+	Detail              work.TicketDetail
+	Prior               work.PriorTurns
+	PriorProviderThread *ProviderThreadContinuation
+	CredentialRevision  CredentialRevisionExpectation
+}
+
+// ProviderThreadContinuation identifies an established implementer thread that
+// may continue only on the Run Worker generation that owns its local state.
+type ProviderThreadContinuation struct {
+	Identity work.RunWorkerIdentity
+	ThreadID string
+}
+
+// CredentialRevisionExpectation fences a target Agent Attempt to the
+// credential revision installed for its exact Run Worker generation.
+type CredentialRevisionExpectation struct {
+	Identity work.RunWorkerIdentity
+	Revision string
 }
 
 // TargetAgentOutput contains no credential or transcript; both durable forms
@@ -142,6 +160,21 @@ func (a *RunWorkerActivities) RunTargetAgent(ctx context.Context, in TargetAgent
 		default:
 			return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("reconciling %s", in.AttemptID), fmt.Errorf("unknown durable state %q: %w", stored.State, work.ErrPermanent))
 		}
+	} else if continuation := in.PriorProviderThread; continuation != nil {
+		if in.Stage != work.AgentStageImplement || continuation.Identity != a.deps.Identity || continuation.ThreadID == "" {
+			return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("reconciling prior provider state for %s", in.AttemptID), ErrUnresumableIncompleteAttempt)
+		}
+		available, stateErr := a.deps.ProviderState.Available(ctx, continuation.ThreadID)
+		if stateErr != nil {
+			return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("checking prior provider state for %s", in.AttemptID), stateErr)
+		}
+		if !available {
+			return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("reconciling unavailable prior provider state for %s", in.AttemptID), ErrUnresumableIncompleteAttempt)
+		}
+		resumeThread = continuation.ThreadID
+	}
+	if err := a.observeCredentialRevision(ctx, in.CredentialRevision); err != nil {
+		return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("observing projected credential revision for %s", in.AttemptID), err)
 	}
 
 	stage := work.Stage(in.Stage)
@@ -188,6 +221,20 @@ func (a *RunWorkerActivities) RunTargetAgent(ctx context.Context, in TargetAgent
 		return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("checkpointing terminal evidence for %s", in.AttemptID), err)
 	}
 	return a.targetAgentOutput(in.Stage, terminal)
+}
+
+func (a *RunWorkerActivities) observeCredentialRevision(ctx context.Context, expected CredentialRevisionExpectation) error {
+	if expected.Identity != a.deps.Identity || strings.TrimSpace(expected.Revision) == "" {
+		return fmt.Errorf("credential revision expectation does not belong to this Run Worker generation: %w", work.ErrPermanent)
+	}
+	observed, err := a.deps.CredentialRevision(ctx)
+	if err != nil {
+		return fmt.Errorf("reading projected credential revision: %w", err)
+	}
+	if strings.TrimSpace(observed) != expected.Revision {
+		return fmt.Errorf("projected credential revision %q has not reached expected revision %q", strings.TrimSpace(observed), expected.Revision)
+	}
+	return nil
 }
 
 func (a *RunWorkerActivities) targetAgentOutput(stage work.AgentStage, attempt checkpointprotocol.Attempt) (TargetAgentOutput, error) {

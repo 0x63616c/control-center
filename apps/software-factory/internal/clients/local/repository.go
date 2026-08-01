@@ -68,7 +68,7 @@ func NewRepository(root string, runner GitRunner) (*Repository, error) {
 // checkout to the last head GitHub accepted for this Run's branch.
 func (r *Repository) Prepare(ctx context.Context, cloneURL, branch string) (string, error) {
 	if err := validateRepositoryInput(cloneURL, branch); err != nil {
-		return "", err
+		return "", fmt.Errorf("validating target repository inputs: %w", err)
 	}
 	gitDir := filepath.Join(r.root, ".git")
 	_, statErr := os.Stat(gitDir)
@@ -83,7 +83,7 @@ func (r *Repository) Prepare(ctx context.Context, cloneURL, branch string) (stri
 		}
 	case errors.Is(statErr, os.ErrNotExist):
 		if err := r.replacePartialCheckout(); err != nil {
-			return "", err
+			return "", fmt.Errorf("removing partial target repository checkout: %w", err)
 		}
 		if _, code, err := r.runner.Run(ctx, filepath.Dir(r.root), []string{"git", "clone", "--origin", "origin", cloneURL, r.root}); err != nil || code != 0 {
 			return "", commandFailure("cloning the target repository", code, err)

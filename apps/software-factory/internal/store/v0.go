@@ -489,7 +489,7 @@ func (s *Store) checkpointGitEffect(ctx context.Context, in GitCheckpointInput, 
 			return GitCheckpoint{}, fmt.Errorf("checkpointing repository effect: identity names another Run: %w", ErrRunOwnership)
 		}
 		if err := authorizeRepositoryCapability(ctx, q, id, authorization.identity, authorization.capability); err != nil {
-			return GitCheckpoint{}, err
+			return GitCheckpoint{}, fmt.Errorf("checkpointing repository effect: authorizing generation capability: %w", err)
 		}
 	}
 	step, err := q.TargetStepForUpdate(ctx, storedb.TargetStepForUpdateParams{RunID: id, Ordinal: int32(in.StepOrdinal)})
@@ -596,7 +596,7 @@ func (s *Store) LoadRepositoryCheckpoint(ctx context.Context, identity work.RunW
 		return GitCheckpoint{}, false, fmt.Errorf("loading repository checkpoint: %w", ErrRunOwnership)
 	}
 	if err := authorizeRepositoryCapability(ctx, q, id, identity, capability); err != nil {
-		return GitCheckpoint{}, false, err
+		return GitCheckpoint{}, false, fmt.Errorf("loading repository checkpoint: authorizing generation capability: %w", err)
 	}
 	row, err := q.TargetGitCheckpoint(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
