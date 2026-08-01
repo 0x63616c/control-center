@@ -9,19 +9,27 @@
   and excluded from active build, lint, code generation, and test surfaces.
 - Software Factory remains unlicensed for now. Do not add a license as part of
   this cutover without a separate decision.
-- `v0.1.0` is the extraction baseline. Later WWW workflow updates belong in a
-  standalone `v0.1.1` follow-up after they finish and are reconciled.
+- The immutable `v0.1.0` tag is the failed first release attempt. Its gate
+  stopped before publishing because the runner lacked `ripgrep`; no images or
+  GitHub Release were published, and the tag was not moved.
+- `v0.1.1` is the first published extraction release. Its manifest, checksum,
+  exact seven-image set, and promoted registry digests were independently
+  verified.
+- WWW PRs #670 and #671 are ported as exactly two commits in standalone PR #4.
+  After review and merge, that line belongs in a `v0.1.2` follow-up.
 
-## Release `v0.1.0`
+## Release baseline
 
-- [ ] Require the standalone merge commit's own main CI run to pass.
-- [ ] Tag that exact main commit as `v0.1.0` and push only the tag.
-- [ ] Require the tag-triggered release workflow to pass.
-- [ ] Verify the non-draft GitHub Release contains the release manifest and
+- [x] Require the standalone release commit's own main CI run to pass.
+- [x] Preserve the failed `v0.1.0` tag without moving or republishing it.
+- [x] Fix the missing release-gate dependency through standalone PR #3.
+- [x] Tag the exact green fix commit as `v0.1.1` and push only the tag.
+- [x] Require the tag-triggered release workflow to pass.
+- [x] Verify the non-draft GitHub Release contains the release manifest and
   `SHA256SUMS`.
-- [ ] Verify the manifest binds `v0.1.0` to the tagged commit, `linux/amd64`,
+- [x] Verify the manifest binds `v0.1.1` to the tagged commit, `linux/amd64`,
   and exactly seven expected images with immutable `sha256:` digests.
-- [ ] Verify all seven SemVer image tags resolve to the manifest digests.
+- [x] Verify all seven SemVer image tags resolve to the manifest digests.
 
 ## WWW consumer cutover
 
@@ -53,11 +61,14 @@
   module or revives the retired Codex CLI design.
 - [ ] Run the final adapted Gate 10 proof after merge and production deploy.
 
-## Follow-up `v0.1.1`
+## Follow-up `v0.1.2`
 
-- [ ] Wait for Calum's WWW workflow updates to merge.
-- [ ] Reconcile the applicable changes into the standalone repository.
+- [x] Wait for Calum's WWW workflow updates to merge.
+- [x] Reconcile the applicable changes into the standalone repository as one
+  commit per source PR in standalone PR #4.
+- [x] Run standalone verification and two-axis review before opening PR #4.
+- [ ] Review and merge standalone PR #4 with green CI.
 - [ ] Run standalone verification, deterministic E2E, Temporal Session, and all
-  seven image builds.
-- [ ] Release `v0.1.1` through the same immutable SemVer mechanism.
-- [ ] Update WWW to the verified `v0.1.1` digest set in a normal consumer PR.
+  seven image builds on its merge commit.
+- [ ] Release `v0.1.2` through the same immutable SemVer mechanism.
+- [ ] Update WWW to the verified release digest set in a normal consumer PR.
