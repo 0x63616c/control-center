@@ -108,10 +108,10 @@ func (c *Client) Turn(ctx context.Context, request TurnRequest, emit EmitFunc) (
 		metadata := safeProviderErrorMetadata(body)
 		err := fmt.Errorf("the Codex Responses endpoint answered HTTP %d%s", resp.StatusCode, metadata)
 		if resp.StatusCode == http.StatusTooManyRequests {
-			return TurnResult{}, fmt.Errorf("%w: %v", ErrRateLimited, err)
+			return TurnResult{}, fmt.Errorf("%w: %w", ErrRateLimited, err)
 		}
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-			return TurnResult{}, fmt.Errorf("%w: %v", ErrAuth, err)
+			return TurnResult{}, fmt.Errorf("%w: %w", ErrAuth, err)
 		}
 		return TurnResult{}, err
 	}

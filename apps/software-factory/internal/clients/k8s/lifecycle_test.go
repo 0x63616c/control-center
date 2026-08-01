@@ -62,12 +62,6 @@ func actionsOn(cs *fake.Clientset, resource string) []string {
 	return out
 }
 
-// validCredential is the codex credential document every Create test hands
-// in when the document's own content is not what the test is about.
-func validCredential() work.CredentialFile {
-	return work.NewCredentialFile([]byte(`{"tokens":{"access_token":"test-token"}}`))
-}
-
 func newLifecycleSandboxes(t *testing.T, objects ...runtime.Object) (*Sandboxes, *fake.Clientset, *strings.Builder) {
 	t.Helper()
 	s, cs, logs, _ := newLifecycleSandboxesWithClock(t, objects...)

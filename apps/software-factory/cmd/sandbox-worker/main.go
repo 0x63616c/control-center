@@ -31,6 +31,7 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agenttools"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
 	temporalapi "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/temporal"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/config"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
@@ -60,6 +61,7 @@ func run() error {
 		return fmt.Errorf("reading the sandbox worker's configuration: %w", err)
 	}
 	logger := newLogger(cfg.LogLevel)
+	clk := clock.System{}
 	blobStore, err := blobs.NewHTTPStore(cfg.BlobsURL, nil)
 	if err != nil {
 		return fmt.Errorf("opening HTTP blob store: %w", err)
@@ -93,7 +95,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("building the sandbox agent toolsets: %w", err)
 	}
-	toolActivities, err := agentactivities.NewToolActivities(blobStore, toolsets...)
+	toolActivities, err := agentactivities.NewToolActivities(blobStore, clk, toolsets...)
 	if err != nil {
 		return fmt.Errorf("building the sandbox agent activity: %w", err)
 	}

@@ -145,5 +145,7 @@ func TestPrepareRendersTheStageAndStoresReferenceBackedModelInput(t *testing.T) 
 	}
 }
 
-var _ agentactivities.PromptRenderer = decodingPromptRenderer{}
-var _ agentactivities.PromptRenderer = (*recordingPromptRenderer)(nil)
+var (
+	_ agentactivities.PromptRenderer = decodingPromptRenderer{}
+	_ agentactivities.PromptRenderer = (*recordingPromptRenderer)(nil)
+)

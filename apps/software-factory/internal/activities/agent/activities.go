@@ -7,12 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agenttool"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codexresponses"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
@@ -29,6 +29,7 @@ type Activities struct {
 	conversations agent.ConversationStore
 	transcripts   agent.TranscriptStore
 	artifacts     agent.ArtifactStore
+	clock         clock.Clock
 	toolsets      map[agent.ToolsetID]agenttool.Set
 }
 
@@ -39,12 +40,15 @@ type StreamProgress struct {
 }
 
 // NewActivities constructs production model-side agent activities.
-func NewActivities(turner Turner, blobStore blobs.Store, toolsets ...agenttool.Set) (*Activities, error) {
+func NewActivities(turner Turner, blobStore blobs.Store, clk clock.Clock, toolsets ...agenttool.Set) (*Activities, error) {
 	if turner == nil {
 		return nil, fmt.Errorf("agent activities need a model turner")
 	}
 	if blobStore == nil {
 		return nil, fmt.Errorf("agent activities need a blob store")
+	}
+	if clk == nil {
+		return nil, fmt.Errorf("agent activities need a clock")
 	}
 	byID := make(map[agent.ToolsetID]agenttool.Set, len(toolsets))
 	for _, toolset := range toolsets {
@@ -58,6 +62,7 @@ func NewActivities(turner Turner, blobStore blobs.Store, toolsets ...agenttool.S
 		conversations: agent.NewConversationStore(blobStore),
 		transcripts:   agent.NewTranscriptStore(blobStore),
 		artifacts:     agent.NewArtifactStore(blobStore),
+		clock:         clk,
 		toolsets:      byID,
 	}, nil
 }
@@ -81,7 +86,7 @@ func (activities *Activities) ModelTurn(ctx context.Context, input agent.ModelTu
 		return agent.ModelTurnResult{}, invalidInput("build model request: %v", err)
 	}
 	events := 0
-	started := time.Now()
+	started := activities.clock.Now()
 	providerResult, err := activities.turner.Turn(ctx, request, func(event codexresponses.Event) {
 		events++
 		activity.RecordHeartbeat(ctx, StreamProgress{EventType: event.Type, Events: events})
@@ -108,7 +113,8 @@ func (activities *Activities) ModelTurn(ctx context.Context, input agent.ModelTu
 	if input.TranscriptRef.Key != "" {
 		result.TranscriptRef, err = activities.transcripts.Append(ctx, identity, &input.TranscriptRef, agent.TranscriptEvent{
 			Type: agent.EventModelCompleted, ModelTurn: input.ModelTurn, Outcome: string(result.Outcome),
-			Usage: result.Usage, UsageMeasured: result.UsageMeasured, DurationMillis: time.Since(started).Milliseconds(),
+			Usage: result.Usage, UsageMeasured: result.UsageMeasured,
+			DurationMillis: activities.clock.Now().Sub(started).Milliseconds(),
 		})
 		if err != nil {
 			return agent.ModelTurnResult{}, transientFailure("append model transcript event", err)
@@ -288,6 +294,8 @@ func modelRequest(
 			instructions = item.Text
 		case agent.ItemUserText:
 			providerItems = append(providerItems, codexresponses.UserText(item.Text))
+		case agent.ItemAssistantText:
+			return codexresponses.TurnRequest{}, fmt.Errorf("model conversation contains terminal assistant text")
 		case agent.ItemFunctionCall:
 			providerItems = append(providerItems, codexresponses.FunctionCall(codexresponses.ToolCall{
 				ID:        item.ID,

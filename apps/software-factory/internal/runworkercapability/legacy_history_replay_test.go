@@ -12,8 +12,10 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/workflows"
 )
 
-const legacyHistoryFixture = "../workflows/testdata/factory-dispatcher-paused.json"
-const legacyFactoryWorkTicketHistoryFixture = "../workflows/testdata/factory-work-ticket-pre-agent.json"
+const (
+	legacyHistoryFixture                  = "../workflows/testdata/factory-dispatcher-paused.json"
+	legacyFactoryWorkTicketHistoryFixture = "../workflows/testdata/factory-work-ticket-pre-agent.json"
+)
 
 func TestLegacyFactoryDispatcherHistoryReplays(t *testing.T) {
 	history := readLegacyHistoryFixture(t)

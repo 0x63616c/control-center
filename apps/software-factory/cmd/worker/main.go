@@ -167,7 +167,8 @@ func run() error {
 		return err
 	}
 
-	tokenSource, err := newCodexAuthSource(cfg, clock.System{}, logger)
+	clk := clock.System{}
+	tokenSource, err := newCodexAuthSource(cfg, clk, logger)
 	if err != nil {
 		return fmt.Errorf("building the codex credential source: %w", err)
 	}
@@ -209,7 +210,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("building the direct Codex Responses client: %w", err)
 	}
-	modelActs, err := agentactivities.NewActivities(turner, blobStore, toolsets...)
+	modelActs, err := agentactivities.NewActivities(turner, blobStore, clk, toolsets...)
 	if err != nil {
 		return fmt.Errorf("building the agent model activity set: %w", err)
 	}

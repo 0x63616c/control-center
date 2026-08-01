@@ -154,11 +154,7 @@ func TestMustSetRejectsNilTools(t *testing.T) {
 	})
 
 	t.Run("typed nil", func(t *testing.T) {
-		tool := agenttool.Bind(
-			agenttool.Define[readInput]("read_file", "Read a repository file."),
-			func(_ context.Context, _ readInput) (agenttool.Result, error) { return agenttool.Result{}, nil },
-		)
-		tool = nil
+		var tool *agenttool.BoundTool[readInput]
 		defer func() {
 			panicValue := recover()
 			if message := fmt.Sprint(panicValue); !strings.Contains(message, "nil tool") {

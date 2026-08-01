@@ -12,6 +12,7 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agenttool"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
 )
@@ -22,13 +23,17 @@ type ToolActivities struct {
 	artifacts     agent.ArtifactStore
 	conversations agent.ConversationStore
 	transcripts   agent.TranscriptStore
+	clock         clock.Clock
 	toolsets      map[agent.ToolsetID]agenttool.Set
 }
 
 // NewToolActivities constructs the sandbox-side generic tool activity.
-func NewToolActivities(blobStore blobs.Store, toolsets ...agenttool.Set) (*ToolActivities, error) {
+func NewToolActivities(blobStore blobs.Store, clk clock.Clock, toolsets ...agenttool.Set) (*ToolActivities, error) {
 	if blobStore == nil {
 		return nil, fmt.Errorf("agent tool activities need a blob store")
+	}
+	if clk == nil {
+		return nil, fmt.Errorf("agent tool activities need a clock")
 	}
 	byID := make(map[agent.ToolsetID]agenttool.Set, len(toolsets))
 	for _, toolset := range toolsets {
@@ -39,7 +44,8 @@ func NewToolActivities(blobStore blobs.Store, toolsets ...agenttool.Set) (*ToolA
 	}
 	return &ToolActivities{
 		blobs: blobStore, artifacts: agent.NewArtifactStore(blobStore),
-		conversations: agent.NewConversationStore(blobStore), transcripts: agent.NewTranscriptStore(blobStore), toolsets: byID,
+		conversations: agent.NewConversationStore(blobStore), transcripts: agent.NewTranscriptStore(blobStore),
+		clock: clk, toolsets: byID,
 	}, nil
 }
 
@@ -82,7 +88,7 @@ func (activities *ToolActivities) Tool(ctx context.Context, input agent.ToolInpu
 	}
 	stopHeartbeat := startToolHeartbeat(ctx, input.Call.Name)
 	defer stopHeartbeat()
-	started := time.Now()
+	started := activities.clock.Now()
 	result, err := toolset.Execute(ctx, input.Call.Name, arguments)
 	if err != nil {
 		return agent.ToolOutput{}, err
@@ -97,7 +103,7 @@ func (activities *ToolActivities) Tool(ctx context.Context, input agent.ToolInpu
 	if input.TranscriptRef.Key != "" {
 		output.TranscriptRef, err = activities.transcripts.Append(ctx, identity, &input.TranscriptRef, agent.TranscriptEvent{
 			Type: agent.EventToolCompleted, ToolName: input.Call.Name, CallID: input.Call.CallID,
-			IsError: result.IsError, DurationMillis: time.Since(started).Milliseconds(),
+			IsError: result.IsError, DurationMillis: activities.clock.Now().Sub(started).Milliseconds(),
 		})
 		if err != nil {
 			return agent.ToolOutput{}, transientFailure("append tool transcript event", err)

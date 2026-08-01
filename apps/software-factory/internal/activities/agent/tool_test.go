@@ -3,11 +3,13 @@ package agentactivities_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	agentactivities "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities/agent"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agenttool"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock/clocktest"
 )
 
 type countedInput struct {
@@ -52,7 +54,9 @@ func TestToolRetryReturnsTheRecordedResultWithoutExecutingTwice(t *testing.T) {
 			return agenttool.Result{Content: input.Value}, nil
 		},
 	)
-	activities, err := agentactivities.NewToolActivities(blobStore, agenttool.MustSet("coding-write-v1", tool))
+	activities, err := agentactivities.NewToolActivities(
+		blobStore, clocktest.NewFake(time.Unix(0, 0)), agenttool.MustSet("coding-write-v1", tool),
+	)
 	if err != nil {
 		t.Fatalf("NewToolActivities() error = %v", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 )
@@ -50,7 +51,7 @@ func (t *BoundTool[T]) Execute(ctx context.Context, arguments json.RawMessage) (
 	if err := decoder.Decode(&input); err != nil {
 		return Result{Content: fmt.Sprintf("invalid arguments: %v", err), IsError: true}, nil
 	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		if err == nil {
 			err = fmt.Errorf("more than one JSON value")
 		}

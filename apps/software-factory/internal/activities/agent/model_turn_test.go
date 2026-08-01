@@ -7,12 +7,14 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	agentactivities "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities/agent"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agenttool"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codexresponses"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock/clocktest"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/converter"
@@ -72,6 +74,7 @@ func TestModelTurnLoadsConversationAndStoresFinalText(t *testing.T) {
 	activities, err := agentactivities.NewActivities(
 		turner,
 		blobStore,
+		clocktest.NewFake(time.Unix(0, 0)),
 		agenttool.MustSet("coding-read-v1"),
 	)
 	if err != nil {
@@ -150,6 +153,7 @@ func TestModelTurnStoresToolArgumentsAndPreservesCallIDs(t *testing.T) {
 	activities, err := agentactivities.NewActivities(
 		turner,
 		blobStore,
+		clocktest.NewFake(time.Unix(0, 0)),
 		agenttool.MustSet("coding-write-v1", readFile),
 	)
 	if err != nil {
@@ -231,6 +235,7 @@ func TestModelTurnRejectsIncompleteProviderOutcomes(t *testing.T) {
 			activities, err := agentactivities.NewActivities(
 				&fakeTurner{result: test.result},
 				blobStore,
+				clocktest.NewFake(time.Unix(0, 0)),
 				agenttool.MustSet("coding-read-v1"),
 			)
 			if err != nil {
@@ -269,7 +274,9 @@ func TestModelTurnHeartbeatsContentFreeProgressAndClassifiesProviderErrors(t *te
 			{Type: codexresponses.EventTextDelta, Delta: "secret response chunk"},
 		},
 	}
-	activities, err := agentactivities.NewActivities(turner, blobStore, agenttool.MustSet("coding-read-v1"))
+	activities, err := agentactivities.NewActivities(
+		turner, blobStore, clocktest.NewFake(time.Unix(0, 0)), agenttool.MustSet("coding-read-v1"),
+	)
 	if err != nil {
 		t.Fatalf("NewActivities() error = %v", err)
 	}
@@ -309,12 +316,18 @@ func TestModelTurnHeartbeatsContentFreeProgressAndClassifiesProviderErrors(t *te
 		wantType         string
 		wantNonRetryable bool
 	}{
-		{name: "rate limit", toolsetID: "coding-read-v1", providerError: codexresponses.ErrRateLimited,
-			wantType: agent.ErrorTypeRateLimit, wantNonRetryable: true},
-		{name: "provider auth", toolsetID: "coding-read-v1", providerError: codexresponses.ErrAuth,
-			wantType: agent.ErrorTypeAuth, wantNonRetryable: true},
-		{name: "stream interruption", toolsetID: "coding-read-v1", providerError: codexresponses.ErrStreamInterrupted,
-			wantType: agent.ErrorTypeTransient},
+		{
+			name: "rate limit", toolsetID: "coding-read-v1", providerError: codexresponses.ErrRateLimited,
+			wantType: agent.ErrorTypeRateLimit, wantNonRetryable: true,
+		},
+		{
+			name: "provider auth", toolsetID: "coding-read-v1", providerError: codexresponses.ErrAuth,
+			wantType: agent.ErrorTypeAuth, wantNonRetryable: true,
+		},
+		{
+			name: "stream interruption", toolsetID: "coding-read-v1", providerError: codexresponses.ErrStreamInterrupted,
+			wantType: agent.ErrorTypeTransient,
+		},
 		{name: "unknown toolset", toolsetID: "unknown-v1", wantType: agent.ErrorTypeInvalidInput, wantNonRetryable: true},
 	}
 	for _, test := range tests {
