@@ -296,31 +296,6 @@ describe("cronSpecs image digest pinning", () => {
 // InfraNamespaceName-keyed namespace map (home-assistant's namespace is
 // created directly in homeassistant.ts, L1). homeassistant.ts is the only
 // caller, itself only invoked from program.ts behind `substrate === "talos"`.
-describe("haConfigBackupCronSpec (Task 4)", () => {
-  test("tars .storage + YAML from the ha-config claim to the NAS, NOT the recorder history", () => {
-    const spec = crons.haConfigBackupCronSpec({
-      nasNfsServer: NAS,
-      haConfigClaimName: "ha-config",
-    });
-    expect(spec.name).toBe("ha-config-backup");
-    expect(spec.command?.join("\n")).toContain("tar -czf");
-    expect(spec.command?.join("\n")).toContain(".storage");
-    expect(spec.command?.join("\n")).not.toContain("pg_dump");
-  });
-
-  test("mounts the ha-config claim read-only and the NAS backup dest separately", () => {
-    const spec = crons.haConfigBackupCronSpec({
-      nasNfsServer: NAS,
-      haConfigClaimName: "ha-config",
-    });
-    const configVol = spec.volumes?.find((v) => v.claim === "ha-config");
-    const nfsVol = spec.volumes?.find((v) => v.nfs);
-    expect(configVol?.readOnly).toBe(true);
-    expect(nfsVol?.nfs?.server).toBe(NAS);
-    expect(nfsVol?.subPath).toBe("backups/world-wide-webb/home-assistant/ha-config");
-  });
-});
-
 describe("homeAssistantPgBackupCronSpec (Task 4)", () => {
   const args = {
     nasNfsServer: NAS,

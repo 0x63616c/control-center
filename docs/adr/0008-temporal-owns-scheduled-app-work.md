@@ -16,7 +16,7 @@ entrypoint with its `boot-env-cron` hydration — is deleted.
 
 ## Why move off k8s CronJobs
 
-The CronJob path accumulated real operational cost for app work (issue #27 was three stacked
+The CronJob path accumulated real operational cost for app work (three stacked
 layers of it): every cron run pulls a digest-pinned api image, so stale-pin bugs ship silently;
 env hydration happens in a bespoke `boot-env-cron` entrypoint that once pointed purges at
 localhost; per-run visibility is a Job pod's logs and nothing else; retry policy is "the pod

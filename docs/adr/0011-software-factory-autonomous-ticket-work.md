@@ -2,13 +2,13 @@
 
 > **Superseded in part by [ADR-0012](./0012-software-factory-owns-its-tickets-and-its-record.md).**
 > The work source, the state store and the progress record described below are no longer
-> GitHub Issues, the `auto` label or issue comments: the factory owns its own Tickets, its
-> own record and its own console, and the GitHub-backed pipeline this ADR specifies was
+> Legacy intake labels and external status comments: the factory owns its own Tickets, its
+> own record and its own console, and the legacy pipeline this ADR specifies was
 > deleted. Everything here about sandboxed pods, the stage pipeline and the trust boundary
 > still describes the running system. This ADR is left as the record of a decision at a
 > point in time; it is not rewritten.
 
-Tickets labelled `auto` are picked up, planned, reviewed, implemented and turned into open
+Tickets are picked up, planned, reviewed, implemented and turned into open
 PRs by a self-hosted service — no human in the loop until the PR exists. It runs as a Go
 Temporal worker in a new `software-factory` k8s namespace on its own `software-factory`
 Temporal namespace and task queue, and executes each ticket's agent stages via `codex exec`
@@ -72,23 +72,11 @@ its cleanup can leave a ticket in a state the dispatcher's query no longer retur
 dispatcher therefore re-checks tickets it believes are in flight against their actual
 workflow state, and releases the ones that aren't.
 
-## One label
+## Ticket state
 
-`auto` — unchanged, and the only label this system touches. It means *this ticket wants
-machine work and none has been delivered*. The machine **removes** it when a PR opens or
-when it is blocked, and comments why. A human re-adds it to request another pass.
-
-An earlier draft proposed `auto/todo`, `auto/claimed` and `auto/blocked`. Rejected:
-`auto/claimed` existed only to prevent double-work, which workflow-ID uniqueness already
-prevents, and the rest reintroduced exactly the stale status-label scheme AGENTS.md
-deliberately excludes. Machine state belongs in Temporal, which can be queried; the issue
-carries a status **comment** instead, which is chronological and more informative than a
-label.
-
-A run **appends** one comment per step: picked up (with a link to the Temporal run), one per
-stage — posted when the stage starts, edited in place when it ends — then outcome and token
-totals. One comment per `(run, stage)`, not per attempt, so a retried stage edits its own
-comment rather than appending a second.
+Tickets carry no labels. The factory owns their lifecycle, execution history and dependency
+edges; the console is the chronological record of every Run, Step and Attempt. Workflow-ID
+uniqueness prevents double-work without a separate claim marker.
 
 Decided 2026-07-28, replacing an earlier single comment edited in place for the whole run:
 the ticket's timeline is then the audit trail, and the cost — a five-stage run leaving seven
@@ -129,7 +117,7 @@ control-plane node. What it buys is protection against container escape via kern
 The realistic threat is the arbitrary npm postinstall scripts `bun install` executes every
 ticket, and those get code execution inside the container either way; gVisor only blocks
 escalation to the host. Meanwhile the sandbox holds strictly less than the laptop that runs
-`bun install` on this repo daily. Revisit if anyone but the owner can file an `auto`
+`bun install` on this repo daily. Revisit if anyone but the owner can file a Ticket
 ticket — untrusted execution plus prompt injection is a different threat model.
 
 ## Stages, and why each is a separate `codex exec`
@@ -153,7 +141,7 @@ narrower activity-retry window where that same Session finds its earlier attempt
 but failed to report success, avoiding a duplicate paid Codex run.
 
 **`implement` pushes its branch before finishing.** The branch is going to origin anyway,
-and it makes GitHub the durable state between stages. A pod lost between `implement` and
+and it makes the pushed branch the durable state between stages. A pod lost between `implement` and
 `propose` costs a re-clone, not a redone ticket — which is why the sandbox needs no
 persistent volume.
 
@@ -257,8 +245,7 @@ retries into the same wall simultaneously.
 
 Per-stage token usage comes free in `turn.completed` and goes three places: Prometheus
 counters labelled by stage and model (the cluster already runs Prometheus and Grafana), the
-workflow result, and the issue's status comment so cost is visible where the work is
-reviewed.
+workflow result, and the factory console so cost is visible where the work is reviewed.
 
 Full `--json` event streams are written per stage to `/transcripts/<ticket>/<run-id>/<stage>.jsonl`
 on an NFS-backed volume, where `run-id` is Temporal's RunID so retries and re-runs stay
@@ -327,7 +314,7 @@ oversight. Kubernetes `resourceNames` **cannot** restrict `list`, `watch`, `crea
   admission policy.
 
 Sandboxes hold a GitHub App installation token (one hour, scoped to this repository)
-because `implement` pushes a branch. Issue titles and bodies are attacker-controllable text
+because `implement` pushes a branch. Ticket titles and bodies are attacker-controllable text
 that reaches the sandbox as prompts and argv, so every `codex` invocation is built as an
 explicit `[]string` and never interpolated into a shell string — end to end, including the
 sandbox's own entrypoint.

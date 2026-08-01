@@ -131,5 +131,5 @@ content, not line number. Non-blocking.
 - ONE atomic commit is correctly mandated (dup-router-key `logs` / dup-table
   `frontend_log` throw otherwise). Honor it.
 
-Once fixes #1 and #2 are folded into the plan (both one-line clarifications), this is
+Once the two one-line clarifications are folded into the plan, this is
 ready to implement.
