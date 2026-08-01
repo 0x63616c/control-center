@@ -3,7 +3,9 @@ package storetest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -28,6 +30,9 @@ type TargetStore interface {
 	BindCheckpointCapability(context.Context, store.TargetAttemptID, string) error
 	LoadAgentCheckpoint(context.Context, store.TargetAttemptID, string) (store.AgentAttempt, *store.TargetTranscript, bool, error)
 	CheckpointGitEffect(context.Context, store.GitCheckpointInput) (store.GitCheckpoint, error)
+	BindRepositoryCapability(context.Context, work.RunWorkerIdentity, string) error
+	LoadRepositoryCheckpoint(context.Context, work.RunWorkerIdentity, string) (store.GitCheckpoint, bool, error)
+	CheckpointRepository(context.Context, store.RepositoryCheckpointInput) (store.GitCheckpoint, error)
 	ReconcileAbandonedRun(context.Context, string, store.TicketID) (bool, error)
 }
 
@@ -366,7 +371,7 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 			t.Fatalf("CheckpointAgentAttempt(exact retry): %v", err)
 		}
 		loaded, loadedTranscript, found, err = s.LoadAgentCheckpoint(ctx, attemptID, "contract-capability")
-		if err != nil || !found || loaded.State != work.AgentAttemptSucceeded || string(loaded.Result) != `{"kind":"done"}` || loadedTranscript == nil {
+		if err != nil || !found || loaded.State != work.AgentAttemptSucceeded || !jsonEquivalent(loaded.Result, []byte(`{"kind":"done"}`)) || loadedTranscript == nil {
 			t.Fatalf("LoadAgentCheckpoint(succeeded) = (%+v, %+v, %v, %v)", loaded, loadedTranscript, found, err)
 		}
 		checkpoint.Result = []byte(`{"kind":"different"}`)
@@ -495,6 +500,126 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 			t.Fatalf("CheckpointGitEffect(conflict) error = %v, want permanent", err)
 		}
 	})
+
+	t.Run("repository capability is generation scoped and checkpoint retries are atomic", func(t *testing.T) {
+		s, _, runID, startedAt := claimedRun(t, newStore(t))
+		ctx := context.Background()
+		generationOne := work.RunWorkerIdentity{RunID: runID, Generation: 1}
+		generationTwo := work.RunWorkerIdentity{RunID: runID, Generation: 2}
+		if err := s.BindRepositoryCapability(ctx, generationOne, "repository-one"); err != nil {
+			t.Fatalf("BindRepositoryCapability: %v", err)
+		}
+		if err := s.BindRepositoryCapability(ctx, generationOne, "repository-one"); err != nil {
+			t.Fatalf("BindRepositoryCapability(exact retry): %v", err)
+		}
+		if _, found, err := s.LoadRepositoryCheckpoint(ctx, generationOne, "repository-one"); err != nil || found {
+			t.Fatalf("LoadRepositoryCheckpoint(missing) = found %t, error %v", found, err)
+		}
+		if err := s.BindRepositoryCapability(ctx, generationOne, "conflicting"); !errors.Is(err, work.ErrPermanent) {
+			t.Fatalf("BindRepositoryCapability(conflict) error = %v, want permanent", err)
+		}
+		if _, err := s.StartStep(ctx, store.StartStepInput{RunID: runID, Ordinal: 1, Kind: work.StepSyncPullRequest, StartedAt: startedAt}); err != nil {
+			t.Fatalf("StartStep: %v", err)
+		}
+		input := store.RepositoryCheckpointInput{
+			Identity: generationOne, Capability: "repository-one", CompletedAt: startedAt.Add(time.Minute),
+			GitCheckpoint: store.GitCheckpoint{RunID: runID, StepOrdinal: 1, Branch: "factory/contract", PushedHead: "head-1", ObservedBase: "base-1", PullRequestNumber: 7, PullRequestNodeID: "node-7", StepResult: []byte(`{"kind":"synced"}`)},
+		}
+		got, err := s.CheckpointRepository(ctx, input)
+		if err != nil {
+			t.Fatalf("CheckpointRepository: %v", err)
+		}
+		input.CompletedAt = input.CompletedAt.Add(time.Minute)
+		if retry, err := s.CheckpointRepository(ctx, input); err != nil || retry.PushedHead != got.PushedHead {
+			t.Fatalf("CheckpointRepository(exact retry) = %+v, error %v", retry, err)
+		}
+		detail, err := s.TargetRunDetail(ctx, runID)
+		if err != nil {
+			t.Fatalf("TargetRunDetail: %v", err)
+		}
+		if len(detail.Steps) != 1 || detail.Steps[0].Step.State != work.StepStateCompleted || !detail.Steps[0].Step.EndedAt.Equal(startedAt.Add(time.Minute)) {
+			t.Fatalf("checkpoint did not atomically preserve completed Step: %+v", detail.Steps)
+		}
+		loaded, found, err := s.LoadRepositoryCheckpoint(ctx, generationOne, "repository-one")
+		if err != nil || !found || loaded.PushedHead != "head-1" {
+			t.Fatalf("LoadRepositoryCheckpoint = %+v, found %t, error %v", loaded, found, err)
+		}
+		if err := s.BindRepositoryCapability(ctx, generationTwo, "repository-two"); err != nil {
+			t.Fatalf("BindRepositoryCapability(rotation): %v", err)
+		}
+		if _, _, err := s.LoadRepositoryCheckpoint(ctx, generationOne, "repository-one"); !errors.Is(err, store.ErrRunOwnership) {
+			t.Fatalf("LoadRepositoryCheckpoint(obsolete generation) error = %v, want ownership", err)
+		}
+		if err := s.BindRepositoryCapability(ctx, generationOne, "repository-one"); !errors.Is(err, work.ErrPermanent) {
+			t.Fatalf("BindRepositoryCapability(regression) error = %v, want permanent", err)
+		}
+	})
+
+	t.Run("repository capability cannot cross Runs", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		_, _, firstRunID, startedAt := claimedRun(t, s)
+		_, _, secondRunID, _ := claimedRun(t, s)
+		first := work.RunWorkerIdentity{RunID: firstRunID, Generation: 1}
+		second := work.RunWorkerIdentity{RunID: secondRunID, Generation: 1}
+		if err := s.BindRepositoryCapability(ctx, first, "first-repository"); err != nil {
+			t.Fatalf("BindRepositoryCapability(first): %v", err)
+		}
+		if _, found, err := s.LoadRepositoryCheckpoint(ctx, second, "first-repository"); !errors.Is(err, store.ErrRunOwnership) || found {
+			t.Fatalf("LoadRepositoryCheckpoint(foreign) = found %t, error %v, want ownership", found, err)
+		}
+		if _, err := s.StartStep(ctx, store.StartStepInput{RunID: secondRunID, Ordinal: 1, Kind: work.StepSyncPullRequest, StartedAt: startedAt}); err != nil {
+			t.Fatalf("StartStep(second): %v", err)
+		}
+		_, err := s.CheckpointRepository(ctx, store.RepositoryCheckpointInput{
+			Identity: second, Capability: "first-repository", CompletedAt: startedAt.Add(time.Minute),
+			GitCheckpoint: store.GitCheckpoint{RunID: secondRunID, StepOrdinal: 1, Branch: "factory/second", PushedHead: "head", ObservedBase: "base", PullRequestNumber: 2, PullRequestNodeID: "node-2", StepResult: []byte(`{"kind":"synced"}`)},
+		})
+		if !errors.Is(err, store.ErrRunOwnership) {
+			t.Fatalf("CheckpointRepository(foreign) error = %v, want ownership", err)
+		}
+	})
+
+	for _, terminal := range []string{"canceled", "done"} {
+		terminal := terminal
+		t.Run("repository capability fences "+terminal+" owner", func(t *testing.T) {
+			s, ticket, runID, startedAt := claimedRun(t, newStore(t))
+			ctx := context.Background()
+			identity := work.RunWorkerIdentity{RunID: runID, Generation: 1}
+			if err := s.BindRepositoryCapability(ctx, identity, "repository"); err != nil {
+				t.Fatalf("BindRepositoryCapability: %v", err)
+			}
+			if _, err := s.StartStep(ctx, store.StartStepInput{RunID: runID, Ordinal: 1, Kind: work.StepSyncPullRequest, StartedAt: startedAt}); err != nil {
+				t.Fatalf("StartStep(repository): %v", err)
+			}
+			switch terminal {
+			case "canceled":
+				if _, err := s.CancelRun(ctx, store.CancelRunInput{RunID: runID, TicketID: ticket.ID, EndedAt: startedAt.Add(time.Minute)}); err != nil {
+					t.Fatalf("CancelRun: %v", err)
+				}
+			case "done":
+				if _, err := s.StartStep(ctx, store.StartStepInput{RunID: runID, Ordinal: 2, Kind: work.StepMergePullRequest, StartedAt: startedAt}); err != nil {
+					t.Fatalf("StartStep(merge): %v", err)
+				}
+				if _, err := s.FinalizeConfirmedMerge(ctx, store.ConfirmedMergeInput{RunID: runID, TicketID: ticket.ID, StepOrdinal: 2, ReviewedHead: "head", MergeSHA: "merge", EndedAt: startedAt.Add(time.Minute)}); err != nil {
+					t.Fatalf("FinalizeConfirmedMerge: %v", err)
+				}
+			}
+			if _, _, err := s.LoadRepositoryCheckpoint(ctx, identity, "repository"); !errors.Is(err, store.ErrRunOwnership) {
+				t.Fatalf("LoadRepositoryCheckpoint(%s) error = %v, want ownership", terminal, err)
+			}
+			if err := s.BindRepositoryCapability(ctx, work.RunWorkerIdentity{RunID: runID, Generation: 2}, "replacement"); !errors.Is(err, store.ErrRunOwnership) {
+				t.Fatalf("BindRepositoryCapability(%s) error = %v, want ownership", terminal, err)
+			}
+			_, err := s.CheckpointRepository(ctx, store.RepositoryCheckpointInput{
+				Identity: identity, Capability: "repository", CompletedAt: startedAt.Add(2 * time.Minute),
+				GitCheckpoint: store.GitCheckpoint{RunID: runID, StepOrdinal: 1, Branch: "factory/terminal", PushedHead: "head", ObservedBase: "base", PullRequestNumber: 1, PullRequestNodeID: "node", StepResult: []byte(`{"kind":"synced"}`)},
+			})
+			if !errors.Is(err, store.ErrRunOwnership) {
+				t.Fatalf("CheckpointRepository(%s) error = %v, want ownership", terminal, err)
+			}
+		})
+	}
 
 	t.Run("git checkpoint requires its owned running step", func(t *testing.T) {
 		s, _, runID, startedAt := claimedRun(t, newStore(t))
@@ -644,6 +769,15 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 			t.Fatalf("Merge Step = %+v, want completed", detail.Steps)
 		}
 	})
+}
+
+func jsonEquivalent(left, right []byte) bool {
+	var leftValue any
+	var rightValue any
+	if json.Unmarshal(left, &leftValue) != nil || json.Unmarshal(right, &rightValue) != nil {
+		return false
+	}
+	return reflect.DeepEqual(leftValue, rightValue)
 }
 
 func claimedRun(t *testing.T, s TargetStore) (TargetStore, store.Ticket, string, time.Time) {

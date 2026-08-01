@@ -16,6 +16,7 @@ type RunWorkerLifecycle interface {
 	Provision(context.Context, work.RunWorkerSpec, work.RunWorkerSecretMaterial) (work.RunWorkerID, error)
 	RotateGitHubCredential(context.Context, work.RunWorkerIdentity, work.Credential, string, time.Time) (work.RunWorkerCredentialRevision, error)
 	InstallCheckpointCapability(context.Context, work.RunWorkerIdentity, store.TargetAttemptID, work.Credential) (work.Credential, error)
+	InstallRepositoryCapability(context.Context, work.RunWorkerIdentity, work.Credential) (work.Credential, error)
 	Delete(context.Context, work.RunWorkerIdentity) error
 }
 
@@ -36,6 +37,12 @@ type CheckpointCapabilityBinder interface {
 	BindCheckpointCapability(context.Context, store.TargetAttemptID, string) error
 }
 
+// RepositoryCapabilityBinder fences Git/PR checkpoint writes to the active
+// Run Worker generation.
+type RepositoryCapabilityBinder interface {
+	BindRepositoryCapability(context.Context, work.RunWorkerIdentity, string) error
+}
+
 // RunWorkerTemplate is deployment-owned worker shape, not workflow input.
 type RunWorkerTemplate struct {
 	Image           string
@@ -47,18 +54,20 @@ type RunWorkerTemplate struct {
 
 // RunWorkerControlDeps are capabilities that remain on the main queue.
 type RunWorkerControlDeps struct {
-	Workers      RunWorkerLifecycle
-	GitHub       GitHubCredentialSource
-	Codex        TokenSource
-	Capabilities CheckpointCapabilityMinter
-	Binder       CheckpointCapabilityBinder
-	Template     RunWorkerTemplate
+	Workers          RunWorkerLifecycle
+	GitHub           GitHubCredentialSource
+	Codex            TokenSource
+	Capabilities     CheckpointCapabilityMinter
+	Binder           CheckpointCapabilityBinder
+	RepositoryBinder RepositoryCapabilityBinder
+	Template         RunWorkerTemplate
 }
 
 // RunWorkerControlActivities provisions and renews Run Workers without ever
 // admitting credentials to workflow input, output, logs, or history.
 type RunWorkerControlActivities struct{ deps RunWorkerControlDeps }
 
+// NewRunWorkerControlActivities validates and seals the main-control dependencies.
 func NewRunWorkerControlActivities(deps RunWorkerControlDeps) (*RunWorkerControlActivities, error) {
 	missing := []string{}
 	if deps.Workers == nil {
@@ -76,27 +85,32 @@ func NewRunWorkerControlActivities(deps RunWorkerControlDeps) (*RunWorkerControl
 	if deps.Binder == nil {
 		missing = append(missing, "Binder")
 	}
+	if deps.RepositoryBinder == nil {
+		missing = append(missing, "RepositoryBinder")
+	}
 	if len(missing) > 0 {
-		return nil, fmt.Errorf("Run Worker control activities require %v", missing)
+		return nil, fmt.Errorf("run worker control activities require %v", missing)
 	}
 	if strings.TrimSpace(deps.Template.Image) == "" || strings.TrimSpace(deps.Template.CPURequest) == "" || strings.TrimSpace(deps.Template.MemoryLimit) == "" || deps.Template.DeadlineSeconds <= 0 {
-		return nil, fmt.Errorf("Run Worker control activities require a complete worker template")
+		return nil, fmt.Errorf("run worker control activities require a complete worker template")
 	}
 	return &RunWorkerControlActivities{deps: deps}, nil
 }
 
+// ProvisionRunWorkerInput names the deterministic worker generation to create.
 type ProvisionRunWorkerInput struct {
 	TicketNumber int
 	Identity     work.RunWorkerIdentity
 	Branch       string
 }
 
+// ProvisionRunWorkerOutput contains only the safe deterministic worker identity.
 type ProvisionRunWorkerOutput struct {
 	ID work.RunWorkerID
 }
 
-// ProvisionRunWorker fetches all three credentials inside the activity and
-// returns only the deterministic worker identity.
+// ProvisionRunWorker fetches every credential inside the activity, projects
+// both checkpoint capabilities, and returns only the deterministic worker identity.
 func (a *RunWorkerControlActivities) ProvisionRunWorker(ctx context.Context, in ProvisionRunWorkerInput) (ProvisionRunWorkerOutput, error) {
 	if in.TicketNumber <= 0 || strings.TrimSpace(in.Branch) == "" {
 		return ProvisionRunWorkerOutput{}, fail(ctx, "validating Run Worker provisioning", fmt.Errorf("ticket number must be positive: %w", work.ErrPermanent))
@@ -133,9 +147,21 @@ func (a *RunWorkerControlActivities) ProvisionRunWorker(ctx context.Context, in 
 	if err != nil {
 		return ProvisionRunWorkerOutput{}, fail(ctx, "provisioning the Run Worker", err)
 	}
+	repositoryCapability, err := a.deps.Capabilities.Mint()
+	if err != nil {
+		return ProvisionRunWorkerOutput{}, fail(ctx, "minting the Run Worker repository capability", err)
+	}
+	installedRepositoryCapability, err := a.deps.Workers.InstallRepositoryCapability(ctx, in.Identity, repositoryCapability)
+	if err != nil {
+		return ProvisionRunWorkerOutput{}, fail(ctx, "installing the Run Worker repository capability", err)
+	}
+	if err := a.deps.RepositoryBinder.BindRepositoryCapability(ctx, in.Identity, installedRepositoryCapability.Reveal()); err != nil {
+		return ProvisionRunWorkerOutput{}, fail(ctx, "binding the Run Worker repository capability", err)
+	}
 	return ProvisionRunWorkerOutput{ID: id}, nil
 }
 
+// RotateRunWorkerGitHubCredentialInput names the generation receiving a new token.
 type RotateRunWorkerGitHubCredentialInput struct {
 	Identity work.RunWorkerIdentity
 }
@@ -157,6 +183,7 @@ func (a *RunWorkerControlActivities) RotateRunWorkerGitHubCredential(ctx context
 	return revision, nil
 }
 
+// AuthorizeRunWorkerAttemptInput binds one exact Agent Attempt to its projected capability.
 type AuthorizeRunWorkerAttemptInput struct {
 	Identity  work.RunWorkerIdentity
 	AttemptID store.TargetAttemptID
@@ -180,10 +207,12 @@ func (a *RunWorkerControlActivities) AuthorizeRunWorkerAttempt(ctx context.Conte
 	return nil
 }
 
+// DeleteRunWorkerInput names the generation whose temporary resources should be removed.
 type DeleteRunWorkerInput struct {
 	Identity work.RunWorkerIdentity
 }
 
+// DeleteRunWorker idempotently removes one generation's temporary resources.
 func (a *RunWorkerControlActivities) DeleteRunWorker(ctx context.Context, in DeleteRunWorkerInput) error {
 	if err := a.deps.Workers.Delete(ctx, in.Identity); err != nil {
 		return fail(ctx, "deleting the Run Worker", err)

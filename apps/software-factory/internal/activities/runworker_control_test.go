@@ -13,15 +13,24 @@ import (
 )
 
 type runWorkerLifecycleProbe struct {
-	provisioned work.RunWorkerSpec
-	material    work.RunWorkerSecretMaterial
-	rotated     work.RunWorkerIdentity
-	credential  work.SandboxCredential
-	deleted     work.RunWorkerIdentity
-	installedOn work.RunWorkerIdentity
-	installedAt store.TargetAttemptID
-	installed   work.Credential
-	projected   work.Credential
+	provisioned         work.RunWorkerSpec
+	material            work.RunWorkerSecretMaterial
+	rotated             work.RunWorkerIdentity
+	credential          work.SandboxCredential
+	deleted             work.RunWorkerIdentity
+	installedOn         work.RunWorkerIdentity
+	installedAt         store.TargetAttemptID
+	installed           work.Credential
+	projected           work.Credential
+	repositoryInstalled work.Credential
+}
+
+func (p *runWorkerLifecycleProbe) InstallRepositoryCapability(_ context.Context, _ work.RunWorkerIdentity, proposed work.Credential) (work.Credential, error) {
+	if p.repositoryInstalled.Reveal() != "" {
+		return p.repositoryInstalled, nil
+	}
+	p.repositoryInstalled = proposed
+	return proposed, nil
 }
 
 func (p *runWorkerLifecycleProbe) Provision(_ context.Context, spec work.RunWorkerSpec, material work.RunWorkerSecretMaterial) (work.RunWorkerID, error) {
@@ -75,8 +84,15 @@ func (p *capabilityProbe) Mint() (work.Credential, error) {
 }
 
 type capabilityBinderProbe struct {
-	id         store.TargetAttemptID
-	capability string
+	id                   store.TargetAttemptID
+	capability           string
+	repositoryIdentity   work.RunWorkerIdentity
+	repositoryCapability string
+}
+
+func (p *capabilityBinderProbe) BindRepositoryCapability(_ context.Context, identity work.RunWorkerIdentity, capability string) error {
+	p.repositoryIdentity, p.repositoryCapability = identity, capability
+	return nil
 }
 
 func (p *capabilityBinderProbe) BindCheckpointCapability(_ context.Context, id store.TargetAttemptID, capability string) error {
@@ -87,14 +103,15 @@ func (p *capabilityBinderProbe) BindCheckpointCapability(_ context.Context, id s
 func runWorkerControlHarness(t *testing.T) (*RunWorkerControlActivities, *runWorkerLifecycleProbe, *capabilityProbe, *capabilityBinderProbe) {
 	t.Helper()
 	lifecycle := &runWorkerLifecycleProbe{}
-	capabilities := &capabilityProbe{values: []work.Credential{work.NewCredential("bootstrap-secret"), work.NewCredential("attempt-secret")}}
+	capabilities := &capabilityProbe{values: []work.Credential{work.NewCredential("bootstrap-secret"), work.NewCredential("repository-secret"), work.NewCredential("attempt-secret")}}
 	binder := &capabilityBinderProbe{}
 	acts, err := NewRunWorkerControlActivities(RunWorkerControlDeps{
-		Workers:      lifecycle,
-		GitHub:       githubCredentialProbe{credential: work.SandboxCredential{Token: work.NewCredential("github-secret"), Login: "factory[bot]", ExpiresAt: time.Date(2026, 8, 1, 1, 0, 0, 0, time.UTC)}},
-		Codex:        codexCredentialProbe{file: work.NewCredentialFile([]byte("codex-secret"))},
-		Capabilities: capabilities,
-		Binder:       binder,
+		Workers:          lifecycle,
+		GitHub:           githubCredentialProbe{credential: work.SandboxCredential{Token: work.NewCredential("github-secret"), Login: "factory[bot]", ExpiresAt: time.Date(2026, 8, 1, 1, 0, 0, 0, time.UTC)}},
+		Codex:            codexCredentialProbe{file: work.NewCredentialFile([]byte("codex-secret"))},
+		Capabilities:     capabilities,
+		Binder:           binder,
+		RepositoryBinder: binder,
 		Template: RunWorkerTemplate{
 			Image: "ghcr.io/example/run-worker@sha256:123", CPURequest: "2", MemoryLimit: "8Gi", DeadlineSeconds: 7200,
 			Env: map[string]string{work.RunWorkerTemporalHostPortEnv: "temporal:7233"},
@@ -107,7 +124,7 @@ func runWorkerControlHarness(t *testing.T) (*RunWorkerControlActivities, *runWor
 }
 
 func TestProvisionRunWorkerKeepsCredentialsInsideTheActivity(t *testing.T) {
-	acts, lifecycle, _, _ := runWorkerControlHarness(t)
+	acts, lifecycle, _, binder := runWorkerControlHarness(t)
 	in := ProvisionRunWorkerInput{TicketNumber: 42, Identity: work.RunWorkerIdentity{RunID: "0f466627-b3ae-4ba2-9c96-6ef44ec6f578", Generation: 1}, Branch: "factory/ticket-42/run"}
 	out, err := acts.ProvisionRunWorker(context.Background(), in)
 	if err != nil {
@@ -122,6 +139,9 @@ func TestProvisionRunWorkerKeepsCredentialsInsideTheActivity(t *testing.T) {
 	}
 	if string(lifecycle.material.CodexCredential.Reveal()) != "codex-secret" || lifecycle.material.GitHubToken.Reveal() != "github-secret" || lifecycle.material.CheckpointCapability.Reveal() != "bootstrap-secret" {
 		t.Fatal("provisioning did not receive all in-process credentials")
+	}
+	if lifecycle.repositoryInstalled.Reveal() != "repository-secret" || binder.repositoryIdentity != in.Identity || binder.repositoryCapability != "repository-secret" {
+		t.Fatal("provisioning did not install and bind its generation repository capability")
 	}
 	assertHistoryHasNoSecrets(t, in, out)
 }
@@ -173,7 +193,7 @@ func assertHistoryHasNoSecrets(t *testing.T, input, output any) {
 		if err != nil {
 			t.Fatalf("marshal safe activity payload: %v", err)
 		}
-		for _, secret := range [][]byte{[]byte("codex-secret"), []byte("github-secret"), []byte("bootstrap-secret"), []byte("attempt-secret"), []byte("already-projected-secret")} {
+		for _, secret := range [][]byte{[]byte("codex-secret"), []byte("github-secret"), []byte("bootstrap-secret"), []byte("repository-secret"), []byte("attempt-secret"), []byte("already-projected-secret")} {
 			if bytes.Contains(raw, secret) {
 				t.Fatalf("activity payload leaked credential: %s", raw)
 			}

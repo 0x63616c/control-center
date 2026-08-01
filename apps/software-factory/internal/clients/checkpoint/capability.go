@@ -14,6 +14,7 @@ const capabilityBytes = 32
 // entropy source. Production supplies crypto/rand.Reader; tests stay exact.
 type CapabilityMinter struct{ random io.Reader }
 
+// NewCapabilityMinter builds a capability minter from an injected entropy source.
 func NewCapabilityMinter(random io.Reader) (*CapabilityMinter, error) {
 	if random == nil {
 		return nil, fmt.Errorf("constructing checkpoint capability minter: random source is nil")
@@ -21,6 +22,7 @@ func NewCapabilityMinter(random io.Reader) (*CapabilityMinter, error) {
 	return &CapabilityMinter{random: random}, nil
 }
 
+// Mint returns a new opaque capability that refuses JSON serialization.
 func (m *CapabilityMinter) Mint() (work.Credential, error) {
 	raw := make([]byte, capabilityBytes)
 	if _, err := io.ReadFull(m.random, raw); err != nil {

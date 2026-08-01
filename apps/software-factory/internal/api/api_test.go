@@ -237,6 +237,8 @@ func TestBuildEndpointAndOpenAPI(t *testing.T) {
 		"cloudflareAccess:", "Cf-Access-Jwt-Assertion", "inClusterBearer:", "scheme: bearer",
 		"agentCheckpointCapability:", "X-Software-Factory-Checkpoint-Capability",
 		"/v1/run-worker/runs/{runID}/steps/{stepOrdinal}/attempts/{attemptNo}/checkpoint:",
+		"repositoryCheckpointCapability:", "X-Software-Factory-Repository-Capability",
+		"/v1/run-worker/runs/{runID}/generations/{generation}/repository-checkpoint:",
 	} {
 		if !strings.Contains(string(spec), requirement) {
 			t.Fatalf("OpenAPIYAML() missing security requirement %q", requirement)
