@@ -634,7 +634,36 @@ func TestSucceededAgentCheckpointRequiresCompleteDurableEvidence(t *testing.T) {
 	}
 }
 
-func TestRunningAgentCheckpointRetryPropagatesTranscriptReadFailure(t *testing.T) {
+func TestAgentCheckpointRetryPropagatesTranscriptReadFailure(t *testing.T) {
+	for _, state := range []work.AgentAttemptState{work.AgentAttemptRunning, work.AgentAttemptSucceeded} {
+		t.Run(string(state), func(t *testing.T) {
+			s, pool, checkpoint, startedAt := persistedRunningCheckpoint(t)
+			ctx := context.Background()
+			if state == work.AgentAttemptSucceeded {
+				checkpoint.State = work.AgentAttemptSucceeded
+				checkpoint.EndedAt = startedAt.Add(time.Minute)
+				checkpoint.Result = []byte(`{"kind":"done"}`)
+				checkpoint.Transcript = targetTranscript()
+				if _, err := s.CheckpointAgentAttempt(ctx, checkpoint); err != nil {
+					t.Fatalf("CheckpointAgentAttempt(terminal): %v", err)
+				}
+			}
+
+			readFailure := errors.New("transcript persistence unavailable")
+			failing := store.New(&transcriptReadFailurePool{Pool: pool, err: readFailure})
+			_, err := failing.CheckpointAgentAttempt(ctx, checkpoint)
+			if !errors.Is(err, readFailure) {
+				t.Fatalf("CheckpointAgentAttempt(retry) error = %v, want transcript read failure", err)
+			}
+			if errors.Is(err, work.ErrPermanent) {
+				t.Fatalf("CheckpointAgentAttempt(retry) error = %v, want retryable persistence failure", err)
+			}
+		})
+	}
+}
+
+func persistedRunningCheckpoint(t *testing.T) (*store.Store, *pgxpool.Pool, store.AgentCheckpointInput, time.Time) {
+	t.Helper()
 	s, pool := newTestStoreAndPool(t)
 	ctx := context.Background()
 	ticket, err := s.CreateTicket(ctx, "checkpoint read failure", "", nil)
@@ -664,16 +693,7 @@ func TestRunningAgentCheckpointRetryPropagatesTranscriptReadFailure(t *testing.T
 	if _, err := s.CheckpointAgentAttempt(ctx, checkpoint); err != nil {
 		t.Fatalf("CheckpointAgentAttempt(running): %v", err)
 	}
-
-	readFailure := errors.New("transcript persistence unavailable")
-	failing := store.New(&transcriptReadFailurePool{Pool: pool, err: readFailure})
-	_, err = failing.CheckpointAgentAttempt(ctx, checkpoint)
-	if !errors.Is(err, readFailure) {
-		t.Fatalf("CheckpointAgentAttempt(retry) error = %v, want transcript read failure", err)
-	}
-	if errors.Is(err, work.ErrPermanent) {
-		t.Fatalf("CheckpointAgentAttempt(retry) error = %v, want retryable persistence failure", err)
-	}
+	return s, pool, checkpoint, startedAt
 }
 
 type transcriptReadFailurePool struct {
