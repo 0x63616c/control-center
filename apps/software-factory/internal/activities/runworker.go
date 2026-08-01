@@ -13,6 +13,7 @@ import (
 type TargetRepository interface {
 	Prepare(context.Context, string, string) (string, error)
 	PrepareFromCommit(context.Context, string, string, string) (string, error)
+	Publish(context.Context, string) (string, error)
 }
 
 // TargetGitHub is the repository-scoped external surface hosted by a Run Worker.

@@ -24,6 +24,8 @@ type targetRepositoryProbe struct {
 	head        string
 	calls       int
 	carryHead   string
+	publishHead string
+	published   []string
 }
 
 func (p *targetRepositoryProbe) PrepareFromCommit(_ context.Context, url, branch, commit string) (string, error) {
@@ -36,6 +38,11 @@ func (p *targetRepositoryProbe) Prepare(_ context.Context, url, branch string) (
 	p.calls++
 	p.url, p.branch = url, branch
 	return p.head, nil
+}
+
+func (p *targetRepositoryProbe) Publish(_ context.Context, branch string) (string, error) {
+	p.published = append(p.published, branch)
+	return p.publishHead, nil
 }
 
 type targetGitHubProbe struct {
@@ -231,7 +238,8 @@ func TestTargetSyncRetryAfterLostCheckpointResponseUsesTheExactDurableResult(t *
 	want := work.PullRequest{Number: 42, NodeID: "PR_node", HeadSHA: "H1", URL: "https://github.com/example/repo/pull/42"}
 	cp := &repositoryCheckpointProbe{checkpointErr: errCheckpointResponseLost}
 	github := &targetGitHubProbe{pr: want}
-	a := targetRepositoryActivities(&targetRepositoryProbe{}, github, cp)
+	repository := &targetRepositoryProbe{publishHead: want.HeadSHA}
+	a := targetRepositoryActivities(repository, github, cp)
 	in := TargetSyncPullRequestInput{Step: position, Title: "title"}
 	if _, err := a.TargetSyncPullRequest(context.Background(), in); !errors.Is(err, errCheckpointResponseLost) || github.syncCalls != 1 || !cp.found {
 		t.Fatalf("first try error/calls/checkpoint = %v / %d / %#v", err, github.syncCalls, cp.loaded)
@@ -240,8 +248,28 @@ func TestTargetSyncRetryAfterLostCheckpointResponseUsesTheExactDurableResult(t *
 	if err != nil {
 		t.Fatalf("TargetSyncPullRequest: %v", err)
 	}
-	if github.syncCalls != 1 || got.Number != want.Number || got.NodeID != want.NodeID || len(cp.writes) != 1 || cp.writes[0].PushedHead != want.HeadSHA {
+	if len(repository.published) != 1 || github.syncCalls != 1 || got.Number != want.Number || got.NodeID != want.NodeID || len(cp.writes) != 1 || cp.writes[0].PushedHead != want.HeadSHA {
 		t.Fatalf("sync calls/result = %d / %+v", github.syncCalls, got)
+	}
+}
+
+func TestTargetSyncPublishesTheCommittedCandidateBeforeOpeningThePullRequest(t *testing.T) {
+	position := targetPosition(3)
+	repository := &targetRepositoryProbe{publishHead: "committed-head"}
+	want := work.PullRequest{Number: 42, NodeID: "PR_node", HeadSHA: "committed-head", URL: "https://github.com/example/repo/pull/42"}
+	cp := &repositoryCheckpointProbe{}
+	github := &targetGitHubProbe{pr: want}
+	a := targetRepositoryActivities(repository, github, cp)
+
+	got, err := a.TargetSyncPullRequest(context.Background(), TargetSyncPullRequestInput{Step: position, Title: "title"})
+	if err != nil {
+		t.Fatalf("TargetSyncPullRequest: %v", err)
+	}
+	if len(repository.published) != 1 || repository.published[0] != position.Branch {
+		t.Fatalf("published branches = %#v, want [%q]", repository.published, position.Branch)
+	}
+	if got.HeadSHA != repository.publishHead || len(cp.writes) != 1 || cp.writes[0].PushedHead != repository.publishHead {
+		t.Fatalf("pull request/checkpoint = %+v / %+v, want head %q", got, cp.writes, repository.publishHead)
 	}
 }
 

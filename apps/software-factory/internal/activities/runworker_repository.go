@@ -233,12 +233,17 @@ func (a *RunWorkerActivities) TargetSyncPullRequest(ctx context.Context, in Targ
 	if strings.TrimSpace(in.Title) == "" {
 		return work.PullRequest{}, fail(ctx, "synchronizing the target pull request", fmt.Errorf("title is required: %w", work.ErrPermanent))
 	}
+	publishedHead, err := a.deps.Repository.Publish(ctx, in.Step.Branch)
+	if err != nil {
+		return work.PullRequest{}, fail(ctx, "publishing the target pull request candidate", err)
+	}
 	pr, err := a.deps.GitHub.OpenOrUpdatePullRequest(ctx, in.Step.Branch, in.Title, in.Body, in.Existing)
 	if err != nil {
 		return work.PullRequest{}, fail(ctx, "synchronizing the target pull request", err)
 	}
+	pr.HeadSHA = publishedHead
 	position := in.Step
-	position.PushedHead = pr.HeadSHA
+	position.PushedHead = publishedHead
 	position.PullRequestNumber, position.PullRequestNodeID = pr.Number, pr.NodeID
 	if err := a.checkpointRepositoryResult(ctx, cp, position, repositoryEffectSync, pr); err != nil {
 		return work.PullRequest{}, fmt.Errorf("checkpointing target pull request sync effect: %w", err)

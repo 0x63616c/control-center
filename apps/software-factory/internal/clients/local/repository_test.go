@@ -17,6 +17,7 @@ type gitCall struct {
 type gitRunnerProbe struct {
 	calls  []gitCall
 	remote bool
+	branch string
 }
 
 func (p *gitRunnerProbe) Run(_ context.Context, dir string, argv []string) (string, int, error) {
@@ -32,6 +33,11 @@ func (p *gitRunnerProbe) Run(_ context.Context, dir string, argv []string) (stri
 		return "", 1, nil
 	case strings.Contains(joined, "rev-parse HEAD"):
 		return "head-sha\n", 0, nil
+	case strings.Contains(joined, "symbolic-ref --quiet --short HEAD"):
+		if p.branch == "" {
+			return "factory/run-42\n", 0, nil
+		}
+		return p.branch + "\n", 0, nil
 	default:
 		return "", 0, nil
 	}
@@ -107,6 +113,27 @@ func TestRepositoryCarryForwardCreatesFreshBranchAtTheDurableCommit(t *testing.T
 		{"git", "checkout", "-B", "factory/ticket-42/new-run", commit},
 		{"git", "push", "--set-upstream", "origin", "factory/ticket-42/new-run"},
 		{"git", "rev-parse", "HEAD"},
+	})
+}
+
+func TestRepositoryPublishesTheCommittedHeadFromTheExpectedRunBranch(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "repository")
+	runner := &gitRunnerProbe{}
+	repo, err := NewRepository(root, runner)
+	if err != nil {
+		t.Fatalf("NewRepository: %v", err)
+	}
+	head, err := repo.Publish(context.Background(), "factory/run-42")
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if head != "head-sha" {
+		t.Fatalf("head = %q", head)
+	}
+	assertGitArgv(t, runner.calls, [][]string{
+		{"git", "symbolic-ref", "--quiet", "--short", "HEAD"},
+		{"git", "rev-parse", "HEAD"},
+		{"git", "push", "origin", "HEAD:refs/heads/factory/run-42"},
 	})
 }
 
