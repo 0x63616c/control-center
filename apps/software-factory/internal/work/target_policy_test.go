@@ -38,6 +38,21 @@ func TestDefaultTargetRunPolicyEncodesTheTargetBudgets(t *testing.T) {
 	}
 }
 
+func TestDefaultLegacyAgentActivityPolicyMatchesThePreTargetAgentWorkflowPolicy(t *testing.T) {
+	t.Parallel()
+
+	policy := work.DefaultLegacyAgentActivityPolicy()
+	if policy.StartToCloseTimeout != 2*time.Minute || policy.ScheduleToCloseTimeout != 10*time.Minute || policy.HeartbeatTimeout != 15*time.Second {
+		t.Fatalf("legacy agent timeouts = %#v", policy)
+	}
+	if policy.Retry.InitialInterval != time.Second || policy.Retry.BackoffCoefficient != 2 || policy.Retry.MaximumInterval != 10*time.Second || policy.Retry.MaximumAttempts != 3 {
+		t.Fatalf("legacy agent retry = %#v", policy.Retry)
+	}
+	if err := policy.Validate(); err != nil {
+		t.Fatalf("legacy agent policy is invalid: %v", err)
+	}
+}
+
 func TestTargetRunPolicyRejectsAnEmptyRequiredCheckSet(t *testing.T) {
 	t.Parallel()
 

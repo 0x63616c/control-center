@@ -181,6 +181,13 @@ func (r *factoryTicketRun) runFactoryPlanTurn(
 			r.recordAttempt(ctx, key, model, startedAt, out.Usage, out.UsageMeasured, store.AttemptFailed)
 			return work.StageOutput{}, err
 		}
+		if out.Failure != nil {
+			r.recordAttempt(ctx, key, model, startedAt, out.Usage, out.UsageMeasured, store.AttemptFailed)
+			if out.TranscriptRef.Key != "" {
+				r.persistAgentTranscript(ctx, key, out.TranscriptRef)
+			}
+			return work.StageOutput{}, fmt.Errorf("agent plan terminal failure: %s", out.Failure.Kind)
+		}
 		r.usage = r.usage.Add(out.Usage)
 		r.recordAttempt(ctx, key, model, startedAt, out.Usage, out.UsageMeasured, store.AttemptSucceeded)
 		r.persistAgentTranscript(ctx, key, out.TranscriptRef)
@@ -221,6 +228,13 @@ func (r *factoryTicketRun) runFactoryImplementTurn(
 			r.recordAttempt(ctx, key, model, startedAt, out.Usage, out.UsageMeasured, store.AttemptFailed)
 			return work.StageOutput{}, err
 		}
+		if out.Failure != nil {
+			r.recordAttempt(ctx, key, model, startedAt, out.Usage, out.UsageMeasured, store.AttemptFailed)
+			if out.TranscriptRef.Key != "" {
+				r.persistAgentTranscript(ctx, key, out.TranscriptRef)
+			}
+			return work.StageOutput{}, fmt.Errorf("agent implement terminal failure: %s", out.Failure.Kind)
+		}
 		r.usage = r.usage.Add(out.Usage)
 		r.recordAttempt(ctx, key, model, startedAt, out.Usage, out.UsageMeasured, store.AttemptSucceeded)
 		r.persistAgentTranscript(ctx, key, out.TranscriptRef)
@@ -257,6 +271,13 @@ func (r *factoryTicketRun) runFactoryReviewTurn(
 		if err != nil {
 			r.recordAttempt(ctx, key, model, startedAt, out.Usage, out.UsageMeasured, store.AttemptFailed)
 			return work.StageOutput{}, err
+		}
+		if out.Failure != nil {
+			r.recordAttempt(ctx, key, model, startedAt, out.Usage, out.UsageMeasured, store.AttemptFailed)
+			if out.TranscriptRef.Key != "" {
+				r.persistAgentTranscript(ctx, key, out.TranscriptRef)
+			}
+			return work.StageOutput{}, fmt.Errorf("agent review terminal failure: %s", out.Failure.Kind)
 		}
 		r.usage = r.usage.Add(out.Usage)
 		r.recordAttempt(ctx, key, model, startedAt, out.Usage, out.UsageMeasured, store.AttemptSucceeded)

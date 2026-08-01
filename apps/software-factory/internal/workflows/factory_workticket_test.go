@@ -100,6 +100,7 @@ type factoryTicketHarness struct {
 	lifecycle      []string
 
 	cancelDuringAgent bool
+	agentFailure      *agent.TerminalFailure
 }
 
 func newFactoryTicketHarness(t *testing.T) *factoryTicketHarness {
@@ -263,6 +264,7 @@ func (h *factoryTicketHarness) runVersion(version workflow.Version) {
 				}
 				return workflows.AgentWorkflowResult{
 					Result: result, Usage: work.Usage{InputTokens: 10, OutputTokens: 1}, UsageMeasured: true,
+					Failure:       h.agentFailure,
 					TranscriptRef: agent.TranscriptRef{Key: "conversations/agent/test/transcript/0/digest", Bytes: 1, Digest: "digest"},
 				}, nil
 			})
@@ -563,7 +565,8 @@ func TestFactoryWorkTicketRunsPlanImplementAndReviewAsAgentChildren(t *testing.T
 		input := h.agentChildren[index]
 		wantID := agent.WorkflowID(h.done.RunID, string(stage), 1)
 		if input.Attempt.Key.Stage != stage || input.ToolsetID != wantToolsets[index] || input.Limits != agent.DefaultLimits() ||
-			input.ModelTurnPolicy != workflows.LegacyAgentWorkflowModelTurnPolicy() {
+			input.ModelTurnPolicy != workflows.LegacyAgentWorkflowModelTurnPolicy() ||
+			input.ControlPolicy != workflows.LegacyAgentWorkflowControlPolicy() {
 			t.Fatalf("child %d input = %#v", index, input)
 		}
 		if h.agentChildIDs[index] != wantID {
@@ -574,6 +577,23 @@ func TestFactoryWorkTicketRunsPlanImplementAndReviewAsAgentChildren(t *testing.T
 		if activityName == "RunPlan" || activityName == "RunImplement" || activityName == "RunReview" {
 			t.Fatalf("new history invoked legacy stage activity %q", activityName)
 		}
+	}
+}
+
+func TestFactoryWorkTicketFailsAnAgentTerminalFailureInsteadOfUsingAnEmptyResult(t *testing.T) {
+	t.Parallel()
+
+	h := newFactoryTicketHarness(t)
+	h.agentFailure = &agent.TerminalFailure{Kind: agent.TerminalFailureAmbiguousToolExecution}
+	h.runVersion(1)
+	if h.env.GetWorkflowError() == nil {
+		t.Fatal("FactoryWorkTicket accepted an agent terminal failure")
+	}
+	if got, want := h.ticketState(t), store.TicketFailed; got != want {
+		t.Fatalf("ticket state = %s, want %s", got, want)
+	}
+	if h.openOrUpdate != 0 {
+		t.Fatalf("opened pull requests = %d, want no proposal from a failed agent child", h.openOrUpdate)
 	}
 }
 

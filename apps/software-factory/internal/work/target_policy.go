@@ -154,6 +154,15 @@ func DefaultTargetRunPolicy() TargetRunPolicy {
 	}
 }
 
+// DefaultLegacyAgentActivityPolicy returns the explicit AgentWorkflow policy
+// that FactoryWorkTicket used before target Runs supplied their own policy.
+func DefaultLegacyAgentActivityPolicy() AgentActivityPolicy {
+	return AgentActivityPolicy{
+		StartToCloseTimeout: 2 * time.Minute, ScheduleToCloseTimeout: 10 * time.Minute, HeartbeatTimeout: 15 * time.Second,
+		Retry: RetryPolicy{InitialInterval: time.Second, BackoffCoefficient: 2, MaximumInterval: 10 * time.Second, MaximumAttempts: 3},
+	}
+}
+
 func boundedActivityPolicy(startToClose, scheduleToClose, initial time.Duration, coefficient float64, maximum time.Duration, attempts int32) ActivityPolicy {
 	return ActivityPolicy{
 		StartToCloseTimeout:    startToClose,
