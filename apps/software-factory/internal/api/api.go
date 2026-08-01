@@ -75,7 +75,7 @@ type createTicketInput struct {
 type stateTicketInput struct {
 	TicketID int64 `path:"ticketID" minimum:"1" doc:"The Ticket identifier."`
 	Body     struct {
-		State store.TicketState `json:"state" doc:"The target lifecycle state: open, working, review, done, or failed."`
+		State store.TicketState `json:"state" doc:"The lifecycle state: open, active, working, review, done, or failed. Active is owned by a target Run; working and review belong to the legacy workflow."`
 	}
 }
 

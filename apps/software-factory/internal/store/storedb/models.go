@@ -43,12 +43,70 @@ type MigrationProbe struct {
 }
 
 type Run struct {
-	ID          pgtype.UUID
-	TicketID    int64
-	StartedAt   pgtype.Timestamptz
-	EndedAt     pgtype.Timestamptz
-	Outcome     pgtype.Text
-	FailureKind string
+	ID                pgtype.UUID
+	TicketID          int64
+	StartedAt         pgtype.Timestamptz
+	EndedAt           pgtype.Timestamptz
+	Outcome           pgtype.Text
+	FailureKind       string
+	TargetOutcome     pgtype.Text
+	TargetFailureKind string
+	ReviewedHead      pgtype.Text
+	MergeSha          pgtype.Text
+}
+
+type RunAgentAttempt struct {
+	RunID                    pgtype.UUID
+	StepOrdinal              int32
+	AttemptNo                int32
+	AgentStage               string
+	Model                    string
+	Effort                   string
+	State                    string
+	FailureKind              string
+	ProviderThreadID         string
+	UsageState               string
+	InputTokens              int64
+	CachedInputTokens        int64
+	OutputTokens             int64
+	ReasoningTokens          int64
+	StartedAt                pgtype.Timestamptz
+	EndedAt                  pgtype.Timestamptz
+	Result                   []byte
+	CheckpointCapabilityHash pgtype.Text
+}
+
+type RunAgentTranscript struct {
+	RunID                 pgtype.UUID
+	StepOrdinal           int32
+	AttemptNo             int32
+	CompressedBytes       []byte
+	Compression           string
+	UncompressedSizeBytes int64
+	Checksum              []byte
+}
+
+type RunGitCheckpoint struct {
+	RunID             pgtype.UUID
+	StepOrdinal       int32
+	Branch            string
+	PushedHead        string
+	ObservedBase      string
+	PullRequestNumber int32
+	PullRequestNodeID string
+	StepResult        []byte
+}
+
+type RunStep struct {
+	RunID     pgtype.UUID
+	Ordinal   int32
+	Kind      string
+	Iteration int32
+	Reason    string
+	State     string
+	StartedAt pgtype.Timestamptz
+	EndedAt   pgtype.Timestamptz
+	Result    []byte
 }
 
 type Step struct {
@@ -59,12 +117,13 @@ type Step struct {
 }
 
 type Ticket struct {
-	ID        int64
-	Title     string
-	Body      string
-	State     string
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
+	ID          int64
+	Title       string
+	Body        string
+	State       string
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+	ActiveRunID pgtype.UUID
 }
 
 type TicketEdge struct {

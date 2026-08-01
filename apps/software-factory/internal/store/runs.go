@@ -145,12 +145,16 @@ func stepIdentity(k work.StageKey) work.StageKey {
 
 func runFromRow(row storedb.Run) Run {
 	return Run{
-		ID:        runIDString(row.ID),
-		TicketID:  TicketID(row.TicketID),
-		StartedAt: timeFromPg(row.StartedAt),
-		EndedAt:   timeFromPg(row.EndedAt),
-		Outcome:   work.Outcome(textFromPg(row.Outcome)),
-		Failure:   work.FailureKind(row.FailureKind),
+		ID:            runIDString(row.ID),
+		TicketID:      TicketID(row.TicketID),
+		StartedAt:     timeFromPg(row.StartedAt),
+		EndedAt:       timeFromPg(row.EndedAt),
+		Outcome:       work.Outcome(textFromPg(row.Outcome)),
+		Failure:       work.FailureKind(row.FailureKind),
+		TargetOutcome: work.RunOutcome(textFromPg(row.TargetOutcome)),
+		TargetFailure: work.RunFailureKind(row.TargetFailureKind),
+		ReviewedHead:  textFromPg(row.ReviewedHead),
+		MergeSHA:      textFromPg(row.MergeSha),
 	}
 }
 

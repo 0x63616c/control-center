@@ -23,6 +23,12 @@ import (
 // config.DatabaseURLEnv is set, which CI's test-software-factory job does.
 func newTestStore(t *testing.T) *store.Store {
 	t.Helper()
+	s, _ := newTestStoreAndPool(t)
+	return s
+}
+
+func newTestStoreAndPool(t *testing.T) (*store.Store, *pgxpool.Pool) {
+	t.Helper()
 	databaseURL := config.DatabaseURL()
 	if databaseURL == "" {
 		t.Skip(config.DatabaseURLEnv + " is not set")
@@ -48,7 +54,7 @@ func newTestStore(t *testing.T) *store.Store {
 	}
 	t.Cleanup(pool.Close)
 
-	return store.New(pool)
+	return store.New(pool), pool
 }
 
 // TestStoreCarriesATicketThroughItsWholeLifecycle runs the same scenario

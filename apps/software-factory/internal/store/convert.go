@@ -31,7 +31,16 @@ func runIDString(u pgtype.UUID) string {
 // pgTimestamp converts a UTC instant to a required (NOT NULL) timestamptz
 // column value.
 func pgTimestamp(t time.Time) pgtype.Timestamptz {
-	return pgtype.Timestamptz{Time: t.UTC(), Valid: true}
+	return pgtype.Timestamptz{Time: t.UTC().Truncate(time.Microsecond), Valid: true}
+}
+
+// pgOptionalTimestamp converts a zero instant to SQL NULL and any other instant
+// to its UTC microsecond representation.
+func pgOptionalTimestamp(t time.Time) pgtype.Timestamptz {
+	if t.IsZero() {
+		return pgtype.Timestamptz{}
+	}
+	return pgTimestamp(t)
 }
 
 // timeFromPg converts a required timestamptz column back to time.Time.

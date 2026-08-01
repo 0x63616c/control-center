@@ -14,7 +14,7 @@ import (
 const endRun = `-- name: EndRun :one
 UPDATE run SET ended_at = $2, outcome = $3, failure_kind = $4
 WHERE id = $1
-RETURNING id, ticket_id, started_at, ended_at, outcome, failure_kind
+RETURNING id, ticket_id, started_at, ended_at, outcome, failure_kind, target_outcome, target_failure_kind, reviewed_head, merge_sha
 `
 
 type EndRunParams struct {
@@ -39,12 +39,16 @@ func (q *Queries) EndRun(ctx context.Context, arg EndRunParams) (Run, error) {
 		&i.EndedAt,
 		&i.Outcome,
 		&i.FailureKind,
+		&i.TargetOutcome,
+		&i.TargetFailureKind,
+		&i.ReviewedHead,
+		&i.MergeSha,
 	)
 	return i, err
 }
 
 const run = `-- name: Run :one
-SELECT id, ticket_id, started_at, ended_at, outcome, failure_kind FROM run WHERE id = $1
+SELECT id, ticket_id, started_at, ended_at, outcome, failure_kind, target_outcome, target_failure_kind, reviewed_head, merge_sha FROM run WHERE id = $1
 `
 
 func (q *Queries) Run(ctx context.Context, id pgtype.UUID) (Run, error) {
@@ -57,12 +61,16 @@ func (q *Queries) Run(ctx context.Context, id pgtype.UUID) (Run, error) {
 		&i.EndedAt,
 		&i.Outcome,
 		&i.FailureKind,
+		&i.TargetOutcome,
+		&i.TargetFailureKind,
+		&i.ReviewedHead,
+		&i.MergeSha,
 	)
 	return i, err
 }
 
 const runsForTicket = `-- name: RunsForTicket :many
-SELECT id, ticket_id, started_at, ended_at, outcome, failure_kind FROM run WHERE ticket_id = $1 ORDER BY started_at DESC
+SELECT id, ticket_id, started_at, ended_at, outcome, failure_kind, target_outcome, target_failure_kind, reviewed_head, merge_sha FROM run WHERE ticket_id = $1 ORDER BY started_at DESC
 `
 
 // Most recent first: the console's ticket detail view leads with the
@@ -83,6 +91,10 @@ func (q *Queries) RunsForTicket(ctx context.Context, ticketID int64) ([]Run, err
 			&i.EndedAt,
 			&i.Outcome,
 			&i.FailureKind,
+			&i.TargetOutcome,
+			&i.TargetFailureKind,
+			&i.ReviewedHead,
+			&i.MergeSha,
 		); err != nil {
 			return nil, err
 		}
@@ -100,7 +112,7 @@ VALUES ($1, $2, $3)
 ON CONFLICT (id) DO UPDATE SET
     ticket_id = EXCLUDED.ticket_id,
     started_at = EXCLUDED.started_at
-RETURNING id, ticket_id, started_at, ended_at, outcome, failure_kind
+RETURNING id, ticket_id, started_at, ended_at, outcome, failure_kind, target_outcome, target_failure_kind, reviewed_head, merge_sha
 `
 
 type StartRunParams struct {
@@ -122,6 +134,10 @@ func (q *Queries) StartRun(ctx context.Context, arg StartRunParams) (Run, error)
 		&i.EndedAt,
 		&i.Outcome,
 		&i.FailureKind,
+		&i.TargetOutcome,
+		&i.TargetFailureKind,
+		&i.ReviewedHead,
+		&i.MergeSha,
 	)
 	return i, err
 }

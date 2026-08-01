@@ -9,7 +9,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store/storefake"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
@@ -28,6 +30,24 @@ func TestConsoleSnapshotDoesNotExposeRetiredDispatcherState(t *testing.T) {
 	}
 	if _, ok := body["dispatcher"]; ok {
 		t.Fatalf("console response = %s, must not expose retired dispatcher state", response.Body.String())
+	}
+}
+
+func TestTicketAPIProjectsAndFiltersTargetActiveState(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	fake := storefake.New()
+	ticket, err := fake.CreateTicket(ctx, "target-owned", "", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	runID := "0f466627-b3ae-4ba2-9c96-6ef44ec6f578"
+	if _, err := fake.ClaimAndStartRun(ctx, store.ClaimRunInput{TicketID: ticket.ID, RunID: runID, StartedAt: time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)}); err != nil {
+		t.Fatalf("ClaimAndStartRun: %v", err)
+	}
+	response := ticketRequest(t, New("test-build", nil, fake), http.MethodGet, "/v1/tickets?state=active", "")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"state":"active"`) {
+		t.Fatalf("GET active tickets = (%d, %s), want active Ticket", response.Code, response.Body.String())
 	}
 }
 

@@ -34,7 +34,7 @@ type TicketID int64
 
 // TicketState is a Ticket's lifecycle state.
 //
-// Five values, enforced twice: the ticket table's CHECK constraint is the
+// Six values, enforced twice: the ticket table's CHECK constraint is the
 // database's wall, and Valid is Go's. Neither is a formality — a state read
 // out of a row is trusted afterwards precisely because it passed one of these
 // on the way in.
@@ -42,11 +42,14 @@ type TicketState struct{ value ticketStateValue }
 
 type ticketStateValue uint8
 
-// The five ticket states ADR-0012 fixes. No others exist.
+// The six accepted ticket states during the additive target-store cutover.
+// Working and review belong to the legacy workflow; active is the target
+// workflow's ownership state.
 const (
 	ticketStateOpen ticketStateValue = iota + 1
 	ticketStateWorking
 	ticketStateReview
+	ticketStateActive
 	ticketStateDone
 	ticketStateFailed
 )
@@ -54,10 +57,12 @@ const (
 var (
 	// TicketOpen is filed, not started.
 	TicketOpen = TicketState{value: ticketStateOpen}
-	// TicketWorking means a Run is in flight.
+	// TicketWorking means a legacy Run is in flight.
 	TicketWorking = TicketState{value: ticketStateWorking}
-	// TicketReview means a Run produced a pull request; waiting on a human.
+	// TicketReview means a legacy Run produced a pull request; waiting on a human.
 	TicketReview = TicketState{value: ticketStateReview}
+	// TicketActive means a target Run owns the Ticket through ActiveRunID.
+	TicketActive = TicketState{value: ticketStateActive}
 	// TicketDone is terminal, and satisfies dependencies.
 	TicketDone = TicketState{value: ticketStateDone}
 	// TicketFailed is terminal, and does not satisfy dependencies. Never
@@ -65,10 +70,10 @@ var (
 	TicketFailed = TicketState{value: ticketStateFailed}
 )
 
-// Valid reports whether s is one of the five states the schema enforces.
+// Valid reports whether s is one of the six states the schema enforces.
 func (s TicketState) Valid() bool {
 	switch s {
-	case TicketOpen, TicketWorking, TicketReview, TicketDone, TicketFailed:
+	case TicketOpen, TicketWorking, TicketReview, TicketActive, TicketDone, TicketFailed:
 		return true
 	default:
 		return false
@@ -84,6 +89,8 @@ func (s TicketState) String() string {
 		return "working"
 	case TicketReview:
 		return "review"
+	case TicketActive:
+		return "active"
 	case TicketDone:
 		return "done"
 	case TicketFailed:
@@ -104,6 +111,8 @@ func ParseTicketState(value string) (TicketState, error) {
 		return TicketWorking, nil
 	case "review":
 		return TicketReview, nil
+	case "active":
+		return TicketActive, nil
 	case "done":
 		return TicketDone, nil
 	case "failed":
@@ -153,6 +162,8 @@ func (s TicketState) CanTransitionTo(next TicketState) bool {
 		return next == TicketReview || next == TicketFailed
 	case TicketReview:
 		return next == TicketDone || next == TicketFailed
+	case TicketActive:
+		return next == TicketDone || next == TicketOpen || next == TicketFailed
 	case TicketFailed:
 		return next == TicketOpen
 	case TicketDone:
@@ -169,12 +180,15 @@ func (s TicketState) CanTransitionTo(next TicketState) bool {
 // Source field: ADR-0012 records that one is trivially backfilled if a second
 // origin ever exists, and adding it now would be speculative.
 type Ticket struct {
-	ID        TicketID
-	Title     string
-	Body      string
-	State     TicketState
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID    TicketID
+	Title string
+	Body  string
+	State TicketState
+	// ActiveRunID is the target Run which currently owns an active Ticket.
+	// It remains empty for legacy workflow states and terminal Tickets.
+	ActiveRunID string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // InFlightTicket is one Ticket the Ticket-driven FactoryDispatcher believes is
@@ -274,6 +288,12 @@ type Run struct {
 	EndedAt time.Time
 	Outcome work.Outcome
 	Failure work.FailureKind
+	// TargetOutcome and TargetFailure are additive until the cutover removes
+	// the legacy outcome vocabulary.
+	TargetOutcome work.RunOutcome
+	TargetFailure work.RunFailureKind
+	ReviewedHead  string
+	MergeSHA      string
 }
 
 // Step is one instance of a Stage inside a Run — exactly internal/work's

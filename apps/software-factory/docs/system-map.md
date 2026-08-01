@@ -44,6 +44,13 @@ The fixed first pass is `plan → implement → review`, defined by
 after a blocking review finding. A blocked implement verdict, stalled or
 exhausted CI/review progress, or an activity failure terminates the run.
 
+That diagram is the deployed legacy workflow. The additive target Store uses
+an ownership-bearing `active` Ticket state instead of `working`/`review`: an
+atomic claim sets `active_run_id`, and only that Run may checkpoint or release
+the Ticket. The API accepts and projects all six schema states during the
+cutover: `open`, target `active`, legacy `working` and `review`, `done`, and
+`failed`.
+
 ## The control plane
 
 ### Dispatcher
