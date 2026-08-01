@@ -321,7 +321,7 @@ The image digest config key must be namespaced as `wwwinfra:imageDigests.<svc>`.
 
 App-level scheduled work (every retention purge, plus health-check) runs as
 Temporal Schedules declared from each feature's `temporal.ts` facet (ADR-0008,
-issue #260) — per-run history in the Temporal UI, retries, SKIP overlap, and
+tracked concern) — per-run history in the Temporal UI, retries, SKIP overlap, and
 boot-time reconciliation from `features/_generated/schedules.gen.ts`.
 
 Only infra-level jobs remain Kubernetes CronJobs in `infra/src/crons.ts`:

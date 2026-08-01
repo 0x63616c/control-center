@@ -59,10 +59,10 @@ bun run knip
 
 Use `bun` and `bunx`, never `npm` or `npx`.
 
-## Issue tracking
+## Ticket tracking
 
-GitHub Issues (`gh issue`) is the tracker, since 2026-07-25. See `AGENTS.md`
-for the label scheme and the verbatim-ask rule. `bd`/Beads was dropped
+software-factory Tickets are the tracker, since 2026-07-31. See `AGENTS.md`
+for the verbatim-ask rule and creation workflow. `bd`/Beads was dropped
 2026-07-11; the old tickets are archived under
 [`docs/beads-archive/`](docs/beads-archive/) - `OPEN-IDEAS.md` for the
 unfinished ideas, `beads-export.jsonl` for the full raw dump.

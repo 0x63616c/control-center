@@ -167,7 +167,7 @@ cancelled yet, and Prometheus does not carry a series for a counter that never
 incremented. Those panels fill in the moment the thing they measure happens,
 which is the point of them.
 
-### SDK metrics (`temporal-sdk-worker`, issue #233)
+### SDK metrics (`temporal-sdk-worker`)
 
 Unlike the five server-side dashboards above, `apps/temporal-worker` did not
 emit its SDK-internal metrics at all until #233 — workflow/activity

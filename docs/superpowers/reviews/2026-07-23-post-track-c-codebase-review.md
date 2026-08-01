@@ -16,7 +16,7 @@ seams that are generic on the API side but still hand-wired on the web side.
 
 ## Status: triaged and ticketed 2026-07-25 — with two corrections
 
-Every finding below is now a GitHub issue (#93–#108); each issue quotes its finding verbatim. Three
+Every actionable finding below was recorded as a Ticket; each Ticket quotes its finding verbatim. Three
 items were **not** ticketed because they are done or were never real:
 
 - The **device-ownership hoist** shipped (`311ab7ce8`) — `ownerOf`/`DeviceOwner` now live in
@@ -298,7 +298,7 @@ together as one fix. **Value: High (as the mechanism behind #1).**
 
 ### Safe autonomous follow-ups (mechanical, low-judgment, individually shippable)
 - **F1.1 + X.4:** add `createFeatureDb`/memoized `createPool` to `@www/core`, migrate the ~11 `db.ts`
-  + `ac`/`ctrl` `deps.ts` to it. Set a sane `max`. (Fixes #1.)
+  + `ac`/`ctrl` `deps.ts` to it. Set a sane `max`.
 - **F2.3 / F2.2:** unify facet-type home; add a lint restricting `schema.ts` to table exports.
 - **F4.1 / F4.2 / F4.3:** fix `forFeature` tags, drop `forFeature("worker")`, reconcile the 42-vs-44
   count in the spec/memory.
