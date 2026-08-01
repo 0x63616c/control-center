@@ -12,6 +12,14 @@ SELECT * FROM ticket WHERE state = $1 ORDER BY id;
 -- name: Tickets :many
 SELECT * FROM ticket ORDER BY id;
 
+-- name: ReopenLegacyTicket :one
+UPDATE ticket SET state = 'open', updated_at = CURRENT_TIMESTAMP
+WHERE id = $1
+  AND state = $2
+  AND updated_at = $3
+  AND state IN ('working', 'review')
+RETURNING *;
+
 -- name: UpdateTicketState :one
 UPDATE ticket SET state = $2, updated_at = CURRENT_TIMESTAMP
 WHERE id = $1

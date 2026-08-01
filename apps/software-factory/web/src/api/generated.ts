@@ -88,7 +88,20 @@ export interface Attempt {
 }
 
 /**
- * The part of inputTokens served from the provider's prompt cache. Null when measured is false.
+ * The agent role for this semantic execution: plan, implement, or review.
+ */
+export type AttemptOutputAgentStage =
+  (typeof AttemptOutputAgentStage)[keyof typeof AttemptOutputAgentStage];
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const AttemptOutputAgentStage = {
+  plan: "plan",
+  implement: "implement",
+  review: "review",
+} as const;
+
+/**
+ * The part of inputTokens served from the provider's prompt cache. Null unless usageState is measured.
  */
 export type AttemptOutputCachedInputTokens = number | null;
 
@@ -98,57 +111,103 @@ export type AttemptOutputCachedInputTokens = number | null;
 export type AttemptOutputEndedAt = string | null;
 
 /**
- * The whole input, including cachedInputTokens. Null when measured is false.
+ * The terminal failure category, empty unless this Attempt failed.
+ */
+export type AttemptOutputFailureKind =
+  (typeof AttemptOutputFailureKind)[keyof typeof AttemptOutputFailureKind];
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const AttemptOutputFailureKind = {
+  "": "",
+  invalid_input: "invalid_input",
+  agent_unrecoverable: "agent_unrecoverable",
+  agent_attempt_budget: "agent_attempt_budget",
+  review_budget: "review_budget",
+  ci_unobserved: "ci_unobserved",
+  github_auth: "github_auth",
+  github_ruleset: "github_ruleset",
+  github_unavailable: "github_unavailable",
+  run_worker_unavailable: "run_worker_unavailable",
+  persistence_unavailable: "persistence_unavailable",
+  infrastructure: "infrastructure",
+} as const;
+
+/**
+ * The whole input, including cachedInputTokens. Null unless usageState is measured.
  */
 export type AttemptOutputInputTokens = number | null;
 
 /**
- * The whole output, including reasoningTokens. Null when measured is false.
+ * The whole output, including reasoningTokens. Null unless usageState is measured.
  */
 export type AttemptOutputOutputTokens = number | null;
 
 /**
- * The part of outputTokens spent reasoning. Null when measured is false.
+ * The part of outputTokens spent reasoning. Null unless usageState is measured.
  */
 export type AttemptOutputReasoningTokens = number | null;
 
 /**
- * '', 'succeeded' or 'failed'. Empty means the attempt has not ended yet.
+ * The durable Attempt lifecycle state.
  */
-export type AttemptOutputResult = (typeof AttemptOutputResult)[keyof typeof AttemptOutputResult];
+export type AttemptOutputState = (typeof AttemptOutputState)[keyof typeof AttemptOutputState];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
-export const AttemptOutputResult = {
-  "": "",
+export const AttemptOutputState = {
+  running: "running",
   succeeded: "succeeded",
   failed: "failed",
 } as const;
 
+/**
+ * Whether token usage is unknown or measured.
+ */
+export type AttemptOutputUsageState =
+  (typeof AttemptOutputUsageState)[keyof typeof AttemptOutputUsageState];
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const AttemptOutputUsageState = {
+  unknown: "unknown",
+  measured: "measured",
+} as const;
+
 export interface AttemptOutput {
-  /** Which attempt of this Step this is, starting at 1. */
+  /** The agent role for this semantic execution: plan, implement, or review. */
+  agentStage: AttemptOutputAgentStage;
+  /** Which semantic Agent Attempt of this Step this is, starting at 1. Temporal activity tries are not represented. */
   attemptNo: number;
-  /** The part of inputTokens served from the provider's prompt cache. Null when measured is false. */
+  /** The part of inputTokens served from the provider's prompt cache. Null unless usageState is measured. */
   cachedInputTokens: AttemptOutputCachedInputTokens;
   /** The reasoning effort this attempt ran on. */
   effort: string;
   /** RFC3339 UTC. Null until the attempt ends. */
   endedAt: AttemptOutputEndedAt;
+  /** The terminal failure category, empty unless this Attempt failed. */
+  failureKind: AttemptOutputFailureKind;
   /** Whether a transcript is stored for this attempt. */
   hasTranscript: boolean;
-  /** The whole input, including cachedInputTokens. Null when measured is false. */
+  /** The whole input, including cachedInputTokens. Null unless usageState is measured. */
   inputTokens: AttemptOutputInputTokens;
-  /** Whether this attempt actually ran Codex. False means it resumed a stored result: the four token fields below are null, not zero, because nothing ran to measure. */
+  /** Compatibility projection of usageState == measured. */
   measured: boolean;
   /** The model this attempt ran on. */
   model: string;
-  /** The whole output, including reasoningTokens. Null when measured is false. */
+  /** The whole output, including reasoningTokens. Null unless usageState is measured. */
   outputTokens: AttemptOutputOutputTokens;
-  /** The part of outputTokens spent reasoning. Null when measured is false. */
+  /** The provider thread identity captured by this semantic Attempt. */
+  providerThreadId: string;
+  /** The part of outputTokens spent reasoning. Null unless usageState is measured. */
   reasoningTokens: AttemptOutputReasoningTokens;
-  /** '', 'succeeded' or 'failed'. Empty means the attempt has not ended yet. */
-  result: AttemptOutputResult;
+  /** The durable structured result envelope. Null until one is recorded. */
+  result: unknown;
   /** RFC3339 UTC. */
   startedAt: string;
+  /** The durable Attempt lifecycle state. */
+  state: AttemptOutputState;
+  /** The download path for this transcript, empty when none is stored. */
+  transcriptPath: string;
+  /** Whether token usage is unknown or measured. */
+  usageState: AttemptOutputUsageState;
 }
 
 export interface BuildOutputBody {
@@ -156,6 +215,13 @@ export interface BuildOutputBody {
   readonly $schema?: string;
   /** The build version running this API. */
   version: string;
+}
+
+export interface ConfirmedMergeOutput {
+  /** The authoritative merge commit SHA. */
+  mergeSha: string;
+  /** The exact pull-request head reviewed before merge. */
+  reviewedHead: string;
 }
 
 export type ConsoleResponseTickets = TicketSummary[] | null;
@@ -292,30 +358,63 @@ export interface RepositoryWrite {
 export type RunOutputEndedAt = string | null;
 
 /**
- * '', 'auth', 'rate-limit' or 'other'.
+ * The target Run failure category, or the historical category for a legacy Run. Empty when not failed.
  */
 export type RunOutputFailureKind = (typeof RunOutputFailureKind)[keyof typeof RunOutputFailureKind];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const RunOutputFailureKind = {
   "": "",
+  invalid_input: "invalid_input",
+  agent_unrecoverable: "agent_unrecoverable",
+  agent_attempt_budget: "agent_attempt_budget",
+  review_budget: "review_budget",
+  ci_unobserved: "ci_unobserved",
+  github_auth: "github_auth",
+  github_ruleset: "github_ruleset",
+  github_unavailable: "github_unavailable",
+  run_worker_unavailable: "run_worker_unavailable",
+  persistence_unavailable: "persistence_unavailable",
+  infrastructure: "infrastructure",
   auth: "auth",
   "rate-limit": "rate-limit",
   other: "other",
 } as const;
 
 /**
- * '', 'proposed', 'blocked', 'exhausted' or 'failed'. Empty until the Run ends.
+ * The target Run outcome, or the historical outcome for a legacy Run. Empty until terminal.
  */
 export type RunOutputOutcome = (typeof RunOutputOutcome)[keyof typeof RunOutputOutcome];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const RunOutputOutcome = {
   "": "",
-  proposed: "proposed",
-  blocked: "blocked",
+  succeeded: "succeeded",
+  canceled: "canceled",
   exhausted: "exhausted",
   failed: "failed",
+  proposed: "proposed",
+  blocked: "blocked",
+} as const;
+
+/**
+ * The latest active Step kind, falling back to the latest terminal Step kind.
+ */
+export type RunOutputPhase = (typeof RunOutputPhase)[keyof typeof RunOutputPhase];
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const RunOutputPhase = {
+  "": "",
+  prepare_run_worker: "prepare_run_worker",
+  acquire_run_worker_session: "acquire_run_worker_session",
+  clone_repository: "clone_repository",
+  plan: "plan",
+  implement: "implement",
+  sync_pull_request: "sync_pull_request",
+  await_ci: "await_ci",
+  review: "review",
+  mark_pull_request_ready: "mark_pull_request_ready",
+  merge_pull_request: "merge_pull_request",
 } as const;
 
 /**
@@ -324,14 +423,20 @@ export const RunOutputOutcome = {
 export type RunOutputSteps = StepOutput[] | null;
 
 export interface RunOutput {
+  /** Whether this Run is still nonterminal. */
+  active: boolean;
+  /** Immutable merge evidence, absent unless this Run ended in a Confirmed Merge. */
+  confirmedMerge?: ConfirmedMergeOutput;
   /** RFC3339 UTC. Null until the Run ends. */
   endedAt: RunOutputEndedAt;
-  /** '', 'auth', 'rate-limit' or 'other'. */
+  /** The target Run failure category, or the historical category for a legacy Run. Empty when not failed. */
   failureKind: RunOutputFailureKind;
   /** Temporal's run id for this Run. */
   id: string;
-  /** '', 'proposed', 'blocked', 'exhausted' or 'failed'. Empty until the Run ends. */
+  /** The target Run outcome, or the historical outcome for a legacy Run. Empty until terminal. */
   outcome: RunOutputOutcome;
+  /** The latest active Step kind, falling back to the latest terminal Step kind. */
+  phase: RunOutputPhase;
   /** RFC3339 UTC. */
   startedAt: string;
   /** This Run's Steps, in pipeline order. */
@@ -350,7 +455,7 @@ export interface StateTicketInputBody {
 }
 
 /**
- * This Step's attempts, oldest first. Usually one; more than one means a machine retry, not semantic re-work.
+ * This Step's workflow-authorized semantic Agent Attempts, oldest first. Native Temporal activity tries are absent.
  */
 export type StepOutputAttempts = AttemptOutput[] | null;
 
@@ -360,27 +465,77 @@ export type StepOutputAttempts = AttemptOutput[] | null;
 export type StepOutputEndedAt = string | null;
 
 /**
- * plan, implement, or review.
+ * The operation this Step records.
+ */
+export type StepOutputKind = (typeof StepOutputKind)[keyof typeof StepOutputKind];
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const StepOutputKind = {
+  prepare_run_worker: "prepare_run_worker",
+  acquire_run_worker_session: "acquire_run_worker_session",
+  clone_repository: "clone_repository",
+  plan: "plan",
+  implement: "implement",
+  sync_pull_request: "sync_pull_request",
+  await_ci: "await_ci",
+  review: "review",
+  mark_pull_request_ready: "mark_pull_request_ready",
+  merge_pull_request: "merge_pull_request",
+} as const;
+
+/**
+ * Historical alias for agent-backed legacy Steps.
  */
 export type StepOutputStage = (typeof StepOutputStage)[keyof typeof StepOutputStage];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const StepOutputStage = {
+  prepare_run_worker: "prepare_run_worker",
+  acquire_run_worker_session: "acquire_run_worker_session",
+  clone_repository: "clone_repository",
   plan: "plan",
   implement: "implement",
+  sync_pull_request: "sync_pull_request",
+  await_ci: "await_ci",
   review: "review",
+  mark_pull_request_ready: "mark_pull_request_ready",
+  merge_pull_request: "merge_pull_request",
+} as const;
+
+/**
+ * The durable Step lifecycle state.
+ */
+export type StepOutputState = (typeof StepOutputState)[keyof typeof StepOutputState];
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const StepOutputState = {
+  running: "running",
+  completed: "completed",
+  failed: "failed",
 } as const;
 
 export interface StepOutput {
-  /** This Step's attempts, oldest first. Usually one; more than one means a machine retry, not semantic re-work. */
+  /** This Step's workflow-authorized semantic Agent Attempts, oldest first. Native Temporal activity tries are absent. */
   attempts: StepOutputAttempts;
   /** RFC3339 UTC. Null while its last Attempt is still running. */
   endedAt: StepOutputEndedAt;
-  /** plan, implement, or review. */
+  /** The semantic repetition number for this Step kind, when applicable. */
+  iteration: number;
+  /** The operation this Step records. */
+  kind: StepOutputKind;
+  /** The stable Step identity within this Run, starting at 1. */
+  ordinal: number;
+  /** Why this Step was authorized, when applicable. */
+  reason: string;
+  /** The durable structured result envelope. Null until one is recorded. */
+  result: unknown;
+  /** Historical alias for agent-backed legacy Steps. */
   stage: StepOutputStage;
-  /** RFC3339 UTC. Its first Attempt's start. */
+  /** RFC3339 UTC. */
   startedAt: string;
-  /** Which turn of Stage this is within the Run, starting at 1 — the headline number: the model was asked to do this work again. */
+  /** The durable Step lifecycle state. */
+  state: StepOutputState;
+  /** Historical alias for a legacy Step iteration. */
   turn: number;
   /** Rolled up across this Step's Attempts. */
   usage: UsageOutput;
@@ -2707,6 +2862,271 @@ export function useListV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAtt
       runID,
       stage,
       turn,
+      attemptNo,
+      options,
+    );
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Returns an ordinal Step Attempt's raw JSONL event stream, decompressed, as a downloadable file.
+ * @summary Download a target Attempt's transcript
+ */
+export const listV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscript = (
+  ticketID: number,
+  runID: string,
+  ordinal: number,
+  attemptNo: number,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<string>> => {
+  return axios.get(
+    `/v1/tickets/${ticketID}/runs/${runID}/steps/${ordinal}/attempts/${attemptNo}/transcript`,
+    {
+      ...options,
+    },
+  );
+};
+
+export const getListV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscriptQueryKey =
+  (ticketID?: number, runID?: string, ordinal?: number, attemptNo?: number) => {
+    return [
+      `/v1/tickets/${ticketID}/runs/${runID}/steps/${ordinal}/attempts/${attemptNo}/transcript`,
+    ] as const;
+  };
+
+export const getListV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscriptQueryOptions =
+  <
+    TData = Awaited<
+      ReturnType<
+        typeof listV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscript
+      >
+    >,
+    TError = AxiosError<ErrorModel>,
+  >(
+    ticketID: number,
+    runID: string,
+    ordinal: number,
+    attemptNo: number,
+    options?: {
+      query?: Partial<
+        UseQueryOptions<
+          Awaited<
+            ReturnType<
+              typeof listV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscript
+            >
+          >,
+          TError,
+          TData
+        >
+      >;
+      axios?: AxiosRequestConfig;
+    },
+  ) => {
+    const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+    const queryKey =
+      queryOptions?.queryKey ??
+      getListV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscriptQueryKey(
+        ticketID,
+        runID,
+        ordinal,
+        attemptNo,
+      );
+
+    const queryFn: QueryFunction<
+      Awaited<
+        ReturnType<
+          typeof listV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscript
+        >
+      >
+    > = ({ signal }) =>
+      listV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscript(
+        ticketID,
+        runID,
+        ordinal,
+        attemptNo,
+        { signal, ...axiosOptions },
+      );
+
+    return {
+      queryKey,
+      queryFn,
+      enabled: !!(ticketID && runID && ordinal && attemptNo),
+      ...queryOptions,
+    } as UseQueryOptions<
+      Awaited<
+        ReturnType<
+          typeof listV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscript
+        >
+      >,
+      TError,
+      TData
+    > & { queryKey: DataTag<QueryKey, TData, TError> };
+  };
+
+export type ListV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscriptQueryResult =
+  NonNullable<
+    Awaited<
+      ReturnType<
+        typeof listV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscript
+      >
+    >
+  >;
+export type ListV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscriptQueryError =
+  AxiosError<ErrorModel>;
+
+export function useListV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscript<
+  TData = Awaited<
+    ReturnType<typeof listV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscript>
+  >,
+  TError = AxiosError<ErrorModel>,
+>(
+  ticketID: number,
+  runID: string,
+  ordinal: number,
+  attemptNo: number,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<
+          ReturnType<
+            typeof listV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscript
+          >
+        >,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<
+            ReturnType<
+              typeof listV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscript
+            >
+          >,
+          TError,
+          Awaited<
+            ReturnType<
+              typeof listV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscript
+            >
+          >
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useListV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscript<
+  TData = Awaited<
+    ReturnType<typeof listV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscript>
+  >,
+  TError = AxiosError<ErrorModel>,
+>(
+  ticketID: number,
+  runID: string,
+  ordinal: number,
+  attemptNo: number,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<
+          ReturnType<
+            typeof listV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscript
+          >
+        >,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<
+            ReturnType<
+              typeof listV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscript
+            >
+          >,
+          TError,
+          Awaited<
+            ReturnType<
+              typeof listV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscript
+            >
+          >
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useListV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscript<
+  TData = Awaited<
+    ReturnType<typeof listV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscript>
+  >,
+  TError = AxiosError<ErrorModel>,
+>(
+  ticketID: number,
+  runID: string,
+  ordinal: number,
+  attemptNo: number,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<
+          ReturnType<
+            typeof listV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscript
+          >
+        >,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+/**
+ * @summary Download a target Attempt's transcript
+ */
+
+export function useListV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscript<
+  TData = Awaited<
+    ReturnType<typeof listV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscript>
+  >,
+  TError = AxiosError<ErrorModel>,
+>(
+  ticketID: number,
+  runID: string,
+  ordinal: number,
+  attemptNo: number,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<
+          ReturnType<
+            typeof listV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscript
+          >
+        >,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions =
+    getListV1TicketsByTicketIdRunsByRunIdStepsByOrdinalAttemptsByAttemptNoTranscriptQueryOptions(
+      ticketID,
+      runID,
+      ordinal,
       attemptNo,
       options,
     );

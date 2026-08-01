@@ -404,6 +404,11 @@ a:hover {
   font-size: 0.8rem;
   margin: 4px 0 0;
 }
+.run-phase,
+.confirmed-merge {
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+}
 .step-list {
   margin: 10px 0 0;
   padding: 0;
@@ -430,5 +435,18 @@ a:hover {
   color: var(--muted);
 }
 .attempt-row .row-line {
+  color: var(--text);
+}
+.step-row details,
+.attempt-row details {
+  margin-top: 6px;
+}
+.step-row pre,
+.attempt-row pre {
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
   color: var(--text);
 }

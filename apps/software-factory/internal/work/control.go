@@ -328,3 +328,10 @@ type Status struct {
 	// that never took effect looks exactly like one that did.
 	ConfigError string `json:"configError,omitempty"`
 }
+
+// FactoryDispatcherStatus is the acknowledged control state used by the
+// one-time cutover gate. Its in-flight identifiers are factory Ticket IDs.
+type FactoryDispatcherStatus struct {
+	Config   Config  `json:"config"`
+	InFlight []int64 `json:"inFlight"`
+}

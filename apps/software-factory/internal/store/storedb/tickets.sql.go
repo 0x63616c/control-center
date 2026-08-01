@@ -7,6 +7,8 @@ package storedb
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createTicket = `-- name: CreateTicket :one
@@ -76,6 +78,36 @@ func (q *Queries) ReadyTickets(ctx context.Context) ([]Ticket, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const reopenLegacyTicket = `-- name: ReopenLegacyTicket :one
+UPDATE ticket SET state = 'open', updated_at = CURRENT_TIMESTAMP
+WHERE id = $1
+  AND state = $2
+  AND updated_at = $3
+  AND state IN ('working', 'review')
+RETURNING id, title, body, state, created_at, updated_at, active_run_id
+`
+
+type ReopenLegacyTicketParams struct {
+	ID        int64
+	State     string
+	UpdatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) ReopenLegacyTicket(ctx context.Context, arg ReopenLegacyTicketParams) (Ticket, error) {
+	row := q.db.QueryRow(ctx, reopenLegacyTicket, arg.ID, arg.State, arg.UpdatedAt)
+	var i Ticket
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Body,
+		&i.State,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ActiveRunID,
+	)
+	return i, err
 }
 
 const ticket = `-- name: Ticket :one

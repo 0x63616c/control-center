@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store/storedb"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
@@ -36,6 +37,20 @@ func (s *Store) Tickets(ctx context.Context) ([]Ticket, error) {
 type TicketStateWriter interface {
 	UpdateTicketState(ctx context.Context, id TicketID, state TicketState) (Ticket, error)
 	TransitionTicketState(ctx context.Context, id TicketID, from, to TicketState) (Ticket, error)
+}
+
+// LegacyTicketReopener performs the cutover-only optimistic repair from the
+// two legacy nonterminal states. The complete expected snapshots prevent a
+// concurrent state write from being mistaken for cutover-owned work.
+type LegacyTicketReopener interface {
+	ReopenLegacyTickets(ctx context.Context, expected []Ticket) ([]Ticket, error)
+}
+
+// LegacyCutoverReconciler inventories and atomically closes the database side
+// of legacy work before reopening its Tickets.
+type LegacyCutoverReconciler interface {
+	OpenLegacyRuns(context.Context) ([]Run, error)
+	ReconcileLegacyState(context.Context, []Ticket, []Run, time.Time) ([]Ticket, error)
 }
 
 // ReadyTicketLister lists the Tickets the dispatcher may start next: open,
@@ -104,6 +119,110 @@ func (s *Store) TicketsByState(ctx context.Context, state TicketState) ([]Ticket
 		return nil, fmt.Errorf("listing %s tickets: %w", state, wrapQueryErr(err))
 	}
 	return ticketsFromRows(rows)
+}
+
+// ReopenLegacyTickets atomically reopens exactly expected. A changed state or
+// updated_at version aborts the whole transaction, leaving every row untouched.
+func (s *Store) ReopenLegacyTickets(ctx context.Context, expected []Ticket) ([]Ticket, error) {
+	if len(expected) == 0 {
+		return []Ticket{}, nil
+	}
+	if s.begin == nil {
+		return nil, fmt.Errorf("reopening legacy tickets: store cannot begin a transaction")
+	}
+	tx, err := s.begin.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("reopening legacy tickets: beginning transaction: %w", wrapQueryErr(err))
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	q := s.q.WithTx(tx)
+	reopened := make([]Ticket, 0, len(expected))
+	for _, snapshot := range expected {
+		if snapshot.State != TicketWorking && snapshot.State != TicketReview {
+			return nil, fmt.Errorf("reopening legacy ticket %d: expected state %s is not legacy nonterminal", snapshot.ID, snapshot.State)
+		}
+		row, queryErr := q.ReopenLegacyTicket(ctx, storedb.ReopenLegacyTicketParams{
+			ID:        int64(snapshot.ID),
+			State:     snapshot.State.String(),
+			UpdatedAt: pgTimestamp(snapshot.UpdatedAt),
+		})
+		if errors.Is(queryErr, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("reopening legacy ticket %d: state/version changed after inventory", snapshot.ID)
+		}
+		if queryErr != nil {
+			return nil, fmt.Errorf("reopening legacy ticket %d: %w", snapshot.ID, wrapQueryErr(queryErr))
+		}
+		ticket, parseErr := ticketFromRow(row)
+		if parseErr != nil {
+			return nil, fmt.Errorf("reopening legacy ticket %d: parsing updated row: %w", snapshot.ID, parseErr)
+		}
+		reopened = append(reopened, ticket)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("reopening legacy tickets: committing transaction: %w", wrapQueryErr(err))
+	}
+	return reopened, nil
+}
+
+// ReconcileLegacyState atomically records every still-open legacy Run as a
+// preserved failed historical Run and reopens the exact Ticket snapshots.
+func (s *Store) ReconcileLegacyState(ctx context.Context, expectedTickets []Ticket, expectedRuns []Run, endedAt time.Time) ([]Ticket, error) {
+	if len(expectedTickets) == 0 && len(expectedRuns) == 0 {
+		return []Ticket{}, nil
+	}
+	if s.begin == nil {
+		return nil, fmt.Errorf("reconciling legacy state: store cannot begin a transaction")
+	}
+	tx, err := s.begin.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("reconciling legacy state: beginning transaction: %w", wrapQueryErr(err))
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	q := s.q.WithTx(tx)
+	for _, snapshot := range expectedRuns {
+		id, parseErr := pgUUID(snapshot.ID)
+		if parseErr != nil {
+			return nil, fmt.Errorf("closing legacy run %s: %w", snapshot.ID, parseErr)
+		}
+		row, queryErr := q.CloseLegacyRun(ctx, storedb.CloseLegacyRunParams{ID: id, EndedAt: pgTimestamp(endedAt)})
+		if errors.Is(queryErr, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("closing legacy run %s: terminal state changed after inventory", snapshot.ID)
+		}
+		if queryErr != nil {
+			return nil, fmt.Errorf("closing legacy run %s: %w", snapshot.ID, wrapQueryErr(queryErr))
+		}
+		closed := runFromRow(row)
+		if closed.TicketID != snapshot.TicketID || !closed.StartedAt.Equal(snapshot.StartedAt) {
+			return nil, fmt.Errorf("closing legacy run %s: snapshot changed after inventory", snapshot.ID)
+		}
+	}
+
+	reopened := make([]Ticket, 0, len(expectedTickets))
+	for _, snapshot := range expectedTickets {
+		if snapshot.State != TicketWorking && snapshot.State != TicketReview {
+			return nil, fmt.Errorf("reopening legacy ticket %d: expected state %s is not legacy nonterminal", snapshot.ID, snapshot.State)
+		}
+		row, queryErr := q.ReopenLegacyTicket(ctx, storedb.ReopenLegacyTicketParams{
+			ID: int64(snapshot.ID), State: snapshot.State.String(), UpdatedAt: pgTimestamp(snapshot.UpdatedAt),
+		})
+		if errors.Is(queryErr, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("reopening legacy ticket %d: state/version changed after inventory", snapshot.ID)
+		}
+		if queryErr != nil {
+			return nil, fmt.Errorf("reopening legacy ticket %d: %w", snapshot.ID, wrapQueryErr(queryErr))
+		}
+		ticket, parseErr := ticketFromRow(row)
+		if parseErr != nil {
+			return nil, fmt.Errorf("reopening legacy ticket %d: parsing updated row: %w", snapshot.ID, parseErr)
+		}
+		reopened = append(reopened, ticket)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("reconciling legacy state: committing transaction: %w", wrapQueryErr(err))
+	}
+	return reopened, nil
 }
 
 // UpdateTicketState moves ticket id to state and returns the updated row.

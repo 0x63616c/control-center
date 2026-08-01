@@ -317,6 +317,36 @@ func TestFactoryDispatcherAppliesAnUpdateConfigSignal(t *testing.T) {
 	}
 }
 
+func TestFactoryDispatcherReportsItsAppliedPauseState(t *testing.T) {
+	t.Parallel()
+
+	h := newFactoryDispatcherHarness(t)
+	h.config.Paused = true
+	var status work.FactoryDispatcherStatus
+	var queryErr error
+	queried := false
+	h.at(time.Second, func() {
+		queried = true
+		value, err := h.env.QueryWorkflow(workflows.QueryFactoryDispatcherStatus)
+		if err != nil {
+			queryErr = err
+			return
+		}
+		queryErr = value.Get(&status)
+	})
+	h.run()
+
+	if !queried {
+		t.Fatalf("status query callback did not run; workflow error: %v", h.env.GetWorkflowError())
+	}
+	if queryErr != nil {
+		t.Fatalf("QueryWorkflow: %v", queryErr)
+	}
+	if !status.Config.Paused {
+		t.Fatalf("status = %+v, want acknowledged paused config", status)
+	}
+}
+
 // TestFactoryDispatcherRefusesAnUnusableUpdateWhole proves a bad update is
 // refused entire rather than partly adopted: work.Config.Apply validates the
 // result, so a message that also carries a cap above the ceiling must not

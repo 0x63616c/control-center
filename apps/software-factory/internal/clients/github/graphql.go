@@ -61,6 +61,16 @@ const enableAutoMergeMutation = `mutation($id: ID!) {
   }
 }`
 
+const disableAutoMergeMutation = `mutation($id: ID!) {
+  disablePullRequestAutoMerge(input: {pullRequestId: $id}) {
+    pullRequest {
+      autoMergeRequest {
+        enabledAt
+      }
+    }
+  }
+}`
+
 // graphQLRequest is the body every GraphQL call this package makes sends.
 type graphQLRequest struct {
 	Query     string         `json:"query"`
@@ -105,6 +115,12 @@ func (c *Client) MarkPullRequestReadyForReview(ctx context.Context, nodeID strin
 // merge the moment someone later approves it.
 func (c *Client) EnablePullRequestAutoMerge(ctx context.Context, nodeID string) error {
 	return c.runPullRequestMutation(ctx, nodeID, "enabling", "auto-merge", enableAutoMergeMutation, "enabled auto-merge on pull request")
+}
+
+// DisablePullRequestAutoMerge disarms a legacy PR before workflow ownership
+// moves. It is safe to retry; GitHub leaves an already-disarmed PR disarmed.
+func (c *Client) DisablePullRequestAutoMerge(ctx context.Context, nodeID string) error {
+	return c.runPullRequestMutation(ctx, nodeID, "disabling", "auto-merge", disableAutoMergeMutation, "disabled auto-merge on pull request")
 }
 
 // runPullRequestMutation sends one of this file's single-id GraphQL mutations

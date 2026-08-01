@@ -113,6 +113,72 @@ func (f *Store) TargetRunDetail(_ context.Context, runID string) (store.TargetRu
 	return store.TargetRunDetail{Run: run, Steps: steps}, nil
 }
 
+// History mirrors the target-first compatibility projection used by the real Store.
+func (f *Store) History(ctx context.Context, runID string) (store.RunHistory, error) {
+	target, err := f.TargetRunDetail(ctx, runID)
+	if err != nil {
+		return store.RunHistory{}, err
+	}
+	if len(target.Steps) > 0 || target.Run.TargetOutcome != "" {
+		return store.RunHistory{Run: target.Run, Steps: target.Steps}, nil
+	}
+	legacy, err := f.RunDetail(ctx, runID)
+	if err != nil {
+		return store.RunHistory{}, err
+	}
+	transcriptKeys, err := f.TranscriptKeysForRun(ctx, runID)
+	if err != nil {
+		return store.RunHistory{}, err
+	}
+	transcriptPresent := make(map[store.TranscriptKey]bool, len(transcriptKeys))
+	for _, key := range transcriptKeys {
+		transcriptPresent[key] = true
+	}
+	steps := make([]store.TargetStepDetail, 0, len(legacy.Steps))
+	for index, legacyStep := range legacy.Steps {
+		step := store.RunStep{RunID: runID, Ordinal: index + 1, Kind: work.StepKind(legacyStep.Stage), Iteration: legacyStep.Turn, State: work.StepStateCompleted}
+		attempts := make([]store.AgentAttempt, 0, len(legacyStep.Attempts))
+		for _, legacyAttempt := range legacyStep.Attempts {
+			state := work.AgentAttemptRunning
+			switch legacyAttempt.Result {
+			case store.AttemptSucceeded:
+				state = work.AgentAttemptSucceeded
+			case store.AttemptFailed:
+				state = work.AgentAttemptFailed
+			}
+			usageState := work.UsageUnknown
+			if legacyAttempt.Measured {
+				usageState = work.UsageMeasured
+			}
+			attempts = append(attempts, store.AgentAttempt{
+				ID: store.TargetAttemptID{RunID: runID, StepOrdinal: index + 1, AttemptNo: legacyAttempt.AttemptNo}, AgentStage: work.AgentStage(legacyStep.Stage), Model: legacyAttempt.Model,
+				State: state, UsageState: usageState, Usage: legacyAttempt.Usage, StartedAt: legacyAttempt.StartedAt, EndedAt: legacyAttempt.EndedAt,
+				TranscriptPresent: transcriptPresent[store.TranscriptKey{Stage: legacyStep.Stage, Turn: legacyStep.Turn, AttemptNo: legacyAttempt.AttemptNo}],
+			})
+		}
+		if len(attempts) > 0 {
+			step.StartedAt = attempts[0].StartedAt
+			step.EndedAt = attempts[len(attempts)-1].EndedAt
+			if step.EndedAt.IsZero() {
+				step.State = work.StepStateRunning
+			}
+		}
+		steps = append(steps, store.TargetStepDetail{Step: step, Attempts: attempts})
+	}
+	return store.RunHistory{Run: legacy.Run, Steps: steps, Legacy: true}, nil
+}
+
+// TargetTranscript reads target transcript evidence without a write capability.
+func (f *Store) TargetTranscript(_ context.Context, id store.TargetAttemptID) (store.TargetTranscript, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	transcript, ok := f.targetTranscripts[id]
+	if !ok {
+		return store.TargetTranscript{}, fmt.Errorf("reading target transcript %s: %w", id, store.ErrNotFound)
+	}
+	return transcript, nil
+}
+
 // StartAgentAttempt records one agent execution under an existing target Step.
 func (f *Store) StartAgentAttempt(_ context.Context, in store.StartAgentAttemptInput) (store.AgentAttempt, error) {
 	f.mu.Lock()
