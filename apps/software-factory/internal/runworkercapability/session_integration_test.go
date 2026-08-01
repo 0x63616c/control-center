@@ -5,6 +5,7 @@ package runworkercapability
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"errors"
 	"flag"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -25,6 +27,9 @@ import (
 
 	temporalclient "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/temporal"
 )
+
+//go:embed temporal-cli-version.txt
+var temporalCLIVersion string
 
 const (
 	mainQueue       = "capability-main"
@@ -676,9 +681,16 @@ func waitForFile(t *testing.T, path, description string) {
 
 func startServer(t *testing.T) *testsuite.DevServer {
 	t.Helper()
+	cacheDir := filepath.Join(os.TempDir(), "software-factory-temporal-cli")
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		t.Fatalf("creating Temporal CLI cache: %v", err)
+	}
 	server, err := testsuite.StartDevServer(context.Background(), testsuite.DevServerOptions{
-		CachedDownload: testsuite.CachedDownload{Version: "v1.8.1"},
-		LogLevel:       "error",
+		CachedDownload: testsuite.CachedDownload{
+			Version: strings.TrimSpace(temporalCLIVersion),
+			DestDir: cacheDir,
+		},
+		LogLevel: "error",
 	})
 	if err != nil {
 		t.Fatalf("starting Temporal dev server: %v", err)
