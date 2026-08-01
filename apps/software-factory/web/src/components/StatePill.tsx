@@ -9,8 +9,7 @@ function ticketStatus(ticket: { state: string; ready: boolean }): string {
 }
 
 const PILL_CLASS: Record<string, string> = {
-  working: "pill pill-working",
-  review: "pill pill-review",
+  active: "pill pill-working",
   done: "pill pill-done",
   failed: "pill pill-failed",
   ready: "pill pill-open",

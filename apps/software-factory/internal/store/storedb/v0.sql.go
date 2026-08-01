@@ -47,7 +47,7 @@ WHERE run_id = $1 AND step_ordinal = $2 AND attempt_no = $3 AND state = 'running
       WHERE run.id = $1 AND run.target_outcome IS NULL
         AND ticket.state = 'active' AND ticket.active_run_id = run.id
   )
-RETURNING run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, provider_thread_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result, checkpoint_capability_hash
+RETURNING run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, execution_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result, checkpoint_capability_hash
 `
 
 type BindTargetAttemptCapabilityParams struct {
@@ -74,7 +74,7 @@ func (q *Queries) BindTargetAttemptCapability(ctx context.Context, arg BindTarge
 		&i.Effort,
 		&i.State,
 		&i.FailureKind,
-		&i.ProviderThreadID,
+		&i.ExecutionID,
 		&i.UsageState,
 		&i.InputTokens,
 		&i.CachedInputTokens,
@@ -121,7 +121,7 @@ func (q *Queries) BindTargetRepositoryCapability(ctx context.Context, arg BindTa
 
 const checkpointTargetAgentAttempt = `-- name: CheckpointTargetAgentAttempt :one
 UPDATE run_agent_attempt SET
-    provider_thread_id = $4,
+    execution_id = $4,
     state = $5,
     failure_kind = $6,
     usage_state = $7,
@@ -132,14 +132,14 @@ UPDATE run_agent_attempt SET
     ended_at = $12,
     result = $13
 WHERE run_id = $1 AND step_ordinal = $2 AND attempt_no = $3
-RETURNING run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, provider_thread_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result, checkpoint_capability_hash
+RETURNING run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, execution_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result, checkpoint_capability_hash
 `
 
 type CheckpointTargetAgentAttemptParams struct {
 	RunID             pgtype.UUID
 	StepOrdinal       int32
 	AttemptNo         int32
-	ProviderThreadID  string
+	ExecutionID       string
 	State             string
 	FailureKind       string
 	UsageState        string
@@ -156,7 +156,7 @@ func (q *Queries) CheckpointTargetAgentAttempt(ctx context.Context, arg Checkpoi
 		arg.RunID,
 		arg.StepOrdinal,
 		arg.AttemptNo,
-		arg.ProviderThreadID,
+		arg.ExecutionID,
 		arg.State,
 		arg.FailureKind,
 		arg.UsageState,
@@ -177,7 +177,7 @@ func (q *Queries) CheckpointTargetAgentAttempt(ctx context.Context, arg Checkpoi
 		&i.Effort,
 		&i.State,
 		&i.FailureKind,
-		&i.ProviderThreadID,
+		&i.ExecutionID,
 		&i.UsageState,
 		&i.InputTokens,
 		&i.CachedInputTokens,
@@ -424,7 +424,7 @@ func (q *Queries) CompleteTargetTicket(ctx context.Context, arg CompleteTargetTi
 const failRunningTargetAgentAttempts = `-- name: FailRunningTargetAgentAttempts :many
 UPDATE run_agent_attempt SET state = 'failed', failure_kind = $3, ended_at = $4
 WHERE run_id = $1 AND step_ordinal = $2 AND state = 'running'
-RETURNING run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, provider_thread_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result, checkpoint_capability_hash
+RETURNING run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, execution_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result, checkpoint_capability_hash
 `
 
 type FailRunningTargetAgentAttemptsParams struct {
@@ -457,7 +457,7 @@ func (q *Queries) FailRunningTargetAgentAttempts(ctx context.Context, arg FailRu
 			&i.Effort,
 			&i.State,
 			&i.FailureKind,
-			&i.ProviderThreadID,
+			&i.ExecutionID,
 			&i.UsageState,
 			&i.InputTokens,
 			&i.CachedInputTokens,
@@ -828,7 +828,7 @@ WHERE run_agent_attempt.agent_stage = EXCLUDED.agent_stage
   AND run_agent_attempt.effort = EXCLUDED.effort
   AND run_agent_attempt.usage_state = EXCLUDED.usage_state
   AND run_agent_attempt.started_at = EXCLUDED.started_at
-RETURNING run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, provider_thread_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result, checkpoint_capability_hash
+RETURNING run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, execution_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result, checkpoint_capability_hash
 `
 
 type StartTargetAgentAttemptParams struct {
@@ -863,7 +863,7 @@ func (q *Queries) StartTargetAgentAttempt(ctx context.Context, arg StartTargetAg
 		&i.Effort,
 		&i.State,
 		&i.FailureKind,
-		&i.ProviderThreadID,
+		&i.ExecutionID,
 		&i.UsageState,
 		&i.InputTokens,
 		&i.CachedInputTokens,
@@ -928,7 +928,7 @@ func (q *Queries) StartTargetStep(ctx context.Context, arg StartTargetStepParams
 }
 
 const targetAgentAttempt = `-- name: TargetAgentAttempt :one
-SELECT run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, provider_thread_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result, checkpoint_capability_hash FROM run_agent_attempt
+SELECT run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, execution_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result, checkpoint_capability_hash FROM run_agent_attempt
 WHERE run_id = $1 AND step_ordinal = $2 AND attempt_no = $3
 `
 
@@ -950,7 +950,7 @@ func (q *Queries) TargetAgentAttempt(ctx context.Context, arg TargetAgentAttempt
 		&i.Effort,
 		&i.State,
 		&i.FailureKind,
-		&i.ProviderThreadID,
+		&i.ExecutionID,
 		&i.UsageState,
 		&i.InputTokens,
 		&i.CachedInputTokens,
@@ -965,7 +965,7 @@ func (q *Queries) TargetAgentAttempt(ctx context.Context, arg TargetAgentAttempt
 }
 
 const targetAgentAttemptForUpdate = `-- name: TargetAgentAttemptForUpdate :one
-SELECT run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, provider_thread_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result, checkpoint_capability_hash FROM run_agent_attempt
+SELECT run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, execution_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result, checkpoint_capability_hash FROM run_agent_attempt
 WHERE run_id = $1 AND step_ordinal = $2 AND attempt_no = $3 FOR UPDATE
 `
 
@@ -987,7 +987,7 @@ func (q *Queries) TargetAgentAttemptForUpdate(ctx context.Context, arg TargetAge
 		&i.Effort,
 		&i.State,
 		&i.FailureKind,
-		&i.ProviderThreadID,
+		&i.ExecutionID,
 		&i.UsageState,
 		&i.InputTokens,
 		&i.CachedInputTokens,
@@ -1002,7 +1002,7 @@ func (q *Queries) TargetAgentAttemptForUpdate(ctx context.Context, arg TargetAge
 }
 
 const targetAgentAttemptsForRun = `-- name: TargetAgentAttemptsForRun :many
-SELECT run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, provider_thread_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result, checkpoint_capability_hash FROM run_agent_attempt WHERE run_id = $1 ORDER BY step_ordinal, attempt_no
+SELECT run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, execution_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result, checkpoint_capability_hash FROM run_agent_attempt WHERE run_id = $1 ORDER BY step_ordinal, attempt_no
 `
 
 func (q *Queries) TargetAgentAttemptsForRun(ctx context.Context, runID pgtype.UUID) ([]RunAgentAttempt, error) {
@@ -1023,7 +1023,7 @@ func (q *Queries) TargetAgentAttemptsForRun(ctx context.Context, runID pgtype.UU
 			&i.Effort,
 			&i.State,
 			&i.FailureKind,
-			&i.ProviderThreadID,
+			&i.ExecutionID,
 			&i.UsageState,
 			&i.InputTokens,
 			&i.CachedInputTokens,

@@ -1897,7 +1897,7 @@ func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore workOnT
 			transcript = &store.TargetTranscript{CompressedBytes: []byte("test transcript"), Compression: "gzip", UncompressedSizeBytes: 15, Checksum: []byte("test-checksum")}
 		}
 		_, err := h.store.FinalizeAgentWorkflowAttempt(ctx, store.AgentCheckpointInput{
-			ID: input.AttemptID, ThreadID: input.Identity, State: input.State, FailureKind: input.FailureKind,
+			ID: input.AttemptID, ExecutionID: input.Identity, State: input.State, FailureKind: input.FailureKind,
 			UsageState: usageState, Usage: input.Usage, EndedAt: input.EndedAt,
 			Result: result, Transcript: transcript,
 		})

@@ -116,7 +116,7 @@ WHERE run_id = $1 AND step_ordinal = $2 AND attempt_no = $3;
 
 -- name: CheckpointTargetAgentAttempt :one
 UPDATE run_agent_attempt SET
-    provider_thread_id = $4,
+    execution_id = $4,
     state = $5,
     failure_kind = $6,
     usage_state = $7,

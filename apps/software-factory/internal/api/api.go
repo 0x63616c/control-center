@@ -40,7 +40,6 @@ type factoryStore interface {
 	store.TicketDependencyReader
 	store.RunLister
 	store.RunReader
-	store.TranscriptReader
 	store.TargetHistoryReader
 }
 
@@ -79,7 +78,7 @@ type createTicketInput struct {
 type stateTicketInput struct {
 	TicketID int64 `path:"ticketID" minimum:"1" doc:"The Ticket identifier."`
 	Body     struct {
-		State store.TicketState `json:"state" doc:"The lifecycle state: open, active, working, review, done, or failed. Active is owned by a target Run; working and review belong to the legacy workflow."`
+		State store.TicketState `json:"state" enum:"open,active,done,failed" doc:"The lifecycle state. Active is owned by a target Run."`
 	}
 }
 
@@ -93,7 +92,7 @@ type getTicketInput struct {
 }
 
 type listTicketsInput struct {
-	State store.TicketState `query:"state" doc:"Limit results to this lifecycle state."`
+	State store.TicketState `query:"state" enum:"open,active,done,failed" doc:"Limit results to this lifecycle state."`
 	Ready string            `query:"ready" doc:"Limit results by derived readiness: true or false."`
 }
 
@@ -249,7 +248,6 @@ func New(version string, commands commandClient, ticketStores ...factoryStore) *
 	huma.Put(api, "/v1/tickets/{ticketID}/blockers/{blockerTicketID}", service.addBlocker, commandOperation("Add a Ticket blocker", "Records that the first Ticket is blocked by the second."))
 	huma.Delete(api, "/v1/tickets/{ticketID}/blockers/{blockerTicketID}", service.removeBlocker, commandOperation("Remove a Ticket blocker", "Removes a dependency edge when it exists."))
 	huma.Get(api, "/v1/tickets/{ticketID}/runs", service.getTicketRuns, commandOperation("List a Ticket's Runs", "Returns every Run of the Ticket, most recent first, each with its Steps and Attempts and rolled-up token usage."))
-	huma.Get(api, "/v1/tickets/{ticketID}/runs/{runID}/stages/{stage}/turns/{turn}/attempts/{attemptNo}/transcript", service.getAttemptTranscript, commandOperation("Download an Attempt's transcript", "Returns the Attempt's raw JSONL event stream, decompressed, as a downloadable file."))
 	huma.Get(api, "/v1/tickets/{ticketID}/runs/{runID}/steps/{ordinal}/attempts/{attemptNo}/transcript", service.getTargetAttemptTranscript, commandOperation("Download a target Attempt's transcript", "Returns an ordinal Step Attempt's raw JSONL event stream, decompressed, as a downloadable file."))
 	errorSchema := api.OpenAPI().Components.Schemas.Map()["ErrorModel"]
 	errorSchema.Properties["reason"] = &huma.Schema{Type: "string", Description: "Stable machine-readable reason for the error."}

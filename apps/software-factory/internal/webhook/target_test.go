@@ -20,7 +20,7 @@ func TestTargetHandlerAuthenticatesAndRecordsPullRequestClosedWithoutChangingTic
 		t.Run(map[bool]string{true: "merged", false: "unmerged"}[merged], func(t *testing.T) {
 			t.Parallel()
 			fake := storefake.New()
-			ticket := mustTicket(t, fake, store.TicketReview)
+			ticket := mustTicket(t, fake, store.TicketOpen)
 			handler := NewTargetHandler([]byte(testSecret), fake, testLogger(io.Discard), prometheus.NewRegistry())
 			body := mergedPullRequestBody(t, ticket.ID, "run-1", merged)
 
@@ -33,8 +33,8 @@ func TestTargetHandlerAuthenticatesAndRecordsPullRequestClosedWithoutChangingTic
 			if err != nil {
 				t.Fatalf("Ticket: %v", err)
 			}
-			if got.State != store.TicketReview {
-				t.Fatalf("ticket state = %s, want unchanged review", got.State)
+			if got.State != store.TicketOpen {
+				t.Fatalf("ticket state = %s, want unchanged open", got.State)
 			}
 		})
 	}

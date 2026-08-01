@@ -93,7 +93,7 @@ func (activities *TargetAgentEvidenceActivities) Finalize(ctx context.Context, i
 		usageState = work.UsageMeasured
 	}
 	_, err := activities.recorder.FinalizeAgentWorkflowAttempt(ctx, store.AgentCheckpointInput{
-		ID: input.AttemptID, ThreadID: input.Identity, State: state, FailureKind: input.FailureKind,
+		ID: input.AttemptID, ExecutionID: input.Identity, State: state, FailureKind: input.FailureKind,
 		UsageState: usageState, Usage: input.Usage, EndedAt: input.EndedAt,
 		Result: result, Transcript: transcript,
 	})

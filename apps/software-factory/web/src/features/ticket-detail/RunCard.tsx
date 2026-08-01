@@ -18,7 +18,7 @@ function runStatus(run: RunOutput): string {
 function runPillClass(run: RunOutput): string {
   if (run.active) return "pill pill-working";
   if (run.outcome === "failed" || run.outcome === "exhausted") return "pill pill-failed";
-  if (run.outcome === "proposed" || run.outcome === "succeeded") return "pill pill-done";
+  if (run.outcome === "succeeded") return "pill pill-done";
   return "pill pill-blocked";
 }
 

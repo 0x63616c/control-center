@@ -42,7 +42,7 @@ func TestCheckpointSendsTerminalEvidenceToItsScopedAttempt(t *testing.T) {
 	}
 	endedAt := time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)
 	input := checkpointprotocol.Attempt{
-		ProviderThreadID: "thread-9", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured,
+		ExecutionID: "opaque-execution-9", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured,
 		Usage:   checkpointprotocol.Usage{InputTokens: 100, CachedInputTokens: 25, OutputTokens: 30, ReasoningTokens: 10},
 		EndedAt: &endedAt, Result: json.RawMessage(`{"kind":"done"}`),
 		Transcript: &checkpointprotocol.Transcript{CompressedBytes: []byte("terminal"), Compression: "zstd", UncompressedSizeBytes: 8, Checksum: []byte("checksum")},
@@ -62,7 +62,7 @@ func TestCheckpointSendsTerminalEvidenceToItsScopedAttempt(t *testing.T) {
 	if err := json.Unmarshal(received.body, &sent); err != nil {
 		t.Fatalf("decode checkpoint body: %v", err)
 	}
-	if sent.ProviderThreadID != input.ProviderThreadID || sent.State != input.State || string(sent.Result) != string(input.Result) || sent.Transcript == nil || string(sent.Transcript.CompressedBytes) != "terminal" {
+	if sent.ExecutionID != input.ExecutionID || sent.State != input.State || string(sent.Result) != string(input.Result) || sent.Transcript == nil || string(sent.Transcript.CompressedBytes) != "terminal" {
 		t.Fatalf("checkpoint body = %+v, want terminal evidence", sent)
 	}
 }
@@ -91,7 +91,7 @@ func TestLoadReadsTheDurableAttemptBeforeAProviderStarts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !found || got.ProviderThreadID != want.ProviderThreadID || got.State != want.State || string(got.Result) != string(want.Result) {
+	if !found || got.ExecutionID != want.ExecutionID || got.State != want.State || string(got.Result) != string(want.Result) {
 		t.Fatalf("Load = (%+v, %v), want durable terminal checkpoint", got, found)
 	}
 }
@@ -203,7 +203,7 @@ func TestNewRejectsAnUnscopedCheckpointClient(t *testing.T) {
 
 func runningCheckpoint() checkpointprotocol.Attempt {
 	return checkpointprotocol.Attempt{
-		ProviderThreadID: "thread-1", State: work.AgentAttemptRunning, UsageState: work.UsageUnknown,
+		ExecutionID: "opaque-execution-1", State: work.AgentAttemptRunning, UsageState: work.UsageUnknown,
 		Usage: checkpointprotocol.Usage{},
 	}
 }
@@ -211,7 +211,7 @@ func runningCheckpoint() checkpointprotocol.Attempt {
 func terminalCheckpoint() checkpointprotocol.Attempt {
 	endedAt := time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)
 	return checkpointprotocol.Attempt{
-		ProviderThreadID: "thread-1", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured,
+		ExecutionID: "opaque-execution-1", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured,
 		Usage: checkpointprotocol.Usage{InputTokens: 3, OutputTokens: 2}, EndedAt: &endedAt,
 		Result: json.RawMessage(`{"kind":"done"}`), Transcript: &checkpointprotocol.Transcript{CompressedBytes: []byte("transcript"), Compression: "zstd", UncompressedSizeBytes: 10, Checksum: []byte("sum")},
 	}

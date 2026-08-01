@@ -89,7 +89,7 @@ func TestWorkOnTicketCommitsRepresentativeHistoryAgainstARealDatabase(t *testing
 		}
 		attempt := step.Attempts[0]
 		wantIdentity := fmt.Sprintf("agent/%s/step/%d/attempt/1", input.RunID, step.Step.Ordinal)
-		if attempt.AgentStage != wantStage || attempt.State != work.AgentAttemptSucceeded || attempt.ProviderThreadID != wantIdentity || attempt.UsageState != work.UsageMeasured {
+		if attempt.AgentStage != wantStage || attempt.State != work.AgentAttemptSucceeded || attempt.ExecutionID != wantIdentity || attempt.UsageState != work.UsageMeasured {
 			t.Fatalf("agent step %s attempt = %+v, want successful measured %s evidence", wantKind, attempt, wantStage)
 		}
 	}

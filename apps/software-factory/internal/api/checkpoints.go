@@ -39,13 +39,13 @@ type agentCheckpointOutput struct{ Body checkpoint.Attempt }
 
 func checkpointOperation(operation *huma.Operation) {
 	operation.Summary = "Checkpoint an active Agent Attempt"
-	operation.Description = "Stores running provider identity or terminal execution evidence using a capability scoped to the exact Run, Step, and Agent Attempt."
+	operation.Description = "Stores an opaque execution identity or terminal evidence using a capability scoped to the exact Run, Step, and Agent Attempt."
 	operation.Security = []map[string][]string{{"agentCheckpointCapability": {}}}
 }
 
 func readCheckpointOperation(operation *huma.Operation) {
 	operation.Summary = "Read an active Agent Attempt checkpoint"
-	operation.Description = "Reconciles provider progress using the capability scoped to the exact Run, Step, and Agent Attempt."
+	operation.Description = "Reconciles execution progress using the capability scoped to the exact Run, Step, and Agent Attempt."
 	operation.Security = []map[string][]string{{"agentCheckpointCapability": {}}}
 }
 
@@ -65,7 +65,7 @@ func (service *Service) loadAgentAttemptCheckpoint(ctx context.Context, input *a
 	}
 	output := &agentCheckpointOutput{}
 	output.Body = checkpoint.Attempt{
-		ProviderThreadID: attempt.ProviderThreadID, State: attempt.State, FailureKind: attempt.FailureKind,
+		ExecutionID: attempt.ExecutionID, State: attempt.State, FailureKind: attempt.FailureKind,
 		UsageState: attempt.UsageState,
 		Usage:      checkpoint.Usage{InputTokens: attempt.Usage.InputTokens, CachedInputTokens: attempt.Usage.CachedInputTokens, OutputTokens: attempt.Usage.OutputTokens, ReasoningTokens: attempt.Usage.ReasoningTokens},
 		EndedAt:    checkpointEndedAtPointer(attempt.EndedAt), Result: attempt.Result, Transcript: checkpointProtocolTranscript(transcript),
@@ -86,7 +86,7 @@ func (service *Service) checkpointAgentAttempt(ctx context.Context, input *agent
 			RunID: input.RunID, StepOrdinal: input.StepOrdinal, AttemptNo: input.AttemptNo,
 		},
 		Capability:  input.Capability,
-		ThreadID:    input.Body.ProviderThreadID,
+		ExecutionID: input.Body.ExecutionID,
 		State:       input.Body.State,
 		FailureKind: input.Body.FailureKind,
 		UsageState:  input.Body.UsageState,

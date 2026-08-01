@@ -72,7 +72,7 @@ describe("App", () => {
             id: 42,
             title: "Console ticket detail",
             body: "",
-            state: "working",
+            state: "active",
             ready: false,
             createdAt: "2026-07-31T12:00:00Z",
             updatedAt: "2026-07-31T12:00:00Z",

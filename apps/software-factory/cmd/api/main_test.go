@@ -3,6 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,7 +16,9 @@ import (
 	factoryapi "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/api"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/checkpoint"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store/storefake"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 func TestOpenAPICommandPrintsSpecWithoutStartupConfig(t *testing.T) {
@@ -44,7 +51,7 @@ func (checkpointStore) CheckpointAgentAttempt(_ context.Context, input store.Age
 }
 
 func (checkpointStore) LoadAgentCheckpoint(_ context.Context, id store.TargetAttemptID, _ string) (store.AgentAttempt, *store.TargetTranscript, bool, error) {
-	return store.AgentAttempt{ID: id, ProviderThreadID: "thread-1", State: work.AgentAttemptRunning, UsageState: work.UsageUnknown}, nil, true, nil
+	return store.AgentAttempt{ID: id, ExecutionID: "opaque-execution-1", State: work.AgentAttemptRunning, UsageState: work.UsageUnknown}, nil, true, nil
 }
 
 func (checkpointStore) LoadRepositoryCheckpoint(_ context.Context, identity work.RunWorkerIdentity, _ string) (store.GitCheckpoint, bool, error) {
@@ -73,7 +80,7 @@ func TestFactoryRoutingUsesAttemptCapabilityWithoutWeakeningLegacyAuthentication
 		t.Fatalf("legacy route without bearer = %d, want 401", legacyResponse.Code)
 	}
 
-	body := strings.NewReader(`{"providerThreadId":"thread-1","state":"running","usageState":"unknown","usage":{"inputTokens":0,"cachedInputTokens":0,"outputTokens":0,"reasoningTokens":0}}`)
+	body := strings.NewReader(`{"executionId":"opaque-execution-1","state":"running","usageState":"unknown","usage":{"inputTokens":0,"cachedInputTokens":0,"outputTokens":0,"reasoningTokens":0}}`)
 	checkpointRequest := httptest.NewRequest(http.MethodPut, checkpoint.AttemptPath("0f466627-b3ae-4ba2-9c96-6ef44ec6f578", 1, 1), body)
 	checkpointRequest.Header.Set("Content-Type", "application/json")
 	checkpointRequest.Header.Set(checkpoint.CapabilityHeader, "attempt-capability")
@@ -112,5 +119,37 @@ func TestFactoryRoutingUsesAttemptCapabilityWithoutWeakeningLegacyAuthentication
 	mux.ServeHTTP(legacyResponse, legacy)
 	if legacyResponse.Code != http.StatusOK {
 		t.Fatalf("legacy route with bearer = %d: %s", legacyResponse.Code, legacyResponse.Body.String())
+	}
+}
+
+func TestGitHubWebhookCompositionAuthenticatesAndDoesNotTransitionTickets(t *testing.T) {
+	t.Parallel()
+	const secret = "composition-secret"
+	fake := storefake.New()
+	ticket, err := fake.CreateTicket(context.Background(), "legacy review", "", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mountGitHubWebhook(mux, []byte(secret), fake, slog.New(slog.NewTextHandler(io.Discard, nil)), prometheus.NewRegistry())
+	body := []byte(`{"action":"closed","pull_request":{"merged":true,"head":{"ref":"factory/ticket-1/run-run-1"}}}`)
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write(body)
+	request := httptest.NewRequest(http.MethodPost, "/v1/hooks/github", bytes.NewReader(body))
+	request.Header.Set("x-hub-signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+	request.Header.Set("x-github-delivery", "composition-delivery")
+	request.Header.Set("x-github-event", "pull_request")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("webhook status = %d, want 204: %s", response.Code, response.Body.String())
+	}
+	got, err := fake.Ticket(context.Background(), ticket.ID)
+	if err != nil {
+		t.Fatalf("Ticket: %v", err)
+	}
+	if got.State != store.TicketOpen {
+		t.Fatalf("ticket state = %s, want unchanged open", got.State)
 	}
 }

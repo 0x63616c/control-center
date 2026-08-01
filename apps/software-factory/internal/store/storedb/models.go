@@ -64,7 +64,7 @@ type RunAgentAttempt struct {
 	Effort                   string
 	State                    string
 	FailureKind              string
-	ProviderThreadID         string
+	ExecutionID              string
 	UsageState               string
 	InputTokens              int64
 	CachedInputTokens        int64
@@ -119,6 +119,14 @@ type Step struct {
 	RunID     pgtype.UUID
 	Stage     string
 	Turn      int32
+	CreatedAt pgtype.Timestamptz
+}
+
+type TargetHistoryStepMap struct {
+	RunID     pgtype.UUID
+	Stage     string
+	Turn      int32
+	Ordinal   int32
 	CreatedAt pgtype.Timestamptz
 }
 
