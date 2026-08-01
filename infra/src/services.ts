@@ -88,6 +88,11 @@ const IMAGE_REPOSITORIES = {
     digestKey: softwareFactoryProduct.imageDigestKey("sandbox"),
     repository: softwareFactoryProduct.imageRepository("sandbox"),
   },
+  "software-factory-run-worker": {
+    product: "software-factory",
+    digestKey: softwareFactoryProduct.imageDigestKey("run-worker"),
+    repository: softwareFactoryProduct.imageRepository("run-worker"),
+  },
   "software-factory-relay": {
     product: "software-factory",
     digestKey: softwareFactoryProduct.imageDigestKey("relay"),

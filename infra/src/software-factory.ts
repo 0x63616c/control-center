@@ -579,6 +579,13 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
                     name: "SANDBOX_IMAGE",
                     value: ghcrImage("software-factory-sandbox", imageDigests),
                   },
+                  // Additive target image. New Runs use this separately named,
+                  // digest-pinned runtime; SANDBOX_IMAGE remains wired until
+                  // legacy workflows are quiesced in PR 8.
+                  {
+                    name: "RUN_WORKER_IMAGE",
+                    value: ghcrImage("software-factory-run-worker", imageDigests),
+                  },
                   { name: "SANDBOX_NAMESPACE", value: SOFTWARE_FACTORY_NAMESPACE },
                   { name: "CODEX_AUTH_SECRET_NAME", value: CODEX_AUTH_SECRET_NAME },
                   // The Secret podspec.go sets as `imagePullSecrets` on every
