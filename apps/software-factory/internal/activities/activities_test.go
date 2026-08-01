@@ -32,8 +32,10 @@ type fakeGitHub struct {
 	prErr       error
 	askedBranch string
 
-	token    work.SandboxCredential
-	tokenErr error
+	token      work.SandboxCredential
+	tokens     []work.SandboxCredential
+	tokenErr   error
+	tokenCalls int
 
 	checks    []work.CheckRun
 	checksErr error
@@ -65,6 +67,10 @@ func (f *fakeGitHub) PostComment(_ context.Context, number int, body string) err
 }
 
 func (f *fakeGitHub) InstallationToken(context.Context) (work.SandboxCredential, error) {
+	f.tokenCalls++
+	if len(f.tokens) >= f.tokenCalls {
+		return f.tokens[f.tokenCalls-1], f.tokenErr
+	}
 	return f.token, f.tokenErr
 }
 
@@ -138,11 +144,25 @@ type fakeRepo struct {
 	sawLogin     string
 	sawAccountID int64
 	called       int
+	operations   []string
+	tokens       []string
 	err          error
 }
 
 func (f *fakeRepo) CloneRepo(_ context.Context, sandbox work.SandboxID, cloneURL string, credential work.SandboxCredential) error {
 	f.called++
+	f.operations = append(f.operations, "clone")
+	f.tokens = append(f.tokens, credential.Token.Reveal())
+	f.sawSandbox, f.sawURL, f.sawToken = sandbox, cloneURL, credential.Token.Reveal()
+	f.sawLogin = credential.Login
+	f.sawAccountID = credential.AccountID
+	return f.err
+}
+
+func (f *fakeRepo) PushRepo(_ context.Context, sandbox work.SandboxID, cloneURL string, credential work.SandboxCredential) error {
+	f.called++
+	f.operations = append(f.operations, "push")
+	f.tokens = append(f.tokens, credential.Token.Reveal())
 	f.sawSandbox, f.sawURL, f.sawToken = sandbox, cloneURL, credential.Token.Reveal()
 	f.sawLogin = credential.Login
 	f.sawAccountID = credential.AccountID
@@ -441,6 +461,40 @@ func TestCloneRepoSurfacesTheClonersFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "SF_BRANCH") {
 		t.Fatalf("error %q lost the cloner's reason", err)
+	}
+}
+
+func TestPushRepoMintsANewCredentialAfterClone(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeRepo{}
+	githubClient := &fakeGitHub{tokens: []work.SandboxCredential{
+		{Token: work.NewCredential("clone-token"), Login: "factory[bot]", AccountID: 1},
+		{Token: work.NewCredential("push-token"), Login: "factory[bot]", AccountID: 1},
+	}}
+	d := deps()
+	d.Repo = repo
+	d.GitHub = githubClient
+	e := env(t)
+	a := mustNew(t, d)
+	e.RegisterActivity(a.CloneRepo)
+	e.RegisterActivity(a.PushRepo)
+
+	if _, err := e.ExecuteActivity(a.CloneRepo, work.SandboxID("sandbox-328")); err != nil {
+		t.Fatalf("CloneRepo: %v", err)
+	}
+	if _, err := e.ExecuteActivity(a.PushRepo, work.SandboxID("sandbox-328")); err != nil {
+		t.Fatalf("PushRepo: %v", err)
+	}
+
+	if githubClient.tokenCalls != 2 {
+		t.Fatalf("installation token calls = %d, want one for clone and a fresh one for push", githubClient.tokenCalls)
+	}
+	if got, want := strings.Join(repo.operations, ","), "clone,push"; got != want {
+		t.Fatalf("repository operations = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(repo.tokens, ","), "clone-token,push-token"; got != want {
+		t.Fatalf("repository credentials = %q, want %q", got, want)
 	}
 }
 

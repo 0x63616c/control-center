@@ -139,6 +139,8 @@ type RepoCloner interface {
 	// must not reach a workflow: Temporal would persist it to history for the
 	// namespace's whole retention.
 	CloneRepo(ctx context.Context, sandbox work.SandboxID, cloneURL string, credential work.SandboxCredential) error
+	// PushRepo publishes the committed branch with a freshly minted credential.
+	PushRepo(ctx context.Context, sandbox work.SandboxID, cloneURL string, credential work.SandboxCredential) error
 }
 
 // RunLookup answers whether a ticket's workflow is still open.

@@ -142,6 +142,14 @@ func (s *Sandboxes) Exec(ctx context.Context, sandbox work.SandboxID, argv []str
 // exec is the one path every remote command takes, so exit-code extraction and
 // post-failure pod classification each exist once.
 func (s *Sandboxes) exec(ctx context.Context, sandbox work.SandboxID, argv []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	return s.execInContainer(ctx, sandbox, s.opts.containerName, argv, stdin, stdout, stderr)
+}
+
+func (s *Sandboxes) repositoryExec(ctx context.Context, sandbox work.SandboxID, argv []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	return s.execInContainer(ctx, sandbox, repositoryContainerName, argv, stdin, stdout, stderr)
+}
+
+func (s *Sandboxes) execInContainer(ctx context.Context, sandbox work.SandboxID, container string, argv []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	if len(argv) == 0 {
 		return 0, fmt.Errorf("running a command in sandbox %s: argv is empty: %w", sandbox, work.ErrPermanent)
 	}
@@ -149,7 +157,7 @@ func (s *Sandboxes) exec(ctx context.Context, sandbox work.SandboxID, argv []str
 		return 0, fmt.Errorf("running %s in sandbox %s: this Sandboxes has no exec transport: %w", argvSummary(argv), sandbox, work.ErrPermanent)
 	}
 
-	target := execTarget{pod: sandbox, container: s.opts.containerName}
+	target := execTarget{pod: sandbox, container: container}
 
 	// argv0 and argc only: a full argv carries file paths today and could carry
 	// more later.

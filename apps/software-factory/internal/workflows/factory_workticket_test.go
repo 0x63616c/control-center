@@ -26,6 +26,11 @@ import (
 // same thing.
 const factoryDispatcherID = "software-factory-ticket-dispatcher"
 
+const (
+	testFactoryPushRepoChangeID = "factory-push-repo-v1"
+	testFactoryPushRepoVersion  = workflow.Version(1)
+)
+
 func cancelableAgentWorkflow(ctx workflow.Context, _ workflows.AgentWorkflowInput) (workflows.AgentWorkflowResult, error) {
 	return workflows.AgentWorkflowResult{}, workflow.Await(ctx, func() bool { return false })
 }
@@ -154,6 +159,7 @@ func (h *factoryTicketHarness) runVersion(version workflow.Version) {
 		env.RegisterWorkflowWithOptions(cancelableAgentWorkflow, workflow.RegisterOptions{Name: agent.WorkflowName})
 	}
 	env.OnGetVersion("factory-agent-workflow-v1", workflow.DefaultVersion, 1).Return(version)
+	env.OnGetVersion(testFactoryPushRepoChangeID, workflow.DefaultVersion, testFactoryPushRepoVersion).Return(version)
 	env.SetOnChildWorkflowStartedListener(func(info *workflow.Info, _ workflow.Context, _ converter.EncodedValues) {
 		h.agentChildIDs = append(h.agentChildIDs, info.WorkflowExecution.ID)
 	})
@@ -186,6 +192,10 @@ func (h *factoryTicketHarness) runVersion(version workflow.Version) {
 		func(context.Context, activities.RunReviewInput) (*activities.RunReviewOutput, error) { return nil, nil },
 		activity.RegisterOptions{Name: "RunReview"},
 	)
+	env.RegisterActivityWithOptions(
+		func(context.Context, work.SandboxID) error { return nil },
+		activity.RegisterOptions{Name: "PushRepo"},
+	)
 
 	env.OnActivity(acts.CreateSandbox, mock.Anything, mock.Anything).
 		Return(func(_ context.Context, in activities.CreateSandboxInput) (work.SandboxID, error) {
@@ -203,6 +213,7 @@ func (h *factoryTicketHarness) runVersion(version workflow.Version) {
 			h.cloned = append(h.cloned, sandbox)
 			return h.cloneErr
 		})
+	env.OnActivity(acts.PushRepo, mock.Anything, mock.Anything).Return(nil)
 	env.OnActivity(acts.DeleteSandbox, mock.Anything, mock.Anything).
 		Return(func(_ context.Context, id work.SandboxID) error {
 			h.deleted = append(h.deleted, id)
@@ -561,6 +572,48 @@ func TestFactoryWorkTicketRunsPlanImplementAndReviewAsAgentChildren(t *testing.T
 	for _, activityName := range h.activityStarts {
 		if activityName == "RunPlan" || activityName == "RunImplement" || activityName == "RunReview" {
 			t.Fatalf("new history invoked legacy stage activity %q", activityName)
+		}
+	}
+}
+
+func TestFactoryWorkTicketPushesCommittedImplementBeforePullRequestAndCI(t *testing.T) {
+	t.Parallel()
+
+	h := newFactoryTicketHarness(t)
+	h.runVersion(testFactoryPushRepoVersion)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+
+	positions := map[string]int{}
+	for index, name := range h.activityStarts {
+		if _, recorded := positions[name]; !recorded {
+			positions[name] = index
+		}
+	}
+	push, pushed := positions["PushRepo"]
+	pullRequest, opened := positions["OpenOrUpdatePullRequest"]
+	ci, observed := positions["ObserveCI"]
+	if !pushed || !opened || !observed {
+		t.Fatalf("activity order = %v, want PushRepo, OpenOrUpdatePullRequest, and ObserveCI", h.activityStarts)
+	}
+	if push >= pullRequest || pullRequest >= ci {
+		t.Fatalf("activity order = %v, want PushRepo before pull request publication before CI", h.activityStarts)
+	}
+}
+
+func TestFactoryWorkTicketDoesNotPushABlockedImplement(t *testing.T) {
+	t.Parallel()
+
+	h := newFactoryTicketHarness(t)
+	h.implement[1] = implementOutput(true, "cannot safely finish", "", "")
+	h.runVersion(testFactoryPushRepoVersion)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+	for _, name := range h.activityStarts {
+		if name == "PushRepo" {
+			t.Fatalf("blocked implement invoked PushRepo: %v", h.activityStarts)
 		}
 	}
 }

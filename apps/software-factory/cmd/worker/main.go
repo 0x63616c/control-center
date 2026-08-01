@@ -325,6 +325,7 @@ func register(
 		acts.CreateSandbox,
 		acts.WaitSandboxReady,
 		acts.CloneRepo,
+		acts.PushRepo,
 		acts.DeleteSandbox,
 		acts.FindPullRequest,
 		acts.OpenOrUpdatePullRequest,

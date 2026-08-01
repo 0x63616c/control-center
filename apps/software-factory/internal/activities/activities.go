@@ -181,6 +181,19 @@ func (a *Activities) CloneRepo(ctx context.Context, sandbox work.SandboxID) erro
 	return nil
 }
 
+// PushRepo publishes a successful implement turn from the credential-only
+// repository sidecar. The fresh installation token never crosses history.
+func (a *Activities) PushRepo(ctx context.Context, sandbox work.SandboxID) error {
+	credential, err := a.deps.GitHub.InstallationToken(ctx)
+	if err != nil {
+		return fail(ctx, fmt.Sprintf("minting a credential to push from sandbox %s", sandbox), err)
+	}
+	if err := a.deps.Repo.PushRepo(ctx, sandbox, a.deps.RepoURL, credential); err != nil {
+		return fail(ctx, fmt.Sprintf("pushing the repository from sandbox %s", sandbox), err)
+	}
+	return nil
+}
+
 // DeleteSandbox destroys the pod. It is called from a disconnected context by
 // its workflow, so a cancelled run still cleans up after itself.
 func (a *Activities) DeleteSandbox(ctx context.Context, sandbox work.SandboxID) error {

@@ -332,10 +332,9 @@ type runWorkerContainerContract struct {
 }
 
 func runWorkerPodFingerprint(pod *corev1.Pod) ([sha256.Size]byte, error) {
-	if pod == nil || len(pod.Spec.Containers) != 1 {
-		return [sha256.Size]byte{}, fmt.Errorf("fingerprinting Run Worker pod: expected exactly one container: %w", work.ErrPermanent)
+	if pod == nil || len(pod.Spec.Containers) != 2 {
+		return [sha256.Size]byte{}, fmt.Errorf("fingerprinting Run Worker pod: expected repository and tool containers: %w", work.ErrPermanent)
 	}
-	container := pod.Spec.Containers[0]
 	serviceAccountName := pod.Spec.ServiceAccountName
 	if serviceAccountName == "" {
 		serviceAccountName = "default"
@@ -346,11 +345,13 @@ func runWorkerPodFingerprint(pod *corev1.Pod) ([sha256.Size]byte, error) {
 		EnableServiceLinks: pod.Spec.EnableServiceLinks, TerminationGracePeriod: pod.Spec.TerminationGracePeriodSeconds,
 		ServiceAccountName: serviceAccountName, SecurityContext: pod.Spec.SecurityContext,
 		ImagePullSecrets: pod.Spec.ImagePullSecrets, Volumes: pod.Spec.Volumes,
-		Containers: []runWorkerContainerContract{{
+	}
+	for _, container := range pod.Spec.Containers {
+		contract.Containers = append(contract.Containers, runWorkerContainerContract{
 			Name: container.Name, Image: container.Image, ImagePullPolicy: container.ImagePullPolicy,
 			Command: container.Command, Args: container.Args, Env: container.Env, Ports: container.Ports, Resources: container.Resources,
 			VolumeMounts: container.VolumeMounts, SecurityContext: container.SecurityContext,
-		}},
+		})
 	}
 	encoded, err := json.Marshal(contract)
 	if err != nil {

@@ -75,6 +75,11 @@ func (r *factoryTicketRun) factoryImplementReviewLoop(
 					Detail: impl.BlockedReason,
 				}, nil
 			}
+			if r.agentWorkflow && workflow.GetVersion(ctx, factoryPushRepoChangeID, workflow.DefaultVersion, factoryPushRepoVersion) != workflow.DefaultVersion {
+				if err := workflow.ExecuteActivity(control, acts.PushRepo, r.sandbox).Get(ctx, nil); err != nil {
+					return FactoryWorkTicketResult{Outcome: work.OutcomeFailed, Usage: r.usage, PullRequest: pr}, fmt.Errorf("push successful implement turn: %w", err)
+				}
+			}
 
 			pullRequestTitle := fmt.Sprintf("T-%d %s", r.in.TicketID, impl.Title)
 			updated, err := r.openOrUpdatePullRequest(control, branch, pullRequestTitle, impl.Body, pr)

@@ -1,6 +1,6 @@
 # Software Factory Agent Workflow
 
-**Status:** implemented; local runtime acceptance and production cutover remain
+**Status:** implemented; production CI and cutover remain
 **Date:** 2026-07-31  
 **Scope:** `apps/software-factory`  
 **Goal:** new software-factory Runs execute every plan, implement and review Step through a reusable Temporal `AgentWorkflow`; the production sandbox no longer installs or invokes the Codex CLI.
@@ -16,15 +16,16 @@ The Codex CLI is not a provider adapter. New Runs do not call `codex exec`, do n
 ```text
 FactoryWorkTicket
   |
-  +-- prepare sandbox and clone repository
+  +-- prepare sandbox and clone repository (credentialed repository container)
   |
   +-- AgentWorkflow(plan/1) ----------+
   |     model activity (main queue)   |
-  |     tool activity (sandbox Session)
+  |     tool activity (credential-free tools container Session)
   |     model activity (main queue)   |
   +<----------------------------------+
   |
   +-- AgentWorkflow(implement/N) ...
+  +-- publish committed HEAD (credentialed repository container)
   +-- GitHub and CI decisions
   +-- AgentWorkflow(review/N) ...
   +-- terminal Ticket/Run decision
@@ -50,6 +51,7 @@ The parent continues to own:
 
 - Ticket state and Run recording;
 - sandbox creation, repository clone and deletion;
+- publication of the agent's committed HEAD through the credentialed repository boundary;
 - plan/implement/review sequencing and semantic turn budgets;
 - pull request synchronization and exact-head CI observation;
 - attempt recording before transcript persistence;
@@ -131,6 +133,21 @@ Cancellation propagates down both effect paths:
 Temporal Session contexts do not cross workflow boundaries. The parent therefore stops creating the run-wide Session. Each child receives a typed `ToolTarget`, derives either `work.SandboxTaskQueue(runID)` or a validated `work.RunWorkerTaskQueue(identity)`, and uses that Session context only for tool activities. Model, prompt, finalization and lifecycle activities remain on `work.TaskQueue`. Zero-value targets replay as the legacy sandbox for compatibility; new `FactoryWorkTicket` children select that target explicitly, while the dormant `WorkOnTicket` path can select a Run Worker generation without accepting arbitrary queue strings.
 
 One sandbox worker serves one Session at a time. Children are synchronous and Steps are sequential, so this remains one active agent per ticket sandbox.
+
+Tool activities may run for at most 30 minutes. Their Temporal activity timeout is 31 minutes, leaving a one-minute persistence margin for recording the durable result after the subprocess exits. This keeps Temporal from timing out a valid command before the tool contract does and avoids converting an ordinary long build into an ambiguous retry.
+
+## Repository credential boundary
+
+Arbitrary model-selected commands and repository credentials never share a process, container filesystem or Kubernetes secret mount.
+
+Each execution pod has two roles:
+
+- the credential-free `tools` container mounts only the shared `/work` volume and hosts model-selected tool activities;
+- the `repository` container owns GitHub credentials in its private root filesystem and performs workflow-selected clone and publish operations.
+
+The implement agent may edit and commit in the shared checkout, but it never pushes. After a successful, non-blocked implement child, `FactoryWorkTicket` invokes the fixed `PushRepo` activity before opening or updating the pull request.
+
+Publishing does not run `git push` from the model-controlled checkout. The repository activity creates a bundle without credentials, imports it into a private temporary bare repository, and pushes the intended committed ref to the exact workflow-supplied HTTPS repository URL. Git global and system configuration, hooks, prompts and inherited credential helpers are disabled; only the private credential helper is enabled for the final push. Temporary private state is removed on success or failure. This prevents a model-authored `.git/config`, hook or URL rewrite from redirecting credentials.
 
 ## Tool definitions: Go is the source of truth
 
@@ -396,14 +413,17 @@ Cutover is operationally gated:
 7. confirm the same child execution completes with one attempt/result;
 8. resume the dispatcher.
 
-The sandbox image removes the Codex download, checksum, binary assertion and Codex home setup. The sandbox pod no longer mounts the Codex auth secret; the main worker alone reads and refreshes OAuth credentials for the direct model activity.
+The sandbox image removes the Codex download, checksum, binary assertion and Codex home setup. The sandbox pod no longer mounts the Codex auth secret; the main worker alone reads and refreshes OAuth credentials for the direct model activity. GitHub credentials are mounted only in the repository container and never in the tools container.
 
 The isolated `agent-poc-*` commands and `agentpoc` packages are deleted after their behaviors are covered by production tests and the canary harness.
 
 ## Security
 
 - OAuth credentials remain only in the main worker and its Kubernetes Secret client.
-- No credential crosses a Temporal payload or reaches the sandbox.
+- No credential crosses a Temporal payload or reaches a model-controlled process.
+- GitHub and checkpoint credentials are absent from the model-controlled tools container.
+- Clone and publish are fixed workflow operations in a separate repository container; raw credentials are never returned to the model.
+- Publish imports the committed revision into private repository state and ignores model-controlled Git configuration and hooks.
 - Tool paths are confined to the ticket repository after symlink-aware resolution.
 - Tool argv is structured; no implicit shell interprets model text.
 - Read-only toolsets enforce capability, not prompt intent.
@@ -525,6 +545,8 @@ Write/modify registration tests first so they fail until:
 - no production worker registers `RunPlan`, `RunImplement` or `RunReview`.
 
 Write an image/source acceptance test that fails while the production sandbox downloads, installs or invokes Codex. Then remove the Codex binary, CLI runner package, CLI argv/resume code, stage runner wiring, Codex-home setup and sandbox auth mount. Retain the direct OAuth and Responses packages.
+
+Write pod-spec and repository-operation tests that fail while model-controlled tools share credential mounts or while publish trusts the shared checkout's Git configuration. Split execution into credential-free tools and credentialed repository containers, then publish through a sanitized private repository.
 
 Delete the isolated POC packages/commands after their production replacements are green.
 

@@ -16,8 +16,8 @@ E1 (#341) left these undecided. Decided here:
 
 - **GNU `tar`, `test`, `cat`** — the argv `transfer.go` uses for file-in, the
   existence probe and file-out. From the base image; asserted by `smoke.sh`.
-- **`git`** — `implement` pushes its branch, which is what makes GitHub the
-  durable state between stages.
+- **`git`** — `implement` edits, tests and commits; a workflow-owned repository
+  operation publishes that commit, making GitHub the durable state between stages.
 - **`bun`/`bunx`, Node and the Go toolchain** — this repo is both, so a ticket
   that cannot build or test one half of it cannot be worked. Bun remains the
   repository's package/runtime command and `bunx` is required by the root
@@ -61,7 +61,7 @@ image is never stale against `main` and never carries a lockfile's
 **The pod's command is its own embedded Temporal worker (#434 step 3).** The
 image ships `cmd/sandbox-worker` at `/usr/local/bin/sandbox-worker`, and
 `podspec.go`'s `Command` runs it directly — no shell, no `sleep infinity`.
-Per-run values — which branch to push, the ticket, the run id, and which
+Per-run values — which branch to publish, the ticket, the run id, and which
 per-ticket Temporal queue to poll — reach it as env on the *pod*
 (`SandboxSpec.Env`, set by whoever creates the sandbox) and are read by that
 process at start, not by anything baked into the image at build time.
@@ -86,18 +86,18 @@ uid 1000 is refused.
 directory the *process* creates under it is owned by that process — so the clone
 creates `work.RepoDir`, and nothing pre-creates it.
 
-Permissions are the reason it works this way; they are not the reason worth
-remembering. `/work` also holds sandbox-owned credential configuration outside
-the checkout. A checkout rooted at `/work` would put that state **inside the
-git working tree**, one `git add -A` away from committing it into the branch
-`implement` pushes. That argument survives any change to how the runtime
-creates directories.
+Permissions are the reason it works this way. Credentials are not: the tools
+container shares `/work` with the repository container but cannot see its
+private home directory or projected secrets. The agent may commit in the
+shared checkout, but only the fixed repository operation publishes it.
 
 **Model calls do not run here.** The sandbox image contains no Codex binary and
 receives no provider credential. The embedded worker registers only the typed
 `agent.tool` activity. Direct Responses calls run on the main worker; a
 Temporal Session routes tool activities to this ticket's pod, where
-`exec.CommandContext` provides a real cancellable process handle.
+`exec.CommandContext` provides a real cancellable process handle. The pod's
+second container owns credentialed clone and publish operations and never
+executes model-selected commands.
 
 ## Provider independence
 

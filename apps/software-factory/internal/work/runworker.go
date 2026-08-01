@@ -55,6 +55,16 @@ func RunWorkerTaskQueue(identity RunWorkerIdentity) (string, error) {
 	return fmt.Sprintf("%s%s-g%d", runWorkerTaskQueuePrefix, identity.RunID, identity.Generation), nil
 }
 
+// RunWorkerToolTaskQueue constructs the credential-free tool container queue
+// for one validated generation. Repository activities stay on the base queue.
+func RunWorkerToolTaskQueue(identity RunWorkerIdentity) (string, error) {
+	base, err := RunWorkerTaskQueue(identity)
+	if err != nil {
+		return "", fmt.Errorf("constructing Run Worker tool task queue: %w", err)
+	}
+	return base + "-tools", nil
+}
+
 // RunWorkerName constructs the Kubernetes name for one validated generation.
 func RunWorkerName(identity RunWorkerIdentity) (RunWorkerID, error) {
 	if err := identity.Validate(); err != nil {

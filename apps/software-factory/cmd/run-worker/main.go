@@ -17,14 +17,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"go.temporal.io/sdk/activity"
 	tlog "go.temporal.io/sdk/log"
 	"go.temporal.io/sdk/worker"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
-	agentactivities "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities/agent"
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agenttools"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
 	checkpointclient "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/checkpoint"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
@@ -82,7 +78,7 @@ func run() error {
 	}
 	defer temporal.Close()
 
-	toolActs, targetActs, err := newActivities(cfg, logger, blobStore, metrics)
+	targetActs, err := newActivities(cfg, logger)
 	if err != nil {
 		return fmt.Errorf("building Run Worker activities: %w", err)
 	}
@@ -92,7 +88,7 @@ func run() error {
 		MaxConcurrentSessionExecutionSize:  1,
 		MaxConcurrentActivityExecutionSize: 1,
 	})
-	register(w, toolActs, targetActs)
+	register(w, targetActs)
 	logger.Info("Run Worker starting", "run_worker", cfg.ID, "run_id", cfg.Identity.RunID,
 		"generation", cfg.Identity.Generation, "task_queue", cfg.TaskQueue)
 	if err := w.Run(worker.InterruptCh()); err != nil {
@@ -103,34 +99,24 @@ func run() error {
 
 type activityRegistrar interface {
 	RegisterActivity(any)
-	RegisterActivityWithOptions(any, activity.RegisterOptions)
 }
 
-func register(w activityRegistrar, toolActs *agentactivities.ToolActivities, targetActs *activities.RunWorkerActivities) {
-	w.RegisterActivityWithOptions(toolActs.Tool, activity.RegisterOptions{Name: agent.ToolActivityName})
+func register(w activityRegistrar, targetActs *activities.RunWorkerActivities) {
 	w.RegisterActivity(targetActs)
 }
 
-func newActivities(cfg config.RunWorker, logger *slog.Logger, blobStore blobs.Store, metrics *telemetry.Metrics) (*agentactivities.ToolActivities, *activities.RunWorkerActivities, error) {
-	toolsets, err := agenttools.NewToolsets(work.RepoDir, string(cfg.ID), blobStore)
-	if err != nil {
-		return nil, nil, fmt.Errorf("building typed agent toolsets: %w", err)
-	}
-	toolActs, err := agentactivities.NewObservedToolActivities(blobStore, clock.System{}, metrics, logger, toolsets...)
-	if err != nil {
-		return nil, nil, fmt.Errorf("building typed agent tool activities: %w", err)
-	}
+func newActivities(cfg config.RunWorker, logger *slog.Logger) (*activities.RunWorkerActivities, error) {
 	repositoryCheckpointFactory, err := checkpointclient.NewRepositoryFactory(cfg.CheckpointAPIURL, work.RunWorkerRepositoryCapabilityFile, http.DefaultClient, os.ReadFile)
 	if err != nil {
-		return nil, nil, fmt.Errorf("building repository checkpoint client factory: %w", err)
+		return nil, fmt.Errorf("building repository checkpoint client factory: %w", err)
 	}
 	repository, err := local.NewRepository(work.RepoDir, local.OSGitRunner{})
 	if err != nil {
-		return nil, nil, fmt.Errorf("building local target repository: %w", err)
+		return nil, fmt.Errorf("building local target repository: %w", err)
 	}
 	githubClient, err := github.NewProjected(cfg.GitHubOwner, cfg.GitHubRepo, work.RunWorkerGitHubTokenFile, os.ReadFile, logger)
 	if err != nil {
-		return nil, nil, fmt.Errorf("building projected GitHub client: %w", err)
+		return nil, fmt.Errorf("building projected GitHub client: %w", err)
 	}
 	target, err := activities.NewRunWorkerActivities(activities.RunWorkerDeps{
 		Clock: clock.System{}, Repository: repository, GitHub: githubClient, Identity: cfg.Identity,
@@ -139,9 +125,9 @@ func newActivities(cfg config.RunWorker, logger *slog.Logger, blobStore blobs.St
 		},
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("building target Run Worker activities: %w", err)
+		return nil, fmt.Errorf("building target Run Worker activities: %w", err)
 	}
-	return toolActs, target, nil
+	return target, nil
 }
 
 func stopMetricsServer(server *http.Server, logger *slog.Logger) {

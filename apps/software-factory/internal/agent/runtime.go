@@ -2,8 +2,20 @@ package agent
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+)
+
+const (
+	// MaxToolExecutionDuration is the longest one model-selected command may
+	// run. The enclosing Temporal activity must outlive this bound so it can
+	// persist the terminal marker instead of timing out an otherwise valid
+	// command and turning its retry into an ambiguous execution.
+	MaxToolExecutionDuration = 30 * time.Minute
+	// ToolActivityPersistenceMargin leaves time to persist bounded output and
+	// the completion marker after the command itself reaches its limit.
+	ToolActivityPersistenceMargin = time.Minute
 )
 
 // ToolsetID identifies one immutable meaning of a tool catalogue.
@@ -39,7 +51,7 @@ func (target ToolTarget) TaskQueue(runID string) (string, error) {
 		if target.RunWorkerIdentity.RunID != runID {
 			return "", fmt.Errorf("run worker tool target belongs to Run %q, not %q: %w", target.RunWorkerIdentity.RunID, runID, work.ErrInvalidRun)
 		}
-		queue, err := work.RunWorkerTaskQueue(target.RunWorkerIdentity)
+		queue, err := work.RunWorkerToolTaskQueue(target.RunWorkerIdentity)
 		if err != nil {
 			return "", fmt.Errorf("resolve Run Worker tool target: %w", err)
 		}

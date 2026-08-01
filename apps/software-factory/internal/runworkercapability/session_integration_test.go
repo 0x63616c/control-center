@@ -28,7 +28,6 @@ import (
 	"go.temporal.io/sdk/workflow"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
-	checkpointprotocol "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/checkpoint"
 	temporalclient "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/temporal"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
@@ -153,14 +152,6 @@ type productionEvidence struct {
 	Operations []string
 }
 
-type productionSecretRedactor struct{}
-
-func (productionSecretRedactor) Prime(context.Context) error { return nil }
-
-func (productionSecretRedactor) Redact(_ context.Context, raw []byte) ([]byte, error) {
-	return bytes.Clone(raw), nil
-}
-
 type privateWorkerProcess struct {
 	cmd     *exec.Cmd
 	output  bytes.Buffer
@@ -246,7 +237,7 @@ func TestSessionRunsTheRegisteredRunWorkerActivitiesOnItsPrivateWorker(t *testin
 	if evidence.ProcessID != privateOne.processID() || evidence.Identity != productionRunWorkerIdentity {
 		t.Fatalf("Run Worker evidence = %#v, want identity %#v in process %d", evidence, productionRunWorkerIdentity, privateOne.processID())
 	}
-	if !slices.Equal(evidence.Operations, []string{"clone", "agent", "ci", "sync", "ready", "merge"}) {
+	if !slices.Equal(evidence.Operations, []string{"clone", "ci", "sync", "ready", "merge"}) {
 		t.Fatalf("Run Worker operations = %v", evidence.Operations)
 	}
 	if _, err := os.Stat(filepath.Join(rootTwo, productionEvidenceFilename)); err == nil || !errors.Is(err, os.ErrNotExist) {
@@ -484,24 +475,14 @@ func productionSessionWorkflow(ctx workflow.Context, in productionSessionInput) 
 	}).Get(sessionCtx, &clone); err != nil {
 		return fmt.Errorf("running registered clone activity: %w", err)
 	}
-	if err := workflow.ExecuteActivity(sessionCtx, "RunTargetAgent", activities.TargetAgentInput{
-		AttemptID:          store.TargetAttemptID{RunID: productionRunWorkerIdentity.RunID, StepOrdinal: 2, AttemptNo: 1},
-		TicketNumber:       42,
-		Iteration:          1,
-		Stage:              work.AgentStageImplement,
-		Model:              work.Model{Name: "gpt-5", Effort: "high"},
-		CredentialRevision: activities.CredentialRevisionExpectation{Identity: productionRunWorkerIdentity, Revision: "1"},
-	}).Get(sessionCtx, nil); err != nil {
-		return fmt.Errorf("running registered target agent activity: %w", err)
-	}
-	ciStep := activities.RepositoryStep{StepOrdinal: 3, Branch: in.Branch, PushedHead: clone.HeadSHA, ObservedBase: "base-head"}
+	ciStep := activities.RepositoryStep{StepOrdinal: 2, Branch: in.Branch, PushedHead: clone.HeadSHA, ObservedBase: "base-head"}
 	if err := workflow.ExecuteActivity(sessionCtx, "TargetAwaitCI", activities.TargetAwaitCIInput{
 		Step: ciStep,
 		CI:   activities.AwaitCIInput{CommitSHA: clone.HeadSHA, RequiredChecks: []string{"test"}},
 	}).Get(sessionCtx, nil); err != nil {
 		return fmt.Errorf("running registered target CI activity: %w", err)
 	}
-	prStep := activities.RepositoryStep{StepOrdinal: 4, Branch: in.Branch, PushedHead: clone.HeadSHA, ObservedBase: "base-head"}
+	prStep := activities.RepositoryStep{StepOrdinal: 3, Branch: in.Branch, PushedHead: clone.HeadSHA, ObservedBase: "base-head"}
 	var pullRequest work.PullRequest
 	if err := workflow.ExecuteActivity(sessionCtx, "TargetSyncPullRequest", activities.TargetSyncPullRequestInput{
 		Step: prStep, Title: "Implement ticket", Body: "Ready",
@@ -509,14 +490,14 @@ func productionSessionWorkflow(ctx workflow.Context, in productionSessionInput) 
 		return fmt.Errorf("running registered target pull request sync activity: %w", err)
 	}
 	readyStep := activities.RepositoryStep{
-		StepOrdinal: 5, Branch: in.Branch, PushedHead: clone.HeadSHA, ObservedBase: "base-head",
+		StepOrdinal: 4, Branch: in.Branch, PushedHead: clone.HeadSHA, ObservedBase: "base-head",
 		PullRequestNumber: pullRequest.Number, PullRequestNodeID: pullRequest.NodeID,
 	}
 	if err := workflow.ExecuteActivity(sessionCtx, "TargetMarkPullRequestReady", activities.TargetMarkPullRequestReadyInput{Step: readyStep}).Get(sessionCtx, nil); err != nil {
 		return fmt.Errorf("running registered target pull request ready activity: %w", err)
 	}
 	mergeStep := readyStep
-	mergeStep.StepOrdinal = 6
+	mergeStep.StepOrdinal = 5
 	if err := workflow.ExecuteActivity(sessionCtx, "TargetMergePullRequest", activities.TargetMergePullRequestInput{
 		Step: mergeStep, ExpectedHeadSHA: clone.HeadSHA,
 	}).Get(sessionCtx, nil); err != nil {
@@ -732,25 +713,15 @@ func runSessionActivity(root, identity string, in sessionActivityInput) (session
 
 func productionRunWorkerActivities(root string) (*activities.RunWorkerActivities, error) {
 	recorder := productionRecorder{root: root, identity: productionRunWorkerIdentity}
-	attempt := &productionAttemptCheckpoint{}
 	repository := &productionRepositoryCheckpoint{}
 	return activities.NewRunWorkerActivities(activities.RunWorkerDeps{
-		Stages:                productionStageRunner{recorder: recorder},
-		Prompts:               productionPrompts{},
-		Checkpoints:           func(store.TargetAttemptID) (activities.AttemptCheckpoint, error) { return attempt, nil },
-		ProviderState:         productionProviderState{},
-		CredentialRevision:    productionCredentialRevision,
-		SecretRedactor:        productionSecretRedactor{},
 		Clock:                 productionClock{},
-		Heartbeat:             func(context.Context) {},
 		Repository:            productionRepository{recorder: recorder},
 		GitHub:                productionGitHub{recorder: recorder},
 		Identity:              productionRunWorkerIdentity,
 		RepositoryCheckpoints: repository.open,
 	})
 }
-
-func productionCredentialRevision(context.Context) (string, error) { return "1", nil }
 
 type productionRecorder struct {
 	root     string
@@ -802,48 +773,6 @@ func (r productionRepository) Prepare(context.Context, string, string) (string, 
 	}
 	return "candidate-head", nil
 }
-
-type productionStageRunner struct{ recorder productionRecorder }
-
-func (r productionStageRunner) RunTargetStage(_ context.Context, _ work.StageRun, _ string, events work.StageEventSink) (work.StageResult, error) {
-	if err := r.recorder.observe("agent"); err != nil {
-		return work.StageResult{}, fmt.Errorf("recording target agent execution: %w", err)
-	}
-	events([]byte(`{"type":"thread.started","thread_id":"019fb8f6-1446-7da2-838f-4ea1f15304fd"}`))
-	return work.StageResult{Output: []byte(`{"report":"implemented","blocked":false,"blocked_reason":"","title":"Implement ticket","body":"Ready"}`), ThreadID: "019fb8f6-1446-7da2-838f-4ea1f15304fd", UsageMeasured: true}, nil
-}
-
-type productionPrompts struct{}
-
-func (productionPrompts) Render(work.StageKey, work.TicketDetail, work.PriorTurns) (string, []byte, error) {
-	return "prompt", []byte(`{}`), nil
-}
-
-func (productionPrompts) Decode(stage work.Stage, raw []byte) (work.StageOutput, error) {
-	var output work.ImplementOutput
-	if err := json.Unmarshal(raw, &output); err != nil {
-		return work.StageOutput{}, fmt.Errorf("decoding production target result: %w", err)
-	}
-	return work.NewStageOutput(stage, output), nil
-}
-
-type productionAttemptCheckpoint struct {
-	value checkpointprotocol.Attempt
-	found bool
-}
-
-func (c *productionAttemptCheckpoint) Load(context.Context) (checkpointprotocol.Attempt, bool, error) {
-	return c.value, c.found, nil
-}
-
-func (c *productionAttemptCheckpoint) Checkpoint(_ context.Context, value checkpointprotocol.Attempt) error {
-	c.value, c.found = value, true
-	return nil
-}
-
-type productionProviderState struct{}
-
-func (productionProviderState) Available(context.Context, string) (bool, error) { return true, nil }
 
 type productionClock struct{}
 

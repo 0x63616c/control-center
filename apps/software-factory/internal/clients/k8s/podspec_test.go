@@ -38,10 +38,37 @@ func mustBuild(t *testing.T, spec work.SandboxSpec) *corev1.Pod {
 
 func sandboxContainer(t *testing.T, pod *corev1.Pod) corev1.Container {
 	t.Helper()
-	if len(pod.Spec.Containers) != 1 {
-		t.Fatalf("pod has %d containers, want exactly 1", len(pod.Spec.Containers))
+	if len(pod.Spec.Containers) != 2 {
+		t.Fatalf("pod has %d containers, want tool and repository containers", len(pod.Spec.Containers))
 	}
-	return pod.Spec.Containers[0]
+	for _, container := range pod.Spec.Containers {
+		if container.Name == defaultOptions().containerName {
+			return container
+		}
+	}
+	t.Fatal("pod has no sandbox tool container")
+	return corev1.Container{}
+}
+
+func TestBuildPodSeparatesToolsFromRepositoryCredentials(t *testing.T) {
+	t.Parallel()
+	pod := mustBuild(t, validSpec())
+	tool := sandboxContainer(t, pod)
+	if len(tool.VolumeMounts) != 1 || tool.VolumeMounts[0].MountPath != work.SandboxRoot {
+		t.Fatalf("tool mounts = %#v, want shared /work only", tool.VolumeMounts)
+	}
+	var repository *corev1.Container
+	for index := range pod.Spec.Containers {
+		if pod.Spec.Containers[index].Name == repositoryContainerName {
+			repository = &pod.Spec.Containers[index]
+		}
+	}
+	if repository == nil || !reflect.DeepEqual(repository.Command, []string{"sleep", "infinity"}) {
+		t.Fatalf("repository sidecar = %#v", repository)
+	}
+	if strings.HasPrefix(credentialsPath, work.SandboxRoot+"/") {
+		t.Fatalf("credential path shares /work: %q", credentialsPath)
+	}
 }
 
 func TestBuildPodNamesThePodForItsTicketNumberAndRun(t *testing.T) {

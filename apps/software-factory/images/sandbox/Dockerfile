@@ -4,8 +4,9 @@
 # It executes typed repository tools requested by AgentWorkflow; model calls
 # and OAuth credentials remain in the main worker.
 #
-# The git/gh argv CloneRepo still reaches remotely through internal/clients/k8s.
-# Agent tools execute structured argv without an implicit shell:
+# The pod runs separate tools and repository containers. They share /work, but
+# only the repository container has a private credential file. Agent tools
+# execute structured argv without an implicit shell:
 #
 #   tar                           file-in, `tar -xf - -C /` (transfer.go)
 #   test                          the file-existence probe (transfer.go)
@@ -14,17 +15,11 @@
 #                                 so CloneRepo notices if this pod's branch ever
 #                                 disagrees with what SandboxTemplate.Spec baked
 #                                 into it (clone.go: sandboxBranch, #383).
-#   git                           clone, checkout -b, `config --local
-#                                 credential.helper` and push work.RepoDir on
-#                                 the branch above (clone.go). A credential file
-#                                 is written first with Write/tar, never argv,
-#                                 so the token never appears in a command line
-#                                 or a log line. It is never removed either:
-#                                 `implement` pushes as the model, from inside
-#                                 this pod, long after CloneRepo has returned,
-#                                 and the local credential.helper config this
-#                                 sets is what its BARE `git push` — no `-c` of
-#                                 its own — authenticates through.
+#   git                           clone and initial push in the repository
+#                                 container; model-selected edit/test/commit
+#                                 commands in the credential-free tools
+#                                 container; sanitized workflow-owned publish
+#                                 from a private bare repository (clone.go).
 #   rm                            clears a partial checkout before a retried
 #                                 clone (clone.go).
 #
@@ -71,10 +66,9 @@ FROM debian:trixie-slim
 # resolve the same lockfile the reviewer's machine does.
 ARG BUN_VERSION=1.2.19
 ARG BUN_SHA256=c3d3c14e9a5ec83ff67d0acfe76e4315ad06da9f34f59fc7b13813782caf1f66
-# gh is what `propose` opens the pull request with (#414). It authenticates
-# through a hosts.yml CloneRepo writes into the pod, NOT through git's
-# credential store — gh has no code path that reads one, so the installation
-# token has to reach it in gh's own format. See clone.go: ghHostsPath.
+# gh remains available for unauthenticated repository inspection and project
+# tooling. Pull requests are opened by workflow-owned GitHub activities; no gh
+# credential is exposed to the tools container.
 ARG GH_VERSION=2.96.0
 ARG GH_SHA256=83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60
 # golangci-lint, pinned to what CI pins (.github/workflows/ci.yml:363,
@@ -98,9 +92,8 @@ ARG PLAYWRIGHT_FFMPEG_REVISION=1011
 ARG PLAYWRIGHT_FFMPEG_SHA256=ebc74fc5b94830176a3c2914ae96bd8bc7f6a91f4f33890230f84a172ee61ccc
 
 # GNU tar, coreutils (test, cat, printenv, rm) and a shell come from the base
-# image. Added here: git, because CloneRepo checks the ticket's repository out
-# and pushes its branch before any stage runs, and `implement` later commits
-# and pushes to that same checkout; ca-certificates for the OpenAI and GitHub
+# image. Added here: git, because repository activities clone and publish while
+# the implement agent edits and commits; ca-certificates for GitHub and package
 # APIs; curl and unzip for the two downloads below; passwd for
 # groupadd/useradd, which trixie-slim omits; gcc and libc6-dev so
 # `CGO_ENABLED=1 go test -race` can link inside this image (#428); Node, because

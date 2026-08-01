@@ -25,13 +25,13 @@ func NewToolsets(repositoryRoot, artifactIdentity string, blobStore blobs.Store)
 		return nil, fmt.Errorf("build read_file tool: %w", err)
 	}
 	readOnlyExec, err := NewReadOnlyExecCommand(
-		repositoryRoot, artifactIdentity, artifacts, maxInlineToolOutputBytes, 30*time.Minute,
+		repositoryRoot, artifactIdentity, artifacts, maxInlineToolOutputBytes, agent.MaxToolExecutionDuration,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("build read-only exec_command tool: %w", err)
 	}
 	writeExec, err := NewExecCommand(
-		repositoryRoot, artifactIdentity, artifacts, maxInlineToolOutputBytes, 30*time.Minute,
+		repositoryRoot, artifactIdentity, artifacts, maxInlineToolOutputBytes, agent.MaxToolExecutionDuration,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("build write exec_command tool: %w", err)

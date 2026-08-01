@@ -15,6 +15,8 @@ import (
 const (
 	factoryAgentWorkflowChangeID = "factory-agent-workflow-v1"
 	factoryAgentWorkflowVersion  = 1
+	factoryPushRepoChangeID      = "factory-push-repo-v1"
+	factoryPushRepoVersion       = 1
 )
 
 // ticketActs, recordingActs and transcriptActs name the second pipeline's

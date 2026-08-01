@@ -17,7 +17,7 @@ func TestToolTargetResolvesLegacyAndRunWorkerQueues(t *testing.T) {
 		t.Fatalf("explicit legacy target queue = %q, %v", got, err)
 	}
 	identity := work.RunWorkerIdentity{RunID: "019fb900-0000-7000-8000-000000000001", Generation: 2}
-	want, err := work.RunWorkerTaskQueue(identity)
+	want, err := work.RunWorkerToolTaskQueue(identity)
 	if err != nil {
 		t.Fatal(err)
 	}

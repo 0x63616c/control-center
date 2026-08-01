@@ -42,6 +42,11 @@ const workSizeLimitBytes = 20 << 30
 // sandboxUID above.
 const sandboxWorkerBinaryPath = "/usr/local/bin/sandbox-worker"
 
+// repositoryContainerName is the only legacy sandbox container reachable by
+// credential-bearing clone and push execs. The tool worker shares /work with
+// it but not its image filesystem or /home/sandbox.
+const repositoryContainerName = "repository"
+
 // allowedSandboxEnvKeys is the deny-by-default allowlist for spec.Env. A
 // container in this cluster inherits nothing from the node or kubelet — this
 // map IS the sandbox's entire environment contract (image-baked ENV
@@ -194,6 +199,23 @@ func buildPod(spec work.SandboxSpec, o options) (*corev1.Pod, error) {
 					RunAsNonRoot:             ptr(true),
 					RunAsUser:                &uid,
 					RunAsGroup:               &uid,
+					AllowPrivilegeEscalation: ptr(false),
+					Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+					SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+				},
+			}, {
+				Name:            repositoryContainerName,
+				Image:           spec.Image,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				Command:         []string{"sleep", "infinity"},
+				Env:             sortedEnv(env),
+				Resources: corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("50m"), corev1.ResourceMemory: resource.MustParse("128Mi")},
+					Limits:   corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("256Mi")},
+				},
+				VolumeMounts: []corev1.VolumeMount{{Name: workVolumeName, MountPath: work.SandboxRoot}},
+				SecurityContext: &corev1.SecurityContext{
+					RunAsNonRoot: ptr(true), RunAsUser: &uid, RunAsGroup: &uid,
 					AllowPrivilegeEscalation: ptr(false),
 					Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 					SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},

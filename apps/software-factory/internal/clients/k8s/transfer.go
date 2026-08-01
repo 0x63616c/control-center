@@ -20,9 +20,8 @@ import (
 // fails with a permission error that looks nothing like its cause.
 const dirMode = 0o755
 
-// credentialFileMode is the mode every credential file this package writes
-// into a sandbox is written with — CloneRepo's git credential file and its
-// gh hosts.yml. One constant rather than one per caller, so #363 ("the
+// credentialFileMode is the mode of the repository container's private Git
+// credential file. One owned constant, so #363 ("the
 // sandbox credential file's 0600 mode is unowned and
 // unenforced") has exactly one place to hold the line: a caller cannot drift
 // to a wider mode by copying a literal instead of this name, and Write's own
@@ -50,6 +49,17 @@ func (s *Sandboxes) Write(ctx context.Context, sandbox work.SandboxID, filePath 
 	if err != nil {
 		return err
 	}
+	return s.writeToContainer(ctx, sandbox, s.opts.containerName, clean, content, mode)
+}
+
+func (s *Sandboxes) writeRepositoryCredential(ctx context.Context, sandbox work.SandboxID, filePath string, content []byte) error {
+	if filePath != credentialsPath {
+		return fmt.Errorf("writing repository credential %q in sandbox %s is not allowlisted: %w", filePath, sandbox, work.ErrPermanent)
+	}
+	return s.writeToContainer(ctx, sandbox, repositoryContainerName, filePath, content, credentialFileMode)
+}
+
+func (s *Sandboxes) writeToContainer(ctx context.Context, sandbox work.SandboxID, container, clean string, content []byte, mode fs.FileMode) error {
 	if mode&^fs.ModePerm != 0 {
 		return fmt.Errorf("writing %s to sandbox %s: mode %v carries bits that mean nothing for a file: %w",
 			clean, sandbox, mode, work.ErrPermanent)
@@ -65,7 +75,7 @@ func (s *Sandboxes) Write(ctx context.Context, sandbox work.SandboxID, filePath 
 	// unambiguous under both.
 	argv := []string{"tar", "-xf", "-", "-C", "/"}
 	var stderr bytes.Buffer
-	code, err := s.exec(ctx, sandbox, argv, bytes.NewReader(stream), nil, &stderr)
+	code, err := s.execInContainer(ctx, sandbox, container, argv, bytes.NewReader(stream), nil, &stderr)
 	if err != nil {
 		return fmt.Errorf("writing %s to sandbox %s: %w", clean, sandbox, err)
 	}

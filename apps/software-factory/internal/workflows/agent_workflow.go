@@ -171,12 +171,7 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (workflowResu
 				sessionContext = created
 				defer workflow.CompleteSession(sessionContext)
 			}
-			toolContext := workflow.WithActivityOptions(sessionContext, workflow.ActivityOptions{
-				StartToCloseTimeout: 2 * time.Minute,
-				HeartbeatTimeout:    15 * time.Second,
-				WaitForCancellation: true,
-				RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: 2},
-			})
+			toolContext := workflow.WithActivityOptions(sessionContext, agentToolActivityOptions())
 			for _, call := range turn.ToolCalls {
 				var toolOutput agent.ToolOutput
 				if err := workflow.ExecuteActivity(toolContext, agent.ToolActivityName, agent.ToolInput{
@@ -219,6 +214,15 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (workflowResu
 			result.TranscriptRef = finalized.TranscriptRef
 		}
 		return result, nil
+	}
+}
+
+func agentToolActivityOptions() workflow.ActivityOptions {
+	return workflow.ActivityOptions{
+		StartToCloseTimeout: agent.MaxToolExecutionDuration + agent.ToolActivityPersistenceMargin,
+		HeartbeatTimeout:    15 * time.Second,
+		WaitForCancellation: true,
+		RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: 2},
 	}
 }
 

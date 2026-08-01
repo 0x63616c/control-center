@@ -48,6 +48,17 @@ func mustBuildRunWorker(t *testing.T) *corev1.Pod {
 	return pod
 }
 
+func runWorkerContainer(t *testing.T, pod *corev1.Pod, name string) corev1.Container {
+	t.Helper()
+	for _, container := range pod.Spec.Containers {
+		if container.Name == name {
+			return container
+		}
+	}
+	t.Fatalf("Run Worker pod has no %q container", name)
+	return corev1.Container{}
+}
+
 func TestRunWorkerPodMatchCoversTheAuthoritativeSecurityAndRuntimeSpec(t *testing.T) {
 	t.Parallel()
 
@@ -190,5 +201,39 @@ func TestRunWorkerPodExposesToolMetricsWithoutCodexCredentialProjection(t *testi
 		if strings.Contains(strings.ToLower(volume.Name), "codex") {
 			t.Fatalf("Run Worker still projects a Codex credential: %#v", volume)
 		}
+	}
+}
+
+func TestRunWorkerPodSeparatesCredentialFreeToolsFromRepositoryActivities(t *testing.T) {
+	t.Parallel()
+	pod := mustBuildRunWorker(t)
+	tool := runWorkerContainer(t, pod, runWorkerToolContainerName)
+	if !reflect.DeepEqual(tool.Command, []string{runWorkerToolBinaryPath}) {
+		t.Fatalf("tool command = %#v", tool.Command)
+	}
+	if len(tool.VolumeMounts) != 1 || tool.VolumeMounts[0].Name != workVolumeName || tool.VolumeMounts[0].MountPath != work.SandboxRoot {
+		t.Fatalf("tool mounts = %#v, want shared /work only", tool.VolumeMounts)
+	}
+	env := map[string]string{}
+	for _, item := range tool.Env {
+		env[item.Name] = item.Value
+	}
+	wantQueue, err := work.RunWorkerToolTaskQueue(validRunWorkerSpec().Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env[work.SandboxTaskQueueEnv] != wantQueue {
+		t.Fatalf("tool queue = %q, want %q", env[work.SandboxTaskQueueEnv], wantQueue)
+	}
+	for _, forbidden := range []string{work.RunWorkerGitHubCredentialDir, work.RunWorkerCheckpointCapabilityDir, work.RunWorkerRepositoryCapabilityDir} {
+		for _, mount := range tool.VolumeMounts {
+			if mount.MountPath == forbidden {
+				t.Fatalf("tool container mounts credential path %q", forbidden)
+			}
+		}
+	}
+	repository := runWorkerContainer(t, pod, runWorkerContainerName)
+	if len(repository.VolumeMounts) <= 1 {
+		t.Fatalf("repository container has no credential mounts: %#v", repository.VolumeMounts)
 	}
 }

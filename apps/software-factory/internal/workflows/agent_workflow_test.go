@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
 	agentactivities "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities/agent"
@@ -423,6 +424,16 @@ func TestAgentWorkflowRejectsInvalidRunWorkerToolTarget(t *testing.T) {
 	var applicationError *temporal.ApplicationError
 	if !errors.As(environment.GetWorkflowError(), &applicationError) || applicationError.Type() != agent.ErrorTypeInvalidInput || !applicationError.NonRetryable() {
 		t.Fatalf("workflow error = %v, want non-retryable invalid target", environment.GetWorkflowError())
+	}
+}
+
+func TestAgentToolActivityOutlivesTheLongestToolCommand(t *testing.T) {
+	got := workflows.AgentToolActivityOptionsForTest().StartToCloseTimeout
+	if got <= agent.MaxToolExecutionDuration {
+		t.Fatalf("tool activity timeout = %s, must exceed command timeout %s so completion can be persisted", got, agent.MaxToolExecutionDuration)
+	}
+	if got != 31*time.Minute {
+		t.Fatalf("tool activity timeout = %s, want the 30 minute command bound plus persistence margin", got)
 	}
 }
 
