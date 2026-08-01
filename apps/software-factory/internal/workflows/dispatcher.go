@@ -20,10 +20,6 @@ const UpdateDispatcherPolicy = "publish-dispatcher-policy"
 // letting one later worker publication become the policy of the next run.
 const maxPolicyUpdatesDuringDrain = 1
 
-// dispatcherChildTaskQueueVersion preserves control-queue inheritance for
-// Dispatcher histories recorded before target work moved explicitly to main.
-const dispatcherChildTaskQueueVersion = "dispatcher-child-task-queue-v1"
-
 // DispatcherInput is the durable target-dispatcher state. Live child Futures
 // never cross a Continue-As-New boundary: the workflow drains first.
 type DispatcherInput struct {
@@ -136,9 +132,6 @@ func Dispatcher(ctx workflow.Context, in DispatcherInput) error {
 						continue
 					}
 					childOptions := dispatchChildWorkflowOptions(ticket.ID, policy.Run)
-					if workflow.GetVersion(ctx, dispatcherChildTaskQueueVersion, workflow.DefaultVersion, 1) == workflow.DefaultVersion {
-						childOptions.TaskQueue = ""
-					}
 					child := workflow.ExecuteChildWorkflow(workflow.WithChildOptions(ctx, childOptions), WorkOnTicket, WorkOnTicketInput{TicketID: ticket.ID, Policy: policy.Run, CloneURL: in.CloneURL, Model: in.Model})
 					children[ticket.ID] = child
 				}

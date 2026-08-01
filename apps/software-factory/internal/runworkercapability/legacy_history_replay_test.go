@@ -9,6 +9,7 @@ import (
 	"go.temporal.io/api/temporalproto"
 	"go.temporal.io/sdk/worker"
 
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/workflows"
 )
 
@@ -70,6 +71,7 @@ func assertRepresentativeTargetDispatcherHistory(t *testing.T, history *historyp
 	activityCompleted := false
 	activityRetried := false
 	childStarted := false
+	childUsesMainRunQueue := false
 	childRequestsCancellation := false
 	for _, event := range history.Events {
 		if event.GetEventType() == enums.EVENT_TYPE_ACTIVITY_TASK_COMPLETED {
@@ -80,13 +82,15 @@ func assertRepresentativeTargetDispatcherHistory(t *testing.T, history *historyp
 		}
 		if event.GetEventType() == enums.EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED {
 			childStarted = true
-			childRequestsCancellation = event.GetStartChildWorkflowExecutionInitiatedEventAttributes().GetParentClosePolicy() == enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL
+			attributes := event.GetStartChildWorkflowExecutionInitiatedEventAttributes()
+			childUsesMainRunQueue = attributes.GetTaskQueue().GetName() == work.TaskQueue
+			childRequestsCancellation = attributes.GetParentClosePolicy() == enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL
 		}
 	}
-	if !activityCompleted || !activityRetried || !childStarted || !childRequestsCancellation {
+	if !activityCompleted || !activityRetried || !childStarted || !childUsesMainRunQueue || !childRequestsCancellation {
 		t.Fatalf(
-			"target dispatcher history must contain a retried wait, completed dispatch, and child admission that requests cancellation; activity_completed=%t activity_retried=%t child_started=%t child_requests_cancellation=%t",
-			activityCompleted, activityRetried, childStarted, childRequestsCancellation,
+			"target dispatcher history must contain a retried wait, completed dispatch, and child admission on the main run queue that requests cancellation; activity_completed=%t activity_retried=%t child_started=%t child_uses_main_run_queue=%t child_requests_cancellation=%t",
+			activityCompleted, activityRetried, childStarted, childUsesMainRunQueue, childRequestsCancellation,
 		)
 	}
 }

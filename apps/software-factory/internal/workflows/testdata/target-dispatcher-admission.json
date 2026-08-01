@@ -217,7 +217,7 @@
           "name": "WorkOnTicket"
         },
         "taskQueue": {
-          "name": "target-dispatcher-history-export",
+          "name": "software-factory",
           "kind": "TASK_QUEUE_KIND_NORMAL"
         },
         "input": {
