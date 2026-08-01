@@ -1942,7 +1942,10 @@ func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore workOnT
 			if !h.checkpointAgents {
 				return nil
 			}
-			return h.store.BindCheckpointCapability(ctx, in.AttemptID, workOnTicketCheckpointCapability)
+			if err := h.store.BindCheckpointCapability(ctx, in.AttemptID, workOnTicketCheckpointCapability); err != nil {
+				return fmt.Errorf("binding test checkpoint capability for %s: %w", in.AttemptID, err)
+			}
+			return nil
 		},
 		activity.RegisterOptions{Name: "AuthorizeRunWorkerAttempt"},
 	)
@@ -1990,7 +1993,10 @@ func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore workOnT
 					Checksum:              []byte("test-checksum"),
 				},
 			})
-			return out, err
+			if err != nil {
+				return out, fmt.Errorf("checkpointing test agent evidence for %s: %w", in.AttemptID, err)
+			}
+			return out, nil
 		},
 		activity.RegisterOptions{Name: "RunTargetAgent"},
 	)
