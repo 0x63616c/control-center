@@ -92,6 +92,41 @@ func TestAgentWorkflowCompletesFromOneFinalModelTurn(t *testing.T) {
 	}
 }
 
+func TestAgentWorkflowClassifiesAnInvalidProviderFinalizationWithoutAResult(t *testing.T) {
+	t.Parallel()
+
+	suite := &testsuite.WorkflowTestSuite{}
+	environment := suite.NewTestWorkflowEnvironment()
+	registerAgentLifecycle(environment, nil)
+	conversation := agent.ConversationRef{Key: "conversations/agent/run-7/implement/1", Revision: 1, Bytes: 2}
+	environment.RegisterActivityWithOptions(func(context.Context, agentactivities.PrepareInput) (agentactivities.PrepareOutput, error) {
+		return agentactivities.PrepareOutput{ConversationRef: conversation}, nil
+	}, activity.RegisterOptions{Name: agent.PrepareActivityName})
+	environment.RegisterActivityWithOptions(func(context.Context, agent.ModelTurnInput) (agent.ModelTurnResult, error) {
+		return agent.ModelTurnResult{
+			Outcome: agent.OutcomeFinalText, ToolsetFingerprint: testToolsetFingerprint,
+			ConversationRef: conversation, FinalTextRef: agent.TextRef{Key: "text"}, UsageMeasured: true,
+		}, nil
+	}, activity.RegisterOptions{Name: agent.ModelTurnActivityName})
+	environment.RegisterActivityWithOptions(func(context.Context, agentactivities.FinalizeInput) (agentactivities.FinalizeOutput, error) {
+		return agentactivities.FinalizeOutput{}, temporal.NewNonRetryableApplicationError(
+			"provider final output violates the expected schema", agent.ErrorTypeInvalidProviderOutcome, nil,
+		)
+	}, activity.RegisterOptions{Name: agent.FinalizeActivityName})
+
+	environment.ExecuteWorkflow(workflows.AgentWorkflow, validAgentWorkflowInput(work.StageImplement))
+	if err := environment.GetWorkflowError(); err != nil {
+		t.Fatalf("AgentWorkflow error = %v", err)
+	}
+	var result workflows.AgentWorkflowResult
+	if err := environment.GetWorkflowResult(&result); err != nil {
+		t.Fatalf("GetWorkflowResult() error = %v", err)
+	}
+	if result.Failure == nil || !result.Failure.Is(agent.TerminalFailureInvalidProviderOutcome) || result.Result.Stage() != "" {
+		t.Fatalf("result = %#v, want only an invalid-provider terminal failure", result)
+	}
+}
+
 func TestAgentWorkflowUsesTheSuppliedModelTurnPolicy(t *testing.T) {
 	t.Parallel()
 
