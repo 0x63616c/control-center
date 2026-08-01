@@ -144,6 +144,7 @@ describe("installHomeAssistant (Task 4, §0.1-§0.4, talos-only)", () => {
       template: {
         spec: {
           containers: { name: string; command?: string[]; volumeMounts: { mountPath: string }[] }[];
+          volumes: { name: string }[];
         };
       };
     }>(res.workload.deployment, "spec");
@@ -153,6 +154,9 @@ describe("installHomeAssistant (Task 4, §0.1-§0.4, talos-only)", () => {
     expect(backup?.command?.join("\n")).toContain("crond -f");
     expect(backup?.command?.join("\n")).toContain("tar -czf");
     expect(backup?.volumeMounts.map((mount) => mount.mountPath)).toEqual(["/config", "/backup"]);
+    expect(new Set(spec.template.spec.volumes.map((volume) => volume.name)).size).toBe(
+      spec.template.spec.volumes.length,
+    );
   });
 
   test("§0.4: does not create anything in the control-center namespace", async () => {

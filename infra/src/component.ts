@@ -404,9 +404,12 @@ function buildPod(
 
   for (const [i, vol] of (p.volumes ?? []).entries()) {
     const fallbackVolName = `vol-${i}`;
-    const volName = vol.claim
-      ? claimVolumeName(claimVolumeNames, vol.claim, fallbackVolName)
-      : fallbackVolName;
+    const existingClaimVolumeName = vol.claim ? claimVolumeNames.get(vol.claim) : undefined;
+    const volName = existingClaimVolumeName
+      ? existingClaimVolumeName
+      : vol.claim
+        ? claimVolumeName(claimVolumeNames, vol.claim, fallbackVolName)
+        : fallbackVolName;
     volumeMounts.push({
       name: volName,
       mountPath: vol.mountPath,
@@ -435,10 +438,8 @@ function buildPod(
         },
       });
       podVolumes.push({ name: volName, persistentVolumeClaim: { claimName: pvName } });
-    } else if (vol.claim) {
-      if (volName === fallbackVolName) {
-        podVolumes.push({ name: volName, persistentVolumeClaim: { claimName: vol.claim } });
-      }
+    } else if (vol.claim && !existingClaimVolumeName) {
+      podVolumes.push({ name: volName, persistentVolumeClaim: { claimName: vol.claim } });
     }
   }
 
