@@ -15,6 +15,7 @@ func completeEnv() map[string]string {
 		"TEMPORAL_NAMESPACE":             "software-factory",
 		"SANDBOX_NAMESPACE":              "software-factory",
 		"SANDBOX_IMAGE":                  "ghcr.io/0x63616c/www-software-factory-sandbox@sha256:abc",
+		"RUN_WORKER_IMAGE":               "ghcr.io/0x63616c/www-software-factory-run-worker@sha256:def",
 		"METRICS_ADDR":                   ":9090",
 		"POD_NAME":                       "software-factory-worker-7d9f8c-abcde",
 		"TRANSCRIPTS_ROOT":               "/transcripts",
@@ -92,6 +93,8 @@ func TestLoadWorkerReadsTheWholeEnvironment(t *testing.T) {
 		t.Errorf("SandboxNamespace = %q", got.SandboxNamespace)
 	case got.SandboxImage != "ghcr.io/0x63616c/www-software-factory-sandbox@sha256:abc":
 		t.Errorf("SandboxImage = %q", got.SandboxImage)
+	case got.RunWorkerImage != "ghcr.io/0x63616c/www-software-factory-run-worker@sha256:def":
+		t.Errorf("RunWorkerImage = %q", got.RunWorkerImage)
 	case got.MetricsAddr != ":9090":
 		t.Errorf("MetricsAddr = %q", got.MetricsAddr)
 	case got.PodName != "software-factory-worker-7d9f8c-abcde":

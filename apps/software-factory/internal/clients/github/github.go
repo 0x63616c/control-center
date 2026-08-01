@@ -406,7 +406,7 @@ func (c *Client) InstallationToken(ctx context.Context) (work.SandboxCredential,
 		return work.SandboxCredential{}, err
 	}
 
-	token, _, err := c.auth.mint(ctx, op, &gh.InstallationTokenOptions{
+	token, expiresAt, err := c.auth.mint(ctx, op, &gh.InstallationTokenOptions{
 		Repositories: []string{c.repo},
 		Permissions: &gh.InstallationPermissions{
 			// implement clones and pushes the branch.
@@ -431,7 +431,7 @@ func (c *Client) InstallationToken(ctx context.Context) (work.SandboxCredential,
 	// nothing in this pipeline reruns or watches CI.
 	c.log.InfoContext(ctx, "minted a repository-scoped installation token for a sandbox",
 		"repository", c.repo, "login", identity.Login, "account_id", identity.AccountID)
-	return work.SandboxCredential{Token: work.NewCredential(token), Login: identity.Login, AccountID: identity.AccountID}, nil
+	return work.SandboxCredential{Token: work.NewCredential(token), Login: identity.Login, AccountID: identity.AccountID, ExpiresAt: expiresAt}, nil
 }
 
 // capBody bounds a comment body at a rune boundary.

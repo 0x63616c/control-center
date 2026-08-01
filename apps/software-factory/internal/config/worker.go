@@ -36,6 +36,9 @@ type Worker struct {
 	// deploy that set it.
 	SandboxImage string
 
+	// RunWorkerImage is the separately pinned target execution image.
+	RunWorkerImage string
+
 	// MetricsAddr is what the metrics and health server listens on.
 	MetricsAddr string
 
@@ -129,6 +132,7 @@ const (
 	envTemporalNamespace      = "TEMPORAL_NAMESPACE"
 	envSandboxNamespace       = "SANDBOX_NAMESPACE"
 	envSandboxImage           = "SANDBOX_IMAGE"
+	envRunWorkerImage         = "RUN_WORKER_IMAGE"
 	envMetricsAddr            = "METRICS_ADDR"
 	envPodName                = "POD_NAME"
 	envTranscriptsRoot        = "TRANSCRIPTS_ROOT"
@@ -150,6 +154,7 @@ func workerEnvNames() []string {
 		envTemporalNamespace,
 		envSandboxNamespace,
 		envSandboxImage,
+		envRunWorkerImage,
 		envMetricsAddr,
 		envPodName,
 		envTranscriptsRoot,
@@ -171,6 +176,7 @@ func (w Worker) Validate() error {
 		envTemporalNamespace:      w.TemporalNamespace,
 		envSandboxNamespace:       w.SandboxNamespace,
 		envSandboxImage:           w.SandboxImage,
+		envRunWorkerImage:         w.RunWorkerImage,
 		envMetricsAddr:            w.MetricsAddr,
 		envPodName:                w.PodName,
 		envTranscriptsRoot:        w.TranscriptsRoot,
@@ -199,6 +205,7 @@ func LoadWorker() (Worker, error) {
 		TemporalNamespace: os.Getenv(envTemporalNamespace),
 		SandboxNamespace:  os.Getenv(envSandboxNamespace),
 		SandboxImage:      os.Getenv(envSandboxImage),
+		RunWorkerImage:    os.Getenv(envRunWorkerImage),
 		MetricsAddr:       os.Getenv(envMetricsAddr),
 		PodName:           os.Getenv(envPodName),
 

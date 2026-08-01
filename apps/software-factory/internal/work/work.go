@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 )
 
 // ErrFileNotFound reports that a path does not exist inside a sandbox.
@@ -393,6 +394,9 @@ type SandboxCredential struct {
 
 	// AccountID is the stable GitHub account ID for Login.
 	AccountID int64
+
+	// ExpiresAt is safe rotation metadata; the token remains opaque.
+	ExpiresAt time.Time
 }
 
 // String redacts the whole struct, so a stray %v cannot leak the token it
