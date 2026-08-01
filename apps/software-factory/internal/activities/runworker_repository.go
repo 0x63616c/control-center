@@ -116,6 +116,9 @@ func (a *RunWorkerActivities) prepareCloneRepository(ctx context.Context, in Clo
 // newest durable Git checkpoint without opening another Step or repeating a
 // GitHub effect.
 func (a *RunWorkerActivities) RestoreTargetRepository(ctx context.Context, in RestoreTargetRepositoryInput) error {
+	if err := a.validateRepositoryBranch(ctx, in.Branch); err != nil {
+		return err
+	}
 	if strings.TrimSpace(in.CloneURL) == "" || strings.TrimSpace(in.Branch) == "" {
 		return fail(ctx, "validating replacement repository restore", fmt.Errorf("clone URL and branch are required: %w", work.ErrPermanent))
 	}
@@ -233,9 +236,6 @@ func (a *RunWorkerActivities) TargetSyncPullRequest(ctx context.Context, in Targ
 	if strings.TrimSpace(in.Title) == "" {
 		return work.PullRequest{}, fail(ctx, "synchronizing the target pull request", fmt.Errorf("title is required: %w", work.ErrPermanent))
 	}
-	if in.Step.Branch != a.deps.Branch {
-		return work.PullRequest{}, fail(ctx, "publishing the target pull request candidate", fmt.Errorf("repository Step branch does not match the Run Worker branch: %w", work.ErrPermanent))
-	}
 	publishedHead, err := a.deps.Repository.Publish(ctx, a.deps.Branch)
 	if err != nil {
 		return work.PullRequest{}, fail(ctx, "publishing the target pull request candidate", err)
@@ -346,6 +346,9 @@ func (a *RunWorkerActivities) checkpointRepositoryEffect(ctx context.Context, cp
 }
 
 func (a *RunWorkerActivities) loadRepositoryResult(ctx context.Context, requested RepositoryStep, kind string) (RepositoryCheckpoint, json.RawMessage, bool, error) {
+	if err := a.validateRepositoryBranch(ctx, requested.Branch); err != nil {
+		return nil, nil, false, err
+	}
 	if requested.StepOrdinal <= 0 || strings.TrimSpace(requested.Branch) == "" {
 		return nil, nil, false, fail(ctx, "validating repository Step", fmt.Errorf("positive ordinal and branch are required: %w", work.ErrPermanent))
 	}
@@ -368,6 +371,13 @@ func (a *RunWorkerActivities) loadRepositoryResult(ctx context.Context, requeste
 		return nil, nil, false, fail(ctx, "reconciling repository checkpoint", fmt.Errorf("durable result does not encode %s: %w", kind, work.ErrPermanent))
 	}
 	return cp, envelope.Result, true, nil
+}
+
+func (a *RunWorkerActivities) validateRepositoryBranch(ctx context.Context, branch string) error {
+	if branch != a.deps.Branch {
+		return fail(ctx, "validating repository Step", fmt.Errorf("repository Step branch does not match the Run Worker branch: %w", work.ErrPermanent))
+	}
+	return nil
 }
 
 func (a *RunWorkerActivities) checkpointRepositoryResult(ctx context.Context, cp RepositoryCheckpoint, position RepositoryStep, kind string, result any) error {

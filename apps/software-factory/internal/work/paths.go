@@ -206,6 +206,12 @@ func ParseFactoryTicketBranchName(branch string) (ticketID int64, ok bool) {
 	return id, true
 }
 
+// FactoryTicketBranchBelongsToRun reports whether branch is the canonical branch for runID.
+func FactoryTicketBranchBelongsToRun(branch, runID string) bool {
+	ticketID, ok := ParseFactoryTicketBranchName(branch)
+	return ok && branch == FactoryTicketBranchName(ticketID, runID)
+}
+
 // TargetDispatcherWorkflowID is the stable singleton target Dispatcher ID.
 const TargetDispatcherWorkflowID = "software-factory-target-dispatcher"
 

@@ -76,8 +76,7 @@ func (w RunWorker) Validate() error {
 	if w.ID != wantID {
 		return fmt.Errorf("%s=%q does not match Run %q generation %d (want %q)", work.RunWorkerIDEnv, w.ID, w.Identity.RunID, w.Identity.Generation, wantID)
 	}
-	ticketID, validBranch := work.ParseFactoryTicketBranchName(w.Branch)
-	if !validBranch || w.Branch != work.FactoryTicketBranchName(ticketID, w.Identity.RunID) {
+	if !work.FactoryTicketBranchBelongsToRun(w.Branch, w.Identity.RunID) {
 		return fmt.Errorf("%s=%q is not bound to Run %q", work.RunWorkerBranchEnv, w.Branch, w.Identity.RunID)
 	}
 	wantQueue, err := work.RunWorkerTaskQueue(w.Identity)

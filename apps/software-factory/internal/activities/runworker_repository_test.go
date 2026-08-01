@@ -125,9 +125,13 @@ func (p *repositoryCheckpointProbe) Checkpoint(_ context.Context, in store.GitCh
 	return in.GitCheckpoint, err
 }
 
-func targetRepositoryActivities(repository *targetRepositoryProbe, github *targetGitHubProbe, cp *repositoryCheckpointProbe) *RunWorkerActivities {
+func targetRepositoryActivities(repository *targetRepositoryProbe, github *targetGitHubProbe, cp *repositoryCheckpointProbe, branches ...string) *RunWorkerActivities {
+	branch := "factory/ticket-42/run"
+	if len(branches) == 1 {
+		branch = branches[0]
+	}
 	return &RunWorkerActivities{deps: RunWorkerDeps{
-		Repository: repository, GitHub: github, Identity: targetTestIdentity, Branch: "factory/ticket-42/run",
+		Repository: repository, GitHub: github, Identity: targetTestIdentity, Branch: branch,
 		RepositoryCheckpoints: func(work.RunWorkerIdentity) (RepositoryCheckpoint, error) { return cp, nil },
 		Clock:                 repositoryFixedClock{now: time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)},
 	}}
@@ -136,9 +140,10 @@ func targetRepositoryActivities(repository *targetRepositoryProbe, github *targe
 func TestTargetSyncRejectsARepositoryStepForAnotherBranch(t *testing.T) {
 	repository := &targetRepositoryProbe{publishHead: "wrong-head"}
 	github := &targetGitHubProbe{}
-	a := targetRepositoryActivities(repository, github, &repositoryCheckpointProbe{})
 	position := targetPosition(3)
 	position.Branch = "factory/ticket-99/another-run"
+	cp := storedRepositoryEffect(t, position, repositoryEffectSync, work.PullRequest{Number: 99, HeadSHA: "wrong-head"})
+	a := targetRepositoryActivities(repository, github, cp)
 
 	_, err := a.TargetSyncPullRequest(context.Background(), TargetSyncPullRequestInput{Step: position, Title: "title"})
 	if err == nil {
@@ -170,12 +175,12 @@ func TestCloneTargetRepositoryCompletesTheInfrastructureStepBeforeSuccess(t *tes
 func TestCloneTargetRepositoryCarriesForwardOnlyTheDurableCommit(t *testing.T) {
 	repository := &targetRepositoryProbe{head: "carried-head"}
 	cp := &repositoryCheckpointProbe{}
-	a := targetRepositoryActivities(repository, &targetGitHubProbe{}, cp)
 	in := CloneTargetRepositoryInput{
 		Step:             RepositoryStep{StepOrdinal: 1, Branch: "factory/ticket-42/new-run"},
 		CloneURL:         "https://github.com/example/repo.git",
 		CarryForwardHead: "0123456789abcdef0123456789abcdef01234567",
 	}
+	a := targetRepositoryActivities(repository, &targetGitHubProbe{}, cp, in.Step.Branch)
 	if _, err := a.CloneTargetRepository(context.Background(), in); err != nil {
 		t.Fatalf("CloneTargetRepository: %v", err)
 	}
@@ -187,13 +192,13 @@ func TestCloneTargetRepositoryCarriesForwardOnlyTheDurableCommit(t *testing.T) {
 func TestCloneTargetRepositoryRetiresCanceledPullRequestBeforeCarryForward(t *testing.T) {
 	repository := &targetRepositoryProbe{head: "carried-head"}
 	github := &targetGitHubProbe{}
-	a := targetRepositoryActivities(repository, github, &repositoryCheckpointProbe{})
 	in := CloneTargetRepositoryInput{
 		Step:                    RepositoryStep{StepOrdinal: 1, Branch: "factory/ticket-42/new-run"},
 		CloneURL:                "https://github.com/example/repo.git",
 		CarryForwardHead:        "0123456789abcdef0123456789abcdef01234567",
 		RetirePullRequestNumber: 42,
 	}
+	a := targetRepositoryActivities(repository, github, &repositoryCheckpointProbe{}, in.Step.Branch)
 	if _, err := a.CloneTargetRepository(context.Background(), in); err != nil {
 		t.Fatalf("CloneTargetRepository: %v", err)
 	}
@@ -205,13 +210,14 @@ func TestCloneTargetRepositoryRetiresCanceledPullRequestBeforeCarryForward(t *te
 func TestCloneTargetRepositoryReturnsConfirmedPredecessorMergeWithoutPreparingRunB(t *testing.T) {
 	repository := &targetRepositoryProbe{head: "must-not-be-used"}
 	github := &targetGitHubProbe{retireMerged: true}
-	a := targetRepositoryActivities(repository, github, &repositoryCheckpointProbe{})
-	out, err := a.CloneTargetRepository(context.Background(), CloneTargetRepositoryInput{
+	in := CloneTargetRepositoryInput{
 		Step:                    RepositoryStep{StepOrdinal: 1, Branch: "factory/ticket-42/new-run"},
 		CloneURL:                "https://github.com/example/repo.git",
 		CarryForwardHead:        "0123456789abcdef0123456789abcdef01234567",
 		RetirePullRequestNumber: 42,
-	})
+	}
+	a := targetRepositoryActivities(repository, github, &repositoryCheckpointProbe{}, in.Step.Branch)
+	out, err := a.CloneTargetRepository(context.Background(), in)
 	if err != nil {
 		t.Fatalf("CloneTargetRepository: %v", err)
 	}

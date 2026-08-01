@@ -175,6 +175,22 @@ func TestParseFactoryTicketBranchNameRejectsAnythingElse(t *testing.T) {
 	}
 }
 
+func TestFactoryTicketBranchBelongsToItsRun(t *testing.T) {
+	runID := "019fb900-0000-7000-8000-000000000001"
+	if !FactoryTicketBranchBelongsToRun(FactoryTicketBranchName(42, runID), runID) {
+		t.Fatal("FactoryTicketBranchBelongsToRun rejected the branch derived for the Run")
+	}
+	for _, branch := range []string{
+		FactoryTicketBranchName(42, "019fb900-0000-7000-8000-000000000002"),
+		"software-factory/factory-ticket-42",
+		"main",
+	} {
+		if FactoryTicketBranchBelongsToRun(branch, runID) {
+			t.Errorf("FactoryTicketBranchBelongsToRun(%q, %q) = true", branch, runID)
+		}
+	}
+}
+
 func TestTargetDispatcherStartsWithOneTicketAtATime(t *testing.T) {
 	t.Parallel()
 
