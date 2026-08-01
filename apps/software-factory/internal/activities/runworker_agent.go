@@ -95,13 +95,17 @@ func NewRunWorkerActivities(deps RunWorkerDeps) (*RunWorkerActivities, error) {
 
 // TargetAgentInput names one workflow-authorized target Agent Attempt.
 type TargetAgentInput struct {
-	AttemptID           store.TargetAttemptID
-	TicketNumber        int
-	Iteration           int
-	Stage               work.AgentStage
-	Model               work.Model
-	Detail              work.TicketDetail
-	Prior               work.PriorTurns
+	AttemptID    store.TargetAttemptID
+	TicketNumber int
+	Iteration    int
+	Stage        work.AgentStage
+	Model        work.Model
+	Detail       work.TicketDetail
+	Prior        work.PriorTurns
+	// CandidateHeadSHA binds review input to the exact candidate authorized by
+	// the preceding CI Step. It is empty for plan and implementation, which do
+	// not review an already-authorized candidate.
+	CandidateHeadSHA    string
 	PriorProviderThread *ProviderThreadContinuation
 	CredentialRevision  CredentialRevisionExpectation
 }

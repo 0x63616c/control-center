@@ -3,6 +3,7 @@ package workflows_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -12,7 +13,6 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/workflows"
 	"go.temporal.io/sdk/activity"
-	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/worker"
 )
@@ -34,6 +34,7 @@ func TestWorkOnTicketClaimsBeforeProvisioningGenerationOneAndClonesThroughItsSes
 		RunID:    "0f466627-b3ae-4ba2-9c96-6ef44ec6f578",
 		Policy:   work.DefaultTargetRunPolicy(),
 		CloneURL: "https://github.com/example/repository.git",
+		Model:    work.Model{Name: "gpt-5", Effort: "high"},
 	}
 
 	winner := newWorkOnTicketHarness(t, recorderStore)
@@ -48,8 +49,8 @@ func TestWorkOnTicketClaimsBeforeProvisioningGenerationOneAndClonesThroughItsSes
 	if err != nil {
 		t.Fatalf("Ticket: %v", err)
 	}
-	if claimed.State != store.TicketActive || claimed.ActiveRunID != winner.provisioned.Identity.RunID {
-		t.Fatalf("claimed ticket = %+v, want active owner %q", claimed, winner.provisioned.Identity.RunID)
+	if claimed.State != store.TicketDone || claimed.ActiveRunID != "" {
+		t.Fatalf("completed ticket = %+v, want done with no active owner", claimed)
 	}
 	if winner.clone.Step.StepOrdinal != 1 || winner.clone.Step.Branch != winner.provisioned.Branch || winner.clone.CloneURL != input.CloneURL {
 		t.Fatalf("clone = %+v, provision = %+v", winner.clone, winner.provisioned)
@@ -100,9 +101,9 @@ func TestWorkOnTicketConfirmsMergeBeforeBestEffortTeardown(t *testing.T) {
 		work.StepCloneRepository,
 		work.StepPlan,
 		work.StepImplement,
+		work.StepSyncPullRequest,
 		work.StepAwaitCI,
 		work.StepReview,
-		work.StepSyncPullRequest,
 		work.StepMarkPullRequestReady,
 		work.StepMergePullRequest,
 	}
@@ -115,8 +116,7 @@ func TestWorkOnTicketConfirmsMergeBeforeBestEffortTeardown(t *testing.T) {
 			t.Fatalf("step %d = %+v, want completed %s", index+1, step.Step, want)
 		}
 		wantAttempts := 0
-		switch want {
-		case work.StepPlan, work.StepImplement, work.StepReview:
+		if want == work.StepPlan || want == work.StepImplement || want == work.StepReview {
 			wantAttempts = 1
 		}
 		if len(step.Attempts) != wantAttempts {
@@ -155,8 +155,8 @@ func TestWorkOnTicketConfirmsMergeBeforeBestEffortTeardown(t *testing.T) {
 	if detail.Run.TargetOutcome != work.RunOutcomeSucceeded || detail.Run.ReviewedHead != "H1" || detail.Run.MergeSHA != "M1" {
 		t.Fatalf("terminal run = %+v, want confirmed H1/M1 success", detail.Run)
 	}
-	if len(h.deleted) != 1 || h.deleted[0].Identity != h.provisioned.Identity {
-		t.Fatalf("teardown calls = %+v, want the successful worker once", h.deleted)
+	if len(h.deleted) != int(input.Policy.Teardown.Retry.MaximumAttempts) || h.deleted[0].Identity != h.provisioned.Identity {
+		t.Fatalf("teardown calls = %+v, want %d bounded retries for the successful worker", h.deleted, input.Policy.Teardown.Retry.MaximumAttempts)
 	}
 }
 
@@ -207,11 +207,11 @@ func newWorkOnTicketHarness(t *testing.T, recorderStore *storefake.Store) *workO
 		func(_ context.Context, in activities.CloneTargetRepositoryInput) (activities.CloneTargetRepositoryOutput, error) {
 			h.clone = in
 			position := in.Step
-			position.PushedHead = "H1"
+			position.PushedHead = "B0"
 			if err := h.checkpointRepositoryStep(position); err != nil {
 				return activities.CloneTargetRepositoryOutput{}, err
 			}
-			return activities.CloneTargetRepositoryOutput{HeadSHA: "H1"}, nil
+			return activities.CloneTargetRepositoryOutput{HeadSHA: "B0"}, nil
 		},
 		activity.RegisterOptions{Name: "CloneTargetRepository"},
 	)
@@ -252,6 +252,7 @@ func newWorkOnTicketHarness(t *testing.T, recorderStore *storefake.Store) *workO
 	env.RegisterActivityWithOptions(
 		func(_ context.Context, in activities.TargetSyncPullRequestInput) (work.PullRequest, error) {
 			position := in.Step
+			position.PushedHead = "H1"
 			position.PullRequestNumber, position.PullRequestNodeID = 1, "PR_node1"
 			if err := h.checkpointRepositoryStep(position); err != nil {
 				return work.PullRequest{}, err
@@ -277,7 +278,7 @@ func newWorkOnTicketHarness(t *testing.T, recorderStore *storefake.Store) *workO
 	env.RegisterActivityWithOptions(
 		func(_ context.Context, in activities.DeleteRunWorkerInput) error {
 			h.deleted = append(h.deleted, in)
-			return temporal.NewNonRetryableApplicationError("temporary teardown handoff", "test_teardown", nil)
+			return errors.New("temporary teardown handoff")
 		},
 		activity.RegisterOptions{Name: "DeleteRunWorker"},
 	)
@@ -297,10 +298,12 @@ func (h *workOnTicketHarness) checkpointRepositoryStep(position activities.Repos
 			PullRequestNumber: position.PullRequestNumber, PullRequestNodeID: position.PullRequestNodeID,
 			StepResult: json.RawMessage(`{"kind":"fake"}`),
 		},
-		CompletedAt: time.Now().UTC(),
+		CompletedAt: targetTestTime,
 	})
 	return err
 }
+
+var targetTestTime = time.Date(2026, 7, 31, 21, 0, 0, 0, time.UTC)
 
 func targetAgentOutput(t *testing.T, stage work.AgentStage) activities.TargetAgentOutput {
 	t.Helper()
