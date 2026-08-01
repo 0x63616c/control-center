@@ -12,14 +12,21 @@ import (
 	"go.temporal.io/sdk/testsuite"
 )
 
+// These nil handles name the workflow activity methods for this test package.
+// Temporal resolves methods by name; no test invokes a nil receiver.
+var (
+	maintenanceActs          *activities.TargetMaintenanceActivities
+	maintenanceRunWorkerActs *activities.RunWorkerControlActivities
+)
+
 func TestMaintainFactoryReconcilesClosedOwnerAndDeletesItsRunWorker(t *testing.T) {
 	suite := &testsuite.WorkflowTestSuite{}
 	env := suite.NewTestWorkflowEnvironment()
-	owner := activities.TargetRunOwner{TicketID: 7, RunID: "019fb900-0000-7000-8000-000000000007"}
-	env.OnActivity(maintainActs.ListActiveTargetRunOwners, mock.Anything).Return([]activities.TargetRunOwner{owner}, nil)
+	owner := store.ActiveTargetRunOwner{TicketID: 7, RunID: "019fb900-0000-7000-8000-000000000007"}
+	env.OnActivity(maintenanceActs.ListActiveTargetRunOwners, mock.Anything).Return([]store.ActiveTargetRunOwner{owner}, nil)
 	env.OnActivity(acts.DescribeRun, mock.Anything, work.FactoryTicketWorkflowID(int64(owner.TicketID))).Return(work.RunState{Open: false}, nil)
 	deleted := false
-	env.OnActivity(runWorkerControlActs.DeleteRunWorker, mock.Anything, mock.Anything).
+	env.OnActivity(maintenanceRunWorkerActs.DeleteRunWorker, mock.Anything, mock.Anything).
 		Return(func(_ context.Context, in activities.DeleteRunWorkerInput) error {
 			identity, err := work.NewRunWorkerIdentity(owner.RunID, 1)
 			if err != nil {
@@ -31,10 +38,10 @@ func TestMaintainFactoryReconcilesClosedOwnerAndDeletesItsRunWorker(t *testing.T
 			deleted = true
 			return nil
 		})
-	var reconciled activities.TargetRunOwner
-	env.OnActivity(maintainActs.ReconcileAbandonedTargetRun, mock.Anything, owner.RunID, owner.TicketID).
+	var reconciled store.ActiveTargetRunOwner
+	env.OnActivity(maintenanceActs.ReconcileAbandonedTargetRun, mock.Anything, owner.RunID, owner.TicketID).
 		Return(func(_ context.Context, runID string, ticketID store.TicketID) (bool, error) {
-			reconciled = activities.TargetRunOwner{RunID: runID, TicketID: ticketID}
+			reconciled = store.ActiveTargetRunOwner{RunID: runID, TicketID: ticketID}
 			return true, nil
 		})
 
@@ -53,8 +60,8 @@ func TestMaintainFactoryReconcilesClosedOwnerAndDeletesItsRunWorker(t *testing.T
 func TestMaintainFactoryLeavesTheCurrentLiveOwnerUntouched(t *testing.T) {
 	suite := &testsuite.WorkflowTestSuite{}
 	env := suite.NewTestWorkflowEnvironment()
-	owner := activities.TargetRunOwner{TicketID: 8, RunID: "019fb900-0000-7000-8000-000000000008"}
-	env.OnActivity(maintainActs.ListActiveTargetRunOwners, mock.Anything).Return([]activities.TargetRunOwner{owner}, nil)
+	owner := store.ActiveTargetRunOwner{TicketID: 8, RunID: "019fb900-0000-7000-8000-000000000008"}
+	env.OnActivity(maintenanceActs.ListActiveTargetRunOwners, mock.Anything).Return([]store.ActiveTargetRunOwner{owner}, nil)
 	env.OnActivity(acts.DescribeRun, mock.Anything, work.FactoryTicketWorkflowID(int64(owner.TicketID))).Return(work.RunState{Open: true, RunID: owner.RunID}, nil)
 
 	env.ExecuteWorkflow(workflows.MaintainFactory)

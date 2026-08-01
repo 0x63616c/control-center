@@ -8,6 +8,15 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store/storefake"
 )
 
+func mustNewTargetMaintenance(t *testing.T, store TargetMaintenanceStore) *TargetMaintenanceActivities {
+	t.Helper()
+	activities, err := NewTargetMaintenanceActivities(store)
+	if err != nil {
+		t.Fatalf("NewTargetMaintenanceActivities: %v", err)
+	}
+	return activities
+}
+
 func TestTargetMaintenanceListsAndConditionallyReleasesActiveOwners(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -34,7 +43,7 @@ func TestTargetMaintenanceListsAndConditionallyReleasesActiveOwners(t *testing.T
 	if err != nil {
 		t.Fatalf("ListActiveTargetRunOwners: %v", err)
 	}
-	want := []TargetRunOwner{{TicketID: first.ID, RunID: firstRun}, {TicketID: second.ID, RunID: secondRun}}
+	want := []store.ActiveTargetRunOwner{{TicketID: first.ID, RunID: firstRun}, {TicketID: second.ID, RunID: secondRun}}
 	if len(owners) != len(want) {
 		t.Fatalf("owners = %+v, want %+v", owners, want)
 	}
