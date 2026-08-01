@@ -249,6 +249,89 @@ func TestWorkOnTicketRepairsRedCIThenReviewsTheNewHead(t *testing.T) {
 	}
 }
 
+// A blocking review is completed, authoritative feedback. It must reopen the
+// surviving implementer with both the reviewed head and structured findings,
+// then bind CI and an independent reviewer to the new head before merge.
+func TestWorkOnTicketRepairsBlockingReviewWithFreshCandidateAuthorization(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "review feedback", "repair the finding", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000007", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.sync = func(input activities.TargetSyncPullRequestInput) (work.PullRequest, error) {
+		head := "H1"
+		if len(h.syncInputs) == 2 {
+			head = "H2"
+		}
+		position := input.Step
+		position.PushedHead, position.PullRequestNumber, position.PullRequestNodeID = head, 1, "PR_node1"
+		if err := h.checkpointRepositoryStep(position); err != nil {
+			return work.PullRequest{}, err
+		}
+		return work.PullRequest{Number: 1, NodeID: "PR_node1", HeadSHA: head, Draft: true}, nil
+	}
+	h.awaitCI = func(input activities.TargetAwaitCIInput) (activities.AwaitCIOutput, error) {
+		if err := h.checkpointRepositoryStep(input.Step); err != nil {
+			return activities.AwaitCIOutput{}, err
+		}
+		return activities.AwaitCIOutput{CommitSHA: input.CI.CommitSHA, Green: true}, nil
+	}
+	reviews := 0
+	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
+		if input.Stage != work.AgentStageReview {
+			return targetAgentOutput(t, input.Stage), nil
+		}
+		reviews++
+		if reviews != 1 {
+			return targetAgentOutput(t, input.Stage), nil
+		}
+		var result work.StageOutput
+		raw := `{"stage":"review","value":{"document":"blocked","findings":[{"id":"finding_1","blocking":true,"summary":"repair the boundary"}]}}`
+		if err := json.Unmarshal([]byte(raw), &result); err != nil {
+			return activities.TargetAgentOutput{}, err
+		}
+		return activities.TargetAgentOutput{Output: json.RawMessage(raw), Result: result, ThreadID: "review-thread-1", UsageState: work.UsageMeasured}, nil
+	}
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket: %v", err)
+	}
+
+	var implements, reviewInputs []activities.TargetAgentInput
+	for _, agent := range h.agentInputs {
+		switch agent.Stage {
+		case work.AgentStageImplement:
+			implements = append(implements, agent)
+		case work.AgentStageReview:
+			reviewInputs = append(reviewInputs, agent)
+		}
+	}
+	if len(implements) != 2 || implements[1].PriorProviderThread == nil || implements[1].PriorProviderThread.Identity != h.provisioned.Identity || implements[1].PriorProviderThread.ThreadID != "implement-thread" || implements[1].PromptContext.CandidateHeadSHA != "H1" || len(implements[1].PromptContext.ReviewFindings) != 1 || implements[1].PromptContext.ReviewFindings[0].ID != "finding_1" {
+		t.Fatalf("review-feedback implementation = %+v, want same-generation H1 implementer handoff with typed finding", implements)
+	}
+	if len(h.ciInputs) != 2 || h.ciInputs[0].CI.CommitSHA != "H1" || h.ciInputs[1].CI.CommitSHA != "H2" || len(reviewInputs) != 2 || reviewInputs[0].PromptContext.CandidateHeadSHA != "H1" || reviewInputs[1].PromptContext.CandidateHeadSHA != "H2" || reviewInputs[0].PriorProviderThread != nil || reviewInputs[1].PriorProviderThread != nil {
+		t.Fatalf("fresh candidate authorization = CI %+v, reviews %+v", h.ciInputs, reviewInputs)
+	}
+	if h.merge.ExpectedHeadSHA != "H2" {
+		t.Fatalf("merge = %+v, want only reviewed H2", h.merge)
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	attempts := 0
+	for _, step := range detail.Steps {
+		attempts += len(step.Attempts)
+	}
+	if attempts != 5 || attempts > in.Policy.MaxAgentAttempts {
+		t.Fatalf("cumulative attempts = %d, want five without a loop reset", attempts)
+	}
+}
+
 func TestWorkOnTicketNeverMergesAHeadChangedAfterReview(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
