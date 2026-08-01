@@ -27,6 +27,7 @@ type TargetStore interface {
 	store.TargetAgentRecorder
 	store.TargetTerminalRecorder
 	TargetRunDetail(context.Context, string) (store.TargetRunDetail, error)
+	History(context.Context, string) (store.RunHistory, error)
 	BindCheckpointCapability(context.Context, store.TargetAttemptID, string) error
 	LoadAgentCheckpoint(context.Context, store.TargetAttemptID, string) (store.AgentAttempt, *store.TargetTranscript, bool, error)
 	CheckpointGitEffect(context.Context, store.GitCheckpointInput) (store.GitCheckpoint, error)
@@ -40,6 +41,30 @@ type TargetStore interface {
 // rejects conflicting terminal evidence in the same way as the real Store.
 func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetStore) {
 	t.Helper()
+	t.Run("zero-step canceled run remains target history", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		ticket, err := s.CreateTicket(ctx, "cancel before first step", "", nil)
+		if err != nil {
+			t.Fatalf("CreateTicket: %v", err)
+		}
+		runID := uuid.NewString()
+		startedAt := time.Date(2026, time.July, 31, 12, 0, 0, 0, time.UTC)
+		if _, err := s.ClaimAndStartRun(ctx, store.ClaimRunInput{TicketID: ticket.ID, RunID: runID, StartedAt: startedAt}); err != nil {
+			t.Fatalf("ClaimAndStartRun: %v", err)
+		}
+		if _, err := s.CancelRun(ctx, store.CancelRunInput{TicketID: ticket.ID, RunID: runID, EndedAt: startedAt.Add(time.Minute)}); err != nil {
+			t.Fatalf("CancelRun: %v", err)
+		}
+		history, err := s.History(ctx, runID)
+		if err != nil {
+			t.Fatalf("History: %v", err)
+		}
+		if history.Legacy || history.Run.TargetOutcome != work.RunOutcomeCanceled || len(history.Steps) != 0 {
+			t.Fatalf("History = %+v, want a zero-Step canceled target Run", history)
+		}
+	})
+
 	t.Run("done tickets are terminal across every public writer", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()

@@ -24,8 +24,8 @@ func TestInventoryAndDryRunAreInertAndMachineReadable(t *testing.T) {
 			if report.Ready {
 				t.Fatalf("Ready = true with legacy inventory: %+v", report)
 			}
-			if len(report.Before.Workflows) != 3 || len(report.Before.PullRequests) != 1 || len(report.Before.Tickets) != 2 {
-				t.Fatalf("inventory = %+v, want three workflows, one PR, two Tickets", report.Before)
+			if len(report.Before.Workflows) != 3 || len(report.Before.PullRequests) != 1 || len(report.Before.Tickets) != 2 || len(report.Before.Runs) != 2 {
+				t.Fatalf("inventory = %+v, want three workflows, one PR, two Tickets, and two open legacy Runs", report.Before)
 			}
 			if len(fake.calls) != 0 {
 				t.Fatalf("mutating calls = %v, want none in %s", fake.calls, mode)
@@ -48,7 +48,7 @@ func TestApplyQuiescesLegacyWorkAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute(first): %v", err)
 	}
-	if !report.Ready || len(report.After.Workflows) != 0 || len(report.After.PullRequests) != 1 || report.After.PullRequests[0].AutoMergeEnabled || len(report.After.Tickets) != 0 {
+	if !report.Ready || len(report.After.Workflows) != 0 || len(report.After.PullRequests) != 1 || report.After.PullRequests[0].AutoMergeEnabled || len(report.After.Tickets) != 0 || len(report.After.Runs) != 0 {
 		t.Fatalf("report = %+v, want a clean ready inventory", report)
 	}
 	wantCalls := []string{
@@ -62,7 +62,7 @@ func TestApplyQuiescesLegacyWorkAndIsIdempotent(t *testing.T) {
 		"await:factory-ticket-8/run-8",
 		"terminate-dispatcher:software-factory-ticket-dispatcher/dispatcher-run",
 		"await:software-factory-ticket-dispatcher/dispatcher-run",
-		"reopen-legacy-tickets:7@working,8@review",
+		"reconcile-legacy-state:7@working,8@review;runs:run-7,run-8",
 	}
 	if diff := stringSliceDiff(fake.calls, wantCalls); diff != "" {
 		t.Fatal(diff)
@@ -154,6 +154,7 @@ type fakeDependencies struct {
 	workflows                []WorkflowExecution
 	pullRequests             []PullRequest
 	tickets                  []LegacyTicket
+	runs                     []LegacyRun
 	calls                    []string
 	disableAutoMergeFailures int
 	asynchronousTermination  bool
@@ -174,6 +175,7 @@ func newFakeDependencies() *fakeDependencies {
 			{ID: 7, State: LegacyTicketWorking, Version: versionSeven},
 			{ID: 8, State: LegacyTicketReview, Version: versionEight},
 		},
+		runs: []LegacyRun{{ID: "run-7", TicketID: 7}, {ID: "run-8", TicketID: 8}},
 	}
 }
 
@@ -240,13 +242,28 @@ func (fake *fakeDependencies) ListLegacyTickets(context.Context) ([]LegacyTicket
 	return append([]LegacyTicket(nil), fake.tickets...), nil
 }
 
+func (fake *fakeDependencies) ListLegacyRuns(context.Context) ([]LegacyRun, error) {
+	return append([]LegacyRun(nil), fake.runs...), nil
+}
+
 func (fake *fakeDependencies) ReopenLegacyTickets(_ context.Context, expected []LegacyTicket) ([]LegacyTicket, error) {
+	return fake.ReconcileLegacyState(context.Background(), expected, fake.runs)
+}
+
+func (fake *fakeDependencies) ReconcileLegacyState(_ context.Context, expected []LegacyTicket, runs []LegacyRun) ([]LegacyTicket, error) {
 	target := "reopen-legacy-tickets:"
 	for index, ticket := range expected {
 		if index > 0 {
 			target += ","
 		}
 		target += strconv.FormatInt(ticket.ID, 10) + "@" + string(ticket.State)
+	}
+	target = "reconcile-legacy-state:" + target[len("reopen-legacy-tickets:"):] + ";runs:"
+	for index, run := range runs {
+		if index > 0 {
+			target += ","
+		}
+		target += run.ID
 	}
 	fake.calls = append(fake.calls, target)
 	if fake.staleTicketOnReopen {
@@ -265,6 +282,7 @@ func (fake *fakeDependencies) ReopenLegacyTickets(_ context.Context, expected []
 		reopened[index].State = LegacyTicketOpen
 	}
 	fake.tickets = nil
+	fake.runs = nil
 	return reopened, nil
 }
 
