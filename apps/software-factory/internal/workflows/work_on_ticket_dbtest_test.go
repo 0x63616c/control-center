@@ -31,6 +31,7 @@ func TestWorkOnTicketCommitsRepresentativeHistoryAgainstARealDatabase(t *testing
 
 	h := newWorkOnTicketHarness(t, s)
 	h.deleteErr = nil
+	h.checkpointAgents = true
 	h.run(input)
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("WorkOnTicket: %v", err)

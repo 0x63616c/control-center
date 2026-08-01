@@ -1835,6 +1835,7 @@ type workOnTicketHarness struct {
 	rotations         []activities.RotateRunWorkerGitHubCredentialInput
 	authorized        []activities.AuthorizeRunWorkerAttemptInput
 	authorizeErr      error
+	checkpointAgents  bool
 	agentInputs       []activities.TargetAgentInput
 	ci                activities.TargetAwaitCIInput
 	ready             activities.TargetMarkPullRequestReadyInput
@@ -1858,7 +1859,10 @@ type workOnTicketHarness struct {
 type workOnTicketStore interface {
 	activities.TargetRunRecorder
 	store.CanceledRunRecoveryReader
+	BindCheckpointCapability(context.Context, store.TargetAttemptID, string) error
 }
+
+const workOnTicketCheckpointCapability = "work-on-ticket-test-capability"
 
 func newWorkOnTicketHarness(t *testing.T, recorderStore workOnTicketStore) *workOnTicketHarness {
 	return newWorkOnTicketHarnessWithSessionWorker(t, recorderStore, true)
@@ -1930,9 +1934,18 @@ func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore workOnT
 		activity.RegisterOptions{Name: "RestoreTargetRepository"},
 	)
 	env.RegisterActivityWithOptions(
-		func(_ context.Context, in activities.AuthorizeRunWorkerAttemptInput) error {
+		func(ctx context.Context, in activities.AuthorizeRunWorkerAttemptInput) error {
 			h.authorized = append(h.authorized, in)
-			return h.authorizeErr
+			if h.authorizeErr != nil {
+				return h.authorizeErr
+			}
+			if !h.checkpointAgents {
+				return nil
+			}
+			if err := h.store.BindCheckpointCapability(ctx, in.AttemptID, workOnTicketCheckpointCapability); err != nil {
+				return fmt.Errorf("binding test checkpoint capability for %s: %w", in.AttemptID, err)
+			}
+			return nil
 		},
 		activity.RegisterOptions{Name: "AuthorizeRunWorkerAttempt"},
 	)
@@ -1949,14 +1962,41 @@ func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore workOnT
 			if in.Stage == work.AgentStageReview {
 				h.reviewHead = in.PromptContext.CandidateHeadSHA
 			}
-			if h.agentResult != nil {
-				return h.agentResult(in)
-			}
 			if h.pendingImplement && in.Stage == work.AgentStageImplement {
 				h.pendingAgentTaskToken = activity.GetInfo(ctx).TaskToken
 				return targetAgentOutput(t, in.Stage), activity.ErrResultPending
 			}
-			return targetAgentOutput(t, in.Stage), nil
+			out := targetAgentOutput(t, in.Stage)
+			var err error
+			if h.agentResult != nil {
+				out, err = h.agentResult(in)
+			}
+			if err != nil {
+				return out, err
+			}
+			if !h.checkpointAgents {
+				return out, nil
+			}
+			_, err = h.store.CheckpointAgentAttempt(ctx, store.AgentCheckpointInput{
+				ID:         in.AttemptID,
+				Capability: workOnTicketCheckpointCapability,
+				ThreadID:   out.ThreadID,
+				State:      work.AgentAttemptSucceeded,
+				UsageState: out.UsageState,
+				Usage:      out.Usage,
+				EndedAt:    targetTestTime,
+				Result:     out.Output,
+				Transcript: &store.TargetTranscript{
+					CompressedBytes:       []byte("test transcript"),
+					Compression:           "zstd",
+					UncompressedSizeBytes: 15,
+					Checksum:              []byte("test-checksum"),
+				},
+			})
+			if err != nil {
+				return out, fmt.Errorf("checkpointing test agent evidence for %s: %w", in.AttemptID, err)
+			}
+			return out, nil
 		},
 		activity.RegisterOptions{Name: "RunTargetAgent"},
 	)

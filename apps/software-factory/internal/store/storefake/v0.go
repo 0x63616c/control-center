@@ -491,7 +491,10 @@ func (f *Store) CancelRun(_ context.Context, in store.CancelRunInput) (store.Ter
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	run, ok := f.runs[in.RunID]
-	if !ok || run.TicketID != in.TicketID {
+	if !ok {
+		return store.TerminalResult{}, fmt.Errorf("cancel: %w", store.ErrNoOwnedClaim)
+	}
+	if run.TicketID != in.TicketID {
 		return store.TerminalResult{}, fmt.Errorf("cancel: %w", store.ErrRunOwnership)
 	}
 	ticket := f.tickets[in.TicketID]
@@ -523,7 +526,7 @@ func (f *Store) FinalizeRunFailure(_ context.Context, in store.RunFailureInput) 
 	}
 	ticket := f.tickets[in.TicketID]
 	if run.TargetOutcome != "" {
-		if run.TargetOutcome != in.Outcome || run.TargetFailure != in.FailureKind {
+		if (run.TargetOutcome != in.Outcome || run.TargetFailure != in.FailureKind) && run.TargetOutcome != work.RunOutcomeSucceeded && run.TargetOutcome != work.RunOutcomeCanceled {
 			return store.TerminalResult{}, fmt.Errorf("failure: %w", work.ErrPermanent)
 		}
 		return store.TerminalResult{Ticket: ticket, Run: run}, nil
