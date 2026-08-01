@@ -83,6 +83,9 @@ func TestFeedbackContinuationReachesTheProviderWithTheSuccessfulImplementConvers
 		t.Fatalf("ModelTurn() feedback continuation: %v", err)
 	}
 
+	if turner.request.Instructions != "Complete the implementation." {
+		t.Fatalf("provider instructions = %q, want seeded implement instructions", turner.request.Instructions)
+	}
 	want := []codexresponses.InputItem{
 		codexresponses.UserText("Implement the accepted plan."),
 		codexresponses.AssistantText("Implemented the plan and opened the pull request."),
