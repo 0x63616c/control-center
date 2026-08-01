@@ -165,6 +165,40 @@ func TestSessionPinsRepositoryWorkToOneIsolatedPrivateWorker(t *testing.T) {
 	}
 }
 
+func TestSessionCreationWaitsForRunWorkerReadiness(t *testing.T) {
+	server := startServer(t)
+	root := t.TempDir()
+	startWorker(t, mainCapabilityWorker(server.Client()))
+
+	run, err := server.Client().ExecuteWorkflow(context.Background(), temporalclient.StartWorkflowOptions{
+		ID:        "session-target-readiness",
+		TaskQueue: mainQueue,
+	}, sessionReadinessWorkflow, sessionWorkflowInput{
+		PrivateQueue: privateQueueOne,
+		MarkerName:   "repository.marker",
+		Marker:       "repository-state-v1",
+	})
+	if err != nil {
+		t.Fatalf("starting workflow: %v", err)
+	}
+
+	blocked, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
+	defer cancel()
+	if err := run.Get(blocked, nil); err == nil || !errors.Is(blocked.Err(), context.DeadlineExceeded) {
+		t.Fatalf("workflow before Run Worker readiness = %v (context %v), want it still waiting", err, blocked.Err())
+	}
+
+	private := startPrivateWorkerProcess(t, server.FrontendHostPort(), privateQueueOne, "private-ready", root)
+	var evidence sessionActivityEvidence
+	if err := run.Get(context.Background(), &evidence); err != nil {
+		t.Fatalf("getting workflow result after Run Worker readiness: %v", err)
+	}
+	if evidence.Operation != "clone" || evidence.Worker != "private-ready" ||
+		evidence.ProcessID != private.processID() || !evidence.Found || evidence.Marker != "repository-state-v1" {
+		t.Fatalf("first repository activity after readiness = %#v", evidence)
+	}
+}
+
 func TestSessionStaysOnItsPrivateProcessAcrossAMainWorkerRestart(t *testing.T) {
 	server := startServer(t)
 	rootOne := t.TempDir()
@@ -321,6 +355,21 @@ func sessionEvidenceWorkflow(ctx workflow.Context, in sessionWorkflowInput) (ses
 	return result, nil
 }
 
+func sessionReadinessWorkflow(ctx workflow.Context, in sessionWorkflowInput) (sessionActivityEvidence, error) {
+	sessionCtx, err := createCapabilitySession(ctx, in.PrivateQueue)
+	if err != nil {
+		return sessionActivityEvidence{}, fmt.Errorf("creating session: %w", err)
+	}
+	defer workflow.CompleteSession(sessionCtx)
+
+	input := sessionActivityInput{MarkerName: in.MarkerName, Marker: in.Marker, Write: true}
+	var evidence sessionActivityEvidence
+	if err := workflow.ExecuteActivity(sessionCtx, cloneActivityName, input).Get(sessionCtx, &evidence); err != nil {
+		return sessionActivityEvidence{}, fmt.Errorf("running first repository activity: %w", err)
+	}
+	return evidence, nil
+}
+
 func sessionRestartWorkflow(ctx workflow.Context, in sessionWorkflowInput) (sessionEvidence, error) {
 	sessionCtx, err := createCapabilitySession(ctx, in.PrivateQueue)
 	if err != nil {
@@ -414,6 +463,7 @@ func createCapabilitySession(ctx workflow.Context, privateQueue string) (workflo
 func mainCapabilityWorker(c temporalclient.Client) worker.Worker {
 	w := worker.New(c, mainQueue, worker.Options{})
 	w.RegisterWorkflow(sessionEvidenceWorkflow)
+	w.RegisterWorkflow(sessionReadinessWorkflow)
 	w.RegisterWorkflow(sessionRestartWorkflow)
 	w.RegisterWorkflow(sessionLossWorkflow)
 	w.RegisterActivityWithOptions(
