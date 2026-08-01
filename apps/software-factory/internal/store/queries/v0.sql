@@ -153,10 +153,22 @@ RETURNING *;
 -- name: TargetGitCheckpoint :one
 SELECT * FROM run_git_checkpoint WHERE run_id = $1;
 
+-- name: StartRecoveredTargetMergeStep :one
+INSERT INTO run_step (run_id, ordinal, kind, iteration, reason, state, started_at)
+SELECT $1, COALESCE(MAX(ordinal), 0) + 1, 'merge_pull_request', 0,
+       'reconcile confirmed external merge', 'running', $2
+FROM run_step
+WHERE run_id = $1
+RETURNING *;
+
 -- name: LatestCanceledRunGitCheckpoint :one
-SELECT checkpoint.*
+SELECT checkpoint.*, COALESCE(merge_step.ordinal, 0)::integer AS merge_step_ordinal
 FROM run AS predecessor
 JOIN run_git_checkpoint AS checkpoint ON checkpoint.run_id = predecessor.id
+LEFT JOIN run_step AS merge_step
+  ON merge_step.run_id = predecessor.id
+  AND merge_step.kind = 'merge_pull_request'
+  AND merge_step.state = 'running'
 WHERE predecessor.ticket_id = $1
   AND predecessor.id <> $2
   AND predecessor.target_outcome = 'canceled'

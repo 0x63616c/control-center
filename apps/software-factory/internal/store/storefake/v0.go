@@ -284,7 +284,7 @@ func (f *Store) CheckpointGitEffect(_ context.Context, in store.GitCheckpointInp
 
 // LatestCanceledRunCheckpoint mirrors the production recovery fence: only a
 // canceled predecessor of the same Ticket can donate a durable pushed head.
-func (f *Store) LatestCanceledRunCheckpoint(_ context.Context, ticketID store.TicketID, excludingRunID string) (store.GitCheckpoint, bool, error) {
+func (f *Store) LatestCanceledRunCheckpoint(_ context.Context, ticketID store.TicketID, excludingRunID string) (store.CanceledRunRecovery, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var chosen store.Run
@@ -302,9 +302,15 @@ func (f *Store) LatestCanceledRunCheckpoint(_ context.Context, ticketID store.Ti
 		}
 	}
 	if !found {
-		return store.GitCheckpoint{}, false, nil
+		return store.CanceledRunRecovery{}, false, nil
 	}
-	return f.targetGit[chosen.ID], true, nil
+	mergeOrdinal := 0
+	for key, step := range f.targetSteps {
+		if key.runID == chosen.ID && step.Kind == work.StepMergePullRequest && step.State == work.StepStateRunning && key.ordinal > mergeOrdinal {
+			mergeOrdinal = key.ordinal
+		}
+	}
+	return store.CanceledRunRecovery{Checkpoint: f.targetGit[chosen.ID], MergeStepOrdinal: mergeOrdinal}, true, nil
 }
 
 // BindRepositoryCapability installs one monotonically increasing Run Worker
@@ -421,6 +427,17 @@ func (f *Store) FinalizeConfirmedMerge(_ context.Context, in store.ConfirmedMerg
 			return store.TerminalResult{}, fmt.Errorf("merge: %w", work.ErrPermanent)
 		}
 		return store.TerminalResult{Ticket: f.tickets[in.TicketID], Run: run}, nil
+	}
+	if in.StepOrdinal == 0 && run.TargetOutcome == work.RunOutcomeCanceled {
+		for key := range f.targetSteps {
+			if key.runID == in.RunID && key.ordinal >= in.StepOrdinal {
+				in.StepOrdinal = key.ordinal + 1
+			}
+		}
+		f.targetSteps[targetStepKey{runID: in.RunID, ordinal: in.StepOrdinal}] = store.RunStep{
+			RunID: in.RunID, Ordinal: in.StepOrdinal, Kind: work.StepMergePullRequest,
+			Reason: "reconcile confirmed external merge", State: work.StepStateRunning, StartedAt: in.EndedAt,
+		}
 	}
 	stepKey := targetStepKey{runID: in.RunID, ordinal: in.StepOrdinal}
 	step, ok := f.targetSteps[stepKey]

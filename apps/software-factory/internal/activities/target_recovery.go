@@ -16,8 +16,9 @@ type TargetRecoveryActivities struct {
 // CanceledRunCheckpoint is the complete non-secret result returned by the
 // activity boundary.
 type CanceledRunCheckpoint struct {
-	Checkpoint store.GitCheckpoint
-	Found      bool
+	Checkpoint       store.GitCheckpoint
+	MergeStepOrdinal int
+	Found            bool
 }
 
 // NewTargetRecoveryActivities constructs the main-control recovery boundary.
@@ -31,9 +32,9 @@ func NewTargetRecoveryActivities(reader store.CanceledRunRecoveryReader) (*Targe
 // LatestCanceledRunCheckpoint looks up a predecessor after the successor has
 // atomically claimed its Ticket, so it cannot authorize an unrelated Ticket.
 func (a *TargetRecoveryActivities) LatestCanceledRunCheckpoint(ctx context.Context, ticketID store.TicketID, excludingRunID string) (CanceledRunCheckpoint, error) {
-	checkpoint, found, err := a.store.LatestCanceledRunCheckpoint(ctx, ticketID, excludingRunID)
+	recovery, found, err := a.store.LatestCanceledRunCheckpoint(ctx, ticketID, excludingRunID)
 	if err != nil {
 		return CanceledRunCheckpoint{}, fail(ctx, fmt.Sprintf("reading canceled recovery checkpoint for ticket %d", ticketID), err)
 	}
-	return CanceledRunCheckpoint{Checkpoint: checkpoint, Found: found}, nil
+	return CanceledRunCheckpoint{Checkpoint: recovery.Checkpoint, MergeStepOrdinal: recovery.MergeStepOrdinal, Found: found}, nil
 }

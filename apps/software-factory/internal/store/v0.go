@@ -47,7 +47,7 @@ type TargetRunClaimer interface {
 // newly claimed Run may carry forward from an earlier canceled Run for the
 // same Ticket. A confirmed merge never satisfies this boundary.
 type CanceledRunRecoveryReader interface {
-	LatestCanceledRunCheckpoint(context.Context, TicketID, string) (GitCheckpoint, bool, error)
+	LatestCanceledRunCheckpoint(context.Context, TicketID, string) (CanceledRunRecovery, bool, error)
 }
 
 // TargetStepRecorder records mandatory target Step lifecycle boundaries.
@@ -453,25 +453,41 @@ type GitCheckpointInput struct {
 	CompletedAt time.Time
 }
 
+// CanceledRunRecovery contains the predecessor's only transferable state plus
+// the exact outstanding Merge Step that can reconcile a lost merge response.
+type CanceledRunRecovery struct {
+	Checkpoint       GitCheckpoint
+	MergeStepOrdinal int
+}
+
 // LatestCanceledRunCheckpoint finds the most recently canceled predecessor's
 // durable pushed head. It deliberately does not return provider state or any
 // credential material: a new Run gets only a Git object it can fetch itself.
-func (s *Store) LatestCanceledRunCheckpoint(ctx context.Context, ticketID TicketID, excludingRunID string) (GitCheckpoint, bool, error) {
+func (s *Store) LatestCanceledRunCheckpoint(ctx context.Context, ticketID TicketID, excludingRunID string) (CanceledRunRecovery, bool, error) {
 	excluding, err := pgUUID(excludingRunID)
 	if err != nil {
-		return GitCheckpoint{}, false, fmt.Errorf("reading canceled recovery checkpoint for ticket %d: %w", ticketID, err)
+		return CanceledRunRecovery{}, false, fmt.Errorf("reading canceled recovery checkpoint for ticket %d: %w", ticketID, err)
 	}
 	row, err := s.q.LatestCanceledRunGitCheckpoint(ctx, storedb.LatestCanceledRunGitCheckpointParams{
 		TicketID: int64(ticketID),
 		ID:       excluding,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return GitCheckpoint{}, false, nil
+		return CanceledRunRecovery{}, false, nil
 	}
 	if err != nil {
-		return GitCheckpoint{}, false, fmt.Errorf("reading canceled recovery checkpoint for ticket %d: %w", ticketID, wrapQueryErr(err))
+		return CanceledRunRecovery{}, false, fmt.Errorf("reading canceled recovery checkpoint for ticket %d: %w", ticketID, wrapQueryErr(err))
 	}
-	return gitCheckpointFromRow(row), true, nil
+	return CanceledRunRecovery{Checkpoint: GitCheckpoint{
+		RunID:             runIDString(row.RunID),
+		StepOrdinal:       int(row.StepOrdinal),
+		Branch:            row.Branch,
+		PushedHead:        row.PushedHead,
+		ObservedBase:      row.ObservedBase,
+		PullRequestNumber: int(row.PullRequestNumber),
+		PullRequestNodeID: row.PullRequestNodeID,
+		StepResult:        row.StepResult,
+	}, MergeStepOrdinal: int(row.MergeStepOrdinal)}, true, nil
 }
 
 // RepositoryCheckpointInput is a repository Step checkpoint authorized by one
@@ -1053,6 +1069,15 @@ func reconcileConfirmedMergeAfterCancellation(
 	stepResult, err := confirmedMergeStepResult(in.MergeSHA)
 	if err != nil {
 		return TerminalResult{}, err
+	}
+	if in.StepOrdinal == 0 {
+		recoveredStep, startErr := q.StartRecoveredTargetMergeStep(ctx, storedb.StartRecoveredTargetMergeStepParams{
+			RunID: runID, StartedAt: pgTimestamp(in.EndedAt),
+		})
+		if startErr != nil {
+			return TerminalResult{}, fmt.Errorf("reconciling confirmed merge: starting recovery merge step: %w", wrapQueryErr(startErr))
+		}
+		in.StepOrdinal = int(recoveredStep.Ordinal)
 	}
 	if _, err := q.CompleteTargetMergeStep(ctx, storedb.CompleteTargetMergeStepParams{RunID: runID, Ordinal: int32(in.StepOrdinal), EndedAt: pgTimestamp(in.EndedAt), Result: stepResult}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

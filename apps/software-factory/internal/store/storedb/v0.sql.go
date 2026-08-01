@@ -479,9 +479,13 @@ func (q *Queries) InsertTargetRun(ctx context.Context, arg InsertTargetRunParams
 }
 
 const latestCanceledRunGitCheckpoint = `-- name: LatestCanceledRunGitCheckpoint :one
-SELECT checkpoint.run_id, checkpoint.step_ordinal, checkpoint.branch, checkpoint.pushed_head, checkpoint.observed_base, checkpoint.pull_request_number, checkpoint.pull_request_node_id, checkpoint.step_result
+SELECT checkpoint.run_id, checkpoint.step_ordinal, checkpoint.branch, checkpoint.pushed_head, checkpoint.observed_base, checkpoint.pull_request_number, checkpoint.pull_request_node_id, checkpoint.step_result, COALESCE(merge_step.ordinal, 0)::integer AS merge_step_ordinal
 FROM run AS predecessor
 JOIN run_git_checkpoint AS checkpoint ON checkpoint.run_id = predecessor.id
+LEFT JOIN run_step AS merge_step
+  ON merge_step.run_id = predecessor.id
+  AND merge_step.kind = 'merge_pull_request'
+  AND merge_step.state = 'running'
 WHERE predecessor.ticket_id = $1
   AND predecessor.id <> $2
   AND predecessor.target_outcome = 'canceled'
@@ -495,9 +499,21 @@ type LatestCanceledRunGitCheckpointParams struct {
 	ID       pgtype.UUID
 }
 
-func (q *Queries) LatestCanceledRunGitCheckpoint(ctx context.Context, arg LatestCanceledRunGitCheckpointParams) (RunGitCheckpoint, error) {
+type LatestCanceledRunGitCheckpointRow struct {
+	RunID             pgtype.UUID
+	StepOrdinal       int32
+	Branch            string
+	PushedHead        string
+	ObservedBase      string
+	PullRequestNumber int32
+	PullRequestNodeID string
+	StepResult        []byte
+	MergeStepOrdinal  int32
+}
+
+func (q *Queries) LatestCanceledRunGitCheckpoint(ctx context.Context, arg LatestCanceledRunGitCheckpointParams) (LatestCanceledRunGitCheckpointRow, error) {
 	row := q.db.QueryRow(ctx, latestCanceledRunGitCheckpoint, arg.TicketID, arg.ID)
-	var i RunGitCheckpoint
+	var i LatestCanceledRunGitCheckpointRow
 	err := row.Scan(
 		&i.RunID,
 		&i.StepOrdinal,
@@ -507,6 +523,7 @@ func (q *Queries) LatestCanceledRunGitCheckpoint(ctx context.Context, arg Latest
 		&i.PullRequestNumber,
 		&i.PullRequestNodeID,
 		&i.StepResult,
+		&i.MergeStepOrdinal,
 	)
 	return i, err
 }
@@ -665,6 +682,37 @@ func (q *Queries) ReopenTargetTicket(ctx context.Context, arg ReopenTargetTicket
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ActiveRunID,
+	)
+	return i, err
+}
+
+const startRecoveredTargetMergeStep = `-- name: StartRecoveredTargetMergeStep :one
+INSERT INTO run_step (run_id, ordinal, kind, iteration, reason, state, started_at)
+SELECT $1, COALESCE(MAX(ordinal), 0) + 1, 'merge_pull_request', 0,
+       'reconcile confirmed external merge', 'running', $2
+FROM run_step
+WHERE run_id = $1
+RETURNING run_id, ordinal, kind, iteration, reason, state, started_at, ended_at, result
+`
+
+type StartRecoveredTargetMergeStepParams struct {
+	RunID     pgtype.UUID
+	StartedAt pgtype.Timestamptz
+}
+
+func (q *Queries) StartRecoveredTargetMergeStep(ctx context.Context, arg StartRecoveredTargetMergeStepParams) (RunStep, error) {
+	row := q.db.QueryRow(ctx, startRecoveredTargetMergeStep, arg.RunID, arg.StartedAt)
+	var i RunStep
+	err := row.Scan(
+		&i.RunID,
+		&i.Ordinal,
+		&i.Kind,
+		&i.Iteration,
+		&i.Reason,
+		&i.State,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.Result,
 	)
 	return i, err
 }

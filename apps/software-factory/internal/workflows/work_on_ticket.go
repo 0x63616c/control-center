@@ -128,7 +128,7 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 		defer cancel()
 		finalCtx := workflow.WithActivityOptions(terminalCtx, targetActivityOptions(in.Policy.Recording))
 		if err := workflow.ExecuteActivity(finalCtx, targetRecordingActs.FinalizeConfirmedMerge, store.ConfirmedMergeInput{
-			RunID: recovery.Checkpoint.RunID, TicketID: in.TicketID, StepOrdinal: recovery.Checkpoint.StepOrdinal,
+			RunID: recovery.Checkpoint.RunID, TicketID: in.TicketID, StepOrdinal: recovery.MergeStepOrdinal,
 			ReviewedHead: clone.PredecessorMerge.ReviewedHead, MergeSHA: clone.PredecessorMerge.MergeSHA, EndedAt: workflow.Now(terminalCtx),
 		}).Get(finalCtx, nil); err != nil {
 			return fmt.Errorf("recording confirmed predecessor merge: %w", err)
