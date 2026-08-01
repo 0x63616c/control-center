@@ -255,7 +255,8 @@ belongs to PR 8 after production cutover.
 
 **Branch:** `codex/software-factory-v0-github-merge`  
 **Depends on:** PR 1  
-**Acceptance:** G01-G12, F05-F09, F13  
+**Acceptance:** G01-G11, F05-F09, F13
+
 **Primary files:**
 
 - `internal/clients/github/`
@@ -289,6 +290,8 @@ belongs to PR 8 after production cutover.
 
 **Branch:** `codex/software-factory-v0-policy-ci`  
 **Depends on:** PR 1  
+**Acceptance:** G12
+
 **Capability prerequisites for:** F01-F03, F08-F12, F14, A07-A10
 
 **Primary files:**

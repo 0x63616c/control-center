@@ -757,6 +757,25 @@ func (a *Activities) MarkPullRequestReadyForReview(ctx context.Context, nodeID s
 	return nil
 }
 
+// MergePullRequestInput identifies the reviewed pull-request head GitHub may merge.
+type MergePullRequestInput struct {
+	PullRequestNumber int
+	ExpectedHeadSHA   string
+}
+
+// MergePullRequest asks GitHub to squash-merge exactly the reviewed head.
+//
+// Semantic merge feedback is a typed result for the target workflow to route.
+// Transport, authentication, ruleset, and rate-limit errors still flow through
+// fail so Temporal retains the service's established retry classification.
+func (a *Activities) MergePullRequest(ctx context.Context, in MergePullRequestInput) (work.PullRequestMergeResult, error) {
+	result, err := a.deps.GitHub.MergePullRequest(ctx, in.PullRequestNumber, in.ExpectedHeadSHA)
+	if err != nil {
+		return work.PullRequestMergeResult{}, fail(ctx, fmt.Sprintf("squash-merging pull request #%d", in.PullRequestNumber), err)
+	}
+	return result, nil
+}
+
 // EnablePullRequestAutoMerge arms a proposed pull request to squash-merge
 // itself once Calum approves it and its checks are green.
 func (a *Activities) EnablePullRequestAutoMerge(ctx context.Context, nodeID string) error {

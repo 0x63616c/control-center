@@ -110,6 +110,20 @@ func TestFailKeepsARetryableRateLimitRetryable(t *testing.T) {
 	}
 }
 
+func TestFailKeepsARepositoryPolicyRejectionTypedAndRetryable(t *testing.T) {
+	t.Parallel()
+
+	err := fail(t.Context(), "merging pull request", fmt.Errorf("review required: %w", github.ErrRuleset))
+	app := appErrorOf(t, err)
+
+	if app.NonRetryable() {
+		t.Fatal("repository policy must remain retryable for bounded operator repair")
+	}
+	if app.Type() != ErrTypeRuleset {
+		t.Fatalf("type = %q, want %q", app.Type(), ErrTypeRuleset)
+	}
+}
+
 func TestFailReportsCancellationAsCancellationRatherThanAsAFailure(t *testing.T) {
 	t.Parallel()
 

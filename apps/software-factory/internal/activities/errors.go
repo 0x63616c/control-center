@@ -38,6 +38,10 @@ const (
 	// system is not broken, it is early.
 	ErrTypeRateLimit = "RateLimit"
 
+	// ErrTypeRuleset is a repository policy or merge grant that an operator can
+	// repair while the target Merge Step remains within its retry deadline.
+	ErrTypeRuleset = "GitHubRuleset"
+
 	// ErrTypeNotFound is a resource that is gone — or, in a private repository,
 	// one this installation cannot see, which GitHub reports identically.
 	ErrTypeNotFound = "NotFound"
@@ -136,6 +140,8 @@ func errorTypeOf(err error) string {
 		return ErrTypeAuth
 	case errors.Is(err, github.ErrRateLimit):
 		return ErrTypeRateLimit
+	case errors.Is(err, github.ErrRuleset):
+		return ErrTypeRuleset
 	case errors.Is(err, github.ErrNotFound):
 		return ErrTypeNotFound
 	case errors.Is(err, github.ErrInvalid):

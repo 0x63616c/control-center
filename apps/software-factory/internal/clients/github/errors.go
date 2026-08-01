@@ -33,6 +33,11 @@ var (
 	// ErrInvalid means we sent something GitHub would not accept. Sending it
 	// again sends the same thing.
 	ErrInvalid = errors.New("github rejected the request as malformed")
+
+	// ErrRuleset means repository policy or the installation's merge grant
+	// currently blocks a valid merge request. It is retryable so the target
+	// merge policy can wait for operator repair until its deadline.
+	ErrRuleset = errors.New("github repository policy blocks the merge")
 )
 
 // defaultRetryAfter is what a rate limit costs when GitHub does not say. Its
@@ -145,5 +150,5 @@ func retryAfterIn(h http.Header) time.Duration {
 // vocabulary.
 func alreadyClassified(err error) bool {
 	return errors.Is(err, ErrAuth) || errors.Is(err, ErrRateLimit) ||
-		errors.Is(err, ErrNotFound) || errors.Is(err, ErrInvalid)
+		errors.Is(err, ErrNotFound) || errors.Is(err, ErrInvalid) || errors.Is(err, ErrRuleset)
 }

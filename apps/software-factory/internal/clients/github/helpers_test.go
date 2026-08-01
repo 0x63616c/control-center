@@ -217,12 +217,19 @@ func (s *stub) String() string {
 
 // client builds a Client aimed at this stub, with logs captured.
 func (s *stub) client(t *testing.T) (*Client, *bytes.Buffer) {
+	return s.clientWithOptions(t)
+}
+
+// clientWithOptions builds the same captured client while letting a focused
+// transport test inject behaviour below go-github's request machinery.
+func (s *stub) clientWithOptions(t *testing.T, opts ...Option) (*Client, *bytes.Buffer) {
 	t.Helper()
 
 	logs := &bytes.Buffer{}
 	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	c, err := New(testConfig(), s.clk, log, withBaseURL(s.URL))
+	opts = append(opts, withBaseURL(s.URL))
+	c, err := New(testConfig(), s.clk, log, opts...)
 	if err != nil {
 		t.Fatalf("New returned an unexpected error: %v", err)
 	}
