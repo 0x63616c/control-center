@@ -11,6 +11,37 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const closeLegacyRun = `-- name: CloseLegacyRun :one
+UPDATE run SET ended_at = $2, outcome = 'failed', failure_kind = 'other'
+WHERE id = $1
+  AND ended_at IS NULL
+  AND target_outcome IS NULL
+RETURNING id, ticket_id, started_at, ended_at, outcome, failure_kind, target_outcome, target_failure_kind, reviewed_head, merge_sha
+`
+
+type CloseLegacyRunParams struct {
+	ID      pgtype.UUID
+	EndedAt pgtype.Timestamptz
+}
+
+func (q *Queries) CloseLegacyRun(ctx context.Context, arg CloseLegacyRunParams) (Run, error) {
+	row := q.db.QueryRow(ctx, closeLegacyRun, arg.ID, arg.EndedAt)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.TicketID,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.Outcome,
+		&i.FailureKind,
+		&i.TargetOutcome,
+		&i.TargetFailureKind,
+		&i.ReviewedHead,
+		&i.MergeSha,
+	)
+	return i, err
+}
+
 const endRun = `-- name: EndRun :one
 UPDATE run SET ended_at = $2, outcome = $3, failure_kind = $4
 WHERE id = $1
@@ -45,6 +76,46 @@ func (q *Queries) EndRun(ctx context.Context, arg EndRunParams) (Run, error) {
 		&i.MergeSha,
 	)
 	return i, err
+}
+
+const openLegacyRuns = `-- name: OpenLegacyRuns :many
+SELECT run.id, run.ticket_id, run.started_at, run.ended_at, run.outcome, run.failure_kind, run.target_outcome, run.target_failure_kind, run.reviewed_head, run.merge_sha FROM run
+JOIN ticket ON ticket.id = run.ticket_id
+WHERE run.ended_at IS NULL
+  AND run.target_outcome IS NULL
+  AND ticket.state IN ('working', 'review')
+ORDER BY run.started_at, run.id
+`
+
+func (q *Queries) OpenLegacyRuns(ctx context.Context) ([]Run, error) {
+	rows, err := q.db.Query(ctx, openLegacyRuns)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Run
+	for rows.Next() {
+		var i Run
+		if err := rows.Scan(
+			&i.ID,
+			&i.TicketID,
+			&i.StartedAt,
+			&i.EndedAt,
+			&i.Outcome,
+			&i.FailureKind,
+			&i.TargetOutcome,
+			&i.TargetFailureKind,
+			&i.ReviewedHead,
+			&i.MergeSha,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const run = `-- name: Run :one

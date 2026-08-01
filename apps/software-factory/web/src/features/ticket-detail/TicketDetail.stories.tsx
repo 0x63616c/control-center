@@ -92,7 +92,7 @@ export const StepWithSeveralAttempts: Story = {
                 fixtureAttempt({
                   attemptNo: 1,
                   state: "failed",
-                  failureKind: "provider",
+                  failureKind: "agent_unrecoverable",
                   result: { kind: "provider_failed" },
                   endedAt: "2026-07-31T10:05:00Z",
                 }),

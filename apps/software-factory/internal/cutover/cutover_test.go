@@ -246,10 +246,6 @@ func (fake *fakeDependencies) ListLegacyRuns(context.Context) ([]LegacyRun, erro
 	return append([]LegacyRun(nil), fake.runs...), nil
 }
 
-func (fake *fakeDependencies) ReopenLegacyTickets(_ context.Context, expected []LegacyTicket) ([]LegacyTicket, error) {
-	return fake.ReconcileLegacyState(context.Background(), expected, fake.runs)
-}
-
 func (fake *fakeDependencies) ReconcileLegacyState(_ context.Context, expected []LegacyTicket, runs []LegacyRun) ([]LegacyTicket, error) {
 	target := "reopen-legacy-tickets:"
 	for index, ticket := range expected {

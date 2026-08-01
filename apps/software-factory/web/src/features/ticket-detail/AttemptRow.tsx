@@ -1,5 +1,6 @@
 import type { AttemptOutput } from "@/api/generated";
 import { formatDuration } from "@/features/ticket-detail/duration";
+import { formatStructuredResult } from "@/features/ticket-detail/format";
 import { TranscriptViewer } from "@/features/ticket-detail/TranscriptViewer";
 import { transcriptDownloadUrl } from "@/features/ticket-detail/transcriptUrl";
 import { formatAttemptUsage } from "@/features/ticket-detail/usage";
@@ -14,11 +15,6 @@ function resultPillClass(state: string): string {
   return "pill pill-working";
 }
 
-function resultText(result: unknown): string | null {
-  if (result === null || result === undefined) return null;
-  return JSON.stringify(result, null, 2);
-}
-
 export function AttemptRow({
   attempt,
   showAttemptNumber,
@@ -26,7 +22,7 @@ export function AttemptRow({
   attempt: AttemptOutput;
   showAttemptNumber: boolean;
 }) {
-  const result = resultText(attempt.result);
+  const result = formatStructuredResult(attempt.result);
   return (
     <div className="attempt-row" data-testid="attempt-row">
       <div className="row-line">

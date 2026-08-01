@@ -38,8 +38,8 @@ jq '{ready, before, actions}' "${cutover_dir}/02-dry-run.json"
 
 The plan must enumerate every legacy dispatcher/Ticket execution, every open
 legacy factory PR with auto-merge enabled, and every `working` or `review`
-Ticket. Dry-run makes no signals, cancels, terminations, GitHub mutations, or
-database writes.
+Ticket together with every still-open legacy database Run. Dry-run makes no
+signals, cancels, terminations, GitHub mutations, or database writes.
 
 ## 3. Verify GitHub policy locally
 
@@ -57,7 +57,10 @@ jq . "${cutover_dir}/03-github-policy.json"
 
 The verifier exits non-zero unless an active approval ruleset names the App as
 a pull-request bypass actor and a separate active ruleset retains a non-empty
-required-check set that the App cannot bypass. A non-ready report blocks PR 8.
+required-check set that the App cannot bypass. That set must contain every
+check named by `DefaultTargetRunPolicy`, currently `test-software-factory`;
+unrelated required checks do not satisfy the gate. A non-ready report blocks
+PR 8.
 
 ## 4. Apply during the reviewed PR 8 cutover window
 
@@ -72,12 +75,15 @@ kubectl -n software-factory exec deployment/software-factory-worker -- \
 jq . "${cutover_dir}/04-apply.json"
 ```
 
-Apply pauses the old dispatcher, disables auto-merge on open legacy factory
-PRs, requests cancellation of old Ticket workflows, force-terminates survivors,
-proves every termination closed, terminates and proves closure of the old
-dispatcher, then transactionally reopens only the exact `working`/`review`
-Ticket state/version snapshots it inventoried. A race or surviving workflow
-returns a non-zero exit with the machine-readable non-ready report preserved.
+Apply pauses the old dispatcher and queries its applied configuration until
+the workflow acknowledges the cutover pause, disables auto-merge on open
+legacy factory PRs, requests cancellation of old Ticket workflows,
+force-terminates survivors, proves every termination closed, and terminates
+and proves closure of the old dispatcher. It then transactionally records
+still-open database Runs as failed historical Runs and reopens only the exact
+`working`/`review` Ticket state/version snapshots it inventoried. A race or
+surviving workflow returns a non-zero exit with the machine-readable non-ready
+report preserved.
 
 ## 5. Final deployment refusal gate
 
@@ -87,7 +93,8 @@ kubectl -n software-factory exec deployment/software-factory-worker -- \
   >"${cutover_dir}/05-ready.json"
 jq -e '.ready == true and (.after.workflows | length) == 0 and
   ([.after.pullRequests[] | select(.autoMergeEnabled)] | length) == 0 and
-  (.after.tickets | length) == 0' "${cutover_dir}/05-ready.json"
+  (.after.tickets | length) == 0 and
+  (.after.runs | length) == 0' "${cutover_dir}/05-ready.json"
 ```
 
 Do not merge PR 8 unless both this command and the GitHub policy verifier exit

@@ -88,6 +88,19 @@ export interface Attempt {
 }
 
 /**
+ * The agent role for this semantic execution: plan, implement, or review.
+ */
+export type AttemptOutputAgentStage =
+  (typeof AttemptOutputAgentStage)[keyof typeof AttemptOutputAgentStage];
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const AttemptOutputAgentStage = {
+  plan: "plan",
+  implement: "implement",
+  review: "review",
+} as const;
+
+/**
  * The part of inputTokens served from the provider's prompt cache. Null unless usageState is measured.
  */
 export type AttemptOutputCachedInputTokens = number | null;
@@ -96,6 +109,28 @@ export type AttemptOutputCachedInputTokens = number | null;
  * RFC3339 UTC. Null until the attempt ends.
  */
 export type AttemptOutputEndedAt = string | null;
+
+/**
+ * The terminal failure category, empty unless this Attempt failed.
+ */
+export type AttemptOutputFailureKind =
+  (typeof AttemptOutputFailureKind)[keyof typeof AttemptOutputFailureKind];
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const AttemptOutputFailureKind = {
+  "": "",
+  invalid_input: "invalid_input",
+  agent_unrecoverable: "agent_unrecoverable",
+  agent_attempt_budget: "agent_attempt_budget",
+  review_budget: "review_budget",
+  ci_unobserved: "ci_unobserved",
+  github_auth: "github_auth",
+  github_ruleset: "github_ruleset",
+  github_unavailable: "github_unavailable",
+  run_worker_unavailable: "run_worker_unavailable",
+  persistence_unavailable: "persistence_unavailable",
+  infrastructure: "infrastructure",
+} as const;
 
 /**
  * The whole input, including cachedInputTokens. Null unless usageState is measured.
@@ -112,9 +147,33 @@ export type AttemptOutputOutputTokens = number | null;
  */
 export type AttemptOutputReasoningTokens = number | null;
 
+/**
+ * The durable Attempt lifecycle state.
+ */
+export type AttemptOutputState = (typeof AttemptOutputState)[keyof typeof AttemptOutputState];
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const AttemptOutputState = {
+  running: "running",
+  succeeded: "succeeded",
+  failed: "failed",
+} as const;
+
+/**
+ * Whether token usage is unknown or measured.
+ */
+export type AttemptOutputUsageState =
+  (typeof AttemptOutputUsageState)[keyof typeof AttemptOutputUsageState];
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const AttemptOutputUsageState = {
+  unknown: "unknown",
+  measured: "measured",
+} as const;
+
 export interface AttemptOutput {
   /** The agent role for this semantic execution: plan, implement, or review. */
-  agentStage: string;
+  agentStage: AttemptOutputAgentStage;
   /** Which semantic Agent Attempt of this Step this is, starting at 1. Temporal activity tries are not represented. */
   attemptNo: number;
   /** The part of inputTokens served from the provider's prompt cache. Null unless usageState is measured. */
@@ -124,7 +183,7 @@ export interface AttemptOutput {
   /** RFC3339 UTC. Null until the attempt ends. */
   endedAt: AttemptOutputEndedAt;
   /** The terminal failure category, empty unless this Attempt failed. */
-  failureKind: string;
+  failureKind: AttemptOutputFailureKind;
   /** Whether a transcript is stored for this attempt. */
   hasTranscript: boolean;
   /** The whole input, including cachedInputTokens. Null unless usageState is measured. */
@@ -144,11 +203,11 @@ export interface AttemptOutput {
   /** RFC3339 UTC. */
   startedAt: string;
   /** The durable Attempt lifecycle state. */
-  state: string;
+  state: AttemptOutputState;
   /** The download path for this transcript, empty when none is stored. */
   transcriptPath: string;
   /** Whether token usage is unknown or measured. */
-  usageState: string;
+  usageState: AttemptOutputUsageState;
 }
 
 export interface BuildOutputBody {
@@ -299,6 +358,66 @@ export interface RepositoryWrite {
 export type RunOutputEndedAt = string | null;
 
 /**
+ * The target Run failure category, or the historical category for a legacy Run. Empty when not failed.
+ */
+export type RunOutputFailureKind = (typeof RunOutputFailureKind)[keyof typeof RunOutputFailureKind];
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const RunOutputFailureKind = {
+  "": "",
+  invalid_input: "invalid_input",
+  agent_unrecoverable: "agent_unrecoverable",
+  agent_attempt_budget: "agent_attempt_budget",
+  review_budget: "review_budget",
+  ci_unobserved: "ci_unobserved",
+  github_auth: "github_auth",
+  github_ruleset: "github_ruleset",
+  github_unavailable: "github_unavailable",
+  run_worker_unavailable: "run_worker_unavailable",
+  persistence_unavailable: "persistence_unavailable",
+  infrastructure: "infrastructure",
+  auth: "auth",
+  "rate-limit": "rate-limit",
+  other: "other",
+} as const;
+
+/**
+ * The target Run outcome, or the historical outcome for a legacy Run. Empty until terminal.
+ */
+export type RunOutputOutcome = (typeof RunOutputOutcome)[keyof typeof RunOutputOutcome];
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const RunOutputOutcome = {
+  "": "",
+  succeeded: "succeeded",
+  canceled: "canceled",
+  exhausted: "exhausted",
+  failed: "failed",
+  proposed: "proposed",
+  blocked: "blocked",
+} as const;
+
+/**
+ * The latest active Step kind, falling back to the latest terminal Step kind.
+ */
+export type RunOutputPhase = (typeof RunOutputPhase)[keyof typeof RunOutputPhase];
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const RunOutputPhase = {
+  "": "",
+  prepare_run_worker: "prepare_run_worker",
+  acquire_run_worker_session: "acquire_run_worker_session",
+  clone_repository: "clone_repository",
+  plan: "plan",
+  implement: "implement",
+  sync_pull_request: "sync_pull_request",
+  await_ci: "await_ci",
+  review: "review",
+  mark_pull_request_ready: "mark_pull_request_ready",
+  merge_pull_request: "merge_pull_request",
+} as const;
+
+/**
  * This Run's Steps, in pipeline order.
  */
 export type RunOutputSteps = StepOutput[] | null;
@@ -311,13 +430,13 @@ export interface RunOutput {
   /** RFC3339 UTC. Null until the Run ends. */
   endedAt: RunOutputEndedAt;
   /** The target Run failure category, or the historical category for a legacy Run. Empty when not failed. */
-  failureKind: string;
+  failureKind: RunOutputFailureKind;
   /** Temporal's run id for this Run. */
   id: string;
   /** The target Run outcome, or the historical outcome for a legacy Run. Empty until terminal. */
-  outcome: string;
+  outcome: RunOutputOutcome;
   /** The latest active Step kind, falling back to the latest terminal Step kind. */
-  phase: string;
+  phase: RunOutputPhase;
   /** RFC3339 UTC. */
   startedAt: string;
   /** This Run's Steps, in pipeline order. */
@@ -345,6 +464,56 @@ export type StepOutputAttempts = AttemptOutput[] | null;
  */
 export type StepOutputEndedAt = string | null;
 
+/**
+ * The operation this Step records.
+ */
+export type StepOutputKind = (typeof StepOutputKind)[keyof typeof StepOutputKind];
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const StepOutputKind = {
+  prepare_run_worker: "prepare_run_worker",
+  acquire_run_worker_session: "acquire_run_worker_session",
+  clone_repository: "clone_repository",
+  plan: "plan",
+  implement: "implement",
+  sync_pull_request: "sync_pull_request",
+  await_ci: "await_ci",
+  review: "review",
+  mark_pull_request_ready: "mark_pull_request_ready",
+  merge_pull_request: "merge_pull_request",
+} as const;
+
+/**
+ * Historical alias for agent-backed legacy Steps.
+ */
+export type StepOutputStage = (typeof StepOutputStage)[keyof typeof StepOutputStage];
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const StepOutputStage = {
+  prepare_run_worker: "prepare_run_worker",
+  acquire_run_worker_session: "acquire_run_worker_session",
+  clone_repository: "clone_repository",
+  plan: "plan",
+  implement: "implement",
+  sync_pull_request: "sync_pull_request",
+  await_ci: "await_ci",
+  review: "review",
+  mark_pull_request_ready: "mark_pull_request_ready",
+  merge_pull_request: "merge_pull_request",
+} as const;
+
+/**
+ * The durable Step lifecycle state.
+ */
+export type StepOutputState = (typeof StepOutputState)[keyof typeof StepOutputState];
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const StepOutputState = {
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
 export interface StepOutput {
   /** This Step's workflow-authorized semantic Agent Attempts, oldest first. Native Temporal activity tries are absent. */
   attempts: StepOutputAttempts;
@@ -353,7 +522,7 @@ export interface StepOutput {
   /** The semantic repetition number for this Step kind, when applicable. */
   iteration: number;
   /** The operation this Step records. */
-  kind: string;
+  kind: StepOutputKind;
   /** The stable Step identity within this Run, starting at 1. */
   ordinal: number;
   /** Why this Step was authorized, when applicable. */
@@ -361,11 +530,11 @@ export interface StepOutput {
   /** The durable structured result envelope. Null until one is recorded. */
   result: unknown;
   /** Historical alias for agent-backed legacy Steps. */
-  stage: string;
+  stage: StepOutputStage;
   /** RFC3339 UTC. */
   startedAt: string;
   /** The durable Step lifecycle state. */
-  state: string;
+  state: StepOutputState;
   /** Historical alias for a legacy Step iteration. */
   turn: number;
   /** Rolled up across this Step's Attempts. */

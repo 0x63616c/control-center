@@ -57,6 +57,13 @@ type LegacyTicket struct {
 	Version time.Time         `json:"version"`
 }
 
+// LegacyRun is an open database Run left by the pre-cutover workflow.
+type LegacyRun struct {
+	ID        string    `json:"id"`
+	TicketID  int64     `json:"ticketId"`
+	StartedAt time.Time `json:"startedAt"`
+}
+
 // LegacyTicketState is the narrow state vocabulary which cutover can repair.
 type LegacyTicketState string
 
@@ -74,6 +81,7 @@ type Inventory struct {
 	Workflows    []WorkflowExecution `json:"workflows"`
 	PullRequests []PullRequest       `json:"pullRequests"`
 	Tickets      []LegacyTicket      `json:"tickets"`
+	Runs         []LegacyRun         `json:"runs"`
 }
 
 // Action records one planned or applied operation without carrying credentials.
@@ -131,7 +139,8 @@ type GitHub interface {
 // Tickets owns the single transactional legacy-state repair.
 type Tickets interface {
 	ListLegacyTickets(context.Context) ([]LegacyTicket, error)
-	ReopenLegacyTickets(context.Context, []LegacyTicket) ([]LegacyTicket, error)
+	ListLegacyRuns(context.Context) ([]LegacyRun, error)
+	ReconcileLegacyState(context.Context, []LegacyTicket, []LegacyRun) ([]LegacyTicket, error)
 }
 
 // Dependencies groups the three independently fakeable external boundaries.
@@ -177,7 +186,7 @@ func Execute(ctx context.Context, dependencies Dependencies, options Options) (R
 		report.Actions = append(report.Actions, Action{Kind: "pause_dispatcher", Target: dispatchers[0].ID, Status: "applied"})
 	}
 
-	// Re-inventory after Temporal accepted the pause signal. Anything admitted
+	// Re-inventory after the dispatcher query proves the pause was applied. Anything admitted
 	// in the initial inventory/pause race is included in this run; anything
 	// admitted later is caught by the closure inventory before ticket repair.
 	quiesced, err := inventory(ctx, dependencies)
@@ -234,10 +243,13 @@ func Execute(ctx context.Context, dependencies Dependencies, options Options) (R
 	if len(closedInventory.Workflows) > 0 {
 		return report, &NotReadyError{Report: report}
 	}
-	if len(quiesced.Tickets) > 0 {
-		reopened, err := dependencies.Tickets.ReopenLegacyTickets(ctx, quiesced.Tickets)
+	if len(closedInventory.Tickets) > 0 || len(closedInventory.Runs) > 0 {
+		reopened, err := dependencies.Tickets.ReconcileLegacyState(ctx, closedInventory.Tickets, closedInventory.Runs)
 		if err != nil {
-			return report, fmt.Errorf("reopening legacy tickets: %w", err)
+			return report, fmt.Errorf("reconciling legacy database state: %w", err)
+		}
+		for _, run := range closedInventory.Runs {
+			report.Actions = append(report.Actions, Action{Kind: "close_legacy_run", Target: "run/" + run.ID, Status: "applied"})
 		}
 		for _, ticket := range reopened {
 			report.Actions = append(report.Actions, Action{Kind: "reopen_ticket", Target: fmt.Sprintf("ticket/%d", ticket.ID), Status: "applied"})
@@ -269,6 +281,10 @@ func inventory(ctx context.Context, dependencies Dependencies) (Inventory, error
 	if err != nil {
 		return Inventory{}, fmt.Errorf("listing legacy tickets: %w", err)
 	}
+	runs, err := dependencies.Tickets.ListLegacyRuns(ctx)
+	if err != nil {
+		return Inventory{}, fmt.Errorf("listing legacy database runs: %w", err)
+	}
 	for _, execution := range workflows {
 		if execution.Kind != WorkflowDispatcher && execution.Kind != WorkflowTicket {
 			return Inventory{}, fmt.Errorf("legacy workflow %s/%s has unknown kind %q", execution.ID, execution.RunID, execution.Kind)
@@ -285,11 +301,17 @@ func inventory(ctx context.Context, dependencies Dependencies) (Inventory, error
 	})
 	sort.Slice(pullRequests, func(left, right int) bool { return pullRequests[left].Number < pullRequests[right].Number })
 	sort.Slice(tickets, func(left, right int) bool { return tickets[left].ID < tickets[right].ID })
-	return Inventory{Workflows: nonNil(workflows), PullRequests: nonNil(pullRequests), Tickets: nonNil(tickets)}, nil
+	sort.Slice(runs, func(left, right int) bool {
+		if runs[left].StartedAt != runs[right].StartedAt {
+			return runs[left].StartedAt.Before(runs[right].StartedAt)
+		}
+		return runs[left].ID < runs[right].ID
+	})
+	return Inventory{Workflows: nonNil(workflows), PullRequests: nonNil(pullRequests), Tickets: nonNil(tickets), Runs: nonNil(runs)}, nil
 }
 
 func ready(inventory Inventory) bool {
-	if len(inventory.Workflows) > 0 || len(inventory.Tickets) > 0 {
+	if len(inventory.Workflows) > 0 || len(inventory.Tickets) > 0 || len(inventory.Runs) > 0 {
 		return false
 	}
 	for _, pullRequest := range inventory.PullRequests {
@@ -328,6 +350,9 @@ func plannedActions(inventory Inventory) []Action {
 	}
 	for _, dispatcher := range dispatchers {
 		actions = append(actions, Action{Kind: "terminate_dispatcher", Target: executionTarget(dispatcher), Status: "planned"})
+	}
+	for _, run := range inventory.Runs {
+		actions = append(actions, Action{Kind: "close_legacy_run", Target: "run/" + run.ID, Status: "planned"})
 	}
 	for _, ticket := range inventory.Tickets {
 		actions = append(actions, Action{Kind: "reopen_ticket", Target: fmt.Sprintf("ticket/%d", ticket.ID), Status: "planned"})

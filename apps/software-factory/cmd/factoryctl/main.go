@@ -29,6 +29,7 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/githubpolicy"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
 func main() {
@@ -149,7 +150,7 @@ func runPolicyVerification(args []string, stdin io.Reader, stdout io.Writer) err
 	if err := decoder.Decode(&rulesets); err != nil {
 		return fmt.Errorf("decoding detailed GitHub rulesets: %w", err)
 	}
-	report := githubpolicy.Verify(rulesets, parsedAppID, *branch)
+	report := githubpolicy.Verify(rulesets, parsedAppID, *branch, work.DefaultTargetRunPolicy().RequiredChecks)
 	if err := json.NewEncoder(stdout).Encode(report); err != nil {
 		return fmt.Errorf("writing GitHub policy report: %w", err)
 	}

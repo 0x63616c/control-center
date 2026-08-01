@@ -51,6 +51,10 @@ components:
       properties:
         agentStage:
           description: "The agent role for this semantic execution: plan, implement, or review."
+          enum:
+            - plan
+            - implement
+            - review
           type: string
         attemptNo:
           description: Which semantic Agent Attempt of this Step this is, starting at 1. Temporal activity tries are not represented.
@@ -72,6 +76,19 @@ components:
             - "null"
         failureKind:
           description: The terminal failure category, empty unless this Attempt failed.
+          enum:
+            - ""
+            - invalid_input
+            - agent_unrecoverable
+            - agent_attempt_budget
+            - review_budget
+            - ci_unobserved
+            - github_auth
+            - github_ruleset
+            - github_unavailable
+            - run_worker_unavailable
+            - persistence_unavailable
+            - infrastructure
           type: string
         hasTranscript:
           description: Whether a transcript is stored for this attempt.
@@ -110,12 +127,19 @@ components:
           type: string
         state:
           description: The durable Attempt lifecycle state.
+          enum:
+            - running
+            - succeeded
+            - failed
           type: string
         transcriptPath:
           description: The download path for this transcript, empty when none is stored.
           type: string
         usageState:
           description: Whether token usage is unknown or measured.
+          enum:
+            - unknown
+            - measured
           type: string
       required:
         - attemptNo
@@ -405,15 +429,51 @@ components:
             - "null"
         failureKind:
           description: The target Run failure category, or the historical category for a legacy Run. Empty when not failed.
+          enum:
+            - ""
+            - invalid_input
+            - agent_unrecoverable
+            - agent_attempt_budget
+            - review_budget
+            - ci_unobserved
+            - github_auth
+            - github_ruleset
+            - github_unavailable
+            - run_worker_unavailable
+            - persistence_unavailable
+            - infrastructure
+            - auth
+            - rate-limit
+            - other
           type: string
         id:
           description: Temporal's run id for this Run.
           type: string
         outcome:
           description: The target Run outcome, or the historical outcome for a legacy Run. Empty until terminal.
+          enum:
+            - ""
+            - succeeded
+            - canceled
+            - exhausted
+            - failed
+            - proposed
+            - blocked
           type: string
         phase:
           description: The latest active Step kind, falling back to the latest terminal Step kind.
+          enum:
+            - ""
+            - prepare_run_worker
+            - acquire_run_worker_session
+            - clone_repository
+            - plan
+            - implement
+            - sync_pull_request
+            - await_ci
+            - review
+            - mark_pull_request_ready
+            - merge_pull_request
           type: string
         startedAt:
           description: RFC3339 UTC.
@@ -481,6 +541,17 @@ components:
           type: integer
         kind:
           description: The operation this Step records.
+          enum:
+            - prepare_run_worker
+            - acquire_run_worker_session
+            - clone_repository
+            - plan
+            - implement
+            - sync_pull_request
+            - await_ci
+            - review
+            - mark_pull_request_ready
+            - merge_pull_request
           type: string
         ordinal:
           description: The stable Step identity within this Run, starting at 1.
@@ -493,12 +564,27 @@ components:
           description: The durable structured result envelope. Null until one is recorded.
         stage:
           description: Historical alias for agent-backed legacy Steps.
+          enum:
+            - prepare_run_worker
+            - acquire_run_worker_session
+            - clone_repository
+            - plan
+            - implement
+            - sync_pull_request
+            - await_ci
+            - review
+            - mark_pull_request_ready
+            - merge_pull_request
           type: string
         startedAt:
           description: RFC3339 UTC.
           type: string
         state:
           description: The durable Step lifecycle state.
+          enum:
+            - running
+            - completed
+            - failed
           type: string
         turn:
           description: Historical alias for a legacy Step iteration.

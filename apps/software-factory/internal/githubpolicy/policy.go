@@ -62,14 +62,15 @@ type Report struct {
 	ApprovalRuleset string   `json:"approvalRuleset,omitempty"`
 	ChecksRulesets  []string `json:"checksRulesets"`
 	RequiredChecks  []string `json:"requiredChecks"`
+	ExpectedChecks  []string `json:"expectedChecks"`
 	Missing         []string `json:"missing"`
 }
 
 // Verify requires two independently enforced facts: an active approval rule
 // the App can bypass through a PR, and active checks in a ruleset where that
 // App is not a bypass actor.
-func Verify(rulesets []Ruleset, appID int64, branch string) Report {
-	report := Report{Version: 1, Branch: branch, ChecksRulesets: []string{}, RequiredChecks: []string{}, Missing: []string{}}
+func Verify(rulesets []Ruleset, appID int64, branch string, expectedChecks []string) Report {
+	report := Report{Version: 1, Branch: branch, ChecksRulesets: []string{}, RequiredChecks: []string{}, ExpectedChecks: append([]string(nil), expectedChecks...), Missing: []string{}}
 	checks := map[string]struct{}{}
 	for _, ruleset := range rulesets {
 		if ruleset.Enforcement != "active" || !appliesToBranch(ruleset, branch) {
@@ -100,11 +101,14 @@ func Verify(rulesets []Ruleset, appID int64, branch string) Report {
 	}
 	sort.Strings(report.ChecksRulesets)
 	sort.Strings(report.RequiredChecks)
+	sort.Strings(report.ExpectedChecks)
 	if report.ApprovalRuleset == "" {
 		report.Missing = append(report.Missing, "active approval rule bypassable by the GitHub App through pull requests")
 	}
-	if len(report.RequiredChecks) == 0 {
-		report.Missing = append(report.Missing, "active required checks in a ruleset the GitHub App cannot bypass")
+	for _, expected := range report.ExpectedChecks {
+		if _, protected := checks[expected]; !protected {
+			report.Missing = append(report.Missing, "non-bypassable required check "+expected)
+		}
 	}
 	report.Ready = len(report.Missing) == 0
 	return report

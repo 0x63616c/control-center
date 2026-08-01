@@ -332,6 +332,46 @@ func TestReopenLegacyTicketsRollsBackEveryRowWhenOneSnapshotIsStale(t *testing.T
 	}
 }
 
+func TestReconcileLegacyStateClosesRunsAndReopensTicketsAtomically(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	ticket, err := s.CreateTicket(ctx, "legacy cutover", "", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	ticket, err = s.TransitionTicketState(ctx, ticket.ID, store.TicketOpen, store.TicketWorking)
+	if err != nil {
+		t.Fatalf("TransitionTicketState: %v", err)
+	}
+	startedAt := time.Date(2026, time.July, 31, 20, 0, 0, 0, time.UTC)
+	runID := newTestRunID(t)
+	if _, err := s.StartRun(ctx, runID, ticket.ID, startedAt); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	runs, err := s.OpenLegacyRuns(ctx)
+	if err != nil {
+		t.Fatalf("OpenLegacyRuns: %v", err)
+	}
+	if len(runs) != 1 || runs[0].ID != runID {
+		t.Fatalf("OpenLegacyRuns = %+v, want %s", runs, runID)
+	}
+	endedAt := startedAt.Add(time.Hour)
+	reopened, err := s.ReconcileLegacyState(ctx, []store.Ticket{ticket}, runs, endedAt)
+	if err != nil {
+		t.Fatalf("ReconcileLegacyState: %v", err)
+	}
+	if len(reopened) != 1 || reopened[0].State != store.TicketOpen {
+		t.Fatalf("reopened = %+v, want one open Ticket", reopened)
+	}
+	closed, err := s.Run(ctx, runID)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if closed.EndedAt != endedAt || closed.Outcome != work.OutcomeFailed || closed.Failure != work.FailureOther {
+		t.Fatalf("closed Run = %+v, want failed/other at %s", closed, endedAt)
+	}
+}
+
 func TestCreateTicketCommitsDeclaredBlockersWithTheTicket(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

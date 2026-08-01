@@ -1,6 +1,7 @@
 import type { RunOutput } from "@/api/generated";
 import { TemporalLink } from "@/components/TemporalLink";
 import { formatDuration } from "@/features/ticket-detail/duration";
+import { formatMachineLabel } from "@/features/ticket-detail/format";
 import { StepList } from "@/features/ticket-detail/StepList";
 import { formatUsage } from "@/features/ticket-detail/usage";
 import { temporalRunUrl } from "@/lib/temporal";
@@ -21,13 +22,6 @@ function runPillClass(run: RunOutput): string {
   return "pill pill-blocked";
 }
 
-function phaseLabel(phase: string): string {
-  return phase
-    .split("_")
-    .map((part) => (part === "ci" ? "CI" : `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`))
-    .join(" ");
-}
-
 export function RunCard({ run }: { run: RunOutput }) {
   return (
     <article className="run-card">
@@ -43,7 +37,7 @@ export function RunCard({ run }: { run: RunOutput }) {
           label="Temporal execution (technical retries)"
         />
       </header>
-      <p className="run-phase">Phase: {phaseLabel(run.phase) || "Not started"}</p>
+      <p className="run-phase">Phase: {formatMachineLabel(run.phase) || "Not started"}</p>
       {run.confirmedMerge && (
         <p className="confirmed-merge">
           Confirmed Merge: <code>{run.confirmedMerge.mergeSha}</code>{" "}

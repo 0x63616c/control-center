@@ -119,7 +119,7 @@ func (f *Store) History(ctx context.Context, runID string) (store.RunHistory, er
 	if err != nil {
 		return store.RunHistory{}, err
 	}
-	if len(target.Steps) > 0 {
+	if len(target.Steps) > 0 || target.Run.TargetOutcome != "" {
 		return store.RunHistory{Run: target.Run, Steps: target.Steps}, nil
 	}
 	legacy, err := f.RunDetail(ctx, runID)

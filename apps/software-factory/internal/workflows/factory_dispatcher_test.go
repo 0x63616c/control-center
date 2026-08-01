@@ -317,17 +317,16 @@ func TestFactoryDispatcherAppliesAnUpdateConfigSignal(t *testing.T) {
 	}
 }
 
-func TestFactoryDispatcherReportsWhenAPauseHasBeenApplied(t *testing.T) {
+func TestFactoryDispatcherReportsItsAppliedPauseState(t *testing.T) {
 	t.Parallel()
 
 	h := newFactoryDispatcherHarness(t)
-	paused := true
+	h.config.Paused = true
 	var status work.FactoryDispatcherStatus
 	var queryErr error
-	h.at(45*time.Second, func() {
-		h.env.SignalWorkflow(workflows.SignalUpdateConfig, work.ConfigUpdate{Paused: &paused})
-	})
-	h.at(46*time.Second, func() {
+	queried := false
+	h.at(time.Second, func() {
+		queried = true
 		value, err := h.env.QueryWorkflow(workflows.QueryFactoryDispatcherStatus)
 		if err != nil {
 			queryErr = err
@@ -337,6 +336,9 @@ func TestFactoryDispatcherReportsWhenAPauseHasBeenApplied(t *testing.T) {
 	})
 	h.run()
 
+	if !queried {
+		t.Fatalf("status query callback did not run; workflow error: %v", h.env.GetWorkflowError())
+	}
 	if queryErr != nil {
 		t.Fatalf("QueryWorkflow: %v", queryErr)
 	}

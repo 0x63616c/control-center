@@ -1,31 +1,20 @@
 import type { StepOutput } from "@/api/generated";
 import { AttemptRow } from "@/features/ticket-detail/AttemptRow";
 import { formatDuration } from "@/features/ticket-detail/duration";
+import { formatMachineLabel, formatStructuredResult } from "@/features/ticket-detail/format";
 import { formatUsage } from "@/features/ticket-detail/usage";
-
-function stepLabel(kind: string): string {
-  return kind
-    .split("_")
-    .map((part) => (part === "ci" ? "CI" : `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`))
-    .join(" ");
-}
-
-function resultText(result: unknown): string | null {
-  if (result === null || result === undefined) return null;
-  return JSON.stringify(result, null, 2);
-}
 
 // StepRow renders the durable ordinal lifecycle. Agent Attempts are semantic
 // executions authorized by the workflow; Temporal's technical retries remain
 // behind the Run-level Temporal link and never inflate this count.
 export function StepRow({ step }: { step: StepOutput }) {
   const attempts = step.attempts ?? [];
-  const result = resultText(step.result);
+  const result = formatStructuredResult(step.result);
   return (
     <div className="step-row" data-testid="step-row">
       <div className="row-line">
         <strong>
-          #{step.ordinal} {stepLabel(step.kind)}
+          #{step.ordinal} {formatMachineLabel(step.kind)}
         </strong>
         <span
           className={
@@ -44,7 +33,7 @@ export function StepRow({ step }: { step: StepOutput }) {
           {attempts.length > 1 && ` · ${attempts.length} Agent Attempts`}
         </span>
       </div>
-      {step.reason && <p className="row-meta">Reason: {stepLabel(step.reason)}</p>}
+      {step.reason && <p className="row-meta">Reason: {formatMachineLabel(step.reason)}</p>}
       <p className="usage">Usage: {formatUsage(step.usage)}</p>
       {attempts.length === 0 ? (
         <p className="row-meta">No Agent Attempt (infrastructure Step).</p>

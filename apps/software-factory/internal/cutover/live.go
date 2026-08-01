@@ -17,7 +17,7 @@ func LiveDependencies(temporal temporalclient.Client, namespace string, github *
 	return Dependencies{
 		Temporal: &liveTemporal{controller: temporalclient.NewLegacyController(temporal, namespace, clk)},
 		GitHub:   liveGitHub{client: github},
-		Tickets:  liveTickets{store: tickets},
+		Tickets:  liveTickets{store: tickets, clock: clk},
 	}
 }
 
@@ -96,7 +96,10 @@ func (live liveGitHub) DisableAutoMerge(ctx context.Context, pullRequest PullReq
 	return nil
 }
 
-type liveTickets struct{ store *store.Store }
+type liveTickets struct {
+	store *store.Store
+	clock clock.Clock
+}
 
 func (live liveTickets) ListLegacyTickets(ctx context.Context) ([]LegacyTicket, error) {
 	working, err := live.store.TicketsByState(ctx, store.TicketWorking)
@@ -118,7 +121,19 @@ func (live liveTickets) ListLegacyTickets(ctx context.Context) ([]LegacyTicket, 
 	return result, nil
 }
 
-func (live liveTickets) ReopenLegacyTickets(ctx context.Context, expected []LegacyTicket) ([]LegacyTicket, error) {
+func (live liveTickets) ListLegacyRuns(ctx context.Context) ([]LegacyRun, error) {
+	listed, err := live.store.OpenLegacyRuns(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing open legacy database runs: %w", err)
+	}
+	runs := make([]LegacyRun, 0, len(listed))
+	for _, run := range listed {
+		runs = append(runs, LegacyRun{ID: run.ID, TicketID: int64(run.TicketID), StartedAt: run.StartedAt.UTC()})
+	}
+	return runs, nil
+}
+
+func (live liveTickets) ReconcileLegacyState(ctx context.Context, expected []LegacyTicket, expectedRuns []LegacyRun) ([]LegacyTicket, error) {
 	snapshots := make([]store.Ticket, 0, len(expected))
 	for _, ticket := range expected {
 		state, err := storeTicketState(ticket.State)
@@ -127,9 +142,13 @@ func (live liveTickets) ReopenLegacyTickets(ctx context.Context, expected []Lega
 		}
 		snapshots = append(snapshots, store.Ticket{ID: store.TicketID(ticket.ID), State: state, UpdatedAt: ticket.Version})
 	}
-	reopened, err := live.store.ReopenLegacyTickets(ctx, snapshots)
+	runSnapshots := make([]store.Run, 0, len(expectedRuns))
+	for _, run := range expectedRuns {
+		runSnapshots = append(runSnapshots, store.Run{ID: run.ID, TicketID: store.TicketID(run.TicketID), StartedAt: run.StartedAt})
+	}
+	reopened, err := live.store.ReconcileLegacyState(ctx, snapshots, runSnapshots, live.clock.Now())
 	if err != nil {
-		return nil, fmt.Errorf("reopening legacy tickets transactionally: %w", err)
+		return nil, fmt.Errorf("reconciling legacy runs and tickets transactionally: %w", err)
 	}
 	result := make([]LegacyTicket, 0, len(reopened))
 	for _, ticket := range reopened {

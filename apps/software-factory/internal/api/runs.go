@@ -36,13 +36,13 @@ type usageOutput struct {
 // Attempt's numbers are summed, which happens at Step and Run, not here.
 type attemptOutput struct {
 	AttemptNo         int             `json:"attemptNo" doc:"Which semantic Agent Attempt of this Step this is, starting at 1. Temporal activity tries are not represented."`
-	AgentStage        string          `json:"agentStage" doc:"The agent role for this semantic execution: plan, implement, or review."`
+	AgentStage        string          `json:"agentStage" enum:"plan,implement,review" doc:"The agent role for this semantic execution: plan, implement, or review."`
 	Model             string          `json:"model" doc:"The model this attempt ran on."`
 	Effort            string          `json:"effort" doc:"The reasoning effort this attempt ran on."`
-	State             string          `json:"state" doc:"The durable Attempt lifecycle state."`
-	FailureKind       string          `json:"failureKind" doc:"The terminal failure category, empty unless this Attempt failed."`
+	State             string          `json:"state" enum:"running,succeeded,failed" doc:"The durable Attempt lifecycle state."`
+	FailureKind       string          `json:"failureKind" enum:",invalid_input,agent_unrecoverable,agent_attempt_budget,review_budget,ci_unobserved,github_auth,github_ruleset,github_unavailable,run_worker_unavailable,persistence_unavailable,infrastructure" doc:"The terminal failure category, empty unless this Attempt failed."`
 	ProviderThreadID  string          `json:"providerThreadId" doc:"The provider thread identity captured by this semantic Attempt."`
-	UsageState        string          `json:"usageState" doc:"Whether token usage is unknown or measured."`
+	UsageState        string          `json:"usageState" enum:"unknown,measured" doc:"Whether token usage is unknown or measured."`
 	Measured          bool            `json:"measured" doc:"Compatibility projection of usageState == measured."`
 	InputTokens       *int64          `json:"inputTokens" doc:"The whole input, including cachedInputTokens. Null unless usageState is measured."`
 	CachedInputTokens *int64          `json:"cachedInputTokens" doc:"The part of inputTokens served from the provider's prompt cache. Null unless usageState is measured."`
@@ -59,11 +59,11 @@ type attemptOutput struct {
 // aliases while old Runs are projected through this ordinal model.
 type stepOutput struct {
 	Ordinal   int             `json:"ordinal" doc:"The stable Step identity within this Run, starting at 1."`
-	Kind      string          `json:"kind" doc:"The operation this Step records."`
+	Kind      string          `json:"kind" enum:"prepare_run_worker,acquire_run_worker_session,clone_repository,plan,implement,sync_pull_request,await_ci,review,mark_pull_request_ready,merge_pull_request" doc:"The operation this Step records."`
 	Iteration int             `json:"iteration" doc:"The semantic repetition number for this Step kind, when applicable."`
 	Reason    string          `json:"reason" doc:"Why this Step was authorized, when applicable."`
-	State     string          `json:"state" doc:"The durable Step lifecycle state."`
-	Stage     string          `json:"stage" doc:"Historical alias for agent-backed legacy Steps."`
+	State     string          `json:"state" enum:"running,completed,failed" doc:"The durable Step lifecycle state."`
+	Stage     string          `json:"stage" enum:"prepare_run_worker,acquire_run_worker_session,clone_repository,plan,implement,sync_pull_request,await_ci,review,mark_pull_request_ready,merge_pull_request" doc:"Historical alias for agent-backed legacy Steps."`
 	Turn      int             `json:"turn" doc:"Historical alias for a legacy Step iteration."`
 	StartedAt string          `json:"startedAt" doc:"RFC3339 UTC."`
 	EndedAt   *string         `json:"endedAt" doc:"RFC3339 UTC. Null while its last Attempt is still running."`
@@ -83,10 +83,10 @@ type runOutput struct {
 	TicketID       int64                 `json:"ticketId" doc:"The Ticket this Run belongs to."`
 	StartedAt      string                `json:"startedAt" doc:"RFC3339 UTC."`
 	EndedAt        *string               `json:"endedAt" doc:"RFC3339 UTC. Null until the Run ends."`
-	Outcome        string                `json:"outcome" doc:"The target Run outcome, or the historical outcome for a legacy Run. Empty until terminal."`
-	FailureKind    string                `json:"failureKind" doc:"The target Run failure category, or the historical category for a legacy Run. Empty when not failed."`
+	Outcome        string                `json:"outcome" enum:",succeeded,canceled,exhausted,failed,proposed,blocked" doc:"The target Run outcome, or the historical outcome for a legacy Run. Empty until terminal."`
+	FailureKind    string                `json:"failureKind" enum:",invalid_input,agent_unrecoverable,agent_attempt_budget,review_budget,ci_unobserved,github_auth,github_ruleset,github_unavailable,run_worker_unavailable,persistence_unavailable,infrastructure,auth,rate-limit,other" doc:"The target Run failure category, or the historical category for a legacy Run. Empty when not failed."`
 	Active         bool                  `json:"active" doc:"Whether this Run is still nonterminal."`
-	Phase          string                `json:"phase" doc:"The latest active Step kind, falling back to the latest terminal Step kind."`
+	Phase          string                `json:"phase" enum:",prepare_run_worker,acquire_run_worker_session,clone_repository,plan,implement,sync_pull_request,await_ci,review,mark_pull_request_ready,merge_pull_request" doc:"The latest active Step kind, falling back to the latest terminal Step kind."`
 	ConfirmedMerge *confirmedMergeOutput `json:"confirmedMerge,omitempty" doc:"Immutable merge evidence, absent unless this Run ended in a Confirmed Merge."`
 	Steps          []stepOutput          `json:"steps" doc:"This Run's Steps, in pipeline order."`
 	Usage          usageOutput           `json:"usage" doc:"Rolled up across this Run's Steps."`

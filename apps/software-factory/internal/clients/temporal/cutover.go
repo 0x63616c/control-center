@@ -13,6 +13,7 @@ import (
 	"go.temporal.io/api/serviceerror"
 	workflowservice "go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/converter"
 )
 
 const cutoverTerminationReason = "software-factory v0 cutover"
@@ -42,6 +43,7 @@ type cutoverClient interface {
 	CancelWorkflow(context.Context, string, string) error
 	DescribeWorkflowExecution(context.Context, string, string) (*workflowservice.DescribeWorkflowExecutionResponse, error)
 	TerminateWorkflow(context.Context, string, string, string, ...interface{}) error
+	QueryWorkflow(context.Context, string, string, string, ...interface{}) (converter.EncodedValue, error)
 }
 
 // LegacyController seals Temporal SDK requests and error classification behind
@@ -100,7 +102,22 @@ func (controller *LegacyController) PauseDispatcher(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("signaling the legacy dispatcher pause: %w", err)
 	}
-	return nil
+	for {
+		encoded, err := controller.client.QueryWorkflow(ctx, work.FactoryDispatcherWorkflowID, "", workflows.QueryFactoryDispatcherStatus)
+		if err != nil {
+			return fmt.Errorf("querying the applied legacy dispatcher pause: %w", err)
+		}
+		var status work.FactoryDispatcherStatus
+		if err := encoded.Get(&status); err != nil {
+			return fmt.Errorf("decoding the applied legacy dispatcher pause: %w", err)
+		}
+		if status.Config.Paused && status.Config.PauseReason == cutoverTerminationReason {
+			return nil
+		}
+		if err := controller.clock.Sleep(ctx, time.Second); err != nil {
+			return fmt.Errorf("waiting for the legacy dispatcher pause to apply: %w", err)
+		}
+	}
 }
 
 // Cancel asks a legacy execution to perform cooperative cleanup.
