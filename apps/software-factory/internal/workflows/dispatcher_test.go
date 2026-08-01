@@ -114,10 +114,22 @@ func TestDispatcherDrainsTrackedChildrenBeforeContinuingAsNew(t *testing.T) {
 		})
 
 	in := targetDispatcherInput()
+	accepted := in.Policy
+	accepted.MaxInFlight = 2
+	rejected := in.Policy
+	rejected.MaxInFlight = 3
+	updates := map[string]workflows.DispatcherPublication{}
+	errs := map[string]error{}
 	env.RegisterDelayedCallback(func() {
 		env.SetContinueAsNewSuggested(true)
-		env.UpdateWorkflowNoRejection(workflows.UpdateDispatcherPolicy, "wake-for-drain", t, targetDispatcherPolicyUpdate(t, in.Policy))
+		env.UpdateWorkflow(workflows.UpdateDispatcherPolicy, "accepted-during-drain", dispatcherUpdateCallback("accepted", updates, errs), targetDispatcherPolicyUpdate(t, accepted))
 	}, 10*time.Second)
+	env.RegisterDelayedCallback(func() {
+		env.UpdateWorkflow(workflows.UpdateDispatcherPolicy, "rejected-during-drain", dispatcherUpdateCallback("rejected", updates, errs), targetDispatcherPolicyUpdate(t, rejected))
+	}, 20*time.Second)
+	env.RegisterDelayedCallback(func() {
+		env.UpdateWorkflow(workflows.UpdateDispatcherPolicy, "duplicate-during-drain", dispatcherUpdateCallback("duplicate", updates, errs), targetDispatcherPolicyUpdate(t, accepted))
+	}, 30*time.Second)
 	env.ExecuteWorkflow(workflows.Dispatcher, in)
 
 	var continued *workflow.ContinueAsNewError
@@ -126,6 +138,31 @@ func TestDispatcherDrainsTrackedChildrenBeforeContinuingAsNew(t *testing.T) {
 	}
 	if awaits != 1 {
 		t.Errorf("AwaitDispatchableTickets calls = %d, want exactly one before drain", awaits)
+	}
+	for name, err := range errs {
+		if err != nil {
+			t.Errorf("%s drain publication failed: %v", name, err)
+		}
+	}
+	if got := updates["accepted"]; got != workflows.DispatcherPublicationApplied {
+		t.Errorf("first policy during drain = %q, want APPLIED", got)
+	}
+	if got := updates["rejected"]; got != workflows.DispatcherPublicationDraining {
+		t.Errorf("second policy during drain = %q, want DRAINING", got)
+	}
+	if got := updates["duplicate"]; got != workflows.DispatcherPublicationAlreadyCurrent {
+		t.Errorf("duplicate policy during drain = %q, want ALREADY_CURRENT", got)
+	}
+	var next workflows.DispatcherInput
+	if err := converter.GetDefaultDataConverter().FromPayloads(continued.Input, &next); err != nil {
+		t.Fatalf("decoding continued dispatcher input: %v", err)
+	}
+	if got, err := next.Policy.Fingerprint(); err != nil {
+		t.Fatalf("fingerprinting continued policy: %v", err)
+	} else if want, err := accepted.Fingerprint(); err != nil {
+		t.Fatalf("fingerprinting accepted policy: %v", err)
+	} else if got != want {
+		t.Errorf("continued policy = %q, want last accepted %q", got, want)
 	}
 }
 
