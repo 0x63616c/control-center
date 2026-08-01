@@ -72,7 +72,7 @@ func (c *Client) Turn(ctx context.Context, request TurnRequest, emit EmitFunc) (
 
 	body, err := encodeRequest(request)
 	if err != nil {
-		return TurnResult{}, err
+		return TurnResult{}, fmt.Errorf("encoding the Codex Responses request: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
 	if err != nil {
@@ -358,7 +358,7 @@ func parseStream(reader io.Reader, emit EmitFunc) (TurnResult, error) {
 		line := scanner.Text()
 		if line == "" {
 			if err := consumeEvent(data, &result, pendingCalls, emit, &terminal); err != nil {
-				return TurnResult{}, err
+				return TurnResult{}, fmt.Errorf("consuming a Codex Responses SSE event: %w", err)
 			}
 			data = data[:0]
 			continue
@@ -371,7 +371,7 @@ func parseStream(reader io.Reader, emit EmitFunc) (TurnResult, error) {
 		return TurnResult{}, fmt.Errorf("scanning SSE events: %w", err)
 	}
 	if err := consumeEvent(data, &result, pendingCalls, emit, &terminal); err != nil {
-		return TurnResult{}, err
+		return TurnResult{}, fmt.Errorf("consuming the final Codex Responses SSE event: %w", err)
 	}
 	if !terminal {
 		return TurnResult{}, fmt.Errorf("%w: the stream ended before a terminal response event", ErrStreamInterrupted)

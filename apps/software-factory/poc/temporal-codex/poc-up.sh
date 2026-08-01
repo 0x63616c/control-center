@@ -28,11 +28,12 @@ docker build \
   "${repo_root}"
 
 kubectl --context "${kube_context}" apply -f "${here}/k8s/namespace.yaml"
-kubectl --context "${kube_context}" --namespace "${namespace}" create secret generic codex-auth-seed \
-  --from-file="auth.json=${CODEX_AUTH_FILE}" \
-  --dry-run=client \
-  -o yaml \
-  | kubectl --context "${kube_context}" apply -f - >/dev/null
+if ! kubectl --context "${kube_context}" --namespace "${namespace}" get secret codex-auth >/dev/null 2>&1; then
+  kubectl --context "${kube_context}" --namespace "${namespace}" create secret generic codex-auth \
+    --from-file="auth.json=${CODEX_AUTH_FILE}" >/dev/null
+else
+  echo "reusing the existing durable codex-auth Secret"
+fi
 kubectl --context "${kube_context}" apply -f "${here}/k8s/temporal.yaml"
 kubectl --context "${kube_context}" --namespace "${namespace}" rollout status deployment/temporal --timeout=120s
 kubectl --context "${kube_context}" apply -f "${here}/k8s/worker.yaml"

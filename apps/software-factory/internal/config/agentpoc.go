@@ -11,7 +11,9 @@ const (
 	envAgentPOCTemporalHostPort  = "TEMPORAL_HOST_PORT"
 	envAgentPOCTemporalNamespace = "TEMPORAL_NAMESPACE"
 	envAgentPOCEndpoint          = "CODEX_RESPONSES_ENDPOINT"
-	envAgentPOCAuthFile          = "CODEX_AUTH_FILE"
+	envAgentPOCAuthSecret        = "CODEX_AUTH_SECRET_NAME"
+	envAgentPOCPodName           = "POD_NAME"
+	envAgentPOCPodNamespace      = "POD_NAMESPACE"
 )
 
 // AgentPOCWorker is the startup configuration for the isolated local worker.
@@ -19,7 +21,9 @@ type AgentPOCWorker struct {
 	TemporalHostPort  string
 	TemporalNamespace string
 	ResponsesEndpoint string
-	AuthFile          string
+	AuthSecretName    string
+	PodName           string
+	PodNamespace      string
 	LogLevel          slog.Level
 }
 
@@ -29,7 +33,9 @@ func LoadAgentPOCWorker() (AgentPOCWorker, error) {
 		TemporalHostPort:  os.Getenv(envAgentPOCTemporalHostPort),
 		TemporalNamespace: os.Getenv(envAgentPOCTemporalNamespace),
 		ResponsesEndpoint: os.Getenv(envAgentPOCEndpoint),
-		AuthFile:          os.Getenv(envAgentPOCAuthFile),
+		AuthSecretName:    os.Getenv(envAgentPOCAuthSecret),
+		PodName:           os.Getenv(envAgentPOCPodName),
+		PodNamespace:      os.Getenv(envAgentPOCPodNamespace),
 	}
 	for _, required := range []struct {
 		name  string
@@ -38,7 +44,9 @@ func LoadAgentPOCWorker() (AgentPOCWorker, error) {
 		{name: envAgentPOCTemporalHostPort, value: config.TemporalHostPort},
 		{name: envAgentPOCTemporalNamespace, value: config.TemporalNamespace},
 		{name: envAgentPOCEndpoint, value: config.ResponsesEndpoint},
-		{name: envAgentPOCAuthFile, value: config.AuthFile},
+		{name: envAgentPOCAuthSecret, value: config.AuthSecretName},
+		{name: envAgentPOCPodName, value: config.PodName},
+		{name: envAgentPOCPodNamespace, value: config.PodNamespace},
 	} {
 		if strings.TrimSpace(required.value) == "" {
 			return AgentPOCWorker{}, fmt.Errorf("%s is required to start the agent POC worker", required.name)
@@ -46,7 +54,7 @@ func LoadAgentPOCWorker() (AgentPOCWorker, error) {
 	}
 	level, err := logLevel()
 	if err != nil {
-		return AgentPOCWorker{}, err
+		return AgentPOCWorker{}, fmt.Errorf("loading the agent POC log level: %w", err)
 	}
 	config.LogLevel = level
 	return config, nil

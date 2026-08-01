@@ -1,3 +1,35 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-poc-worker
+  namespace: codex-agent-poc
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agent-poc-credential-writer
+  namespace: codex-agent-poc
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["codex-auth"]
+    verbs: ["get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-poc-credential-writer
+  namespace: codex-agent-poc
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agent-poc-credential-writer
+subjects:
+  - kind: ServiceAccount
+    name: agent-poc-worker
+    namespace: codex-agent-poc
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -15,30 +47,10 @@ spec:
       labels:
         app: agent-poc-worker
     spec:
-      automountServiceAccountToken: false
+      serviceAccountName: agent-poc-worker
       securityContext:
         fsGroup: 65532
         fsGroupChangePolicy: OnRootMismatch
-      initContainers:
-        - name: copy-codex-auth
-          image: busybox@sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
-          command: ["/bin/cp"]
-          args: ["/seed/auth.json", "/runtime/auth.json"]
-          securityContext:
-            runAsNonRoot: true
-            runAsUser: 65532
-            runAsGroup: 65532
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
-            seccompProfile:
-              type: RuntimeDefault
-          volumeMounts:
-            - name: auth-seed
-              mountPath: /seed
-              readOnly: true
-            - name: auth-runtime
-              mountPath: /runtime
       containers:
         - name: worker
           image: codex-agent-poc:dev
@@ -50,8 +62,16 @@ spec:
               value: default
             - name: CODEX_RESPONSES_ENDPOINT
               value: https://chatgpt.com/backend-api/codex/responses
-            - name: CODEX_AUTH_FILE
-              value: /runtime/auth.json
+            - name: CODEX_AUTH_SECRET_NAME
+              value: codex-auth
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: LOG_LEVEL
               value: info
           resources:
@@ -70,13 +90,3 @@ spec:
               drop: ["ALL"]
             seccompProfile:
               type: RuntimeDefault
-          volumeMounts:
-            - name: auth-runtime
-              mountPath: /runtime
-      volumes:
-        - name: auth-seed
-          secret:
-            secretName: codex-auth-seed
-            defaultMode: 416
-        - name: auth-runtime
-          emptyDir: {}

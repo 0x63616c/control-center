@@ -1,4 +1,4 @@
-package agentpoc_test
+package agentpocworkflow_test
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agentpoc"
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codexresponses"
+	agentpocworkflow "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/workflows/agentpoc"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
@@ -17,17 +17,17 @@ func TestAgentWorkflowCompletesOnFinalText(t *testing.T) {
 	t.Parallel()
 
 	env := newEnvironment(t,
-		func(context.Context, agentpoc.ModelTurnInput) (codexresponses.TurnResult, error) {
-			return codexresponses.TurnResult{
-				Outcome: codexresponses.OutcomeFinalText,
+		func(context.Context, agentpoc.ModelTurnInput) (agentpoc.ModelTurnResult, error) {
+			return agentpoc.ModelTurnResult{
+				Outcome: agentpoc.OutcomeFinalText,
 				Text:    "Temporal kept the turn durable.",
-				Usage:   codexresponses.Usage{InputTokens: 10, OutputTokens: 6, TotalTokens: 16},
+				Usage:   agentpoc.Usage{InputTokens: 10, OutputTokens: 6, TotalTokens: 16},
 			}, nil
 		},
 		unexpectedTool(t),
 	)
 
-	env.ExecuteWorkflow(agentpoc.Workflow, validInput(3))
+	env.ExecuteWorkflow(agentpocworkflow.Workflow, validInput(3))
 	assertCompleted(t, env)
 	var result agentpoc.Result
 	if err := env.GetWorkflowResult(&result); err != nil {
@@ -42,23 +42,23 @@ func TestAgentWorkflowExecutesToolAndContinuesTheStoredResponse(t *testing.T) {
 	t.Parallel()
 
 	var requests []agentpoc.ModelTurnInput
-	model := func(_ context.Context, in agentpoc.ModelTurnInput) (codexresponses.TurnResult, error) {
+	model := func(_ context.Context, in agentpoc.ModelTurnInput) (agentpoc.ModelTurnResult, error) {
 		requests = append(requests, in)
 		if len(requests) == 1 {
-			return codexresponses.TurnResult{
-				Outcome:    codexresponses.OutcomeToolCalls,
+			return agentpoc.ModelTurnResult{
+				Outcome:    agentpoc.OutcomeToolCalls,
 				ResponseID: "resp_tool",
-				ToolCalls: []codexresponses.ToolCall{{
+				ToolCalls: []agentpoc.ToolCall{{
 					ID: "fc_1", CallID: "call_1", Name: agentpoc.PrototypeToolName,
 					Arguments: []byte(`{"key":"temporal"}`),
 				}},
-				Usage: codexresponses.Usage{TotalTokens: 20},
+				Usage: agentpoc.Usage{TotalTokens: 20},
 			}, nil
 		}
-		return codexresponses.TurnResult{
-			Outcome: codexresponses.OutcomeFinalText,
+		return agentpoc.ModelTurnResult{
+			Outcome: agentpoc.OutcomeFinalText,
 			Text:    "The prototype fact is durable execution.",
-			Usage:   codexresponses.Usage{TotalTokens: 12},
+			Usage:   agentpoc.Usage{TotalTokens: 12},
 		}, nil
 	}
 	var toolCalls []agentpoc.ToolInput
@@ -68,7 +68,7 @@ func TestAgentWorkflowExecutesToolAndContinuesTheStoredResponse(t *testing.T) {
 	}
 	env := newEnvironment(t, model, tool)
 
-	env.ExecuteWorkflow(agentpoc.Workflow, validInput(3))
+	env.ExecuteWorkflow(agentpocworkflow.Workflow, validInput(3))
 	assertCompleted(t, env)
 	var result agentpoc.Result
 	if err := env.GetWorkflowResult(&result); err != nil {
@@ -77,10 +77,10 @@ func TestAgentWorkflowExecutesToolAndContinuesTheStoredResponse(t *testing.T) {
 	if len(requests) != 2 || len(toolCalls) != 1 {
 		t.Fatalf("model requests = %d, tool calls = %d", len(requests), len(toolCalls))
 	}
-	continuation := requests[1].Request
-	if continuation.Store || continuation.PreviousResponseID != "" || len(continuation.Input) != 3 ||
-		continuation.Input[1].Type != codexresponses.InputFunctionCall || continuation.Input[1].CallID != "call_1" ||
-		continuation.Input[2].Type != codexresponses.InputFunctionOutput || continuation.Input[2].CallID != "call_1" {
+	continuation := requests[1]
+	if continuation.RequireTool || len(continuation.Items) != 3 ||
+		continuation.Items[1].Kind != agentpoc.ItemFunctionCall || continuation.Items[1].CallID != "call_1" ||
+		continuation.Items[2].Kind != agentpoc.ItemFunctionOutput || continuation.Items[2].CallID != "call_1" {
 		t.Fatalf("continuation = %#v", continuation)
 	}
 	if result.FinalText == "" || result.ModelTurns != 2 || result.ToolCalls != 1 || result.Usage.TotalTokens != 32 {
@@ -94,19 +94,19 @@ func TestAgentWorkflowRetriesTransientModelFailures(t *testing.T) {
 	attempts := 0
 	var timeoutInfo activity.Info
 	env := newEnvironment(t,
-		func(ctx context.Context, _ agentpoc.ModelTurnInput) (codexresponses.TurnResult, error) {
+		func(ctx context.Context, _ agentpoc.ModelTurnInput) (agentpoc.ModelTurnResult, error) {
 			attempts++
 			timeoutInfo = activity.GetInfo(ctx)
 			if attempts < 3 {
-				return codexresponses.TurnResult{}, errors.New("stream interrupted")
+				return agentpoc.ModelTurnResult{}, errors.New("stream interrupted")
 			}
-			return codexresponses.TurnResult{Outcome: codexresponses.OutcomeFinalText, Text: "recovered"}, nil
+			return agentpoc.ModelTurnResult{Outcome: agentpoc.OutcomeFinalText, Text: "recovered"}, nil
 		},
 		unexpectedTool(t),
 	)
 	started := env.Now()
 
-	env.ExecuteWorkflow(agentpoc.Workflow, validInput(3))
+	env.ExecuteWorkflow(agentpocworkflow.Workflow, validInput(3))
 	assertCompleted(t, env)
 	if attempts != 3 {
 		t.Fatalf("attempts = %d, want 3", attempts)
@@ -122,11 +122,11 @@ func TestAgentWorkflowRetriesTransientModelFailures(t *testing.T) {
 func TestAgentWorkflowFailsAtTheTurnLimit(t *testing.T) {
 	t.Parallel()
 
-	model := func(_ context.Context, _ agentpoc.ModelTurnInput) (codexresponses.TurnResult, error) {
-		return codexresponses.TurnResult{
-			Outcome:    codexresponses.OutcomeToolCalls,
+	model := func(_ context.Context, _ agentpoc.ModelTurnInput) (agentpoc.ModelTurnResult, error) {
+		return agentpoc.ModelTurnResult{
+			Outcome:    agentpoc.OutcomeToolCalls,
 			ResponseID: "resp_more",
-			ToolCalls: []codexresponses.ToolCall{{
+			ToolCalls: []agentpoc.ToolCall{{
 				ID: "fc_more", CallID: "call_more", Name: agentpoc.PrototypeToolName,
 				Arguments: []byte(`{"key":"temporal"}`),
 			}},
@@ -137,7 +137,7 @@ func TestAgentWorkflowFailsAtTheTurnLimit(t *testing.T) {
 	}
 	env := newEnvironment(t, model, tool)
 
-	env.ExecuteWorkflow(agentpoc.Workflow, validInput(2))
+	env.ExecuteWorkflow(agentpocworkflow.Workflow, validInput(2))
 	if !env.IsWorkflowCompleted() || env.GetWorkflowError() == nil {
 		t.Fatal("workflow did not fail at the turn limit")
 	}
@@ -149,7 +149,7 @@ func TestAgentWorkflowFailsAtTheTurnLimit(t *testing.T) {
 
 func newEnvironment(
 	t *testing.T,
-	model func(context.Context, agentpoc.ModelTurnInput) (codexresponses.TurnResult, error),
+	model func(context.Context, agentpoc.ModelTurnInput) (agentpoc.ModelTurnResult, error),
 	tool func(context.Context, agentpoc.ToolInput) (agentpoc.ToolOutput, error),
 ) *testsuite.TestWorkflowEnvironment {
 	t.Helper()
