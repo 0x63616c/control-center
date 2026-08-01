@@ -36,6 +36,7 @@ type FileCredentialSource struct {
 	clock     clock.Clock
 	margin    time.Duration
 	mu        sync.Mutex
+	blocked   error
 }
 
 // NewFileCredentialSource constructs a source for an explicitly selected file.
@@ -63,6 +64,9 @@ func NewFileCredentialSource(
 func (s *FileCredentialSource) Credential(ctx context.Context) (Credential, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.blocked != nil {
+		return Credential{}, s.blocked
+	}
 
 	document, err := readCredentialDocument(s.path)
 	if err != nil {
@@ -78,10 +82,13 @@ func (s *FileCredentialSource) Credential(ctx context.Context) (Credential, erro
 
 	rotated, outcome, err := s.refresher.Refresh(ctx, document.refresh)
 	if err != nil {
+		if outcome != codexauth.RefreshNotSent {
+			return Credential{}, s.blockRefresh(outcome)
+		}
 		return Credential{}, fmt.Errorf("refreshing the Codex credential (%s): %w", outcome, err)
 	}
 	if outcome != codexauth.RefreshRotated {
-		return Credential{}, fmt.Errorf("refreshing the Codex credential ended with outcome %s", outcome)
+		return Credential{}, s.blockRefresh(outcome)
 	}
 	if rotated.AccessToken.Reveal() != "" {
 		document.access = rotated.AccessToken
@@ -90,15 +97,34 @@ func (s *FileCredentialSource) Credential(ctx context.Context) (Credential, erro
 		document.refresh = rotated.RefreshToken
 	}
 	if document.access.Reveal() == "" || document.refresh.Reveal() == "" {
-		return Credential{}, fmt.Errorf("the rotated Codex credential is incomplete")
+		return Credential{}, s.blockCredentialLoss("the provider returned an incomplete rotated credential")
 	}
 	if err := document.applyRotation(s.clock.Now()); err != nil {
-		return Credential{}, err
+		return Credential{}, s.blockCredentialLoss("the rotated credential could not be encoded")
 	}
 	if err := writeCredentialDocument(s.path, document.raw); err != nil {
-		return Credential{}, err
+		return Credential{}, s.blockCredentialLoss("the rotated credential could not be persisted")
 	}
 	return document.credential(), nil
+}
+
+func (s *FileCredentialSource) blockRefresh(outcome codexauth.RefreshOutcome) error {
+	var cause error
+	switch outcome {
+	case codexauth.RefreshRejected:
+		cause = codexauth.ErrRefreshRejected
+	case codexauth.RefreshReused:
+		cause = codexauth.ErrSingleWriterViolated
+	default:
+		cause = codexauth.ErrRefreshOutcomeUnknown
+	}
+	s.blocked = fmt.Errorf("Codex credential refresh halted after outcome %s: %w", outcome, cause)
+	return s.blocked
+}
+
+func (s *FileCredentialSource) blockCredentialLoss(reason string) error {
+	s.blocked = fmt.Errorf("%s: %w", reason, codexauth.ErrCredentialLost)
+	return s.blocked
 }
 
 type fileCredentialDocument struct {
