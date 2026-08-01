@@ -44,6 +44,50 @@ type NonReadonly<T> = [T] extends [UnionToIntersection<T>]
   : DistributeReadOnlyOverUnions<T>;
 
 /**
+ * The execution state this checkpoint proves.
+ */
+export type AttemptState = (typeof AttemptState)[keyof typeof AttemptState];
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const AttemptState = {
+  running: "running",
+  succeeded: "succeeded",
+  failed: "failed",
+} as const;
+
+/**
+ * Whether provider usage is available.
+ */
+export type AttemptUsageState = (typeof AttemptUsageState)[keyof typeof AttemptUsageState];
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const AttemptUsageState = {
+  unknown: "unknown",
+  measured: "measured",
+} as const;
+
+export interface Attempt {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** RFC3339 UTC terminal time; absent while running. */
+  endedAt?: string;
+  /** The classified terminal failure, when state is failed. */
+  failureKind?: string;
+  /** The provider thread identity exposed by the active execution. */
+  providerThreadId?: string;
+  /** The terminal provider envelope; absent while running. */
+  result?: unknown;
+  /** The execution state this checkpoint proves. */
+  state: AttemptState;
+  /** Durable partial or terminal transcript material. */
+  transcript?: Transcript;
+  /** Provider-reported token usage; all fields are zero while usage is unknown. */
+  usage: Usage;
+  /** Whether provider usage is available. */
+  usageState: AttemptUsageState;
+}
+
+/**
  * The part of inputTokens served from the provider's prompt cache. Null when measured is false.
  */
 export type AttemptOutputCachedInputTokens = number | null;
@@ -354,6 +398,46 @@ export interface TicketsOutputBody {
   readonly $schema?: string;
   /** Tickets matching the requested filters. */
   tickets: TicketsOutputBodyTickets;
+}
+
+export interface Transcript {
+  /** Transcript checksum, base64 encoded on the wire. */
+  checksum: string;
+  /** Compressed transcript bytes, base64 encoded on the wire. */
+  compressedBytes: string;
+  /**
+   * The transcript compression codec.
+   * @minLength 1
+   */
+  compression: string;
+  /**
+   * Transcript size before compression.
+   * @minimum 0
+   */
+  uncompressedSizeBytes: number;
+}
+
+export interface Usage {
+  /**
+   * Input tokens served from cache.
+   * @minimum 0
+   */
+  cachedInputTokens: number;
+  /**
+   * Whole input tokens, including cached input.
+   * @minimum 0
+   */
+  inputTokens: number;
+  /**
+   * Whole output tokens, including reasoning.
+   * @minimum 0
+   */
+  outputTokens: number;
+  /**
+   * Output tokens spent reasoning.
+   * @minimum 0
+   */
+  reasoningTokens: number;
 }
 
 export interface UsageOutput {
@@ -794,6 +878,118 @@ export const usePostV1FactoryResume = <TError = AxiosError<ErrorModel>, TContext
   queryClient?: QueryClient,
 ): UseMutationResult<Awaited<ReturnType<typeof postV1FactoryResume>>, TError, void, TContext> => {
   const mutationOptions = getPostV1FactoryResumeMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
+ * Stores running provider identity or terminal execution evidence using a capability scoped to the exact Run, Step, and Agent Attempt.
+ * @summary Checkpoint an active Agent Attempt
+ */
+export const putV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint = (
+  runID: string,
+  stepOrdinal: number,
+  attemptNo: number,
+  attempt: NonReadonly<Attempt>,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<void>> => {
+  return axios.put(
+    `/v1/run-worker/runs/${runID}/steps/${stepOrdinal}/attempts/${attemptNo}/checkpoint`,
+    attempt,
+    options,
+  );
+};
+
+export const getPutV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpointMutationOptions =
+  <TError = AxiosError<ErrorModel>, TContext = unknown>(options?: {
+    mutation?: UseMutationOptions<
+      Awaited<
+        ReturnType<typeof putV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint>
+      >,
+      TError,
+      { runID: string; stepOrdinal: number; attemptNo: number; data: NonReadonly<Attempt> },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  }): UseMutationOptions<
+    Awaited<
+      ReturnType<typeof putV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint>
+    >,
+    TError,
+    { runID: string; stepOrdinal: number; attemptNo: number; data: NonReadonly<Attempt> },
+    TContext
+  > => {
+    const mutationKey = [
+      "putV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint",
+    ];
+    const { mutation: mutationOptions, axios: axiosOptions } = options
+      ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+        ? options
+        : { ...options, mutation: { ...options.mutation, mutationKey } }
+      : { mutation: { mutationKey }, axios: undefined };
+
+    const mutationFn: MutationFunction<
+      Awaited<
+        ReturnType<typeof putV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint>
+      >,
+      { runID: string; stepOrdinal: number; attemptNo: number; data: NonReadonly<Attempt> }
+    > = (props) => {
+      const { runID, stepOrdinal, attemptNo, data } = props ?? {};
+
+      return putV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint(
+        runID,
+        stepOrdinal,
+        attemptNo,
+        data,
+        axiosOptions,
+      );
+    };
+
+    return { mutationFn, ...mutationOptions };
+  };
+
+export type PutV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpointMutationResult =
+  NonNullable<
+    Awaited<
+      ReturnType<typeof putV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint>
+    >
+  >;
+export type PutV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpointMutationBody =
+  NonReadonly<Attempt>;
+export type PutV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpointMutationError =
+  AxiosError<ErrorModel>;
+
+/**
+ * @summary Checkpoint an active Agent Attempt
+ */
+export const usePutV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint = <
+  TError = AxiosError<ErrorModel>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<
+        ReturnType<typeof putV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint>
+      >,
+      TError,
+      { runID: string; stepOrdinal: number; attemptNo: number; data: NonReadonly<Attempt> },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<
+    ReturnType<typeof putV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint>
+  >,
+  TError,
+  { runID: string; stepOrdinal: number; attemptNo: number; data: NonReadonly<Attempt> },
+  TContext
+> => {
+  const mutationOptions =
+    getPutV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpointMutationOptions(
+      options,
+    );
 
   return useMutation(mutationOptions, queryClient);
 };
