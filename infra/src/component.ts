@@ -53,6 +53,18 @@ export interface InitContainerSpec {
   volumes?: VolumeSpec[];
 }
 
+// A long-lived helper that shares a workload's pod and volumes. Sidecars are
+// for work that must act on a ReadWriteOnce volume while its primary container
+// owns that volume; a separate Job cannot safely mount it a second time.
+export interface SidecarSpec {
+  name: string;
+  image: string;
+  command?: string[];
+  env?: Record<string, string>;
+  resources?: ResourceSpec;
+  volumes?: VolumeSpec[];
+}
+
 export interface WorkloadSpec {
   logicalName?: string;
   // Pulumi state alias for one-time namespace/product-name migrations.
@@ -81,6 +93,7 @@ export interface WorkloadSpec {
     items?: { key: string; path: string }[];
   }[];
   initContainers?: InitContainerSpec[];
+  sidecars?: SidecarSpec[];
   // hostNetwork + dnsPolicy: Task 4's HA workload binds :8123 in the NODE's
   // netns (Talos has no equivalent to the mini's tailnet-routed socat), so
   // other pods reach it at the node LAN IP (see services.ts haTarget).
@@ -337,7 +350,10 @@ function claimVolumeName(claimVolumeNames: Map<string, string>, claim: string, f
   return fallback;
 }
 
-function buildPod(p: PodInputs): {
+function buildPod(
+  p: PodInputs,
+  claimVolumeNames = new Map<string, string>(),
+): {
   container: Container;
   podVolumes: PodVolume[];
   persistentVolumes: PersistentVolumeArgs[];
@@ -369,8 +385,6 @@ function buildPod(p: PodInputs): {
   const podVolumes: PodVolume[] = [];
   const persistentVolumes: PersistentVolumeArgs[] = [];
   const persistentVolumeClaims: PersistentVolumeClaimArgs[] = [];
-  const claimVolumeNames = new Map<string, string>();
-
   if (p.secrets && p.secrets.length > 0) {
     volumeMounts.push({ name: "secrets", mountPath: "/run/secrets", readOnly: true });
     podVolumes.push({
@@ -502,6 +516,7 @@ function mountsExistingClaim(w: WorkloadSpec): boolean {
   const declared = [
     ...(w.volumes ?? []),
     ...(w.initContainers ?? []).flatMap((i) => i.volumes ?? []),
+    ...(w.sidecars ?? []).flatMap((sidecar) => sidecar.volumes ?? []),
   ];
   return declared.some((v) => v.claim && !v.nfs);
 }
@@ -521,6 +536,7 @@ export function renderWorkload(w: WorkloadSpec): RenderedWorkload {
   const inits = (w.initContainers ?? []).map((ic, i) =>
     buildInitContainer(ic, i, claimVolumeNames),
   );
+  const sidecars = (w.sidecars ?? []).map((sidecar) => buildPod(sidecar, claimVolumeNames));
   const podAnnotations = scrapeAnnotations(w.scrape);
 
   const deployment: DeploymentArgs = {
@@ -545,9 +561,13 @@ export function renderWorkload(w: WorkloadSpec): RenderedWorkload {
       template: {
         metadata: { labels, ...(podAnnotations ? { annotations: podAnnotations } : {}) },
         spec: {
-          containers: [container],
+          containers: [container, ...sidecars.map((sidecar) => sidecar.container)],
           ...(inits.length > 0 ? { initContainers: inits.map((i) => i.container) } : {}),
-          volumes: [...podVolumes, ...inits.flatMap((i) => i.podVolumes)],
+          volumes: [
+            ...podVolumes,
+            ...inits.flatMap((i) => i.podVolumes),
+            ...sidecars.flatMap((sidecar) => sidecar.podVolumes),
+          ],
           ...(w.imagePullSecrets && w.imagePullSecrets.length > 0
             ? { imagePullSecrets: w.imagePullSecrets.map((name) => ({ name })) }
             : {}),
@@ -582,7 +602,18 @@ export function renderWorkload(w: WorkloadSpec): RenderedWorkload {
     });
   }
 
-  return { deployment, services, persistentVolumes, persistentVolumeClaims };
+  return {
+    deployment,
+    services,
+    persistentVolumes: [
+      ...persistentVolumes,
+      ...sidecars.flatMap((sidecar) => sidecar.persistentVolumes),
+    ],
+    persistentVolumeClaims: [
+      ...persistentVolumeClaims,
+      ...sidecars.flatMap((sidecar) => sidecar.persistentVolumeClaims),
+    ],
+  };
 }
 
 export function renderCronJob(c: CronJobSpec): RenderedCronJob {
