@@ -54,6 +54,8 @@ func (live *liveTemporal) ListLegacyExecutions(ctx context.Context) ([]WorkflowE
 	for _, execution := range listed {
 		kind := WorkflowTicket
 		switch execution.Kind {
+		case temporalclient.LegacyTicket:
+			kind = WorkflowTicket
 		case temporalclient.LegacyDispatcher:
 			kind = WorkflowDispatcher
 		case temporalclient.LegacyAgent:
@@ -91,6 +93,8 @@ func (live *liveTemporal) terminate(ctx context.Context, execution WorkflowExecu
 func temporalExecution(execution WorkflowExecution) temporalclient.LegacyExecution {
 	kind := temporalclient.LegacyTicket
 	switch execution.Kind {
+	case WorkflowTicket:
+		kind = temporalclient.LegacyTicket
 	case WorkflowDispatcher:
 		kind = temporalclient.LegacyDispatcher
 	case WorkflowAgent:
