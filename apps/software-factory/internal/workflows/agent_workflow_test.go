@@ -70,6 +70,41 @@ func TestAgentWorkflowCompletesFromOneFinalModelTurn(t *testing.T) {
 	}
 }
 
+func TestAgentWorkflowRequestsCancellationOfTheActiveTool(t *testing.T) {
+	t.Parallel()
+
+	suite := &testsuite.WorkflowTestSuite{}
+	environment := suite.NewTestWorkflowEnvironment()
+	environment.SetWorkerOptions(worker.Options{EnableSessionWorker: true, MaxConcurrentSessionExecutionSize: 1})
+	environment.RegisterActivityWithOptions(func(context.Context, agentactivities.PrepareInput) (agentactivities.PrepareOutput, error) {
+		return agentactivities.PrepareOutput{ConversationRef: agent.ConversationRef{Revision: 0, Bytes: 50}}, nil
+	}, activity.RegisterOptions{Name: agent.PrepareActivityName})
+	environment.RegisterActivityWithOptions(func(context.Context, agent.ModelTurnInput) (agent.ModelTurnResult, error) {
+		return agent.ModelTurnResult{
+			Outcome: agent.OutcomeToolCalls, ConversationRef: agent.ConversationRef{Revision: 1, Bytes: 100},
+			ToolCalls: []agent.PendingToolCall{{CallID: "call_slow", Name: "exec_command"}}, UsageMeasured: true,
+		}, nil
+	}, activity.RegisterOptions{Name: agent.ModelTurnActivityName})
+	toolCancelled := false
+	environment.SetOnActivityCanceledListener(func(info *activity.Info) {
+		if info.ActivityType.Name == agent.ToolActivityName {
+			toolCancelled = true
+		}
+	})
+	environment.RegisterActivityWithOptions(func(ctx context.Context, _ agent.ToolInput) (agent.ToolOutput, error) {
+		environment.CancelWorkflow()
+		<-ctx.Done()
+		return agent.ToolOutput{}, ctx.Err()
+	}, activity.RegisterOptions{Name: agent.ToolActivityName})
+	environment.ExecuteWorkflow(workflows.AgentWorkflow, validAgentWorkflowInput(work.StageImplement))
+	if !toolCancelled {
+		t.Fatal("active tool activity did not observe cancellation")
+	}
+	if !temporal.IsCanceledError(environment.GetWorkflowError()) {
+		t.Fatalf("workflow error = %v, want cancellation", environment.GetWorkflowError())
+	}
+}
+
 func TestAgentWorkflowStopsAtModelToolAndTokenBudgets(t *testing.T) {
 	t.Parallel()
 

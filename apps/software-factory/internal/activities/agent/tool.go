@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agenttool"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
+	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
 )
 
@@ -77,6 +79,8 @@ func (activities *ToolActivities) Tool(ctx context.Context, input agent.ToolInpu
 	if err := activities.blobs.Put(ctx, startedKey, []byte(input.Call.CallID)); err != nil {
 		return agent.ToolOutput{}, transientFailure("record started tool operation", err)
 	}
+	stopHeartbeat := startToolHeartbeat(ctx, input.Call.Name)
+	defer stopHeartbeat()
 	result, err := toolset.Execute(ctx, input.Call.Name, arguments)
 	if err != nil {
 		return agent.ToolOutput{}, err
@@ -96,6 +100,31 @@ func (activities *ToolActivities) Tool(ctx context.Context, input agent.ToolInpu
 		return agent.ToolOutput{}, transientFailure("record completed tool operation", err)
 	}
 	return output, nil
+}
+
+func startToolHeartbeat(ctx context.Context, name string) func() {
+	if !activity.IsActivity(ctx) {
+		return func() {}
+	}
+	done := make(chan struct{})
+	activity.RecordHeartbeat(ctx, struct {
+		Tool string
+	}{Tool: name})
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				activity.RecordHeartbeat(ctx, struct {
+					Tool string
+				}{Tool: name})
+			}
+		}
+	}()
+	return func() { close(done) }
 }
 
 func operationKeys(identity string, revision int, callID string) (blobs.Key, blobs.Key, error) {
