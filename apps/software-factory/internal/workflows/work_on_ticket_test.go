@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -738,6 +739,110 @@ func TestWorkOnTicketCountsUnresumableReplacementAgainstTheRunWideAttemptBudget(
 	}
 }
 
+// A failed Session loses its generation's filesystem and provider state. The
+// workflow must first retire that generation, then create exactly one
+// replacement and continue from the durable Step boundary without resetting
+// the Run-wide attempt budget.
+func TestWorkOnTicketReplacesLostSessionWithoutRerunningCompletedSteps(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "lost session", "recover the active run worker", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000015", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
+		if input.Stage == work.AgentStageImplement && input.CredentialRevision.Identity.Generation == 1 {
+			return targetAgentOutput(t, input.Stage), temporal.NewNonRetryableApplicationError("Run Worker Session lost", "run_worker_session_lost", nil)
+		}
+		return targetAgentOutput(t, input.Stage), nil
+	}
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket: %v", err)
+	}
+	if len(h.provisionedInputs) != 2 || h.provisionedInputs[0].Identity.Generation != 1 || h.provisionedInputs[1].Identity.Generation != 2 {
+		t.Fatalf("provisioned generations = %+v, want generation one then one replacement", h.provisionedInputs)
+	}
+	if len(h.deleted) == 0 || h.deleted[0].Identity.Generation != 1 {
+		t.Fatalf("deleted workers = %+v, want lost generation one removed before replacement", h.deleted)
+	}
+	if len(h.controlSequence) < 3 || h.controlSequence[0] != "provision:1" || h.controlSequence[1] != "delete:1" || h.controlSequence[2] != "provision:2" {
+		t.Fatalf("generation lifecycle = %v, want serialized provision 1, delete 1, provision 2", h.controlSequence)
+	}
+	if len(h.cloneInputs) != 2 || h.cloneInputs[0].Step.StepOrdinal != 1 || h.cloneInputs[1].Step.StepOrdinal != 1 {
+		t.Fatalf("repository restore clone inputs = %+v, want generation-local restore of durable clone Step", h.cloneInputs)
+	}
+	implements := make([]activities.TargetAgentInput, 0, 2)
+	for _, input := range h.agentInputs {
+		if input.Stage == work.AgentStageImplement {
+			implements = append(implements, input)
+		}
+	}
+	if len(implements) != 2 || implements[0].AttemptID.AttemptNo != 1 || implements[0].CredentialRevision.Identity.Generation != 1 || implements[1].AttemptID.AttemptNo != 2 || implements[1].CredentialRevision.Identity.Generation != 2 || implements[1].PriorProviderThread != nil {
+		t.Fatalf("implement recovery = %+v, want fresh generation-two attempt without provider continuation", implements)
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	if len(detail.Steps) != 8 || detail.Steps[1].Step.Kind != work.StepPlan || len(detail.Steps[1].Attempts) != 1 || len(detail.Steps[2].Attempts) != 2 || detail.Steps[2].Attempts[0].State != work.AgentAttemptFailed {
+		t.Fatalf("durable recovery detail = %+v, want completed plan once and failed/fresh implementation attempts", detail)
+	}
+}
+
+// A durable Git/PR checkpoint is the answer after a lost activity response:
+// recovery may invoke the activity again, but it must return the checkpointed
+// result instead of repeating the GitHub write or moving back to an older head.
+func TestWorkOnTicketRecoversCheckpointedPullRequestAfterSessionLoss(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "checkpointed pull request", "do not repeat sync", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000016", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	externalSyncs := 0
+	h.sync = func(input activities.TargetSyncPullRequestInput) (work.PullRequest, error) {
+		if len(h.syncInputs) == 1 {
+			externalSyncs++
+			position := input.Step
+			position.PushedHead = "H1"
+			position.PullRequestNumber, position.PullRequestNodeID = 1, "PR_node1"
+			if err := h.checkpointRepositoryStep(position); err != nil {
+				return work.PullRequest{}, err
+			}
+			return work.PullRequest{Number: 1, NodeID: "PR_node1", HeadSHA: "H1", Draft: true}, temporal.NewNonRetryableApplicationError("Run Worker Session lost", "run_worker_session_lost", nil)
+		}
+		return work.PullRequest{Number: 1, NodeID: "PR_node1", HeadSHA: "H1", Draft: true}, nil
+	}
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket: %v", err)
+	}
+	if externalSyncs != 1 || len(h.syncInputs) != 2 {
+		t.Fatalf("pull request sync = external %d / recovery calls %d, want one GitHub write and one checkpoint recovery", externalSyncs, len(h.syncInputs))
+	}
+	if len(h.provisionedInputs) != 2 || h.provisionedInputs[1].Identity.Generation != 2 {
+		t.Fatalf("recovery provision = %+v, want generation two", h.provisionedInputs)
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	for _, step := range detail.Steps {
+		if step.Step.Kind == work.StepSyncPullRequest && step.Step.State != work.StepStateCompleted {
+			t.Fatalf("checkpointed sync Step = %+v, want completed durable effect", step.Step)
+		}
+	}
+}
+
 func TestWorkOnTicketStopsBeforeSixthReviewOrTwentySixthAttempt(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -887,17 +992,20 @@ type workOnTicketHarness struct {
 	store *storefake.Store
 	runID string
 
-	provisioned activities.ProvisionRunWorkerInput
-	clone       activities.CloneTargetRepositoryInput
-	rotations   []activities.RotateRunWorkerGitHubCredentialInput
-	authorized  []activities.AuthorizeRunWorkerAttemptInput
-	agentInputs []activities.TargetAgentInput
-	ci          activities.TargetAwaitCIInput
-	ready       activities.TargetMarkPullRequestReadyInput
-	merge       activities.TargetMergePullRequestInput
-	mergeInputs []activities.TargetMergePullRequestInput
-	deleted     []activities.DeleteRunWorkerInput
-	reviewHead  string
+	provisioned       activities.ProvisionRunWorkerInput
+	clone             activities.CloneTargetRepositoryInput
+	provisionedInputs []activities.ProvisionRunWorkerInput
+	cloneInputs       []activities.CloneTargetRepositoryInput
+	controlSequence   []string
+	rotations         []activities.RotateRunWorkerGitHubCredentialInput
+	authorized        []activities.AuthorizeRunWorkerAttemptInput
+	agentInputs       []activities.TargetAgentInput
+	ci                activities.TargetAwaitCIInput
+	ready             activities.TargetMarkPullRequestReadyInput
+	merge             activities.TargetMergePullRequestInput
+	mergeInputs       []activities.TargetMergePullRequestInput
+	deleted           []activities.DeleteRunWorkerInput
+	reviewHead        string
 
 	syncInputs            []activities.TargetSyncPullRequestInput
 	ciInputs              []activities.TargetAwaitCIInput
@@ -927,6 +1035,8 @@ func newWorkOnTicketHarness(t *testing.T, recorderStore *storefake.Store) *workO
 	env.RegisterActivityWithOptions(
 		func(_ context.Context, in activities.ProvisionRunWorkerInput) (activities.ProvisionRunWorkerOutput, error) {
 			h.provisioned = in
+			h.provisionedInputs = append(h.provisionedInputs, in)
+			h.controlSequence = append(h.controlSequence, "provision:"+strconv.Itoa(in.Identity.Generation))
 			id, err := work.RunWorkerName(in.Identity)
 			if err != nil {
 				return activities.ProvisionRunWorkerOutput{}, err
@@ -938,6 +1048,7 @@ func newWorkOnTicketHarness(t *testing.T, recorderStore *storefake.Store) *workO
 	env.RegisterActivityWithOptions(
 		func(_ context.Context, in activities.CloneTargetRepositoryInput) (activities.CloneTargetRepositoryOutput, error) {
 			h.clone = in
+			h.cloneInputs = append(h.cloneInputs, in)
 			position := in.Step
 			position.PushedHead = "B0"
 			if err := h.checkpointRepositoryStep(position); err != nil {
@@ -1033,6 +1144,7 @@ func newWorkOnTicketHarness(t *testing.T, recorderStore *storefake.Store) *workO
 	env.RegisterActivityWithOptions(
 		func(_ context.Context, in activities.DeleteRunWorkerInput) error {
 			h.deleted = append(h.deleted, in)
+			h.controlSequence = append(h.controlSequence, "delete:"+strconv.Itoa(in.Identity.Generation))
 			return errors.New("temporary teardown handoff")
 		},
 		activity.RegisterOptions{Name: "DeleteRunWorker"},
