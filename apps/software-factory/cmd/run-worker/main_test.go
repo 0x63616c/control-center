@@ -60,12 +60,13 @@ func TestRunWorkerRegistersAndExecutesOnePinnedRepositorySession(t *testing.T) {
 		Checkpoints: func(store.TargetAttemptID) (activities.AttemptCheckpoint, error) {
 			return attemptCheckpoint, nil
 		},
-		ProviderState: sessionProviderState{},
-		Clock:         sessionClock{now: time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)},
-		Heartbeat:     func(context.Context) {},
-		Repository:    repository,
-		GitHub:        github,
-		Identity:      identity,
+		CredentialRevision: func(context.Context) (string, error) { return "1", nil },
+		ProviderState:      sessionProviderState{},
+		Clock:              sessionClock{now: time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)},
+		Heartbeat:          func(context.Context) {},
+		Repository:         repository,
+		GitHub:             github,
+		Identity:           identity,
 		RepositoryCheckpoints: func(got work.RunWorkerIdentity) (activities.RepositoryCheckpoint, error) {
 			if got != filesystem.identity {
 				return nil, fmt.Errorf("repository activity used identity %+v, want %+v", got, filesystem.identity)
@@ -99,11 +100,12 @@ func TestRunWorkerRegistersAndExecutesOnePinnedRepositorySession(t *testing.T) {
 	}
 
 	_, err = registered.RunTargetAgent(ctx, activities.TargetAgentInput{
-		AttemptID:    store.TargetAttemptID{RunID: identity.RunID, StepOrdinal: 2, AttemptNo: 1},
-		TicketNumber: 42,
-		Iteration:    1,
-		Stage:        work.AgentStageImplement,
-		Model:        work.Model{Name: "gpt-5", Effort: "high"},
+		AttemptID:          store.TargetAttemptID{RunID: identity.RunID, StepOrdinal: 2, AttemptNo: 1},
+		TicketNumber:       42,
+		Iteration:          1,
+		Stage:              work.AgentStageImplement,
+		Model:              work.Model{Name: "gpt-5", Effort: "high"},
+		CredentialRevision: activities.CredentialRevisionExpectation{Identity: identity, Revision: "1"},
 	})
 	if err != nil {
 		t.Fatalf("RunTargetAgent: %v", err)

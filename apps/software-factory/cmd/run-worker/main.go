@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -149,7 +150,8 @@ func newActivities(cfg config.RunWorker, logger *slog.Logger) (*activities.Activ
 		Checkpoints: func(id store.TargetAttemptID) (activities.AttemptCheckpoint, error) {
 			return checkpointFactory.Open(id)
 		},
-		ProviderState: providerState, Clock: clock.System{}, Heartbeat: func(ctx context.Context) { activity.RecordHeartbeat(ctx) },
+		CredentialRevision: projectedCredentialRevision,
+		ProviderState:      providerState, Clock: clock.System{}, Heartbeat: func(ctx context.Context) { activity.RecordHeartbeat(ctx) },
 		Repository: repository, GitHub: githubClient, Identity: cfg.Identity,
 		RepositoryCheckpoints: func(identity work.RunWorkerIdentity) (activities.RepositoryCheckpoint, error) {
 			return repositoryCheckpointFactory.Open(identity)
@@ -159,6 +161,18 @@ func newActivities(cfg config.RunWorker, logger *slog.Logger) (*activities.Activ
 		return nil, nil, fmt.Errorf("building target Run Worker activities: %w", err)
 	}
 	return legacy, target, nil
+}
+
+func projectedCredentialRevision(context.Context) (string, error) {
+	raw, err := os.ReadFile(work.RunWorkerGitHubRevisionFile)
+	if err != nil {
+		return "", fmt.Errorf("reading projected GitHub credential revision: %w", err)
+	}
+	revision := strings.TrimSpace(string(raw))
+	if revision == "" {
+		return "", fmt.Errorf("projected GitHub credential revision is empty")
+	}
+	return revision, nil
 }
 
 func ensureCodexHome(homeDir, authFile, projectedFile string) error {
