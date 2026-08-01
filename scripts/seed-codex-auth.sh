@@ -96,7 +96,7 @@ if [ "$CHECK" -eq 1 ]; then
   keys="$(kubectl -n "$NAMESPACE" get secret "$SECRET_NAME" \
     -o go-template='{{range $k,$v := .data}}{{$k}}{{"\n"}}{{end}}')"
 
-  if ! printf '%s\n' "$keys" | grep -qx "$CREDENTIAL_KEY"; then
+  if ! printf '%s\n' "$keys" | grep -Fqx "$CREDENTIAL_KEY"; then
     echo "NOT SEEDED: secret '$SECRET_NAME' exists but has no '$CREDENTIAL_KEY' key"
     echo "keys present: $(printf '%s' "$keys" | tr '\n' ' ')"
     exit 1
@@ -105,7 +105,7 @@ if [ "$CHECK" -eq 1 ]; then
   # The worker writes its own lease after a healthy refresh. It is legitimate
   # state, not a second operator-seeded credential. Any other key is unsafe:
   # this check must still catch accidental Secret shape drift.
-  extra="$(printf '%s\n' "$keys" | grep -vx -e "$CREDENTIAL_KEY" -e "$LEASE_KEY" || true)"
+  extra="$(printf '%s\n' "$keys" | grep -Fvx -e "$CREDENTIAL_KEY" -e "$LEASE_KEY" || true)"
   if [ -n "$extra" ]; then
     echo "SEEDED but with unexpected extra key(s): $(printf '%s' "$extra" | tr '\n' ' ')"
     echo "(the worker may own '$LEASE_KEY'; do not seed it by hand)"

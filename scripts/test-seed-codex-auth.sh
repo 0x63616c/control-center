@@ -77,6 +77,11 @@ assert_check \
   1 \
   "NOT SEEDED: secret 'codex-auth' exists but has no 'auth.json' key"
 assert_check \
+  regex_near_misses \
+  $'authXjson\nrefresh_stateXjson' \
+  1 \
+  "NOT SEEDED: secret 'codex-auth' exists but has no 'auth.json' key"
+assert_check \
   missing_secret \
   '' \
   1 \
