@@ -20,8 +20,10 @@ const (
 	CapabilityHeader = "X-Software-Factory-Checkpoint-Capability"
 	// Path is the exact-attempt checkpoint route registered by the factory API.
 	Path = "/v1/run-worker/runs/{runID}/steps/{stepOrdinal}/attempts/{attemptNo}/checkpoint"
-	// ServeMuxPattern is the only method and path mounted outside the legacy API authentication middleware.
-	ServeMuxPattern = "PUT " + Path
+	// PutServeMuxPattern and GetServeMuxPattern are the only method/path pairs
+	// mounted outside the legacy API authentication middleware.
+	PutServeMuxPattern = "PUT " + Path
+	GetServeMuxPattern = "GET " + Path
 )
 
 // Attempt is running progress or terminal evidence for one active Agent Attempt.

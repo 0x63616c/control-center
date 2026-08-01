@@ -26,6 +26,7 @@ type TargetStore interface {
 	store.TargetTerminalRecorder
 	TargetRunDetail(context.Context, string) (store.TargetRunDetail, error)
 	BindCheckpointCapability(context.Context, store.TargetAttemptID, string) error
+	LoadAgentCheckpoint(context.Context, store.TargetAttemptID, string) (store.AgentAttempt, *store.TargetTranscript, bool, error)
 	CheckpointGitEffect(context.Context, store.GitCheckpointInput) (store.GitCheckpoint, error)
 	ReconcileAbandonedRun(context.Context, string, store.TicketID) (bool, error)
 }
@@ -313,6 +314,12 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 		if err := s.BindCheckpointCapability(ctx, attemptID, "contract-capability"); err != nil {
 			t.Fatalf("BindCheckpointCapability: %v", err)
 		}
+		if _, _, found, err := s.LoadAgentCheckpoint(ctx, attemptID, "contract-capability"); err != nil || found {
+			t.Fatalf("LoadAgentCheckpoint(pending) = (found %v, error %v), want authorized pending", found, err)
+		}
+		if _, _, _, err := s.LoadAgentCheckpoint(ctx, attemptID, "wrong-capability"); !errors.Is(err, store.ErrRunOwnership) {
+			t.Fatalf("LoadAgentCheckpoint(wrong capability) error = %v, want ownership", err)
+		}
 		running := store.AgentCheckpointInput{
 			ID: attemptID, Capability: "contract-capability", ThreadID: "thread-1",
 			State: work.AgentAttemptRunning, UsageState: work.UsageMeasured,
@@ -324,6 +331,10 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 		}
 		if _, err := s.CheckpointAgentAttempt(ctx, running); err != nil {
 			t.Fatalf("CheckpointAgentAttempt(running exact retry): %v", err)
+		}
+		loaded, loadedTranscript, found, err := s.LoadAgentCheckpoint(ctx, attemptID, "contract-capability")
+		if err != nil || !found || loaded.State != work.AgentAttemptRunning || loaded.ProviderThreadID != "thread-1" || loadedTranscript == nil {
+			t.Fatalf("LoadAgentCheckpoint(running) = (%+v, %+v, %v, %v)", loaded, loadedTranscript, found, err)
 		}
 		detail, err := s.TargetRunDetail(ctx, runID)
 		if err != nil {
@@ -354,6 +365,10 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 		if _, err := s.CheckpointAgentAttempt(ctx, checkpoint); err != nil {
 			t.Fatalf("CheckpointAgentAttempt(exact retry): %v", err)
 		}
+		loaded, loadedTranscript, found, err = s.LoadAgentCheckpoint(ctx, attemptID, "contract-capability")
+		if err != nil || !found || loaded.State != work.AgentAttemptSucceeded || string(loaded.Result) != `{"kind":"done"}` || loadedTranscript == nil {
+			t.Fatalf("LoadAgentCheckpoint(succeeded) = (%+v, %+v, %v, %v)", loaded, loadedTranscript, found, err)
+		}
 		checkpoint.Result = []byte(`{"kind":"different"}`)
 		if _, err := s.CheckpointAgentAttempt(ctx, checkpoint); !errors.Is(err, work.ErrPermanent) {
 			t.Fatalf("CheckpointAgentAttempt(conflict) error = %v, want permanent", err)
@@ -362,6 +377,29 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 		checkpoint.Transcript.Checksum = []byte("different-checksum")
 		if _, err := s.CheckpointAgentAttempt(ctx, checkpoint); !errors.Is(err, work.ErrPermanent) {
 			t.Fatalf("CheckpointAgentAttempt(transcript conflict) error = %v, want permanent", err)
+		}
+	})
+
+	t.Run("failed before provider identity is still a durable checkpoint", func(t *testing.T) {
+		s, _, runID, startedAt := claimedRun(t, newStore(t))
+		ctx := context.Background()
+		if _, err := s.StartStep(ctx, store.StartStepInput{RunID: runID, Ordinal: 1, Kind: work.StepImplement, StartedAt: startedAt}); err != nil {
+			t.Fatalf("StartStep: %v", err)
+		}
+		attemptID := store.TargetAttemptID{RunID: runID, StepOrdinal: 1, AttemptNo: 1}
+		if _, err := s.StartAgentAttempt(ctx, store.StartAgentAttemptInput{ID: attemptID, AgentStage: work.AgentStageImplement, Model: work.Model{Name: "contract-model", Effort: "medium"}, UsageState: work.UsageUnknown, StartedAt: startedAt}); err != nil {
+			t.Fatalf("StartAgentAttempt: %v", err)
+		}
+		if err := s.BindCheckpointCapability(ctx, attemptID, "contract-capability"); err != nil {
+			t.Fatalf("BindCheckpointCapability: %v", err)
+		}
+		failed := store.AgentCheckpointInput{ID: attemptID, Capability: "contract-capability", State: work.AgentAttemptFailed, FailureKind: work.RunFailureAgentUnrecoverable, UsageState: work.UsageUnknown, EndedAt: startedAt.Add(time.Minute)}
+		if _, err := s.CheckpointAgentAttempt(ctx, failed); err != nil {
+			t.Fatalf("CheckpointAgentAttempt(failed before thread): %v", err)
+		}
+		loaded, _, found, err := s.LoadAgentCheckpoint(ctx, attemptID, "contract-capability")
+		if err != nil || !found || loaded.State != work.AgentAttemptFailed || loaded.ProviderThreadID != "" {
+			t.Fatalf("LoadAgentCheckpoint(failed before thread) = (%+v, %v, %v)", loaded, found, err)
 		}
 	})
 

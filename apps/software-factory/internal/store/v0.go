@@ -641,7 +641,7 @@ func (s *Store) LoadAgentCheckpoint(ctx context.Context, attemptID TargetAttempt
 		return AgentAttempt{}, nil, false, fmt.Errorf("loading agent checkpoint: %w", ErrRunOwnership)
 	}
 	attempt := agentAttemptFromRow(row)
-	if attempt.ProviderThreadID == "" {
+	if attempt.State == work.AgentAttemptRunning && attempt.ProviderThreadID == "" {
 		return attempt, nil, false, nil
 	}
 	transcriptRow, transcriptErr := s.q.TargetAgentTranscript(ctx, storedb.TargetAgentTranscriptParams{RunID: id, StepOrdinal: int32(attemptID.StepOrdinal), AttemptNo: int32(attemptID.AttemptNo)})

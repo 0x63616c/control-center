@@ -54,6 +54,16 @@ type event struct {
 	} `json:"error"`
 }
 
+// ThreadIDFromEvent extracts only a top-level provider thread-start identity.
+// Run Worker checkpointing uses it before the provider process can finish.
+func ThreadIDFromEvent(raw []byte) string {
+	var e event
+	if err := json.Unmarshal(raw, &e); err != nil || e.Type != eventThreadStarted {
+		return ""
+	}
+	return e.ThreadID
+}
+
 // usage mirrors codex's per-turn token counts, field for field.
 //
 // It is a separate type from work.Usage and mapped explicitly below, so codex's

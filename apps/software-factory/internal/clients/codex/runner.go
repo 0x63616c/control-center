@@ -76,6 +76,49 @@ func (r *Runner) RunStage(ctx context.Context, run work.StageRun, events work.St
 	}
 }
 
+// RunTargetStage runs one workflow-authorized target Attempt. resumeThreadID
+// comes only from the scoped durable checkpoint after local provider state was
+// proved available; an absent ID starts the first and only fresh execution for
+// that Attempt.
+func (r *Runner) RunTargetStage(ctx context.Context, run work.StageRun, resumeThreadID string, events work.StageEventSink) (result work.StageResult, err error) {
+	paths := run.Key.Paths()
+	lock, err := r.locks.Acquire(ctx, paths.Lock)
+	if err != nil {
+		return work.StageResult{}, fmt.Errorf("acquiring the target codex lock for %s: %w", run.Key, err)
+	}
+	defer func() {
+		if closeErr := lock.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("releasing the target codex lock for %s: %w", run.Key, closeErr)
+		}
+	}()
+	if done, probeErr := (&sandboxProbe{runner: r, sandbox: run.Sandbox, paths: paths}).ResultExists(ctx); probeErr != nil {
+		return work.StageResult{}, fmt.Errorf("checking the target result for %s: %w", run.Key, probeErr)
+	} else if done {
+		stored, readErr := r.storedResult(ctx, run, paths)
+		stored.ThreadID = resumeThreadID
+		return stored, readErr
+	}
+	if err := r.files.Write(ctx, run.Sandbox, paths.Prompt, []byte(run.Prompt), stageFileMode); err != nil {
+		return work.StageResult{}, fmt.Errorf("writing the target prompt for %s: %w", run.Key, err)
+	}
+	if err := r.files.Write(ctx, run.Sandbox, paths.Schema, run.Schema, stageFileMode); err != nil {
+		return work.StageResult{}, fmt.Errorf("writing the target output schema for %s: %w", run.Key, err)
+	}
+	stream, exitCode, err := r.exec(ctx, run, events, resumeThreadID)
+	if err != nil {
+		return work.StageResult{}, err
+	}
+	result = work.StageResult{ThreadID: stream.ThreadID, Usage: stream.Usage, UsageMeasured: true}
+	if err := classify(exitCode, stream.outcome, stream.stderr); err != nil {
+		return result, fmt.Errorf("%s: %w", run.Key, err)
+	}
+	result.Output, err = r.readResult(ctx, run, paths)
+	if err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
 // run executes the stage: prompt and schema in, codex, result out.
 func (r *Runner) run(ctx context.Context, run work.StageRun, events work.StageEventSink, paths work.StagePaths) (work.StageResult, error) {
 	// Written before the run and kept afterwards. codex is handed the prompt on

@@ -5,25 +5,30 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"go.temporal.io/sdk/activity"
 	tlog "go.temporal.io/sdk/log"
 	"go.temporal.io/sdk/worker"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
+	checkpointclient "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/checkpoint"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codex"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/local"
 	temporalapi "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/temporal"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/config"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/prompts"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/transcripts"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
@@ -60,7 +65,7 @@ func run() error {
 	}
 	defer temporal.Close()
 
-	acts, err := newActivities(logger)
+	acts, targetActs, err := newActivities(cfg, logger)
 	if err != nil {
 		return err
 	}
@@ -70,7 +75,7 @@ func run() error {
 		MaxConcurrentSessionExecutionSize:  1,
 		MaxConcurrentActivityExecutionSize: 1,
 	})
-	register(w, acts)
+	register(w, acts, targetActs)
 	logger.Info("Run Worker starting", "run_worker", cfg.ID, "run_id", cfg.Identity.RunID,
 		"generation", cfg.Identity.Generation, "task_queue", cfg.TaskQueue)
 	if err := w.Run(worker.InterruptCh()); err != nil {
@@ -79,35 +84,60 @@ func run() error {
 	return nil
 }
 
-func register(w worker.Worker, acts *activities.Activities) {
+func register(w worker.Worker, acts *activities.Activities, targetActs *activities.RunWorkerActivities) {
 	w.RegisterActivity(acts.RunPlan)
 	w.RegisterActivity(acts.RunImplement)
 	w.RegisterActivity(acts.RunReview)
+	w.RegisterActivity(targetActs)
 }
 
-func newActivities(logger *slog.Logger) (*activities.Activities, error) {
+func newActivities(cfg config.RunWorker, logger *slog.Logger) (*activities.Activities, *activities.RunWorkerActivities, error) {
 	if err := os.MkdirAll(transcriptsSubdir, 0o750); err != nil {
-		return nil, fmt.Errorf("creating local transcript directory: %w", err)
+		return nil, nil, fmt.Errorf("creating local transcript directory: %w", err)
 	}
 	sink, err := transcripts.New(transcriptsSubdir)
 	if err != nil {
-		return nil, fmt.Errorf("building local transcript sink: %w", err)
+		return nil, nil, fmt.Errorf("building local transcript sink: %w", err)
 	}
 	if err := ensureCodexHome(work.CodexHomeDir, work.CodexAuthFile, work.RunWorkerCodexCredentialFile); err != nil {
-		return nil, fmt.Errorf("preparing Codex home: %w", err)
+		return nil, nil, fmt.Errorf("preparing Codex home: %w", err)
 	}
 	renderer, err := prompts.New(rand.Reader)
 	if err != nil {
-		return nil, fmt.Errorf("building prompt renderer: %w", err)
+		return nil, nil, fmt.Errorf("building prompt renderer: %w", err)
 	}
-	return activities.NewSandboxSide(activities.SandboxDeps{
-		Stages:      codex.NewRunner(local.NewExecer(), local.NewFileTransfer(), local.NewLocker(clock.System{}), logger),
+	runner := codex.NewRunner(local.NewExecer(), local.NewFileTransfer(), local.NewLocker(clock.System{}), logger)
+	promptRenderer := prompts.NewActivityRenderer(renderer)
+	legacy, err := activities.NewSandboxSide(activities.SandboxDeps{
+		Stages:      runner,
 		Transcripts: sink,
-		Prompts:     prompts.NewActivityRenderer(renderer),
+		Prompts:     promptRenderer,
 		Metrics:     telemetry.NewMetrics(prometheus.NewRegistry()),
 		Log:         logger,
 		Clock:       clock.System{},
 	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("building legacy-compatible stage activities: %w", err)
+	}
+	checkpointFactory, err := checkpointclient.NewFactory(cfg.CheckpointAPIURL, work.RunWorkerCheckpointCapabilityFile, http.DefaultClient, os.ReadFile)
+	if err != nil {
+		return nil, nil, fmt.Errorf("building checkpoint client factory: %w", err)
+	}
+	providerState, err := codex.NewRolloutProbe(os.DirFS(work.CodexHomeDir))
+	if err != nil {
+		return nil, nil, fmt.Errorf("building Codex provider-state probe: %w", err)
+	}
+	target, err := activities.NewRunWorkerActivities(activities.RunWorkerDeps{
+		Stages: runner, Prompts: promptRenderer,
+		Checkpoints: func(id store.TargetAttemptID) (activities.AttemptCheckpoint, error) {
+			return checkpointFactory.Open(id)
+		},
+		ProviderState: providerState, Clock: clock.System{}, Heartbeat: func(ctx context.Context) { activity.RecordHeartbeat(ctx) },
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("building target Run Worker activities: %w", err)
+	}
+	return legacy, target, nil
 }
 
 func ensureCodexHome(homeDir, authFile, projectedFile string) error {

@@ -201,7 +201,7 @@ func (f *Store) LoadAgentCheckpoint(_ context.Context, id store.TargetAttemptID,
 	if !ok || f.capabilityHash[id] != capability {
 		return store.AgentAttempt{}, nil, false, fmt.Errorf("loading checkpoint: %w", store.ErrRunOwnership)
 	}
-	if attempt.ProviderThreadID == "" {
+	if attempt.State == work.AgentAttemptRunning && attempt.ProviderThreadID == "" {
 		return attempt, nil, false, nil
 	}
 	var transcript *store.TargetTranscript

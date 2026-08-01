@@ -690,6 +690,58 @@ paths:
           description: Error
       summary: Resume the factory
   /v1/run-worker/runs/{runID}/steps/{stepOrdinal}/attempts/{attemptNo}/checkpoint:
+    get:
+      description: Reconciles provider progress using the capability scoped to the exact Run, Step, and Agent Attempt.
+      operationId: get-v1-run-worker-runs-by-run-id-steps-by-step-ordinal-attempts-by-attempt-no-checkpoint
+      parameters:
+        - description: The owning Run identity.
+          in: path
+          name: runID
+          required: true
+          schema:
+            description: The owning Run identity.
+            format: uuid
+            type: string
+        - description: The active agent-backed Step ordinal.
+          in: path
+          name: stepOrdinal
+          required: true
+          schema:
+            description: The active agent-backed Step ordinal.
+            format: int64
+            minimum: 1
+            type: integer
+        - description: The workflow-authorized Agent Attempt number.
+          in: path
+          name: attemptNo
+          required: true
+          schema:
+            description: The workflow-authorized Agent Attempt number.
+            format: int64
+            minimum: 1
+            type: integer
+        - description: The capability minted for this exact active Agent Attempt.
+          in: header
+          name: X-Software-Factory-Checkpoint-Capability
+          schema:
+            description: The capability minted for this exact active Agent Attempt.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Attempt"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      security:
+        - agentCheckpointCapability: []
+      summary: Read an active Agent Attempt checkpoint
     put:
       description: Stores running provider identity or terminal execution evidence using a capability scoped to the exact Run, Step, and Agent Attempt.
       operationId: put-v1-run-worker-runs-by-run-id-steps-by-step-ordinal-attempts-by-attempt-no-checkpoint

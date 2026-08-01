@@ -11,6 +11,7 @@ import (
 	factoryapi "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/api"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/checkpoint"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
 func TestOpenAPICommandPrintsSpecWithoutStartupConfig(t *testing.T) {
@@ -42,6 +43,10 @@ func (checkpointStore) CheckpointAgentAttempt(_ context.Context, input store.Age
 	return store.AgentAttempt{ID: input.ID, State: input.State}, nil
 }
 
+func (checkpointStore) LoadAgentCheckpoint(_ context.Context, id store.TargetAttemptID, _ string) (store.AgentAttempt, *store.TargetTranscript, bool, error) {
+	return store.AgentAttempt{ID: id, ProviderThreadID: "thread-1", State: work.AgentAttemptRunning, UsageState: work.UsageUnknown}, nil, true, nil
+}
+
 func TestFactoryRoutingUsesAttemptCapabilityWithoutWeakeningLegacyAuthentication(t *testing.T) {
 	t.Parallel()
 
@@ -64,6 +69,14 @@ func TestFactoryRoutingUsesAttemptCapabilityWithoutWeakeningLegacyAuthentication
 	mux.ServeHTTP(checkpointResponse, checkpointRequest)
 	if checkpointResponse.Code != http.StatusNoContent {
 		t.Fatalf("checkpoint route without broad bearer = %d: %s", checkpointResponse.Code, checkpointResponse.Body.String())
+	}
+
+	checkpointRead := httptest.NewRequest(http.MethodGet, checkpoint.AttemptPath("0f466627-b3ae-4ba2-9c96-6ef44ec6f578", 1, 1), nil)
+	checkpointRead.Header.Set(checkpoint.CapabilityHeader, "attempt-capability")
+	checkpointReadResponse := httptest.NewRecorder()
+	mux.ServeHTTP(checkpointReadResponse, checkpointRead)
+	if checkpointReadResponse.Code != http.StatusOK {
+		t.Fatalf("checkpoint GET without broad bearer = %d: %s", checkpointReadResponse.Code, checkpointReadResponse.Body.String())
 	}
 
 	futureRunWorkerRequest := httptest.NewRequest(http.MethodGet, "/v1/run-worker/future", nil)

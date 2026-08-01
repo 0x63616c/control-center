@@ -883,6 +883,255 @@ export const usePostV1FactoryResume = <TError = AxiosError<ErrorModel>, TContext
 };
 
 /**
+ * Reconciles provider progress using the capability scoped to the exact Run, Step, and Agent Attempt.
+ * @summary Read an active Agent Attempt checkpoint
+ */
+export const getV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint = (
+  runID: string,
+  stepOrdinal: number,
+  attemptNo: number,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<Attempt>> => {
+  return axios.get(
+    `/v1/run-worker/runs/${runID}/steps/${stepOrdinal}/attempts/${attemptNo}/checkpoint`,
+    options,
+  );
+};
+
+export const getGetV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpointQueryKey = (
+  runID?: string,
+  stepOrdinal?: number,
+  attemptNo?: number,
+) => {
+  return [
+    `/v1/run-worker/runs/${runID}/steps/${stepOrdinal}/attempts/${attemptNo}/checkpoint`,
+  ] as const;
+};
+
+export const getGetV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpointQueryOptions =
+  <
+    TData = Awaited<
+      ReturnType<typeof getV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint>
+    >,
+    TError = AxiosError<ErrorModel>,
+  >(
+    runID: string,
+    stepOrdinal: number,
+    attemptNo: number,
+    options?: {
+      query?: Partial<
+        UseQueryOptions<
+          Awaited<
+            ReturnType<
+              typeof getV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint
+            >
+          >,
+          TError,
+          TData
+        >
+      >;
+      axios?: AxiosRequestConfig;
+    },
+  ) => {
+    const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+    const queryKey =
+      queryOptions?.queryKey ??
+      getGetV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpointQueryKey(
+        runID,
+        stepOrdinal,
+        attemptNo,
+      );
+
+    const queryFn: QueryFunction<
+      Awaited<
+        ReturnType<typeof getV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint>
+      >
+    > = ({ signal }) =>
+      getV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint(
+        runID,
+        stepOrdinal,
+        attemptNo,
+        { signal, ...axiosOptions },
+      );
+
+    return {
+      queryKey,
+      queryFn,
+      enabled: !!(runID && stepOrdinal && attemptNo),
+      ...queryOptions,
+    } as UseQueryOptions<
+      Awaited<
+        ReturnType<typeof getV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint>
+      >,
+      TError,
+      TData
+    > & { queryKey: DataTag<QueryKey, TData, TError> };
+  };
+
+export type GetV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpointQueryResult =
+  NonNullable<
+    Awaited<
+      ReturnType<typeof getV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint>
+    >
+  >;
+export type GetV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpointQueryError =
+  AxiosError<ErrorModel>;
+
+export function useGetV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint<
+  TData = Awaited<
+    ReturnType<typeof getV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint>
+  >,
+  TError = AxiosError<ErrorModel>,
+>(
+  runID: string,
+  stepOrdinal: number,
+  attemptNo: number,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<
+          ReturnType<
+            typeof getV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint
+          >
+        >,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<
+            ReturnType<
+              typeof getV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint
+            >
+          >,
+          TError,
+          Awaited<
+            ReturnType<
+              typeof getV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint
+            >
+          >
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useGetV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint<
+  TData = Awaited<
+    ReturnType<typeof getV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint>
+  >,
+  TError = AxiosError<ErrorModel>,
+>(
+  runID: string,
+  stepOrdinal: number,
+  attemptNo: number,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<
+          ReturnType<
+            typeof getV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint
+          >
+        >,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<
+            ReturnType<
+              typeof getV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint
+            >
+          >,
+          TError,
+          Awaited<
+            ReturnType<
+              typeof getV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint
+            >
+          >
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useGetV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint<
+  TData = Awaited<
+    ReturnType<typeof getV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint>
+  >,
+  TError = AxiosError<ErrorModel>,
+>(
+  runID: string,
+  stepOrdinal: number,
+  attemptNo: number,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<
+          ReturnType<
+            typeof getV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint
+          >
+        >,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+/**
+ * @summary Read an active Agent Attempt checkpoint
+ */
+
+export function useGetV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint<
+  TData = Awaited<
+    ReturnType<typeof getV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint>
+  >,
+  TError = AxiosError<ErrorModel>,
+>(
+  runID: string,
+  stepOrdinal: number,
+  attemptNo: number,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<
+          ReturnType<
+            typeof getV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpoint
+          >
+        >,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions =
+    getGetV1RunWorkerRunsByRunIdStepsByStepOrdinalAttemptsByAttemptNoCheckpointQueryOptions(
+      runID,
+      stepOrdinal,
+      attemptNo,
+      options,
+    );
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
  * Stores running provider identity or terminal execution evidence using a capability scoped to the exact Run, Step, and Agent Attempt.
  * @summary Checkpoint an active Agent Attempt
  */
