@@ -148,7 +148,13 @@ type TargetSyncPullRequestInput struct {
 
 // TargetSyncPullRequest opens or updates the branch PR and checkpoints it.
 func (a *RunWorkerActivities) TargetSyncPullRequest(ctx context.Context, in TargetSyncPullRequestInput) (work.PullRequest, error) {
-	cp, raw, found, err := a.loadRepositoryResult(ctx, in.Step, repositoryEffectSync)
+	// Synchronization discovers the authoritative pushed head from GitHub. A
+	// retry begins from the preceding repository position, so its input still
+	// carries that old head while the completed checkpoint carries the newly
+	// observed one.
+	recoveryStep := in.Step
+	recoveryStep.PushedHead = ""
+	cp, raw, found, err := a.loadRepositoryResult(ctx, recoveryStep, repositoryEffectSync)
 	if err != nil {
 		return work.PullRequest{}, fmt.Errorf("loading target pull request sync effect: %w", err)
 	}
@@ -163,6 +169,7 @@ func (a *RunWorkerActivities) TargetSyncPullRequest(ctx context.Context, in Targ
 		return work.PullRequest{}, fail(ctx, "synchronizing the target pull request", err)
 	}
 	position := in.Step
+	position.PushedHead = pr.HeadSHA
 	position.PullRequestNumber, position.PullRequestNodeID = pr.Number, pr.NodeID
 	if err := a.checkpointRepositoryResult(ctx, cp, position, repositoryEffectSync, pr); err != nil {
 		return work.PullRequest{}, fmt.Errorf("checkpointing target pull request sync effect: %w", err)

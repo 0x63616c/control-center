@@ -142,7 +142,7 @@ var errCheckpointResponseLost = errors.New("checkpoint response was lost")
 
 func TestTargetSyncRetryAfterLostCheckpointResponseUsesTheExactDurableResult(t *testing.T) {
 	position := targetPosition(3)
-	want := work.PullRequest{Number: 42, NodeID: "PR_node", URL: "https://github.com/example/repo/pull/42"}
+	want := work.PullRequest{Number: 42, NodeID: "PR_node", HeadSHA: "H1", URL: "https://github.com/example/repo/pull/42"}
 	cp := &repositoryCheckpointProbe{checkpointErr: errCheckpointResponseLost}
 	github := &targetGitHubProbe{pr: want}
 	a := targetRepositoryActivities(&targetRepositoryProbe{}, github, cp)
@@ -154,7 +154,7 @@ func TestTargetSyncRetryAfterLostCheckpointResponseUsesTheExactDurableResult(t *
 	if err != nil {
 		t.Fatalf("TargetSyncPullRequest: %v", err)
 	}
-	if github.syncCalls != 1 || got.Number != want.Number || got.NodeID != want.NodeID || len(cp.writes) != 1 {
+	if github.syncCalls != 1 || got.Number != want.Number || got.NodeID != want.NodeID || len(cp.writes) != 1 || cp.writes[0].PushedHead != want.HeadSHA {
 		t.Fatalf("sync calls/result = %d / %+v", github.syncCalls, got)
 	}
 }
