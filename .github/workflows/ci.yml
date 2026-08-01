@@ -263,6 +263,11 @@ jobs:
         # either, prod's required-pin check turns a green merge into a failed
         # deploy, or worse, a target image is never published at all.
         run: bash scripts/test-software-factory-image-ci.sh
+      - name: Software-factory release manifest contract
+        # The standalone release is the producer after extraction. Before the
+        # cutover consumes its artifact, prove that only the exact seven
+        # linux/amd64 repositories and immutable digests can enter Pulumi's map.
+        run: bash scripts/test-software-factory-release-manifest.sh
       - name: Control Center cutover tooling tests
         # Hermetic self-tests of the M7 production-cutover tooling (www-jtp0.7):
         # the red-first preflight gate (refuses cutover until rehearsal/snapshot/
