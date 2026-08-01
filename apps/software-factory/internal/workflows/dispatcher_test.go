@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -96,6 +97,54 @@ func TestDispatcherPublishesTheLatestAcceptedPolicy(t *testing.T) {
 	}
 	if got := updates["second-comparison"]; got != workflows.DispatcherPublicationAlreadyCurrent {
 		t.Errorf("repeated latest policy under a new request = %q, want ALREADY_CURRENT", got)
+	}
+}
+
+func TestDispatcherAdmitsTicketsUpToCapacityWithPolicySnapshots(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+	awaits := 0
+	env.OnActivity(ticketActs.AwaitDispatchableTickets, mock.Anything).
+		Return(func(context.Context) ([]store.Ticket, error) {
+			awaits++
+			return []store.Ticket{
+				{ID: 9, Title: "third", State: store.TicketOpen},
+				{ID: 3, Title: "first", State: store.TicketOpen},
+				{ID: 5, Title: "second", State: store.TicketOpen},
+			}, nil
+		})
+	var admitted []workflows.WorkOnTicketInput
+	env.OnWorkflow(workflows.WorkOnTicket, mock.Anything, mock.Anything).
+		Return(func(ctx workflow.Context, in workflows.WorkOnTicketInput) error {
+			admitted = append(admitted, in)
+			return workflow.Sleep(ctx, time.Hour)
+		})
+
+	in := targetDispatcherInput()
+	in.Policy.MaxInFlight = 2
+	env.RegisterDelayedCallback(env.CancelWorkflow, time.Minute)
+	env.ExecuteWorkflow(workflows.Dispatcher, in)
+
+	if err := env.GetWorkflowError(); !temporal.IsCanceledError(err) {
+		t.Fatalf("Dispatcher error = %v, want cancellation after admission assertions", err)
+	}
+	if awaits != 1 {
+		t.Errorf("AwaitDispatchableTickets calls = %d, want exactly one while capacity is full", awaits)
+	}
+	if len(admitted) != 2 {
+		t.Fatalf("admitted %d children, want capacity 2", len(admitted))
+	}
+	admittedIDs := map[store.TicketID]bool{}
+	for _, child := range admitted {
+		admittedIDs[child.TicketID] = true
+	}
+	if !admittedIDs[3] || !admittedIDs[5] || admittedIDs[9] {
+		t.Errorf("admitted Ticket IDs = %v, want the two sorted IDs before capacity", admittedIDs)
+	}
+	for _, child := range admitted {
+		if !reflect.DeepEqual(child.Policy, in.Policy.Run) {
+			t.Errorf("ticket %d policy = %+v, want input snapshot %+v", child.TicketID, child.Policy, in.Policy.Run)
+		}
 	}
 }
 
