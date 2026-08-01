@@ -161,6 +161,8 @@ type fakeDependencies struct {
 }
 
 func newFakeDependencies() *fakeDependencies {
+	versionSeven := time.Date(2026, time.July, 31, 7, 0, 0, 0, time.UTC)
+	versionEight := versionSeven.Add(time.Minute)
 	return &fakeDependencies{
 		workflows: []WorkflowExecution{
 			{ID: "software-factory-ticket-dispatcher", RunID: "dispatcher-run", Kind: WorkflowDispatcher},
@@ -168,7 +170,10 @@ func newFakeDependencies() *fakeDependencies {
 			{ID: "factory-ticket-8", RunID: "run-8", Kind: WorkflowTicket},
 		},
 		pullRequests: []PullRequest{{Number: 41, NodeID: "PR_41", Branch: "factory/ticket-7/run-7", AutoMergeEnabled: true}},
-		tickets:      []LegacyTicket{{ID: 7, State: "working", Version: "v7"}, {ID: 8, State: "review", Version: "v8"}},
+		tickets: []LegacyTicket{
+			{ID: 7, State: LegacyTicketWorking, Version: versionSeven},
+			{ID: 8, State: LegacyTicketReview, Version: versionEight},
+		},
 	}
 }
 
@@ -241,11 +246,11 @@ func (fake *fakeDependencies) ReopenLegacyTickets(_ context.Context, expected []
 		if index > 0 {
 			target += ","
 		}
-		target += strconv.FormatInt(ticket.ID, 10) + "@" + ticket.State
+		target += strconv.FormatInt(ticket.ID, 10) + "@" + string(ticket.State)
 	}
 	fake.calls = append(fake.calls, target)
 	if fake.staleTicketOnReopen {
-		fake.tickets[0].Version = "changed"
+		fake.tickets[0].Version = fake.tickets[0].Version.Add(time.Nanosecond)
 	}
 	if len(expected) != len(fake.tickets) {
 		return nil, fmt.Errorf("legacy ticket inventory changed")
@@ -257,7 +262,7 @@ func (fake *fakeDependencies) ReopenLegacyTickets(_ context.Context, expected []
 	}
 	reopened := append([]LegacyTicket(nil), expected...)
 	for index := range reopened {
-		reopened[index].State = "open"
+		reopened[index].State = LegacyTicketOpen
 	}
 	fake.tickets = nil
 	return reopened, nil
