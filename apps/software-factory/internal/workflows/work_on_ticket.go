@@ -37,12 +37,32 @@ type WorkOnTicketInput struct {
 // WorkOnTicket claims one Ticket before creating generation one, creates its
 // private Run Worker Session, and clones the repository as that Session's
 // first repository-affine activity.
-func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
+func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
+	var claimed store.ClaimRunResult
+	var session *targetRunSession
+	claimedRun := false
+	defer func() {
+		if !temporal.IsCanceledError(runErr) || !claimedRun {
+			return
+		}
+		cleanupCtx, cancel := workflow.NewDisconnectedContext(ctx)
+		defer cancel()
+		finalCtx := workflow.WithActivityOptions(cleanupCtx, targetActivityOptions(in.Policy.Recording))
+		if err := workflow.ExecuteActivity(finalCtx, targetRecordingActs.CancelRun, store.CancelRunInput{
+			RunID: in.RunID, TicketID: in.TicketID, EndedAt: workflow.Now(cleanupCtx),
+		}).Get(finalCtx, nil); err != nil {
+			runErr = fmt.Errorf("recording canceled target run: %w", err)
+			return
+		}
+		if session != nil {
+			session.close()
+			session.delete(cleanupCtx)
+		}
+	}()
 	if err := validateWorkOnTicket(in); err != nil {
 		return err
 	}
 	claimCtx := workflow.WithActivityOptions(ctx, targetActivityOptions(in.Policy.Recording))
-	var claimed store.ClaimRunResult
 	if err := workflow.ExecuteActivity(claimCtx, targetRecordingActs.ClaimAndStartRun, store.ClaimRunInput{
 		TicketID:  in.TicketID,
 		RunID:     in.RunID,
@@ -50,6 +70,7 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 	}).Get(claimCtx, &claimed); err != nil {
 		return fmt.Errorf("claiming ticket %d: %w", in.TicketID, err)
 	}
+	claimedRun = true
 
 	branch := work.FactoryTicketBranchName(int64(claimed.Ticket.ID), in.RunID)
 	session, err := newTargetRunSession(ctx, in, int(claimed.Ticket.ID), branch)
@@ -241,16 +262,18 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 		ordinal++
 	}
 
-	finalCtx := workflow.WithActivityOptions(ctx, targetActivityOptions(in.Policy.Recording))
+	terminalCtx, cancelTerminal := workflow.NewDisconnectedContext(ctx)
+	defer cancelTerminal()
+	finalCtx := workflow.WithActivityOptions(terminalCtx, targetActivityOptions(in.Policy.Recording))
 	if err := workflow.ExecuteActivity(finalCtx, targetRecordingActs.FinalizeConfirmedMerge, store.ConfirmedMergeInput{
 		RunID: in.RunID, TicketID: in.TicketID, StepOrdinal: mergeStep.StepOrdinal,
-		ReviewedHead: mergeStep.PushedHead, MergeSHA: merge.MergeSHA, EndedAt: workflow.Now(ctx),
+		ReviewedHead: mergeStep.PushedHead, MergeSHA: merge.MergeSHA, EndedAt: workflow.Now(terminalCtx),
 	}).Get(finalCtx, nil); err != nil {
 		return fmt.Errorf("recording confirmed target merge: %w", err)
 	}
 
 	session.close()
-	session.delete(ctx)
+	session.delete(terminalCtx)
 	return nil
 }
 
@@ -278,10 +301,16 @@ func runTargetAgentStep(ctx workflow.Context, session *targetRunSession, in Work
 	controlCtx := workflow.WithActivityOptions(ctx, targetActivityOptions(in.Policy.Provisioning))
 	credentialCtx := workflow.WithActivityOptions(ctx, targetActivityOptions(in.Policy.CredentialRotation))
 	attemptContinuation := continuation
-	for attemptNo := 1; attemptNo <= remainingAttempts; attemptNo++ {
+	attemptStartedAt := make(map[int]time.Time, remainingAttempts)
+	for attemptNo := 1; attemptNo <= remainingAttempts; {
 		attempt := store.TargetAttemptID{RunID: in.RunID, StepOrdinal: ordinal, AttemptNo: attemptNo}
+		startedAt, exists := attemptStartedAt[attemptNo]
+		if !exists {
+			startedAt = workflow.Now(ctx)
+			attemptStartedAt[attemptNo] = startedAt
+		}
 		if err := workflow.ExecuteActivity(recordingCtx, targetRecordingActs.StartAgentAttempt, store.StartAgentAttemptInput{
-			ID: attempt, AgentStage: stage, Model: in.Model, UsageState: work.UsageUnknown, StartedAt: workflow.Now(ctx),
+			ID: attempt, AgentStage: stage, Model: in.Model, UsageState: work.UsageUnknown, StartedAt: startedAt,
 		}).Get(recordingCtx, nil); err != nil {
 			return activities.TargetAgentOutput{}, attemptNo - 1, fmt.Errorf("authorizing %s agent attempt: %w", stage, err)
 		}
@@ -333,6 +362,16 @@ func runTargetAgentStep(ctx workflow.Context, session *targetRunSession, in Work
 		cancelRenewal()
 		cancelAgent()
 		if agentErr != nil {
+			if isRunWorkerSessionLoss(agentErr) {
+				if err := session.replace(ctx); err != nil {
+					return activities.TargetAgentOutput{}, attemptNo, fmt.Errorf("replacing lost Run Worker Session: %w", err)
+				}
+				// The replacement must reconcile this same durable Attempt before
+				// deciding it is unresumable. A terminal checkpoint returns without
+				// another provider call; an incomplete one reports A12/I08.
+				attemptContinuation = nil
+				continue
+			}
 			failureKind := work.RunFailureInfrastructure
 			if isUnresumableAttempt(agentErr) {
 				failureKind = work.RunFailureAgentUnrecoverable
@@ -342,15 +381,9 @@ func runTargetAgentStep(ctx workflow.Context, session *targetRunSession, in Work
 			}).Get(recordingCtx, nil); err != nil {
 				return activities.TargetAgentOutput{}, attemptNo, fmt.Errorf("recording failed %s agent attempt: %w", stage, err)
 			}
-			if isRunWorkerSessionLoss(agentErr) {
-				if err := session.replace(ctx); err != nil {
-					return activities.TargetAgentOutput{}, attemptNo, fmt.Errorf("replacing lost Run Worker Session: %w", err)
-				}
-				attemptContinuation = nil
-				continue
-			}
 			if isUnresumableAttempt(agentErr) && attemptNo < remainingAttempts {
 				attemptContinuation = nil
+				attemptNo++
 				continue
 			}
 			if isUnresumableAttempt(agentErr) {
@@ -380,7 +413,6 @@ type targetRunSession struct {
 	identity      work.RunWorkerIdentity
 	sessionCtx    workflow.Context
 	open          bool
-	replaced      bool
 	checkoutReady bool
 }
 
@@ -433,15 +465,11 @@ func (s *targetRunSession) execute(ctx workflow.Context, run func(workflow.Conte
 }
 
 func (s *targetRunSession) replace(ctx workflow.Context) error {
-	if s.replaced {
-		return temporal.NewNonRetryableApplicationError("Run Worker Session replacement already used", activities.ErrTypeRunWorkerSessionLost, nil)
-	}
 	s.close()
 	s.delete(ctx)
 	if err := s.provisionAndCreate(ctx, s.identity.Generation+1); err != nil {
 		return err
 	}
-	s.replaced = true
 	if !s.checkoutReady {
 		return nil
 	}
