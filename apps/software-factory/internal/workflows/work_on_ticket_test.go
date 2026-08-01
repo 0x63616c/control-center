@@ -949,6 +949,7 @@ func TestWorkOnTicketReconcilesSameAttemptAfterLostAgentResponse(t *testing.T) {
 	}
 	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000015", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
 	h := newWorkOnTicketHarness(t, s)
+	h.deleteErr = nil
 	providerCalls := 0
 	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
 		if input.Stage == work.AgentStageImplement && input.CredentialRevision.Identity.Generation == 1 {
@@ -1001,6 +1002,32 @@ func TestWorkOnTicketReconcilesSameAttemptAfterLostAgentResponse(t *testing.T) {
 	}
 }
 
+func TestWorkOnTicketDoesNotProvisionReplacementUntilLostGenerationIsDeleted(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "blocked replacement", "keep one live worker", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000025", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
+		if input.Stage == work.AgentStageImplement {
+			return targetAgentOutput(t, input.Stage), temporal.NewNonRetryableApplicationError("Run Worker Session lost", activities.ErrTypeRunWorkerSessionLost, nil)
+		}
+		return targetAgentOutput(t, input.Stage), nil
+	}
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err == nil {
+		t.Fatal("WorkOnTicket succeeded despite failed teardown of the lost generation")
+	}
+	if len(h.provisionedInputs) != 1 {
+		t.Fatalf("provisioned generations = %+v, want no generation two while generation one deletion is unconfirmed", h.provisionedInputs)
+	}
+}
+
 // Replacement generations serialize, but a later loss after the prior
 // recovery completed may advance the same Run again without resetting any
 // budget or leaving the preceding generation active.
@@ -1014,6 +1041,7 @@ func TestWorkOnTicketSerializesSequentialSessionReplacements(t *testing.T) {
 	}
 	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000019", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
 	h := newWorkOnTicketHarness(t, s)
+	h.deleteErr = nil
 	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
 		if input.Stage == work.AgentStageImplement && input.CredentialRevision.Identity.Generation < 3 {
 			return targetAgentOutput(t, input.Stage), temporal.NewNonRetryableApplicationError("Run Worker Session lost", activities.ErrTypeRunWorkerSessionLost, nil)
@@ -1063,6 +1091,7 @@ func TestWorkOnTicketRecoversCheckpointedPullRequestAfterSessionLoss(t *testing.
 	}
 	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000016", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
 	h := newWorkOnTicketHarness(t, s)
+	h.deleteErr = nil
 	externalSyncs := 0
 	h.sync = func(input activities.TargetSyncPullRequestInput) (work.PullRequest, error) {
 		if len(h.syncInputs) == 1 {
@@ -1127,7 +1156,9 @@ func TestWorkOnTicketRecoversCheckpointedPullRequestAfterSessionLoss(t *testing.
 
 // A provisioned worker without a Session is not a successful Run. Session
 // creation timeout must hand that generation to bounded cleanup and leave the
-// Ticket active rather than pretending the Run completed.
+// Ticket active rather than pretending the Run completed. This is intentional:
+// PR6's MaintainFactory owns reconciliation of nonterminal workflow failure;
+// PR5 must not invent a terminal business outcome from infrastructure loss.
 func TestWorkOnTicketCleansUpWorkerWhenSessionCreationTimesOut(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -1478,6 +1509,7 @@ type workOnTicketHarness struct {
 	mergeInputs       []activities.TargetMergePullRequestInput
 	deleted           []activities.DeleteRunWorkerInput
 	reviewHead        string
+	deleteErr         error
 
 	syncInputs            []activities.TargetSyncPullRequestInput
 	ciInputs              []activities.TargetAwaitCIInput
@@ -1518,7 +1550,7 @@ func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore *storef
 	}
 	env.RegisterActivity(recovery)
 
-	h := &workOnTicketHarness{env: env, store: recorderStore}
+	h := &workOnTicketHarness{env: env, store: recorderStore, deleteErr: errors.New("temporary teardown handoff")}
 	env.RegisterActivityWithOptions(
 		func(_ context.Context, in activities.ProvisionRunWorkerInput) (activities.ProvisionRunWorkerOutput, error) {
 			h.provisioned = in
@@ -1639,7 +1671,7 @@ func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore *storef
 		func(_ context.Context, in activities.DeleteRunWorkerInput) error {
 			h.deleted = append(h.deleted, in)
 			h.controlSequence = append(h.controlSequence, "delete:"+strconv.Itoa(in.Identity.Generation))
-			return errors.New("temporary teardown handoff")
+			return h.deleteErr
 		},
 		activity.RegisterOptions{Name: "DeleteRunWorker"},
 	)

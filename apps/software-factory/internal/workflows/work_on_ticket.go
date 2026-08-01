@@ -60,7 +60,7 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 			}
 			if session != nil {
 				session.close()
-				session.delete(terminalCtx)
+				session.reportTerminalDelete(terminalCtx, "failed run cleanup")
 			}
 			return
 		}
@@ -78,7 +78,7 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 		}
 		if session != nil {
 			session.close()
-			session.delete(cleanupCtx)
+			session.reportTerminalDelete(cleanupCtx, "canceled run cleanup")
 		}
 	}()
 	if err := validateWorkOnTicket(in); err != nil {
@@ -134,7 +134,7 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 			return fmt.Errorf("recording confirmed predecessor merge: %w", err)
 		}
 		session.close()
-		session.delete(terminalCtx)
+		session.reportTerminalDelete(terminalCtx, "fenced successor cleanup")
 		return nil
 	}
 	session.checkoutReady = true
@@ -329,7 +329,7 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 	}
 
 	session.close()
-	session.delete(terminalCtx)
+	session.reportTerminalDelete(terminalCtx, "successful run cleanup")
 	return nil
 }
 
@@ -513,7 +513,9 @@ func (s *targetRunSession) provisionAndCreate(ctx workflow.Context, generation i
 	}
 	privateQueue, err := work.RunWorkerTaskQueue(identity)
 	if err != nil {
-		s.deleteIdentity(ctx, identity)
+		if deleteErr := s.deleteIdentity(ctx, identity); deleteErr != nil {
+			return errors.Join(fmt.Errorf("building Run Worker private task queue: %w", err), fmt.Errorf("deleting provisioned Run Worker generation %d: %w", generation, deleteErr))
+		}
 		return fmt.Errorf("building Run Worker private task queue: %w", err)
 	}
 	sessionOptions := targetActivityOptions(s.in.Policy.Provisioning)
@@ -522,7 +524,9 @@ func (s *targetRunSession) provisionAndCreate(ctx workflow.Context, generation i
 		ExecutionTimeout: s.in.Policy.HardDeadline, CreationTimeout: s.in.Policy.Provisioning.ScheduleToCloseTimeout, HeartbeatTimeout: s.in.Policy.Agent.HeartbeatTimeout,
 	})
 	if err != nil {
-		s.deleteIdentity(ctx, identity)
+		if deleteErr := s.deleteIdentity(ctx, identity); deleteErr != nil {
+			return errors.Join(fmt.Errorf("creating Run Worker Session for generation %d: %w", generation, err), fmt.Errorf("deleting provisioned Run Worker generation %d: %w", generation, deleteErr))
+		}
 		return fmt.Errorf("creating Run Worker Session for generation %d: %w", generation, err)
 	}
 	s.identity, s.sessionCtx, s.open = identity, sessionCtx, true
@@ -542,7 +546,9 @@ func (s *targetRunSession) execute(ctx workflow.Context, run func(workflow.Conte
 
 func (s *targetRunSession) replace(ctx workflow.Context) error {
 	s.close()
-	s.delete(ctx)
+	if err := s.delete(ctx); err != nil {
+		return fmt.Errorf("deleting lost Run Worker generation %d before replacement: %w", s.identity.Generation, err)
+	}
 	if err := s.provisionAndCreate(ctx, s.identity.Generation+1); err != nil {
 		return err
 	}
@@ -564,13 +570,19 @@ func (s *targetRunSession) close() {
 	}
 }
 
-func (s *targetRunSession) delete(ctx workflow.Context) {
-	s.deleteIdentity(ctx, s.identity)
+func (s *targetRunSession) delete(ctx workflow.Context) error {
+	return s.deleteIdentity(ctx, s.identity)
 }
 
-func (s *targetRunSession) deleteIdentity(ctx workflow.Context, identity work.RunWorkerIdentity) {
+func (s *targetRunSession) deleteIdentity(ctx workflow.Context, identity work.RunWorkerIdentity) error {
 	teardownCtx := workflow.WithActivityOptions(ctx, targetActivityOptions(s.in.Policy.Teardown))
-	_ = workflow.ExecuteActivity(teardownCtx, runWorkerControlActs.DeleteRunWorker, activities.DeleteRunWorkerInput{Identity: identity}).Get(teardownCtx, nil)
+	return workflow.ExecuteActivity(teardownCtx, runWorkerControlActs.DeleteRunWorker, activities.DeleteRunWorkerInput{Identity: identity}).Get(teardownCtx, nil)
+}
+
+func (s *targetRunSession) reportTerminalDelete(ctx workflow.Context, operation string) {
+	if err := s.delete(ctx); err != nil {
+		workflow.GetLogger(ctx).Error(operation+" exhausted bounded teardown; maintenance owns the orphan", "run_id", s.identity.RunID, "generation", s.identity.Generation, "error", err)
+	}
 }
 
 func isUnresumableAttempt(err error) bool {
@@ -631,7 +643,7 @@ func finalizeUnobservedCI(ctx workflow.Context, session *targetRunSession, in Wo
 		return fmt.Errorf("recording unobserved CI: %w", err)
 	}
 	session.close()
-	session.delete(terminalCtx)
+	session.reportTerminalDelete(terminalCtx, "unobserved CI cleanup")
 	return temporal.NewNonRetryableApplicationError("target CI became unobserved", activities.ErrTypeCIUnobserved, nil)
 }
 
@@ -669,7 +681,7 @@ func finalizeMergeFailure(ctx workflow.Context, session *targetRunSession, in Wo
 		return fmt.Errorf("recording exhausted target merge retry window: %w", err)
 	}
 	session.close()
-	session.delete(terminalCtx)
+	session.reportTerminalDelete(terminalCtx, "merge failure cleanup")
 	return temporal.NewNonRetryableApplicationError(message, errorType, nil)
 }
 
