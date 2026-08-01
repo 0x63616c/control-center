@@ -17,6 +17,21 @@ import (
 	"go.temporal.io/sdk/temporal"
 )
 
+const (
+	testProviderThreadLive        = "019fb8f6-1446-7da2-838f-4ea1f15304fd"
+	testProviderThreadDone        = "019fb8f6-1446-7da2-838f-4ea1f15304fe"
+	testProviderThreadLost        = "019fb8f6-1446-7da2-838f-4ea1f15304ff"
+	testProviderThreadEstablished = "019fb8f6-1446-7da2-838f-4ea1f1530500"
+	testProviderThreadUnavailable = "019fb8f6-1446-7da2-838f-4ea1f1530501"
+	testProviderThreadObserved    = "019fb8f6-1446-7da2-838f-4ea1f1530502"
+	testProviderThreadDifferent   = "019fb8f6-1446-7da2-838f-4ea1f1530503"
+	testProviderThreadSafe        = "019fb8f6-1446-7da2-838f-4ea1f1530504"
+)
+
+func providerThreadStartedEvent(threadID string) []byte {
+	return []byte(fmt.Sprintf(`{"type":"thread.started","thread_id":%q}`, threadID))
+}
+
 type attemptCheckpointProbe struct {
 	loaded checkpointprotocol.Attempt
 	found  bool
@@ -46,7 +61,7 @@ func (p *targetStageRunnerProbe) RunTargetStage(_ context.Context, _ work.StageR
 	p.resume = resume
 	result := p.result
 	if result.ThreadID == "" && !p.preserveEmptyThreadID {
-		result.ThreadID = "thread-live"
+		result.ThreadID = testProviderThreadLive
 	}
 	if len(p.events) > 0 {
 		for _, event := range p.events {
@@ -54,7 +69,7 @@ func (p *targetStageRunnerProbe) RunTargetStage(_ context.Context, _ work.StageR
 		}
 		return result, p.err
 	}
-	events([]byte(`{"type":"thread.started","thread_id":"thread-live"}`))
+	events(providerThreadStartedEvent(testProviderThreadLive))
 	events([]byte(`{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":2}}`))
 	return result, p.err
 }
@@ -105,6 +120,18 @@ type providerStateProbe struct{ available bool }
 
 func (p providerStateProbe) Available(context.Context, string) (bool, error) { return p.available, nil }
 
+type trackingProviderStateProbe struct {
+	available bool
+	calls     int
+	threadIDs []string
+}
+
+func (p *trackingProviderStateProbe) Available(_ context.Context, threadID string) (bool, error) {
+	p.calls++
+	p.threadIDs = append(p.threadIDs, threadID)
+	return p.available, nil
+}
+
 type credentialRevisionProbe struct {
 	revision string
 	calls    int
@@ -141,7 +168,7 @@ func targetAgentInput() TargetAgentInput {
 func TestRunTargetAgentReturnsCompletedCheckpointWithoutModelCall(t *testing.T) {
 	t.Parallel()
 	endedAt := time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)
-	cp := &attemptCheckpointProbe{found: true, loaded: checkpointprotocol.Attempt{ProviderThreadID: "thread-done", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured, EndedAt: &endedAt, Result: json.RawMessage(`{"document":"done"}`)}}
+	cp := &attemptCheckpointProbe{found: true, loaded: checkpointprotocol.Attempt{ProviderThreadID: testProviderThreadDone, State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured, EndedAt: &endedAt, Result: json.RawMessage(`{"document":"done"}`)}}
 	runner := &targetStageRunnerProbe{}
 	a, err := NewRunWorkerActivities(RunWorkerDeps{Stages: runner, Prompts: promptProbe{}, Checkpoints: func(store.TargetAttemptID) (AttemptCheckpoint, error) { return cp, nil }, CredentialRevision: observedCredentialRevision, SecretRedactor: passthroughSecretRedactor{}, ProviderState: providerStateProbe{available: true}, Clock: fixedClock{now: endedAt}, Heartbeat: func(context.Context) {}, Repository: &targetRepositoryProbe{}, GitHub: &targetGitHubProbe{}, Identity: targetTestIdentity, RepositoryCheckpoints: testRepositoryCheckpointFactory})
 	if err != nil {
@@ -151,14 +178,14 @@ func TestRunTargetAgentReturnsCompletedCheckpointWithoutModelCall(t *testing.T) 
 	if err != nil {
 		t.Fatalf("RunTargetAgent: %v", err)
 	}
-	if runner.calls != 0 || out.ThreadID != "thread-done" || string(out.Output) != `{"document":"done"}` {
+	if runner.calls != 0 || out.ThreadID != testProviderThreadDone || string(out.Output) != `{"document":"done"}` {
 		t.Fatalf("result = %+v, runner calls %d", out, runner.calls)
 	}
 }
 
 func TestRunTargetAgentRefusesFreshExecutionForUnresumableCheckpoint(t *testing.T) {
 	t.Parallel()
-	cp := &attemptCheckpointProbe{found: true, loaded: checkpointprotocol.Attempt{ProviderThreadID: "thread-lost", State: work.AgentAttemptRunning, UsageState: work.UsageUnknown}}
+	cp := &attemptCheckpointProbe{found: true, loaded: checkpointprotocol.Attempt{ProviderThreadID: testProviderThreadLost, State: work.AgentAttemptRunning, UsageState: work.UsageUnknown}}
 	runner := &targetStageRunnerProbe{}
 	a, err := NewRunWorkerActivities(RunWorkerDeps{Stages: runner, Prompts: promptProbe{}, Checkpoints: func(store.TargetAttemptID) (AttemptCheckpoint, error) { return cp, nil }, CredentialRevision: observedCredentialRevision, SecretRedactor: passthroughSecretRedactor{}, ProviderState: providerStateProbe{}, Clock: fixedClock{now: time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)}, Heartbeat: func(context.Context) {}, Repository: &targetRepositoryProbe{}, GitHub: &targetGitHubProbe{}, Identity: targetTestIdentity, RepositoryCheckpoints: testRepositoryCheckpointFactory})
 	if err != nil {
@@ -174,8 +201,8 @@ func TestRunTargetAgentResumesPriorImplementerThreadOnTheSameWorkerGeneration(t 
 	t.Parallel()
 	cp := &attemptCheckpointProbe{}
 	runner := &targetStageRunnerProbe{
-		events: [][]byte{[]byte(`{"type":"thread.started","thread_id":"thread-established"}`)},
-		result: work.StageResult{Output: []byte(`{"document":"done"}`), ThreadID: "thread-established"},
+		events: [][]byte{providerThreadStartedEvent(testProviderThreadEstablished)},
+		result: work.StageResult{Output: []byte(`{"document":"done"}`), ThreadID: testProviderThreadEstablished},
 	}
 	a, err := NewRunWorkerActivities(RunWorkerDeps{Stages: runner, Prompts: promptProbe{}, Checkpoints: func(store.TargetAttemptID) (AttemptCheckpoint, error) { return cp, nil }, CredentialRevision: observedCredentialRevision, SecretRedactor: passthroughSecretRedactor{}, ProviderState: providerStateProbe{available: true}, Clock: fixedClock{now: time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)}, Heartbeat: func(context.Context) {}, Repository: &targetRepositoryProbe{}, GitHub: &targetGitHubProbe{}, Identity: targetTestIdentity, RepositoryCheckpoints: testRepositoryCheckpointFactory})
 	if err != nil {
@@ -183,11 +210,11 @@ func TestRunTargetAgentResumesPriorImplementerThreadOnTheSameWorkerGeneration(t 
 	}
 	in := targetAgentInput()
 	in.AttemptID.StepOrdinal++
-	in.PriorProviderThread = &ProviderThreadContinuation{Identity: targetTestIdentity, ThreadID: "thread-established"}
+	in.PriorProviderThread = &ProviderThreadContinuation{Identity: targetTestIdentity, ThreadID: testProviderThreadEstablished}
 	if _, err := a.RunTargetAgent(context.Background(), in); err != nil {
 		t.Fatalf("RunTargetAgent: %v", err)
 	}
-	if runner.calls != 1 || runner.resume != "thread-established" {
+	if runner.calls != 1 || runner.resume != testProviderThreadEstablished {
 		t.Fatalf("runner calls/resume = %d / %q", runner.calls, runner.resume)
 	}
 }
@@ -200,7 +227,7 @@ func TestRunTargetAgentRefusesPriorImplementerThreadFromReplacementGeneration(t 
 		t.Fatalf("NewRunWorkerActivities: %v", err)
 	}
 	in := targetAgentInput()
-	in.PriorProviderThread = &ProviderThreadContinuation{Identity: work.RunWorkerIdentity{RunID: targetTestIdentity.RunID, Generation: targetTestIdentity.Generation + 1}, ThreadID: "thread-lost"}
+	in.PriorProviderThread = &ProviderThreadContinuation{Identity: work.RunWorkerIdentity{RunID: targetTestIdentity.RunID, Generation: targetTestIdentity.Generation + 1}, ThreadID: testProviderThreadLost}
 	_, err = a.RunTargetAgent(context.Background(), in)
 	if !errors.Is(err, ErrUnresumableIncompleteAttempt) || runner.calls != 0 {
 		t.Fatalf("error/calls = %v / %d", err, runner.calls)
@@ -215,7 +242,7 @@ func TestRunTargetAgentRefusesUnavailablePriorImplementerThread(t *testing.T) {
 		t.Fatalf("NewRunWorkerActivities: %v", err)
 	}
 	in := targetAgentInput()
-	in.PriorProviderThread = &ProviderThreadContinuation{Identity: targetTestIdentity, ThreadID: "thread-unavailable"}
+	in.PriorProviderThread = &ProviderThreadContinuation{Identity: targetTestIdentity, ThreadID: testProviderThreadUnavailable}
 	_, err = a.RunTargetAgent(context.Background(), in)
 	if !errors.Is(err, ErrUnresumableIncompleteAttempt) || runner.calls != 0 {
 		t.Fatalf("error/calls = %v / %d", err, runner.calls)
@@ -264,7 +291,7 @@ func TestRunTargetAgentCheckpointsProviderAndTerminalBeforeSuccess(t *testing.T)
 	t.Parallel()
 	now := time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)
 	cp := &attemptCheckpointProbe{}
-	runner := &targetStageRunnerProbe{result: work.StageResult{Output: []byte(`{"document":"done"}`), ThreadID: "thread-live", Usage: work.Usage{InputTokens: 3, OutputTokens: 2}, UsageMeasured: true}}
+	runner := &targetStageRunnerProbe{result: work.StageResult{Output: []byte(`{"document":"done"}`), ThreadID: testProviderThreadLive, Usage: work.Usage{InputTokens: 3, OutputTokens: 2}, UsageMeasured: true}}
 	a, err := NewRunWorkerActivities(RunWorkerDeps{Stages: runner, Prompts: promptProbe{}, Checkpoints: func(store.TargetAttemptID) (AttemptCheckpoint, error) { return cp, nil }, CredentialRevision: observedCredentialRevision, SecretRedactor: passthroughSecretRedactor{}, ProviderState: providerStateProbe{available: true}, Clock: fixedClock{now: now}, Heartbeat: func(context.Context) {}, Repository: &targetRepositoryProbe{}, GitHub: &targetGitHubProbe{}, Identity: targetTestIdentity, RepositoryCheckpoints: testRepositoryCheckpointFactory})
 	if err != nil {
 		t.Fatalf("NewRunWorkerActivities: %v", err)
@@ -272,7 +299,7 @@ func TestRunTargetAgentCheckpointsProviderAndTerminalBeforeSuccess(t *testing.T)
 	if _, err := a.RunTargetAgent(context.Background(), targetAgentInput()); err != nil {
 		t.Fatalf("RunTargetAgent: %v", err)
 	}
-	if len(cp.writes) != 2 || cp.writes[0].State != work.AgentAttemptRunning || cp.writes[0].ProviderThreadID != "thread-live" || cp.writes[1].State != work.AgentAttemptSucceeded || cp.writes[1].Transcript == nil || string(cp.writes[1].Result) != `{"document":"done"}` {
+	if len(cp.writes) != 2 || cp.writes[0].State != work.AgentAttemptRunning || cp.writes[0].ProviderThreadID != testProviderThreadLive || cp.writes[1].State != work.AgentAttemptSucceeded || cp.writes[1].Transcript == nil || string(cp.writes[1].Result) != `{"document":"done"}` {
 		t.Fatalf("checkpoint writes = %+v", cp.writes)
 	}
 }
@@ -288,12 +315,12 @@ func TestRunTargetAgentRedactsProjectedSecretsBeforeCheckpointOrOutput(t *testin
 	cp := &attemptCheckpointProbe{}
 	runner := &targetStageRunnerProbe{
 		events: [][]byte{
-			[]byte(`{"type":"thread.started","thread_id":"thread-live"}`),
+			providerThreadStartedEvent(testProviderThreadLive),
 			[]byte(`{"type":"item.completed","item":{"text":"github-token-for-test codex-access-token-for-test checkpoint-capability-for-test repository-capability-for-test"}}`),
 		},
 		result: work.StageResult{
 			Output:   []byte(`{"report":"github-token-for-test","blocked":false,"blocked_reason":"","title":"checkpoint-capability-for-test","body":"repository-capability-for-test codex-access-token-for-test"}`),
-			ThreadID: "thread-live", UsageMeasured: true,
+			ThreadID: testProviderThreadLive, UsageMeasured: true,
 		},
 	}
 	a, err := NewRunWorkerActivities(RunWorkerDeps{
@@ -331,7 +358,7 @@ func TestRunTargetAgentFailsPermanentlyWithoutLeakingSecretWhenRedactionInvalida
 	cp := &attemptCheckpointProbe{}
 	runner := &targetStageRunnerProbe{result: work.StageResult{
 		Output:   []byte(`{"report":"github-token-for-invalid-result-test","blocked":false,"blocked_reason":"","title":"Implement ticket","body":"Ready"}`),
-		ThreadID: "thread-live", UsageMeasured: true,
+		ThreadID: testProviderThreadLive, UsageMeasured: true,
 	}}
 	a, err := NewRunWorkerActivities(RunWorkerDeps{
 		Stages: runner, Prompts: validatingPromptProbe{}, Checkpoints: func(store.TargetAttemptID) (AttemptCheckpoint, error) { return cp, nil },
@@ -396,7 +423,7 @@ func TestRunTargetAgentDoesNotRetainRawProviderErrorInTemporalCause(t *testing.T
 
 func TestRunTargetAgentRejectsProviderThreadIDsContainingProjectedSecrets(t *testing.T) {
 	t.Parallel()
-	secret := []byte("github-token-in-provider-thread")
+	secret := []byte("019fb8f6-1446-7da2-838f-4ea1f1530600")
 	for _, test := range []struct {
 		name       string
 		checkpoint *attemptCheckpointProbe
@@ -406,27 +433,27 @@ func TestRunTargetAgentRejectsProviderThreadIDsContainingProjectedSecrets(t *tes
 		{
 			name: "event checkpoint",
 			runner: &targetStageRunnerProbe{
-				events: [][]byte{[]byte(`{"type":"thread.started","thread_id":"thread-github-token-in-provider-thread"}`)},
-				result: work.StageResult{Output: []byte(`{"document":"done"}`), ThreadID: "thread-safe"},
+				events: [][]byte{providerThreadStartedEvent(string(secret))},
+				result: work.StageResult{Output: []byte(`{"document":"done"}`), ThreadID: testProviderThreadSafe},
 			},
 		},
 		{
 			name:   "terminal checkpoint and output",
-			runner: &targetStageRunnerProbe{result: work.StageResult{Output: []byte(`{"document":"done"}`), ThreadID: "thread-github-token-in-provider-thread"}},
+			runner: &targetStageRunnerProbe{result: work.StageResult{Output: []byte(`{"document":"done"}`), ThreadID: string(secret)}},
 		},
 		{
 			name:       "durable succeeded replay",
-			checkpoint: &attemptCheckpointProbe{found: true, loaded: checkpointprotocol.Attempt{State: work.AgentAttemptSucceeded, ProviderThreadID: "thread-github-token-in-provider-thread", Result: []byte(`{"document":"done"}`)}},
+			checkpoint: &attemptCheckpointProbe{found: true, loaded: checkpointprotocol.Attempt{State: work.AgentAttemptSucceeded, ProviderThreadID: string(secret), Result: []byte(`{"document":"done"}`)}},
 			runner:     &targetStageRunnerProbe{},
 		},
 		{
 			name:       "durable running replay",
-			checkpoint: &attemptCheckpointProbe{found: true, loaded: checkpointprotocol.Attempt{State: work.AgentAttemptRunning, ProviderThreadID: "thread-github-token-in-provider-thread"}},
+			checkpoint: &attemptCheckpointProbe{found: true, loaded: checkpointprotocol.Attempt{State: work.AgentAttemptRunning, ProviderThreadID: string(secret)}},
 			runner:     &targetStageRunnerProbe{},
 		},
 		{
 			name:   "prior continuation",
-			prior:  &ProviderThreadContinuation{Identity: targetTestIdentity, ThreadID: "thread-github-token-in-provider-thread"},
+			prior:  &ProviderThreadContinuation{Identity: targetTestIdentity, ThreadID: string(secret)},
 			runner: &targetStageRunnerProbe{},
 		},
 	} {
@@ -469,6 +496,65 @@ func TestRunTargetAgentRejectsProviderThreadIDsContainingProjectedSecrets(t *tes
 	}
 }
 
+func TestRunTargetAgentRejectsNonUUIDProviderThreadFromBeforeRedactorRestart(t *testing.T) {
+	t.Parallel()
+	staleSecret := []byte("stale-secret-from-before-worker-restart")
+	for _, test := range []struct {
+		name       string
+		checkpoint *attemptCheckpointProbe
+		prior      *ProviderThreadContinuation
+	}{
+		{
+			name: "durable succeeded replay",
+			checkpoint: &attemptCheckpointProbe{found: true, loaded: checkpointprotocol.Attempt{
+				State: work.AgentAttemptSucceeded, ProviderThreadID: string(staleSecret), Result: []byte(`{"document":"done"}`),
+			}},
+		},
+		{
+			name: "durable running replay",
+			checkpoint: &attemptCheckpointProbe{found: true, loaded: checkpointprotocol.Attempt{
+				State: work.AgentAttemptRunning, ProviderThreadID: string(staleSecret),
+			}},
+		},
+		{
+			name:  "prior continuation",
+			prior: &ProviderThreadContinuation{Identity: targetTestIdentity, ThreadID: string(staleSecret)},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cp := test.checkpoint
+			if cp == nil {
+				cp = &attemptCheckpointProbe{}
+			}
+			runner := &targetStageRunnerProbe{}
+			providerState := &trackingProviderStateProbe{available: true}
+			a, err := NewRunWorkerActivities(RunWorkerDeps{
+				Stages: runner, Prompts: promptProbe{}, Checkpoints: func(store.TargetAttemptID) (AttemptCheckpoint, error) { return cp, nil },
+				// This simulates a new process whose redactor has never observed
+				// the stale secret embedded in durable workflow input.
+				SecretRedactor: passthroughSecretRedactor{}, CredentialRevision: observedCredentialRevision,
+				ProviderState: providerState, Clock: fixedClock{now: time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)},
+				Heartbeat: func(context.Context) {}, Repository: &targetRepositoryProbe{}, GitHub: &targetGitHubProbe{}, Identity: targetTestIdentity,
+				RepositoryCheckpoints: testRepositoryCheckpointFactory,
+			})
+			if err != nil {
+				t.Fatalf("NewRunWorkerActivities: %v", err)
+			}
+			in := targetAgentInput()
+			in.PriorProviderThread = test.prior
+			_, err = a.RunTargetAgent(context.Background(), in)
+			var app *temporal.ApplicationError
+			if !errors.As(err, &app) || app.Type() != ErrTypePermanent || !app.NonRetryable() {
+				t.Fatalf("error = %v, want non-retryable permanent ApplicationError", err)
+			}
+			assertErrorChainExcludes(t, err, staleSecret)
+			if providerState.calls != 0 || runner.calls != 0 || len(cp.writes) != 0 {
+				t.Fatalf("invalid thread reached provider/checkpoint: provider calls=%d IDs=%v runner calls=%d writes=%d", providerState.calls, providerState.threadIDs, runner.calls, len(cp.writes))
+			}
+		})
+	}
+}
+
 func TestRunTargetAgentRequiresTerminalProviderThreadToMatchObservedThread(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
@@ -478,13 +564,13 @@ func TestRunTargetAgentRequiresTerminalProviderThreadToMatchObservedThread(t *te
 	}{
 		{
 			name:   "empty after provider event",
-			events: [][]byte{[]byte(`{"type":"thread.started","thread_id":"thread-observed"}`)},
+			events: [][]byte{providerThreadStartedEvent(testProviderThreadObserved)},
 			thread: "",
 		},
 		{
 			name:   "mismatch after provider event",
-			events: [][]byte{[]byte(`{"type":"thread.started","thread_id":"thread-observed"}`)},
-			thread: "thread-different",
+			events: [][]byte{providerThreadStartedEvent(testProviderThreadObserved)},
+			thread: testProviderThreadDifferent,
 		},
 		{
 			name:   "empty without provider event",

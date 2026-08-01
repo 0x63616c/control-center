@@ -17,6 +17,7 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+	"github.com/google/uuid"
 )
 
 // ErrUnresumableIncompleteAttempt means durable provider identity exists but
@@ -302,6 +303,10 @@ func (a *RunWorkerActivities) RunTargetAgent(ctx context.Context, in TargetAgent
 func (a *RunWorkerActivities) validateProviderThreadID(ctx context.Context, threadID string) (string, error) {
 	if threadID == "" {
 		return "", nil
+	}
+	parsed, err := uuid.Parse(threadID)
+	if err != nil || parsed.String() != threadID {
+		return "", fmt.Errorf("provider thread ID is not a canonical UUID: %w", work.ErrPermanent)
 	}
 	redacted, err := a.deps.SecretRedactor.Redact(ctx, []byte(threadID))
 	if err != nil {
