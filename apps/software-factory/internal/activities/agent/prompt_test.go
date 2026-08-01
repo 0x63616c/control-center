@@ -84,7 +84,7 @@ func TestFinalizeDecodesEachStageResultFromItsTextReference(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewPromptActivities() error = %v", err)
 			}
-			finalized, err := promptActivities.Finalize(t.Context(), agentactivities.FinalizeInput{Stage: test.stage, TextRef: textRef})
+			finalized, err := promptActivities.DecodeFinalOutput(t.Context(), agentactivities.FinalizeInput{Stage: test.stage, TextRef: textRef})
 			if err != nil {
 				t.Fatalf("Finalize() error = %v", err)
 			}
@@ -102,7 +102,7 @@ func TestFinalizeRejectsAnIncompleteTextReferenceWithoutRetrying(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPromptActivities() error = %v", err)
 	}
-	_, err = promptActivities.Finalize(t.Context(), agentactivities.FinalizeInput{Stage: work.StagePlan})
+	_, err = promptActivities.DecodeFinalOutput(t.Context(), agentactivities.FinalizeInput{Stage: work.StagePlan})
 	var applicationError *temporal.ApplicationError
 	if !errors.As(err, &applicationError) || applicationError.Type() != agent.ErrorTypeInvalidProviderOutcome ||
 		!applicationError.NonRetryable() {

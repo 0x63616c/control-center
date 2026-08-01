@@ -116,8 +116,8 @@ func (activities *PromptActivities) prepareConversation(
 	return conversationRef, nil
 }
 
-// Finalize loads terminal model text and decodes the stage's existing result envelope.
-func (activities *PromptActivities) Finalize(ctx context.Context, input FinalizeInput) (FinalizeOutput, error) {
+// DecodeFinalOutput loads terminal model text and decodes the stage's existing result envelope.
+func (activities *PromptActivities) DecodeFinalOutput(ctx context.Context, input FinalizeInput) (FinalizeOutput, error) {
 	if input.TextRef.Key == "" || input.TextRef.Bytes < 1 || input.TextRef.Digest == "" {
 		return FinalizeOutput{}, invalidProviderOutcome("final model text reference is incomplete")
 	}

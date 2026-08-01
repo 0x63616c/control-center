@@ -910,10 +910,10 @@ func TestWorkOnTicketFinalizesChildEvidenceBeforeCompletingAgentStep(t *testing.
 	}
 }
 
-// Target evidence and prompt decoding both end in a method named Finalize.
-// WorkOnTicket must schedule the evidence boundary under its own stable name so
-// worker registration order can never route the evidence payload to the prompt
-// decoder.
+// Target evidence and prompt decoding once shared the Go method name Finalize.
+// WorkOnTicket must schedule the evidence boundary under its explicit stable
+// wire name so worker registration order can never route the evidence payload
+// to the prompt decoder.
 func TestWorkOnTicketNamesTheTargetEvidenceActivityUnambiguously(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -934,7 +934,7 @@ func TestWorkOnTicketNamesTheTargetEvidenceActivityUnambiguously(t *testing.T) {
 		if name == want {
 			count++
 		}
-		if name == "Finalize" || name == agent.FinalizeActivityName {
+		if name == agent.FinalizeActivityName {
 			t.Fatalf("target evidence used ambiguous activity name %q; activities = %v", name, h.activityNames)
 		}
 	}
