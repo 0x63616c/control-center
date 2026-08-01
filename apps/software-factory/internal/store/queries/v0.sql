@@ -153,6 +153,17 @@ RETURNING *;
 -- name: TargetGitCheckpoint :one
 SELECT * FROM run_git_checkpoint WHERE run_id = $1;
 
+-- name: LatestCanceledRunGitCheckpoint :one
+SELECT checkpoint.*
+FROM run AS predecessor
+JOIN run_git_checkpoint AS checkpoint ON checkpoint.run_id = predecessor.id
+WHERE predecessor.ticket_id = $1
+  AND predecessor.id <> $2
+  AND predecessor.target_outcome = 'canceled'
+  AND checkpoint.pushed_head <> ''
+ORDER BY predecessor.ended_at DESC, checkpoint.step_ordinal DESC
+LIMIT 1;
+
 -- name: BindTargetRepositoryCapability :one
 INSERT INTO run_repository_capability (run_id, generation, capability_hash)
 SELECT $1, $2, $3

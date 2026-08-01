@@ -19,6 +19,13 @@ type targetRepositoryProbe struct {
 	url, branch string
 	head        string
 	calls       int
+	carryHead   string
+}
+
+func (p *targetRepositoryProbe) PrepareFromCommit(_ context.Context, url, branch, commit string) (string, error) {
+	p.calls++
+	p.url, p.branch, p.carryHead = url, branch, commit
+	return p.head, nil
 }
 
 func (p *targetRepositoryProbe) Prepare(_ context.Context, url, branch string) (string, error) {
@@ -128,6 +135,23 @@ func TestCloneTargetRepositoryCompletesTheInfrastructureStepBeforeSuccess(t *tes
 	}
 	if repository.url != in.CloneURL || repository.branch != in.Step.Branch || out.HeadSHA != "head-sha" || len(cp.writes) != 1 || cp.writes[0].PushedHead != "head-sha" {
 		t.Fatalf("clone/checkpoint = %+v / %+v / %+v", repository, out, cp.writes)
+	}
+}
+
+func TestCloneTargetRepositoryCarriesForwardOnlyTheDurableCommit(t *testing.T) {
+	repository := &targetRepositoryProbe{head: "carried-head"}
+	cp := &repositoryCheckpointProbe{}
+	a := targetRepositoryActivities(repository, &targetGitHubProbe{}, cp)
+	in := CloneTargetRepositoryInput{
+		Step:             RepositoryStep{StepOrdinal: 1, Branch: "factory/ticket-42/new-run"},
+		CloneURL:         "https://github.com/example/repo.git",
+		CarryForwardHead: "0123456789abcdef0123456789abcdef01234567",
+	}
+	if _, err := a.CloneTargetRepository(context.Background(), in); err != nil {
+		t.Fatalf("CloneTargetRepository: %v", err)
+	}
+	if repository.carryHead != in.CarryForwardHead || repository.branch != in.Step.Branch {
+		t.Fatalf("carry-forward repository call = %+v", repository)
 	}
 }
 

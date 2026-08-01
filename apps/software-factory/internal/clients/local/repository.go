@@ -70,30 +70,8 @@ func (r *Repository) Prepare(ctx context.Context, cloneURL, branch string) (stri
 	if err := validateRepositoryInput(cloneURL, branch); err != nil {
 		return "", fmt.Errorf("validating target repository inputs: %w", err)
 	}
-	gitDir := filepath.Join(r.root, ".git")
-	_, statErr := os.Stat(gitDir)
-	switch {
-	case statErr == nil:
-		remote, code, err := r.runner.Run(ctx, r.root, []string{"git", "remote", "get-url", "origin"})
-		if err != nil {
-			return "", fmt.Errorf("reading the local repository remote: %w", err)
-		}
-		if code != 0 || strings.TrimSpace(remote) != cloneURL {
-			return "", fmt.Errorf("the existing checkout does not belong to the configured repository: %w", work.ErrPermanent)
-		}
-	case errors.Is(statErr, os.ErrNotExist):
-		if err := r.replacePartialCheckout(); err != nil {
-			return "", fmt.Errorf("removing partial target repository checkout: %w", err)
-		}
-		if _, code, err := r.runner.Run(ctx, filepath.Dir(r.root), []string{"git", "clone", "--origin", "origin", cloneURL, r.root}); err != nil || code != 0 {
-			return "", commandFailure("cloning the target repository", code, err)
-		}
-	default:
-		return "", fmt.Errorf("checking the local repository: %w", statErr)
-	}
-
-	if _, code, err := r.runner.Run(ctx, r.root, []string{"git", "fetch", "--prune", "origin"}); err != nil || code != 0 {
-		return "", commandFailure("fetching the target repository", code, err)
+	if err := r.prepareCheckout(ctx, cloneURL); err != nil {
+		return "", err
 	}
 	remoteRef := "refs/remotes/origin/" + branch
 	_, remoteCode, err := r.runner.Run(ctx, r.root, []string{"git", "rev-parse", "--verify", "--quiet", remoteRef})
@@ -115,6 +93,63 @@ func (r *Repository) Prepare(ctx context.Context, cloneURL, branch string) (stri
 	default:
 		return "", fmt.Errorf("checking the target branch exited %d", remoteCode)
 	}
+	return r.currentHead(ctx)
+}
+
+// PrepareFromCommit creates this Run's fresh branch at an exact durable commit
+// from a canceled predecessor. It never relies on the mutable default branch.
+func (r *Repository) PrepareFromCommit(ctx context.Context, cloneURL, branch, commit string) (string, error) {
+	if err := validateRepositoryInput(cloneURL, branch); err != nil {
+		return "", fmt.Errorf("validating target repository inputs: %w", err)
+	}
+	if !validCommitID(commit) {
+		return "", fmt.Errorf("validating carry-forward commit: %w", work.ErrPermanent)
+	}
+	if err := r.prepareCheckout(ctx, cloneURL); err != nil {
+		return "", err
+	}
+	if _, code, err := r.runner.Run(ctx, r.root, []string{"git", "rev-parse", "--verify", "--quiet", commit + "^{commit}"}); err != nil || code != 0 {
+		return "", commandFailure("verifying the carry-forward commit", code, err)
+	}
+	if _, code, err := r.runner.Run(ctx, r.root, []string{"git", "checkout", "-B", branch, commit}); err != nil || code != 0 {
+		return "", commandFailure("creating the carry-forward branch", code, err)
+	}
+	if _, code, err := r.runner.Run(ctx, r.root, []string{"git", "push", "--set-upstream", "origin", branch}); err != nil || code != 0 {
+		return "", commandFailure("publishing the carry-forward branch", code, err)
+	}
+	return r.currentHead(ctx)
+}
+
+func (r *Repository) prepareCheckout(ctx context.Context, cloneURL string) error {
+	gitDir := filepath.Join(r.root, ".git")
+	_, statErr := os.Stat(gitDir)
+	switch {
+	case statErr == nil:
+		remote, code, err := r.runner.Run(ctx, r.root, []string{"git", "remote", "get-url", "origin"})
+		if err != nil {
+			return fmt.Errorf("reading the local repository remote: %w", err)
+		}
+		if code != 0 || strings.TrimSpace(remote) != cloneURL {
+			return fmt.Errorf("the existing checkout does not belong to the configured repository: %w", work.ErrPermanent)
+		}
+	case errors.Is(statErr, os.ErrNotExist):
+		if err := r.replacePartialCheckout(); err != nil {
+			return fmt.Errorf("removing partial target repository checkout: %w", err)
+		}
+		if _, code, err := r.runner.Run(ctx, filepath.Dir(r.root), []string{"git", "clone", "--origin", "origin", cloneURL, r.root}); err != nil || code != 0 {
+			return commandFailure("cloning the target repository", code, err)
+		}
+	default:
+		return fmt.Errorf("checking the local repository: %w", statErr)
+	}
+
+	if _, code, err := r.runner.Run(ctx, r.root, []string{"git", "fetch", "--prune", "origin"}); err != nil || code != 0 {
+		return commandFailure("fetching the target repository", code, err)
+	}
+	return nil
+}
+
+func (r *Repository) currentHead(ctx context.Context) (string, error) {
 	head, code, err := r.runner.Run(ctx, r.root, []string{"git", "rev-parse", "HEAD"})
 	if err != nil || code != 0 {
 		return "", commandFailure("reading the restored target head", code, err)
@@ -124,6 +159,18 @@ func (r *Repository) Prepare(ctx context.Context, cloneURL, branch string) (stri
 		return "", fmt.Errorf("the restored target branch has no head: %w", work.ErrPermanent)
 	}
 	return head, nil
+}
+
+func validCommitID(commit string) bool {
+	if len(commit) != 40 && len(commit) != 64 {
+		return false
+	}
+	for _, char := range commit {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') && (char < 'A' || char > 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *Repository) replacePartialCheckout() error {

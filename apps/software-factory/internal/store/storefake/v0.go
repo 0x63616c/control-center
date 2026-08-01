@@ -282,6 +282,31 @@ func (f *Store) CheckpointGitEffect(_ context.Context, in store.GitCheckpointInp
 	return f.checkpointGitEffectLocked(in, true)
 }
 
+// LatestCanceledRunCheckpoint mirrors the production recovery fence: only a
+// canceled predecessor of the same Ticket can donate a durable pushed head.
+func (f *Store) LatestCanceledRunCheckpoint(_ context.Context, ticketID store.TicketID, excludingRunID string) (store.GitCheckpoint, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var chosen store.Run
+	found := false
+	for _, run := range f.runs {
+		if run.ID == excludingRunID || run.TicketID != ticketID || run.TargetOutcome != work.RunOutcomeCanceled {
+			continue
+		}
+		checkpoint, exists := f.targetGit[run.ID]
+		if !exists || checkpoint.PushedHead == "" {
+			continue
+		}
+		if !found || run.EndedAt.After(chosen.EndedAt) || (run.EndedAt.Equal(chosen.EndedAt) && run.ID > chosen.ID) {
+			chosen, found = run, true
+		}
+	}
+	if !found {
+		return store.GitCheckpoint{}, false, nil
+	}
+	return f.targetGit[chosen.ID], true, nil
+}
+
 // BindRepositoryCapability installs one monotonically increasing Run Worker
 // generation as the repository checkpoint owner.
 func (f *Store) BindRepositoryCapability(_ context.Context, identity work.RunWorkerIdentity, capability string) error {

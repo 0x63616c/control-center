@@ -43,6 +43,13 @@ type TargetRunClaimer interface {
 	ClaimAndStartRun(context.Context, ClaimRunInput) (ClaimRunResult, error)
 }
 
+// CanceledRunRecoveryReader returns only the non-secret Git position that a
+// newly claimed Run may carry forward from an earlier canceled Run for the
+// same Ticket. A confirmed merge never satisfies this boundary.
+type CanceledRunRecoveryReader interface {
+	LatestCanceledRunCheckpoint(context.Context, TicketID, string) (GitCheckpoint, bool, error)
+}
+
 // TargetStepRecorder records mandatory target Step lifecycle boundaries.
 type TargetStepRecorder interface {
 	StartStep(context.Context, StartStepInput) (RunStep, error)
@@ -444,6 +451,27 @@ type GitCheckpoint struct {
 type GitCheckpointInput struct {
 	GitCheckpoint
 	CompletedAt time.Time
+}
+
+// LatestCanceledRunCheckpoint finds the most recently canceled predecessor's
+// durable pushed head. It deliberately does not return provider state or any
+// credential material: a new Run gets only a Git object it can fetch itself.
+func (s *Store) LatestCanceledRunCheckpoint(ctx context.Context, ticketID TicketID, excludingRunID string) (GitCheckpoint, bool, error) {
+	excluding, err := pgUUID(excludingRunID)
+	if err != nil {
+		return GitCheckpoint{}, false, fmt.Errorf("reading canceled recovery checkpoint for ticket %d: %w", ticketID, err)
+	}
+	row, err := s.q.LatestCanceledRunGitCheckpoint(ctx, storedb.LatestCanceledRunGitCheckpointParams{
+		TicketID: int64(ticketID),
+		ID:       excluding,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return GitCheckpoint{}, false, nil
+	}
+	if err != nil {
+		return GitCheckpoint{}, false, fmt.Errorf("reading canceled recovery checkpoint for ticket %d: %w", ticketID, wrapQueryErr(err))
+	}
+	return gitCheckpointFromRow(row), true, nil
 }
 
 // RepositoryCheckpointInput is a repository Step checkpoint authorized by one

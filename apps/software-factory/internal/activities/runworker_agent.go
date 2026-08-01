@@ -56,6 +56,12 @@ type TargetRepository interface {
 	Prepare(context.Context, string, string) (string, error)
 }
 
+// TargetRepositoryCarryForward is deliberately optional for legacy test
+// doubles; only a recovery-bearing clone needs the exact-commit operation.
+type TargetRepositoryCarryForward interface {
+	PrepareFromCommit(context.Context, string, string, string) (string, error)
+}
+
 // TargetGitHub is the repository-scoped external surface hosted by the Run
 // Worker. Its implementation reads the renewable projected token per request.
 type TargetGitHub interface {

@@ -22,6 +22,7 @@ const credentialRenewalInterval = 30 * time.Minute
 // workflow code never invokes the nil receivers directly.
 var (
 	targetRecordingActs  *activities.TargetRecordingActivities
+	targetRecoveryActs   *activities.TargetRecoveryActivities
 	runWorkerControlActs *activities.RunWorkerControlActivities
 	targetRunWorkerActs  *activities.RunWorkerActivities
 )
@@ -93,6 +94,10 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 	}
 	claimedRun = true
 	ctx = workflow.WithValue(ctx, semanticDeadlineContextKey{}, workflow.Now(ctx).Add(in.Policy.SemanticDeadline))
+	var recovery activities.CanceledRunCheckpoint
+	if err := workflow.ExecuteActivity(claimCtx, targetRecoveryActs.LatestCanceledRunCheckpoint, claimed.Ticket.ID, in.RunID).Get(claimCtx, &recovery); err != nil {
+		return fmt.Errorf("reading canceled run recovery checkpoint: %w", err)
+	}
 
 	branch := work.FactoryTicketBranchName(int64(claimed.Ticket.ID), in.RunID)
 	session, err := newTargetRunSession(ctx, in, int(claimed.Ticket.ID), branch)
@@ -107,8 +112,9 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 	var clone activities.CloneTargetRepositoryOutput
 	if err := session.execute(ctx, func(sessionCtx workflow.Context) error {
 		return workflow.ExecuteActivity(sessionCtx, targetRunWorkerActs.CloneTargetRepository, activities.CloneTargetRepositoryInput{
-			Step:     activities.RepositoryStep{StepOrdinal: 1, Branch: branch},
-			CloneURL: in.CloneURL,
+			Step:             activities.RepositoryStep{StepOrdinal: 1, Branch: branch},
+			CloneURL:         in.CloneURL,
+			CarryForwardHead: carryForwardHead(recovery),
 		}).Get(sessionCtx, &clone)
 	}); err != nil {
 		return fmt.Errorf("cloning the target repository: %w", err)
@@ -307,6 +313,13 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 	session.close()
 	session.delete(terminalCtx)
 	return nil
+}
+
+func carryForwardHead(recovery activities.CanceledRunCheckpoint) string {
+	if !recovery.Found {
+		return ""
+	}
+	return recovery.Checkpoint.PushedHead
 }
 
 func startTargetStep(ctx workflow.Context, in WorkOnTicketInput, ordinal int, kind work.StepKind) error {

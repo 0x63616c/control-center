@@ -478,6 +478,39 @@ func (q *Queries) InsertTargetRun(ctx context.Context, arg InsertTargetRunParams
 	return i, err
 }
 
+const latestCanceledRunGitCheckpoint = `-- name: LatestCanceledRunGitCheckpoint :one
+SELECT checkpoint.run_id, checkpoint.step_ordinal, checkpoint.branch, checkpoint.pushed_head, checkpoint.observed_base, checkpoint.pull_request_number, checkpoint.pull_request_node_id, checkpoint.step_result
+FROM run AS predecessor
+JOIN run_git_checkpoint AS checkpoint ON checkpoint.run_id = predecessor.id
+WHERE predecessor.ticket_id = $1
+  AND predecessor.id <> $2
+  AND predecessor.target_outcome = 'canceled'
+  AND checkpoint.pushed_head <> ''
+ORDER BY predecessor.ended_at DESC, checkpoint.step_ordinal DESC
+LIMIT 1
+`
+
+type LatestCanceledRunGitCheckpointParams struct {
+	TicketID int64
+	ID       pgtype.UUID
+}
+
+func (q *Queries) LatestCanceledRunGitCheckpoint(ctx context.Context, arg LatestCanceledRunGitCheckpointParams) (RunGitCheckpoint, error) {
+	row := q.db.QueryRow(ctx, latestCanceledRunGitCheckpoint, arg.TicketID, arg.ID)
+	var i RunGitCheckpoint
+	err := row.Scan(
+		&i.RunID,
+		&i.StepOrdinal,
+		&i.Branch,
+		&i.PushedHead,
+		&i.ObservedBase,
+		&i.PullRequestNumber,
+		&i.PullRequestNodeID,
+		&i.StepResult,
+	)
+	return i, err
+}
+
 const putTargetAgentTranscript = `-- name: PutTargetAgentTranscript :exec
 INSERT INTO run_agent_transcript (
     run_id, step_ordinal, attempt_no, compressed_bytes, compression,

@@ -40,8 +40,9 @@ type repositoryEffectEnvelope struct {
 // CloneTargetRepositoryInput identifies the repository Step and source to
 // restore on this Run Worker generation.
 type CloneTargetRepositoryInput struct {
-	Step     RepositoryStep
-	CloneURL string
+	Step             RepositoryStep
+	CloneURL         string
+	CarryForwardHead string
 }
 
 // CloneTargetRepositoryOutput records the exact restored candidate head.
@@ -61,7 +62,7 @@ func (a *RunWorkerActivities) CloneTargetRepository(ctx context.Context, in Clon
 	if err != nil {
 		return CloneTargetRepositoryOutput{}, fmt.Errorf("loading target repository clone effect: %w", err)
 	}
-	head, err := a.deps.Repository.Prepare(ctx, in.CloneURL, in.Step.Branch)
+	head, err := a.prepareCloneRepository(ctx, in)
 	if err != nil {
 		return CloneTargetRepositoryOutput{}, fail(ctx, "preparing the target repository", err)
 	}
@@ -78,6 +79,17 @@ func (a *RunWorkerActivities) CloneTargetRepository(ctx context.Context, in Clon
 		return CloneTargetRepositoryOutput{}, fmt.Errorf("checkpointing target repository clone effect: %w", err)
 	}
 	return out, nil
+}
+
+func (a *RunWorkerActivities) prepareCloneRepository(ctx context.Context, in CloneTargetRepositoryInput) (string, error) {
+	if strings.TrimSpace(in.CarryForwardHead) == "" {
+		return a.deps.Repository.Prepare(ctx, in.CloneURL, in.Step.Branch)
+	}
+	recoveryRepository, ok := a.deps.Repository.(TargetRepositoryCarryForward)
+	if !ok {
+		return "", fmt.Errorf("preparing the target repository from the durable recovery commit: %w", work.ErrPermanent)
+	}
+	return recoveryRepository.PrepareFromCommit(ctx, in.CloneURL, in.Step.Branch, in.CarryForwardHead)
 }
 
 // RestoreTargetRepository reconstructs a replacement filesystem from the

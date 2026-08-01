@@ -1512,6 +1512,11 @@ func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore *storef
 		t.Fatalf("NewTargetRecordingActivities: %v", err)
 	}
 	env.RegisterActivity(recording)
+	recovery, err := activities.NewTargetRecoveryActivities(recorderStore)
+	if err != nil {
+		t.Fatalf("NewTargetRecoveryActivities: %v", err)
+	}
+	env.RegisterActivity(recovery)
 
 	h := &workOnTicketHarness{env: env, store: recorderStore}
 	env.RegisterActivityWithOptions(
