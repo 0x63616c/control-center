@@ -48,6 +48,7 @@ const accessAud = "mock-audience";
 const digests = {
   "software-factory-worker": `sha256:${"a".repeat(64)}`,
   "software-factory-sandbox": `sha256:${"b".repeat(64)}`,
+  "software-factory-run-worker": `sha256:${"1".repeat(64)}`,
   "software-factory-relay": `sha256:${"c".repeat(64)}`,
   "software-factory-api": `sha256:${"d".repeat(64)}`,
   "software-factory-console": `sha256:${"e".repeat(64)}`,
@@ -279,6 +280,17 @@ describe("the worker Deployment (#343)", () => {
     );
     expect(container.image).toBe(
       `ghcr.io/0x63616c/www-software-factory-worker@${digests["software-factory-worker"]}`,
+    );
+  });
+
+  test("hands the separately pinned target Run Worker image to the main worker", async () => {
+    const [container] = (await deploymentSpec(digests)).template.spec.containers;
+    const runWorker = container.env.find((e) => e.name === "RUN_WORKER_IMAGE");
+    expect(runWorker?.value).toBe(
+      `ghcr.io/0x63616c/www-software-factory-run-worker@${digests["software-factory-run-worker"]}`,
+    );
+    expect(container.env.find((e) => e.name === "SANDBOX_IMAGE")?.value).toBe(
+      `ghcr.io/0x63616c/www-software-factory-sandbox@${digests["software-factory-sandbox"]}`,
     );
   });
 
