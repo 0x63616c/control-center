@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	historypb "go.temporal.io/api/history/v1"
 	"go.temporal.io/api/temporalproto"
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/worker"
 
@@ -117,6 +119,7 @@ func TestExportTargetDispatcherHistory(t *testing.T) {
 	})
 
 	const queue = "target-dispatcher-history-export"
+	var attempts atomic.Int32
 	w := worker.New(server.Client(), queue, worker.Options{
 		Identity:               "target-dispatcher-history-exporter",
 		DisableEagerActivities: true,
@@ -125,6 +128,12 @@ func TestExportTargetDispatcherHistory(t *testing.T) {
 	w.RegisterWorkflowWithOptions(targetDispatcherFixtureChild, workflow.RegisterOptions{Name: "WorkOnTicket"})
 	w.RegisterActivityWithOptions(
 		func(context.Context) ([]store.Ticket, error) {
+			if attempts.Add(1) == 1 {
+				return nil, temporal.NewApplicationErrorWithOptions(
+					"no dispatchable factory tickets", activities.ErrTypeNoDispatchableTickets,
+					temporal.ApplicationErrorOptions{NextRetryDelay: 10 * time.Second},
+				)
+			}
 			return []store.Ticket{{ID: 17, Title: "replay fixture admission", State: store.TicketOpen}}, nil
 		},
 		activity.RegisterOptions{Name: "AwaitDispatchableTickets"},
@@ -146,10 +155,10 @@ func TestExportTargetDispatcherHistory(t *testing.T) {
 		t.Fatalf("starting target dispatcher: %v", err)
 	}
 
-	// The child cannot start until the wait activity completed and the parent
-	// emitted its StartChildWorkflow command. Let both workflow tasks settle
-	// before terminating the finite exported history.
-	time.Sleep(time.Second)
+	// The first activity attempt uses the same ten-second retry cadence as an
+	// idle dispatcher. The later child cannot start until that retry completes
+	// and the parent emits its StartChildWorkflow command.
+	time.Sleep(12 * time.Second)
 	if err := server.Client().TerminateWorkflow(context.Background(), run.GetID(), run.GetRunID(), "fixture export"); err != nil {
 		t.Fatalf("terminating target dispatcher: %v", err)
 	}

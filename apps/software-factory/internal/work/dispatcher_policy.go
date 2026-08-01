@@ -12,6 +12,10 @@ import (
 type DispatcherPolicy struct {
 	Run         TargetRunPolicy
 	MaxInFlight int
+	// Paused prevents new Ticket admission while preserving existing Runs.
+	// It is part of the resolved policy so every worker publication has one
+	// complete, replay-stable control snapshot.
+	Paused bool
 }
 
 // DefaultDispatcherPolicy returns the resolved policy published by a target

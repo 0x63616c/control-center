@@ -68,19 +68,25 @@ func readHistoryFixture(t *testing.T, fixture string) *historypb.History {
 func assertRepresentativeTargetDispatcherHistory(t *testing.T, history *historypb.History) {
 	t.Helper()
 	activityCompleted := false
+	activityRetried := false
 	childStarted := false
+	childRequestsCancellation := false
 	for _, event := range history.Events {
 		if event.GetEventType() == enums.EVENT_TYPE_ACTIVITY_TASK_COMPLETED {
 			activityCompleted = true
 		}
+		if event.GetEventType() == enums.EVENT_TYPE_ACTIVITY_TASK_STARTED && event.GetActivityTaskStartedEventAttributes().GetAttempt() > 1 {
+			activityRetried = true
+		}
 		if event.GetEventType() == enums.EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED {
 			childStarted = true
+			childRequestsCancellation = event.GetStartChildWorkflowExecutionInitiatedEventAttributes().GetParentClosePolicy() == enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL
 		}
 	}
-	if !activityCompleted || !childStarted {
+	if !activityCompleted || !activityRetried || !childStarted || !childRequestsCancellation {
 		t.Fatalf(
-			"target dispatcher history must contain a completed dispatch wait and child admission; activity_completed=%t child_started=%t",
-			activityCompleted, childStarted,
+			"target dispatcher history must contain a retried wait, completed dispatch, and child admission that requests cancellation; activity_completed=%t activity_retried=%t child_started=%t child_requests_cancellation=%t",
+			activityCompleted, activityRetried, childStarted, childRequestsCancellation,
 		)
 	}
 }

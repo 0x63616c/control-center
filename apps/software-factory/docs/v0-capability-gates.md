@@ -131,9 +131,10 @@ go test -tags=manual -run '^TestExportLegacyFactoryDispatcherHistory$' \
 
 `internal/workflows/testdata/target-dispatcher-admission.json` is an export
 from a Temporal CLI dev-server execution of the dormant v0 `Dispatcher`. It
-completes one `AwaitDispatchableTickets` activity and starts one
-`WorkOnTicket` child, preserving the wait-to-admission command sequence before
-the PR 8 registration cutover makes the workflow live.
+retries one no-work `AwaitDispatchableTickets` attempt, then completes the
+next wait and starts one `WorkOnTicket` child, preserving the
+wait-to-admission command sequence before the PR 8 registration cutover makes
+the workflow live.
 `TestTargetDispatcherHistoryReplays` registers the target dispatcher exactly
 as the eventual worker does and replays that checked-in JSON export.
 

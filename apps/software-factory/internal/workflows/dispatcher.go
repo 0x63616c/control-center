@@ -60,6 +60,7 @@ func Dispatcher(ctx workflow.Context, in DispatcherInput) error {
 	}
 	var wait workflow.Future
 	var cancelWait workflow.CancelFunc
+	policyChanged := workflow.NewBufferedChannel(ctx, 1)
 	draining := false
 	drainPolicyUpdates := 0
 	beginDraining := func() {
@@ -87,6 +88,9 @@ func Dispatcher(ctx workflow.Context, in DispatcherInput) error {
 			return DispatcherPublicationDraining, nil
 		}
 		policy, fingerprint = update.Policy, update.Fingerprint
+		if policyChanged.Len() == 0 {
+			policyChanged.Send(ctx, struct{}{})
+		}
 		if draining {
 			drainPolicyUpdates++
 		}
@@ -103,7 +107,7 @@ func Dispatcher(ctx workflow.Context, in DispatcherInput) error {
 		if draining && len(children) == 0 {
 			return workflow.NewContinueAsNewError(ctx, Dispatcher, DispatcherInput{Policy: policy, CloneURL: in.CloneURL, Model: in.Model})
 		}
-		if !draining && wait == nil && len(children) < policy.MaxInFlight {
+		if !draining && !policy.Paused && wait == nil && len(children) < policy.MaxInFlight {
 			waitCtx, cancel := workflow.WithCancel(ctx)
 			wait = workflow.ExecuteActivity(workflow.WithActivityOptions(waitCtx, dispatchWaitActivityOptions(policy.Run.Recording)), ticketActs.AwaitDispatchableTickets)
 			cancelWait = cancel
@@ -127,7 +131,7 @@ func Dispatcher(ctx workflow.Context, in DispatcherInput) error {
 					if _, exists := children[ticket.ID]; exists {
 						continue
 					}
-					child := workflow.ExecuteChildWorkflow(workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{WorkflowID: work.FactoryTicketWorkflowID(int64(ticket.ID)), ParentClosePolicy: enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL}), WorkOnTicket, WorkOnTicketInput{TicketID: ticket.ID, Policy: policy.Run, CloneURL: in.CloneURL, Model: in.Model})
+					child := workflow.ExecuteChildWorkflow(workflow.WithChildOptions(ctx, dispatchChildWorkflowOptions(ticket.ID)), WorkOnTicket, WorkOnTicketInput{TicketID: ticket.ID, Policy: policy.Run, CloneURL: in.CloneURL, Model: in.Model})
 					children[ticket.ID] = child
 				}
 			})
@@ -137,11 +141,22 @@ func Dispatcher(ctx workflow.Context, in DispatcherInput) error {
 			id, child := id, child
 			selector.AddFuture(child, func(workflow.Future) { delete(children, id) })
 		}
+		selector.AddReceive(policyChanged, func(channel workflow.ReceiveChannel, _ bool) {
+			var ignored struct{}
+			channel.Receive(ctx, &ignored)
+		})
 		selector.AddReceive(ctx.Done(), func(workflow.ReceiveChannel, bool) {})
 		selector.Select(ctx)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+	}
+}
+
+func dispatchChildWorkflowOptions(ticketID store.TicketID) workflow.ChildWorkflowOptions {
+	return workflow.ChildWorkflowOptions{
+		WorkflowID:        work.FactoryTicketWorkflowID(int64(ticketID)),
+		ParentClosePolicy: enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
 	}
 }
 

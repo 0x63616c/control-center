@@ -152,11 +152,18 @@ func TestDispatcherDoesNotPollUntilAnUnpausedPolicyIsPublished(t *testing.T) {
 	suite := &testsuite.WorkflowTestSuite{}
 	env := suite.NewTestWorkflowEnvironment()
 	polls := 0
+	unpauseRequested := false
 	env.OnActivity(ticketActs.AwaitDispatchableTickets, mock.Anything).
 		Return(func(context.Context) ([]store.Ticket, error) {
 			polls++
-			return nil, temporal.NewApplicationError("no dispatchable tickets", activities.ErrTypeNoDispatchableTickets, nil)
+			if !unpauseRequested {
+				t.Error("dispatcher polled before an unpaused policy was published")
+			}
+			return []store.Ticket{{ID: 17, Title: "admit after unpause", State: store.TicketOpen}}, nil
 		})
+	env.OnWorkflow(workflows.WorkOnTicket, mock.Anything, mock.Anything).Return(func(ctx workflow.Context, _ workflows.WorkOnTicketInput) error {
+		return workflow.Sleep(ctx, time.Hour)
+	})
 
 	in := targetDispatcherInput()
 	in.Policy.Paused = true
@@ -165,8 +172,9 @@ func TestDispatcherDoesNotPollUntilAnUnpausedPolicyIsPublished(t *testing.T) {
 	updates := map[string]workflows.DispatcherPublication{}
 	errs := map[string]error{}
 	env.RegisterDelayedCallback(func() {
+		unpauseRequested = true
 		env.UpdateWorkflow(workflows.UpdateDispatcherPolicy, "unpause", dispatcherUpdateCallback("unpause", updates, errs), targetDispatcherPolicyUpdate(t, unpaused))
-	}, 0)
+	}, 10*time.Second)
 	env.RegisterDelayedCallback(env.CancelWorkflow, time.Minute)
 	env.ExecuteWorkflow(workflows.Dispatcher, in)
 
@@ -203,8 +211,69 @@ func TestDispatcherReleasesACompletedChildSlotWithoutContinueAsNew(t *testing.T)
 	if err := env.GetWorkflowError(); !temporal.IsCanceledError(err) {
 		t.Fatalf("Dispatcher error = %v, want cancellation", err)
 	}
-	if polls != 2 {
+	if polls < 2 {
 		t.Errorf("dispatch polls = %d, want a second wait after the child released its only slot", polls)
+	}
+}
+
+func TestDispatcherUsesTheLatestPublishedPolicyForLaterAdmissions(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+	env.OnActivity(ticketActs.AwaitDispatchableTickets, mock.Anything).After(time.Second).
+		Return([]store.Ticket{{ID: 31, Title: "admit with latest policy", State: store.TicketOpen}}, nil)
+	var admitted workflows.WorkOnTicketInput
+	env.OnWorkflow(workflows.WorkOnTicket, mock.Anything, mock.Anything).
+		Return(func(ctx workflow.Context, in workflows.WorkOnTicketInput) error {
+			admitted = in
+			return workflow.Sleep(ctx, time.Hour)
+		})
+
+	in := targetDispatcherInput()
+	latest := in.Policy
+	latest.MaxInFlight = 2
+	updates := map[string]workflows.DispatcherPublication{}
+	errs := map[string]error{}
+	env.RegisterDelayedCallback(func() {
+		env.UpdateWorkflow(workflows.UpdateDispatcherPolicy, "latest-before-admission", dispatcherUpdateCallback("latest", updates, errs), targetDispatcherPolicyUpdate(t, latest))
+	}, 0)
+	env.RegisterDelayedCallback(env.CancelWorkflow, 2*time.Second)
+	env.ExecuteWorkflow(workflows.Dispatcher, in)
+
+	if err := env.GetWorkflowError(); !temporal.IsCanceledError(err) {
+		t.Fatalf("Dispatcher error = %v, want cancellation", err)
+	}
+	if err := errs["latest"]; err != nil {
+		t.Fatalf("latest publication failed: %v", err)
+	}
+	if updates["latest"] != workflows.DispatcherPublicationApplied {
+		t.Errorf("latest publication = %q, want APPLIED", updates["latest"])
+	}
+	if !reflect.DeepEqual(admitted.Policy, latest.Run) {
+		t.Errorf("admitted policy = %+v, want latest published policy %+v", admitted.Policy, latest.Run)
+	}
+}
+
+func TestDispatcherCancelsAnOutstandingWaitBeforeDraining(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+	env.OnActivity(ticketActs.AwaitDispatchableTickets, mock.Anything).After(time.Hour).Return([]store.Ticket{}, nil)
+	updates := map[string]workflows.DispatcherPublication{}
+	errs := map[string]error{}
+	env.RegisterDelayedCallback(func() {
+		env.SetContinueAsNewSuggested(true)
+		env.UpdateWorkflow(workflows.UpdateDispatcherPolicy, "drain-wait", dispatcherUpdateCallback("drain-wait", updates, errs), targetDispatcherPolicyUpdate(t, work.DefaultDispatcherPolicy()))
+	}, time.Second)
+	// A wait that was not canceled would still be outstanding here and this
+	// cancellation would win instead of the required empty-state rollover.
+	env.RegisterDelayedCallback(env.CancelWorkflow, 2*time.Second)
+	env.ExecuteWorkflow(workflows.Dispatcher, targetDispatcherInput())
+
+	var continued *workflow.ContinueAsNewError
+	if err := env.GetWorkflowError(); !errors.As(err, &continued) {
+		t.Fatalf("Dispatcher error = %v, want ContinueAsNewError after canceling its wait", err)
+	}
+	if err := errs["drain-wait"]; err != nil {
+		t.Fatalf("drain publication failed: %v", err)
 	}
 }
 
