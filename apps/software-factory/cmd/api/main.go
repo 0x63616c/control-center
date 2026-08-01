@@ -24,6 +24,7 @@ import (
 
 	factoryapi "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/api"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/api/auth"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/checkpoint"
 	temporalapi "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/temporal"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/config"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/database"
@@ -140,7 +141,8 @@ func run() error {
 	// authenticates each delivery itself, by HMAC, exactly as the relay does.
 	// Every other path stays behind Cloudflare Access or the in-cluster bearer.
 	mux.Handle("/v1/hooks/github", webhook.NewHandler(cfg.WebhookSecret, ticketStore, logger, registry))
-	mux.Handle("/", authentication.Wrap(factoryapi.New(buildVersion, temporalapi.NewCommands(temporal), ticketStore).Handler()))
+	factory := factoryapi.NewWithCheckpointStore(buildVersion, temporalapi.NewCommands(temporal), ticketStore, ticketStore)
+	mountFactoryAPI(mux, authentication, factory)
 
 	listener, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
@@ -165,4 +167,16 @@ func run() error {
 		}
 	}
 	return nil
+}
+
+type routeAuthenticator interface {
+	Wrap(http.Handler) http.Handler
+}
+
+func mountFactoryAPI(mux *http.ServeMux, authentication routeAuthenticator, factory *factoryapi.Service) {
+	// The Store authenticates this exact-attempt capability. Requiring the
+	// legacy broad worker bearer as well would give the Run Worker authority the
+	// narrow checkpoint route exists to avoid.
+	mux.Handle(checkpoint.PathPrefix, factory.Handler())
+	mux.Handle("/", authentication.Wrap(factory.Handler()))
 }
