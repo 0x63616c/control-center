@@ -49,6 +49,9 @@ components:
     AttemptOutput:
       additionalProperties: false
       properties:
+        agentStage:
+          description: "The agent role for this semantic execution: plan, implement, or review."
+          type: string
         attemptNo:
           description: Which attempt of this Step this is, starting at 1.
           format: int64
@@ -67,6 +70,9 @@ components:
           type:
             - string
             - "null"
+        failureKind:
+          description: The terminal failure category, empty unless this Attempt failed.
+          type: string
         hasTranscript:
           description: Whether a transcript is stored for this attempt.
           type: boolean
@@ -77,7 +83,7 @@ components:
             - integer
             - "null"
         measured:
-          description: "Whether this attempt actually ran Codex. False means it resumed a stored result: the four token fields below are null, not zero, because nothing ran to measure."
+          description: Compatibility projection of usageState == measured.
           type: boolean
         model:
           description: The model this attempt ran on.
@@ -88,6 +94,9 @@ components:
           type:
             - integer
             - "null"
+        providerThreadId:
+          description: The provider thread identity captured by this semantic Attempt.
+          type: string
         reasoningTokens:
           description: The part of outputTokens spent reasoning. Null when measured is false.
           format: int64
@@ -95,19 +104,28 @@ components:
             - integer
             - "null"
         result:
-          description: "'', 'succeeded' or 'failed'. Empty means the attempt has not ended yet."
-          enum:
-            - ""
-            - succeeded
-            - failed
-          type: string
+          description: The durable structured result envelope. Null until one is recorded.
         startedAt:
           description: RFC3339 UTC.
           type: string
+        state:
+          description: The durable Attempt lifecycle state.
+          type: string
+        transcriptPath:
+          description: The download path for this transcript, empty when none is stored.
+          type: string
+        usageState:
+          description: Whether token usage is unknown or measured.
+          type: string
       required:
         - attemptNo
+        - agentStage
         - model
         - effort
+        - state
+        - failureKind
+        - providerThreadId
+        - usageState
         - measured
         - inputTokens
         - cachedInputTokens
@@ -117,6 +135,7 @@ components:
         - endedAt
         - result
         - hasTranscript
+        - transcriptPath
       type: object
     BuildOutputBody:
       additionalProperties: false
@@ -133,6 +152,19 @@ components:
           type: string
       required:
         - version
+      type: object
+    ConfirmedMergeOutput:
+      additionalProperties: false
+      properties:
+        mergeSha:
+          description: The authoritative merge commit SHA.
+          type: string
+        reviewedHead:
+          description: The exact pull-request head reviewed before merge.
+          type: string
+      required:
+        - reviewedHead
+        - mergeSha
       type: object
     ConsoleResponse:
       additionalProperties: false
@@ -360,30 +392,28 @@ components:
     RunOutput:
       additionalProperties: false
       properties:
+        active:
+          description: Whether this Run is still nonterminal.
+          type: boolean
+        confirmedMerge:
+          $ref: "#/components/schemas/ConfirmedMergeOutput"
+          description: Immutable merge evidence, absent unless this Run ended in a Confirmed Merge.
         endedAt:
           description: RFC3339 UTC. Null until the Run ends.
           type:
             - string
             - "null"
         failureKind:
-          description: "'', 'auth', 'rate-limit' or 'other'."
-          enum:
-            - ""
-            - auth
-            - rate-limit
-            - other
+          description: The target Run failure category, or the historical category for a legacy Run. Empty when not failed.
           type: string
         id:
           description: Temporal's run id for this Run.
           type: string
         outcome:
-          description: "'', 'proposed', 'blocked', 'exhausted' or 'failed'. Empty until the Run ends."
-          enum:
-            - ""
-            - proposed
-            - blocked
-            - exhausted
-            - failed
+          description: The target Run outcome, or the historical outcome for a legacy Run. Empty until terminal.
+          type: string
+        phase:
+          description: The latest active Step kind, falling back to the latest terminal Step kind.
           type: string
         startedAt:
           description: RFC3339 UTC.
@@ -409,6 +439,8 @@ components:
         - endedAt
         - outcome
         - failureKind
+        - active
+        - phase
         - steps
         - usage
       type: object
@@ -443,28 +475,49 @@ components:
           type:
             - string
             - "null"
+        iteration:
+          description: The semantic repetition number for this Step kind, when applicable.
+          format: int64
+          type: integer
+        kind:
+          description: The operation this Step records.
+          type: string
+        ordinal:
+          description: The stable Step identity within this Run, starting at 1.
+          format: int64
+          type: integer
+        reason:
+          description: Why this Step was authorized, when applicable.
+          type: string
+        result:
+          description: The durable structured result envelope. Null until one is recorded.
         stage:
-          description: plan, implement, or review.
-          enum:
-            - plan
-            - implement
-            - review
+          description: Historical alias for agent-backed legacy Steps.
           type: string
         startedAt:
-          description: RFC3339 UTC. Its first Attempt's start.
+          description: RFC3339 UTC.
+          type: string
+        state:
+          description: The durable Step lifecycle state.
           type: string
         turn:
-          description: "Which turn of Stage this is within the Run, starting at 1 — the headline number: the model was asked to do this work again."
+          description: Historical alias for a legacy Step iteration.
           format: int64
           type: integer
         usage:
           $ref: "#/components/schemas/UsageOutput"
           description: Rolled up across this Step's Attempts.
       required:
+        - ordinal
+        - kind
+        - iteration
+        - reason
+        - state
         - stage
         - turn
         - startedAt
         - endedAt
+        - result
         - attempts
         - usage
       type: object
@@ -1309,6 +1362,67 @@ paths:
                 $ref: "#/components/schemas/ErrorModel"
           description: Error
       summary: Download an Attempt's transcript
+  /v1/tickets/{ticketID}/runs/{runID}/steps/{ordinal}/attempts/{attemptNo}/transcript:
+    get:
+      description: Returns an ordinal Step Attempt's raw JSONL event stream, decompressed, as a downloadable file.
+      operationId: list-v1-tickets-by-ticket-id-runs-by-run-id-steps-by-ordinal-attempts-by-attempt-no-transcript
+      parameters:
+        - description: The Ticket identifier.
+          in: path
+          name: ticketID
+          required: true
+          schema:
+            description: The Ticket identifier.
+            format: int64
+            minimum: 1
+            type: integer
+        - description: The Run's Temporal run id.
+          in: path
+          name: runID
+          required: true
+          schema:
+            description: The Run's Temporal run id.
+            type: string
+        - description: The target Step's ordinal identity.
+          in: path
+          name: ordinal
+          required: true
+          schema:
+            description: The target Step's ordinal identity.
+            format: int64
+            minimum: 1
+            type: integer
+        - description: Which semantic Agent Attempt to download.
+          in: path
+          name: attemptNo
+          required: true
+          schema:
+            description: Which semantic Agent Attempt to download.
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                contentEncoding: base64
+                type: string
+          description: OK
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+            Content-Type:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Download a target Attempt's transcript
   /v1/tickets/{ticketID}/state:
     patch:
       description: Moves a Ticket through its legal lifecycle transitions.
