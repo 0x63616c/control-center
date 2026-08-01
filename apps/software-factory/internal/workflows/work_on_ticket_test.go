@@ -13,6 +13,7 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store/storefake"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/workflows"
+	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
@@ -423,6 +424,86 @@ func TestWorkOnTicketRetriesPendingCIInsideOneStep(t *testing.T) {
 	}
 	if len(h.ciInputs) != 2 || ciSteps != 1 || attempts != 3 {
 		t.Fatalf("pending CI = %d reads, %d CI steps, %d agent attempts; want 2, 1, 3", len(h.ciInputs), ciSteps, attempts)
+	}
+}
+
+// A ScheduleToClose timeout means Temporal has exhausted the complete CI
+// observation window. It is terminal even when the broader semantic deadline
+// still has time left: leaving the await-ci Step running strands the Ticket.
+func TestWorkOnTicketFinalizesCIScheduleToCloseTimeoutImmediately(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "CI schedule timeout", "finish durable failure", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	policy := work.DefaultTargetRunPolicy()
+	// The test environment returns the server's terminal timeout directly. One
+	// activity attempt avoids simulating the full two-hour wall clock while
+	// retaining the exact ScheduleToClose timeout classification.
+	policy.AwaitCI.Retry.MaximumAttempts = 1
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000023", Policy: policy, CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.awaitCI = func(activities.TargetAwaitCIInput) (activities.AwaitCIOutput, error) {
+		return activities.AwaitCIOutput{}, temporal.NewTimeoutError(enumspb.TIMEOUT_TYPE_SCHEDULE_TO_CLOSE, nil)
+	}
+
+	h.run(in)
+	var application *temporal.ApplicationError
+	if err := h.env.GetWorkflowError(); !errors.As(err, &application) || application.Type() != activities.ErrTypeCIUnobserved {
+		t.Fatalf("WorkOnTicket error = %v, want non-retryable %s", err, activities.ErrTypeCIUnobserved)
+	}
+	got, err := s.Ticket(ctx, ticket.ID)
+	if err != nil {
+		t.Fatalf("Ticket: %v", err)
+	}
+	if got.State != store.TicketFailed || got.ActiveRunID != "" {
+		t.Fatalf("CI-timeout ticket = %+v, want failed with no active owner", got)
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	if detail.Run.TargetOutcome != work.RunOutcomeFailed || detail.Run.TargetFailure != work.RunFailureCIUnobserved {
+		t.Fatalf("CI-timeout run = %+v, want failed ci_unobserved", detail.Run)
+	}
+	for _, step := range detail.Steps {
+		if step.Step.Kind == work.StepAwaitCI && (step.Step.State != work.StepStateCompleted || string(step.Step.Result) != `{"kind":"ci_unobserved"}`) {
+			t.Fatalf("CI timeout step = %+v, want completed ci_unobserved result", step.Step)
+		}
+		if step.Step.Kind == work.StepReview {
+			t.Fatalf("steps = %+v, want no post-timeout review", detail.Steps)
+		}
+	}
+}
+
+func TestWorkOnTicketDoesNotTerminalizeAnotherCITimeoutAsUnobserved(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "CI retryable timeout", "do not conflate timeout classes", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	policy := work.DefaultTargetRunPolicy()
+	policy.AwaitCI.Retry.MaximumAttempts = 1
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000024", Policy: policy, CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.awaitCI = func(activities.TargetAwaitCIInput) (activities.AwaitCIOutput, error) {
+		return activities.AwaitCIOutput{}, temporal.NewTimeoutError(enumspb.TIMEOUT_TYPE_START_TO_CLOSE, nil)
+	}
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err == nil {
+		t.Fatal("WorkOnTicket succeeded after a non-ScheduleToClose timeout")
+	}
+	got, err := s.Ticket(ctx, ticket.ID)
+	if err != nil {
+		t.Fatalf("Ticket: %v", err)
+	}
+	if got.State != store.TicketActive || got.ActiveRunID != in.RunID {
+		t.Fatalf("non-ScheduleToClose ticket = %+v, want active owned ticket", got)
 	}
 }
 

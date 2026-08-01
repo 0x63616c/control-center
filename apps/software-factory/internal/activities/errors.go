@@ -73,7 +73,7 @@ const (
 	// authorization of another Agent Attempt; native retry must never start fresh.
 	ErrTypeUnresumableIncompleteAttempt = "unresumable_incomplete_attempt"
 	// ErrTypeSemanticDeadline says no new target work may consume the reserved finalization window.
-	ErrTypeSemanticDeadline = "semantic_deadline"
+	ErrTypeSemanticDeadline   = "semantic_deadline"
 	ErrTypeAgentAttemptBudget = "agent_attempt_budget"
 	ErrTypeReviewBudget       = "review_budget"
 	ErrTypeCIUnobserved       = "ci_unobserved"
