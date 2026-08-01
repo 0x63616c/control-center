@@ -2,6 +2,7 @@ package codexresponses
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
@@ -41,6 +42,45 @@ const (
 	TextVerbosityHigh TextVerbosity = "high"
 )
 
+// ReasoningEffort controls how much reasoning the model may perform.
+type ReasoningEffort string
+
+const (
+	// ReasoningEffortLow requests a small reasoning budget.
+	ReasoningEffortLow ReasoningEffort = "low"
+	// ReasoningEffortMedium requests the normal reasoning budget.
+	ReasoningEffortMedium ReasoningEffort = "medium"
+	// ReasoningEffortHigh requests a larger reasoning budget.
+	ReasoningEffortHigh ReasoningEffort = "high"
+	// ReasoningEffortXHigh requests the largest generally available reasoning budget.
+	ReasoningEffortXHigh ReasoningEffort = "xhigh"
+)
+
+// ReasoningSummary controls whether the provider returns a reasoning summary.
+type ReasoningSummary string
+
+const (
+	// ReasoningSummaryAuto lets the provider choose summary detail.
+	ReasoningSummaryAuto ReasoningSummary = "auto"
+	// ReasoningSummaryConcise requests a concise summary.
+	ReasoningSummaryConcise ReasoningSummary = "concise"
+	// ReasoningSummaryDetailed requests a detailed summary.
+	ReasoningSummaryDetailed ReasoningSummary = "detailed"
+)
+
+// ReasoningOptions configure reasoning for a turn.
+type ReasoningOptions struct {
+	Effort  ReasoningEffort  `json:"effort"`
+	Summary ReasoningSummary `json:"summary"`
+}
+
+// Tool describes one function the model may ask the caller to execute.
+type Tool struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Parameters  json.RawMessage `json:"parameters"`
+}
+
 // InputType identifies one item supplied to a model turn.
 type InputType string
 
@@ -66,9 +106,12 @@ type TurnRequest struct {
 	Instructions      string
 	Input             []InputItem
 	Store             bool
+	Tools             []Tool
 	ToolChoice        ToolChoice
 	ParallelToolCalls bool
+	Reasoning         ReasoningOptions
 	TextVerbosity     TextVerbosity
+	PromptCacheKey    string
 }
 
 // Outcome distinguishes a final answer from a turn requiring tool execution.
@@ -88,11 +131,20 @@ type Usage struct {
 	TotalTokens  int64
 }
 
+// ToolCall is one complete function invocation requested by the model.
+type ToolCall struct {
+	ID        string
+	CallID    string
+	Name      string
+	Arguments json.RawMessage
+}
+
 // TurnResult is the durable, provider-neutral result of one model turn.
 type TurnResult struct {
 	Outcome    Outcome
 	ResponseID string
 	Text       string
+	ToolCalls  []ToolCall
 	Status     string
 	Usage      Usage
 }

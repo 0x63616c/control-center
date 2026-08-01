@@ -109,14 +109,17 @@ func (c *Client) Turn(ctx context.Context, request TurnRequest, emit EmitFunc) (
 }
 
 type wireRequest struct {
-	Model             string          `json:"model"`
-	Store             bool            `json:"store"`
-	Stream            bool            `json:"stream"`
-	Instructions      string          `json:"instructions"`
-	Input             []wireInputItem `json:"input"`
-	ToolChoice        ToolChoice      `json:"tool_choice"`
-	ParallelToolCalls bool            `json:"parallel_tool_calls"`
-	Text              wireText        `json:"text"`
+	Model             string            `json:"model"`
+	Store             bool              `json:"store"`
+	Stream            bool              `json:"stream"`
+	Instructions      string            `json:"instructions"`
+	Input             []wireInputItem   `json:"input"`
+	Tools             []wireTool        `json:"tools,omitempty"`
+	ToolChoice        ToolChoice        `json:"tool_choice"`
+	ParallelToolCalls bool              `json:"parallel_tool_calls"`
+	Reasoning         *ReasoningOptions `json:"reasoning,omitempty"`
+	Text              wireText          `json:"text"`
+	PromptCacheKey    string            `json:"prompt_cache_key,omitempty"`
 }
 
 type wireInputItem struct {
@@ -133,6 +136,14 @@ type wireText struct {
 	Verbosity TextVerbosity `json:"verbosity"`
 }
 
+type wireTool struct {
+	Type        string          `json:"type"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Parameters  json.RawMessage `json:"parameters"`
+	Strict      bool            `json:"strict"`
+}
+
 func encodeRequest(request TurnRequest) ([]byte, error) {
 	if request.Model == "" || request.Instructions == "" || len(request.Input) == 0 {
 		return nil, fmt.Errorf("a Codex Responses turn needs a model, instructions, and input")
@@ -147,15 +158,35 @@ func encodeRequest(request TurnRequest) ([]byte, error) {
 			Content: []wireInputContent{{Type: "input_text", Text: item.Text}},
 		})
 	}
+	tools := make([]wireTool, 0, len(request.Tools))
+	for _, tool := range request.Tools {
+		if tool.Name == "" || tool.Description == "" || !json.Valid(tool.Parameters) {
+			return nil, fmt.Errorf("the Codex Responses turn contains an invalid tool definition")
+		}
+		tools = append(tools, wireTool{
+			Type:        "function",
+			Name:        tool.Name,
+			Description: tool.Description,
+			Parameters:  tool.Parameters,
+			Strict:      true,
+		})
+	}
+	var reasoning *ReasoningOptions
+	if request.Reasoning.Effort != "" || request.Reasoning.Summary != "" {
+		reasoning = &request.Reasoning
+	}
 	encoded, err := json.Marshal(wireRequest{
 		Model:             request.Model,
 		Store:             request.Store,
 		Stream:            true,
 		Instructions:      request.Instructions,
 		Input:             input,
+		Tools:             tools,
 		ToolChoice:        request.ToolChoice,
 		ParallelToolCalls: request.ParallelToolCalls,
+		Reasoning:         reasoning,
 		Text:              wireText{Verbosity: request.TextVerbosity},
+		PromptCacheKey:    request.PromptCacheKey,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("encoding the Codex Responses request: %w", err)
@@ -164,15 +195,21 @@ func encodeRequest(request TurnRequest) ([]byte, error) {
 }
 
 type wireEvent struct {
-	Type     string       `json:"type"`
-	Delta    string       `json:"delta"`
-	Item     wireItem     `json:"item"`
-	Response wireResponse `json:"response"`
+	Type        string       `json:"type"`
+	OutputIndex int          `json:"output_index"`
+	Delta       string       `json:"delta"`
+	Arguments   string       `json:"arguments"`
+	Item        wireItem     `json:"item"`
+	Response    wireResponse `json:"response"`
 }
 
 type wireItem struct {
-	Type    string        `json:"type"`
-	Content []wireContent `json:"content"`
+	Type      string        `json:"type"`
+	ID        string        `json:"id"`
+	CallID    string        `json:"call_id"`
+	Name      string        `json:"name"`
+	Arguments string        `json:"arguments"`
+	Content   []wireContent `json:"content"`
 }
 
 type wireContent struct {
@@ -197,11 +234,12 @@ func parseStream(reader io.Reader, emit EmitFunc) (TurnResult, error) {
 	scanner.Buffer(make([]byte, 64<<10), maxSSEEventBytes)
 	var data []string
 	var result TurnResult
+	pendingCalls := make(map[int]wireItem)
 	terminal := false
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
-			if err := consumeEvent(data, &result, emit, &terminal); err != nil {
+			if err := consumeEvent(data, &result, pendingCalls, emit, &terminal); err != nil {
 				return TurnResult{}, err
 			}
 			data = data[:0]
@@ -214,7 +252,7 @@ func parseStream(reader io.Reader, emit EmitFunc) (TurnResult, error) {
 	if err := scanner.Err(); err != nil {
 		return TurnResult{}, fmt.Errorf("scanning SSE events: %w", err)
 	}
-	if err := consumeEvent(data, &result, emit, &terminal); err != nil {
+	if err := consumeEvent(data, &result, pendingCalls, emit, &terminal); err != nil {
 		return TurnResult{}, err
 	}
 	if !terminal {
@@ -226,7 +264,13 @@ func parseStream(reader io.Reader, emit EmitFunc) (TurnResult, error) {
 	return result, nil
 }
 
-func consumeEvent(data []string, result *TurnResult, emit EmitFunc, terminal *bool) error {
+func consumeEvent(
+	data []string,
+	result *TurnResult,
+	pendingCalls map[int]wireItem,
+	emit EmitFunc,
+	terminal *bool,
+) error {
 	if len(data) == 0 {
 		return nil
 	}
@@ -241,13 +285,26 @@ func consumeEvent(data []string, result *TurnResult, emit EmitFunc, terminal *bo
 	switch event.Type {
 	case "response.created":
 		result.ResponseID = event.Response.ID
+	case "response.output_item.added":
+		if event.Item.Type == "function_call" {
+			pendingCalls[event.OutputIndex] = event.Item
+		}
 	case "response.output_text.delta":
 		result.Text += event.Delta
 		if emit != nil {
 			emit(Event{Type: EventTextDelta, Delta: event.Delta})
 		}
+	case "response.function_call_arguments.delta":
+		call := pendingCalls[event.OutputIndex]
+		call.Arguments += event.Delta
+		pendingCalls[event.OutputIndex] = call
+	case "response.function_call_arguments.done":
+		call := pendingCalls[event.OutputIndex]
+		call.Arguments = event.Arguments
+		pendingCalls[event.OutputIndex] = call
 	case "response.output_item.done":
-		if event.Item.Type == "message" {
+		switch event.Item.Type {
+		case "message":
 			var text strings.Builder
 			for _, content := range event.Item.Content {
 				if content.Type == "output_text" {
@@ -258,6 +315,31 @@ func consumeEvent(data []string, result *TurnResult, emit EmitFunc, terminal *bo
 				result.Text = text.String()
 				result.Outcome = OutcomeFinalText
 			}
+		case "function_call":
+			call := pendingCalls[event.OutputIndex]
+			if event.Item.ID != "" {
+				call.ID = event.Item.ID
+			}
+			if event.Item.CallID != "" {
+				call.CallID = event.Item.CallID
+			}
+			if event.Item.Name != "" {
+				call.Name = event.Item.Name
+			}
+			if event.Item.Arguments != "" {
+				call.Arguments = event.Item.Arguments
+			}
+			if call.ID == "" || call.CallID == "" || call.Name == "" || !json.Valid([]byte(call.Arguments)) {
+				return fmt.Errorf("the provider completed an invalid function call")
+			}
+			result.ToolCalls = append(result.ToolCalls, ToolCall{
+				ID:        call.ID,
+				CallID:    call.CallID,
+				Name:      call.Name,
+				Arguments: json.RawMessage(call.Arguments),
+			})
+			result.Outcome = OutcomeToolCalls
+			delete(pendingCalls, event.OutputIndex)
 		}
 	case "response.completed":
 		*terminal = true
