@@ -45,7 +45,7 @@ func TestApplyQuiescesLegacyWorkAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute(first): %v", err)
 	}
-	if !report.Ready || len(report.After.Workflows) != 0 || len(report.After.PullRequests) != 0 || len(report.After.Tickets) != 0 {
+	if !report.Ready || len(report.After.Workflows) != 0 || len(report.After.PullRequests) != 1 || report.After.PullRequests[0].AutoMergeEnabled || len(report.After.Tickets) != 0 {
 		t.Fatalf("report = %+v, want a clean ready inventory", report)
 	}
 	wantCalls := []string{
@@ -148,7 +148,11 @@ func (fake *fakeDependencies) ListLegacyPullRequests(context.Context) ([]PullReq
 
 func (fake *fakeDependencies) DisableAutoMerge(_ context.Context, pullRequest PullRequest) error {
 	fake.calls = append(fake.calls, "disable-auto-merge:"+itoa(pullRequest.Number))
-	fake.pullRequests = nil
+	for index := range fake.pullRequests {
+		if fake.pullRequests[index].Number == pullRequest.Number {
+			fake.pullRequests[index].AutoMergeEnabled = false
+		}
+	}
 	return nil
 }
 
