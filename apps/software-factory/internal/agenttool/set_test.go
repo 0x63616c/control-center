@@ -17,6 +17,8 @@ type undocumentedInput struct {
 	Path string `json:"path"`
 }
 
+type scalarInput string
+
 func TestMustSetSortsSpecifications(t *testing.T) {
 	t.Parallel()
 
@@ -173,6 +175,22 @@ func TestMustSetRejectsMissingPropertyDescriptions(t *testing.T) {
 	defer func() {
 		panicValue := recover()
 		if message := fmt.Sprint(panicValue); !strings.Contains(message, `property "path" description is blank`) {
+			t.Fatalf("panic = %q", message)
+		}
+	}()
+	agenttool.MustSet("coding-read-v1", tool)
+}
+
+func TestMustSetRejectsNonObjectInputs(t *testing.T) {
+	t.Parallel()
+
+	tool := agenttool.Bind(
+		agenttool.Define[scalarInput]("echo", "Echo one string."),
+		func(_ context.Context, _ scalarInput) (agenttool.Result, error) { return agenttool.Result{}, nil },
+	)
+	defer func() {
+		panicValue := recover()
+		if message := fmt.Sprint(panicValue); !strings.Contains(message, `root type is "string", want object`) {
 			t.Fatalf("panic = %q", message)
 		}
 	}()

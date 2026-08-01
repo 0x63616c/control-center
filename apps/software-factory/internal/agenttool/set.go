@@ -75,6 +75,10 @@ func validatePropertyDescriptions(schemaJSON []byte) error {
 	if err := json.Unmarshal(schemaJSON, &schema); err != nil {
 		return fmt.Errorf("decode: %w", err)
 	}
+	rootType, _ := schema["type"].(string)
+	if rootType != "object" {
+		return fmt.Errorf("root type is %q, want object", rootType)
+	}
 	properties, _ := schema["properties"].(map[string]any)
 	names := make([]string, 0, len(properties))
 	for name := range properties {
