@@ -26,7 +26,9 @@ type TargetAgentEvidenceActivities struct {
 type TargetAgentEvidenceInput struct {
 	AttemptID     store.TargetAttemptID
 	Identity      string
+	State         work.AgentAttemptState
 	Result        work.StageOutput
+	FailureKind   work.RunFailureKind
 	Usage         work.Usage
 	UsageMeasured bool
 	TranscriptRef agent.TranscriptRef
@@ -41,34 +43,53 @@ func NewTargetAgentEvidenceActivities(recorder TargetRunRecorder, blobStore blob
 	return &TargetAgentEvidenceActivities{recorder: recorder, transcripts: agent.NewTranscriptStore(blobStore)}, nil
 }
 
-// Finalize atomically records result, usage and a bounded transcript before
-// WorkOnTicket may complete the containing Step.
+// Finalize atomically records terminal result or classified failure, usage,
+// and any bounded transcript available before WorkOnTicket advances the Step.
 func (activities *TargetAgentEvidenceActivities) Finalize(ctx context.Context, input TargetAgentEvidenceInput) error {
-	if input.AttemptID.RunID == "" || input.Identity == "" || input.EndedAt.IsZero() || input.Result.Value() == nil {
-		return fail(ctx, "validating target agent evidence", fmt.Errorf("attempt identity, agent identity, result, and end time are required: %w", work.ErrPermanent))
+	state := input.State
+	if state == "" {
+		state = work.AgentAttemptSucceeded
+		if input.FailureKind != "" {
+			state = work.AgentAttemptFailed
+		}
 	}
-	identity, err := activities.transcripts.Identity(input.TranscriptRef)
-	if err != nil || identity != input.Identity {
-		return fail(ctx, "validating target agent transcript identity", fmt.Errorf("transcript does not belong to target agent execution: %w", work.ErrPermanent))
+	if input.AttemptID.RunID == "" || input.Identity == "" ||
+		(state != work.AgentAttemptRunning && input.EndedAt.IsZero()) ||
+		(state == work.AgentAttemptSucceeded && input.Result.Value() == nil) {
+		return fail(ctx, "validating target agent evidence", fmt.Errorf("attempt identity, agent identity, state, and required terminal outcome are missing: %w", work.ErrPermanent))
 	}
-	rawTranscript, err := activities.transcripts.JSONL(ctx, input.TranscriptRef)
-	if err != nil {
-		return fail(ctx, "loading target agent transcript", err)
+	var transcript *store.TargetTranscript
+	if input.TranscriptRef.Key != "" {
+		identity, err := activities.transcripts.Identity(input.TranscriptRef)
+		if err != nil || identity != input.Identity {
+			return fail(ctx, "validating target agent transcript identity", fmt.Errorf("transcript does not belong to target agent execution: %w", work.ErrPermanent))
+		}
+		rawTranscript, err := activities.transcripts.JSONL(ctx, input.TranscriptRef)
+		if err != nil {
+			return fail(ctx, "loading target agent transcript", err)
+		}
+		transcript, err = targetTranscript(rawTranscript)
+		if err != nil {
+			return fail(ctx, "compressing target agent transcript", err)
+		}
 	}
-	transcript, err := targetTranscript(rawTranscript)
-	if err != nil {
-		return fail(ctx, "compressing target agent transcript", err)
-	}
-	result, err := json.Marshal(input.Result)
-	if err != nil {
-		return fail(ctx, "encoding target agent result", err)
+	result := json.RawMessage(nil)
+	if state == work.AgentAttemptSucceeded {
+		var err error
+		result, err = json.Marshal(input.Result)
+		if err != nil {
+			return fail(ctx, "encoding target agent result", err)
+		}
+		if transcript == nil {
+			return fail(ctx, "validating target agent evidence", fmt.Errorf("successful target agent result requires a transcript: %w", work.ErrPermanent))
+		}
 	}
 	usageState := work.UsageUnknown
 	if input.UsageMeasured {
 		usageState = work.UsageMeasured
 	}
-	_, err = activities.recorder.FinalizeAgentWorkflowAttempt(ctx, store.AgentCheckpointInput{
-		ID: input.AttemptID, ThreadID: input.Identity, State: work.AgentAttemptSucceeded,
+	_, err := activities.recorder.FinalizeAgentWorkflowAttempt(ctx, store.AgentCheckpointInput{
+		ID: input.AttemptID, ThreadID: input.Identity, State: state, FailureKind: input.FailureKind,
 		UsageState: usageState, Usage: input.Usage, EndedAt: input.EndedAt,
 		Result: result, Transcript: transcript,
 	})

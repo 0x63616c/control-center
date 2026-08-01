@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"go.temporal.io/sdk/temporal"
 )
@@ -27,6 +28,32 @@ func TestRemainingSessionExecutionTimeoutUsesOneAbsoluteDeadline(t *testing.T) {
 	var application *temporal.ApplicationError
 	if !errors.As(err, &application) || application.Type() != activities.ErrTypeHardDeadline {
 		t.Fatalf("elapsed deadline error = %v, want typed %q", err, activities.ErrTypeHardDeadline)
+	}
+}
+
+func TestTargetFailureFreshAttemptPolicyPreservesSemanticAttemptBudget(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		kind agent.TerminalFailureKind
+		want bool
+	}{
+		{kind: agent.TerminalFailureSessionLost, want: false},
+		{kind: agent.TerminalFailureAmbiguousToolExecution, want: true},
+		{kind: agent.TerminalFailureInvalidProviderOutcome, want: true},
+		{kind: agent.TerminalFailureBudgetExhausted, want: true},
+		{kind: agent.TerminalFailureModelExhausted, want: false},
+		{kind: agent.TerminalFailureRateLimited, want: false},
+		{kind: agent.TerminalFailureAuthentication, want: false},
+	} {
+		t.Run(string(test.kind), func(t *testing.T) {
+			failure := &agent.TerminalFailure{Kind: test.kind}
+			if test.kind == agent.TerminalFailureBudgetExhausted {
+				failure.Budget = agent.BudgetModelTurns
+			}
+			if got := targetFailureNeedsFreshAttempt(failure); got != test.want {
+				t.Fatalf("targetFailureNeedsFreshAttempt(%s) = %t, want %t", test.kind, got, test.want)
+			}
+		})
 	}
 }
 

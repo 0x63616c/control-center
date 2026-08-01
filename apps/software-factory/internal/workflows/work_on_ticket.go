@@ -597,6 +597,49 @@ func runTargetAgentStep(ctx workflow.Context, session *targetRunSession, in Work
 			}
 			return targetAgentStepResult{}, attemptNo, fmt.Errorf("running %s agent attempt: %w", stage, childErr)
 		}
+		if result.Failure != nil {
+			if result.Failure.Is(agent.TerminalFailureSessionLost) {
+				if result.TranscriptRef.Key != "" {
+					if evidenceErr := workflow.ExecuteActivity(recordingCtx, targetEvidenceActs.Finalize, activities.TargetAgentEvidenceInput{
+						AttemptID: attemptID, Identity: identity, State: work.AgentAttemptRunning,
+						Usage: result.Usage, UsageMeasured: result.UsageMeasured, TranscriptRef: result.TranscriptRef,
+					}).Get(recordingCtx, nil); evidenceErr != nil {
+						return targetAgentStepResult{}, attemptNo, fmt.Errorf("recording interrupted %s agent evidence: %w", stage, evidenceErr)
+					}
+				}
+				if replaceErr := session.replace(ctx); replaceErr != nil {
+					return targetAgentStepResult{}, attemptNo, fmt.Errorf("replacing lost Run Worker Session: %w", replaceErr)
+				}
+				// A worker loss retains this semantic Attempt. The replacement
+				// reconciles repository state before the child is started again.
+				continue
+			}
+			endedAt := workflow.Now(ctx)
+			if result.TranscriptRef.Key != "" {
+				if evidenceErr := workflow.ExecuteActivity(recordingCtx, targetEvidenceActs.Finalize, activities.TargetAgentEvidenceInput{
+					AttemptID: attemptID, Identity: identity, FailureKind: work.RunFailureAgentUnrecoverable,
+					Usage: result.Usage, UsageMeasured: result.UsageMeasured, TranscriptRef: result.TranscriptRef, EndedAt: endedAt,
+				}).Get(recordingCtx, nil); evidenceErr != nil {
+					return targetAgentStepResult{}, attemptNo, fmt.Errorf("recording terminal %s agent evidence: %w", stage, evidenceErr)
+				}
+			} else if failErr := workflow.ExecuteActivity(recordingCtx, targetRecordingActs.FailAgentAttempt, store.AgentAttemptFailureInput{
+				ID: attemptID, FailureKind: work.RunFailureAgentUnrecoverable, EndedAt: endedAt,
+			}).Get(recordingCtx, nil); failErr != nil {
+				return targetAgentStepResult{}, attemptNo, fmt.Errorf("recording terminal %s agent failure: %w", stage, failErr)
+			}
+			if targetFailureNeedsFreshAttempt(result.Failure) && attemptNo < remainingAttempts {
+				attemptNo++
+				continue
+			}
+			if !targetFailureNeedsFreshAttempt(result.Failure) {
+				return targetAgentStepResult{}, attemptNo, temporal.NewNonRetryableApplicationError(
+					fmt.Sprintf("%s agent terminal failure: %s", stage, result.Failure.Kind),
+					activities.ErrTypeUnresumableIncompleteAttempt,
+					nil,
+				)
+			}
+			return targetAgentStepResult{}, attemptNo, exhaustedAgentAttempts(in.Policy.MaxAgentAttempts)
+		}
 		if result.Result.Value() == nil {
 			return targetAgentStepResult{}, attemptNo, temporal.NewNonRetryableApplicationError(fmt.Sprintf("%s agent produced no durable result", stage), activities.ErrTypeInvalid, nil)
 		}
@@ -618,6 +661,12 @@ func runTargetAgentStep(ctx workflow.Context, session *targetRunSession, in Work
 		return targetAgentStepResult{Key: key, Identity: identity, Raw: raw, Result: result.Result, Usage: result.Usage, UsageMeasured: result.UsageMeasured, ConversationRef: result.ConversationRef, TranscriptRef: result.TranscriptRef}, attemptNo, nil
 	}
 	return targetAgentStepResult{}, remainingAttempts, exhaustedAgentAttempts(in.Policy.MaxAgentAttempts)
+}
+
+func targetFailureNeedsFreshAttempt(failure *agent.TerminalFailure) bool {
+	return failure.Is(agent.TerminalFailureAmbiguousToolExecution) ||
+		failure.Is(agent.TerminalFailureInvalidProviderOutcome) ||
+		failure.Is(agent.TerminalFailureBudgetExhausted)
 }
 
 func targetToolset(stage work.AgentStage) agent.ToolsetID {
