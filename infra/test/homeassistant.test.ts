@@ -138,6 +138,23 @@ describe("installHomeAssistant (Task 4, §0.1-§0.4, talos-only)", () => {
     expect(mounts).toContain("/config");
   });
 
+  test("backs up config from a sidecar that shares HA's one local-lvm mount", async () => {
+    const res = install();
+    const spec = await get<{
+      template: {
+        spec: {
+          containers: { name: string; command?: string[]; volumeMounts: { mountPath: string }[] }[];
+        };
+      };
+    }>(res.workload.deployment, "spec");
+    const backup = spec.template.spec.containers.find(
+      (container) => container.name === "ha-config-backup-sidecar",
+    );
+    expect(backup?.command?.join("\n")).toContain("crond -f");
+    expect(backup?.command?.join("\n")).toContain("tar -czf");
+    expect(backup?.volumeMounts.map((mount) => mount.mountPath)).toEqual(["/config", "/backup"]);
+  });
+
   test("§0.4: does not create anything in the control-center namespace", async () => {
     const res = install();
     const namespacesUsed = await Promise.all([
@@ -148,12 +165,12 @@ describe("installHomeAssistant (Task 4, §0.1-§0.4, talos-only)", () => {
     expect(namespacesUsed.every((ns) => ns === "home-assistant")).toBe(true);
   });
 
-  test("declares exactly two backup crons: ha-config tar + home_assistant pg_dump", async () => {
+  test("declares the home_assistant pg_dump cron", async () => {
     const res = install();
-    expect(res.backupJobs).toHaveLength(2);
+    expect(res.backupJobs).toHaveLength(1);
     const names = await Promise.all(
       res.backupJobs.map((j) => get<{ name: string }>(j.cronJob, "metadata").then((m) => m.name)),
     );
-    expect(names.sort()).toEqual(["ha-config-backup", "home-assistant-pg-backup"]);
+    expect(names).toEqual(["home-assistant-pg-backup"]);
   });
 });
