@@ -33,18 +33,18 @@
 
 ## WWW consumer cutover
 
-- [ ] Rebase the consumer-cutover branch onto current `origin/main` without
+- [x] Rebase the consumer-cutover branch onto current `origin/main` without
   overwriting Calum's workflow changes.
-- [ ] Verify the GitHub Release provenance, checksum, and tag-to-commit binding
+- [x] Verify the GitHub Release provenance, checksum, and tag-to-commit binding
   before accepting its manifest.
-- [ ] Map the exact seven released image digests to the existing Pulumi digest
+- [x] Map the exact seven released image digests to the existing Pulumi digest
   keys deterministically.
-- [ ] Replace embedded-build image ownership with the released standalone
+- [x] Replace embedded-build image ownership with the released standalone
   digests while keeping the existing runtime configuration and secrets wiring.
-- [ ] Adapt Gate 10 to prove the standalone release identity, exact deployed
+- [x] Adapt Gate 10 to prove the standalone release identity, exact deployed
   digests, required standalone CI/release evidence, and durable
   `AgentWorkflow` runtime path.
-- [ ] Validate the Pulumi preview and all relevant repository checks.
+- [x] Validate the Pulumi preview and all relevant repository checks.
 - [ ] Open a first WWW PR for immutable release consumption and the adapted
   Gate 10 proof.
 - [ ] Merge only with green CI, deploy `home-server`, and capture production
@@ -68,7 +68,7 @@
   commit per source PR in standalone PR #4.
 - [x] Run standalone verification and two-axis review before opening PR #4.
 - [x] Review and merge standalone PR #4 with green CI.
-- [ ] Run standalone verification, deterministic E2E, Temporal Session, and all
+- [x] Run standalone verification, deterministic E2E, Temporal Session, and all
   seven image builds on its merge commit.
-- [ ] Release `v0.1.2` through the same immutable SemVer mechanism.
-- [ ] Update WWW to the verified release digest set in a normal consumer PR.
+- [x] Release `v0.1.2` through the same immutable SemVer mechanism.
+- [x] Update the WWW consumer branch to the verified release digest set.

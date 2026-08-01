@@ -22,7 +22,7 @@ gh release download "$version" --repo "$repository" --dir "$artifact_dir" \
 
 (
   cd "$artifact_dir"
-  shasum -a 256 -c SHA256SUMS
+  shasum -a 256 -c SHA256SUMS >&2
 )
 
 manifest="$artifact_dir/software-factory-images-$version.json"

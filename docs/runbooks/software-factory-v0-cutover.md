@@ -154,15 +154,50 @@ Run every command below from the same shell after the activation merge reaches
 This gate is not satisfied by a green pull-request run or by a successful
 Pulumi command alone.
 
-### 7.1 Main Actions run and all seven image paths
+### 7.1 Standalone release, main deployment, and all seven image paths
 
-Bind the evidence to the current `main` commit, wait for that exact push run,
-and require every software-factory build plus the production deployment job to
-have completed successfully:
+First prove the checked release against GitHub's stable Release, its checksum,
+the tag's resolved commit, and every SemVer image tag. Then bind WWW evidence
+to the current `main` commit and require its production deployment to pass.
+The standalone Release gate is the build/test owner: its `gate` job runs the
+real Temporal Session integration and the durable `AgentWorkflow` E2E using
+direct Responses calls. WWW no longer substitutes embedded build jobs as that
+evidence, and the retired Codex CLI execution design is not accepted.
 
 ```bash
 gate10_dir="${gate10_dir:-$(mktemp -d /tmp/software-factory-v0-gate10.XXXXXX)}"
 printf 'Gate 10 artifacts: %s\n' "${gate10_dir}"
+release_manifest=infra/software-factory-release.json
+release_version="$(jq -er .version "${release_manifest}")"
+release_commit="$(jq -er .commit "${release_manifest}")"
+scripts/verify-software-factory-release.sh \
+  "${release_version}" "${release_manifest}" \
+  >"${gate10_dir}/07-release-digests.json"
+release_run_id="$(gh run list \
+  --repo 0x63616c/software-factory \
+  --workflow .github/workflows/release.yml \
+  --branch "${release_version}" \
+  --commit "${release_commit}" \
+  --event push \
+  --limit 1 \
+  --json databaseId \
+  --jq '.[0].databaseId')"
+test -n "${release_run_id}"
+gh run view "${release_run_id}" \
+  --repo 0x63616c/software-factory \
+  --json headSha,status,conclusion,jobs \
+  >"${gate10_dir}/07-release-actions.json"
+jq -e --arg sha "${release_commit}" '
+  .headSha == $sha and
+  .status == "completed" and
+  .conclusion == "success" and
+  (["gate", "publish"] -
+    [.jobs[] | select(.conclusion == "success") | .name] | length) == 0 and
+  ([.jobs[] |
+    select(.name | startswith("images (")) |
+    select(.conclusion == "success")] | length) == 7
+' "${gate10_dir}/07-release-actions.json"
+
 activation_sha="$(gh api repos/0x63616c/world-wide-webb/commits/main --jq .sha)"
 activation_run_id="$(gh run list \
   --repo 0x63616c/world-wide-webb \
@@ -184,25 +219,15 @@ jq -e --arg sha "${activation_sha}" '
   .headSha == $sha and
   .status == "completed" and
   .conclusion == "success" and
-  ([
-    "test-software-factory",
-    "test-software-factory-session",
-    "check-software-factory-generated",
-    "build-software-factory-worker",
-    "build-software-factory-run-worker",
-    "build-software-factory-relay",
-    "build-software-factory-api",
-    "build-software-factory-blobs",
-    "build-software-factory-codec",
-    "build-software-factory-console",
-    "deploy-home-server"
-  ] - [.jobs[] | select(.conclusion == "success") | .name] | length) == 0
+  (["deploy-home-server"] -
+    [.jobs[] | select(.conclusion == "success") | .name] | length) == 0
 ' "${gate10_dir}/07-main-actions.json"
 ```
 
-Capture the five static factory Deployments, the relay Deployment, and the
-Run Worker image passed to generation pods. All seven deployed image paths
-must be digest-pinned:
+Capture the five static factory Deployments, the relay Deployment, and the Run
+Worker image passed to generation pods. The deployed set must equal the seven
+producer-owned repository and digest pairs in the checked release, not merely
+look digest-pinned.
 
 ```bash
 kubectl -n software-factory get deployments \
@@ -232,11 +257,12 @@ jq -s '
 ' "${gate10_dir}/07-factory-deployments.json" \
   "${gate10_dir}/07-relay-deployment.json" \
   >"${gate10_dir}/07-images.json"
-jq -e '
-  ([.static[], .runWorker]) as $images |
-  ($images | length) == 7 and
-  all($images[]; test("@sha256:[0-9a-f]{64}$"))
-' "${gate10_dir}/07-images.json"
+jq -n -e \
+  --slurpfile deployed "${gate10_dir}/07-images.json" \
+  --slurpfile release "${release_manifest}" '
+  ([$deployed[0].static[], $deployed[0].runWorker] | sort) ==
+  ([$release[0].images[] | (.image + "@" + .digest)] | sort)
+'
 ```
 
 ### 7.2 API rollout and migration 11

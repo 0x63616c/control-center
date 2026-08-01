@@ -1,0 +1,42 @@
+{
+  "version": "v0.1.2",
+  "commit": "f4c58c15e7e297b7f44434ff2fadd543304c7689",
+  "platform": "linux/amd64",
+  "images": [
+    {
+      "name": "api",
+      "image": "ghcr.io/0x63616c/software-factory-api",
+      "digest": "sha256:d91fd59f8351039d31d9e47e684d4ba95b9d2d17cddfc938cc210ebae11bbe26"
+    },
+    {
+      "name": "blobs",
+      "image": "ghcr.io/0x63616c/software-factory-blobs",
+      "digest": "sha256:2e7c8f7d2f914ec387cad12ba2c4ab1cee6c6b7e45ae0d5b34e94ca429e13f8d"
+    },
+    {
+      "name": "codec",
+      "image": "ghcr.io/0x63616c/software-factory-codec",
+      "digest": "sha256:1ffe75185b6b70dbca06b4ab24f312b269fa6d44e26146108f6cfe9544b4acf6"
+    },
+    {
+      "name": "console",
+      "image": "ghcr.io/0x63616c/software-factory-console",
+      "digest": "sha256:7a4fff81ae60e80b934ef411b236d5a8885a8e534a6f55f16c95598b20e5abcb"
+    },
+    {
+      "name": "relay",
+      "image": "ghcr.io/0x63616c/software-factory-relay",
+      "digest": "sha256:dfb0f4ee1a49716699a98094f909aa24447ba953972322968dc302fbbbac8d2e"
+    },
+    {
+      "name": "run-worker",
+      "image": "ghcr.io/0x63616c/software-factory-run-worker",
+      "digest": "sha256:1cf94fc7610ce8bf9712b0ae9a7e7ca1ea00337878defd39324d803669bd91d9"
+    },
+    {
+      "name": "worker",
+      "image": "ghcr.io/0x63616c/software-factory-worker",
+      "digest": "sha256:a5358c07749929f4a7354f674f467a57ec0c2e820a7789b663280595750781c6"
+    }
+  ]
+}
