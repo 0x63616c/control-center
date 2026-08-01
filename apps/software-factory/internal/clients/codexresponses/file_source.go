@@ -115,10 +115,12 @@ func (s *FileCredentialSource) blockRefresh(outcome codexauth.RefreshOutcome) er
 		cause = codexauth.ErrRefreshRejected
 	case codexauth.RefreshReused:
 		cause = codexauth.ErrSingleWriterViolated
+	case codexauth.RefreshUnknown, codexauth.RefreshNotSent, codexauth.RefreshRotated:
+		cause = codexauth.ErrRefreshOutcomeUnknown
 	default:
 		cause = codexauth.ErrRefreshOutcomeUnknown
 	}
-	s.blocked = fmt.Errorf("Codex credential refresh halted after outcome %s: %w", outcome, cause)
+	s.blocked = fmt.Errorf("codex credential refresh halted after outcome %s: %w", outcome, cause)
 	return s.blocked
 }
 
