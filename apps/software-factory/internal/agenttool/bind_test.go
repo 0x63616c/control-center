@@ -3,10 +3,23 @@ package agenttool_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agenttool"
 )
+
+type semanticInput struct {
+	Path string `json:"path" jsonschema_description:"Repository-relative file path to read."`
+}
+
+func (input semanticInput) Validate() error {
+	if input.Path == "." {
+		return errors.New("path must name a file")
+	}
+	return nil
+}
 
 func TestBindDecodesAndExecutesTheTypedInput(t *testing.T) {
 	t.Parallel()
@@ -55,5 +68,47 @@ func TestBindReturnsToolErrorForUnknownOrTrailingFields(t *testing.T) {
 		if !result.IsError || result.Content == "" {
 			t.Fatalf("Execute(%s) result = %#v", argument, result)
 		}
+	}
+}
+
+func TestBindReturnsToolErrorForSchemaConstraint(t *testing.T) {
+	t.Parallel()
+
+	definition := agenttool.Define[readInput](
+		"read_file",
+		"Read a bounded region of a repository file.",
+	)
+	tool := agenttool.Bind(definition, func(_ context.Context, _ readInput) (agenttool.Result, error) {
+		t.Fatal("handler executed for schema-invalid arguments")
+		return agenttool.Result{}, nil
+	})
+
+	result, err := tool.Execute(context.Background(), json.RawMessage(`{"path":"docs/design.md","limit":0}`))
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !result.IsError || result.Content == "" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestBindRunsSemanticValidationBeforeTheHandler(t *testing.T) {
+	t.Parallel()
+
+	definition := agenttool.Define[semanticInput](
+		"read_file",
+		"Read a bounded region of a repository file.",
+	)
+	tool := agenttool.Bind(definition, func(_ context.Context, _ semanticInput) (agenttool.Result, error) {
+		t.Fatal("handler executed for semantically invalid arguments")
+		return agenttool.Result{}, nil
+	})
+
+	result, err := tool.Execute(context.Background(), json.RawMessage(`{"path":"."}`))
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !result.IsError || !strings.Contains(result.Content, "path must name a file") {
+		t.Fatalf("result = %#v", result)
 	}
 }
