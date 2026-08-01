@@ -843,11 +843,6 @@ func (s *targetRunSession) reportTerminalDelete(ctx workflow.Context, operation 
 	}
 }
 
-func isUnresumableAttempt(err error) bool {
-	var application *temporal.ApplicationError
-	return errors.As(err, &application) && application.Type() == activities.ErrTypeUnresumableIncompleteAttempt
-}
-
 func isRunWorkerSessionLoss(err error) bool {
 	if errors.Is(err, workflow.ErrSessionFailed) {
 		return true
@@ -1080,20 +1075,6 @@ func targetActivityOptions(policy work.ActivityPolicy) workflow.ActivityOptions 
 	return workflow.ActivityOptions{
 		StartToCloseTimeout:    policy.StartToCloseTimeout,
 		ScheduleToCloseTimeout: policy.ScheduleToCloseTimeout,
-		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval:    policy.Retry.InitialInterval,
-			BackoffCoefficient: policy.Retry.BackoffCoefficient,
-			MaximumInterval:    policy.Retry.MaximumInterval,
-			MaximumAttempts:    policy.Retry.MaximumAttempts,
-		},
-	}
-}
-
-func targetAgentActivityOptions(policy work.AgentActivityPolicy) workflow.ActivityOptions {
-	return workflow.ActivityOptions{
-		StartToCloseTimeout:    policy.StartToCloseTimeout,
-		ScheduleToCloseTimeout: policy.ScheduleToCloseTimeout,
-		HeartbeatTimeout:       policy.HeartbeatTimeout,
 		RetryPolicy: &temporal.RetryPolicy{
 			InitialInterval:    policy.Retry.InitialInterval,
 			BackoffCoefficient: policy.Retry.BackoffCoefficient,

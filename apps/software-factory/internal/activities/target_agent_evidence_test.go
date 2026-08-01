@@ -2,7 +2,6 @@ package activities
 
 import (
 	"testing"
-	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
@@ -19,7 +18,7 @@ func TestTargetAgentEvidenceRequiresAnExplicitWellFormedState(t *testing.T) {
 	base := TargetAgentEvidenceInput{
 		AttemptID: store.TargetAttemptID{RunID: "019fb901-0000-7000-8000-000000000001", StepOrdinal: 1, AttemptNo: 1},
 		Identity:  "agent/019fb901-0000-7000-8000-000000000001/step/1/attempt/1",
-		EndedAt:   time.Now().UTC(),
+		EndedAt:   fixedTestTime,
 	}
 	for _, test := range []struct {
 		name  string
