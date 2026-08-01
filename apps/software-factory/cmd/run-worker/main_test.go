@@ -285,6 +285,13 @@ func (r *sessionRepository) Prepare(_ context.Context, _, _ string) (string, err
 	return r.head, nil
 }
 
+func (r *sessionRepository) PrepareFromCommit(_ context.Context, _, _, _ string) (string, error) {
+	if err := r.filesystem.observe("carry-forward clone"); err != nil {
+		return "", fmt.Errorf("observing carry-forward clone: %w", err)
+	}
+	return r.head, nil
+}
+
 type sessionStageRunner struct {
 	filesystem   *pinnedFilesystem
 	result       work.StageResult
@@ -410,6 +417,10 @@ func (g *sessionGitHub) ChecksForCommit(_ context.Context, head string, _ []stri
 	}
 	g.ciHead = head
 	return []work.CheckRun{{Name: "test", Completed: true, Conclusion: "success"}}, nil
+}
+
+func (g *sessionGitHub) RetirePullRequest(context.Context, int) (work.PullRequestRetirement, error) {
+	return work.PullRequestRetirement{}, nil
 }
 
 func equalStrings(got, want []string) bool {

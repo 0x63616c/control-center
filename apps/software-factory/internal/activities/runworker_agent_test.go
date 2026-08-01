@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -216,6 +217,37 @@ func TestRunTargetAgentResumesPriorImplementerThreadOnTheSameWorkerGeneration(t 
 	}
 	if runner.calls != 1 || runner.resume != testProviderThreadEstablished {
 		t.Fatalf("runner calls/resume = %d / %q", runner.calls, runner.resume)
+	}
+}
+
+func TestRunTargetAgentBoundsVerboseProviderTranscriptBeforeCheckpointing(t *testing.T) {
+	t.Parallel()
+	cp := &attemptCheckpointProbe{}
+	runner := &targetStageRunnerProbe{
+		events: [][]byte{
+			providerThreadStartedEvent(testProviderThreadLive),
+			[]byte(`{"type":"item.completed","text":"` + strings.Repeat("x", work.MaxTargetTranscriptUncompressedBytes) + `"}`),
+		},
+		result: work.StageResult{Output: []byte(`{"document":"done"}`), ThreadID: testProviderThreadLive},
+	}
+	a, err := NewRunWorkerActivities(RunWorkerDeps{
+		Stages: runner, Prompts: promptProbe{}, Checkpoints: func(store.TargetAttemptID) (AttemptCheckpoint, error) { return cp, nil },
+		CredentialRevision: observedCredentialRevision, SecretRedactor: passthroughSecretRedactor{}, ProviderState: providerStateProbe{available: true},
+		Clock: fixedClock{now: time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)}, Heartbeat: func(context.Context) {},
+		Repository: &targetRepositoryProbe{}, GitHub: &targetGitHubProbe{}, Identity: targetTestIdentity, RepositoryCheckpoints: testRepositoryCheckpointFactory,
+	})
+	if err != nil {
+		t.Fatalf("NewRunWorkerActivities: %v", err)
+	}
+	if _, err := a.RunTargetAgent(context.Background(), targetAgentInput()); err != nil {
+		t.Fatalf("RunTargetAgent: %v", err)
+	}
+	terminal := cp.writes[len(cp.writes)-1].Transcript
+	if terminal == nil || terminal.UncompressedSizeBytes > work.MaxTargetTranscriptUncompressedBytes || len(terminal.CompressedBytes) > work.MaxTargetTranscriptCompressedBytes {
+		t.Fatalf("bounded transcript = %+v", terminal)
+	}
+	if !bytes.Contains(decompressTranscript(t, terminal.CompressedBytes), []byte(`"type":"factory.transcript_truncated"`)) {
+		t.Fatal("bounded transcript omitted its durable truncation marker")
 	}
 }
 

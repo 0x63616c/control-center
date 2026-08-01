@@ -348,6 +348,37 @@ func (f *Store) CheckpointGitEffect(_ context.Context, in store.GitCheckpointInp
 	return f.checkpointGitEffectLocked(in, true)
 }
 
+// LatestCanceledRunCheckpoint mirrors the production recovery fence: only a
+// canceled predecessor of the same Ticket can donate a durable pushed head.
+func (f *Store) LatestCanceledRunCheckpoint(_ context.Context, ticketID store.TicketID, excludingRunID string) (store.CanceledRunRecovery, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var chosen store.Run
+	found := false
+	for _, run := range f.runs {
+		if run.ID == excludingRunID || run.TicketID != ticketID || run.TargetOutcome != work.RunOutcomeCanceled {
+			continue
+		}
+		checkpoint, exists := f.targetGit[run.ID]
+		if !exists || checkpoint.PushedHead == "" {
+			continue
+		}
+		if !found || run.EndedAt.After(chosen.EndedAt) || (run.EndedAt.Equal(chosen.EndedAt) && run.ID > chosen.ID) {
+			chosen, found = run, true
+		}
+	}
+	if !found {
+		return store.CanceledRunRecovery{}, false, nil
+	}
+	mergeOrdinal := 0
+	for key, step := range f.targetSteps {
+		if key.runID == chosen.ID && step.Kind == work.StepMergePullRequest && step.State == work.StepStateRunning && key.ordinal > mergeOrdinal {
+			mergeOrdinal = key.ordinal
+		}
+	}
+	return store.CanceledRunRecovery{Checkpoint: f.targetGit[chosen.ID], MergeStepOrdinal: mergeOrdinal}, true, nil
+}
+
 // BindRepositoryCapability installs one monotonically increasing Run Worker
 // generation as the repository checkpoint owner.
 func (f *Store) BindRepositoryCapability(_ context.Context, identity work.RunWorkerIdentity, capability string) error {
@@ -463,6 +494,17 @@ func (f *Store) FinalizeConfirmedMerge(_ context.Context, in store.ConfirmedMerg
 		}
 		return store.TerminalResult{Ticket: f.tickets[in.TicketID], Run: run}, nil
 	}
+	if in.StepOrdinal == 0 && run.TargetOutcome == work.RunOutcomeCanceled {
+		for key := range f.targetSteps {
+			if key.runID == in.RunID && key.ordinal >= in.StepOrdinal {
+				in.StepOrdinal = key.ordinal + 1
+			}
+		}
+		f.targetSteps[targetStepKey{runID: in.RunID, ordinal: in.StepOrdinal}] = store.RunStep{
+			RunID: in.RunID, Ordinal: in.StepOrdinal, Kind: work.StepMergePullRequest,
+			Reason: "reconcile confirmed external merge", State: work.StepStateRunning, StartedAt: in.EndedAt,
+		}
+	}
 	stepKey := targetStepKey{runID: in.RunID, ordinal: in.StepOrdinal}
 	step, ok := f.targetSteps[stepKey]
 	if !ok || step.Kind != work.StepMergePullRequest || step.State != work.StepStateRunning {
@@ -535,6 +577,48 @@ func (f *Store) CancelRun(_ context.Context, in store.CancelRunInput) (store.Ter
 	ticket.State, ticket.ActiveRunID, ticket.UpdatedAt = store.TicketOpen, "", f.clk.Now()
 	f.tickets[in.TicketID], f.runs[in.RunID] = ticket, run
 	return store.TerminalResult{Ticket: f.tickets[in.TicketID], Run: f.runs[in.RunID]}, nil
+}
+
+// FinalizeRunFailure conditionally records a terminal workflow failure.
+func (f *Store) FinalizeRunFailure(_ context.Context, in store.RunFailureInput) (store.TerminalResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	run, ok := f.runs[in.RunID]
+	if !ok || run.TicketID != in.TicketID {
+		return store.TerminalResult{}, fmt.Errorf("failure: %w", store.ErrRunOwnership)
+	}
+	ticket := f.tickets[in.TicketID]
+	if run.TargetOutcome != "" {
+		if run.TargetOutcome != in.Outcome || run.TargetFailure != in.FailureKind {
+			return store.TerminalResult{}, fmt.Errorf("failure: %w", work.ErrPermanent)
+		}
+		return store.TerminalResult{Ticket: ticket, Run: run}, nil
+	}
+	if ticket.State != store.TicketActive || ticket.ActiveRunID != in.RunID {
+		return store.TerminalResult{}, fmt.Errorf("failure: %w", store.ErrRunOwnership)
+	}
+	if in.Outcome != work.RunOutcomeFailed && in.Outcome != work.RunOutcomeExhausted {
+		return store.TerminalResult{}, fmt.Errorf("failure: %w", work.ErrPermanent)
+	}
+	if in.StepOrdinal > 0 {
+		key := targetStepKey{runID: in.RunID, ordinal: in.StepOrdinal}
+		step, exists := f.targetSteps[key]
+		if !exists || step.State != work.StepStateRunning {
+			return store.TerminalResult{}, fmt.Errorf("failure: %w", store.ErrRunOwnership)
+		}
+		for attemptKey, attempt := range f.targetAttempts {
+			if attemptKey.RunID == in.RunID && attemptKey.StepOrdinal == in.StepOrdinal && attempt.State == work.AgentAttemptRunning {
+				attempt.State, attempt.FailureKind, attempt.EndedAt = work.AgentAttemptFailed, in.FailureKind, in.EndedAt
+				f.targetAttempts[attemptKey] = attempt
+			}
+		}
+		step.State, step.EndedAt, step.Result = work.StepStateFailed, in.EndedAt, in.StepResult
+		f.targetSteps[key] = step
+	}
+	run.TargetOutcome, run.TargetFailure, run.EndedAt = in.Outcome, in.FailureKind, in.EndedAt
+	ticket.State, ticket.ActiveRunID, ticket.UpdatedAt = store.TicketFailed, "", f.clk.Now()
+	f.runs[in.RunID], f.tickets[in.TicketID] = run, ticket
+	return store.TerminalResult{Ticket: ticket, Run: run}, nil
 }
 
 // ReconcileAbandonedRun releases only nonterminal ownership without inventing an outcome.
