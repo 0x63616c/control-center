@@ -114,7 +114,8 @@ func Dispatcher(ctx workflow.Context, in DispatcherInput) error {
 				}
 			})
 		}
-		for id, child := range children {
+		for _, id := range sortedChildTicketIDs(children) {
+			child := children[id]
 			id, child := id, child
 			selector.AddFuture(child, func(workflow.Future) { delete(children, id) })
 		}
@@ -140,4 +141,13 @@ func sortedDispatchableTickets(tickets []store.Ticket) []store.Ticket {
 	sorted := append([]store.Ticket(nil), tickets...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
 	return sorted
+}
+
+func sortedChildTicketIDs(children map[store.TicketID]workflow.ChildWorkflowFuture) []store.TicketID {
+	ids := make([]store.TicketID, 0, len(children))
+	for id := range children {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
 }
