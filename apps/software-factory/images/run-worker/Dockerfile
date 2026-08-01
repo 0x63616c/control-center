@@ -1,46 +1,17 @@
 # syntax=docker/dockerfile:1
 
-# The per-ticket sandbox (ADR-0011): a session that stages `codex exec` into,
-# not a batch job. The pod's command is its own embedded Temporal worker
-# (cmd/run-worker) — not `sleep infinity` with stages
-# arriving over pods/exec, which is what this image ran before Sessions
-# replaced that transport.
+# The target per-Run worker (ADR-0011). The pod starts cmd/run-worker, which
+# polls one generation-specific Temporal Session queue and runs its registered
+# repository-affine activities in this process namespace. Commands and file
+# operations use internal/clients/local, so subprocess cancellation and files
+# are local to the worker; the main worker never reaches this pod through
+# pods/exec.
 #
-# The argv this embedded worker itself invokes is a contract with
-# internal/clients/local (the codex CLI it execs directly, as a local
-# subprocess), and the git/gh argv CloneRepo still reaches remotely through
-# internal/clients/k8s until #431 decides otherwise (see that package's
-# exec.go). Either way, no shell is ever invoked, on any path:
-#
-#   tar                           file-in, `tar -xf - -C /` (transfer.go)
-#   test                          the file-existence probe (transfer.go)
-#   cat                           file-out (transfer.go)
-#   printenv                      SF_BRANCH, read back rather than recomputed,
-#                                 so CloneRepo notices if this pod's branch ever
-#                                 disagrees with what SandboxTemplate.Spec baked
-#                                 into it (clone.go: sandboxBranch, #383).
-#   git                           clone, checkout -b, `config --local
-#                                 credential.helper` and push work.RepoDir on
-#                                 the branch above (clone.go). A credential file
-#                                 is written first with Write/tar, never argv,
-#                                 so the token never appears in a command line
-#                                 or a log line. It is never removed either:
-#                                 `implement` pushes as the model, from inside
-#                                 this pod, long after CloneRepo has returned,
-#                                 and the local credential.helper config this
-#                                 sets is what its BARE `git push` — no `-c` of
-#                                 its own — authenticates through.
-#   rm                            clears a partial checkout before a retried
-#                                 clone (clone.go).
-#
-# A shell IS present, because `codex exec`'s own job is running shell commands
-# on the agent's behalf. "No shell" is a rule about how the WORKER invokes this
-# image, not about what the image contains — an image without one could not run
-# a single ticket.
-#
-# The remote process-management shim and its liveness probe are gone (#434,
-# step 3 of the software-factory migration): Temporal Sessions let the
-# embedded worker hold a real os/exec.Cmd instead.
+# A shell and the repository toolchain are intentionally present because the
+# agent's job is to run project commands. The Run Worker itself still uses
+# argv-based process execution and never interpolates those commands through a
+# shell. Git and gh reopen the projected GitHub credential at invocation time,
+# so credential renewal does not restart or mutate the long-lived process.
 #
 # amd64 only. The home-server Talos node is the only deploy target and it is
 # x86; CI builds --platform linux/amd64 on a native runner.
@@ -70,7 +41,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags="-s -w" -o /out/run-worker ./cmd/run-worker
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Stage 2: the sandbox itself.
+# Stage 2: the per-Run worker runtime.
 FROM debian:trixie-slim
 
 # Pinned by version AND by checksum. A version tag alone is a moving target for
@@ -86,10 +57,9 @@ ARG CODEX_SHA256=bfaf13c9ba34f2ad764e4a916c49cf7177aeba329cf0f719e2227566fc8d662
 # resolve the same lockfile the reviewer's machine does.
 ARG BUN_VERSION=1.2.19
 ARG BUN_SHA256=c3d3c14e9a5ec83ff67d0acfe76e4315ad06da9f34f59fc7b13813782caf1f66
-# gh is what `propose` opens the pull request with (#414). It authenticates
-# through a hosts.yml CloneRepo writes into the pod, NOT through git's
-# credential store — gh has no code path that reads one, so the installation
-# token has to reach it in gh's own format. See clone.go: ghHostsPath.
+# gh opens pull requests and performs repository operations. The launcher
+# reads the projected token immediately before exec and exposes GH_TOKEN only
+# to that short-lived gh process.
 ARG GH_VERSION=2.96.0
 ARG GH_SHA256=83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60
 # golangci-lint, pinned to what CI pins (.github/workflows/ci.yml:363,
@@ -113,8 +83,8 @@ ARG PLAYWRIGHT_FFMPEG_REVISION=1011
 ARG PLAYWRIGHT_FFMPEG_SHA256=ebc74fc5b94830176a3c2914ae96bd8bc7f6a91f4f33890230f84a172ee61ccc
 
 # GNU tar, coreutils (test, cat, printenv, rm) and a shell come from the base
-# image. Added here: git, because CloneRepo checks the ticket's repository out
-# and pushes its branch before any stage runs, and `implement` later commits
+# image. Added here: git, because repository lifecycle activities check the
+# ticket's repository out and push its branch, and `implement` later commits
 # and pushes to that same checkout; ca-certificates for the OpenAI and GitHub
 # APIs; curl and unzip for the two downloads below; passwd for
 # groupadd/useradd, which trixie-slim omits; gcc and libc6-dev so
@@ -250,10 +220,9 @@ RUN printf 'package main\nimport "C"\nfunc main() {}\n' > /tmp/cgo_check.go \
     && CGO_ENABLED=1 go build -o /tmp/cgo_check /tmp/cgo_check.go \
     && rm -f /tmp/cgo_check.go /tmp/cgo_check
 
-# The pod's own embedded Temporal worker (#434 step 3): polls this run's
-# per-ticket queue via workflow.CreateSession, and is what CMD below actually
-# runs — see podspec.go's sandboxWorkerBinaryPath, which is a contract with
-# this exact install path.
+# The pod's own Temporal worker: it polls this generation's private Session
+# queue and is what CMD below actually runs. runWorkerBinaryPath in podspec.go
+# is a contract with this exact install path.
 COPY --from=build /out/run-worker /usr/local/bin/run-worker
 COPY apps/software-factory/images/run-worker/bin/git-credential-projected /usr/local/bin/git-credential-projected
 COPY apps/software-factory/images/run-worker/bin/gh /usr/local/bin/gh
@@ -264,7 +233,7 @@ COPY apps/software-factory/images/run-worker/bin/gh /usr/local/bin/gh
 RUN git config --system credential.helper /usr/local/bin/git-credential-projected
 
 # uid/gid 1000, and it is a contract, not a convention: podspec.go pins
-# runAsUser/runAsGroup/fsGroup to 1000 (sandboxUID) so that Read's ownership
+# runAsUser/runAsGroup/fsGroup to 1000 (runWorkerUID) so local file operations
 # invariant holds — `test -e` exiting 1 must mean absent rather than unreadable,
 # which is only true while one uid owns everything it writes under /work.
 RUN groupadd --gid 1000 sandbox \
@@ -278,8 +247,8 @@ RUN install -d -o 1000 -g 1000 -m 0755 /work
 ENV HOME=/home/sandbox
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# WORKDIR is the working directory every `codex exec` inherits: pods/exec runs
-# with the container's cwd, and podspec.go sets no WorkingDir, so this is it.
+# WORKDIR is the working directory every local `codex exec` inherits because
+# podspec.go sets no container WorkingDir.
 #
 # It is /work — the mount root — and DELIBERATELY NOT the repo checkout, which
 # is the obvious-looking choice and is a trap. A WORKDIR the runtime has to
@@ -290,7 +259,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 #   drwxr-sr-x 2 0 1000 ... /work/repo
 #   touch: cannot touch '/work/repo/probe': Permission denied
 #
-# — so the sandbox uid could not write its own checkout, and every clone, build
+# — so the worker uid could not write its own checkout, and every clone, build
 # and test would fail as a permission error dressed up as a broken tool. /work
 # itself is group-writable because the kubelet applies fsGroup 1000 to the
 # emptyDir, and a directory the PROCESS creates under it is owned by the
@@ -299,7 +268,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 WORKDIR /work
 USER 1000:1000
 
-# Mirrors podspec.go's Command (sandboxWorkerBinaryPath) so `docker run`
+# Mirrors podspec.go's Command (runWorkerBinaryPath) so `docker run`
 # behaves like the pod does. The pod sets its own, so this is documentation
 # with a fallback, not a default the cluster relies on.
 CMD ["/usr/local/bin/run-worker"]

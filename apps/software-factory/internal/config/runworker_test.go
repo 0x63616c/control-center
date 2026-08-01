@@ -41,10 +41,18 @@ func TestLoadRunWorkerReadsItsTargetOnlyEnvironment(t *testing.T) {
 	if got.Identity.RunID != "019fb900-0000-7000-8000-000000000001" || got.Identity.Generation != 1 {
 		t.Errorf("identity = %+v", got.Identity)
 	}
-	if got.ID != work.RunWorkerID("run-worker-019fb900-0000-7000-8000-000000000001-g1") {
+	wantID, err := work.ParseRunWorkerID("run-worker-019fb900-0000-7000-8000-000000000001-g1", got.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != wantID {
 		t.Errorf("ID = %q", got.ID)
 	}
-	if got.TaskQueue != work.RunWorkerTaskQueue(got.Identity.RunID, got.Identity.Generation) {
+	wantQueue, err := work.RunWorkerTaskQueue(got.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TaskQueue != wantQueue {
 		t.Errorf("TaskQueue = %q, want the queue derived from %+v", got.TaskQueue, got.Identity)
 	}
 	if got.TemporalHostPort == "" || got.TemporalNamespace == "" || got.BlobsURL == "" || got.CheckpointAPIURL == "" {
@@ -71,11 +79,33 @@ func TestLoadRunWorkerNamesEveryMissingVariable(t *testing.T) {
 
 func TestLoadRunWorkerRejectsQueueIdentityDrift(t *testing.T) {
 	env := completeRunWorkerEnv()
-	env[work.RunWorkerTaskQueueEnv] = work.RunWorkerTaskQueue(env[work.RunWorkerRunIDEnv], 2)
+	other, err := work.NewRunWorkerIdentity(env[work.RunWorkerRunIDEnv], 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env[work.RunWorkerTaskQueueEnv], err = work.RunWorkerTaskQueue(other)
+	if err != nil {
+		t.Fatal(err)
+	}
 	setRunWorkerEnv(t, env)
 
-	_, err := LoadRunWorker()
+	_, err = LoadRunWorker()
 	if err == nil || !strings.Contains(err.Error(), work.RunWorkerTaskQueueEnv) {
 		t.Fatalf("LoadRunWorker accepted a queue for another generation: %v", err)
+	}
+}
+
+func TestLoadRunWorkerRejectsNonHTTPServiceURLs(t *testing.T) {
+	for _, name := range []string{work.RunWorkerBlobsURLEnv, work.RunWorkerCheckpointAPIURLEnv} {
+		t.Run(name, func(t *testing.T) {
+			env := completeRunWorkerEnv()
+			env[name] = "http://software-factory-api:8080?token=leaked"
+			setRunWorkerEnv(t, env)
+
+			_, err := LoadRunWorker()
+			if err == nil || !strings.Contains(err.Error(), name) {
+				t.Fatalf("LoadRunWorker with invalid %s = %v", name, err)
+			}
+		})
 	}
 }

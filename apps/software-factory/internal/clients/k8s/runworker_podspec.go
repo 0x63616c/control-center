@@ -16,6 +16,7 @@ import (
 
 const (
 	runWorkerBinaryPath                 = "/usr/local/bin/run-worker"
+	runWorkerContainerName              = "run-worker"
 	runWorkerUID                  int64 = 1000
 	runWorkerCodexVolumeName            = "codex-credential"
 	runWorkerGitHubVolumeName           = "github-credential"
@@ -36,11 +37,14 @@ var allowedRunWorkerEnvKeys = map[string]bool{
 
 // buildRunWorkerPod is the pure target pod renderer. The legacy buildPod
 // remains unchanged until quiesced activation.
-func buildRunWorkerPod(spec work.RunWorkerSpec, o options) (*corev1.Pod, error) {
-	if err := spec.Identity.Validate(); err != nil {
-		return nil, err
+func buildRunWorkerPod(spec work.RunWorkerSpec, o runWorkerOptions) (*corev1.Pod, error) {
+	if err := spec.Validate(); err != nil {
+		return nil, fmt.Errorf("building Run Worker pod: %w", err)
 	}
-	id := work.RunWorkerName(spec.Identity)
+	id, err := work.RunWorkerName(spec.Identity)
+	if err != nil {
+		return nil, fmt.Errorf("building Run Worker pod name: %w", err)
+	}
 	if problems := validation.IsDNS1123Label(string(id)); len(problems) > 0 {
 		return nil, fmt.Errorf("run worker name %q is invalid: %s: %w", id, problems[0], work.ErrPermanent)
 	}
@@ -71,7 +75,11 @@ func buildRunWorkerPod(spec work.RunWorkerSpec, o options) (*corev1.Pod, error) 
 	env[work.RunWorkerIDEnv] = string(id)
 	env[work.RunWorkerRunIDEnv] = spec.Identity.RunID
 	env[work.RunWorkerGenerationEnv] = strconv.Itoa(spec.Identity.Generation)
-	env[work.RunWorkerTaskQueueEnv] = work.RunWorkerTaskQueue(spec.Identity.RunID, spec.Identity.Generation)
+	taskQueue, err := work.RunWorkerTaskQueue(spec.Identity)
+	if err != nil {
+		return nil, fmt.Errorf("building Run Worker pod task queue: %w", err)
+	}
+	env[work.RunWorkerTaskQueueEnv] = taskQueue
 	env[config.PayloadCodecModeEnv] = "full"
 
 	uid := runWorkerUID
@@ -96,7 +104,7 @@ func buildRunWorkerPod(spec work.RunWorkerSpec, o options) (*corev1.Pod, error) 
 			SecurityContext:               &corev1.PodSecurityContext{FSGroup: &uid},
 			ImagePullSecrets:              pullSecrets,
 			Containers: []corev1.Container{{
-				Name:            o.containerName,
+				Name:            runWorkerContainerName,
 				Image:           spec.Image,
 				ImagePullPolicy: corev1.PullIfNotPresent,
 				Command:         []string{runWorkerBinaryPath},

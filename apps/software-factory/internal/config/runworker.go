@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -56,19 +57,37 @@ func (w RunWorker) Validate() error {
 		}
 	}
 	if err := w.Identity.Validate(); err != nil {
-		return err
+		return fmt.Errorf("validating Run Worker identity: %w", err)
 	}
-	if want := work.RunWorkerName(w.Identity); w.ID != want {
-		return fmt.Errorf("%s=%q does not match Run %q generation %d (want %q)", work.RunWorkerIDEnv, w.ID, w.Identity.RunID, w.Identity.Generation, want)
+	wantID, err := work.RunWorkerName(w.Identity)
+	if err != nil {
+		return fmt.Errorf("deriving Run Worker ID: %w", err)
 	}
-	if want := work.RunWorkerTaskQueue(w.Identity.RunID, w.Identity.Generation); w.TaskQueue != want {
-		return fmt.Errorf("%s=%q does not match Run %q generation %d (want %q)", work.RunWorkerTaskQueueEnv, w.TaskQueue, w.Identity.RunID, w.Identity.Generation, want)
+	if w.ID != wantID {
+		return fmt.Errorf("%s=%q does not match Run %q generation %d (want %q)", work.RunWorkerIDEnv, w.ID, w.Identity.RunID, w.Identity.Generation, wantID)
+	}
+	wantQueue, err := work.RunWorkerTaskQueue(w.Identity)
+	if err != nil {
+		return fmt.Errorf("deriving Run Worker task queue: %w", err)
+	}
+	if w.TaskQueue != wantQueue {
+		return fmt.Errorf("%s=%q does not match Run %q generation %d (want %q)", work.RunWorkerTaskQueueEnv, w.TaskQueue, w.Identity.RunID, w.Identity.Generation, wantQueue)
+	}
+	for name, raw := range map[string]string{work.RunWorkerBlobsURLEnv: w.BlobsURL, work.RunWorkerCheckpointAPIURLEnv: w.CheckpointAPIURL} {
+		parsed, err := url.Parse(raw)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return fmt.Errorf("%s=%q must be an absolute HTTP URL", name, raw)
+		}
 	}
 	return nil
 }
 
 // LoadRunWorker reads cmd/run-worker's non-secret environment.
 func LoadRunWorker() (RunWorker, error) {
+	runID := strings.TrimSpace(os.Getenv(work.RunWorkerRunIDEnv))
+	if runID == "" {
+		return RunWorker{}, fmt.Errorf("%s is required", work.RunWorkerRunIDEnv)
+	}
 	generationRaw := strings.TrimSpace(os.Getenv(work.RunWorkerGenerationEnv))
 	if generationRaw == "" {
 		return RunWorker{}, fmt.Errorf("%s is required", work.RunWorkerGenerationEnv)
@@ -77,9 +96,17 @@ func LoadRunWorker() (RunWorker, error) {
 	if err != nil {
 		return RunWorker{}, fmt.Errorf("%s=%q is not a generation number: %w", work.RunWorkerGenerationEnv, generationRaw, err)
 	}
+	identity, err := work.NewRunWorkerIdentity(runID, generation)
+	if err != nil {
+		return RunWorker{}, fmt.Errorf("reading Run Worker identity: %w", err)
+	}
+	id, err := work.ParseRunWorkerID(os.Getenv(work.RunWorkerIDEnv), identity)
+	if err != nil {
+		return RunWorker{}, fmt.Errorf("reading %s: %w", work.RunWorkerIDEnv, err)
+	}
 	cfg := RunWorker{
-		ID:                work.RunWorkerID(os.Getenv(work.RunWorkerIDEnv)),
-		Identity:          work.RunWorkerIdentity{RunID: os.Getenv(work.RunWorkerRunIDEnv), Generation: generation},
+		ID:                id,
+		Identity:          identity,
 		TaskQueue:         os.Getenv(work.RunWorkerTaskQueueEnv),
 		TemporalHostPort:  os.Getenv(work.RunWorkerTemporalHostPortEnv),
 		TemporalNamespace: os.Getenv(work.RunWorkerTemporalNamespaceEnv),
@@ -87,11 +114,11 @@ func LoadRunWorker() (RunWorker, error) {
 		CheckpointAPIURL:  os.Getenv(work.RunWorkerCheckpointAPIURLEnv),
 	}
 	if err := cfg.Validate(); err != nil {
-		return RunWorker{}, err
+		return RunWorker{}, fmt.Errorf("validating Run Worker configuration: %w", err)
 	}
 	cfg.LogLevel, err = logLevel()
 	if err != nil {
-		return RunWorker{}, err
+		return RunWorker{}, fmt.Errorf("reading Run Worker log level: %w", err)
 	}
 	return cfg, nil
 }
