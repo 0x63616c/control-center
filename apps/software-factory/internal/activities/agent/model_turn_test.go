@@ -1,7 +1,9 @@
 package agentactivities_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
@@ -12,7 +14,10 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codexresponses"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
+	"go.temporal.io/sdk/testsuite"
 )
 
 type readFileInput struct {
@@ -23,14 +28,18 @@ type fakeTurner struct {
 	request codexresponses.TurnRequest
 	result  codexresponses.TurnResult
 	err     error
+	events  []codexresponses.Event
 }
 
 func (turner *fakeTurner) Turn(
 	_ context.Context,
 	request codexresponses.TurnRequest,
-	_ codexresponses.EmitFunc,
+	emit codexresponses.EmitFunc,
 ) (codexresponses.TurnResult, error) {
 	turner.request = request
+	for _, event := range turner.events {
+		emit(event)
+	}
 	return turner.result, turner.err
 }
 
@@ -218,6 +227,88 @@ func TestModelTurnRejectsIncompleteProviderOutcomes(t *testing.T) {
 			if !errors.As(err, &applicationError) || applicationError.Type() != agent.ErrorTypeInvalidProviderOutcome ||
 				!applicationError.NonRetryable() {
 				t.Fatalf("ModelTurn() error = %T %v, want non-retryable %q", err, err, agent.ErrorTypeInvalidProviderOutcome)
+			}
+		})
+	}
+}
+
+func TestModelTurnHeartbeatsContentFreeProgressAndClassifiesProviderErrors(t *testing.T) {
+	t.Parallel()
+
+	blobStore := blobs.NewMemStore()
+	conversations := agent.NewConversationStore(blobStore)
+	conversationRef, err := conversations.Append(t.Context(), "agent/run-progress/plan", nil, []agent.ConversationItem{
+		{Kind: agent.ItemInstructions, Text: "Work carefully."},
+		{Kind: agent.ItemUserText, Text: "Design the change."},
+	})
+	if err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+	turner := &fakeTurner{
+		result: codexresponses.TurnResult{Outcome: codexresponses.OutcomeFinalText, Text: `{"summary":"done"}`},
+		events: []codexresponses.Event{
+			{Type: codexresponses.EventReasoningDelta, Delta: "private reasoning must not persist"},
+			{Type: codexresponses.EventTextDelta, Delta: "secret response chunk"},
+		},
+	}
+	activities, err := agentactivities.NewActivities(turner, blobStore, agenttool.MustSet("coding-read-v1"))
+	if err != nil {
+		t.Fatalf("NewActivities() error = %v", err)
+	}
+	suite := &testsuite.WorkflowTestSuite{}
+	environment := suite.NewTestActivityEnvironment()
+	environment.RegisterActivity(activities.ModelTurn)
+	var heartbeats []agentactivities.StreamProgress
+	environment.SetOnActivityHeartbeatListener(func(_ *activity.Info, details converter.EncodedValues) {
+		var progress agentactivities.StreamProgress
+		if err := details.Get(&progress); err != nil {
+			t.Errorf("heartbeat decode error = %v", err)
+			return
+		}
+		heartbeats = append(heartbeats, progress)
+	})
+	_, err = environment.ExecuteActivity(activities.ModelTurn, agent.ModelTurnInput{
+		Model: work.Model{Name: "gpt-test", Effort: "medium"}, ToolsetID: "coding-read-v1",
+		ConversationRef: conversationRef, IdempotencyKey: "agent/run-progress/plan/model/1",
+	})
+	if err != nil {
+		t.Fatalf("ExecuteActivity() error = %v", err)
+	}
+	heartbeatJSON, err := json.Marshal(heartbeats)
+	if err != nil {
+		t.Fatalf("Marshal(heartbeats) error = %v", err)
+	}
+	if len(heartbeats) == 0 || bytes.Contains(heartbeatJSON, []byte("private reasoning")) ||
+		bytes.Contains(heartbeatJSON, []byte("secret response")) {
+		t.Fatalf("heartbeats contain content or are absent: %s", heartbeatJSON)
+	}
+	turner.events = nil
+
+	tests := []struct {
+		name             string
+		toolsetID        agent.ToolsetID
+		providerError    error
+		wantType         string
+		wantNonRetryable bool
+	}{
+		{name: "rate limit", toolsetID: "coding-read-v1", providerError: codexresponses.ErrRateLimited,
+			wantType: agent.ErrorTypeRateLimit, wantNonRetryable: true},
+		{name: "stream interruption", toolsetID: "coding-read-v1", providerError: codexresponses.ErrStreamInterrupted,
+			wantType: agent.ErrorTypeTransient},
+		{name: "unknown toolset", toolsetID: "unknown-v1", wantType: agent.ErrorTypeInvalidInput, wantNonRetryable: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			turner.err = test.providerError
+			_, err := activities.ModelTurn(t.Context(), agent.ModelTurnInput{
+				Model: work.Model{Name: "gpt-test", Effort: "medium"}, ToolsetID: test.toolsetID,
+				ConversationRef: conversationRef, IdempotencyKey: "agent/run-progress/plan/model/2",
+			})
+			var applicationError *temporal.ApplicationError
+			if !errors.As(err, &applicationError) || applicationError.Type() != test.wantType ||
+				applicationError.NonRetryable() != test.wantNonRetryable {
+				t.Fatalf("ModelTurn() error = %T %v, want type %q non-retryable %t",
+					err, err, test.wantType, test.wantNonRetryable)
 			}
 		})
 	}

@@ -4,6 +4,7 @@ package agentactivities
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -62,15 +63,15 @@ func NewActivities(turner Turner, blobStore blobs.Store, toolsets ...agenttool.S
 func (activities *Activities) ModelTurn(ctx context.Context, input agent.ModelTurnInput) (agent.ModelTurnResult, error) {
 	toolset, ok := activities.toolsets[input.ToolsetID]
 	if !ok {
-		return agent.ModelTurnResult{}, fmt.Errorf("unknown agent toolset %q", input.ToolsetID)
+		return agent.ModelTurnResult{}, invalidInput("unknown agent toolset %q", input.ToolsetID)
 	}
 	items, err := activities.conversations.Items(ctx, input.ConversationRef)
 	if err != nil {
-		return agent.ModelTurnResult{}, fmt.Errorf("load model conversation: %w", err)
+		return agent.ModelTurnResult{}, transientFailure("load model conversation", err)
 	}
 	request, err := modelRequest(input, toolset, items)
 	if err != nil {
-		return agent.ModelTurnResult{}, err
+		return agent.ModelTurnResult{}, invalidInput("build model request: %v", err)
 	}
 	events := 0
 	providerResult, err := activities.turner.Turn(ctx, request, func(event codexresponses.Event) {
@@ -78,11 +79,11 @@ func (activities *Activities) ModelTurn(ctx context.Context, input agent.ModelTu
 		activity.RecordHeartbeat(ctx, StreamProgress{EventType: event.Type, Events: events})
 	})
 	if err != nil {
-		return agent.ModelTurnResult{}, fmt.Errorf("run direct model turn: %w", err)
+		return agent.ModelTurnResult{}, providerFailure(ctx, err)
 	}
 	identity, err := activities.conversations.Identity(input.ConversationRef)
 	if err != nil {
-		return agent.ModelTurnResult{}, fmt.Errorf("resolve model conversation identity: %w", err)
+		return agent.ModelTurnResult{}, invalidInput("resolve model conversation identity: %v", err)
 	}
 	switch providerResult.Outcome {
 	case codexresponses.OutcomeFinalText:
@@ -108,11 +109,11 @@ func (activities *Activities) storeFinalTurn(
 		Text: providerResult.Text,
 	}})
 	if err != nil {
-		return agent.ModelTurnResult{}, fmt.Errorf("store final model conversation: %w", err)
+		return agent.ModelTurnResult{}, transientFailure("store final model conversation", err)
 	}
 	textRef, err := activities.artifacts.StoreText(ctx, identity, providerResult.Text)
 	if err != nil {
-		return agent.ModelTurnResult{}, fmt.Errorf("store final model text: %w", err)
+		return agent.ModelTurnResult{}, transientFailure("store final model text", err)
 	}
 	return agent.ModelTurnResult{
 		Outcome:         agent.OutcomeFinalText,
@@ -146,7 +147,10 @@ func (activities *Activities) storeToolTurn(
 	for _, call := range providerResult.ToolCalls {
 		argumentsRef, err := activities.artifacts.StoreArguments(ctx, identity, call.Arguments)
 		if err != nil {
-			return agent.ModelTurnResult{}, fmt.Errorf("store arguments for tool call %q: %w", call.CallID, err)
+			return agent.ModelTurnResult{}, transientFailure(
+				fmt.Sprintf("store arguments for tool call %q", call.CallID),
+				err,
+			)
 		}
 		pending = append(pending, agent.PendingToolCall{
 			CallID:       call.CallID,
@@ -163,7 +167,7 @@ func (activities *Activities) storeToolTurn(
 	}
 	conversationRef, err := activities.conversations.Append(ctx, identity, &predecessor, items)
 	if err != nil {
-		return agent.ModelTurnResult{}, fmt.Errorf("store tool-call model conversation: %w", err)
+		return agent.ModelTurnResult{}, transientFailure("store tool-call model conversation", err)
 	}
 	return agent.ModelTurnResult{
 		Outcome:         agent.OutcomeToolCalls,
@@ -182,6 +186,36 @@ func invalidProviderOutcome(format string, args ...any) error {
 		fmt.Sprintf(format, args...),
 		agent.ErrorTypeInvalidProviderOutcome,
 		nil,
+	)
+}
+
+func invalidInput(format string, args ...any) error {
+	return temporal.NewNonRetryableApplicationError(
+		fmt.Sprintf(format, args...),
+		agent.ErrorTypeInvalidInput,
+		nil,
+	)
+}
+
+func providerFailure(ctx context.Context, err error) error {
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("run direct model turn: %w", err)
+	}
+	if errors.Is(err, codexresponses.ErrRateLimited) {
+		return temporal.NewNonRetryableApplicationError(
+			fmt.Sprintf("run direct model turn: %v", err),
+			agent.ErrorTypeRateLimit,
+			err,
+		)
+	}
+	return transientFailure("run direct model turn", err)
+}
+
+func transientFailure(operation string, err error) error {
+	return temporal.NewApplicationErrorWithOptions(
+		fmt.Sprintf("%s: %v", operation, err),
+		agent.ErrorTypeTransient,
+		temporal.ApplicationErrorOptions{Cause: err},
 	)
 }
 

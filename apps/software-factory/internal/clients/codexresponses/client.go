@@ -106,7 +106,11 @@ func (c *Client) Turn(ctx context.Context, request TurnRequest, emit EmitFunc) (
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		metadata := safeProviderErrorMetadata(body)
-		return TurnResult{}, fmt.Errorf("the Codex Responses endpoint answered HTTP %d%s", resp.StatusCode, metadata)
+		err := fmt.Errorf("the Codex Responses endpoint answered HTTP %d%s", resp.StatusCode, metadata)
+		if resp.StatusCode == http.StatusTooManyRequests {
+			return TurnResult{}, fmt.Errorf("%w: %v", ErrRateLimited, err)
+		}
+		return TurnResult{}, err
 	}
 
 	result, err := parseStream(resp.Body, emit)
