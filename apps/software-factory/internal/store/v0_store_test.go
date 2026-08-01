@@ -151,7 +151,7 @@ func TestFailedRunFinalizationIsIdempotentAndCannotReverseConfirmedMerge(t *test
 	if _, err := s.ClaimAndStartRun(ctx, store.ClaimRunInput{TicketID: ticket.ID, RunID: runID, StartedAt: startedAt}); err != nil {
 		t.Fatalf("ClaimAndStartRun: %v", err)
 	}
-	in := store.RunFailureInput{RunID: runID, TicketID: ticket.ID, FailureKind: work.RunFailureSemanticDeadline, EndedAt: startedAt.Add(time.Minute)}
+	in := store.RunFailureInput{RunID: runID, TicketID: ticket.ID, Outcome: work.RunOutcomeFailed, FailureKind: work.RunFailureSemanticDeadline, EndedAt: startedAt.Add(time.Minute)}
 	result, err := s.FinalizeRunFailure(ctx, in)
 	if err != nil {
 		t.Fatalf("FinalizeRunFailure: %v", err)

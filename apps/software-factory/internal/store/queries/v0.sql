@@ -213,8 +213,8 @@ UPDATE run SET target_outcome = 'canceled', target_failure_kind = '', ended_at =
 WHERE id = $1 AND target_outcome IS NULL
 RETURNING *;
 
--- name: CompleteTargetRunFailure :one
-UPDATE run SET target_outcome = 'failed', target_failure_kind = $2, ended_at = $3
+-- name: CompleteTargetRunTerminal :one
+UPDATE run SET target_outcome = $2, target_failure_kind = $3, ended_at = $4
 WHERE id = $1 AND target_outcome IS NULL
 RETURNING *;
 

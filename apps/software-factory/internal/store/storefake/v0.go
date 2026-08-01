@@ -481,7 +481,7 @@ func (f *Store) FinalizeRunFailure(_ context.Context, in store.RunFailureInput) 
 	}
 	ticket := f.tickets[in.TicketID]
 	if run.TargetOutcome != "" {
-		if run.TargetOutcome == work.RunOutcomeFailed && run.TargetFailure != in.FailureKind {
+		if run.TargetOutcome != in.Outcome || run.TargetFailure != in.FailureKind {
 			return store.TerminalResult{}, fmt.Errorf("failure: %w", work.ErrPermanent)
 		}
 		return store.TerminalResult{Ticket: ticket, Run: run}, nil
@@ -489,7 +489,19 @@ func (f *Store) FinalizeRunFailure(_ context.Context, in store.RunFailureInput) 
 	if ticket.State != store.TicketActive || ticket.ActiveRunID != in.RunID {
 		return store.TerminalResult{}, fmt.Errorf("failure: %w", store.ErrRunOwnership)
 	}
-	run.TargetOutcome, run.TargetFailure, run.EndedAt = work.RunOutcomeFailed, in.FailureKind, in.EndedAt
+	if in.Outcome != work.RunOutcomeFailed && in.Outcome != work.RunOutcomeExhausted {
+		return store.TerminalResult{}, fmt.Errorf("failure: %w", work.ErrPermanent)
+	}
+	if in.StepOrdinal > 0 {
+		key := targetStepKey{runID: in.RunID, ordinal: in.StepOrdinal}
+		step, exists := f.targetSteps[key]
+		if !exists || step.State != work.StepStateRunning {
+			return store.TerminalResult{}, fmt.Errorf("failure: %w", store.ErrRunOwnership)
+		}
+		step.State, step.EndedAt, step.Result = work.StepStateCompleted, in.EndedAt, in.StepResult
+		f.targetSteps[key] = step
+	}
+	run.TargetOutcome, run.TargetFailure, run.EndedAt = in.Outcome, in.FailureKind, in.EndedAt
 	ticket.State, ticket.ActiveRunID, ticket.UpdatedAt = store.TicketFailed, "", f.clk.Now()
 	f.runs[in.RunID], f.tickets[in.TicketID] = run, ticket
 	return store.TerminalResult{Ticket: ticket, Run: run}, nil

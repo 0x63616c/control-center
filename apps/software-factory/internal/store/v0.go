@@ -1077,7 +1077,10 @@ type CancelRunInput struct {
 type RunFailureInput struct {
 	RunID       string
 	TicketID    TicketID
+	Outcome     work.RunOutcome
 	FailureKind work.RunFailureKind
+	StepOrdinal int
+	StepResult  json.RawMessage
 	EndedAt     time.Time
 }
 
@@ -1110,7 +1113,7 @@ func (s *Store) FinalizeRunFailure(ctx context.Context, in RunFailureInput) (Ter
 		return TerminalResult{}, fmt.Errorf("failing run: reading ticket: %w", wrapQueryErr(err))
 	}
 	if runRow.TargetOutcome.Valid {
-		if runRow.TargetOutcome.String == string(work.RunOutcomeFailed) && runRow.TargetFailureKind != string(in.FailureKind) {
+		if (runRow.TargetOutcome.String != string(in.Outcome) || runRow.TargetFailureKind != string(in.FailureKind)) && runRow.TargetOutcome.String != string(work.RunOutcomeSucceeded) && runRow.TargetOutcome.String != string(work.RunOutcomeCanceled) {
 			return TerminalResult{}, fmt.Errorf("failing run: conflicting terminal result: %w", work.ErrPermanent)
 		}
 		ticket, parseErr := ticketFromRow(ticketRow)
@@ -1125,7 +1128,15 @@ func (s *Store) FinalizeRunFailure(ctx context.Context, in RunFailureInput) (Ter
 	if ticketRow.State != TicketActive.String() || ticketRow.ActiveRunID != id {
 		return TerminalResult{}, fmt.Errorf("failing run: %w", ErrRunOwnership)
 	}
-	failedRun, err := q.CompleteTargetRunFailure(ctx, storedb.CompleteTargetRunFailureParams{ID: id, TargetFailureKind: string(in.FailureKind), EndedAt: pgTimestamp(in.EndedAt)})
+	if in.StepOrdinal > 0 {
+		if _, err := q.CompleteTargetStep(ctx, storedb.CompleteTargetStepParams{RunID: id, Ordinal: int32(in.StepOrdinal), EndedAt: pgTimestamp(in.EndedAt), Result: in.StepResult}); err != nil {
+			return TerminalResult{}, fmt.Errorf("failing run: completing step: %w", wrapQueryErr(err))
+		}
+	}
+	if in.Outcome != work.RunOutcomeFailed && in.Outcome != work.RunOutcomeExhausted {
+		return TerminalResult{}, fmt.Errorf("failing run: invalid terminal outcome: %w", work.ErrPermanent)
+	}
+	failedRun, err := q.CompleteTargetRunTerminal(ctx, storedb.CompleteTargetRunTerminalParams{ID: id, TargetOutcome: pgOptionalText(string(in.Outcome)), TargetFailureKind: string(in.FailureKind), EndedAt: pgTimestamp(in.EndedAt)})
 	if err != nil {
 		return TerminalResult{}, fmt.Errorf("failing run: completing run: %w", wrapQueryErr(err))
 	}

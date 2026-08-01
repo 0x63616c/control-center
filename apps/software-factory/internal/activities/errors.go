@@ -74,6 +74,9 @@ const (
 	ErrTypeUnresumableIncompleteAttempt = "unresumable_incomplete_attempt"
 	// ErrTypeSemanticDeadline says no new target work may consume the reserved finalization window.
 	ErrTypeSemanticDeadline = "semantic_deadline"
+	ErrTypeAgentAttemptBudget = "agent_attempt_budget"
+	ErrTypeReviewBudget       = "review_budget"
+	ErrTypeCIUnobserved       = "ci_unobserved"
 	// ErrTypeRunWorkerSessionLost reports permanent loss of the private Run
 	// Worker Session. The workflow may provision one replacement generation;
 	// this is never a native activity retry.

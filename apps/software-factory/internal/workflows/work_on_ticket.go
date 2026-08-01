@@ -47,11 +47,11 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 		if !claimedRun {
 			return
 		}
-		if failureKind, failed := terminalFailureKind(runErr); failed {
+		if outcome, failureKind, failed := terminalFailureKind(runErr); failed {
 			terminalCtx, cancel := workflow.NewDisconnectedContext(ctx)
 			defer cancel()
 			finalCtx := workflow.WithActivityOptions(terminalCtx, targetActivityOptions(in.Policy.Recording))
-			if err := workflow.ExecuteActivity(finalCtx, targetRecordingActs.FinalizeRunFailure, store.RunFailureInput{RunID: in.RunID, TicketID: in.TicketID, FailureKind: failureKind, EndedAt: workflow.Now(terminalCtx)}).Get(finalCtx, nil); err != nil {
+			if err := workflow.ExecuteActivity(finalCtx, targetRecordingActs.FinalizeRunFailure, store.RunFailureInput{RunID: in.RunID, TicketID: in.TicketID, Outcome: outcome, FailureKind: failureKind, EndedAt: workflow.Now(terminalCtx)}).Get(finalCtx, nil); err != nil {
 				runErr = fmt.Errorf("recording failed target run: %w", err)
 				return
 			}
@@ -547,12 +547,19 @@ func requireSemanticTime(ctx workflow.Context) error {
 	return nil
 }
 
-func terminalFailureKind(err error) (work.RunFailureKind, bool) {
+func terminalFailureKind(err error) (work.RunOutcome, work.RunFailureKind, bool) {
 	var application *temporal.ApplicationError
-	if errors.As(err, &application) && application.Type() == activities.ErrTypeSemanticDeadline {
-		return work.RunFailureSemanticDeadline, true
+	if errors.As(err, &application) {
+		switch application.Type() {
+		case activities.ErrTypeSemanticDeadline:
+			return work.RunOutcomeFailed, work.RunFailureSemanticDeadline, true
+		case activities.ErrTypeAgentAttemptBudget:
+			return work.RunOutcomeExhausted, work.RunFailureAgentAttemptBudget, true
+		case activities.ErrTypeReviewBudget:
+			return work.RunOutcomeExhausted, work.RunFailureReviewBudget, true
+		}
 	}
-	return work.RunFailureNone, false
+	return "", work.RunFailureNone, false
 }
 
 func sameGenerationContinuation(session *targetRunSession, identity work.RunWorkerIdentity, threadID string) *activities.ProviderThreadContinuation {
@@ -584,12 +591,12 @@ func optionalPullRequest(pullRequest work.PullRequest) *work.PullRequest {
 
 func exhaustedReviewSteps(limit int) error {
 	return temporal.NewNonRetryableApplicationError(
-		fmt.Sprintf("target run exhausted its %d review-step budget", limit), activities.ErrTypeInvalid, nil)
+		fmt.Sprintf("target run exhausted its %d review-step budget", limit), activities.ErrTypeReviewBudget, nil)
 }
 
 func exhaustedAgentAttempts(limit int) error {
 	return temporal.NewNonRetryableApplicationError(
-		fmt.Sprintf("target run exhausted its %d agent-attempt budget", limit), activities.ErrTypeInvalid, nil)
+		fmt.Sprintf("target run exhausted its %d agent-attempt budget", limit), activities.ErrTypeAgentAttemptBudget, nil)
 }
 
 func implementTitle(out work.StageOutput) string {
