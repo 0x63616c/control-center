@@ -131,7 +131,7 @@ func Dispatcher(ctx workflow.Context, in DispatcherInput) error {
 					if _, exists := children[ticket.ID]; exists {
 						continue
 					}
-					child := workflow.ExecuteChildWorkflow(workflow.WithChildOptions(ctx, dispatchChildWorkflowOptions(ticket.ID)), WorkOnTicket, WorkOnTicketInput{TicketID: ticket.ID, Policy: policy.Run, CloneURL: in.CloneURL, Model: in.Model})
+					child := workflow.ExecuteChildWorkflow(workflow.WithChildOptions(ctx, dispatchChildWorkflowOptions(ticket.ID, policy.Run)), WorkOnTicket, WorkOnTicketInput{TicketID: ticket.ID, Policy: policy.Run, CloneURL: in.CloneURL, Model: in.Model})
 					children[ticket.ID] = child
 				}
 			})
@@ -153,10 +153,11 @@ func Dispatcher(ctx workflow.Context, in DispatcherInput) error {
 	}
 }
 
-func dispatchChildWorkflowOptions(ticketID store.TicketID) workflow.ChildWorkflowOptions {
+func dispatchChildWorkflowOptions(ticketID store.TicketID, policy work.TargetRunPolicy) workflow.ChildWorkflowOptions {
 	return workflow.ChildWorkflowOptions{
-		WorkflowID:        work.FactoryTicketWorkflowID(int64(ticketID)),
-		ParentClosePolicy: enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
+		WorkflowID:               work.FactoryTicketWorkflowID(int64(ticketID)),
+		WorkflowExecutionTimeout: policy.HardDeadline,
+		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
 	}
 }
 

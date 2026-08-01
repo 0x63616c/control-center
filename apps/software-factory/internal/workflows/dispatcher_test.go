@@ -253,6 +253,79 @@ func TestDispatcherUsesTheLatestPublishedPolicyForLaterAdmissions(t *testing.T) 
 	}
 }
 
+func TestDispatcherGivesEachChildItsAdmittedHardDeadline(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+	polls := 0
+	env.OnActivity(ticketActs.AwaitDispatchableTickets, mock.Anything).
+		Return(func(context.Context) ([]store.Ticket, error) {
+			polls++
+			switch polls {
+			case 1:
+				return []store.Ticket{{ID: 31, Title: "first policy", State: store.TicketOpen}}, nil
+			case 2:
+				return []store.Ticket{{ID: 32, Title: "later policy", State: store.TicketOpen}}, nil
+			default:
+				return nil, temporal.NewApplicationError("no dispatchable tickets", activities.ErrTypeNoDispatchableTickets, nil)
+			}
+		})
+	env.OnWorkflow(workflows.WorkOnTicket, mock.Anything, mock.Anything).
+		Return(func(ctx workflow.Context, in workflows.WorkOnTicketInput) error {
+			if in.TicketID == 31 {
+				return workflow.Sleep(ctx, 5*time.Second)
+			}
+			return workflow.Sleep(ctx, time.Hour)
+		})
+
+	in := targetDispatcherInput()
+	firstDeadline := in.Policy.Run.HardDeadline
+	later := in.Policy
+	later.Run.SemanticDeadline = 47 * time.Hour
+	later.Run.HardDeadline = 48 * time.Hour
+
+	timeouts := map[store.TicketID]time.Duration{}
+	inputs := map[store.TicketID]workflows.WorkOnTicketInput{}
+	env.SetOnChildWorkflowStartedListener(func(info *workflow.Info, _ workflow.Context, args converter.EncodedValues) {
+		var input workflows.WorkOnTicketInput
+		if err := args.Get(&input); err != nil {
+			t.Errorf("decoding child input: %v", err)
+			return
+		}
+		timeouts[input.TicketID] = info.WorkflowExecutionTimeout
+		inputs[input.TicketID] = input
+	})
+
+	updates := map[string]workflows.DispatcherPublication{}
+	errs := map[string]error{}
+	env.RegisterDelayedCallback(func() {
+		env.UpdateWorkflow(workflows.UpdateDispatcherPolicy, "later-hard-deadline", dispatcherUpdateCallback("later", updates, errs), targetDispatcherPolicyUpdate(t, later))
+	}, time.Second)
+	env.RegisterDelayedCallback(env.CancelWorkflow, 10*time.Second)
+	env.ExecuteWorkflow(workflows.Dispatcher, in)
+
+	if err := env.GetWorkflowError(); !temporal.IsCanceledError(err) {
+		t.Fatalf("Dispatcher error = %v, want cancellation", err)
+	}
+	if err := errs["later"]; err != nil {
+		t.Fatalf("later publication failed: %v", err)
+	}
+	if updates["later"] != workflows.DispatcherPublicationApplied {
+		t.Errorf("later publication = %q, want APPLIED", updates["later"])
+	}
+	if got := timeouts[31]; got != firstDeadline {
+		t.Errorf("first child WorkflowExecutionTimeout = %s, want its admitted hard deadline %s", got, firstDeadline)
+	}
+	if got := timeouts[32]; got != later.Run.HardDeadline {
+		t.Errorf("later child WorkflowExecutionTimeout = %s, want later admitted hard deadline %s", got, later.Run.HardDeadline)
+	}
+	if got := inputs[31].Policy.HardDeadline; got != firstDeadline {
+		t.Errorf("first child policy hard deadline = %s, want immutable admitted deadline %s", got, firstDeadline)
+	}
+	if got := inputs[32].Policy.HardDeadline; got != later.Run.HardDeadline {
+		t.Errorf("later child policy hard deadline = %s, want later admitted deadline %s", got, later.Run.HardDeadline)
+	}
+}
+
 func TestDispatcherCancelsAnOutstandingWaitBeforeDraining(t *testing.T) {
 	suite := &testsuite.WorkflowTestSuite{}
 	env := suite.NewTestWorkflowEnvironment()

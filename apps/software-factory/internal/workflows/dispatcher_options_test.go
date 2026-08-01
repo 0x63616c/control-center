@@ -19,9 +19,13 @@ func TestDispatchWaitActivityOptionsLeaveIdleRetriesOutsideWorkflowHistory(t *te
 }
 
 func TestDispatchChildOptionsRequestCancellationWhenTheDispatcherCloses(t *testing.T) {
-	options := dispatchChildWorkflowOptions(store.TicketID(41))
+	policy := work.DefaultTargetRunPolicy()
+	options := dispatchChildWorkflowOptions(store.TicketID(41), policy)
 	if options.WorkflowID != work.FactoryTicketWorkflowID(41) {
 		t.Errorf("WorkflowID = %q, want ticket-scoped target workflow ID", options.WorkflowID)
+	}
+	if options.WorkflowExecutionTimeout != policy.HardDeadline {
+		t.Errorf("WorkflowExecutionTimeout = %s, want immutable policy hard deadline %s", options.WorkflowExecutionTimeout, policy.HardDeadline)
 	}
 	if options.ParentClosePolicy != enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL {
 		t.Errorf("ParentClosePolicy = %s, want request cancellation", options.ParentClosePolicy)
