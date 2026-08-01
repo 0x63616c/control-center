@@ -34,8 +34,8 @@ kubectl --context "${kube_context}" --namespace "${namespace}" create secret gen
   -o yaml \
   | kubectl --context "${kube_context}" apply -f - >/dev/null
 kubectl --context "${kube_context}" apply -f "${here}/k8s/temporal.yaml"
+kubectl --context "${kube_context}" --namespace "${namespace}" rollout status deployment/temporal --timeout=120s
 kubectl --context "${kube_context}" apply -f "${here}/k8s/worker.yaml"
 kubectl --context "${kube_context}" --namespace "${namespace}" rollout restart deployment/agent-poc-worker
-kubectl --context "${kube_context}" --namespace "${namespace}" rollout status deployment/temporal --timeout=120s
 kubectl --context "${kube_context}" --namespace "${namespace}" rollout status deployment/agent-poc-worker --timeout=120s
 kubectl --context "${kube_context}" --namespace "${namespace}" get pods
