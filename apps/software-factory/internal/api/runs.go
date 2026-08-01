@@ -35,7 +35,7 @@ type usageOutput struct {
 // roll up at this level — Complete only means something once more than one
 // Attempt's numbers are summed, which happens at Step and Run, not here.
 type attemptOutput struct {
-	AttemptNo         int             `json:"attemptNo" doc:"Which attempt of this Step this is, starting at 1."`
+	AttemptNo         int             `json:"attemptNo" doc:"Which semantic Agent Attempt of this Step this is, starting at 1. Temporal activity tries are not represented."`
 	AgentStage        string          `json:"agentStage" doc:"The agent role for this semantic execution: plan, implement, or review."`
 	Model             string          `json:"model" doc:"The model this attempt ran on."`
 	Effort            string          `json:"effort" doc:"The reasoning effort this attempt ran on."`
@@ -44,10 +44,10 @@ type attemptOutput struct {
 	ProviderThreadID  string          `json:"providerThreadId" doc:"The provider thread identity captured by this semantic Attempt."`
 	UsageState        string          `json:"usageState" doc:"Whether token usage is unknown or measured."`
 	Measured          bool            `json:"measured" doc:"Compatibility projection of usageState == measured."`
-	InputTokens       *int64          `json:"inputTokens" doc:"The whole input, including cachedInputTokens. Null when measured is false."`
-	CachedInputTokens *int64          `json:"cachedInputTokens" doc:"The part of inputTokens served from the provider's prompt cache. Null when measured is false."`
-	OutputTokens      *int64          `json:"outputTokens" doc:"The whole output, including reasoningTokens. Null when measured is false."`
-	ReasoningTokens   *int64          `json:"reasoningTokens" doc:"The part of outputTokens spent reasoning. Null when measured is false."`
+	InputTokens       *int64          `json:"inputTokens" doc:"The whole input, including cachedInputTokens. Null unless usageState is measured."`
+	CachedInputTokens *int64          `json:"cachedInputTokens" doc:"The part of inputTokens served from the provider's prompt cache. Null unless usageState is measured."`
+	OutputTokens      *int64          `json:"outputTokens" doc:"The whole output, including reasoningTokens. Null unless usageState is measured."`
+	ReasoningTokens   *int64          `json:"reasoningTokens" doc:"The part of outputTokens spent reasoning. Null unless usageState is measured."`
 	StartedAt         string          `json:"startedAt" doc:"RFC3339 UTC."`
 	EndedAt           *string         `json:"endedAt" doc:"RFC3339 UTC. Null until the attempt ends."`
 	Result            json.RawMessage `json:"result" doc:"The durable structured result envelope. Null until one is recorded."`
@@ -68,7 +68,7 @@ type stepOutput struct {
 	StartedAt string          `json:"startedAt" doc:"RFC3339 UTC."`
 	EndedAt   *string         `json:"endedAt" doc:"RFC3339 UTC. Null while its last Attempt is still running."`
 	Result    json.RawMessage `json:"result" doc:"The durable structured result envelope. Null until one is recorded."`
-	Attempts  []attemptOutput `json:"attempts" doc:"This Step's attempts, oldest first. Usually one; more than one means a machine retry, not semantic re-work."`
+	Attempts  []attemptOutput `json:"attempts" doc:"This Step's workflow-authorized semantic Agent Attempts, oldest first. Native Temporal activity tries are absent."`
 	Usage     usageOutput     `json:"usage" doc:"Rolled up across this Step's Attempts."`
 }
 

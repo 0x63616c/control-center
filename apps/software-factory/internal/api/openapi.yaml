@@ -53,11 +53,11 @@ components:
           description: "The agent role for this semantic execution: plan, implement, or review."
           type: string
         attemptNo:
-          description: Which attempt of this Step this is, starting at 1.
+          description: Which semantic Agent Attempt of this Step this is, starting at 1. Temporal activity tries are not represented.
           format: int64
           type: integer
         cachedInputTokens:
-          description: The part of inputTokens served from the provider's prompt cache. Null when measured is false.
+          description: The part of inputTokens served from the provider's prompt cache. Null unless usageState is measured.
           format: int64
           type:
             - integer
@@ -77,7 +77,7 @@ components:
           description: Whether a transcript is stored for this attempt.
           type: boolean
         inputTokens:
-          description: The whole input, including cachedInputTokens. Null when measured is false.
+          description: The whole input, including cachedInputTokens. Null unless usageState is measured.
           format: int64
           type:
             - integer
@@ -89,7 +89,7 @@ components:
           description: The model this attempt ran on.
           type: string
         outputTokens:
-          description: The whole output, including reasoningTokens. Null when measured is false.
+          description: The whole output, including reasoningTokens. Null unless usageState is measured.
           format: int64
           type:
             - integer
@@ -98,7 +98,7 @@ components:
           description: The provider thread identity captured by this semantic Attempt.
           type: string
         reasoningTokens:
-          description: The part of outputTokens spent reasoning. Null when measured is false.
+          description: The part of outputTokens spent reasoning. Null unless usageState is measured.
           format: int64
           type:
             - integer
@@ -464,7 +464,7 @@ components:
       additionalProperties: false
       properties:
         attempts:
-          description: This Step's attempts, oldest first. Usually one; more than one means a machine retry, not semantic re-work.
+          description: This Step's workflow-authorized semantic Agent Attempts, oldest first. Native Temporal activity tries are absent.
           items:
             $ref: "#/components/schemas/AttemptOutput"
           type:

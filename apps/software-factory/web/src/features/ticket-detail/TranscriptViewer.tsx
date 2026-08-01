@@ -1,35 +1,23 @@
+import { useQuery } from "@tanstack/react-query";
+import axios from "axios";
 import { useState } from "react";
-import type { StepOutputStage } from "@/api/generated";
-import { useListV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscript } from "@/api/generated";
 import { formatTranscript } from "@/features/ticket-detail/transcript";
+
+export function transcriptQueryKey(transcriptPath: string) {
+  return ["attempt-transcript", transcriptPath] as const;
+}
 
 // TranscriptViewer fetches an Attempt's transcript only once a reader asks
 // for it — `enabled` stays false until the toggle opens, so a run with many
 // attempts never pulls transcripts nobody is looking at. ADR-0012 defers live
 // tailing: this renders one already-landed transcript, never a stream.
-export function TranscriptViewer({
-  ticketId,
-  runId,
-  stage,
-  turn,
-  attemptNo,
-}: {
-  ticketId: number;
-  runId: string;
-  stage: StepOutputStage;
-  turn: number;
-  attemptNo: number;
-}) {
+export function TranscriptViewer({ transcriptPath }: { transcriptPath: string }) {
   const [open, setOpen] = useState(false);
-  const query =
-    useListV1TicketsByTicketIdRunsByRunIdStagesByStageTurnsByTurnAttemptsByAttemptNoTranscript(
-      ticketId,
-      runId,
-      stage,
-      turn,
-      attemptNo,
-      { query: { enabled: open } },
-    );
+  const query = useQuery({
+    queryKey: transcriptQueryKey(transcriptPath),
+    queryFn: () => axios.get<string>(transcriptPath),
+    enabled: open,
+  });
 
   if (!open) {
     return (

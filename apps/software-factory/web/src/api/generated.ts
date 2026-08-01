@@ -88,7 +88,7 @@ export interface Attempt {
 }
 
 /**
- * The part of inputTokens served from the provider's prompt cache. Null when measured is false.
+ * The part of inputTokens served from the provider's prompt cache. Null unless usageState is measured.
  */
 export type AttemptOutputCachedInputTokens = number | null;
 
@@ -98,26 +98,26 @@ export type AttemptOutputCachedInputTokens = number | null;
 export type AttemptOutputEndedAt = string | null;
 
 /**
- * The whole input, including cachedInputTokens. Null when measured is false.
+ * The whole input, including cachedInputTokens. Null unless usageState is measured.
  */
 export type AttemptOutputInputTokens = number | null;
 
 /**
- * The whole output, including reasoningTokens. Null when measured is false.
+ * The whole output, including reasoningTokens. Null unless usageState is measured.
  */
 export type AttemptOutputOutputTokens = number | null;
 
 /**
- * The part of outputTokens spent reasoning. Null when measured is false.
+ * The part of outputTokens spent reasoning. Null unless usageState is measured.
  */
 export type AttemptOutputReasoningTokens = number | null;
 
 export interface AttemptOutput {
   /** The agent role for this semantic execution: plan, implement, or review. */
   agentStage: string;
-  /** Which attempt of this Step this is, starting at 1. */
+  /** Which semantic Agent Attempt of this Step this is, starting at 1. Temporal activity tries are not represented. */
   attemptNo: number;
-  /** The part of inputTokens served from the provider's prompt cache. Null when measured is false. */
+  /** The part of inputTokens served from the provider's prompt cache. Null unless usageState is measured. */
   cachedInputTokens: AttemptOutputCachedInputTokens;
   /** The reasoning effort this attempt ran on. */
   effort: string;
@@ -127,17 +127,17 @@ export interface AttemptOutput {
   failureKind: string;
   /** Whether a transcript is stored for this attempt. */
   hasTranscript: boolean;
-  /** The whole input, including cachedInputTokens. Null when measured is false. */
+  /** The whole input, including cachedInputTokens. Null unless usageState is measured. */
   inputTokens: AttemptOutputInputTokens;
   /** Compatibility projection of usageState == measured. */
   measured: boolean;
   /** The model this attempt ran on. */
   model: string;
-  /** The whole output, including reasoningTokens. Null when measured is false. */
+  /** The whole output, including reasoningTokens. Null unless usageState is measured. */
   outputTokens: AttemptOutputOutputTokens;
   /** The provider thread identity captured by this semantic Attempt. */
   providerThreadId: string;
-  /** The part of outputTokens spent reasoning. Null when measured is false. */
+  /** The part of outputTokens spent reasoning. Null unless usageState is measured. */
   reasoningTokens: AttemptOutputReasoningTokens;
   /** The durable structured result envelope. Null until one is recorded. */
   result: unknown;
@@ -336,7 +336,7 @@ export interface StateTicketInputBody {
 }
 
 /**
- * This Step's attempts, oldest first. Usually one; more than one means a machine retry, not semantic re-work.
+ * This Step's workflow-authorized semantic Agent Attempts, oldest first. Native Temporal activity tries are absent.
  */
 export type StepOutputAttempts = AttemptOutput[] | null;
 
@@ -346,7 +346,7 @@ export type StepOutputAttempts = AttemptOutput[] | null;
 export type StepOutputEndedAt = string | null;
 
 export interface StepOutput {
-  /** This Step's attempts, oldest first. Usually one; more than one means a machine retry, not semantic re-work. */
+  /** This Step's workflow-authorized semantic Agent Attempts, oldest first. Native Temporal activity tries are absent. */
   attempts: StepOutputAttempts;
   /** RFC3339 UTC. Null while its last Attempt is still running. */
   endedAt: StepOutputEndedAt;

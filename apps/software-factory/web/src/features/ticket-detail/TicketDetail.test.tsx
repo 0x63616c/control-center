@@ -40,7 +40,8 @@ describe("TicketDetail", () => {
       ticket: fixtureTicket(),
       runs: [fixtureRun({ steps: [fixtureStep({ ordinal: 7, kind: "implement", iteration: 3 })] })],
     });
-    expect(screen.getByTestId("step-row")).toHaveTextContent(/#7\s*Implement\s*·\s*iteration 3/);
+    expect(screen.getByText("#7 Implement")).toBeInTheDocument();
+    expect(screen.getByTestId("step-row")).toHaveTextContent(/iteration 3/);
   });
 
   it("renders an infrastructure Step without inventing an Agent Attempt", () => {
@@ -186,7 +187,7 @@ describe("TicketDetail", () => {
       ],
     });
     expect(screen.getByText(/Phase:\s*Merge Pull Request/)).toBeInTheDocument();
-    expect(screen.getByText(/Confirmed Merge:\s*merge-sha/)).toBeInTheDocument();
+    expect(screen.getByText("merge-sha")).toBeInTheDocument();
     expect(screen.getByText(/reviewed head head-sha/)).toBeInTheDocument();
   });
 

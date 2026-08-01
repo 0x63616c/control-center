@@ -31,11 +31,11 @@ export function formatUsage(usage: UsageOutput): string {
 }
 
 // formatAttemptUsage renders one Attempt's usage, or "unknown" when it was
-// never measured — never "0", which is #426: a resumed Attempt that ran
-// nothing is not the same fact as an Attempt that ran and spent nothing.
+// never measured — never "0": missing provider usage is not the same fact as
+// a measured Attempt that spent nothing.
 export function formatAttemptUsage(attempt: AttemptOutput): string {
   if (
-    !attempt.measured ||
+    attempt.usageState !== "measured" ||
     attempt.inputTokens === null ||
     attempt.cachedInputTokens === null ||
     attempt.outputTokens === null ||

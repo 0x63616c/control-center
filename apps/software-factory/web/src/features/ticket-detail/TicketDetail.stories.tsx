@@ -170,8 +170,8 @@ export const ConfirmedMerge: Story = {
   },
 };
 
-// #556 acceptance: "an unmeasured Attempt" — a resumed Attempt renders its
-// usage as unknown, never zero, and flags the Run incomplete.
+// An Attempt whose provider did not report usage renders unknown, never zero,
+// and flags the Run's rollup incomplete.
 export const UnmeasuredAttempt: Story = {
   args: {
     state: {
