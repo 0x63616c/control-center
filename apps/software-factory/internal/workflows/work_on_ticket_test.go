@@ -424,6 +424,91 @@ func TestWorkOnTicketRetriesPendingCIInsideOneStep(t *testing.T) {
 	}
 }
 
+// Credential renewal is supporting machinery for one authorized execution,
+// not another Agent Attempt. A long-running implement activity must receive a
+// projected credential renewal at thirty minutes while its original activity
+// future and durable Attempt remain active.
+func TestWorkOnTicketRenewsCredentialDuringOneActiveAgentAttempt(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "renew credentials", "keep Git authenticated", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000008", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	implementDone := make(chan struct{})
+	h.agentWait = implementDone
+	h.env.RegisterDelayedCallback(func() { close(implementDone) }, 31*time.Minute)
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket: %v", err)
+	}
+
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	attempts := 0
+	for _, step := range detail.Steps {
+		attempts += len(step.Attempts)
+	}
+	if attempts != 3 || len(h.rotations) != 4 {
+		t.Fatalf("credential renewal = %d durable attempts, %d rotations; want the same three attempts and one 30-minute renewal", attempts, len(h.rotations))
+	}
+}
+
+// A native retry repeats the activity with its durable Attempt identity. It
+// must reconcile that same execution after the projected credential has been
+// observed again, rather than authorizing another Attempt or another renewal
+// lifecycle.
+func TestWorkOnTicketReconcilesNativeAgentRetryWithoutAnotherAttempt(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "retry agent", "reconcile it", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000009", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	implementTries := 0
+	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
+		if input.Stage == work.AgentStageImplement {
+			implementTries++
+			if implementTries == 1 {
+				return activities.TargetAgentOutput{}, temporal.NewApplicationError("temporary model transport", activities.ErrTypeTransient, nil)
+			}
+		}
+		return targetAgentOutput(t, input.Stage), nil
+	}
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket: %v", err)
+	}
+	var implementInputs []activities.TargetAgentInput
+	for _, input := range h.agentInputs {
+		if input.Stage == work.AgentStageImplement {
+			implementInputs = append(implementInputs, input)
+		}
+	}
+	if len(implementInputs) != 2 || implementInputs[0].AttemptID != implementInputs[1].AttemptID {
+		t.Fatalf("implement retry inputs = %+v, want two activity tries of the same durable Agent Attempt", implementInputs)
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	attempts := 0
+	for _, step := range detail.Steps {
+		attempts += len(step.Attempts)
+	}
+	if attempts != 3 || len(h.rotations) != 3 {
+		t.Fatalf("native retry = %d durable attempts, %d credential lifecycles; want three and three", attempts, len(h.rotations))
+	}
+}
+
 func TestWorkOnTicketStopsBeforeSixthReviewOrTwentySixthAttempt(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -591,6 +676,7 @@ type workOnTicketHarness struct {
 	awaitCI     func(activities.TargetAwaitCIInput) (activities.AwaitCIOutput, error)
 	mergeResult func(activities.TargetMergePullRequestInput) (work.PullRequestMergeResult, error)
 	agentResult func(activities.TargetAgentInput) (activities.TargetAgentOutput, error)
+	agentWait   <-chan struct{}
 }
 
 func newWorkOnTicketHarness(t *testing.T, recorderStore *storefake.Store) *workOnTicketHarness {
@@ -653,6 +739,9 @@ func newWorkOnTicketHarness(t *testing.T, recorderStore *storefake.Store) *workO
 			}
 			if h.agentResult != nil {
 				return h.agentResult(in)
+			}
+			if h.agentWait != nil && in.Stage == work.AgentStageImplement {
+				<-h.agentWait
 			}
 			return targetAgentOutput(t, in.Stage), nil
 		},
