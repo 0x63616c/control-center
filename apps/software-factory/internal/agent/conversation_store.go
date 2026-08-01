@@ -60,7 +60,11 @@ func (store ConversationStore) Append(
 	if err := store.blobs.Put(ctx, key, encoded); err != nil {
 		return ConversationRef{}, fmt.Errorf("store conversation revision %d: %w", revision, err)
 	}
-	return ConversationRef{Key: key.String(), Revision: revision, Bytes: int64(len(encoded)), Digest: digest}, nil
+	bytes := int64(len(encoded))
+	if predecessor != nil {
+		bytes += predecessor.Bytes
+	}
+	return ConversationRef{Key: key.String(), Revision: revision, Bytes: bytes, Digest: digest}, nil
 }
 
 // Load reads and verifies one immutable conversation revision.
@@ -80,12 +84,16 @@ func (store ConversationStore) Load(ctx context.Context, ref ConversationRef) (C
 	if hex.EncodeToString(actualDigest[:]) != ref.Digest {
 		return ConversationRevision{}, fmt.Errorf("load conversation revision %d: digest mismatch", ref.Revision)
 	}
-	if int64(len(encoded)) != ref.Bytes {
-		return ConversationRevision{}, fmt.Errorf("load conversation revision %d: byte count mismatch", ref.Revision)
-	}
 	var revision ConversationRevision
 	if err := json.Unmarshal(encoded, &revision); err != nil {
 		return ConversationRevision{}, fmt.Errorf("decode conversation revision %d: %w", ref.Revision, err)
+	}
+	expectedBytes := int64(len(encoded))
+	if revision.Predecessor != nil {
+		expectedBytes += revision.Predecessor.Bytes
+	}
+	if expectedBytes != ref.Bytes {
+		return ConversationRevision{}, fmt.Errorf("load conversation revision %d: byte count mismatch", ref.Revision)
 	}
 	return revision, nil
 }

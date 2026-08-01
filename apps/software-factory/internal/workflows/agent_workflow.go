@@ -50,6 +50,9 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (AgentWorkflo
 	}
 	result := AgentWorkflowResult{TranscriptRef: prepared.TranscriptRef, UsageMeasured: true}
 	conversationRef := prepared.ConversationRef
+	if conversationRef.Bytes > input.Limits.MaxConversationBytes {
+		return result, agentBudgetError("agent conversation budget exhausted", "AgentConversationBudget")
+	}
 	var sessionContext workflow.Context
 	for modelTurn := 1; modelTurn <= input.Limits.MaxModelTurns; modelTurn++ {
 		var turn agent.ModelTurnResult
@@ -64,6 +67,15 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (AgentWorkflo
 		result.Usage = result.Usage.Add(turn.Usage)
 		result.UsageMeasured = result.UsageMeasured && turn.UsageMeasured
 		conversationRef = turn.ConversationRef
+		if result.UsageMeasured && result.Usage.InputTokens > input.Limits.MaxInputTokens {
+			return result, agentBudgetError("agent input-token budget exhausted", "AgentInputTokenBudget")
+		}
+		if result.UsageMeasured && result.Usage.OutputTokens > input.Limits.MaxOutputTokens {
+			return result, agentBudgetError("agent output-token budget exhausted", "AgentOutputTokenBudget")
+		}
+		if conversationRef.Bytes > input.Limits.MaxConversationBytes {
+			return result, agentBudgetError("agent conversation budget exhausted", "AgentConversationBudget")
+		}
 		switch turn.Outcome {
 		case agent.OutcomeToolCalls:
 			if len(turn.ToolCalls) == 0 {
@@ -110,6 +122,9 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (AgentWorkflo
 				}
 				conversationRef = toolOutput.ConversationRef
 				result.ToolCalls++
+				if conversationRef.Bytes > input.Limits.MaxConversationBytes {
+					return result, agentBudgetError("agent conversation budget exhausted", "AgentConversationBudget")
+				}
 			}
 			continue
 		case agent.OutcomeFinalText:
@@ -130,6 +145,10 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (AgentWorkflo
 		return result, nil
 	}
 	return result, temporal.NewNonRetryableApplicationError("agent model-turn budget exhausted", "AgentModelTurnBudget", nil)
+}
+
+func agentBudgetError(message, errorType string) error {
+	return temporal.NewNonRetryableApplicationError(message, errorType, nil)
 }
 
 func validateAgentInput(input AgentWorkflowInput) error {

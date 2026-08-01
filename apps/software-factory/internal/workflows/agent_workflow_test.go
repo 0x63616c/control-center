@@ -2,6 +2,7 @@ package workflows_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
@@ -10,6 +11,7 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/workflows"
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/worker"
 )
@@ -65,6 +67,61 @@ func TestAgentWorkflowCompletesFromOneFinalModelTurn(t *testing.T) {
 	if result.Result.Prose() != "the plan" || result.ModelTurns != 1 || result.ToolCalls != 0 ||
 		result.Usage.InputTokens != 10 || !result.UsageMeasured {
 		t.Fatalf("AgentWorkflow result = %#v", result)
+	}
+}
+
+func TestAgentWorkflowStopsAtModelToolAndTokenBudgets(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		limits    agent.Limits
+		turn      agent.ModelTurnResult
+		wantType  string
+		wantTools int
+	}{
+		{name: "model turns", limits: agent.Limits{MaxModelTurns: 1, MaxToolCalls: 2, MaxInputTokens: 100, MaxOutputTokens: 100, MaxConversationBytes: 1000, ContinueAsNewAfter: 20},
+			turn: agent.ModelTurnResult{Outcome: agent.OutcomeToolCalls, ConversationRef: agent.ConversationRef{Revision: 1, Bytes: 100}, ToolCalls: []agent.PendingToolCall{{CallID: "call_1", Name: "read_file"}}, UsageMeasured: true}, wantType: "AgentModelTurnBudget", wantTools: 1},
+		{name: "tool calls", limits: agent.Limits{MaxModelTurns: 2, MaxToolCalls: 0, MaxInputTokens: 100, MaxOutputTokens: 100, MaxConversationBytes: 1000, ContinueAsNewAfter: 20},
+			turn: agent.ModelTurnResult{Outcome: agent.OutcomeToolCalls, ConversationRef: agent.ConversationRef{Revision: 1, Bytes: 100}, ToolCalls: []agent.PendingToolCall{{CallID: "call_1", Name: "read_file"}}, UsageMeasured: true}, wantType: "AgentToolCallBudget"},
+		{name: "input tokens", limits: agent.Limits{MaxModelTurns: 2, MaxToolCalls: 2, MaxInputTokens: 9, MaxOutputTokens: 100, MaxConversationBytes: 1000, ContinueAsNewAfter: 20},
+			turn: agent.ModelTurnResult{Outcome: agent.OutcomeFinalText, ConversationRef: agent.ConversationRef{Revision: 1, Bytes: 100}, FinalTextRef: agent.TextRef{Key: "text"}, Usage: work.Usage{InputTokens: 10}, UsageMeasured: true}, wantType: "AgentInputTokenBudget"},
+		{name: "output tokens", limits: agent.Limits{MaxModelTurns: 2, MaxToolCalls: 2, MaxInputTokens: 100, MaxOutputTokens: 9, MaxConversationBytes: 1000, ContinueAsNewAfter: 20},
+			turn: agent.ModelTurnResult{Outcome: agent.OutcomeFinalText, ConversationRef: agent.ConversationRef{Revision: 1, Bytes: 100}, FinalTextRef: agent.TextRef{Key: "text"}, Usage: work.Usage{OutputTokens: 10}, UsageMeasured: true}, wantType: "AgentOutputTokenBudget"},
+		{name: "conversation bytes", limits: agent.Limits{MaxModelTurns: 2, MaxToolCalls: 2, MaxInputTokens: 100, MaxOutputTokens: 100, MaxConversationBytes: 99, ContinueAsNewAfter: 20},
+			turn: agent.ModelTurnResult{Outcome: agent.OutcomeFinalText, ConversationRef: agent.ConversationRef{Revision: 1, Bytes: 100}, FinalTextRef: agent.TextRef{Key: "text"}, UsageMeasured: true}, wantType: "AgentConversationBudget"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			suite := &testsuite.WorkflowTestSuite{}
+			environment := suite.NewTestWorkflowEnvironment()
+			environment.SetWorkerOptions(worker.Options{EnableSessionWorker: true, MaxConcurrentSessionExecutionSize: 1})
+			environment.RegisterActivityWithOptions(func(context.Context, agentactivities.PrepareInput) (agentactivities.PrepareOutput, error) {
+				return agentactivities.PrepareOutput{ConversationRef: agent.ConversationRef{Revision: 0, Bytes: 50}}, nil
+			}, activity.RegisterOptions{Name: agent.PrepareActivityName})
+			environment.RegisterActivityWithOptions(func(context.Context, agent.ModelTurnInput) (agent.ModelTurnResult, error) {
+				return test.turn, nil
+			}, activity.RegisterOptions{Name: agent.ModelTurnActivityName})
+			tools := 0
+			environment.RegisterActivityWithOptions(func(_ context.Context, input agent.ToolInput) (agent.ToolOutput, error) {
+				tools++
+				return agent.ToolOutput{CallID: input.Call.CallID, ConversationRef: agent.ConversationRef{Revision: 2, Bytes: 100}}, nil
+			}, activity.RegisterOptions{Name: agent.ToolActivityName})
+			environment.RegisterActivityWithOptions(func(context.Context, agentactivities.FinalizeInput) (agentactivities.FinalizeOutput, error) {
+				t.Fatal("finalize activity must not run after a budget is exhausted")
+				return agentactivities.FinalizeOutput{}, nil
+			}, activity.RegisterOptions{Name: agent.FinalizeActivityName})
+			input := validAgentWorkflowInput(work.StageImplement)
+			input.Limits = test.limits
+			environment.ExecuteWorkflow(workflows.AgentWorkflow, input)
+			var applicationError *temporal.ApplicationError
+			if !errors.As(environment.GetWorkflowError(), &applicationError) || applicationError.Type() != test.wantType || !applicationError.NonRetryable() {
+				t.Fatalf("workflow error = %v, want non-retryable %q", environment.GetWorkflowError(), test.wantType)
+			}
+			if tools != test.wantTools {
+				t.Fatalf("tool calls = %d, want %d", tools, test.wantTools)
+			}
+		})
 	}
 }
 
