@@ -14,6 +14,7 @@ cred_dir="$(mktemp -d)"
 trap 'rm -rf "$cred_dir"' EXIT
 printf '%s' 'bot[bot]' >"$cred_dir/login"
 printf '%s' 'smoke-token' >"$cred_dir/token"
+chmod 0755 "$cred_dir"
 chmod 0644 "$cred_dir/login" "$cred_dir/token"
 
 docker run --rm --platform linux/amd64 \

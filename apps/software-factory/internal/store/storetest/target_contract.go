@@ -438,7 +438,6 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 			t.Fatalf("attempt history = %+v, want failed attempt 1 then authorized attempt 2", attempts)
 		}
 	})
-
 	t.Run("failed agent checkpoint preserves running transcript", func(t *testing.T) {
 		s, _, runID, startedAt := claimedRun(t, newStore(t))
 		ctx := context.Background()
