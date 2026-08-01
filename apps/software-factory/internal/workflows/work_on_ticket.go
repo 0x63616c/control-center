@@ -987,10 +987,6 @@ func terminalFailureKind(err error) (work.RunOutcome, work.RunFailureKind, bool)
 			return work.RunOutcomeFailed, work.RunFailureRunWorkerUnavailable, true
 		case activities.ErrTypeSemanticDeadline:
 			return work.RunOutcomeFailed, work.RunFailureSemanticDeadline, true
-		case activities.ErrTypeAgentAttemptBudget:
-			return work.RunOutcomeExhausted, work.RunFailureAgentAttemptBudget, true
-		case activities.ErrTypeReviewBudget:
-			return work.RunOutcomeExhausted, work.RunFailureReviewBudget, true
 		}
 	}
 	return work.RunOutcomeFailed, work.RunFailureInfrastructure, true
@@ -1014,16 +1010,6 @@ func optionalPullRequest(pullRequest work.PullRequest) *work.PullRequest {
 		return nil
 	}
 	return &pullRequest
-}
-
-func exhaustedReviewSteps(limit int) error {
-	return temporal.NewNonRetryableApplicationError(
-		fmt.Sprintf("target run exhausted its %d review-step budget", limit), activities.ErrTypeReviewBudget, nil)
-}
-
-func exhaustedAgentAttempts(limit int) error {
-	return temporal.NewNonRetryableApplicationError(
-		fmt.Sprintf("target run exhausted its %d agent-attempt budget", limit), activities.ErrTypeAgentAttemptBudget, nil)
 }
 
 func implementTitle(out work.StageOutput) string {

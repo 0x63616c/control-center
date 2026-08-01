@@ -1,5 +1,10 @@
 # Software Factory Agent Workflow
 
+> Update (2026-08-01): fixed model-turn, tool-call, token, conversation-size,
+> Agent Attempt, and Review Step budgets described below were removed. Runs are
+> bounded by Temporal deadlines; Continue-As-New still controls history size.
+> Budget details remain only as the historical design that shipped before this change.
+
 **Status:** implemented; production CI and cutover remain
 **Date:** 2026-07-31  
 **Scope:** `apps/software-factory`  
