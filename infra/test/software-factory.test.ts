@@ -121,7 +121,7 @@ interface Container {
 interface PodSpec {
   serviceAccountName?: string;
   automountServiceAccountToken?: boolean;
-  securityContext?: { fsGroup?: number; runAsUser?: number };
+  securityContext?: { fsGroup?: number; runAsUser?: number; runAsGroup?: number };
   containers: Container[];
 }
 interface DeploymentSpec {

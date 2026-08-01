@@ -113,7 +113,7 @@ func (c *Client) Turn(ctx context.Context, request TurnRequest, emit EmitFunc) (
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 			return TurnResult{}, fmt.Errorf("%w: %w", ErrAuth, err)
 		}
-		return TurnResult{}, fmt.Errorf("Codex Responses request failed: %w", err)
+		return TurnResult{}, fmt.Errorf("responses request failed: %w", err)
 	}
 
 	result, err := parseStream(resp.Body, emit)
