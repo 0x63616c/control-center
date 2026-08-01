@@ -576,6 +576,46 @@ func TestFactoryWorkTicketRunsPlanImplementAndReviewAsAgentChildren(t *testing.T
 	}
 }
 
+func TestFactoryWorkTicketGivesEachImplementAttemptDistinctChildAndCacheIdentity(t *testing.T) {
+	t.Parallel()
+
+	h := newFactoryTicketHarness(t)
+	h.review[1] = []work.Finding{{ID: "f1", Blocking: true, Summary: "fix this"}}
+	h.runVersion(1)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+
+	var implements []workflows.AgentWorkflowInput
+	var implementChildIDs []string
+	var reviewers []workflows.AgentWorkflowInput
+	for index, child := range h.agentChildren {
+		switch child.Attempt.Key.Stage {
+		case work.StagePlan:
+		case work.StageImplement:
+			implements = append(implements, child)
+			implementChildIDs = append(implementChildIDs, h.agentChildIDs[index])
+		case work.StageReview:
+			reviewers = append(reviewers, child)
+		}
+	}
+	if len(implements) != 2 || implements[0].Attempt.Key.Turn != 1 || implements[1].Attempt.Key.Turn != 2 {
+		t.Fatalf("implement children = %#v", implements)
+	}
+	if implements[0].CacheKey == implements[1].CacheKey || implements[0].CacheKey != "agent/"+h.done.RunID+"/implement/1" || implements[1].CacheKey != "agent/"+h.done.RunID+"/implement/2" {
+		t.Fatalf("implement cache keys = %q, %q", implements[0].CacheKey, implements[1].CacheKey)
+	}
+	if len(implementChildIDs) != 2 || implementChildIDs[0] != agent.WorkflowID(h.done.RunID, "implement", 1) ||
+		implementChildIDs[1] != agent.WorkflowID(h.done.RunID, "implement", 2) || implementChildIDs[0] == implementChildIDs[1] {
+		t.Fatalf("implement child workflow IDs = %v", implementChildIDs)
+	}
+	for _, reviewer := range reviewers {
+		if reviewer.Seed != nil {
+			t.Fatalf("review child inherited an implement conversation seed: %#v", reviewer.Seed)
+		}
+	}
+}
+
 func TestFactoryWorkTicketPushesCommittedImplementBeforePullRequestAndCI(t *testing.T) {
 	t.Parallel()
 

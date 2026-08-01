@@ -83,6 +83,43 @@ func TestAgentWorkflowCompletesFromOneFinalModelTurn(t *testing.T) {
 	}
 }
 
+func TestAgentWorkflowPassesAConversationSeedToPrepare(t *testing.T) {
+	t.Parallel()
+
+	suite := &testsuite.WorkflowTestSuite{}
+	environment := suite.NewTestWorkflowEnvironment()
+	registerAgentLifecycle(environment, nil)
+	input := validAgentWorkflowInput(work.StageImplement)
+	input.Attempt.Key.Turn = 2
+	seed := &agent.ConversationSeed{
+		Source:          work.StageKey{Ticket: 7, RunID: "run-7", Stage: work.StageImplement, Turn: 1},
+		SourceIdentity:  "agent/run-7/step/8/attempt/1",
+		ConversationRef: agent.ConversationRef{Key: "conversations/agent/run-7/implement/1/0/digest", Bytes: 1, Digest: "digest"},
+	}
+	input.Seed = seed
+	conversationRef := agent.ConversationRef{Key: "conversations/agent/run-7/implement/2/1/digest", Revision: 1, Bytes: 2, Digest: "digest"}
+	environment.RegisterActivityWithOptions(func(_ context.Context, prepared agentactivities.PrepareInput) (agentactivities.PrepareOutput, error) {
+		if prepared.Attempt.Key != input.Attempt.Key || prepared.Seed == nil || *prepared.Seed != *seed {
+			t.Fatalf("Prepare input = %#v", prepared)
+		}
+		return agentactivities.PrepareOutput{ConversationRef: conversationRef}, nil
+	}, activity.RegisterOptions{Name: agent.PrepareActivityName})
+	environment.RegisterActivityWithOptions(func(_ context.Context, turn agent.ModelTurnInput) (agent.ModelTurnResult, error) {
+		return agent.ModelTurnResult{
+			Outcome: agent.OutcomeFinalText, ToolsetFingerprint: testToolsetFingerprint,
+			ConversationRef: conversationRef, FinalTextRef: agent.TextRef{Key: "text"}, UsageMeasured: true,
+		}, nil
+	}, activity.RegisterOptions{Name: agent.ModelTurnActivityName})
+	environment.RegisterActivityWithOptions(func(context.Context, agentactivities.FinalizeInput) (agentactivities.FinalizeOutput, error) {
+		return agentactivities.FinalizeOutput{Result: work.NewStageOutput(work.StageImplement, work.ImplementOutput{Report: "done"})}, nil
+	}, activity.RegisterOptions{Name: agent.FinalizeActivityName})
+
+	environment.ExecuteWorkflow(workflows.AgentWorkflow, input)
+	if err := environment.GetWorkflowError(); err != nil {
+		t.Fatalf("AgentWorkflow error = %v", err)
+	}
+}
+
 func TestAgentWorkflowRequestsCancellationOfTheActiveTool(t *testing.T) {
 	t.Parallel()
 
@@ -153,8 +190,15 @@ func TestAgentWorkflowContinuesAsNewWithOnlyReferences(t *testing.T) {
 	input := validAgentWorkflowInput(work.StageImplement)
 	identity := work.RunWorkerIdentity{RunID: "019fb900-0000-7000-8000-000000000001", Generation: 2}
 	input.Attempt.Key.RunID = identity.RunID
+	input.Attempt.Key.Turn = 2
+	input.Identity = "agent/019fb900-0000-7000-8000-000000000001/step/9/attempt/2"
 	input.ToolTarget = agent.ToolTarget{Kind: agent.ToolTargetRunWorker, RunWorkerIdentity: identity}
 	input.Attempt.Detail = work.TicketDetail{Ticket: work.Ticket{Number: 7, Body: conversationBody}}
+	input.Seed = &agent.ConversationSeed{
+		Source:          work.StageKey{Ticket: 7, RunID: identity.RunID, Stage: work.StageImplement, Turn: 1},
+		SourceIdentity:  "agent/019fb900-0000-7000-8000-000000000001/step/8/attempt/1",
+		ConversationRef: agent.ConversationRef{Key: "conversations/agent/seed/0/digest", Bytes: 1, Digest: "digest"},
+	}
 	input.Limits.ContinueAsNewAfter = 1
 	environment.ExecuteWorkflow(workflows.AgentWorkflow, input)
 
@@ -176,6 +220,9 @@ func TestAgentWorkflowContinuesAsNewWithOnlyReferences(t *testing.T) {
 	}
 	if next.ToolTarget != input.ToolTarget {
 		t.Fatalf("continued tool target = %#v, want %#v", next.ToolTarget, input.ToolTarget)
+	}
+	if next.Seed == nil || *next.Seed != *input.Seed {
+		t.Fatalf("continued seed = %#v, want %#v", next.Seed, input.Seed)
 	}
 	if next.Attempt.Detail != (work.TicketDetail{}) || next.Attempt.Prior.Plan.Prose() != "" ||
 		next.Attempt.Prior.LatestImplement.Prose() != "" || next.Attempt.Prior.LatestReview.Prose() != "" ||

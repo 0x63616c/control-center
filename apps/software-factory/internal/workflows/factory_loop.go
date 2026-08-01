@@ -287,7 +287,7 @@ func (r *factoryTicketRun) runAgentStage(
 	input := AgentWorkflowInput{
 		Attempt: attempt, ToolsetID: toolsetID,
 		ToolTarget: agent.ToolTarget{Kind: agent.ToolTargetLegacySandbox}, Limits: agent.DefaultLimits(),
-		CacheKey: fmt.Sprintf("agent/%s/%s", r.runID, attempt.Key.Stage),
+		CacheKey: fmt.Sprintf("agent/%s/%s/%d", r.runID, attempt.Key.Stage, attempt.Key.Turn),
 	}
 	var result AgentWorkflowResult
 	err := workflow.ExecuteChildWorkflow(child, AgentWorkflow, input).Get(ctx, &result)

@@ -36,11 +36,12 @@ type PromptRenderer interface {
 
 // PrepareInput contains the bounded parent-owned stage attempt.
 type PrepareInput struct {
-	Attempt  activities.StageAttempt
-	CacheKey string
+	Attempt activities.StageAttempt
 	// Identity is the durable semantic execution identity. Empty retains the
 	// stage-key-derived identity required by pre-target-run histories.
 	Identity string
+	CacheKey string
+	Seed     *agent.ConversationSeed
 }
 
 // PrepareOutput starts the reference-only workflow state.

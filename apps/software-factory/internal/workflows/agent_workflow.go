@@ -20,10 +20,11 @@ type AgentWorkflowInput struct {
 	ToolsetID  agent.ToolsetID
 	ToolTarget agent.ToolTarget
 	Limits     agent.Limits
-	CacheKey   string
 	// Identity pins every durable agent artifact to one semantic execution.
 	// Empty preserves the pre-target-run stage identity for existing histories.
 	Identity string
+	CacheKey string
+	Seed     *agent.ConversationSeed
 	State    *AgentWorkflowState
 }
 
@@ -63,6 +64,12 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (workflowResu
 			fmt.Sprintf("resolve agent tool target: %v", err), agent.ErrorTypeInvalidInput, err,
 		)
 	}
+	identity, err := agent.ConversationIdentity(input.Identity, input.Attempt.Key)
+	if err != nil {
+		return AgentWorkflowResult{}, temporal.NewNonRetryableApplicationError(
+			fmt.Sprintf("resolve agent conversation identity: %v", err), agent.ErrorTypeInvalidInput, err,
+		)
+	}
 	mainContext := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 		StartToCloseTimeout: 2 * time.Minute,
 		HeartbeatTimeout:    15 * time.Second,
@@ -74,7 +81,7 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (workflowResu
 	if input.State == nil {
 		var prepared agentactivities.PrepareOutput
 		if err := workflow.ExecuteActivity(mainContext, agent.PrepareActivityName, agentactivities.PrepareInput{
-			Attempt: input.Attempt, CacheKey: input.CacheKey, Identity: input.Identity,
+			Attempt: input.Attempt, Identity: identity, CacheKey: input.CacheKey, Seed: input.Seed,
 		}).Get(ctx, &prepared); err != nil {
 			return AgentWorkflowResult{}, fmt.Errorf("prepare agent workflow: %w", err)
 		}
@@ -115,7 +122,7 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (workflowResu
 			Model: input.Attempt.Model, ToolsetID: input.ToolsetID, ToolsetFingerprint: state.ToolsetFingerprint,
 			ConversationRef: conversationRef, TranscriptRef: result.TranscriptRef,
 			ResponseFormat: state.ResponseFormat, PromptCacheKey: state.PromptCacheKey, ModelTurn: modelTurn,
-			IdempotencyKey: fmt.Sprintf("%s/model/%d", agentWorkflowIdentity(input), modelTurn),
+			IdempotencyKey: fmt.Sprintf("%s/model/%d", identity, modelTurn),
 		}).Get(ctx, &turn); err != nil {
 			return result, fmt.Errorf("run agent model turn %d: %w", modelTurn, err)
 		}
@@ -279,17 +286,11 @@ func continueAgentWorkflowAsNew(ctx workflow.Context, input AgentWorkflowInput, 
 		ToolsetID:  input.ToolsetID,
 		ToolTarget: input.ToolTarget,
 		Limits:     input.Limits,
-		CacheKey:   input.CacheKey,
 		Identity:   input.Identity,
+		CacheKey:   input.CacheKey,
+		Seed:       input.Seed,
 		State:      &state,
 	})
-}
-
-func agentWorkflowIdentity(input AgentWorkflowInput) string {
-	if input.Identity != "" {
-		return input.Identity
-	}
-	return agent.WorkflowID(input.Attempt.Key.RunID, string(input.Attempt.Key.Stage), input.Attempt.Key.Turn)
 }
 
 func agentBudgetError(message, errorType string) error {
@@ -310,6 +311,14 @@ func validateAgentInput(input AgentWorkflowInput) error {
 	if input.Limits.MaxModelTurns < 1 || input.Limits.MaxToolCalls < 0 || input.Limits.MaxInputTokens < 1 ||
 		input.Limits.MaxOutputTokens < 1 || input.Limits.MaxConversationBytes < 1 || input.Limits.ContinueAsNewAfter < 1 {
 		return fmt.Errorf("agent workflow limits must be positive")
+	}
+	if _, err := agent.ConversationIdentity(input.Identity, input.Attempt.Key); err != nil {
+		return fmt.Errorf("validate agent workflow conversation identity: %w", err)
+	}
+	if input.Seed != nil {
+		if err := input.Seed.ValidateFor(input.Attempt.Key); err != nil {
+			return fmt.Errorf("validate agent workflow conversation seed: %w", err)
+		}
 	}
 	if input.State != nil {
 		if input.State.ModelTurns < 0 || input.State.ToolCalls < 0 || input.State.TurnsSinceContinueAsNew < 0 {
