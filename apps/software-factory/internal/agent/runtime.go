@@ -58,6 +58,20 @@ type PendingToolCall struct {
 	ArgumentsRef ArgumentsRef `json:"arguments_ref"`
 }
 
+// ToolInput routes one pending model call to the sandbox activity.
+type ToolInput struct {
+	ToolsetID       ToolsetID       `json:"toolset_id"`
+	ConversationRef ConversationRef `json:"conversation_ref"`
+	Call            PendingToolCall `json:"call"`
+}
+
+// ToolOutput is the bounded durable result of one sandbox tool activity.
+type ToolOutput struct {
+	CallID          string          `json:"call_id"`
+	ConversationRef ConversationRef `json:"conversation_ref"`
+	IsError         bool            `json:"is_error"`
+}
+
 // ModelTurnResult is the bounded durable outcome of one provider activity.
 type ModelTurnResult struct {
 	Outcome         TurnOutcome       `json:"outcome"`
