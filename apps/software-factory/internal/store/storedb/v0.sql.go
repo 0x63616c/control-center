@@ -88,6 +88,37 @@ func (q *Queries) BindTargetAttemptCapability(ctx context.Context, arg BindTarge
 	return i, err
 }
 
+const bindTargetRepositoryCapability = `-- name: BindTargetRepositoryCapability :one
+INSERT INTO run_repository_capability (run_id, generation, capability_hash)
+SELECT $1, $2, $3
+WHERE EXISTS (
+    SELECT 1 FROM run
+    JOIN ticket ON ticket.id = run.ticket_id
+    WHERE run.id = $1 AND run.target_outcome IS NULL
+      AND ticket.state = 'active' AND ticket.active_run_id = run.id
+)
+ON CONFLICT (run_id) DO UPDATE SET
+    generation = EXCLUDED.generation,
+    capability_hash = EXCLUDED.capability_hash
+WHERE run_repository_capability.generation < EXCLUDED.generation
+   OR (run_repository_capability.generation = EXCLUDED.generation
+       AND run_repository_capability.capability_hash = EXCLUDED.capability_hash)
+RETURNING run_id, generation, capability_hash
+`
+
+type BindTargetRepositoryCapabilityParams struct {
+	RunID          pgtype.UUID
+	Generation     int64
+	CapabilityHash string
+}
+
+func (q *Queries) BindTargetRepositoryCapability(ctx context.Context, arg BindTargetRepositoryCapabilityParams) (RunRepositoryCapability, error) {
+	row := q.db.QueryRow(ctx, bindTargetRepositoryCapability, arg.RunID, arg.Generation, arg.CapabilityHash)
+	var i RunRepositoryCapability
+	err := row.Scan(&i.RunID, &i.Generation, &i.CapabilityHash)
+	return i, err
+}
+
 const checkpointTargetAgentAttempt = `-- name: CheckpointTargetAgentAttempt :one
 UPDATE run_agent_attempt SET
     provider_thread_id = $4,
@@ -821,6 +852,17 @@ func (q *Queries) TargetGitCheckpoint(ctx context.Context, runID pgtype.UUID) (R
 		&i.PullRequestNodeID,
 		&i.StepResult,
 	)
+	return i, err
+}
+
+const targetRepositoryCapabilityForUpdate = `-- name: TargetRepositoryCapabilityForUpdate :one
+SELECT run_id, generation, capability_hash FROM run_repository_capability WHERE run_id = $1 FOR UPDATE
+`
+
+func (q *Queries) TargetRepositoryCapabilityForUpdate(ctx context.Context, runID pgtype.UUID) (RunRepositoryCapability, error) {
+	row := q.db.QueryRow(ctx, targetRepositoryCapabilityForUpdate, runID)
+	var i RunRepositoryCapability
+	err := row.Scan(&i.RunID, &i.Generation, &i.CapabilityHash)
 	return i, err
 }
 

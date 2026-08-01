@@ -253,6 +253,12 @@ jobs:
         # no arm64 leg or QEMU emulation creeps back in. The home-server Talos
         # node is the only deploy target and is x86.
         run: bash scripts/test-build-matrix.sh
+      - name: Software-factory image CI coverage guard
+        # `infra/src/services.ts` is the source of truth for factory images.
+        # Every entry needs both a producer and a digest collector: without
+        # either, prod's required-pin check turns a green merge into a failed
+        # deploy, or worse, a target image is never published at all.
+        run: bash scripts/test-software-factory-image-ci.sh
       - name: Control Center cutover tooling tests
         # Hermetic self-tests of the M7 production-cutover tooling (www-jtp0.7):
         # the red-first preflight gate (refuses cutover until rehearsal/snapshot/
@@ -415,6 +421,51 @@ jobs:
           # reverse) teaches people to distrust it.
           version: v2.12.2
           working-directory: apps/software-factory
+
+  # Real-Temporal Session coverage is intentionally separate from the fast,
+  # hermetic unit/race suite above. CI installs the pinned CLI before the
+  # mandatory suite and reuses it from the runner cache, so test execution has
+  # no network dependency.
+  test-software-factory-session:
+    needs: [changes]
+    if: needs.changes.outputs.softwarefactory == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/software-factory
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/software-factory/go.mod
+          cache-dependency-path: apps/software-factory/go.sum
+      - name: Resolve pinned Temporal CLI version
+        id: temporal-cli
+        run: |
+          version="$(tr -d '\n' < internal/runworkercapability/temporal-cli-version.txt)"
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Cache pinned Temporal dev server
+        id: temporal-cli-cache
+        uses: actions/cache@v5
+        with:
+          path: /tmp/software-factory-temporal-cli
+          key: temporal-cli-${{ runner.os }}-${{ runner.arch }}-${{ steps.temporal-cli.outputs.version }}
+      - name: Install pinned Temporal CLI on cache miss
+        if: steps.temporal-cli-cache.outputs.cache-hit != 'true'
+        uses: temporalio/setup-temporal@1059a504f87e7fa2f385e3fa40d1aa7e62f1c6ca # v0
+        with:
+          version: ${{ steps.temporal-cli.outputs.version }}
+      - name: Stage pinned Temporal dev server on cache miss
+        if: steps.temporal-cli-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p /tmp/software-factory-temporal-cli
+          cp "$(command -v temporal)" \
+            "/tmp/software-factory-temporal-cli/temporal-cli-${{ steps.temporal-cli.outputs.version }}"
+          chmod 700 "/tmp/software-factory-temporal-cli/temporal-cli-${{ steps.temporal-cli.outputs.version }}"
+      - name: Test Run Worker Sessions (real Temporal, race detector)
+        run: go test -race -count=1 -tags=integration ./internal/runworkercapability
 
   # Generated API artefacts are committed. Regenerate before diffing so this
   # stops a spec or client change from reaching deploy without its contract.
@@ -641,6 +692,31 @@ jobs:
           docker image inspect --format 'sandbox image size: {{.Size}} bytes' sf-sandbox:ci
           apps/software-factory/images/sandbox/smoke.sh sf-sandbox:ci
 
+  build-software-factory-run-worker:
+    needs: [changes]
+    if: needs.changes.outputs.softwarefactory == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build and push software-factory Run Worker image
+        uses: ./.github/actions/build-product-image
+        env:
+          SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
+        with:
+          image: www-software-factory-run-worker
+          dockerfile: apps/software-factory/images/run-worker/Dockerfile
+          cache-scope: software-factory-run-worker
+
+      - name: Smoke-test the Run Worker image contract
+        run: |
+          docker buildx build --platform linux/amd64 --load \
+            -f apps/software-factory/images/run-worker/Dockerfile \
+            -t sf-run-worker:ci .
+          docker image inspect --format 'Run Worker image size: {{.Size}} bytes' sf-run-worker:ci
+          apps/software-factory/images/run-worker/smoke.sh sf-run-worker:ci
+
   build-software-factory-relay:
     needs: [changes]
     if: needs.changes.outputs.softwarefactory == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
@@ -758,12 +834,14 @@ jobs:
         build-map-provision,
         build-software-factory-worker,
         build-software-factory-sandbox,
+        build-software-factory-run-worker,
         build-software-factory-relay,
         build-software-factory-api,
         build-software-factory-blobs,
         build-software-factory-codec,
         build-software-factory-console,
         test-software-factory,
+        test-software-factory-session,
         check-software-factory-generated,
       ]
     # always() lets us run even when some build jobs were skipped (no changes).
@@ -857,7 +935,7 @@ jobs:
           # KEY is product-component scoped and matches the Pulumi imageDigests
           # config key, while repo names use full product slugs.
           declare -A out=()
-          for entry in www-control-center-web:control-center-web www-control-center-manage:control-center-manage www-control-center-api:control-center-api www-control-center-worker:control-center-worker www-control-center-temporal-worker:control-center-temporal-worker www-control-center-map-provision:control-center-map-provision www-software-factory-worker:software-factory-worker www-software-factory-sandbox:software-factory-sandbox www-software-factory-relay:software-factory-relay www-software-factory-api:software-factory-api www-software-factory-blobs:software-factory-blobs www-software-factory-codec:software-factory-codec www-software-factory-console:software-factory-console; do
+          for entry in www-control-center-web:control-center-web www-control-center-manage:control-center-manage www-control-center-api:control-center-api www-control-center-worker:control-center-worker www-control-center-temporal-worker:control-center-temporal-worker www-control-center-map-provision:control-center-map-provision www-software-factory-worker:software-factory-worker www-software-factory-sandbox:software-factory-sandbox www-software-factory-run-worker:software-factory-run-worker www-software-factory-relay:software-factory-relay www-software-factory-api:software-factory-api www-software-factory-blobs:software-factory-blobs www-software-factory-codec:software-factory-codec www-software-factory-console:software-factory-console; do
             repo="${entry%%:*}"
             name="${entry#*:}"
             d=$(docker buildx imagetools inspect "ghcr.io/0x63616c/$repo:main" --format '{{.Manifest.Digest}}' 2>/dev/null || true)

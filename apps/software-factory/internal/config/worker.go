@@ -36,6 +36,13 @@ type Worker struct {
 	// deploy that set it.
 	SandboxImage string
 
+	// RunWorkerImage is the separately pinned target execution image.
+	RunWorkerImage string
+
+	// CheckpointAPIURL is projected into target Run Workers as a non-secret
+	// service address for their capability-authenticated evidence writes.
+	CheckpointAPIURL string
+
 	// MetricsAddr is what the metrics and health server listens on.
 	MetricsAddr string
 
@@ -129,6 +136,8 @@ const (
 	envTemporalNamespace      = "TEMPORAL_NAMESPACE"
 	envSandboxNamespace       = "SANDBOX_NAMESPACE"
 	envSandboxImage           = "SANDBOX_IMAGE"
+	envRunWorkerImage         = "RUN_WORKER_IMAGE"
+	envCheckpointAPIURL       = "CHECKPOINT_API_URL"
 	envMetricsAddr            = "METRICS_ADDR"
 	envPodName                = "POD_NAME"
 	envTranscriptsRoot        = "TRANSCRIPTS_ROOT"
@@ -150,6 +159,8 @@ func workerEnvNames() []string {
 		envTemporalNamespace,
 		envSandboxNamespace,
 		envSandboxImage,
+		envRunWorkerImage,
+		envCheckpointAPIURL,
 		envMetricsAddr,
 		envPodName,
 		envTranscriptsRoot,
@@ -171,6 +182,8 @@ func (w Worker) Validate() error {
 		envTemporalNamespace:      w.TemporalNamespace,
 		envSandboxNamespace:       w.SandboxNamespace,
 		envSandboxImage:           w.SandboxImage,
+		envRunWorkerImage:         w.RunWorkerImage,
+		envCheckpointAPIURL:       w.CheckpointAPIURL,
 		envMetricsAddr:            w.MetricsAddr,
 		envPodName:                w.PodName,
 		envTranscriptsRoot:        w.TranscriptsRoot,
@@ -199,6 +212,8 @@ func LoadWorker() (Worker, error) {
 		TemporalNamespace: os.Getenv(envTemporalNamespace),
 		SandboxNamespace:  os.Getenv(envSandboxNamespace),
 		SandboxImage:      os.Getenv(envSandboxImage),
+		RunWorkerImage:    os.Getenv(envRunWorkerImage),
+		CheckpointAPIURL:  os.Getenv(envCheckpointAPIURL),
 		MetricsAddr:       os.Getenv(envMetricsAddr),
 		PodName:           os.Getenv(envPodName),
 
@@ -242,6 +257,8 @@ func describeWorkerRequirement(err error) error {
 		envTemporalNamespace:      "the Temporal namespace this service's workflows live in",
 		envSandboxNamespace:       "the Kubernetes namespace per-ticket sandbox pods are created in",
 		envSandboxImage:           "the per-ticket sandbox image, pinned by digest",
+		envRunWorkerImage:         "the target Run Worker image, pinned by digest",
+		envCheckpointAPIURL:       "the in-cluster API used for target Attempt checkpoints",
 		envMetricsAddr:            "the address the metrics and health server listens on",
 		envPodName:                "this pod's own name, from the downward API; it identifies the credential lease holder",
 		envTranscriptsRoot:        "the mount point of the transcript volume, where stage transcripts are written",

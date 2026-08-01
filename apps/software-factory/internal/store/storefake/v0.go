@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
@@ -193,6 +194,25 @@ func (f *Store) CheckpointAgentAttempt(_ context.Context, in store.AgentCheckpoi
 	return attempt, nil
 }
 
+// LoadAgentCheckpoint authenticates the exact Attempt before returning its durable evidence.
+func (f *Store) LoadAgentCheckpoint(_ context.Context, id store.TargetAttemptID, capability string) (store.AgentAttempt, *store.TargetTranscript, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	attempt, ok := f.targetAttempts[id]
+	if !ok || f.capabilityHash[id] != capability {
+		return store.AgentAttempt{}, nil, false, fmt.Errorf("loading checkpoint: %w", store.ErrRunOwnership)
+	}
+	if attempt.State == work.AgentAttemptRunning && attempt.ProviderThreadID == "" {
+		return attempt, nil, false, nil
+	}
+	var transcript *store.TargetTranscript
+	if stored, exists := f.targetTranscripts[id]; exists {
+		copy := stored
+		transcript = &copy
+	}
+	return attempt, transcript, true, nil
+}
+
 func terminalAgentCheckpointMatches(attempt store.AgentAttempt, in store.AgentCheckpointInput) bool {
 	return attempt.State == in.State &&
 		attempt.ProviderThreadID == in.ThreadID &&
@@ -233,6 +253,79 @@ func jsonEqual(left, right json.RawMessage) bool {
 func (f *Store) CheckpointGitEffect(_ context.Context, in store.GitCheckpointInput) (store.GitCheckpoint, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	return f.checkpointGitEffectLocked(in, true)
+}
+
+// BindRepositoryCapability installs one monotonically increasing Run Worker
+// generation as the repository checkpoint owner.
+func (f *Store) BindRepositoryCapability(_ context.Context, identity work.RunWorkerIdentity, capability string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := identity.Validate(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(capability) == "" {
+		return fmt.Errorf("binding repository capability: capability is empty: %w", work.ErrPermanent)
+	}
+	if !f.targetRunOwnedLocked(identity.RunID) {
+		return fmt.Errorf("binding repository capability: %w", store.ErrRunOwnership)
+	}
+	current, exists := f.repositoryCapability[identity.RunID]
+	switch {
+	case !exists, current.generation < identity.Generation:
+		f.repositoryCapability[identity.RunID] = repositoryCapability{generation: identity.Generation, value: capability}
+		return nil
+	case current.generation == identity.Generation && current.value == capability:
+		return nil
+	default:
+		return fmt.Errorf("binding repository capability: conflicting or obsolete generation: %w", work.ErrPermanent)
+	}
+}
+
+// LoadRepositoryCheckpoint returns only the current generation's position.
+func (f *Store) LoadRepositoryCheckpoint(_ context.Context, identity work.RunWorkerIdentity, capability string) (store.GitCheckpoint, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := identity.Validate(); err != nil {
+		return store.GitCheckpoint{}, false, err
+	}
+	if !f.repositoryCapabilityMatchesLocked(identity, capability) {
+		return store.GitCheckpoint{}, false, fmt.Errorf("loading repository checkpoint: %w", store.ErrRunOwnership)
+	}
+	checkpoint, found := f.targetGit[identity.RunID]
+	return checkpoint, found, nil
+}
+
+// CheckpointRepository authenticates the generation before using the same
+// atomic Step/checkpoint transition as the privileged compatibility path.
+func (f *Store) CheckpointRepository(_ context.Context, in store.RepositoryCheckpointInput) (store.GitCheckpoint, error) {
+	return f.checkpointRepository(in, true)
+}
+
+// CheckpointRepositoryEffect preserves an external result for terminal
+// finalization without completing the owning Step.
+func (f *Store) CheckpointRepositoryEffect(_ context.Context, in store.RepositoryCheckpointInput) (store.GitCheckpoint, error) {
+	return f.checkpointRepository(in, false)
+}
+
+func (f *Store) checkpointRepository(in store.RepositoryCheckpointInput, completeStep bool) (store.GitCheckpoint, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := in.Identity.Validate(); err != nil {
+		return store.GitCheckpoint{}, err
+	}
+	if in.GitCheckpoint.RunID != in.Identity.RunID || !f.repositoryCapabilityMatchesLocked(in.Identity, in.Capability) {
+		return store.GitCheckpoint{}, fmt.Errorf("checkpointing repository effect: %w", store.ErrRunOwnership)
+	}
+	return f.checkpointGitEffectLocked(store.GitCheckpointInput{GitCheckpoint: in.GitCheckpoint, CompletedAt: in.CompletedAt}, completeStep)
+}
+
+func (f *Store) repositoryCapabilityMatchesLocked(identity work.RunWorkerIdentity, capability string) bool {
+	current, exists := f.repositoryCapability[identity.RunID]
+	return exists && f.targetRunOwnedLocked(identity.RunID) && current.generation == identity.Generation && current.value == capability
+}
+
+func (f *Store) checkpointGitEffectLocked(in store.GitCheckpointInput, completeStep bool) (store.GitCheckpoint, error) {
 	if !f.targetRunOwnedLocked(in.RunID) {
 		return store.GitCheckpoint{}, fmt.Errorf("checkpoint: %w", store.ErrRunOwnership)
 	}
@@ -243,7 +336,7 @@ func (f *Store) CheckpointGitEffect(_ context.Context, in store.GitCheckpointInp
 			return store.GitCheckpoint{}, fmt.Errorf("checkpoint: %w", work.ErrPermanent)
 		}
 		if previous.StepOrdinal == in.StepOrdinal {
-			if !stepExists || step.State != work.StepStateCompleted || !jsonEqual(step.Result, in.StepResult) {
+			if !stepExists || (completeStep && (step.State != work.StepStateCompleted || !jsonEqual(step.Result, in.StepResult))) || (!completeStep && step.State != work.StepStateRunning) {
 				return store.GitCheckpoint{}, fmt.Errorf("checkpoint: conflicting completed step: %w", work.ErrPermanent)
 			}
 			return previous, nil
@@ -256,8 +349,10 @@ func (f *Store) CheckpointGitEffect(_ context.Context, in store.GitCheckpointInp
 		return store.GitCheckpoint{}, fmt.Errorf("checkpoint: step is not running: %w", work.ErrPermanent)
 	}
 	f.targetGit[in.RunID] = in.GitCheckpoint
-	step.State, step.EndedAt, step.Result = work.StepStateCompleted, in.CompletedAt, in.StepResult
-	f.targetSteps[k] = step
+	if completeStep {
+		step.State, step.EndedAt, step.Result = work.StepStateCompleted, in.CompletedAt, in.StepResult
+		f.targetSteps[k] = step
+	}
 	return in.GitCheckpoint, nil
 }
 

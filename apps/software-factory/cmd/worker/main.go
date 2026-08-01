@@ -11,6 +11,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
+	checkpointclient "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/checkpoint"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codex"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/k8s"
@@ -163,7 +165,7 @@ func run() error {
 		return err
 	}
 
-	acts, err := newActivities(cfg, temporal, renderer, metrics, logger, factoryStore)
+	acts, runWorkerControl, err := newActivities(cfg, temporal, renderer, metrics, logger, factoryStore, factoryStore)
 	if err != nil {
 		return fmt.Errorf("building the activity set: %w", err)
 	}
@@ -187,7 +189,7 @@ func run() error {
 	// Registration site. Every workflow and activity set this worker runs is
 	// registered here, on this worker, and nowhere else — one queue, one
 	// worker, one list.
-	register(w, acts, ticketActs, recordingActs, transcriptActs, logger)
+	register(w, acts, runWorkerControl, ticketActs, recordingActs, transcriptActs, logger)
 
 	// Idempotent: a worker replica that loses the race to start this simply
 	// attaches to the execution the winner started, which is why it happens on
@@ -267,6 +269,7 @@ func newObservability() (*prometheus.Registry, *telemetry.Metrics) {
 func register(
 	w worker.Worker,
 	acts *activities.Activities,
+	runWorkerControl *activities.RunWorkerControlActivities,
 	ticketActs *activities.TicketActivities,
 	recordingActs *activities.RecordingActivities,
 	transcriptActs *activities.TranscriptRecordingActivities,
@@ -275,6 +278,7 @@ func register(
 	w.RegisterWorkflow(workflows.FactoryWorkTicket)
 	w.RegisterWorkflow(workflows.FactoryDispatcher)
 	w.RegisterActivity(acts)
+	w.RegisterActivity(runWorkerControl)
 	w.RegisterActivity(ticketActs)
 	w.RegisterActivity(recordingActs)
 	w.RegisterActivity(transcriptActs)
@@ -325,36 +329,68 @@ func ensureFactoryDispatcher(ctx context.Context, c dispatcherStarter, logger *s
 func newActivities(
 	cfg config.Worker, temporal temporalapi.Client, renderer *prompts.Renderer, metrics *telemetry.Metrics, logger *slog.Logger,
 	dispatcherState activities.DispatcherStateWriter,
-) (*activities.Activities, error) {
+	checkpointBinder interface {
+		activities.CheckpointCapabilityBinder
+		activities.RepositoryCapabilityBinder
+	},
+) (*activities.Activities, *activities.RunWorkerControlActivities, error) {
 	clk := clock.System{}
 
 	ghCfg, err := config.LoadGitHub()
 	if err != nil {
-		return nil, fmt.Errorf("reading the GitHub App's configuration: %w", err)
+		return nil, nil, fmt.Errorf("reading the GitHub App's configuration: %w", err)
 	}
 	ghClient, err := github.New(ghCfg, clk, logger)
 	if err != nil {
-		return nil, fmt.Errorf("building the GitHub client: %w", err)
+		return nil, nil, fmt.Errorf("building the GitHub client: %w", err)
 	}
 
 	sandboxes, err := k8s.NewInCluster(cfg.SandboxNamespace, logger, clk, k8s.WithImagePullSecret(cfg.SandboxImagePullSecretName))
 	if err != nil {
-		return nil, fmt.Errorf("building the Kubernetes sandbox client: %w", err)
+		return nil, nil, fmt.Errorf("building the Kubernetes sandbox client: %w", err)
 	}
 
 	transcriptSink, err := transcripts.New(cfg.TranscriptsRoot)
 	if err != nil {
-		return nil, fmt.Errorf("building the transcript sink at %s (TRANSCRIPTS_ROOT): %w", cfg.TranscriptsRoot, err)
+		return nil, nil, fmt.Errorf("building the transcript sink at %s (TRANSCRIPTS_ROOT): %w", cfg.TranscriptsRoot, err)
 	}
 
 	tokenSource, err := newCodexAuthSource(cfg, clk, logger)
 	if err != nil {
-		return nil, fmt.Errorf("building the codex credential source: %w", err)
+		return nil, nil, fmt.Errorf("building the codex credential source: %w", err)
 	}
-
-	return activities.New(buildDeps(
+	legacy, err := activities.New(buildDeps(
 		cfg, ghCfg, ghClient, sandboxes, transcriptSink, renderer, metrics, temporal, tokenSource, dispatcherState, clk, logger,
 	))
+	if err != nil {
+		return nil, nil, fmt.Errorf("building legacy activities: %w", err)
+	}
+	runWorkers, err := k8s.NewRunWorkersInCluster(cfg.SandboxNamespace, logger, cfg.SandboxImagePullSecretName)
+	if err != nil {
+		return nil, nil, fmt.Errorf("building the Kubernetes Run Worker client: %w", err)
+	}
+	capabilities, err := checkpointclient.NewCapabilityMinter(rand.Reader)
+	if err != nil {
+		return nil, nil, fmt.Errorf("building the checkpoint capability minter: %w", err)
+	}
+	control, err := activities.NewRunWorkerControlActivities(activities.RunWorkerControlDeps{
+		Workers: runWorkers, GitHub: ghClient, Codex: tokenSource, Capabilities: capabilities,
+		Binder: checkpointBinder, RepositoryBinder: checkpointBinder,
+		Template: activities.RunWorkerTemplate{
+			Image: cfg.RunWorkerImage, CPURequest: cfg.SandboxCPURequest, MemoryLimit: cfg.SandboxMemoryLimit,
+			DeadlineSeconds: work.SandboxDeadlineSeconds,
+			Env: map[string]string{
+				work.CodexHomeEnv: work.CodexHomeDir, work.GhConfigDirEnv: work.GhConfigDir,
+				work.RunWorkerTemporalHostPortEnv: cfg.TemporalHostPort, work.RunWorkerTemporalNamespaceEnv: cfg.TemporalNamespace,
+				work.RunWorkerBlobsURLEnv: cfg.BlobsURL, work.RunWorkerCheckpointAPIURLEnv: cfg.CheckpointAPIURL,
+				work.RunWorkerGitHubRepositoryEnv: ghCfg.Owner + "/" + ghCfg.Repo,
+			},
+		},
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("building the Run Worker control activities: %w", err)
+	}
+	return legacy, control, nil
 }
 
 // buildDeps assembles activities.Deps from clients newActivities already

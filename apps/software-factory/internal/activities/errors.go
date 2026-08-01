@@ -68,6 +68,10 @@ const (
 	// ErrTypeCINotConcluded is an expected retryable wait. AwaitCI sets its
 	// exact next retry delay so pending CI never enters a workflow poll loop.
 	ErrTypeCINotConcluded = "CINotConcluded"
+
+	// ErrTypeUnresumableIncompleteAttempt requires explicit workflow
+	// authorization of another Agent Attempt; native retry must never start fresh.
+	ErrTypeUnresumableIncompleteAttempt = "unresumable_incomplete_attempt"
 )
 
 // fail translates this service's error vocabulary into Temporal's, once.
@@ -130,6 +134,8 @@ func errorTypeOf(err error) string {
 		return ErrTypeRateLimit
 	case errors.Is(err, codex.ErrAuth):
 		return ErrTypeAuth
+	case errors.Is(err, ErrUnresumableIncompleteAttempt):
+		return ErrTypeUnresumableIncompleteAttempt
 	// codexauth.ErrUnseeded means the codex-auth Secret does not exist or does
 	// not parse (#344/#398): every ticket fails identically until a human
 	// seeds it, which is exactly the "stop and page a human" case ErrTypeAuth
