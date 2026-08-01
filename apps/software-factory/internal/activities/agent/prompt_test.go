@@ -136,6 +136,13 @@ func TestPrepareRendersTheStageAndStoresReferenceBackedModelInput(t *testing.T) 
 	if string(schema) != string(renderer.schema) {
 		t.Fatalf("stored response schema = %s, want %s", schema, renderer.schema)
 	}
+	events, err := agent.NewTranscriptStore(blobStore).Events(t.Context(), prepared.TranscriptRef)
+	if err != nil {
+		t.Fatalf("Transcript Events() error = %v", err)
+	}
+	if len(events) != 1 || events[0].Type != agent.EventWorkflowPrepared {
+		t.Fatalf("prepared transcript = %#v", events)
+	}
 }
 
 var _ agentactivities.PromptRenderer = decodingPromptRenderer{}

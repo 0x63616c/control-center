@@ -28,11 +28,13 @@ type PrepareOutput struct {
 
 // FinalizeInput identifies terminal structured text and its expected stage shape.
 type FinalizeInput struct {
-	Stage   work.Stage
-	TextRef agent.TextRef
+	Stage         work.Stage
+	TextRef       agent.TextRef
+	TranscriptRef agent.TranscriptRef
 }
 
 // FinalizeOutput contains the decoded closed stage result.
 type FinalizeOutput struct {
-	Result work.StageOutput
+	Result        work.StageOutput
+	TranscriptRef agent.TranscriptRef
 }

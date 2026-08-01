@@ -87,6 +87,7 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (AgentWorkflo
 		}
 		if state.TurnsSinceContinueAsNew >= input.Limits.ContinueAsNewAfter {
 			state.ConversationRef = conversationRef
+			state.TranscriptRef = result.TranscriptRef
 			state.Usage = result.Usage
 			state.UsageMeasured = result.UsageMeasured
 			state.ModelTurns = result.ModelTurns
@@ -97,7 +98,7 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (AgentWorkflo
 		modelTurn := result.ModelTurns + 1
 		var turn agent.ModelTurnResult
 		if err := workflow.ExecuteActivity(mainContext, agent.ModelTurnActivityName, agent.ModelTurnInput{
-			Model: input.Attempt.Model, ToolsetID: input.ToolsetID, ConversationRef: conversationRef,
+			Model: input.Attempt.Model, ToolsetID: input.ToolsetID, ConversationRef: conversationRef, TranscriptRef: result.TranscriptRef,
 			ResponseFormat: state.ResponseFormat, PromptCacheKey: state.PromptCacheKey, ModelTurn: modelTurn,
 			IdempotencyKey: fmt.Sprintf("agent/%s/%s/%d/model/%d", input.Attempt.Key.RunID, input.Attempt.Key.Stage, input.Attempt.Key.Turn, modelTurn),
 		}).Get(ctx, &turn); err != nil {
@@ -108,6 +109,9 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (AgentWorkflo
 		result.Usage = result.Usage.Add(turn.Usage)
 		result.UsageMeasured = result.UsageMeasured && turn.UsageMeasured
 		conversationRef = turn.ConversationRef
+		if turn.TranscriptRef.Key != "" {
+			result.TranscriptRef = turn.TranscriptRef
+		}
 		if result.UsageMeasured && result.Usage.InputTokens > input.Limits.MaxInputTokens {
 			return result, agentBudgetError("agent input-token budget exhausted", "AgentInputTokenBudget")
 		}
@@ -152,7 +156,7 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (AgentWorkflo
 			for _, call := range turn.ToolCalls {
 				var toolOutput agent.ToolOutput
 				if err := workflow.ExecuteActivity(toolContext, agent.ToolActivityName, agent.ToolInput{
-					ToolsetID: input.ToolsetID, ConversationRef: conversationRef, Call: call,
+					ToolsetID: input.ToolsetID, ConversationRef: conversationRef, TranscriptRef: result.TranscriptRef, Call: call,
 				}).Get(ctx, &toolOutput); err != nil {
 					return result, fmt.Errorf("run agent tool %q: %w", call.Name, err)
 				}
@@ -162,6 +166,9 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (AgentWorkflo
 					)
 				}
 				conversationRef = toolOutput.ConversationRef
+				if toolOutput.TranscriptRef.Key != "" {
+					result.TranscriptRef = toolOutput.TranscriptRef
+				}
 				result.ToolCalls++
 				if conversationRef.Bytes > input.Limits.MaxConversationBytes {
 					return result, agentBudgetError("agent conversation budget exhausted", "AgentConversationBudget")
@@ -178,11 +185,14 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (AgentWorkflo
 		}
 		var finalized agentactivities.FinalizeOutput
 		if err := workflow.ExecuteActivity(mainContext, agent.FinalizeActivityName, agentactivities.FinalizeInput{
-			Stage: input.Attempt.Key.Stage, TextRef: turn.FinalTextRef,
+			Stage: input.Attempt.Key.Stage, TextRef: turn.FinalTextRef, TranscriptRef: result.TranscriptRef,
 		}).Get(ctx, &finalized); err != nil {
 			return result, fmt.Errorf("finalize agent output: %w", err)
 		}
 		result.Result = finalized.Result
+		if finalized.TranscriptRef.Key != "" {
+			result.TranscriptRef = finalized.TranscriptRef
+		}
 		return result, nil
 	}
 }

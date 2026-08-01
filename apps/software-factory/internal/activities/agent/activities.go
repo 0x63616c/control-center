@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agenttool"
@@ -26,6 +27,7 @@ type Turner interface {
 type Activities struct {
 	turner        Turner
 	conversations agent.ConversationStore
+	transcripts   agent.TranscriptStore
 	artifacts     agent.ArtifactStore
 	toolsets      map[agent.ToolsetID]agenttool.Set
 }
@@ -54,6 +56,7 @@ func NewActivities(turner Turner, blobStore blobs.Store, toolsets ...agenttool.S
 	return &Activities{
 		turner:        turner,
 		conversations: agent.NewConversationStore(blobStore),
+		transcripts:   agent.NewTranscriptStore(blobStore),
 		artifacts:     agent.NewArtifactStore(blobStore),
 		toolsets:      byID,
 	}, nil
@@ -78,6 +81,7 @@ func (activities *Activities) ModelTurn(ctx context.Context, input agent.ModelTu
 		return agent.ModelTurnResult{}, invalidInput("build model request: %v", err)
 	}
 	events := 0
+	started := time.Now()
 	providerResult, err := activities.turner.Turn(ctx, request, func(event codexresponses.Event) {
 		events++
 		activity.RecordHeartbeat(ctx, StreamProgress{EventType: event.Type, Events: events})
@@ -89,14 +93,28 @@ func (activities *Activities) ModelTurn(ctx context.Context, input agent.ModelTu
 	if err != nil {
 		return agent.ModelTurnResult{}, invalidInput("resolve model conversation identity: %v", err)
 	}
+	var result agent.ModelTurnResult
 	switch providerResult.Outcome {
 	case codexresponses.OutcomeFinalText:
-		return activities.storeFinalTurn(ctx, input.ConversationRef, identity, providerResult)
+		result, err = activities.storeFinalTurn(ctx, input.ConversationRef, identity, providerResult)
 	case codexresponses.OutcomeToolCalls:
-		return activities.storeToolTurn(ctx, input.ConversationRef, identity, providerResult)
+		result, err = activities.storeToolTurn(ctx, input.ConversationRef, identity, providerResult)
 	default:
 		return agent.ModelTurnResult{}, invalidProviderOutcome("model turn has unknown outcome %q", providerResult.Outcome)
 	}
+	if err != nil {
+		return agent.ModelTurnResult{}, err
+	}
+	if input.TranscriptRef.Key != "" {
+		result.TranscriptRef, err = activities.transcripts.Append(ctx, identity, &input.TranscriptRef, agent.TranscriptEvent{
+			Type: agent.EventModelCompleted, ModelTurn: input.ModelTurn, Outcome: string(result.Outcome),
+			Usage: result.Usage, UsageMeasured: result.UsageMeasured, DurationMillis: time.Since(started).Milliseconds(),
+		})
+		if err != nil {
+			return agent.ModelTurnResult{}, transientFailure("append model transcript event", err)
+		}
+	}
+	return result, nil
 }
 
 func (activities *Activities) responseFormat(

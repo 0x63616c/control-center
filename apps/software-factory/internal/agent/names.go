@@ -11,4 +11,6 @@ const (
 	ToolActivityName = "agent.tool"
 	// FinalizeActivityName decodes terminal structured text into a stage result.
 	FinalizeActivityName = "agent.finalize"
+	// PersistTranscriptActivityName stores one finalized transcript ref against its recorded Attempt.
+	PersistTranscriptActivityName = "agent.persist-transcript"
 )

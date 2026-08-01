@@ -14,6 +14,7 @@ import (
 type PromptActivities struct {
 	prompts       PromptRenderer
 	conversations agent.ConversationStore
+	transcripts   agent.TranscriptStore
 	artifacts     agent.ArtifactStore
 }
 
@@ -28,7 +29,8 @@ func NewPromptActivities(renderer PromptRenderer, blobStore blobs.Store) (*Promp
 		return nil, fmt.Errorf("agent prompt activities need a blob store")
 	}
 	return &PromptActivities{
-		prompts: renderer, conversations: agent.NewConversationStore(blobStore), artifacts: agent.NewArtifactStore(blobStore),
+		prompts: renderer, conversations: agent.NewConversationStore(blobStore),
+		transcripts: agent.NewTranscriptStore(blobStore), artifacts: agent.NewArtifactStore(blobStore),
 	}, nil
 }
 
@@ -53,8 +55,13 @@ func (activities *PromptActivities) Prepare(ctx context.Context, input PrepareIn
 	if err != nil {
 		return PrepareOutput{}, transientFailure("store agent response schema", err)
 	}
+	transcriptRef, err := activities.transcripts.Append(ctx, identity, nil, agent.TranscriptEvent{Type: agent.EventWorkflowPrepared})
+	if err != nil {
+		return PrepareOutput{}, transientFailure("start agent transcript", err)
+	}
 	return PrepareOutput{
 		ConversationRef: conversationRef,
+		TranscriptRef:   transcriptRef,
 		ResponseFormat: agent.ResponseFormatRef{
 			Name: string(input.Attempt.Key.Stage) + "_result", SchemaRef: schemaRef,
 		},
@@ -72,5 +79,18 @@ func (activities *PromptActivities) Finalize(ctx context.Context, input Finalize
 	if err != nil {
 		return FinalizeOutput{}, invalidProviderOutcome("decode final %s output: %v", input.Stage, err)
 	}
-	return FinalizeOutput{Result: result}, nil
+	output := FinalizeOutput{Result: result, TranscriptRef: input.TranscriptRef}
+	if input.TranscriptRef.Key != "" {
+		identity, err := activities.transcripts.Identity(input.TranscriptRef)
+		if err != nil {
+			return FinalizeOutput{}, invalidInput("resolve final transcript identity: %v", err)
+		}
+		output.TranscriptRef, err = activities.transcripts.Append(
+			ctx, identity, &input.TranscriptRef, agent.TranscriptEvent{Type: agent.EventFinalOutputDecoded},
+		)
+		if err != nil {
+			return FinalizeOutput{}, transientFailure("append final transcript event", err)
+		}
+	}
+	return output, nil
 }

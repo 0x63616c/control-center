@@ -38,6 +38,12 @@ func TestToolRetryReturnsTheRecordedResultWithoutExecutingTwice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StoreArguments() error = %v", err)
 	}
+	transcriptRef, err := agent.NewTranscriptStore(blobStore).Append(
+		t.Context(), "agent/run-7/implement/1", nil, agent.TranscriptEvent{Type: agent.EventWorkflowPrepared},
+	)
+	if err != nil {
+		t.Fatalf("start transcript: %v", err)
+	}
 	executions := 0
 	tool := agenttool.Bind(
 		agenttool.Define[countedInput]("counted", "Return one value while counting executions."),
@@ -53,6 +59,7 @@ func TestToolRetryReturnsTheRecordedResultWithoutExecutingTwice(t *testing.T) {
 	input := agent.ToolInput{
 		ToolsetID:       "coding-write-v1",
 		ConversationRef: requested,
+		TranscriptRef:   transcriptRef,
 		Call:            agent.PendingToolCall{CallID: "call_1", Name: "counted", ArgumentsRef: argumentsRef},
 	}
 	first, err := activities.Tool(t.Context(), input)
@@ -68,6 +75,9 @@ func TestToolRetryReturnsTheRecordedResultWithoutExecutingTwice(t *testing.T) {
 	}
 	if first != second || first.CallID != "call_1" || first.ConversationRef.Revision != 2 {
 		t.Fatalf("tool results = %#v and %#v", first, second)
+	}
+	if first.TranscriptRef.Revision != 1 {
+		t.Fatalf("tool transcript ref = %#v", first.TranscriptRef)
 	}
 	items, err := conversations.Items(t.Context(), first.ConversationRef)
 	if err != nil {

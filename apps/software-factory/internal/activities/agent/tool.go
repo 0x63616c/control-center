@@ -21,6 +21,7 @@ type ToolActivities struct {
 	blobs         blobs.Store
 	artifacts     agent.ArtifactStore
 	conversations agent.ConversationStore
+	transcripts   agent.TranscriptStore
 	toolsets      map[agent.ToolsetID]agenttool.Set
 }
 
@@ -38,7 +39,7 @@ func NewToolActivities(blobStore blobs.Store, toolsets ...agenttool.Set) (*ToolA
 	}
 	return &ToolActivities{
 		blobs: blobStore, artifacts: agent.NewArtifactStore(blobStore),
-		conversations: agent.NewConversationStore(blobStore), toolsets: byID,
+		conversations: agent.NewConversationStore(blobStore), transcripts: agent.NewTranscriptStore(blobStore), toolsets: byID,
 	}, nil
 }
 
@@ -81,6 +82,7 @@ func (activities *ToolActivities) Tool(ctx context.Context, input agent.ToolInpu
 	}
 	stopHeartbeat := startToolHeartbeat(ctx, input.Call.Name)
 	defer stopHeartbeat()
+	started := time.Now()
 	result, err := toolset.Execute(ctx, input.Call.Name, arguments)
 	if err != nil {
 		return agent.ToolOutput{}, err
@@ -92,6 +94,15 @@ func (activities *ToolActivities) Tool(ctx context.Context, input agent.ToolInpu
 		return agent.ToolOutput{}, transientFailure("store tool output conversation", err)
 	}
 	output := agent.ToolOutput{CallID: input.Call.CallID, ConversationRef: conversationRef, IsError: result.IsError}
+	if input.TranscriptRef.Key != "" {
+		output.TranscriptRef, err = activities.transcripts.Append(ctx, identity, &input.TranscriptRef, agent.TranscriptEvent{
+			Type: agent.EventToolCompleted, ToolName: input.Call.Name, CallID: input.Call.CallID,
+			IsError: result.IsError, DurationMillis: time.Since(started).Milliseconds(),
+		})
+		if err != nil {
+			return agent.ToolOutput{}, transientFailure("append tool transcript event", err)
+		}
+	}
 	encoded, err := json.Marshal(output)
 	if err != nil {
 		return agent.ToolOutput{}, fmt.Errorf("encode completed tool operation: %w", err)

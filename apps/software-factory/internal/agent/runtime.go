@@ -20,6 +20,7 @@ type ModelTurnInput struct {
 	Model           work.Model        `json:"model"`
 	ToolsetID       ToolsetID         `json:"toolset_id"`
 	ConversationRef ConversationRef   `json:"conversation_ref"`
+	TranscriptRef   TranscriptRef     `json:"transcript_ref"`
 	ResponseFormat  ResponseFormatRef `json:"response_format"`
 	PromptCacheKey  string            `json:"prompt_cache_key"`
 	ModelTurn       int               `json:"model_turn"`
@@ -52,8 +53,13 @@ type ArgumentsRef ArtifactRef
 // OutputRef identifies immutable oversized tool output.
 type OutputRef ArtifactRef
 
-// TranscriptRef identifies one durable provider-neutral agent transcript.
-type TranscriptRef ArtifactRef
+// TranscriptRef identifies the latest immutable revision of one provider-neutral transcript.
+type TranscriptRef struct {
+	Key      string `json:"key"`
+	Revision int    `json:"revision"`
+	Bytes    int64  `json:"bytes"`
+	Digest   string `json:"digest"`
+}
 
 // ResponseSchemaRef identifies one immutable provider structured-output schema.
 type ResponseSchemaRef ArtifactRef
@@ -75,6 +81,7 @@ type PendingToolCall struct {
 type ToolInput struct {
 	ToolsetID       ToolsetID       `json:"toolset_id"`
 	ConversationRef ConversationRef `json:"conversation_ref"`
+	TranscriptRef   TranscriptRef   `json:"transcript_ref"`
 	Call            PendingToolCall `json:"call"`
 }
 
@@ -82,6 +89,7 @@ type ToolInput struct {
 type ToolOutput struct {
 	CallID          string          `json:"call_id"`
 	ConversationRef ConversationRef `json:"conversation_ref"`
+	TranscriptRef   TranscriptRef   `json:"transcript_ref"`
 	IsError         bool            `json:"is_error"`
 }
 
@@ -89,6 +97,7 @@ type ToolOutput struct {
 type ModelTurnResult struct {
 	Outcome         TurnOutcome       `json:"outcome"`
 	ConversationRef ConversationRef   `json:"conversation_ref"`
+	TranscriptRef   TranscriptRef     `json:"transcript_ref"`
 	FinalTextRef    TextRef           `json:"final_text_ref"`
 	ToolCalls       []PendingToolCall `json:"tool_calls"`
 	Usage           work.Usage        `json:"usage"`

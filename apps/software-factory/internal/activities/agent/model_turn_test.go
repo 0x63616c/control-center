@@ -60,6 +60,10 @@ func TestModelTurnLoadsConversationAndStoresFinalText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StoreResponseSchema() error = %v", err)
 	}
+	transcriptRef, err := agent.NewTranscriptStore(blobStore).Append(t.Context(), "agent/run-7/plan", nil, agent.TranscriptEvent{Type: agent.EventWorkflowPrepared})
+	if err != nil {
+		t.Fatalf("start transcript: %v", err)
+	}
 	turner := &fakeTurner{result: codexresponses.TurnResult{
 		Outcome: codexresponses.OutcomeFinalText,
 		Text:    `{"summary":"done"}`,
@@ -78,6 +82,7 @@ func TestModelTurnLoadsConversationAndStoresFinalText(t *testing.T) {
 		Model:           work.Model{Name: "gpt-test", Effort: "medium"},
 		ToolsetID:       "coding-read-v1",
 		ConversationRef: conversationRef,
+		TranscriptRef:   transcriptRef,
 		ResponseFormat:  agent.ResponseFormatRef{Name: "plan_result", SchemaRef: responseSchemaRef},
 		PromptCacheKey:  "run-7-plan",
 		ModelTurn:       1,
@@ -102,6 +107,9 @@ func TestModelTurnLoadsConversationAndStoresFinalText(t *testing.T) {
 	}
 	if result.Outcome != agent.OutcomeFinalText || result.ConversationRef.Revision != 1 {
 		t.Fatalf("ModelTurn() result = %#v", result)
+	}
+	if result.TranscriptRef.Revision != 1 {
+		t.Fatalf("ModelTurn() transcript ref = %#v", result.TranscriptRef)
 	}
 	if result.Usage != (work.Usage{InputTokens: 12, OutputTokens: 3}) || !result.UsageMeasured {
 		t.Fatalf("ModelTurn() usage = %#v, measured = %t", result.Usage, result.UsageMeasured)
