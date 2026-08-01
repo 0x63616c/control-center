@@ -160,6 +160,93 @@ func TestWorkOnTicketConfirmsMergeBeforeBestEffortTeardown(t *testing.T) {
 	}
 }
 
+// A red CI result is completed feedback, not a workflow failure. The next
+// implement Step must be a new durable Step but continue the surviving
+// generation's implementer thread, then send the new authoritative head
+// through CI and a fresh review before merge.
+func TestWorkOnTicketRepairsRedCIThenReviewsTheNewHead(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	recorderStore := storefake.New()
+	ticket, err := recorderStore.CreateTicket(ctx, "repair red CI", "make CI green", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	input := workflows.WorkOnTicketInput{
+		TicketID: ticket.ID,
+		RunID:    "019fb901-0000-7000-8000-000000000001",
+		Policy:   work.DefaultTargetRunPolicy(),
+		CloneURL: "https://github.com/example/repository.git",
+		Model:    work.Model{Name: "gpt-5", Effort: "high"},
+	}
+
+	h := newWorkOnTicketHarness(t, recorderStore)
+	h.sync = func(in activities.TargetSyncPullRequestInput) (work.PullRequest, error) {
+		head := "H1"
+		if len(h.syncInputs) == 2 {
+			head = "H2"
+		}
+		position := in.Step
+		position.PushedHead = head
+		position.PullRequestNumber, position.PullRequestNodeID = 1, "PR_node1"
+		if err := h.checkpointRepositoryStep(position); err != nil {
+			return work.PullRequest{}, err
+		}
+		return work.PullRequest{Number: 1, NodeID: "PR_node1", HeadSHA: head, Draft: true}, nil
+	}
+	h.awaitCI = func(in activities.TargetAwaitCIInput) (activities.AwaitCIOutput, error) {
+		if err := h.checkpointRepositoryStep(in.Step); err != nil {
+			return activities.AwaitCIOutput{}, err
+		}
+		if in.CI.CommitSHA == "H1" {
+			return activities.AwaitCIOutput{CommitSHA: "H1", Green: false, RedFailures: []work.CheckFailure{{Name: "test-software-factory", Fingerprint: "ci-red", Evidence: "expected true to be false"}}}, nil
+		}
+		return activities.AwaitCIOutput{CommitSHA: "H2", Green: true}, nil
+	}
+	h.run(input)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket: %v", err)
+	}
+
+	detail, err := recorderStore.TargetRunDetail(ctx, input.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	wantSteps := []work.StepKind{
+		work.StepCloneRepository, work.StepPlan, work.StepImplement,
+		work.StepSyncPullRequest, work.StepAwaitCI, work.StepImplement,
+		work.StepSyncPullRequest, work.StepAwaitCI, work.StepReview,
+		work.StepMarkPullRequestReady, work.StepMergePullRequest,
+	}
+	if len(detail.Steps) != len(wantSteps) {
+		t.Fatalf("steps = %d, want %d: %+v", len(detail.Steps), len(wantSteps), detail.Steps)
+	}
+	for index, want := range wantSteps {
+		if got := detail.Steps[index].Step.Kind; got != want {
+			t.Fatalf("step %d kind = %q, want %q", index+1, got, want)
+		}
+	}
+	var implements []activities.TargetAgentInput
+	var reviews []activities.TargetAgentInput
+	for _, agent := range h.agentInputs {
+		switch agent.Stage {
+		case work.AgentStageImplement:
+			implements = append(implements, agent)
+		case work.AgentStageReview:
+			reviews = append(reviews, agent)
+		}
+	}
+	if len(implements) != 2 || implements[1].PriorProviderThread == nil || implements[1].PriorProviderThread.Identity != h.provisioned.Identity || implements[1].PriorProviderThread.ThreadID != "implement-thread" {
+		t.Fatalf("implement feedback continuation = %+v, want the original implementer thread on generation one", implements)
+	}
+	if len(reviews) != 1 || reviews[0].CandidateHeadSHA != "H2" {
+		t.Fatalf("reviews = %+v, want one fresh H2 review", reviews)
+	}
+	if h.merge.ExpectedHeadSHA != "H2" {
+		t.Fatalf("merge = %+v, want only reviewed H2", h.merge)
+	}
+}
+
 type workOnTicketHarness struct {
 	env   *testsuite.TestWorkflowEnvironment
 	store *storefake.Store
@@ -175,6 +262,11 @@ type workOnTicketHarness struct {
 	merge       activities.TargetMergePullRequestInput
 	deleted     []activities.DeleteRunWorkerInput
 	reviewHead  string
+
+	syncInputs []activities.TargetSyncPullRequestInput
+	ciInputs   []activities.TargetAwaitCIInput
+	sync       func(activities.TargetSyncPullRequestInput) (work.PullRequest, error)
+	awaitCI    func(activities.TargetAwaitCIInput) (activities.AwaitCIOutput, error)
 }
 
 func newWorkOnTicketHarness(t *testing.T, recorderStore *storefake.Store) *workOnTicketHarness {
@@ -241,6 +333,10 @@ func newWorkOnTicketHarness(t *testing.T, recorderStore *storefake.Store) *workO
 	)
 	env.RegisterActivityWithOptions(
 		func(_ context.Context, in activities.TargetAwaitCIInput) (activities.AwaitCIOutput, error) {
+			h.ciInputs = append(h.ciInputs, in)
+			if h.awaitCI != nil {
+				return h.awaitCI(in)
+			}
 			h.ci = in
 			if err := h.checkpointRepositoryStep(in.Step); err != nil {
 				return activities.AwaitCIOutput{}, err
@@ -251,6 +347,10 @@ func newWorkOnTicketHarness(t *testing.T, recorderStore *storefake.Store) *workO
 	)
 	env.RegisterActivityWithOptions(
 		func(_ context.Context, in activities.TargetSyncPullRequestInput) (work.PullRequest, error) {
+			h.syncInputs = append(h.syncInputs, in)
+			if h.sync != nil {
+				return h.sync(in)
+			}
 			position := in.Step
 			position.PushedHead = "H1"
 			position.PullRequestNumber, position.PullRequestNodeID = 1, "PR_node1"
