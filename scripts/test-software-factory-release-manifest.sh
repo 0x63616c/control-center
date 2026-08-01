@@ -6,22 +6,7 @@ fixture_dir="$(mktemp -d /tmp/software-factory-release-manifest-test.XXXXXX)"
 trap 'rm -rf "$fixture_dir"' EXIT
 
 manifest="$fixture_dir/software-factory-images-v0.1.0.json"
-cat >"$manifest" <<'JSON'
-{
-  "version": "v0.1.0",
-  "commit": "0123456789abcdef0123456789abcdef01234567",
-  "platform": "linux/amd64",
-  "images": [
-    {"name":"api","image":"ghcr.io/0x63616c/software-factory-api","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-    {"name":"blobs","image":"ghcr.io/0x63616c/software-factory-blobs","digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
-    {"name":"codec","image":"ghcr.io/0x63616c/software-factory-codec","digest":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
-    {"name":"console","image":"ghcr.io/0x63616c/software-factory-console","digest":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
-    {"name":"relay","image":"ghcr.io/0x63616c/software-factory-relay","digest":"sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},
-    {"name":"run-worker","image":"ghcr.io/0x63616c/software-factory-run-worker","digest":"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"},
-    {"name":"worker","image":"ghcr.io/0x63616c/software-factory-worker","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111"}
-  ]
-}
-JSON
+cp "$repo_root/scripts/testdata/software-factory-release-manifest.json" "$manifest"
 
 expected='{"software-factory-api":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","software-factory-blobs":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","software-factory-codec":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","software-factory-console":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","software-factory-relay":"sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","software-factory-run-worker":"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","software-factory-worker":"sha256:1111111111111111111111111111111111111111111111111111111111111111"}'
 actual="$("$repo_root/scripts/software-factory-release-manifest.sh" "$manifest")"

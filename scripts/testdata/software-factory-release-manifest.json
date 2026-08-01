@@ -1,0 +1,42 @@
+{
+  "version": "v0.1.0",
+  "commit": "0123456789abcdef0123456789abcdef01234567",
+  "platform": "linux/amd64",
+  "images": [
+    {
+      "name": "api",
+      "image": "ghcr.io/0x63616c/software-factory-api",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "name": "blobs",
+      "image": "ghcr.io/0x63616c/software-factory-blobs",
+      "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "name": "codec",
+      "image": "ghcr.io/0x63616c/software-factory-codec",
+      "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "name": "console",
+      "image": "ghcr.io/0x63616c/software-factory-console",
+      "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    {
+      "name": "relay",
+      "image": "ghcr.io/0x63616c/software-factory-relay",
+      "digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    {
+      "name": "run-worker",
+      "image": "ghcr.io/0x63616c/software-factory-run-worker",
+      "digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "name": "worker",
+      "image": "ghcr.io/0x63616c/software-factory-worker",
+      "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  ]
+}
