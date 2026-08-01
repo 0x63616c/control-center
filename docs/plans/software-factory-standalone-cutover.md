@@ -61,7 +61,7 @@
   the standalone release.
 - [x] Confirm no active WWW surface imports, builds, or tests the removed Go
   module or revives the retired Codex CLI design.
-- [ ] Run the final adapted Gate 10 proof after merge and production deploy.
+- [x] Run the final adapted Gate 10 proof after merge and production deploy.
 
 ## Follow-up `v0.1.2`
 
