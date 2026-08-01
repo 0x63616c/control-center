@@ -20,6 +20,8 @@ import (
 
 type runWorkerTestRedactor struct{}
 
+func (runWorkerTestRedactor) Prime(context.Context) error { return nil }
+
 func (runWorkerTestRedactor) Redact(_ context.Context, raw []byte) ([]byte, error) {
 	return bytes.Clone(raw), nil
 }
@@ -63,7 +65,7 @@ func TestRunWorkerRegistersAndExecutesOnePinnedRepositorySession(t *testing.T) {
 	target, err := activities.NewRunWorkerActivities(activities.RunWorkerDeps{
 		Stages: &sessionStageRunner{filesystem: filesystem, result: work.StageResult{
 			Output:   []byte(`{"report":"implemented","blocked":false,"blocked_reason":"","title":"Implement ticket","body":"Ready"}`),
-			ThreadID: "thread-42", UsageMeasured: true,
+			ThreadID: "019fb8f6-1446-7da2-838f-4ea1f15304fd", UsageMeasured: true,
 		}},
 		Prompts: sessionPrompts{},
 		Checkpoints: func(store.TargetAttemptID) (activities.AttemptCheckpoint, error) {
@@ -182,13 +184,13 @@ func TestRunTargetAgentRedactsPriorCredentialAfterProjectionRotation(t *testing.
 	checkpoint := &sessionAttemptCheckpoint{}
 	stage := &sessionStageRunner{
 		filesystem: filesystem,
-		events:     [][]byte{[]byte(`{"type":"thread.started","thread_id":"thread-42"}`), []byte(`{"type":"item.completed","item":{"text":"github-token-before-rotation"}}`)},
-		afterEvents: func() {
+		events:     [][]byte{[]byte(`{"type":"thread.started","thread_id":"019fb8f6-1446-7da2-838f-4ea1f15304fd"}`), []byte(`{"type":"item.completed","item":{"text":"github-token-before-rotation"}}`)},
+		beforeEvents: func() {
 			files[work.RunWorkerGitHubTokenFile] = []byte("github-token-after-rotation")
 		},
 		result: work.StageResult{
 			Output:   []byte(`{"report":"github-token-before-rotation github-token-after-rotation","blocked":false,"blocked_reason":"","title":"Implement ticket","body":"Ready"}`),
-			ThreadID: "thread-42", UsageMeasured: true,
+			ThreadID: "019fb8f6-1446-7da2-838f-4ea1f15304fd", UsageMeasured: true,
 		},
 	}
 	target, err := activities.NewRunWorkerActivities(activities.RunWorkerDeps{
@@ -284,19 +286,23 @@ func (r *sessionRepository) Prepare(_ context.Context, _, _ string) (string, err
 }
 
 type sessionStageRunner struct {
-	filesystem  *pinnedFilesystem
-	result      work.StageResult
-	events      [][]byte
-	afterEvents func()
+	filesystem   *pinnedFilesystem
+	result       work.StageResult
+	events       [][]byte
+	beforeEvents func()
+	afterEvents  func()
 }
 
 func (r *sessionStageRunner) RunTargetStage(_ context.Context, _ work.StageRun, _ string, events work.StageEventSink) (work.StageResult, error) {
 	if err := r.filesystem.observe("agent"); err != nil {
 		return work.StageResult{}, err
 	}
+	if r.beforeEvents != nil {
+		r.beforeEvents()
+	}
 	stream := r.events
 	if len(stream) == 0 {
-		stream = [][]byte{[]byte(`{"type":"thread.started","thread_id":"thread-42"}`)}
+		stream = [][]byte{[]byte(`{"type":"thread.started","thread_id":"019fb8f6-1446-7da2-838f-4ea1f15304fd"}`)}
 	}
 	for _, event := range stream {
 		events(event)

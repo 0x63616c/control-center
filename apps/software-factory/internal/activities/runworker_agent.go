@@ -18,6 +18,7 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+	"github.com/google/uuid"
 )
 
 // ErrUnresumableIncompleteAttempt means durable provider identity exists but
@@ -46,6 +47,7 @@ type ProviderState interface {
 // SecretRedactor removes observed projected credential material from data that
 // crosses the Run Worker durability boundary.
 type SecretRedactor interface {
+	Prime(context.Context) error
 	Redact(context.Context, []byte) ([]byte, error)
 }
 
@@ -168,18 +170,26 @@ func (a *RunWorkerActivities) RunTargetAgent(ctx context.Context, in TargetAgent
 				return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("redacting durable target result for %s", in.AttemptID), redactErr)
 			}
 			stored.Result = result
-			return a.targetAgentOutput(in.Stage, stored)
+			out, outputErr := a.targetAgentOutput(ctx, in.Stage, stored)
+			if outputErr != nil {
+				return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("validating durable provider thread for %s", in.AttemptID), outputErr)
+			}
+			return out, nil
 		case work.AgentAttemptFailed:
 			return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("reconciling failed %s", in.AttemptID), ErrUnresumableIncompleteAttempt)
 		case work.AgentAttemptRunning:
-			available, stateErr := a.deps.ProviderState.Available(ctx, stored.ProviderThreadID)
+			threadID, threadErr := a.validateProviderThreadID(ctx, stored.ProviderThreadID)
+			if threadErr != nil {
+				return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("validating durable provider thread for %s", in.AttemptID), threadErr)
+			}
+			available, stateErr := a.deps.ProviderState.Available(ctx, threadID)
 			if stateErr != nil {
 				return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("checking provider state for %s", in.AttemptID), stateErr)
 			}
 			if !available {
 				return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("reconciling incomplete %s", in.AttemptID), ErrUnresumableIncompleteAttempt)
 			}
-			resumeThread = stored.ProviderThreadID
+			resumeThread = threadID
 		default:
 			return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("reconciling %s", in.AttemptID), fmt.Errorf("unknown durable state %q: %w", stored.State, work.ErrPermanent))
 		}
@@ -187,14 +197,18 @@ func (a *RunWorkerActivities) RunTargetAgent(ctx context.Context, in TargetAgent
 		if in.Stage != work.AgentStageImplement || continuation.Identity != a.deps.Identity || continuation.ThreadID == "" {
 			return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("reconciling prior provider state for %s", in.AttemptID), ErrUnresumableIncompleteAttempt)
 		}
-		available, stateErr := a.deps.ProviderState.Available(ctx, continuation.ThreadID)
+		threadID, threadErr := a.validateProviderThreadID(ctx, continuation.ThreadID)
+		if threadErr != nil {
+			return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("validating prior provider thread for %s", in.AttemptID), threadErr)
+		}
+		available, stateErr := a.deps.ProviderState.Available(ctx, threadID)
 		if stateErr != nil {
 			return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("checking prior provider state for %s", in.AttemptID), stateErr)
 		}
 		if !available {
 			return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("reconciling unavailable prior provider state for %s", in.AttemptID), ErrUnresumableIncompleteAttempt)
 		}
-		resumeThread = continuation.ThreadID
+		resumeThread = threadID
 	}
 	if err := a.observeCredentialRevision(ctx, in.CredentialRevision); err != nil {
 		return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("observing projected credential revision for %s", in.AttemptID), err)
@@ -208,12 +222,27 @@ func (a *RunWorkerActivities) RunTargetAgent(ctx context.Context, in TargetAgent
 	}
 	var transcript bytes.Buffer
 	checkpointedThread := resumeThread != ""
+	expectedThreadID := resumeThread
 	var checkpointErr error
 	var redactionErr error
 	events := func(raw []byte) {
 		a.deps.Heartbeat(ctx)
 		if redactionErr != nil {
 			return
+		}
+		threadID := codex.ThreadIDFromEvent(raw)
+		if threadID != "" {
+			var threadErr error
+			threadID, threadErr = a.validateProviderThreadID(ctx, threadID)
+			if threadErr != nil {
+				redactionErr = fmt.Errorf("validating provider thread before checkpointing target events: %w", threadErr)
+				return
+			}
+			if expectedThreadID != "" && expectedThreadID != threadID {
+				redactionErr = fmt.Errorf("provider event changed the established thread identity: %w", work.ErrPermanent)
+				return
+			}
+			expectedThreadID = threadID
 		}
 		redacted, err := a.deps.SecretRedactor.Redact(ctx, raw)
 		if err != nil {
@@ -225,12 +254,14 @@ func (a *RunWorkerActivities) RunTargetAgent(ctx context.Context, in TargetAgent
 		if checkpointedThread || checkpointErr != nil {
 			return
 		}
-		threadID := codex.ThreadIDFromEvent(raw)
 		if threadID == "" {
 			return
 		}
 		checkpointedThread = true
 		checkpointErr = cp.Checkpoint(ctx, checkpointprotocol.Attempt{ProviderThreadID: threadID, State: work.AgentAttemptRunning, UsageState: work.UsageUnknown, Usage: checkpointprotocol.Usage{}, Transcript: checkpointTranscript(transcript.Bytes())})
+	}
+	if err := a.deps.SecretRedactor.Prime(ctx); err != nil {
+		return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("priming projected secret material for %s", in.AttemptID), fmt.Errorf("reading projected secret material before running target agent"))
 	}
 	result, runErr := a.deps.Stages.RunTargetStage(ctx, work.StageRun{Key: key, Sandbox: work.SandboxID("self"), Model: in.Model, Prompt: prompt, Schema: schema}, resumeThread, events)
 	if redactionErr != nil {
@@ -242,6 +273,16 @@ func (a *RunWorkerActivities) RunTargetAgent(ctx context.Context, in TargetAgent
 	if runErr != nil {
 		return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("running target agent %s", in.AttemptID), a.redactError(ctx, runErr))
 	}
+	threadID, err := a.validateProviderThreadID(ctx, result.ThreadID)
+	if err != nil {
+		return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("validating terminal provider thread for %s", in.AttemptID), err)
+	}
+	if threadID == "" {
+		return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("validating terminal provider thread for %s", in.AttemptID), fmt.Errorf("terminal provider thread ID is empty: %w", work.ErrPermanent))
+	}
+	if expectedThreadID != "" && expectedThreadID != threadID {
+		return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("validating terminal provider thread for %s", in.AttemptID), fmt.Errorf("terminal provider thread ID does not match established thread identity: %w", work.ErrPermanent))
+	}
 	usageState := work.UsageUnknown
 	if result.UsageMeasured {
 		usageState = work.UsageMeasured
@@ -252,14 +293,36 @@ func (a *RunWorkerActivities) RunTargetAgent(ctx context.Context, in TargetAgent
 	}
 	endedAt := a.deps.Clock.Now().UTC()
 	terminal := checkpointprotocol.Attempt{
-		ProviderThreadID: result.ThreadID, State: work.AgentAttemptSucceeded, UsageState: usageState,
+		ProviderThreadID: threadID, State: work.AgentAttemptSucceeded, UsageState: usageState,
 		Usage:   checkpointprotocol.Usage{InputTokens: result.Usage.InputTokens, CachedInputTokens: result.Usage.CachedInputTokens, OutputTokens: result.Usage.OutputTokens, ReasoningTokens: result.Usage.ReasoningTokens},
 		EndedAt: &endedAt, Result: redactedResult, Transcript: checkpointTranscript(transcript.Bytes()),
 	}
 	if err := cp.Checkpoint(ctx, terminal); err != nil {
 		return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("checkpointing terminal evidence for %s", in.AttemptID), err)
 	}
-	return a.targetAgentOutput(in.Stage, terminal)
+	out, err := a.targetAgentOutput(ctx, in.Stage, terminal)
+	if err != nil {
+		return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("validating target provider thread for %s", in.AttemptID), err)
+	}
+	return out, nil
+}
+
+func (a *RunWorkerActivities) validateProviderThreadID(ctx context.Context, threadID string) (string, error) {
+	if threadID == "" {
+		return "", nil
+	}
+	parsed, err := uuid.Parse(threadID)
+	if err != nil || parsed.String() != threadID {
+		return "", fmt.Errorf("provider thread ID is not a canonical UUID: %w", work.ErrPermanent)
+	}
+	redacted, err := a.deps.SecretRedactor.Redact(ctx, []byte(threadID))
+	if err != nil {
+		return "", fmt.Errorf("reading projected secret material before accepting provider thread ID")
+	}
+	if !bytes.Equal(redacted, []byte(threadID)) {
+		return "", fmt.Errorf("provider thread ID contains projected secret material: %w", work.ErrPermanent)
+	}
+	return threadID, nil
 }
 
 func (a *RunWorkerActivities) redactTargetResult(ctx context.Context, stage work.AgentStage, raw []byte) (json.RawMessage, error) {
@@ -357,12 +420,19 @@ func credentialRevisionNumber(value string) (uint64, error) {
 	return revision, nil
 }
 
-func (a *RunWorkerActivities) targetAgentOutput(stage work.AgentStage, attempt checkpointprotocol.Attempt) (TargetAgentOutput, error) {
+func (a *RunWorkerActivities) targetAgentOutput(ctx context.Context, stage work.AgentStage, attempt checkpointprotocol.Attempt) (TargetAgentOutput, error) {
+	threadID, err := a.validateProviderThreadID(ctx, attempt.ProviderThreadID)
+	if err != nil {
+		return TargetAgentOutput{}, err
+	}
+	if threadID == "" {
+		return TargetAgentOutput{}, fmt.Errorf("terminal provider thread ID is empty: %w", work.ErrPermanent)
+	}
 	decoded, err := a.deps.Prompts.Decode(work.Stage(stage), attempt.Result)
 	if err != nil {
 		return TargetAgentOutput{}, fmt.Errorf("decoding durable target result: %w", err)
 	}
-	return TargetAgentOutput{Output: attempt.Result, Result: decoded, ThreadID: attempt.ProviderThreadID, Usage: work.Usage{InputTokens: attempt.Usage.InputTokens, CachedInputTokens: attempt.Usage.CachedInputTokens, OutputTokens: attempt.Usage.OutputTokens, ReasoningTokens: attempt.Usage.ReasoningTokens}, UsageState: attempt.UsageState}, nil
+	return TargetAgentOutput{Output: attempt.Result, Result: decoded, ThreadID: threadID, Usage: work.Usage{InputTokens: attempt.Usage.InputTokens, CachedInputTokens: attempt.Usage.CachedInputTokens, OutputTokens: attempt.Usage.OutputTokens, ReasoningTokens: attempt.Usage.ReasoningTokens}, UsageState: attempt.UsageState}, nil
 }
 
 func checkpointTranscript(raw []byte) *checkpointprotocol.Transcript {

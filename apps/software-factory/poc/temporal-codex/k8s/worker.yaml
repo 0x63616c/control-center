@@ -1,0 +1,92 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-poc-worker
+  namespace: codex-agent-poc
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agent-poc-credential-writer
+  namespace: codex-agent-poc
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["codex-auth"]
+    verbs: ["get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-poc-credential-writer
+  namespace: codex-agent-poc
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agent-poc-credential-writer
+subjects:
+  - kind: ServiceAccount
+    name: agent-poc-worker
+    namespace: codex-agent-poc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-poc-worker
+  namespace: codex-agent-poc
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: agent-poc-worker
+  template:
+    metadata:
+      labels:
+        app: agent-poc-worker
+    spec:
+      serviceAccountName: agent-poc-worker
+      securityContext:
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: worker
+          image: codex-agent-poc:dev
+          imagePullPolicy: Never
+          env:
+            - name: TEMPORAL_HOST_PORT
+              value: temporal:7233
+            - name: TEMPORAL_NAMESPACE
+              value: default
+            - name: CODEX_RESPONSES_ENDPOINT
+              value: https://chatgpt.com/backend-api/codex/responses
+            - name: CODEX_AUTH_SECRET_NAME
+              value: codex-auth
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: LOG_LEVEL
+              value: info
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault

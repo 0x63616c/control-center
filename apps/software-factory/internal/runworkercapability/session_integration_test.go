@@ -155,6 +155,8 @@ type productionEvidence struct {
 
 type productionSecretRedactor struct{}
 
+func (productionSecretRedactor) Prime(context.Context) error { return nil }
+
 func (productionSecretRedactor) Redact(_ context.Context, raw []byte) ([]byte, error) {
 	return bytes.Clone(raw), nil
 }
@@ -807,8 +809,8 @@ func (r productionStageRunner) RunTargetStage(_ context.Context, _ work.StageRun
 	if err := r.recorder.observe("agent"); err != nil {
 		return work.StageResult{}, fmt.Errorf("recording target agent execution: %w", err)
 	}
-	events([]byte(`{"type":"thread.started","thread_id":"thread-42"}`))
-	return work.StageResult{Output: []byte(`{"report":"implemented","blocked":false,"blocked_reason":"","title":"Implement ticket","body":"Ready"}`), ThreadID: "thread-42", UsageMeasured: true}, nil
+	events([]byte(`{"type":"thread.started","thread_id":"019fb8f6-1446-7da2-838f-4ea1f15304fd"}`))
+	return work.StageResult{Output: []byte(`{"report":"implemented","blocked":false,"blocked_reason":"","title":"Implement ticket","body":"Ready"}`), ThreadID: "019fb8f6-1446-7da2-838f-4ea1f15304fd", UsageMeasured: true}, nil
 }
 
 type productionPrompts struct{}

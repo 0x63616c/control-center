@@ -156,63 +156,6 @@ function softwareFactoryBlobsBackupCronSpec(nasNfsServer: string): OwnedCronJobS
 }
 
 /**
- * @public - the `ha-config` PVC's daily backup: tars `.storage` + the YAML
- * config files (NOT the recorder history, which lives in the separate
- * `home_assistant` CNPG cluster below and is backed up via pg_dump instead ,
- * see homeAssistantPgBackupCronSpec). Mirrors postgresBackupCronSpec's NFS
- * destination pattern. Talos-only: consumed by homeassistant.ts, itself only
- * invoked from program.ts behind `substrate === "talos"`.
- */
-export function haConfigBackupCronSpec(args: {
-  nasNfsServer: string;
-  haConfigClaimName: string;
-}): CronJobSpec {
-  const { nasNfsServer, haConfigClaimName } = args;
-  const backupMountPath = "/backup";
-  return {
-    name: "ha-config-backup",
-    image: "alpine:3.20",
-    schedule: "15 1 * * *",
-    // The live `ha-config` PVC (RWO, local-lvm) is already mounted rw by the
-    // running home-assistant pod on the same node; this cron mounts it a
-    // second time read-only. openebs's local-lvm CSI plugin has hit an
-    // idempotency bug on that second NodePublishVolume where the pod wedges
-    // in ContainerCreating forever ("device already mounted"), and
-    // concurrencyPolicy: Forbid then blocks every later scheduled run until
-    // someone manually deletes the stuck pod. Bound the job so a wedge
-    // self-clears instead: the tar itself finishes in seconds.
-    activeDeadlineSeconds: 300,
-    // alpine's /bin/sh is busybox ash (no `pipefail`), and this command has no
-    // pipe , plain `set -e` is sufficient and correct here, unlike
-    // postgresBackupCommand's pg_dump-into-gzip pipe.
-    command: [
-      "sh",
-      "-c",
-      [
-        "set -e",
-        "cd /config",
-        `out="${backupMountPath}/ha-config-$(date +%Y%m%d).tar.gz"`,
-        // `.storage` (registries, auth, tokens) + top-level YAML (configuration/
-        // automations/scripts/etc). Recorder history is NOT here (§0.3): it lives
-        // entirely in the home_assistant CNPG cluster, backed up separately below.
-        'tar -czf "$out" .storage *.yaml',
-        'echo "wrote $out"',
-      ].join("\n"),
-    ],
-    env: { TZ },
-    volumes: [
-      // Read-only: this cron only ever reads the live config, never writes it.
-      { mountPath: "/config", claim: haConfigClaimName, readOnly: true },
-      {
-        mountPath: backupMountPath,
-        nfs: { server: nasNfsServer, path: "/volume1/Homelab" },
-        subPath: `${NAS_BACKUP_ROOT}/home-assistant/ha-config`,
-      },
-    ],
-  };
-}
-
-/**
  * @public - the `home_assistant` CNPG cluster's daily pg_dump, alongside
  * control-center's (Step 6b): keeps the backup pattern uniform across every
  * Postgres cluster in the stack even though this data is disposable (§0.1 ,

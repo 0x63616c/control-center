@@ -24,7 +24,7 @@
 import * as k8s from "@pulumi/kubernetes";
 import * as pulumi from "@pulumi/pulumi";
 import { ScheduledJob, Workload } from "./component.ts";
-import { haConfigBackupCronSpec, homeAssistantPgBackupCronSpec } from "./crons.ts";
+import { homeAssistantPgBackupCronSpec } from "./crons.ts";
 
 export const HOME_ASSISTANT_NAMESPACE = "home-assistant";
 
@@ -63,8 +63,8 @@ export interface HomeAssistantArgs {
   cnpgOperator: k8s.yaml.ConfigFile;
   // Decrypted vault (vault.ts, CC-k8t7). Needs HOME_ASSISTANT_POSTGRES__PASSWORD.
   vault: Record<string, string>;
-  // NAS NFS server for the ha-config + home_assistant-postgres backup crons
-  // (same knob services.ts/crons.ts thread through for every other backup).
+  // NAS NFS server for the HA config-backup sidecar and home_assistant-postgres
+  // backup cron (same knob services.ts/crons.ts thread through for every backup).
   nasNfsServer: string;
 }
 
@@ -226,6 +226,34 @@ export function installHomeAssistant(args: HomeAssistantArgs): HomeAssistantReso
         TZ: "America/Los_Angeles",
       },
       volumes: [{ mountPath: "/config", claim: HA_CONFIG_CLAIM_NAME }],
+      // local-lvm permits only the HA pod's mount of ha-config. Keep the
+      // backup scheduler in that pod so it shares the one valid mount instead
+      // of creating a CronJob pod that wedges in ContainerCreating forever.
+      sidecars: [
+        {
+          name: "ha-config-backup-sidecar",
+          image: "alpine:3.20",
+          command: [
+            "sh",
+            "-c",
+            [
+              "set -e",
+              "mkdir -p /etc/crontabs",
+              "printf '%s\\n' '15 1 * * * cd /config && tar -czf /backup/ha-config-$(date +\\%Y\\%m\\%d).tar.gz .storage *.yaml' > /etc/crontabs/root",
+              "exec crond -f -l 2",
+            ].join("\n"),
+          ],
+          env: { TZ: "America/Los_Angeles" },
+          volumes: [
+            { mountPath: "/config", claim: HA_CONFIG_CLAIM_NAME, readOnly: true },
+            {
+              mountPath: "/backup",
+              nfs: { server: nasNfsServer, path: "/volume1/Homelab" },
+              subPath: "backups/world-wide-webb/home-assistant/ha-config",
+            },
+          ],
+        },
+      ],
       // No `ports`: hostNetwork pods don't need a k8s Service to be reached
       // at :8123 (services.ts's `ha` ExternalName points straight at the
       // node LAN IP, not at a Service backed by this Deployment's pod).
@@ -234,14 +262,6 @@ export function installHomeAssistant(args: HomeAssistantArgs): HomeAssistantReso
   );
 
   const backupJobs = [
-    new ScheduledJob(
-      {
-        ...haConfigBackupCronSpec({ nasNfsServer, haConfigClaimName: HA_CONFIG_CLAIM_NAME }),
-        provider,
-        namespace: namespaceName,
-      },
-      { ...opts, dependsOn: [configClaim] },
-    ),
     new ScheduledJob(
       {
         ...homeAssistantPgBackupCronSpec({

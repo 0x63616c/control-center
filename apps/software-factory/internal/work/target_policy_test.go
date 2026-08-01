@@ -78,3 +78,67 @@ func TestTargetRunPolicyRejectsAHardDeadlineWithoutFinalizationRoom(t *testing.T
 		t.Fatal("a target run needs a distinct hard deadline for finalization")
 	}
 }
+
+func TestTargetRunPolicyAcceptsAValidResolvedSnapshotWithFutureDefaults(t *testing.T) {
+	t.Parallel()
+
+	policy := work.DefaultTargetRunPolicy()
+	policy.MaxReviewSteps = 8
+	policy.MaxAgentAttempts = 40
+	policy.Agent.StartToCloseTimeout = 65 * time.Minute
+	policy.Agent.ScheduleToCloseTimeout = 2 * time.Hour
+	policy.Agent.HeartbeatTimeout = 10 * time.Minute
+	policy.Agent.Retry = work.RetryPolicy{
+		InitialInterval:    15 * time.Second,
+		BackoffCoefficient: 3,
+		MaximumInterval:    10 * time.Minute,
+		MaximumAttempts:    12,
+	}
+
+	if err := policy.Validate(); err != nil {
+		t.Fatalf("valid resolved future policy snapshot rejected: %v", err)
+	}
+}
+
+func TestTargetRunPolicyRejectsNonPositiveSemanticBudgets(t *testing.T) {
+	t.Parallel()
+
+	for _, field := range []string{"review steps", "agent attempts"} {
+		t.Run(field, func(t *testing.T) {
+			policy := work.DefaultTargetRunPolicy()
+			switch field {
+			case "review steps":
+				policy.MaxReviewSteps = 0
+			case "agent attempts":
+				policy.MaxAgentAttempts = 0
+			}
+			if err := policy.Validate(); err == nil {
+				t.Fatalf("non-positive %s accepted", field)
+			}
+		})
+	}
+}
+
+func TestTargetRunPolicyRejectsInvalidAgentTimeoutRelations(t *testing.T) {
+	t.Parallel()
+
+	for _, change := range []struct {
+		name  string
+		apply func(*work.TargetRunPolicy)
+	}{
+		{name: "zero start-to-close", apply: func(policy *work.TargetRunPolicy) { policy.Agent.StartToCloseTimeout = 0 }},
+		{name: "schedule before start-to-close", apply: func(policy *work.TargetRunPolicy) {
+			policy.Agent.ScheduleToCloseTimeout = policy.Agent.StartToCloseTimeout - time.Second
+		}},
+		{name: "zero heartbeat", apply: func(policy *work.TargetRunPolicy) { policy.Agent.HeartbeatTimeout = 0 }},
+		{name: "heartbeat at start-to-close", apply: func(policy *work.TargetRunPolicy) { policy.Agent.HeartbeatTimeout = policy.Agent.StartToCloseTimeout }},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			policy := work.DefaultTargetRunPolicy()
+			change.apply(&policy)
+			if err := policy.Validate(); err == nil {
+				t.Fatal("invalid agent timeout relation accepted")
+			}
+		})
+	}
+}

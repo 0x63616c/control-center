@@ -46,20 +46,30 @@ func newProjectedSecretRedactor(readFile func(string) ([]byte, error)) (*project
 	}, nil
 }
 
-// Redact removes exact observed secret values from untrusted agent output
-// without logging either the source material or the output. Values remain in
-// the process-local set after a projected credential rotation because the
-// agent may emit an older token after the projection has changed.
-func (r *projectedSecretRedactor) Redact(ctx context.Context, raw []byte) ([]byte, error) {
+// Prime snapshots the current projected material before provider execution.
+// Values remain in the process-local set after a projected credential rotation
+// because the agent may emit an older token after the projection has changed.
+func (r *projectedSecretRedactor) Prime(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("reading projected secret material: %w", err)
+		return fmt.Errorf("reading projected secret material: %w", err)
 	}
 	current, err := r.currentValues()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	r.mu.Lock()
 	r.observed = appendSecretValues(r.observed, current)
+	r.mu.Unlock()
+	return nil
+}
+
+// Redact removes exact observed secret values from untrusted agent output
+// without logging either the source material or the output.
+func (r *projectedSecretRedactor) Redact(ctx context.Context, raw []byte) ([]byte, error) {
+	if err := r.Prime(ctx); err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
 	values := cloneSecretValues(r.observed)
 	r.mu.Unlock()
 	redacted := bytes.Clone(raw)
@@ -147,5 +157,6 @@ func cloneSecretValues(values [][]byte) [][]byte {
 }
 
 var _ interface {
+	Prime(context.Context) error
 	Redact(context.Context, []byte) ([]byte, error)
 } = (*projectedSecretRedactor)(nil)

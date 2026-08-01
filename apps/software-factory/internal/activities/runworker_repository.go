@@ -220,8 +220,30 @@ func (a *RunWorkerActivities) TargetMergePullRequest(ctx context.Context, in Tar
 	if err != nil {
 		return work.PullRequestMergeResult{}, fail(ctx, "merging the target pull request", err)
 	}
-	if err := a.checkpointRepositoryEffect(ctx, cp, in.Step, repositoryEffectMerge, result); err != nil {
-		return work.PullRequestMergeResult{}, fmt.Errorf("checkpointing target pull request merge effect: %w", err)
+	switch result.Outcome {
+	case work.PullRequestMergeRetryableAmbiguity:
+		diagnostic := strings.TrimSpace(result.Diagnostic)
+		if diagnostic == "" {
+			diagnostic = "GitHub has not resolved the authoritative merge state"
+		}
+		return work.PullRequestMergeResult{}, fail(ctx, "merging the target pull request", fmt.Errorf("merge result remains ambiguous: %s", diagnostic))
+	case work.PullRequestMergeConfirmed:
+		// A confirmed merge must remain recoverable until
+		// FinalizeConfirmedMerge transactionally completes the merge Step
+		// alongside the Run and Ticket.
+		err = a.checkpointRepositoryEffect(ctx, cp, in.Step, repositoryEffectMerge, result)
+	case work.PullRequestMergeClosedUnmerged,
+		work.PullRequestMergeTextConflict,
+		work.PullRequestMergeHeadChanged,
+		work.PullRequestMergeBaseRefreshRequired:
+		// These outcomes are terminal for this merge attempt and authorize
+		// the workflow's next semantic decision, so they complete the Step.
+		err = a.checkpointRepositoryResult(ctx, cp, in.Step, repositoryEffectMerge, result)
+	default:
+		return work.PullRequestMergeResult{}, fail(ctx, "merging the target pull request", fmt.Errorf("GitHub returned an unrecognized merge outcome: %w", work.ErrPermanent))
+	}
+	if err != nil {
+		return work.PullRequestMergeResult{}, fmt.Errorf("checkpointing target pull request merge result: %w", err)
 	}
 	return result, nil
 }

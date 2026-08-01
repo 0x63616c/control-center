@@ -1,59 +1,52 @@
 ---
 name: create-ticket
-description: Use when filing a GitHub issue in this repo, or when the user says "ticket", "file a ticket", "make an issue", or dumps ideas to track. Applies this repo's verbatim-ask rule and exactly-two-labels scheme.
+description: Use when filing a software-factory Ticket in this repo, or when the user says "ticket", "file a ticket", "make an issue", or dumps ideas to track. Applies the verbatim-ask rule and factory Ticket workflow.
 ---
 
 # create-ticket
 
-"Ticket" here = GitHub issue, filed with `gh issue`. This is the human-facing
-tracker and brain-dump inbox - not the same system as software-factory's own
-Tickets (ADR-0012). software-factory no longer reads GitHub issues or the
-`auto` label; it works its own Ticket store. This skill does not create
-software-factory Tickets.
+"Ticket" here means a software-factory Ticket. It is the sole work tracker and
+brain-dump inbox, backed by the factory's own Postgres store and API
+(ADR-0012). Create it through `scripts/create-ticket.sh`; never expose or
+inspect the bearer token that script decrypts.
 
 ## Recipe
 
-1. Search first — don't dupe: `gh issue list --search "<keywords>" --state all --json number,title,labels,state`
-2. Pick exactly one `area/*` and one `type/*` label (list below), plus `auto` if an agent could take it end-to-end unattended. No other labels at filing time — no priority, no status, no milestone. `failed` is a lifecycle marker software-factory adds later to a failed ticket and any run-owned PR; do not select it here.
-3. Create:
+1. Keep one Ticket per request, so work can be independently planned, run, and
+   completed. Add `--blocker T-<id>` for every known prerequisite.
+2. Write a self-contained body. Factory Tickets have no labels: lifecycle and
+   execution state belong to the factory.
+3. Create it:
 
 ```bash
-gh issue create \
+scripts/create-ticket.sh \
   --title "<cleaned-up handle, not the raw ask>" \
-  --label "area/<x>" --label "type/<y>" \
-  --body '## Original ask (verbatim)
+  --body-file <body.md> \
+  --blocker <id>
+```
 
-> <requester'"'"'s exact wording, character-for-character - typos and all>
+`<body.md>` must contain:
+
+```md
+## Original ask (verbatim)
+
+> <requester's exact wording, character-for-character - typos and all>
 
 ## Interpretation
 
-<your read on it, clearly separate from the quote above>'
+<your read on it, clearly separate from the quote above>
 ```
 
 Rules:
 - The verbatim blockquote is mandatory and must not be paraphrased — that's the one unacceptable edit.
-- One issue per request, even when several ideas arrive in one message, so each closes independently.
-- If the ask cites an origin (e.g. "item #22" from a brain dump), note it in the body — that number is not a GitHub issue number.
-
-## Labels
-
-Get the current, authoritative set from the repo (don't trust a hardcoded list — it goes stale, and the repo also carries unrelated default labels like `bug`/`enhancement`/`ruby` you must ignore):
-
-```bash
-gh label list --limit 100 --json name | jq -r '.[].name' | grep -E '^(area|type)/'
-```
-
-As of 2026-07-25 that's:
-- `area/`: `infra` `network` `hardware` `panel-ui` `tiles` `integrations` `observability` `docs` `tooling` `security`
-- `type/`: `bug` `chore` `design` `feature` `question` `spike` `verify`
-
-If neither list fits, ask the user rather than inventing a new label.
+- Do not add labels, milestones, or a parallel tracking record.
+- If the ask cites an origin (for example `item #22` from a brain dump), retain it in the body as context.
+- The script prints the created `T-<id>` and never prints the bearer token.
 
 ## PR handoff
 
-This skill creates issues, not pull requests. If the work continues to a PR,
+This skill creates Tickets, not pull requests. If the work continues to a PR,
 write its description from `.github/pull_request_template.md`: complete every
-applicable section with real branch evidence, use `Refs #N` (never `Fixes #N`
-or another closing keyword) for an issue the PR resolves, close it by hand
-after merge, and delete the
+applicable section with real branch evidence, use `Refs T-<id>` for its Ticket,
+and delete the
 Screenshot section when there is no UI change.
