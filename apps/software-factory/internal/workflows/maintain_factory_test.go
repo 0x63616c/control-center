@@ -23,15 +23,16 @@ func TestMaintainFactoryReconcilesClosedOwnerAndDeletesItsRunWorker(t *testing.T
 	suite := &testsuite.WorkflowTestSuite{}
 	env := suite.NewTestWorkflowEnvironment()
 	owner := store.ActiveTargetRunOwner{TicketID: 7, RunID: "019fb900-0000-7000-8000-000000000007"}
+	identity, err := work.NewRunWorkerIdentity(owner.RunID, 2)
+	if err != nil {
+		t.Fatalf("NewRunWorkerIdentity: %v", err)
+	}
 	env.OnActivity(maintenanceActs.ListActiveTargetRunOwners, mock.Anything).Return([]store.ActiveTargetRunOwner{owner}, nil)
+	env.OnActivity(maintenanceRunWorkerActs.ListRunWorkers, mock.Anything).Return([]work.RunWorkerIdentity{identity}, nil)
 	env.OnActivity(acts.DescribeRun, mock.Anything, work.FactoryTicketWorkflowID(int64(owner.TicketID))).Return(work.RunState{Open: false}, nil)
 	deleted := false
 	env.OnActivity(maintenanceRunWorkerActs.DeleteRunWorker, mock.Anything, mock.Anything).
 		Return(func(_ context.Context, in activities.DeleteRunWorkerInput) error {
-			identity, err := work.NewRunWorkerIdentity(owner.RunID, 1)
-			if err != nil {
-				t.Fatalf("NewRunWorkerIdentity: %v", err)
-			}
 			if in.Identity != identity {
 				t.Errorf("deleted identity = %+v, want %+v", in.Identity, identity)
 			}
@@ -61,8 +62,33 @@ func TestMaintainFactoryLeavesTheCurrentLiveOwnerUntouched(t *testing.T) {
 	suite := &testsuite.WorkflowTestSuite{}
 	env := suite.NewTestWorkflowEnvironment()
 	owner := store.ActiveTargetRunOwner{TicketID: 8, RunID: "019fb900-0000-7000-8000-000000000008"}
+	identity, err := work.NewRunWorkerIdentity(owner.RunID, 2)
+	if err != nil {
+		t.Fatalf("NewRunWorkerIdentity: %v", err)
+	}
 	env.OnActivity(maintenanceActs.ListActiveTargetRunOwners, mock.Anything).Return([]store.ActiveTargetRunOwner{owner}, nil)
+	env.OnActivity(maintenanceRunWorkerActs.ListRunWorkers, mock.Anything).Return([]work.RunWorkerIdentity{identity}, nil)
 	env.OnActivity(acts.DescribeRun, mock.Anything, work.FactoryTicketWorkflowID(int64(owner.TicketID))).Return(work.RunState{Open: true, RunID: owner.RunID}, nil)
+
+	env.ExecuteWorkflow(workflows.MaintainFactory)
+	if err := env.GetWorkflowError(); err != nil {
+		t.Fatalf("MaintainFactory: %v", err)
+	}
+}
+
+func TestMaintainFactoryDeletesTerminalRunWorkersWithoutReopeningDoneTickets(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+	runID := "019fb900-0000-7000-8000-000000000009"
+	identity, err := work.NewRunWorkerIdentity(runID, 2)
+	if err != nil {
+		t.Fatalf("NewRunWorkerIdentity: %v", err)
+	}
+	env.OnActivity(maintenanceActs.ListActiveTargetRunOwners, mock.Anything).Return([]store.ActiveTargetRunOwner{}, nil)
+	env.OnActivity(maintenanceRunWorkerActs.ListRunWorkers, mock.Anything).Return([]work.RunWorkerIdentity{identity}, nil)
+	env.OnActivity(maintenanceActs.LookupTargetRun, mock.Anything, runID).
+		Return(store.Run{ID: runID, TicketID: 9, TargetOutcome: work.RunOutcomeSucceeded}, nil)
+	env.OnActivity(maintenanceRunWorkerActs.DeleteRunWorker, mock.Anything, activities.DeleteRunWorkerInput{Identity: identity}).Return(nil)
 
 	env.ExecuteWorkflow(workflows.MaintainFactory)
 	if err := env.GetWorkflowError(); err != nil {
