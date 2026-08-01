@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+	"go.temporal.io/sdk/temporal"
 )
 
 var targetTestIdentity = work.RunWorkerIdentity{RunID: "0f466627-b3ae-4ba2-9c96-6ef44ec6f578", Generation: 1}
@@ -31,6 +33,8 @@ type targetGitHubProbe struct {
 	checks     []work.CheckRun
 	pr         work.PullRequest
 	merge      work.PullRequestMergeResult
+	merges     []work.PullRequestMergeResult
+	mergeHeads []string
 	syncCalls  int
 	readyCalls int
 	mergeCalls int
@@ -53,6 +57,10 @@ func (p *targetGitHubProbe) MarkPullRequestReadyForReview(context.Context, strin
 func (p *targetGitHubProbe) MergePullRequest(_ context.Context, _ int, sha string) (work.PullRequestMergeResult, error) {
 	p.mergeCalls++
 	p.commitSHA = sha
+	p.mergeHeads = append(p.mergeHeads, sha)
+	if p.mergeCalls <= len(p.merges) {
+		return p.merges[p.mergeCalls-1], nil
+	}
 	return p.merge, nil
 }
 
@@ -207,13 +215,12 @@ func TestTargetMergeRetryAfterLostCheckpointResponseDoesNotMergeAgain(t *testing
 	}
 }
 
-func TestTargetMergeNonConfirmedOutcomesCompleteTheStepAndReplayLostCheckpointResponse(t *testing.T) {
+func TestTargetMergeTerminalNonConfirmedOutcomesCompleteTheStepAndReplayLostCheckpointResponse(t *testing.T) {
 	for _, outcome := range []work.PullRequestMergeOutcome{
 		work.PullRequestMergeClosedUnmerged,
 		work.PullRequestMergeTextConflict,
 		work.PullRequestMergeHeadChanged,
 		work.PullRequestMergeBaseRefreshRequired,
-		work.PullRequestMergeRetryableAmbiguity,
 	} {
 		t.Run(string(outcome), func(t *testing.T) {
 			position := targetPosition(5)
@@ -232,6 +239,86 @@ func TestTargetMergeNonConfirmedOutcomesCompleteTheStepAndReplayLostCheckpointRe
 			}
 			if github.mergeCalls != 1 || got != want || len(cp.stepWrites) != 1 || len(cp.effectWrites) != 0 {
 				t.Fatalf("merge calls/result/checkpoints = %d / %+v / steps=%d effects=%d", github.mergeCalls, got, len(cp.stepWrites), len(cp.effectWrites))
+			}
+		})
+	}
+}
+
+func TestTargetMergeRetriesAmbiguityOnTheSameStepUntilGitHubReturnsAnAuthoritativeOutcome(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		authoritative work.PullRequestMergeResult
+		wantEffects   int
+		wantSteps     int
+	}{
+		{
+			name:          "confirmed merge remains deferred for finalization",
+			authoritative: work.PullRequestMergeResult{Outcome: work.PullRequestMergeConfirmed, MergeSHA: "merge-sha"},
+			wantEffects:   1,
+		},
+		{
+			name:          "text conflict completes the merge step",
+			authoritative: work.PullRequestMergeResult{Outcome: work.PullRequestMergeTextConflict, Diagnostic: "text conflict"},
+			wantSteps:     1,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			position := targetPosition(5)
+			ambiguity := work.PullRequestMergeResult{
+				Outcome:    work.PullRequestMergeRetryableAmbiguity,
+				Diagnostic: "GitHub is still computing mergeability",
+			}
+			cp := &repositoryCheckpointProbe{}
+			github := &targetGitHubProbe{merges: []work.PullRequestMergeResult{ambiguity, test.authoritative}}
+			a := targetRepositoryActivities(&targetRepositoryProbe{}, github, cp)
+			in := TargetMergePullRequestInput{Step: position, ExpectedHeadSHA: position.PushedHead}
+
+			if _, err := a.TargetMergePullRequest(context.Background(), in); err == nil {
+				t.Fatal("ambiguous merge result completed the activity")
+			} else {
+				var app *temporal.ApplicationError
+				if !errors.As(err, &app) || app.NonRetryable() || app.Type() != ErrTypeTransient || !strings.Contains(app.Error(), ambiguity.Diagnostic) {
+					t.Fatalf("ambiguity error = %v, want retryable bounded diagnostic", err)
+				}
+			}
+			if cp.found || len(cp.writes) != 0 {
+				t.Fatalf("ambiguous merge checkpointed the Step: found=%t writes=%d", cp.found, len(cp.writes))
+			}
+
+			got, err := a.TargetMergePullRequest(context.Background(), in)
+			if err != nil {
+				t.Fatalf("TargetMergePullRequest authoritative retry: %v", err)
+			}
+			if got != test.authoritative {
+				t.Fatalf("result = %+v, want %+v", got, test.authoritative)
+			}
+			if github.mergeCalls != 2 || len(github.mergeHeads) != 2 || github.mergeHeads[0] != position.PushedHead || github.mergeHeads[1] != position.PushedHead {
+				t.Fatalf("merge calls/heads = %d / %v, want two exact-head calls for %q", github.mergeCalls, github.mergeHeads, position.PushedHead)
+			}
+			if len(cp.effectWrites) != test.wantEffects || len(cp.stepWrites) != test.wantSteps || len(cp.writes) != 1 {
+				t.Fatalf("authoritative checkpoints = effects=%d steps=%d total=%d", len(cp.effectWrites), len(cp.stepWrites), len(cp.writes))
+			}
+		})
+	}
+}
+
+func TestTargetMergeRejectsUnknownOutcomesWithoutCheckpointingTheStep(t *testing.T) {
+	for _, outcome := range []work.PullRequestMergeOutcome{"", "future_unknown_outcome"} {
+		t.Run(string(outcome), func(t *testing.T) {
+			position := targetPosition(5)
+			cp := &repositoryCheckpointProbe{}
+			github := &targetGitHubProbe{merge: work.PullRequestMergeResult{Outcome: outcome}}
+			a := targetRepositoryActivities(&targetRepositoryProbe{}, github, cp)
+
+			_, err := a.TargetMergePullRequest(context.Background(), TargetMergePullRequestInput{
+				Step: position, ExpectedHeadSHA: position.PushedHead,
+			})
+			var app *temporal.ApplicationError
+			if !errors.As(err, &app) || !app.NonRetryable() || app.Type() != ErrTypePermanent {
+				t.Fatalf("unknown outcome error = %v, want permanent ApplicationError", err)
+			}
+			if cp.found || len(cp.writes) != 0 {
+				t.Fatalf("unknown merge outcome checkpointed the Step: found=%t writes=%d", cp.found, len(cp.writes))
 			}
 		})
 	}
