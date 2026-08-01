@@ -247,6 +247,53 @@ func TestWorkOnTicketRepairsRedCIThenReviewsTheNewHead(t *testing.T) {
 	}
 }
 
+func TestWorkOnTicketNeverMergesAHeadChangedAfterReview(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	recorderStore := storefake.New()
+	ticket, err := recorderStore.CreateTicket(ctx, "head changed", "review the new head", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	input := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000002", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, recorderStore)
+	h.awaitCI = func(in activities.TargetAwaitCIInput) (activities.AwaitCIOutput, error) {
+		if err := h.checkpointRepositoryStep(in.Step); err != nil {
+			return activities.AwaitCIOutput{}, err
+		}
+		return activities.AwaitCIOutput{CommitSHA: in.CI.CommitSHA, Green: true}, nil
+	}
+	h.mergeResult = func(in activities.TargetMergePullRequestInput) (work.PullRequestMergeResult, error) {
+		if len(h.mergeInputs) == 1 {
+			return work.PullRequestMergeResult{Outcome: work.PullRequestMergeHeadChanged, PullRequest: work.PullRequest{Number: 1, NodeID: "PR_node1", HeadSHA: "H2"}}, nil
+		}
+		return work.PullRequestMergeResult{Outcome: work.PullRequestMergeConfirmed, MergeSHA: "M2"}, nil
+	}
+	h.run(input)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket: %v", err)
+	}
+	if len(h.mergeInputs) != 2 || h.mergeInputs[0].ExpectedHeadSHA != "H1" || h.mergeInputs[1].ExpectedHeadSHA != "H2" {
+		t.Fatalf("merge requests = %+v, want only H1 then independently authorized H2", h.mergeInputs)
+	}
+	var reviews []activities.TargetAgentInput
+	for _, agent := range h.agentInputs {
+		if agent.Stage == work.AgentStageReview {
+			reviews = append(reviews, agent)
+		}
+	}
+	if len(reviews) != 2 || reviews[0].PromptContext.CandidateHeadSHA != "H1" || reviews[1].PromptContext.CandidateHeadSHA != "H2" || reviews[0].PriorProviderThread != nil || reviews[1].PriorProviderThread != nil {
+		t.Fatalf("review handoffs = %+v, want independent fresh H1 and H2 reviews", reviews)
+	}
+	detail, err := recorderStore.TargetRunDetail(ctx, input.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	if detail.Run.ReviewedHead != "H2" || detail.Run.MergeSHA != "M2" {
+		t.Fatalf("terminal run = %+v, want reviewed H2 / M2", detail.Run)
+	}
+}
+
 type workOnTicketHarness struct {
 	env   *testsuite.TestWorkflowEnvironment
 	store *storefake.Store
@@ -260,13 +307,15 @@ type workOnTicketHarness struct {
 	ci          activities.TargetAwaitCIInput
 	ready       activities.TargetMarkPullRequestReadyInput
 	merge       activities.TargetMergePullRequestInput
+	mergeInputs []activities.TargetMergePullRequestInput
 	deleted     []activities.DeleteRunWorkerInput
 	reviewHead  string
 
-	syncInputs []activities.TargetSyncPullRequestInput
-	ciInputs   []activities.TargetAwaitCIInput
-	sync       func(activities.TargetSyncPullRequestInput) (work.PullRequest, error)
-	awaitCI    func(activities.TargetAwaitCIInput) (activities.AwaitCIOutput, error)
+	syncInputs  []activities.TargetSyncPullRequestInput
+	ciInputs    []activities.TargetAwaitCIInput
+	sync        func(activities.TargetSyncPullRequestInput) (work.PullRequest, error)
+	awaitCI     func(activities.TargetAwaitCIInput) (activities.AwaitCIOutput, error)
+	mergeResult func(activities.TargetMergePullRequestInput) (work.PullRequestMergeResult, error)
 }
 
 func newWorkOnTicketHarness(t *testing.T, recorderStore *storefake.Store) *workOnTicketHarness {
@@ -371,6 +420,10 @@ func newWorkOnTicketHarness(t *testing.T, recorderStore *storefake.Store) *workO
 	env.RegisterActivityWithOptions(
 		func(_ context.Context, in activities.TargetMergePullRequestInput) (work.PullRequestMergeResult, error) {
 			h.merge = in
+			h.mergeInputs = append(h.mergeInputs, in)
+			if h.mergeResult != nil {
+				return h.mergeResult(in)
+			}
 			return work.PullRequestMergeResult{Outcome: work.PullRequestMergeConfirmed, MergeSHA: "M1"}, nil
 		},
 		activity.RegisterOptions{Name: "TargetMergePullRequest"},
