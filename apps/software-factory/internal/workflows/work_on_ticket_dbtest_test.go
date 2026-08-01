@@ -2,6 +2,7 @@ package workflows_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/database/databasetest"
@@ -87,7 +88,8 @@ func TestWorkOnTicketCommitsRepresentativeHistoryAgainstARealDatabase(t *testing
 			t.Fatalf("agent step %s attempts = %+v, want one", wantKind, step.Attempts)
 		}
 		attempt := step.Attempts[0]
-		if attempt.AgentStage != wantStage || attempt.State != work.AgentAttemptSucceeded || attempt.ProviderThreadID != string(wantStage)+"-thread" || attempt.UsageState != work.UsageMeasured {
+		wantIdentity := fmt.Sprintf("agent/%s/step/%d/attempt/1", input.RunID, step.Step.Ordinal)
+		if attempt.AgentStage != wantStage || attempt.State != work.AgentAttemptSucceeded || attempt.ProviderThreadID != wantIdentity || attempt.UsageState != work.UsageMeasured {
 			t.Fatalf("agent step %s attempt = %+v, want successful measured %s evidence", wantKind, attempt, wantStage)
 		}
 	}
