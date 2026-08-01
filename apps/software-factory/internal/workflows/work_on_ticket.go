@@ -247,8 +247,12 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 			return err
 		}
 		ordinal++
+		mergeOptions, readyToMerge := mergeActivityOptions(ctx, in.Policy.Merge)
+		if !readyToMerge {
+			return finalizeMergeSemanticDeadline(ctx, session, in, mergeStep.StepOrdinal)
+		}
 		if err := session.execute(ctx, func(sessionCtx workflow.Context) error {
-			mergeCtx := workflow.WithActivityOptions(sessionCtx, mergeActivityOptions(ctx, in.Policy.Merge))
+			mergeCtx := workflow.WithActivityOptions(sessionCtx, mergeOptions)
 			return workflow.ExecuteActivity(mergeCtx, targetRunWorkerActs.TargetMergePullRequest, activities.TargetMergePullRequestInput{Step: mergeStep, ExpectedHeadSHA: candidate.PushedHead}).Get(mergeCtx, &merge)
 		}); err != nil {
 			if isScheduleToCloseTimeout(err) {
@@ -593,13 +597,25 @@ func finalizeUnobservedCI(ctx workflow.Context, session *targetRunSession, in Wo
 	return temporal.NewNonRetryableApplicationError("target CI became unobserved", activities.ErrTypeCIUnobserved, nil)
 }
 
-func mergeActivityOptions(ctx workflow.Context, policy work.ActivityPolicy) workflow.ActivityOptions {
-	policy.ScheduleToCloseTimeout = semanticTimeRemainingDuration(ctx)
-	return targetActivityOptions(policy)
+func mergeActivityOptions(ctx workflow.Context, policy work.ActivityPolicy) (workflow.ActivityOptions, bool) {
+	remaining := semanticTimeRemainingDuration(ctx)
+	if remaining <= 0 {
+		return workflow.ActivityOptions{}, false
+	}
+	policy.ScheduleToCloseTimeout = remaining
+	return targetActivityOptions(policy), true
 }
 
 func finalizeMergeRetryDeadline(ctx workflow.Context, session *targetRunSession, in WorkOnTicketInput, stepOrdinal int, mergeErr error) error {
 	failureKind, stepResult, errorType := mergeRetryDeadlineFailure(mergeErr)
+	return finalizeMergeFailure(ctx, session, in, stepOrdinal, failureKind, stepResult, errorType, "target merge remained unavailable through its retry window")
+}
+
+func finalizeMergeSemanticDeadline(ctx workflow.Context, session *targetRunSession, in WorkOnTicketInput, stepOrdinal int) error {
+	return finalizeMergeFailure(ctx, session, in, stepOrdinal, work.RunFailureSemanticDeadline, json.RawMessage(`{"kind":"semantic_deadline"}`), activities.ErrTypeSemanticDeadline, "target run reached its semantic deadline before scheduling merge")
+}
+
+func finalizeMergeFailure(ctx workflow.Context, session *targetRunSession, in WorkOnTicketInput, stepOrdinal int, failureKind work.RunFailureKind, stepResult json.RawMessage, errorType, message string) error {
 	terminalCtx, cancel := workflow.NewDisconnectedContext(ctx)
 	defer cancel()
 	finalCtx := workflow.WithActivityOptions(terminalCtx, targetActivityOptions(in.Policy.Recording))
@@ -616,7 +632,7 @@ func finalizeMergeRetryDeadline(ctx workflow.Context, session *targetRunSession,
 	}
 	session.close()
 	session.delete(terminalCtx)
-	return temporal.NewNonRetryableApplicationError("target merge remained unavailable through its retry window", errorType, nil)
+	return temporal.NewNonRetryableApplicationError(message, errorType, nil)
 }
 
 func mergeRetryDeadlineFailure(err error) (work.RunFailureKind, json.RawMessage, string) {
