@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import { AppHeader } from "@/components/AppHeader";
 import { Console } from "@/features/console/Console";
 import { useConsole } from "@/features/console/useConsole";
+import { CreateTicketPrototype } from "@/features/create-ticket-prototype/CreateTicketPrototype";
 import { TicketDetail } from "@/features/ticket-detail/TicketDetail";
 import { useTicketDetail } from "@/features/ticket-detail/useTicketDetail";
 
@@ -9,6 +10,7 @@ import { useTicketDetail } from "@/features/ticket-detail/useTicketDetail";
 // hash is enough to make a Ticket's detail view a real, bookmarkable
 // location (`#/tickets/42`) without adding react-router for two routes.
 const TICKET_HASH = /^#\/tickets\/(\d+)$/;
+const CREATE_TICKET_PROTOTYPE_HASH = "#/prototype/create-ticket";
 
 function useHash(): string {
   return useSyncExternalStore(
@@ -46,11 +48,18 @@ function TicketDetailRoute({ ticketId }: { readonly ticketId: number }) {
 }
 
 export function App() {
-  const ticketId = ticketIdFromHash(useHash());
+  const hash = useHash();
+  const ticketId = ticketIdFromHash(hash);
   return (
     <>
       <AppHeader />
-      {ticketId !== null ? <TicketDetailRoute ticketId={ticketId} /> : <ConsoleRoute />}
+      {hash === CREATE_TICKET_PROTOTYPE_HASH ? (
+        <CreateTicketPrototype />
+      ) : ticketId !== null ? (
+        <TicketDetailRoute ticketId={ticketId} />
+      ) : (
+        <ConsoleRoute />
+      )}
     </>
   );
 }
