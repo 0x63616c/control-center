@@ -29,6 +29,7 @@ func TestRegisterExposesTheAgentWorkflowAndMainQueueActivities(t *testing.T) {
 		"w.RegisterWorkflowWithOptions(workflows.AgentWorkflow",
 		"agent.PrepareActivityName",
 		"agent.ModelTurnActivityName",
+		"agent.LifecycleActivityName",
 		"agent.FinalizeActivityName",
 		"agent.PersistTranscriptActivityName",
 	} {

@@ -108,7 +108,7 @@ func (store ConversationStore) Items(ctx context.Context, ref ConversationRef) (
 		}
 		revision, err := store.Load(ctx, current)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("reconstruct conversation at revision %d: %w", revisionIndex, err)
 		}
 		revisions[revisionIndex] = revision
 		if revisionIndex == 0 {
@@ -137,7 +137,7 @@ func (store ConversationStore) Identity(ref ConversationRef) (string, error) {
 func conversationIdentity(ref ConversationRef) (string, error) {
 	key, err := blobs.ParseKey(ref.Key)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("parse conversation reference: %w", err)
 	}
 	if key.Bucket != blobs.BucketConversations {
 		return "", fmt.Errorf("key %q is not a conversation", key)

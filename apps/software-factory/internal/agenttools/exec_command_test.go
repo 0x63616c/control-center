@@ -87,3 +87,42 @@ func TestExecCommandUsesArgvCancelsTheProcessAndBoundsBothStreams(t *testing.T) 
 		t.Fatal("cancelled command did not stop")
 	}
 }
+
+func TestReadOnlyExecCommandRejectsSideEffectAndRepositoryEscapeOptions(t *testing.T) {
+	t.Parallel()
+
+	repository := t.TempDir()
+	tool, err := agenttools.NewReadOnlyExecCommand(
+		repository,
+		"agent/run-7/review/1",
+		agent.NewArtifactStore(blobs.NewMemStore()),
+		1024,
+		time.Second,
+	)
+	if err != nil {
+		t.Fatalf("NewReadOnlyExecCommand() error = %v", err)
+	}
+
+	for _, argv := range [][]string{
+		{"/tmp/rg", "needle", "."},
+		{"git", "diff", "--output=review.patch"},
+		{"git", "grep", "--open-files-in-pager=touch marker", "needle"},
+		{"rg", "--follow", "needle", "."},
+		{"rg", "-L", "needle", "."},
+	} {
+		argv := argv
+		t.Run(strings.Join(argv, "_"), func(t *testing.T) {
+			arguments, marshalErr := json.Marshal(agenttools.ExecCommandInput{Argv: argv})
+			if marshalErr != nil {
+				t.Fatalf("Marshal() error = %v", marshalErr)
+			}
+			result, executeErr := tool.Execute(t.Context(), arguments)
+			if executeErr != nil {
+				t.Fatalf("Execute() error = %v", executeErr)
+			}
+			if !result.IsError || !strings.Contains(result.Content, "rejected argv") {
+				t.Fatalf("Execute() result = %#v, want policy rejection", result)
+			}
+		})
+	}
+}

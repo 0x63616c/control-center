@@ -82,24 +82,120 @@ func newExecCommand(
 }
 
 func readOnlyCommand(argv []string) error {
+	if len(argv) == 0 {
+		return fmt.Errorf("command is required")
+	}
+	if filepath.Base(argv[0]) != argv[0] {
+		return fmt.Errorf("command %q must be an allowlisted bare executable name", argv[0])
+	}
 	command := filepath.Base(argv[0])
 	switch command {
 	case "git":
-		if len(argv) < 2 {
-			return fmt.Errorf("git subcommand is required")
-		}
-		allowed := map[string]bool{
-			"status": true, "diff": true, "show": true, "log": true, "grep": true,
-			"rev-parse": true, "ls-files": true,
-		}
-		if !allowed[argv[1]] {
-			return fmt.Errorf("git subcommand %q is mutating or unsupported", argv[1])
-		}
+		return readOnlyGitCommand(argv[1:])
 	case "rg":
+		return readOnlyRipgrepCommand(argv[1:])
 	default:
 		return fmt.Errorf("command %q is not allowlisted", command)
 	}
-	for _, argument := range argv[1:] {
+}
+
+func readOnlyGitCommand(arguments []string) error {
+	if len(arguments) == 0 {
+		return fmt.Errorf("git subcommand is required")
+	}
+	allowedOptions, ok := gitReadOnlyOptions[arguments[0]]
+	if !ok {
+		return fmt.Errorf("git subcommand %q is mutating or unsupported", arguments[0])
+	}
+	return validateReadOnlyArguments(arguments[1:], allowedOptions)
+}
+
+func readOnlyRipgrepCommand(arguments []string) error {
+	return validateReadOnlyArguments(arguments, ripgrepReadOnlyOptions)
+}
+
+type optionGrammar struct {
+	exact       map[string]bool
+	valuePrefix []string
+}
+
+var commonGitReadOnlyOptions = optionGrammar{
+	exact: map[string]bool{
+		"--": true, "--no-color": true, "--no-ext-diff": true, "--no-textconv": true,
+		"--abbrev-commit": true, "--full-history": true, "--decorate": true, "--no-decorate": true,
+	},
+	valuePrefix: []string{"--color=", "--format=", "--pretty=", "--date=", "--abbrev="},
+}
+
+var gitReadOnlyOptions = map[string]optionGrammar{
+	"status": extendOptionGrammar(commonGitReadOnlyOptions,
+		[]string{"-s", "-b", "--short", "--branch", "--show-stash", "--ahead-behind", "--no-ahead-behind", "--porcelain"},
+		[]string{"--porcelain=", "--untracked-files=", "--ignored=", "--find-renames="}),
+	"diff": extendOptionGrammar(commonGitReadOnlyOptions,
+		[]string{"-p", "-u", "-U", "--patch", "--no-patch", "--raw", "--stat", "--numstat", "--shortstat", "--summary", "--name-only", "--name-status", "--check", "--cached", "--staged", "--merge-base", "--exit-code", "--quiet", "--word-diff", "--binary"},
+		[]string{"-U", "--unified=", "--stat=", "--word-diff=", "--diff-filter=", "--find-renames=", "--find-copies="}),
+	"show": extendOptionGrammar(commonGitReadOnlyOptions,
+		[]string{"-p", "--patch", "--no-patch", "--raw", "--stat", "--numstat", "--shortstat", "--summary", "--name-only", "--name-status", "--oneline"},
+		[]string{"--unified=", "--diff-filter="}),
+	"log": extendOptionGrammar(commonGitReadOnlyOptions,
+		[]string{"-p", "--patch", "--no-patch", "--stat", "--shortstat", "--name-only", "--name-status", "--oneline", "--graph", "--all", "--first-parent", "--reverse"},
+		[]string{"-n", "--max-count=", "--since=", "--until=", "--author=", "--grep="}),
+	"grep": extendOptionGrammar(commonGitReadOnlyOptions,
+		[]string{"-n", "-i", "-w", "-v", "-F", "-E", "--line-number", "--ignore-case", "--word-regexp", "--invert-match", "--fixed-strings", "--extended-regexp", "--count", "--files-with-matches", "--files-without-match"},
+		[]string{"-e", "--regexp="}),
+	"rev-parse": extendOptionGrammar(commonGitReadOnlyOptions,
+		[]string{"--verify", "--quiet", "--short", "--show-toplevel", "--show-prefix", "--show-cdup", "--is-inside-work-tree", "--is-bare-repository", "--git-common-dir"},
+		[]string{"--short="}),
+	"ls-files": extendOptionGrammar(commonGitReadOnlyOptions,
+		[]string{"-c", "-d", "-m", "-o", "-i", "-s", "-u", "-k", "--cached", "--deleted", "--modified", "--others", "--ignored", "--stage", "--unmerged", "--killed", "--directory", "--empty-directory", "--error-unmatch"},
+		[]string{"--exclude=", "--exclude-from=", "--exclude-per-directory="}),
+}
+
+var ripgrepReadOnlyOptions = optionGrammar{
+	exact: map[string]bool{
+		"--": true, "-i": true, "-s": true, "-S": true, "-F": true, "-w": true, "-x": true, "-v": true,
+		"-e": true, "-g": true, "-t": true, "-T": true, "-A": true, "-B": true, "-C": true, "-m": true,
+		"-n": true, "-N": true, "--hidden": true, "--no-hidden": true, "--ignore-case": true,
+		"--case-sensitive": true, "--smart-case": true, "--fixed-strings": true, "--word-regexp": true,
+		"--line-regexp": true, "--invert-match": true, "--files": true, "--files-with-matches": true,
+		"--files-without-match": true, "--count": true, "--count-matches": true, "--line-number": true,
+		"--no-line-number": true, "--column": true, "--heading": true, "--no-heading": true, "--json": true,
+		"--stats": true, "--no-messages": true, "--multiline": true, "--multiline-dotall": true, "--crlf": true,
+		"--text": true, "--binary": true, "--no-ignore": true, "--no-ignore-vcs": true, "--no-ignore-parent": true,
+		"--no-ignore-global": true, "--no-require-git": true, "--one-file-system": true,
+	},
+	valuePrefix: []string{
+		"-e", "--regexp=", "-g", "--glob=", "-t", "--type=", "-T", "--type-not=", "-A", "--after-context=",
+		"-B", "--before-context=", "-C", "--context=", "-m", "--max-count=", "--max-depth=", "--max-filesize=",
+		"--sort=", "--sortr=", "--threads=", "--color=", "--colors=", "--context-separator=", "--path-separator=",
+	},
+}
+
+func extendOptionGrammar(base optionGrammar, exact, prefixes []string) optionGrammar {
+	combined := optionGrammar{exact: make(map[string]bool, len(base.exact)+len(exact))}
+	for option := range base.exact {
+		combined.exact[option] = true
+	}
+	for _, option := range exact {
+		combined.exact[option] = true
+	}
+	combined.valuePrefix = append(append([]string{}, base.valuePrefix...), prefixes...)
+	return combined
+}
+
+func validateReadOnlyArguments(arguments []string, grammar optionGrammar) error {
+	pathsOnly := false
+	for _, argument := range arguments {
+		if argument == "--" {
+			pathsOnly = true
+			continue
+		}
+		if !pathsOnly && strings.HasPrefix(argument, "-") {
+			if grammar.exact[argument] || hasAllowedOptionPrefix(argument, grammar.valuePrefix) {
+				continue
+			}
+			return fmt.Errorf("option %q is not in the read-only grammar", argument)
+		}
 		value := argument
 		if _, after, found := strings.Cut(argument, "="); found {
 			value = after
@@ -107,15 +203,17 @@ func readOnlyCommand(argv []string) error {
 		if filepath.IsAbs(value) || value == ".." || strings.HasPrefix(filepath.Clean(value), ".."+string(filepath.Separator)) {
 			return fmt.Errorf("path argument %q escapes the repository", argument)
 		}
-		for _, forbidden := range []string{
-			"-c", "--config-env", "--git-dir", "--work-tree", "--exec-path", "--upload-pack", "--ext-diff", "--textconv", "--pre",
-		} {
-			if argument == forbidden || strings.HasPrefix(argument, forbidden+"=") {
-				return fmt.Errorf("option %q can escape read-only execution", argument)
-			}
-		}
 	}
 	return nil
+}
+
+func hasAllowedOptionPrefix(argument string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(argument, prefix) && len(argument) > len(prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func executeCommand(

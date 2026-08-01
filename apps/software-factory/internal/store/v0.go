@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store/storedb"
@@ -433,10 +434,29 @@ type GitCheckpointInput struct {
 	CompletedAt time.Time
 }
 
+// RepositoryCheckpointInput is a repository Step checkpoint authorized by one
+// exact active Run Worker generation. The capability is verified and discarded
+// at the Store boundary; it is never persisted in clear text.
+type RepositoryCheckpointInput struct {
+	Identity      work.RunWorkerIdentity
+	Capability    string
+	GitCheckpoint GitCheckpoint
+	CompletedAt   time.Time
+}
+
 // CheckpointGitEffect atomically persists the newest Git/PR recovery position
 // and completes the corresponding repository-affine Step. It refuses an older
 // position rather than allowing replacement recovery to regress a pushed head.
 func (s *Store) CheckpointGitEffect(ctx context.Context, in GitCheckpointInput) (GitCheckpoint, error) {
+	return s.checkpointGitEffect(ctx, in, nil, true)
+}
+
+type repositoryAuthorization struct {
+	identity   work.RunWorkerIdentity
+	capability string
+}
+
+func (s *Store) checkpointGitEffect(ctx context.Context, in GitCheckpointInput, authorization *repositoryAuthorization, completeStep bool) (GitCheckpoint, error) {
 	if s.begin == nil {
 		return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: store cannot begin a transaction")
 	}
@@ -452,6 +472,9 @@ func (s *Store) CheckpointGitEffect(ctx context.Context, in GitCheckpointInput) 
 	q := s.q.WithTx(tx)
 	run, err := q.TargetRunForUpdate(ctx, id)
 	if err != nil {
+		if authorization != nil && errors.Is(err, pgx.ErrNoRows) {
+			return GitCheckpoint{}, fmt.Errorf("checkpointing repository effect: %w", ErrRunOwnership)
+		}
 		return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: reading run: %w", wrapQueryErr(err))
 	}
 	ticket, err := q.TargetTicketForUpdate(ctx, run.TicketID)
@@ -460,6 +483,14 @@ func (s *Store) CheckpointGitEffect(ctx context.Context, in GitCheckpointInput) 
 	}
 	if run.TargetOutcome.Valid || ticket.State != TicketActive.String() || runIDString(ticket.ActiveRunID) != in.RunID {
 		return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: %w", ErrRunOwnership)
+	}
+	if authorization != nil {
+		if authorization.identity.RunID != in.RunID {
+			return GitCheckpoint{}, fmt.Errorf("checkpointing repository effect: identity names another Run: %w", ErrRunOwnership)
+		}
+		if err := authorizeRepositoryCapability(ctx, q, id, authorization.identity, authorization.capability); err != nil {
+			return GitCheckpoint{}, fmt.Errorf("checkpointing repository effect: authorizing generation capability: %w", err)
+		}
 	}
 	step, err := q.TargetStepForUpdate(ctx, storedb.TargetStepForUpdateParams{RunID: id, Ordinal: int32(in.StepOrdinal)})
 	if err != nil {
@@ -471,7 +502,7 @@ func (s *Store) CheckpointGitEffect(ctx context.Context, in GitCheckpointInput) 
 			return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: older or conflicting checkpoint: %w", work.ErrPermanent)
 		}
 		if previous.StepOrdinal == int32(in.StepOrdinal) {
-			if step.State != string(work.StepStateCompleted) || !jsonEqual(step.Result, in.StepResult) {
+			if (completeStep && (step.State != string(work.StepStateCompleted) || !jsonEqual(step.Result, in.StepResult))) || (!completeStep && step.State != string(work.StepStateRunning)) {
 				return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: conflicting completed step: %w", work.ErrPermanent)
 			}
 			if err := tx.Commit(ctx); err != nil {
@@ -489,13 +520,136 @@ func (s *Store) CheckpointGitEffect(ctx context.Context, in GitCheckpointInput) 
 	if err != nil {
 		return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: writing checkpoint: %w", wrapQueryErr(err))
 	}
-	if _, err := q.CompleteTargetStep(ctx, storedb.CompleteTargetStepParams{RunID: id, Ordinal: int32(in.StepOrdinal), EndedAt: pgTimestamp(in.CompletedAt), Result: in.StepResult}); err != nil {
-		return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: completing step: %w", wrapQueryErr(err))
+	if completeStep {
+		if _, err := q.CompleteTargetStep(ctx, storedb.CompleteTargetStepParams{RunID: id, Ordinal: int32(in.StepOrdinal), EndedAt: pgTimestamp(in.CompletedAt), Result: in.StepResult}); err != nil {
+			return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: completing step: %w", wrapQueryErr(err))
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: committing: %w", wrapQueryErr(err))
 	}
 	return gitCheckpointFromRow(row), nil
+}
+
+// BindRepositoryCapability installs or monotonically rotates the capability
+// for one active Run Worker generation. An exact retry is idempotent; an older
+// generation or a different value for the same generation is rejected.
+func (s *Store) BindRepositoryCapability(ctx context.Context, identity work.RunWorkerIdentity, capability string) error {
+	if err := identity.Validate(); err != nil {
+		return fmt.Errorf("binding repository capability: %w", err)
+	}
+	if strings.TrimSpace(capability) == "" {
+		return fmt.Errorf("binding repository capability: capability is empty: %w", work.ErrPermanent)
+	}
+	id, err := pgUUID(identity.RunID)
+	if err != nil {
+		return fmt.Errorf("binding repository capability: %w", err)
+	}
+	_, err = s.q.BindTargetRepositoryCapability(ctx, storedb.BindTargetRepositoryCapabilityParams{
+		RunID: id, Generation: int64(identity.Generation), CapabilityHash: repositoryCapabilityHash(identity, capability),
+	})
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("binding repository capability for Run %s generation %d: %w", identity.RunID, identity.Generation, wrapQueryErr(err))
+	}
+	owned, ownershipErr := s.q.TargetRunOwned(ctx, id)
+	if ownershipErr != nil {
+		return fmt.Errorf("binding repository capability for Run %s generation %d: checking ownership: %w", identity.RunID, identity.Generation, wrapQueryErr(ownershipErr))
+	}
+	if !owned {
+		return fmt.Errorf("binding repository capability for Run %s generation %d: %w", identity.RunID, identity.Generation, ErrRunOwnership)
+	}
+	return fmt.Errorf("binding repository capability for Run %s generation %d: conflicting or obsolete generation: %w", identity.RunID, identity.Generation, work.ErrPermanent)
+}
+
+// LoadRepositoryCheckpoint authenticates the current Run Worker generation
+// before returning its durable Git/PR recovery position.
+func (s *Store) LoadRepositoryCheckpoint(ctx context.Context, identity work.RunWorkerIdentity, capability string) (GitCheckpoint, bool, error) {
+	if s.begin == nil {
+		return GitCheckpoint{}, false, fmt.Errorf("loading repository checkpoint: store cannot begin a transaction")
+	}
+	if err := identity.Validate(); err != nil {
+		return GitCheckpoint{}, false, fmt.Errorf("loading repository checkpoint: %w", err)
+	}
+	id, err := pgUUID(identity.RunID)
+	if err != nil {
+		return GitCheckpoint{}, false, fmt.Errorf("loading repository checkpoint: %w", err)
+	}
+	tx, err := s.begin.Begin(ctx)
+	if err != nil {
+		return GitCheckpoint{}, false, fmt.Errorf("loading repository checkpoint: beginning transaction: %w", wrapQueryErr(err))
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := s.q.WithTx(tx)
+	run, err := q.TargetRunForUpdate(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return GitCheckpoint{}, false, fmt.Errorf("loading repository checkpoint: %w", ErrRunOwnership)
+		}
+		return GitCheckpoint{}, false, fmt.Errorf("loading repository checkpoint: reading Run: %w", wrapQueryErr(err))
+	}
+	ticket, err := q.TargetTicketForUpdate(ctx, run.TicketID)
+	if err != nil {
+		return GitCheckpoint{}, false, fmt.Errorf("loading repository checkpoint: reading Ticket: %w", wrapQueryErr(err))
+	}
+	if run.TargetOutcome.Valid || ticket.State != TicketActive.String() || runIDString(ticket.ActiveRunID) != identity.RunID {
+		return GitCheckpoint{}, false, fmt.Errorf("loading repository checkpoint: %w", ErrRunOwnership)
+	}
+	if err := authorizeRepositoryCapability(ctx, q, id, identity, capability); err != nil {
+		return GitCheckpoint{}, false, fmt.Errorf("loading repository checkpoint: authorizing generation capability: %w", err)
+	}
+	row, err := q.TargetGitCheckpoint(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if err := tx.Commit(ctx); err != nil {
+			return GitCheckpoint{}, false, fmt.Errorf("loading repository checkpoint: committing empty read: %w", wrapQueryErr(err))
+		}
+		return GitCheckpoint{}, false, nil
+	}
+	if err != nil {
+		return GitCheckpoint{}, false, fmt.Errorf("loading repository checkpoint: reading checkpoint: %w", wrapQueryErr(err))
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return GitCheckpoint{}, false, fmt.Errorf("loading repository checkpoint: committing: %w", wrapQueryErr(err))
+	}
+	return gitCheckpointFromRow(row), true, nil
+}
+
+// CheckpointRepository verifies the generation capability and atomically
+// persists the repository position plus its completed Step result.
+func (s *Store) CheckpointRepository(ctx context.Context, in RepositoryCheckpointInput) (GitCheckpoint, error) {
+	return s.checkpointRepository(ctx, in, true)
+}
+
+// CheckpointRepositoryEffect persists a recovery result without completing
+// the target Step. Confirmed merge finalization owns that terminal transition.
+func (s *Store) CheckpointRepositoryEffect(ctx context.Context, in RepositoryCheckpointInput) (GitCheckpoint, error) {
+	return s.checkpointRepository(ctx, in, false)
+}
+
+func (s *Store) checkpointRepository(ctx context.Context, in RepositoryCheckpointInput, completeStep bool) (GitCheckpoint, error) {
+	if err := in.Identity.Validate(); err != nil {
+		return GitCheckpoint{}, fmt.Errorf("checkpointing repository effect: %w", err)
+	}
+	if strings.TrimSpace(in.Capability) == "" || in.GitCheckpoint.RunID != in.Identity.RunID {
+		return GitCheckpoint{}, fmt.Errorf("checkpointing repository effect: identity or capability mismatch: %w", ErrRunOwnership)
+	}
+	return s.checkpointGitEffect(ctx, GitCheckpointInput{GitCheckpoint: in.GitCheckpoint, CompletedAt: in.CompletedAt}, &repositoryAuthorization{identity: in.Identity, capability: in.Capability}, completeStep)
+}
+
+func authorizeRepositoryCapability(ctx context.Context, q *storedb.Queries, runID pgtype.UUID, identity work.RunWorkerIdentity, capability string) error {
+	row, err := q.TargetRepositoryCapabilityForUpdate(ctx, runID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("authorizing repository checkpoint: %w", ErrRunOwnership)
+		}
+		return fmt.Errorf("authorizing repository checkpoint: %w", wrapQueryErr(err))
+	}
+	if row.Generation != int64(identity.Generation) || row.CapabilityHash != repositoryCapabilityHash(identity, capability) {
+		return fmt.Errorf("authorizing repository checkpoint: stale or foreign capability: %w", ErrRunOwnership)
+	}
+	return nil
 }
 
 // BindCheckpointCapability hashes and binds one capability to one exact active
@@ -621,6 +775,38 @@ func (s *Store) CheckpointAgentAttempt(ctx context.Context, in AgentCheckpointIn
 		return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: committing: %w", wrapQueryErr(err))
 	}
 	return agentAttemptFromRow(row), nil
+}
+
+// LoadAgentCheckpoint authenticates and reads one Attempt's durable provider
+// evidence. found is false before the provider exposes its first thread ID.
+func (s *Store) LoadAgentCheckpoint(ctx context.Context, attemptID TargetAttemptID, capability string) (AgentAttempt, *TargetTranscript, bool, error) {
+	id, err := pgUUID(attemptID.RunID)
+	if err != nil {
+		return AgentAttempt{}, nil, false, fmt.Errorf("loading agent checkpoint: %w", err)
+	}
+	row, err := s.q.TargetAgentAttempt(ctx, storedb.TargetAgentAttemptParams{RunID: id, StepOrdinal: int32(attemptID.StepOrdinal), AttemptNo: int32(attemptID.AttemptNo)})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return AgentAttempt{}, nil, false, fmt.Errorf("loading agent checkpoint: %w", ErrRunOwnership)
+		}
+		return AgentAttempt{}, nil, false, fmt.Errorf("loading agent checkpoint: %w", wrapQueryErr(err))
+	}
+	if !row.CheckpointCapabilityHash.Valid || row.CheckpointCapabilityHash.String != capabilityHash(attemptID, capability) {
+		return AgentAttempt{}, nil, false, fmt.Errorf("loading agent checkpoint: %w", ErrRunOwnership)
+	}
+	attempt := agentAttemptFromRow(row)
+	if attempt.State == work.AgentAttemptRunning && attempt.ProviderThreadID == "" {
+		return attempt, nil, false, nil
+	}
+	transcriptRow, transcriptErr := s.q.TargetAgentTranscript(ctx, storedb.TargetAgentTranscriptParams{RunID: id, StepOrdinal: int32(attemptID.StepOrdinal), AttemptNo: int32(attemptID.AttemptNo)})
+	if transcriptErr != nil && !errors.Is(transcriptErr, pgx.ErrNoRows) {
+		return AgentAttempt{}, nil, false, fmt.Errorf("loading agent checkpoint: reading transcript: %w", wrapQueryErr(transcriptErr))
+	}
+	var transcript *TargetTranscript
+	if transcriptErr == nil {
+		transcript = &TargetTranscript{CompressedBytes: transcriptRow.CompressedBytes, Compression: transcriptRow.Compression, UncompressedSizeBytes: transcriptRow.UncompressedSizeBytes, Checksum: transcriptRow.Checksum}
+	}
+	return attempt, transcript, true, nil
 }
 
 // ConfirmedMergeInput names the immutable merge evidence and its Merge Step.
@@ -971,6 +1157,11 @@ func (in AgentCheckpointInput) Validate() error {
 
 func capabilityHash(attemptID TargetAttemptID, capability string) string {
 	material := attemptID.String() + "\x00" + capability
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(material)))
+}
+
+func repositoryCapabilityHash(identity work.RunWorkerIdentity, capability string) string {
+	material := fmt.Sprintf("%s/generation-%d\x00%s", identity.RunID, identity.Generation, capability)
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(material)))
 }
 

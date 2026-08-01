@@ -29,7 +29,7 @@ func NewAgentTranscriptRecordingActivities(
 ) (*AgentTranscriptRecordingActivities, error) {
 	recording, err := NewTranscriptRecordingActivities(transcriptStore)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("build agent transcript recording activities: %w", err)
 	}
 	if blobStore == nil {
 		return nil, fmt.Errorf("agent transcript recording activities: a blob store is required")

@@ -18,6 +18,76 @@ func TestTargetStoreConflictContract(t *testing.T) {
 	})
 }
 
+// A merge is externally irreversible before the Store makes its Step and Run
+// terminal. The repository-effect checkpoint preserves the exact GitHub result
+// for retry, but FinalizeConfirmedMerge is the only transition that completes
+// the merge Step and ticket.
+func TestRepositoryMergeEffectWaitsForConfirmedMergeFinalization(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	startedAt := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	runID := "019fb900-0000-7000-8000-000000000001"
+
+	ticket, err := s.CreateTicket(ctx, "merge effect", "", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	if _, err := s.ClaimAndStartRun(ctx, store.ClaimRunInput{TicketID: ticket.ID, RunID: runID, StartedAt: startedAt}); err != nil {
+		t.Fatalf("ClaimAndStartRun: %v", err)
+	}
+	if _, err := s.StartStep(ctx, store.StartStepInput{RunID: runID, Ordinal: 1, Kind: work.StepMergePullRequest, StartedAt: startedAt}); err != nil {
+		t.Fatalf("StartStep(merge): %v", err)
+	}
+	identity, err := work.NewRunWorkerIdentity(runID, 1)
+	if err != nil {
+		t.Fatalf("NewRunWorkerIdentity: %v", err)
+	}
+	if err := s.BindRepositoryCapability(ctx, identity, "merge-capability"); err != nil {
+		t.Fatalf("BindRepositoryCapability: %v", err)
+	}
+	checkpoint := store.RepositoryCheckpointInput{
+		Identity: identity, Capability: "merge-capability",
+		GitCheckpoint: store.GitCheckpoint{
+			RunID: runID, StepOrdinal: 1, Branch: "factory/merge-effect", PushedHead: "H1", ObservedBase: "B0",
+			PullRequestNumber: 42, PullRequestNodeID: "PR_node", StepResult: []byte(`{"kind":"merged","merge_sha":"M1"}`),
+		},
+		CompletedAt: startedAt.Add(time.Minute),
+	}
+	if _, err := s.CheckpointRepositoryEffect(ctx, checkpoint); err != nil {
+		t.Fatalf("CheckpointRepositoryEffect: %v", err)
+	}
+	// A lost response retries the exact durable GitHub result; it cannot turn
+	// the effect checkpoint into a completed merge Step.
+	if _, err := s.CheckpointRepositoryEffect(ctx, checkpoint); err != nil {
+		t.Fatalf("CheckpointRepositoryEffect(retry): %v", err)
+	}
+	detail, err := s.TargetRunDetail(ctx, runID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail(after effect): %v", err)
+	}
+	if len(detail.Steps) != 1 || detail.Steps[0].Step.State != work.StepStateRunning {
+		t.Fatalf("merge effect detail = %+v, want one running merge step", detail)
+	}
+
+	result, err := s.FinalizeConfirmedMerge(ctx, store.ConfirmedMergeInput{
+		RunID: runID, TicketID: ticket.ID, StepOrdinal: 1, ReviewedHead: "H1", MergeSHA: "M1", EndedAt: startedAt.Add(2 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("FinalizeConfirmedMerge: %v", err)
+	}
+	if result.Ticket.State != store.TicketDone || result.Ticket.ActiveRunID != "" || result.Run.TargetOutcome != work.RunOutcomeSucceeded || result.Run.MergeSHA != "M1" {
+		t.Fatalf("FinalizeConfirmedMerge result = %+v, want owned ticket done and run successful at M1", result)
+	}
+	detail, err = s.TargetRunDetail(ctx, runID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail(after finalization): %v", err)
+	}
+	if len(detail.Steps) != 1 || detail.Steps[0].Step.State != work.StepStateCompleted {
+		t.Fatalf("final detail = %+v, want completed merge step", detail)
+	}
+}
+
 // This test never opens a database — it is the one SoftwareStyle requires:
 // every consumer built on top of internal/store must be testable without
 // Postgres, and this is the fake proving it can carry a whole ticket's

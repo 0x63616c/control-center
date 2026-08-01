@@ -1,9 +1,53 @@
 package agent
 
-import "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+import (
+	"fmt"
+
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+)
 
 // ToolsetID identifies one immutable meaning of a tool catalogue.
 type ToolsetID string
+
+// ToolTargetKind identifies the generation-affine worker that executes tools.
+type ToolTargetKind string
+
+const (
+	// ToolTargetLegacySandbox routes tools to the pre-Run-Worker sandbox queue.
+	ToolTargetLegacySandbox ToolTargetKind = "legacy_sandbox"
+	// ToolTargetRunWorker routes tools to one validated Run Worker generation.
+	ToolTargetRunWorker ToolTargetKind = "run_worker"
+)
+
+// ToolTarget is the durable tool-routing decision pinned at child-workflow
+// start. The zero value means legacy sandbox for replay compatibility with
+// AgentWorkflow histories written before this field existed.
+type ToolTarget struct {
+	Kind              ToolTargetKind         `json:"kind"`
+	RunWorkerIdentity work.RunWorkerIdentity `json:"run_worker_identity"`
+}
+
+// TaskQueue resolves the target without consulting mutable external state.
+func (target ToolTarget) TaskQueue(runID string) (string, error) {
+	switch target.Kind {
+	case "", ToolTargetLegacySandbox:
+		if target.RunWorkerIdentity != (work.RunWorkerIdentity{}) {
+			return "", fmt.Errorf("legacy sandbox tool target carries a Run Worker identity: %w", work.ErrInvalidRun)
+		}
+		return work.SandboxTaskQueue(runID), nil
+	case ToolTargetRunWorker:
+		if target.RunWorkerIdentity.RunID != runID {
+			return "", fmt.Errorf("run worker tool target belongs to Run %q, not %q: %w", target.RunWorkerIdentity.RunID, runID, work.ErrInvalidRun)
+		}
+		queue, err := work.RunWorkerTaskQueue(target.RunWorkerIdentity)
+		if err != nil {
+			return "", fmt.Errorf("resolve Run Worker tool target: %w", err)
+		}
+		return queue, nil
+	default:
+		return "", fmt.Errorf("unknown agent tool target %q: %w", target.Kind, work.ErrInvalidRun)
+	}
+}
 
 const (
 	// ToolsetCodingReadV1 is the immutable read-only plan/review catalogue.
@@ -32,14 +76,15 @@ func DefaultLimits() Limits {
 
 // ModelTurnInput routes one provider turn using only bounded metadata and a conversation reference.
 type ModelTurnInput struct {
-	Model           work.Model        `json:"model"`
-	ToolsetID       ToolsetID         `json:"toolset_id"`
-	ConversationRef ConversationRef   `json:"conversation_ref"`
-	TranscriptRef   TranscriptRef     `json:"transcript_ref"`
-	ResponseFormat  ResponseFormatRef `json:"response_format"`
-	PromptCacheKey  string            `json:"prompt_cache_key"`
-	ModelTurn       int               `json:"model_turn"`
-	IdempotencyKey  string            `json:"idempotency_key"`
+	Model              work.Model        `json:"model"`
+	ToolsetID          ToolsetID         `json:"toolset_id"`
+	ToolsetFingerprint string            `json:"toolset_fingerprint"`
+	ConversationRef    ConversationRef   `json:"conversation_ref"`
+	TranscriptRef      TranscriptRef     `json:"transcript_ref"`
+	ResponseFormat     ResponseFormatRef `json:"response_format"`
+	PromptCacheKey     string            `json:"prompt_cache_key"`
+	ModelTurn          int               `json:"model_turn"`
+	IdempotencyKey     string            `json:"idempotency_key"`
 }
 
 // TurnOutcome distinguishes a terminal answer from requested tool calls.
@@ -94,10 +139,11 @@ type PendingToolCall struct {
 
 // ToolInput routes one pending model call to the sandbox activity.
 type ToolInput struct {
-	ToolsetID       ToolsetID       `json:"toolset_id"`
-	ConversationRef ConversationRef `json:"conversation_ref"`
-	TranscriptRef   TranscriptRef   `json:"transcript_ref"`
-	Call            PendingToolCall `json:"call"`
+	ToolsetID          ToolsetID       `json:"toolset_id"`
+	ToolsetFingerprint string          `json:"toolset_fingerprint"`
+	ConversationRef    ConversationRef `json:"conversation_ref"`
+	TranscriptRef      TranscriptRef   `json:"transcript_ref"`
+	Call               PendingToolCall `json:"call"`
 }
 
 // ToolOutput is the bounded durable result of one sandbox tool activity.
@@ -110,11 +156,12 @@ type ToolOutput struct {
 
 // ModelTurnResult is the bounded durable outcome of one provider activity.
 type ModelTurnResult struct {
-	Outcome         TurnOutcome       `json:"outcome"`
-	ConversationRef ConversationRef   `json:"conversation_ref"`
-	TranscriptRef   TranscriptRef     `json:"transcript_ref"`
-	FinalTextRef    TextRef           `json:"final_text_ref"`
-	ToolCalls       []PendingToolCall `json:"tool_calls"`
-	Usage           work.Usage        `json:"usage"`
-	UsageMeasured   bool              `json:"usage_measured"`
+	Outcome            TurnOutcome       `json:"outcome"`
+	ToolsetFingerprint string            `json:"toolset_fingerprint"`
+	ConversationRef    ConversationRef   `json:"conversation_ref"`
+	TranscriptRef      TranscriptRef     `json:"transcript_ref"`
+	FinalTextRef       TextRef           `json:"final_text_ref"`
+	ToolCalls          []PendingToolCall `json:"tool_calls"`
+	Usage              work.Usage        `json:"usage"`
+	UsageMeasured      bool              `json:"usage_measured"`
 }

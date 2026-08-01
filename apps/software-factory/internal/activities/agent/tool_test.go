@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,21 +61,23 @@ func TestToolRetryReturnsTheRecordedResultWithoutExecutingTwice(t *testing.T) {
 		},
 	)
 	registry := prometheus.NewRegistry()
+	toolset := agenttool.MustSet("coding-write-v1", tool)
 	activities, err := agentactivities.NewObservedToolActivities(
 		blobStore,
 		clocktest.NewFake(time.Unix(0, 0)),
 		telemetry.NewMetrics(registry),
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		agenttool.MustSet("coding-write-v1", tool),
+		toolset,
 	)
 	if err != nil {
 		t.Fatalf("NewToolActivities() error = %v", err)
 	}
 	input := agent.ToolInput{
-		ToolsetID:       "coding-write-v1",
-		ConversationRef: requested,
-		TranscriptRef:   transcriptRef,
-		Call:            agent.PendingToolCall{CallID: "call_1", Name: "counted", ArgumentsRef: argumentsRef},
+		ToolsetID:          "coding-write-v1",
+		ToolsetFingerprint: toolset.Fingerprint(),
+		ConversationRef:    requested,
+		TranscriptRef:      transcriptRef,
+		Call:               agent.PendingToolCall{CallID: "call_1", Name: "counted", ArgumentsRef: argumentsRef},
 	}
 	first, err := activities.Tool(t.Context(), input)
 	if err != nil {
@@ -102,5 +105,23 @@ func TestToolRetryReturnsTheRecordedResultWithoutExecutingTwice(t *testing.T) {
 	}
 	if last := items[len(items)-1]; last.Kind != agent.ItemFunctionOutput || last.CallID != "call_1" || last.Output != "once" {
 		t.Fatalf("stored tool output = %#v", last)
+	}
+}
+
+func TestToolRejectsPinnedToolsetFingerprintMismatch(t *testing.T) {
+	t.Parallel()
+
+	toolset := agenttool.MustSet("coding-write-v1")
+	activities, err := agentactivities.NewToolActivities(
+		blobs.NewMemStore(), clocktest.NewFake(time.Unix(0, 0)), toolset,
+	)
+	if err != nil {
+		t.Fatalf("NewToolActivities() error = %v", err)
+	}
+	_, err = activities.Tool(t.Context(), agent.ToolInput{
+		ToolsetID: "coding-write-v1", ToolsetFingerprint: "sha256:stale",
+	})
+	if err == nil || !strings.Contains(err.Error(), "fingerprint changed") {
+		t.Fatalf("Tool() error = %v, want fingerprint mismatch", err)
 	}
 }

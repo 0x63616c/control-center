@@ -113,6 +113,13 @@ activities; prompt, model and finalization activities stay on the main queue.
 Cleanup is run on a disconnected workflow context so cancellation does not
 strand the sandbox.
 
+The child input carries a typed tool target. Current `FactoryWorkTicket` runs
+set `legacy_sandbox`; the dormant `WorkOnTicket`/Run Worker path will provide a
+validated Run ID and generation. The child derives the corresponding private
+queue and carries the target through Continue-As-New, so the Run Worker
+foundation is usable without exposing raw task-queue strings or changing the
+agent loop.
+
 `work.DefaultRunPolicy` and `work/durations.go` own the deadline ladder:
 
 | bound | value |
@@ -221,10 +228,13 @@ auto-merge and carries no Ticket to transition.
 `emptyDir` work volume, no provider credential, no automatically mounted
 service-account token, a non-root security context, no privilege escalation,
 and all Linux capabilities dropped. The main worker registers `AgentWorkflow`
-plus prompt, model, finalization and transcript activities. The sandbox worker
-registers only the generic typed `agent.tool` activity and hosts one concurrent
-Temporal Session. Tool calls are Session-bound to the run-specific sandbox
-queue, which only that sandbox pod polls.
+plus prompt, model, finalization, lifecycle and transcript activities. The
+sandbox worker registers only the generic typed `agent.tool` activity and
+hosts one concurrent Temporal Session. Tool calls are Session-bound to the
+run-specific sandbox queue, which only that sandbox pod polls. The separately
+named Run Worker image exposes the same typed tool activity plus
+repository-affine activities on a validated run/generation queue;
+`WorkOnTicket` remains inactive until its later vertical workflow slice.
 
 Each child workflow is parent-owned with request-cancel close policy and waits
 for cancellation. Model activity cancellation closes the HTTP request; tool

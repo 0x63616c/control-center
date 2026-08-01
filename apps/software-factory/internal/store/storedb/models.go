@@ -97,6 +97,12 @@ type RunGitCheckpoint struct {
 	StepResult        []byte
 }
 
+type RunRepositoryCapability struct {
+	RunID          pgtype.UUID
+	Generation     int64
+	CapabilityHash string
+}
+
 type RunStep struct {
 	RunID     pgtype.UUID
 	Ordinal   int32

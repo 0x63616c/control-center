@@ -87,6 +87,12 @@ func (activities *ToolActivities) Tool(ctx context.Context, input agent.ToolInpu
 	if !ok {
 		return agent.ToolOutput{}, invalidInput("unknown agent toolset %q", input.ToolsetID)
 	}
+	if input.ToolsetFingerprint == "" || input.ToolsetFingerprint != toolset.Fingerprint() {
+		return agent.ToolOutput{}, invalidInput(
+			"agent toolset %q fingerprint changed: got %q, want %q",
+			input.ToolsetID, input.ToolsetFingerprint, toolset.Fingerprint(),
+		)
+	}
 	identity, err := activities.conversations.Identity(input.ConversationRef)
 	if err != nil {
 		return agent.ToolOutput{}, invalidInput("resolve tool conversation identity: %v", err)

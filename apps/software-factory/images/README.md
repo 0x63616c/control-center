@@ -1,12 +1,13 @@
 # Images
 
-Three images, one path filter (`apps/software-factory/**`), all amd64-only — the
+Eight images, one path filter (`apps/software-factory/**`), all amd64-only — the
 home-server Talos node is the only deploy target and it is x86.
 
 | | |
 |---|---|
 | `worker/` | the Temporal worker. distroless static, nonroot uid 65532, no shell. |
 | `sandbox/` | the per-ticket sandbox. debian-slim, uid 1000, a shell and the toolchains. |
+| `run-worker/` | the additive target per-Run Session worker. It retains the sandbox toolchain but reads renewable GitHub and checkpoint capabilities from projected Secret directories. |
 | `relay/` | the stateless GitHub webhook fan-out edge service. distroless static, nonroot uid 65532. |
 
 ## What the sandbox ships, and why

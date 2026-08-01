@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 )
 
 // ErrFileNotFound reports that a path does not exist inside a sandbox.
@@ -272,8 +273,9 @@ type SandboxSpec struct {
 	// Temporal still believes in.
 	DeadlineSeconds int64
 
-	// Env is the sandbox's environment. It carries the ephemeral CODEX_HOME
-	// path; it never carries a credential, which is written as a file instead.
+	// Env is the sandbox's non-secret runtime configuration. It names the
+	// private Temporal queue and shared service endpoints; provider credentials
+	// never enter the sandbox.
 	Env map[string]string
 }
 
@@ -315,6 +317,9 @@ type SandboxCredential struct {
 
 	// AccountID is the stable GitHub account ID for Login.
 	AccountID int64
+
+	// ExpiresAt is safe rotation metadata; the token remains opaque.
+	ExpiresAt time.Time
 }
 
 // String redacts the whole struct, so a stray %v cannot leak the token it

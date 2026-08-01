@@ -60,3 +60,9 @@ type FinalizeOutput struct {
 	Result        work.StageOutput
 	TranscriptRef agent.TranscriptRef
 }
+
+// LifecycleInput contains only bounded terminal classification metadata.
+type LifecycleInput struct {
+	Outcome telemetry.AgentOutcome
+	Budget  string
+}

@@ -107,7 +107,7 @@ func (store TranscriptStore) Events(ctx context.Context, ref TranscriptRef) ([]T
 		}
 		revision, err := store.load(ctx, current)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("reconstruct transcript at revision %d: %w", revisionIndex, err)
 		}
 		events[revisionIndex] = revision.Event
 		if revisionIndex == 0 {
@@ -128,7 +128,7 @@ func (store TranscriptStore) Events(ctx context.Context, ref TranscriptRef) ([]T
 func (store TranscriptStore) JSONL(ctx context.Context, ref TranscriptRef) ([]byte, error) {
 	events, err := store.Events(ctx, ref)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("render transcript JSONL: %w", err)
 	}
 	var result bytes.Buffer
 	encoder := json.NewEncoder(&result)
@@ -147,11 +147,11 @@ func (store TranscriptStore) Identity(ref TranscriptRef) (string, error) {
 
 func (store TranscriptStore) load(ctx context.Context, ref TranscriptRef) (transcriptRevision, error) {
 	if _, err := transcriptIdentity(ref); err != nil {
-		return transcriptRevision{}, err
+		return transcriptRevision{}, fmt.Errorf("validate transcript reference: %w", err)
 	}
 	key, err := blobs.ParseKey(ref.Key)
 	if err != nil {
-		return transcriptRevision{}, err
+		return transcriptRevision{}, fmt.Errorf("parse transcript storage key: %w", err)
 	}
 	encoded, err := store.blobs.Get(ctx, key)
 	if err != nil {
@@ -178,7 +178,7 @@ func (store TranscriptStore) load(ctx context.Context, ref TranscriptRef) (trans
 func transcriptIdentity(ref TranscriptRef) (string, error) {
 	key, err := blobs.ParseKey(ref.Key)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("parse transcript reference: %w", err)
 	}
 	if key.Bucket != blobs.BucketConversations {
 		return "", fmt.Errorf("key %q is not an agent transcript", key)

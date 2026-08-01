@@ -89,9 +89,13 @@ func NewReadFile(
 func resolveRepositoryRoot(root string) (string, error) {
 	resolved, err := filepath.EvalSymlinks(root)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("resolve repository root symlinks: %w", err)
 	}
-	return filepath.Abs(resolved)
+	absolute, err := filepath.Abs(resolved)
+	if err != nil {
+		return "", fmt.Errorf("make repository root absolute: %w", err)
+	}
+	return absolute, nil
 }
 
 func confinedFile(root, requested string) (string, agenttool.Result) {

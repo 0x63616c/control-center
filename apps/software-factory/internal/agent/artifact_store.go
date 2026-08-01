@@ -22,14 +22,17 @@ func NewArtifactStore(store blobs.Store) ArtifactStore {
 // StoreText persists immutable final text below a workflow identity.
 func (store ArtifactStore) StoreText(ctx context.Context, identity, value string) (TextRef, error) {
 	ref, err := store.put(ctx, identity, "text", []byte(value))
-	return TextRef(ref), err
+	if err != nil {
+		return TextRef{}, fmt.Errorf("store agent text: %w", err)
+	}
+	return TextRef(ref), nil
 }
 
 // LoadText verifies and loads immutable final text.
 func (store ArtifactStore) LoadText(ctx context.Context, ref TextRef) (string, error) {
 	value, err := store.get(ctx, ArtifactRef(ref))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("load agent text: %w", err)
 	}
 	return string(value), nil
 }
@@ -37,34 +40,55 @@ func (store ArtifactStore) LoadText(ctx context.Context, ref TextRef) (string, e
 // StoreResponseSchema persists an immutable structured-output schema.
 func (store ArtifactStore) StoreResponseSchema(ctx context.Context, identity string, value []byte) (ResponseSchemaRef, error) {
 	ref, err := store.put(ctx, identity, "response-schema", value)
-	return ResponseSchemaRef(ref), err
+	if err != nil {
+		return ResponseSchemaRef{}, fmt.Errorf("store agent response schema: %w", err)
+	}
+	return ResponseSchemaRef(ref), nil
 }
 
 // LoadResponseSchema verifies and loads an immutable structured-output schema.
 func (store ArtifactStore) LoadResponseSchema(ctx context.Context, ref ResponseSchemaRef) ([]byte, error) {
-	return store.get(ctx, ArtifactRef(ref))
+	value, err := store.get(ctx, ArtifactRef(ref))
+	if err != nil {
+		return nil, fmt.Errorf("load agent response schema: %w", err)
+	}
+	return value, nil
 }
 
 // StoreArguments persists immutable provider tool arguments below a workflow identity.
 func (store ArtifactStore) StoreArguments(ctx context.Context, identity string, value []byte) (ArgumentsRef, error) {
 	ref, err := store.put(ctx, identity, "arguments", value)
-	return ArgumentsRef(ref), err
+	if err != nil {
+		return ArgumentsRef{}, fmt.Errorf("store agent tool arguments: %w", err)
+	}
+	return ArgumentsRef(ref), nil
 }
 
 // LoadArguments verifies and loads immutable provider tool arguments.
 func (store ArtifactStore) LoadArguments(ctx context.Context, ref ArgumentsRef) ([]byte, error) {
-	return store.get(ctx, ArtifactRef(ref))
+	value, err := store.get(ctx, ArtifactRef(ref))
+	if err != nil {
+		return nil, fmt.Errorf("load agent tool arguments: %w", err)
+	}
+	return value, nil
 }
 
 // StoreOutput persists immutable oversized tool output below a workflow identity.
 func (store ArtifactStore) StoreOutput(ctx context.Context, identity string, value []byte) (OutputRef, error) {
 	ref, err := store.put(ctx, identity, "output", value)
-	return OutputRef(ref), err
+	if err != nil {
+		return OutputRef{}, fmt.Errorf("store agent tool output: %w", err)
+	}
+	return OutputRef(ref), nil
 }
 
 // LoadOutput verifies and loads immutable oversized tool output.
 func (store ArtifactStore) LoadOutput(ctx context.Context, ref OutputRef) ([]byte, error) {
-	return store.get(ctx, ArtifactRef(ref))
+	value, err := store.get(ctx, ArtifactRef(ref))
+	if err != nil {
+		return nil, fmt.Errorf("load agent tool output: %w", err)
+	}
+	return value, nil
 }
 
 func (store ArtifactStore) put(ctx context.Context, identity, kind string, value []byte) (ArtifactRef, error) {

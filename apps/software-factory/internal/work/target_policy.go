@@ -165,11 +165,11 @@ func (p TargetRunPolicy) Validate() error {
 		}
 		checks[check] = struct{}{}
 	}
-	if p.MaxReviewSteps != 5 {
-		return fmt.Errorf("%w: target runs require exactly five review steps, got %d", ErrInvalidRun, p.MaxReviewSteps)
+	if p.MaxReviewSteps <= 0 {
+		return fmt.Errorf("%w: target runs require a positive review-step budget, got %d", ErrInvalidRun, p.MaxReviewSteps)
 	}
-	if p.MaxAgentAttempts != 25 {
-		return fmt.Errorf("%w: target runs require exactly 25 agent attempts, got %d", ErrInvalidRun, p.MaxAgentAttempts)
+	if p.MaxAgentAttempts <= 0 {
+		return fmt.Errorf("%w: target runs require a positive agent-attempt budget, got %d", ErrInvalidRun, p.MaxAgentAttempts)
 	}
 	if err := p.validateAgent(); err != nil {
 		return err
@@ -193,24 +193,20 @@ func (p TargetRunPolicy) Validate() error {
 }
 
 func (p TargetRunPolicy) validateAgent() error {
-	if p.Agent.StartToCloseTimeout != 55*time.Minute {
-		return fmt.Errorf("%w: agent start-to-close timeout must be 55 minutes", ErrInvalidRun)
+	if p.Agent.StartToCloseTimeout <= 0 {
+		return fmt.Errorf("%w: agent start-to-close timeout must be positive", ErrInvalidRun)
 	}
-	if p.Agent.ScheduleToCloseTimeout != 90*time.Minute {
-		return fmt.Errorf("%w: agent schedule-to-close timeout must be 90 minutes", ErrInvalidRun)
+	if p.Agent.ScheduleToCloseTimeout <= 0 {
+		return fmt.Errorf("%w: agent schedule-to-close timeout must be positive", ErrInvalidRun)
 	}
-	if p.Agent.HeartbeatTimeout != 5*time.Minute {
-		return fmt.Errorf("%w: agent heartbeat timeout must be five minutes", ErrInvalidRun)
+	if p.Agent.HeartbeatTimeout <= 0 {
+		return fmt.Errorf("%w: agent heartbeat timeout must be positive", ErrInvalidRun)
 	}
 	if p.Agent.HeartbeatTimeout >= p.Agent.StartToCloseTimeout {
-		return fmt.Errorf("%w: agent heartbeat timeout cannot fire inside its start-to-close timeout", ErrInvalidRun)
+		return fmt.Errorf("%w: agent heartbeat timeout must be shorter than its start-to-close timeout", ErrInvalidRun)
 	}
 	if p.Agent.ScheduleToCloseTimeout < p.Agent.StartToCloseTimeout {
 		return fmt.Errorf("%w: agent schedule-to-close timeout is shorter than start-to-close timeout", ErrInvalidRun)
-	}
-	if got := p.Agent.Retry; got.InitialInterval != 10*time.Second || got.BackoffCoefficient != 2 ||
-		got.MaximumInterval != 5*time.Minute || got.MaximumAttempts != 10 {
-		return fmt.Errorf("%w: agent retry policy must be 10 tries with 10s x2 backoff capped at five minutes", ErrInvalidRun)
 	}
 	return p.Agent.Retry.Validate("agent")
 }

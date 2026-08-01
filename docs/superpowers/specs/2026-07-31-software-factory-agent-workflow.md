@@ -128,7 +128,7 @@ Cancellation propagates down both effect paths:
 - the child completes its sandbox Session before returning cancellation;
 - the parent retains its existing disconnected cleanup path and deletes the sandbox.
 
-Temporal Session contexts do not cross workflow boundaries. The parent therefore stops creating the run-wide Session. Each child creates its own Session against `work.SandboxTaskQueue(runID)` and uses that Session context only for sandbox tool activities. Model, prompt and finalization activities remain on `work.TaskQueue`.
+Temporal Session contexts do not cross workflow boundaries. The parent therefore stops creating the run-wide Session. Each child receives a typed `ToolTarget`, derives either `work.SandboxTaskQueue(runID)` or a validated `work.RunWorkerTaskQueue(identity)`, and uses that Session context only for tool activities. Model, prompt, finalization and lifecycle activities remain on `work.TaskQueue`. Zero-value targets replay as the legacy sandbox for compatibility; new `FactoryWorkTicket` children select that target explicitly, while the dormant `WorkOnTicket` path can select a Run Worker generation without accepting arbitrary queue strings.
 
 One sandbox worker serves one Session at a time. Children are synchronous and Steps are sequential, so this remains one active agent per ticket sandbox.
 
@@ -299,7 +299,7 @@ Arguments, large tool outputs, final text and transcripts are also immutable blo
 
 The existing payload codec remains defense in depth for the initial child input and other ordinary payloads. It is not the conversation database and does not make quadratic history growth acceptable.
 
-### Context budget and compaction
+### Context budget and V1 fail-closed behavior
 
 Limits are explicit workflow input fixed at child start:
 
@@ -314,7 +314,9 @@ type Limits struct {
 }
 ```
 
-Before each provider call the model activity estimates the next request. If it exceeds the configured context budget it compacts older tool chatter into a durable summary while retaining:
+V1 checks the accumulated immutable conversation size before and after each model/tool turn. If it exceeds `MaxConversationBytes`, the child terminates with the non-retryable `AgentConversationBudget` error. This is deliberately fail-closed: the shared Temporal payload codec protects history payloads, but it cannot reduce the provider's model context.
+
+Durable summarization/compaction is follow-up [#655](https://github.com/0x63616c/world-wide-webb/issues/655). That change will compact older tool chatter into a new immutable revision while retaining:
 
 - system/developer instructions;
 - the original stage request;
@@ -322,22 +324,21 @@ Before each provider call the model activity estimates the next request. If it e
 - recent tool calls and outputs;
 - every item required by the provider's call linkage rules.
 
-Compaction writes a new immutable revision and a transcript event. It never mutates an existing conversation.
+Compaction will write a new immutable revision and a transcript event. It will never mutate an existing conversation. Until #655 ships, no acceptance claim may describe an over-budget conversation as compactable.
 
 `AgentWorkflow` uses `ContinueAsNew` before its own event count becomes operationally large. Its continuation input is references plus remaining budgets and aggregate usage, not the conversation body. The synchronous parent follows the continued execution transparently.
 
 ## Transcript and observability
 
-The old raw Codex CLI JSONL stream is replaced by a provider-neutral agent transcript. Events include:
+The old raw Codex CLI JSONL stream is replaced by a provider-neutral agent transcript. V1 events include:
 
 - workflow prepared;
-- model turn started/completed/failed;
-- tool requested/completed/failed;
-- compaction performed;
+- model turn completed;
+- tool completed;
 - final output decoded;
-- cancellation and budget exhaustion.
+- compaction performed (after #655).
 
-Events carry IDs, names, durations, usage, exit status and bounded previews. They never carry OAuth credentials or unbounded reasoning deltas. The transcript is appended as immutable revisions and finalized to a `TranscriptRef`.
+Events carry IDs, names, durations, usage, exit status and bounded previews. They never carry OAuth credentials or unbounded reasoning deltas. The transcript is appended as immutable revisions and finalized to a `TranscriptRef`. Failure, cancellation and budget outcomes are recorded in Temporal plus content-free lifecycle metrics and logs; V1 does not claim a terminal transcript append after cancellation.
 
 The parent preserves the database foreign-key ordering: record Attempt, then persist the transcript from its ref. No transcript bytes cross the child result.
 
@@ -346,9 +347,9 @@ Metrics distinguish:
 - model turns and provider latency;
 - tool calls by name and outcome;
 - input/output tokens and measured/unknown usage;
-- conversation bytes and compactions;
+- conversation bytes, budget exhaustion, and compactions after #655;
 - turn/tool/context budget exhaustion;
-- cancellation latency;
+- child success/failure/cancellation outcome;
 - activity retries and child outcome.
 
 Logs include workflow/run/stage/turn/call IDs but no prompt, response, arguments or tool output content.
@@ -576,7 +577,7 @@ After deploy, run a canary Ticket, inspect Temporal/Grafana/Postgres evidence, t
 - The sandbox image does not contain the Codex CLI and production code cannot invoke `codex exec`.
 - Tool schemas, strict decoders and handler input types have one Go source of truth.
 - Plan/review receive enforced read-only capabilities; implement receives the versioned write toolset.
-- Conversation growth is reference-backed, budgeted and compactable rather than repeated through Temporal payloads.
+- Conversation growth is reference-backed and budgeted rather than repeated through Temporal payloads; V1 fails closed at the context limit, with compaction tracked in #655.
 - Parent cancellation waits for child/tool cancellation before sandbox deletion.
 - Old workflow history replays through the version marker.
 - Focused tests, full tests, race tests, lint and image builds pass.

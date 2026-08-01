@@ -22,23 +22,23 @@ func NewToolsets(repositoryRoot, artifactIdentity string, blobStore blobs.Store)
 	artifacts := agent.NewArtifactStore(blobStore)
 	readFile, err := NewReadFile(repositoryRoot, artifactIdentity, artifacts, maxInlineToolOutputBytes)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("build read_file tool: %w", err)
 	}
 	readOnlyExec, err := NewReadOnlyExecCommand(
 		repositoryRoot, artifactIdentity, artifacts, maxInlineToolOutputBytes, 30*time.Minute,
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("build read-only exec_command tool: %w", err)
 	}
 	writeExec, err := NewExecCommand(
 		repositoryRoot, artifactIdentity, artifacts, maxInlineToolOutputBytes, 30*time.Minute,
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("build write exec_command tool: %w", err)
 	}
 	applyPatch, err := NewApplyPatch(repositoryRoot, time.Minute)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("build apply_patch tool: %w", err)
 	}
 	return []agenttool.Set{
 		agenttool.MustSet(agent.ToolsetCodingReadV1, readFile, readOnlyExec),

@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,7 +118,7 @@ func TestModelTurnLoadsConversationAndStoresFinalText(t *testing.T) {
 		string(turner.request.ResponseFormat.Schema) != string(responseSchema) {
 		t.Fatalf("Turn() response format = %#v", turner.request.ResponseFormat)
 	}
-	if result.Outcome != agent.OutcomeFinalText || result.ConversationRef.Revision != 1 {
+	if result.Outcome != agent.OutcomeFinalText || result.ConversationRef.Revision != 1 || result.ToolsetFingerprint == "" {
 		t.Fatalf("ModelTurn() result = %#v", result)
 	}
 	if got, err := testutil.GatherAndCount(registry, "software_factory_agent_model_turns_total"); err != nil || got != 1 {
@@ -135,6 +136,52 @@ func TestModelTurnLoadsConversationAndStoresFinalText(t *testing.T) {
 	}
 	if text != `{"summary":"done"}` {
 		t.Fatalf("LoadText() = %q", text)
+	}
+}
+
+func TestModelTurnRejectsPinnedToolsetFingerprintMismatch(t *testing.T) {
+	t.Parallel()
+
+	turner := &fakeTurner{}
+	activities, err := agentactivities.NewActivities(
+		turner, blobs.NewMemStore(), clocktest.NewFake(time.Unix(0, 0)),
+		agenttool.MustSet("coding-read-v1"),
+	)
+	if err != nil {
+		t.Fatalf("NewActivities() error = %v", err)
+	}
+	_, err = activities.ModelTurn(t.Context(), agent.ModelTurnInput{
+		ToolsetID: "coding-read-v1", ToolsetFingerprint: "sha256:stale",
+	})
+	if err == nil || !strings.Contains(err.Error(), "fingerprint changed") {
+		t.Fatalf("ModelTurn() error = %v, want fingerprint mismatch", err)
+	}
+	if turner.request.Model != "" {
+		t.Fatal("fingerprint mismatch reached the provider")
+	}
+}
+
+func TestRecordLifecycleEmitsTerminalAndBudgetMetrics(t *testing.T) {
+	t.Parallel()
+
+	registry := prometheus.NewRegistry()
+	activities, err := agentactivities.NewObservedActivities(
+		&fakeTurner{}, blobs.NewMemStore(), clocktest.NewFake(time.Unix(0, 0)), telemetry.NewMetrics(registry),
+		slog.New(slog.NewTextHandler(io.Discard, nil)), agenttool.MustSet("coding-read-v1"),
+	)
+	if err != nil {
+		t.Fatalf("NewObservedActivities() error = %v", err)
+	}
+	if err := activities.RecordLifecycle(t.Context(), agentactivities.LifecycleInput{
+		Outcome: telemetry.AgentOutcomeCancelled, Budget: "tool_calls",
+	}); err != nil {
+		t.Fatalf("RecordLifecycle() error = %v", err)
+	}
+	got, err := testutil.GatherAndCount(
+		registry, "software_factory_agent_child_outcomes_total", "software_factory_agent_budget_exhaustions_total",
+	)
+	if err != nil || got != 2 {
+		t.Fatalf("lifecycle metric families = %d, %v; want 2", got, err)
 	}
 }
 

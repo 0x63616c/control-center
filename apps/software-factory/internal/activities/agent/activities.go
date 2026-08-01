@@ -44,6 +44,23 @@ type StreamProgress struct {
 	Events    int
 }
 
+// RecordLifecycle records one terminal child outcome without carrying prompt,
+// conversation, result, error, or credential content across the boundary.
+func (activities *Activities) RecordLifecycle(_ context.Context, input LifecycleInput) error {
+	switch input.Outcome {
+	case telemetry.AgentOutcomeSucceeded, telemetry.AgentOutcomeFailed, telemetry.AgentOutcomeCancelled:
+	case telemetry.AgentOutcomeFinalText, telemetry.AgentOutcomeToolCalls, telemetry.AgentOutcomeToolError:
+		return invalidInput("unsupported agent child outcome %q", input.Outcome)
+	default:
+		return invalidInput("unsupported agent child outcome %q", input.Outcome)
+	}
+	if input.Budget != "" {
+		activities.metrics.AgentBudgetExhausted(input.Budget)
+	}
+	activities.metrics.AgentChildFinished(input.Outcome)
+	return nil
+}
+
 // NewActivities constructs model-side activities for isolated acceptance harnesses.
 // Production composition uses NewObservedActivities so metrics and structured
 // decision logs cannot be accidentally detached from the served registry.
@@ -111,13 +128,20 @@ func (activities *Activities) ModelTurn(ctx context.Context, input agent.ModelTu
 	if !ok {
 		return agent.ModelTurnResult{}, invalidInput("unknown agent toolset %q", input.ToolsetID)
 	}
+	fingerprint := toolset.Fingerprint()
+	if input.ToolsetFingerprint != "" && input.ToolsetFingerprint != fingerprint {
+		return agent.ModelTurnResult{}, invalidInput(
+			"agent toolset %q fingerprint changed: got %q, want %q",
+			input.ToolsetID, input.ToolsetFingerprint, fingerprint,
+		)
+	}
 	items, err := activities.conversations.Items(ctx, input.ConversationRef)
 	if err != nil {
 		return agent.ModelTurnResult{}, transientFailure("load model conversation", err)
 	}
 	responseFormat, err := activities.responseFormat(ctx, input.ResponseFormat)
 	if err != nil {
-		return agent.ModelTurnResult{}, err
+		return agent.ModelTurnResult{}, fmt.Errorf("resolve agent response format: %w", err)
 	}
 	request, err := modelRequest(input, toolset, items, responseFormat)
 	if err != nil {
@@ -170,8 +194,9 @@ func (activities *Activities) ModelTurn(ctx context.Context, input agent.ModelTu
 		return agent.ModelTurnResult{}, invalidProviderOutcome("model turn has unknown outcome %q", providerResult.Outcome)
 	}
 	if err != nil {
-		return agent.ModelTurnResult{}, err
+		return agent.ModelTurnResult{}, fmt.Errorf("store agent model outcome: %w", err)
 	}
+	result.ToolsetFingerprint = fingerprint
 	outcome := telemetry.AgentOutcomeFinalText
 	if result.Outcome == agent.OutcomeToolCalls {
 		outcome = telemetry.AgentOutcomeToolCalls

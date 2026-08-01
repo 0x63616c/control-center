@@ -24,6 +24,7 @@ import (
 
 	factoryapi "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/api"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/api/auth"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/checkpoint"
 	temporalapi "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/temporal"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/config"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/database"
@@ -138,9 +139,12 @@ func run() error {
 	// The webhook consumer (#557) is deliberately NOT behind authentication.Wrap:
 	// its caller is the relay (#535), not a human or an agent, and it
 	// authenticates each delivery itself, by HMAC, exactly as the relay does.
-	// Every other path stays behind Cloudflare Access or the in-cluster bearer.
+	// The checkpoint route is the other exception: its exact-attempt capability
+	// is authenticated by the Store. Legacy API paths stay behind Cloudflare
+	// Access or the in-cluster bearer.
 	mux.Handle("/v1/hooks/github", webhook.NewHandler(cfg.WebhookSecret, ticketStore, logger, registry))
-	mux.Handle("/", authentication.Wrap(factoryapi.New(buildVersion, temporalapi.NewCommands(temporal), ticketStore).Handler()))
+	factory := factoryapi.NewWithRunWorkerStores(buildVersion, temporalapi.NewCommands(temporal), ticketStore, ticketStore, ticketStore)
+	mountFactoryAPI(mux, authentication, factory)
 
 	listener, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
@@ -165,4 +169,20 @@ func run() error {
 		}
 	}
 	return nil
+}
+
+type routeAuthenticator interface {
+	Wrap(http.Handler) http.Handler
+}
+
+func mountFactoryAPI(mux *http.ServeMux, authentication routeAuthenticator, factory *factoryapi.Service) {
+	// The Store authenticates this exact-attempt capability. Requiring the
+	// legacy broad worker bearer as well would give the Run Worker authority the
+	// narrow checkpoint route exists to avoid.
+	mux.Handle(checkpoint.PutServeMuxPattern, factory.Handler())
+	mux.Handle(checkpoint.GetServeMuxPattern, factory.Handler())
+	mux.Handle(checkpoint.RepositoryPutServeMuxPattern, factory.Handler())
+	mux.Handle(checkpoint.RepositoryGetServeMuxPattern, factory.Handler())
+	mux.Handle(checkpoint.RepositoryEffectPatchServeMuxPattern, factory.Handler())
+	mux.Handle("/", authentication.Wrap(factory.Handler()))
 }

@@ -153,6 +153,26 @@ RETURNING *;
 -- name: TargetGitCheckpoint :one
 SELECT * FROM run_git_checkpoint WHERE run_id = $1;
 
+-- name: BindTargetRepositoryCapability :one
+INSERT INTO run_repository_capability (run_id, generation, capability_hash)
+SELECT $1, $2, $3
+WHERE EXISTS (
+    SELECT 1 FROM run
+    JOIN ticket ON ticket.id = run.ticket_id
+    WHERE run.id = $1 AND run.target_outcome IS NULL
+      AND ticket.state = 'active' AND ticket.active_run_id = run.id
+)
+ON CONFLICT (run_id) DO UPDATE SET
+    generation = EXCLUDED.generation,
+    capability_hash = EXCLUDED.capability_hash
+WHERE run_repository_capability.generation < EXCLUDED.generation
+   OR (run_repository_capability.generation = EXCLUDED.generation
+       AND run_repository_capability.capability_hash = EXCLUDED.capability_hash)
+RETURNING *;
+
+-- name: TargetRepositoryCapabilityForUpdate :one
+SELECT * FROM run_repository_capability WHERE run_id = $1 FOR UPDATE;
+
 -- name: PutTargetGitCheckpoint :one
 INSERT INTO run_git_checkpoint (
     run_id, step_ordinal, branch, pushed_head, observed_base,
