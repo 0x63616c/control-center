@@ -18,6 +18,12 @@ import (
 
 const credentialRenewalInterval = 30 * time.Minute
 
+const (
+	targetUnboundedChangeID    = "work-on-ticket-unbounded-v1"
+	targetUnboundedVersion     = 1
+	legacyTargetMaxReviewSteps = 5
+)
+
 // targetRecordingActs, runWorkerControlActs, and targetRunWorkerActs name the
 // target activity boundaries whose method names are already unique. Temporal
 // resolves their registered method names; workflow code never invokes the nil
@@ -43,6 +49,8 @@ type WorkOnTicketInput struct {
 }
 
 type semanticDeadlineContextKey struct{}
+
+type targetLegacyPayloadContextKey struct{}
 
 type targetStepTrackerContextKey struct{}
 
@@ -178,6 +186,8 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 	if err := validateWorkOnTicket(in); err != nil {
 		return fmt.Errorf("validating WorkOnTicket input: %w", err)
 	}
+	legacyPayload := workflow.GetVersion(ctx, targetUnboundedChangeID, workflow.DefaultVersion, targetUnboundedVersion) == workflow.DefaultVersion
+	ctx = workflow.WithValue(ctx, targetLegacyPayloadContextKey{}, legacyPayload)
 	hardDeadline := workflow.Now(ctx).Add(in.Policy.HardDeadline)
 	claimStarted = true
 	claimCtx := workflow.WithActivityOptions(ctx, targetActivityOptions(in.Policy.Recording))
@@ -242,15 +252,13 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 	session.checkoutReady = true
 
 	detail := work.TicketDetail{Ticket: work.Ticket{Number: int(claimed.Ticket.ID), Title: claimed.Ticket.Title, Body: claimed.Ticket.Body}}
-	ordinal, agentAttempts, reviewSteps := 4, 0, 0
-	plan, used, err := runTargetAgentStep(ctx, session, in, detail, ordinal, work.AgentStagePlan, work.PriorTurns{}, work.AgentPromptContext{}, 1, nil, in.Policy.MaxAgentAttempts-agentAttempts)
-	agentAttempts += used
+	ordinal, reviewSteps := 4, 0
+	plan, _, err := runTargetAgentStep(ctx, session, in, detail, ordinal, work.AgentStagePlan, work.PriorTurns{}, work.AgentPromptContext{}, 1, nil)
 	if err != nil {
 		return fmt.Errorf("running target plan: %w", err)
 	}
 	ordinal++
-	implement, used, err := runTargetAgentStep(ctx, session, in, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result}, work.AgentPromptContext{}, 1, nil, in.Policy.MaxAgentAttempts-agentAttempts)
-	agentAttempts += used
+	implement, _, err := runTargetAgentStep(ctx, session, in, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result}, work.AgentPromptContext{}, 1, nil)
 	if err != nil {
 		return fmt.Errorf("running initial target implementation: %w", err)
 	}
@@ -309,13 +317,9 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 			return temporal.NewNonRetryableApplicationError(fmt.Sprintf("target CI returned another candidate %q", ci.CommitSHA), activities.ErrTypeInvalid, nil)
 		}
 		if !ci.Green {
-			if agentAttempts >= in.Policy.MaxAgentAttempts {
-				return exhaustedAgentAttempts(in.Policy.MaxAgentAttempts)
-			}
 			implementTurn++
 			feedback = work.AgentPromptContext{CandidateHeadSHA: candidate.PushedHead, CIFailures: ci.RedFailures}
-			implement, used, err = runTargetAgentStep(ctx, session, in, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result}, feedback, implementTurn, implementSeed, in.Policy.MaxAgentAttempts-agentAttempts)
-			agentAttempts += used
+			implement, _, err = runTargetAgentStep(ctx, session, in, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result}, feedback, implementTurn, implementSeed)
 			if err != nil {
 				return fmt.Errorf("running target implementation after CI feedback: %w", err)
 			}
@@ -323,15 +327,8 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 			ordinal++
 			continue
 		}
-		if reviewSteps >= in.Policy.MaxReviewSteps {
-			return exhaustedReviewSteps(in.Policy.MaxReviewSteps)
-		}
-		if agentAttempts >= in.Policy.MaxAgentAttempts {
-			return exhaustedAgentAttempts(in.Policy.MaxAgentAttempts)
-		}
 		reviewSteps++
-		review, used, reviewErr := runTargetAgentStep(ctx, session, in, detail, ordinal, work.AgentStageReview, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: latestReview, ReviewLedger: reviewLedger}, work.AgentPromptContext{CandidateHeadSHA: candidate.PushedHead}, reviewSteps, nil, in.Policy.MaxAgentAttempts-agentAttempts)
-		agentAttempts += used
+		review, _, reviewErr := runTargetAgentStep(ctx, session, in, detail, ordinal, work.AgentStageReview, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: latestReview, ReviewLedger: reviewLedger}, work.AgentPromptContext{CandidateHeadSHA: candidate.PushedHead}, reviewSteps, nil)
 		if reviewErr != nil {
 			return fmt.Errorf("running target review %d: %w", reviewSteps, reviewErr)
 		}
@@ -343,13 +340,9 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 		latestReview = review.Result
 		reviewLedger = append(reviewLedger, work.ReviewTurnRecord{Turn: reviewSteps, Findings: findings.Findings, Verified: findings.Verified})
 		if len(findings.BlockingFindingIDs()) != 0 {
-			if agentAttempts >= in.Policy.MaxAgentAttempts {
-				return exhaustedAgentAttempts(in.Policy.MaxAgentAttempts)
-			}
 			implementTurn++
 			feedback = work.AgentPromptContext{CandidateHeadSHA: candidate.PushedHead, ReviewFindings: findings.Findings}
-			implement, used, err = runTargetAgentStep(ctx, session, in, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: latestReview}, feedback, implementTurn, implementSeed, in.Policy.MaxAgentAttempts-agentAttempts)
-			agentAttempts += used
+			implement, _, err = runTargetAgentStep(ctx, session, in, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: latestReview}, feedback, implementTurn, implementSeed)
 			if err != nil {
 				return fmt.Errorf("running target implementation after review feedback: %w", err)
 			}
@@ -418,13 +411,9 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 			return temporal.NewNonRetryableApplicationError(fmt.Sprintf("target merge did not confirm candidate %q", candidate.PushedHead), activities.ErrTypeInvalid, nil)
 		}
 		completeTrackedStep(ctx, mergeStep.StepOrdinal)
-		if agentAttempts >= in.Policy.MaxAgentAttempts {
-			return exhaustedAgentAttempts(in.Policy.MaxAgentAttempts)
-		}
 		implementTurn++
 		feedback = work.AgentPromptContext{CandidateHeadSHA: candidate.PushedHead, Merge: &work.MergeFeedback{Outcome: merge.Outcome, ReviewedHeadSHA: candidate.PushedHead, CurrentHeadSHA: merge.PullRequest.HeadSHA, CurrentBaseSHA: merge.PullRequest.BaseSHA, Diagnostic: merge.Diagnostic}}
-		implement, used, err = runTargetAgentStep(ctx, session, in, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: latestReview}, feedback, implementTurn, implementSeed, in.Policy.MaxAgentAttempts-agentAttempts)
-		agentAttempts += used
+		implement, _, err = runTargetAgentStep(ctx, session, in, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: latestReview}, feedback, implementTurn, implementSeed)
 		if err != nil {
 			return fmt.Errorf("running target implementation after merge feedback: %w", err)
 		}
@@ -514,20 +503,17 @@ func targetImplementSeed(result targetAgentStepResult) *agent.ConversationSeed {
 // runTargetAgentStep records one semantic target Attempt before starting its
 // reusable child runtime. Activity retries remain internal to that child;
 // only a fresh loop iteration below creates another target Attempt row.
-func runTargetAgentStep(ctx workflow.Context, session *targetRunSession, in WorkOnTicketInput, detail work.TicketDetail, ordinal int, stage work.AgentStage, prior work.PriorTurns, promptContext work.AgentPromptContext, iteration int, seed *agent.ConversationSeed, remainingAttempts int) (targetAgentStepResult, int, error) {
+func runTargetAgentStep(ctx workflow.Context, session *targetRunSession, in WorkOnTicketInput, detail work.TicketDetail, ordinal int, stage work.AgentStage, prior work.PriorTurns, promptContext work.AgentPromptContext, iteration int, seed *agent.ConversationSeed) (targetAgentStepResult, int, error) {
 	if err := promptContext.Validate(); err != nil {
 		return targetAgentStepResult{}, 0, temporal.NewNonRetryableApplicationError(fmt.Sprintf("validating %s prompt context: %v", stage, err), activities.ErrTypeInvalid, nil)
-	}
-	if remainingAttempts <= 0 {
-		return targetAgentStepResult{}, 0, exhaustedAgentAttempts(in.Policy.MaxAgentAttempts)
 	}
 	if err := startTargetStep(ctx, in, ordinal, agentStepKind(stage)); err != nil {
 		return targetAgentStepResult{}, 0, fmt.Errorf("starting %s agent step: %w", stage, err)
 	}
 	recordingCtx := workflow.WithActivityOptions(ctx, targetActivityOptions(in.Policy.Recording))
 	credentialCtx := workflow.WithActivityOptions(ctx, targetActivityOptions(in.Policy.CredentialRotation))
-	attemptStartedAt := make(map[int]time.Time, remainingAttempts)
-	for attemptNo := 1; attemptNo <= remainingAttempts; {
+	attemptStartedAt := make(map[int]time.Time)
+	for attemptNo := 1; ; {
 		if err := requireSemanticTime(ctx); err != nil {
 			return targetAgentStepResult{}, attemptNo - 1, fmt.Errorf("checking semantic budget before %s agent attempt %d: %w", stage, attemptNo, err)
 		}
@@ -553,11 +539,17 @@ func runTargetAgentStep(ctx workflow.Context, session *targetRunSession, in Work
 		identity := fmt.Sprintf("agent/%s/step/%d/attempt/%d", in.RunID, ordinal, attemptNo)
 		child := workflow.WithChildOptions(ctx, targetAgentChildOptions(identity, in.Policy.Agent))
 		var result AgentWorkflowResult
-		childFuture := workflow.ExecuteChildWorkflow(child, AgentWorkflow, AgentWorkflowInput{
-			Attempt:   activities.StageAttempt{Key: key, Model: in.Model, Detail: detail, Prior: prior, PromptContext: promptContext, MaxReviewSteps: in.Policy.MaxReviewSteps},
-			ToolsetID: targetToolset(stage), ToolTarget: agent.ToolTarget{Kind: agent.ToolTargetRunWorker, RunWorkerIdentity: session.identity},
-			Limits: agent.DefaultLimits(), ModelTurnPolicy: in.Policy.Agent, ControlPolicy: in.Policy.Recording, CacheKey: identity, Identity: identity, Seed: seed,
-		})
+		attempt := activities.StageAttempt{Key: key, Model: in.Model, Detail: detail, Prior: prior, PromptContext: promptContext}
+		childInput := AgentWorkflowInput{
+			Attempt: attempt, ToolsetID: targetToolset(stage),
+			ToolTarget:      agent.ToolTarget{Kind: agent.ToolTargetRunWorker, RunWorkerIdentity: session.identity},
+			ModelTurnPolicy: in.Policy.Agent, ControlPolicy: in.Policy.Recording, CacheKey: identity, Identity: identity, Seed: seed,
+		}
+		if targetUsesLegacyPayload(ctx) {
+			childInput.Attempt.LegacyMaxReviewSteps = legacyTargetMaxReviewSteps
+			childInput.LegacyLimits = defaultLegacyAgentLimits()
+		}
+		childFuture := workflow.ExecuteChildWorkflow(child, AgentWorkflow, childInput)
 		renewalCtx, cancelRenewal := workflow.WithCancel(ctx)
 		var childErr error
 		for {
@@ -624,7 +616,7 @@ func runTargetAgentStep(ctx workflow.Context, session *targetRunSession, in Work
 			}).Get(recordingCtx, nil); failErr != nil {
 				return targetAgentStepResult{}, attemptNo, fmt.Errorf("recording terminal %s agent failure: %w", stage, failErr)
 			}
-			if targetFailureNeedsFreshAttempt(result.Failure) && attemptNo < remainingAttempts {
+			if targetFailureNeedsFreshAttempt(result.Failure) {
 				attemptNo++
 				continue
 			}
@@ -635,7 +627,11 @@ func runTargetAgentStep(ctx workflow.Context, session *targetRunSession, in Work
 					nil,
 				)
 			}
-			return targetAgentStepResult{}, attemptNo, exhaustedAgentAttempts(in.Policy.MaxAgentAttempts)
+			return targetAgentStepResult{}, attemptNo, temporal.NewNonRetryableApplicationError(
+				fmt.Sprintf("%s agent could not produce a resumable result", stage),
+				activities.ErrTypeUnresumableIncompleteAttempt,
+				nil,
+			)
 		}
 		if result.Result.Value() == nil {
 			return targetAgentStepResult{}, attemptNo, temporal.NewNonRetryableApplicationError(fmt.Sprintf("%s agent produced no durable result", stage), activities.ErrTypeInvalid, nil)
@@ -657,13 +653,16 @@ func runTargetAgentStep(ctx workflow.Context, session *targetRunSession, in Work
 		completeTrackedStep(ctx, ordinal)
 		return targetAgentStepResult{Key: key, Identity: identity, Raw: raw, Result: result.Result, Usage: result.Usage, UsageMeasured: result.UsageMeasured, ConversationRef: result.ConversationRef, TranscriptRef: result.TranscriptRef}, attemptNo, nil
 	}
-	return targetAgentStepResult{}, remainingAttempts, exhaustedAgentAttempts(in.Policy.MaxAgentAttempts)
+}
+
+func targetUsesLegacyPayload(ctx workflow.Context) bool {
+	legacy, ok := ctx.Value(targetLegacyPayloadContextKey{}).(bool)
+	return ok && legacy
 }
 
 func targetFailureNeedsFreshAttempt(failure *agent.TerminalFailure) bool {
 	return failure.Is(agent.TerminalFailureAmbiguousToolExecution) ||
-		failure.Is(agent.TerminalFailureInvalidProviderOutcome) ||
-		failure.Is(agent.TerminalFailureBudgetExhausted)
+		failure.Is(agent.TerminalFailureInvalidProviderOutcome)
 }
 
 func targetAgentChildOptions(identity string, policy work.AgentActivityPolicy) workflow.ChildWorkflowOptions {
