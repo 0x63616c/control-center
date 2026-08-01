@@ -36,7 +36,11 @@ const (
 	ciActivityName          = "run-worker-ci"
 	pullRequestActivityName = "run-worker-pull-request"
 	mergeActivityName       = "run-worker-merge"
+	reconcileActivityName   = "run-worker-reconcile-incomplete-attempt"
+	restoreActivityName     = "run-worker-restore-checkpoint"
 	controlActivityName     = "capability-control-activity"
+	recordingActivityName   = "main-control-recording"
+	rotationActivityName    = "main-control-credential-rotation"
 )
 
 type repositoryActivityDefinition struct {
@@ -50,6 +54,11 @@ var targetRepositoryActivities = [...]repositoryActivityDefinition{
 	{Operation: "ci", Name: ciActivityName},
 	{Operation: "pull_request", Name: pullRequestActivityName},
 	{Operation: "merge", Name: mergeActivityName},
+}
+
+var replacementActivities = [...]repositoryActivityDefinition{
+	{Operation: "reconcile_attempt", Name: reconcileActivityName},
+	{Operation: "restore", Name: restoreActivityName},
 }
 
 var (
@@ -73,7 +82,12 @@ type sessionActivityEvidence struct {
 	ProcessID int
 	Found     bool
 	Marker    string
+	Recovery  attemptRecoveryOutcome
 }
+
+type attemptRecoveryOutcome string
+
+const attemptRecoveryUnresumable attemptRecoveryOutcome = "unresumable_incomplete_attempt"
 
 type sessionWorkflowInput struct {
 	PrivateQueue string
@@ -102,6 +116,10 @@ type sessionLossEvidence struct {
 	First             sessionActivityEvidence
 	Failure           string
 	Control           string
+	Recording         string
+	Rotation          string
+	Recovery          attemptRecoveryOutcome
+	Completed         []sessionActivityEvidence
 	ReplacementBefore sessionActivityEvidence
 	Replacement       sessionActivityEvidence
 }
@@ -285,14 +303,29 @@ func TestSessionLossLeavesMainControlAndRoutesAReplacementToItsOwnRoot(t *testin
 	if evidence.Failure == "" || evidence.Control != "main-control" {
 		t.Fatalf("Session-loss control evidence = %#v", evidence)
 	}
+	if evidence.Recording != "main-recording" || evidence.Rotation != "main-rotation" {
+		t.Fatalf("main-control recovery calls = %#v", evidence)
+	}
+	if evidence.Recovery != attemptRecoveryUnresumable {
+		t.Fatalf("incomplete Attempt recovery = %q, want %q", evidence.Recovery, attemptRecoveryUnresumable)
+	}
+	if len(evidence.Completed) != 1 || evidence.Completed[0].Operation != "clone" {
+		t.Fatalf("completed repository Steps = %#v, want clone exactly once", evidence.Completed)
+	}
 	if evidence.ReplacementBefore.Worker != "private-replacement" ||
-		evidence.ReplacementBefore.ProcessID != privateTwo.processID() || evidence.ReplacementBefore.Found {
+		evidence.ReplacementBefore.ProcessID != privateTwo.processID() || evidence.ReplacementBefore.Found ||
+		evidence.ReplacementBefore.Operation != "reconcile_attempt" ||
+		evidence.ReplacementBefore.Recovery != attemptRecoveryUnresumable {
 		t.Fatalf("replacement pre-write isolation evidence = %#v", evidence.ReplacementBefore)
 	}
 	if evidence.Replacement.Worker != "private-replacement" ||
 		evidence.Replacement.ProcessID != privateTwo.processID() || !evidence.Replacement.Found ||
-		evidence.Replacement.Marker != "replacement-state-v1" {
+		evidence.Replacement.Marker != "replacement-state-v1" || evidence.Replacement.Operation != "restore" {
 		t.Fatalf("replacement routing evidence = %#v", evidence.Replacement)
+	}
+	allOperations := []string{evidence.First.Operation, evidence.ReplacementBefore.Operation, evidence.Replacement.Operation}
+	if !slices.Equal(allOperations, []string{"clone", "reconcile_attempt", "restore"}) {
+		t.Fatalf("repository operations after replacement = %v, want no rerun and no fresh agent execution", allOperations)
 	}
 }
 
@@ -422,6 +455,7 @@ func sessionLossWorkflow(ctx workflow.Context, in sessionLossInput) (sessionLoss
 	if err := workflow.ExecuteActivity(sessionCtx, cloneActivityName, first).Get(sessionCtx, &result.First); err != nil {
 		return sessionLossEvidence{}, fmt.Errorf("running first private activity: %w", err)
 	}
+	result.Completed = append(result.Completed, result.First)
 	var continueRun string
 	workflow.GetSignalChannel(ctx, "continue").Receive(ctx, &continueRun)
 	read := sessionActivityInput{Operation: "agent", MarkerName: in.MarkerName}
@@ -434,18 +468,28 @@ func sessionLossWorkflow(ctx workflow.Context, in sessionLossInput) (sessionLoss
 	if err := workflow.ExecuteActivity(controlCtx, controlActivityName).Get(controlCtx, &result.Control); err != nil {
 		return sessionLossEvidence{}, fmt.Errorf("running main-control activity after Session loss: %w", err)
 	}
+	if err := workflow.ExecuteActivity(controlCtx, recordingActivityName).Get(controlCtx, &result.Recording); err != nil {
+		return sessionLossEvidence{}, fmt.Errorf("recording the interrupted Attempt after Session loss: %w", err)
+	}
+	if err := workflow.ExecuteActivity(controlCtx, rotationActivityName).Get(controlCtx, &result.Rotation); err != nil {
+		return sessionLossEvidence{}, fmt.Errorf("rotating credentials after Session loss: %w", err)
+	}
 
 	replacementSession, err := createCapabilitySession(ctx, in.ReplacementQueue)
 	if err != nil {
 		return sessionLossEvidence{}, fmt.Errorf("creating replacement session: %w", err)
 	}
 	defer workflow.CompleteSession(replacementSession)
-	if err := workflow.ExecuteActivity(replacementSession, agentActivityName, read).
+	if err := workflow.ExecuteActivity(replacementSession, reconcileActivityName, read).
 		Get(replacementSession, &result.ReplacementBefore); err != nil {
 		return sessionLossEvidence{}, fmt.Errorf("probing replacement private root: %w", err)
 	}
+	result.Recovery = result.ReplacementBefore.Recovery
+	if result.Recovery != attemptRecoveryUnresumable {
+		return sessionLossEvidence{}, fmt.Errorf("replacement returned Attempt recovery %q", result.Recovery)
+	}
 	replacement := sessionActivityInput{Operation: "restore", MarkerName: in.MarkerName, Marker: in.ReplacementMarker, Write: true}
-	if err := workflow.ExecuteActivity(replacementSession, agentActivityName, replacement).
+	if err := workflow.ExecuteActivity(replacementSession, restoreActivityName, replacement).
 		Get(replacementSession, &result.Replacement); err != nil {
 		return sessionLossEvidence{}, fmt.Errorf("running replacement private activity: %w", err)
 	}
@@ -485,6 +529,14 @@ func mainCapabilityWorker(c temporalclient.Client, identity string) worker.Worke
 		func(context.Context) (string, error) { return identity + "-control", nil },
 		activity.RegisterOptions{Name: controlActivityName},
 	)
+	w.RegisterActivityWithOptions(
+		func(context.Context) (string, error) { return identity + "-recording", nil },
+		activity.RegisterOptions{Name: recordingActivityName},
+	)
+	w.RegisterActivityWithOptions(
+		func(context.Context) (string, error) { return identity + "-rotation", nil },
+		activity.RegisterOptions{Name: rotationActivityName},
+	)
 	return w
 }
 
@@ -498,31 +550,48 @@ func privateWorker(c temporalclient.Client, queue, identity, root string) worker
 		w.RegisterActivityWithOptions(
 			func(_ context.Context, in sessionActivityInput) (sessionActivityEvidence, error) {
 				in.Operation = definition.Operation
-				markerPath, err := privateMarkerPath(root, in.MarkerName)
-				if err != nil {
-					return sessionActivityEvidence{}, fmt.Errorf("resolve private marker path: %w", err)
-				}
-				if in.Write {
-					if err := os.WriteFile(markerPath, []byte(in.Marker), 0o600); err != nil {
-						return sessionActivityEvidence{}, fmt.Errorf("writing filesystem marker: %w", err)
-					}
-				}
-				evidence := sessionActivityEvidence{Operation: in.Operation, Worker: identity, ProcessID: os.Getpid()}
-				marker, err := os.ReadFile(markerPath)
-				if errors.Is(err, os.ErrNotExist) {
-					return evidence, nil
-				}
-				if err != nil {
-					return sessionActivityEvidence{}, fmt.Errorf("reading filesystem marker: %w", err)
-				}
-				evidence.Found = true
-				evidence.Marker = string(marker)
-				return evidence, nil
+				return runSessionActivity(root, identity, in)
+			},
+			activity.RegisterOptions{Name: definition.Name},
+		)
+	}
+	for _, definition := range replacementActivities {
+		definition := definition
+		w.RegisterActivityWithOptions(
+			func(_ context.Context, in sessionActivityInput) (sessionActivityEvidence, error) {
+				in.Operation = definition.Operation
+				return runSessionActivity(root, identity, in)
 			},
 			activity.RegisterOptions{Name: definition.Name},
 		)
 	}
 	return w
+}
+
+func runSessionActivity(root, identity string, in sessionActivityInput) (sessionActivityEvidence, error) {
+	markerPath, err := privateMarkerPath(root, in.MarkerName)
+	if err != nil {
+		return sessionActivityEvidence{}, fmt.Errorf("resolve private marker path: %w", err)
+	}
+	if in.Write {
+		if err := os.WriteFile(markerPath, []byte(in.Marker), 0o600); err != nil {
+			return sessionActivityEvidence{}, fmt.Errorf("writing filesystem marker: %w", err)
+		}
+	}
+	evidence := sessionActivityEvidence{Operation: in.Operation, Worker: identity, ProcessID: os.Getpid()}
+	marker, err := os.ReadFile(markerPath)
+	if errors.Is(err, os.ErrNotExist) {
+		if in.Operation == "reconcile_attempt" {
+			evidence.Recovery = attemptRecoveryUnresumable
+		}
+		return evidence, nil
+	}
+	if err != nil {
+		return sessionActivityEvidence{}, fmt.Errorf("reading filesystem marker: %w", err)
+	}
+	evidence.Found = true
+	evidence.Marker = string(marker)
+	return evidence, nil
 }
 
 func privateMarkerPath(root, name string) (string, error) {
