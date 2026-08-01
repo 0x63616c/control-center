@@ -3,6 +3,11 @@ set -euo pipefail
 
 manifest="${1:?usage: software-factory-release-manifest.sh MANIFEST}"
 
+# This exact set is the frozen v1 consumer schema, not a reflection of whatever
+# the producer happens to publish later. A new component therefore requires an
+# explicit compatibility change here. The cutover caller separately verifies
+# the GitHub Release checksum and tag-to-commit provenance before invoking this
+# structural adapter.
 jq --exit-status --compact-output '
   if (.version | test("^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$")) and
     (.commit | test("^[0-9a-f]{40}$")) and
