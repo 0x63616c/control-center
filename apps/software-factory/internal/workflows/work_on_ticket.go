@@ -547,10 +547,7 @@ func runTargetAgentStep(ctx workflow.Context, session *targetRunSession, in Work
 		}
 		key := work.StageKey{Ticket: detail.Number, RunID: in.RunID, Stage: work.Stage(stage), Turn: iteration}
 		identity := fmt.Sprintf("agent/%s/step/%d/attempt/%d", in.RunID, ordinal, attemptNo)
-		child := workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{
-			WorkflowID: identity, WorkflowExecutionTimeout: in.Policy.Agent.ScheduleToCloseTimeout,
-			WaitForCancellation: true, ParentClosePolicy: enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
-		})
+		child := workflow.WithChildOptions(ctx, targetAgentChildOptions(identity, in.Policy.Agent))
 		var result AgentWorkflowResult
 		childFuture := workflow.ExecuteChildWorkflow(child, AgentWorkflow, AgentWorkflowInput{
 			Attempt:   activities.StageAttempt{Key: key, Sandbox: work.SandboxID("run-worker-" + in.RunID), Model: in.Model, Detail: detail, Prior: prior, PromptContext: promptContext, MaxReviewSteps: in.Policy.MaxReviewSteps},
@@ -663,6 +660,14 @@ func targetFailureNeedsFreshAttempt(failure *agent.TerminalFailure) bool {
 	return failure.Is(agent.TerminalFailureAmbiguousToolExecution) ||
 		failure.Is(agent.TerminalFailureInvalidProviderOutcome) ||
 		failure.Is(agent.TerminalFailureBudgetExhausted)
+}
+
+func targetAgentChildOptions(identity string, policy work.AgentActivityPolicy) workflow.ChildWorkflowOptions {
+	return workflow.ChildWorkflowOptions{
+		WorkflowID: identity, WorkflowExecutionTimeout: policy.ScheduleToCloseTimeout,
+		WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
+		WaitForCancellation:   true, ParentClosePolicy: enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
+	}
 }
 
 func targetToolset(stage work.AgentStage) agent.ToolsetID {

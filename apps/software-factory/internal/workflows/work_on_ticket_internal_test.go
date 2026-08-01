@@ -8,6 +8,7 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+	enums "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/temporal"
 )
 
@@ -54,6 +55,16 @@ func TestTargetFailureFreshAttemptPolicyPreservesSemanticAttemptBudget(t *testin
 				t.Fatalf("targetFailureNeedsFreshAttempt(%s) = %t, want %t", test.kind, got, test.want)
 			}
 		})
+	}
+}
+
+func TestTargetAgentChildOptionsAllowSameAttemptRecovery(t *testing.T) {
+	t.Parallel()
+	policy := work.DefaultTargetRunPolicy().Agent
+	options := targetAgentChildOptions("agent/run-1/step/5/attempt/1", policy)
+	if options.WorkflowID != "agent/run-1/step/5/attempt/1" || options.WorkflowExecutionTimeout != policy.ScheduleToCloseTimeout ||
+		options.WorkflowIDReusePolicy != enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE {
+		t.Fatalf("target child options = %#v", options)
 	}
 }
 
