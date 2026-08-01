@@ -1,21 +1,15 @@
 package main
 
 import (
-	"crypto/rand"
 	"testing"
 	"time"
-
-	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/k8s"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock/clocktest"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/config"
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/prompts"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/transcripts"
 )
 
 // TestBuildDepsSatisfiesActivitiesNew is the regression test #395's own
@@ -48,23 +42,14 @@ func TestBuildDepsSatisfiesActivitiesNew(t *testing.T) {
 		SandboxCPURequest:  "2",
 		SandboxMemoryLimit: "8Gi",
 		TemporalNamespace:  "software-factory",
-		TranscriptsRoot:    "/transcripts",
 	}
 	ghCfg := config.GitHub{Owner: "0x63616c", Repo: "world-wide-webb"}
-
-	renderer, err := prompts.New(rand.Reader)
-	if err != nil {
-		t.Fatalf("building the prompt renderer: %v", err)
-	}
 
 	deps := buildDeps(
 		cfg,
 		ghCfg,
 		(*github.Client)(nil),
 		(*k8s.Sandboxes)(nil),
-		(*transcripts.Sink)(nil),
-		renderer,
-		telemetry.NewMetrics(prometheus.NewRegistry()),
 		nil, // temporal.Client: runs.New only stores it, it is never dialled here
 		(*store.Store)(nil),
 		clocktest.NewFake(time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)),

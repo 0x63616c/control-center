@@ -11,11 +11,9 @@ package activities
 
 import (
 	"context"
-	"io"
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
@@ -24,27 +22,6 @@ import (
 // every seam it consumes rather than depending on store.Store directly.
 type DispatcherStateWriter interface {
 	PutDispatcherState(ctx context.Context, state store.DispatcherState) error
-}
-
-// StageRunner executes one pipeline stage in a sandbox and returns its
-// structured result. It is the only seam here that is not CRUD, and everything
-// difficult about this service is behind it.
-//
-// An implementation composes: write the prompt and schema into the sandbox,
-// build an explicit argv, exec it, stream the event lines to events while the
-// enclosing activity heartbeats on them, and extract the token usage, the
-// provider's thread ID and the schema-conforming final message.
-//
-// It must be idempotent. Activities retry, so an implementation reads a
-// completed result when it is present and runs only when it is absent. The
-// Session host owns the stage subprocess, so cancellation does not leave a
-// separate process for a retry to observe.
-//
-// The result is read from a file rather than from the process's stdout because
-// it is the durable completion record when a model invocation finishes before
-// its activity reports success.
-type StageRunner interface {
-	RunStage(ctx context.Context, run work.StageRun, events work.StageEventSink) (work.StageResult, error)
 }
 
 // PodLifecycle creates and destroys per-ticket sandboxes.
@@ -141,9 +118,8 @@ type GitHub interface {
 // RepoCloner checks the ticket's repository out inside its sandbox, on the
 // branch this run named, and pushes it. Nothing else in this service puts a
 // repository in the sandbox, so every stage depends on this running first:
-// codex refuses to run outside a git repository and exits before making any
-// model call, which without a checkout would fail every stage identically and
-// read as the model failing the ticket rather than as a missing repository.
+// the repository tools are unavailable until the checkout exists, which
+// without a checkout would fail every stage before useful work begins.
 //
 // The branch it checks out is read from the sandbox's own environment, never
 // recomputed: work.SandboxTemplate.Spec baked SF_BRANCH into the pod at create
@@ -151,7 +127,7 @@ type GitHub interface {
 // than calling work.BranchName a second time is the one that notices if those
 // two ever disagree.
 //
-// It is idempotent under activity retry, in the same shape as StageRunner: an
+// It is idempotent under activity retry: an
 // existing checkout already on this run's branch is left alone, and a push is
 // issued regardless, which is a no-op against a branch already at that state.
 type RepoCloner interface {
@@ -163,61 +139,6 @@ type RepoCloner interface {
 	// must not reach a workflow: Temporal would persist it to history for the
 	// namespace's whole retention.
 	CloneRepo(ctx context.Context, sandbox work.SandboxID, cloneURL string, credential work.SandboxCredential) error
-}
-
-// PromptRenderer turns a ticket and the preceding stage's output into the
-// prompt and schema one stage runs on.
-//
-// It is a seam rather than a call into internal/prompts because prompts are the
-// highest-churn part of this service and orchestration is the lowest: a wording
-// change must not be a workflow change, and a test of the pipeline must not
-// need the real prompts to exist. It is also the rule the linter enforces —
-// workflow code may not import internal/prompts at all, because the nonce a
-// render mints is invisible nondeterminism at the call site.
-//
-// The workflow itself still reads nothing back from a stage's PROSE — ticket
-// bodies are attacker-chosen and they reach a model, so no stage's document
-// may steer control flow, and what a run achieved on GitHub is still asked of
-// GitHub. See GitHub.PullRequestForBranch. What the workflow's own loop *does*
-// read, since the pipeline rewrite (#435): implement's Blocked/BlockedReason
-// and review's Findings, both real structured data constrained by
-// --output-schema rather than free text, never re-parsed prose. See
-// work.ImplementOutput and work.ReviewOutput.
-type PromptRenderer interface {
-	// Render returns the prompt a stage runs on and the schema its final
-	// message must satisfy — one schema per stage, not a single shared
-	// envelope, so a required field like implement's Blocked is stated for
-	// the stage that actually answers it.
-	//
-	// prior is exactly the plan, the latest implement turn and the latest
-	// review turn — see work.PriorTurns' own doc comment for why the seam
-	// is bounded to that rather than the run's whole turn history. The
-	// workflow (internal/workflows) keeps the full history in its own local
-	// state, for progress detection; it narrows to this before building an
-	// activity input, because Temporal records this input into workflow
-	// history on every single stage invocation, and the whole history would
-	// otherwise be shipped, and re-shipped, on every turn. The one bounded
-	// exception is work.PriorTurns.ReviewLedger; its own doc comment says why
-	// review can hold a whole-run memory when implement cannot.
-	//
-	// key rather than a bare stage, because a prompt can depend on WHICH turn
-	// of that stage it is: review is told it is turn N of
-	// work.MaxReviewTurns, so a turn can weigh a blocking finding against
-	// being the last turn the run will get.
-	Render(key work.StageKey, detail work.TicketDetail, prior work.PriorTurns) (prompt string, schema []byte, err error)
-
-	// Decode unwraps a stage's result envelope into the domain's StageOutput.
-	//
-	// It belongs beside Render because they are one format seen from two ends:
-	// whoever defines the envelope a stage answers in is the only one who can
-	// say what its answer means. It is not a verdict in the sense that mattered
-	// before this type existed — Blocked/BlockedReason on implement's output is
-	// real branchable data, not prose to be re-parsed, but it is not derived
-	// from ticket text either: it is the model's own structured self-report,
-	// constrained by --output-schema. What still never branches on this is the
-	// workflow's own outcome decision, which continues to ask GitHub rather
-	// than trust any stage's output — see GitHub.PullRequestForBranch.
-	Decode(stage work.Stage, result []byte) (work.StageOutput, error)
 }
 
 // RunLookup answers whether a ticket's workflow is still open.
@@ -239,30 +160,4 @@ type RunLookup interface {
 // live says — without it the sweep races the run that just created it.
 type SandboxSweeper interface {
 	SweepOrphans(ctx context.Context, live []string, minAge time.Duration) (deleted int, err error)
-}
-
-// TranscriptSink stores one stage attempt's raw event stream.
-//
-// It takes a StageKey and returns a writer, so the path layout stays in one
-// place and no caller assembles it. Transcripts are stored rather than logged
-// because the cluster's log retention is far shorter than the time you might
-// want to ask why a PR was proposed.
-type TranscriptSink interface {
-	Open(ctx context.Context, key work.StageKey) (io.WriteCloser, error)
-}
-
-// Metrics records what a stage attempt spent and how it ended.
-//
-// It is an interface here, satisfied by *telemetry.Metrics, for one reason
-// beyond testability: telemetry.NewMetrics registers with Prometheus and
-// **panics on duplicate registration**, deliberately — two counter sets each
-// recording half the work is worse than a crash. So there is exactly one
-// construction, in the composition root, and this package accepts what it is
-// handed rather than being able to construct a second.
-//
-// Recording is fire-and-forget: it returns nothing, because failing a stage
-// that has already spent its tokens in order to report that it spent them
-// would be the tail wagging the dog.
-type Metrics interface {
-	StageFinished(stage work.Stage, model work.Model, outcome telemetry.Outcome, usage work.Usage, took time.Duration)
 }

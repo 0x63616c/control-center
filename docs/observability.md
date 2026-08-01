@@ -167,6 +167,30 @@ cancelled yet, and Prometheus does not carry a series for a counter that never
 incremented. Those panels fill in the moment the thing they measure happens,
 which is the point of them.
 
+### Software factory `AgentWorkflow`
+
+The factory's reusable agent runtime splits one stage across two workers:
+prompt/model/finalization activities on task queue `software-factory`, and the
+typed `agent.tool` activity on the per-run sandbox Session queue. Start with the
+Temporal execution tree: `FactoryWorkTicket` owns synchronous `AgentWorkflow`
+children named `agent/<run-id>/<stage>/<turn>`. A child waiting on the main
+queue is a provider-side concern; one waiting on its Session queue is a
+sandbox/tool concern.
+
+The durable forensic record is the factory Store, not container logs. Attempt
+rows hold model, measured usage and outcome. Agent transcripts are assembled as
+immutable blob revisions, returned by `TranscriptRef`, then copied into the
+Attempt record after the Attempt exists. Temporal history contains bounded
+references and routing metadata, not the whole conversation or tool output.
+
+Loki logs include run, stage, turn and tool-call identity where available, but
+must not include prompt, response, tool arguments, tool output or OAuth
+credentials. Provider calls run only in the main worker; seeing provider
+authentication material or a model request in `sandbox-worker` logs is a
+security boundary violation. Cancellation should appear as a cancelled child,
+a cancelled model HTTP request or local tool process, followed by the parent's
+disconnected sandbox cleanup.
+
 ### SDK metrics (`temporal-sdk-worker`)
 
 Unlike the five server-side dashboards above, `apps/temporal-worker` did not

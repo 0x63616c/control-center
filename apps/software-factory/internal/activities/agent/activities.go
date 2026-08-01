@@ -250,6 +250,13 @@ func providerFailure(ctx context.Context, err error) error {
 			err,
 		)
 	}
+	if errors.Is(err, codexresponses.ErrAuth) || errors.Is(err, work.ErrPermanent) {
+		return temporal.NewNonRetryableApplicationError(
+			fmt.Sprintf("run direct model turn: %v", err),
+			agent.ErrorTypeAuth,
+			err,
+		)
+	}
 	return transientFailure("run direct model turn", err)
 }
 

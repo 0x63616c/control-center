@@ -20,14 +20,13 @@ factory-ticket-<id> (child workflow; one disposable sandbox pod)
         │
         ├─ TransitionTicketState open → working
         ├─ CreateSandbox → WaitSandboxReady → CloneRepo
-        ├─ Create one Temporal Session on this run's sandbox task queue
-        ├─ plan (once)
+        ├─ AgentWorkflow(plan/1): main-worker model calls + sandbox tools
         │
-        │    ┌─ implement → workflow creates/updates draft PR → observe CI ─┐
+        │    ┌─ AgentWorkflow(implement/N) → draft PR → observe CI ─────────┐
         │    │       ▲ red or not concluded                                  │
         │    │       └──────────────────────────────────────────────────────┘
         │    │
-        │    └─ green CI → fresh review
+        │    └─ green CI → AgentWorkflow(review/N)
         │                     │ blocking finding
         │                     └──────────────► a fresh implement window
         │
@@ -78,8 +77,8 @@ The HTTP API (`internal/api`) is reached at `factory.worldwidewebb.co` through
 Cloudflare Access. The tunnel targets the namespace-local `web` Service; nginx
 serves the console and proxies `/api/*` to the namespace-local `api` Service.
 The API applies migrations before its readiness endpoint can answer. Both API and
-console run without Kubernetes credentials or transcript storage; only the worker
-mounts the Kubernetes token and transcript volume.
+console run without Kubernetes credentials; only the worker mounts a Kubernetes
+token. Transcript and conversation bytes use the blob service and factory Store.
 Its authenticated write commands use `internal/clients/temporal.Commands` to
 send `workflows.SignalUpdateConfig` to `work.FactoryDispatcherWorkflowID`
 (pause, resume, max-in-flight, or an empty update that wakes the next tick);
@@ -107,8 +106,10 @@ branch constructor keeps the sandbox branch and the PR head aligned; see
 
 ### Work ticket and deadlines
 
-`factoryTicketRun.execute` claims the Ticket, performs setup, creates exactly
-one Session, runs the one plan turn, then calls `factoryImplementReviewLoop`.
+`factoryTicketRun.execute` claims the Ticket, performs setup, runs the one plan
+child, then calls `factoryImplementReviewLoop`. Each stage is a synchronous
+`AgentWorkflow` child. The child creates its own Session for sandbox-affine tool
+activities; prompt, model and finalization activities stay on the main queue.
 Cleanup is run on a disconnected workflow context so cancellation does not
 strand the sandbox.
 
@@ -130,27 +131,29 @@ and `RunPolicy.Validate` centralize and check that arithmetic against the
 
 ## The three stage contracts
 
-Every stage invokes `codex exec` in the sandbox through the codex client. The
-runner sends the rendered prompt on standard input, records it as `prompt.md`,
-and uses explicit argv rather than a shell command. The sandbox has the same
-credentials and bypassed Codex sandboxing for every stage, so read-only status
-is instruction, not capability enforcement.
+Every stage starts an `AgentWorkflow` child with a versioned toolset. Direct
+subscription-backed Responses calls and OAuth credentials stay on the main
+worker. Only typed tool calls cross onto the sandbox Session queue. Tool schemas
+are reflected from Go input types at startup, strict-decoded at runtime and
+fingerprinted as part of an immutable toolset. There are no handwritten JSON
+tool schema files.
 
 | stage | purpose and inputs | write/trust boundary |
 |---|---|---|
-| `plan` | Turn the ticket and discussion into an implementation plan. | Prompt says read-only; its document guides implement but workflow code does not act on it directly. |
+| `plan` | Turn the ticket and discussion into an implementation plan. | Receives `coding-read-v1`; its document guides implement but workflow code does not act on it directly. |
 | `implement` | Change, verify, commit, and push the checked-out branch using the plan, its own previous report, and the latest review findings. | The only intended writing stage. It returns `report`, `blocked`, `blocked_reason`, `title`, and `body`. |
-| `review` | Fresh adversarial review of the implementation after green CI, using the report and previous review findings. | Prompt says read-only. It returns a document plus structured, stable-ID findings; blocking findings control the next loop decision. |
+| `review` | Fresh adversarial review of the implementation after green CI, using the report and previous review findings. | Receives `coding-read-v1`. It returns a document plus structured, stable-ID findings; blocking findings control the next loop decision. |
 
 `work.ImplementOutput` and `work.ReviewOutput` define these structured
 contracts. `work.PriorTurns` limits each stage activity input to the plan and
 the latest implement/review outputs; the workflow separately retains the full
 ordered turn history for CI and repeated-finding progress checks.
 
-Each invocation is a separate agent process. Later implement turns resume the
-implement conversation, whereas every review turn is a fresh thread. The
-prompt templates explicitly pass the last handoff values because a new process
-does not otherwise know the earlier turn.
+Each invocation is a separate child workflow with a deterministic ID of
+`agent/<run-id>/<stage>/<turn>`. Conversation revisions and tool arguments are
+blob-backed references, not growing values copied into every history event.
+The bounded `work.PriorTurns` handoff carries the plan, latest implement and
+latest review result into the next semantic stage.
 
 ### Pull request and CI ownership
 
@@ -215,24 +218,20 @@ auto-merge and carries no Ticket to transition.
 ## Sandbox and retries
 
 `CreateSandbox` creates one `restartPolicy: Never` pod per ticket. It has an
-`emptyDir` work volume, a per-ticket credential Secret, no automatically
-mounted service-account token, a non-root security context, no privilege
-escalation, and all Linux capabilities dropped. Both workers register activity
-methods: the main worker registers the complete `Activities` object on its
-main queue, while the sandbox worker explicitly registers `RunPlan`,
-`RunImplement`, and `RunReview` and enables one concurrent Temporal Session.
-Stage calls are Session-bound to the run-specific sandbox queue, which only
-that sandbox pod polls; main-queue registration does not make the main worker
-an executor for those Session-bound stage calls.
+`emptyDir` work volume, no provider credential, no automatically mounted
+service-account token, a non-root security context, no privilege escalation,
+and all Linux capabilities dropped. The main worker registers `AgentWorkflow`
+plus prompt, model, finalization and transcript activities. The sandbox worker
+registers only the generic typed `agent.tool` activity and hosts one concurrent
+Temporal Session. Tool calls are Session-bound to the run-specific sandbox
+queue, which only that sandbox pod polls.
 
-The stage activity retry policy uses the bounded exponential backoff owned by
-`work.DefaultRunPolicy` and `work.StageRetry*`, and it applies on the Session's
-run-specific sandbox queue. A rollout of the main worker can resume
-workflow/control work without itself consuming a stage attempt. A sandbox-pod
-loss instead fails the Session (`workflow.ErrSessionFailed`); the pod's
-`emptyDir`, including the checkout and any unrelayed transcript, is gone and
-cannot be resumed. A heartbeat timeout, Codex/process failure, or stage timeout
-can also consume the retry budget.
+Each child workflow is parent-owned with request-cancel close policy and waits
+for cancellation. Model activity cancellation closes the HTTP request; tool
+activity cancellation kills the local process. A sandbox-pod loss fails the
+Session (`workflow.ErrSessionFailed`); the pod's `emptyDir` checkout is gone and
+cannot be resumed. The parent always runs sandbox deletion on its disconnected
+cleanup context.
 
 The sandbox image includes Node, Go, `gcc`/`libc6-dev`, and a pinned
 `golangci-lint`; the previous toolchain-gap warning no longer applies. It also
@@ -258,38 +257,21 @@ headless and do not themselves capture native browser chrome.
 
 ## Current limitations
 
-- Read-only stages have prompt-only, not capability, enforcement.
 - The sandbox has no network isolation: the cluster currently has no effective
   egress policy for it.
 - The agent can read its GitHub credential inside the sandbox ([#416][416]).
 - The installation token is not refreshed during a run ([#417][417]); the run
   budget is now 24 hours, so the issue title's former six-hour wording is
   historical rather than a current duration.
-- Liveness and transcript collection remain coupled to the sandbox stream
-  ([#424][424]).
-- A resumed stage can render zero usage as measured because `UsageMeasured` is
-  not consumed ([#426][426]).
-- The transcript PV is backed by the wider shared NFS export despite the
-  worker's subpath mount ([#412][412]). Nothing writes durable transcripts
-  there any more — #559 deleted the `PersistTranscript` activity with the rest
-  of the GitHub-backed pipeline — but the sandbox-local sink and the worker's
-  own mount are still constructed, so the volume is retired by #412 rather than
-  by this change.
 
 ## Open tickets this map makes legible
 
-- [#412][412] — transcript storage scope.
 - [#416][416] — agent-readable GitHub token.
 - [#417][417] — installation-token refresh during the now-longer run budget.
-- [#424][424] — stage liveness/transcript stream coupling.
-- [#426][426] — cached-stage usage rendered as measured zero.
 
 Resolved historical context deliberately omitted here: #415's output-contract
 work, #425's generic activity-name problem, #428's sandbox-toolchain work, and
 #331's status-token accounting item are closed and are not current open work.
 
-[412]: https://github.com/0x63616c/world-wide-webb/issues/412
 [416]: https://github.com/0x63616c/world-wide-webb/issues/416
 [417]: https://github.com/0x63616c/world-wide-webb/issues/417
-[424]: https://github.com/0x63616c/world-wide-webb/issues/424
-[426]: https://github.com/0x63616c/world-wide-webb/issues/426

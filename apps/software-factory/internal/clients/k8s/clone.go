@@ -61,12 +61,11 @@ const credentialHelperValue = "store --file=" + credentialsPath
 //
 // # The credential outlives this call, on purpose
 //
-// implement.md tells the model to push its own commit before it finishes,
-// every turn. The workflow reads that push back from GitHub afterward
-// (FindPullRequest/OpenOrUpdatePullRequest, #435) rather than a later stage
-// reading it from inside the sandbox — but implement itself runs as
-// `codex exec` inside the sandbox, well after this activity has returned, and
-// may run many turns — so the credential this writes, and the checkout's
+// The implement prompt tells the model to push its own commit before it
+// finishes every turn. The workflow reads that push back from GitHub afterward
+// (FindPullRequest/OpenOrUpdatePullRequest, #435), but implement tool calls run
+// in the sandbox after this activity returns and may span many turns. The
+// credential this writes, and the checkout's
 // local `credential.helper` config pointing at it (configureCheckoutIdentity),
 // have to still be there and still work when they do. A version of this that
 // deleted the file once CloneRepo's own push succeeded would leave `implement`
@@ -95,7 +94,7 @@ const credentialHelperValue = "store --file=" + credentialsPath
 // own `git push` fails with GitHub's ordinary authentication error, which
 // reaches the model as an unexplained non-zero exit from a tool call, not as
 // anything this package's error classification ever sees — the failure is
-// inside `codex exec`, not inside an activity. That is a real, known
+// inside a model-directed tool call, not inside CloneRepo. That is a real, known
 // limitation of clone-once-at-the-start, not a regression this fix
 // introduces; solving it needs a way to hand the sandbox a fresher credential
 // mid-run, which is out of #383's scope.
@@ -122,7 +121,7 @@ func (s *Sandboxes) CloneRepo(ctx context.Context, sandbox work.SandboxID, clone
 	}
 
 	// The checkout's own git config is what a later BARE `git push` — the
-	// model's, from inside `codex exec`, with no `-c` this package controls —
+	// model's, from a sandbox tool call with no `-c` this package controls —
 	// resolves its credential through. Configured every time, not only on a
 	// fresh clone, for the same reason the credential file is rewritten every
 	// time: a retry must leave the checkout in the state a first attempt would

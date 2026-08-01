@@ -44,12 +44,6 @@ type Worker struct {
 	// a lease nobody can attribute cannot be investigated at 3am.
 	PodName string
 
-	// TranscriptsRoot is where stage transcripts are written, the mount point
-	// of the worker's transcript volume. Read rather than assumed because the
-	// deploy owns the mount path, and a worker writing somewhere else writes to
-	// the pod's own filesystem — which looks like success until the pod goes.
-	TranscriptsRoot string
-
 	// BlobsURL is the in-cluster blob API. It is copied into sandbox pods so
 	// their future payload codec clients use the same durable service.
 	BlobsURL string
@@ -135,7 +129,6 @@ const (
 	envSandboxImage           = "SANDBOX_IMAGE"
 	envMetricsAddr            = "METRICS_ADDR"
 	envPodName                = "POD_NAME"
-	envTranscriptsRoot        = "TRANSCRIPTS_ROOT"
 	envBlobsURL               = "BLOBS_URL"
 	envCodexResponsesEndpoint = "CODEX_RESPONSES_ENDPOINT"
 	envCodexAuthSecret        = "CODEX_AUTH_SECRET_NAME"
@@ -157,7 +150,6 @@ func workerEnvNames() []string {
 		envSandboxImage,
 		envMetricsAddr,
 		envPodName,
-		envTranscriptsRoot,
 		envBlobsURL,
 		envCodexResponsesEndpoint,
 		envCodexAuthSecret,
@@ -179,7 +171,6 @@ func (w Worker) Validate() error {
 		envSandboxImage:           w.SandboxImage,
 		envMetricsAddr:            w.MetricsAddr,
 		envPodName:                w.PodName,
-		envTranscriptsRoot:        w.TranscriptsRoot,
 		envBlobsURL:               w.BlobsURL,
 		envCodexResponsesEndpoint: w.CodexResponsesEndpoint,
 		envCodexAuthSecret:        w.CodexAuthSecretName,
@@ -209,7 +200,6 @@ func LoadWorker() (Worker, error) {
 		MetricsAddr:       os.Getenv(envMetricsAddr),
 		PodName:           os.Getenv(envPodName),
 
-		TranscriptsRoot:        os.Getenv(envTranscriptsRoot),
 		BlobsURL:               os.Getenv(envBlobsURL),
 		CodexResponsesEndpoint: os.Getenv(envCodexResponsesEndpoint),
 		CodexAuthSecretName:    os.Getenv(envCodexAuthSecret),
@@ -252,7 +242,6 @@ func describeWorkerRequirement(err error) error {
 		envSandboxImage:           "the per-ticket sandbox image, pinned by digest",
 		envMetricsAddr:            "the address the metrics and health server listens on",
 		envPodName:                "this pod's own name, from the downward API; it identifies the credential lease holder",
-		envTranscriptsRoot:        "the mount point of the transcript volume, where stage transcripts are written",
 		envBlobsURL:               "the in-cluster payload blob API copied into sandbox pods",
 		envCodexResponsesEndpoint: "the direct subscription-backed Codex Responses endpoint",
 		envCodexAuthSecret:        "the Kubernetes Secret holding the codex credential; the worker's Role is pinned to this exact name",

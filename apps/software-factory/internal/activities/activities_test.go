@@ -1,7 +1,6 @@
 package activities
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,16 +8,13 @@ import (
 	"io"
 	"log/slog"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock/clocktest"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
-	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/testsuite"
 )
@@ -153,90 +149,6 @@ func (f *fakeRepo) CloneRepo(_ context.Context, sandbox work.SandboxID, cloneURL
 	return f.err
 }
 
-type fakeStages struct {
-	events  [][]byte
-	result  work.StageResult
-	err     error
-	sawRun  work.StageRun
-	ranOnce bool
-}
-
-func (f *fakeStages) RunStage(_ context.Context, run work.StageRun, sink work.StageEventSink) (work.StageResult, error) {
-	f.sawRun, f.ranOnce = run, true
-	for _, e := range f.events {
-		sink(e)
-	}
-	return f.result, f.err
-}
-
-// fakeTranscript records what was written and whether it was closed.
-type fakeTranscript struct {
-	buf      bytes.Buffer
-	closed   atomic.Bool
-	writeErr error
-	openErr  error
-}
-
-func (f *fakeTranscript) Open(context.Context, work.StageKey) (io.WriteCloser, error) {
-	if f.openErr != nil {
-		return nil, f.openErr
-	}
-	return f, nil
-}
-
-func (f *fakeTranscript) Write(p []byte) (int, error) {
-	if f.writeErr != nil {
-		return 0, f.writeErr
-	}
-	return f.buf.Write(p)
-}
-
-func (f *fakeTranscript) Close() error {
-	f.closed.Store(true)
-	return nil
-}
-
-type fakePrompts struct {
-	prompt string
-	schema []byte
-	err    error
-
-	decodeErr error
-	// decode, when set, overrides the default document-shaped decode below —
-	// used by tests exercising implement's ImplementOutput shape.
-	decode func(stage work.Stage, result []byte) (work.StageOutput, error)
-
-	sawStage work.Stage
-	sawKey   work.StageKey
-	sawPrior work.PriorTurns
-}
-
-func (f *fakePrompts) Render(key work.StageKey, _ work.TicketDetail, prior work.PriorTurns) (string, []byte, error) {
-	f.sawStage = key.Stage
-	f.sawKey = key
-	f.sawPrior = prior
-	return f.prompt, f.schema, f.err
-}
-
-func (f *fakePrompts) Decode(stage work.Stage, result []byte) (work.StageOutput, error) {
-	if f.decodeErr != nil {
-		return work.StageOutput{}, f.decodeErr
-	}
-	if f.decode != nil {
-		return f.decode(stage, result)
-	}
-	switch stage {
-	case work.StagePlan:
-		return work.NewStageOutput(stage, work.DocumentOutput{Document: "document of " + string(result)}), nil
-	case work.StageImplement:
-		return work.NewStageOutput(stage, work.ImplementOutput{Report: "document of " + string(result)}), nil
-	case work.StageReview:
-		return work.NewStageOutput(stage, work.ReviewOutput{Document: "document of " + string(result)}), nil
-	default:
-		return work.NewStageOutput(stage, work.DocumentOutput{Document: "document of " + string(result)}), nil
-	}
-}
-
 type fakeRuns struct {
 	state work.RunState
 	err   error
@@ -246,22 +158,6 @@ type fakeRuns struct {
 func (f *fakeRuns) Describe(_ context.Context, workflowID string) (work.RunState, error) {
 	f.saw = workflowID
 	return f.state, f.err
-}
-
-// fakeMetrics records what was reported, so a test can assert the expensive
-// case is not the invisible one.
-type fakeMetrics struct {
-	stages   []work.Stage
-	outcomes []telemetry.Outcome
-	usages   []work.Usage
-	tooks    []time.Duration
-}
-
-func (f *fakeMetrics) StageFinished(stage work.Stage, _ work.Model, outcome telemetry.Outcome, usage work.Usage, took time.Duration) {
-	f.stages = append(f.stages, stage)
-	f.outcomes = append(f.outcomes, outcome)
-	f.usages = append(f.usages, usage)
-	f.tooks = append(f.tooks, took)
 }
 
 type fakeSweeper struct {
@@ -312,12 +208,8 @@ func deps() Deps {
 		GitHub:          &fakeGitHub{},
 		Pods:            &fakePods{},
 		Repo:            &fakeRepo{},
-		Stages:          &fakeStages{},
-		Transcripts:     &fakeTranscript{},
-		Prompts:         &fakePrompts{},
 		Runs:            &fakeRuns{},
 		Sweeper:         &fakeSweeper{},
-		Metrics:         &fakeMetrics{},
 		DispatcherState: &fakeDispatcherState{},
 		Log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Clock:           clocktest.NewFake(time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)),
@@ -353,7 +245,7 @@ func TestNewNamesEveryDependencyItIsMissing(t *testing.T) {
 		t.Fatal("a set of activities with no dependencies must not construct")
 	}
 	for _, name := range []string{
-		"GitHub", "Pods", "Repo", "Stages", "Transcripts", "Prompts", "Runs", "Sweeper", "Metrics",
+		"GitHub", "Pods", "Repo", "Runs", "Sweeper",
 		"DispatcherState", "Clock", "Log",
 	} {
 		if !strings.Contains(err.Error(), name) {
@@ -370,55 +262,6 @@ func TestNewRefusesASandboxTemplateItCannotBuildAPodFrom(t *testing.T) {
 
 	if _, err := New(d); !errors.Is(err, work.ErrInvalidRun) {
 		t.Fatalf("an imageless template must fail construction, got %v", err)
-	}
-}
-
-// sandboxDeps builds a complete SandboxDeps, the way deps() does for Deps.
-func sandboxDeps() SandboxDeps {
-	return SandboxDeps{
-		Stages:      &fakeStages{},
-		Transcripts: &fakeTranscript{},
-		Prompts:     &fakePrompts{},
-		Metrics:     &fakeMetrics{},
-		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Clock:       clocktest.NewFake(time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)),
-	}
-}
-
-// TestNewSandboxSideNamesEveryDependencyItIsMissing is NewSandboxSide's half
-// of TestNewNamesEveryDependencyItIsMissing: a narrower constructor still owes
-// the same "no usable-but-invalid zero value" guarantee, over a narrower set
-// of fields.
-func TestNewSandboxSideNamesEveryDependencyItIsMissing(t *testing.T) {
-	t.Parallel()
-
-	_, err := NewSandboxSide(SandboxDeps{})
-	if err == nil {
-		t.Fatal("a sandbox-side activity set with no dependencies must not construct")
-	}
-	for _, name := range []string{"Stages", "Transcripts", "Prompts", "Metrics", "Log", "Clock"} {
-		if !strings.Contains(err.Error(), name) {
-			t.Fatalf("error %q does not name the missing %s", err, name)
-		}
-	}
-}
-
-// TestNewSandboxSideBuildsAWorkingRunPlan proves the narrower constructor
-// actually wires the stage-running activities end to end, not merely that it
-// type-checks: a SandboxDeps missing something RunPlan silently never touched
-// would still pass the missing-dependency test above.
-func TestNewSandboxSideBuildsAWorkingRunPlan(t *testing.T) {
-	t.Parallel()
-
-	a, err := NewSandboxSide(sandboxDeps())
-	if err != nil {
-		t.Fatalf("NewSandboxSide: %v", err)
-	}
-
-	e := env(t)
-	e.RegisterActivity(a.RunPlan)
-	if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{})); err != nil {
-		t.Fatalf("RunPlan on a sandbox-side Activities: %v", err)
 	}
 }
 
@@ -601,339 +444,6 @@ func TestCloneRepoSurfacesTheClonersFailure(t *testing.T) {
 	}
 }
 
-// --- stages ----------------------------------------------------------------
-
-// stageAttempt builds a plan attempt's input for tests exercising the shared
-// runStage plumbing — plan stands in for "any stage" throughout this file
-// except where a test is specifically about implement's or review's own
-// decoded shape, which build a RunImplementInput/RunReviewInput directly.
-func stageAttempt(prior work.PriorTurns) RunPlanInput {
-	return NewRunPlanInput(StageAttempt{
-		Key:     work.StageKey{Ticket: 328, RunID: "run-1", Stage: work.StagePlan, Turn: 1},
-		Sandbox: "sandbox-328",
-		Model:   work.Model{Name: "gpt-5.6-terra", Effort: "medium"},
-		Detail:  work.TicketDetail{Ticket: work.Ticket{Number: 328, Title: "t", Body: "b"}},
-		Prior:   prior,
-	})
-}
-
-func TestRunPlanWritesOneTerminatedLinePerEventToTheTranscript(t *testing.T) {
-	t.Parallel()
-
-	transcript := &fakeTranscript{}
-	stages := &fakeStages{
-		events: [][]byte{[]byte(`{"type":"turn.started"}`), []byte(`{"type":"turn.completed"}`)},
-		result: work.StageResult{Output: []byte(`{"ok":true}`), ThreadID: "thread-1"},
-	}
-	d := deps()
-	d.Transcripts, d.Stages = transcript, stages
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.RunPlan)
-
-	if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{})); err != nil {
-		t.Fatalf("RunPlan: %v", err)
-	}
-
-	want := `{"type":"turn.started"}` + "\n" + `{"type":"turn.completed"}` + "\n"
-	if got := transcript.buf.String(); got != want {
-		t.Fatalf("transcript = %q, want %q — framing has exactly one owner", got, want)
-	}
-	if !transcript.closed.Load() {
-		t.Fatal("the transcript must be closed")
-	}
-}
-
-// TestRunPlanCarriesTheWholeTranscriptHomeOnItsOutput proves D5 (#434): a
-// successful stage's whole event stream travels back on the activity's own
-// output, not only into the sandbox's own local sink, so a later
-// PersistTranscript activity on the main queue has something to relay.
-func TestRunPlanCarriesTheWholeTranscriptHomeOnItsOutput(t *testing.T) {
-	t.Parallel()
-
-	transcript := &fakeTranscript{}
-	stages := &fakeStages{
-		events: [][]byte{[]byte(`{"type":"turn.started"}`), []byte(`{"type":"turn.completed"}`)},
-		result: work.StageResult{Output: []byte(`{"ok":true}`)},
-	}
-	d := deps()
-	d.Transcripts, d.Stages = transcript, stages
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.RunPlan)
-
-	val, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{}))
-	if err != nil {
-		t.Fatalf("RunPlan: %v", err)
-	}
-
-	var out RunPlanOutput
-	if err := val.Get(&out); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	want := `{"type":"turn.started"}` + "\n" + `{"type":"turn.completed"}` + "\n"
-	if string(out.Transcript) != want {
-		t.Fatalf("out.Transcript = %q, want %q — exactly what the local sink received", string(out.Transcript), want)
-	}
-	// The local sink still received every byte too: the capture is a mirror,
-	// not a replacement for it.
-	if transcript.buf.String() != want {
-		t.Fatalf("the local sink = %q, want the same bytes", transcript.buf.String())
-	}
-}
-
-func TestRunPlanHeartbeatsOffTheEventStreamSoAStuckStageIsSeenAsDeadRatherThanSlow(t *testing.T) {
-	t.Parallel()
-
-	// The SDK throttles heartbeats, so the count is the SDK's business and not
-	// this test's. What is asserted is the thing the code owns: the heartbeat is
-	// driven by the stage's own output, and by nothing else. A stage that emits
-	// nothing must therefore heartbeat nothing — that is what makes it look dead
-	// rather than slow.
-	cases := map[string]struct {
-		events   [][]byte
-		wantBeat bool
-	}{
-		"a stage that is emitting events": {events: [][]byte{[]byte("a"), []byte("b")}, wantBeat: true},
-		"a stage that has gone silent":    {events: nil, wantBeat: false},
-	}
-
-	for name, c := range cases {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			var beats atomic.Int32
-			d := deps()
-			d.Stages = &fakeStages{events: c.events}
-			e := env(t)
-			e.SetOnActivityHeartbeatListener(func(_ *activity.Info, _ converter.EncodedValues) {
-				beats.Add(1)
-			})
-			a := mustNew(t, d)
-			e.RegisterActivity(a.RunPlan)
-
-			if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{})); err != nil {
-				t.Fatalf("RunPlan: %v", err)
-			}
-
-			if got := beats.Load() > 0; got != c.wantBeat {
-				t.Fatalf("heartbeated = %v (%d beats), want %v", got, beats.Load(), c.wantBeat)
-			}
-		})
-	}
-}
-
-func TestRunPlanKeepsGoingWhenTheTranscriptCannotBeWritten(t *testing.T) {
-	t.Parallel()
-
-	transcript := &fakeTranscript{writeErr: errors.New("volume full")}
-	stages := &fakeStages{
-		events: [][]byte{[]byte("a")},
-		result: work.StageResult{Output: []byte(`{"ok":true}`)},
-	}
-	d := deps()
-	d.Transcripts, d.Stages = transcript, stages
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.RunPlan)
-
-	val, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{}))
-	if err != nil {
-		t.Fatalf("losing the record of the work is cheaper than losing the work: %v", err)
-	}
-
-	var out RunPlanOutput
-	if err := val.Get(&out); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if string(out.Output) != `{"ok":true}` {
-		t.Fatalf("output = %q, want the stage's own result", out.Output)
-	}
-}
-
-func TestRunPlanClosesTheTranscriptWhenTheStageFails(t *testing.T) {
-	t.Parallel()
-
-	transcript := &fakeTranscript{}
-	d := deps()
-	d.Transcripts = transcript
-	d.Stages = &fakeStages{err: errors.New("exit 1")}
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.RunPlan)
-
-	_, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{}))
-	if err == nil {
-		t.Fatal("a failed stage fails its activity")
-	}
-	// Asserts the real cause, not just that some error came back — a nil
-	// *RunPlanOutput on this path is what stops the SDK's own encode attempt
-	// silently replacing it with an unrelated marshalling error (#457's whole
-	// point; that gap is exactly how the defect shipped unnoticed the first
-	// time, in RunStage before this activity replaced it).
-	if !strings.Contains(err.Error(), "exit 1") {
-		t.Fatalf("error = %v, want the stage's own failure (\"exit 1\"), not an unrelated encode error", err)
-	}
-	if !transcript.closed.Load() {
-		t.Fatal("a failed stage's transcript is the one most worth reading, so it must still be closed")
-	}
-}
-
-func TestRunImplementHandsEveryPriorTurnToTheRenderer(t *testing.T) {
-	t.Parallel()
-
-	prompts := &fakePrompts{prompt: "do the thing", schema: []byte(`{"type":"object"}`)}
-	stages := &fakeStages{}
-	d := deps()
-	d.Prompts, d.Stages = prompts, stages
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.RunImplement)
-
-	prior := work.PriorTurns{
-		Plan:            work.NewStageOutput(work.StagePlan, work.DocumentOutput{Document: "the plan"}),
-		LatestImplement: work.NewStageOutput(work.StageImplement, work.ImplementOutput{Report: "turn one's report"}),
-	}
-	in := NewRunImplementInput(StageAttempt{
-		Key:     work.StageKey{Ticket: 328, RunID: "run-1", Stage: work.StageImplement, Turn: 2},
-		Sandbox: "sandbox-328",
-		Model:   work.Model{Name: "gpt-5.6-terra", Effort: "medium"},
-		Detail:  work.TicketDetail{Ticket: work.Ticket{Number: 328, Title: "t", Body: "b"}},
-		Prior:   prior,
-	})
-	if _, err := e.ExecuteActivity(a.RunImplement, in); err != nil {
-		t.Fatalf("RunImplement: %v", err)
-	}
-
-	// Both fields the loop narrows to, not only the plan: buildStageInput
-	// reads the plan and implement's own previous turn, and a seam that
-	// carried only one could not render either at once.
-	if prompts.sawStage != work.StageImplement {
-		t.Fatalf("renderer saw stage %q", prompts.sawStage)
-	}
-	// The WHOLE key, not only its stage: review's prompt is rendered with the
-	// turn number in it ("turn 2 of 3"), so a seam that dropped Turn would
-	// render every review turn as turn zero and no other test would notice.
-	if want := (work.StageKey{Ticket: 328, RunID: "run-1", Stage: work.StageImplement, Turn: 2}); prompts.sawKey != want {
-		t.Fatalf("renderer saw key %+v, want %+v", prompts.sawKey, want)
-	}
-	if prompts.sawPrior.Plan.Prose() != "the plan" {
-		t.Fatalf("renderer saw prior plan %q, want %q", prompts.sawPrior.Plan.Prose(), "the plan")
-	}
-	if prompts.sawPrior.LatestImplement.Prose() != "turn one's report" {
-		t.Fatalf("renderer saw prior implement report %q, want %q", prompts.sawPrior.LatestImplement.Prose(), "turn one's report")
-	}
-	if stages.sawRun.Prompt != "do the thing" || string(stages.sawRun.Schema) != `{"type":"object"}` {
-		t.Fatalf("the rendered prompt and schema must reach the stage runner, got %+v", stages.sawRun)
-	}
-}
-
-// TestRunImplementCarriesBlockedFields proves Blocked/BlockedReason survive
-// from the decoded envelope through to the activity's own result, on the
-// concrete work.ImplementOutput type — not merely as prose folded into the
-// document plan answers in.
-func TestRunImplementCarriesBlockedFields(t *testing.T) {
-	t.Parallel()
-
-	d := deps()
-	d.Prompts = &fakePrompts{decode: func(stage work.Stage, _ []byte) (work.StageOutput, error) {
-		return work.NewStageOutput(stage, work.ImplementOutput{
-			Report: "did the work", Blocked: true, BlockedReason: "needs a human",
-		}), nil
-	}}
-	d.Stages = &fakeStages{result: work.StageResult{
-		Output: []byte(`{"report":"did the work","blocked":true,"blocked_reason":"needs a human","title":"","body":""}`),
-	}}
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.RunImplement)
-
-	in := NewRunImplementInput(StageAttempt{
-		Key:     work.StageKey{Ticket: 328, RunID: "run-1", Stage: work.StageImplement, Turn: 1},
-		Sandbox: "sandbox-328",
-		Model:   work.Model{Name: "gpt-5.6-terra", Effort: "medium"},
-		Detail:  work.TicketDetail{Ticket: work.Ticket{Number: 328, Title: "t", Body: "b"}},
-	})
-	val, err := e.ExecuteActivity(a.RunImplement, in)
-	if err != nil {
-		t.Fatalf("RunImplement: %v", err)
-	}
-
-	var out RunImplementOutput
-	if err := val.Get(&out); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	got, ok := out.Result.Value().(work.ImplementOutput)
-	if !ok {
-		t.Fatalf("Result.Value() = %T, want work.ImplementOutput", out.Result.Value())
-	}
-	if !got.Blocked || got.BlockedReason != "needs a human" {
-		t.Fatalf("Blocked/BlockedReason did not survive to the activity's output: %+v", got)
-	}
-}
-
-// TestRunReviewCarriesFindings proves Findings survive from the decoded
-// envelope through to the activity's own result, on the concrete
-// work.ReviewOutput type.
-func TestRunReviewCarriesFindings(t *testing.T) {
-	t.Parallel()
-
-	d := deps()
-	d.Prompts = &fakePrompts{decode: func(stage work.Stage, _ []byte) (work.StageOutput, error) {
-		return work.NewStageOutput(stage, work.ReviewOutput{
-			Document: "found one blocking issue",
-			Findings: []work.Finding{{ID: "f1", Blocking: true, Summary: "missing nil check"}},
-		}), nil
-	}}
-	d.Stages = &fakeStages{result: work.StageResult{
-		Output: []byte(`{"document":"found one blocking issue","findings":[{"id":"f1","blocking":true,"summary":"missing nil check"}]}`),
-	}}
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.RunReview)
-
-	in := NewRunReviewInput(StageAttempt{
-		Key:     work.StageKey{Ticket: 328, RunID: "run-1", Stage: work.StageReview, Turn: 1},
-		Sandbox: "sandbox-328",
-		Model:   work.Model{Name: "gpt-5.6-terra", Effort: "medium"},
-		Detail:  work.TicketDetail{Ticket: work.Ticket{Number: 328, Title: "t", Body: "b"}},
-	})
-	val, err := e.ExecuteActivity(a.RunReview, in)
-	if err != nil {
-		t.Fatalf("RunReview: %v", err)
-	}
-
-	var out RunReviewOutput
-	if err := val.Get(&out); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	got, ok := out.Result.Value().(work.ReviewOutput)
-	if !ok {
-		t.Fatalf("Result.Value() = %T, want work.ReviewOutput", out.Result.Value())
-	}
-	if len(got.Findings) != 1 || got.Findings[0].ID != "f1" {
-		t.Fatalf("Findings did not survive to the activity's output: %+v", got)
-	}
-}
-
-func TestRunPlanDoesNotStartTheStageWhenTheTranscriptCannotBeOpened(t *testing.T) {
-	t.Parallel()
-
-	stages := &fakeStages{}
-	d := deps()
-	d.Transcripts = &fakeTranscript{openErr: errors.New("no such volume")}
-	d.Stages = stages
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.RunPlan)
-
-	if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{})); err == nil {
-		t.Fatal("an unopenable transcript fails the stage")
-	}
-	if stages.ranOnce {
-		t.Fatal("tokens must not be spent on a stage whose record cannot be kept")
-	}
-}
-
 // --- reconcile and sweep ---------------------------------------------------
 
 func TestDescribeRunAsksAboutTheWorkflowIDItWasGiven(t *testing.T) {
@@ -1009,65 +519,6 @@ func TestSweepPassesTheLiveRunsAndTheFloorThrough(t *testing.T) {
 func errTypeOf(t *testing.T, err error) string {
 	t.Helper()
 	return appErrorOf(t, err).Type()
-}
-
-func TestRunPlanRecordsWhatASuccessfulStageSpent(t *testing.T) {
-	t.Parallel()
-
-	metrics := &fakeMetrics{}
-	d := deps()
-	d.Metrics = metrics
-	d.Stages = &fakeStages{result: work.StageResult{
-		Output: []byte(`{"ok":true}`),
-		Usage:  work.Usage{InputTokens: 100, CachedInputTokens: 40, OutputTokens: 20, ReasoningTokens: 5},
-	}}
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.RunPlan)
-
-	if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{})); err != nil {
-		t.Fatalf("RunPlan: %v", err)
-	}
-
-	if len(metrics.outcomes) != 1 || metrics.outcomes[0] != telemetry.OutcomeSuccess {
-		t.Fatalf("recorded %v, want one success", metrics.outcomes)
-	}
-	// The nesting is the provider's and is passed through untouched: input
-	// includes cached, and reasoning is a subset of output. Pre-subtracting here
-	// would double-count every cache hit in the metric that does the split.
-	if got := metrics.usages[0]; got.InputTokens != 100 || got.CachedInputTokens != 40 || got.ReasoningTokens != 5 {
-		t.Fatalf("usage = %+v, want the provider's own nesting preserved", got)
-	}
-}
-
-func TestRunPlanRecordsAFailedStageToo(t *testing.T) {
-	t.Parallel()
-
-	metrics := &fakeMetrics{}
-	d := deps()
-	d.Metrics = metrics
-	d.Stages = &fakeStages{
-		result: work.StageResult{Usage: work.Usage{InputTokens: 100}},
-		err:    permanent(github.ErrAuth),
-	}
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.RunPlan)
-
-	if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{})); err == nil {
-		t.Fatal("a failed stage fails its activity")
-	}
-
-	if len(metrics.outcomes) != 1 {
-		t.Fatalf("recorded %v — a stage that failed spent its tokens too, and a metric that counts only "+
-			"successes makes the expensive case the invisible one", metrics.outcomes)
-	}
-	if metrics.outcomes[0] != telemetry.OutcomeAuthFailed {
-		t.Fatalf("outcome = %q, want %q", metrics.outcomes[0], telemetry.OutcomeAuthFailed)
-	}
-	if metrics.usages[0].InputTokens != 100 {
-		t.Fatalf("usage = %+v, want the tokens the failed attempt spent", metrics.usages[0])
-	}
 }
 
 func TestFindPullRequestAsksAboutTheBranchItWasGiven(t *testing.T) {
@@ -1351,67 +802,6 @@ func TestPostPullRequestCommentPostsAgainstThePullRequestNumber(t *testing.T) {
 	}
 }
 
-func TestRunPlanReturnsTheDocumentInsideTheEnvelopeNotTheEnvelope(t *testing.T) {
-	t.Parallel()
-
-	// The next stage's prompt is rendered from the document, and A1's envelope
-	// is `{"document": ...}`. Handing the raw envelope on would interpolate
-	// JSON into a prompt where prose belongs, and every downstream stage would
-	// read a wrapper it was never shown the shape of.
-	envelope := []byte(`{"document":"the plan itself"}`)
-	d := deps()
-	d.Stages = &fakeStages{result: work.StageResult{Output: envelope}}
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.RunPlan)
-
-	val, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{}))
-	if err != nil {
-		t.Fatalf("RunPlan: %v", err)
-	}
-
-	var out RunPlanOutput
-	if err := val.Get(&out); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if out.Result.Prose() != "document of "+string(envelope) {
-		t.Fatalf("Result.Prose() = %q — it must come from the seam that owns the envelope format", out.Result.Prose())
-	}
-	if string(out.Output) != string(envelope) {
-		t.Fatalf("Output = %q, want the raw envelope kept for the transcript", out.Output)
-	}
-}
-
-func TestRunPlanFailsWhenTheEnvelopeCannotBeRead(t *testing.T) {
-	t.Parallel()
-
-	d := deps()
-	d.Prompts = &fakePrompts{decodeErr: errors.New("no document field")}
-	d.Stages = &fakeStages{result: work.StageResult{Output: []byte(`{"nonsense":1}`)}}
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.RunPlan)
-
-	if _, err := e.ExecuteActivity(a.RunPlan, stageAttempt(work.PriorTurns{})); err == nil {
-		t.Fatal("a stage that answered in some other shape has not done its job; carrying an empty document " +
-			"into the next prompt would hide that")
-	}
-}
-
-// TestRunPlanOutputRefusesThePreThisStepShape covers the real migration path,
-// which is the activity *result* decode and not StageOutput.UnmarshalJSON.
-//
-// Before step 4 (#443) the result carried `Document string`; it now carries
-// `Result work.StageOutput`. That is a rename, so a pre-deploy payload has no
-// "Result" key at all and StageOutput.UnmarshalJSON is never reached — plain
-// encoding/json, which is exactly what the SDK's JSONPayloadConverter runs,
-// would drop the unrecognised "Document" and hand back a zero Result with no
-// error. A run in flight across the deploy would then replay as though the
-// completed stage had produced nothing, and fail later somewhere unrelated
-// (buildStageInput's missing-prior check) instead of here, where the mismatch
-// is. stageOutputUnmarshalJSON, shared by RunPlanOutput/RunImplementOutput/
-// RunReviewOutput since this step's activity split (#435), is what makes it
-// fail here.
 func TestRunPlanOutputRefusesThePreThisStepShape(t *testing.T) {
 	t.Parallel()
 

@@ -271,7 +271,6 @@ func TestBuildPodRejectsAnUnknownSandboxEnvKey(t *testing.T) {
 
 	spec := validSpec()
 	spec.Env = map[string]string{
-		work.CodexHomeEnv:       "/work/.codex",
 		"AWS_SECRET_ACCESS_KEY": "leaked",
 	}
 	_, err := buildPod(spec, defaultOptions())

@@ -17,7 +17,6 @@ func completeEnv() map[string]string {
 		"SANDBOX_IMAGE":                  "ghcr.io/0x63616c/www-software-factory-sandbox@sha256:abc",
 		"METRICS_ADDR":                   ":9090",
 		"POD_NAME":                       "software-factory-worker-7d9f8c-abcde",
-		"TRANSCRIPTS_ROOT":               "/transcripts",
 		"BLOBS_URL":                      "http://blobs:8080",
 		"CODEX_RESPONSES_ENDPOINT":       "https://chatgpt.com/backend-api/codex/responses",
 		"CODEX_AUTH_SECRET_NAME":         "codex-auth",
@@ -97,8 +96,6 @@ func TestLoadWorkerReadsTheWholeEnvironment(t *testing.T) {
 		t.Errorf("MetricsAddr = %q", got.MetricsAddr)
 	case got.PodName != "software-factory-worker-7d9f8c-abcde":
 		t.Errorf("PodName = %q", got.PodName)
-	case got.TranscriptsRoot != "/transcripts":
-		t.Errorf("TranscriptsRoot = %q", got.TranscriptsRoot)
 	case got.BlobsURL != "http://blobs:8080":
 		t.Errorf("BlobsURL = %q", got.BlobsURL)
 	case got.CodexResponsesEndpoint != "https://chatgpt.com/backend-api/codex/responses":

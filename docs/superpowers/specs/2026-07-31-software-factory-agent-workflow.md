@@ -1,6 +1,6 @@
 # Software Factory Agent Workflow
 
-**Status:** accepted for implementation  
+**Status:** implemented; local runtime acceptance and production cutover remain
 **Date:** 2026-07-31  
 **Scope:** `apps/software-factory`  
 **Goal:** new software-factory Runs execute every plan, implement and review Step through a reusable Temporal `AgentWorkflow`; the production sandbox no longer installs or invokes the Codex CLI.
@@ -30,7 +30,7 @@ FactoryWorkTicket
   +-- terminal Ticket/Run decision
 ```
 
-## Current state
+## Starting point (retired by this implementation)
 
 The merged direct-Responses proof already establishes the risky transport facts:
 
@@ -40,7 +40,7 @@ The merged direct-Responses proof already establishes the risky transport facts:
 - a worker restart does not lose the workflow's durable loop state;
 - the shared payload codec compresses and blob-offloads large Temporal payloads.
 
-The proof is deliberately isolated under `agentpoc`. Production still renders a stage prompt, writes a schema file and invokes `codex exec` inside a sandbox-side stage activity. The parent workflow owns a single Temporal Session spanning all stage activities. The sandbox image still installs the Codex binary and prepares its home/auth file.
+Before this change the proof was isolated under `agentpoc`; production rendered a stage prompt, wrote a schema file and invoked the CLI inside a sandbox-side stage activity. That isolated POC, the CLI client and the sandbox binary/auth setup are now deleted. This section records the migration's starting point rather than current behavior.
 
 ## Target responsibilities
 

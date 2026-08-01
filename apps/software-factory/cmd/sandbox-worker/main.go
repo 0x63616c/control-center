@@ -35,13 +35,9 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
-// workerStopTimeout is how long a drain waits for RunStage to finish after a
-// SIGTERM, mirroring cmd/worker's own constant and its reasoning: a stage may
-// run for work.MaxStageDuration (60m) and no deploy waits an hour, so a stage
-// in flight when this pod is asked to stop IS cancelled — see
-// internal/clients/local.Execer's doc comment on Exec for what that
-// cancellation actually does now (kills the real child process directly,
-// unlike the remote transport this replaces).
+// workerStopTimeout is how long a drain waits for a tool activity after a
+// SIGTERM. No deploy waits for the whole AgentWorkflow stage budget, so an
+// in-flight tool call is cancelled when this pod is asked to stop.
 //
 // UNVERIFIED against a real pod: whether this needs to relate to the sandbox
 // pod's own terminationGracePeriodSeconds the way cmd/worker's constant
@@ -89,7 +85,7 @@ func run() error {
 		EnableSessionWorker:               true,
 		MaxConcurrentSessionExecutionSize: 1,
 		// This serialises duplicate activity delivery against this pod's mutable
-		// stage directory; it is a guard, not a throughput setting.
+		// repository checkout; it is a guard, not a throughput setting.
 		MaxConcurrentActivityExecutionSize: 1,
 	})
 

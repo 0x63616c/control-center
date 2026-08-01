@@ -1,7 +1,9 @@
 package main
 
 import (
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -34,10 +36,47 @@ func TestRegisterExposesTheAgentWorkflowAndMainQueueActivities(t *testing.T) {
 			t.Errorf("register()'s body does not contain %q; the worker registers nothing it does not name here", want)
 		}
 	}
-	for _, forbidden := range []string{"acts.RunPlan", "acts.RunImplement", "acts.RunReview"} {
+	for _, forbidden := range []string{"w.RegisterActivity(acts)", "acts.RunPlan", "acts.RunImplement", "acts.RunReview"} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("register() exposes legacy CLI activity %q", forbidden)
 		}
+	}
+}
+
+func TestProductionSourceCannotInvokeCodexCLI(t *testing.T) {
+	t.Parallel()
+
+	moduleRoot := filepath.Clean(filepath.Join("..", ".."))
+	forbidden := "codex" + " exec"
+	err := filepath.WalkDir(moduleRoot, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			switch entry.Name() {
+			case ".git", "docs", "testdata":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		base := filepath.Base(path)
+		if filepath.Ext(path) != ".go" && filepath.Ext(path) != ".sh" && base != "Dockerfile" {
+			return nil
+		}
+		content, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		if strings.Contains(string(content), forbidden) {
+			t.Errorf("production source %s can invoke the removed Codex CLI", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("scanning production source: %v", err)
 	}
 }
 

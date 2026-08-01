@@ -45,18 +45,17 @@ E1 (#341) left these undecided. Decided here:
   Playwright page screenshot does not itself include native browser tab/window
   chrome; the headed check exists so agent-browser-style window sessions have a
   runnable display rather than silently falling back to an undersized viewport.
-- **A shell.** `codex exec`'s job is running shell commands on the agent's
-  behalf. The argv-only rule constrains how the *worker* invokes this image, not
-  what the image contains.
+- **A shell.** The typed `exec_command` tool accepts explicit argv and some
+  repository tasks legitimately need an allowlisted shell. The model never
+  receives an implicit shell command string from the worker.
 
 Not shipped: formatters beyond the toolchains. CI is the authoritative wall,
 and a ticket that needs one can install it.
 
-**The repo is not baked in, and neither is `bun install`.** The sandbox clones
-at stage time with the installation token it holds, so an image is never stale
-against `main` and never carries a lockfile's `node_modules` from build day.
-Nothing performs that clone yet — #383 owns it, and `work.RepoDir` is the agreed
-destination.
+**The repo is not baked in, and neither is `bun install`.** `CloneRepo` clones
+into `work.RepoDir` with a short-lived GitHub App installation token, so an
+image is never stale against `main` and never carries a lockfile's
+`node_modules` from build day.
 
 **The pod's command is its own embedded Temporal worker (#434 step 3).** The
 image ships `cmd/sandbox-worker` at `/usr/local/bin/sandbox-worker`, and
@@ -66,20 +65,15 @@ per-ticket Temporal queue to poll — reach it as env on the *pod*
 (`SandboxSpec.Env`, set by whoever creates the sandbox) and are read by that
 process at start, not by anything baked into the image at build time.
 
-## Invariants a stage depends on
+## Runtime invariants
 
 Recorded here because this is the first of the software-factory PRs in the merge
 order, so it is where a reader looks first. Each is measured, not reasoned.
 
-**The stage's cwd must be inside the repository checkout.** `codex exec` in a
-directory that is not a git repo prints `Not inside a trusted directory and
---skip-git-repo-check was not specified` and **dies before any model call** —
-verified in this image against an empty `/work`; with a real repo at the cwd the
-check passes and it proceeds to auth. The image's `WORKDIR` is `/work`, which is
-*not* a checkout, so the stage has to run with its cwd inside one — B5 does
-that with **`codex --cd work.RepoDir`** (`/work/repo`). The requirement is the
-cwd, not the flag: a plain `cd /work/repo` satisfies the same check, measured. Without that flag every stage fails identically
-and it looks like the model failing at the task rather than a misconfiguration.
+**Repository tools are confined to the checkout.** The image's `WORKDIR` is
+`/work`, but `agenttools.NewToolsets` is rooted at `work.RepoDir`
+(`/work/repo`). Path validation refuses traversal and working directories
+outside that root.
 
 `WORKDIR` deliberately is not `/work/repo` itself: a `WORKDIR` the container
 runtime has to create inside the `/work` emptyDir is created **by the runtime,
@@ -92,26 +86,23 @@ directory the *process* creates under it is owned by that process — so the clo
 creates `work.RepoDir`, and nothing pre-creates it.
 
 Permissions are the reason it works this way; they are not the reason worth
-remembering. `/work` also holds the run's scaffolding — the rendered prompt, the
-schema and the result file. A checkout rooted at
-`/work` would put all of that **inside the git working tree**, one `git add -A`
-away from committing a rendered prompt into the branch `implement` pushes. That
-argument survives any change to how the runtime creates directories.
+remembering. `/work` also holds sandbox-owned credential configuration outside
+the checkout. A checkout rooted at `/work` would put that state **inside the
+git working tree**, one `git add -A` away from committing it into the branch
+`implement` pushes. That argument survives any change to how the runtime
+creates directories.
 
-**Nothing clones the repository yet.** `work.RepoDir` names the destination; no
-track owns putting a repo there — #383 tracks it.
+**Model calls do not run here.** The sandbox image contains no Codex binary and
+receives no provider credential. The embedded worker registers only the typed
+`agent.tool` activity. Direct Responses calls run on the main worker; a
+Temporal Session routes tool activities to this ticket's pod, where
+`exec.CommandContext` provides a real cancellable process handle.
 
-**The remote process-management shim is gone (#434, step 3 of the
-software-factory migration).** It existed to let the main worker find and
-cancel a Codex process across `pods/exec`, which offers no real process handle
-of its own. Temporal Sessions replace the mechanism: the embedded worker that
-now runs a stage holds a real `os/exec.Cmd` in its own process.
+## Provider independence
 
-## Pins
-
-`codex` is pinned to the version ADR-0011's auth behaviour was verified against,
-by version *and* sha256. Bumping it means re-testing the blanked-`refresh_token`
-path, not just editing a number.
+There is no provider binary pin in this image. Provider transport and OAuth
+compatibility are tested in the main worker's `codexresponses` and `codexauth`
+packages; the sandbox contract is only its typed tool activity and toolchains.
 
 ## Verifying
 

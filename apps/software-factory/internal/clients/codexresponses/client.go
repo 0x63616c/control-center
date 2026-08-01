@@ -110,6 +110,9 @@ func (c *Client) Turn(ctx context.Context, request TurnRequest, emit EmitFunc) (
 		if resp.StatusCode == http.StatusTooManyRequests {
 			return TurnResult{}, fmt.Errorf("%w: %v", ErrRateLimited, err)
 		}
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return TurnResult{}, fmt.Errorf("%w: %v", ErrAuth, err)
+		}
 		return TurnResult{}, err
 	}
 

@@ -5,13 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"go.temporal.io/sdk/activity"
 )
@@ -25,15 +23,11 @@ import (
 // fields keep the composition root readable and New still validates once, so
 // nothing about the "no usable-but-invalid zero value" guarantee is weakened.
 type Deps struct {
-	GitHub      GitHub
-	Pods        PodLifecycle
-	Repo        RepoCloner
-	Stages      StageRunner
-	Transcripts TranscriptSink
-	Prompts     PromptRenderer
-	Runs        RunLookup
-	Sweeper     SandboxSweeper
-	Metrics     Metrics
+	GitHub  GitHub
+	Pods    PodLifecycle
+	Repo    RepoCloner
+	Runs    RunLookup
+	Sweeper SandboxSweeper
 
 	// DispatcherState records the dispatcher's per-tick projection (#551), the
 	// store row the console will eventually read instead of querying Temporal.
@@ -82,23 +76,11 @@ func New(deps Deps) (*Activities, error) {
 	if deps.Repo == nil {
 		missing = append(missing, "Repo")
 	}
-	if deps.Stages == nil {
-		missing = append(missing, "Stages")
-	}
-	if deps.Transcripts == nil {
-		missing = append(missing, "Transcripts")
-	}
-	if deps.Prompts == nil {
-		missing = append(missing, "Prompts")
-	}
 	if deps.Runs == nil {
 		missing = append(missing, "Runs")
 	}
 	if deps.Sweeper == nil {
 		missing = append(missing, "Sweeper")
-	}
-	if deps.Metrics == nil {
-		missing = append(missing, "Metrics")
 	}
 	if deps.DispatcherState == nil {
 		missing = append(missing, "DispatcherState")
@@ -129,82 +111,6 @@ func (a *Activities) RecordDispatcherState(ctx context.Context, state store.Disp
 		return fail(ctx, "recording dispatcher state", err)
 	}
 	return nil
-}
-
-// SandboxDeps are what a sandbox pod's embedded worker needs to host RunStage
-// under a Temporal Session (step 3, #434's D2).
-//
-// It is deliberately narrower than Deps rather than the same struct with the
-// rest left zero: this composition root creates no pod, holds no Kubernetes
-// API access, mints no GitHub credential and posts no status comment, so it
-// has no business requiring a PodLifecycle, a SandboxSweeper, a RunLookup, a
-// StatusRenderer, a GitHub client or a RepoURL just to build the one activity
-// it actually registers. Requiring them anyway would mean inventing stand-ins
-// for capabilities this process is never supposed to have, which is a worse
-// failure mode than a second, smaller constructor: a stand-in that happens to
-// work is indistinguishable from one that is a real capability until the day
-// something calls it by accident.
-//
-// CloneRepo is not on this list, and not yet registered anywhere but the main
-// worker's *Activities (New, above): it mints a GitHub App installation
-// token in-process from the App's private key, and #431 has not decided
-// whether the sandbox pod may hold that capability itself. Today CloneRepo
-// still reaches the pod through the pods/exec transport internal/clients/k8s
-// keeps alive for exactly this reason — see internal/clients/k8s/exec.go's
-// own doc comment on Exec. There used to be a second activity here for the
-// same reason, WriteCodexCredential, until D3 (#431) replaced its transport
-// with a per-ticket Kubernetes Secret mounted at pod creation and the
-// activity became a no-op nothing called any more — it, and the workticket.go
-// call to it, are deleted rather than kept as a step that does nothing.
-type SandboxDeps struct {
-	// Stages executes RunStage's own codex invocation. In the sandbox pod this
-	// is backed by internal/clients/local, not internal/clients/k8s: the
-	// process running this Activities value already IS the sandbox, so there
-	// is nothing remote left to exec into.
-	Stages StageRunner
-
-	Transcripts TranscriptSink
-	Prompts     PromptRenderer
-	Metrics     Metrics
-	Log         *slog.Logger
-	Clock       clock.Clock
-}
-
-// NewSandboxSide builds the activity set a sandbox pod's embedded worker
-// registers. Only RunStage is ever scheduled against the result today — see
-// SandboxDeps' own doc comment for why WriteCodexCredential and CloneRepo stay
-// off this constructor rather than being wired here as a stand-in.
-func NewSandboxSide(deps SandboxDeps) (*Activities, error) {
-	missing := []string{}
-	if deps.Stages == nil {
-		missing = append(missing, "Stages")
-	}
-	if deps.Transcripts == nil {
-		missing = append(missing, "Transcripts")
-	}
-	if deps.Prompts == nil {
-		missing = append(missing, "Prompts")
-	}
-	if deps.Metrics == nil {
-		missing = append(missing, "Metrics")
-	}
-	if deps.Log == nil {
-		missing = append(missing, "Log")
-	}
-	if deps.Clock == nil {
-		missing = append(missing, "Clock")
-	}
-	if len(missing) > 0 {
-		return nil, fmt.Errorf("sandbox-side activities need %v", missing)
-	}
-	return &Activities{deps: Deps{
-		Stages:      deps.Stages,
-		Transcripts: deps.Transcripts,
-		Prompts:     deps.Prompts,
-		Metrics:     deps.Metrics,
-		Log:         deps.Log,
-		Clock:       deps.Clock,
-	}}, nil
 }
 
 // CreateSandboxInput asks for one run's pod.
@@ -288,8 +194,8 @@ func (a *Activities) DeleteSandbox(ctx context.Context, sandbox work.SandboxID) 
 // RunImplementInput and RunReviewInput each embed it rather than repeating its
 // fields, so the plumbing that renders a prompt and runs it is written once
 // against this shape and each stage's own activity method (below) is a thin,
-// named wrapper — per-stage activity names (#425) replacing one generic
-// RunStage dispatched by a Stage field, per the pipeline-rewrite spec (#435).
+// named wrapper. These types remain only as a Temporal history compatibility
+// contract for the pre-AgentWorkflow per-stage activities.
 type stageInput struct {
 	Key     work.StageKey
 	Sandbox work.SandboxID
@@ -334,16 +240,7 @@ type stageOutput struct {
 	ThreadID string
 	Usage    work.Usage
 
-	// Transcript is this attempt's whole event stream, carried home from the
-	// sandbox's own local sink so a new activity on the MAIN task queue
-	// (PersistTranscript, below) can replay it into the real, durable one —
-	// #434's step 3 (D5) moved stage execution into the sandbox pod, whose
-	// local disk does not survive DeleteSandbox and must never be NFS (see
-	// internal/transcripts.Sink's own doc comment).
-	//
-	// It is the largest field on this type by far — see work.Transcript's own
-	// doc comment for the measured size — which is deliberate: nothing else
-	// should ever be added here alongside it.
+	// Transcript remains solely for decoding pre-AgentWorkflow activity results.
 	Transcript work.Transcript
 }
 
@@ -390,32 +287,6 @@ func (o *RunPlanOutput) UnmarshalJSON(data []byte) error {
 	return stageOutputUnmarshalJSON(data, &o.stageOutput)
 }
 
-// RunPlan renders the plan stage's prompt, runs it in the sandbox, and stores
-// its event stream.
-//
-// Returns *RunPlanOutput, not RunPlanOutput, and nil on every error path —
-// load-bearing, not stylistic, and identical in kind and reason to #457's fix
-// for the generic RunStage this method replaced. The SDK's reflection-based
-// activity executor (executeFunction) serializes retValues[0] whenever it is
-// not a nil pointer, regardless of whether an error was also returned; a
-// value-typed struct is never a nil pointer, so a value return here would
-// always be handed to the data converter, even on an error path, where
-// RunPlanOutput.Result (a work.StageOutput) is the zero value on purpose —
-// and work.StageOutput.MarshalJSON refuses to encode its own zero value (a
-// deliberate guard against a stage that forgot to call NewStageOutput on its
-// success path). That refusal would silently replace the real error, and its
-// retry classification, with an encode error instead — exactly what prod run
-// one observed for RunStage before #457. A nil *RunPlanOutput on every error
-// path trips executeFunction's own nil-pointer check and skips the encode
-// entirely.
-func (a *Activities) RunPlan(ctx context.Context, in RunPlanInput) (*RunPlanOutput, error) {
-	out, err := a.runStage(ctx, in.stageInput)
-	if err != nil {
-		return nil, err
-	}
-	return &RunPlanOutput{stageOutput: out}, nil
-}
-
 // RunImplementInput is one implement turn.
 type RunImplementInput struct{ stageInput }
 
@@ -433,26 +304,6 @@ func (o *RunImplementOutput) UnmarshalJSON(data []byte) error {
 	return stageOutputUnmarshalJSON(data, &o.stageOutput)
 }
 
-// RunImplement renders one implement turn's prompt, runs it in the sandbox,
-// and stores its event stream.
-//
-// It does not itself decide whether there will be another turn, whether the
-// pull request opens or updates, or whether CI is green — all of that is the
-// workflow loop's job (internal/workflows), driven by this activity's Result
-// and the CI-observation activity's own. This activity's whole job is running
-// one turn and handing back what it produced.
-//
-// Returns *RunImplementOutput and nil on every error path, for the same
-// reason RunPlan does — see its doc comment; #457 diagnosed and fixed the
-// identical defect on the generic RunStage this method replaced.
-func (a *Activities) RunImplement(ctx context.Context, in RunImplementInput) (*RunImplementOutput, error) {
-	out, err := a.runStage(ctx, in.stageInput)
-	if err != nil {
-		return nil, err
-	}
-	return &RunImplementOutput{stageOutput: out}, nil
-}
-
 // RunReviewInput is one review turn.
 type RunReviewInput struct{ stageInput }
 
@@ -466,25 +317,6 @@ type RunReviewOutput struct{ stageOutput }
 // stageOutputUnmarshalJSON.
 func (o *RunReviewOutput) UnmarshalJSON(data []byte) error {
 	return stageOutputUnmarshalJSON(data, &o.stageOutput)
-}
-
-// RunReview renders one review turn's prompt, runs it in the sandbox, and
-// stores its event stream.
-//
-// Every review turn is a fresh codex thread — the workflow must never resume
-// one review turn's session into the next, unlike implement's. That is
-// enforced by never writing a review session id anywhere stageArgv reads one
-// from (internal/clients/codex/argv.go), not by anything in this method.
-//
-// Returns *RunReviewOutput and nil on every error path, for the same reason
-// RunPlan does — see its doc comment; #457 diagnosed and fixed the identical
-// defect on the generic RunStage this method replaced.
-func (a *Activities) RunReview(ctx context.Context, in RunReviewInput) (*RunReviewOutput, error) {
-	out, err := a.runStage(ctx, in.stageInput)
-	if err != nil {
-		return nil, err
-	}
-	return &RunReviewOutput{stageOutput: out}, nil
 }
 
 // stageOutputUnmarshalJSON is RunPlanOutput's, RunImplementOutput's and
@@ -518,90 +350,6 @@ func stageOutputUnmarshalJSON(data []byte, out *stageOutput) error {
 	}
 	*out = stageOutput(w)
 	return nil
-}
-
-// runStage is the one place a stage attempt is actually run, shared by
-// RunPlan, RunImplement and RunReview so the three differ only in the types
-// Temporal sees, never in what running a stage does.
-//
-// The event sink does two jobs at once because there is exactly one stream and
-// two consumers of it: the transcript wants the bytes, and Temporal wants to
-// know the stage is alive. A stage that emits nothing for the heartbeat timeout
-// is dead rather than slow, and only the stream can tell the difference.
-func (a *Activities) runStage(ctx context.Context, in stageInput) (stageOutput, error) {
-	log := activity.GetLogger(ctx)
-
-	prompt, schema, err := a.deps.Prompts.Render(in.Key, in.Detail, in.Prior)
-	if err != nil {
-		return stageOutput{}, fail(ctx, fmt.Sprintf("rendering the prompt for %s", in.Key), err)
-	}
-
-	transcript, err := a.deps.Transcripts.Open(ctx, in.Key)
-	if err != nil {
-		return stageOutput{}, fail(ctx, fmt.Sprintf("opening the transcript for %s", in.Key), err)
-	}
-	defer func() {
-		if closeErr := transcript.Close(); closeErr != nil {
-			// Never fails the stage. The tokens are already spent, and the
-			// record of the work is worth less than the work.
-			log.Error("closing the transcript failed", "stage", in.Key.String(), "error", closeErr)
-		}
-	}()
-
-	// captured mirrors every byte the transcript writer sees, so this attempt's
-	// whole event stream can travel home as stageOutput.Transcript once the
-	// stage finishes — see that field's own doc comment for why. A plain
-	// io.MultiWriter rather than a read-back after Close: the local sink
-	// (transcripts.Sink) only ever exposes a writer, never a reader, and
-	// reading is exactly the api this package would otherwise have to add
-	// just for this.
-	var captured bytes.Buffer
-
-	// StageEvents rather than a sink assembled here: framing belongs to
-	// transcripts.EventSink, which owns the format, and heartbeat-before-write
-	// belongs with it so a blocking transcript writer cannot silence liveness.
-	// A second assembly of the same two consumers is a second place for one of
-	// them to be left out.
-	events := StageEvents(ctx, in.Key, io.MultiWriter(transcript, &captured), a.deps.Log)
-
-	started := a.deps.Clock.Now()
-	result, err := a.deps.Stages.RunStage(ctx, work.StageRun{
-		Key:     in.Key,
-		Sandbox: in.Sandbox,
-		Model:   in.Model,
-		Prompt:  prompt,
-		Schema:  schema,
-	}, events)
-	took := a.deps.Clock.Now().Sub(started)
-	if err != nil {
-		// Recorded before the error is returned, not after: a stage that failed
-		// spent its tokens too, and a metric that only counts successes makes
-		// the expensive case the invisible one.
-		a.deps.Metrics.StageFinished(in.Key.Stage, in.Model, outcomeOf(err), result.Usage, took)
-		return stageOutput{}, fail(ctx, fmt.Sprintf("running %s", in.Key), err)
-	}
-	a.deps.Metrics.StageFinished(in.Key.Stage, in.Model, telemetry.OutcomeSuccess, result.Usage, took)
-
-	log.Info("stage finished",
-		"stage", string(in.Key.Stage),
-		"turn", in.Key.Turn,
-		"ticket", in.Key.Ticket,
-		"model", in.Model.Name,
-		"input_tokens", result.Usage.InputTokens,
-		"output_tokens", result.Usage.OutputTokens)
-
-	decoded, err := a.deps.Prompts.Decode(in.Key.Stage, result.Output)
-	if err != nil {
-		return stageOutput{}, fail(ctx, fmt.Sprintf("reading the result envelope of %s", in.Key), err)
-	}
-
-	return stageOutput{
-		Output:     result.Output,
-		Result:     decoded,
-		ThreadID:   result.ThreadID,
-		Usage:      result.Usage,
-		Transcript: work.Transcript(captured.Bytes()),
-	}, nil
 }
 
 // FindPullRequestOutput is what GitHub says is open on a run's branch.

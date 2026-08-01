@@ -110,7 +110,7 @@ func TestRunFactoryPlanTurnRecordsTheAttemptBeforePersistingItsTranscriptAgainst
 	env.RegisterActivity(transcriptActivities)
 
 	transcript := work.Transcript(`{"type":"turn.completed","stage":"plan"}`)
-	env.OnActivity(acts.RunPlan, mock.Anything, mock.Anything).
+	env.OnActivity(legacyRunPlanActivityName, mock.Anything, mock.Anything).
 		Return(func(_ context.Context, _ activities.RunPlanInput) (*activities.RunPlanOutput, error) {
 			var out activities.RunPlanOutput
 			out.Output = []byte(`{"result":"plan"}`)

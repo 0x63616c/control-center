@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codex"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codexauth"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
@@ -121,15 +120,6 @@ func fail(ctx context.Context, op string, err error) error {
 // stops the whole system rather than one ticket.
 func errorTypeOf(err error) string {
 	switch {
-	// codex first, and both of its sentinels named. They resolve to
-	// work.ErrPermanent, so without these two cases they fall through to
-	// ErrTypePermanent — and the dispatcher then cannot tell "the provider is
-	// rate-limiting us" from "the credential is dead". Those call for opposite
-	// responses: wait out a cooldown, or stop and page a human.
-	case errors.Is(err, codex.ErrRateLimited):
-		return ErrTypeRateLimit
-	case errors.Is(err, codex.ErrAuth):
-		return ErrTypeAuth
 	// codexauth.ErrUnseeded means the codex-auth Secret does not exist or does
 	// not parse (#344/#398): every ticket fails identically until a human
 	// seeds it, which is exactly the "stop and page a human" case ErrTypeAuth

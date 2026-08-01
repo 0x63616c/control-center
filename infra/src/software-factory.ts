@@ -107,36 +107,13 @@ const APP_PRIVATE_KEY_MOUNT = "/run/secrets/github-app-private-key-pem";
 const GITHUB_OWNER = "0x63616c";
 const GITHUB_REPO = "world-wide-webb";
 
-/** Where transcripts are mounted on the WORKER — never on a sandbox. */
-const TRANSCRIPTS_MOUNT_PATH = "/transcripts";
-
-/**
- * The NAS export, and the directory under it this service owns. The kubelet
- * creates a subPath that is absent, so no NAS-side directory has to exist
- * first — but see WORKER_UID for what DOES have to be true of the export.
- */
-const TRANSCRIPTS_NFS_EXPORT = "/volume1/Homelab";
-const TRANSCRIPTS_SUBPATH = "software-factory/transcripts";
-
-/**
- * Declared capacity for the transcript PV, and part of its NAME.
- *
- * Kubernetes does not enforce capacity on an NFS volume — the real ceiling is
- * the NAS export's free space — so this number is a label rather than a limit,
- * which is why it can be chosen before a single transcript has been measured.
- * The number that WILL matter is a retention policy, and there is not one yet
- * (#343, still open on that point). A bound static PVC cannot be resized in
- * place, so the capacity is in the name: changing it arrives as a new PV/PVC
- * pair rather than a mutation, exactly as component.ts does it.
- */
-const TRANSCRIPTS_CAPACITY = "10Gi";
-const TRANSCRIPTS_PV_NAME = `software-factory-transcripts-${TRANSCRIPTS_CAPACITY.toLowerCase()}`;
+/** Shared NAS export used by the content-addressed blob service. */
+const SOFTWARE_FACTORY_NFS_EXPORT = "/volume1/Homelab";
 
 /**
  * Payload blobs are primary workflow data: every payload is retained and
- * content-addressed, with no retention policy yet. Capacity is deliberately
- * larger than transcripts and embedded in the static PV/PVC name because a
- * bound static PVC cannot be resized in place.
+ * content-addressed, with no retention policy yet. Capacity is embedded in
+ * the static PV/PVC name because a bound static PVC cannot be resized in place.
  */
 const BLOBS_CAPACITY = "100Gi";
 const BLOBS_PV_NAME = `software-factory-blobs-${BLOBS_CAPACITY.toLowerCase()}`;
@@ -146,12 +123,9 @@ const BLOBS_URL = `http://${BLOBS_SERVICE_NAME}:${BLOBS_PORT}`;
 
 /**
  * SOFT, with a bounded timeout. A hard mount turns an unreachable NAS into a
- * worker wedged inside its own constructor with no error to log and no
- * heartbeat to fail — the process sits in uninterruptible sleep, where even
- * SIGKILL does not land. Soft turns the same outage into an EIO the transcript
- * sink reports, at the cost of a write that can fail. That is the right trade
- * here: transcripts are a secondary record, and Temporal history is the
- * authoritative one.
+ * process wedged in uninterruptible sleep. Soft is safe for the blob service
+ * because writes are content-addressed and verified before a reference is
+ * accepted; a partial write cannot be mistaken for valid content.
  *
  * `timeo` is DECISECONDS, so 100 is 10s; 3 retransmits bounds a stuck mount at
  * roughly 30 seconds rather than forever. nfsvers=4.0 and nolock match the rest
@@ -162,24 +136,11 @@ const BLOBS_URL = `http://${BLOBS_SERVICE_NAME}:${BLOBS_PORT}`;
  * fail a write mid-stream, and a truncated pg dump that reports success is far
  * worse than a backup job that hangs and gets noticed.
  */
-const TRANSCRIPTS_MOUNT_OPTIONS = ["nfsvers=4.0", "nolock", "soft", "timeo=100", "retrans=3"];
+const NFS_MOUNT_OPTIONS = ["nfsvers=4.0", "nolock", "soft", "timeo=100", "retrans=3"];
 
 /**
- * The uid/gid the worker image runs as — distroless's `nonroot`, and a contract
- * with images/worker/Dockerfile.
- *
- * It is also the fsGroup on the transcript volume, where it is **belt and
- * braces rather than load-bearing**, and an earlier version of this comment
- * predicted a failure that cannot happen. Measured against the live export:
- * `root_squash` IS active (a root pod's write lands `1024:100`), but every
- * directory on it is created `0777`, so the sandbox uid can write regardless.
- * And `fsGroup` is a **no-op on NFS** — the in-tree plugin does not report the
- * mount as ownership-managed, so the kubelet never runs the recursive chown,
- * which means it also cannot fail and block pod start.
- *
- * Kept anyway because it costs nothing and is correct the day this volume is
- * not NFS. Worth knowing: this is the first non-root workload on that export —
- * no existing consumer sets runAsUser, runAsNonRoot or fsGroup at all.
+ * The uid/gid the distroless service images run as. The blob service also uses
+ * it as fsGroup on its NFS mount.
  */
 const WORKER_UID = 65532;
 
@@ -233,7 +194,7 @@ export interface SoftwareFactoryArgs {
    * a broken sandbox build cannot block the house's own deploy.
    */
   requireImageDigestPins: boolean;
-  /** The NAS, for the transcript PV. Same server the backup PVs use. */
+  /** The NAS used by the content-addressed blob PV. */
   nasNfsServer: string;
 }
 
@@ -245,8 +206,6 @@ export interface SoftwareFactoryResources {
   serviceAccount: k8s.core.v1.ServiceAccount;
   role: k8s.rbac.v1.Role;
   roleBinding: k8s.rbac.v1.RoleBinding;
-  transcriptsVolume: k8s.core.v1.PersistentVolume;
-  transcriptsClaim: k8s.core.v1.PersistentVolumeClaim;
   blobsVolume: k8s.core.v1.PersistentVolume;
   blobsClaim: k8s.core.v1.PersistentVolumeClaim;
   worker: k8s.apps.v1.Deployment;
@@ -377,25 +336,6 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
           resourceNames: [CODEX_AUTH_SECRET_NAME],
           verbs: ["get", "update"],
         },
-        {
-          apiGroups: [""],
-          resources: ["secrets"],
-          // The per-ticket codex-credential Secret (#434, D3): CreateSandbox
-          // provisions one per run (internal/clients/k8s/lifecycle.go,
-          // ensureCredentialSecret) and DeleteSandbox removes it, and the
-          // orphan sweep now lists and deletes any left behind by a worker
-          // that died between the two (sweep.go, sweepOrphanSecrets).
-          //
-          // This CANNOT be scoped with `resourceNames` the way the codex-auth
-          // rule above is, for exactly the reason the pods rule above cannot
-          // be either: the name carries a per-run id unknown when this Role
-          // is authored, and Kubernetes ignores `resourceNames` for `list`,
-          // `create` and `deletecollection` regardless. THE NAMESPACE IS THE
-          // ISOLATION BOUNDARY for this rule, not a resourceNames clause —
-          // stated explicitly rather than left to look like an oversight,
-          // the same call already made for pods above.
-          verbs: ["create", "get", "update", "delete", "list"],
-        },
       ],
     },
     inNamespace,
@@ -421,39 +361,7 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
     { ...inNamespace, dependsOn: [namespace, role, serviceAccount] },
   );
 
-  // Statically provisioned, `storageClassName: ""` — the cluster's default
-  // StorageClass is local-lvm (ADR-0009), which is node-local and RWO. This
-  // volume is neither.
-  const transcriptsVolume = new k8s.core.v1.PersistentVolume(
-    TRANSCRIPTS_PV_NAME,
-    {
-      metadata: { name: TRANSCRIPTS_PV_NAME },
-      spec: {
-        capacity: { storage: TRANSCRIPTS_CAPACITY },
-        accessModes: ["ReadWriteMany"],
-        mountOptions: TRANSCRIPTS_MOUNT_OPTIONS,
-        nfs: { server: nasNfsServer, path: TRANSCRIPTS_NFS_EXPORT },
-        storageClassName: "",
-      },
-    },
-    opts,
-  );
-
-  const transcriptsClaim = new k8s.core.v1.PersistentVolumeClaim(
-    TRANSCRIPTS_PV_NAME,
-    {
-      metadata: { name: TRANSCRIPTS_PV_NAME, namespace: namespaceName },
-      spec: {
-        accessModes: ["ReadWriteMany"],
-        storageClassName: "",
-        volumeName: TRANSCRIPTS_PV_NAME,
-        resources: { requests: { storage: TRANSCRIPTS_CAPACITY } },
-      },
-    },
-    { ...inNamespace, dependsOn: [namespace, transcriptsVolume] },
-  );
-
-  // Statically provisioned RWX on the shared NAS, like transcripts. Soft
+  // Statically provisioned RWX on the shared NAS. Soft
   // mounts are safe here because every blob is content-addressed and verified
   // on read; a failed write cannot be mistaken for valid content. Retain keeps
   // primary payload data on the NAS if this PVC is ever deleted.
@@ -464,9 +372,9 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
       spec: {
         capacity: { storage: BLOBS_CAPACITY },
         accessModes: ["ReadWriteMany"],
-        mountOptions: TRANSCRIPTS_MOUNT_OPTIONS,
+        mountOptions: NFS_MOUNT_OPTIONS,
         persistentVolumeReclaimPolicy: "Retain",
-        nfs: { server: nasNfsServer, path: TRANSCRIPTS_NFS_EXPORT },
+        nfs: { server: nasNfsServer, path: SOFTWARE_FACTORY_NFS_EXPORT },
         storageClassName: "",
       },
     },
@@ -529,9 +437,6 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
               runAsNonRoot: true,
               runAsUser: WORKER_UID,
               runAsGroup: WORKER_UID,
-              // Applies to the NFS mount. See WORKER_UID: the export has to
-              // cooperate for this to mean anything.
-              fsGroup: WORKER_UID,
               seccompProfile: { type: "RuntimeDefault" },
             },
             containers: [
@@ -590,7 +495,6 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
                   // own `imagePullSecrets` above uses, because both pull the
                   // same private GHCR images with the same token.
                   { name: "SANDBOX_IMAGE_PULL_SECRET_NAME", value: GHCR_PULL_SECRET_NAME },
-                  { name: "TRANSCRIPTS_ROOT", value: TRANSCRIPTS_MOUNT_PATH },
                   // config.LoadWorker's one required database input (#551):
                   // the dispatcher's per-tick RecordDispatcherState activity
                   // writes through this connection. Same variable name
@@ -607,14 +511,6 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
                     mountPath: APP_PRIVATE_KEY_MOUNT,
                     subPath: "private-key-pem",
                     readOnly: true,
-                  },
-                  {
-                    name: "transcripts",
-                    mountPath: TRANSCRIPTS_MOUNT_PATH,
-                    // One export serves several things, so this service gets a
-                    // directory rather than the root of it. The kubelet creates
-                    // the subPath if it is missing.
-                    subPath: TRANSCRIPTS_SUBPATH,
                   },
                   // The image has a read-only root filesystem, so anything
                   // wanting a temporary file needs somewhere to put it.
@@ -639,14 +535,13 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
                   items: [{ key: "GITHUB_APP_PRIVATE_KEY_PEM", path: "private-key-pem" }],
                 },
               },
-              { name: "transcripts", persistentVolumeClaim: { claimName: TRANSCRIPTS_PV_NAME } },
               { name: "tmp", emptyDir: {} },
             ],
           },
         },
       },
     },
-    { ...inNamespace, dependsOn: [roleBinding, workerSecret, transcriptsClaim, ghcrPullSecret] },
+    { ...inNamespace, dependsOn: [roleBinding, workerSecret, ghcrPullSecret] },
   );
 
   const blobsLabels = { app: "software-factory-blobs" };
@@ -970,8 +865,6 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
     serviceAccount,
     role,
     roleBinding,
-    transcriptsVolume,
-    transcriptsClaim,
     blobsVolume,
     blobsClaim,
     worker,

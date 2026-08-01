@@ -128,45 +128,13 @@ func (r *remoteStreamer) stream(ctx context.Context, target execTarget, o stream
 // must not be read as completion.
 //
 // stdin is the command's standard input, and may be nil for a command that
-// reads none. It is a parameter rather than an absent capability because a
-// stage's prompt is issue text: it travels on stdin and as a file so that it is
-// never a command argument, which is the whole of the argv-only guarantee — and
-// this exec path summarises argv into its own errors, so a prompt in argv would
-// copy attacker-chosen text into the logs as well.
+// reads none. This remote transport remains for CloneRepo's short,
+// idempotent git commands. Model-directed commands use typed AgentWorkflow
+// tool activities on the sandbox worker instead.
 //
-// Cancelling the context stops the stream — remotecommand's own
-// StreamWithContext honours it — but cannot guarantee the remote process has
-// exited. Stage execution now belongs to the Session-bound activity, which
-// holds the local process handle needed to cancel its child.
-//
-// This transport survives step 3 deliberately, not as an oversight awaiting
-// cleanup — and survives past #431's credential Secret mount too (D3 shipped
-// in a later slice than this comment's first draft, and WriteCodexCredential
-// along with it — deleted, once the Secret mount made it a no-op nothing
-// called for a reason). What outlives both is CloneRepo, which authenticates
-// with a different credential than the one that Secret carries: a GitHub App
-// installation token minted in-process from the App's private key
-// (activities.go, CloneRepo → a.deps.GitHub.InstallationToken). Mounting the
-// codex Secret into the pod says nothing about whether the pod may mint or
-// hold that token — a separate, still-open question this file does not
-// answer. So deleting this transport needs two things to land, not one: the
-// credential-reach decision, AND somewhere for CloneRepo's token-minting to
-// live once it does. Until both are true, this method is the only way
-// CloneRepo reaches a pod at all, and deleting it would either break the
-// build or force that decision here instead of where it is owned.
-//
-// So its one remaining caller, after step 3's stage loop moved onto a local
-// os/exec.Cmd the pod's own embedded worker holds directly (RunStage, via
-// internal/clients/local), is CloneRepo's git clone/checkout/push. Its own
-// doc comment states outright that it is idempotent under activity retry (an
-// existing checkout on the run's branch is left in place, everything else
-// redone) — verified there, not assumed here. It is also short. A cancelled
-// call here can leave that process briefly alive in the sandbox, but the
-// blast radius is bounded by the pod's own lifetime: DeleteSandbox destroys
-// it at the run's end regardless, so there is no window in which an orphaned
-// clone outlives the sandbox it was writing into. Contrast this with the
-// pre-#434 shape, where the same gap would have applied to RunStage's own
-// hour-long codex invocation — that exposure is what step 3 actually closes.
+// Cancelling the context stops remotecommand's stream but cannot prove the
+// remote process has exited. DeleteSandbox bounds that gap to the pod's
+// lifetime, and CloneRepo remains safe to retry after cancellation.
 func (s *Sandboxes) Exec(ctx context.Context, sandbox work.SandboxID, argv []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	return s.exec(ctx, sandbox, argv, stdin, stdout, stderr)
 }

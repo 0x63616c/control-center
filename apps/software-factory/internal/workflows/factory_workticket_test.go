@@ -170,6 +170,22 @@ func (h *factoryTicketHarness) runVersion(version workflow.Version) {
 		func(context.Context, activities.PersistAgentTranscriptInput) error { return nil },
 		activity.RegisterOptions{Name: agent.PersistTranscriptActivityName},
 	)
+	// Register the retired activity wire contracts so the test environment can
+	// mock histories created before FactoryWorkTicket moved to AgentWorkflow.
+	env.RegisterActivityWithOptions(
+		func(context.Context, activities.RunPlanInput) (*activities.RunPlanOutput, error) { return nil, nil },
+		activity.RegisterOptions{Name: "RunPlan"},
+	)
+	env.RegisterActivityWithOptions(
+		func(context.Context, activities.RunImplementInput) (*activities.RunImplementOutput, error) {
+			return nil, nil
+		},
+		activity.RegisterOptions{Name: "RunImplement"},
+	)
+	env.RegisterActivityWithOptions(
+		func(context.Context, activities.RunReviewInput) (*activities.RunReviewOutput, error) { return nil, nil },
+		activity.RegisterOptions{Name: "RunReview"},
+	)
 
 	env.OnActivity(acts.CreateSandbox, mock.Anything, mock.Anything).
 		Return(func(_ context.Context, in activities.CreateSandboxInput) (work.SandboxID, error) {
@@ -193,9 +209,9 @@ func (h *factoryTicketHarness) runVersion(version workflow.Version) {
 			return nil
 		})
 
-	env.OnActivity(acts.RunPlan, mock.Anything, mock.Anything).Return(planOutput(), nil)
+	env.OnActivity("RunPlan", mock.Anything, mock.Anything).Return(planOutput(), nil)
 
-	env.OnActivity(acts.RunImplement, mock.Anything, mock.Anything).
+	env.OnActivity("RunImplement", mock.Anything, mock.Anything).
 		Return(func(_ context.Context, in activities.RunImplementInput) (*activities.RunImplementOutput, error) {
 			h.implementTurns = append(h.implementTurns, in.Key)
 			if out, ok := h.implement[in.Key.Turn]; ok {
@@ -204,7 +220,7 @@ func (h *factoryTicketHarness) runVersion(version workflow.Version) {
 			return implementOutput(false, "", "the title", "the body"), nil
 		})
 
-	env.OnActivity(acts.RunReview, mock.Anything, mock.Anything).
+	env.OnActivity("RunReview", mock.Anything, mock.Anything).
 		Return(func(_ context.Context, in activities.RunReviewInput) (*activities.RunReviewOutput, error) {
 			h.reviewTurns = append(h.reviewTurns, in.Key)
 			h.reviewAttempts = append(h.reviewAttempts, env.Now())

@@ -311,6 +311,8 @@ func TestModelTurnHeartbeatsContentFreeProgressAndClassifiesProviderErrors(t *te
 	}{
 		{name: "rate limit", toolsetID: "coding-read-v1", providerError: codexresponses.ErrRateLimited,
 			wantType: agent.ErrorTypeRateLimit, wantNonRetryable: true},
+		{name: "provider auth", toolsetID: "coding-read-v1", providerError: codexresponses.ErrAuth,
+			wantType: agent.ErrorTypeAuth, wantNonRetryable: true},
 		{name: "stream interruption", toolsetID: "coding-read-v1", providerError: codexresponses.ErrStreamInterrupted,
 			wantType: agent.ErrorTypeTransient},
 		{name: "unknown toolset", toolsetID: "unknown-v1", wantType: agent.ErrorTypeInvalidInput, wantNonRetryable: true},

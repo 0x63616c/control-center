@@ -210,10 +210,7 @@ describe("the worker's Role (#343)", () => {
   test("pins the codex-auth secrets rule to that one credential, and to two verbs", async () => {
     // Scoping works here and not on pods, and the asymmetry is structural:
     // SecretClient binds namespace and name at construction, so no code path
-    // could want `list`. Selected by resourceNames rather than ruleFor("secrets"),
-    // which is now ambiguous between this rule and the per-ticket one below —
-    // a helper that silently returned the first match would have made this
-    // test pass against the wrong rule.
+    // could want `list`.
     const rules = await rulesFor("secrets");
     const rule = rules.find((r) => r.resourceNames !== undefined);
     if (!rule) throw new Error("no resourceNames-scoped secrets rule found");
@@ -221,35 +218,10 @@ describe("the worker's Role (#343)", () => {
     expect([...rule.verbs].sort()).toEqual(["get", "update"]);
   });
 
-  test("leaves the per-ticket credential secrets rule unscoped, because resourceNames cannot scope a name unknown at authoring time (#434)", async () => {
-    // The per-ticket codex-credential Secret (D3, lifecycle.go) and its orphan
-    // sweep (sweep.go) both need create/get/update/delete/list against a name
-    // that carries a per-run id — the same limitation that keeps the pods rule
-    // above unscoped, and for the same reason: Kubernetes ignores
-    // resourceNames for list/create/deletecollection regardless. THE
-    // NAMESPACE IS THE ISOLATION BOUNDARY for this rule, not a resourceNames
-    // clause, and that namespace also holds WORKER_SECRET_NAME, the Secret
-    // carrying the GitHub App's private key — #453 is deciding whether to
-    // narrow this rule away from sharing a namespace with that.
-    const rules = await rulesFor("secrets");
-    const rule = rules.find((r) => r.resourceNames === undefined);
-    if (!rule) throw new Error("no unscoped secrets rule found");
-    expect([...rule.verbs].sort()).toEqual(["create", "delete", "get", "list", "update"]);
-  });
-
-  test("grants nothing outside the core API group, and no fifth resource", async () => {
+  test("grants nothing outside the core API group and no extra resource", async () => {
     const rules = await get<PolicyRule[]>(install().role, "rules");
     expect(rules.every((r) => r.apiGroups.every((g) => g === ""))).toBe(true);
-    // Four rules, not four distinct resource names: "secrets" appears twice,
-    // once pinned to codex-auth and once unpinned for the per-ticket Secret
-    // (#434). A further widening — a new resource, or a rule outside the core
-    // API group — is what this assertion exists to catch.
-    expect(rules.flatMap((r) => r.resources).sort()).toEqual([
-      "pods",
-      "pods/exec",
-      "secrets",
-      "secrets",
-    ]);
+    expect(rules.flatMap((r) => r.resources).sort()).toEqual(["pods", "pods/exec", "secrets"]);
   });
 });
 
@@ -291,19 +263,10 @@ describe("the worker Deployment (#343)", () => {
     expect(pullSecret?.value).toBe("ghcr-pull");
   });
 
-  test("mounts transcripts on the worker, under its own directory in the export", async () => {
-    const [container] = (await deploymentSpec()).template.spec.containers;
-    const transcripts = container.volumeMounts.find((m) => m.name === "transcripts");
-    expect(transcripts?.mountPath).toBe("/transcripts");
-    expect(transcripts?.subPath).toBe("software-factory/transcripts");
-  });
-
-  test("runs as the uid its image declares, and shares it with the volume's fsGroup", async () => {
-    // A mismatch here is the root_squash failure mode: every transcript Open
-    // returns EACCES, and only against a real NFS export.
+  test("runs as the uid and gid its image declares", async () => {
     const ctx = (await deploymentSpec()).template.spec.securityContext;
     expect(ctx?.runAsUser).toBe(65532);
-    expect(ctx?.fsGroup).toBe(ctx?.runAsUser);
+    expect(ctx?.runAsGroup).toBe(ctx?.runAsUser);
   });
 
   test("takes POD_NAME from the downward API, never a literal", async () => {
@@ -480,34 +443,5 @@ describe("Cloudflare Access AUD bootstrap (#593)", () => {
       "metadata",
     );
     expect(metadata.annotations?.["pulumi.com/skipAwait"]).toBe("true");
-  });
-});
-
-describe("the transcript volume (#343, from B4)", () => {
-  test("is a soft mount with a bounded timeout", async () => {
-    // A hard mount turns an unreachable NAS into a worker wedged in
-    // uninterruptible sleep inside its own constructor, with nothing to log and
-    // no heartbeat to fail.
-    const spec = await get<{ mountOptions: string[] }>(install().transcriptsVolume, "spec");
-    expect(spec.mountOptions).toContain("soft");
-    expect(spec.mountOptions).toContain("timeo=100");
-    expect(spec.mountOptions).toContain("retrans=3");
-  });
-
-  test("is ReadWriteMany on both the volume and the claim", async () => {
-    const pv = await get<{ accessModes: string[] }>(install().transcriptsVolume, "spec");
-    const pvc = await get<{ accessModes: string[] }>(install().transcriptsClaim, "spec");
-    expect(pv.accessModes).toEqual(["ReadWriteMany"]);
-    expect(pvc.accessModes).toEqual(["ReadWriteMany"]);
-  });
-
-  test("carries its capacity in its name, so a resize arrives as a new pair", async () => {
-    // A bound static PVC cannot be resized in place.
-    const meta = await get<{ name: string }>(install().transcriptsVolume, "metadata");
-    const spec = await get<{ capacity: Record<string, string> }>(
-      install().transcriptsVolume,
-      "spec",
-    );
-    expect(meta.name).toContain(spec.capacity.storage.toLowerCase());
   });
 });

@@ -171,6 +171,25 @@ func TestTurnClassifiesRateLimitResponses(t *testing.T) {
 	}
 }
 
+func TestTurnClassifiesAuthenticationResponses(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"error":{"type":"authentication_error"}}`)
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server.URL)
+	_, err := client.Turn(context.Background(), TurnRequest{
+		Model: "gpt-test", Instructions: "Answer.", Input: []InputItem{UserText("Hello")},
+		ToolChoice: ToolChoiceNone, TextVerbosity: TextVerbosityLow,
+	}, nil)
+	if !errors.Is(err, ErrAuth) {
+		t.Fatalf("Turn() error = %v, want ErrAuth", err)
+	}
+}
+
 func TestTurnReportsOnlySafeProviderErrorMetadata(t *testing.T) {
 	t.Parallel()
 

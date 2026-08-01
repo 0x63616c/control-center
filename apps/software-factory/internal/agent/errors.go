@@ -7,6 +7,8 @@ const (
 	ErrorTypeInvalidProviderOutcome = "InvalidProviderOutcome"
 	// ErrorTypeRateLimit identifies provider capacity that should trip the factory breaker.
 	ErrorTypeRateLimit = "RateLimit"
+	// ErrorTypeAuth identifies a provider credential that requires operator repair.
+	ErrorTypeAuth = "Auth"
 	// ErrorTypeTransient identifies a retryable provider or storage failure.
 	ErrorTypeTransient = "Transient"
 )
