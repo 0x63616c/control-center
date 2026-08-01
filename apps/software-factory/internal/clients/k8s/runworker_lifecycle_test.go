@@ -138,10 +138,36 @@ func TestProvisionRunWorkerCreatesPodAndGenerationSecrets(t *testing.T) {
 	if _, err := cs.CoreV1().Pods("software-factory").Get(context.Background(), string(id), metav1.GetOptions{}); err != nil {
 		t.Errorf("pod: %v", err)
 	}
-	for _, name := range runWorkerSecretNames(id) {
+	for _, name := range []string{runWorkerCodexSecretName(id), runWorkerGitHubSecretName(id), runWorkerCheckpointSecretName(id)} {
 		if _, err := cs.CoreV1().Secrets("software-factory").Get(context.Background(), name, metav1.GetOptions{}); err != nil {
 			t.Errorf("secret %s: %v", name, err)
 		}
+	}
+}
+
+func TestInstallRepositoryCapabilityReusesTheGenerationValue(t *testing.T) {
+	ctx := context.Background()
+	cs := fake.NewSimpleClientset()
+	workers := mustRunWorkers(t, cs)
+	identity := validRunWorkerSpec().Identity
+	if _, err := workers.Provision(ctx, validRunWorkerSpec(), validRunWorkerSecrets()); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	first, err := workers.InstallRepositoryCapability(ctx, identity, work.NewCredential("repository-first"))
+	if err != nil {
+		t.Fatalf("InstallRepositoryCapability(first): %v", err)
+	}
+	retry, err := workers.InstallRepositoryCapability(ctx, identity, work.NewCredential("repository-retry"))
+	if err != nil {
+		t.Fatalf("InstallRepositoryCapability(retry): %v", err)
+	}
+	if first.Reveal() != "repository-first" || retry.Reveal() != "repository-first" {
+		t.Fatalf("installed/retry = %q/%q", first.Reveal(), retry.Reveal())
+	}
+	id, _ := work.RunWorkerName(identity)
+	secret, err := cs.CoreV1().Secrets("software-factory").Get(ctx, runWorkerRepositorySecretName(id), metav1.GetOptions{})
+	if err != nil || string(secret.Data[runWorkerRepositoryKey]) != "repository-first" {
+		t.Fatalf("repository Secret = %+v, %v", secret, err)
 	}
 }
 

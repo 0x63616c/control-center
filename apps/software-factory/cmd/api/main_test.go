@@ -47,10 +47,18 @@ func (checkpointStore) LoadAgentCheckpoint(_ context.Context, id store.TargetAtt
 	return store.AgentAttempt{ID: id, ProviderThreadID: "thread-1", State: work.AgentAttemptRunning, UsageState: work.UsageUnknown}, nil, true, nil
 }
 
+func (checkpointStore) LoadRepositoryCheckpoint(_ context.Context, identity work.RunWorkerIdentity, _ string) (store.GitCheckpoint, bool, error) {
+	return store.GitCheckpoint{RunID: identity.RunID, StepOrdinal: 1, Branch: "factory/run", PushedHead: "head", StepResult: []byte(`{"kind":"clone"}`)}, true, nil
+}
+
+func (checkpointStore) CheckpointRepository(_ context.Context, input store.RepositoryCheckpointInput) (store.GitCheckpoint, error) {
+	return input.GitCheckpoint, nil
+}
+
 func TestFactoryRoutingUsesAttemptCapabilityWithoutWeakeningLegacyAuthentication(t *testing.T) {
 	t.Parallel()
 
-	factory := factoryapi.NewWithCheckpointStore("test-build", nil, checkpointStore{})
+	factory := factoryapi.NewWithRunWorkerStores("test-build", nil, checkpointStore{}, checkpointStore{})
 	mux := http.NewServeMux()
 	mountFactoryAPI(mux, testRouteAuthenticator{}, factory)
 
@@ -77,6 +85,14 @@ func TestFactoryRoutingUsesAttemptCapabilityWithoutWeakeningLegacyAuthentication
 	mux.ServeHTTP(checkpointReadResponse, checkpointRead)
 	if checkpointReadResponse.Code != http.StatusOK {
 		t.Fatalf("checkpoint GET without broad bearer = %d: %s", checkpointReadResponse.Code, checkpointReadResponse.Body.String())
+	}
+
+	repositoryRead := httptest.NewRequest(http.MethodGet, checkpoint.RepositoryPathFor("0f466627-b3ae-4ba2-9c96-6ef44ec6f578", 1), nil)
+	repositoryRead.Header.Set(checkpoint.RepositoryCapabilityHeader, "repository-capability")
+	repositoryReadResponse := httptest.NewRecorder()
+	mux.ServeHTTP(repositoryReadResponse, repositoryRead)
+	if repositoryReadResponse.Code != http.StatusOK {
+		t.Fatalf("repository checkpoint GET without broad bearer = %d: %s", repositoryReadResponse.Code, repositoryReadResponse.Body.String())
 	}
 
 	futureRunWorkerRequest := httptest.NewRequest(http.MethodGet, "/v1/run-worker/future", nil)

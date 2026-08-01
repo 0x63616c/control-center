@@ -175,4 +175,6 @@ const (
 	RunWorkerCodexCredentialFile      = RunWorkerCodexCredentialDir + "/auth.json"
 	RunWorkerCheckpointCapabilityDir  = "/var/run/secrets/software-factory/checkpoint"
 	RunWorkerCheckpointCapabilityFile = RunWorkerCheckpointCapabilityDir + "/capability"
+	RunWorkerRepositoryCapabilityDir  = "/var/run/secrets/software-factory/repository-checkpoint"
+	RunWorkerRepositoryCapabilityFile = RunWorkerRepositoryCapabilityDir + "/capability"
 )

@@ -228,6 +228,64 @@ export interface MaxInFlightInputBody {
   maxInFlight: number;
 }
 
+export interface Repository {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+   * The Run-owned branch.
+   * @minLength 1
+   */
+  branch: string;
+  /** The target branch head observed by this Step, when available. */
+  observedBase: string;
+  /** The GraphQL pull request node identity, when one exists. */
+  pullRequestNodeId: string;
+  /**
+   * The pull request number, or zero before one exists.
+   * @minimum 0
+   */
+  pullRequestNumber: number;
+  /** The latest head accepted by GitHub, when available. */
+  pushedHead: string;
+  /**
+   * The completed repository-affine Step ordinal.
+   * @minimum 1
+   */
+  stepOrdinal: number;
+  /** The kind-specific durable Step result. */
+  stepResult: unknown;
+}
+
+export interface RepositoryWrite {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+   * The Run-owned branch.
+   * @minLength 1
+   */
+  branch: string;
+  /** RFC3339 UTC time at which the Step completed. */
+  completedAt: string;
+  /** The target branch head observed by this Step, when available. */
+  observedBase: string;
+  /** The GraphQL pull request node identity, when one exists. */
+  pullRequestNodeId: string;
+  /**
+   * The pull request number, or zero before one exists.
+   * @minimum 0
+   */
+  pullRequestNumber: number;
+  /** The latest head accepted by GitHub, when available. */
+  pushedHead: string;
+  /**
+   * The completed repository-affine Step ordinal.
+   * @minimum 1
+   */
+  stepOrdinal: number;
+  /** The kind-specific durable Step result. */
+  stepResult: unknown;
+}
+
 /**
  * RFC3339 UTC. Null until the Run ends.
  */
@@ -878,6 +936,321 @@ export const usePostV1FactoryResume = <TError = AxiosError<ErrorModel>, TContext
   queryClient?: QueryClient,
 ): UseMutationResult<Awaited<ReturnType<typeof postV1FactoryResume>>, TError, void, TContext> => {
   const mutationOptions = getPostV1FactoryResumeMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
+ * Reconciles the latest completed Git/PR position using the capability scoped to one Run Worker generation.
+ * @summary Read a repository checkpoint
+ */
+export const getV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint = (
+  runID: string,
+  generation: number,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<Repository>> => {
+  return axios.get(
+    `/v1/run-worker/runs/${runID}/generations/${generation}/repository-checkpoint`,
+    options,
+  );
+};
+
+export const getGetV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpointQueryKey = (
+  runID?: string,
+  generation?: number,
+) => {
+  return [`/v1/run-worker/runs/${runID}/generations/${generation}/repository-checkpoint`] as const;
+};
+
+export const getGetV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpointQueryOptions = <
+  TData = Awaited<
+    ReturnType<typeof getV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>
+  >,
+  TError = AxiosError<ErrorModel>,
+>(
+  runID: string,
+  generation: number,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<
+          ReturnType<typeof getV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>
+        >,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getGetV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpointQueryKey(
+      runID,
+      generation,
+    );
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>>
+  > = ({ signal }) =>
+    getV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint(runID, generation, {
+      signal,
+      ...axiosOptions,
+    });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!(runID && generation),
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<
+      ReturnType<typeof getV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>
+    >,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpointQueryResult =
+  NonNullable<
+    Awaited<ReturnType<typeof getV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>>
+  >;
+export type GetV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpointQueryError =
+  AxiosError<ErrorModel>;
+
+export function useGetV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint<
+  TData = Awaited<
+    ReturnType<typeof getV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>
+  >,
+  TError = AxiosError<ErrorModel>,
+>(
+  runID: string,
+  generation: number,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<
+          ReturnType<typeof getV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>
+        >,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<
+            ReturnType<typeof getV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>
+          >,
+          TError,
+          Awaited<
+            ReturnType<typeof getV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>
+          >
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useGetV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint<
+  TData = Awaited<
+    ReturnType<typeof getV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>
+  >,
+  TError = AxiosError<ErrorModel>,
+>(
+  runID: string,
+  generation: number,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<
+          ReturnType<typeof getV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>
+        >,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<
+            ReturnType<typeof getV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>
+          >,
+          TError,
+          Awaited<
+            ReturnType<typeof getV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>
+          >
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useGetV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint<
+  TData = Awaited<
+    ReturnType<typeof getV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>
+  >,
+  TError = AxiosError<ErrorModel>,
+>(
+  runID: string,
+  generation: number,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<
+          ReturnType<typeof getV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>
+        >,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+/**
+ * @summary Read a repository checkpoint
+ */
+
+export function useGetV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint<
+  TData = Awaited<
+    ReturnType<typeof getV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>
+  >,
+  TError = AxiosError<ErrorModel>,
+>(
+  runID: string,
+  generation: number,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<
+          ReturnType<typeof getV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>
+        >,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions =
+    getGetV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpointQueryOptions(
+      runID,
+      generation,
+      options,
+    );
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Atomically stores one Run Worker generation's monotonic Git/PR position and completed Step result.
+ * @summary Checkpoint a repository Step
+ */
+export const putV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint = (
+  runID: string,
+  generation: number,
+  repositoryWrite: NonReadonly<RepositoryWrite>,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<Repository>> => {
+  return axios.put(
+    `/v1/run-worker/runs/${runID}/generations/${generation}/repository-checkpoint`,
+    repositoryWrite,
+    options,
+  );
+};
+
+export const getPutV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpointMutationOptions =
+  <TError = AxiosError<ErrorModel>, TContext = unknown>(options?: {
+    mutation?: UseMutationOptions<
+      Awaited<
+        ReturnType<typeof putV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>
+      >,
+      TError,
+      { runID: string; generation: number; data: NonReadonly<RepositoryWrite> },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  }): UseMutationOptions<
+    Awaited<
+      ReturnType<typeof putV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>
+    >,
+    TError,
+    { runID: string; generation: number; data: NonReadonly<RepositoryWrite> },
+    TContext
+  > => {
+    const mutationKey = ["putV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint"];
+    const { mutation: mutationOptions, axios: axiosOptions } = options
+      ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+        ? options
+        : { ...options, mutation: { ...options.mutation, mutationKey } }
+      : { mutation: { mutationKey }, axios: undefined };
+
+    const mutationFn: MutationFunction<
+      Awaited<
+        ReturnType<typeof putV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>
+      >,
+      { runID: string; generation: number; data: NonReadonly<RepositoryWrite> }
+    > = (props) => {
+      const { runID, generation, data } = props ?? {};
+
+      return putV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint(
+        runID,
+        generation,
+        data,
+        axiosOptions,
+      );
+    };
+
+    return { mutationFn, ...mutationOptions };
+  };
+
+export type PutV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpointMutationResult =
+  NonNullable<
+    Awaited<ReturnType<typeof putV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>>
+  >;
+export type PutV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpointMutationBody =
+  NonReadonly<RepositoryWrite>;
+export type PutV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpointMutationError =
+  AxiosError<ErrorModel>;
+
+/**
+ * @summary Checkpoint a repository Step
+ */
+export const usePutV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint = <
+  TError = AxiosError<ErrorModel>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<
+        ReturnType<typeof putV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>
+      >,
+      TError,
+      { runID: string; generation: number; data: NonReadonly<RepositoryWrite> },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof putV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>>,
+  TError,
+  { runID: string; generation: number; data: NonReadonly<RepositoryWrite> },
+  TContext
+> => {
+  const mutationOptions =
+    getPutV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpointMutationOptions(options);
 
   return useMutation(mutationOptions, queryClient);
 };

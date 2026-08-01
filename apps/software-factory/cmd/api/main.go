@@ -143,7 +143,7 @@ func run() error {
 	// is authenticated by the Store. Legacy API paths stay behind Cloudflare
 	// Access or the in-cluster bearer.
 	mux.Handle("/v1/hooks/github", webhook.NewHandler(cfg.WebhookSecret, ticketStore, logger, registry))
-	factory := factoryapi.NewWithCheckpointStore(buildVersion, temporalapi.NewCommands(temporal), ticketStore, ticketStore)
+	factory := factoryapi.NewWithRunWorkerStores(buildVersion, temporalapi.NewCommands(temporal), ticketStore, ticketStore, ticketStore)
 	mountFactoryAPI(mux, authentication, factory)
 
 	listener, err := net.Listen("tcp", cfg.ListenAddr)
@@ -181,5 +181,7 @@ func mountFactoryAPI(mux *http.ServeMux, authentication routeAuthenticator, fact
 	// narrow checkpoint route exists to avoid.
 	mux.Handle(checkpoint.PutServeMuxPattern, factory.Handler())
 	mux.Handle(checkpoint.GetServeMuxPattern, factory.Handler())
+	mux.Handle(checkpoint.RepositoryPutServeMuxPattern, factory.Handler())
+	mux.Handle(checkpoint.RepositoryGetServeMuxPattern, factory.Handler())
 	mux.Handle("/", authentication.Wrap(factory.Handler()))
 }

@@ -15,6 +15,11 @@ func AttemptPath(runID string, stepOrdinal, attemptNo int) string {
 	return "/v1/run-worker/runs/" + url.PathEscape(runID) + "/steps/" + strconv.Itoa(stepOrdinal) + "/attempts/" + strconv.Itoa(attemptNo) + "/checkpoint"
 }
 
+// RepositoryPathFor renders the checkpoint path owned by one Run Worker generation.
+func RepositoryPathFor(runID string, generation int) string {
+	return "/v1/run-worker/runs/" + url.PathEscape(runID) + "/generations/" + strconv.Itoa(generation) + "/repository-checkpoint"
+}
+
 const (
 	// CapabilityHeader carries one active Agent Attempt's checkpoint capability.
 	CapabilityHeader = "X-Software-Factory-Checkpoint-Capability"
@@ -23,7 +28,17 @@ const (
 	// PutServeMuxPattern and GetServeMuxPattern are the only method/path pairs
 	// mounted outside the legacy API authentication middleware.
 	PutServeMuxPattern = "PUT " + Path
+	// GetServeMuxPattern mounts exact-attempt reconciliation outside broad authentication.
 	GetServeMuxPattern = "GET " + Path
+	// RepositoryCapabilityHeader carries one Run Worker generation's distinct
+	// repository checkpoint capability.
+	RepositoryCapabilityHeader = "X-Software-Factory-Repository-Capability"
+	// RepositoryPath is the generation-scoped Git/PR checkpoint route.
+	RepositoryPath = "/v1/run-worker/runs/{runID}/generations/{generation}/repository-checkpoint"
+	// RepositoryPutServeMuxPattern mounts generation-scoped writes outside broad authentication.
+	RepositoryPutServeMuxPattern = "PUT " + RepositoryPath
+	// RepositoryGetServeMuxPattern mounts generation-scoped reads outside broad authentication.
+	RepositoryGetServeMuxPattern = "GET " + RepositoryPath
 )
 
 // Attempt is running progress or terminal evidence for one active Agent Attempt.
@@ -36,6 +51,25 @@ type Attempt struct {
 	EndedAt          *time.Time             `json:"endedAt,omitempty" doc:"RFC3339 UTC terminal time; absent while running."`
 	Result           json.RawMessage        `json:"result,omitempty" doc:"The terminal provider envelope; absent while running."`
 	Transcript       *Transcript            `json:"transcript,omitempty" doc:"Durable partial or terminal transcript material."`
+}
+
+// Repository is the durable Git/PR position for the latest completed
+// repository-affine Step in a Run.
+type Repository struct {
+	StepOrdinal       int             `json:"stepOrdinal" minimum:"1" doc:"The completed repository-affine Step ordinal."`
+	Branch            string          `json:"branch" minLength:"1" doc:"The Run-owned branch."`
+	PushedHead        string          `json:"pushedHead" doc:"The latest head accepted by GitHub, when available."`
+	ObservedBase      string          `json:"observedBase" doc:"The target branch head observed by this Step, when available."`
+	PullRequestNumber int             `json:"pullRequestNumber" minimum:"0" doc:"The pull request number, or zero before one exists."`
+	PullRequestNodeID string          `json:"pullRequestNodeId" doc:"The GraphQL pull request node identity, when one exists."`
+	StepResult        json.RawMessage `json:"stepResult" doc:"The kind-specific durable Step result."`
+}
+
+// RepositoryWrite supplies the terminal time atomically recorded with a
+// repository checkpoint.
+type RepositoryWrite struct {
+	Repository
+	CompletedAt time.Time `json:"completedAt" doc:"RFC3339 UTC time at which the Step completed."`
 }
 
 // Usage is the provider's four token counters.

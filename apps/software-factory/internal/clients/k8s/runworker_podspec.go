@@ -21,6 +21,7 @@ const (
 	runWorkerCodexVolumeName            = "codex-credential"
 	runWorkerGitHubVolumeName           = "github-credential"
 	runWorkerCheckpointVolumeName       = "checkpoint-capability"
+	runWorkerRepositoryVolumeName       = "repository-checkpoint-capability"
 )
 
 var runWorkerSecretMode int32 = 0o440
@@ -116,6 +117,7 @@ func buildRunWorkerPod(spec work.RunWorkerSpec, o runWorkerOptions) (*corev1.Pod
 					{Name: runWorkerCodexVolumeName, MountPath: work.RunWorkerCodexCredentialDir, ReadOnly: true},
 					{Name: runWorkerGitHubVolumeName, MountPath: work.RunWorkerGitHubCredentialDir, ReadOnly: true},
 					{Name: runWorkerCheckpointVolumeName, MountPath: work.RunWorkerCheckpointCapabilityDir, ReadOnly: true},
+					{Name: runWorkerRepositoryVolumeName, MountPath: work.RunWorkerRepositoryCapabilityDir, ReadOnly: true},
 				},
 				SecurityContext: &corev1.SecurityContext{
 					RunAsNonRoot:             ptr(true),
@@ -131,6 +133,7 @@ func buildRunWorkerPod(spec work.RunWorkerSpec, o runWorkerOptions) (*corev1.Pod
 				projectedSecretVolume(runWorkerCodexVolumeName, runWorkerCodexSecretName(id)),
 				projectedSecretVolume(runWorkerGitHubVolumeName, runWorkerGitHubSecretName(id)),
 				projectedSecretVolume(runWorkerCheckpointVolumeName, runWorkerCheckpointSecretName(id)),
+				projectedSecretVolume(runWorkerRepositoryVolumeName, runWorkerRepositorySecretName(id)),
 			},
 		},
 	}, nil

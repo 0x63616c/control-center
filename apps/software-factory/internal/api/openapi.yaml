@@ -264,6 +264,99 @@ components:
       required:
         - maxInFlight
       type: object
+    Repository:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Repository.json
+          format: uri
+          readOnly: true
+          type: string
+        branch:
+          description: The Run-owned branch.
+          minLength: 1
+          type: string
+        observedBase:
+          description: The target branch head observed by this Step, when available.
+          type: string
+        pullRequestNodeId:
+          description: The GraphQL pull request node identity, when one exists.
+          type: string
+        pullRequestNumber:
+          description: The pull request number, or zero before one exists.
+          format: int64
+          minimum: 0
+          type: integer
+        pushedHead:
+          description: The latest head accepted by GitHub, when available.
+          type: string
+        stepOrdinal:
+          description: The completed repository-affine Step ordinal.
+          format: int64
+          minimum: 1
+          type: integer
+        stepResult:
+          description: The kind-specific durable Step result.
+      required:
+        - stepOrdinal
+        - branch
+        - pushedHead
+        - observedBase
+        - pullRequestNumber
+        - pullRequestNodeId
+        - stepResult
+      type: object
+    RepositoryWrite:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RepositoryWrite.json
+          format: uri
+          readOnly: true
+          type: string
+        branch:
+          description: The Run-owned branch.
+          minLength: 1
+          type: string
+        completedAt:
+          description: RFC3339 UTC time at which the Step completed.
+          format: date-time
+          type: string
+        observedBase:
+          description: The target branch head observed by this Step, when available.
+          type: string
+        pullRequestNodeId:
+          description: The GraphQL pull request node identity, when one exists.
+          type: string
+        pullRequestNumber:
+          description: The pull request number, or zero before one exists.
+          format: int64
+          minimum: 0
+          type: integer
+        pushedHead:
+          description: The latest head accepted by GitHub, when available.
+          type: string
+        stepOrdinal:
+          description: The completed repository-affine Step ordinal.
+          format: int64
+          minimum: 1
+          type: integer
+        stepResult:
+          description: The kind-specific durable Step result.
+      required:
+        - completedAt
+        - stepOrdinal
+        - branch
+        - pushedHead
+        - observedBase
+        - pullRequestNumber
+        - pullRequestNodeId
+        - stepResult
+      type: object
     RunOutput:
       additionalProperties: false
       properties:
@@ -601,6 +694,11 @@ components:
       description: Static bearer for in-cluster worker or sandbox callers.
       scheme: bearer
       type: http
+    repositoryCheckpointCapability:
+      description: A capability scoped to one active Run Worker generation.
+      in: header
+      name: X-Software-Factory-Repository-Capability
+      type: apiKey
 info:
   title: Software Factory API
   version: development
@@ -689,6 +787,99 @@ paths:
                 $ref: "#/components/schemas/ErrorModel"
           description: Error
       summary: Resume the factory
+  /v1/run-worker/runs/{runID}/generations/{generation}/repository-checkpoint:
+    get:
+      description: Reconciles the latest completed Git/PR position using the capability scoped to one Run Worker generation.
+      operationId: get-v1-run-worker-runs-by-run-id-generations-by-generation-repository-checkpoint
+      parameters:
+        - description: The owning Run identity.
+          in: path
+          name: runID
+          required: true
+          schema:
+            description: The owning Run identity.
+            format: uuid
+            type: string
+        - description: The active Run Worker generation.
+          in: path
+          name: generation
+          required: true
+          schema:
+            description: The active Run Worker generation.
+            format: int64
+            minimum: 1
+            type: integer
+        - description: The capability minted for this Run Worker generation.
+          in: header
+          name: X-Software-Factory-Repository-Capability
+          schema:
+            description: The capability minted for this Run Worker generation.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Repository"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      security:
+        - repositoryCheckpointCapability: []
+      summary: Read a repository checkpoint
+    put:
+      description: Atomically stores one Run Worker generation's monotonic Git/PR position and completed Step result.
+      operationId: put-v1-run-worker-runs-by-run-id-generations-by-generation-repository-checkpoint
+      parameters:
+        - description: The owning Run identity.
+          in: path
+          name: runID
+          required: true
+          schema:
+            description: The owning Run identity.
+            format: uuid
+            type: string
+        - description: The active Run Worker generation.
+          in: path
+          name: generation
+          required: true
+          schema:
+            description: The active Run Worker generation.
+            format: int64
+            minimum: 1
+            type: integer
+        - description: The capability minted for this Run Worker generation.
+          in: header
+          name: X-Software-Factory-Repository-Capability
+          schema:
+            description: The capability minted for this Run Worker generation.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RepositoryWrite"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Repository"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      security:
+        - repositoryCheckpointCapability: []
+      summary: Checkpoint a repository Step
   /v1/run-worker/runs/{runID}/steps/{stepOrdinal}/attempts/{attemptNo}/checkpoint:
     get:
       description: Reconciles provider progress using the capability scoped to the exact Run, Step, and Agent Attempt.

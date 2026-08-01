@@ -23,6 +23,7 @@ const (
 	runWorkerCodexSecretPrefix      = "run-worker-codex-"
 	runWorkerGitHubSecretPrefix     = "run-worker-github-"
 	runWorkerCheckpointSecretPrefix = "run-worker-checkpoint-"
+	runWorkerRepositorySecretPrefix = "run-worker-repository-"
 	runWorkerCodexAuthKey           = "auth.json"
 	runWorkerGitHubTokenKey         = "token"
 	runWorkerGitHubLoginKey         = "login"
@@ -30,6 +31,7 @@ const (
 	runWorkerGitHubExpiresAtKey     = "expires-at"
 	runWorkerCheckpointKey          = "capability"
 	runWorkerCheckpointAttempt      = "software-factory.worldwidewebb.co/checkpoint-attempt"
+	runWorkerRepositoryKey          = "capability"
 )
 
 func runWorkerCodexSecretName(id work.RunWorkerID) string {
@@ -44,8 +46,12 @@ func runWorkerCheckpointSecretName(id work.RunWorkerID) string {
 	return runWorkerCheckpointSecretPrefix + string(id)
 }
 
+func runWorkerRepositorySecretName(id work.RunWorkerID) string {
+	return runWorkerRepositorySecretPrefix + string(id)
+}
+
 func runWorkerSecretNames(id work.RunWorkerID) []string {
-	return []string{runWorkerCodexSecretName(id), runWorkerGitHubSecretName(id), runWorkerCheckpointSecretName(id)}
+	return []string{runWorkerCodexSecretName(id), runWorkerGitHubSecretName(id), runWorkerCheckpointSecretName(id), runWorkerRepositorySecretName(id)}
 }
 
 // Provision creates one target worker generation and all of its file-only
@@ -139,7 +145,7 @@ func (r *RunWorkers) InstallCheckpointCapability(ctx context.Context, identity w
 	if secret.Annotations[runWorkerCheckpointAttempt] == wantAttempt {
 		installed := strings.TrimSpace(string(secret.Data[runWorkerCheckpointKey]))
 		if installed == "" {
-			return work.Credential{}, fmt.Errorf("Run Worker %s checkpoint Secret has no installed capability: %w", id, work.ErrPermanent)
+			return work.Credential{}, fmt.Errorf("run worker %s checkpoint Secret has no installed capability: %w", id, work.ErrPermanent)
 		}
 		return work.NewCredential(installed), nil
 	}
@@ -152,6 +158,43 @@ func (r *RunWorkers) InstallCheckpointCapability(ctx context.Context, identity w
 		return work.Credential{}, fmt.Errorf("updating Run Worker %s checkpoint Secret: %w", id, err)
 	}
 	return proposed, nil
+}
+
+// InstallRepositoryCapability creates one generation's repository capability
+// Secret exactly once. A retry returns the already projected value so a lost
+// activity response cannot rotate the Store to a different value.
+func (r *RunWorkers) InstallRepositoryCapability(ctx context.Context, identity work.RunWorkerIdentity, proposed work.Credential) (work.Credential, error) {
+	id, err := work.RunWorkerName(identity)
+	if err != nil {
+		return work.Credential{}, fmt.Errorf("installing Run Worker repository capability: %w", err)
+	}
+	if strings.TrimSpace(proposed.Reveal()) == "" {
+		return work.Credential{}, fmt.Errorf("installing Run Worker repository capability requires a value: %w", work.ErrPermanent)
+	}
+	pod, err := r.cs.CoreV1().Pods(r.ns).Get(ctx, string(id), metav1.GetOptions{})
+	if err != nil {
+		return work.Credential{}, fmt.Errorf("reading Run Worker %s before repository capability install: %w", id, err)
+	}
+	if pod.Labels[labelRunID] != identity.RunID || pod.Labels["software-factory.worldwidewebb.co/generation"] != strconv.Itoa(identity.Generation) {
+		return work.Credential{}, fmt.Errorf("run worker %s does not match repository capability identity: %w", id, work.ErrPermanent)
+	}
+	secrets := r.cs.CoreV1().Secrets(r.ns)
+	name := runWorkerRepositorySecretName(id)
+	want := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: pod.Labels}, Type: corev1.SecretTypeOpaque, Data: map[string][]byte{runWorkerRepositoryKey: []byte(proposed.Reveal())}}
+	if _, err := secrets.Create(ctx, want, metav1.CreateOptions{}); err == nil {
+		return proposed, nil
+	} else if !apierrors.IsAlreadyExists(err) {
+		return work.Credential{}, fmt.Errorf("creating Run Worker %s repository capability Secret: %w", id, err)
+	}
+	existing, err := secrets.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return work.Credential{}, fmt.Errorf("reading Run Worker %s repository capability Secret: %w", id, err)
+	}
+	installed := strings.TrimSpace(string(existing.Data[runWorkerRepositoryKey]))
+	if existing.Type != corev1.SecretTypeOpaque || !reflect.DeepEqual(existing.Labels, pod.Labels) || len(existing.Data) != 1 || installed == "" {
+		return work.Credential{}, fmt.Errorf("run worker %s repository capability Secret differs from its generation: %w", id, work.ErrPermanent)
+	}
+	return work.NewCredential(installed), nil
 }
 
 // Delete removes a target worker and every per-generation Secret. Absence is

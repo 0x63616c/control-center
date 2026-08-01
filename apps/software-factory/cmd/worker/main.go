@@ -329,7 +329,10 @@ func ensureFactoryDispatcher(ctx context.Context, c dispatcherStarter, logger *s
 func newActivities(
 	cfg config.Worker, temporal temporalapi.Client, renderer *prompts.Renderer, metrics *telemetry.Metrics, logger *slog.Logger,
 	dispatcherState activities.DispatcherStateWriter,
-	checkpointBinder activities.CheckpointCapabilityBinder,
+	checkpointBinder interface {
+		activities.CheckpointCapabilityBinder
+		activities.RepositoryCapabilityBinder
+	},
 ) (*activities.Activities, *activities.RunWorkerControlActivities, error) {
 	clk := clock.System{}
 
@@ -371,7 +374,8 @@ func newActivities(
 		return nil, nil, fmt.Errorf("building the checkpoint capability minter: %w", err)
 	}
 	control, err := activities.NewRunWorkerControlActivities(activities.RunWorkerControlDeps{
-		Workers: runWorkers, GitHub: ghClient, Codex: tokenSource, Capabilities: capabilities, Binder: checkpointBinder,
+		Workers: runWorkers, GitHub: ghClient, Codex: tokenSource, Capabilities: capabilities,
+		Binder: checkpointBinder, RepositoryBinder: checkpointBinder,
 		Template: activities.RunWorkerTemplate{
 			Image: cfg.RunWorkerImage, CPURequest: cfg.SandboxCPURequest, MemoryLimit: cfg.SandboxMemoryLimit,
 			DeadlineSeconds: work.SandboxDeadlineSeconds,
