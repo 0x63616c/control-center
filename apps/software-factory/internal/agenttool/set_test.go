@@ -13,6 +13,10 @@ type execInput struct {
 	Argv []string `json:"argv" jsonschema:"minItems=1" jsonschema_description:"Command and arguments to execute."`
 }
 
+type undocumentedInput struct {
+	Path string `json:"path"`
+}
+
 func TestMustSetSortsSpecifications(t *testing.T) {
 	t.Parallel()
 
@@ -157,4 +161,20 @@ func TestMustSetRejectsNilTools(t *testing.T) {
 		}()
 		agenttool.MustSet("coding-read-v1", tool)
 	})
+}
+
+func TestMustSetRejectsMissingPropertyDescriptions(t *testing.T) {
+	t.Parallel()
+
+	tool := agenttool.Bind(
+		agenttool.Define[undocumentedInput]("read_file", "Read a repository file."),
+		func(_ context.Context, _ undocumentedInput) (agenttool.Result, error) { return agenttool.Result{}, nil },
+	)
+	defer func() {
+		panicValue := recover()
+		if message := fmt.Sprint(panicValue); !strings.Contains(message, `property "path" description is blank`) {
+			t.Fatalf("panic = %q", message)
+		}
+	}()
+	agenttool.MustSet("coding-read-v1", tool)
 }

@@ -47,6 +47,9 @@ func MustSet(id ToolsetID, tools ...runtimeTool) Set {
 		if strings.TrimSpace(specification.Description) == "" {
 			panic(fmt.Sprintf("agenttool: tool %q description is blank in toolset %q", specification.Name, id))
 		}
+		if err := validatePropertyDescriptions(specification.Parameters); err != nil {
+			panic(fmt.Sprintf("agenttool: tool %q schema: %v", specification.Name, err))
+		}
 		if _, exists := set.tools[specification.Name]; exists {
 			panic(fmt.Sprintf("agenttool: duplicate tool %q in toolset %q", specification.Name, id))
 		}
@@ -65,6 +68,30 @@ func MustSet(id ToolsetID, tools ...runtimeTool) Set {
 	}
 	set.fingerprint = fmt.Sprintf("sha256:%x", sha256.Sum256(canonical))
 	return set
+}
+
+func validatePropertyDescriptions(schemaJSON []byte) error {
+	var schema map[string]any
+	if err := json.Unmarshal(schemaJSON, &schema); err != nil {
+		return fmt.Errorf("decode: %w", err)
+	}
+	properties, _ := schema["properties"].(map[string]any)
+	names := make([]string, 0, len(properties))
+	for name := range properties {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		property, ok := properties[name].(map[string]any)
+		if !ok {
+			return fmt.Errorf("property %q schema is not an object", name)
+		}
+		description, _ := property["description"].(string)
+		if strings.TrimSpace(description) == "" {
+			return fmt.Errorf("property %q description is blank", name)
+		}
+	}
+	return nil
 }
 
 func isNilRuntimeTool(tool runtimeTool) bool {
