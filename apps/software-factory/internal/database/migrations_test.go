@@ -284,8 +284,8 @@ func TestTicketActiveStateRequiresRunOwnership(t *testing.T) {
 	t.Cleanup(pool.Close)
 
 	for _, state := range []string{"working", "review"} {
-		if _, err := pool.Exec(ctx, "INSERT INTO ticket (title, body, state) VALUES ($1, '', $2)", "legacy "+state, state); err != nil {
-			t.Fatalf("insert legacy %s ticket: %v", state, err)
+		if _, err := pool.Exec(ctx, "INSERT INTO ticket (title, body, state) VALUES ($1, '', $2)", "legacy "+state, state); err == nil {
+			t.Fatalf("insert legacy %s ticket succeeded after target-only migration", state)
 		}
 	}
 	if _, err := pool.Exec(ctx, "INSERT INTO ticket (title, body, state) VALUES ('missing owner', '', 'active')"); err == nil {
