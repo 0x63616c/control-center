@@ -6,12 +6,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	checkpointprotocol "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/checkpoint"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codex"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codexauth"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
@@ -37,6 +40,12 @@ type TargetStageRunner interface {
 // this worker's filesystem.
 type ProviderState interface {
 	Available(context.Context, string) (bool, error)
+}
+
+// SecretRedactor removes observed projected credential material from data that
+// crosses the Run Worker durability boundary.
+type SecretRedactor interface {
+	Redact(context.Context, []byte) ([]byte, error)
 }
 
 // TargetRepository prepares the Run Worker's own filesystem checkout.
@@ -70,6 +79,7 @@ type RunWorkerDeps struct {
 	Checkpoints           func(store.TargetAttemptID) (AttemptCheckpoint, error)
 	ProviderState         ProviderState
 	CredentialRevision    func(context.Context) (string, error)
+	SecretRedactor        SecretRedactor
 	Clock                 interface{ Now() time.Time }
 	Heartbeat             func(context.Context)
 	Repository            TargetRepository
@@ -85,8 +95,8 @@ type RunWorkerActivities struct{ deps RunWorkerDeps }
 
 // NewRunWorkerActivities validates the target agent activity set once.
 func NewRunWorkerActivities(deps RunWorkerDeps) (*RunWorkerActivities, error) {
-	if deps.Stages == nil || deps.Prompts == nil || deps.Checkpoints == nil || deps.ProviderState == nil || deps.CredentialRevision == nil || deps.Clock == nil || deps.Heartbeat == nil || deps.Repository == nil || deps.GitHub == nil || deps.RepositoryCheckpoints == nil {
-		return nil, fmt.Errorf("run worker activities require stages, prompts, checkpoints, provider state, credential revision, clock, heartbeat, repository, GitHub, and repository checkpoints")
+	if deps.Stages == nil || deps.Prompts == nil || deps.Checkpoints == nil || deps.ProviderState == nil || deps.CredentialRevision == nil || deps.SecretRedactor == nil || deps.Clock == nil || deps.Heartbeat == nil || deps.Repository == nil || deps.GitHub == nil || deps.RepositoryCheckpoints == nil {
+		return nil, fmt.Errorf("run worker activities require stages, prompts, checkpoints, provider state, credential revision, secret redactor, clock, heartbeat, repository, GitHub, and repository checkpoints")
 	}
 	if err := deps.Identity.Validate(); err != nil {
 		return nil, fmt.Errorf("run worker activities require a valid identity: %w", err)
@@ -150,6 +160,11 @@ func (a *RunWorkerActivities) RunTargetAgent(ctx context.Context, in TargetAgent
 	if found {
 		switch stored.State {
 		case work.AgentAttemptSucceeded:
+			result, redactErr := a.redactTargetResult(ctx, in.Stage, stored.Result)
+			if redactErr != nil {
+				return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("redacting durable target result for %s", in.AttemptID), redactErr)
+			}
+			stored.Result = result
 			return a.targetAgentOutput(in.Stage, stored)
 		case work.AgentAttemptFailed:
 			return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("reconciling failed %s", in.AttemptID), ErrUnresumableIncompleteAttempt)
@@ -191,10 +206,19 @@ func (a *RunWorkerActivities) RunTargetAgent(ctx context.Context, in TargetAgent
 	var transcript bytes.Buffer
 	checkpointedThread := resumeThread != ""
 	var checkpointErr error
+	var redactionErr error
 	events := func(raw []byte) {
-		transcript.Write(raw)
-		transcript.WriteByte('\n')
 		a.deps.Heartbeat(ctx)
+		if redactionErr != nil {
+			return
+		}
+		redacted, err := a.deps.SecretRedactor.Redact(ctx, raw)
+		if err != nil {
+			redactionErr = fmt.Errorf("reading projected secret material before checkpointing target events")
+			return
+		}
+		transcript.Write(redacted)
+		transcript.WriteByte('\n')
 		if checkpointedThread || checkpointErr != nil {
 			return
 		}
@@ -206,26 +230,98 @@ func (a *RunWorkerActivities) RunTargetAgent(ctx context.Context, in TargetAgent
 		checkpointErr = cp.Checkpoint(ctx, checkpointprotocol.Attempt{ProviderThreadID: threadID, State: work.AgentAttemptRunning, UsageState: work.UsageUnknown, Usage: checkpointprotocol.Usage{}, Transcript: checkpointTranscript(transcript.Bytes())})
 	}
 	result, runErr := a.deps.Stages.RunTargetStage(ctx, work.StageRun{Key: key, Sandbox: work.SandboxID("self"), Model: in.Model, Prompt: prompt, Schema: schema}, resumeThread, events)
+	if redactionErr != nil {
+		return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("redacting target transcript for %s", in.AttemptID), redactionErr)
+	}
 	if checkpointErr != nil {
 		return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("checkpointing provider identity for %s", in.AttemptID), checkpointErr)
 	}
 	if runErr != nil {
-		return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("running target agent %s", in.AttemptID), runErr)
+		return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("running target agent %s", in.AttemptID), a.redactError(ctx, runErr))
 	}
 	usageState := work.UsageUnknown
 	if result.UsageMeasured {
 		usageState = work.UsageMeasured
 	}
+	redactedResult, err := a.redactTargetResult(ctx, in.Stage, result.Output)
+	if err != nil {
+		return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("redacting target result for %s", in.AttemptID), err)
+	}
 	endedAt := a.deps.Clock.Now().UTC()
 	terminal := checkpointprotocol.Attempt{
 		ProviderThreadID: result.ThreadID, State: work.AgentAttemptSucceeded, UsageState: usageState,
 		Usage:   checkpointprotocol.Usage{InputTokens: result.Usage.InputTokens, CachedInputTokens: result.Usage.CachedInputTokens, OutputTokens: result.Usage.OutputTokens, ReasoningTokens: result.Usage.ReasoningTokens},
-		EndedAt: &endedAt, Result: result.Output, Transcript: checkpointTranscript(transcript.Bytes()),
+		EndedAt: &endedAt, Result: redactedResult, Transcript: checkpointTranscript(transcript.Bytes()),
 	}
 	if err := cp.Checkpoint(ctx, terminal); err != nil {
 		return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("checkpointing terminal evidence for %s", in.AttemptID), err)
 	}
 	return a.targetAgentOutput(in.Stage, terminal)
+}
+
+func (a *RunWorkerActivities) redactTargetResult(ctx context.Context, stage work.AgentStage, raw []byte) (json.RawMessage, error) {
+	redacted, err := a.deps.SecretRedactor.Redact(ctx, raw)
+	if err != nil {
+		return nil, fmt.Errorf("reading projected secret material before checkpointing target result")
+	}
+	if _, err := a.deps.Prompts.Decode(work.Stage(stage), redacted); err != nil {
+		return nil, fmt.Errorf("redacted target result is not a valid %s output: %w", stage, work.ErrPermanent)
+	}
+	return json.RawMessage(redacted), nil
+}
+
+type redactedError struct {
+	message        string
+	classification error
+}
+
+func (e redactedError) Error() string { return e.message }
+
+// Unwrap retains only a safe retry/cancellation classification. In particular,
+// it must never expose the raw provider error: Temporal serializes causes into
+// workflow history and activity failure payloads.
+func (e redactedError) Unwrap() error { return e.classification }
+
+func (a *RunWorkerActivities) redactError(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	redacted, redactErr := a.deps.SecretRedactor.Redact(ctx, []byte(err.Error()))
+	if redactErr != nil {
+		return fmt.Errorf("reading projected secret material before reporting target agent failure")
+	}
+	return redactedError{message: string(redacted), classification: safeErrorClassification(err)}
+}
+
+func safeErrorClassification(err error) error {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return context.Canceled
+	case errors.Is(err, context.DeadlineExceeded):
+		return context.DeadlineExceeded
+	case errors.Is(err, codex.ErrAuth):
+		return codex.ErrAuth
+	case errors.Is(err, codex.ErrRateLimited):
+		return codex.ErrRateLimited
+	case errors.Is(err, codexauth.ErrUnseeded):
+		return codexauth.ErrUnseeded
+	case errors.Is(err, github.ErrAuth):
+		return github.ErrAuth
+	case errors.Is(err, github.ErrRateLimit):
+		return github.ErrRateLimit
+	case errors.Is(err, github.ErrNotFound):
+		return github.ErrNotFound
+	case errors.Is(err, github.ErrInvalid):
+		return github.ErrInvalid
+	case errors.Is(err, github.ErrRuleset):
+		return github.ErrRuleset
+	case errors.Is(err, ErrUnresumableIncompleteAttempt):
+		return ErrUnresumableIncompleteAttempt
+	case errors.Is(err, work.ErrPermanent):
+		return work.ErrPermanent
+	default:
+		return nil
+	}
 }
 
 func (a *RunWorkerActivities) observeCredentialRevision(ctx context.Context, expected CredentialRevisionExpectation) error {

@@ -293,12 +293,12 @@ components:
           description: The latest head accepted by GitHub, when available.
           type: string
         stepOrdinal:
-          description: The completed repository-affine Step ordinal.
+          description: The repository-affine Step ordinal that owns this evidence.
           format: int64
           minimum: 1
           type: integer
         stepResult:
-          description: The kind-specific durable Step result.
+          description: The kind-specific durable Step or external-effect result.
       required:
         - stepOrdinal
         - branch
@@ -323,7 +323,7 @@ components:
           minLength: 1
           type: string
         completedAt:
-          description: RFC3339 UTC time at which the Step completed.
+          description: RFC3339 UTC time at which the represented operation completed.
           format: date-time
           type: string
         observedBase:
@@ -341,12 +341,12 @@ components:
           description: The latest head accepted by GitHub, when available.
           type: string
         stepOrdinal:
-          description: The completed repository-affine Step ordinal.
+          description: The repository-affine Step ordinal that owns this evidence.
           format: int64
           minimum: 1
           type: integer
         stepResult:
-          description: The kind-specific durable Step result.
+          description: The kind-specific durable Step or external-effect result.
       required:
         - completedAt
         - stepOrdinal
@@ -831,6 +831,55 @@ paths:
       security:
         - repositoryCheckpointCapability: []
       summary: Read a repository checkpoint
+    patch:
+      description: Stores one Run Worker generation's monotonic external-effect result without completing its Store Step; terminal finalization owns that transition.
+      operationId: patch-v1-run-worker-runs-by-run-id-generations-by-generation-repository-checkpoint
+      parameters:
+        - description: The owning Run identity.
+          in: path
+          name: runID
+          required: true
+          schema:
+            description: The owning Run identity.
+            format: uuid
+            type: string
+        - description: The active Run Worker generation.
+          in: path
+          name: generation
+          required: true
+          schema:
+            description: The active Run Worker generation.
+            format: int64
+            minimum: 1
+            type: integer
+        - description: The capability minted for this Run Worker generation.
+          in: header
+          name: X-Software-Factory-Repository-Capability
+          schema:
+            description: The capability minted for this Run Worker generation.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RepositoryWrite"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Repository"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      security:
+        - repositoryCheckpointCapability: []
+      summary: Checkpoint a deferred repository effect
     put:
       description: Atomically stores one Run Worker generation's monotonic Git/PR position and completed Step result.
       operationId: put-v1-run-worker-runs-by-run-id-generations-by-generation-repository-checkpoint

@@ -92,6 +92,7 @@ func targetRepositoryActivities(repository *targetRepositoryProbe, github *targe
 	return &RunWorkerActivities{deps: RunWorkerDeps{
 		Repository: repository, GitHub: github, Identity: targetTestIdentity,
 		RepositoryCheckpoints: func(work.RunWorkerIdentity) (RepositoryCheckpoint, error) { return cp, nil },
+		SecretRedactor:        passthroughSecretRedactor{},
 		Clock:                 fixedClock{now: time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)},
 	}}
 }

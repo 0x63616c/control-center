@@ -153,6 +153,12 @@ type productionEvidence struct {
 	Operations []string
 }
 
+type productionSecretRedactor struct{}
+
+func (productionSecretRedactor) Redact(_ context.Context, raw []byte) ([]byte, error) {
+	return bytes.Clone(raw), nil
+}
+
 type privateWorkerProcess struct {
 	cmd     *exec.Cmd
 	output  bytes.Buffer
@@ -732,6 +738,7 @@ func productionRunWorkerActivities(root string) (*activities.RunWorkerActivities
 		Checkpoints:           func(store.TargetAttemptID) (activities.AttemptCheckpoint, error) { return attempt, nil },
 		ProviderState:         productionProviderState{},
 		CredentialRevision:    productionCredentialRevision,
+		SecretRedactor:        productionSecretRedactor{},
 		Clock:                 productionClock{},
 		Heartbeat:             func(context.Context) {},
 		Repository:            productionRepository{recorder: recorder},
@@ -857,6 +864,11 @@ func (c *productionRepositoryCheckpoint) Load(context.Context) (store.GitCheckpo
 }
 
 func (c *productionRepositoryCheckpoint) Checkpoint(_ context.Context, value store.GitCheckpointInput) (store.GitCheckpoint, error) {
+	c.value, c.found = value.GitCheckpoint, true
+	return c.value, nil
+}
+
+func (c *productionRepositoryCheckpoint) CheckpointEffect(_ context.Context, value store.GitCheckpointInput) (store.GitCheckpoint, error) {
 	c.value, c.found = value.GitCheckpoint, true
 	return c.value, nil
 }

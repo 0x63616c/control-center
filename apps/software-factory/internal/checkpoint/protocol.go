@@ -56,23 +56,24 @@ type Attempt struct {
 	Transcript       *Transcript            `json:"transcript,omitempty" doc:"Durable partial or terminal transcript material."`
 }
 
-// Repository is the durable Git/PR position for the latest completed
-// repository-affine Step in a Run.
+// Repository is the durable Git/PR position for the latest repository-affine
+// Step or deferred external effect in a Run.
 type Repository struct {
-	StepOrdinal       int             `json:"stepOrdinal" minimum:"1" doc:"The completed repository-affine Step ordinal."`
+	StepOrdinal       int             `json:"stepOrdinal" minimum:"1" doc:"The repository-affine Step ordinal that owns this evidence."`
 	Branch            string          `json:"branch" minLength:"1" doc:"The Run-owned branch."`
 	PushedHead        string          `json:"pushedHead" doc:"The latest head accepted by GitHub, when available."`
 	ObservedBase      string          `json:"observedBase" doc:"The target branch head observed by this Step, when available."`
 	PullRequestNumber int             `json:"pullRequestNumber" minimum:"0" doc:"The pull request number, or zero before one exists."`
 	PullRequestNodeID string          `json:"pullRequestNodeId" doc:"The GraphQL pull request node identity, when one exists."`
-	StepResult        json.RawMessage `json:"stepResult" doc:"The kind-specific durable Step result."`
+	StepResult        json.RawMessage `json:"stepResult" doc:"The kind-specific durable Step or external-effect result."`
 }
 
-// RepositoryWrite supplies the terminal time atomically recorded with a
-// repository checkpoint.
+// RepositoryWrite supplies the effect time atomically recorded with a
+// repository checkpoint. PUT also uses it as the Step completion time; PATCH
+// leaves that Step running for terminal finalization.
 type RepositoryWrite struct {
 	Repository
-	CompletedAt time.Time `json:"completedAt" doc:"RFC3339 UTC time at which the Step completed."`
+	CompletedAt time.Time `json:"completedAt" doc:"RFC3339 UTC time at which the represented operation completed."`
 }
 
 // Usage is the provider's four token counters.
