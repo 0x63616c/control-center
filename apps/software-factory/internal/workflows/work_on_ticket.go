@@ -39,6 +39,26 @@ type WorkOnTicketInput struct {
 
 type semanticDeadlineContextKey struct{}
 
+type targetStepTrackerContextKey struct{}
+
+type targetStepTracker struct {
+	ordinal int
+	kind    work.StepKind
+	active  bool
+}
+
+type terminalRunError struct {
+	err         error
+	outcome     work.RunOutcome
+	failureKind work.RunFailureKind
+	stepOrdinal int
+	stepResult  json.RawMessage
+}
+
+func (e *terminalRunError) Error() string { return e.err.Error() }
+
+func (e *terminalRunError) Unwrap() error { return e.err }
+
 // WorkOnTicket claims one Ticket before creating generation one, creates its
 // private Run Worker Session, and clones the repository as that Session's
 // first repository-affine activity.
@@ -47,6 +67,9 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 	var session *targetRunSession
 	claimedRun := false
 	claimStarted := false
+	mergeConfirmed := false
+	terminalFinalized := false
+	var trackedStep *targetStepTracker
 	defer func() {
 		if !claimedRun {
 			if claimStarted && temporal.IsCanceledError(runErr) {
@@ -61,13 +84,50 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 			}
 			return
 		}
+		// Once GitHub has confirmed either this Run's merge or its canceled
+		// predecessor's merge, a persistence failure must never rewrite that
+		// irreversible external fact as a failed or canceled Run.
+		if mergeConfirmed {
+			if runErr != nil && session != nil {
+				cleanupCtx, cancel := workflow.NewDisconnectedContext(ctx)
+				defer cancel()
+				session.close()
+				session.reportTerminalDelete(cleanupCtx, "confirmed merge reconciliation cleanup")
+			}
+			return
+		}
+		if terminalFinalized {
+			return
+		}
+		var terminal *terminalRunError
+		_ = errors.As(runErr, &terminal)
 		if outcome, failureKind, failed := terminalFailureKind(runErr); failed {
 			terminalCtx, cancel := workflow.NewDisconnectedContext(ctx)
 			defer cancel()
 			finalCtx := workflow.WithActivityOptions(terminalCtx, targetActivityOptions(in.Policy.Recording))
-			if err := workflow.ExecuteActivity(finalCtx, targetRecordingActs.FinalizeRunFailure, store.RunFailureInput{RunID: in.RunID, TicketID: in.TicketID, Outcome: outcome, FailureKind: failureKind, EndedAt: workflow.Now(terminalCtx)}).Get(finalCtx, nil); err != nil {
+			failureInput := store.RunFailureInput{RunID: in.RunID, TicketID: in.TicketID, Outcome: outcome, FailureKind: failureKind, EndedAt: workflow.Now(terminalCtx)}
+			if terminal != nil {
+				failureInput.StepOrdinal = terminal.stepOrdinal
+				failureInput.StepResult = terminal.stepResult
+			} else if trackedStep != nil && trackedStep.active {
+				result, err := json.Marshal(struct {
+					Kind        string              `json:"kind"`
+					StepKind    work.StepKind       `json:"step_kind"`
+					FailureKind work.RunFailureKind `json:"failure_kind"`
+				}{Kind: "terminal_failure", StepKind: trackedStep.kind, FailureKind: failureKind})
+				if err != nil {
+					runErr = fmt.Errorf("encoding terminal result for step %d: %w", trackedStep.ordinal, err)
+					return
+				}
+				failureInput.StepOrdinal = trackedStep.ordinal
+				failureInput.StepResult = result
+			}
+			if err := workflow.ExecuteActivity(finalCtx, targetRecordingActs.FinalizeRunFailure, failureInput).Get(finalCtx, nil); err != nil {
 				runErr = fmt.Errorf("recording failed target run: %w", err)
 				return
+			}
+			if terminal != nil {
+				runErr = terminal.err
 			}
 			if session != nil {
 				session.close()
@@ -107,6 +167,8 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 	}
 	claimedRun = true
 	ctx = workflow.WithValue(ctx, semanticDeadlineContextKey{}, workflow.Now(ctx).Add(in.Policy.SemanticDeadline))
+	trackedStep = &targetStepTracker{}
+	ctx = workflow.WithValue(ctx, targetStepTrackerContextKey{}, trackedStep)
 	var recovery activities.CanceledRunCheckpoint
 	if err := workflow.ExecuteActivity(claimCtx, targetRecoveryActs.LatestCanceledRunCheckpoint, claimed.Ticket.ID, in.RunID).Get(claimCtx, &recovery); err != nil {
 		return fmt.Errorf("reading canceled run recovery checkpoint: %w", err)
@@ -133,10 +195,12 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 	}); err != nil {
 		return fmt.Errorf("cloning the target repository: %w", err)
 	}
+	completeTrackedStep(ctx, 3)
 	if clone.PredecessorMerge != nil {
 		if !recovery.Found {
 			return fmt.Errorf("reconciling canceled predecessor merge without recovery checkpoint: %w", work.ErrPermanent)
 		}
+		mergeConfirmed = true
 		terminalCtx, cancel := workflow.NewDisconnectedContext(ctx)
 		defer cancel()
 		finalCtx := workflow.WithActivityOptions(terminalCtx, targetActivityOptions(in.Policy.Recording))
@@ -198,6 +262,7 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 			}); err != nil {
 				return fmt.Errorf("synchronizing target pull request: %w", err)
 			}
+			completeTrackedStep(ctx, syncStep.StepOrdinal)
 		}
 		if strings.TrimSpace(pullRequest.HeadSHA) == "" || pullRequest.Number <= 0 || strings.TrimSpace(pullRequest.NodeID) == "" {
 			return temporal.NewNonRetryableApplicationError("target pull request does not identify an authoritative candidate head", activities.ErrTypeInvalid, nil)
@@ -218,6 +283,7 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 			}
 			return fmt.Errorf("awaiting target CI for %s: %w", candidate.PushedHead, err)
 		}
+		completeTrackedStep(ctx, candidate.StepOrdinal)
 		if ci.CommitSHA != candidate.PushedHead {
 			return temporal.NewNonRetryableApplicationError(fmt.Sprintf("target CI returned another candidate %q", ci.CommitSHA), activities.ErrTypeInvalid, nil)
 		}
@@ -281,6 +347,7 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 			}); err != nil {
 				return fmt.Errorf("marking target pull request ready: %w", err)
 			}
+			completeTrackedStep(ctx, readyStep.StepOrdinal)
 			ready = true
 		}
 		mergeStep = activities.RepositoryStep{StepOrdinal: ordinal, Branch: branch, PushedHead: candidate.PushedHead, PullRequestNumber: pullRequest.Number, PullRequestNodeID: pullRequest.NodeID}
@@ -290,21 +357,29 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 		ordinal++
 		mergeOptions, readyToMerge := mergeActivityOptions(ctx, in.Policy.Merge)
 		if !readyToMerge {
-			return finalizeMergeSemanticDeadline(ctx, session, in, mergeStep.StepOrdinal)
+			var finalized bool
+			finalized, runErr = finalizeMergeSemanticDeadline(ctx, session, in, mergeStep.StepOrdinal)
+			terminalFinalized = finalized
+			return runErr
 		}
 		if err := session.execute(ctx, func(sessionCtx workflow.Context) error {
 			mergeCtx := workflow.WithActivityOptions(sessionCtx, mergeOptions)
 			return workflow.ExecuteActivity(mergeCtx, targetRunWorkerActs.TargetMergePullRequest, activities.TargetMergePullRequestInput{Step: mergeStep, ExpectedHeadSHA: candidate.PushedHead}).Get(mergeCtx, &merge)
 		}); err != nil {
 			if isScheduleToCloseTimeout(err) {
-				return finalizeMergeRetryDeadline(ctx, session, in, mergeStep.StepOrdinal, err)
+				var finalized bool
+				finalized, runErr = finalizeMergeRetryDeadline(ctx, session, in, mergeStep.StepOrdinal, err)
+				terminalFinalized = finalized
+				return runErr
 			}
 			return fmt.Errorf("merging reviewed target candidate %s: %w", candidate.PushedHead, err)
 		}
 		if merge.Outcome == work.PullRequestMergeConfirmed && strings.TrimSpace(merge.MergeSHA) != "" {
+			mergeConfirmed = true
 			break
 		}
 		if merge.Outcome == work.PullRequestMergeHeadChanged {
+			completeTrackedStep(ctx, mergeStep.StepOrdinal)
 			if strings.TrimSpace(merge.PullRequest.HeadSHA) == "" {
 				return temporal.NewNonRetryableApplicationError("target merge reported a changed head without its SHA", activities.ErrTypeInvalid, nil)
 			}
@@ -321,6 +396,7 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 		if merge.Outcome != work.PullRequestMergeTextConflict && merge.Outcome != work.PullRequestMergeBaseRefreshRequired {
 			return temporal.NewNonRetryableApplicationError(fmt.Sprintf("target merge did not confirm candidate %q", candidate.PushedHead), activities.ErrTypeInvalid, nil)
 		}
+		completeTrackedStep(ctx, mergeStep.StepOrdinal)
 		if agentAttempts >= in.Policy.MaxAgentAttempts {
 			return exhaustedAgentAttempts(in.Policy.MaxAgentAttempts)
 		}
@@ -374,7 +450,16 @@ func startTargetStep(ctx workflow.Context, in WorkOnTicketInput, ordinal int, ki
 	}).Get(recordingCtx, nil); err != nil {
 		return fmt.Errorf("starting %s step %d: %w", kind, ordinal, err)
 	}
+	if tracker, ok := ctx.Value(targetStepTrackerContextKey{}).(*targetStepTracker); ok {
+		tracker.ordinal, tracker.kind, tracker.active = ordinal, kind, true
+	}
 	return nil
+}
+
+func completeTrackedStep(ctx workflow.Context, ordinal int) {
+	if tracker, ok := ctx.Value(targetStepTrackerContextKey{}).(*targetStepTracker); ok && tracker.ordinal == ordinal {
+		tracker.active = false
+	}
 }
 
 func completeInfrastructureStep(ctx workflow.Context, in WorkOnTicketInput, ordinal int, kind string, generation int) error {
@@ -389,6 +474,7 @@ func completeInfrastructureStep(ctx workflow.Context, in WorkOnTicketInput, ordi
 	if err := workflow.ExecuteActivity(recordingCtx, targetRecordingActs.CompleteStep, in.RunID, ordinal, workflow.Now(ctx), json.RawMessage(result)).Get(recordingCtx, nil); err != nil {
 		return fmt.Errorf("completing infrastructure step %d: %w", ordinal, err)
 	}
+	completeTrackedStep(ctx, ordinal)
 	return nil
 }
 
@@ -506,6 +592,7 @@ func runTargetAgentStep(ctx workflow.Context, session *targetRunSession, in Work
 		if err := workflow.ExecuteActivity(recordingCtx, targetRecordingActs.CompleteStep, in.RunID, ordinal, workflow.Now(ctx), out.Output).Get(recordingCtx, nil); err != nil {
 			return activities.TargetAgentOutput{}, attemptNo, fmt.Errorf("completing %s step %d: %w", stage, ordinal, err)
 		}
+		completeTrackedStep(ctx, ordinal)
 		return out, attemptNo, nil
 	}
 	return activities.TargetAgentOutput{}, remainingAttempts, exhaustedAgentAttempts(in.Policy.MaxAgentAttempts)
@@ -574,10 +661,15 @@ func (s *targetRunSession) provisionAndCreate(ctx workflow.Context, generation i
 		ExecutionTimeout: executionTimeout, CreationTimeout: s.in.Policy.Provisioning.ScheduleToCloseTimeout, HeartbeatTimeout: s.in.Policy.Agent.HeartbeatTimeout,
 	})
 	if err != nil {
+		sessionErr := temporal.NewNonRetryableApplicationError(
+			fmt.Sprintf("creating Run Worker Session for generation %d", generation),
+			activities.ErrTypeRunWorkerSessionLost,
+			err,
+		)
 		if deleteErr := s.deleteIdentity(ctx, identity); deleteErr != nil {
-			return errors.Join(fmt.Errorf("creating Run Worker Session for generation %d: %w", generation, err), fmt.Errorf("deleting provisioned Run Worker generation %d: %w", generation, deleteErr))
+			return errors.Join(sessionErr, fmt.Errorf("deleting provisioned Run Worker generation %d: %w", generation, deleteErr))
 		}
-		return fmt.Errorf("creating Run Worker Session for generation %d: %w", generation, err)
+		return sessionErr
 	}
 	if recordPreparationSteps {
 		if err := completeInfrastructureStep(ctx, s.in, 2, "acquired", generation); err != nil {
@@ -626,22 +718,28 @@ func (s *targetRunSession) execute(ctx workflow.Context, run func(workflow.Conte
 }
 
 func (s *targetRunSession) replace(ctx workflow.Context) error {
-	s.close()
-	if err := s.delete(ctx); err != nil {
-		return fmt.Errorf("deleting lost Run Worker generation %d before replacement: %w", s.identity.Generation, err)
+	for {
+		s.close()
+		if err := s.delete(ctx); err != nil {
+			return fmt.Errorf("deleting lost Run Worker generation %d before replacement: %w", s.identity.Generation, err)
+		}
+		nextGeneration := s.identity.Generation + 1
+		if err := s.provisionAndCreate(ctx, nextGeneration, false); err != nil {
+			return fmt.Errorf("provisioning replacement Run Worker generation %d: %w", nextGeneration, err)
+		}
+		if !s.checkoutReady {
+			return nil
+		}
+		err := workflow.ExecuteActivity(s.sessionCtx, targetRunWorkerActs.RestoreTargetRepository, activities.RestoreTargetRepositoryInput{
+			CloneURL: s.in.CloneURL, Branch: s.branch,
+		}).Get(s.sessionCtx, nil)
+		if err == nil {
+			return nil
+		}
+		if !isRunWorkerSessionLoss(err) {
+			return fmt.Errorf("restoring replacement repository: %w", err)
+		}
 	}
-	if err := s.provisionAndCreate(ctx, s.identity.Generation+1, false); err != nil {
-		return fmt.Errorf("provisioning replacement Run Worker generation %d: %w", s.identity.Generation+1, err)
-	}
-	if !s.checkoutReady {
-		return nil
-	}
-	if err := workflow.ExecuteActivity(s.sessionCtx, targetRunWorkerActs.RestoreTargetRepository, activities.RestoreTargetRepositoryInput{
-		CloneURL: s.in.CloneURL, Branch: s.branch,
-	}).Get(s.sessionCtx, nil); err != nil {
-		return fmt.Errorf("restoring replacement repository: %w", err)
-	}
-	return nil
 }
 
 func (s *targetRunSession) close() {
@@ -737,16 +835,23 @@ func mergeActivityOptions(ctx workflow.Context, policy work.ActivityPolicy) (wor
 	return targetActivityOptions(policy), true
 }
 
-func finalizeMergeRetryDeadline(ctx workflow.Context, session *targetRunSession, in WorkOnTicketInput, stepOrdinal int, mergeErr error) error {
+func finalizeMergeRetryDeadline(ctx workflow.Context, session *targetRunSession, in WorkOnTicketInput, stepOrdinal int, mergeErr error) (bool, error) {
 	failureKind, stepResult, errorType := mergeRetryDeadlineFailure(mergeErr)
 	return finalizeMergeFailure(ctx, session, in, stepOrdinal, failureKind, stepResult, errorType, "target merge remained unavailable through its retry window")
 }
 
-func finalizeMergeSemanticDeadline(ctx workflow.Context, session *targetRunSession, in WorkOnTicketInput, stepOrdinal int) error {
+func finalizeMergeSemanticDeadline(ctx workflow.Context, session *targetRunSession, in WorkOnTicketInput, stepOrdinal int) (bool, error) {
 	return finalizeMergeFailure(ctx, session, in, stepOrdinal, work.RunFailureSemanticDeadline, json.RawMessage(`{"kind":"semantic_deadline"}`), activities.ErrTypeSemanticDeadline, "target run reached its semantic deadline before scheduling merge")
 }
 
-func finalizeMergeFailure(ctx workflow.Context, session *targetRunSession, in WorkOnTicketInput, stepOrdinal int, failureKind work.RunFailureKind, stepResult json.RawMessage, errorType, message string) error {
+func finalizeMergeFailure(ctx workflow.Context, session *targetRunSession, in WorkOnTicketInput, stepOrdinal int, failureKind work.RunFailureKind, stepResult json.RawMessage, errorType, message string) (bool, error) {
+	terminalErr := &terminalRunError{
+		err:         temporal.NewNonRetryableApplicationError(message, errorType, nil),
+		outcome:     work.RunOutcomeFailed,
+		failureKind: failureKind,
+		stepOrdinal: stepOrdinal,
+		stepResult:  stepResult,
+	}
 	terminalCtx, cancel := workflow.NewDisconnectedContext(ctx)
 	defer cancel()
 	finalCtx := workflow.WithActivityOptions(terminalCtx, targetActivityOptions(in.Policy.Recording))
@@ -759,11 +864,12 @@ func finalizeMergeFailure(ctx workflow.Context, session *targetRunSession, in Wo
 		StepResult:  stepResult,
 		EndedAt:     workflow.Now(terminalCtx),
 	}).Get(finalCtx, nil); err != nil {
-		return fmt.Errorf("recording exhausted target merge retry window: %w", err)
+		workflow.GetLogger(ctx).Error("initial target merge failure recording exhausted; deferred finalization will retry", "run_id", in.RunID, "failure_kind", failureKind, "error", err)
+		return false, terminalErr
 	}
 	session.close()
 	session.reportTerminalDelete(terminalCtx, "merge failure cleanup")
-	return temporal.NewNonRetryableApplicationError(message, errorType, nil)
+	return true, terminalErr.err
 }
 
 func mergeRetryDeadlineFailure(err error) (work.RunFailureKind, json.RawMessage, string) {
@@ -775,9 +881,33 @@ func mergeRetryDeadlineFailure(err error) (work.RunFailureKind, json.RawMessage,
 }
 
 func terminalFailureKind(err error) (work.RunOutcome, work.RunFailureKind, bool) {
+	if err == nil || temporal.IsCanceledError(err) {
+		return "", work.RunFailureNone, false
+	}
+	if isRunWorkerSessionLoss(err) {
+		return work.RunOutcomeFailed, work.RunFailureRunWorkerUnavailable, true
+	}
+	var terminal *terminalRunError
+	if errors.As(err, &terminal) {
+		return terminal.outcome, terminal.failureKind, true
+	}
 	var application *temporal.ApplicationError
 	if errors.As(err, &application) {
 		switch application.Type() {
+		case activities.ErrTypePredecessorMergeFenced:
+			return "", work.RunFailureNone, false
+		case activities.ErrTypeInvalid:
+			return work.RunOutcomeFailed, work.RunFailureInvalidInput, true
+		case activities.ErrTypeUnresumableIncompleteAttempt:
+			return work.RunOutcomeFailed, work.RunFailureAgentUnrecoverable, true
+		case activities.ErrTypeCIUnobserved:
+			return work.RunOutcomeFailed, work.RunFailureCIUnobserved, true
+		case activities.ErrTypeAuth:
+			return work.RunOutcomeFailed, work.RunFailureGitHubAuth, true
+		case activities.ErrTypeRuleset:
+			return work.RunOutcomeFailed, work.RunFailureGitHubRuleset, true
+		case activities.ErrTypeHardDeadline, activities.ErrTypeRunWorkerSessionLost:
+			return work.RunOutcomeFailed, work.RunFailureRunWorkerUnavailable, true
 		case activities.ErrTypeSemanticDeadline:
 			return work.RunOutcomeFailed, work.RunFailureSemanticDeadline, true
 		case activities.ErrTypeAgentAttemptBudget:
@@ -786,7 +916,7 @@ func terminalFailureKind(err error) (work.RunOutcome, work.RunFailureKind, bool)
 			return work.RunOutcomeExhausted, work.RunFailureReviewBudget, true
 		}
 	}
-	return "", work.RunFailureNone, false
+	return work.RunOutcomeFailed, work.RunFailureInfrastructure, true
 }
 
 func sameGenerationContinuation(session *targetRunSession, identity work.RunWorkerIdentity, threadID string) *activities.ProviderThreadContinuation {
