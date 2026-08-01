@@ -51,6 +51,9 @@ type ArgumentsRef ArtifactRef
 // OutputRef identifies immutable oversized tool output.
 type OutputRef ArtifactRef
 
+// TranscriptRef identifies one durable provider-neutral agent transcript.
+type TranscriptRef ArtifactRef
+
 // PendingToolCall is bounded routing metadata for one provider function call.
 type PendingToolCall struct {
 	CallID       string       `json:"call_id"`
