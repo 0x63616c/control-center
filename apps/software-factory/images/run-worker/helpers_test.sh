@@ -22,6 +22,14 @@ second="$(printf 'protocol=https\nhost=github.com\n\n' | \
 [[ "$second" == *'password=second-token'* ]]
 [[ "$second" != *'first-token'* ]]
 
+refused="$(printf 'protocol=https\nhost=attacker.example\n\n' | \
+  RUN_WORKER_GITHUB_CREDENTIAL_DIR="$cred_dir" ./bin/git-credential-projected get)"
+[[ -z "$refused" ]]
+
+refused="$(printf 'protocol=http\nhost=github.com\n\n' | \
+  RUN_WORKER_GITHUB_CREDENTIAL_DIR="$cred_dir" ./bin/git-credential-projected get)"
+[[ -z "$refused" ]]
+
 cat >"$root/gh-real" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
