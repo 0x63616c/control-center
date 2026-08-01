@@ -1069,6 +1069,55 @@ func TestWorkOnTicketConfirmedMergeWinsLateCancellation(t *testing.T) {
 	}
 }
 
+// The semantic deadline forbids the next primary operation while preserving
+// the hard-deadline reserve for durable failed finalization and cleanup.
+func TestWorkOnTicketSemanticDeadlineFailsBeforeStartingAnotherStep(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "semantic deadline", "reserve finalization time", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	policy := work.DefaultTargetRunPolicy()
+	policy.SemanticDeadline, policy.HardDeadline = time.Minute, 2*time.Minute
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000022", Policy: policy, CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.awaitCI = func(input activities.TargetAwaitCIInput) (activities.AwaitCIOutput, error) {
+		if len(h.ciInputs) == 1 {
+			return activities.AwaitCIOutput{}, temporal.NewApplicationErrorWithOptions("checks pending", activities.ErrTypeCINotConcluded, temporal.ApplicationErrorOptions{NextRetryDelay: 2 * time.Minute})
+		}
+		if err := h.checkpointRepositoryStep(input.Step); err != nil {
+			return activities.AwaitCIOutput{}, err
+		}
+		return activities.AwaitCIOutput{CommitSHA: input.CI.CommitSHA, Green: true}, nil
+	}
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err == nil {
+		t.Fatal("WorkOnTicket succeeded after its semantic deadline")
+	}
+	got, err := s.Ticket(ctx, ticket.ID)
+	if err != nil {
+		t.Fatalf("Ticket: %v", err)
+	}
+	if got.State != store.TicketFailed || got.ActiveRunID != "" {
+		t.Fatalf("deadline ticket = %+v, want failed with no owner", got)
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	if detail.Run.TargetOutcome != work.RunOutcomeFailed || detail.Run.TargetFailure != work.RunFailureSemanticDeadline {
+		t.Fatalf("deadline run = %+v, want semantic-deadline failure", detail.Run)
+	}
+	for _, step := range detail.Steps {
+		if step.Step.Kind == work.StepReview {
+			t.Fatalf("steps = %+v, want no post-deadline review", detail.Steps)
+		}
+	}
+}
+
 func TestWorkOnTicketStopsBeforeSixthReviewOrTwentySixthAttempt(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

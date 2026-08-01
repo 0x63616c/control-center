@@ -139,6 +139,34 @@ func TestConfirmedMergeFinalizationIsIrreversible(t *testing.T) {
 	}
 }
 
+func TestFailedRunFinalizationIsIdempotentAndCannotReverseConfirmedMerge(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	ticket, err := s.CreateTicket(ctx, "deadline", "", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	startedAt := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	runID := newTestRunID(t)
+	if _, err := s.ClaimAndStartRun(ctx, store.ClaimRunInput{TicketID: ticket.ID, RunID: runID, StartedAt: startedAt}); err != nil {
+		t.Fatalf("ClaimAndStartRun: %v", err)
+	}
+	in := store.RunFailureInput{RunID: runID, TicketID: ticket.ID, FailureKind: work.RunFailureSemanticDeadline, EndedAt: startedAt.Add(time.Minute)}
+	result, err := s.FinalizeRunFailure(ctx, in)
+	if err != nil {
+		t.Fatalf("FinalizeRunFailure: %v", err)
+	}
+	if result.Ticket.State != store.TicketFailed || result.Ticket.ActiveRunID != "" || result.Run.TargetOutcome != work.RunOutcomeFailed || result.Run.TargetFailure != work.RunFailureSemanticDeadline {
+		t.Fatalf("failed result = %+v, want failed ticket/run with semantic deadline", result)
+	}
+	if _, err := s.FinalizeRunFailure(ctx, in); err != nil {
+		t.Fatalf("FinalizeRunFailure retry: %v", err)
+	}
+	if _, err := s.FinalizeConfirmedMerge(ctx, store.ConfirmedMergeInput{RunID: runID, TicketID: ticket.ID, StepOrdinal: 1, ReviewedHead: "h1", MergeSHA: "m1", EndedAt: startedAt.Add(2 * time.Minute)}); err == nil {
+		t.Fatal("FinalizeConfirmedMerge succeeded after failed terminal outcome")
+	}
+}
+
 func TestCancellationOnlyReopensItsActiveOwner(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
