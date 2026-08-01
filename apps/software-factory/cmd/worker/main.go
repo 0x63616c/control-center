@@ -215,10 +215,6 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("building the target execution activity set: %w", err)
 	}
-	agentTranscriptActs, err := activities.NewAgentTranscriptRecordingActivities(factoryStore, blobStore)
-	if err != nil {
-		return fmt.Errorf("building the agent transcript activity set: %w", err)
-	}
 	targetEvidenceActs, err := activities.NewTargetAgentEvidenceActivities(factoryStore, blobStore)
 	if err != nil {
 		return fmt.Errorf("building the target agent evidence activity set: %w", err)
@@ -249,11 +245,11 @@ func run() error {
 	registerControl(controlWorker, ticketActs)
 	register(
 		mainWorker, runWorkerControl, targetRecordingActs, targetRecoveryActs, maintenanceActs, targetExecutionActs,
-		agentTranscriptActs, targetEvidenceActs, modelActs, promptActs, logger,
+		targetEvidenceActs, modelActs, promptActs, logger,
 	)
 
 	activationCtx := context.Background()
-	legacy := temporalapi.NewLegacyController(temporal, cfg.TemporalNamespace, clk)
+	readiness := temporalapi.NewActivationReadiness(temporal, cfg.TemporalNamespace)
 	request := defaultDispatcherPolicyPublicationRequest("pending")
 	request.RequestID = "startup-" + request.Fingerprint
 	publisher := targetDispatcherPolicyPublisher{
@@ -265,7 +261,7 @@ func run() error {
 	}
 	stopWorkers, err := activateTargetWorkers(
 		activationCtx, controlWorker, mainWorker,
-		func(ctx context.Context) error { return ensureActivationReady(ctx, legacy, factoryStore) },
+		func(ctx context.Context) error { return ensureActivationReady(ctx, readiness, factoryStore) },
 		publisher, request,
 		func(ctx context.Context) error { return ensureMaintainFactorySchedule(ctx, temporal) },
 	)
@@ -337,7 +333,6 @@ func register(
 	targetRecoveryActs *activities.TargetRecoveryActivities,
 	maintenanceActs *activities.TargetMaintenanceActivities,
 	targetExecutionActs *activities.TargetExecutionActivities,
-	agentTranscriptActs *activities.AgentTranscriptRecordingActivities,
 	targetEvidenceActs *activities.TargetAgentEvidenceActivities,
 	modelActs *agentactivities.Activities,
 	promptActs *agentactivities.PromptActivities,
@@ -356,11 +351,6 @@ func register(
 	w.RegisterActivityWithOptions(modelActs.ModelTurn, activity.RegisterOptions{Name: agent.ModelTurnActivityName})
 	w.RegisterActivityWithOptions(modelActs.RecordLifecycle, activity.RegisterOptions{Name: agent.LifecycleActivityName})
 	w.RegisterActivityWithOptions(promptActs.Finalize, activity.RegisterOptions{Name: agent.FinalizeActivityName})
-	w.RegisterActivityWithOptions(
-		agentTranscriptActs.PersistAgentTranscript,
-		activity.RegisterOptions{Name: agent.PersistTranscriptActivityName},
-	)
-
 	logger.Info("registrations",
 		slog.Int("workflows", 3),
 		slog.Int("max_in_flight", work.DefaultDispatcherPolicy().MaxInFlight),

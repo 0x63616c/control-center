@@ -35,7 +35,7 @@ const vault = {
   GITHUB_BOT_APP__PRIVATE_KEY_PEM: "mock-base64-pem",
   SOFTWARE_FACTORY_POSTGRES__PASSWORD: "mock-postgres-password",
   SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN: "mock-worker-bearer",
-  SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN: "mock-sandbox-bearer",
+  SOFTWARE_FACTORY_API__RUN_WORKER_BEARER_TOKEN: "mock-run-worker-bearer",
   SOFTWARE_FACTORY_CLOUDFLARE_ACCESS__TEAM_DOMAIN: "example.cloudflareaccess.com",
   GITHUB_BOT_APP__WEBHOOK_SECRET: "mock-webhook-secret",
 };
@@ -381,7 +381,7 @@ describe("factory API and console workloads (#554)", () => {
         "CLOUDFLARE_ACCESS_TEAM_DOMAIN",
         "CLOUDFLARE_ACCESS_AUD",
         "SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN",
-        "SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN",
+        "SOFTWARE_FACTORY_API__RUN_WORKER_BEARER_TOKEN",
         "GITHUB_BOT_APP__WEBHOOK_SECRET",
         "TEMPORAL_HOST_PORT",
         "TEMPORAL_NAMESPACE",

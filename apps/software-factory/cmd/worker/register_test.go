@@ -34,7 +34,6 @@ func TestRegisterExposesOnlyActivatedWorkflowsAndMainQueueActivities(t *testing.
 		"agent.ModelTurnActivityName",
 		"agent.LifecycleActivityName",
 		"agent.FinalizeActivityName",
-		"agent.PersistTranscriptActivityName",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("register()'s body does not contain %q; the worker registers nothing it does not name here", want)

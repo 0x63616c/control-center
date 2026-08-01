@@ -174,9 +174,6 @@ type TicketDetail struct {
 	Ticket
 }
 
-// SandboxID identifies one ticket's disposable pod.
-type SandboxID string
-
 // Model names the model and reasoning effort a stage runs at. Per-stage
 // overrides exist so the adversarial reviewer can be given different blind
 // spots from the planner without touching workflow code.
@@ -239,46 +236,6 @@ func (u Usage) Add(other Usage) Usage {
 	}
 }
 
-// SandboxSpec describes the pod one ticket's stages execute in. Its lifetime is
-// the ticket's: nothing in it survives the run, and nothing valuable is in it.
-//
-// It carries the ticket NUMBER rather than the Ticket, so no attacker-chosen
-// text can reach a Kubernetes object name, label or annotation.
-type SandboxSpec struct {
-	TicketNumber int
-
-	// RunID is Temporal's RunID for the run this sandbox belongs to, the same
-	// value and the same representation StageKey carries — one run id, not two
-	// spellings of one.
-	//
-	// It belongs in the pod's name. A pod named for the ticket alone is shared
-	// by every run of that ticket, so an AlreadyExists on Create could mean
-	// either "my own Create is being retried" or "an older run left this
-	// behind", and adopting the wrong one gives a run a pod built to a
-	// different spec with someone else's deadline already ticking. Named for
-	// the run too, AlreadyExists can only ever be the first case, and the spec
-	// and deadline are right by construction. It is safe in a name for the same
-	// reason the ticket number is: Temporal mints it, and it is a UUID, so no
-	// issue author can steer it.
-	RunID string
-
-	Image string
-
-	// CPURequest and MemoryLimit are Kubernetes quantity strings ("2", "8Gi").
-	CPURequest  string
-	MemoryLimit string
-
-	// DeadlineSeconds is the hard ceiling Kubernetes enforces on the pod. It
-	// sits above the workflow's own timeout, so Kubernetes never kills a pod
-	// Temporal still believes in.
-	DeadlineSeconds int64
-
-	// Env is the sandbox's non-secret runtime configuration. It names the
-	// private Temporal queue and shared service endpoints; provider credentials
-	// never enter the sandbox.
-	Env map[string]string
-}
-
 // Credential is a short-lived secret — a GitHub App installation token, or a
 // model access token. It is deliberately not a string: the type is what stops
 // the value reaching a log line or a durable store.
@@ -296,7 +253,7 @@ func NewCredential(value string) Credential {
 	return Credential{value: value}
 }
 
-// SandboxCredential is the installation token written into a sandbox, together
+// GitHubCredential is the installation token written into a sandbox, together
 // with the login GitHub attributes its use to.
 //
 // The login travels with the token rather than being fetched beside it because
@@ -308,7 +265,7 @@ func NewCredential(value string) Credential {
 // was given. Verified against gh 2.96.0, not inferred.
 //
 // It carries the same never-return-from-an-activity rule Credential does.
-type SandboxCredential struct {
+type GitHubCredential struct {
 	// Token is the short-lived, repository-scoped installation token.
 	Token Credential
 
@@ -330,17 +287,17 @@ type SandboxCredential struct {
 // formatting change away from being wrong, and the login is not worth the
 // exception — nothing that logs this needs it, and TicketDetail's filtering
 // already resolves the bot login by itself where it is genuinely needed.
-func (c SandboxCredential) String() string {
+func (c GitHubCredential) String() string {
 	return "[redacted]"
 }
 
-// SandboxCredential must satisfy slog.LogValuer for the same reason Credential
+// GitHubCredential must satisfy slog.LogValuer for the same reason Credential
 // must, and it is enforced the same way — at package scope, so a drifted
 // signature fails `go build`.
-var _ slog.LogValuer = SandboxCredential{}
+var _ slog.LogValuer = GitHubCredential{}
 
 // LogValue redacts the credential in structured logs.
-func (c SandboxCredential) LogValue() slog.Value {
+func (c GitHubCredential) LogValue() slog.Value {
 	return slog.StringValue("[redacted]")
 }
 

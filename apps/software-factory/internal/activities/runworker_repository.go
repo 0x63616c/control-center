@@ -177,6 +177,12 @@ func (a *RunWorkerActivities) TargetAwaitCI(ctx context.Context, in TargetAwaitC
 // TargetFindPullRequestInput binds PR discovery to one repository Step.
 type TargetFindPullRequestInput struct{ Step RepositoryStep }
 
+// FindPullRequestOutput reports whether the branch already owns a pull request.
+type FindPullRequestOutput struct {
+	PullRequest work.PullRequest
+	Found       bool
+}
+
 // TargetFindPullRequest discovers the PR associated with the durable branch.
 func (a *RunWorkerActivities) TargetFindPullRequest(ctx context.Context, in TargetFindPullRequestInput) (FindPullRequestOutput, error) {
 	cp, raw, found, err := a.loadRepositoryResult(ctx, in.Step, repositoryEffectFind)

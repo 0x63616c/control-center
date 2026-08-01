@@ -30,7 +30,7 @@ type RunWorkerInventory interface {
 // GitHubCredentialSource mints one short-lived repository credential inside a
 // main-control activity. The credential must never be returned by that method.
 type GitHubCredentialSource interface {
-	InstallationToken(context.Context) (work.SandboxCredential, error)
+	InstallationToken(context.Context) (work.GitHubCredential, error)
 }
 
 // CheckpointCapabilityMinter creates an opaque capability inside the activity.
@@ -130,7 +130,7 @@ func (a *RunWorkerControlActivities) ProvisionRunWorker(ctx context.Context, in 
 		return ProvisionRunWorkerOutput{}, fail(ctx, "minting the Run Worker bootstrap capability", err)
 	}
 	env := cloneRunWorkerEnv(a.deps.Template.Env)
-	env[work.SandboxBranchEnv] = in.Branch
+	env[work.RunWorkerBranchEnv] = in.Branch
 	spec, err := work.NewRunWorkerSpec(work.RunWorkerSpec{
 		TicketNumber: in.TicketNumber, Identity: in.Identity,
 		Image: a.deps.Template.Image, CPURequest: a.deps.Template.CPURequest, MemoryLimit: a.deps.Template.MemoryLimit,

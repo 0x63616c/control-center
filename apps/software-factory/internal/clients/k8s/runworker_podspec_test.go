@@ -24,7 +24,7 @@ func validRunWorkerSpec() work.RunWorkerSpec {
 		DeadlineSeconds: 86400,
 		Env: map[string]string{
 			work.GhConfigDirEnv:                work.GhConfigDir,
-			work.SandboxBranchEnv:              "software-factory/ticket-42/run",
+			work.RunWorkerBranchEnv:            "software-factory/ticket-42/run",
 			work.RunWorkerTemporalHostPortEnv:  "temporal-frontend.temporal:7233",
 			work.RunWorkerTemporalNamespaceEnv: "software-factory",
 			work.RunWorkerBlobsURLEnv:          "http://software-factory-blobs:8080",
@@ -164,7 +164,7 @@ func TestRunWorkerPodHasWritableWorkAndNoKubernetesCredential(t *testing.T) {
 	}
 	foundWork := false
 	for _, mount := range pod.Spec.Containers[0].VolumeMounts {
-		if mount.MountPath == work.SandboxRoot {
+		if mount.MountPath == work.WorkspaceRoot {
 			foundWork = true
 			if mount.ReadOnly {
 				t.Error("/work is read-only")
@@ -211,7 +211,7 @@ func TestRunWorkerPodSeparatesCredentialFreeToolsFromRepositoryActivities(t *tes
 	if !reflect.DeepEqual(tool.Command, []string{"/usr/local/bin/tool-worker"}) {
 		t.Fatalf("tool command = %#v", tool.Command)
 	}
-	if len(tool.VolumeMounts) != 1 || tool.VolumeMounts[0].Name != workVolumeName || tool.VolumeMounts[0].MountPath != work.SandboxRoot {
+	if len(tool.VolumeMounts) != 1 || tool.VolumeMounts[0].Name != workVolumeName || tool.VolumeMounts[0].MountPath != work.WorkspaceRoot {
 		t.Fatalf("tool mounts = %#v, want shared /work only", tool.VolumeMounts)
 	}
 	env := map[string]string{}

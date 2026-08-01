@@ -112,7 +112,7 @@ func TestPayloadKeyIsAValidBlobsKeyPath(t *testing.T) {
 	}
 }
 
-func TestFactoryTicketWorkflowIDsUseADisjointNamespace(t *testing.T) {
+func TestWorkOnTicketWorkflowIDsUseADisjointNamespace(t *testing.T) {
 	t.Parallel()
 
 	for _, id := range []int64{0, 1, 7, 99} {
@@ -121,11 +121,11 @@ func TestFactoryTicketWorkflowIDsUseADisjointNamespace(t *testing.T) {
 		// that prefix would share a history lineage with the issue of the same
 		// number — which is why this prefix must stay disjoint from it even now
 		// that nothing mints the old one.
-		if strings.HasPrefix(FactoryTicketWorkflowID(id), "work-ticket-") {
+		if strings.HasPrefix(WorkOnTicketWorkflowID(id), "work-ticket-") {
 			t.Fatalf("Ticket id %d claims the retired GitHub-issue workflow ID namespace", id)
 		}
-		if !strings.HasPrefix(FactoryTicketWorkflowID(id), "factory-ticket-") {
-			t.Fatalf("FactoryTicketWorkflowID(%d) = %q", id, FactoryTicketWorkflowID(id))
+		if !strings.HasPrefix(WorkOnTicketWorkflowID(id), "factory-ticket-") {
+			t.Fatalf("WorkOnTicketWorkflowID(%d) = %q", id, WorkOnTicketWorkflowID(id))
 		}
 	}
 }
@@ -183,14 +183,14 @@ func TestFactoryDispatcherStartsWithOneTicketAtATime(t *testing.T) {
 	}
 }
 
-func TestRepoDirIsInsideTheSandboxRootWithoutBeingIt(t *testing.T) {
+func TestRepoDirIsInsideTheWorkspaceRootWithoutBeingIt(t *testing.T) {
 	// Inside, because transfer.go confines every write to the sandbox root.
 	// Not equal to it, because the run's own scaffolding lives at the root and
 	// a checkout over the top of that puts prompts inside the git working tree.
-	if !strings.HasPrefix(RepoDir, SandboxRoot+"/") {
-		t.Errorf("RepoDir = %q, want a path under %q", RepoDir, SandboxRoot)
+	if !strings.HasPrefix(RepoDir, WorkspaceRoot+"/") {
+		t.Errorf("RepoDir = %q, want a path under %q", RepoDir, WorkspaceRoot)
 	}
-	if RepoDir == SandboxRoot {
+	if RepoDir == WorkspaceRoot {
 		t.Errorf("RepoDir must not be the sandbox root itself: %q", RepoDir)
 	}
 }

@@ -1,6 +1,9 @@
 -- name: TicketForTargetClaim :one
 SELECT * FROM ticket WHERE id = $1 FOR UPDATE;
 
+-- name: CountLegacyTicketStates :one
+SELECT COUNT(*) FROM ticket WHERE state IN ('working', 'review');
+
 -- name: InsertTargetRun :one
 INSERT INTO run (id, ticket_id, started_at)
 VALUES ($1, $2, $3)

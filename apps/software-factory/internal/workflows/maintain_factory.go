@@ -37,7 +37,7 @@ func MaintainFactory(ctx workflow.Context) error {
 	handled := make(map[string]bool, len(owners))
 	for _, owner := range owners {
 		var state work.RunState
-		workflowID := work.FactoryTicketWorkflowID(int64(owner.TicketID))
+		workflowID := work.WorkOnTicketWorkflowID(int64(owner.TicketID))
 		if err := workflow.ExecuteActivity(control, targetExecutionActs.DescribeRun, workflowID).Get(control, &state); err != nil {
 			return fmt.Errorf("describing target ticket workflow %s: %w", workflowID, err)
 		}
@@ -71,7 +71,7 @@ func MaintainFactory(ctx workflow.Context) error {
 			}
 			continue
 		}
-		workflowID := work.FactoryTicketWorkflowID(int64(run.TicketID))
+		workflowID := work.WorkOnTicketWorkflowID(int64(run.TicketID))
 		var state work.RunState
 		if err := workflow.ExecuteActivity(control, targetExecutionActs.DescribeRun, workflowID).Get(control, &state); err != nil {
 			return fmt.Errorf("describing inventoried target ticket workflow %s: %w", workflowID, err)

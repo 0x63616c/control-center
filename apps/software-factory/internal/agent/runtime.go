@@ -25,15 +25,12 @@ type ToolsetID string
 type ToolTargetKind string
 
 const (
-	// ToolTargetLegacySandbox routes tools to the pre-Run-Worker sandbox queue.
-	ToolTargetLegacySandbox ToolTargetKind = "legacy_sandbox"
 	// ToolTargetRunWorker routes tools to one validated Run Worker generation.
 	ToolTargetRunWorker ToolTargetKind = "run_worker"
 )
 
 // ToolTarget is the durable tool-routing decision pinned at child-workflow
-// start. The zero value means legacy sandbox for replay compatibility with
-// AgentWorkflow histories written before this field existed.
+// start. Only a concrete Run Worker generation is valid after activation.
 type ToolTarget struct {
 	Kind              ToolTargetKind         `json:"kind"`
 	RunWorkerIdentity work.RunWorkerIdentity `json:"run_worker_identity"`
@@ -42,11 +39,6 @@ type ToolTarget struct {
 // TaskQueue resolves the target without consulting mutable external state.
 func (target ToolTarget) TaskQueue(runID string) (string, error) {
 	switch target.Kind {
-	case "", ToolTargetLegacySandbox:
-		if target.RunWorkerIdentity != (work.RunWorkerIdentity{}) {
-			return "", fmt.Errorf("legacy sandbox tool target carries a Run Worker identity: %w", work.ErrInvalidRun)
-		}
-		return work.SandboxTaskQueue(runID), nil
 	case ToolTargetRunWorker:
 		if target.RunWorkerIdentity.RunID != runID {
 			return "", fmt.Errorf("run worker tool target belongs to Run %q, not %q: %w", target.RunWorkerIdentity.RunID, runID, work.ErrInvalidRun)

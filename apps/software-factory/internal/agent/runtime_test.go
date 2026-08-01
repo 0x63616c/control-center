@@ -7,15 +7,9 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
-func TestToolTargetResolvesLegacyAndRunWorkerQueues(t *testing.T) {
+func TestToolTargetResolvesRunWorkerQueue(t *testing.T) {
 	t.Parallel()
 
-	if got, err := (ToolTarget{}).TaskQueue("legacy-run"); err != nil || got != work.SandboxTaskQueue("legacy-run") {
-		t.Fatalf("zero-value legacy target queue = %q, %v", got, err)
-	}
-	if got, err := (ToolTarget{Kind: ToolTargetLegacySandbox}).TaskQueue("legacy-run"); err != nil || got != work.SandboxTaskQueue("legacy-run") {
-		t.Fatalf("explicit legacy target queue = %q, %v", got, err)
-	}
 	identity := work.RunWorkerIdentity{RunID: "019fb900-0000-7000-8000-000000000001", Generation: 2}
 	want, err := work.RunWorkerToolTaskQueue(identity)
 	if err != nil {
@@ -31,9 +25,9 @@ func TestToolTargetRejectsInvalidOrMismatchedRunWorkerIdentity(t *testing.T) {
 	t.Parallel()
 
 	tests := []ToolTarget{
+		{},
 		{Kind: ToolTargetRunWorker},
 		{Kind: ToolTargetRunWorker, RunWorkerIdentity: work.RunWorkerIdentity{RunID: "019fb900-0000-7000-8000-000000000002", Generation: 1}},
-		{Kind: ToolTargetLegacySandbox, RunWorkerIdentity: work.RunWorkerIdentity{RunID: "019fb900-0000-7000-8000-000000000001", Generation: 1}},
 		{Kind: "unknown"},
 	}
 	for _, target := range tests {

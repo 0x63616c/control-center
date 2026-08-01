@@ -19,6 +19,8 @@ import (
 	"go.temporal.io/sdk/workflow"
 )
 
+var ticketActs *activities.TicketActivities
+
 func TestDispatcherRollsOverOnlyFromTemporalsSuggestionAndCarriesNoLiveState(t *testing.T) {
 	t.Parallel()
 

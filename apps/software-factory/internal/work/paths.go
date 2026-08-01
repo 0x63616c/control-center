@@ -11,12 +11,12 @@ import (
 	"go.temporal.io/sdk/converter"
 )
 
-// SandboxRoot is where a stage's working files live inside the sandbox.
+// WorkspaceRoot is where a stage's working files live inside the sandbox.
 //
 // It is part of the contract with the sandbox image rather than a private
 // detail of whatever runs the stage: the image's entrypoint creates it, and the
 // worker writes into it. Changing it means changing both.
-const SandboxRoot = "/work"
+const WorkspaceRoot = "/work"
 
 // PayloadKey names one offloaded Temporal payload.
 //
@@ -71,7 +71,7 @@ func isPathElement(value string) bool {
 // RepoDir is where the ticket's repository is checked out inside the sandbox,
 // and the working directory repository tools are confined to.
 //
-// It is a subdirectory of SandboxRoot rather than SandboxRoot itself, because
+// It is a subdirectory of WorkspaceRoot rather than WorkspaceRoot itself, because
 // the sandbox root also holds this run's scaffolding — .exec/ and the per-stage
 // prompt, schema and result files. Checking the repository out over the top of
 // those would put them inside the git working tree, where `implement` is one
@@ -83,8 +83,8 @@ func isPathElement(value string) bool {
 // is created as root with mode 0755, and the sandbox uid then cannot write its
 // own checkout — a permission error that reads as a broken tool. A directory
 // the cloning process creates is owned by that process, so the clone creates
-// it, and the image's WORKDIR stays at the group-writable SandboxRoot.
-const RepoDir = SandboxRoot + "/repo"
+// it, and the image's WORKDIR stays at the group-writable WorkspaceRoot.
+const RepoDir = WorkspaceRoot + "/repo"
 
 // GhConfigDir is the gh CLI's config directory inside the sandbox, and
 // GhHostsFile the credential file it reads out of it.
@@ -101,13 +101,13 @@ const RepoDir = SandboxRoot + "/repo"
 // twice, in two formats — see clone.go's writeGhCredentials for why the
 // environment is the wrong one of the two.
 //
-// Sibling of RepoDir under SandboxRoot for the reason RepoDir gives: RepoDir is
+// Sibling of RepoDir under WorkspaceRoot for the reason RepoDir gives: RepoDir is
 // a git working tree, and a credential file inside one is one `git add -A` away
 // from being pushed. NOT $HOME/.config/gh, which is gh's default and would make
 // the image's HOME a silent second contract; GH_CONFIG_DIR names it explicitly,
 // rather than relying on a process-wide HOME convention.
 const (
-	GhConfigDir = SandboxRoot + "/.gh"
+	GhConfigDir = WorkspaceRoot + "/.gh"
 
 	// GhConfigDirEnv is the environment variable pointing gh at GhConfigDir. Set
 	// on every sandbox's template by the composition root.
@@ -154,7 +154,7 @@ func (k StageKey) String() string {
 	return fmt.Sprintf("ticket #%d stage %s turn %d run %s", k.Ticket, k.Stage, k.Turn, k.RunID)
 }
 
-// FactoryTicketWorkflowID is the Temporal claim for a factory-owned Ticket.
+// WorkOnTicketWorkflowID is the Temporal claim for a factory-owned Ticket.
 //
 // Starting a workflow with this ID *is* the claim: Temporal refuses a second
 // execution with an open run under the same ID, so uniqueness here replaces a
@@ -165,7 +165,7 @@ func (k StageKey) String() string {
 // `work-ticket-` scheme (#559): Temporal lets a closed run's ID be reused, so
 // sharing that namespace would have let a small Ticket id share a history
 // lineage with the GitHub issue of the same number.
-func FactoryTicketWorkflowID(ticketID int64) string {
+func WorkOnTicketWorkflowID(ticketID int64) string {
 	return fmt.Sprintf("factory-ticket-%d", ticketID)
 }
 
@@ -206,17 +206,7 @@ func ParseFactoryTicketBranchName(branch string) (ticketID int64, ok bool) {
 	return id, true
 }
 
-// FactoryDispatcherWorkflowID is the one dispatcher's Temporal workflow ID.
-//
-// It is a constant rather than derived from anything, because there is
-// exactly one dispatcher: the composition root starts a workflow with this ID
-// on every boot, and Temporal's default StartWorkflowOptions — reused across
-// an already-running execution rather than erroring on it — is what makes
-// that idempotent. A second spelling anywhere would be a second dispatcher.
-const FactoryDispatcherWorkflowID = "software-factory-ticket-dispatcher"
-
-// TargetDispatcherWorkflowID is the stable singleton ID for the inactive v0
-// dispatcher. It stays disjoint from the legacy dispatcher until cutover.
+// TargetDispatcherWorkflowID is the stable singleton target Dispatcher ID.
 const TargetDispatcherWorkflowID = "software-factory-target-dispatcher"
 
 // MaintainFactoryScheduleID is the stable Temporal Schedule reconciled on

@@ -750,7 +750,7 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
                     "CLOUDFLARE_ACCESS_TEAM_DOMAIN",
                     "CLOUDFLARE_ACCESS_AUD",
                     "SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN",
-                    "SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN",
+                    "SOFTWARE_FACTORY_API__RUN_WORKER_BEARER_TOKEN",
                     "GITHUB_BOT_APP__WEBHOOK_SECRET",
                   ].map((name) => ({
                     name,
@@ -898,7 +898,7 @@ function createAPISecret(
         SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN: pulumi.secret(
           fromVault("SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN"),
         ),
-        SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN: pulumi.secret(
+        SOFTWARE_FACTORY_API__RUN_WORKER_BEARER_TOKEN: pulumi.secret(
           fromVault("SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN"),
         ),
         // The same GitHub App webhook secret the relay verifies with

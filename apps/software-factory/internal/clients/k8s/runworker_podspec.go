@@ -29,7 +29,7 @@ var runWorkerSecretMode int32 = 0o440
 
 var allowedRunWorkerEnvKeys = map[string]bool{
 	work.GhConfigDirEnv:                true,
-	work.SandboxBranchEnv:              true,
+	work.RunWorkerBranchEnv:            true,
 	work.RunWorkerTemporalHostPortEnv:  true,
 	work.RunWorkerTemporalNamespaceEnv: true,
 	work.RunWorkerBlobsURLEnv:          true,
@@ -132,7 +132,7 @@ func buildRunWorkerPod(spec work.RunWorkerSpec, o runWorkerOptions) (*corev1.Pod
 				Ports:           []corev1.ContainerPort{{Name: "metrics", ContainerPort: 9090}},
 				Resources:       repositoryResources,
 				VolumeMounts: []corev1.VolumeMount{
-					{Name: workVolumeName, MountPath: work.SandboxRoot},
+					{Name: workVolumeName, MountPath: work.WorkspaceRoot},
 					{Name: runWorkerGitHubVolumeName, MountPath: work.RunWorkerGitHubCredentialDir, ReadOnly: true},
 					{Name: runWorkerCheckpointVolumeName, MountPath: work.RunWorkerCheckpointCapabilityDir, ReadOnly: true},
 					{Name: runWorkerRepositoryVolumeName, MountPath: work.RunWorkerRepositoryCapabilityDir, ReadOnly: true},
@@ -148,7 +148,7 @@ func buildRunWorkerPod(spec work.RunWorkerSpec, o runWorkerOptions) (*corev1.Pod
 			}, {
 				Name: runWorkerToolContainerName, Image: spec.Image, ImagePullPolicy: corev1.PullIfNotPresent,
 				Command: []string{runWorkerToolBinaryPath}, Env: sortedEnv(toolEnv), Resources: resources,
-				VolumeMounts: []corev1.VolumeMount{{Name: workVolumeName, MountPath: work.SandboxRoot}},
+				VolumeMounts: []corev1.VolumeMount{{Name: workVolumeName, MountPath: work.WorkspaceRoot}},
 				SecurityContext: &corev1.SecurityContext{
 					RunAsNonRoot: ptr(true), RunAsUser: &uid, RunAsGroup: &uid,
 					AllowPrivilegeEscalation: ptr(false), Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},

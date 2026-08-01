@@ -16,7 +16,7 @@ type runWorkerLifecycleProbe struct {
 	provisioned         work.RunWorkerSpec
 	material            work.RunWorkerSecretMaterial
 	rotated             work.RunWorkerIdentity
-	credential          work.SandboxCredential
+	credential          work.GitHubCredential
 	deleted             work.RunWorkerIdentity
 	installedOn         work.RunWorkerIdentity
 	installedAt         store.TargetAttemptID
@@ -40,7 +40,7 @@ func (p *runWorkerLifecycleProbe) Provision(_ context.Context, spec work.RunWork
 
 func (p *runWorkerLifecycleProbe) RotateGitHubCredential(_ context.Context, identity work.RunWorkerIdentity, token work.Credential, login string, expiresAt time.Time) (work.RunWorkerCredentialRevision, error) {
 	p.rotated = identity
-	p.credential = work.SandboxCredential{Token: token, Login: login, ExpiresAt: expiresAt}
+	p.credential = work.GitHubCredential{Token: token, Login: login, ExpiresAt: expiresAt}
 	return work.RunWorkerCredentialRevision{Revision: "2", ExpiresAt: expiresAt}, nil
 }
 
@@ -57,9 +57,9 @@ func (p *runWorkerLifecycleProbe) Delete(_ context.Context, identity work.RunWor
 	return nil
 }
 
-type githubCredentialProbe struct{ credential work.SandboxCredential }
+type githubCredentialProbe struct{ credential work.GitHubCredential }
 
-func (p githubCredentialProbe) InstallationToken(context.Context) (work.SandboxCredential, error) {
+func (p githubCredentialProbe) InstallationToken(context.Context) (work.GitHubCredential, error) {
 	return p.credential, nil
 }
 
@@ -101,7 +101,7 @@ func runWorkerControlHarness(t *testing.T) (*RunWorkerControlActivities, *runWor
 	binder := &capabilityBinderProbe{}
 	acts, err := NewRunWorkerControlActivities(RunWorkerControlDeps{
 		Workers:          lifecycle,
-		GitHub:           githubCredentialProbe{credential: work.SandboxCredential{Token: work.NewCredential("github-secret"), Login: "factory[bot]", ExpiresAt: time.Date(2026, 8, 1, 1, 0, 0, 0, time.UTC)}},
+		GitHub:           githubCredentialProbe{credential: work.GitHubCredential{Token: work.NewCredential("github-secret"), Login: "factory[bot]", ExpiresAt: time.Date(2026, 8, 1, 1, 0, 0, 0, time.UTC)}},
 		Capabilities:     capabilities,
 		Binder:           binder,
 		RepositoryBinder: binder,
@@ -127,7 +127,7 @@ func TestProvisionRunWorkerKeepsCredentialsInsideTheActivity(t *testing.T) {
 	if nameErr != nil {
 		t.Fatal(nameErr)
 	}
-	if out.ID != wantID || lifecycle.provisioned.TicketNumber != 42 || lifecycle.provisioned.Image == "" || lifecycle.provisioned.Env[work.SandboxBranchEnv] != in.Branch {
+	if out.ID != wantID || lifecycle.provisioned.TicketNumber != 42 || lifecycle.provisioned.Image == "" || lifecycle.provisioned.Env[work.RunWorkerBranchEnv] != in.Branch {
 		t.Fatalf("safe output/spec = %+v / %+v", out, lifecycle.provisioned)
 	}
 	if lifecycle.material.GitHubToken.Reveal() != "github-secret" || lifecycle.material.CheckpointCapability.Reveal() != "bootstrap-secret" {

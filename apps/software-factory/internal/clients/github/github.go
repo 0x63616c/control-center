@@ -394,16 +394,16 @@ func (c *Client) PostComment(ctx context.Context, number int, body string) error
 // It deliberately bypasses the cache. The cached token has an arbitrary
 // remaining lifetime — possibly three minutes — while the implement stage
 // pushes a branch up to an hour later.
-func (c *Client) InstallationToken(ctx context.Context) (work.SandboxCredential, error) {
+func (c *Client) InstallationToken(ctx context.Context) (work.GitHubCredential, error) {
 	const op = "minting a repository-scoped installation token for the sandbox"
 
 	// Resolved before the token is minted, deliberately: this is a cached read
 	// after the first call, and a failure here must not leave a live token
-	// minted for a sandbox that never receives it. See work.SandboxCredential
+	// minted for a sandbox that never receives it. See work.GitHubCredential
 	// for why gh cannot proceed without it.
 	identity, err := c.auth.attribution(ctx)
 	if err != nil {
-		return work.SandboxCredential{}, err
+		return work.GitHubCredential{}, err
 	}
 
 	token, expiresAt, err := c.auth.mint(ctx, op, &gh.InstallationTokenOptions{
@@ -422,7 +422,7 @@ func (c *Client) InstallationToken(ctx context.Context) (work.SandboxCredential,
 		},
 	})
 	if err != nil {
-		return work.SandboxCredential{}, err
+		return work.GitHubCredential{}, err
 	}
 
 	// Note what is absent: issues:write, because the WORKER posts status and
@@ -431,7 +431,7 @@ func (c *Client) InstallationToken(ctx context.Context) (work.SandboxCredential,
 	// nothing in this pipeline reruns or watches CI.
 	c.log.InfoContext(ctx, "minted a repository-scoped installation token for a sandbox",
 		"repository", c.repo, "login", identity.Login, "account_id", identity.AccountID)
-	return work.SandboxCredential{Token: work.NewCredential(token), Login: identity.Login, AccountID: identity.AccountID, ExpiresAt: expiresAt}, nil
+	return work.GitHubCredential{Token: work.NewCredential(token), Login: identity.Login, AccountID: identity.AccountID, ExpiresAt: expiresAt}, nil
 }
 
 // capBody bounds a comment body at a rune boundary.

@@ -79,11 +79,11 @@ func run() error {
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	authentication, err := auth.New(auth.Options{
-		AccessIssuer:   cfg.AccessIssuer,
-		AccessAudience: cfg.AccessAudience,
-		AccessCertsURL: cfg.AccessCertsURL,
-		WorkerBearer:   cfg.WorkerBearer,
-		SandboxBearer:  cfg.SandboxBearer,
+		AccessIssuer:    cfg.AccessIssuer,
+		AccessAudience:  cfg.AccessAudience,
+		AccessCertsURL:  cfg.AccessCertsURL,
+		WorkerBearer:    cfg.WorkerBearer,
+		RunWorkerBearer: cfg.RunWorkerBearer,
 	})
 	if err != nil {
 		return fmt.Errorf("starting API authentication: %w", err)

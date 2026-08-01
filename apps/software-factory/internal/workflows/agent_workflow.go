@@ -463,7 +463,7 @@ func agentLifecycleInput(terminalErr error, failure *agent.TerminalFailure) (age
 func continueAgentWorkflowAsNew(ctx workflow.Context, input AgentWorkflowInput, state AgentWorkflowState) error {
 	return workflow.NewContinueAsNewError(ctx, AgentWorkflow, AgentWorkflowInput{
 		Attempt: activities.StageAttempt{
-			Key: input.Attempt.Key, Sandbox: input.Attempt.Sandbox, Model: input.Attempt.Model,
+			Key: input.Attempt.Key, Model: input.Attempt.Model,
 		},
 		ToolsetID:       input.ToolsetID,
 		ToolTarget:      input.ToolTarget,

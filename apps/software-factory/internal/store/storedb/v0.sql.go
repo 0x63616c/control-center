@@ -421,6 +421,17 @@ func (q *Queries) CompleteTargetTicket(ctx context.Context, arg CompleteTargetTi
 	return i, err
 }
 
+const countLegacyTicketStates = `-- name: CountLegacyTicketStates :one
+SELECT COUNT(*) FROM ticket WHERE state IN ('working', 'review')
+`
+
+func (q *Queries) CountLegacyTicketStates(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countLegacyTicketStates)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const failRunningTargetAgentAttempts = `-- name: FailRunningTargetAgentAttempts :many
 UPDATE run_agent_attempt SET state = 'failed', failure_kind = $3, ended_at = $4
 WHERE run_id = $1 AND step_ordinal = $2 AND state = 'running'

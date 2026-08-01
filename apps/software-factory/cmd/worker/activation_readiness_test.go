@@ -3,21 +3,18 @@ package main
 import (
 	"context"
 	"testing"
-
-	temporalapi "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/temporal"
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 )
 
-type fakeLegacyExecutions struct{ listed []temporalapi.LegacyExecution }
+type fakeLegacyExecutions struct{ count int }
 
-func (f fakeLegacyExecutions) List(context.Context) ([]temporalapi.LegacyExecution, error) {
-	return f.listed, nil
+func (f fakeLegacyExecutions) RunningPreActivationExecutions(context.Context) (int, error) {
+	return f.count, nil
 }
 
-type fakeLegacyTickets struct{ byState map[string][]store.Ticket }
+type fakeLegacyTickets struct{ count int64 }
 
-func (f fakeLegacyTickets) TicketsByState(_ context.Context, state store.TicketState) ([]store.Ticket, error) {
-	return f.byState[state.String()], nil
+func (f fakeLegacyTickets) LegacyTicketCount(context.Context) (int64, error) {
+	return f.count, nil
 }
 
 func TestActivationReadinessAcceptsOnlyAQuiescentLegacyBoundary(t *testing.T) {
@@ -29,24 +26,16 @@ func TestActivationReadinessAcceptsOnlyAQuiescentLegacyBoundary(t *testing.T) {
 
 func TestActivationReadinessRejectsRunningLegacyWorkflow(t *testing.T) {
 	t.Parallel()
-	err := ensureActivationReady(context.Background(), fakeLegacyExecutions{listed: []temporalapi.LegacyExecution{{ID: "legacy"}}}, fakeLegacyTickets{})
+	err := ensureActivationReady(context.Background(), fakeLegacyExecutions{count: 1}, fakeLegacyTickets{})
 	if err == nil {
 		t.Fatal("ensureActivationReady accepted a running legacy workflow")
 	}
 }
 
-func TestActivationReadinessRejectsEachLegacyTicketState(t *testing.T) {
+func TestActivationReadinessRejectsLegacyTicketStates(t *testing.T) {
 	t.Parallel()
-	for _, state := range []store.TicketState{store.TicketWorking, store.TicketReview} {
-		state := state
-		t.Run(state.String(), func(t *testing.T) {
-			t.Parallel()
-			err := ensureActivationReady(context.Background(), fakeLegacyExecutions{}, fakeLegacyTickets{byState: map[string][]store.Ticket{
-				state.String(): {{ID: 1, State: state}},
-			}})
-			if err == nil {
-				t.Fatalf("ensureActivationReady accepted %s Ticket", state)
-			}
-		})
+	err := ensureActivationReady(context.Background(), fakeLegacyExecutions{}, fakeLegacyTickets{count: 1})
+	if err == nil {
+		t.Fatal("ensureActivationReady accepted a pre-activation Ticket state")
 	}
 }

@@ -58,7 +58,7 @@ func TestMiddlewareAuthenticatesAccessAndBearerIdentities(t *testing.T) {
 	}
 }
 
-func TestMiddlewareRefusesSandboxBearerForEveryFactoryCommand(t *testing.T) {
+func TestMiddlewareRefusesRunWorkerBearerForEveryFactoryCommand(t *testing.T) {
 	key := newRSAKey(t)
 	server := newJWKSServer(t, testJWKS(t, "first", key))
 	middleware := newMiddleware(t, server.URL, "worker-token", "sandbox-token")
@@ -148,14 +148,14 @@ func TestMiddlewareRefreshesJWKSForUnknownKeyID(t *testing.T) {
 	}
 }
 
-func newMiddleware(t *testing.T, certsURL, workerBearer, sandboxBearer string) *Middleware {
+func newMiddleware(t *testing.T, certsURL, workerBearer, runWorkerBearer string) *Middleware {
 	t.Helper()
 	middleware, err := New(Options{
-		AccessIssuer:   testIssuer,
-		AccessAudience: testAudience,
-		AccessCertsURL: certsURL,
-		WorkerBearer:   workerBearer,
-		SandboxBearer:  sandboxBearer,
+		AccessIssuer:    testIssuer,
+		AccessAudience:  testAudience,
+		AccessCertsURL:  certsURL,
+		WorkerBearer:    workerBearer,
+		RunWorkerBearer: runWorkerBearer,
 	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)

@@ -73,6 +73,15 @@ type TargetTerminalRecorder interface {
 	FinalizeRunFailure(context.Context, RunFailureInput) (TerminalResult, error)
 }
 
+// LegacyTicketCount proves the final target-state migration has no old rows.
+func (s *Store) LegacyTicketCount(ctx context.Context) (int64, error) {
+	count, err := s.q.CountLegacyTicketStates(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("counting pre-activation Ticket states: %w", wrapQueryErr(err))
+	}
+	return count, nil
+}
+
 // TargetHistoryReader exposes the durable target projection used by the console.
 type TargetHistoryReader interface {
 	TargetRunDetail(context.Context, string) (TargetRunDetail, error)

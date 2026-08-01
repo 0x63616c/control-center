@@ -16,9 +16,15 @@ import (
 // complete resolved policy before it begins polling the main task queue.
 const UpdateDispatcherPolicy = "publish-dispatcher-policy"
 
+// QueryDispatcherPolicy returns the current acknowledged target policy.
+const QueryDispatcherPolicy = "target-dispatcher-policy"
+
 // maxPolicyUpdatesDuringDrain keeps a suggested execution bounded while still
 // letting one later worker publication become the policy of the next run.
 const maxPolicyUpdatesDuringDrain = 1
+
+// ticketActs resolves target dispatcher database activities by registered name.
+var ticketActs *activities.TicketActivities
 
 // DispatcherInput is the durable target-dispatcher state. Live child Futures
 // never cross a Continue-As-New boundary: the workflow drains first.
@@ -47,6 +53,13 @@ type DispatcherPolicyUpdate struct {
 	Policy      work.DispatcherPolicy
 }
 
+// DispatcherPolicyStatus is the observable target control state.
+type DispatcherPolicyStatus struct {
+	Policy      work.DispatcherPolicy
+	Fingerprint string
+	Draining    bool
+}
+
 // Dispatcher admits target WorkOnTicket children. Idle polling is represented
 // by the retry state of AwaitDispatchableTickets, not workflow timers.
 func Dispatcher(ctx workflow.Context, in DispatcherInput) error {
@@ -63,6 +76,11 @@ func Dispatcher(ctx workflow.Context, in DispatcherInput) error {
 	policyChanged := workflow.NewBufferedChannel(ctx, 1)
 	draining := false
 	drainPolicyUpdates := 0
+	if err := workflow.SetQueryHandler(ctx, QueryDispatcherPolicy, func() (DispatcherPolicyStatus, error) {
+		return DispatcherPolicyStatus{Policy: policy, Fingerprint: fingerprint, Draining: draining}, nil
+	}); err != nil {
+		return fmt.Errorf("registering dispatcher policy query: %w", err)
+	}
 	beginDraining := func() {
 		if draining {
 			return
@@ -156,7 +174,7 @@ func Dispatcher(ctx workflow.Context, in DispatcherInput) error {
 
 func dispatchChildWorkflowOptions(ticketID store.TicketID, policy work.TargetRunPolicy) workflow.ChildWorkflowOptions {
 	return workflow.ChildWorkflowOptions{
-		WorkflowID:               work.FactoryTicketWorkflowID(int64(ticketID)),
+		WorkflowID:               work.WorkOnTicketWorkflowID(int64(ticketID)),
 		TaskQueue:                work.TaskQueue,
 		WorkflowExecutionTimeout: policy.HardDeadline,
 		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
