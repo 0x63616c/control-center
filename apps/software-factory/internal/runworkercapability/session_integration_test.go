@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
@@ -207,8 +208,9 @@ func TestSessionCreationWaitsForRunWorkerReadiness(t *testing.T) {
 
 	blocked, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
 	defer cancel()
-	if err := run.Get(blocked, nil); err == nil || !errors.Is(blocked.Err(), context.DeadlineExceeded) {
-		t.Fatalf("workflow before Run Worker readiness = %v (context %v), want it still waiting", err, blocked.Err())
+	var deadline *serviceerror.DeadlineExceeded
+	if err := run.Get(blocked, nil); !errors.Is(err, context.DeadlineExceeded) && !errors.As(err, &deadline) {
+		t.Fatalf("workflow before Run Worker readiness = %T: %v, want a deadline error", err, err)
 	}
 
 	private := startPrivateWorkerProcess(t, server.FrontendHostPort(), privateQueueOne, "private-ready", root)
