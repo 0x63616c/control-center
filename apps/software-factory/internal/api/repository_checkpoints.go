@@ -42,6 +42,12 @@ func repositoryCheckpointOperation(operation *huma.Operation) {
 	operation.Security = []map[string][]string{{"repositoryCheckpointCapability": {}}}
 }
 
+func repositoryEffectCheckpointOperation(operation *huma.Operation) {
+	operation.Summary = "Checkpoint a deferred repository effect"
+	operation.Description = "Stores one Run Worker generation's monotonic external-effect result without completing its Store Step; terminal finalization owns that transition."
+	operation.Security = []map[string][]string{{"repositoryCheckpointCapability": {}}}
+}
+
 func readRepositoryCheckpointOperation(operation *huma.Operation) {
 	operation.Summary = "Read a repository checkpoint"
 	operation.Description = "Reconciles the latest completed Git/PR position using the capability scoped to one Run Worker generation."

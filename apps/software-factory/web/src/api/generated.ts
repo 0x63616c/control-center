@@ -248,11 +248,11 @@ export interface Repository {
   /** The latest head accepted by GitHub, when available. */
   pushedHead: string;
   /**
-   * The completed repository-affine Step ordinal.
+   * The repository-affine Step ordinal that owns this evidence.
    * @minimum 1
    */
   stepOrdinal: number;
-  /** The kind-specific durable Step result. */
+  /** The kind-specific durable Step or external-effect result. */
   stepResult: unknown;
 }
 
@@ -264,7 +264,7 @@ export interface RepositoryWrite {
    * @minLength 1
    */
   branch: string;
-  /** RFC3339 UTC time at which the Step completed. */
+  /** RFC3339 UTC time at which the represented operation completed. */
   completedAt: string;
   /** The target branch head observed by this Step, when available. */
   observedBase: string;
@@ -278,11 +278,11 @@ export interface RepositoryWrite {
   /** The latest head accepted by GitHub, when available. */
   pushedHead: string;
   /**
-   * The completed repository-affine Step ordinal.
+   * The repository-affine Step ordinal that owns this evidence.
    * @minimum 1
    */
   stepOrdinal: number;
-  /** The kind-specific durable Step result. */
+  /** The kind-specific durable Step or external-effect result. */
   stepResult: unknown;
 }
 
@@ -1152,6 +1152,114 @@ export function useGetV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryChe
 
   return query;
 }
+
+/**
+ * Stores one Run Worker generation's monotonic external-effect result without completing its Store Step; terminal finalization owns that transition.
+ * @summary Checkpoint a deferred repository effect
+ */
+export const patchV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint = (
+  runID: string,
+  generation: number,
+  repositoryWrite: NonReadonly<RepositoryWrite>,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<Repository>> => {
+  return axios.patch(
+    `/v1/run-worker/runs/${runID}/generations/${generation}/repository-checkpoint`,
+    repositoryWrite,
+    options,
+  );
+};
+
+export const getPatchV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpointMutationOptions =
+  <TError = AxiosError<ErrorModel>, TContext = unknown>(options?: {
+    mutation?: UseMutationOptions<
+      Awaited<
+        ReturnType<typeof patchV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>
+      >,
+      TError,
+      { runID: string; generation: number; data: NonReadonly<RepositoryWrite> },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  }): UseMutationOptions<
+    Awaited<
+      ReturnType<typeof patchV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>
+    >,
+    TError,
+    { runID: string; generation: number; data: NonReadonly<RepositoryWrite> },
+    TContext
+  > => {
+    const mutationKey = ["patchV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint"];
+    const { mutation: mutationOptions, axios: axiosOptions } = options
+      ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+        ? options
+        : { ...options, mutation: { ...options.mutation, mutationKey } }
+      : { mutation: { mutationKey }, axios: undefined };
+
+    const mutationFn: MutationFunction<
+      Awaited<
+        ReturnType<typeof patchV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>
+      >,
+      { runID: string; generation: number; data: NonReadonly<RepositoryWrite> }
+    > = (props) => {
+      const { runID, generation, data } = props ?? {};
+
+      return patchV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint(
+        runID,
+        generation,
+        data,
+        axiosOptions,
+      );
+    };
+
+    return { mutationFn, ...mutationOptions };
+  };
+
+export type PatchV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpointMutationResult =
+  NonNullable<
+    Awaited<
+      ReturnType<typeof patchV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>
+    >
+  >;
+export type PatchV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpointMutationBody =
+  NonReadonly<RepositoryWrite>;
+export type PatchV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpointMutationError =
+  AxiosError<ErrorModel>;
+
+/**
+ * @summary Checkpoint a deferred repository effect
+ */
+export const usePatchV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint = <
+  TError = AxiosError<ErrorModel>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<
+        ReturnType<typeof patchV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>
+      >,
+      TError,
+      { runID: string; generation: number; data: NonReadonly<RepositoryWrite> },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<
+    ReturnType<typeof patchV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpoint>
+  >,
+  TError,
+  { runID: string; generation: number; data: NonReadonly<RepositoryWrite> },
+  TContext
+> => {
+  const mutationOptions =
+    getPatchV1RunWorkerRunsByRunIdGenerationsByGenerationRepositoryCheckpointMutationOptions(
+      options,
+    );
+
+  return useMutation(mutationOptions, queryClient);
+};
 
 /**
  * Atomically stores one Run Worker generation's monotonic Git/PR position and completed Step result.
