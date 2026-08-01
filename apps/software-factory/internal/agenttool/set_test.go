@@ -19,6 +19,10 @@ type undocumentedInput struct {
 
 type scalarInput string
 
+type arbitraryMapInput struct {
+	Values map[string]string `json:"values" jsonschema_description:"Values indexed by arbitrary keys."`
+}
+
 func TestMustSetSortsSpecifications(t *testing.T) {
 	t.Parallel()
 
@@ -191,6 +195,22 @@ func TestMustSetRejectsNonObjectInputs(t *testing.T) {
 	defer func() {
 		panicValue := recover()
 		if message := fmt.Sprint(panicValue); !strings.Contains(message, `root type is "string", want object`) {
+			t.Fatalf("panic = %q", message)
+		}
+	}()
+	agenttool.MustSet("coding-read-v1", tool)
+}
+
+func TestMustSetRejectsUnsupportedStrictSchemas(t *testing.T) {
+	t.Parallel()
+
+	tool := agenttool.Bind(
+		agenttool.Define[arbitraryMapInput]("lookup", "Look up arbitrary values."),
+		func(_ context.Context, _ arbitraryMapInput) (agenttool.Result, error) { return agenttool.Result{}, nil },
+	)
+	defer func() {
+		panicValue := recover()
+		if message := fmt.Sprint(panicValue); !strings.Contains(message, `property "values" permits arbitrary object keys`) {
 			t.Fatalf("panic = %q", message)
 		}
 	}()

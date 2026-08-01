@@ -79,6 +79,9 @@ func validatePropertyDescriptions(schemaJSON []byte) error {
 	if rootType != "object" {
 		return fmt.Errorf("root type is %q, want object", rootType)
 	}
+	if additional, ok := schema["additionalProperties"].(bool); !ok || additional {
+		return fmt.Errorf("root permits arbitrary object keys")
+	}
 	properties, _ := schema["properties"].(map[string]any)
 	names := make([]string, 0, len(properties))
 	for name := range properties {
@@ -93,6 +96,11 @@ func validatePropertyDescriptions(schemaJSON []byte) error {
 		description, _ := property["description"].(string)
 		if strings.TrimSpace(description) == "" {
 			return fmt.Errorf("property %q description is blank", name)
+		}
+		if propertyType, _ := property["type"].(string); propertyType == "object" {
+			if additional, ok := property["additionalProperties"].(bool); !ok || additional {
+				return fmt.Errorf("property %q permits arbitrary object keys", name)
+			}
 		}
 	}
 	return nil
