@@ -14,6 +14,8 @@ import (
 
 const legacyHistoryFixture = "../workflows/testdata/factory-dispatcher-paused.json"
 
+const targetDispatcherHistoryFixture = "../workflows/testdata/target-dispatcher-admission.json"
+
 func TestLegacyFactoryDispatcherHistoryReplays(t *testing.T) {
 	history := readLegacyHistoryFixture(t)
 	assertRepresentativeLegacyHistory(t, history)
@@ -25,17 +27,62 @@ func TestLegacyFactoryDispatcherHistoryReplays(t *testing.T) {
 	}
 }
 
+// TestTargetDispatcherHistoryReplays is the compatibility guard for the v0
+// dispatcher before its registration is enabled. Its fixture is deliberately
+// an exported dev-server history, not a testsuite transcript: a future command
+// change must replay the same wait and child-admission sequence Temporal saw.
+func TestTargetDispatcherHistoryReplays(t *testing.T) {
+	history := readTargetDispatcherHistoryFixture(t)
+	assertRepresentativeTargetDispatcherHistory(t, history)
+
+	replayer := worker.NewWorkflowReplayer()
+	replayer.RegisterWorkflow(workflows.Dispatcher)
+	if err := replayer.ReplayWorkflowHistory(nil, history); err != nil {
+		t.Fatalf("replaying %s through the Dispatcher registration: %v", targetDispatcherHistoryFixture, err)
+	}
+}
+
 func readLegacyHistoryFixture(t *testing.T) *historypb.History {
 	t.Helper()
-	data, err := os.ReadFile(legacyHistoryFixture)
+	return readHistoryFixture(t, legacyHistoryFixture)
+}
+
+func readTargetDispatcherHistoryFixture(t *testing.T) *historypb.History {
+	t.Helper()
+	return readHistoryFixture(t, targetDispatcherHistoryFixture)
+}
+
+func readHistoryFixture(t *testing.T, fixture string) *historypb.History {
+	t.Helper()
+	data, err := os.ReadFile(fixture)
 	if err != nil {
-		t.Fatalf("reading %s: %v", legacyHistoryFixture, err)
+		t.Fatalf("reading %s: %v", fixture, err)
 	}
 	history := &historypb.History{}
 	if err := (temporalproto.CustomJSONUnmarshalOptions{}).Unmarshal(data, history); err != nil {
-		t.Fatalf("decoding %s: %v", legacyHistoryFixture, err)
+		t.Fatalf("decoding %s: %v", fixture, err)
 	}
 	return history
+}
+
+func assertRepresentativeTargetDispatcherHistory(t *testing.T, history *historypb.History) {
+	t.Helper()
+	activityCompleted := false
+	childStarted := false
+	for _, event := range history.Events {
+		switch event.GetEventType() {
+		case enums.EVENT_TYPE_ACTIVITY_TASK_COMPLETED:
+			activityCompleted = true
+		case enums.EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED:
+			childStarted = true
+		}
+	}
+	if !activityCompleted || !childStarted {
+		t.Fatalf(
+			"target dispatcher history must contain a completed dispatch wait and child admission; activity_completed=%t child_started=%t",
+			activityCompleted, childStarted,
+		)
+	}
 }
 
 func assertRepresentativeLegacyHistory(t *testing.T, history *historypb.History) {
