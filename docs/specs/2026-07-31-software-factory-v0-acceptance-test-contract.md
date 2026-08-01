@@ -1,5 +1,9 @@
 # Software factory v0 acceptance-test contract
 
+> Update (2026-08-01): fixed Agent Attempt and Review Step acceptance limits in
+> this historical contract were removed. Current Runs continue revision until
+> success or their Temporal deadline.
+
 Status: **working behavior contract**
 
 Companion design:

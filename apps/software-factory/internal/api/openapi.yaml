@@ -83,8 +83,6 @@ components:
             - ""
             - invalid_input
             - agent_unrecoverable
-            - agent_attempt_budget
-            - review_budget
             - ci_unobserved
             - github_auth
             - github_ruleset
@@ -433,8 +431,6 @@ components:
             - ""
             - invalid_input
             - agent_unrecoverable
-            - agent_attempt_budget
-            - review_budget
             - ci_unobserved
             - github_auth
             - github_ruleset

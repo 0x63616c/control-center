@@ -87,7 +87,7 @@ that run/deploy, `packages/` = things you import); product features live under
   A Temporal worker that autonomously works Tickets from its own Postgres. The stable
   `Dispatcher` admits dependency-ready Tickets to one `WorkOnTicket` workflow each;
   `MaintainFactory` repairs orphaned ownership and Run Worker generations. A Run moves through
-  plan, implement, required CI, independent review, and bounded revision before the workflow
+  plan, implement, required CI, and independent review. Revision continues until success or the Run deadline before the workflow
   performs an exact-reviewed-head squash merge. Confirmed merge records the Run as `succeeded`
   and the Ticket as `done`; cancellation returns it to `open`, while terminal failure or
   exhaustion moves it to `failed`. Each Run Worker pod has a credentialed fixed-operation
