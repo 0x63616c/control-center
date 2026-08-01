@@ -868,6 +868,11 @@ func (c *productionRepositoryCheckpoint) Checkpoint(_ context.Context, value sto
 	return c.value, nil
 }
 
+func (c *productionRepositoryCheckpoint) CheckpointEffect(_ context.Context, value store.GitCheckpointInput) (store.GitCheckpoint, error) {
+	c.value, c.found = value.GitCheckpoint, true
+	return c.value, nil
+}
+
 type productionGitHub struct{ recorder productionRecorder }
 
 func (g productionGitHub) PullRequestForBranch(context.Context, string) (work.PullRequest, bool, error) {
