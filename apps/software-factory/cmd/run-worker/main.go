@@ -23,6 +23,7 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
 	checkpointclient "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/checkpoint"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codex"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/local"
 	temporalapi "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/temporal"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock"
@@ -123,9 +124,21 @@ func newActivities(cfg config.RunWorker, logger *slog.Logger) (*activities.Activ
 	if err != nil {
 		return nil, nil, fmt.Errorf("building checkpoint client factory: %w", err)
 	}
+	repositoryCheckpointFactory, err := checkpointclient.NewRepositoryFactory(cfg.CheckpointAPIURL, work.RunWorkerRepositoryCapabilityFile, http.DefaultClient, os.ReadFile)
+	if err != nil {
+		return nil, nil, fmt.Errorf("building repository checkpoint client factory: %w", err)
+	}
 	providerState, err := codex.NewRolloutProbe(os.DirFS(work.CodexHomeDir))
 	if err != nil {
 		return nil, nil, fmt.Errorf("building Codex provider-state probe: %w", err)
+	}
+	repository, err := local.NewRepository(work.RepoDir, local.OSGitRunner{})
+	if err != nil {
+		return nil, nil, fmt.Errorf("building local target repository: %w", err)
+	}
+	githubClient, err := github.NewProjected(cfg.GitHubOwner, cfg.GitHubRepo, work.RunWorkerGitHubTokenFile, os.ReadFile, logger)
+	if err != nil {
+		return nil, nil, fmt.Errorf("building projected GitHub client: %w", err)
 	}
 	target, err := activities.NewRunWorkerActivities(activities.RunWorkerDeps{
 		Stages: runner, Prompts: promptRenderer,
@@ -133,6 +146,10 @@ func newActivities(cfg config.RunWorker, logger *slog.Logger) (*activities.Activ
 			return checkpointFactory.Open(id)
 		},
 		ProviderState: providerState, Clock: clock.System{}, Heartbeat: func(ctx context.Context) { activity.RecordHeartbeat(ctx) },
+		Repository: repository, GitHub: githubClient, Identity: cfg.Identity,
+		RepositoryCheckpoints: func(identity work.RunWorkerIdentity) (activities.RepositoryCheckpoint, error) {
+			return repositoryCheckpointFactory.Open(identity)
+		},
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("building target Run Worker activities: %w", err)
