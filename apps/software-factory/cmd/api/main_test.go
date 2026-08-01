@@ -66,6 +66,13 @@ func TestFactoryRoutingUsesAttemptCapabilityWithoutWeakeningLegacyAuthentication
 		t.Fatalf("checkpoint route without broad bearer = %d: %s", checkpointResponse.Code, checkpointResponse.Body.String())
 	}
 
+	futureRunWorkerRequest := httptest.NewRequest(http.MethodGet, "/v1/run-worker/future", nil)
+	futureRunWorkerResponse := httptest.NewRecorder()
+	mux.ServeHTTP(futureRunWorkerResponse, futureRunWorkerRequest)
+	if futureRunWorkerResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("unregistered Run Worker route without bearer = %d, want 401", futureRunWorkerResponse.Code)
+	}
+
 	legacy = httptest.NewRequest(http.MethodGet, "/v1/build", nil)
 	legacy.Header.Set("Authorization", "Bearer legacy-api")
 	legacyResponse = httptest.NewRecorder()
