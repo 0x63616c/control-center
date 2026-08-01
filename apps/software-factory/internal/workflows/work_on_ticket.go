@@ -1,6 +1,7 @@
 package workflows
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -103,17 +104,17 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 
 	detail := work.TicketDetail{Ticket: work.Ticket{Number: int(claimed.Ticket.ID), Title: claimed.Ticket.Title, Body: claimed.Ticket.Body}}
 	ordinal, agentAttempts, reviewSteps := 2, 0, 0
-	plan, err := runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStagePlan, work.PriorTurns{}, work.AgentPromptContext{}, nil, 1)
+	plan, used, err := runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStagePlan, work.PriorTurns{}, work.AgentPromptContext{}, nil, 1, in.Policy.MaxAgentAttempts-agentAttempts)
+	agentAttempts += used
 	if err != nil {
 		return err
 	}
-	agentAttempts++
 	ordinal++
-	implement, err := runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result}, work.AgentPromptContext{}, nil, 1)
+	implement, used, err := runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result}, work.AgentPromptContext{}, nil, 1, in.Policy.MaxAgentAttempts-agentAttempts)
+	agentAttempts += used
 	if err != nil {
 		return err
 	}
-	agentAttempts++
 	ordinal++
 	implementTurn := 1
 	var pullRequest work.PullRequest
@@ -164,11 +165,11 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 			}
 			implementTurn++
 			feedback = work.AgentPromptContext{CandidateHeadSHA: candidate.PushedHead, CIFailures: ci.RedFailures}
-			implement, err = runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result}, feedback, &activities.ProviderThreadContinuation{Identity: identity, ThreadID: implement.ThreadID}, implementTurn)
+			implement, used, err = runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result}, feedback, &activities.ProviderThreadContinuation{Identity: identity, ThreadID: implement.ThreadID}, implementTurn, in.Policy.MaxAgentAttempts-agentAttempts)
+			agentAttempts += used
 			if err != nil {
 				return err
 			}
-			agentAttempts++
 			ordinal++
 			continue
 		}
@@ -179,11 +180,11 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 			return exhaustedAgentAttempts(in.Policy.MaxAgentAttempts)
 		}
 		reviewSteps++
-		review, reviewErr := runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageReview, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: latestReview, ReviewLedger: reviewLedger}, work.AgentPromptContext{CandidateHeadSHA: candidate.PushedHead}, nil, reviewSteps)
+		review, used, reviewErr := runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageReview, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: latestReview, ReviewLedger: reviewLedger}, work.AgentPromptContext{CandidateHeadSHA: candidate.PushedHead}, nil, reviewSteps, in.Policy.MaxAgentAttempts-agentAttempts)
+		agentAttempts += used
 		if reviewErr != nil {
 			return reviewErr
 		}
-		agentAttempts++
 		ordinal++
 		findings, ok := review.Result.Value().(work.ReviewOutput)
 		if !ok {
@@ -197,11 +198,11 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 			}
 			implementTurn++
 			feedback = work.AgentPromptContext{CandidateHeadSHA: candidate.PushedHead, ReviewFindings: findings.Findings}
-			implement, err = runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: latestReview}, feedback, &activities.ProviderThreadContinuation{Identity: identity, ThreadID: implement.ThreadID}, implementTurn)
+			implement, used, err = runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: latestReview}, feedback, &activities.ProviderThreadContinuation{Identity: identity, ThreadID: implement.ThreadID}, implementTurn, in.Policy.MaxAgentAttempts-agentAttempts)
+			agentAttempts += used
 			if err != nil {
 				return err
 			}
-			agentAttempts++
 			ordinal++
 			continue
 		}
@@ -250,11 +251,11 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 		}
 		implementTurn++
 		feedback = work.AgentPromptContext{CandidateHeadSHA: candidate.PushedHead, Merge: &work.MergeFeedback{Outcome: merge.Outcome, ReviewedHeadSHA: candidate.PushedHead, CurrentHeadSHA: merge.PullRequest.HeadSHA, CurrentBaseSHA: merge.PullRequest.BaseSHA, Diagnostic: merge.Diagnostic}}
-		implement, err = runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: latestReview}, feedback, &activities.ProviderThreadContinuation{Identity: identity, ThreadID: implement.ThreadID}, implementTurn)
+		implement, used, err = runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: latestReview}, feedback, &activities.ProviderThreadContinuation{Identity: identity, ThreadID: implement.ThreadID}, implementTurn, in.Policy.MaxAgentAttempts-agentAttempts)
+		agentAttempts += used
 		if err != nil {
 			return err
 		}
-		agentAttempts++
 		ordinal++
 	}
 
@@ -283,78 +284,108 @@ func startTargetStep(ctx workflow.Context, in WorkOnTicketInput, ordinal int, ki
 	return nil
 }
 
-func runTargetAgentStep(ctx workflow.Context, sessionCtx workflow.Context, in WorkOnTicketInput, identity work.RunWorkerIdentity, detail work.TicketDetail, ordinal int, stage work.AgentStage, prior work.PriorTurns, promptContext work.AgentPromptContext, continuation *activities.ProviderThreadContinuation, iteration int) (activities.TargetAgentOutput, error) {
+func runTargetAgentStep(ctx workflow.Context, sessionCtx workflow.Context, in WorkOnTicketInput, identity work.RunWorkerIdentity, detail work.TicketDetail, ordinal int, stage work.AgentStage, prior work.PriorTurns, promptContext work.AgentPromptContext, continuation *activities.ProviderThreadContinuation, iteration, remainingAttempts int) (activities.TargetAgentOutput, int, error) {
 	if err := promptContext.Validate(); err != nil {
-		return activities.TargetAgentOutput{}, temporal.NewNonRetryableApplicationError(fmt.Sprintf("validating %s prompt context: %v", stage, err), activities.ErrTypeInvalid, nil)
+		return activities.TargetAgentOutput{}, 0, temporal.NewNonRetryableApplicationError(fmt.Sprintf("validating %s prompt context: %v", stage, err), activities.ErrTypeInvalid, nil)
+	}
+	if remainingAttempts <= 0 {
+		return activities.TargetAgentOutput{}, 0, exhaustedAgentAttempts(in.Policy.MaxAgentAttempts)
 	}
 	if err := startTargetStep(ctx, in, ordinal, agentStepKind(stage)); err != nil {
-		return activities.TargetAgentOutput{}, err
+		return activities.TargetAgentOutput{}, 0, err
 	}
-	attempt := store.TargetAttemptID{RunID: in.RunID, StepOrdinal: ordinal, AttemptNo: 1}
 	recordingCtx := workflow.WithActivityOptions(ctx, targetActivityOptions(in.Policy.Recording))
-	if err := workflow.ExecuteActivity(recordingCtx, targetRecordingActs.StartAgentAttempt, store.StartAgentAttemptInput{
-		ID: attempt, AgentStage: stage, Model: in.Model, UsageState: work.UsageUnknown, StartedAt: workflow.Now(ctx),
-	}).Get(recordingCtx, nil); err != nil {
-		return activities.TargetAgentOutput{}, fmt.Errorf("authorizing %s agent attempt: %w", stage, err)
-	}
 	controlCtx := workflow.WithActivityOptions(ctx, targetActivityOptions(in.Policy.Provisioning))
-	if err := workflow.ExecuteActivity(controlCtx, runWorkerControlActs.AuthorizeRunWorkerAttempt, activities.AuthorizeRunWorkerAttemptInput{
-		Identity: identity, AttemptID: attempt,
-	}).Get(controlCtx, nil); err != nil {
-		return activities.TargetAgentOutput{}, fmt.Errorf("installing %s checkpoint capability: %w", stage, err)
-	}
 	credentialCtx := workflow.WithActivityOptions(ctx, targetActivityOptions(in.Policy.CredentialRotation))
-	var revision work.RunWorkerCredentialRevision
-	if err := workflow.ExecuteActivity(credentialCtx, runWorkerControlActs.RotateRunWorkerGitHubCredential, activities.RotateRunWorkerGitHubCredentialInput{Identity: identity}).Get(credentialCtx, &revision); err != nil {
-		return activities.TargetAgentOutput{}, fmt.Errorf("rotating %s GitHub credential: %w", stage, err)
-	}
-	if err := revision.Validate(); err != nil {
-		return activities.TargetAgentOutput{}, fmt.Errorf("validating %s credential revision: %w", stage, err)
-	}
-	agentCtx, cancelAgent := workflow.WithCancel(workflow.WithActivityOptions(sessionCtx, targetAgentActivityOptions(in.Policy.Agent)))
-	defer cancelAgent()
-	var out activities.TargetAgentOutput
-	agentFuture := workflow.ExecuteActivity(agentCtx, targetRunWorkerActs.RunTargetAgent, activities.TargetAgentInput{
-		AttemptID: attempt, TicketNumber: detail.Number, Iteration: iteration, Stage: stage, Model: in.Model,
-		Detail: detail, Prior: prior, PromptContext: promptContext, MaxReviewSteps: in.Policy.MaxReviewSteps, PriorProviderThread: continuation,
-		CredentialRevision: activities.CredentialRevisionExpectation{Identity: identity, Revision: revision.Revision},
-	})
-	renewalCtx, cancelRenewal := workflow.WithCancel(ctx)
-	defer cancelRenewal()
-	for {
-		completed := false
-		var agentErr error
-		selector := workflow.NewSelector(ctx)
-		selector.AddFuture(agentFuture, func(f workflow.Future) {
-			completed = true
-			agentErr = f.Get(agentCtx, &out)
+	attemptContinuation := continuation
+	for attemptNo := 1; attemptNo <= remainingAttempts; attemptNo++ {
+		attempt := store.TargetAttemptID{RunID: in.RunID, StepOrdinal: ordinal, AttemptNo: attemptNo}
+		if err := workflow.ExecuteActivity(recordingCtx, targetRecordingActs.StartAgentAttempt, store.StartAgentAttemptInput{
+			ID: attempt, AgentStage: stage, Model: in.Model, UsageState: work.UsageUnknown, StartedAt: workflow.Now(ctx),
+		}).Get(recordingCtx, nil); err != nil {
+			return activities.TargetAgentOutput{}, attemptNo - 1, fmt.Errorf("authorizing %s agent attempt: %w", stage, err)
+		}
+		if err := workflow.ExecuteActivity(controlCtx, runWorkerControlActs.AuthorizeRunWorkerAttempt, activities.AuthorizeRunWorkerAttemptInput{
+			Identity: identity, AttemptID: attempt,
+		}).Get(controlCtx, nil); err != nil {
+			return activities.TargetAgentOutput{}, attemptNo, fmt.Errorf("installing %s checkpoint capability: %w", stage, err)
+		}
+		var revision work.RunWorkerCredentialRevision
+		if err := workflow.ExecuteActivity(credentialCtx, runWorkerControlActs.RotateRunWorkerGitHubCredential, activities.RotateRunWorkerGitHubCredentialInput{Identity: identity}).Get(credentialCtx, &revision); err != nil {
+			return activities.TargetAgentOutput{}, attemptNo, fmt.Errorf("rotating %s GitHub credential: %w", stage, err)
+		}
+		if err := revision.Validate(); err != nil {
+			return activities.TargetAgentOutput{}, attemptNo, fmt.Errorf("validating %s credential revision: %w", stage, err)
+		}
+		agentCtx, cancelAgent := workflow.WithCancel(workflow.WithActivityOptions(sessionCtx, targetAgentActivityOptions(in.Policy.Agent)))
+		var out activities.TargetAgentOutput
+		agentFuture := workflow.ExecuteActivity(agentCtx, targetRunWorkerActs.RunTargetAgent, activities.TargetAgentInput{
+			AttemptID: attempt, TicketNumber: detail.Number, Iteration: iteration, Stage: stage, Model: in.Model,
+			Detail: detail, Prior: prior, PromptContext: promptContext, MaxReviewSteps: in.Policy.MaxReviewSteps, PriorProviderThread: attemptContinuation,
+			CredentialRevision: activities.CredentialRevisionExpectation{Identity: identity, Revision: revision.Revision},
 		})
-		selector.AddFuture(workflow.NewTimer(renewalCtx, credentialRenewalInterval), func(workflow.Future) {})
-		selector.Select(ctx)
-		if completed {
-			if agentErr != nil {
-				return activities.TargetAgentOutput{}, fmt.Errorf("running %s agent attempt: %w", stage, agentErr)
+		renewalCtx, cancelRenewal := workflow.WithCancel(ctx)
+		var agentErr error
+		for {
+			completed := false
+			selector := workflow.NewSelector(ctx)
+			selector.AddFuture(agentFuture, func(f workflow.Future) {
+				completed = true
+				agentErr = f.Get(agentCtx, &out)
+			})
+			selector.AddFuture(workflow.NewTimer(renewalCtx, credentialRenewalInterval), func(workflow.Future) {})
+			selector.Select(ctx)
+			if completed {
+				break
 			}
-			break
+			var renewed work.RunWorkerCredentialRevision
+			if err := workflow.ExecuteActivity(controlCtx, runWorkerControlActs.RotateRunWorkerGitHubCredential, activities.RotateRunWorkerGitHubCredentialInput{Identity: identity}).Get(controlCtx, &renewed); err != nil {
+				cancelRenewal()
+				cancelAgent()
+				return activities.TargetAgentOutput{}, attemptNo, fmt.Errorf("renewing %s GitHub credential: %w", stage, err)
+			}
+			if err := renewed.Validate(); err != nil {
+				cancelRenewal()
+				cancelAgent()
+				return activities.TargetAgentOutput{}, attemptNo, fmt.Errorf("validating renewed %s credential revision: %w", stage, err)
+			}
 		}
-		var renewed work.RunWorkerCredentialRevision
-		if err := workflow.ExecuteActivity(controlCtx, runWorkerControlActs.RotateRunWorkerGitHubCredential, activities.RotateRunWorkerGitHubCredentialInput{Identity: identity}).Get(controlCtx, &renewed); err != nil {
-			cancelAgent()
-			return activities.TargetAgentOutput{}, fmt.Errorf("renewing %s GitHub credential: %w", stage, err)
+		cancelRenewal()
+		cancelAgent()
+		if agentErr != nil {
+			failureKind := work.RunFailureInfrastructure
+			if isUnresumableAttempt(agentErr) {
+				failureKind = work.RunFailureAgentUnrecoverable
+			}
+			if err := workflow.ExecuteActivity(recordingCtx, targetRecordingActs.FailAgentAttempt, store.AgentAttemptFailureInput{
+				ID: attempt, FailureKind: failureKind, EndedAt: workflow.Now(ctx),
+			}).Get(recordingCtx, nil); err != nil {
+				return activities.TargetAgentOutput{}, attemptNo, fmt.Errorf("recording failed %s agent attempt: %w", stage, err)
+			}
+			if isUnresumableAttempt(agentErr) && attemptNo < remainingAttempts {
+				attemptContinuation = nil
+				continue
+			}
+			if isUnresumableAttempt(agentErr) {
+				return activities.TargetAgentOutput{}, attemptNo, exhaustedAgentAttempts(in.Policy.MaxAgentAttempts)
+			}
+			return activities.TargetAgentOutput{}, attemptNo, fmt.Errorf("running %s agent attempt: %w", stage, agentErr)
 		}
-		if err := renewed.Validate(); err != nil {
-			cancelAgent()
-			return activities.TargetAgentOutput{}, fmt.Errorf("validating renewed %s credential revision: %w", stage, err)
+		if len(out.Output) == 0 {
+			return activities.TargetAgentOutput{}, attemptNo, temporal.NewNonRetryableApplicationError(
+				fmt.Sprintf("%s agent produced no durable result", stage), activities.ErrTypeInvalid, nil)
 		}
+		if err := workflow.ExecuteActivity(recordingCtx, targetRecordingActs.CompleteStep, in.RunID, ordinal, workflow.Now(ctx), out.Output).Get(recordingCtx, nil); err != nil {
+			return activities.TargetAgentOutput{}, attemptNo, fmt.Errorf("completing %s step %d: %w", stage, ordinal, err)
+		}
+		return out, attemptNo, nil
 	}
-	if len(out.Output) == 0 {
-		return activities.TargetAgentOutput{}, temporal.NewNonRetryableApplicationError(
-			fmt.Sprintf("%s agent produced no durable result", stage), activities.ErrTypeInvalid, nil)
-	}
-	if err := workflow.ExecuteActivity(recordingCtx, targetRecordingActs.CompleteStep, in.RunID, ordinal, workflow.Now(ctx), out.Output).Get(recordingCtx, nil); err != nil {
-		return activities.TargetAgentOutput{}, fmt.Errorf("completing %s step %d: %w", stage, ordinal, err)
-	}
-	return out, nil
+	return activities.TargetAgentOutput{}, remainingAttempts, exhaustedAgentAttempts(in.Policy.MaxAgentAttempts)
+}
+
+func isUnresumableAttempt(err error) bool {
+	var application *temporal.ApplicationError
+	return errors.As(err, &application) && application.Type() == activities.ErrTypeUnresumableIncompleteAttempt
 }
 
 func agentStepKind(stage work.AgentStage) work.StepKind {

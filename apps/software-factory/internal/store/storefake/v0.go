@@ -156,6 +156,32 @@ func (f *Store) BindCheckpointCapability(_ context.Context, attemptID store.Targ
 	return nil
 }
 
+// FailAgentAttempt mirrors the main workflow's authority to close one
+// exhausted execution before it may authorize a replacement Attempt.
+func (f *Store) FailAgentAttempt(_ context.Context, in store.AgentAttemptFailureInput) (store.AgentAttempt, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if in.FailureKind == "" || in.EndedAt.IsZero() {
+		return store.AgentAttempt{}, fmt.Errorf("failing agent attempt %s: failure kind and terminal time are required: %w", in.ID, work.ErrPermanent)
+	}
+	if !f.targetRunOwnedLocked(in.ID.RunID) {
+		return store.AgentAttempt{}, fmt.Errorf("failing agent attempt: %w", store.ErrRunOwnership)
+	}
+	attempt, ok := f.targetAttempts[in.ID]
+	if !ok {
+		return store.AgentAttempt{}, fmt.Errorf("attempt %s: %w", in.ID, store.ErrNotFound)
+	}
+	if attempt.State != work.AgentAttemptRunning {
+		if attempt.State != work.AgentAttemptFailed || attempt.FailureKind != in.FailureKind || !attempt.EndedAt.Equal(in.EndedAt) {
+			return store.AgentAttempt{}, fmt.Errorf("failing agent attempt: conflicting terminal failure: %w", work.ErrPermanent)
+		}
+		return attempt, nil
+	}
+	attempt.State, attempt.FailureKind, attempt.EndedAt = work.AgentAttemptFailed, in.FailureKind, in.EndedAt
+	f.targetAttempts[in.ID] = attempt
+	return attempt, nil
+}
+
 // CheckpointAgentAttempt writes only an Attempt owned by the supplied capability.
 func (f *Store) CheckpointAgentAttempt(_ context.Context, in store.AgentCheckpointInput) (store.AgentAttempt, error) {
 	f.mu.Lock()

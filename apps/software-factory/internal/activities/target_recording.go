@@ -17,6 +17,7 @@ type TargetRunRecorder interface {
 	StartStep(context.Context, store.StartStepInput) (store.RunStep, error)
 	CompleteStep(context.Context, string, int, time.Time, json.RawMessage) (store.RunStep, error)
 	StartAgentAttempt(context.Context, store.StartAgentAttemptInput) (store.AgentAttempt, error)
+	FailAgentAttempt(context.Context, store.AgentAttemptFailureInput) (store.AgentAttempt, error)
 	CheckpointAgentAttempt(context.Context, store.AgentCheckpointInput) (store.AgentAttempt, error)
 	CheckpointGitEffect(context.Context, store.GitCheckpointInput) (store.GitCheckpoint, error)
 	FinalizeConfirmedMerge(context.Context, store.ConfirmedMergeInput) (store.TerminalResult, error)
@@ -66,6 +67,15 @@ func (a *TargetRecordingActivities) StartAgentAttempt(ctx context.Context, in st
 	attempt, err := a.store.StartAgentAttempt(ctx, in)
 	if err != nil {
 		return store.AgentAttempt{}, fail(ctx, fmt.Sprintf("starting agent attempt %s", in.ID), err)
+	}
+	return attempt, nil
+}
+
+// FailAgentAttempt closes an exhausted Agent Attempt before the workflow can authorize a replacement.
+func (a *TargetRecordingActivities) FailAgentAttempt(ctx context.Context, in store.AgentAttemptFailureInput) (store.AgentAttempt, error) {
+	attempt, err := a.store.FailAgentAttempt(ctx, in)
+	if err != nil {
+		return store.AgentAttempt{}, fail(ctx, fmt.Sprintf("failing agent attempt %s", in.ID), err)
 	}
 	return attempt, nil
 }

@@ -52,6 +52,7 @@ type TargetStepRecorder interface {
 // TargetAgentRecorder records durable agent authorization and checkpoint boundaries.
 type TargetAgentRecorder interface {
 	StartAgentAttempt(context.Context, StartAgentAttemptInput) (AgentAttempt, error)
+	FailAgentAttempt(context.Context, AgentAttemptFailureInput) (AgentAttempt, error)
 	CheckpointAgentAttempt(context.Context, AgentCheckpointInput) (AgentAttempt, error)
 }
 
@@ -408,6 +409,16 @@ type AgentCheckpointInput struct {
 	Transcript  *TargetTranscript
 }
 
+// AgentAttemptFailureInput records that the workflow exhausted one authorized
+// execution without receiving a durable terminal response. It is deliberately
+// main-control authority, unlike AgentCheckpointInput's scoped Run Worker
+// capability: only the workflow may decide a fresh Agent Attempt is allowed.
+type AgentAttemptFailureInput struct {
+	ID          TargetAttemptID
+	FailureKind work.RunFailureKind
+	EndedAt     time.Time
+}
+
 // TargetTranscript is transcript material for one ordinal Agent Attempt.
 type TargetTranscript struct {
 	CompressedBytes       []byte
@@ -683,6 +694,69 @@ func (s *Store) BindCheckpointCapability(ctx context.Context, attemptID TargetAt
 		return fmt.Errorf("binding checkpoint capability to %s: %w", attemptID, wrapQueryErr(err))
 	}
 	return nil
+}
+
+// FailAgentAttempt records a terminal failure after Temporal has exhausted an
+// authorized activity execution. The main workflow owns this decision, so it
+// authenticates Run ownership rather than requiring the Run Worker's scoped
+// checkpoint capability, which may be unavailable precisely when this path is
+// needed.
+func (s *Store) FailAgentAttempt(ctx context.Context, in AgentAttemptFailureInput) (AgentAttempt, error) {
+	if s.begin == nil {
+		return AgentAttempt{}, fmt.Errorf("failing agent attempt: store cannot begin a transaction")
+	}
+	if in.FailureKind == "" || in.EndedAt.IsZero() {
+		return AgentAttempt{}, fmt.Errorf("failing agent attempt %s: failure kind and terminal time are required: %w", in.ID, work.ErrPermanent)
+	}
+	id, err := pgUUID(in.ID.RunID)
+	if err != nil {
+		return AgentAttempt{}, fmt.Errorf("failing agent attempt: %w", err)
+	}
+	tx, err := s.begin.Begin(ctx)
+	if err != nil {
+		return AgentAttempt{}, fmt.Errorf("failing agent attempt: beginning transaction: %w", wrapQueryErr(err))
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := s.q.WithTx(tx)
+	run, err := q.TargetRunForUpdate(ctx, id)
+	if err != nil {
+		return AgentAttempt{}, fmt.Errorf("failing agent attempt: reading run: %w", wrapQueryErr(err))
+	}
+	ticket, err := q.TargetTicketForUpdate(ctx, run.TicketID)
+	if err != nil {
+		return AgentAttempt{}, fmt.Errorf("failing agent attempt: reading ticket: %w", wrapQueryErr(err))
+	}
+	if run.TargetOutcome.Valid || ticket.State != TicketActive.String() || runIDString(ticket.ActiveRunID) != in.ID.RunID {
+		return AgentAttempt{}, fmt.Errorf("failing agent attempt: %w", ErrRunOwnership)
+	}
+	current, err := q.TargetAgentAttemptForUpdate(ctx, storedb.TargetAgentAttemptForUpdateParams{
+		RunID: id, StepOrdinal: int32(in.ID.StepOrdinal), AttemptNo: int32(in.ID.AttemptNo),
+	})
+	if err != nil {
+		return AgentAttempt{}, fmt.Errorf("failing agent attempt: reading attempt: %w", wrapQueryErr(err))
+	}
+	if current.State != string(work.AgentAttemptRunning) {
+		if current.State != string(work.AgentAttemptFailed) || current.FailureKind != string(in.FailureKind) || !timeFromPg(current.EndedAt).Equal(in.EndedAt.Truncate(time.Microsecond)) {
+			return AgentAttempt{}, fmt.Errorf("failing agent attempt: conflicting terminal failure: %w", work.ErrPermanent)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return AgentAttempt{}, fmt.Errorf("failing agent attempt: committing retry: %w", wrapQueryErr(err))
+		}
+		return agentAttemptFromRow(current), nil
+	}
+	row, err := q.CheckpointTargetAgentAttempt(ctx, storedb.CheckpointTargetAgentAttemptParams{
+		RunID: id, StepOrdinal: int32(in.ID.StepOrdinal), AttemptNo: int32(in.ID.AttemptNo),
+		ProviderThreadID: current.ProviderThreadID, State: string(work.AgentAttemptFailed), FailureKind: string(in.FailureKind),
+		UsageState: current.UsageState, InputTokens: current.InputTokens, CachedInputTokens: current.CachedInputTokens,
+		OutputTokens: current.OutputTokens, ReasoningTokens: current.ReasoningTokens, EndedAt: pgTimestamp(in.EndedAt),
+	})
+	if err != nil {
+		return AgentAttempt{}, fmt.Errorf("failing agent attempt %s: %w", in.ID, wrapQueryErr(err))
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return AgentAttempt{}, fmt.Errorf("failing agent attempt: committing: %w", wrapQueryErr(err))
+	}
+	return agentAttemptFromRow(row), nil
 }
 
 // CheckpointAgentAttempt records only the named active Attempt after verifying the Run capability.

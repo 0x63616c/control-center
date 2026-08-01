@@ -583,6 +583,13 @@ func TestWorkOnTicketSchedulesTenAgentRetriesWithTheAcceptanceBackoff(t *testing
 	if elapsed := h.env.Now().Sub(started); elapsed != 25*time.Minute+10*time.Second {
 		t.Fatalf("retry schedule elapsed = %s, want 25m10s from 10s x2 capped at 5m", elapsed)
 	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	if len(detail.Steps) < 2 || len(detail.Steps[1].Attempts) != 1 || detail.Steps[1].Attempts[0].State != work.AgentAttemptFailed || detail.Steps[1].Attempts[0].FailureKind != work.RunFailureInfrastructure {
+		t.Fatalf("unavailable model attempt = %+v, want one durably failed plan Attempt", detail.Steps)
+	}
 }
 
 // A heartbeat timeout is a technical retry of the same authorized execution.
@@ -663,8 +670,8 @@ func TestWorkOnTicketReplacesAnUnresumableAttemptInsideTheSameStep(t *testing.T)
 	if implement.Step.State != work.StepStateCompleted || len(implement.Attempts) != 2 {
 		t.Fatalf("implement step = %+v, want one completed Step with two attempts", implement)
 	}
-	if first, second := implement.Attempts[0], implement.Attempts[1]; first.ID.AttemptNo != 1 || first.State != work.AgentAttemptFailed || first.FailureKind != work.RunFailureAgentUnrecoverable || second.ID.AttemptNo != 2 || second.State != work.AgentAttemptSucceeded {
-		t.Fatalf("implement attempts = %+v, want failed unresumable attempt 1 then successful attempt 2", implement.Attempts)
+	if first, second := implement.Attempts[0], implement.Attempts[1]; first.ID.AttemptNo != 1 || first.State != work.AgentAttemptFailed || first.FailureKind != work.RunFailureAgentUnrecoverable || second.ID.AttemptNo != 2 {
+		t.Fatalf("implement attempts = %+v, want failed unresumable attempt 1 then explicit attempt 2", implement.Attempts)
 	}
 	if len(h.authorized) != 4 || h.authorized[1].AttemptID.AttemptNo != 1 || h.authorized[2].AttemptID.AttemptNo != 2 {
 		t.Fatalf("authorized attempts = %+v, want plan, implement attempt 1, implement attempt 2, and review", h.authorized)
@@ -673,6 +680,61 @@ func TestWorkOnTicketReplacesAnUnresumableAttemptInsideTheSameStep(t *testing.T)
 		if input.Stage == work.AgentStageImplement && input.AttemptID.AttemptNo == 2 && input.PriorProviderThread != nil {
 			t.Fatalf("replacement attempt resumed an unresumable provider thread: %+v", input.PriorProviderThread)
 		}
+	}
+}
+
+// A replacement is a new semantic Attempt, not a technical retry. It must
+// spend the Run-wide budget, so exhausting that budget after a recovery stops
+// the next fresh implementer authorization.
+func TestWorkOnTicketCountsUnresumableReplacementAgainstTheRunWideAttemptBudget(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "replacement budget", "do not reset the attempt cap", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	policy := work.DefaultTargetRunPolicy()
+	policy.MaxAgentAttempts = 4
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000014", Policy: policy, CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
+		if input.Stage == work.AgentStageImplement && input.AttemptID.AttemptNo == 1 {
+			return targetAgentOutput(t, input.Stage), temporal.NewNonRetryableApplicationError("provider execution cannot resume", activities.ErrTypeUnresumableIncompleteAttempt, nil)
+		}
+		if input.Stage == work.AgentStageReview {
+			var result work.StageOutput
+			if err := json.Unmarshal([]byte(`{"stage":"review","value":{"document":"fix it","findings":[{"id":"blocking","blocking":true,"summary":"fix it"}]}}`), &result); err != nil {
+				return activities.TargetAgentOutput{}, err
+			}
+			return activities.TargetAgentOutput{Output: []byte(`{"stage":"review","value":{"document":"fix it","findings":[{"id":"blocking","blocking":true,"summary":"fix it"}]}}`), Result: result, ThreadID: "review-thread", UsageState: work.UsageMeasured}, nil
+		}
+		return targetAgentOutput(t, input.Stage), nil
+	}
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err == nil {
+		t.Fatal("WorkOnTicket succeeded after the replacement consumed the last agent-attempt budget")
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	total := 0
+	for _, step := range detail.Steps {
+		total += len(step.Attempts)
+	}
+	if total != policy.MaxAgentAttempts || len(h.agentInputs) != policy.MaxAgentAttempts {
+		t.Fatalf("attempts = durable %d / scheduled %d, want the %d-cap including the replacement", total, len(h.agentInputs), policy.MaxAgentAttempts)
+	}
+	implements := 0
+	for _, input := range h.agentInputs {
+		if input.Stage == work.AgentStageImplement {
+			implements++
+		}
+	}
+	if implements != 2 {
+		t.Fatalf("implement activity inputs = %d, want only the failed attempt and explicit replacement", implements)
 	}
 }
 

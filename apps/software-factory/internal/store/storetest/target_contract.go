@@ -408,6 +408,37 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 		}
 	})
 
+	t.Run("main control closes an exhausted attempt before authorizing its replacement", func(t *testing.T) {
+		s, _, runID, startedAt := claimedRun(t, newStore(t))
+		ctx := context.Background()
+		if _, err := s.StartStep(ctx, store.StartStepInput{RunID: runID, Ordinal: 1, Kind: work.StepImplement, StartedAt: startedAt}); err != nil {
+			t.Fatalf("StartStep: %v", err)
+		}
+		first := store.TargetAttemptID{RunID: runID, StepOrdinal: 1, AttemptNo: 1}
+		if _, err := s.StartAgentAttempt(ctx, store.StartAgentAttemptInput{ID: first, AgentStage: work.AgentStageImplement, Model: work.Model{Name: "contract-model", Effort: "medium"}, UsageState: work.UsageUnknown, StartedAt: startedAt}); err != nil {
+			t.Fatalf("StartAgentAttempt(first): %v", err)
+		}
+		failure := store.AgentAttemptFailureInput{ID: first, FailureKind: work.RunFailureAgentUnrecoverable, EndedAt: startedAt.Add(time.Minute)}
+		if _, err := s.FailAgentAttempt(ctx, failure); err != nil {
+			t.Fatalf("FailAgentAttempt: %v", err)
+		}
+		if _, err := s.FailAgentAttempt(ctx, failure); err != nil {
+			t.Fatalf("FailAgentAttempt(exact retry): %v", err)
+		}
+		second := store.TargetAttemptID{RunID: runID, StepOrdinal: 1, AttemptNo: 2}
+		if _, err := s.StartAgentAttempt(ctx, store.StartAgentAttemptInput{ID: second, AgentStage: work.AgentStageImplement, Model: work.Model{Name: "contract-model", Effort: "medium"}, UsageState: work.UsageUnknown, StartedAt: startedAt.Add(time.Minute)}); err != nil {
+			t.Fatalf("StartAgentAttempt(replacement): %v", err)
+		}
+		detail, err := s.TargetRunDetail(ctx, runID)
+		if err != nil {
+			t.Fatalf("TargetRunDetail: %v", err)
+		}
+		attempts := detail.Steps[0].Attempts
+		if len(attempts) != 2 || attempts[0].State != work.AgentAttemptFailed || attempts[0].FailureKind != work.RunFailureAgentUnrecoverable || attempts[1].ID.AttemptNo != 2 || attempts[1].State != work.AgentAttemptRunning {
+			t.Fatalf("attempt history = %+v, want failed attempt 1 then authorized attempt 2", attempts)
+		}
+	})
+
 	t.Run("failed agent checkpoint preserves running transcript", func(t *testing.T) {
 		s, _, runID, startedAt := claimedRun(t, newStore(t))
 		ctx := context.Background()
