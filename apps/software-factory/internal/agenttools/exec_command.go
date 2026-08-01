@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
@@ -40,6 +41,28 @@ func NewExecCommand(
 	maxInlineBytes int,
 	timeout time.Duration,
 ) (*agenttool.BoundTool[ExecCommandInput], error) {
+	return newExecCommand(repositoryRoot, artifactIdentity, artifacts, maxInlineBytes, timeout, nil)
+}
+
+// NewReadOnlyExecCommand builds the capability-restricted exec_command used by plan and review.
+func NewReadOnlyExecCommand(
+	repositoryRoot string,
+	artifactIdentity string,
+	artifacts agent.ArtifactStore,
+	maxInlineBytes int,
+	timeout time.Duration,
+) (*agenttool.BoundTool[ExecCommandInput], error) {
+	return newExecCommand(repositoryRoot, artifactIdentity, artifacts, maxInlineBytes, timeout, readOnlyCommand)
+}
+
+func newExecCommand(
+	repositoryRoot string,
+	artifactIdentity string,
+	artifacts agent.ArtifactStore,
+	maxInlineBytes int,
+	timeout time.Duration,
+	policy func([]string) error,
+) (*agenttool.BoundTool[ExecCommandInput], error) {
 	root, err := filepath.EvalSymlinks(repositoryRoot)
 	if err != nil {
 		return nil, fmt.Errorf("resolve repository root: %w", err)
@@ -53,8 +76,50 @@ func NewExecCommand(
 	}
 	definition := agenttool.Define[ExecCommandInput]("exec_command", "Execute one explicit argv command in the ticket repository.")
 	return agenttool.Bind(definition, func(ctx context.Context, input ExecCommandInput) (agenttool.Result, error) {
+		if policy != nil {
+			if err := policy(input.Argv); err != nil {
+				return toolError("read-only exec_command rejected argv: %v", err), nil
+			}
+		}
 		return executeCommand(ctx, root, artifactIdentity, artifacts, maxInlineBytes, timeout, input)
 	}), nil
+}
+
+func readOnlyCommand(argv []string) error {
+	command := filepath.Base(argv[0])
+	switch command {
+	case "git":
+		if len(argv) < 2 {
+			return fmt.Errorf("git subcommand is required")
+		}
+		allowed := map[string]bool{
+			"status": true, "diff": true, "show": true, "log": true, "grep": true,
+			"rev-parse": true, "ls-files": true,
+		}
+		if !allowed[argv[1]] {
+			return fmt.Errorf("git subcommand %q is mutating or unsupported", argv[1])
+		}
+	case "rg":
+	default:
+		return fmt.Errorf("command %q is not allowlisted", command)
+	}
+	for _, argument := range argv[1:] {
+		value := argument
+		if _, after, found := strings.Cut(argument, "="); found {
+			value = after
+		}
+		if filepath.IsAbs(value) || value == ".." || strings.HasPrefix(filepath.Clean(value), ".."+string(filepath.Separator)) {
+			return fmt.Errorf("path argument %q escapes the repository", argument)
+		}
+		for _, forbidden := range []string{
+			"-c", "--config-env", "--git-dir", "--work-tree", "--exec-path", "--upload-pack", "--ext-diff", "--textconv", "--pre",
+		} {
+			if argument == forbidden || strings.HasPrefix(argument, forbidden+"=") {
+				return fmt.Errorf("option %q can escape read-only execution", argument)
+			}
+		}
+	}
+	return nil
 }
 
 func executeCommand(
