@@ -22,6 +22,7 @@ import (
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/k8s"
 	temporalapi "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/temporal"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/config"
@@ -98,6 +99,10 @@ func buildLiveDependencies(ctx context.Context, stderr io.Writer) (cutover.Depen
 		return cutover.Dependencies{}, func() {}, fmt.Errorf("reading in-cluster GitHub App configuration: %w", err)
 	}
 	logger := slog.New(slog.NewJSONHandler(stderr, &slog.HandlerOptions{Level: workerConfig.LogLevel}))
+	sandboxes, err := k8s.NewInCluster(workerConfig.SandboxNamespace, logger, clock.System{})
+	if err != nil {
+		return cutover.Dependencies{}, func() {}, fmt.Errorf("building the Kubernetes sandbox client: %w", err)
+	}
 
 	pool, err := pgxpool.New(ctx, workerConfig.DatabaseURL)
 	if err != nil {
@@ -130,7 +135,7 @@ func buildLiveDependencies(ctx context.Context, stderr io.Writer) (cutover.Depen
 		temporal.Close()
 		pool.Close()
 	}
-	return cutover.LiveDependencies(temporal, workerConfig.TemporalNamespace, githubClient, store.New(pool), clock.System{}), closeRuntime, nil
+	return cutover.LiveDependencies(temporal, workerConfig.TemporalNamespace, sandboxes, githubClient, store.New(pool), clock.System{}), closeRuntime, nil
 }
 
 func runPolicyVerification(args []string, stdin io.Reader, stdout io.Writer) error {

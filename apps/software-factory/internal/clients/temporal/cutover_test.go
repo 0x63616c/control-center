@@ -8,18 +8,57 @@ import (
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock/clocktest"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+	commonpb "go.temporal.io/api/common/v1"
+	enumspb "go.temporal.io/api/enums/v1"
+	workflowpb "go.temporal.io/api/workflow/v1"
 	workflowservice "go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/converter"
 )
 
 type fakeCutoverClient struct {
-	statuses []work.FactoryDispatcherStatus
-	queries  int
-	signal   work.ConfigUpdate
+	statuses     []work.FactoryDispatcherStatus
+	queries      int
+	signal       work.ConfigUpdate
+	listRequests []*workflowservice.ListWorkflowExecutionsRequest
+	listed       []*workflowservice.ListWorkflowExecutionsResponse
 }
 
-func (fake *fakeCutoverClient) ListWorkflow(context.Context, *workflowservice.ListWorkflowExecutionsRequest) (*workflowservice.ListWorkflowExecutionsResponse, error) {
-	return &workflowservice.ListWorkflowExecutionsResponse{}, nil
+func (fake *fakeCutoverClient) ListWorkflow(_ context.Context, request *workflowservice.ListWorkflowExecutionsRequest) (*workflowservice.ListWorkflowExecutionsResponse, error) {
+	fake.listRequests = append(fake.listRequests, request)
+	if len(fake.listed) == 0 {
+		return &workflowservice.ListWorkflowExecutionsResponse{}, nil
+	}
+	response := fake.listed[0]
+	fake.listed = fake.listed[1:]
+	return response, nil
+}
+
+func TestListIncludesPreActivationAgentWorkflowChildren(t *testing.T) {
+	t.Parallel()
+	fake := &fakeCutoverClient{listed: []*workflowservice.ListWorkflowExecutionsResponse{
+		{Executions: []*workflowpb.WorkflowExecutionInfo{
+			{Execution: &commonpb.WorkflowExecution{WorkflowId: "software-factory-ticket-dispatcher", RunId: "dispatcher-run"}, Type: &commonpb.WorkflowType{Name: "FactoryDispatcher"}, Status: enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING},
+			{Execution: &commonpb.WorkflowExecution{WorkflowId: "factory-ticket-8", RunId: "ticket-run"}, Type: &commonpb.WorkflowType{Name: "FactoryWorkTicket"}, Status: enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING},
+			{Execution: &commonpb.WorkflowExecution{WorkflowId: "agent/run-8/implement/1", RunId: "agent-run"}, Type: &commonpb.WorkflowType{Name: "AgentWorkflow"}, Status: enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING},
+			{Execution: &commonpb.WorkflowExecution{WorkflowId: "agent/run-target/step/5/attempt/1", RunId: "target-agent-run"}, Type: &commonpb.WorkflowType{Name: "AgentWorkflow"}, Status: enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING},
+		}},
+	}}
+	controller := &LegacyController{client: fake, namespace: "software-factory", clock: clocktest.NewFake(time.Date(2026, time.August, 1, 12, 0, 0, 0, time.UTC))}
+
+	listed, err := controller.List(t.Context())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(listed) != 3 || listed[2].Kind != LegacyAgent || listed[2].ID != "agent/run-8/implement/1" {
+		t.Fatalf("listed = %+v, want the legacy AgentWorkflow classified and the target agent omitted", listed)
+	}
+	if len(fake.listRequests) != 1 {
+		t.Fatalf("list requests = %d, want 1", len(fake.listRequests))
+	}
+	wantQuery := `ExecutionStatus = 'Running' AND (WorkflowType = 'FactoryDispatcher' OR WorkflowType = 'FactoryWorkTicket' OR WorkflowType = 'AgentWorkflow')`
+	if fake.listRequests[0].Query != wantQuery {
+		t.Fatalf("query = %q, want %q", fake.listRequests[0].Query, wantQuery)
+	}
 }
 
 func (fake *fakeCutoverClient) SignalWorkflow(_ context.Context, _, _, _ string, payload interface{}) error {

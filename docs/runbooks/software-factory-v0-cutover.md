@@ -92,6 +92,7 @@ kubectl -n software-factory exec deployment/software-factory-worker -- \
   /usr/local/bin/factoryctl cutover --mode inventory --require-ready \
   >"${cutover_dir}/05-ready.json"
 jq -e '.ready == true and (.after.workflows | length) == 0 and
+  (.after.sandboxes | length) == 0 and
   ([.after.pullRequests[] | select(.autoMergeEnabled)] | length) == 0 and
   (.after.tickets | length) == 0 and
   (.after.runs | length) == 0' "${cutover_dir}/05-ready.json"
