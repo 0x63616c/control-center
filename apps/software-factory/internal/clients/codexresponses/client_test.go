@@ -3,10 +3,12 @@ package codexresponses
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +17,129 @@ import (
 
 type staticCredentialSource struct {
 	credential Credential
+}
+
+func TestTurnEncodesAFunctionOutputContinuation(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			PreviousResponseID string `json:"previous_response_id"`
+			Input              []struct {
+				Type   string `json:"type"`
+				CallID string `json:"call_id"`
+				Output string `json:"output"`
+			} `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decoding request: %v", err)
+			return
+		}
+		if request.PreviousResponseID != "resp_tool" || len(request.Input) != 1 {
+			t.Fatalf("continuation request = %#v", request)
+		}
+		if got := request.Input[0]; got.Type != "function_call_output" || got.CallID != "call_123" || got.Output != `{"temperature_c":18}` {
+			t.Errorf("function output = %#v", got)
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"It is 18 C.\"}]}}\n\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_final\",\"status\":\"completed\"}}\n\n")
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server.URL)
+	result, err := client.Turn(context.Background(), TurnRequest{
+		Model:              "gpt-test",
+		Instructions:       "Answer briefly.",
+		Input:              []InputItem{FunctionOutput("call_123", `{"temperature_c":18}`)},
+		Store:              true,
+		PreviousResponseID: "resp_tool",
+		ToolChoice:         ToolChoiceAuto,
+		TextVerbosity:      TextVerbosityLow,
+	}, nil)
+	if err != nil {
+		t.Fatalf("running continuation: %v", err)
+	}
+	if result.Outcome != OutcomeFinalText || result.Text != "It is 18 C." {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestTurnReportsTerminalFailuresWithoutLeakingProviderBodies(t *testing.T) {
+	t.Parallel()
+
+	const secret = "super-secret-access-token"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `credential rejected: `+secret)
+	}))
+	defer server.Close()
+
+	client, err := New(
+		&http.Client{Timeout: 2 * time.Second},
+		server.URL,
+		staticCredentialSource{credential: Credential{
+			AccessToken: work.NewCredential(secret),
+			AccountID:   "account-123",
+		}},
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+	if err != nil {
+		t.Fatalf("constructing client: %v", err)
+	}
+
+	_, err = client.Turn(context.Background(), TurnRequest{
+		Model:         "gpt-test",
+		Instructions:  "Answer briefly.",
+		Input:         []InputItem{UserText("Hello")},
+		ToolChoice:    ToolChoiceNone,
+		TextVerbosity: TextVerbosityLow,
+	}, nil)
+	if err == nil {
+		t.Fatal("running turn succeeded, want HTTP error")
+	}
+	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "credential rejected") {
+		t.Fatalf("error leaked provider body: %v", err)
+	}
+}
+
+func TestParseStreamClassifiesTerminalEventsAndReasoningProgress(t *testing.T) {
+	t.Parallel()
+
+	var events []Event
+	_, err := parseStream(strings.NewReader(
+		"data: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"Checking the tool\"}\n\n"+
+			"data: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_partial\",\"status\":\"incomplete\"}}\n\n",
+	), func(event Event) { events = append(events, event) })
+	if err == nil || !strings.Contains(err.Error(), "response.incomplete") {
+		t.Fatalf("error = %v, want incomplete classification", err)
+	}
+	if len(events) != 1 || events[0].Type != EventReasoningDelta || events[0].Delta != "Checking the tool" {
+		t.Fatalf("events = %#v", events)
+	}
+
+	_, err = parseStream(strings.NewReader("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_cut\"}}\n\n"), nil)
+	if err == nil || !errors.Is(err, ErrStreamInterrupted) {
+		t.Fatalf("error = %v, want ErrStreamInterrupted", err)
+	}
+}
+
+func newTestClient(t *testing.T, endpoint string) *Client {
+	t.Helper()
+	client, err := New(
+		&http.Client{Timeout: 2 * time.Second},
+		endpoint,
+		staticCredentialSource{credential: Credential{
+			AccessToken: work.NewCredential("access-token"),
+			AccountID:   "account-123",
+		}},
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+	if err != nil {
+		t.Fatalf("constructing client: %v", err)
+	}
+	return client
 }
 
 func (s staticCredentialSource) Credential(context.Context) (Credential, error) {

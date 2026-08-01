@@ -109,22 +109,26 @@ func (c *Client) Turn(ctx context.Context, request TurnRequest, emit EmitFunc) (
 }
 
 type wireRequest struct {
-	Model             string            `json:"model"`
-	Store             bool              `json:"store"`
-	Stream            bool              `json:"stream"`
-	Instructions      string            `json:"instructions"`
-	Input             []wireInputItem   `json:"input"`
-	Tools             []wireTool        `json:"tools,omitempty"`
-	ToolChoice        ToolChoice        `json:"tool_choice"`
-	ParallelToolCalls bool              `json:"parallel_tool_calls"`
-	Reasoning         *ReasoningOptions `json:"reasoning,omitempty"`
-	Text              wireText          `json:"text"`
-	PromptCacheKey    string            `json:"prompt_cache_key,omitempty"`
+	Model              string            `json:"model"`
+	Store              bool              `json:"store"`
+	Stream             bool              `json:"stream"`
+	Instructions       string            `json:"instructions"`
+	Input              []wireInputItem   `json:"input"`
+	Tools              []wireTool        `json:"tools,omitempty"`
+	ToolChoice         ToolChoice        `json:"tool_choice"`
+	ParallelToolCalls  bool              `json:"parallel_tool_calls"`
+	Reasoning          *ReasoningOptions `json:"reasoning,omitempty"`
+	Text               wireText          `json:"text"`
+	PromptCacheKey     string            `json:"prompt_cache_key,omitempty"`
+	PreviousResponseID string            `json:"previous_response_id,omitempty"`
 }
 
 type wireInputItem struct {
-	Role    string             `json:"role"`
-	Content []wireInputContent `json:"content"`
+	Role    string             `json:"role,omitempty"`
+	Content []wireInputContent `json:"content,omitempty"`
+	Type    string             `json:"type,omitempty"`
+	CallID  string             `json:"call_id,omitempty"`
+	Output  string             `json:"output,omitempty"`
 }
 
 type wireInputContent struct {
@@ -150,13 +154,30 @@ func encodeRequest(request TurnRequest) ([]byte, error) {
 	}
 	input := make([]wireInputItem, 0, len(request.Input))
 	for _, item := range request.Input {
-		if item.Type != InputUserText || item.Text == "" {
+		switch item.Type {
+		case InputUserText:
+			if item.Text == "" {
+				return nil, fmt.Errorf("the Codex Responses turn contains a blank user input")
+			}
+			input = append(input, wireInputItem{
+				Role:    "user",
+				Content: []wireInputContent{{Type: "input_text", Text: item.Text}},
+			})
+		case InputFunctionOutput:
+			if item.CallID == "" || item.Output == "" {
+				return nil, fmt.Errorf("the Codex Responses turn contains an incomplete function output")
+			}
+			input = append(input, wireInputItem{
+				Type:   "function_call_output",
+				CallID: item.CallID,
+				Output: item.Output,
+			})
+		default:
 			return nil, fmt.Errorf("the Codex Responses turn contains an unsupported or blank input item")
 		}
-		input = append(input, wireInputItem{
-			Role:    "user",
-			Content: []wireInputContent{{Type: "input_text", Text: item.Text}},
-		})
+	}
+	if request.PreviousResponseID != "" && !request.Store {
+		return nil, fmt.Errorf("a Codex Responses continuation must enable response storage")
 	}
 	tools := make([]wireTool, 0, len(request.Tools))
 	for _, tool := range request.Tools {
@@ -176,17 +197,18 @@ func encodeRequest(request TurnRequest) ([]byte, error) {
 		reasoning = &request.Reasoning
 	}
 	encoded, err := json.Marshal(wireRequest{
-		Model:             request.Model,
-		Store:             request.Store,
-		Stream:            true,
-		Instructions:      request.Instructions,
-		Input:             input,
-		Tools:             tools,
-		ToolChoice:        request.ToolChoice,
-		ParallelToolCalls: request.ParallelToolCalls,
-		Reasoning:         reasoning,
-		Text:              wireText{Verbosity: request.TextVerbosity},
-		PromptCacheKey:    request.PromptCacheKey,
+		Model:              request.Model,
+		Store:              request.Store,
+		Stream:             true,
+		Instructions:       request.Instructions,
+		Input:              input,
+		Tools:              tools,
+		ToolChoice:         request.ToolChoice,
+		ParallelToolCalls:  request.ParallelToolCalls,
+		Reasoning:          reasoning,
+		Text:               wireText{Verbosity: request.TextVerbosity},
+		PromptCacheKey:     request.PromptCacheKey,
+		PreviousResponseID: request.PreviousResponseID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("encoding the Codex Responses request: %w", err)
@@ -256,7 +278,7 @@ func parseStream(reader io.Reader, emit EmitFunc) (TurnResult, error) {
 		return TurnResult{}, err
 	}
 	if !terminal {
-		return TurnResult{}, fmt.Errorf("the stream ended before a terminal response event")
+		return TurnResult{}, fmt.Errorf("%w: the stream ended before a terminal response event", ErrStreamInterrupted)
 	}
 	if result.Outcome == "" {
 		return TurnResult{}, fmt.Errorf("the completed response contained neither final text nor tool calls")
@@ -293,6 +315,10 @@ func consumeEvent(
 		result.Text += event.Delta
 		if emit != nil {
 			emit(Event{Type: EventTextDelta, Delta: event.Delta})
+		}
+	case "response.reasoning_summary_text.delta":
+		if emit != nil {
+			emit(Event{Type: EventReasoningDelta, Delta: event.Delta})
 		}
 	case "response.function_call_arguments.delta":
 		call := pendingCalls[event.OutputIndex]

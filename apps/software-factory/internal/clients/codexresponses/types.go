@@ -3,6 +3,7 @@ package codexresponses
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
@@ -87,12 +88,21 @@ type InputType string
 const (
 	// InputUserText is a user-authored text message.
 	InputUserText InputType = "user_text"
+	// InputFunctionOutput returns one allowlisted tool's result to the model.
+	InputFunctionOutput InputType = "function_output"
 )
 
 // InputItem is one typed item in a turn's conversation input.
 type InputItem struct {
-	Type InputType `json:"type"`
-	Text string    `json:"text"`
+	Type   InputType
+	Text   string
+	CallID string
+	Output string
+}
+
+// FunctionOutput constructs the continuation item for a completed tool call.
+func FunctionOutput(callID, output string) InputItem {
+	return InputItem{Type: InputFunctionOutput, CallID: callID, Output: output}
 }
 
 // UserText constructs a user text input.
@@ -102,16 +112,17 @@ func UserText(text string) InputItem {
 
 // TurnRequest describes one direct Codex Responses turn.
 type TurnRequest struct {
-	Model             string
-	Instructions      string
-	Input             []InputItem
-	Store             bool
-	Tools             []Tool
-	ToolChoice        ToolChoice
-	ParallelToolCalls bool
-	Reasoning         ReasoningOptions
-	TextVerbosity     TextVerbosity
-	PromptCacheKey    string
+	Model              string
+	Instructions       string
+	Input              []InputItem
+	Store              bool
+	Tools              []Tool
+	ToolChoice         ToolChoice
+	ParallelToolCalls  bool
+	Reasoning          ReasoningOptions
+	TextVerbosity      TextVerbosity
+	PromptCacheKey     string
+	PreviousResponseID string
 }
 
 // Outcome distinguishes a final answer from a turn requiring tool execution.
@@ -155,6 +166,8 @@ type EventType string
 const (
 	// EventTextDelta carries incremental final-answer text.
 	EventTextDelta EventType = "text_delta"
+	// EventReasoningDelta carries transient reasoning-summary progress.
+	EventReasoningDelta EventType = "reasoning_delta"
 )
 
 // Event is transient progress emitted while a turn is running.
@@ -165,3 +178,6 @@ type Event struct {
 
 // EmitFunc receives transient progress. It must not retain credentials.
 type EmitFunc func(Event)
+
+// ErrStreamInterrupted marks an SSE stream that ended without a terminal event.
+var ErrStreamInterrupted = errors.New("codex responses stream interrupted")
