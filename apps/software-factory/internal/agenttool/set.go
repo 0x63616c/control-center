@@ -136,3 +136,8 @@ func (s Set) Specifications() []Specification {
 func (s Set) Fingerprint() string {
 	return s.fingerprint
 }
+
+// Execute dispatches provider arguments to the named typed tool.
+func (s Set) Execute(ctx context.Context, name string, arguments json.RawMessage) (Result, error) {
+	return s.tools[name].Execute(ctx, arguments)
+}

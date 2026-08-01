@@ -216,3 +216,28 @@ func TestMustSetRejectsUnsupportedStrictSchemas(t *testing.T) {
 	}()
 	agenttool.MustSet("coding-read-v1", tool)
 }
+
+func TestSetExecutesToolByName(t *testing.T) {
+	t.Parallel()
+
+	var received readInput
+	read := agenttool.Bind(
+		agenttool.Define[readInput]("read_file", "Read a repository file."),
+		func(_ context.Context, input readInput) (agenttool.Result, error) {
+			received = input
+			return agenttool.Result{Content: "contents"}, nil
+		},
+	)
+	set := agenttool.MustSet("coding-read-v1", read)
+
+	result, err := set.Execute(context.Background(), "read_file", []byte(`{"path":"README.md","limit":128}`))
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if received.Path != "README.md" {
+		t.Fatalf("handler input path = %q", received.Path)
+	}
+	if result.Content != "contents" || result.IsError {
+		t.Fatalf("Execute() result = %+v", result)
+	}
+}
