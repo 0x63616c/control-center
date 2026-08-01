@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,6 +17,12 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
+
+type runWorkerTestRedactor struct{}
+
+func (runWorkerTestRedactor) Redact(_ context.Context, raw []byte) ([]byte, error) {
+	return bytes.Clone(raw), nil
+}
 
 func TestEnsureCodexHomeLinksToProjectedCredentialFile(t *testing.T) {
 	root := t.TempDir()
@@ -61,6 +70,7 @@ func TestRunWorkerRegistersAndExecutesOnePinnedRepositorySession(t *testing.T) {
 			return attemptCheckpoint, nil
 		},
 		CredentialRevision: func(context.Context) (string, error) { return "1", nil },
+		SecretRedactor:     runWorkerTestRedactor{},
 		ProviderState:      sessionProviderState{},
 		Clock:              sessionClock{now: time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)},
 		Heartbeat:          func(context.Context) {},
@@ -155,6 +165,81 @@ func TestRunWorkerRegistersAndExecutesOnePinnedRepositorySession(t *testing.T) {
 	}
 }
 
+func TestRunTargetAgentRedactsPriorCredentialAfterProjectionRotation(t *testing.T) {
+	t.Parallel()
+	identity := work.RunWorkerIdentity{RunID: "0f466627-b3ae-4ba2-9c96-6ef44ec6f578", Generation: 2}
+	files := map[string][]byte{
+		work.RunWorkerGitHubTokenFile:          []byte("github-token-before-rotation"),
+		work.RunWorkerCodexCredentialFile:      []byte(`{"tokens":{"access_token":"codex-access-token","refresh_token":"","id_token":""}}`),
+		work.RunWorkerCheckpointCapabilityFile: []byte("checkpoint-capability"),
+		work.RunWorkerRepositoryCapabilityFile: []byte("repository-capability"),
+	}
+	redactor, err := newProjectedSecretRedactor(func(path string) ([]byte, error) { return bytes.Clone(files[path]), nil })
+	if err != nil {
+		t.Fatalf("newProjectedSecretRedactor: %v", err)
+	}
+	filesystem := &pinnedFilesystem{identity: identity, marker: "run-worker-generation-2"}
+	checkpoint := &sessionAttemptCheckpoint{}
+	stage := &sessionStageRunner{
+		filesystem: filesystem,
+		events:     [][]byte{[]byte(`{"type":"thread.started","thread_id":"thread-42"}`), []byte(`{"type":"item.completed","item":{"text":"github-token-before-rotation"}}`)},
+		afterEvents: func() {
+			files[work.RunWorkerGitHubTokenFile] = []byte("github-token-after-rotation")
+		},
+		result: work.StageResult{
+			Output:   []byte(`{"report":"github-token-before-rotation github-token-after-rotation","blocked":false,"blocked_reason":"","title":"Implement ticket","body":"Ready"}`),
+			ThreadID: "thread-42", UsageMeasured: true,
+		},
+	}
+	target, err := activities.NewRunWorkerActivities(activities.RunWorkerDeps{
+		Stages: stage, Prompts: sessionPrompts{}, Checkpoints: func(store.TargetAttemptID) (activities.AttemptCheckpoint, error) { return checkpoint, nil },
+		CredentialRevision: func(context.Context) (string, error) { return "1", nil }, SecretRedactor: redactor,
+		ProviderState: sessionProviderState{}, Clock: sessionClock{now: time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)}, Heartbeat: func(context.Context) {},
+		Repository: &sessionRepository{filesystem: filesystem, head: "candidate-head"}, GitHub: &sessionGitHub{filesystem: filesystem}, Identity: identity,
+		RepositoryCheckpoints: func(work.RunWorkerIdentity) (activities.RepositoryCheckpoint, error) {
+			return &sessionRepositoryCheckpoint{}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewRunWorkerActivities: %v", err)
+	}
+	out, err := target.RunTargetAgent(context.Background(), activities.TargetAgentInput{
+		AttemptID: store.TargetAttemptID{RunID: identity.RunID, StepOrdinal: 2, AttemptNo: 1}, TicketNumber: 42, Iteration: 1,
+		Stage: work.AgentStageImplement, Model: work.Model{Name: "gpt-5", Effort: "high"},
+		CredentialRevision: activities.CredentialRevisionExpectation{Identity: identity, Revision: "1"},
+	})
+	if err != nil {
+		t.Fatalf("RunTargetAgent: %v", err)
+	}
+	for _, secret := range [][]byte{[]byte("github-token-before-rotation"), []byte("github-token-after-rotation")} {
+		if bytes.Contains(out.Output, secret) || bytes.Contains([]byte(out.Result.Prose()), secret) {
+			t.Fatalf("activity output leaked %q: %+v", secret, out)
+		}
+		for _, write := range checkpoint.writes {
+			if bytes.Contains(write.Result, secret) {
+				t.Fatalf("checkpoint result leaked %q: %s", secret, write.Result)
+			}
+			if write.Transcript != nil && bytes.Contains(decompressRunWorkerTranscript(t, write.Transcript.CompressedBytes), secret) {
+				t.Fatalf("checkpoint transcript leaked %q", secret)
+			}
+		}
+	}
+}
+
+func decompressRunWorkerTranscript(t *testing.T, compressed []byte) []byte {
+	t.Helper()
+	reader, err := gzip.NewReader(bytes.NewReader(compressed))
+	if err != nil {
+		t.Fatalf("opening compressed transcript: %v", err)
+	}
+	defer func() { _ = reader.Close() }()
+	raw, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("reading compressed transcript: %v", err)
+	}
+	return raw
+}
+
 type activityRegistrarProbe struct{ registrations []any }
 
 func (p *activityRegistrarProbe) RegisterActivity(activity any) {
@@ -199,15 +284,26 @@ func (r *sessionRepository) Prepare(_ context.Context, _, _ string) (string, err
 }
 
 type sessionStageRunner struct {
-	filesystem *pinnedFilesystem
-	result     work.StageResult
+	filesystem  *pinnedFilesystem
+	result      work.StageResult
+	events      [][]byte
+	afterEvents func()
 }
 
 func (r *sessionStageRunner) RunTargetStage(_ context.Context, _ work.StageRun, _ string, events work.StageEventSink) (work.StageResult, error) {
 	if err := r.filesystem.observe("agent"); err != nil {
 		return work.StageResult{}, err
 	}
-	events([]byte(`{"type":"thread.started","thread_id":"thread-42"}`))
+	stream := r.events
+	if len(stream) == 0 {
+		stream = [][]byte{[]byte(`{"type":"thread.started","thread_id":"thread-42"}`)}
+	}
+	for _, event := range stream {
+		events(event)
+	}
+	if r.afterEvents != nil {
+		r.afterEvents()
+	}
 	return r.result, nil
 }
 
@@ -226,8 +322,9 @@ func (sessionPrompts) Decode(stage work.Stage, raw []byte) (work.StageOutput, er
 }
 
 type sessionAttemptCheckpoint struct {
-	value checkpointprotocol.Attempt
-	found bool
+	value  checkpointprotocol.Attempt
+	found  bool
+	writes []checkpointprotocol.Attempt
 }
 
 func (c *sessionAttemptCheckpoint) Load(context.Context) (checkpointprotocol.Attempt, bool, error) {
@@ -236,6 +333,7 @@ func (c *sessionAttemptCheckpoint) Load(context.Context) (checkpointprotocol.Att
 
 func (c *sessionAttemptCheckpoint) Checkpoint(_ context.Context, value checkpointprotocol.Attempt) error {
 	c.value, c.found = value, true
+	c.writes = append(c.writes, value)
 	return nil
 }
 

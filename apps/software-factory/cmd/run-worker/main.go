@@ -145,13 +145,17 @@ func newActivities(cfg config.RunWorker, logger *slog.Logger) (*activities.Activ
 	if err != nil {
 		return nil, nil, fmt.Errorf("building projected GitHub client: %w", err)
 	}
+	secretRedactor, err := newProjectedSecretRedactor(os.ReadFile)
+	if err != nil {
+		return nil, nil, fmt.Errorf("building projected secret redactor: %w", err)
+	}
 	target, err := activities.NewRunWorkerActivities(activities.RunWorkerDeps{
 		Stages: runner, Prompts: promptRenderer,
 		Checkpoints: func(id store.TargetAttemptID) (activities.AttemptCheckpoint, error) {
 			return checkpointFactory.Open(id)
 		},
-		CredentialRevision: projectedCredentialRevision,
-		ProviderState:      providerState, Clock: clock.System{}, Heartbeat: func(ctx context.Context) { activity.RecordHeartbeat(ctx) },
+		CredentialRevision: projectedCredentialRevision, SecretRedactor: secretRedactor,
+		ProviderState: providerState, Clock: clock.System{}, Heartbeat: func(ctx context.Context) { activity.RecordHeartbeat(ctx) },
 		Repository: repository, GitHub: githubClient, Identity: cfg.Identity,
 		RepositoryCheckpoints: func(identity work.RunWorkerIdentity) (activities.RepositoryCheckpoint, error) {
 			return repositoryCheckpointFactory.Open(identity)
