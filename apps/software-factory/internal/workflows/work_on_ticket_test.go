@@ -910,6 +910,39 @@ func TestWorkOnTicketFinalizesChildEvidenceBeforeCompletingAgentStep(t *testing.
 	}
 }
 
+// Target evidence and prompt decoding once shared the Go method name Finalize.
+// WorkOnTicket must schedule the evidence boundary under its explicit stable
+// wire name so worker registration order can never route the evidence payload
+// to the prompt decoder.
+func TestWorkOnTicketNamesTheTargetEvidenceActivityUnambiguously(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "name target evidence", "record the child result", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000034", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket: %v", err)
+	}
+	want := activities.TargetAgentEvidenceFinalizeActivityName
+	count := 0
+	for _, name := range h.activityNames {
+		if name == want {
+			count++
+		}
+		if name == agent.FinalizeActivityName {
+			t.Fatalf("target evidence used ambiguous activity name %q; activities = %v", name, h.activityNames)
+		}
+	}
+	if count != 3 {
+		t.Fatalf("target evidence activity count = %d, want plan, implement, and review under %q; activities = %v", count, want, h.activityNames)
+	}
+}
+
 // A classified terminal child failure ends one semantic execution and starts
 // one fresh Attempt under the same Step.
 func TestWorkOnTicketStartsFreshSemanticAttemptOnlyForClassifiedTerminalChildFailure(t *testing.T) {
@@ -1884,6 +1917,7 @@ type workOnTicketHarness struct {
 	agentChildIDs          []string
 	agentChildCanceled     int
 	agentPersistenceEvents []agentPersistenceEvent
+	activityNames          []string
 	finalizedAttempts      []store.TargetAttemptID
 	ci                     activities.TargetAwaitCIInput
 	ready                  activities.TargetMarkPullRequestReadyInput
@@ -1930,6 +1964,7 @@ func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore workOnT
 		h.controlSequence = append(h.controlSequence, "child-canceled")
 	})
 	env.SetOnActivityStartedListener(func(info *activity.Info, _ context.Context, values converter.EncodedValues) {
+		h.activityNames = append(h.activityNames, info.ActivityType.Name)
 		if info.ActivityType.Name != "CompleteStep" {
 			return
 		}
@@ -1985,7 +2020,7 @@ func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore workOnT
 			h.agentPersistenceEvents = append(h.agentPersistenceEvents, agentPersistenceEvent{kind: "finalize", stepOrdinal: input.AttemptID.StepOrdinal})
 		}
 		return err
-	}, activity.RegisterOptions{Name: "Finalize"})
+	}, activity.RegisterOptions{Name: activities.TargetAgentEvidenceFinalizeActivityName})
 
 	env.RegisterWorkflowWithOptions(func(ctx workflow.Context, input workflows.AgentWorkflowInput) (workflows.AgentWorkflowResult, error) {
 		h.agentInputs = append(h.agentInputs, input)

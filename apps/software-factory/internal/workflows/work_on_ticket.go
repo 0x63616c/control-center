@@ -19,12 +19,12 @@ import (
 const credentialRenewalInterval = 30 * time.Minute
 
 // targetRecordingActs, runWorkerControlActs, and targetRunWorkerActs name the
-// target activity boundaries. Temporal resolves their registered method names;
-// workflow code never invokes the nil receivers directly.
+// target activity boundaries whose method names are already unique. Temporal
+// resolves their registered method names; workflow code never invokes the nil
+// receivers directly.
 var (
 	targetRecordingActs  *activities.TargetRecordingActivities
 	targetRecoveryActs   *activities.TargetRecoveryActivities
-	targetEvidenceActs   *activities.TargetAgentEvidenceActivities
 	runWorkerControlActs *activities.RunWorkerControlActivities
 	targetRunWorkerActs  *activities.RunWorkerActivities
 )
@@ -597,7 +597,7 @@ func runTargetAgentStep(ctx workflow.Context, session *targetRunSession, in Work
 		if result.Failure != nil {
 			if result.Failure.Is(agent.TerminalFailureSessionLost) {
 				if result.TranscriptRef.Key != "" {
-					if evidenceErr := workflow.ExecuteActivity(recordingCtx, targetEvidenceActs.Finalize, activities.TargetAgentEvidenceInput{
+					if evidenceErr := workflow.ExecuteActivity(recordingCtx, activities.TargetAgentEvidenceFinalizeActivityName, activities.TargetAgentEvidenceInput{
 						AttemptID: attemptID, Identity: identity, State: work.AgentAttemptRunning,
 						Usage: result.Usage, UsageMeasured: result.UsageMeasured, TranscriptRef: result.TranscriptRef,
 					}).Get(recordingCtx, nil); evidenceErr != nil {
@@ -613,7 +613,7 @@ func runTargetAgentStep(ctx workflow.Context, session *targetRunSession, in Work
 			}
 			endedAt := workflow.Now(ctx)
 			if result.TranscriptRef.Key != "" {
-				if evidenceErr := workflow.ExecuteActivity(recordingCtx, targetEvidenceActs.Finalize, activities.TargetAgentEvidenceInput{
+				if evidenceErr := workflow.ExecuteActivity(recordingCtx, activities.TargetAgentEvidenceFinalizeActivityName, activities.TargetAgentEvidenceInput{
 					AttemptID: attemptID, Identity: identity, State: work.AgentAttemptFailed, FailureKind: work.RunFailureAgentUnrecoverable,
 					Usage: result.Usage, UsageMeasured: result.UsageMeasured, TranscriptRef: result.TranscriptRef, EndedAt: endedAt,
 				}).Get(recordingCtx, nil); evidenceErr != nil {
@@ -641,7 +641,7 @@ func runTargetAgentStep(ctx workflow.Context, session *targetRunSession, in Work
 			return targetAgentStepResult{}, attemptNo, temporal.NewNonRetryableApplicationError(fmt.Sprintf("%s agent produced no durable result", stage), activities.ErrTypeInvalid, nil)
 		}
 		endedAt := workflow.Now(ctx)
-		if err := workflow.ExecuteActivity(recordingCtx, targetEvidenceActs.Finalize, activities.TargetAgentEvidenceInput{
+		if err := workflow.ExecuteActivity(recordingCtx, activities.TargetAgentEvidenceFinalizeActivityName, activities.TargetAgentEvidenceInput{
 			AttemptID: attemptID, Identity: identity, State: work.AgentAttemptSucceeded, Result: &result.Result, Usage: result.Usage,
 			UsageMeasured: result.UsageMeasured, TranscriptRef: result.TranscriptRef, EndedAt: endedAt,
 		}).Get(recordingCtx, nil); err != nil {

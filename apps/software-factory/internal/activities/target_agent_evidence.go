@@ -15,6 +15,11 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
+// TargetAgentEvidenceFinalizeActivityName preserves the established Temporal
+// wire name for persisting one AgentWorkflow outcome. Keeping it explicit
+// prevents another Go method alias from silently changing replay history.
+const TargetAgentEvidenceFinalizeActivityName = "Finalize"
+
 // TargetAgentEvidenceActivities persists a completed AgentWorkflow's
 // reference-backed evidence to the target-run recovery record.
 type TargetAgentEvidenceActivities struct {

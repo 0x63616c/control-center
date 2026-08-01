@@ -28,12 +28,13 @@ func TestRegisterExposesOnlyActivatedWorkflowsAndMainQueueActivities(t *testing.
 		"w.RegisterWorkflow(workflows.MaintainFactory)",
 		"w.RegisterActivity(targetRecordingActs)",
 		"w.RegisterActivity(targetRecoveryActs)",
-		"w.RegisterActivity(targetEvidenceActs)",
+		"w.RegisterActivityWithOptions(targetEvidenceActs.Finalize, activity.RegisterOptions{Name: activities.TargetAgentEvidenceFinalizeActivityName})",
 		"w.RegisterWorkflowWithOptions(workflows.AgentWorkflow",
 		"agent.PrepareActivityName",
 		"agent.ModelTurnActivityName",
 		"agent.LifecycleActivityName",
 		"agent.FinalizeActivityName",
+		"promptActs.DecodeFinalOutput",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("register()'s body does not contain %q; the worker registers nothing it does not name here", want)
@@ -44,6 +45,7 @@ func TestRegisterExposesOnlyActivatedWorkflowsAndMainQueueActivities(t *testing.
 		"w.RegisterWorkflow(workflows.FactoryWorkTicket)",
 		"w.RegisterWorkflow(workflows.FactoryDispatcher)",
 		"w.RegisterActivity(acts)",
+		"w.RegisterActivity(targetEvidenceActs)",
 		"acts.RunPlan",
 		"acts.RunImplement",
 		"acts.RunReview",
