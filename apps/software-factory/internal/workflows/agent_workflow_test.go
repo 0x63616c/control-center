@@ -64,7 +64,8 @@ func TestAgentWorkflowCompletesFromOneFinalModelTurn(t *testing.T) {
 			Sandbox: "sandbox-7", Model: work.Model{Name: "gpt-test", Effort: "medium"},
 		},
 		ToolsetID: "coding-read-v1", CacheKey: "run-7-plan",
-		Limits: agent.Limits{MaxModelTurns: 3, MaxToolCalls: 4, MaxInputTokens: 1000, MaxOutputTokens: 1000, MaxConversationBytes: 1 << 20, ContinueAsNewAfter: 20},
+		ModelTurnPolicy: work.DefaultTargetRunPolicy().Agent,
+		Limits:          agent.Limits{MaxModelTurns: 3, MaxToolCalls: 4, MaxInputTokens: 1000, MaxOutputTokens: 1000, MaxConversationBytes: 1 << 20, ContinueAsNewAfter: 20},
 	}
 	environment.ExecuteWorkflow(workflows.AgentWorkflow, input)
 	if err := environment.GetWorkflowError(); err != nil {
@@ -74,12 +75,61 @@ func TestAgentWorkflowCompletesFromOneFinalModelTurn(t *testing.T) {
 	if err := environment.GetWorkflowResult(&result); err != nil {
 		t.Fatalf("GetWorkflowResult() error = %v", err)
 	}
-	if result.Result.Prose() != "the plan" || result.ModelTurns != 1 || result.ToolCalls != 0 ||
+	if result.Result.Prose() != "the plan" || result.ConversationRef != conversationRef || result.ModelTurns != 1 || result.ToolCalls != 0 ||
 		result.Usage.InputTokens != 10 || !result.UsageMeasured {
 		t.Fatalf("AgentWorkflow result = %#v", result)
 	}
 	if len(lifecycle) != 1 || lifecycle[0].Outcome != telemetry.AgentOutcomeSucceeded {
 		t.Fatalf("lifecycle = %#v, want one success", lifecycle)
+	}
+}
+
+func TestAgentWorkflowUsesTheSuppliedModelTurnPolicy(t *testing.T) {
+	t.Parallel()
+
+	suite := &testsuite.WorkflowTestSuite{}
+	environment := suite.NewTestWorkflowEnvironment()
+	registerAgentLifecycle(environment, nil)
+	input := validAgentWorkflowInput(work.StageImplement)
+	input.ModelTurnPolicy = work.DefaultTargetRunPolicy().Agent
+	started := map[string]activity.Info{}
+	environment.SetOnActivityStartedListener(func(info *activity.Info, _ context.Context, _ converter.EncodedValues) {
+		started[info.ActivityType.Name] = *info
+	})
+	environment.RegisterActivityWithOptions(func(context.Context, agentactivities.PrepareInput) (agentactivities.PrepareOutput, error) {
+		return agentactivities.PrepareOutput{ConversationRef: agent.ConversationRef{Revision: 0, Bytes: 1}}, nil
+	}, activity.RegisterOptions{Name: agent.PrepareActivityName})
+	environment.RegisterActivityWithOptions(func(context.Context, agent.ModelTurnInput) (agent.ModelTurnResult, error) {
+		return agent.ModelTurnResult{
+			Outcome: agent.OutcomeFinalText, ToolsetFingerprint: testToolsetFingerprint,
+			ConversationRef: agent.ConversationRef{Revision: 1, Bytes: 2}, FinalTextRef: agent.TextRef{Key: "text"}, UsageMeasured: true,
+		}, nil
+	}, activity.RegisterOptions{Name: agent.ModelTurnActivityName})
+	environment.RegisterActivityWithOptions(func(context.Context, agentactivities.FinalizeInput) (agentactivities.FinalizeOutput, error) {
+		return agentactivities.FinalizeOutput{Result: work.NewStageOutput(work.StageImplement, work.ImplementOutput{Report: "done"})}, nil
+	}, activity.RegisterOptions{Name: agent.FinalizeActivityName})
+
+	environment.ExecuteWorkflow(workflows.AgentWorkflow, input)
+	if err := environment.GetWorkflowError(); err != nil {
+		t.Fatalf("AgentWorkflow error = %v", err)
+	}
+	model, found := started[agent.ModelTurnActivityName]
+	if !found {
+		t.Fatalf("started activities = %v", started)
+	}
+	if model.StartToCloseTimeout != 55*time.Minute || model.ScheduleToCloseTimeout != 90*time.Minute || model.HeartbeatTimeout != 5*time.Minute {
+		t.Fatalf("model activity timeouts = %#v", model)
+	}
+	options := workflows.AgentModelTurnActivityOptionsForTest(input.ModelTurnPolicy)
+	if options.RetryPolicy == nil || options.RetryPolicy.InitialInterval != 10*time.Second || options.RetryPolicy.BackoffCoefficient != 2 ||
+		options.RetryPolicy.MaximumInterval != 5*time.Minute || options.RetryPolicy.MaximumAttempts != 10 {
+		t.Fatalf("model activity retry policy = %#v", options.RetryPolicy)
+	}
+	for _, name := range []string{agent.PrepareActivityName, agent.FinalizeActivityName} {
+		control, found := started[name]
+		if !found || control.StartToCloseTimeout != 2*time.Minute || control.HeartbeatTimeout != 15*time.Second {
+			t.Fatalf("%s control options = %#v", name, control)
+		}
 	}
 }
 
@@ -220,6 +270,9 @@ func TestAgentWorkflowContinuesAsNewWithOnlyReferences(t *testing.T) {
 	}
 	if next.ToolTarget != input.ToolTarget {
 		t.Fatalf("continued tool target = %#v, want %#v", next.ToolTarget, input.ToolTarget)
+	}
+	if next.ModelTurnPolicy != input.ModelTurnPolicy {
+		t.Fatalf("continued model-turn policy = %#v, want %#v", next.ModelTurnPolicy, input.ModelTurnPolicy)
 	}
 	if next.Seed == nil || *next.Seed != *input.Seed {
 		t.Fatalf("continued seed = %#v, want %#v", next.Seed, input.Seed)
@@ -405,7 +458,7 @@ func TestAgentWorkflowExecutesARequestedToolAndContinuesWithItsOutput(t *testing
 	if err := environment.GetWorkflowResult(&result); err != nil {
 		t.Fatalf("GetWorkflowResult() error = %v", err)
 	}
-	if modelTurns != 2 || toolCalls != 1 || result.ModelTurns != 2 || result.ToolCalls != 1 || result.Result.Prose() != "done" {
+	if modelTurns != 2 || toolCalls != 1 || result.ModelTurns != 2 || result.ToolCalls != 1 || result.ConversationRef != continued || result.Result.Prose() != "done" {
 		t.Fatalf("turns model=%d tool=%d result=%#v", modelTurns, toolCalls, result)
 	}
 }
@@ -474,6 +527,21 @@ func TestAgentWorkflowRejectsInvalidRunWorkerToolTarget(t *testing.T) {
 	}
 }
 
+func TestAgentWorkflowRejectsAnInvalidModelTurnPolicy(t *testing.T) {
+	t.Parallel()
+
+	suite := &testsuite.WorkflowTestSuite{}
+	environment := suite.NewTestWorkflowEnvironment()
+	registerAgentLifecycle(environment, nil)
+	input := validAgentWorkflowInput(work.StageImplement)
+	input.ModelTurnPolicy.HeartbeatTimeout = input.ModelTurnPolicy.StartToCloseTimeout
+	environment.ExecuteWorkflow(workflows.AgentWorkflow, input)
+	var applicationError *temporal.ApplicationError
+	if !errors.As(environment.GetWorkflowError(), &applicationError) || applicationError.Type() != agent.ErrorTypeInvalidInput || !applicationError.NonRetryable() {
+		t.Fatalf("workflow error = %v, want non-retryable invalid model-turn policy", environment.GetWorkflowError())
+	}
+}
+
 func TestAgentToolActivityOutlivesTheLongestToolCommand(t *testing.T) {
 	got := workflows.AgentToolActivityOptionsForTest().StartToCloseTimeout
 	if got <= agent.MaxToolExecutionDuration {
@@ -491,7 +559,8 @@ func validAgentWorkflowInput(stage work.Stage) workflows.AgentWorkflowInput {
 			Sandbox: "sandbox-7", Model: work.Model{Name: "gpt-test", Effort: "medium"},
 		},
 		ToolsetID: "coding-write-v1", CacheKey: "run-7-stage",
-		Limits: agent.Limits{MaxModelTurns: 3, MaxToolCalls: 4, MaxInputTokens: 1000, MaxOutputTokens: 1000, MaxConversationBytes: 1 << 20, ContinueAsNewAfter: 20},
+		ModelTurnPolicy: work.DefaultTargetRunPolicy().Agent,
+		Limits:          agent.Limits{MaxModelTurns: 3, MaxToolCalls: 4, MaxInputTokens: 1000, MaxOutputTokens: 1000, MaxConversationBytes: 1 << 20, ContinueAsNewAfter: 20},
 	}
 }
 

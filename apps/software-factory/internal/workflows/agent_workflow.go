@@ -16,10 +16,11 @@ import (
 
 // AgentWorkflowInput starts one bounded stage agent.
 type AgentWorkflowInput struct {
-	Attempt    activities.StageAttempt
-	ToolsetID  agent.ToolsetID
-	ToolTarget agent.ToolTarget
-	Limits     agent.Limits
+	Attempt         activities.StageAttempt
+	ToolsetID       agent.ToolsetID
+	ToolTarget      agent.ToolTarget
+	Limits          agent.Limits
+	ModelTurnPolicy work.AgentActivityPolicy
 	// Identity pins every durable agent artifact to one semantic execution.
 	// Empty preserves the pre-target-run stage identity for existing histories.
 	Identity string
@@ -44,12 +45,13 @@ type AgentWorkflowState struct {
 
 // AgentWorkflowResult is the bounded typed result returned to FactoryWorkTicket.
 type AgentWorkflowResult struct {
-	Result        work.StageOutput
-	Usage         work.Usage
-	UsageMeasured bool
-	TranscriptRef agent.TranscriptRef
-	ModelTurns    int
-	ToolCalls     int
+	Result          work.StageOutput
+	Usage           work.Usage
+	UsageMeasured   bool
+	ConversationRef agent.ConversationRef
+	TranscriptRef   agent.TranscriptRef
+	ModelTurns      int
+	ToolCalls       int
 }
 
 // AgentWorkflow runs one bounded reference-only model/tool loop.
@@ -70,17 +72,18 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (workflowResu
 			fmt.Sprintf("resolve agent conversation identity: %v", err), agent.ErrorTypeInvalidInput, err,
 		)
 	}
-	mainContext := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+	controlContext := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 		StartToCloseTimeout: 2 * time.Minute,
 		HeartbeatTimeout:    15 * time.Second,
 		RetryPolicy: &temporal.RetryPolicy{
 			InitialInterval: time.Second, BackoffCoefficient: 2, MaximumInterval: 10 * time.Second, MaximumAttempts: 3,
 		},
 	})
+	modelContext := workflow.WithActivityOptions(ctx, agentModelTurnActivityOptions(input.ModelTurnPolicy))
 	state := AgentWorkflowState{}
 	if input.State == nil {
 		var prepared agentactivities.PrepareOutput
-		if err := workflow.ExecuteActivity(mainContext, agent.PrepareActivityName, agentactivities.PrepareInput{
+		if err := workflow.ExecuteActivity(controlContext, agent.PrepareActivityName, agentactivities.PrepareInput{
 			Attempt: input.Attempt, Identity: identity, CacheKey: input.CacheKey, Seed: input.Seed,
 		}).Get(ctx, &prepared); err != nil {
 			return AgentWorkflowResult{}, fmt.Errorf("prepare agent workflow: %w", err)
@@ -94,7 +97,7 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (workflowResu
 		state = *input.State
 	}
 	result := AgentWorkflowResult{
-		Usage: state.Usage, UsageMeasured: state.UsageMeasured, TranscriptRef: state.TranscriptRef,
+		Usage: state.Usage, UsageMeasured: state.UsageMeasured, ConversationRef: state.ConversationRef, TranscriptRef: state.TranscriptRef,
 		ModelTurns: state.ModelTurns, ToolCalls: state.ToolCalls,
 	}
 	conversationRef := state.ConversationRef
@@ -118,7 +121,7 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (workflowResu
 		}
 		modelTurn := result.ModelTurns + 1
 		var turn agent.ModelTurnResult
-		if err := workflow.ExecuteActivity(mainContext, agent.ModelTurnActivityName, agent.ModelTurnInput{
+		if err := workflow.ExecuteActivity(modelContext, agent.ModelTurnActivityName, agent.ModelTurnInput{
 			Model: input.Attempt.Model, ToolsetID: input.ToolsetID, ToolsetFingerprint: state.ToolsetFingerprint,
 			ConversationRef: conversationRef, TranscriptRef: result.TranscriptRef,
 			ResponseFormat: state.ResponseFormat, PromptCacheKey: state.PromptCacheKey, ModelTurn: modelTurn,
@@ -143,6 +146,7 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (workflowResu
 		result.Usage = result.Usage.Add(turn.Usage)
 		result.UsageMeasured = result.UsageMeasured && turn.UsageMeasured
 		conversationRef = turn.ConversationRef
+		result.ConversationRef = conversationRef
 		if turn.TranscriptRef.Key != "" {
 			result.TranscriptRef = turn.TranscriptRef
 		}
@@ -196,6 +200,7 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (workflowResu
 					)
 				}
 				conversationRef = toolOutput.ConversationRef
+				result.ConversationRef = conversationRef
 				if toolOutput.TranscriptRef.Key != "" {
 					result.TranscriptRef = toolOutput.TranscriptRef
 				}
@@ -214,7 +219,7 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (workflowResu
 			)
 		}
 		var finalized agentactivities.FinalizeOutput
-		if err := workflow.ExecuteActivity(mainContext, agent.FinalizeActivityName, agentactivities.FinalizeInput{
+		if err := workflow.ExecuteActivity(controlContext, agent.FinalizeActivityName, agentactivities.FinalizeInput{
 			Stage: input.Attempt.Key.Stage, TextRef: turn.FinalTextRef, TranscriptRef: result.TranscriptRef,
 		}).Get(ctx, &finalized); err != nil {
 			return result, fmt.Errorf("finalize agent output: %w", err)
@@ -224,6 +229,18 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (workflowResu
 			result.TranscriptRef = finalized.TranscriptRef
 		}
 		return result, nil
+	}
+}
+
+func agentModelTurnActivityOptions(policy work.AgentActivityPolicy) workflow.ActivityOptions {
+	return workflow.ActivityOptions{
+		StartToCloseTimeout:    policy.StartToCloseTimeout,
+		ScheduleToCloseTimeout: policy.ScheduleToCloseTimeout,
+		HeartbeatTimeout:       policy.HeartbeatTimeout,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval: policy.Retry.InitialInterval, BackoffCoefficient: policy.Retry.BackoffCoefficient,
+			MaximumInterval: policy.Retry.MaximumInterval, MaximumAttempts: policy.Retry.MaximumAttempts,
+		},
 	}
 }
 
@@ -283,13 +300,14 @@ func continueAgentWorkflowAsNew(ctx workflow.Context, input AgentWorkflowInput, 
 		Attempt: activities.StageAttempt{
 			Key: input.Attempt.Key, Sandbox: input.Attempt.Sandbox, Model: input.Attempt.Model,
 		},
-		ToolsetID:  input.ToolsetID,
-		ToolTarget: input.ToolTarget,
-		Limits:     input.Limits,
-		Identity:   input.Identity,
-		CacheKey:   input.CacheKey,
-		Seed:       input.Seed,
-		State:      &state,
+		ToolsetID:       input.ToolsetID,
+		ToolTarget:      input.ToolTarget,
+		Limits:          input.Limits,
+		ModelTurnPolicy: input.ModelTurnPolicy,
+		Identity:        input.Identity,
+		CacheKey:        input.CacheKey,
+		Seed:            input.Seed,
+		State:           &state,
 	})
 }
 
@@ -311,6 +329,9 @@ func validateAgentInput(input AgentWorkflowInput) error {
 	if input.Limits.MaxModelTurns < 1 || input.Limits.MaxToolCalls < 0 || input.Limits.MaxInputTokens < 1 ||
 		input.Limits.MaxOutputTokens < 1 || input.Limits.MaxConversationBytes < 1 || input.Limits.ContinueAsNewAfter < 1 {
 		return fmt.Errorf("agent workflow limits must be positive")
+	}
+	if err := input.ModelTurnPolicy.Validate(); err != nil {
+		return fmt.Errorf("validate agent workflow model-turn policy: %w", err)
 	}
 	if _, err := agent.ConversationIdentity(input.Identity, input.Attempt.Key); err != nil {
 		return fmt.Errorf("validate agent workflow conversation identity: %w", err)

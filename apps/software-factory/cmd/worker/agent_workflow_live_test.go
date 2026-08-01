@@ -164,8 +164,9 @@ func TestLiveAgentWorkflowStart(t *testing.T) {
 					"You must use the supplied tools; do not merely describe the change.",
 			}},
 		},
-		ToolsetID:  agent.ToolsetCodingWriteV1,
-		ToolTarget: agent.ToolTarget{Kind: agent.ToolTargetLegacySandbox},
+		ToolsetID:       agent.ToolsetCodingWriteV1,
+		ToolTarget:      agent.ToolTarget{Kind: agent.ToolTargetLegacySandbox},
+		ModelTurnPolicy: work.DefaultTargetRunPolicy().Agent,
 		Limits: agent.Limits{
 			MaxModelTurns: 8, MaxToolCalls: 12, MaxInputTokens: 150_000,
 			MaxOutputTokens: 20_000, MaxConversationBytes: 1 << 20, ContinueAsNewAfter: 3,
