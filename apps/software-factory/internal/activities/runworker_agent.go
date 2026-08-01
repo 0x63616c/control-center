@@ -54,11 +54,6 @@ type SecretRedactor interface {
 // TargetRepository prepares the Run Worker's own filesystem checkout.
 type TargetRepository interface {
 	Prepare(context.Context, string, string) (string, error)
-}
-
-// TargetRepositoryCarryForward is deliberately optional for legacy test
-// doubles; only a recovery-bearing clone needs the exact-commit operation.
-type TargetRepositoryCarryForward interface {
 	PrepareFromCommit(context.Context, string, string, string) (string, error)
 }
 
@@ -70,11 +65,6 @@ type TargetGitHub interface {
 	MarkPullRequestReadyForReview(context.Context, string) error
 	MergePullRequest(context.Context, int, string) (work.PullRequestMergeResult, error)
 	ChecksForCommit(context.Context, string, []string) ([]work.CheckRun, error)
-}
-
-// TargetPullRequestRetirer is used only to fence a canceled predecessor's
-// pull request before the successor creates its own.
-type TargetPullRequestRetirer interface {
 	RetirePullRequest(context.Context, int) (work.PullRequestRetirement, error)
 }
 
@@ -443,7 +433,7 @@ func credentialRevisionNumber(value string) (uint64, error) {
 func (a *RunWorkerActivities) targetAgentOutput(ctx context.Context, stage work.AgentStage, attempt checkpointprotocol.Attempt) (TargetAgentOutput, error) {
 	threadID, err := a.validateProviderThreadID(ctx, attempt.ProviderThreadID)
 	if err != nil {
-		return TargetAgentOutput{}, err
+		return TargetAgentOutput{}, fmt.Errorf("validating durable provider thread ID: %w", err)
 	}
 	if threadID == "" {
 		return TargetAgentOutput{}, fmt.Errorf("terminal provider thread ID is empty: %w", work.ErrPermanent)

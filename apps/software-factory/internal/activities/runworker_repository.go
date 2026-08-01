@@ -90,11 +90,7 @@ func (a *RunWorkerActivities) CloneTargetRepository(ctx context.Context, in Clon
 
 func (a *RunWorkerActivities) prepareCloneRepository(ctx context.Context, in CloneTargetRepositoryInput) (string, *work.PullRequestRetirement, error) {
 	if in.RetirePullRequestNumber > 0 {
-		retirer, ok := a.deps.GitHub.(TargetPullRequestRetirer)
-		if !ok {
-			return "", nil, fmt.Errorf("retiring the canceled run pull request: %w", work.ErrPermanent)
-		}
-		retirement, err := retirer.RetirePullRequest(ctx, in.RetirePullRequestNumber)
+		retirement, err := a.deps.GitHub.RetirePullRequest(ctx, in.RetirePullRequestNumber)
 		if err != nil {
 			return "", nil, fmt.Errorf("retiring the canceled run pull request: %w", err)
 		}
@@ -104,14 +100,16 @@ func (a *RunWorkerActivities) prepareCloneRepository(ctx context.Context, in Clo
 	}
 	if strings.TrimSpace(in.CarryForwardHead) == "" {
 		head, err := a.deps.Repository.Prepare(ctx, in.CloneURL, in.Step.Branch)
-		return head, nil, err
+		if err != nil {
+			return "", nil, fmt.Errorf("preparing the target repository checkout: %w", err)
+		}
+		return head, nil, nil
 	}
-	recoveryRepository, ok := a.deps.Repository.(TargetRepositoryCarryForward)
-	if !ok {
-		return "", nil, fmt.Errorf("preparing the target repository from the durable recovery commit: %w", work.ErrPermanent)
+	head, err := a.deps.Repository.PrepareFromCommit(ctx, in.CloneURL, in.Step.Branch, in.CarryForwardHead)
+	if err != nil {
+		return "", nil, fmt.Errorf("preparing the target repository from the durable recovery commit: %w", err)
 	}
-	head, err := recoveryRepository.PrepareFromCommit(ctx, in.CloneURL, in.Step.Branch, in.CarryForwardHead)
-	return head, nil, err
+	return head, nil, nil
 }
 
 // RestoreTargetRepository reconstructs a replacement filesystem from the

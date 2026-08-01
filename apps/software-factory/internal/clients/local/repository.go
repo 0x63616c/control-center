@@ -71,7 +71,7 @@ func (r *Repository) Prepare(ctx context.Context, cloneURL, branch string) (stri
 		return "", fmt.Errorf("validating target repository inputs: %w", err)
 	}
 	if err := r.prepareCheckout(ctx, cloneURL); err != nil {
-		return "", err
+		return "", fmt.Errorf("preparing target checkout: %w", err)
 	}
 	remoteRef := "refs/remotes/origin/" + branch
 	_, remoteCode, err := r.runner.Run(ctx, r.root, []string{"git", "rev-parse", "--verify", "--quiet", remoteRef})
@@ -106,7 +106,7 @@ func (r *Repository) PrepareFromCommit(ctx context.Context, cloneURL, branch, co
 		return "", fmt.Errorf("validating carry-forward commit: %w", work.ErrPermanent)
 	}
 	if err := r.prepareCheckout(ctx, cloneURL); err != nil {
-		return "", err
+		return "", fmt.Errorf("preparing carry-forward checkout: %w", err)
 	}
 	if _, code, err := r.runner.Run(ctx, r.root, []string{"git", "rev-parse", "--verify", "--quiet", commit + "^{commit}"}); err != nil || code != 0 {
 		return "", commandFailure("verifying the carry-forward commit", code, err)

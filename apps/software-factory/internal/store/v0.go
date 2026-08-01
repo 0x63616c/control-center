@@ -1199,7 +1199,7 @@ func (s *Store) FinalizeRunFailure(ctx context.Context, in RunFailureInput) (Ter
 	}
 	ticket, err := ticketFromRow(failedTicket)
 	if err != nil {
-		return TerminalResult{}, err
+		return TerminalResult{}, fmt.Errorf("failing run: decoding completed ticket: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return TerminalResult{}, fmt.Errorf("failing run: committing: %w", wrapQueryErr(err))
