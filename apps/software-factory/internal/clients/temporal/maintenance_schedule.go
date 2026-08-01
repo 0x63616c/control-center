@@ -10,6 +10,7 @@ import (
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
+	temporalerrors "go.temporal.io/sdk/temporal"
 )
 
 const maintainFactoryInterval = 5 * time.Minute
@@ -26,7 +27,7 @@ func EnsureMaintainFactorySchedule(ctx context.Context, schedules client.Schedul
 		return nil
 	} else {
 		var exists *serviceerror.AlreadyExists
-		if !errors.As(err, &exists) {
+		if !errors.Is(err, temporalerrors.ErrScheduleAlreadyRunning) && !errors.As(err, &exists) {
 			return fmt.Errorf("creating MaintainFactory schedule %s: %w", desired.ID, err)
 		}
 	}

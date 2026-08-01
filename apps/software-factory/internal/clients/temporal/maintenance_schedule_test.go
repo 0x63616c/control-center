@@ -8,6 +8,7 @@ import (
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/temporal"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
@@ -57,15 +58,25 @@ func TestEnsureMaintainFactoryScheduleCreatesTheStableTargetSchedule(t *testing.
 
 func TestEnsureMaintainFactoryScheduleReplacesAnExistingDefinition(t *testing.T) {
 	t.Parallel()
-	handle := &fakeScheduleHandle{}
-	fake := &fakeScheduleClient{handle: handle, createErr: serviceerror.NewAlreadyExists("exists")}
-	if err := EnsureMaintainFactorySchedule(context.Background(), fake); err != nil {
-		t.Fatalf("EnsureMaintainFactorySchedule: %v", err)
+	for _, test := range []struct {
+		name      string
+		createErr error
+	}{
+		{name: "SDK sentinel", createErr: temporal.ErrScheduleAlreadyRunning},
+		{name: "service error", createErr: serviceerror.NewAlreadyExists("exists")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			handle := &fakeScheduleHandle{}
+			fake := &fakeScheduleClient{handle: handle, createErr: test.createErr}
+			if err := EnsureMaintainFactorySchedule(context.Background(), fake); err != nil {
+				t.Fatalf("EnsureMaintainFactorySchedule: %v", err)
+			}
+			if handle.id != work.MaintainFactoryScheduleID || handle.updated == nil {
+				t.Fatalf("updated handle = %q, %+v", handle.id, handle.updated)
+			}
+			assertMaintainFactorySchedule(t, handle.id, *handle.updated.Spec, handle.updated.Action, handle.updated.Policy.Overlap)
+		})
 	}
-	if handle.id != work.MaintainFactoryScheduleID || handle.updated == nil {
-		t.Fatalf("updated handle = %q, %+v", handle.id, handle.updated)
-	}
-	assertMaintainFactorySchedule(t, handle.id, *handle.updated.Spec, handle.updated.Action, handle.updated.Policy.Overlap)
 }
 
 func assertMaintainFactorySchedule(t *testing.T, id string, spec client.ScheduleSpec, rawAction client.ScheduleAction, overlap enumspb.ScheduleOverlapPolicy) {

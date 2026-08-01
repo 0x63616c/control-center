@@ -346,11 +346,11 @@ func register(
 	w.RegisterActivity(targetRecoveryActs)
 	w.RegisterActivity(maintenanceActs)
 	w.RegisterActivity(targetExecutionActs)
-	w.RegisterActivity(targetEvidenceActs)
+	w.RegisterActivityWithOptions(targetEvidenceActs.Finalize, activity.RegisterOptions{Name: activities.TargetAgentEvidenceFinalizeActivityName})
 	w.RegisterActivityWithOptions(promptActs.Prepare, activity.RegisterOptions{Name: agent.PrepareActivityName})
 	w.RegisterActivityWithOptions(modelActs.ModelTurn, activity.RegisterOptions{Name: agent.ModelTurnActivityName})
 	w.RegisterActivityWithOptions(modelActs.RecordLifecycle, activity.RegisterOptions{Name: agent.LifecycleActivityName})
-	w.RegisterActivityWithOptions(promptActs.Finalize, activity.RegisterOptions{Name: agent.FinalizeActivityName})
+	w.RegisterActivityWithOptions(promptActs.DecodeFinalOutput, activity.RegisterOptions{Name: agent.FinalizeActivityName})
 	logger.Info("registrations",
 		slog.Int("workflows", 3),
 		slog.Int("max_in_flight", work.DefaultDispatcherPolicy().MaxInFlight),

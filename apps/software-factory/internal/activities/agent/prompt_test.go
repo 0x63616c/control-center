@@ -84,15 +84,29 @@ func TestFinalizeDecodesEachStageResultFromItsTextReference(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewPromptActivities() error = %v", err)
 			}
-			finalized, err := promptActivities.Finalize(t.Context(), agentactivities.FinalizeInput{Stage: test.stage, TextRef: textRef})
+			finalized, err := promptActivities.DecodeFinalOutput(t.Context(), agentactivities.FinalizeInput{Stage: test.stage, TextRef: textRef})
 			if err != nil {
 				t.Fatalf("Finalize() error = %v", err)
 			}
-			if finalized.Result.Stage() != test.stage {
-				t.Fatalf("Finalize() stage = %q, want %q", finalized.Result.Stage(), test.stage)
+			if finalized.Result == nil || finalized.Result.Stage() != test.stage {
+				t.Fatalf("Finalize() result = %#v, want stage %q", finalized.Result, test.stage)
 			}
-			test.check(t, finalized.Result)
+			test.check(t, *finalized.Result)
 		})
+	}
+}
+
+func TestFinalizeRejectsAnIncompleteTextReferenceWithoutRetrying(t *testing.T) {
+	t.Parallel()
+	promptActivities, err := agentactivities.NewPromptActivities(decodingPromptRenderer{}, blobs.NewMemStore())
+	if err != nil {
+		t.Fatalf("NewPromptActivities() error = %v", err)
+	}
+	_, err = promptActivities.DecodeFinalOutput(t.Context(), agentactivities.FinalizeInput{Stage: work.StagePlan})
+	var applicationError *temporal.ApplicationError
+	if !errors.As(err, &applicationError) || applicationError.Type() != agent.ErrorTypeInvalidProviderOutcome ||
+		!applicationError.NonRetryable() {
+		t.Fatalf("Finalize() error = %T %v, want non-retryable %q", err, err, agent.ErrorTypeInvalidProviderOutcome)
 	}
 }
 

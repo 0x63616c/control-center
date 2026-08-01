@@ -24,6 +24,8 @@ type targetRepositoryProbe struct {
 	head        string
 	calls       int
 	carryHead   string
+	publishHead string
+	published   []string
 }
 
 func (p *targetRepositoryProbe) PrepareFromCommit(_ context.Context, url, branch, commit string) (string, error) {
@@ -36,6 +38,11 @@ func (p *targetRepositoryProbe) Prepare(_ context.Context, url, branch string) (
 	p.calls++
 	p.url, p.branch = url, branch
 	return p.head, nil
+}
+
+func (p *targetRepositoryProbe) Publish(_ context.Context, branch string) (string, error) {
+	p.published = append(p.published, branch)
+	return p.publishHead, nil
 }
 
 type targetGitHubProbe struct {
@@ -118,12 +125,33 @@ func (p *repositoryCheckpointProbe) Checkpoint(_ context.Context, in store.GitCh
 	return in.GitCheckpoint, err
 }
 
-func targetRepositoryActivities(repository *targetRepositoryProbe, github *targetGitHubProbe, cp *repositoryCheckpointProbe) *RunWorkerActivities {
+func targetRepositoryActivities(repository *targetRepositoryProbe, github *targetGitHubProbe, cp *repositoryCheckpointProbe, branches ...string) *RunWorkerActivities {
+	branch := "factory/ticket-42/run"
+	if len(branches) == 1 {
+		branch = branches[0]
+	}
 	return &RunWorkerActivities{deps: RunWorkerDeps{
-		Repository: repository, GitHub: github, Identity: targetTestIdentity,
+		Repository: repository, GitHub: github, Identity: targetTestIdentity, Branch: branch,
 		RepositoryCheckpoints: func(work.RunWorkerIdentity) (RepositoryCheckpoint, error) { return cp, nil },
 		Clock:                 repositoryFixedClock{now: time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)},
 	}}
+}
+
+func TestTargetSyncRejectsARepositoryStepForAnotherBranch(t *testing.T) {
+	repository := &targetRepositoryProbe{publishHead: "wrong-head"}
+	github := &targetGitHubProbe{}
+	position := targetPosition(3)
+	position.Branch = "factory/ticket-99/another-run"
+	cp := storedRepositoryEffect(t, position, repositoryEffectSync, work.PullRequest{Number: 99, HeadSHA: "wrong-head"})
+	a := targetRepositoryActivities(repository, github, cp)
+
+	_, err := a.TargetSyncPullRequest(context.Background(), TargetSyncPullRequestInput{Step: position, Title: "title"})
+	if err == nil {
+		t.Fatal("TargetSyncPullRequest accepted a repository Step for another branch")
+	}
+	if len(repository.published) != 0 || github.syncCalls != 0 {
+		t.Fatalf("wrong branch reached repository/GitHub: %#v / %d", repository.published, github.syncCalls)
+	}
 }
 
 func targetPosition(ordinal int) RepositoryStep {
@@ -147,12 +175,12 @@ func TestCloneTargetRepositoryCompletesTheInfrastructureStepBeforeSuccess(t *tes
 func TestCloneTargetRepositoryCarriesForwardOnlyTheDurableCommit(t *testing.T) {
 	repository := &targetRepositoryProbe{head: "carried-head"}
 	cp := &repositoryCheckpointProbe{}
-	a := targetRepositoryActivities(repository, &targetGitHubProbe{}, cp)
 	in := CloneTargetRepositoryInput{
 		Step:             RepositoryStep{StepOrdinal: 1, Branch: "factory/ticket-42/new-run"},
 		CloneURL:         "https://github.com/example/repo.git",
 		CarryForwardHead: "0123456789abcdef0123456789abcdef01234567",
 	}
+	a := targetRepositoryActivities(repository, &targetGitHubProbe{}, cp, in.Step.Branch)
 	if _, err := a.CloneTargetRepository(context.Background(), in); err != nil {
 		t.Fatalf("CloneTargetRepository: %v", err)
 	}
@@ -164,13 +192,13 @@ func TestCloneTargetRepositoryCarriesForwardOnlyTheDurableCommit(t *testing.T) {
 func TestCloneTargetRepositoryRetiresCanceledPullRequestBeforeCarryForward(t *testing.T) {
 	repository := &targetRepositoryProbe{head: "carried-head"}
 	github := &targetGitHubProbe{}
-	a := targetRepositoryActivities(repository, github, &repositoryCheckpointProbe{})
 	in := CloneTargetRepositoryInput{
 		Step:                    RepositoryStep{StepOrdinal: 1, Branch: "factory/ticket-42/new-run"},
 		CloneURL:                "https://github.com/example/repo.git",
 		CarryForwardHead:        "0123456789abcdef0123456789abcdef01234567",
 		RetirePullRequestNumber: 42,
 	}
+	a := targetRepositoryActivities(repository, github, &repositoryCheckpointProbe{}, in.Step.Branch)
 	if _, err := a.CloneTargetRepository(context.Background(), in); err != nil {
 		t.Fatalf("CloneTargetRepository: %v", err)
 	}
@@ -182,13 +210,14 @@ func TestCloneTargetRepositoryRetiresCanceledPullRequestBeforeCarryForward(t *te
 func TestCloneTargetRepositoryReturnsConfirmedPredecessorMergeWithoutPreparingRunB(t *testing.T) {
 	repository := &targetRepositoryProbe{head: "must-not-be-used"}
 	github := &targetGitHubProbe{retireMerged: true}
-	a := targetRepositoryActivities(repository, github, &repositoryCheckpointProbe{})
-	out, err := a.CloneTargetRepository(context.Background(), CloneTargetRepositoryInput{
+	in := CloneTargetRepositoryInput{
 		Step:                    RepositoryStep{StepOrdinal: 1, Branch: "factory/ticket-42/new-run"},
 		CloneURL:                "https://github.com/example/repo.git",
 		CarryForwardHead:        "0123456789abcdef0123456789abcdef01234567",
 		RetirePullRequestNumber: 42,
-	})
+	}
+	a := targetRepositoryActivities(repository, github, &repositoryCheckpointProbe{}, in.Step.Branch)
+	out, err := a.CloneTargetRepository(context.Background(), in)
 	if err != nil {
 		t.Fatalf("CloneTargetRepository: %v", err)
 	}
@@ -231,7 +260,8 @@ func TestTargetSyncRetryAfterLostCheckpointResponseUsesTheExactDurableResult(t *
 	want := work.PullRequest{Number: 42, NodeID: "PR_node", HeadSHA: "H1", URL: "https://github.com/example/repo/pull/42"}
 	cp := &repositoryCheckpointProbe{checkpointErr: errCheckpointResponseLost}
 	github := &targetGitHubProbe{pr: want}
-	a := targetRepositoryActivities(&targetRepositoryProbe{}, github, cp)
+	repository := &targetRepositoryProbe{publishHead: want.HeadSHA}
+	a := targetRepositoryActivities(repository, github, cp)
 	in := TargetSyncPullRequestInput{Step: position, Title: "title"}
 	if _, err := a.TargetSyncPullRequest(context.Background(), in); !errors.Is(err, errCheckpointResponseLost) || github.syncCalls != 1 || !cp.found {
 		t.Fatalf("first try error/calls/checkpoint = %v / %d / %#v", err, github.syncCalls, cp.loaded)
@@ -240,8 +270,28 @@ func TestTargetSyncRetryAfterLostCheckpointResponseUsesTheExactDurableResult(t *
 	if err != nil {
 		t.Fatalf("TargetSyncPullRequest: %v", err)
 	}
-	if github.syncCalls != 1 || got.Number != want.Number || got.NodeID != want.NodeID || len(cp.writes) != 1 || cp.writes[0].PushedHead != want.HeadSHA {
+	if len(repository.published) != 1 || github.syncCalls != 1 || got.Number != want.Number || got.NodeID != want.NodeID || len(cp.writes) != 1 || cp.writes[0].PushedHead != want.HeadSHA {
 		t.Fatalf("sync calls/result = %d / %+v", github.syncCalls, got)
+	}
+}
+
+func TestTargetSyncPublishesTheCommittedCandidateBeforeOpeningThePullRequest(t *testing.T) {
+	position := targetPosition(3)
+	repository := &targetRepositoryProbe{publishHead: "committed-head"}
+	want := work.PullRequest{Number: 42, NodeID: "PR_node", HeadSHA: "committed-head", URL: "https://github.com/example/repo/pull/42"}
+	cp := &repositoryCheckpointProbe{}
+	github := &targetGitHubProbe{pr: want}
+	a := targetRepositoryActivities(repository, github, cp)
+
+	got, err := a.TargetSyncPullRequest(context.Background(), TargetSyncPullRequestInput{Step: position, Title: "title"})
+	if err != nil {
+		t.Fatalf("TargetSyncPullRequest: %v", err)
+	}
+	if len(repository.published) != 1 || repository.published[0] != position.Branch {
+		t.Fatalf("published branches = %#v, want [%q]", repository.published, position.Branch)
+	}
+	if got.HeadSHA != repository.publishHead || len(cp.writes) != 1 || cp.writes[0].PushedHead != repository.publishHead {
+		t.Fatalf("pull request/checkpoint = %+v / %+v, want head %q", got, cp.writes, repository.publishHead)
 	}
 }
 

@@ -116,8 +116,11 @@ func (activities *PromptActivities) prepareConversation(
 	return conversationRef, nil
 }
 
-// Finalize loads terminal model text and decodes the stage's existing result envelope.
-func (activities *PromptActivities) Finalize(ctx context.Context, input FinalizeInput) (FinalizeOutput, error) {
+// DecodeFinalOutput loads terminal model text and decodes the stage's existing result envelope.
+func (activities *PromptActivities) DecodeFinalOutput(ctx context.Context, input FinalizeInput) (FinalizeOutput, error) {
+	if input.TextRef.Key == "" || input.TextRef.Bytes < 1 || input.TextRef.Digest == "" {
+		return FinalizeOutput{}, invalidProviderOutcome("final model text reference is incomplete")
+	}
 	text, err := activities.artifacts.LoadText(ctx, input.TextRef)
 	if err != nil {
 		return FinalizeOutput{}, transientFailure("load final agent text", err)
@@ -126,7 +129,7 @@ func (activities *PromptActivities) Finalize(ctx context.Context, input Finalize
 	if err != nil {
 		return FinalizeOutput{}, invalidProviderOutcome("decode final %s output: %v", input.Stage, err)
 	}
-	output := FinalizeOutput{Result: result, TranscriptRef: input.TranscriptRef}
+	output := FinalizeOutput{Result: &result, TranscriptRef: input.TranscriptRef}
 	if input.TranscriptRef.Key != "" {
 		identity, err := activities.transcripts.Identity(input.TranscriptRef)
 		if err != nil {

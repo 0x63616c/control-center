@@ -16,6 +16,7 @@ import (
 type RunWorker struct {
 	ID                work.RunWorkerID
 	Identity          work.RunWorkerIdentity
+	Branch            string
 	TaskQueue         string
 	TemporalHostPort  string
 	TemporalNamespace string
@@ -32,6 +33,7 @@ func runWorkerEnvNames() []string {
 		work.RunWorkerIDEnv,
 		work.RunWorkerRunIDEnv,
 		work.RunWorkerGenerationEnv,
+		work.RunWorkerBranchEnv,
 		work.RunWorkerTaskQueueEnv,
 		work.RunWorkerTemporalHostPortEnv,
 		work.RunWorkerTemporalNamespaceEnv,
@@ -47,6 +49,7 @@ func (w RunWorker) Validate() error {
 	required := map[string]string{
 		work.RunWorkerIDEnv:                string(w.ID),
 		work.RunWorkerRunIDEnv:             w.Identity.RunID,
+		work.RunWorkerBranchEnv:            w.Branch,
 		work.RunWorkerTaskQueueEnv:         w.TaskQueue,
 		work.RunWorkerTemporalHostPortEnv:  w.TemporalHostPort,
 		work.RunWorkerTemporalNamespaceEnv: w.TemporalNamespace,
@@ -72,6 +75,9 @@ func (w RunWorker) Validate() error {
 	}
 	if w.ID != wantID {
 		return fmt.Errorf("%s=%q does not match Run %q generation %d (want %q)", work.RunWorkerIDEnv, w.ID, w.Identity.RunID, w.Identity.Generation, wantID)
+	}
+	if !work.FactoryTicketBranchBelongsToRun(w.Branch, w.Identity.RunID) {
+		return fmt.Errorf("%s=%q is not bound to Run %q", work.RunWorkerBranchEnv, w.Branch, w.Identity.RunID)
 	}
 	wantQueue, err := work.RunWorkerTaskQueue(w.Identity)
 	if err != nil {
@@ -121,6 +127,7 @@ func LoadRunWorker() (RunWorker, error) {
 	cfg := RunWorker{
 		ID:                id,
 		Identity:          identity,
+		Branch:            os.Getenv(work.RunWorkerBranchEnv),
 		TaskQueue:         os.Getenv(work.RunWorkerTaskQueueEnv),
 		TemporalHostPort:  os.Getenv(work.RunWorkerTemporalHostPortEnv),
 		TemporalNamespace: os.Getenv(work.RunWorkerTemporalNamespaceEnv),

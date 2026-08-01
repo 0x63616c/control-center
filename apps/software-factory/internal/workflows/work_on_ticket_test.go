@@ -910,6 +910,39 @@ func TestWorkOnTicketFinalizesChildEvidenceBeforeCompletingAgentStep(t *testing.
 	}
 }
 
+// Target evidence and prompt decoding once shared the Go method name Finalize.
+// WorkOnTicket must schedule the evidence boundary under its explicit stable
+// wire name so worker registration order can never route the evidence payload
+// to the prompt decoder.
+func TestWorkOnTicketNamesTheTargetEvidenceActivityUnambiguously(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "name target evidence", "record the child result", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000034", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket: %v", err)
+	}
+	want := activities.TargetAgentEvidenceFinalizeActivityName
+	count := 0
+	for _, name := range h.activityNames {
+		if name == want {
+			count++
+		}
+		if name == agent.FinalizeActivityName {
+			t.Fatalf("target evidence used ambiguous activity name %q; activities = %v", name, h.activityNames)
+		}
+	}
+	if count != 3 {
+		t.Fatalf("target evidence activity count = %d, want plan, implement, and review under %q; activities = %v", count, want, h.activityNames)
+	}
+}
+
 // A classified terminal child failure ends one semantic execution and starts
 // one fresh Attempt under the same Step.
 func TestWorkOnTicketStartsFreshSemanticAttemptOnlyForClassifiedTerminalChildFailure(t *testing.T) {
@@ -954,6 +987,59 @@ func TestWorkOnTicketStartsFreshSemanticAttemptOnlyForClassifiedTerminalChildFai
 	implements := agentChildrenAtStage(h.agentInputs, work.StageImplement)
 	if len(implements) != 2 || implements[0].Identity != firstImplementIdentity || implements[1].Identity != fmt.Sprintf("agent/%s/step/5/attempt/2", in.RunID) || implements[1].Seed != nil {
 		t.Fatalf("replacement children = %+v, want failed attempt 1 followed by a fresh unseeded attempt 2", implements)
+	}
+}
+
+// A failed child can still have a transcript. Its durable evidence must not
+// serialize the absent StageOutput before the parent starts the next Attempt.
+func TestWorkOnTicketRecordsTerminalChildFailureWithTranscriptThenStartsFreshAttempt(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "unresumable attempt with evidence", "retain the failed transcript", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000035", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	firstImplementIdentity := fmt.Sprintf("agent/%s/step/5/attempt/1", in.RunID)
+	h.agentResult = func(input workflows.AgentWorkflowInput) (workflows.AgentWorkflowResult, error) {
+		if input.Identity == firstImplementIdentity {
+			ordinary := targetAgentWorkflowResult(t, input)
+			return workflows.AgentWorkflowResult{
+				Failure:         &agent.TerminalFailure{Kind: agent.TerminalFailureInvalidProviderOutcome},
+				Usage:           ordinary.Usage,
+				UsageMeasured:   ordinary.UsageMeasured,
+				ConversationRef: ordinary.ConversationRef,
+				TranscriptRef:   ordinary.TranscriptRef,
+			}, nil
+		}
+		return targetAgentWorkflowResult(t, input), nil
+	}
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket: %v", err)
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	var implement store.TargetStepDetail
+	for _, step := range detail.Steps {
+		if step.Step.Kind == work.StepImplement {
+			implement = step
+			break
+		}
+	}
+	if implement.Step.State != work.StepStateCompleted || len(implement.Attempts) != 2 {
+		t.Fatalf("implement step = %+v, want one completed Step with two Attempts", implement)
+	}
+	if first, second := implement.Attempts[0], implement.Attempts[1]; first.ID.AttemptNo != 1 || first.State != work.AgentAttemptFailed || first.FailureKind != work.RunFailureAgentUnrecoverable || second.ID.AttemptNo != 2 || second.State != work.AgentAttemptSucceeded {
+		t.Fatalf("implement attempts = %+v, want failed transcript-backed Attempt 1 then succeeded Attempt 2", implement.Attempts)
+	}
+	if len(h.finalizedAttempts) != 4 || h.finalizedAttempts[1] != (store.TargetAttemptID{RunID: in.RunID, StepOrdinal: 5, AttemptNo: 1}) {
+		t.Fatalf("finalized evidence = %+v, want the failed transcript-backed implement Attempt finalized before its replacement", h.finalizedAttempts)
 	}
 }
 
@@ -1831,6 +1917,7 @@ type workOnTicketHarness struct {
 	agentChildIDs          []string
 	agentChildCanceled     int
 	agentPersistenceEvents []agentPersistenceEvent
+	activityNames          []string
 	finalizedAttempts      []store.TargetAttemptID
 	ci                     activities.TargetAwaitCIInput
 	ready                  activities.TargetMarkPullRequestReadyInput
@@ -1877,6 +1964,7 @@ func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore workOnT
 		h.controlSequence = append(h.controlSequence, "child-canceled")
 	})
 	env.SetOnActivityStartedListener(func(info *activity.Info, _ context.Context, values converter.EncodedValues) {
+		h.activityNames = append(h.activityNames, info.ActivityType.Name)
 		if info.ActivityType.Name != "CompleteStep" {
 			return
 		}
@@ -1932,7 +2020,7 @@ func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore workOnT
 			h.agentPersistenceEvents = append(h.agentPersistenceEvents, agentPersistenceEvent{kind: "finalize", stepOrdinal: input.AttemptID.StepOrdinal})
 		}
 		return err
-	}, activity.RegisterOptions{Name: "Finalize"})
+	}, activity.RegisterOptions{Name: activities.TargetAgentEvidenceFinalizeActivityName})
 
 	env.RegisterWorkflowWithOptions(func(ctx workflow.Context, input workflows.AgentWorkflowInput) (workflows.AgentWorkflowResult, error) {
 		h.agentInputs = append(h.agentInputs, input)
