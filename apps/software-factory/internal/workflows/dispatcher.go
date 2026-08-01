@@ -89,7 +89,7 @@ func Dispatcher(ctx workflow.Context, in DispatcherInput) error {
 		}
 		if !draining && wait == nil && len(children) < policy.MaxInFlight {
 			waitCtx, cancel := workflow.WithCancel(ctx)
-			wait = workflow.ExecuteActivity(workflow.WithActivityOptions(waitCtx, targetActivityOptions(policy.Run.Recording)), ticketActs.AwaitDispatchableTickets)
+			wait = workflow.ExecuteActivity(workflow.WithActivityOptions(waitCtx, dispatchWaitActivityOptions(policy.Run.Recording)), ticketActs.AwaitDispatchableTickets)
 			cancelWait = cancel
 		}
 
@@ -124,6 +124,22 @@ func Dispatcher(ctx workflow.Context, in DispatcherInput) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+	}
+}
+
+// dispatchWaitActivityOptions deliberately omits ScheduleToCloseTimeout: an
+// idle dispatcher is allowed to wait forever in one retrying activity. The
+// activity's no-work error controls the ordinary cadence with NextRetryDelay;
+// technical failures retain the resolved infrastructure retry policy.
+func dispatchWaitActivityOptions(policy work.ActivityPolicy) workflow.ActivityOptions {
+	return workflow.ActivityOptions{
+		StartToCloseTimeout: policy.StartToCloseTimeout,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:    policy.Retry.InitialInterval,
+			BackoffCoefficient: policy.Retry.BackoffCoefficient,
+			MaximumInterval:    policy.Retry.MaximumInterval,
+			MaximumAttempts:    0,
+		},
 	}
 }
 
