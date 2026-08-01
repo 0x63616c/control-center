@@ -16,6 +16,10 @@ import (
 // complete resolved policy before it begins polling the main task queue.
 const UpdateDispatcherPolicy = "publish-dispatcher-policy"
 
+// maxPolicyUpdatesDuringDrain keeps a suggested execution bounded while still
+// letting one later worker publication become the policy of the next run.
+const maxPolicyUpdatesDuringDrain = 1
+
 // DispatcherInput is the durable target-dispatcher state. Live child Futures
 // never cross a Continue-As-New boundary: the workflow drains first.
 type DispatcherInput struct {
@@ -54,35 +58,47 @@ func Dispatcher(ctx workflow.Context, in DispatcherInput) error {
 	if err != nil {
 		return temporal.NewNonRetryableApplicationError(err.Error(), activities.ErrTypeInvalid, nil)
 	}
+	var wait workflow.Future
+	var cancelWait workflow.CancelFunc
 	draining := false
+	drainPolicyUpdates := 0
+	beginDraining := func() {
+		if draining {
+			return
+		}
+		draining = true
+		if cancelWait != nil {
+			cancelWait()
+			wait, cancelWait = nil, nil
+		}
+	}
 	if err := workflow.SetUpdateHandler(ctx, UpdateDispatcherPolicy, func(_ workflow.Context, update DispatcherPolicyUpdate) (DispatcherPublication, error) {
 		next, err := update.Policy.Fingerprint()
 		if err != nil || update.Fingerprint != next {
 			return "", temporal.NewNonRetryableApplicationError("published dispatcher policy fingerprint is invalid", activities.ErrTypeInvalid, err)
 		}
+		if workflow.GetInfo(ctx).GetContinueAsNewSuggested() {
+			beginDraining()
+		}
 		if update.Fingerprint == fingerprint {
 			return DispatcherPublicationAlreadyCurrent, nil
 		}
-		if draining {
+		if draining && drainPolicyUpdates >= maxPolicyUpdatesDuringDrain {
 			return DispatcherPublicationDraining, nil
 		}
 		policy, fingerprint = update.Policy, update.Fingerprint
+		if draining {
+			drainPolicyUpdates++
+		}
 		return DispatcherPublicationApplied, nil
 	}); err != nil {
 		return fmt.Errorf("registering dispatcher policy update: %w", err)
 	}
 
 	children := map[store.TicketID]workflow.ChildWorkflowFuture{}
-	var wait workflow.Future
-	var cancelWait workflow.CancelFunc
-
 	for {
-		if workflow.GetInfo(ctx).GetContinueAsNewSuggested() && !draining {
-			draining = true
-			if cancelWait != nil {
-				cancelWait()
-				wait, cancelWait = nil, nil
-			}
+		if workflow.GetInfo(ctx).GetContinueAsNewSuggested() {
+			beginDraining()
 		}
 		if draining && len(children) == 0 {
 			return workflow.NewContinueAsNewError(ctx, Dispatcher, DispatcherInput{Policy: policy, CloneURL: in.CloneURL, Model: in.Model})
@@ -96,7 +112,9 @@ func Dispatcher(ctx workflow.Context, in DispatcherInput) error {
 		selector := workflow.NewSelector(ctx)
 		if wait != nil {
 			selector.AddFuture(wait, func(f workflow.Future) {
-				defer cancelWait()
+				if cancelWait != nil {
+					cancelWait()
+				}
 				wait, cancelWait = nil, nil
 				var tickets []store.Ticket
 				if err := f.Get(ctx, &tickets); err != nil {
