@@ -9,7 +9,8 @@ import (
 
 // TestWorkOnTicketReplaysExportedHistory protects the target workflow's
 // command sequence with the same JSON format emitted by `temporal workflow
-// show`. The fixture reaches the first durable claim activity.
+// show`. The fixture records the representative happy path through confirmed
+// merge, durable terminal recording, and worker-session cleanup.
 func TestWorkOnTicketReplaysExportedHistory(t *testing.T) {
 	t.Parallel()
 	replayer := worker.NewWorkflowReplayer()

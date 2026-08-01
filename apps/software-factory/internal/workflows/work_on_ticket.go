@@ -46,8 +46,19 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 	var claimed store.ClaimRunResult
 	var session *targetRunSession
 	claimedRun := false
+	claimStarted := false
 	defer func() {
 		if !claimedRun {
+			if claimStarted && temporal.IsCanceledError(runErr) {
+				cleanupCtx, cancel := workflow.NewDisconnectedContext(ctx)
+				defer cancel()
+				finalCtx := workflow.WithActivityOptions(cleanupCtx, targetActivityOptions(in.Policy.Recording))
+				if err := workflow.ExecuteActivity(finalCtx, targetRecordingActs.CancelRunIfClaimed, store.CancelRunInput{
+					RunID: in.RunID, TicketID: in.TicketID, EndedAt: workflow.Now(cleanupCtx),
+				}).Get(finalCtx, nil); err != nil {
+					runErr = fmt.Errorf("reconciling canceled target claim: %w", err)
+				}
+			}
 			return
 		}
 		if outcome, failureKind, failed := terminalFailureKind(runErr); failed {
@@ -85,6 +96,7 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 		return fmt.Errorf("validating WorkOnTicket input: %w", err)
 	}
 	hardDeadline := workflow.Now(ctx).Add(in.Policy.HardDeadline)
+	claimStarted = true
 	claimCtx := workflow.WithActivityOptions(ctx, targetActivityOptions(in.Policy.Recording))
 	if err := workflow.ExecuteActivity(claimCtx, targetRecordingActs.ClaimAndStartRun, store.ClaimRunInput{
 		TicketID:  in.TicketID,
@@ -599,20 +611,18 @@ func WorkOnTicketExecutionTimeout(policy work.TargetRunPolicy) time.Duration {
 }
 
 func (s *targetRunSession) execute(ctx workflow.Context, run func(workflow.Context) error) error {
-	err := run(s.sessionCtx)
-	if !isRunWorkerSessionLoss(err) {
-		if err != nil {
-			return fmt.Errorf("executing Run Worker Session activity: %w", err)
+	for {
+		err := run(s.sessionCtx)
+		if !isRunWorkerSessionLoss(err) {
+			if err != nil {
+				return fmt.Errorf("executing Run Worker Session activity: %w", err)
+			}
+			return nil
 		}
-		return nil
+		if err := s.replace(ctx); err != nil {
+			return fmt.Errorf("replacing lost Run Worker Session: %w", err)
+		}
 	}
-	if err := s.replace(ctx); err != nil {
-		return fmt.Errorf("replacing lost Run Worker Session: %w", err)
-	}
-	if err := run(s.sessionCtx); err != nil {
-		return fmt.Errorf("executing replacement Run Worker Session activity: %w", err)
-	}
-	return nil
 }
 
 func (s *targetRunSession) replace(ctx workflow.Context) error {

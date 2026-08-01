@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"testing"
 	"time"
@@ -1097,6 +1098,54 @@ func TestWorkOnTicketSerializesSequentialSessionReplacements(t *testing.T) {
 	}
 }
 
+// Repository-affine operations use the same serialized replacement policy as
+// agent execution. Consecutive Session losses may advance generations until
+// the absolute deadline, but never leave two workers live or create a new Step.
+func TestWorkOnTicketReplacesConsecutiveSessionsDuringRepositoryWork(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "repository session losses", "recover sync twice", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000029", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.deleteErr = nil
+	h.sync = func(input activities.TargetSyncPullRequestInput) (work.PullRequest, error) {
+		if h.provisioned.Identity.Generation < 3 {
+			return work.PullRequest{}, temporal.NewNonRetryableApplicationError("Run Worker Session lost", activities.ErrTypeRunWorkerSessionLost, nil)
+		}
+		position := input.Step
+		position.PushedHead, position.PullRequestNumber, position.PullRequestNodeID = "H1", 1, "PR_node1"
+		if err := h.checkpointRepositoryStep(position); err != nil {
+			return work.PullRequest{}, fmt.Errorf("checkpointing recovered pull request: %w", err)
+		}
+		return work.PullRequest{Number: 1, NodeID: "PR_node1", HeadSHA: "H1", Draft: true}, nil
+	}
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket: %v", err)
+	}
+	if len(h.provisionedInputs) != 3 || len(h.restoreInputs) != 2 {
+		t.Fatalf("repository recovery = provisions %+v / restores %+v, want generations one through three and two restores", h.provisionedInputs, h.restoreInputs)
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	syncSteps := 0
+	for _, step := range detail.Steps {
+		if step.Step.Kind == work.StepSyncPullRequest {
+			syncSteps++
+		}
+	}
+	if syncSteps != 1 {
+		t.Fatalf("sync steps = %d, want one durable Step across consecutive Session losses", syncSteps)
+	}
+}
+
 // A durable Git/PR checkpoint is the answer after a lost activity response:
 // recovery may invoke the activity again, but it must return the checkpointed
 // result instead of repeating the GitHub write or moving back to an older head.
@@ -1236,6 +1285,44 @@ func TestWorkOnTicketCancellationBeforeClaimLeavesTicketUntouched(t *testing.T) 
 	}
 	if _, err := s.TargetRunDetail(ctx, in.RunID); err == nil {
 		t.Fatal("TargetRunDetail succeeded for a run canceled before claim")
+	}
+}
+
+// The claim transaction may commit before Temporal observes a canceled
+// activity response. Cancellation reconciles by deterministic Run identity so
+// that this narrow race cannot strand the Ticket as active.
+func TestWorkOnTicketCancellationAfterClaimCommitBeforeResponseReopensTicket(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "claim response lost", "reconcile cancellation", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000030", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.env.RegisterActivityWithOptions(
+		func(_ context.Context, input store.ClaimRunInput) (store.ClaimRunResult, error) {
+			result, err := s.ClaimAndStartRun(context.Background(), input)
+			if err != nil {
+				return store.ClaimRunResult{}, fmt.Errorf("committing claim before response loss: %w", err)
+			}
+			return result, activity.ErrResultPending
+		},
+		activity.RegisterOptions{Name: "ClaimAndStartRun", DisableAlreadyRegisteredCheck: true},
+	)
+	h.env.RegisterDelayedCallback(func() { h.env.CancelWorkflow() }, time.Minute)
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); !temporal.IsCanceledError(err) {
+		t.Fatalf("WorkOnTicket error = %v, want cancellation after committed claim response loss", err)
+	}
+	got, err := s.Ticket(ctx, ticket.ID)
+	if err != nil {
+		t.Fatalf("Ticket: %v", err)
+	}
+	if got.State != store.TicketOpen || got.ActiveRunID != "" {
+		t.Fatalf("ticket after committed claim response loss = %+v, want reopened with no owner", got)
 	}
 }
 
@@ -1580,7 +1667,7 @@ func TestWorkOnTicketRepairsTextConflictOrStaleBaseWithFreshReview(t *testing.T)
 
 type workOnTicketHarness struct {
 	env   *testsuite.TestWorkflowEnvironment
-	store *storefake.Store
+	store workOnTicketStore
 	runID string
 
 	provisioned       activities.ProvisionRunWorkerInput
@@ -1611,15 +1698,20 @@ type workOnTicketHarness struct {
 	pendingAgentTaskToken []byte
 }
 
-func newWorkOnTicketHarness(t *testing.T, recorderStore *storefake.Store) *workOnTicketHarness {
+type workOnTicketStore interface {
+	activities.TargetRunRecorder
+	store.CanceledRunRecoveryReader
+}
+
+func newWorkOnTicketHarness(t *testing.T, recorderStore workOnTicketStore) *workOnTicketHarness {
 	return newWorkOnTicketHarnessWithSessionWorker(t, recorderStore, true)
 }
 
-func newWorkOnTicketHarnessWithoutSessionWorker(t *testing.T, recorderStore *storefake.Store) *workOnTicketHarness {
+func newWorkOnTicketHarnessWithoutSessionWorker(t *testing.T, recorderStore workOnTicketStore) *workOnTicketHarness {
 	return newWorkOnTicketHarnessWithSessionWorker(t, recorderStore, false)
 }
 
-func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore *storefake.Store, enableSessionWorker bool) *workOnTicketHarness {
+func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore workOnTicketStore, enableSessionWorker bool) *workOnTicketHarness {
 	t.Helper()
 	suite := &testsuite.WorkflowTestSuite{}
 	env := suite.NewTestWorkflowEnvironment()

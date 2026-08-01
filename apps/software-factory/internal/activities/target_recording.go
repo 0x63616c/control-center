@@ -3,6 +3,7 @@ package activities
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -115,6 +116,16 @@ func (a *TargetRecordingActivities) CancelRun(ctx context.Context, in store.Canc
 		return store.TerminalResult{}, fail(ctx, fmt.Sprintf("canceling run %s", in.RunID), err)
 	}
 	return result, nil
+}
+
+// CancelRunIfClaimed reconciles cancellation across the claim-response race.
+// A missing or later-owned Run means the claim did not become this workflow's
+// cancellable ownership and is therefore an idempotent no-op.
+func (a *TargetRecordingActivities) CancelRunIfClaimed(ctx context.Context, in store.CancelRunInput) error {
+	if _, err := a.store.CancelRun(ctx, in); err != nil && !errors.Is(err, store.ErrRunOwnership) {
+		return fail(ctx, fmt.Sprintf("canceling run %s if claimed", in.RunID), err)
+	}
+	return nil
 }
 
 // FinalizeRunFailure commits a workflow-owned terminal failure.
