@@ -126,7 +126,7 @@ func (activities *PromptActivities) Finalize(ctx context.Context, input Finalize
 	if err != nil {
 		return FinalizeOutput{}, invalidProviderOutcome("decode final %s output: %v", input.Stage, err)
 	}
-	output := FinalizeOutput{Result: result, TranscriptRef: input.TranscriptRef}
+	output := FinalizeOutput{Result: &result, TranscriptRef: input.TranscriptRef}
 	if input.TranscriptRef.Key != "" {
 		identity, err := activities.transcripts.Identity(input.TranscriptRef)
 		if err != nil {

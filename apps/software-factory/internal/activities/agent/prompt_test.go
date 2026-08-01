@@ -88,10 +88,10 @@ func TestFinalizeDecodesEachStageResultFromItsTextReference(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Finalize() error = %v", err)
 			}
-			if finalized.Result.Stage() != test.stage {
-				t.Fatalf("Finalize() stage = %q, want %q", finalized.Result.Stage(), test.stage)
+			if finalized.Result == nil || finalized.Result.Stage() != test.stage {
+				t.Fatalf("Finalize() result = %#v, want stage %q", finalized.Result, test.stage)
 			}
-			test.check(t, finalized.Result)
+			test.check(t, *finalized.Result)
 		})
 	}
 }

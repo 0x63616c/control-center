@@ -61,7 +61,7 @@ type FinalizeInput struct {
 
 // FinalizeOutput contains the decoded closed stage result.
 type FinalizeOutput struct {
-	Result        work.StageOutput
+	Result        *work.StageOutput
 	TranscriptRef agent.TranscriptRef
 }
 
