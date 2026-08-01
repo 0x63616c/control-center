@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -28,7 +30,7 @@ func TestDecodeRoundTripsAnOffloadedPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("codec ToPayload() error = %v", err)
 	}
-	response := servePayloads(t, newHandler(store, []string{"https://temporal.example"}), "/decode", &commonpb.Payloads{Payloads: []*commonpb.Payload{encoded}})
+	response := servePayloads(t, newHandler(store, []string{"https://temporal.example"}, discardLogger()), "/decode", &commonpb.Payloads{Payloads: []*commonpb.Payload{encoded}})
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("POST /decode status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
@@ -47,7 +49,7 @@ func TestEncodeRoute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("default ToPayload() error = %v", err)
 	}
-	handler := newHandler(store, []string{"https://temporal.example"})
+	handler := newHandler(store, []string{"https://temporal.example"}, discardLogger())
 	encoded := servePayloads(t, handler, "/encode", &commonpb.Payloads{Payloads: []*commonpb.Payload{original}})
 	if encoded.Code != http.StatusOK {
 		t.Fatalf("POST /encode status = %d, want %d: %s", encoded.Code, http.StatusOK, encoded.Body.String())
@@ -69,7 +71,7 @@ func TestCORSPreflightAllowsTheConfiguredOrigin(t *testing.T) {
 	request.Header.Set("Access-Control-Request-Method", http.MethodPost)
 	response := httptest.NewRecorder()
 
-	newHandler(blobs.NewMemStore(), []string{"https://temporal.example"}).ServeHTTP(response, request)
+	newHandler(blobs.NewMemStore(), []string{"https://temporal.example"}, discardLogger()).ServeHTTP(response, request)
 
 	if response.Code != http.StatusNoContent {
 		t.Errorf("OPTIONS /decode status = %d, want %d", response.Code, http.StatusNoContent)
@@ -91,7 +93,7 @@ func TestCORSPreflightAllowsTheConfiguredOrigin(t *testing.T) {
 func TestCodecRoutePassesThroughControlCenterPayloads(t *testing.T) {
 	t.Parallel()
 
-	handler := newHandler(blobs.NewMemStore(), []string{"https://temporal.example"})
+	handler := newHandler(blobs.NewMemStore(), []string{"https://temporal.example"}, discardLogger())
 	original, err := converter.GetDefaultDataConverter().ToPayload("control center payload")
 	if err != nil {
 		t.Fatalf("default ToPayload() error = %v", err)
@@ -138,7 +140,7 @@ func TestCORSRejectsAnUnknownOrigin(t *testing.T) {
 	request.Header.Set("Access-Control-Request-Method", http.MethodPost)
 	response := httptest.NewRecorder()
 
-	newHandler(blobs.NewMemStore(), []string{"https://temporal.example"}).ServeHTTP(response, request)
+	newHandler(blobs.NewMemStore(), []string{"https://temporal.example"}, discardLogger()).ServeHTTP(response, request)
 
 	if response.Code != http.StatusForbidden {
 		t.Errorf("OPTIONS /decode status = %d, want %d", response.Code, http.StatusForbidden)
@@ -154,11 +156,44 @@ func TestHealthz(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	response := httptest.NewRecorder()
 
-	newHandler(blobs.NewMemStore(), []string{"https://temporal.example"}).ServeHTTP(response, request)
+	newHandler(blobs.NewMemStore(), []string{"https://temporal.example"}, discardLogger()).ServeHTTP(response, request)
 
 	if response.Code != http.StatusOK {
 		t.Errorf("GET /healthz status = %d, want %d", response.Code, http.StatusOK)
 	}
+}
+
+func TestCodecLogsRequestMetadataWithoutPayloadContents(t *testing.T) {
+	t.Parallel()
+
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	body, err := protojson.Marshal(&commonpb.Payloads{})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/decode", bytes.NewReader(body))
+	request.Header.Set("X-Namespace", controlCenterTemporalNamespace)
+	response := httptest.NewRecorder()
+
+	newHandler(blobs.NewMemStore(), []string{"https://temporal.example"}, logger).ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("POST /decode status = %d, want %d", response.Code, http.StatusOK)
+	}
+	entry := logs.String()
+	for _, want := range []string{"codec request completed", `"path":"/decode"`, `"namespace":"control-center"`, `"status":200`} {
+		if !strings.Contains(entry, want) {
+			t.Errorf("log entry = %q, want %q", entry, want)
+		}
+	}
+	if strings.Contains(entry, "payloads") {
+		t.Errorf("log entry contains payload contents: %q", entry)
+	}
+}
+
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
 func servePayloads(t *testing.T, handler http.Handler, path string, payloads *commonpb.Payloads) *httptest.ResponseRecorder {
