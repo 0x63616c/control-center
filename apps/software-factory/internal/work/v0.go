@@ -50,8 +50,8 @@ const (
 type StepKind string
 
 const (
-	// StepPrepareRunWorker creates the Run's execution worker.
-	StepPrepareRunWorker StepKind = "prepare_run_worker"
+	// StepCreateRunWorker creates the Run's execution worker.
+	StepCreateRunWorker StepKind = "create_run_worker"
 	// StepAcquireRunWorkerSession creates the worker-affine Temporal Session.
 	StepAcquireRunWorkerSession StepKind = "acquire_run_worker_session"
 	// StepCloneRepository clones the Run-owned repository workspace.

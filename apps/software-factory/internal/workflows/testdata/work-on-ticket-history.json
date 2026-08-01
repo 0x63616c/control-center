@@ -1,0 +1,90 @@
+{
+  "events": [
+    {
+      "eventId": "1",
+      "eventTime": "2026-08-01T06:00:00Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+      "workflowExecutionStartedEventAttributes": {
+        "workflowType": {
+          "name": "WorkOnTicket"
+        },
+        "taskQueue": {
+          "name": "software-factory-replay"
+        },
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJUaWNrZXRJRCI6NywiUnVuSUQiOiIwMTlmYjkwMS0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwMjgiLCJQb2xpY3kiOnsiU2VtYW50aWNEZWFkbGluZSI6ODI4MDAwMDAwMDAwMDAsIkhhcmREZWFkbGluZSI6ODY0MDAwMDAwMDAwMDAsIlJlcXVpcmVkQ2hlY2tzIjpbInRlc3Qtc29mdHdhcmUtZmFjdG9yeSJdLCJNYXhSZXZpZXdTdGVwcyI6NSwiTWF4QWdlbnRBdHRlbXB0cyI6MjUsIkFnZW50Ijp7IlN0YXJ0VG9DbG9zZVRpbWVvdXQiOjMzMDAwMDAwMDAwMDAsIlNjaGVkdWxlVG9DbG9zZVRpbWVvdXQiOjU0MDAwMDAwMDAwMDAsIkhlYXJ0YmVhdFRpbWVvdXQiOjMwMDAwMDAwMDAwMCwiUmV0cnkiOnsiSW5pdGlhbEludGVydmFsIjoxMDAwMDAwMDAwMCwiQmFja29mZkNvZWZmaWNpZW50IjoyLCJNYXhpbXVtSW50ZXJ2YWwiOjMwMDAwMDAwMDAwMCwiTWF4aW11bUF0dGVtcHRzIjoxMH19LCJBd2FpdENJIjp7IlN0YXJ0VG9DbG9zZVRpbWVvdXQiOjYwMDAwMDAwMDAwLCJTY2hlZHVsZVRvQ2xvc2VUaW1lb3V0Ijo3MjAwMDAwMDAwMDAwLCJSZXRyeSI6eyJJbml0aWFsSW50ZXJ2YWwiOjE1MDAwMDAwMDAwLCJCYWNrb2ZmQ29lZmZpY2llbnQiOjIsIk1heGltdW1JbnRlcnZhbCI6MzAwMDAwMDAwMDAwLCJNYXhpbXVtQXR0ZW1wdHMiOjB9fSwiTWVyZ2UiOnsiU3RhcnRUb0Nsb3NlVGltZW91dCI6NjAwMDAwMDAwMDAsIlNjaGVkdWxlVG9DbG9zZVRpbWVvdXQiOjE4MDAwMDAwMDAwMDAsIlJldHJ5Ijp7IkluaXRpYWxJbnRlcnZhbCI6MTAwMDAwMDAwMDAsIkJhY2tvZmZDb2VmZmljaWVudCI6MiwiTWF4aW11bUludGVydmFsIjozMDAwMDAwMDAwMDAsIk1heGltdW1BdHRlbXB0cyI6MH19LCJQcm92aXNpb25pbmciOnsiU3RhcnRUb0Nsb3NlVGltZW91dCI6MTIwMDAwMDAwMDAwLCJTY2hlZHVsZVRvQ2xvc2VUaW1lb3V0IjoxODAwMDAwMDAwMDAwLCJSZXRyeSI6eyJJbml0aWFsSW50ZXJ2YWwiOjEwMDAwMDAwMDAwLCJCYWNrb2ZmQ29lZmZpY2llbnQiOjIsIk1heGltdW1JbnRlcnZhbCI6MzAwMDAwMDAwMDAwLCJNYXhpbXVtQXR0ZW1wdHMiOjEwfX0sIkNyZWRlbnRpYWxSb3RhdGlvbiI6eyJTdGFydFRvQ2xvc2VUaW1lb3V0Ijo2MDAwMDAwMDAwMCwiU2NoZWR1bGVUb0Nsb3NlVGltZW91dCI6OTAwMDAwMDAwMDAwLCJSZXRyeSI6eyJJbml0aWFsSW50ZXJ2YWwiOjEwMDAwMDAwMDAwLCJCYWNrb2ZmQ29lZmZpY2llbnQiOjIsIk1heGltdW1JbnRlcnZhbCI6MzAwMDAwMDAwMDAwLCJNYXhpbXVtQXR0ZW1wdHMiOjEwfX0sIlJlY29yZGluZyI6eyJTdGFydFRvQ2xvc2VUaW1lb3V0Ijo2MDAwMDAwMDAwMCwiU2NoZWR1bGVUb0Nsb3NlVGltZW91dCI6MzYwMDAwMDAwMDAwMCwiUmV0cnkiOnsiSW5pdGlhbEludGVydmFsIjoxMDAwMDAwMDAwMCwiQmFja29mZkNvZWZmaWNpZW50IjoyLCJNYXhpbXVtSW50ZXJ2YWwiOjMwMDAwMDAwMDAwMCwiTWF4aW11bUF0dGVtcHRzIjowfX0sIlRlYXJkb3duIjp7IlN0YXJ0VG9DbG9zZVRpbWVvdXQiOjEyMDAwMDAwMDAwMCwiU2NoZWR1bGVUb0Nsb3NlVGltZW91dCI6MTgwMDAwMDAwMDAwMCwiUmV0cnkiOnsiSW5pdGlhbEludGVydmFsIjoxMDAwMDAwMDAwMCwiQmFja29mZkNvZWZmaWNpZW50IjoyLCJNYXhpbXVtSW50ZXJ2YWwiOjMwMDAwMDAwMDAwMCwiTWF4aW11bUF0dGVtcHRzIjoxMH19fSwiQ2xvbmVVUkwiOiJodHRwczovL2dpdGh1Yi5jb20vZXhhbXBsZS9yZXBvc2l0b3J5LmdpdCIsIk1vZGVsIjp7Im5hbWUiOiJncHQtNSIsImVmZm9ydCI6ImhpZ2gifX0="
+            }
+          ]
+        },
+        "workflowRunTimeout": "86400s",
+        "workflowTaskTimeout": "10s"
+      }
+    },
+    {
+      "eventId": "2",
+      "eventTime": "2026-08-01T06:00:00Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "software-factory-replay"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "3",
+      "eventTime": "2026-08-01T06:00:00Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "2"
+      }
+    },
+    {
+      "eventId": "4",
+      "eventTime": "2026-08-01T06:00:00Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "2",
+        "startedEventId": "3"
+      }
+    },
+    {
+      "eventId": "5",
+      "eventTime": "2026-08-01T06:00:00Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "5",
+        "activityType": {
+          "name": "ClaimAndStartRun"
+        },
+        "taskQueue": {
+          "name": "software-factory-replay"
+        },
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJUaWNrZXRJRCI6NywiUnVuSUQiOiIwMTlmYjkwMS0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwMjgiLCJTdGFydGVkQXQiOiIyMDI2LTA4LTAxVDA2OjAwOjAwWiJ9"
+            }
+          ]
+        },
+        "scheduleToCloseTimeout": "3600s",
+        "startToCloseTimeout": "60s",
+        "workflowTaskCompletedEventId": "4",
+        "retryPolicy": {
+          "initialInterval": "10s",
+          "backoffCoefficient": 2,
+          "maximumInterval": "300s"
+        }
+      }
+    }
+  ]
+}

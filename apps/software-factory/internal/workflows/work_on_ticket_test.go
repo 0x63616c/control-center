@@ -56,7 +56,7 @@ func TestWorkOnTicketClaimsBeforeProvisioningGenerationOneAndClonesThroughItsSes
 	if claimed.State != store.TicketDone || claimed.ActiveRunID != "" {
 		t.Fatalf("completed ticket = %+v, want done with no active owner", claimed)
 	}
-	if winner.clone.Step.StepOrdinal != 1 || winner.clone.Step.Branch != winner.provisioned.Branch || winner.clone.CloneURL != input.CloneURL {
+	if winner.clone.Step.StepOrdinal != 3 || winner.clone.Step.Branch != winner.provisioned.Branch || winner.clone.CloneURL != input.CloneURL {
 		t.Fatalf("clone = %+v, provision = %+v", winner.clone, winner.provisioned)
 	}
 	loser := newWorkOnTicketHarness(t, recorderStore)
@@ -102,6 +102,8 @@ func TestWorkOnTicketConfirmsMergeBeforeBestEffortTeardown(t *testing.T) {
 		t.Fatalf("TargetRunDetail: %v", err)
 	}
 	wantSteps := []work.StepKind{
+		work.StepCreateRunWorker,
+		work.StepAcquireRunWorkerSession,
 		work.StepCloneRepository,
 		work.StepPlan,
 		work.StepImplement,
@@ -125,6 +127,22 @@ func TestWorkOnTicketConfirmsMergeBeforeBestEffortTeardown(t *testing.T) {
 		}
 		if len(step.Attempts) != wantAttempts {
 			t.Fatalf("step %s attempts = %d, want %d", want, len(step.Attempts), wantAttempts)
+		}
+		if index < 2 {
+			var outcome struct {
+				Kind       string `json:"kind"`
+				Generation int    `json:"generation"`
+			}
+			if err := json.Unmarshal(step.Step.Result, &outcome); err != nil {
+				t.Fatalf("decode %s outcome: %v", want, err)
+			}
+			wantKind := "created"
+			if want == work.StepAcquireRunWorkerSession {
+				wantKind = "acquired"
+			}
+			if outcome.Kind != wantKind || outcome.Generation != 1 {
+				t.Fatalf("%s outcome = %+v, want %s generation 1", want, outcome, wantKind)
+			}
 		}
 	}
 
@@ -217,6 +235,7 @@ func TestWorkOnTicketRepairsRedCIThenReviewsTheNewHead(t *testing.T) {
 		t.Fatalf("TargetRunDetail: %v", err)
 	}
 	wantSteps := []work.StepKind{
+		work.StepCreateRunWorker, work.StepAcquireRunWorkerSession,
 		work.StepCloneRepository, work.StepPlan, work.StepImplement,
 		work.StepSyncPullRequest, work.StepAwaitCI, work.StepImplement,
 		work.StepSyncPullRequest, work.StepAwaitCI, work.StepReview,
@@ -784,7 +803,7 @@ func TestWorkOnTicketSchedulesTenAgentRetriesWithTheAcceptanceBackoff(t *testing
 	if err != nil {
 		t.Fatalf("TargetRunDetail: %v", err)
 	}
-	if len(detail.Steps) < 2 || len(detail.Steps[1].Attempts) != 1 || detail.Steps[1].Attempts[0].State != work.AgentAttemptFailed || detail.Steps[1].Attempts[0].FailureKind != work.RunFailureInfrastructure {
+	if len(detail.Steps) < 4 || len(detail.Steps[3].Attempts) != 1 || detail.Steps[3].Attempts[0].State != work.AgentAttemptFailed || detail.Steps[3].Attempts[0].FailureKind != work.RunFailureInfrastructure {
 		t.Fatalf("unavailable model attempt = %+v, want one durably failed plan Attempt", detail.Steps)
 	}
 }
@@ -997,7 +1016,7 @@ func TestWorkOnTicketReconcilesSameAttemptAfterLostAgentResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TargetRunDetail: %v", err)
 	}
-	if len(detail.Steps) != 8 || detail.Steps[1].Step.Kind != work.StepPlan || len(detail.Steps[1].Attempts) != 1 || len(detail.Steps[2].Attempts) != 1 || detail.Steps[2].Attempts[0].State != work.AgentAttemptRunning {
+	if len(detail.Steps) != 10 || detail.Steps[3].Step.Kind != work.StepPlan || len(detail.Steps[3].Attempts) != 1 || len(detail.Steps[4].Attempts) != 1 || detail.Steps[4].Attempts[0].State != work.AgentAttemptRunning {
 		t.Fatalf("durable recovery detail = %+v, want completed plan once and the same implementation Attempt reconciled after loss", detail)
 	}
 }
@@ -1073,8 +1092,8 @@ func TestWorkOnTicketSerializesSequentialSessionReplacements(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TargetRunDetail: %v", err)
 	}
-	if len(detail.Steps[2].Attempts) != 1 || detail.Steps[2].Attempts[0].ID.AttemptNo != 1 {
-		t.Fatalf("implementation attempts = %+v, want the same reconciled Attempt across sequential Session losses", detail.Steps[2].Attempts)
+	if len(detail.Steps[4].Attempts) != 1 || detail.Steps[4].Attempts[0].ID.AttemptNo != 1 {
+		t.Fatalf("implementation attempts = %+v, want the same reconciled Attempt across sequential Session losses", detail.Steps[4].Attempts)
 	}
 }
 
@@ -1296,6 +1315,76 @@ func TestWorkOnTicketConfirmedMergeWinsLateCancellation(t *testing.T) {
 	}
 }
 
+// A merge confirmed while replacing a canceled predecessor is success for the
+// Ticket but a fence for this workflow execution. The successor must report a
+// typed non-success outcome without reopening the Ticket or rewriting either
+// Run's durable terminal state.
+func TestWorkOnTicketReturnsTypedFenceWhenCanceledPredecessorMerged(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "predecessor merged", "fence the successor", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	predecessorRunID := "019fb901-0000-7000-8000-000000000026"
+	startedAt := targetTestTime.Add(-time.Hour)
+	if _, err := s.ClaimAndStartRun(ctx, store.ClaimRunInput{TicketID: ticket.ID, RunID: predecessorRunID, StartedAt: startedAt}); err != nil {
+		t.Fatalf("ClaimAndStartRun(predecessor): %v", err)
+	}
+	if _, err := s.StartStep(ctx, store.StartStepInput{RunID: predecessorRunID, Ordinal: 1, Kind: work.StepSyncPullRequest, StartedAt: startedAt}); err != nil {
+		t.Fatalf("StartStep(sync predecessor): %v", err)
+	}
+	if _, err := s.CheckpointGitEffect(ctx, store.GitCheckpointInput{
+		GitCheckpoint: store.GitCheckpoint{
+			RunID: predecessorRunID, StepOrdinal: 1, Branch: "software-factory/predecessor",
+			PushedHead: "H-old", PullRequestNumber: 41, PullRequestNodeID: "PR_old",
+			StepResult: json.RawMessage(`{"kind":"synced"}`),
+		},
+		CompletedAt: startedAt.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("CheckpointGitEffect(predecessor): %v", err)
+	}
+	if _, err := s.StartStep(ctx, store.StartStepInput{RunID: predecessorRunID, Ordinal: 2, Kind: work.StepMergePullRequest, StartedAt: startedAt.Add(2 * time.Minute)}); err != nil {
+		t.Fatalf("StartStep(merge predecessor): %v", err)
+	}
+	if _, err := s.CancelRun(ctx, store.CancelRunInput{RunID: predecessorRunID, TicketID: ticket.ID, EndedAt: startedAt.Add(3 * time.Minute)}); err != nil {
+		t.Fatalf("CancelRun(predecessor): %v", err)
+	}
+
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000027", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.deleteErr = nil
+	h.cloneResult = func(input activities.CloneTargetRepositoryInput) (activities.CloneTargetRepositoryOutput, error) {
+		if input.RetirePullRequestNumber != 41 || input.CarryForwardHead != "H-old" {
+			t.Fatalf("predecessor retirement input = %+v, want PR 41 at H-old", input)
+		}
+		return activities.CloneTargetRepositoryOutput{PredecessorMerge: &work.PullRequestRetirement{Merged: true, ReviewedHead: "H-old", MergeSHA: "M-old"}}, nil
+	}
+
+	h.run(in)
+	workflowErr := h.env.GetWorkflowError()
+	var application *temporal.ApplicationError
+	if !errors.As(workflowErr, &application) || application.Type() != activities.ErrTypePredecessorMergeFenced {
+		t.Fatalf("WorkOnTicket error = %v, want typed %q fence", workflowErr, activities.ErrTypePredecessorMergeFenced)
+	}
+	gotTicket, err := s.Ticket(ctx, ticket.ID)
+	if err != nil {
+		t.Fatalf("Ticket: %v", err)
+	}
+	predecessor, err := s.TargetRunDetail(ctx, predecessorRunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail(predecessor): %v", err)
+	}
+	successor, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail(successor): %v", err)
+	}
+	if gotTicket.State != store.TicketDone || gotTicket.ActiveRunID != "" || predecessor.Run.TargetOutcome != work.RunOutcomeSucceeded || predecessor.Run.MergeSHA != "M-old" || successor.Run.TargetOutcome != work.RunOutcomeCanceled {
+		t.Fatalf("fenced merge state = ticket %+v / predecessor %+v / successor %+v", gotTicket, predecessor.Run, successor.Run)
+	}
+}
+
 // The semantic deadline forbids the next primary operation while preserving
 // the hard-deadline reserve for durable failed finalization and cleanup.
 func TestWorkOnTicketSemanticDeadlineFailsBeforeStartingAnotherStep(t *testing.T) {
@@ -1510,6 +1599,7 @@ type workOnTicketHarness struct {
 	deleted           []activities.DeleteRunWorkerInput
 	reviewHead        string
 	deleteErr         error
+	cloneResult       func(activities.CloneTargetRepositoryInput) (activities.CloneTargetRepositoryOutput, error)
 
 	syncInputs            []activities.TargetSyncPullRequestInput
 	ciInputs              []activities.TargetAwaitCIInput
@@ -1568,6 +1658,9 @@ func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore *storef
 		func(_ context.Context, in activities.CloneTargetRepositoryInput) (activities.CloneTargetRepositoryOutput, error) {
 			h.clone = in
 			h.cloneInputs = append(h.cloneInputs, in)
+			if h.cloneResult != nil {
+				return h.cloneResult(in)
+			}
 			position := in.Step
 			position.PushedHead = "B0"
 			if err := h.checkpointRepositoryStep(position); err != nil {

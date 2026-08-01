@@ -73,7 +73,9 @@ const (
 	// authorization of another Agent Attempt; native retry must never start fresh.
 	ErrTypeUnresumableIncompleteAttempt = "unresumable_incomplete_attempt"
 	// ErrTypeSemanticDeadline says no new target work may consume the reserved finalization window.
-	ErrTypeSemanticDeadline   = "semantic_deadline"
+	ErrTypeSemanticDeadline = "semantic_deadline"
+	// ErrTypeHardDeadline says the absolute target Run execution budget has elapsed.
+	ErrTypeHardDeadline       = "hard_deadline"
 	ErrTypeAgentAttemptBudget = "agent_attempt_budget"
 	ErrTypeReviewBudget       = "review_budget"
 	ErrTypeCIUnobserved       = "ci_unobserved"
@@ -81,6 +83,9 @@ const (
 	// Worker Session. The workflow may provision one replacement generation;
 	// this is never a native activity retry.
 	ErrTypeRunWorkerSessionLost = "run_worker_session_lost"
+	// ErrTypePredecessorMergeFenced reports that an older canceled Run's
+	// confirmed merge atomically completed the Ticket and fenced this successor.
+	ErrTypePredecessorMergeFenced = "predecessor_merge_fenced"
 )
 
 // fail translates this service's error vocabulary into Temporal's, once.
