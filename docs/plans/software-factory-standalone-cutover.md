@@ -15,8 +15,8 @@
 - `v0.1.1` is the first published extraction release. Its manifest, checksum,
   exact seven-image set, and promoted registry digests were independently
   verified.
-- WWW PRs #670 and #671 are ported as exactly two commits in standalone PR #4.
-  After review and merge, that line belongs in a `v0.1.2` follow-up.
+- WWW PRs #670 and #671 were ported as exactly two commits and merged through
+  standalone PR #4. That line belongs in a `v0.1.2` follow-up.
 
 ## Release baseline
 
@@ -67,7 +67,7 @@
 - [x] Reconcile the applicable changes into the standalone repository as one
   commit per source PR in standalone PR #4.
 - [x] Run standalone verification and two-axis review before opening PR #4.
-- [ ] Review and merge standalone PR #4 with green CI.
+- [x] Review and merge standalone PR #4 with green CI.
 - [ ] Run standalone verification, deterministic E2E, Temporal Session, and all
   seven image builds on its merge commit.
 - [ ] Release `v0.1.2` through the same immutable SemVer mechanism.
