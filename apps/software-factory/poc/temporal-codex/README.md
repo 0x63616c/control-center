@@ -49,8 +49,9 @@ Session if strict same-pod affinity is required.
    user explicitly selects the initial auth file. The repo's `codexauth.Source`
    takes a durable lease in a namespaced Kubernetes Secret before presenting a
    refresh token, then atomically stores the rotated pair and generation state
-   with compare-and-swap. A crashed process leaves enough durable state for its
-   replacement to avoid replaying an uncertain single-use token. Logs,
+   with compare-and-swap. A crashed process leaves enough durable state to
+   bound recovery to one lease-governed takeover presentation and refuse any
+   further replay of an uncertain single-use token. Logs,
    workflow inputs, results, and heartbeats contain no credential material.
 
 ## Run locally

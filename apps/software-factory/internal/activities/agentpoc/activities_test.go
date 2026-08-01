@@ -1,4 +1,4 @@
-package agentpoc_test
+package agentpocactivities_test
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	agentpocactivities "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities/agentpoc"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agentpoc"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codexresponses"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock/clocktest"
@@ -43,16 +44,16 @@ func TestModelTurnActivityDelegatesAndHeartbeatsWithoutChunkContent(t *testing.T
 			{Type: codexresponses.EventTextDelta, Delta: "done"},
 		},
 	}
-	activities, err := agentpoc.NewActivities(client, clocktest.NewFake(time.Date(2026, time.July, 31, 12, 0, 0, 0, time.UTC)))
+	activities, err := agentpocactivities.NewActivities(client, clocktest.NewFake(time.Date(2026, time.July, 31, 12, 0, 0, 0, time.UTC)))
 	if err != nil {
 		t.Fatalf("constructing activities: %v", err)
 	}
 	suite := &testsuite.WorkflowTestSuite{}
 	env := suite.NewTestActivityEnvironment()
 	env.RegisterActivity(activities)
-	var heartbeats []agentpoc.StreamProgress
+	var heartbeats []agentpocactivities.StreamProgress
 	env.SetOnActivityHeartbeatListener(func(_ *activity.Info, details converter.EncodedValues) {
-		var progress agentpoc.StreamProgress
+		var progress agentpocactivities.StreamProgress
 		if err := details.Get(&progress); err != nil {
 			t.Errorf("decoding heartbeat: %v", err)
 			return
@@ -84,7 +85,7 @@ func TestModelTurnActivityDelegatesAndHeartbeatsWithoutChunkContent(t *testing.T
 func TestToolActivityEnforcesTheAllowlist(t *testing.T) {
 	t.Parallel()
 
-	activities, err := agentpoc.NewActivities(&fakeTurnClient{}, clocktest.NewFake(time.Date(2026, time.July, 31, 12, 0, 0, 0, time.UTC)))
+	activities, err := agentpocactivities.NewActivities(&fakeTurnClient{}, clocktest.NewFake(time.Date(2026, time.July, 31, 12, 0, 0, 0, time.UTC)))
 	if err != nil {
 		t.Fatalf("constructing activities: %v", err)
 	}

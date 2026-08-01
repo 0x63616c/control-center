@@ -42,8 +42,10 @@ kubectl --context "${kube_context}" --namespace "${namespace}" delete pod "${old
   --wait=true
 new_pod=""
 for _ in $(seq 1 200); do
-  new_pod="$(kubectl --context "${kube_context}" --namespace "${namespace}" get pod \
-    -l app=agent-poc-worker -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  pods="$(kubectl --context "${kube_context}" --namespace "${namespace}" get pod \
+    -l app=agent-poc-worker -o json)"
+  new_pod="$(jq -r --arg old_pod "${old_pod}" \
+    '[.items[].metadata.name | select(. != $old_pod)][0] // ""' <<<"${pods}")"
   if [[ -n "${new_pod}" && "${new_pod}" != "${old_pod}" ]]; then
     break
   fi

@@ -13,6 +13,7 @@ import (
 	"os"
 	"time"
 
+	agentpocactivities "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities/agentpoc"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agentpoc"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codexauth"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codexresponses"
@@ -86,7 +87,7 @@ func run() error {
 	if *directSmokeModel != "" {
 		return directSmoke(turnClient, *directSmokeModel)
 	}
-	activities, err := agentpoc.NewActivities(turnClient, clock.System{})
+	activities, err := agentpocactivities.NewActivities(turnClient, clock.System{})
 	if err != nil {
 		return fmt.Errorf("constructing activities: %w", err)
 	}
