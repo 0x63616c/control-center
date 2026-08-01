@@ -10,19 +10,18 @@ import (
 // replaces the one variable it is about.
 func completeEnv() map[string]string {
 	return map[string]string{
-		"SOFTWARE_FACTORY_DATABASE_URL":  "postgres://factory:password@postgres/factory",
-		"TEMPORAL_HOST_PORT":             "temporal-frontend.temporal:7233",
-		"TEMPORAL_NAMESPACE":             "software-factory",
-		"SANDBOX_NAMESPACE":              "software-factory",
-		"SANDBOX_IMAGE":                  "ghcr.io/0x63616c/www-software-factory-sandbox@sha256:abc",
-		"RUN_WORKER_IMAGE":               "ghcr.io/0x63616c/www-software-factory-run-worker@sha256:def",
-		"CHECKPOINT_API_URL":             "http://api.software-factory.svc.cluster.local:8080",
-		"METRICS_ADDR":                   ":9090",
-		"POD_NAME":                       "software-factory-worker-7d9f8c-abcde",
-		"BLOBS_URL":                      "http://blobs:8080",
-		"CODEX_RESPONSES_ENDPOINT":       "https://chatgpt.com/backend-api/codex/responses",
-		"CODEX_AUTH_SECRET_NAME":         "codex-auth",
-		"SANDBOX_IMAGE_PULL_SECRET_NAME": "ghcr-pull",
+		"SOFTWARE_FACTORY_DATABASE_URL":     "postgres://factory:password@postgres/factory",
+		"TEMPORAL_HOST_PORT":                "temporal-frontend.temporal:7233",
+		"TEMPORAL_NAMESPACE":                "software-factory",
+		"RUN_WORKER_NAMESPACE":              "software-factory",
+		"RUN_WORKER_IMAGE":                  "ghcr.io/0x63616c/www-software-factory-run-worker@sha256:def",
+		"CHECKPOINT_API_URL":                "http://api.software-factory.svc.cluster.local:8080",
+		"METRICS_ADDR":                      ":9090",
+		"POD_NAME":                          "software-factory-worker-7d9f8c-abcde",
+		"BLOBS_URL":                         "http://blobs:8080",
+		"CODEX_RESPONSES_ENDPOINT":          "https://chatgpt.com/backend-api/codex/responses",
+		"CODEX_AUTH_SECRET_NAME":            "codex-auth",
+		"RUN_WORKER_IMAGE_PULL_SECRET_NAME": "ghcr-pull",
 	}
 }
 
@@ -35,9 +34,8 @@ func completeEnv() map[string]string {
 // above is hand-written, so this comparison is the one assertion in the file
 // that is not the code checking itself.
 //
-// What it stops: SANDBOX_IMAGE tidied out of the required list, after which the
-// worker starts with SandboxImage: "" and creates its first sandbox pod with an
-// empty image — healthy-looking, polling, doing nothing. Or POD_NAME, where the
+// What it stops: RUN_WORKER_IMAGE tidied out of the required list, after which
+// the worker starts with an empty image. Or POD_NAME, where the
 // credential lease holder becomes "" and no lease can be attributed at 3am,
 // which is the only reason that variable is required at all.
 func TestTheRequiredEnvironmentIsExactlyWhatTheTestsSupply(t *testing.T) {
@@ -67,7 +65,7 @@ func TestTheRequiredEnvironmentIsExactlyWhatTheTestsSupply(t *testing.T) {
 func setEnv(t *testing.T, env map[string]string) {
 	t.Helper()
 
-	for _, name := range append(workerEnvNames(), "LOG_LEVEL", envSandboxCPURequest, envSandboxMemoryLimit) {
+	for _, name := range append(workerEnvNames(), "LOG_LEVEL", envRunWorkerCPURequest, envRunWorkerMemoryLimit) {
 		t.Setenv(name, "")
 	}
 	for name, value := range env {
@@ -90,10 +88,8 @@ func TestLoadWorkerReadsTheWholeEnvironment(t *testing.T) {
 		t.Errorf("TemporalHostPort = %q", got.TemporalHostPort)
 	case got.TemporalNamespace != "software-factory":
 		t.Errorf("TemporalNamespace = %q", got.TemporalNamespace)
-	case got.SandboxNamespace != "software-factory":
-		t.Errorf("SandboxNamespace = %q", got.SandboxNamespace)
-	case got.SandboxImage != "ghcr.io/0x63616c/www-software-factory-sandbox@sha256:abc":
-		t.Errorf("SandboxImage = %q", got.SandboxImage)
+	case got.RunWorkerNamespace != "software-factory":
+		t.Errorf("RunWorkerNamespace = %q", got.RunWorkerNamespace)
 	case got.RunWorkerImage != "ghcr.io/0x63616c/www-software-factory-run-worker@sha256:def":
 		t.Errorf("RunWorkerImage = %q", got.RunWorkerImage)
 	case got.CheckpointAPIURL != "http://api.software-factory.svc.cluster.local:8080":
@@ -108,35 +104,35 @@ func TestLoadWorkerReadsTheWholeEnvironment(t *testing.T) {
 		t.Errorf("CodexResponsesEndpoint = %q", got.CodexResponsesEndpoint)
 	case got.CodexAuthSecretName != "codex-auth":
 		t.Errorf("CodexAuthSecretName = %q", got.CodexAuthSecretName)
-	case got.SandboxImagePullSecretName != "ghcr-pull":
-		t.Errorf("SandboxImagePullSecretName = %q", got.SandboxImagePullSecretName)
+	case got.RunWorkerImagePullSecretName != "ghcr-pull":
+		t.Errorf("RunWorkerImagePullSecretName = %q", got.RunWorkerImagePullSecretName)
 	case got.LogLevel != slog.LevelInfo:
 		t.Errorf("LogLevel = %v, want the default %v", got.LogLevel, slog.LevelInfo)
-	case got.SandboxCPURequest != defaultSandboxCPURequest:
-		t.Errorf("SandboxCPURequest = %q, want the default %q", got.SandboxCPURequest, defaultSandboxCPURequest)
-	case got.SandboxMemoryLimit != defaultSandboxMemoryLimit:
-		t.Errorf("SandboxMemoryLimit = %q, want the default %q", got.SandboxMemoryLimit, defaultSandboxMemoryLimit)
+	case got.RunWorkerCPURequest != defaultRunWorkerCPURequest:
+		t.Errorf("RunWorkerCPURequest = %q, want the default %q", got.RunWorkerCPURequest, defaultRunWorkerCPURequest)
+	case got.RunWorkerMemoryLimit != defaultRunWorkerMemoryLimit:
+		t.Errorf("RunWorkerMemoryLimit = %q, want the default %q", got.RunWorkerMemoryLimit, defaultRunWorkerMemoryLimit)
 	}
 }
 
-// TestLoadWorkerTakesTheSandboxResourcesItIsGiven proves the optional CPU
+// TestLoadWorkerTakesTheRunWorkerResourcesItIsGiven proves the optional CPU
 // request and memory limit are read like every other input when set, and only
 // fall back to their defaults when absent — the same contract LogLevel has.
-func TestLoadWorkerTakesTheSandboxResourcesItIsGiven(t *testing.T) {
+func TestLoadWorkerTakesTheRunWorkerResourcesItIsGiven(t *testing.T) {
 	env := completeEnv()
-	env[envSandboxCPURequest] = "4"
-	env[envSandboxMemoryLimit] = "16Gi"
+	env[envRunWorkerCPURequest] = "4"
+	env[envRunWorkerMemoryLimit] = "16Gi"
 	setEnv(t, env)
 
 	got, err := LoadWorker()
 	if err != nil {
 		t.Fatalf("LoadWorker: %v", err)
 	}
-	if got.SandboxCPURequest != "4" {
-		t.Errorf("SandboxCPURequest = %q, want %q", got.SandboxCPURequest, "4")
+	if got.RunWorkerCPURequest != "4" {
+		t.Errorf("RunWorkerCPURequest = %q, want %q", got.RunWorkerCPURequest, "4")
 	}
-	if got.SandboxMemoryLimit != "16Gi" {
-		t.Errorf("SandboxMemoryLimit = %q, want %q", got.SandboxMemoryLimit, "16Gi")
+	if got.RunWorkerMemoryLimit != "16Gi" {
+		t.Errorf("RunWorkerMemoryLimit = %q, want %q", got.RunWorkerMemoryLimit, "16Gi")
 	}
 }
 

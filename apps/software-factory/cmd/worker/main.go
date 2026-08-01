@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -139,8 +140,9 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("listening for metrics on %s (METRICS_ADDR): %w", cfg.MetricsAddr, err)
 	}
+	var activationReady atomic.Bool
 	server := &http.Server{
-		Handler:           observability(registry),
+		Handler:           observability(registry, activationReady.Load),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {
@@ -271,6 +273,7 @@ func run() error {
 		return err
 	}
 	defer stopWorkers()
+	activationReady.Store(true)
 
 	logger.Info("worker starting",
 		// Two different concepts that happen to share the string
@@ -280,7 +283,7 @@ func run() error {
 		// would be invisible on the wire — worth reading twice.
 		slog.String("task_queue", work.TaskQueue),
 		slog.String("temporal_namespace", cfg.TemporalNamespace),
-		slog.String("sandbox_namespace", cfg.SandboxNamespace),
+		slog.String("run_worker_namespace", cfg.RunWorkerNamespace),
 		slog.String("pod", cfg.PodName),
 		slog.String("dispatcher_workflow_id", work.TargetDispatcherWorkflowID),
 		slog.String("dispatcher_control_queue", work.TargetDispatcherTaskQueue),
@@ -382,7 +385,7 @@ func newTargetRunWorkerControlActivities(
 	},
 	logger *slog.Logger,
 ) (*activities.RunWorkerControlActivities, error) {
-	runWorkers, err := k8s.NewRunWorkersInCluster(cfg.SandboxNamespace, logger, cfg.SandboxImagePullSecretName)
+	runWorkers, err := k8s.NewRunWorkersInCluster(cfg.RunWorkerNamespace, logger, cfg.RunWorkerImagePullSecretName)
 	if err != nil {
 		return nil, fmt.Errorf("building the Kubernetes Run Worker client: %w", err)
 	}
@@ -394,7 +397,7 @@ func newTargetRunWorkerControlActivities(
 		Workers: runWorkers, GitHub: ghClient, Capabilities: capabilities,
 		Binder: checkpointBinder, RepositoryBinder: checkpointBinder,
 		Template: activities.RunWorkerTemplate{
-			Image: cfg.RunWorkerImage, CPURequest: cfg.SandboxCPURequest, MemoryLimit: cfg.SandboxMemoryLimit,
+			Image: cfg.RunWorkerImage, CPURequest: cfg.RunWorkerCPURequest, MemoryLimit: cfg.RunWorkerMemoryLimit,
 			DeadlineSeconds: work.SandboxDeadlineSeconds,
 			Env: map[string]string{
 				work.GhConfigDirEnv:               work.GhConfigDir,

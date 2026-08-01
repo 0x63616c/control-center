@@ -47,7 +47,6 @@ const accessAud = "mock-audience";
 
 const digests = {
   "software-factory-worker": `sha256:${"a".repeat(64)}`,
-  "software-factory-sandbox": `sha256:${"b".repeat(64)}`,
   "software-factory-run-worker": `sha256:${"1".repeat(64)}`,
   "software-factory-relay": `sha256:${"c".repeat(64)}`,
   "software-factory-api": `sha256:${"d".repeat(64)}`,
@@ -113,6 +112,7 @@ interface Container {
   }[];
   volumeMounts: { name: string; mountPath: string; subPath?: string }[];
   readinessProbe?: { httpGet?: { path: string; port: string } };
+  livenessProbe?: { httpGet?: { path: string; port: string } };
   securityContext?: {
     allowPrivilegeEscalation?: boolean;
     capabilities?: { drop?: string[] };
@@ -162,35 +162,16 @@ describe("installSoftwareFactory namespace (ADR-0011, issue #325, talos-only)", 
 });
 
 describe("the worker's Role (#343)", () => {
-  test("grants watch on pods, without which every sandbox start 403s", async () => {
-    // WaitReady is watch-based (lifecycle.go). This verb was missing from the
-    // ADR's first draft, and its absence would not have been subtle: the first
-    // ticket ever worked would have failed to start a pod.
-    expect((await ruleFor("pods")).verbs).toContain("watch");
-  });
-
-  test("grants list on pods, which is the orphan sweeper's whole operation", async () => {
-    // Sweeping is list-by-label, filter-by-age, delete. Without it the sweeper
-    // fails Forbidden on its first run, and an RBAC denial reads as an
-    // infrastructure problem — so it gets debugged at the wrong layer.
-    //
-    // `watch` does not cover it: the authorizer maps `GET .../pods?watch=true`
-    // to `watch`, so neither verb implies the other.
+  test("grants list on pods for target Run Worker maintenance", async () => {
     expect((await ruleFor("pods")).verbs).toContain("list");
   });
 
-  test("grants EXACTLY create/delete/get/list/watch on pods, and nothing else", async () => {
+  test("grants EXACTLY create/delete/get/list on pods, and nothing else", async () => {
     // Exact equality, deliberately, and it must STAY exact. This is the only
     // thing keeping the verb set closed — replacing it with a toContain check
     // per verb would keep a green suite while letting a sixth verb land
     // unnoticed on the one rule in this file that cannot be scoped at all.
-    expect([...(await ruleFor("pods")).verbs].sort()).toEqual([
-      "create",
-      "delete",
-      "get",
-      "list",
-      "watch",
-    ]);
+    expect([...(await ruleFor("pods")).verbs].sort()).toEqual(["create", "delete", "get", "list"]);
   });
 
   test("leaves the pods rule unscoped, because resourceNames cannot scope it", async () => {
@@ -201,11 +182,8 @@ describe("the worker's Role (#343)", () => {
     expect((await ruleFor("pods")).resourceNames).toBeUndefined();
   });
 
-  test("grants get as well as create on pods/exec", async () => {
-    // The WebSocket executor issues a GET (exec.go); only the deprecated SPDY
-    // fallback uses POST. With `create` alone every exec either silently takes
-    // the deprecated path or fails outright.
-    expect([...(await ruleFor("pods/exec")).verbs].sort()).toEqual(["create", "get"]);
+  test("grants no pods/exec authority after legacy sandbox cutover", async () => {
+    expect(await rulesFor("pods/exec")).toEqual([]);
   });
 
   test("pins the codex-auth secrets rule to that one credential, and to two verbs", async () => {
@@ -219,10 +197,17 @@ describe("the worker's Role (#343)", () => {
     expect([...rule.verbs].sort()).toEqual(["get", "update"]);
   });
 
+  test("grants target Run Worker Secret lifecycle without legacy exec authority", async () => {
+    const rules = await rulesFor("secrets");
+    const rule = rules.find((r) => r.resourceNames === undefined);
+    if (!rule) throw new Error("no Run Worker secrets rule found");
+    expect([...rule.verbs].sort()).toEqual(["create", "delete", "get", "list", "update"]);
+  });
+
   test("grants nothing outside the core API group and no extra resource", async () => {
     const rules = await get<PolicyRule[]>(install().role, "rules");
     expect(rules.every((r) => r.apiGroups.every((g) => g === ""))).toBe(true);
-    expect(rules.flatMap((r) => r.resources).sort()).toEqual(["pods", "pods/exec", "secrets"]);
+    expect(rules.flatMap((r) => r.resources).sort()).toEqual(["pods", "secrets", "secrets"]);
   });
 });
 
@@ -241,15 +226,15 @@ describe("the worker Deployment (#343)", () => {
     expect(spec.automountServiceAccountToken).toBe(true);
   });
 
-  test("hands the sandbox image to the worker as a digest-pinned env var", async () => {
-    // The sandbox is never a workload here: the worker creates those pods
-    // itself. Passing the pinned ref is what makes a sandbox as reproducible as
-    // the worker that created it.
+  test("reports ready only after target activation completes", async () => {
+    const [container] = (await deploymentSpec()).template.spec.containers;
+    expect(container.readinessProbe?.httpGet).toEqual({ path: "/readyz", port: "metrics" });
+    expect(container.livenessProbe?.httpGet).toEqual({ path: "/healthz", port: "metrics" });
+  });
+
+  test("does not register the retired sandbox image", async () => {
     const [container] = (await deploymentSpec(digests)).template.spec.containers;
-    const sandbox = container.env.find((e) => e.name === "SANDBOX_IMAGE");
-    expect(sandbox?.value).toBe(
-      `ghcr.io/0x63616c/www-software-factory-sandbox@${digests["software-factory-sandbox"]}`,
-    );
+    expect(container.env.find((e) => e.name === "SANDBOX_IMAGE")).toBeUndefined();
     expect(container.image).toBe(
       `ghcr.io/0x63616c/www-software-factory-worker@${digests["software-factory-worker"]}`,
     );
@@ -261,20 +246,14 @@ describe("the worker Deployment (#343)", () => {
     expect(runWorker?.value).toBe(
       `ghcr.io/0x63616c/www-software-factory-run-worker@${digests["software-factory-run-worker"]}`,
     );
-    expect(container.env.find((e) => e.name === "SANDBOX_IMAGE")?.value).toBe(
-      `ghcr.io/0x63616c/www-software-factory-sandbox@${digests["software-factory-sandbox"]}`,
-    );
     expect(container.env.find((e) => e.name === "CHECKPOINT_API_URL")?.value).toBe(
       "http://api.software-factory.svc.cluster.local:8080",
     );
   });
 
-  test("hands the worker the pull secret name every sandbox pod authenticates its image pull with", async () => {
-    // #404: podspec.go sets imagePullSecrets on every sandbox pod itself, from
-    // this env var — there is no namespace-default ServiceAccount fallback.
-    // Same secret name the worker's own imagePullSecrets uses, below.
+  test("hands the worker the pull secret name every Run Worker authenticates with", async () => {
     const [container] = (await deploymentSpec()).template.spec.containers;
-    const pullSecret = container.env.find((e) => e.name === "SANDBOX_IMAGE_PULL_SECRET_NAME");
+    const pullSecret = container.env.find((e) => e.name === "RUN_WORKER_IMAGE_PULL_SECRET_NAME");
     expect(pullSecret?.value).toBe("ghcr-pull");
   });
 

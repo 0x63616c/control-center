@@ -99,7 +99,7 @@ func buildLiveDependencies(ctx context.Context, stderr io.Writer) (cutover.Depen
 		return cutover.Dependencies{}, func() {}, fmt.Errorf("reading in-cluster GitHub App configuration: %w", err)
 	}
 	logger := slog.New(slog.NewJSONHandler(stderr, &slog.HandlerOptions{Level: workerConfig.LogLevel}))
-	sandboxes, err := k8s.NewInCluster(workerConfig.SandboxNamespace, logger, clock.System{})
+	sandboxes, err := k8s.NewInCluster(workerConfig.RunWorkerNamespace, logger, clock.System{})
 	if err != nil {
 		return cutover.Dependencies{}, func() {}, fmt.Errorf("building the Kubernetes sandbox client: %w", err)
 	}

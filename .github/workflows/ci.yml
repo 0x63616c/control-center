@@ -658,40 +658,6 @@ jobs:
           cache-scope: software-factory-worker
 
 
-  build-software-factory-sandbox:
-    needs: [changes]
-    if: needs.changes.outputs.softwarefactory == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Build and push software-factory sandbox image
-        uses: ./.github/actions/build-product-image
-        env:
-          SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
-        with:
-          image: www-software-factory-sandbox
-          dockerfile: apps/software-factory/images/sandbox/Dockerfile
-          cache-scope: software-factory-sandbox
-
-      # The image contract nothing else can check: the worker execs
-      # sandbox-exec, tar, test and cat by absolute argv, and /work is an
-      # emptyDir that MASKS anything baked under it. smoke.sh reproduces that
-      # with a tmpfs, asserts the lot, and launches Playwright Chromium to
-      # write a real headless screenshot against the image just built.
-      #
-      # After the push, not before: the assertions are about the built image,
-      # and a failure here fails the job, which blocks the deploy through
-      # `needs:` — so a bad image can reach GHCR but never the cluster.
-      - name: Smoke-test the sandbox image contract
-        run: |
-          docker buildx build --platform linux/amd64 --load \
-            -f apps/software-factory/images/sandbox/Dockerfile \
-            -t sf-sandbox:ci .
-          docker image inspect --format 'sandbox image size: {{.Size}} bytes' sf-sandbox:ci
-          apps/software-factory/images/sandbox/smoke.sh sf-sandbox:ci
-
   build-software-factory-run-worker:
     needs: [changes]
     if: needs.changes.outputs.softwarefactory == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
@@ -833,7 +799,6 @@ jobs:
         build-temporal-worker,
         build-map-provision,
         build-software-factory-worker,
-        build-software-factory-sandbox,
         build-software-factory-run-worker,
         build-software-factory-relay,
         build-software-factory-api,
@@ -935,7 +900,7 @@ jobs:
           # KEY is product-component scoped and matches the Pulumi imageDigests
           # config key, while repo names use full product slugs.
           declare -A out=()
-          for entry in www-control-center-web:control-center-web www-control-center-manage:control-center-manage www-control-center-api:control-center-api www-control-center-worker:control-center-worker www-control-center-temporal-worker:control-center-temporal-worker www-control-center-map-provision:control-center-map-provision www-software-factory-worker:software-factory-worker www-software-factory-sandbox:software-factory-sandbox www-software-factory-run-worker:software-factory-run-worker www-software-factory-relay:software-factory-relay www-software-factory-api:software-factory-api www-software-factory-blobs:software-factory-blobs www-software-factory-codec:software-factory-codec www-software-factory-console:software-factory-console; do
+          for entry in www-control-center-web:control-center-web www-control-center-manage:control-center-manage www-control-center-api:control-center-api www-control-center-worker:control-center-worker www-control-center-temporal-worker:control-center-temporal-worker www-control-center-map-provision:control-center-map-provision www-software-factory-worker:software-factory-worker www-software-factory-run-worker:software-factory-run-worker www-software-factory-relay:software-factory-relay www-software-factory-api:software-factory-api www-software-factory-blobs:software-factory-blobs www-software-factory-codec:software-factory-codec www-software-factory-console:software-factory-console; do
             repo="${entry%%:*}"
             name="${entry#*:}"
             d=$(docker buildx imagetools inspect "ghcr.io/0x63616c/$repo:main" --format '{{.Manifest.Digest}}' 2>/dev/null || true)

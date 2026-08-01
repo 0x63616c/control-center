@@ -21,7 +21,7 @@ func TestObservabilityServesTheMetricsItIsGiven(t *testing.T) {
 	registry.MustRegister(counter)
 	counter.Inc()
 
-	body, status := get(t, observability(registry), pathMetrics)
+	body, status := get(t, observability(registry, func() bool { return false }), pathMetrics)
 	if status != http.StatusOK {
 		t.Fatalf("GET %s = %d, want 200", pathMetrics, status)
 	}
@@ -36,7 +36,7 @@ func TestObservabilityServesTheMetricsItIsGiven(t *testing.T) {
 func TestObservabilityAnswersALivenessProbe(t *testing.T) {
 	t.Parallel()
 
-	_, status := get(t, observability(prometheus.NewRegistry()), pathHealthz)
+	_, status := get(t, observability(prometheus.NewRegistry(), func() bool { return false }), pathHealthz)
 	if status != http.StatusOK {
 		t.Errorf("GET %s = %d, want 200; the kubelet would restart a healthy worker", pathHealthz, status)
 	}
@@ -47,8 +47,21 @@ func TestObservabilityServesNothingElse(t *testing.T) {
 
 	// The worker takes its work from Temporal. Anything else answering here
 	// would be surface nobody meant to expose.
-	if _, status := get(t, observability(prometheus.NewRegistry()), "/"); status != http.StatusNotFound {
+	if _, status := get(t, observability(prometheus.NewRegistry(), func() bool { return false }), "/"); status != http.StatusNotFound {
 		t.Errorf("GET / = %d, want 404", status)
+	}
+}
+
+func TestObservabilityReadinessTracksCompletedActivation(t *testing.T) {
+	t.Parallel()
+	ready := false
+	handler := observability(prometheus.NewRegistry(), func() bool { return ready })
+	if _, status := get(t, handler, pathReadyz); status != http.StatusServiceUnavailable {
+		t.Fatalf("GET %s before activation = %d, want 503", pathReadyz, status)
+	}
+	ready = true
+	if _, status := get(t, handler, pathReadyz); status != http.StatusOK {
+		t.Fatalf("GET %s after activation = %d, want 200", pathReadyz, status)
 	}
 }
 
@@ -83,14 +96,14 @@ func get(t *testing.T, handler http.Handler, path string) (body string, status i
 func TestTheServedPathsAreTheOnesScrapedAndProbed(t *testing.T) {
 	t.Parallel()
 
-	for path, want := range map[string]int{"/metrics": 200, "/healthz": 200} {
-		if _, status := get(t, observability(prometheus.NewRegistry()), path); status != want {
+	for path, want := range map[string]int{"/metrics": 200, "/healthz": 200, "/readyz": 503} {
+		if _, status := get(t, observability(prometheus.NewRegistry(), func() bool { return false }), path); status != want {
 			t.Errorf("GET %s = %d, want %d; the scrape config and the liveness probe quote this exact path",
 				path, status, want)
 		}
 	}
 
-	if pathMetrics != "/metrics" || pathHealthz != "/healthz" {
-		t.Errorf("served paths are %q and %q, want /metrics and /healthz", pathMetrics, pathHealthz)
+	if pathMetrics != "/metrics" || pathHealthz != "/healthz" || pathReadyz != "/readyz" {
+		t.Errorf("served paths are %q, %q, and %q", pathMetrics, pathHealthz, pathReadyz)
 	}
 }

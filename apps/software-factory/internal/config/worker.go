@@ -8,7 +8,7 @@ import (
 )
 
 // Worker is everything the worker process needs to start: where Temporal is,
-// where sandboxes go, what to run in them, and how loudly to say what it is
+// where Run Workers go, what to run in them, and how loudly to say what it is
 // doing.
 //
 // It deliberately holds no tunable behaviour — no concurrency cap, no model
@@ -28,13 +28,9 @@ type Worker struct {
 	// TemporalNamespace is the namespace this service's workflows live in.
 	TemporalNamespace string
 
-	// SandboxNamespace is the Kubernetes namespace per-ticket pods are created
+	// RunWorkerNamespace is the Kubernetes namespace per-Run pods are created
 	// in. The worker's Role is scoped to it.
-	SandboxNamespace string
-
-	// SandboxImage is the per-ticket sandbox image, pinned by digest by the
-	// deploy that set it.
-	SandboxImage string
+	RunWorkerNamespace string
 
 	// RunWorkerImage is the separately pinned target execution image.
 	RunWorkerImage string
@@ -51,12 +47,12 @@ type Worker struct {
 	// a lease nobody can attribute cannot be investigated at 3am.
 	PodName string
 
-	// BlobsURL is the in-cluster blob API. It is copied into sandbox pods so
+	// BlobsURL is the in-cluster blob API. It is copied into Run Worker pods so
 	// their future payload codec clients use the same durable service.
 	BlobsURL string
 
 	// CodexResponsesEndpoint is the direct subscription-backed model endpoint.
-	// Only the main worker receives it; sandbox pods never call the provider.
+	// Only the main worker receives it; Run Worker pods never call the provider.
 	CodexResponsesEndpoint string
 
 	// CodexAuthSecretName is the Kubernetes Secret holding the codex
@@ -69,8 +65,8 @@ type Worker struct {
 	// debugs it to the credential layer instead of to RBAC.
 	CodexAuthSecretName string
 
-	// SandboxImagePullSecretName is the Kubernetes Secret every sandbox pod
-	// authenticates its image pull with. The sandbox image is private on
+	// RunWorkerImagePullSecretName is the Kubernetes Secret every Run Worker pod
+	// authenticates its image pull with. The image is private on
 	// GHCR, like the worker's own — but unlike the worker's Deployment, a pod
 	// podspec.go builds has no Pulumi-managed spec to set imagePullSecrets on
 	// by hand, so this name has to arrive as config and be threaded onto each
@@ -80,12 +76,12 @@ type Worker struct {
 	// fallback: an empty value here is a pod with no imagePullSecrets at all,
 	// which reads as a healthy Create followed by an ErrImagePull rather than
 	// as a startup failure (#404).
-	SandboxImagePullSecretName string
+	RunWorkerImagePullSecretName string
 
 	// LogLevel is the level everything below this process logs at.
 	LogLevel slog.Level
 
-	// SandboxCPURequest and SandboxMemoryLimit are the per-ticket sandbox
+	// RunWorkerCPURequest and RunWorkerMemoryLimit are the per-Run worker
 	// pod's CPU request and memory limit, as Kubernetes quantity strings
 	// ("2", "8Gi"). There is deliberately no CPU limit: CPU is compressible
 	// and #87 banned limiting it repo-wide, so only a request is configured
@@ -99,22 +95,22 @@ type Worker struct {
 	// has decided is wrong yet. Once infra sets these explicitly the default
 	// stops mattering; until then they are real resource settings, not
 	// placeholders that skip enforcement.
-	SandboxCPURequest  string
-	SandboxMemoryLimit string
+	RunWorkerCPURequest  string
+	RunWorkerMemoryLimit string
 }
 
-// Defaults for the two optional sandbox resource settings. See their fields'
+// Defaults for the two optional Run Worker resource settings. See their fields'
 // doc comment on Worker for why they default rather than fail.
 //
-// defaultSandboxMemoryLimit is set from a measurement, not a guess: #493
+// defaultRunWorkerMemoryLimit is set from a measurement, not a guess: #493
 // measured `bun run typecheck` peaking at 6.92Gi inside the sandbox image,
 // against the previous 4Gi limit — which is why #479's runs died mid-implement.
 // 8Gi is 1.16x that peak, a deliberate near-term unblock rather than a
 // comfortable margin; #492 (bounding tsc's fan-out) is the real fix for the
 // peak itself.
 const (
-	defaultSandboxCPURequest  = "2"
-	defaultSandboxMemoryLimit = "8Gi"
+	defaultRunWorkerCPURequest  = "2"
+	defaultRunWorkerMemoryLimit = "8Gi"
 )
 
 // Environment variables LoadWorker reads. They are constants because the errors
@@ -129,23 +125,22 @@ const (
 	// literal assigned to each identifier it names, by design (D1, #340) — a
 	// bare reference would silently drop out of that check's required set
 	// instead of failing loudly.
-	envDatabaseURL            = "SOFTWARE_FACTORY_DATABASE_URL"
-	envTemporalHostPort       = "TEMPORAL_HOST_PORT"
-	envTemporalNamespace      = "TEMPORAL_NAMESPACE"
-	envSandboxNamespace       = "SANDBOX_NAMESPACE"
-	envSandboxImage           = "SANDBOX_IMAGE"
-	envRunWorkerImage         = "RUN_WORKER_IMAGE"
-	envCheckpointAPIURL       = "CHECKPOINT_API_URL"
-	envMetricsAddr            = "METRICS_ADDR"
-	envPodName                = "POD_NAME"
-	envBlobsURL               = "BLOBS_URL"
-	envCodexResponsesEndpoint = "CODEX_RESPONSES_ENDPOINT"
-	envCodexAuthSecret        = "CODEX_AUTH_SECRET_NAME"
-	envSandboxImagePullSecret = "SANDBOX_IMAGE_PULL_SECRET_NAME"
-	envLogLevel               = "LOG_LEVEL"
+	envDatabaseURL              = "SOFTWARE_FACTORY_DATABASE_URL"
+	envTemporalHostPort         = "TEMPORAL_HOST_PORT"
+	envTemporalNamespace        = "TEMPORAL_NAMESPACE"
+	envRunWorkerNamespace       = "RUN_WORKER_NAMESPACE"
+	envRunWorkerImage           = "RUN_WORKER_IMAGE"
+	envCheckpointAPIURL         = "CHECKPOINT_API_URL"
+	envMetricsAddr              = "METRICS_ADDR"
+	envPodName                  = "POD_NAME"
+	envBlobsURL                 = "BLOBS_URL"
+	envCodexResponsesEndpoint   = "CODEX_RESPONSES_ENDPOINT"
+	envCodexAuthSecret          = "CODEX_AUTH_SECRET_NAME"
+	envRunWorkerImagePullSecret = "RUN_WORKER_IMAGE_PULL_SECRET_NAME"
+	envLogLevel                 = "LOG_LEVEL"
 
-	envSandboxCPURequest  = "SANDBOX_CPU_REQUEST"
-	envSandboxMemoryLimit = "SANDBOX_MEMORY_LIMIT"
+	envRunWorkerCPURequest  = "RUN_WORKER_CPU_REQUEST"
+	envRunWorkerMemoryLimit = "RUN_WORKER_MEMORY_LIMIT"
 )
 
 // workerEnvNames are the variables that must be set. LOG_LEVEL is absent
@@ -155,8 +150,7 @@ func workerEnvNames() []string {
 		envDatabaseURL,
 		envTemporalHostPort,
 		envTemporalNamespace,
-		envSandboxNamespace,
-		envSandboxImage,
+		envRunWorkerNamespace,
 		envRunWorkerImage,
 		envCheckpointAPIURL,
 		envMetricsAddr,
@@ -164,7 +158,7 @@ func workerEnvNames() []string {
 		envBlobsURL,
 		envCodexResponsesEndpoint,
 		envCodexAuthSecret,
-		envSandboxImagePullSecret,
+		envRunWorkerImagePullSecret,
 	}
 }
 
@@ -175,19 +169,18 @@ func workerEnvNames() []string {
 // at the first poll.
 func (w Worker) Validate() error {
 	required := map[string]string{
-		envDatabaseURL:            w.DatabaseURL,
-		envTemporalHostPort:       w.TemporalHostPort,
-		envTemporalNamespace:      w.TemporalNamespace,
-		envSandboxNamespace:       w.SandboxNamespace,
-		envSandboxImage:           w.SandboxImage,
-		envRunWorkerImage:         w.RunWorkerImage,
-		envCheckpointAPIURL:       w.CheckpointAPIURL,
-		envMetricsAddr:            w.MetricsAddr,
-		envPodName:                w.PodName,
-		envBlobsURL:               w.BlobsURL,
-		envCodexResponsesEndpoint: w.CodexResponsesEndpoint,
-		envCodexAuthSecret:        w.CodexAuthSecretName,
-		envSandboxImagePullSecret: w.SandboxImagePullSecretName,
+		envDatabaseURL:              w.DatabaseURL,
+		envTemporalHostPort:         w.TemporalHostPort,
+		envTemporalNamespace:        w.TemporalNamespace,
+		envRunWorkerNamespace:       w.RunWorkerNamespace,
+		envRunWorkerImage:           w.RunWorkerImage,
+		envCheckpointAPIURL:         w.CheckpointAPIURL,
+		envMetricsAddr:              w.MetricsAddr,
+		envPodName:                  w.PodName,
+		envBlobsURL:                 w.BlobsURL,
+		envCodexResponsesEndpoint:   w.CodexResponsesEndpoint,
+		envCodexAuthSecret:          w.CodexAuthSecretName,
+		envRunWorkerImagePullSecret: w.RunWorkerImagePullSecretName,
 	}
 	for _, name := range workerEnvNames() {
 		if strings.TrimSpace(required[name]) == "" {
@@ -201,25 +194,24 @@ func (w Worker) Validate() error {
 //
 // Everything except the log level is required, and nothing is defaulted to a
 // plausible-looking value: a worker that starts against the wrong Temporal
-// namespace or creates sandboxes in the wrong Kubernetes one looks healthy and
+// namespace or creates Run Workers in the wrong Kubernetes one looks healthy and
 // does nothing, which is the failure that costs a morning.
 func LoadWorker() (Worker, error) {
 	cfg := Worker{
-		DatabaseURL:       os.Getenv(envDatabaseURL),
-		TemporalHostPort:  os.Getenv(envTemporalHostPort),
-		TemporalNamespace: os.Getenv(envTemporalNamespace),
-		SandboxNamespace:  os.Getenv(envSandboxNamespace),
-		SandboxImage:      os.Getenv(envSandboxImage),
-		RunWorkerImage:    os.Getenv(envRunWorkerImage),
-		CheckpointAPIURL:  os.Getenv(envCheckpointAPIURL),
-		MetricsAddr:       os.Getenv(envMetricsAddr),
-		PodName:           os.Getenv(envPodName),
+		DatabaseURL:        os.Getenv(envDatabaseURL),
+		TemporalHostPort:   os.Getenv(envTemporalHostPort),
+		TemporalNamespace:  os.Getenv(envTemporalNamespace),
+		RunWorkerNamespace: os.Getenv(envRunWorkerNamespace),
+		RunWorkerImage:     os.Getenv(envRunWorkerImage),
+		CheckpointAPIURL:   os.Getenv(envCheckpointAPIURL),
+		MetricsAddr:        os.Getenv(envMetricsAddr),
+		PodName:            os.Getenv(envPodName),
 
 		BlobsURL:               os.Getenv(envBlobsURL),
 		CodexResponsesEndpoint: os.Getenv(envCodexResponsesEndpoint),
 		CodexAuthSecretName:    os.Getenv(envCodexAuthSecret),
 
-		SandboxImagePullSecretName: os.Getenv(envSandboxImagePullSecret),
+		RunWorkerImagePullSecretName: os.Getenv(envRunWorkerImagePullSecret),
 	}
 	if err := cfg.Validate(); err != nil {
 		return Worker{}, describeWorkerRequirement(err)
@@ -231,8 +223,8 @@ func LoadWorker() (Worker, error) {
 	}
 	cfg.LogLevel = level
 
-	cfg.SandboxCPURequest = orDefault(envSandboxCPURequest, defaultSandboxCPURequest)
-	cfg.SandboxMemoryLimit = orDefault(envSandboxMemoryLimit, defaultSandboxMemoryLimit)
+	cfg.RunWorkerCPURequest = orDefault(envRunWorkerCPURequest, defaultRunWorkerCPURequest)
+	cfg.RunWorkerMemoryLimit = orDefault(envRunWorkerMemoryLimit, defaultRunWorkerMemoryLimit)
 	return cfg, nil
 }
 
@@ -250,19 +242,18 @@ func orDefault(name, fallback string) string {
 // file to fix their Deployment.
 func describeWorkerRequirement(err error) error {
 	purposes := map[string]string{
-		envDatabaseURL:            "the factory Postgres connection the dispatcher writes its per-tick state to",
-		envTemporalHostPort:       "the Temporal frontend to dial, host:port",
-		envTemporalNamespace:      "the Temporal namespace this service's workflows live in",
-		envSandboxNamespace:       "the Kubernetes namespace per-ticket sandbox pods are created in",
-		envSandboxImage:           "the per-ticket sandbox image, pinned by digest",
-		envRunWorkerImage:         "the target Run Worker image, pinned by digest",
-		envCheckpointAPIURL:       "the in-cluster API used for target Attempt checkpoints",
-		envMetricsAddr:            "the address the metrics and health server listens on",
-		envPodName:                "this pod's own name, from the downward API; it identifies the credential lease holder",
-		envBlobsURL:               "the in-cluster payload blob API copied into sandbox pods",
-		envCodexResponsesEndpoint: "the direct subscription-backed Codex Responses endpoint",
-		envCodexAuthSecret:        "the Kubernetes Secret holding the codex credential; the worker's Role is pinned to this exact name",
-		envSandboxImagePullSecret: "the Kubernetes Secret every sandbox pod authenticates its image pull with; without it a sandbox pod ErrImagePulls against GHCR",
+		envDatabaseURL:              "the factory Postgres connection the dispatcher writes its per-tick state to",
+		envTemporalHostPort:         "the Temporal frontend to dial, host:port",
+		envTemporalNamespace:        "the Temporal namespace this service's workflows live in",
+		envRunWorkerNamespace:       "the Kubernetes namespace per-Run workers are created in",
+		envRunWorkerImage:           "the target Run Worker image, pinned by digest",
+		envCheckpointAPIURL:         "the in-cluster API used for target Attempt checkpoints",
+		envMetricsAddr:              "the address the metrics and health server listens on",
+		envPodName:                  "this pod's own name, from the downward API; it identifies the credential lease holder",
+		envBlobsURL:                 "the in-cluster payload blob API copied into Run Worker pods",
+		envCodexResponsesEndpoint:   "the direct subscription-backed Codex Responses endpoint",
+		envCodexAuthSecret:          "the Kubernetes Secret holding the codex credential; the worker's Role is pinned to this exact name",
+		envRunWorkerImagePullSecret: "the Kubernetes Secret every Run Worker authenticates its image pull with; without it a worker ErrImagePulls against GHCR",
 	}
 	for name, purpose := range purposes {
 		if strings.Contains(err.Error(), name) {

@@ -40,7 +40,6 @@ const vault = {
 
 const digests = {
   "software-factory-worker": `sha256:${"a".repeat(64)}`,
-  "software-factory-sandbox": `sha256:${"b".repeat(64)}`,
   "software-factory-run-worker": `sha256:${"1".repeat(64)}`,
   "software-factory-relay": `sha256:${"c".repeat(64)}`,
   "software-factory-api": `sha256:${"d".repeat(64)}`,

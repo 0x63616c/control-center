@@ -68,7 +68,7 @@ func TestLiveAgentWorkflowWorker(t *testing.T) {
 	t.Cleanup(temporalClient.Close)
 
 	authSource, err := newCodexAuthSource(config.Worker{
-		SandboxNamespace:    cfg.credentialNamespace,
+		RunWorkerNamespace:  cfg.credentialNamespace,
 		CodexAuthSecretName: cfg.credentialSecret,
 		PodName:             cfg.podName,
 	}, clock.System{}, logger)

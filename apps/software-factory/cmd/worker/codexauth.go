@@ -24,7 +24,7 @@ const codexRefresherTimeout = 20 * time.Second
 // newCodexAuthSource builds the durable credential source used by the main
 // worker's direct Responses client. The credential never reaches a sandbox.
 //
-// It reads cfg.SandboxNamespace and cfg.CodexAuthSecretName rather than a new
+// It reads cfg.RunWorkerNamespace and cfg.CodexAuthSecretName rather than a new
 // environment variable: the worker's Role is already pinned to exactly that
 // Secret name by `resourceNames` (infra/src/software-factory.ts), so a second
 // spelling here would be either redundant or, if it drifted, a grant that
@@ -41,7 +41,7 @@ func newCodexAuthSource(cfg config.Worker, clk clock.Clock, logger *slog.Logger)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to Kubernetes for the codex credential secret: %w", err)
 	}
-	store, err := k8s.NewSecretClient(api, cfg.SandboxNamespace, cfg.CodexAuthSecretName, logger)
+	store, err := k8s.NewSecretClient(api, cfg.RunWorkerNamespace, cfg.CodexAuthSecretName, logger)
 	if err != nil {
 		return nil, fmt.Errorf("building the codex credential secret client: %w", err)
 	}
