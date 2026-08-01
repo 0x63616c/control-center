@@ -54,6 +54,21 @@ type AgentWorkflowResult struct {
 	ToolCalls       int
 }
 
+// LegacyAgentWorkflowModelTurnPolicy preserves the model-turn behavior of
+// FactoryWorkTicket histories. Target runs carry their distinct immutable
+// policy in WorkOnTicketInput instead of changing this compatibility default.
+func LegacyAgentWorkflowModelTurnPolicy() work.AgentActivityPolicy {
+	return work.AgentActivityPolicy{
+		StartToCloseTimeout:    2 * time.Minute,
+		ScheduleToCloseTimeout: 2*time.Minute + 15*time.Second,
+		HeartbeatTimeout:       15 * time.Second,
+		Retry: work.RetryPolicy{
+			InitialInterval: time.Second, BackoffCoefficient: 2,
+			MaximumInterval: 10 * time.Second, MaximumAttempts: 3,
+		},
+	}
+}
+
 // AgentWorkflow runs one bounded reference-only model/tool loop.
 func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (workflowResult AgentWorkflowResult, workflowErr error) {
 	defer func() { recordAgentLifecycle(ctx, workflowErr) }()

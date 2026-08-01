@@ -563,7 +563,7 @@ func TestFactoryWorkTicketRunsPlanImplementAndReviewAsAgentChildren(t *testing.T
 		input := h.agentChildren[index]
 		wantID := agent.WorkflowID(h.done.RunID, string(stage), 1)
 		if input.Attempt.Key.Stage != stage || input.ToolsetID != wantToolsets[index] || input.Limits != agent.DefaultLimits() ||
-			input.ModelTurnPolicy != work.DefaultTargetRunPolicy().Agent {
+			input.ModelTurnPolicy != workflows.LegacyAgentWorkflowModelTurnPolicy() {
 			t.Fatalf("child %d input = %#v", index, input)
 		}
 		if h.agentChildIDs[index] != wantID {

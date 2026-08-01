@@ -287,7 +287,7 @@ func (r *factoryTicketRun) runAgentStage(
 	input := AgentWorkflowInput{
 		Attempt: attempt, ToolsetID: toolsetID,
 		ToolTarget: agent.ToolTarget{Kind: agent.ToolTargetLegacySandbox}, Limits: agent.DefaultLimits(),
-		ModelTurnPolicy: work.DefaultTargetRunPolicy().Agent,
+		ModelTurnPolicy: LegacyAgentWorkflowModelTurnPolicy(),
 		CacheKey:        fmt.Sprintf("agent/%s/%s/%d", r.runID, attempt.Key.Stage, attempt.Key.Turn),
 	}
 	var result AgentWorkflowResult
