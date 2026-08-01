@@ -24,8 +24,11 @@ func TestInventoryAndDryRunAreInertAndMachineReadable(t *testing.T) {
 			if report.Ready {
 				t.Fatalf("Ready = true with legacy inventory: %+v", report)
 			}
-			if len(report.Before.Workflows) != 3 || len(report.Before.PullRequests) != 1 || len(report.Before.Tickets) != 2 || len(report.Before.Runs) != 2 {
-				t.Fatalf("inventory = %+v, want three workflows, one PR, two Tickets, and two open legacy Runs", report.Before)
+			if report.Version != 2 {
+				t.Fatalf("Version = %d, want 2 for the sandbox-aware report schema", report.Version)
+			}
+			if len(report.Before.Workflows) != 4 || len(report.Before.Sandboxes) != 1 || len(report.Before.PullRequests) != 1 || len(report.Before.Tickets) != 2 || len(report.Before.Runs) != 2 {
+				t.Fatalf("inventory = %+v, want four workflows, one sandbox, one PR, two Tickets, and two open legacy Runs", report.Before)
 			}
 			if len(fake.calls) != 0 {
 				t.Fatalf("mutating calls = %v, want none in %s", fake.calls, mode)
@@ -48,7 +51,7 @@ func TestApplyQuiescesLegacyWorkAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute(first): %v", err)
 	}
-	if !report.Ready || len(report.After.Workflows) != 0 || len(report.After.PullRequests) != 1 || report.After.PullRequests[0].AutoMergeEnabled || len(report.After.Tickets) != 0 || len(report.After.Runs) != 0 {
+	if !report.Ready || len(report.After.Workflows) != 0 || len(report.After.Sandboxes) != 0 || len(report.After.PullRequests) != 1 || report.After.PullRequests[0].AutoMergeEnabled || len(report.After.Tickets) != 0 || len(report.After.Runs) != 0 {
 		t.Fatalf("report = %+v, want a clean ready inventory", report)
 	}
 	wantCalls := []string{
@@ -56,12 +59,17 @@ func TestApplyQuiescesLegacyWorkAndIsIdempotent(t *testing.T) {
 		"disable-auto-merge:41",
 		"cancel:factory-ticket-7/run-7",
 		"cancel:factory-ticket-8/run-8",
+		"cancel:agent-workflow-8/agent-run-8",
 		"await:factory-ticket-7/run-7",
 		"await:factory-ticket-8/run-8",
 		"terminate:factory-ticket-8/run-8",
 		"await:factory-ticket-8/run-8",
+		"await:agent-workflow-8/agent-run-8",
+		"terminate:agent-workflow-8/agent-run-8",
+		"await:agent-workflow-8/agent-run-8",
 		"terminate-dispatcher:software-factory-ticket-dispatcher/dispatcher-run",
 		"await:software-factory-ticket-dispatcher/dispatcher-run",
+		"delete-sandbox:sandbox-ticket-8-run-8/pod-uid-8",
 		"reconcile-legacy-state:7@working,8@review;runs:run-7,run-8",
 	}
 	if diff := stringSliceDiff(fake.calls, wantCalls); diff != "" {
@@ -75,6 +83,27 @@ func TestApplyQuiescesLegacyWorkAndIsIdempotent(t *testing.T) {
 	}
 	if !second.Ready || len(fake.calls) != 0 {
 		t.Fatalf("second apply = %+v calls=%v, want ready no-op", second, fake.calls)
+	}
+}
+
+func TestInventoryRefusesActivationForAgentWorkflowOrLegacySandbox(t *testing.T) {
+	t.Parallel()
+	fake := newFakeDependencies()
+	fake.workflows = []WorkflowExecution{{ID: "agent-workflow-8", RunID: "agent-run-8", Kind: WorkflowAgent}}
+	fake.sandboxes = []LegacySandbox{{Name: "sandbox-ticket-8-run-8", UID: "pod-uid-8", RunID: "run-8", Ticket: "8"}}
+	fake.pullRequests = nil
+	fake.tickets = nil
+	fake.runs = nil
+
+	report, err := Execute(context.Background(), fake.dependencies(), Options{Mode: ModeInventory, GracePeriod: time.Second})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if report.Ready || len(report.After.Workflows) != 1 || len(report.After.Sandboxes) != 1 {
+		t.Fatalf("report = %+v, want the agent child and sandbox to block readiness", report)
+	}
+	if len(fake.calls) != 0 {
+		t.Fatalf("mutating calls = %v, want inert inventory", fake.calls)
 	}
 }
 
@@ -155,6 +184,7 @@ type fakeDependencies struct {
 	pullRequests             []PullRequest
 	tickets                  []LegacyTicket
 	runs                     []LegacyRun
+	sandboxes                []LegacySandbox
 	calls                    []string
 	disableAutoMergeFailures int
 	asynchronousTermination  bool
@@ -169,7 +199,9 @@ func newFakeDependencies() *fakeDependencies {
 			{ID: "software-factory-ticket-dispatcher", RunID: "dispatcher-run", Kind: WorkflowDispatcher},
 			{ID: "factory-ticket-7", RunID: "run-7", Kind: WorkflowTicket},
 			{ID: "factory-ticket-8", RunID: "run-8", Kind: WorkflowTicket},
+			{ID: "agent-workflow-8", RunID: "agent-run-8", Kind: WorkflowAgent},
 		},
+		sandboxes:    []LegacySandbox{{Name: "sandbox-ticket-8-run-8", UID: "pod-uid-8", RunID: "run-8", Ticket: "8"}},
 		pullRequests: []PullRequest{{Number: 41, NodeID: "PR_41", Branch: "factory/ticket-7/run-7", AutoMergeEnabled: true}},
 		tickets: []LegacyTicket{
 			{ID: 7, State: LegacyTicketWorking, Version: versionSeven},
@@ -180,7 +212,7 @@ func newFakeDependencies() *fakeDependencies {
 }
 
 func (fake *fakeDependencies) dependencies() Dependencies {
-	return Dependencies{Temporal: fake, GitHub: fake, Tickets: fake}
+	return Dependencies{Temporal: fake, Sandboxes: fake, GitHub: fake, Tickets: fake}
 }
 
 func (fake *fakeDependencies) ListLegacyExecutions(context.Context) ([]WorkflowExecution, error) {
@@ -217,6 +249,22 @@ func (fake *fakeDependencies) TerminateLegacyExecution(_ context.Context, execut
 
 func (fake *fakeDependencies) TerminateLegacyDispatcher(_ context.Context, execution WorkflowExecution) error {
 	fake.calls = append(fake.calls, "terminate-dispatcher:"+execution.ID+"/"+execution.RunID)
+	return nil
+}
+
+func (fake *fakeDependencies) ListLegacySandboxes(context.Context) ([]LegacySandbox, error) {
+	return append([]LegacySandbox(nil), fake.sandboxes...), nil
+}
+
+func (fake *fakeDependencies) DeleteLegacySandbox(_ context.Context, sandbox LegacySandbox) error {
+	fake.calls = append(fake.calls, "delete-sandbox:"+sandbox.Name+"/"+sandbox.UID)
+	kept := fake.sandboxes[:0]
+	for _, candidate := range fake.sandboxes {
+		if candidate.Name != sandbox.Name || candidate.UID != sandbox.UID {
+			kept = append(kept, candidate)
+		}
+	}
+	fake.sandboxes = kept
 	return nil
 }
 

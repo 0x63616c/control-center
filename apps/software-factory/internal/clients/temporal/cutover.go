@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/workflows"
@@ -18,7 +21,7 @@ import (
 
 const cutoverTerminationReason = "software-factory v0 cutover"
 
-// LegacyExecutionKind classifies the two workflow types retained for cutover.
+// LegacyExecutionKind classifies the workflow types retained for cutover.
 type LegacyExecutionKind string
 
 const (
@@ -26,6 +29,8 @@ const (
 	LegacyDispatcher LegacyExecutionKind = "dispatcher"
 	// LegacyTicket is one pre-v0 ticket workflow.
 	LegacyTicket LegacyExecutionKind = "ticket"
+	// LegacyAgent is a pre-activation child of a legacy ticket workflow.
+	LegacyAgent LegacyExecutionKind = "agent"
 )
 
 // LegacyExecution is the SDK-free execution snapshot exposed to cutover.
@@ -59,12 +64,12 @@ func NewLegacyController(temporal client.Client, namespace string, clk clock.Clo
 	return &LegacyController{client: temporal, namespace: namespace, clock: clk}
 }
 
-// List returns every still-running legacy dispatcher or ticket execution.
+// List returns every still-running legacy dispatcher, ticket, or agent child.
 func (controller *LegacyController) List(ctx context.Context) ([]LegacyExecution, error) {
 	request := &workflowservice.ListWorkflowExecutionsRequest{
 		Namespace: controller.namespace,
 		PageSize:  100,
-		Query:     `ExecutionStatus = 'Running' AND (WorkflowType = 'FactoryDispatcher' OR WorkflowType = 'FactoryWorkTicket')`,
+		Query:     `ExecutionStatus = 'Running' AND (WorkflowType = 'FactoryDispatcher' OR WorkflowType = 'FactoryWorkTicket' OR WorkflowType = 'AgentWorkflow')`,
 	}
 	result := make([]LegacyExecution, 0)
 	for {
@@ -73,9 +78,13 @@ func (controller *LegacyController) List(ctx context.Context) ([]LegacyExecution
 			return nil, fmt.Errorf("listing running legacy workflows: %w", err)
 		}
 		for _, execution := range response.Executions {
-			kind := LegacyTicket
-			if execution.GetType().GetName() == "FactoryDispatcher" {
-				kind = LegacyDispatcher
+			workflowType := execution.GetType().GetName()
+			if workflowType == agent.WorkflowName && !isLegacyAgentWorkflowID(execution.GetExecution().GetWorkflowId()) {
+				continue
+			}
+			kind, err := legacyExecutionKind(workflowType)
+			if err != nil {
+				return nil, err
 			}
 			result = append(result, LegacyExecution{
 				ID:     execution.GetExecution().GetWorkflowId(),
@@ -89,6 +98,32 @@ func (controller *LegacyController) List(ctx context.Context) ([]LegacyExecution
 			return result, nil
 		}
 		request.NextPageToken = response.NextPageToken
+	}
+}
+
+func isLegacyAgentWorkflowID(id string) bool {
+	parts := strings.Split(id, "/")
+	if len(parts) != 4 || parts[0] != "agent" || parts[1] == "" {
+		return false
+	}
+	stage := work.Stage(parts[2])
+	if stage != work.StagePlan && stage != work.StageImplement && stage != work.StageReview {
+		return false
+	}
+	turn, err := strconv.Atoi(parts[3])
+	return err == nil && turn > 0
+}
+
+func legacyExecutionKind(workflowType string) (LegacyExecutionKind, error) {
+	switch workflowType {
+	case "FactoryDispatcher":
+		return LegacyDispatcher, nil
+	case "FactoryWorkTicket":
+		return LegacyTicket, nil
+	case agent.WorkflowName:
+		return LegacyAgent, nil
+	default:
+		return "", fmt.Errorf("classifying listed legacy workflow type %q", workflowType)
 	}
 }
 

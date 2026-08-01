@@ -6,6 +6,7 @@ import (
 	"time"
 
 	githubclient "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
+	k8sclient "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/k8s"
 	temporalclient "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/temporal"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
@@ -13,12 +14,31 @@ import (
 
 // LiveDependencies adapts the already-deployed worker credentials to the
 // deliberately small cutover interfaces.
-func LiveDependencies(temporal temporalclient.Client, namespace string, github *githubclient.Client, tickets *store.Store, clk clock.Clock) Dependencies {
+func LiveDependencies(temporal temporalclient.Client, namespace string, sandboxes *k8sclient.Sandboxes, github *githubclient.Client, tickets *store.Store, clk clock.Clock) Dependencies {
 	return Dependencies{
-		Temporal: &liveTemporal{controller: temporalclient.NewLegacyController(temporal, namespace, clk)},
-		GitHub:   liveGitHub{client: github},
-		Tickets:  liveTickets{store: tickets, clock: clk},
+		Temporal:  &liveTemporal{controller: temporalclient.NewLegacyController(temporal, namespace, clk)},
+		Sandboxes: liveSandboxes{client: sandboxes},
+		GitHub:    liveGitHub{client: github},
+		Tickets:   liveTickets{store: tickets, clock: clk},
 	}
+}
+
+type liveSandboxes struct{ client *k8sclient.Sandboxes }
+
+func (live liveSandboxes) ListLegacySandboxes(ctx context.Context) ([]LegacySandbox, error) {
+	listed, err := live.client.ListLegacySandboxes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing legacy Kubernetes sandboxes: %w", err)
+	}
+	result := make([]LegacySandbox, 0, len(listed))
+	for _, sandbox := range listed {
+		result = append(result, LegacySandbox{Name: sandbox.Name, UID: sandbox.UID, RunID: sandbox.RunID, Ticket: sandbox.Ticket})
+	}
+	return result, nil
+}
+
+func (live liveSandboxes) DeleteLegacySandbox(ctx context.Context, sandbox LegacySandbox) error {
+	return live.client.DeleteLegacySandbox(ctx, k8sclient.LegacySandbox{Name: sandbox.Name, UID: sandbox.UID, RunID: sandbox.RunID, Ticket: sandbox.Ticket})
 }
 
 type liveTemporal struct {
@@ -33,8 +53,11 @@ func (live *liveTemporal) ListLegacyExecutions(ctx context.Context) ([]WorkflowE
 	result := make([]WorkflowExecution, 0, len(listed))
 	for _, execution := range listed {
 		kind := WorkflowTicket
-		if execution.Kind == temporalclient.LegacyDispatcher {
+		switch execution.Kind {
+		case temporalclient.LegacyDispatcher:
 			kind = WorkflowDispatcher
+		case temporalclient.LegacyAgent:
+			kind = WorkflowAgent
 		}
 		result = append(result, WorkflowExecution{ID: execution.ID, RunID: execution.RunID, Kind: kind, Type: execution.Type, Status: execution.Status})
 	}
@@ -67,8 +90,11 @@ func (live *liveTemporal) terminate(ctx context.Context, execution WorkflowExecu
 
 func temporalExecution(execution WorkflowExecution) temporalclient.LegacyExecution {
 	kind := temporalclient.LegacyTicket
-	if execution.Kind == WorkflowDispatcher {
+	switch execution.Kind {
+	case WorkflowDispatcher:
 		kind = temporalclient.LegacyDispatcher
+	case WorkflowAgent:
+		kind = temporalclient.LegacyAgent
 	}
 	return temporalclient.LegacyExecution{ID: execution.ID, RunID: execution.RunID, Kind: kind, Type: execution.Type, Status: execution.Status}
 }
