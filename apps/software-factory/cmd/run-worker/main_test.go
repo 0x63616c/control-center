@@ -309,7 +309,7 @@ func (r *sessionStageRunner) RunTargetStage(_ context.Context, _ work.StageRun, 
 
 type sessionPrompts struct{}
 
-func (sessionPrompts) Render(work.StageKey, work.TicketDetail, work.PriorTurns, work.AgentPromptContext) (string, []byte, error) {
+func (sessionPrompts) Render(work.StageKey, work.TicketDetail, work.PriorTurns, work.AgentPromptContext, int) (string, []byte, error) {
 	return "prompt", []byte(`{}`), nil
 }
 

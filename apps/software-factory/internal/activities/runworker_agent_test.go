@@ -81,7 +81,7 @@ func (p invalidatingSecretRedactor) Redact(ctx context.Context, raw []byte) ([]b
 
 type validatingPromptProbe struct{}
 
-func (validatingPromptProbe) Render(work.StageKey, work.TicketDetail, work.PriorTurns, work.AgentPromptContext) (string, []byte, error) {
+func (validatingPromptProbe) Render(work.StageKey, work.TicketDetail, work.PriorTurns, work.AgentPromptContext, int) (string, []byte, error) {
 	return "prompt", []byte(`{}`), nil
 }
 
@@ -110,7 +110,7 @@ func observedCredentialRevision(context.Context) (string, error) { return "1", n
 
 type promptProbe struct{}
 
-func (promptProbe) Render(work.StageKey, work.TicketDetail, work.PriorTurns, work.AgentPromptContext) (string, []byte, error) {
+func (promptProbe) Render(work.StageKey, work.TicketDetail, work.PriorTurns, work.AgentPromptContext, int) (string, []byte, error) {
 	return "prompt", []byte(`{}`), nil
 }
 

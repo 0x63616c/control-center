@@ -304,6 +304,7 @@ func TestWorkOnTicketRepairsBlockingReviewWithFreshCandidateAuthorization(t *tes
 	var implements, reviewInputs []activities.TargetAgentInput
 	for _, agent := range h.agentInputs {
 		switch agent.Stage {
+		case work.AgentStagePlan:
 		case work.AgentStageImplement:
 			implements = append(implements, agent)
 		case work.AgentStageReview:

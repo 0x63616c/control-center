@@ -21,7 +21,7 @@ func TestActivityRendererMatchesTheUnderlyingRenderer(t *testing.T) {
 	detail := ticket()
 	prior := everyDocument()
 
-	prompt, schema, err := adapter.Render(work.StageKey{Ticket: detail.Number, RunID: "r", Stage: stage, Turn: 1}, detail, prior, work.AgentPromptContext{})
+	prompt, schema, err := adapter.Render(work.StageKey{Ticket: detail.Number, RunID: "r", Stage: stage, Turn: 1}, detail, prior, work.AgentPromptContext{}, work.MaxReviewTurns)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestActivityRendererSchemaMatchesEachStagesOwnFile(t *testing.T) {
 			t.Fatalf("reading %s: %v", file, err)
 		}
 
-		_, schema, err := adapter.Render(work.StageKey{Ticket: detail.Number, RunID: "r", Stage: stage, Turn: 1}, detail, prior, work.AgentPromptContext{})
+		_, schema, err := adapter.Render(work.StageKey{Ticket: detail.Number, RunID: "r", Stage: stage, Turn: 1}, detail, prior, work.AgentPromptContext{}, work.MaxReviewTurns)
 		if err != nil {
 			t.Fatalf("Render(%s): %v", stage, err)
 		}
@@ -103,7 +103,7 @@ func TestActivityRendererFailsLikeTheRendererItWraps(t *testing.T) {
 	t.Parallel()
 
 	adapter := NewActivityRenderer(newTestRenderer(t))
-	_, _, err := adapter.Render(work.StageKey{Stage: work.StagePlan, Turn: 1}, work.TicketDetail{}, work.PriorTurns{}, work.AgentPromptContext{})
+	_, _, err := adapter.Render(work.StageKey{Stage: work.StagePlan, Turn: 1}, work.TicketDetail{}, work.PriorTurns{}, work.AgentPromptContext{}, work.MaxReviewTurns)
 	if err == nil {
 		t.Fatal("Render with an empty ticket detail: want an error, got nil")
 	}
@@ -121,7 +121,7 @@ func TestActivityRendererRendersTheKeysOwnTurn(t *testing.T) {
 
 	prompt, _, err := adapter.Render(
 		work.StageKey{Ticket: detail.Number, RunID: "r", Stage: work.StageReview, Turn: work.MaxReviewTurns},
-		detail, everyDocument(), work.AgentPromptContext{},
+		detail, everyDocument(), work.AgentPromptContext{}, work.MaxReviewTurns,
 	)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
@@ -151,7 +151,7 @@ func TestActivityRendererRendersTheTargetReviewBudgetAtTurnsFourAndFive(t *testi
 		}
 		prompt, _, err := adapter.Render(
 			work.StageKey{Ticket: detail.Number, RunID: "target-run", Stage: work.StageReview, Turn: turn},
-			detail, prior, work.AgentPromptContext{},
+			detail, prior, work.AgentPromptContext{}, 5,
 		)
 		if err != nil {
 			t.Fatalf("Render(review turn %d): %v", turn, err)
@@ -174,7 +174,7 @@ func TestActivityRendererCarriesAuthoritativeAgentPromptContext(t *testing.T) {
 
 	reviewer, _, err := adapter.Render(
 		work.StageKey{Ticket: detail.Number, RunID: "r", Stage: work.StageReview, Turn: 1},
-		detail, prior, work.AgentPromptContext{CandidateHeadSHA: "H1"},
+		detail, prior, work.AgentPromptContext{CandidateHeadSHA: "H1"}, work.MaxReviewTurns,
 	)
 	if err != nil {
 		t.Fatalf("Render(review): %v", err)
@@ -185,7 +185,7 @@ func TestActivityRendererCarriesAuthoritativeAgentPromptContext(t *testing.T) {
 
 	implementer, _, err := adapter.Render(
 		work.StageKey{Ticket: detail.Number, RunID: "r", Stage: work.StageImplement, Turn: 2},
-		detail, prior, work.AgentPromptContext{CIFailures: []work.CheckFailure{{Name: "test", Fingerprint: "abc", Evidence: "expected true to be false"}}},
+		detail, prior, work.AgentPromptContext{CIFailures: []work.CheckFailure{{Name: "test", Fingerprint: "abc", Evidence: "expected true to be false"}}}, work.MaxReviewTurns,
 	)
 	if err != nil {
 		t.Fatalf("Render(implement): %v", err)

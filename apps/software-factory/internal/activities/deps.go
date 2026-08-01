@@ -231,9 +231,9 @@ type PromptRenderer interface {
 	//
 	// key rather than a bare stage, because a prompt can depend on WHICH turn
 	// of that stage it is: review is told it is turn N of
-	// work.MaxReviewTurns, so a turn can weigh a blocking finding against
+	// maxReviewSteps, so a turn can weigh a blocking finding against
 	// being the last turn the run will get.
-	Render(key work.StageKey, detail work.TicketDetail, prior work.PriorTurns, promptContext work.AgentPromptContext) (prompt string, schema []byte, err error)
+	Render(key work.StageKey, detail work.TicketDetail, prior work.PriorTurns, promptContext work.AgentPromptContext, maxReviewSteps int) (prompt string, schema []byte, err error)
 
 	// Decode unwraps a stage's result envelope into the domain's StageOutput.
 	//

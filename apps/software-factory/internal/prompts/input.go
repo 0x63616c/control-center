@@ -124,9 +124,13 @@ type reviewInput struct {
 	// for why review, alone among the stages, gets a whole-run memory.
 	Ledger []work.ReviewTurnRecord
 
-	// Turn is which review turn this is, 1-indexed, rendered against
-	// work.MaxReviewTurns.
+	// Turn is which review turn this is, 1-indexed.
 	Turn int
+
+	// MaxTurns is the immutable budget passed by the workflow that owns this
+	// review loop. Target runs are intentionally independent of the legacy
+	// pipeline's work.MaxReviewTurns constant.
+	MaxTurns int
 
 	CandidateHeadSHA string
 }
@@ -147,7 +151,7 @@ func (in reviewInput) templateValues() (map[string]string, error) {
 func (in reviewInput) scalarValues() map[string]string {
 	return map[string]string{
 		"review_turn":        strconv.Itoa(in.Turn),
-		"max_review_turns":   strconv.Itoa(work.MaxReviewTurns),
+		"max_review_turns":   strconv.Itoa(in.MaxTurns),
 		"candidate_head_sha": in.CandidateHeadSHA,
 	}
 }
@@ -262,7 +266,7 @@ func findingsProse(out work.StageOutput) string {
 // turn is that stage's own 1-indexed turn number; only review reads it.
 //
 // Exhaustive, no default — matches stageTemplate.
-func buildStageInput(stage work.Stage, turn int, prior work.PriorTurns, promptContext work.AgentPromptContext) (stageInput, error) {
+func buildStageInput(stage work.Stage, turn int, maxReviewTurns int, prior work.PriorTurns, promptContext work.AgentPromptContext) (stageInput, error) {
 	switch stage {
 	case work.StagePlan:
 		return planInput{}, nil
@@ -279,6 +283,7 @@ func buildStageInput(stage work.Stage, turn int, prior work.PriorTurns, promptCo
 			PreviousReview:   prior.LatestReview,
 			Ledger:           prior.ReviewLedger,
 			Turn:             turn,
+			MaxTurns:         maxReviewTurns,
 			CandidateHeadSHA: promptContext.CandidateHeadSHA,
 		}, nil
 	}

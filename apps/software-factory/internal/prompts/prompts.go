@@ -62,6 +62,11 @@ type Input struct {
 	// than as plausible.
 	Turn int
 
+	// MaxReviewTurns is the immutable budget for this run's review loop. The
+	// target workflow supplies its own policy; legacy activities use their
+	// retained work.MaxReviewTurns policy at their call site.
+	MaxReviewTurns int
+
 	// Ticket is the issue and its thread, as the issue's authors wrote them.
 	// Every field of it is attacker-controlled text and is rendered inside the
 	// fence.
@@ -174,7 +179,7 @@ func (in Input) staticValues() (map[string]string, int, error) {
 		"ticket_body":   body(in.Ticket),
 	}
 
-	stageInput, err := buildStageInput(in.Stage, in.Turn, in.Prior, in.PromptContext)
+	stageInput, err := buildStageInput(in.Stage, in.Turn, in.MaxReviewTurns, in.Prior, in.PromptContext)
 	if err != nil {
 		return nil, 0, err
 	}

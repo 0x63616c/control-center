@@ -312,7 +312,7 @@ func runTargetAgentStep(ctx workflow.Context, sessionCtx workflow.Context, in Wo
 	var out activities.TargetAgentOutput
 	if err := workflow.ExecuteActivity(agentCtx, targetRunWorkerActs.RunTargetAgent, activities.TargetAgentInput{
 		AttemptID: attempt, TicketNumber: detail.Number, Iteration: iteration, Stage: stage, Model: in.Model,
-		Detail: detail, Prior: prior, PromptContext: promptContext, PriorProviderThread: continuation,
+		Detail: detail, Prior: prior, PromptContext: promptContext, MaxReviewSteps: in.Policy.MaxReviewSteps, PriorProviderThread: continuation,
 		CredentialRevision: activities.CredentialRevisionExpectation{Identity: identity, Revision: revision.Revision},
 	}).Get(agentCtx, &out); err != nil {
 		return activities.TargetAgentOutput{}, fmt.Errorf("running %s agent attempt: %w", stage, err)

@@ -115,7 +115,10 @@ type TargetAgentInput struct {
 	Prior        work.PriorTurns
 	// PromptContext carries the exact candidate and any authoritative feedback
 	// into the real renderer; it is separate from agent-produced PriorTurns.
-	PromptContext       work.AgentPromptContext
+	PromptContext work.AgentPromptContext
+	// MaxReviewSteps is the immutable target policy that the real review
+	// prompt renders for this attempt. It is not the legacy pipeline budget.
+	MaxReviewSteps      int
 	PriorProviderThread *ProviderThreadContinuation
 	CredentialRevision  CredentialRevisionExpectation
 }
@@ -198,7 +201,7 @@ func (a *RunWorkerActivities) RunTargetAgent(ctx context.Context, in TargetAgent
 
 	stage := work.Stage(in.Stage)
 	key := work.StageKey{Ticket: in.TicketNumber, RunID: in.AttemptID.RunID, Stage: stage, Turn: in.Iteration}
-	prompt, schema, err := a.deps.Prompts.Render(key, in.Detail, in.Prior, in.PromptContext)
+	prompt, schema, err := a.deps.Prompts.Render(key, in.Detail, in.Prior, in.PromptContext, in.MaxReviewSteps)
 	if err != nil {
 		return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("rendering target prompt for %s", in.AttemptID), err)
 	}
