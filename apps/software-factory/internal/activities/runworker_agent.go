@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -334,10 +335,26 @@ func (a *RunWorkerActivities) observeCredentialRevision(ctx context.Context, exp
 	if err != nil {
 		return fmt.Errorf("reading projected credential revision: %w", err)
 	}
-	if strings.TrimSpace(observed) != expected.Revision {
+	expectedRevision, err := credentialRevisionNumber(expected.Revision)
+	if err != nil {
+		return fmt.Errorf("validating expected credential revision: %w", err)
+	}
+	observedRevision, err := credentialRevisionNumber(observed)
+	if err != nil {
+		return fmt.Errorf("validating projected credential revision: %w", err)
+	}
+	if observedRevision < expectedRevision {
 		return fmt.Errorf("projected credential revision %q has not reached expected revision %q", strings.TrimSpace(observed), expected.Revision)
 	}
 	return nil
+}
+
+func credentialRevisionNumber(value string) (uint64, error) {
+	revision, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
+	if err != nil || revision == 0 {
+		return 0, fmt.Errorf("credential revision %q is not a positive integer: %w", strings.TrimSpace(value), work.ErrPermanent)
+	}
+	return revision, nil
 }
 
 func (a *RunWorkerActivities) targetAgentOutput(stage work.AgentStage, attempt checkpointprotocol.Attempt) (TargetAgentOutput, error) {

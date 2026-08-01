@@ -3,6 +3,7 @@ package workflows
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
@@ -10,6 +11,8 @@ import (
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 )
+
+const credentialRenewalInterval = 30 * time.Minute
 
 // targetRecordingActs, runWorkerControlActs, and targetRunWorkerActs name the
 // target activity boundaries. Temporal resolves their registered method names;
@@ -308,14 +311,41 @@ func runTargetAgentStep(ctx workflow.Context, sessionCtx workflow.Context, in Wo
 	if err := revision.Validate(); err != nil {
 		return activities.TargetAgentOutput{}, fmt.Errorf("validating %s credential revision: %w", stage, err)
 	}
-	agentCtx := workflow.WithActivityOptions(sessionCtx, targetAgentActivityOptions(in.Policy.Agent))
+	agentCtx, cancelAgent := workflow.WithCancel(workflow.WithActivityOptions(sessionCtx, targetAgentActivityOptions(in.Policy.Agent)))
+	defer cancelAgent()
 	var out activities.TargetAgentOutput
-	if err := workflow.ExecuteActivity(agentCtx, targetRunWorkerActs.RunTargetAgent, activities.TargetAgentInput{
+	agentFuture := workflow.ExecuteActivity(agentCtx, targetRunWorkerActs.RunTargetAgent, activities.TargetAgentInput{
 		AttemptID: attempt, TicketNumber: detail.Number, Iteration: iteration, Stage: stage, Model: in.Model,
 		Detail: detail, Prior: prior, PromptContext: promptContext, MaxReviewSteps: in.Policy.MaxReviewSteps, PriorProviderThread: continuation,
 		CredentialRevision: activities.CredentialRevisionExpectation{Identity: identity, Revision: revision.Revision},
-	}).Get(agentCtx, &out); err != nil {
-		return activities.TargetAgentOutput{}, fmt.Errorf("running %s agent attempt: %w", stage, err)
+	})
+	renewalCtx, cancelRenewal := workflow.WithCancel(ctx)
+	defer cancelRenewal()
+	for {
+		completed := false
+		var agentErr error
+		selector := workflow.NewSelector(ctx)
+		selector.AddFuture(agentFuture, func(f workflow.Future) {
+			completed = true
+			agentErr = f.Get(agentCtx, &out)
+		})
+		selector.AddFuture(workflow.NewTimer(renewalCtx, credentialRenewalInterval), func(workflow.Future) {})
+		selector.Select(ctx)
+		if completed {
+			if agentErr != nil {
+				return activities.TargetAgentOutput{}, fmt.Errorf("running %s agent attempt: %w", stage, agentErr)
+			}
+			break
+		}
+		var renewed work.RunWorkerCredentialRevision
+		if err := workflow.ExecuteActivity(controlCtx, runWorkerControlActs.RotateRunWorkerGitHubCredential, activities.RotateRunWorkerGitHubCredentialInput{Identity: identity}).Get(controlCtx, &renewed); err != nil {
+			cancelAgent()
+			return activities.TargetAgentOutput{}, fmt.Errorf("renewing %s GitHub credential: %w", stage, err)
+		}
+		if err := renewed.Validate(); err != nil {
+			cancelAgent()
+			return activities.TargetAgentOutput{}, fmt.Errorf("validating renewed %s credential revision: %w", stage, err)
+		}
 	}
 	if len(out.Output) == 0 {
 		return activities.TargetAgentOutput{}, temporal.NewNonRetryableApplicationError(

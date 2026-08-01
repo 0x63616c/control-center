@@ -233,6 +233,43 @@ func TestRunTargetAgentWaitsForThePostRotationCredentialRevision(t *testing.T) {
 	}
 }
 
+func TestRunTargetAgentAcceptsANewerProjectedCredentialAfterRenewal(t *testing.T) {
+	t.Parallel()
+	cp := &attemptCheckpointProbe{}
+	runner := &targetStageRunnerProbe{}
+	revision := &credentialRevisionProbe{revision: "3"}
+	a, err := NewRunWorkerActivities(RunWorkerDeps{Stages: runner, Prompts: promptProbe{}, Checkpoints: func(store.TargetAttemptID) (AttemptCheckpoint, error) { return cp, nil }, CredentialRevision: revision.Observe, SecretRedactor: passthroughSecretRedactor{}, ProviderState: providerStateProbe{available: true}, Clock: fixedClock{now: time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)}, Heartbeat: func(context.Context) {}, Repository: &targetRepositoryProbe{}, GitHub: &targetGitHubProbe{}, Identity: targetTestIdentity, RepositoryCheckpoints: testRepositoryCheckpointFactory})
+	if err != nil {
+		t.Fatalf("NewRunWorkerActivities: %v", err)
+	}
+	in := targetAgentInput()
+	in.CredentialRevision.Revision = "2"
+	if _, err := a.RunTargetAgent(context.Background(), in); err != nil {
+		t.Fatalf("RunTargetAgent after a credential renewal: %v", err)
+	}
+	if runner.calls != 1 || revision.calls != 1 {
+		t.Fatalf("renewed revision calls/observations = %d / %d, want 1 / 1", runner.calls, revision.calls)
+	}
+}
+
+func TestRunTargetAgentRefusesMalformedProjectedCredentialRevision(t *testing.T) {
+	t.Parallel()
+	for _, observed := range []string{"0", "not-a-revision"} {
+		t.Run(observed, func(t *testing.T) {
+			cp := &attemptCheckpointProbe{}
+			runner := &targetStageRunnerProbe{}
+			revision := &credentialRevisionProbe{revision: observed}
+			a, err := NewRunWorkerActivities(RunWorkerDeps{Stages: runner, Prompts: promptProbe{}, Checkpoints: func(store.TargetAttemptID) (AttemptCheckpoint, error) { return cp, nil }, CredentialRevision: revision.Observe, SecretRedactor: passthroughSecretRedactor{}, ProviderState: providerStateProbe{available: true}, Clock: fixedClock{now: time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)}, Heartbeat: func(context.Context) {}, Repository: &targetRepositoryProbe{}, GitHub: &targetGitHubProbe{}, Identity: targetTestIdentity, RepositoryCheckpoints: testRepositoryCheckpointFactory})
+			if err != nil {
+				t.Fatalf("NewRunWorkerActivities: %v", err)
+			}
+			if _, err := a.RunTargetAgent(context.Background(), targetAgentInput()); !errors.Is(err, work.ErrPermanent) || runner.calls != 0 {
+				t.Fatalf("malformed revision error/calls = %v / %d, want permanent failure before execution", err, runner.calls)
+			}
+		})
+	}
+}
+
 func TestRunTargetAgentRefusesCredentialRevisionFromAnotherGeneration(t *testing.T) {
 	t.Parallel()
 	runner := &targetStageRunnerProbe{}
