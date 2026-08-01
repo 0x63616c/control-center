@@ -34,13 +34,36 @@ describe("TicketDetail", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Network Error");
   });
 
-  it("renders a Step turn-first, as the ADR-0012 line shape", () => {
+  it("renders the ordered Step identity and semantic iteration", () => {
     renderReady({
       kind: "ready",
       ticket: fixtureTicket(),
-      runs: [fixtureRun({ steps: [fixtureStep({ stage: "implement", turn: 3 })] })],
+      runs: [fixtureRun({ steps: [fixtureStep({ ordinal: 7, kind: "implement", iteration: 3 })] })],
     });
-    expect(screen.getByTestId("step-row")).toHaveTextContent(/implement\s*·\s*turn 3/);
+    expect(screen.getByTestId("step-row")).toHaveTextContent(/#7\s*Implement\s*·\s*iteration 3/);
+  });
+
+  it("renders an infrastructure Step without inventing an Agent Attempt", () => {
+    renderReady({
+      kind: "ready",
+      ticket: fixtureTicket({ state: "active" }),
+      runs: [
+        fixtureRun({
+          phase: "await_ci",
+          steps: [
+            fixtureStep({
+              kind: "await_ci",
+              state: "running",
+              attempts: [],
+              endedAt: null,
+              result: null,
+            }),
+          ],
+        }),
+      ],
+    });
+    expect(screen.getByTestId("step-row")).toHaveTextContent("No Agent Attempt");
+    expect(screen.queryByTestId("attempt-row")).not.toBeInTheDocument();
   });
 
   it("does not show an attempt count for a Step with only one Attempt", () => {
@@ -49,7 +72,7 @@ describe("TicketDetail", () => {
       ticket: fixtureTicket(),
       runs: [fixtureRun({ steps: [fixtureStep({ attempts: [fixtureAttempt()] })] })],
     });
-    expect(screen.getByTestId("step-row")).not.toHaveTextContent(/attempts/);
+    expect(screen.getByTestId("step-row")).not.toHaveTextContent(/Agent Attempts/);
   });
 
   it("shows the attempt count only when a Step ran more than once", () => {
@@ -61,7 +84,7 @@ describe("TicketDetail", () => {
           steps: [
             fixtureStep({
               attempts: [
-                fixtureAttempt({ attemptNo: 1, result: "failed" }),
+                fixtureAttempt({ attemptNo: 1, state: "failed", result: { kind: "failed" } }),
                 fixtureAttempt({ attemptNo: 2 }),
               ],
             }),
@@ -69,7 +92,7 @@ describe("TicketDetail", () => {
         }),
       ],
     });
-    expect(screen.getByTestId("step-row")).toHaveTextContent("2 attempts");
+    expect(screen.getByTestId("step-row")).toHaveTextContent("2 Agent Attempts");
   });
 
   it("renders an unmeasured attempt's usage as unknown, never 0", () => {
@@ -142,7 +165,29 @@ describe("TicketDetail", () => {
         }),
       ],
     });
-    expect(screen.getByText("Download transcript")).toBeInTheDocument();
+    expect(screen.getByText("Download transcript")).toHaveAttribute(
+      "href",
+      "/api/v1/tickets/42/runs/019fb6a0-c159-7a3a-9067-eda7a63a8ac7/steps/1/attempts/1/transcript",
+    );
+  });
+
+  it("renders current phase and immutable Confirmed Merge evidence", () => {
+    renderReady({
+      kind: "ready",
+      ticket: fixtureTicket({ state: "done" }),
+      runs: [
+        fixtureRun({
+          active: false,
+          endedAt: "2026-07-31T11:00:00Z",
+          outcome: "succeeded",
+          phase: "merge_pull_request",
+          confirmedMerge: { reviewedHead: "head-sha", mergeSha: "merge-sha" },
+        }),
+      ],
+    });
+    expect(screen.getByText(/Phase:\s*Merge Pull Request/)).toBeInTheDocument();
+    expect(screen.getByText(/Confirmed Merge:\s*merge-sha/)).toBeInTheDocument();
+    expect(screen.getByText(/reviewed head head-sha/)).toBeInTheDocument();
   });
 
   it("renders the Ticket's dependencies with their states", () => {

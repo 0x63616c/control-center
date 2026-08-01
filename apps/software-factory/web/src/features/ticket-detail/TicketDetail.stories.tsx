@@ -37,8 +37,8 @@ export const SingleTurnRun: Story = {
   },
 };
 
-// #556 acceptance: "a multi-turn run" — several Steps of the looping stages,
-// each turn its own headline.
+// Target projection: semantic repetition belongs to ordered Steps rather than
+// being inferred from Temporal activity attempts.
 export const MultiTurnRun: Story = {
   args: {
     state: {
@@ -47,11 +47,14 @@ export const MultiTurnRun: Story = {
       runs: [
         fixtureRun({
           steps: [
-            fixtureStep({ stage: "plan", turn: 1 }),
-            fixtureStep({ stage: "implement", turn: 1 }),
+            fixtureStep({ ordinal: 1, kind: "plan", stage: "plan", iteration: 1, turn: 1 }),
+            fixtureStep({ ordinal: 2, kind: "implement", iteration: 1, turn: 1 }),
             fixtureStep({
-              stage: "implement",
+              ordinal: 3,
+              kind: "implement",
+              iteration: 2,
               turn: 2,
+              reason: "review_findings",
               attempts: [
                 fixtureAttempt({
                   attemptNo: 1,
@@ -60,7 +63,13 @@ export const MultiTurnRun: Story = {
                 }),
               ],
             }),
-            fixtureStep({ stage: "review", turn: 1 }),
+            fixtureStep({
+              ordinal: 4,
+              kind: "review",
+              stage: "review",
+              iteration: 1,
+              turn: 1,
+            }),
           ],
         }),
       ],
@@ -68,8 +77,8 @@ export const MultiTurnRun: Story = {
   },
 };
 
-// #556 acceptance: "a Step with several Attempts" — the machine-retry case,
-// where the attempt count badge earns its keep.
+// Multiple Agent Attempts are explicit workflow-authorized executions. Native
+// Temporal activity tries never appear as extra rows in this story.
 export const StepWithSeveralAttempts: Story = {
   args: {
     state: {
@@ -80,7 +89,13 @@ export const StepWithSeveralAttempts: Story = {
           steps: [
             fixtureStep({
               attempts: [
-                fixtureAttempt({ attemptNo: 1, result: "failed", endedAt: "2026-07-31T10:05:00Z" }),
+                fixtureAttempt({
+                  attemptNo: 1,
+                  state: "failed",
+                  failureKind: "provider",
+                  result: { kind: "provider_failed" },
+                  endedAt: "2026-07-31T10:05:00Z",
+                }),
                 fixtureAttempt({
                   attemptNo: 2,
                   startedAt: "2026-07-31T10:05:00Z",
@@ -89,6 +104,66 @@ export const StepWithSeveralAttempts: Story = {
               ],
             }),
           ],
+        }),
+      ],
+    },
+  },
+};
+
+// Target infrastructure Steps are first-class history even though they have
+// no Agent Attempt and spend no model tokens.
+export const InfrastructureStepsAndActivePhase: Story = {
+  args: {
+    state: {
+      kind: "ready",
+      ticket: fixtureTicket({ state: "active" }),
+      runs: [
+        fixtureRun({
+          phase: "await_ci",
+          steps: [
+            fixtureStep({
+              ordinal: 1,
+              kind: "clone_repository",
+              stage: "clone_repository",
+              iteration: 0,
+              turn: 0,
+              reason: "",
+              attempts: [],
+              result: { kind: "cloned" },
+            }),
+            fixtureStep({
+              ordinal: 2,
+              kind: "await_ci",
+              stage: "await_ci",
+              iteration: 1,
+              turn: 1,
+              reason: "pull_request_updated",
+              state: "running",
+              endedAt: null,
+              attempts: [],
+              result: null,
+            }),
+          ],
+        }),
+      ],
+    },
+  },
+};
+
+// Confirmed Merge evidence is shown from the terminal Run record rather than
+// inferred from a webhook or a merely closed pull request.
+export const ConfirmedMerge: Story = {
+  args: {
+    state: {
+      kind: "ready",
+      ticket: fixtureTicket({ state: "done", ready: false }),
+      runs: [
+        fixtureRun({
+          active: false,
+          endedAt: "2026-07-31T11:00:00Z",
+          outcome: "succeeded",
+          phase: "merge_pull_request",
+          confirmedMerge: { reviewedHead: "abc123", mergeSha: "def456" },
         }),
       ],
     },
