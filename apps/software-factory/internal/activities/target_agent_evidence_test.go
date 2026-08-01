@@ -28,7 +28,7 @@ func TestTargetAgentEvidenceInputRoundTripsFailedEvidenceWithoutAResult(t *testi
 	if err := json.Unmarshal(encoded, &got); err != nil {
 		t.Fatalf("unmarshal failed target evidence: %v", err)
 	}
-	if got.State != want.State || got.FailureKind != want.FailureKind || got.AttemptID != want.AttemptID || got.Identity != want.Identity || !got.EndedAt.Equal(want.EndedAt) {
+	if got.Result != nil || got.State != want.State || got.FailureKind != want.FailureKind || got.AttemptID != want.AttemptID || got.Identity != want.Identity || !got.EndedAt.Equal(want.EndedAt) {
 		t.Fatalf("failed evidence round trip = %+v, want %#v", got, want)
 	}
 }
@@ -54,7 +54,8 @@ func TestTargetAgentEvidenceRequiresAnExplicitWellFormedState(t *testing.T) {
 		{name: "failed result", input: func() TargetAgentEvidenceInput {
 			value := base
 			value.State, value.FailureKind = work.AgentAttemptFailed, work.RunFailureAgentUnrecoverable
-			value.Result = work.NewStageOutput(work.StagePlan, work.DocumentOutput{Document: "not allowed"})
+			result := work.NewStageOutput(work.StagePlan, work.DocumentOutput{Document: "not allowed"})
+			value.Result = &result
 			return value
 		}()},
 	} {
