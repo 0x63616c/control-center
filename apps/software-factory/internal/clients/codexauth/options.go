@@ -7,12 +7,9 @@ import "time"
 const (
 	// defaultRefreshMargin is how long before expiry a token is refreshed.
 	//
-	// It is sized for the lifetime of the copy handed to a sandbox, not for
-	// our own HTTP call, because that copy cannot be refreshed remotely. A
-	// stage's activity timeout is 60 minutes and codex begins refreshing
-	// within 5 minutes of exp — an attempt that fails, because the sandbox's
-	// refresh token is blanked. So a token handed to a sandbox must stay more
-	// than 5 minutes from exp for the whole stage: 60 + 5 + headroom.
+	// It is sized for the full conservative use bound supplied to Source.New,
+	// because the derived access-only document cannot refresh while in use.
+	// The current 60-minute stage bound plus safety headroom yields 90 minutes.
 	// Measured tokens carry multi-day lifetimes, so this costs at most one
 	// extra refresh per generation.
 	defaultRefreshMargin = 90 * time.Minute

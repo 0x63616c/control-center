@@ -10,7 +10,7 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"github.com/google/uuid"
-	"github.com/stretchr/testify/mock"
+	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/workflow"
 )
@@ -110,8 +110,8 @@ func TestRunFactoryPlanTurnRecordsTheAttemptBeforePersistingItsTranscriptAgainst
 	env.RegisterActivity(transcriptActivities)
 
 	transcript := work.Transcript(`{"type":"turn.completed","stage":"plan"}`)
-	env.OnActivity(acts.RunPlan, mock.Anything, mock.Anything).
-		Return(func(_ context.Context, _ activities.RunPlanInput) (*activities.RunPlanOutput, error) {
+	env.RegisterActivityWithOptions(
+		func(_ context.Context, _ activities.RunPlanInput) (*activities.RunPlanOutput, error) {
 			var out activities.RunPlanOutput
 			out.Output = []byte(`{"result":"plan"}`)
 			out.Result = work.NewStageOutput(work.StagePlan, work.DocumentOutput{Document: "the plan"})
@@ -119,7 +119,8 @@ func TestRunFactoryPlanTurnRecordsTheAttemptBeforePersistingItsTranscriptAgainst
 			out.Usage = work.Usage{InputTokens: 10, OutputTokens: 1}
 			out.Transcript = transcript
 			return &out, nil
-		})
+		}, activity.RegisterOptions{Name: legacyRunPlanActivityName},
+	)
 
 	env.ExecuteWorkflow(factoryPlanTurnOrderingWorkflow, factoryPlanTurnOrderingInput{
 		TicketID: ticket.ID,

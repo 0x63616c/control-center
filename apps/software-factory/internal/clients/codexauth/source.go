@@ -15,9 +15,9 @@ import (
 // them the next step is the same and it is a human's.
 const remedy = "run `codex login` locally and re-seed the secret with scripts/seed-codex-auth.sh"
 
-// Source yields the credential file a sandbox is handed, refreshing and
-// rotating the stored credential when its token nears expiry. It implements
-// activities.TokenSource.
+// Source yields a refresh-token-free credential document to the direct model
+// adapter, refreshing and rotating the stored credential when its token nears
+// expiry.
 //
 // It is the only writer of the credential. Exclusion is a lease taken on the
 // stored object BEFORE the refresh token is presented, so it holds across
@@ -50,14 +50,10 @@ type Source struct {
 	gate chan struct{}
 }
 
-// sandboxRefreshWindow is how close to expiry the CLI begins refreshing on its
-// own — CHATGPT_ACCESS_TOKEN_REFRESH_WINDOW_MINUTES, codex-rs
-// login/src/auth/manager.rs:181 @ rust-v0.145.0.
-//
-// A sandbox's copy has a blanked refresh token and cannot refresh, so a token
-// that reaches this window mid-stage does not degrade: verified live, codex
-// exec exits 1 having made 104 requests to the auth endpoint in 35 seconds.
-const sandboxRefreshWindow = 5 * time.Minute
+// clientRefreshWindow is preserved as safety headroom beyond the longest
+// model operation. The access-only document cannot refresh itself while a
+// request is in flight.
+const clientRefreshWindow = 5 * time.Minute
 
 // New constructs a Source. Required dependencies are positional; everything
 // tunable is an option with a default that is correct for this service.
@@ -67,9 +63,9 @@ const sandboxRefreshWindow = 5 * time.Minute
 // anyone reads one. The composition root passes `<pod name>/<short random>`;
 // the suffix distinguishes two runs of the same pod name.
 //
-// maxStageDuration is the longest a stage may run. It is positional because
-// the refresh margin is meaningless without it: a sandbox cannot refresh the
-// copy it is handed, so the margin has to outlast a whole stage (INV-3).
+// maxStageDuration is the conservative upper bound supplied by the caller for
+// one uninterrupted use of the derived credential. It is positional because
+// the refresh margin is meaningless without that bound.
 func New(store SecretStore, refresher TokenRefresher, clk clock.Clock, log *slog.Logger, holder string, maxStageDuration time.Duration, opts ...Option) (*Source, error) {
 	o := options{
 		metrics:        noMetrics{},
@@ -104,16 +100,16 @@ func New(store SecretStore, refresher TokenRefresher, clk clock.Clock, log *slog
 		return nil, fmt.Errorf("a codex token source needs at least one wait round and one store attempt")
 	case maxStageDuration <= 0:
 		return nil, fmt.Errorf("a codex token source needs the longest a stage may run, to size the refresh margin against")
-	case o.margin <= maxStageDuration+sandboxRefreshWindow:
-		// INV-3. A sandbox is handed a copy it cannot refresh, so the token it
-		// carries must outlive the whole stage plus the window in which the
-		// CLI would try to refresh it. Checked here for the same reason the
+	case o.margin <= maxStageDuration+clientRefreshWindow:
+		// INV-3. The derived document cannot refresh, so the token it carries
+		// must outlive the whole operation plus safety headroom. Checked here
+		// for the same reason the
 		// lease TTL is: it is a relationship between two tunables, and prose
 		// does not survive somebody tuning one of them.
 		return nil, fmt.Errorf(
-			"the refresh margin (%s) must exceed the longest stage (%s) plus the window in which a sandbox refreshes itself (%s): "+
-				"a sandbox cannot refresh, so a shorter margin hands out a token that dies mid-stage",
-			o.margin, maxStageDuration, sandboxRefreshWindow)
+			"the refresh margin (%s) must exceed the longest credential use (%s) plus safety headroom (%s): "+
+				"the access-only document cannot refresh, so a shorter margin can expire in flight",
+			o.margin, maxStageDuration, clientRefreshWindow)
 	case o.leaseTTL <= o.refreshTimeout:
 		// The takeover policy rests on the lease outlasting the presentation
 		// it bounds. Equal or shorter, an expired lease no longer means "the
@@ -135,17 +131,15 @@ func New(store SecretStore, refresher TokenRefresher, clk clock.Clock, log *slog
 	}, nil
 }
 
-// SandboxCredentialFile returns the credential document to write into a
-// sandbox's CODEX_HOME: refreshed if it is inside the refresh margin, with the
+// ManagedCredentialFile returns the provider credential document to the
+// main-worker adapter: refreshed if it is inside the refresh margin, with the
 // refresh token blanked, and good for at least that margin.
 //
-// It yields the whole file rather than a token because a sandbox's auth.json
-// built from an access token alone does not merely go unscoped — it fails to
-// parse, and codex exec never starts. The rules that make it parse are facts
-// about a Rust struct's serde attributes, and they belong in the one package
-// that has read that source rather than duplicated into every caller that
-// writes one.
-func (s *Source) SandboxCredentialFile(ctx context.Context) (work.CredentialFile, error) {
+// It yields the whole file rather than a token because the account id and
+// token metadata required by the direct Responses request live in that
+// document. Parsing that format stays in one adapter rather than being
+// duplicated across model callers.
+func (s *Source) ManagedCredentialFile(ctx context.Context) (work.CredentialFile, error) {
 	select {
 	case s.gate <- struct{}{}:
 		defer func() { <-s.gate }()
@@ -232,7 +226,7 @@ func (s *Source) round(ctx context.Context) (roundResult, error) {
 	now := s.clock.Now()
 	if now.Add(s.margin).Before(exp) {
 		// The overwhelmingly common path: no write, no network, no lease.
-		file, err := cred.forSandbox()
+		file, err := cred.accessOnly()
 		if err != nil {
 			return roundResult{done: true}, s.unusable(err)
 		}
@@ -529,11 +523,11 @@ func (s *Source) recoverSettle(
 	return work.CredentialFile{}, s.credentialLost(cause)
 }
 
-// usable checks that a rotated token is worth handing out, having already
-// stored it, and derives the sandbox's copy from the rotated file.
+// usable checks that a rotated token is worth returning, having already
+// stored it, and derives the access-only copy from the rotated file.
 //
 // The derivation runs on the ROTATED document, not the one that was read, so
-// the file a sandbox receives carries the token this rotation just produced.
+// the adapter receives the token this rotation just produced.
 func (s *Source) usable(rotated credentialFile, res Refreshed) (work.CredentialFile, error) {
 	if res.AccessToken.Reveal() == "" {
 		// The rotation is stored by the time we get here, so the credential
@@ -552,8 +546,8 @@ func (s *Source) usable(rotated credentialFile, res Refreshed) (work.CredentialF
 	if !s.clock.Now().Add(s.margin).Before(exp) {
 		// A provider behaviour change, not a bug of ours. The pair is stored
 		// either way — dropping it would spend a single-use token for nothing
-		// — but handing it to a sandbox would hand over a credential the
-		// sandbox will try, and fail, to refresh.
+		// but returning it would hand over a credential that can expire during
+		// the bounded model operation.
 		s.metrics.CredentialDead(DeathCredentialLost)
 		return work.CredentialFile{}, s.unusable(fmt.Errorf("it expires at %s, inside the %s refresh margin: %w", exp.Format(time.RFC3339), s.margin, ErrRefreshTooShortLived))
 	}
@@ -562,7 +556,7 @@ func (s *Source) usable(rotated credentialFile, res Refreshed) (work.CredentialF
 	// and this is the path where the rotation is already stored and the old
 	// refresh token already spent — the caller reading it needs the remedy
 	// more, not less.
-	file, err := rotated.forSandbox()
+	file, err := rotated.accessOnly()
 	if err != nil {
 		return work.CredentialFile{}, s.unusable(err)
 	}

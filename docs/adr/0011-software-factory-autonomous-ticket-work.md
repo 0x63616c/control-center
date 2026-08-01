@@ -1,18 +1,16 @@
 # Software factory: autonomous ticket work in sandboxed pods
 
-> **Superseded in part by [ADR-0012](./0012-software-factory-owns-its-tickets-and-its-record.md).**
-> The work source, the state store and the progress record described below are no longer
-> Legacy intake labels and external status comments: the factory owns its own Tickets, its
-> own record and its own console, and the legacy pipeline this ADR specifies was
-> deleted. Everything here about sandboxed pods, the stage pipeline and the trust boundary
-> still describes the running system. This ADR is left as the record of a decision at a
-> point in time; it is not rewritten.
+> **Superseded by [ADR-0012](./0012-software-factory-owns-its-tickets-and-its-record.md)
+> and the [AgentWorkflow design](../superpowers/specs/2026-07-31-software-factory-agent-workflow.md).**
+> The factory now owns its Tickets, record and console. New stages run as reusable
+> `AgentWorkflow` children: direct model activities stay on the main worker and typed
+> tool activities run in the per-Ticket sandbox. The Codex CLI design below is retained
+> only as the historical decision record and must not be read as current behavior.
 
 Tickets are picked up, planned, reviewed, implemented and turned into open
 PRs by a self-hosted service — no human in the loop until the PR exists. It runs as a Go
 Temporal worker in a new `software-factory` k8s namespace on its own `software-factory`
-Temporal namespace and task queue, and executes each ticket's agent stages via `codex exec`
-inside a disposable per-ticket pod. Merging the resulting PR — and therefore deploying —
+Temporal namespace and task queue. Merging the resulting PR, and therefore deploying,
 stays a human act.
 
 This replaces `.claude/workflows/grind-tickets.js`, which is deleted. That workflow needed

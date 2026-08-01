@@ -23,13 +23,18 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
+	"go.temporal.io/sdk/activity"
 	tlog "go.temporal.io/sdk/log"
 	"go.temporal.io/sdk/worker"
+	"go.temporal.io/sdk/workflow"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
+	agentactivities "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities/agent"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agenttools"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
 	checkpointclient "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/checkpoint"
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codex"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codexresponses"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/k8s"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/runs"
@@ -39,7 +44,6 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/prompts"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/telemetry"
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/transcripts"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/workflows"
 )
@@ -162,10 +166,17 @@ func run() error {
 
 	renderer, err := newPromptRenderer()
 	if err != nil {
-		return err
+		return fmt.Errorf("building the prompt renderer: %w", err)
 	}
 
-	acts, runWorkerControl, err := newActivities(cfg, temporal, renderer, metrics, logger, factoryStore, factoryStore)
+	clk := clock.System{}
+	tokenSource, err := newCodexAuthSource(cfg, clk, logger)
+	if err != nil {
+		return fmt.Errorf("building the codex credential source: %w", err)
+	}
+	acts, runWorkerControl, err := newActivities(
+		cfg, temporal, renderer, metrics, logger, factoryStore, factoryStore,
+	)
 	if err != nil {
 		return fmt.Errorf("building the activity set: %w", err)
 	}
@@ -185,11 +196,40 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("building the transcript recording activity set: %w", err)
 	}
+	agentTranscriptActs, err := activities.NewAgentTranscriptRecordingActivities(factoryStore, blobStore)
+	if err != nil {
+		return fmt.Errorf("building the agent transcript activity set: %w", err)
+	}
+	toolsets, err := agenttools.NewToolsets(work.RepoDir, "model/catalog", blobStore)
+	if err != nil {
+		return fmt.Errorf("building the model-visible agent toolsets: %w", err)
+	}
+	credentialSource, err := codexresponses.NewManagedCredentialSource(tokenSource)
+	if err != nil {
+		return fmt.Errorf("adapting the durable codex credential source: %w", err)
+	}
+	turner, err := codexresponses.New(
+		&http.Client{Timeout: 110 * time.Second}, cfg.CodexResponsesEndpoint, credentialSource, logger,
+	)
+	if err != nil {
+		return fmt.Errorf("building the direct Codex Responses client: %w", err)
+	}
+	modelActs, err := agentactivities.NewObservedActivities(turner, blobStore, clk, metrics, logger, toolsets...)
+	if err != nil {
+		return fmt.Errorf("building the agent model activity set: %w", err)
+	}
+	promptActs, err := agentactivities.NewPromptActivities(prompts.NewActivityRenderer(renderer), blobStore)
+	if err != nil {
+		return fmt.Errorf("building the agent prompt activity set: %w", err)
+	}
 
 	// Registration site. Every workflow and activity set this worker runs is
 	// registered here, on this worker, and nowhere else — one queue, one
 	// worker, one list.
-	register(w, acts, runWorkerControl, ticketActs, recordingActs, transcriptActs, logger)
+	register(
+		w, acts, runWorkerControl, ticketActs, recordingActs, transcriptActs,
+		agentTranscriptActs, modelActs, promptActs, logger,
+	)
 
 	// Idempotent: a worker replica that loses the race to start this simply
 	// attaches to the execution the winner started, which is why it happens on
@@ -273,18 +313,46 @@ func register(
 	ticketActs *activities.TicketActivities,
 	recordingActs *activities.RecordingActivities,
 	transcriptActs *activities.TranscriptRecordingActivities,
+	agentTranscriptActs *activities.AgentTranscriptRecordingActivities,
+	modelActs *agentactivities.Activities,
+	promptActs *agentactivities.PromptActivities,
 	logger *slog.Logger,
 ) {
 	w.RegisterWorkflow(workflows.FactoryWorkTicket)
 	w.RegisterWorkflow(workflows.FactoryDispatcher)
-	w.RegisterActivity(acts)
+	w.RegisterWorkflowWithOptions(workflows.AgentWorkflow, workflow.RegisterOptions{Name: agent.WorkflowName})
+	for _, activityMethod := range []any{
+		acts.CreateSandbox,
+		acts.WaitSandboxReady,
+		acts.CloneRepo,
+		acts.PushRepo,
+		acts.DeleteSandbox,
+		acts.FindPullRequest,
+		acts.OpenOrUpdatePullRequest,
+		acts.ObserveCI,
+		acts.ConvertPullRequestToDraft,
+		acts.MarkPullRequestReadyForReview,
+		acts.EnablePullRequestAutoMerge,
+		acts.DescribeRun,
+		acts.SweepOrphanSandboxes,
+	} {
+		w.RegisterActivity(activityMethod)
+	}
 	w.RegisterActivity(runWorkerControl)
 	w.RegisterActivity(ticketActs)
 	w.RegisterActivity(recordingActs)
 	w.RegisterActivity(transcriptActs)
+	w.RegisterActivityWithOptions(promptActs.Prepare, activity.RegisterOptions{Name: agent.PrepareActivityName})
+	w.RegisterActivityWithOptions(modelActs.ModelTurn, activity.RegisterOptions{Name: agent.ModelTurnActivityName})
+	w.RegisterActivityWithOptions(modelActs.RecordLifecycle, activity.RegisterOptions{Name: agent.LifecycleActivityName})
+	w.RegisterActivityWithOptions(promptActs.Finalize, activity.RegisterOptions{Name: agent.FinalizeActivityName})
+	w.RegisterActivityWithOptions(
+		agentTranscriptActs.PersistAgentTranscript,
+		activity.RegisterOptions{Name: agent.PersistTranscriptActivityName},
+	)
 
 	logger.Info("registrations",
-		slog.Int("workflows", 2),
+		slog.Int("workflows", 3),
 		slog.Int("stages_per_ticket", len(work.Pipeline())),
 		slog.Int("max_in_flight", work.DefaultFactoryConfig().MaxInFlight),
 	)
@@ -314,15 +382,14 @@ func ensureFactoryDispatcher(ctx context.Context, c dispatcherStarter, logger *s
 }
 
 // newActivities builds the one activity set from concrete clients: GitHub,
-// the sandbox pods, the codex stage runner, transcripts, the prompt and
-// status renderers, the run lookup and the sandbox sweep.
+// the sandbox pods, the run lookup and the sandbox sweep.
 //
 // It is the composition root's other half of "a concrete client meets an
 // interface that consumes it" — main.go's own doc comment — kept out of run()
 // only because the list of clients is long enough to want its own name.
 //
-// One *k8s.Sandboxes instance is shared across three roles (Pods, Sweeper,
-// and — through codex.NewRunner — the stage runner's exec and file transfer):
+// One *k8s.Sandboxes instance is shared across three roles (Pods, Repo and
+// Sweeper):
 // it is "the only place this service speaks to the Kubernetes API" per its
 // own doc comment, and constructing a second would be a second client holding
 // a second watch on the same pods.
@@ -350,17 +417,8 @@ func newActivities(
 		return nil, nil, fmt.Errorf("building the Kubernetes sandbox client: %w", err)
 	}
 
-	transcriptSink, err := transcripts.New(cfg.TranscriptsRoot)
-	if err != nil {
-		return nil, nil, fmt.Errorf("building the transcript sink at %s (TRANSCRIPTS_ROOT): %w", cfg.TranscriptsRoot, err)
-	}
-
-	tokenSource, err := newCodexAuthSource(cfg, clk, logger)
-	if err != nil {
-		return nil, nil, fmt.Errorf("building the codex credential source: %w", err)
-	}
 	legacy, err := activities.New(buildDeps(
-		cfg, ghCfg, ghClient, sandboxes, transcriptSink, renderer, metrics, temporal, tokenSource, dispatcherState, clk, logger,
+		cfg, ghCfg, ghClient, sandboxes, temporal, dispatcherState, clk, logger,
 	))
 	if err != nil {
 		return nil, nil, fmt.Errorf("building legacy activities: %w", err)
@@ -374,16 +432,17 @@ func newActivities(
 		return nil, nil, fmt.Errorf("building the checkpoint capability minter: %w", err)
 	}
 	control, err := activities.NewRunWorkerControlActivities(activities.RunWorkerControlDeps{
-		Workers: runWorkers, GitHub: ghClient, Codex: tokenSource, Capabilities: capabilities,
+		Workers: runWorkers, GitHub: ghClient, Capabilities: capabilities,
 		Binder: checkpointBinder, RepositoryBinder: checkpointBinder,
 		Template: activities.RunWorkerTemplate{
 			Image: cfg.RunWorkerImage, CPURequest: cfg.SandboxCPURequest, MemoryLimit: cfg.SandboxMemoryLimit,
 			DeadlineSeconds: work.SandboxDeadlineSeconds,
 			Env: map[string]string{
-				work.CodexHomeEnv: work.CodexHomeDir, work.GhConfigDirEnv: work.GhConfigDir,
+				work.GhConfigDirEnv:               work.GhConfigDir,
 				work.RunWorkerTemporalHostPortEnv: cfg.TemporalHostPort, work.RunWorkerTemporalNamespaceEnv: cfg.TemporalNamespace,
 				work.RunWorkerBlobsURLEnv: cfg.BlobsURL, work.RunWorkerCheckpointAPIURLEnv: cfg.CheckpointAPIURL,
 				work.RunWorkerGitHubRepositoryEnv: ghCfg.Owner + "/" + ghCfg.Repo,
+				work.RunWorkerMetricsAddrEnv:      ":9090",
 			},
 		},
 	})
@@ -403,43 +462,26 @@ func newActivities(
 // "this seam is wired into the composition root" means. #395 shipped a new
 // Deps field, Repo, that this file did not yet populate; activities.New
 // caught it loudly in a pod's crash loop rather than here, in a test, because
-// this function did not exist to catch it first. #398 added TokenSource
-// through the same seam.
+// this function did not exist to catch it first.
 //
-// tokenSource is a parameter rather than built here for the same reason
-// sandboxes is: newCodexAuthSource dials the in-cluster Kubernetes API to
-// build a SecretStore, which TestBuildDepsSatisfiesActivitiesNew cannot do
-// outside a pod. Constructing it stays in newActivities, alongside sandboxes.
-//
-// One *k8s.Sandboxes is threaded through Pods, Repo, Sweeper and — via
-// codex.NewRunner — the stage runner's exec and file transfer, deliberately:
+// One *k8s.Sandboxes is threaded through Pods, Repo and Sweeper deliberately:
 // see the doc on newActivities for why a second instance would be wrong.
 func buildDeps(
 	cfg config.Worker,
 	ghCfg config.GitHub,
 	ghClient activities.GitHub,
 	sandboxes *k8s.Sandboxes,
-	transcriptSink activities.TranscriptSink,
-	renderer *prompts.Renderer,
-	metrics *telemetry.Metrics,
 	temporal temporalapi.Client,
-	tokenSource activities.TokenSource,
 	dispatcherState activities.DispatcherStateWriter,
 	clk clock.Clock,
 	logger *slog.Logger,
 ) activities.Deps {
-	// CODEX_HOME is part of the contract with the sandbox image (like
-	// SF_BRANCH), set on every sandbox's template so codex exec always knows
-	// where to look. It is never a secret: the credential itself reaches the
-	// pod as a mounted per-ticket Secret (D3, #434), never carried in the
-	// environment.
 	sandboxTemplate := work.SandboxTemplate{
 		Image:           cfg.SandboxImage,
 		CPURequest:      cfg.SandboxCPURequest,
 		MemoryLimit:     cfg.SandboxMemoryLimit,
 		DeadlineSeconds: work.SandboxDeadlineSeconds,
 		Env: map[string]string{
-			work.CodexHomeEnv:   work.CodexHomeDir,
 			work.GhConfigDirEnv: work.GhConfigDir,
 
 			// The sandbox pod's own embedded Temporal worker (#434 step 3,
@@ -455,28 +497,16 @@ func buildDeps(
 	}
 
 	return activities.Deps{
-		GitHub: ghClient,
-		Pods:   sandboxes,
-		Repo:   sandboxes,
-		// Stages run only on a Session-bound sandbox worker. Keep this legacy
-		// dependency fail-closed so an accidental main-queue execution cannot
-		// bypass the sandbox's per-stage lock.
-		Stages:      codex.NewRunner(sandboxes, sandboxes, codex.NewUnavailableLocker("the main worker has no sandbox-local flock"), logger),
-		Transcripts: transcriptSink,
-		Prompts:     prompts.NewActivityRenderer(renderer),
-		Runs:        runs.New(temporal),
-		Sweeper:     sandboxes,
-		Metrics:     metrics,
+		GitHub:  ghClient,
+		Pods:    sandboxes,
+		Repo:    sandboxes,
+		Runs:    runs.New(temporal),
+		Sweeper: sandboxes,
 
 		// DispatcherState is the store row the dispatcher writes its post-tick
 		// projection to (#551) — the console will eventually read this instead
 		// of querying Temporal for status.
 		DispatcherState: dispatcherState,
-
-		// TokenSource fetches and refreshes the codex credential; CreateSandbox
-		// hands what it yields straight to Pods.Create, which turns it into a
-		// per-ticket Secret mounted into the pod (D3, #434). See #398.
-		TokenSource: tokenSource,
 
 		Log:     logger,
 		Clock:   clk,

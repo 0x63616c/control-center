@@ -23,12 +23,12 @@ func validRunWorkerSpec() work.RunWorkerSpec {
 		MemoryLimit:     "8Gi",
 		DeadlineSeconds: 86400,
 		Env: map[string]string{
-			work.CodexHomeEnv:                  work.CodexHomeDir,
 			work.GhConfigDirEnv:                work.GhConfigDir,
 			work.SandboxBranchEnv:              "software-factory/ticket-42/run",
 			work.RunWorkerTemporalHostPortEnv:  "temporal-frontend.temporal:7233",
 			work.RunWorkerTemporalNamespaceEnv: "software-factory",
 			work.RunWorkerBlobsURLEnv:          "http://software-factory-blobs:8080",
+			work.RunWorkerMetricsAddrEnv:       ":9090",
 			work.RunWorkerCheckpointAPIURLEnv:  "http://software-factory-api:8080",
 			work.RunWorkerGitHubRepositoryEnv:  "0x63616c/world-wide-webb",
 		},
@@ -46,6 +46,17 @@ func mustBuildRunWorker(t *testing.T) *corev1.Pod {
 		t.Fatalf("buildRunWorkerPod: %v", err)
 	}
 	return pod
+}
+
+func runWorkerContainer(t *testing.T, pod *corev1.Pod, name string) corev1.Container {
+	t.Helper()
+	for _, container := range pod.Spec.Containers {
+		if container.Name == name {
+			return container
+		}
+	}
+	t.Fatalf("Run Worker pod has no %q container", name)
+	return corev1.Container{}
 }
 
 func TestRunWorkerPodMatchCoversTheAuthoritativeSecurityAndRuntimeSpec(t *testing.T) {
@@ -118,7 +129,6 @@ func TestRunWorkerPodProjectsEveryUpdateableSecretAsADirectory(t *testing.T) {
 	t.Parallel()
 	pod := mustBuildRunWorker(t)
 	want := map[string]string{
-		runWorkerCodexVolumeName:      work.RunWorkerCodexCredentialDir,
 		runWorkerGitHubVolumeName:     work.RunWorkerGitHubCredentialDir,
 		runWorkerCheckpointVolumeName: work.RunWorkerCheckpointCapabilityDir,
 	}
@@ -163,5 +173,67 @@ func TestRunWorkerPodHasWritableWorkAndNoKubernetesCredential(t *testing.T) {
 	}
 	if !foundWork {
 		t.Error("/work is not mounted")
+	}
+}
+
+func TestRunWorkerPodExposesToolMetricsWithoutCodexCredentialProjection(t *testing.T) {
+	t.Parallel()
+
+	pod := mustBuildRunWorker(t)
+	if pod.Annotations["prometheus.io/scrape"] != "true" || pod.Annotations["prometheus.io/port"] != "9090" || pod.Annotations["prometheus.io/path"] != "/metrics" {
+		t.Fatalf("metrics scrape annotations = %#v", pod.Annotations)
+	}
+	container := pod.Spec.Containers[0]
+	if !reflect.DeepEqual(container.Ports, []corev1.ContainerPort{{Name: "metrics", ContainerPort: 9090}}) {
+		t.Fatalf("metrics ports = %#v", container.Ports)
+	}
+	for _, env := range container.Env {
+		if env.Name == "CODEX_HOME" {
+			t.Fatal("Run Worker still publishes CODEX_HOME")
+		}
+	}
+	for _, mount := range container.VolumeMounts {
+		if strings.Contains(strings.ToLower(mount.Name+" "+mount.MountPath), "codex") {
+			t.Fatalf("Run Worker still mounts a Codex credential: %#v", mount)
+		}
+	}
+	for _, volume := range pod.Spec.Volumes {
+		if strings.Contains(strings.ToLower(volume.Name), "codex") {
+			t.Fatalf("Run Worker still projects a Codex credential: %#v", volume)
+		}
+	}
+}
+
+func TestRunWorkerPodSeparatesCredentialFreeToolsFromRepositoryActivities(t *testing.T) {
+	t.Parallel()
+	pod := mustBuildRunWorker(t)
+	tool := runWorkerContainer(t, pod, runWorkerToolContainerName)
+	if !reflect.DeepEqual(tool.Command, []string{runWorkerToolBinaryPath}) {
+		t.Fatalf("tool command = %#v", tool.Command)
+	}
+	if len(tool.VolumeMounts) != 1 || tool.VolumeMounts[0].Name != workVolumeName || tool.VolumeMounts[0].MountPath != work.SandboxRoot {
+		t.Fatalf("tool mounts = %#v, want shared /work only", tool.VolumeMounts)
+	}
+	env := map[string]string{}
+	for _, item := range tool.Env {
+		env[item.Name] = item.Value
+	}
+	wantQueue, err := work.RunWorkerToolTaskQueue(validRunWorkerSpec().Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env[work.SandboxTaskQueueEnv] != wantQueue {
+		t.Fatalf("tool queue = %q, want %q", env[work.SandboxTaskQueueEnv], wantQueue)
+	}
+	for _, forbidden := range []string{work.RunWorkerGitHubCredentialDir, work.RunWorkerCheckpointCapabilityDir, work.RunWorkerRepositoryCapabilityDir} {
+		for _, mount := range tool.VolumeMounts {
+			if mount.MountPath == forbidden {
+				t.Fatalf("tool container mounts credential path %q", forbidden)
+			}
+		}
+	}
+	repository := runWorkerContainer(t, pod, runWorkerContainerName)
+	if len(repository.VolumeMounts) <= 1 {
+		t.Fatalf("repository container has no credential mounts: %#v", repository.VolumeMounts)
 	}
 }

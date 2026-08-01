@@ -84,11 +84,11 @@ func TestSandboxRoundTripAgainstACluster(t *testing.T) {
 		CPURequest:      "500m",
 		MemoryLimit:     "512Mi",
 		DeadlineSeconds: 600,
-		Env:             map[string]string{"CODEX_HOME": "/work/.codex"},
+		Env:             map[string]string{},
 	}
 
 	credential := work.NewCredentialFile([]byte(`{"tokens":{"access_token":"integration-test"}}`))
-	sandbox, err := s.Create(ctx, spec, credential)
+	sandbox, err := s.Create(ctx, spec)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestSandboxRoundTripAgainstACluster(t *testing.T) {
 	}
 
 	t.Run("adopts its own create retry", func(t *testing.T) {
-		got, err := s.Create(ctx, spec, credential)
+		got, err := s.Create(ctx, spec)
 		if err != nil {
 			t.Fatalf("Create (retry): %v", err)
 		}

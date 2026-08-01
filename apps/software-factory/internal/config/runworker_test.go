@@ -17,6 +17,7 @@ func completeRunWorkerEnv() map[string]string {
 		work.RunWorkerTemporalHostPortEnv:  "temporal-frontend.temporal:7233",
 		work.RunWorkerTemporalNamespaceEnv: "software-factory",
 		work.RunWorkerBlobsURLEnv:          "http://software-factory-blobs:8080",
+		work.RunWorkerMetricsAddrEnv:       ":9090",
 		work.RunWorkerCheckpointAPIURLEnv:  "http://software-factory-api:8080",
 		work.RunWorkerGitHubRepositoryEnv:  "0x63616c/world-wide-webb",
 	}
@@ -56,7 +57,7 @@ func TestLoadRunWorkerReadsItsTargetOnlyEnvironment(t *testing.T) {
 	if got.TaskQueue != wantQueue {
 		t.Errorf("TaskQueue = %q, want the queue derived from %+v", got.TaskQueue, got.Identity)
 	}
-	if got.TemporalHostPort == "" || got.TemporalNamespace == "" || got.BlobsURL == "" || got.CheckpointAPIURL == "" || got.GitHubOwner != "0x63616c" || got.GitHubRepo != "world-wide-webb" {
+	if got.TemporalHostPort == "" || got.TemporalNamespace == "" || got.BlobsURL == "" || got.MetricsAddr != ":9090" || got.CheckpointAPIURL == "" || got.GitHubOwner != "0x63616c" || got.GitHubRepo != "world-wide-webb" {
 		t.Errorf("incomplete config: %+v", got)
 	}
 	if got.LogLevel != slog.LevelInfo {

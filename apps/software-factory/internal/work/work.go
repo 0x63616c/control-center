@@ -239,84 +239,6 @@ func (u Usage) Add(other Usage) Usage {
 	}
 }
 
-// StageRun is one stage attempt: which attempt it is, and what to execute.
-//
-// Identity is the Key and nothing else. Everything else is payload, which is
-// why they are separate types — the resume decision, the transcript and the
-// stage's own files are all derived from the Key alone, and none of them should
-// have to be handed a prompt to find out where they live.
-//
-// Note what is absent: no Ticket, so no attacker-controlled text. The prompt
-// arrives already rendered, so a stage runner never interpolates issue text
-// itself and cannot be the place an injection lands.
-type StageRun struct {
-	Key     StageKey
-	Sandbox SandboxID
-	Model   Model
-
-	// Prompt is the fully rendered stage prompt, including any handoff from the
-	// preceding stage. It is written to the sandbox as a file, never passed as
-	// an argument.
-	Prompt string
-
-	// Schema is the JSON Schema constraining the stage's final message. It is
-	// what makes a plan travel as data rather than as conversation.
-	Schema []byte
-}
-
-// StageResult is what one stage produced.
-type StageResult struct {
-	// Output is the schema-conforming final message, still unparsed. Only the
-	// caller knows which stage's schema it satisfies, so only the caller parses
-	// it into a typed value.
-	Output []byte
-
-	// ThreadID is the model provider's own identifier for the conversation,
-	// recorded so a stored transcript can be correlated with the provider's
-	// records.
-	ThreadID string
-
-	Usage Usage
-
-	// UsageMeasured says whether Usage was observed rather than defaulted.
-	//
-	// Zero tokens is a legitimate measurement, so a zero Usage cannot say on
-	// its own whether it means "spent nothing" or "nobody was watching". A
-	// stage resumed from a stored result is the second case: its numbers
-	// arrived on the event stream of a process this worker was never attached
-	// to, and that stream is gone. Recording the difference is what stops an
-	// aggregator adding an unmeasured zero to a total as though it were a
-	// measurement — and the runs that resume are the long ones, which are the
-	// ones that spent most.
-	//
-	// It lives here rather than on Usage so that Usage stays a comparable value
-	// type and Add keeps its meaning: "measured plus unmeasured" is not a
-	// question a summing method should have to answer.
-	//
-	// The consequence, for whoever wires the runner to telemetry:
-	// telemetry.StageFinished takes a bare Usage and therefore cannot see this
-	// flag. Deciding not to report an unmeasured Usage has to happen at the
-	// call site, and nothing in either signature forces it.
-	UsageMeasured bool
-}
-
-// StageEventSink receives each raw event line as a stage streams it.
-//
-// Each call carries exactly one whole event, verbatim and without a terminator.
-// Framing has one owner: whoever stores the stream adds the terminator, so a
-// producer that pre-terminated its lines would be visible rather than silently
-// tolerated.
-//
-// One callback serves both consumers of that stream: the transcript, which
-// needs the bytes verbatim, and the enclosing activity's heartbeat, which needs
-// only to know that something happened. A stage that emits nothing for the
-// heartbeat timeout is treated as dead rather than slow.
-//
-// It returns nothing, deliberately. A failed transcript write must not abort a
-// stage that is already burning tokens: losing the record of the work is
-// cheaper than losing the work.
-type StageEventSink func(rawEvent []byte)
-
 // SandboxSpec describes the pod one ticket's stages execute in. Its lifetime is
 // the ticket's: nothing in it survives the run, and nothing valuable is in it.
 //
@@ -351,8 +273,9 @@ type SandboxSpec struct {
 	// Temporal still believes in.
 	DeadlineSeconds int64
 
-	// Env is the sandbox's environment. It carries the ephemeral CODEX_HOME
-	// path; it never carries a credential, which is written as a file instead.
+	// Env is the sandbox's non-secret runtime configuration. It names the
+	// private Temporal queue and shared service endpoints; provider credentials
+	// never enter the sandbox.
 	Env map[string]string
 }
 

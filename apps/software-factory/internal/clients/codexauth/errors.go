@@ -47,8 +47,8 @@ var (
 	ErrCredentialLost = fmt.Errorf("rotated codex credential could not be stored: %w", work.ErrPermanent)
 
 	// ErrRefreshTooShortLived means a rotation returned a token that already
-	// falls inside the refresh margin, so handing it to a sandbox would hand
-	// over a credential the sandbox will try, and fail, to refresh itself. The
+	// falls inside the refresh margin, so returning it would hand the model
+	// adapter a credential that can expire during its bounded operation. The
 	// rotated pair is stored before this is returned — dropping it would spend
 	// a refresh token for nothing.
 	ErrRefreshTooShortLived = fmt.Errorf("rotated codex access token expires too soon to use: %w", work.ErrPermanent)

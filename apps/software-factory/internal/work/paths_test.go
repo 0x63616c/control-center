@@ -194,13 +194,3 @@ func TestRepoDirIsInsideTheSandboxRootWithoutBeingIt(t *testing.T) {
 		t.Errorf("RepoDir must not be the sandbox root itself: %q", RepoDir)
 	}
 }
-
-func TestStageScaffoldingIsNotInsideTheCheckout(t *testing.T) {
-	// The reason RepoDir is a sibling of the scaffolding rather than its parent:
-	// anything under the checkout is untracked content in the working tree that
-	// `implement` could commit into the branch it pushes.
-	paths := StageKey{Ticket: 1, RunID: "run", Stage: StagePlan, Turn: 1}.Paths()
-	if strings.HasPrefix(paths.Dir, RepoDir+"/") {
-		t.Errorf("stage dir %q is inside the checkout %q", paths.Dir, RepoDir)
-	}
-}

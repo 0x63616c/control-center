@@ -15,6 +15,10 @@ import (
 
 var targetTestIdentity = work.RunWorkerIdentity{RunID: "0f466627-b3ae-4ba2-9c96-6ef44ec6f578", Generation: 1}
 
+type repositoryFixedClock struct{ now time.Time }
+
+func (clock repositoryFixedClock) Now() time.Time { return clock.now }
+
 type targetRepositoryProbe struct {
 	url, branch string
 	head        string
@@ -104,13 +108,8 @@ func targetRepositoryActivities(repository *targetRepositoryProbe, github *targe
 	return &RunWorkerActivities{deps: RunWorkerDeps{
 		Repository: repository, GitHub: github, Identity: targetTestIdentity,
 		RepositoryCheckpoints: func(work.RunWorkerIdentity) (RepositoryCheckpoint, error) { return cp, nil },
-		SecretRedactor:        passthroughSecretRedactor{},
-		Clock:                 fixedClock{now: time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)},
+		Clock:                 repositoryFixedClock{now: time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)},
 	}}
-}
-
-func testRepositoryCheckpointFactory(work.RunWorkerIdentity) (RepositoryCheckpoint, error) {
-	return &repositoryCheckpointProbe{}, nil
 }
 
 func targetPosition(ordinal int) RepositoryStep {

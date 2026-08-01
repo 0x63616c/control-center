@@ -101,7 +101,7 @@ holds only `temporal-server`. Use a throwaway admin-tools pod:
       --command -- temporal --address temporal-server:7233 \
       --namespace software-factory workflow list
 
-Swap the trailing subcommand for `workflow describe`, `workflow terminate`
+Swap the trailing subcommand for `workflow describe`, `workflow cancel`
 (abort lever 3, §5) or `task-queue describe --task-queue software-factory`
 (`work.TaskQueue`, §0).
 
@@ -125,7 +125,7 @@ back to streaming logs`, then nothing. Measured 2026-07-28 against prod with
 arrived in 4 of 5 runs of the form above, and in 1 of 3 of an earlier set.
 
 **So never read an empty result as "it didn't happen"**, above all for
-`workflow terminate`: the next lever up is 4, which stops every other in-flight
+`workflow cancel`: the next lever up is 4, which stops every other in-flight
 ticket to stop one. Confirm rather than escalate —
 
     … --namespace software-factory workflow describe --workflow-id factory-ticket-<id>
@@ -149,11 +149,11 @@ then connects only once the output has already gone.
     {namespace="software-factory"}
     {namespace="software-factory", level="error"}
 
-Transcripts outlive Loki and are the record of what the model actually did.
-The path under the volume is `<ticket>/<run-id>/<stage>.jsonl`
-(`work.StageKey.TranscriptPath`), mounted at `/transcripts`
-(`TRANSCRIPTS_MOUNT_PATH`, `infra/src/software-factory.ts`) since F1 (#343)
-landed. Full path: `/transcripts/<ticket>/<run-id>/<stage>.jsonl`.
+Transcripts outlive Loki and are the record of what the model and tools did.
+Each `AgentWorkflow` stores immutable conversation and transcript revisions in
+the blob service, returns only a `TranscriptRef`, then the parent persists the
+referenced transcript into the factory Store. Read it through the run's
+attempt record; do not inspect the worker's legacy `/transcripts` mount.
 
 **Pods.** The window the other three miss:
 
@@ -168,10 +168,10 @@ started. On a first run this is where the boring failures live.
 
 | Symptom | Cause | Do |
 |---|---|---|
-| `codex exec` exits **1 with empty stdout** | a proactive token refresh failed. The diagnosis is on **stderr only**, and the CLI retries ~104 times in ~35s against `auth.openai.com` first | read the stage's stderr, not its stdout. **The most likely first-run failure** (#340) |
+| model turn fails before any tool call | the main worker could not read/refresh the credential or the Responses endpoint rejected the request | inspect the main worker's structured error and its Temporal activity failure type; the sandbox has no provider credential |
 | 403 on pod create / watch / exec | the worker Role is missing a verb — `watch` on `pods`, `get` on `pods/exec` | fix the Role (#343), not the code |
-| worker wedges during startup | the transcript volume mounted `hard`; an unreachable NFS server hangs inside `New` | must be `soft` with bounded `timeo`/`retrans` (#343) |
-| run keeps burning quota while rate-limited | detection is a heuristic on error text — ADR-0011 admits no structured event exists | expect false negatives; abort by hand (§5) |
+| transcript persistence fails | the blob API or Store is unavailable | inspect the blob/API activity failure; the worker no longer mounts a transcript filesystem |
+| model turns repeatedly rate-limit | the provider returned the rate-limit failure class and the activity retry policy is backing off | inspect attempt count and retry state; cancel the run if the delay is unacceptable (§5) |
 | a plausible but wrong PR | the system working as designed | close it. This is the cost the design accepts |
 
 ## 5. Abort — four levers, least blast radius first
@@ -181,11 +181,14 @@ started. On a first run this is where the boring failures live.
 2. **Pause the dispatcher.** `POST /v1/factory/pause` on the API, which sends the
    `UpdateConfig` signal — also sendable by hand from the Temporal UI or the CLI
    pod above. Leaves in-flight Tickets running.
-3. **Terminate one Ticket.** `workflow terminate --workflow-id factory-ticket-<id>`
-   from the CLI pod. **It often prints nothing even when it worked** (§3) —
-   confirm with `workflow describe`, do not assume it failed and reach for 4.
-   Its sandbox pod is not reaped by the terminate either — check
-   `kubectl -n software-factory get pods` and delete it.
+3. **Cancel one Ticket.** Use the console/API cancel command, or
+   `workflow cancel --workflow-id factory-ticket-<id>` from the CLI pod. The
+   parent requests cancellation of the active `AgentWorkflow` child and waits
+   for its model HTTP request or sandbox tool process to stop, then deletes the
+   sandbox on its disconnected cleanup context. Confirm with `workflow
+   describe`; do not escalate because `kubectl run --rm -i` lost the output.
+   `workflow terminate` is the emergency hard stop only: it bypasses workflow
+   cleanup and can leave the sandbox for the orphan sweeper.
 4. **Stop everything.**
    `kubectl -n software-factory scale deploy/<worker-deployment: F1/#343> --replicas=0`.
 
@@ -202,14 +205,13 @@ sessions own branches you cannot see (AGENTS.md).
       to `done`.
 - [ ] Record the run on its Ticket: which stages ran, tokens spent (they are on
       the Attempt rows, in the console), what broke, what this file got wrong.
-- [ ] Anything unvalidatable-until-prod that the run **did** validate — the
-      `pods/exec` WebSocket→SPDY fallback, `CodeExitError` carrying the real exit
-      code, rate-limit detection — gets said plainly on its own Ticket. Those are
-      open specifically because no test can reach them.
+- [ ] Record what the run validated: direct Responses authentication, typed
+      tool routing to the ticket sandbox, cancellation, transcript references,
+      usage accounting and the exact failure taxonomy observed.
 
 ## 7. Retire `grind-tickets` (gated on §6)
 
-Only once a run has reached `propose` on its own. Then, one PR referencing its
+Only once a run has reached `review` on its own. Then, one PR referencing its
 factory Ticket:
 
 - [ ] delete `.claude/workflows/grind-tickets.js`

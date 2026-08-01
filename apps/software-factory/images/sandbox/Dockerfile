@@ -1,16 +1,12 @@
 # syntax=docker/dockerfile:1
 
-# The per-ticket sandbox (ADR-0011): a session that stages `codex exec` into,
-# not a batch job. The pod's command is its own embedded Temporal worker
-# (cmd/sandbox-worker, #434 step 3) — not `sleep infinity` with stages
-# arriving over pods/exec, which is what this image ran before Sessions
-# replaced that transport.
+# The per-ticket sandbox is a Session-hosting Temporal worker, not a batch job.
+# It executes typed repository tools requested by AgentWorkflow; model calls
+# and OAuth credentials remain in the main worker.
 #
-# The argv this embedded worker itself invokes is a contract with
-# internal/clients/local (the codex CLI it execs directly, as a local
-# subprocess), and the git/gh argv CloneRepo still reaches remotely through
-# internal/clients/k8s until #431 decides otherwise (see that package's
-# exec.go). Either way, no shell is ever invoked, on any path:
+# The pod runs separate tools and repository containers. They share /work, but
+# only the repository container has a private credential file. Agent tools
+# execute structured argv without an implicit shell:
 #
 #   tar                           file-in, `tar -xf - -C /` (transfer.go)
 #   test                          the file-existence probe (transfer.go)
@@ -19,24 +15,16 @@
 #                                 so CloneRepo notices if this pod's branch ever
 #                                 disagrees with what SandboxTemplate.Spec baked
 #                                 into it (clone.go: sandboxBranch, #383).
-#   git                           clone, checkout -b, `config --local
-#                                 credential.helper` and push work.RepoDir on
-#                                 the branch above (clone.go). A credential file
-#                                 is written first with Write/tar, never argv,
-#                                 so the token never appears in a command line
-#                                 or a log line. It is never removed either:
-#                                 `implement` pushes as the model, from inside
-#                                 this pod, long after CloneRepo has returned,
-#                                 and the local credential.helper config this
-#                                 sets is what its BARE `git push` — no `-c` of
-#                                 its own — authenticates through.
+#   git                           clone and initial push in the repository
+#                                 container; model-selected edit/test/commit
+#                                 commands in the credential-free tools
+#                                 container; sanitized workflow-owned publish
+#                                 from a private bare repository (clone.go).
 #   rm                            clears a partial checkout before a retried
 #                                 clone (clone.go).
 #
-# A shell IS present, because `codex exec`'s own job is running shell commands
-# on the agent's behalf. "No shell" is a rule about how the WORKER invokes this
-# image, not about what the image contains — an image without one could not run
-# a single ticket.
+# A shell is present for repository test tooling, but the worker does not
+# interpolate model text into one.
 #
 # The remote process-management shim and its liveness probe are gone (#434,
 # step 3 of the software-factory migration): Temporal Sessions let the
@@ -73,23 +61,14 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 # Stage 2: the sandbox itself.
 FROM debian:trixie-slim
 
-# Pinned by version AND by checksum. A version tag alone is a moving target for
-# a GitHub release asset, and this image executes what it downloads.
-#
-# codex is pinned to the version ADR-0011's auth behaviour was verified against
-# (§"Auth: one refresh token, in exactly one place"). Bumping it means re-testing
-# the blanked-refresh_token path, not just editing this number.
-ARG CODEX_VERSION=0.145.0
-ARG CODEX_SHA256=bfaf13c9ba34f2ad764e4a916c49cf7177aeba329cf0f719e2227566fc8d662a
 # bun matches the version CI and the rest of this repo build with
 # (.github/workflows/ci.yml, oven-sh/setup-bun). A ticket's `bun install` must
 # resolve the same lockfile the reviewer's machine does.
 ARG BUN_VERSION=1.2.19
 ARG BUN_SHA256=c3d3c14e9a5ec83ff67d0acfe76e4315ad06da9f34f59fc7b13813782caf1f66
-# gh is what `propose` opens the pull request with (#414). It authenticates
-# through a hosts.yml CloneRepo writes into the pod, NOT through git's
-# credential store — gh has no code path that reads one, so the installation
-# token has to reach it in gh's own format. See clone.go: ghHostsPath.
+# gh remains available for unauthenticated repository inspection and project
+# tooling. Pull requests are opened by workflow-owned GitHub activities; no gh
+# credential is exposed to the tools container.
 ARG GH_VERSION=2.96.0
 ARG GH_SHA256=83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60
 # golangci-lint, pinned to what CI pins (.github/workflows/ci.yml:363,
@@ -113,9 +92,8 @@ ARG PLAYWRIGHT_FFMPEG_REVISION=1011
 ARG PLAYWRIGHT_FFMPEG_SHA256=ebc74fc5b94830176a3c2914ae96bd8bc7f6a91f4f33890230f84a172ee61ccc
 
 # GNU tar, coreutils (test, cat, printenv, rm) and a shell come from the base
-# image. Added here: git, because CloneRepo checks the ticket's repository out
-# and pushes its branch before any stage runs, and `implement` later commits
-# and pushes to that same checkout; ca-certificates for the OpenAI and GitHub
+# image. Added here: git, because repository activities clone and publish while
+# the implement agent edits and commits; ca-certificates for GitHub and package
 # APIs; curl and unzip for the two downloads below; passwd for
 # groupadd/useradd, which trixie-slim omits; gcc and libc6-dev so
 # `CGO_ENABLED=1 go test -race` can link inside this image (#428); Node, because
@@ -152,14 +130,6 @@ RUN apt-get update \
     && command -v node >/dev/null \
     && command -v printenv >/dev/null \
     && command -v rm >/dev/null
-
-RUN curl -fsSL -o /tmp/codex.tar.gz \
-        "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-x86_64-unknown-linux-musl.tar.gz" \
-    && echo "${CODEX_SHA256}  /tmp/codex.tar.gz" | sha256sum -c - \
-    && tar -xzf /tmp/codex.tar.gz -C /tmp \
-    && install -m 0755 /tmp/codex-x86_64-unknown-linux-musl /usr/local/bin/codex \
-    && rm -rf /tmp/codex.tar.gz /tmp/codex-x86_64-unknown-linux-musl \
-    && codex --version
 
 RUN curl -fsSL -o /tmp/gh.tar.gz \
         "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" \
@@ -271,8 +241,8 @@ RUN install -d -o 1000 -g 1000 -m 0755 /work
 ENV HOME=/home/sandbox
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# WORKDIR is the working directory every `codex exec` inherits: pods/exec runs
-# with the container's cwd, and podspec.go sets no WorkingDir, so this is it.
+# WORKDIR is the sandbox worker's working directory; podspec.go sets no
+# WorkingDir, so this is it.
 #
 # It is /work — the mount root — and DELIBERATELY NOT the repo checkout, which
 # is the obvious-looking choice and is a trap. A WORKDIR the runtime has to

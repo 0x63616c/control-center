@@ -1,7 +1,8 @@
 # v0 capability gates
 
-This is the evidence record for PR 0.5. It describes observations, not target
-runtime behavior. The legacy worker registrations remain unchanged.
+This is the archived evidence record for PR 0.5. It describes observations of
+the retired CLI prototype, not target or current runtime behavior. Production
+uses `AgentWorkflow` and no longer installs or invokes the Codex CLI.
 
 ## Codex fresh-filesystem resume
 
@@ -57,18 +58,8 @@ is retained where captured, and the workflow may authorize a fresh Attempt
 within its existing Run-wide budget. Do not persist Codex rollout directories,
 and do not claim cross-filesystem provider resume.
 
-Run the reproducible gate without exposing the credential value:
-
-```sh
-apps/software-factory/scripts/verify-v0-codex-resume.sh \
-  sf-sandbox:local /path/to/auth.json
-```
-
-The script builds its narrow event-sink helper, exits non-zero when either
-resume is unavailable or any required probe is missing, and prints only the
-image, thread IDs, event count, terminal usage summary, verification booleans,
-exit codes, and final resume errors. The temporary sink store is independent of
-the worker filesystem and is deleted only when the overall harness exits.
+The one-off resume harness was deleted with the CLI runtime. The observations
+above remain historical evidence; they are not a production verification step.
 
 ## Temporal Session harness
 

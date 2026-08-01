@@ -43,8 +43,8 @@ type credentialFile struct {
 //
 // Every rejection here is ErrUnseeded and therefore permanent, because every
 // one of them describes a file only a human can fix. A blanked refresh token is
-// among them: that is the shape handed to a sandbox, and a worker holding one
-// has been given the wrong copy.
+// among them: that is the derived access-only shape, and durable storage
+// holding one has been given the wrong copy.
 func parseCredentialFile(data []byte) (credentialFile, error) {
 	if len(data) == 0 {
 		return credentialFile{}, fmt.Errorf("the %s key is absent or empty: %w", CredentialKey, ErrUnseeded)
@@ -104,7 +104,7 @@ func stringField(tokens map[string]json.RawMessage, key string) (string, error) 
 // alone: the provider is not obliged to reissue one, and blanking a field on
 // the strength of its absence from one response would be inventing a fact.
 //
-// The parsed file comes back too because the caller must derive the sandbox's
+// The parsed file comes back too because the caller must derive the access-only
 // copy from the ROTATED document, not the one that was read. Re-parsing the
 // bytes would work and is what an earlier shape did, but it would also re-run
 // the boundary's rejections against a document this package just built.
@@ -157,7 +157,7 @@ func (f credentialFile) withRotation(res Refreshed, now time.Time) (credentialFi
 	// pre-rotation blob, spent refresh token and all. tokens is the current
 	// one, and encode is what reconciles the two — it re-marshals tokens over
 	// raw[keyTokens] on the way out. Nothing else may read raw[keyTokens] off
-	// this value, and forSandbox does not: it passes raw through and supplies
+	// this value, and accessOnly does not: it passes raw through and supplies
 	// its own tokens map, so encode reconciles there too.
 	rotated := credentialFile{
 		raw:     raw,
@@ -200,8 +200,8 @@ func (f credentialFile) encode() ([]byte, error) {
 	return out, nil
 }
 
-// forSandbox returns the document to hand a sandbox: this file, with the
-// refresh token blanked.
+// accessOnly returns the document for the main-worker adapter with the refresh
+// token blanked.
 //
 // It is a DERIVATION of the stored file rather than a document composed from
 // parts, and that is the safety property. Composition is correct only while
@@ -216,9 +216,8 @@ func (f credentialFile) encode() ([]byte, error) {
 // The refresh token is SET TO THE EMPTY STRING. It is never removed and never
 // nulled. On codex-cli rust-v0.145.0, TokenData.refresh_token is a bare String
 // with no Option, no serde(default) and no custom deserializer, so a blank
-// value parses while an absent key or a null fails the ENTIRE document — the
-// sandbox would not start, with an error pointing nowhere near this line.
-func (f credentialFile) forSandbox() (work.CredentialFile, error) {
+// value parses while an absent key or a null fails the entire document.
+func (f credentialFile) accessOnly() (work.CredentialFile, error) {
 	tokens := make(map[string]json.RawMessage, len(f.tokens))
 	for k, v := range f.tokens {
 		tokens[k] = v
@@ -227,7 +226,7 @@ func (f credentialFile) forSandbox() (work.CredentialFile, error) {
 
 	out, err := credentialFile{raw: f.raw, tokens: tokens}.encode()
 	if err != nil {
-		return work.CredentialFile{}, fmt.Errorf("building the sandbox's credential file: %w", err)
+		return work.CredentialFile{}, fmt.Errorf("building the access-only credential file: %w", err)
 	}
 	return work.NewCredentialFile(out), nil
 }

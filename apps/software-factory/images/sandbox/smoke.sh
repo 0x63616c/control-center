@@ -61,7 +61,7 @@ check() { # check <name> <expected-exit> <cmd...>
 # fail is worse than no check, because it reads as verified.
 check "every binary the worker's argv names is on PATH" 0 \
   /usr/bin/env sh -c '
-    for b in tar test cat git bun bunx node go codex; do
+    for b in tar test cat git bun bunx node go; do
       command -v "$b" >/dev/null || { echo "missing: $b"; exit 1; }
     done'
 
@@ -80,8 +80,7 @@ check "runs as uid/gid 1000" 0 \
 # removed pods/exec mechanism (#434, step 3). The embedded worker now holds a
 # real os/exec.Cmd it can cancel directly.
 
-# WORKDIR is the cwd every `codex exec` inherits — pods/exec runs with the
-# container's cwd and podspec.go sets no WorkingDir. It must be writable BY THE
+# WORKDIR is the sandbox worker's cwd. It must be writable BY THE
 # SANDBOX UID under a kubelet-shaped mount, which is the whole reason it is
 # /work and not the checkout: a WORKDIR the runtime has to create inside the
 # emptyDir is created as root, mode 0755, and the sandbox cannot write it.
@@ -97,9 +96,6 @@ check "a directory the process creates under /work is writable by it" 0 \
 # run log, while a failed or empty version command fails the named check.
 check "pinned tool versions" 0 \
   /usr/bin/env sh -c '
-    codex_version="$(codex --version)" || { echo "codex --version failed"; exit 1; }
-    [ -n "$codex_version" ] || { echo "codex --version returned empty output"; exit 1; }
-
     bun_version="$(bun --version)" || { echo "bun --version failed"; exit 1; }
     [ -n "$bun_version" ] || { echo "bun --version returned empty output"; exit 1; }
 
@@ -115,7 +111,7 @@ check "pinned tool versions" 0 \
     git_version="$(git --version)" || { echo "git --version failed"; exit 1; }
     [ -n "$git_version" ] || { echo "git --version returned empty output"; exit 1; }
 
-    echo "codex $codex_version | bun $bun_version | bunx $bunx_version | node $node_version | $go_version | $git_version"
+    echo "bun $bun_version | bunx $bunx_version | node $node_version | $go_version | $git_version"
   '
 
 # A real Playwright page screenshot proves that the browser bundle is outside

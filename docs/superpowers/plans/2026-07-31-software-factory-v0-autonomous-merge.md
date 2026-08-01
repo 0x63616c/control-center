@@ -1,5 +1,16 @@
 # Software Factory v0 Autonomous Merge Implementation Plan
 
+> **Execution-model amendment (2026-07-31):** the Codex CLI/provider-thread
+> parts of PR 0.5 and PR 4 are historical capability evidence, not the target
+> runtime. The reusable direct-Responses `AgentWorkflow` design in
+> [Software Factory Agent Workflow](../specs/2026-07-31-software-factory-agent-workflow.md)
+> supersedes them. Retain Run Worker identity, private queues, repository
+> checkpoints, credential projection and recovery fencing; do not install or
+> invoke the Codex CLI, project Codex credentials into a Run Worker, or resume
+> provider-local threads. Each synchronous child owns its short-lived Session
+> on the generation's private queue because Temporal Session contexts cannot
+> cross a child-workflow boundary.
+
 > **For the manager agent:** Execute this plan from local `wtp` worktrees with
 > fresh `gpt-5.6-terra` subagents. Do not send these implementation Tickets
 > through the software factory itself. Every code slice is test-first, receives

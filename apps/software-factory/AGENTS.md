@@ -21,7 +21,8 @@ issue tracking). This file **adds** to it; it does not replace it.
 A Go Temporal worker that autonomously works Tickets from its own Postgres (ADR-0012): a
 dispatcher workflow polls for `ready` Tickets and a FactoryWorkTicket workflow per Ticket
 runs `plan → implement → review`, looping implement/review under turn budgets, each stage a
-`codex exec` inside a disposable per-Ticket Kubernetes pod. The workflow itself opens or
+an `AgentWorkflow` child workflow. Direct model calls run on the main worker and typed
+tool activities run inside a disposable per-Ticket Kubernetes pod. The workflow opens or
 updates the pull request after every push implement makes. Merging stays human.
 
 It does not read GitHub Issues and posts nothing to them (#559). GitHub owns the pull
