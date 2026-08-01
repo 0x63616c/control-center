@@ -120,6 +120,23 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 	}); err != nil {
 		return fmt.Errorf("cloning the target repository: %w", err)
 	}
+	if clone.PredecessorMerge != nil {
+		if !recovery.Found {
+			return fmt.Errorf("reconciling canceled predecessor merge without recovery checkpoint: %w", work.ErrPermanent)
+		}
+		terminalCtx, cancel := workflow.NewDisconnectedContext(ctx)
+		defer cancel()
+		finalCtx := workflow.WithActivityOptions(terminalCtx, targetActivityOptions(in.Policy.Recording))
+		if err := workflow.ExecuteActivity(finalCtx, targetRecordingActs.FinalizeConfirmedMerge, store.ConfirmedMergeInput{
+			RunID: recovery.Checkpoint.RunID, TicketID: in.TicketID, StepOrdinal: recovery.Checkpoint.StepOrdinal,
+			ReviewedHead: clone.PredecessorMerge.ReviewedHead, MergeSHA: clone.PredecessorMerge.MergeSHA, EndedAt: workflow.Now(terminalCtx),
+		}).Get(finalCtx, nil); err != nil {
+			return fmt.Errorf("recording confirmed predecessor merge: %w", err)
+		}
+		session.close()
+		session.delete(terminalCtx)
+		return nil
+	}
 	session.checkoutReady = true
 
 	detail := work.TicketDetail{Ticket: work.Ticket{Number: int(claimed.Ticket.ID), Title: claimed.Ticket.Title, Body: claimed.Ticket.Body}}

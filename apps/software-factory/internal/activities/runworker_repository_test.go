@@ -49,9 +49,9 @@ type targetGitHubProbe struct {
 	retireMerged bool
 }
 
-func (p *targetGitHubProbe) RetirePullRequest(_ context.Context, number int) (bool, error) {
+func (p *targetGitHubProbe) RetirePullRequest(_ context.Context, number int) (work.PullRequestRetirement, error) {
 	p.retired = append(p.retired, number)
-	return p.retireMerged, nil
+	return work.PullRequestRetirement{Merged: p.retireMerged, ReviewedHead: "reviewed-head", MergeSHA: "merge-sha"}, nil
 }
 
 func (p *targetGitHubProbe) PullRequestForBranch(context.Context, string) (work.PullRequest, bool, error) {
@@ -177,6 +177,24 @@ func TestCloneTargetRepositoryRetiresCanceledPullRequestBeforeCarryForward(t *te
 	}
 	if len(github.retired) != 1 || github.retired[0] != 42 || repository.carryHead != in.CarryForwardHead {
 		t.Fatalf("retirement/carry-forward = %+v / %+v", github.retired, repository)
+	}
+}
+
+func TestCloneTargetRepositoryReturnsConfirmedPredecessorMergeWithoutPreparingRunB(t *testing.T) {
+	repository := &targetRepositoryProbe{head: "must-not-be-used"}
+	github := &targetGitHubProbe{retireMerged: true}
+	a := targetRepositoryActivities(repository, github, &repositoryCheckpointProbe{})
+	out, err := a.CloneTargetRepository(context.Background(), CloneTargetRepositoryInput{
+		Step:                    RepositoryStep{StepOrdinal: 1, Branch: "factory/ticket-42/new-run"},
+		CloneURL:                "https://github.com/example/repo.git",
+		CarryForwardHead:        "0123456789abcdef0123456789abcdef01234567",
+		RetirePullRequestNumber: 42,
+	})
+	if err != nil {
+		t.Fatalf("CloneTargetRepository: %v", err)
+	}
+	if out.PredecessorMerge == nil || !out.PredecessorMerge.Merged || repository.calls != 0 {
+		t.Fatalf("merge/repository calls = %+v / %d", out.PredecessorMerge, repository.calls)
 	}
 }
 

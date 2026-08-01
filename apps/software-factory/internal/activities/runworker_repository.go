@@ -47,7 +47,10 @@ type CloneTargetRepositoryInput struct {
 }
 
 // CloneTargetRepositoryOutput records the exact restored candidate head.
-type CloneTargetRepositoryOutput struct{ HeadSHA string }
+type CloneTargetRepositoryOutput struct {
+	HeadSHA          string
+	PredecessorMerge *work.PullRequestRetirement
+}
 
 // RestoreTargetRepositoryInput names the durable branch a replacement
 // generation must materialize before resuming repository-affine work.
@@ -63,9 +66,12 @@ func (a *RunWorkerActivities) CloneTargetRepository(ctx context.Context, in Clon
 	if err != nil {
 		return CloneTargetRepositoryOutput{}, fmt.Errorf("loading target repository clone effect: %w", err)
 	}
-	head, err := a.prepareCloneRepository(ctx, in)
+	head, predecessorMerge, err := a.prepareCloneRepository(ctx, in)
 	if err != nil {
 		return CloneTargetRepositoryOutput{}, fail(ctx, "preparing the target repository", err)
+	}
+	if predecessorMerge != nil {
+		return CloneTargetRepositoryOutput{PredecessorMerge: predecessorMerge}, nil
 	}
 	if found {
 		// A repository checkpoint survives replacement; this filesystem does
@@ -82,28 +88,30 @@ func (a *RunWorkerActivities) CloneTargetRepository(ctx context.Context, in Clon
 	return out, nil
 }
 
-func (a *RunWorkerActivities) prepareCloneRepository(ctx context.Context, in CloneTargetRepositoryInput) (string, error) {
+func (a *RunWorkerActivities) prepareCloneRepository(ctx context.Context, in CloneTargetRepositoryInput) (string, *work.PullRequestRetirement, error) {
 	if in.RetirePullRequestNumber > 0 {
 		retirer, ok := a.deps.GitHub.(TargetPullRequestRetirer)
 		if !ok {
-			return "", fmt.Errorf("retiring the canceled run pull request: %w", work.ErrPermanent)
+			return "", nil, fmt.Errorf("retiring the canceled run pull request: %w", work.ErrPermanent)
 		}
-		merged, err := retirer.RetirePullRequest(ctx, in.RetirePullRequestNumber)
+		retirement, err := retirer.RetirePullRequest(ctx, in.RetirePullRequestNumber)
 		if err != nil {
-			return "", fmt.Errorf("retiring the canceled run pull request: %w", err)
+			return "", nil, fmt.Errorf("retiring the canceled run pull request: %w", err)
 		}
-		if merged {
-			return "", fmt.Errorf("canceled run pull request #%d was already merged: %w", in.RetirePullRequestNumber, work.ErrPermanent)
+		if retirement.Merged {
+			return "", &retirement, nil
 		}
 	}
 	if strings.TrimSpace(in.CarryForwardHead) == "" {
-		return a.deps.Repository.Prepare(ctx, in.CloneURL, in.Step.Branch)
+		head, err := a.deps.Repository.Prepare(ctx, in.CloneURL, in.Step.Branch)
+		return head, nil, err
 	}
 	recoveryRepository, ok := a.deps.Repository.(TargetRepositoryCarryForward)
 	if !ok {
-		return "", fmt.Errorf("preparing the target repository from the durable recovery commit: %w", work.ErrPermanent)
+		return "", nil, fmt.Errorf("preparing the target repository from the durable recovery commit: %w", work.ErrPermanent)
 	}
-	return recoveryRepository.PrepareFromCommit(ctx, in.CloneURL, in.Step.Branch, in.CarryForwardHead)
+	head, err := recoveryRepository.PrepareFromCommit(ctx, in.CloneURL, in.Step.Branch, in.CarryForwardHead)
+	return head, nil, err
 }
 
 // RestoreTargetRepository reconstructs a replacement filesystem from the

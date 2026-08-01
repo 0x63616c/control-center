@@ -179,3 +179,11 @@ type PullRequestMergeResult struct {
 	PullRequest PullRequest
 	Diagnostic  string
 }
+
+// PullRequestRetirement is the authoritative state observed while fencing a
+// canceled Run's pull request before a successor starts.
+type PullRequestRetirement struct {
+	Merged       bool
+	ReviewedHead string
+	MergeSHA     string
+}
