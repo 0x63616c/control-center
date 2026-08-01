@@ -220,6 +220,7 @@ func modelRequest(
 		},
 		TextVerbosity:  codexresponses.TextVerbosityMedium,
 		PromptCacheKey: input.PromptCacheKey,
+		IdempotencyKey: input.IdempotencyKey,
 		Include:        []string{"reasoning.encrypted_content"},
 	}, nil
 }

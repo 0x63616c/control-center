@@ -133,6 +133,7 @@ type TurnRequest struct {
 	Reasoning          ReasoningOptions
 	TextVerbosity      TextVerbosity
 	PromptCacheKey     string
+	IdempotencyKey     string
 	PreviousResponseID string
 	Include            []string
 }

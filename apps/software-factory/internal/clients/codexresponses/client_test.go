@@ -23,7 +23,9 @@ func TestTurnEncodesAFunctionOutputContinuation(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("session-id") != "workflow-123" || r.Header.Get("x-client-request-id") != "workflow-123" {
+		if r.Header.Get("session-id") != "workflow-123" ||
+			r.Header.Get("x-client-request-id") != "agent/run-7/plan/model/1" ||
+			r.Header.Get("Idempotency-Key") != "agent/run-7/plan/model/1" {
 			t.Errorf("session affinity headers are absent")
 		}
 		var request struct {
@@ -69,6 +71,7 @@ func TestTurnEncodesAFunctionOutputContinuation(t *testing.T) {
 		ToolChoice:         ToolChoiceAuto,
 		TextVerbosity:      TextVerbosityLow,
 		PromptCacheKey:     "workflow-123",
+		IdempotencyKey:     "agent/run-7/plan/model/1",
 	}, nil)
 	if err != nil {
 		t.Fatalf("running continuation: %v", err)

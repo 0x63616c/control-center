@@ -76,6 +76,9 @@ func TestModelTurnLoadsConversationAndStoresFinalText(t *testing.T) {
 	if turner.request.Store || turner.request.ParallelToolCalls {
 		t.Fatalf("Turn() request enables provider storage or parallel tools: %#v", turner.request)
 	}
+	if turner.request.IdempotencyKey != "agent/run-7/plan/model/1" {
+		t.Fatalf("Turn() idempotency key = %q", turner.request.IdempotencyKey)
+	}
 	if result.Outcome != agent.OutcomeFinalText || result.ConversationRef.Revision != 1 {
 		t.Fatalf("ModelTurn() result = %#v", result)
 	}

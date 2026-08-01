@@ -86,7 +86,16 @@ func (c *Client) Turn(ctx context.Context, request TurnRequest, emit EmitFunc) (
 	req.Header.Set("Content-Type", "application/json")
 	if request.PromptCacheKey != "" {
 		req.Header.Set("session-id", request.PromptCacheKey)
-		req.Header.Set("x-client-request-id", request.PromptCacheKey)
+	}
+	requestID := request.IdempotencyKey
+	if requestID == "" {
+		requestID = request.PromptCacheKey
+	}
+	if requestID != "" {
+		req.Header.Set("x-client-request-id", requestID)
+	}
+	if request.IdempotencyKey != "" {
+		req.Header.Set("Idempotency-Key", request.IdempotencyKey)
 	}
 
 	resp, err := c.httpClient.Do(req)
