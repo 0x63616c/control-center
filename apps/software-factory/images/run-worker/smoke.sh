@@ -26,7 +26,9 @@ check() { # check <name> <expected-exit> <cmd...>
     return
   fi
   printf 'ok   %s\n' "$name"
-  [ -n "$out" ] && printf '     %s\n' "$out"
+  if [ -n "$out" ]; then
+    printf '     %s\n' "$out"
+  fi
 }
 
 check "every required binary is on PATH" 0 /usr/bin/env sh -c '
