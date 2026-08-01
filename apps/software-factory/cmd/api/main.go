@@ -139,7 +139,9 @@ func run() error {
 	// The webhook consumer (#557) is deliberately NOT behind authentication.Wrap:
 	// its caller is the relay (#535), not a human or an agent, and it
 	// authenticates each delivery itself, by HMAC, exactly as the relay does.
-	// Every other path stays behind Cloudflare Access or the in-cluster bearer.
+	// The checkpoint route is the other exception: its exact-attempt capability
+	// is authenticated by the Store. Legacy API paths stay behind Cloudflare
+	// Access or the in-cluster bearer.
 	mux.Handle("/v1/hooks/github", webhook.NewHandler(cfg.WebhookSecret, ticketStore, logger, registry))
 	factory := factoryapi.NewWithCheckpointStore(buildVersion, temporalapi.NewCommands(temporal), ticketStore, ticketStore)
 	mountFactoryAPI(mux, authentication, factory)
