@@ -77,3 +77,23 @@ func TestMustSetFingerprintIsStableAcrossRegistrationOrder(t *testing.T) {
 		t.Fatalf("fingerprints = %q and %q", forward, reverse)
 	}
 }
+
+func TestMustSetRejectsBlankToolsetID(t *testing.T) {
+	t.Parallel()
+
+	read := agenttool.Bind(
+		agenttool.Define[readInput]("read_file", "Read a repository file."),
+		func(_ context.Context, _ readInput) (agenttool.Result, error) { return agenttool.Result{}, nil },
+	)
+
+	defer func() {
+		panicValue := recover()
+		if panicValue == nil {
+			t.Fatal("MustSet() did not panic")
+		}
+		if message := fmt.Sprint(panicValue); !strings.Contains(message, "toolset id is blank") {
+			t.Fatalf("panic = %q", message)
+		}
+	}()
+	agenttool.MustSet("", read)
+}

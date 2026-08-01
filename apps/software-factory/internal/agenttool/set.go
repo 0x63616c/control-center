@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // ToolsetID identifies one immutable meaning of a tool catalogue.
@@ -26,6 +27,9 @@ type Set struct {
 
 // MustSet constructs a versioned tool catalogue or panics when its contract is invalid.
 func MustSet(id ToolsetID, tools ...runtimeTool) Set {
+	if strings.TrimSpace(string(id)) == "" {
+		panic("agenttool: toolset id is blank")
+	}
 	set := Set{
 		id:             id,
 		tools:          make(map[string]runtimeTool, len(tools)),
