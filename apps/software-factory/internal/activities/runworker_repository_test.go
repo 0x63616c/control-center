@@ -68,6 +68,14 @@ type repositoryCheckpointProbe struct {
 	checkpointErr error
 }
 
+func (p *repositoryCheckpointProbe) CheckpointEffect(_ context.Context, in store.GitCheckpointInput) (store.GitCheckpoint, error) {
+	p.writes = append(p.writes, in)
+	p.loaded, p.found = in.GitCheckpoint, true
+	err := p.checkpointErr
+	p.checkpointErr = nil
+	return in.GitCheckpoint, err
+}
+
 func (p *repositoryCheckpointProbe) Load(context.Context) (store.GitCheckpoint, bool, error) {
 	return p.loaded, p.found, nil
 }

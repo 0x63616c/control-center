@@ -220,10 +220,30 @@ func (a *RunWorkerActivities) TargetMergePullRequest(ctx context.Context, in Tar
 	if err != nil {
 		return work.PullRequestMergeResult{}, fail(ctx, "merging the target pull request", err)
 	}
-	if err := a.checkpointRepositoryResult(ctx, cp, in.Step, repositoryEffectMerge, result); err != nil {
+	if err := a.checkpointRepositoryEffect(ctx, cp, in.Step, repositoryEffectMerge, result); err != nil {
 		return work.PullRequestMergeResult{}, fmt.Errorf("checkpointing target pull request merge effect: %w", err)
 	}
 	return result, nil
+}
+
+func (a *RunWorkerActivities) checkpointRepositoryEffect(ctx context.Context, cp RepositoryCheckpoint, position RepositoryStep, kind string, result any) error {
+	raw, err := json.Marshal(result)
+	if err != nil {
+		return fail(ctx, "encoding repository effect result", err)
+	}
+	envelope, err := json.Marshal(repositoryEffectEnvelope{Kind: kind, Result: raw})
+	if err != nil {
+		return fail(ctx, "encoding repository effect checkpoint", err)
+	}
+	_, err = cp.CheckpointEffect(ctx, store.GitCheckpointInput{GitCheckpoint: store.GitCheckpoint{
+		RunID: a.deps.Identity.RunID, StepOrdinal: position.StepOrdinal, Branch: position.Branch,
+		PushedHead: position.PushedHead, ObservedBase: position.ObservedBase,
+		PullRequestNumber: position.PullRequestNumber, PullRequestNodeID: position.PullRequestNodeID, StepResult: envelope,
+	}, CompletedAt: a.deps.Clock.Now().UTC()})
+	if err != nil {
+		return fail(ctx, fmt.Sprintf("checkpointing repository effect %d", position.StepOrdinal), err)
+	}
+	return nil
 }
 
 func (a *RunWorkerActivities) loadRepositoryResult(ctx context.Context, requested RepositoryStep, kind string) (RepositoryCheckpoint, json.RawMessage, bool, error) {

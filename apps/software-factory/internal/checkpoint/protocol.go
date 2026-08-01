@@ -39,6 +39,9 @@ const (
 	RepositoryPutServeMuxPattern = "PUT " + RepositoryPath
 	// RepositoryGetServeMuxPattern mounts generation-scoped reads outside broad authentication.
 	RepositoryGetServeMuxPattern = "GET " + RepositoryPath
+	// RepositoryEffectPatchServeMuxPattern records an external effect without
+	// completing its Store Step.
+	RepositoryEffectPatchServeMuxPattern = "PATCH " + RepositoryPath
 )
 
 // Attempt is running progress or terminal evidence for one active Agent Attempt.

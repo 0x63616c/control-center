@@ -55,6 +55,10 @@ func (checkpointStore) CheckpointRepository(_ context.Context, input store.Repos
 	return input.GitCheckpoint, nil
 }
 
+func (checkpointStore) CheckpointRepositoryEffect(_ context.Context, input store.RepositoryCheckpointInput) (store.GitCheckpoint, error) {
+	return input.GitCheckpoint, nil
+}
+
 func TestFactoryRoutingUsesAttemptCapabilityWithoutWeakeningLegacyAuthentication(t *testing.T) {
 	t.Parallel()
 

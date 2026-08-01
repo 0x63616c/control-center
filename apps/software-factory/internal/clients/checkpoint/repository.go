@@ -75,6 +75,16 @@ func (client *RepositoryClient) Load(ctx context.Context) (_ store.GitCheckpoint
 // Checkpoint stores a repository Step result before the activity acknowledges
 // success.
 func (client *RepositoryClient) Checkpoint(ctx context.Context, input store.GitCheckpointInput) (_ store.GitCheckpoint, err error) {
+	return client.checkpoint(ctx, http.MethodPut, input)
+}
+
+// CheckpointEffect stores an external effect result while leaving terminal
+// Store completion to its main-control transaction.
+func (client *RepositoryClient) CheckpointEffect(ctx context.Context, input store.GitCheckpointInput) (_ store.GitCheckpoint, err error) {
+	return client.checkpoint(ctx, http.MethodPatch, input)
+}
+
+func (client *RepositoryClient) checkpoint(ctx context.Context, method string, input store.GitCheckpointInput) (_ store.GitCheckpoint, err error) {
 	body, err := json.Marshal(checkpointprotocol.RepositoryWrite{
 		Repository: checkpointprotocol.Repository{
 			StepOrdinal: input.StepOrdinal, Branch: input.Branch, PushedHead: input.PushedHead,
@@ -86,7 +96,7 @@ func (client *RepositoryClient) Checkpoint(ctx context.Context, input store.GitC
 	if err != nil {
 		return store.GitCheckpoint{}, fmt.Errorf("checkpointing repository Step: encoding position: %w", err)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPut, client.endpoint, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, method, client.endpoint, bytes.NewReader(body))
 	if err != nil {
 		return store.GitCheckpoint{}, fmt.Errorf("checkpointing repository Step: building request: %w", err)
 	}

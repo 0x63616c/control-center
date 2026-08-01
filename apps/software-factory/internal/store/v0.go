@@ -448,7 +448,7 @@ type RepositoryCheckpointInput struct {
 // and completes the corresponding repository-affine Step. It refuses an older
 // position rather than allowing replacement recovery to regress a pushed head.
 func (s *Store) CheckpointGitEffect(ctx context.Context, in GitCheckpointInput) (GitCheckpoint, error) {
-	return s.checkpointGitEffect(ctx, in, nil)
+	return s.checkpointGitEffect(ctx, in, nil, true)
 }
 
 type repositoryAuthorization struct {
@@ -456,7 +456,7 @@ type repositoryAuthorization struct {
 	capability string
 }
 
-func (s *Store) checkpointGitEffect(ctx context.Context, in GitCheckpointInput, authorization *repositoryAuthorization) (GitCheckpoint, error) {
+func (s *Store) checkpointGitEffect(ctx context.Context, in GitCheckpointInput, authorization *repositoryAuthorization, completeStep bool) (GitCheckpoint, error) {
 	if s.begin == nil {
 		return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: store cannot begin a transaction")
 	}
@@ -502,7 +502,7 @@ func (s *Store) checkpointGitEffect(ctx context.Context, in GitCheckpointInput, 
 			return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: older or conflicting checkpoint: %w", work.ErrPermanent)
 		}
 		if previous.StepOrdinal == int32(in.StepOrdinal) {
-			if step.State != string(work.StepStateCompleted) || !jsonEqual(step.Result, in.StepResult) {
+			if (completeStep && (step.State != string(work.StepStateCompleted) || !jsonEqual(step.Result, in.StepResult))) || (!completeStep && step.State != string(work.StepStateRunning)) {
 				return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: conflicting completed step: %w", work.ErrPermanent)
 			}
 			if err := tx.Commit(ctx); err != nil {
@@ -520,8 +520,10 @@ func (s *Store) checkpointGitEffect(ctx context.Context, in GitCheckpointInput, 
 	if err != nil {
 		return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: writing checkpoint: %w", wrapQueryErr(err))
 	}
-	if _, err := q.CompleteTargetStep(ctx, storedb.CompleteTargetStepParams{RunID: id, Ordinal: int32(in.StepOrdinal), EndedAt: pgTimestamp(in.CompletedAt), Result: in.StepResult}); err != nil {
-		return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: completing step: %w", wrapQueryErr(err))
+	if completeStep {
+		if _, err := q.CompleteTargetStep(ctx, storedb.CompleteTargetStepParams{RunID: id, Ordinal: int32(in.StepOrdinal), EndedAt: pgTimestamp(in.CompletedAt), Result: in.StepResult}); err != nil {
+			return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: completing step: %w", wrapQueryErr(err))
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return GitCheckpoint{}, fmt.Errorf("checkpointing git effect: committing: %w", wrapQueryErr(err))
@@ -617,13 +619,23 @@ func (s *Store) LoadRepositoryCheckpoint(ctx context.Context, identity work.RunW
 // CheckpointRepository verifies the generation capability and atomically
 // persists the repository position plus its completed Step result.
 func (s *Store) CheckpointRepository(ctx context.Context, in RepositoryCheckpointInput) (GitCheckpoint, error) {
+	return s.checkpointRepository(ctx, in, true)
+}
+
+// CheckpointRepositoryEffect persists a recovery result without completing
+// the target Step. Confirmed merge finalization owns that terminal transition.
+func (s *Store) CheckpointRepositoryEffect(ctx context.Context, in RepositoryCheckpointInput) (GitCheckpoint, error) {
+	return s.checkpointRepository(ctx, in, false)
+}
+
+func (s *Store) checkpointRepository(ctx context.Context, in RepositoryCheckpointInput, completeStep bool) (GitCheckpoint, error) {
 	if err := in.Identity.Validate(); err != nil {
 		return GitCheckpoint{}, fmt.Errorf("checkpointing repository effect: %w", err)
 	}
 	if strings.TrimSpace(in.Capability) == "" || in.GitCheckpoint.RunID != in.Identity.RunID {
 		return GitCheckpoint{}, fmt.Errorf("checkpointing repository effect: identity or capability mismatch: %w", ErrRunOwnership)
 	}
-	return s.checkpointGitEffect(ctx, GitCheckpointInput{GitCheckpoint: in.GitCheckpoint, CompletedAt: in.CompletedAt}, &repositoryAuthorization{identity: in.Identity, capability: in.Capability})
+	return s.checkpointGitEffect(ctx, GitCheckpointInput{GitCheckpoint: in.GitCheckpoint, CompletedAt: in.CompletedAt}, &repositoryAuthorization{identity: in.Identity, capability: in.Capability}, completeStep)
 }
 
 func authorizeRepositoryCapability(ctx context.Context, q *storedb.Queries, runID pgtype.UUID, identity work.RunWorkerIdentity, capability string) error {

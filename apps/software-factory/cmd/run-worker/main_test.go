@@ -360,6 +360,11 @@ func (c *sessionRepositoryCheckpoint) Checkpoint(_ context.Context, value store.
 	return c.value, nil
 }
 
+func (c *sessionRepositoryCheckpoint) CheckpointEffect(_ context.Context, value store.GitCheckpointInput) (store.GitCheckpoint, error) {
+	c.value, c.found = value.GitCheckpoint, true
+	return c.value, nil
+}
+
 type sessionGitHub struct {
 	filesystem  *pinnedFilesystem
 	pullRequest work.PullRequest

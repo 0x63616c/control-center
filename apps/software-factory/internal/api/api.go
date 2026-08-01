@@ -233,6 +233,7 @@ func New(version string, commands commandClient, ticketStores ...factoryStore) *
 	huma.Put(api, checkpoint.Path, service.checkpointAgentAttempt, checkpointOperation)
 	huma.Get(api, checkpoint.Path, service.loadAgentAttemptCheckpoint, readCheckpointOperation)
 	huma.Put(api, checkpoint.RepositoryPath, service.checkpointRepository, repositoryCheckpointOperation)
+	huma.Patch(api, checkpoint.RepositoryPath, service.checkpointRepositoryEffect, repositoryCheckpointOperation)
 	huma.Get(api, checkpoint.RepositoryPath, service.loadRepositoryCheckpoint, readRepositoryCheckpointOperation)
 	huma.Get(api, "/v1/console", service.console, commandOperation("Read console snapshot", "Returns the factory Tickets for the console."))
 	huma.Post(api, "/v1/factory/pause", service.pause, commandOperation("Pause the factory", "Success means Temporal accepted the UpdateConfig signal. The dispatcher applies this configuration on its next tick; this endpoint does not poll for observable state."))
