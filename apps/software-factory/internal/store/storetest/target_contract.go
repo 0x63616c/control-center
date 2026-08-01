@@ -365,6 +365,49 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 		}
 	})
 
+	t.Run("failed agent checkpoint preserves running transcript", func(t *testing.T) {
+		s, _, runID, startedAt := claimedRun(t, newStore(t))
+		ctx := context.Background()
+		if _, err := s.StartStep(ctx, store.StartStepInput{RunID: runID, Ordinal: 1, Kind: work.StepImplement, StartedAt: startedAt}); err != nil {
+			t.Fatalf("StartStep: %v", err)
+		}
+		attemptID := store.TargetAttemptID{RunID: runID, StepOrdinal: 1, AttemptNo: 1}
+		if _, err := s.StartAgentAttempt(ctx, store.StartAgentAttemptInput{ID: attemptID, AgentStage: work.AgentStageImplement, Model: work.Model{Name: "contract-model", Effort: "medium"}, UsageState: work.UsageUnknown, StartedAt: startedAt}); err != nil {
+			t.Fatalf("StartAgentAttempt: %v", err)
+		}
+		if err := s.BindCheckpointCapability(ctx, attemptID, "contract-capability"); err != nil {
+			t.Fatalf("BindCheckpointCapability: %v", err)
+		}
+		usage := work.Usage{InputTokens: 3, CachedInputTokens: 1, OutputTokens: 2, ReasoningTokens: 1}
+		running := store.AgentCheckpointInput{
+			ID: attemptID, Capability: "contract-capability", ThreadID: "thread-1",
+			State: work.AgentAttemptRunning, UsageState: work.UsageMeasured, Usage: usage,
+			Transcript: &store.TargetTranscript{CompressedBytes: []byte("partial transcript"), Compression: "zstd", UncompressedSizeBytes: 18, Checksum: []byte("partial-checksum")},
+		}
+		if _, err := s.CheckpointAgentAttempt(ctx, running); err != nil {
+			t.Fatalf("CheckpointAgentAttempt(running): %v", err)
+		}
+		failed := store.AgentCheckpointInput{
+			ID: attemptID, Capability: "contract-capability", ThreadID: "thread-1",
+			State: work.AgentAttemptFailed, FailureKind: work.RunFailureAgentUnrecoverable,
+			UsageState: work.UsageMeasured, Usage: usage, EndedAt: startedAt.Add(time.Minute),
+		}
+		if _, err := s.CheckpointAgentAttempt(ctx, failed); err != nil {
+			t.Fatalf("CheckpointAgentAttempt(failed): %v", err)
+		}
+		if _, err := s.CheckpointAgentAttempt(ctx, failed); err != nil {
+			t.Fatalf("CheckpointAgentAttempt(failed exact retry): %v", err)
+		}
+		detail, err := s.TargetRunDetail(ctx, runID)
+		if err != nil {
+			t.Fatalf("TargetRunDetail: %v", err)
+		}
+		attempt := detail.Steps[0].Attempts[0]
+		if attempt.State != work.AgentAttemptFailed || !attempt.TranscriptPresent || !attempt.EndedAt.Equal(failed.EndedAt) {
+			t.Fatalf("failed checkpoint = %+v, want terminal failure retaining partial transcript", attempt)
+		}
+	})
+
 	t.Run("canceled owner cannot checkpoint an agent attempt", func(t *testing.T) {
 		s, ticket, runID, startedAt := claimedRun(t, newStore(t))
 		ctx := context.Background()

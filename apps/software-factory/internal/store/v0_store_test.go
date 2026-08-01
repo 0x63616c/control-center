@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store/storetest"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -630,6 +632,81 @@ func TestSucceededAgentCheckpointRequiresCompleteDurableEvidence(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRunningAgentCheckpointRetryPropagatesTranscriptReadFailure(t *testing.T) {
+	s, pool := newTestStoreAndPool(t)
+	ctx := context.Background()
+	ticket, err := s.CreateTicket(ctx, "checkpoint read failure", "", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	runID := newTestRunID(t)
+	startedAt := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	if _, err := s.ClaimAndStartRun(ctx, store.ClaimRunInput{TicketID: ticket.ID, RunID: runID, StartedAt: startedAt}); err != nil {
+		t.Fatalf("ClaimAndStartRun: %v", err)
+	}
+	if _, err := s.StartStep(ctx, store.StartStepInput{RunID: runID, Ordinal: 1, Kind: work.StepImplement, StartedAt: startedAt}); err != nil {
+		t.Fatalf("StartStep: %v", err)
+	}
+	attemptID := store.TargetAttemptID{RunID: runID, StepOrdinal: 1, AttemptNo: 1}
+	if _, err := s.StartAgentAttempt(ctx, store.StartAgentAttemptInput{ID: attemptID, AgentStage: work.AgentStageImplement, Model: work.Model{Name: "m", Effort: "medium"}, UsageState: work.UsageUnknown, StartedAt: startedAt}); err != nil {
+		t.Fatalf("StartAgentAttempt: %v", err)
+	}
+	if err := s.BindCheckpointCapability(ctx, attemptID, "capability"); err != nil {
+		t.Fatalf("BindCheckpointCapability: %v", err)
+	}
+	checkpoint := store.AgentCheckpointInput{
+		ID: attemptID, Capability: "capability", ThreadID: "thread-1",
+		State: work.AgentAttemptRunning, UsageState: work.UsageMeasured,
+		Transcript: &store.TargetTranscript{CompressedBytes: []byte("partial"), Compression: "zstd", UncompressedSizeBytes: 7, Checksum: []byte("checksum")},
+	}
+	if _, err := s.CheckpointAgentAttempt(ctx, checkpoint); err != nil {
+		t.Fatalf("CheckpointAgentAttempt(running): %v", err)
+	}
+
+	readFailure := errors.New("transcript persistence unavailable")
+	failing := store.New(&transcriptReadFailurePool{Pool: pool, err: readFailure})
+	_, err = failing.CheckpointAgentAttempt(ctx, checkpoint)
+	if !errors.Is(err, readFailure) {
+		t.Fatalf("CheckpointAgentAttempt(retry) error = %v, want transcript read failure", err)
+	}
+	if errors.Is(err, work.ErrPermanent) {
+		t.Fatalf("CheckpointAgentAttempt(retry) error = %v, want retryable persistence failure", err)
+	}
+}
+
+type transcriptReadFailurePool struct {
+	*pgxpool.Pool
+	err error
+}
+
+func (p *transcriptReadFailurePool) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := p.Pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return transcriptReadFailureTx{Tx: tx, err: p.err}, nil
+}
+
+type transcriptReadFailureTx struct {
+	pgx.Tx
+	err error
+}
+
+func (tx transcriptReadFailureTx) QueryRow(ctx context.Context, query string, args ...interface{}) pgx.Row {
+	if strings.Contains(query, "FROM run_agent_transcript") {
+		return transcriptReadFailureRow{err: tx.err}
+	}
+	return tx.Tx.QueryRow(ctx, query, args...)
+}
+
+type transcriptReadFailureRow struct {
+	err error
+}
+
+func (row transcriptReadFailureRow) Scan(...interface{}) error {
+	return row.err
 }
 
 func TestCheckpointCapabilityCannotSelectAnotherAttemptInTheSameRun(t *testing.T) {

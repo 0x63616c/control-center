@@ -173,7 +173,7 @@ func (f *Store) CheckpointAgentAttempt(_ context.Context, in store.AgentCheckpoi
 		return store.AgentAttempt{}, fmt.Errorf("attempt %s: %w", in.ID, store.ErrNotFound)
 	}
 	if attempt.State != work.AgentAttemptRunning {
-		if !terminalAgentCheckpointMatches(attempt, in) || !targetTranscriptMatches(f.targetTranscripts[in.ID], in.Transcript) {
+		if !terminalAgentCheckpointMatches(attempt, in) || (in.Transcript != nil && !targetTranscriptMatches(f.targetTranscripts[in.ID], in.Transcript)) {
 			return store.AgentAttempt{}, fmt.Errorf("checkpoint: conflicting terminal checkpoint: %w", work.ErrPermanent)
 		}
 		return attempt, nil
@@ -184,12 +184,12 @@ func (f *Store) CheckpointAgentAttempt(_ context.Context, in store.AgentCheckpoi
 		}
 		return attempt, nil
 	}
-	attempt.ProviderThreadID, attempt.State, attempt.FailureKind, attempt.UsageState, attempt.Usage, attempt.EndedAt, attempt.Result = in.ThreadID, in.State, in.FailureKind, in.UsageState, in.Usage, in.EndedAt, in.Result
-	attempt.TranscriptPresent = in.Transcript != nil
-	f.targetAttempts[in.ID] = attempt
 	if in.Transcript != nil {
 		f.targetTranscripts[in.ID] = *in.Transcript
 	}
+	attempt.ProviderThreadID, attempt.State, attempt.FailureKind, attempt.UsageState, attempt.Usage, attempt.EndedAt, attempt.Result = in.ThreadID, in.State, in.FailureKind, in.UsageState, in.Usage, in.EndedAt, in.Result
+	_, attempt.TranscriptPresent = f.targetTranscripts[in.ID]
+	f.targetAttempts[in.ID] = attempt
 	return attempt, nil
 }
 

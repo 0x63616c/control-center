@@ -575,11 +575,11 @@ func (s *Store) CheckpointAgentAttempt(ctx context.Context, in AgentCheckpointIn
 		}
 		storedTranscript, transcriptErr := q.TargetAgentTranscript(ctx, storedb.TargetAgentTranscriptParams{RunID: id, StepOrdinal: int32(in.ID.StepOrdinal), AttemptNo: int32(in.ID.AttemptNo)})
 		switch {
-		case in.Transcript == nil && errors.Is(transcriptErr, pgx.ErrNoRows):
-		case in.Transcript == nil || errors.Is(transcriptErr, pgx.ErrNoRows):
-			return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: conflicting terminal transcript: %w", work.ErrPermanent)
-		case transcriptErr != nil:
+		case transcriptErr != nil && !errors.Is(transcriptErr, pgx.ErrNoRows):
 			return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: reading terminal transcript: %w", wrapQueryErr(transcriptErr))
+		case in.Transcript == nil:
+		case errors.Is(transcriptErr, pgx.ErrNoRows):
+			return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: conflicting terminal transcript: %w", work.ErrPermanent)
 		case !targetTranscriptMatches(storedTranscript, *in.Transcript):
 			return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: conflicting terminal transcript: %w", work.ErrPermanent)
 		}
@@ -589,8 +589,17 @@ func (s *Store) CheckpointAgentAttempt(ctx context.Context, in AgentCheckpointIn
 		return agentAttemptFromRow(current), nil
 	}
 	if in.State == work.AgentAttemptRunning && current.ProviderThreadID != "" {
+		if !runningAgentCheckpointMatches(current, in) {
+			return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: conflicting running checkpoint: %w", work.ErrPermanent)
+		}
 		storedTranscript, transcriptErr := q.TargetAgentTranscript(ctx, storedb.TargetAgentTranscriptParams{RunID: id, StepOrdinal: int32(in.ID.StepOrdinal), AttemptNo: int32(in.ID.AttemptNo)})
-		if !runningAgentCheckpointMatches(current, in) || !targetTranscriptMatchesOptional(storedTranscript, transcriptErr, in.Transcript) {
+		switch {
+		case transcriptErr != nil && !errors.Is(transcriptErr, pgx.ErrNoRows):
+			return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: reading running transcript: %w", wrapQueryErr(transcriptErr))
+		case in.Transcript == nil && errors.Is(transcriptErr, pgx.ErrNoRows):
+		case in.Transcript == nil || errors.Is(transcriptErr, pgx.ErrNoRows):
+			return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: conflicting running checkpoint: %w", work.ErrPermanent)
+		case !targetTranscriptMatches(storedTranscript, *in.Transcript):
 			return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: conflicting running checkpoint: %w", work.ErrPermanent)
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -980,13 +989,6 @@ func terminalAgentCheckpointMatches(current storedb.RunAgentAttempt, in AgentChe
 
 func runningAgentCheckpointMatches(current storedb.RunAgentAttempt, in AgentCheckpointInput) bool {
 	return terminalAgentCheckpointMatches(current, in) && in.State == work.AgentAttemptRunning && in.EndedAt.IsZero() && len(in.Result) == 0
-}
-
-func targetTranscriptMatchesOptional(current storedb.RunAgentTranscript, err error, in *TargetTranscript) bool {
-	if in == nil {
-		return errors.Is(err, pgx.ErrNoRows)
-	}
-	return err == nil && targetTranscriptMatches(current, *in)
 }
 
 func targetTranscriptMatches(current storedb.RunAgentTranscript, in TargetTranscript) bool {
