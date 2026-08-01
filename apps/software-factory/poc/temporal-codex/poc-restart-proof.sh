@@ -40,11 +40,22 @@ kubectl --context "${kube_context}" --namespace "${namespace}" delete pod "${old
   --grace-period=0 \
   --force \
   --wait=true
-kubectl --context "${kube_context}" --namespace "${namespace}" rollout status deployment/agent-poc-worker --timeout=120s
+new_pod=""
+for _ in $(seq 1 200); do
+  new_pod="$(kubectl --context "${kube_context}" --namespace "${namespace}" get pod \
+    -l app=agent-poc-worker -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  if [[ -n "${new_pod}" && "${new_pod}" != "${old_pod}" ]]; then
+    break
+  fi
+  sleep 0.1
+done
+if [[ -z "${new_pod}" || "${new_pod}" == "${old_pod}" ]]; then
+  echo "the deployment did not create a replacement worker pod" >&2
+  exit 1
+fi
 kubectl --context "${kube_context}" --namespace "${namespace}" wait \
   --for=condition=Ready \
-  pod \
-  -l app=agent-poc-worker \
+  "pod/${new_pod}" \
   --timeout=120s
 
 kubectl --context "${kube_context}" --namespace "${namespace}" exec deployment/agent-poc-worker -- \

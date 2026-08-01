@@ -46,12 +46,12 @@ Session if strict same-pod affinity is required.
    heartbeat metadata. HTTP/SSE parsing, OAuth, and tool execution remain in
    activities with explicit timeouts and retry policies.
 3. **Handling rotating credentials without leaking or replaying them.** The
-   user explicitly selects an auth file. Kubernetes stores it in a namespaced
-   Secret, mounts the seed read-only, and copies it into a mode-0600 `emptyDir`
-   runtime file. The sole worker serializes refreshes, atomically persists a
-   rotated pair, and halts rather than replaying a token after an uncertain
-   refresh outcome. Logs, workflow inputs, results, and heartbeats contain no
-   credential material.
+   user explicitly selects the initial auth file. The repo's `codexauth.Source`
+   takes a durable lease in a namespaced Kubernetes Secret before presenting a
+   refresh token, then atomically stores the rotated pair and generation state
+   with compare-and-swap. A crashed process leaves enough durable state for its
+   replacement to avoid replaying an uncertain single-use token. Logs,
+   workflow inputs, results, and heartbeats contain no credential material.
 
 ## Run locally
 
@@ -71,7 +71,9 @@ export CODEX_MODEL="gpt-5.6-sol"
 kubectl --context orbstack -n codex-agent-poc get pods
 ```
 
-`poc-direct-smoke.sh` proves the private endpoint without Temporal.
+On first setup, `poc-up.sh` seeds `codex-auth` from the selected file. Later
+runs reuse the cluster's durable Secret so they cannot overwrite a rotated
+credential with the original seed. `poc-direct-smoke.sh` proves the private endpoint without Temporal.
 `poc-run.sh` proves the full two-model-turn tool loop. The restart script waits
 until the tool activity is running, force-deletes the sole worker pod, then
 attaches to the same workflow and prints the activity attempt identities.
@@ -80,12 +82,18 @@ attaches to the same workflow and prints the activity attempt identities.
 
 - Never print, inspect, commit, or copy the contents of `CODEX_AUTH_FILE` into
   command output. The setup script only passes the selected file to `kubectl`.
-- The pod has no service-account token, no RBAC, a read-only root filesystem,
-  dropped capabilities, and non-root containers.
-- A successful token rotation is durable only in the current pod's `emptyDir`.
-  Before replacing that pod after a live rotation, re-seed from the
-  user-controlled source. Production use needs the existing leased
-  `codexauth.Source` or another durable single-writer credential store.
+- The pod has a dedicated service account whose namespaced Role can only get
+  and update the `codex-auth` Secret. It cannot create, delete, or list Secrets.
+  The container also has a read-only root filesystem, dropped capabilities,
+  and a non-root user.
+- After the cluster source rotates, its Secret is authoritative and the
+  original local seed may be stale. Do not blindly replace the Secret with that
+  file. A deliberate re-seed starts with a fresh `codex login`.
+- Live proof does not deliberately force an early OAuth rotation because doing
+  so invalidates the refresh token in the user's local Codex login. The exact
+  HTTP refresh exchange, durable lease, rotation, crash, and unknown-outcome
+  paths are covered by the existing `codexauth` contract tests; the composed
+  source is exercised live when it supplies each direct model turn.
 - The endpoint and ChatGPT subscription authentication are private,
   unsupported interfaces. A supported product should use the public OpenAI API
   with separately billed API credentials.
