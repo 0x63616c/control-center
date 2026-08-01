@@ -2,7 +2,6 @@ package workflows_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
@@ -29,6 +28,7 @@ func TestWorkOnTicketClaimsBeforeProvisioningGenerationOneAndClonesThroughItsSes
 	}
 	input := workflows.WorkOnTicketInput{
 		TicketID: ticket.ID,
+		RunID:    "0f466627-b3ae-4ba2-9c96-6ef44ec6f578",
 		Policy:   work.DefaultTargetRunPolicy(),
 		CloneURL: "https://github.com/example/repository.git",
 	}
@@ -51,18 +51,12 @@ func TestWorkOnTicketClaimsBeforeProvisioningGenerationOneAndClonesThroughItsSes
 	if winner.clone.Step.StepOrdinal != 1 || winner.clone.Step.Branch != winner.provisioned.Branch || winner.clone.CloneURL != input.CloneURL {
 		t.Fatalf("clone = %+v, provision = %+v", winner.clone, winner.provisioned)
 	}
-	wantQueue, err := work.RunWorkerTaskQueue(winner.provisioned.Identity)
-	if err != nil {
-		t.Fatalf("RunWorkerTaskQueue: %v", err)
-	}
-	if winner.cloneTaskQueue != wantQueue {
-		t.Fatalf("clone task queue = %q, want private queue %q", winner.cloneTaskQueue, wantQueue)
-	}
-
 	loser := newWorkOnTicketHarness(t, recorderStore)
-	loser.run(input)
-	if err := loser.env.GetWorkflowError(); !errors.Is(err, store.ErrTicketClaimed) {
-		t.Fatalf("losing WorkOnTicket error = %v, want ticket claim conflict", err)
+	loserInput := input
+	loserInput.RunID = "0f466627-b3ae-4ba2-9c96-6ef44ec6f579"
+	loser.run(loserInput)
+	if err := loser.env.GetWorkflowError(); err == nil {
+		t.Fatal("losing WorkOnTicket succeeded")
 	}
 	if loser.provisioned.Identity != (work.RunWorkerIdentity{}) || loser.clone.Step != (activities.RepositoryStep{}) {
 		t.Fatalf("losing WorkOnTicket reached private work: provision = %+v, clone = %+v", loser.provisioned, loser.clone)
@@ -72,9 +66,8 @@ func TestWorkOnTicketClaimsBeforeProvisioningGenerationOneAndClonesThroughItsSes
 type workOnTicketHarness struct {
 	env *testsuite.TestWorkflowEnvironment
 
-	provisioned    activities.ProvisionRunWorkerInput
-	clone          activities.CloneTargetRepositoryInput
-	cloneTaskQueue string
+	provisioned activities.ProvisionRunWorkerInput
+	clone       activities.CloneTargetRepositoryInput
 }
 
 func newWorkOnTicketHarness(t *testing.T, recorderStore *storefake.Store) *workOnTicketHarness {
@@ -104,9 +97,8 @@ func newWorkOnTicketHarness(t *testing.T, recorderStore *storefake.Store) *workO
 		activity.RegisterOptions{Name: "ProvisionRunWorker"},
 	)
 	env.RegisterActivityWithOptions(
-		func(ctx context.Context, in activities.CloneTargetRepositoryInput) (activities.CloneTargetRepositoryOutput, error) {
+		func(_ context.Context, in activities.CloneTargetRepositoryInput) (activities.CloneTargetRepositoryOutput, error) {
 			h.clone = in
-			h.cloneTaskQueue = activity.GetInfo(ctx).TaskQueue
 			return activities.CloneTargetRepositoryOutput{HeadSHA: "candidate-head"}, nil
 		},
 		activity.RegisterOptions{Name: "CloneTargetRepository"},

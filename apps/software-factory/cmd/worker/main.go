@@ -185,11 +185,15 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("building the transcript recording activity set: %w", err)
 	}
+	targetRecordingActs, err := activities.NewTargetRecordingActivities(factoryStore)
+	if err != nil {
+		return fmt.Errorf("building the target recording activity set: %w", err)
+	}
 
 	// Registration site. Every workflow and activity set this worker runs is
 	// registered here, on this worker, and nowhere else — one queue, one
 	// worker, one list.
-	register(w, acts, runWorkerControl, ticketActs, recordingActs, transcriptActs, logger)
+	register(w, acts, runWorkerControl, ticketActs, recordingActs, transcriptActs, targetRecordingActs, logger)
 
 	// Idempotent: a worker replica that loses the race to start this simply
 	// attaches to the execution the winner started, which is why it happens on
@@ -273,18 +277,21 @@ func register(
 	ticketActs *activities.TicketActivities,
 	recordingActs *activities.RecordingActivities,
 	transcriptActs *activities.TranscriptRecordingActivities,
+	targetRecordingActs *activities.TargetRecordingActivities,
 	logger *slog.Logger,
 ) {
 	w.RegisterWorkflow(workflows.FactoryWorkTicket)
 	w.RegisterWorkflow(workflows.FactoryDispatcher)
+	w.RegisterWorkflow(workflows.WorkOnTicket)
 	w.RegisterActivity(acts)
 	w.RegisterActivity(runWorkerControl)
 	w.RegisterActivity(ticketActs)
 	w.RegisterActivity(recordingActs)
 	w.RegisterActivity(transcriptActs)
+	w.RegisterActivity(targetRecordingActs)
 
 	logger.Info("registrations",
-		slog.Int("workflows", 2),
+		slog.Int("workflows", 3),
 		slog.Int("stages_per_ticket", len(work.Pipeline())),
 		slog.Int("max_in_flight", work.DefaultFactoryConfig().MaxInFlight),
 	)
