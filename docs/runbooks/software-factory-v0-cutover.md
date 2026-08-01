@@ -466,11 +466,13 @@ while IFS= read -r ticket_id; do
     >>"${gate10_dir}/07-api-ticket-runs.jsonl"
 done < <(jq -r '.tickets[].id' "${gate10_dir}/07-api-tickets.json")
 
+# The API encodes a ticket with no run history as `null`; normalize it to an
+# empty array before checking active-run and terminal-outcome invariants.
 jq -s -e '
   all(.[];
-    ([.runs[] | select(.active)] | length) ==
+    ([(.runs // [])[] | select(.active)] | length) ==
       (if .ticket.state == "active" then 1 else 0 end) and
-    all(.runs[];
+    all((.runs // [])[];
       if .active then
         .outcome == ""
       else
