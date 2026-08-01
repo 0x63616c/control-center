@@ -97,3 +97,35 @@ func TestMustSetRejectsBlankToolsetID(t *testing.T) {
 	}()
 	agenttool.MustSet("", read)
 }
+
+func TestMustSetRejectsBlankToolIdentity(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name        string
+		toolName    string
+		description string
+		wantPanic   string
+	}{
+		{name: "name", toolName: " ", description: "Read a repository file.", wantPanic: "tool name is blank"},
+		{name: "description", toolName: "read_file", description: " ", wantPanic: `tool "read_file" description is blank`},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			tool := agenttool.Bind(
+				agenttool.Define[readInput](testCase.toolName, testCase.description),
+				func(_ context.Context, _ readInput) (agenttool.Result, error) { return agenttool.Result{}, nil },
+			)
+			defer func() {
+				panicValue := recover()
+				if panicValue == nil {
+					t.Fatal("MustSet() did not panic")
+				}
+				if message := fmt.Sprint(panicValue); !strings.Contains(message, testCase.wantPanic) {
+					t.Fatalf("panic = %q", message)
+				}
+			}()
+			agenttool.MustSet("coding-read-v1", tool)
+		})
+	}
+}

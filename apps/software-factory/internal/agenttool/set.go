@@ -37,6 +37,12 @@ func MustSet(id ToolsetID, tools ...runtimeTool) Set {
 	}
 	for _, tool := range tools {
 		specification := tool.Specification()
+		if strings.TrimSpace(specification.Name) == "" {
+			panic(fmt.Sprintf("agenttool: tool name is blank in toolset %q", id))
+		}
+		if strings.TrimSpace(specification.Description) == "" {
+			panic(fmt.Sprintf("agenttool: tool %q description is blank in toolset %q", specification.Name, id))
+		}
 		if _, exists := set.tools[specification.Name]; exists {
 			panic(fmt.Sprintf("agenttool: duplicate tool %q in toolset %q", specification.Name, id))
 		}
