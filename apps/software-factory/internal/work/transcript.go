@@ -1,5 +1,15 @@
 package work
 
+const (
+	// MaxTargetTranscriptUncompressedBytes keeps one Agent Attempt below the
+	// Temporal payload warning boundary while retaining more than the largest
+	// measured production transcript (292 KiB).
+	MaxTargetTranscriptUncompressedBytes = 320 << 10
+	// MaxTargetTranscriptCompressedBytes is the Store/API defense in depth for
+	// the compressed row carried over the checkpoint protocol.
+	MaxTargetTranscriptCompressedBytes = 384 << 10
+)
+
 // Transcript is one stage attempt's whole raw event stream, as JSONL.
 //
 // It exists for #434's step 3 (D5): once RunStage executes inside a sandbox
@@ -23,7 +33,8 @@ package work
 // Temporal's 512 KiB payload warn threshold. That is accepted — it is the
 // price of relaying at all — but it is also why nothing else is added to
 // RunStageOutput's payload alongside it, and why PersistTranscript carries
-// exactly one Transcript per call rather than batching several.
+// exactly one Transcript per call rather than batching several. Target Run
+// Worker checkpoints additionally enforce the bounds above.
 type Transcript []byte
 
 // Bytes returns the transcript's raw content.

@@ -1331,6 +1331,9 @@ func (s *Store) CancelRun(ctx context.Context, in CancelRunInput) (TerminalResul
 
 // Validate reports whether a checkpoint contains the durable evidence its state requires.
 func (in AgentCheckpointInput) Validate() error {
+	if in.Transcript != nil && (in.Transcript.UncompressedSizeBytes > work.MaxTargetTranscriptUncompressedBytes || len(in.Transcript.CompressedBytes) > work.MaxTargetTranscriptCompressedBytes) {
+		return fmt.Errorf("checkpointing agent attempt %s: transcript exceeds durable size limit: %w", in.ID, work.ErrPermanent)
+	}
 	if in.State != work.AgentAttemptRunning && in.State != work.AgentAttemptSucceeded && in.State != work.AgentAttemptFailed {
 		return fmt.Errorf("checkpointing agent attempt %s: invalid state: %w", in.ID, work.ErrPermanent)
 	}
