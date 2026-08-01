@@ -214,3 +214,7 @@ func ParseFactoryTicketBranchName(branch string) (ticketID int64, ok bool) {
 // an already-running execution rather than erroring on it — is what makes
 // that idempotent. A second spelling anywhere would be a second dispatcher.
 const FactoryDispatcherWorkflowID = "software-factory-ticket-dispatcher"
+
+// TargetDispatcherWorkflowID is the stable singleton ID for the inactive v0
+// dispatcher. It stays disjoint from the legacy dispatcher until cutover.
+const TargetDispatcherWorkflowID = "software-factory-target-dispatcher"
