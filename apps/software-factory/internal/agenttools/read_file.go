@@ -35,13 +35,8 @@ func NewReadFile(
 	artifacts agent.ArtifactStore,
 	maxInlineBytes int,
 ) (*agenttool.BoundTool[ReadFileInput], error) {
-	root, err := filepath.EvalSymlinks(repositoryRoot)
-	if err != nil {
-		return nil, fmt.Errorf("resolve repository root: %w", err)
-	}
-	root, err = filepath.Abs(root)
-	if err != nil {
-		return nil, fmt.Errorf("make repository root absolute: %w", err)
+	if strings.TrimSpace(repositoryRoot) == "" || !filepath.IsAbs(repositoryRoot) {
+		return nil, fmt.Errorf("read_file repository root must be absolute")
 	}
 	if strings.TrimSpace(artifactIdentity) == "" {
 		return nil, fmt.Errorf("read_file needs an artifact identity")
@@ -51,6 +46,10 @@ func NewReadFile(
 	}
 	definition := agenttool.Define[ReadFileInput]("read_file", "Read one file inside the ticket repository.")
 	return agenttool.Bind(definition, func(ctx context.Context, input ReadFileInput) (agenttool.Result, error) {
+		root, err := resolveRepositoryRoot(repositoryRoot)
+		if err != nil {
+			return toolError("repository is unavailable: %v", err), nil
+		}
 		target, result := confinedFile(root, input.Path)
 		if result.IsError {
 			return result, nil
@@ -85,6 +84,14 @@ func NewReadFile(
 		}
 		return agenttool.Result{Content: string(encoded)}, nil
 	}), nil
+}
+
+func resolveRepositoryRoot(root string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Abs(resolved)
 }
 
 func confinedFile(root, requested string) (string, agenttool.Result) {

@@ -63,19 +63,15 @@ func newExecCommand(
 	timeout time.Duration,
 	policy func([]string) error,
 ) (*agenttool.BoundTool[ExecCommandInput], error) {
-	root, err := filepath.EvalSymlinks(repositoryRoot)
-	if err != nil {
-		return nil, fmt.Errorf("resolve repository root: %w", err)
-	}
-	root, err = filepath.Abs(root)
-	if err != nil {
-		return nil, fmt.Errorf("make repository root absolute: %w", err)
-	}
-	if artifactIdentity == "" || maxInlineBytes < 1 || timeout <= 0 {
+	if !filepath.IsAbs(repositoryRoot) || artifactIdentity == "" || maxInlineBytes < 1 || timeout <= 0 {
 		return nil, fmt.Errorf("exec_command needs artifact identity, positive preview size, and positive timeout")
 	}
 	definition := agenttool.Define[ExecCommandInput]("exec_command", "Execute one explicit argv command in the ticket repository.")
 	return agenttool.Bind(definition, func(ctx context.Context, input ExecCommandInput) (agenttool.Result, error) {
+		root, err := resolveRepositoryRoot(repositoryRoot)
+		if err != nil {
+			return toolError("repository is unavailable: %v", err), nil
+		}
 		if policy != nil {
 			if err := policy(input.Argv); err != nil {
 				return toolError("read-only exec_command rejected argv: %v", err), nil

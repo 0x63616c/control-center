@@ -22,12 +22,18 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
+	"go.temporal.io/sdk/activity"
 	tlog "go.temporal.io/sdk/log"
 	"go.temporal.io/sdk/worker"
+	"go.temporal.io/sdk/workflow"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
+	agentactivities "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities/agent"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agenttools"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codex"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codexresponses"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/k8s"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/runs"
@@ -163,6 +169,10 @@ func run() error {
 		return err
 	}
 
+	tokenSource, err := newCodexAuthSource(cfg, clock.System{}, logger)
+	if err != nil {
+		return fmt.Errorf("building the codex credential source: %w", err)
+	}
 	acts, err := newActivities(cfg, temporal, renderer, metrics, logger, factoryStore)
 	if err != nil {
 		return fmt.Errorf("building the activity set: %w", err)
@@ -183,11 +193,37 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("building the transcript recording activity set: %w", err)
 	}
+	agentTranscriptActs, err := activities.NewAgentTranscriptRecordingActivities(factoryStore, blobStore)
+	if err != nil {
+		return fmt.Errorf("building the agent transcript activity set: %w", err)
+	}
+	toolsets, err := agenttools.NewToolsets(work.RepoDir, "model/catalog", blobStore)
+	if err != nil {
+		return fmt.Errorf("building the model-visible agent toolsets: %w", err)
+	}
+	credentialSource, err := codexresponses.NewManagedCredentialSource(tokenSource)
+	if err != nil {
+		return fmt.Errorf("adapting the durable codex credential source: %w", err)
+	}
+	turner, err := codexresponses.New(
+		&http.Client{Timeout: 110 * time.Second}, cfg.CodexResponsesEndpoint, credentialSource, logger,
+	)
+	if err != nil {
+		return fmt.Errorf("building the direct Codex Responses client: %w", err)
+	}
+	modelActs, err := agentactivities.NewActivities(turner, blobStore, toolsets...)
+	if err != nil {
+		return fmt.Errorf("building the agent model activity set: %w", err)
+	}
+	promptActs, err := agentactivities.NewPromptActivities(prompts.NewActivityRenderer(renderer), blobStore)
+	if err != nil {
+		return fmt.Errorf("building the agent prompt activity set: %w", err)
+	}
 
 	// Registration site. Every workflow and activity set this worker runs is
 	// registered here, on this worker, and nowhere else — one queue, one
 	// worker, one list.
-	register(w, acts, ticketActs, recordingActs, transcriptActs, logger)
+	register(w, acts, ticketActs, recordingActs, transcriptActs, agentTranscriptActs, modelActs, promptActs, logger)
 
 	// Idempotent: a worker replica that loses the race to start this simply
 	// attaches to the execution the winner started, which is why it happens on
@@ -270,17 +306,28 @@ func register(
 	ticketActs *activities.TicketActivities,
 	recordingActs *activities.RecordingActivities,
 	transcriptActs *activities.TranscriptRecordingActivities,
+	agentTranscriptActs *activities.AgentTranscriptRecordingActivities,
+	modelActs *agentactivities.Activities,
+	promptActs *agentactivities.PromptActivities,
 	logger *slog.Logger,
 ) {
 	w.RegisterWorkflow(workflows.FactoryWorkTicket)
 	w.RegisterWorkflow(workflows.FactoryDispatcher)
+	w.RegisterWorkflowWithOptions(workflows.AgentWorkflow, workflow.RegisterOptions{Name: agent.WorkflowName})
 	w.RegisterActivity(acts)
 	w.RegisterActivity(ticketActs)
 	w.RegisterActivity(recordingActs)
 	w.RegisterActivity(transcriptActs)
+	w.RegisterActivityWithOptions(promptActs.Prepare, activity.RegisterOptions{Name: agent.PrepareActivityName})
+	w.RegisterActivityWithOptions(modelActs.ModelTurn, activity.RegisterOptions{Name: agent.ModelTurnActivityName})
+	w.RegisterActivityWithOptions(promptActs.Finalize, activity.RegisterOptions{Name: agent.FinalizeActivityName})
+	w.RegisterActivityWithOptions(
+		agentTranscriptActs.PersistAgentTranscript,
+		activity.RegisterOptions{Name: agent.PersistTranscriptActivityName},
+	)
 
 	logger.Info("registrations",
-		slog.Int("workflows", 2),
+		slog.Int("workflows", 3),
 		slog.Int("stages_per_ticket", len(work.Pipeline())),
 		slog.Int("max_in_flight", work.DefaultFactoryConfig().MaxInFlight),
 	)
@@ -347,13 +394,8 @@ func newActivities(
 		return nil, fmt.Errorf("building the transcript sink at %s (TRANSCRIPTS_ROOT): %w", cfg.TranscriptsRoot, err)
 	}
 
-	tokenSource, err := newCodexAuthSource(cfg, clk, logger)
-	if err != nil {
-		return nil, fmt.Errorf("building the codex credential source: %w", err)
-	}
-
 	return activities.New(buildDeps(
-		cfg, ghCfg, ghClient, sandboxes, transcriptSink, renderer, metrics, temporal, tokenSource, dispatcherState, clk, logger,
+		cfg, ghCfg, ghClient, sandboxes, transcriptSink, renderer, metrics, temporal, dispatcherState, clk, logger,
 	))
 }
 
@@ -387,23 +429,16 @@ func buildDeps(
 	renderer *prompts.Renderer,
 	metrics *telemetry.Metrics,
 	temporal temporalapi.Client,
-	tokenSource activities.TokenSource,
 	dispatcherState activities.DispatcherStateWriter,
 	clk clock.Clock,
 	logger *slog.Logger,
 ) activities.Deps {
-	// CODEX_HOME is part of the contract with the sandbox image (like
-	// SF_BRANCH), set on every sandbox's template so codex exec always knows
-	// where to look. It is never a secret: the credential itself reaches the
-	// pod as a mounted per-ticket Secret (D3, #434), never carried in the
-	// environment.
 	sandboxTemplate := work.SandboxTemplate{
 		Image:           cfg.SandboxImage,
 		CPURequest:      cfg.SandboxCPURequest,
 		MemoryLimit:     cfg.SandboxMemoryLimit,
 		DeadlineSeconds: work.SandboxDeadlineSeconds,
 		Env: map[string]string{
-			work.CodexHomeEnv:   work.CodexHomeDir,
 			work.GhConfigDirEnv: work.GhConfigDir,
 
 			// The sandbox pod's own embedded Temporal worker (#434 step 3,
@@ -436,11 +471,6 @@ func buildDeps(
 		// projection to (#551) — the console will eventually read this instead
 		// of querying Temporal for status.
 		DispatcherState: dispatcherState,
-
-		// TokenSource fetches and refreshes the codex credential; CreateSandbox
-		// hands what it yields straight to Pods.Create, which turns it into a
-		// per-ticket Secret mounted into the pod (D3, #434). See #398.
-		TokenSource: tokenSource,
 
 		Log:     logger,
 		Clock:   clk,

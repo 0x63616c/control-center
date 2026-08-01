@@ -46,14 +46,6 @@ type Deps struct {
 	// deploy config as opposed to a live dependency.
 	RepoURL string
 
-	// TokenSource yields the codex credential document a sandbox needs to
-	// authenticate. CreateSandbox fetches from it and hands the document to
-	// PodLifecycle.Create, which turns it into a per-ticket Kubernetes Secret
-	// mounted into the pod before it exists (D3, #434) — never returning the
-	// document itself, because Temporal would persist it to workflow history
-	// for the namespace's whole retention.
-	TokenSource TokenSource
-
 	// Log is the injected logger. Clients and activities log themselves, so
 	// leaf code rarely logs by hand and nobody can forget.
 	Log *slog.Logger
@@ -110,9 +102,6 @@ func New(deps Deps) (*Activities, error) {
 	}
 	if deps.DispatcherState == nil {
 		missing = append(missing, "DispatcherState")
-	}
-	if deps.TokenSource == nil {
-		missing = append(missing, "TokenSource")
 	}
 	if deps.Log == nil {
 		missing = append(missing, "Log")
@@ -235,13 +224,8 @@ type CreateSandboxInput struct {
 
 // CreateSandbox creates the pod this run's stages execute in.
 //
-// It fetches the codex credential document from TokenSource and hands it to
-// Pods.Create in-process — never returning it, never logging it, and never
-// letting it appear anywhere Temporal records: CreateSandboxInput above is
-// this activity's whole recorded input, an identifier only, the same shape
-// CloneRepo's already was before this step (D3, #434, acceptance criterion
-// 5). Pods.Create is what turns the document into a per-ticket Kubernetes
-// Secret mounted into the pod; see PodLifecycle's own doc comment.
+// Provider credentials stay on the main worker and are never provisioned into
+// this sandbox.
 func (a *Activities) CreateSandbox(ctx context.Context, in CreateSandboxInput) (work.SandboxID, error) {
 	deadline := time.Duration(a.deps.Sandbox.DeadlineSeconds) * time.Second
 	if deadline <= in.RunTimeout {
@@ -254,13 +238,8 @@ func (a *Activities) CreateSandbox(ctx context.Context, in CreateSandboxInput) (
 			deadline, in.RunTimeout, work.ErrPermanent))
 	}
 
-	credential, err := a.deps.TokenSource.SandboxCredentialFile(ctx)
-	if err != nil {
-		return "", fail(ctx, fmt.Sprintf("fetching the codex credential for ticket #%d's sandbox", in.TicketNumber), err)
-	}
-
 	spec := a.deps.Sandbox.SpecForFactoryTicket(int64(in.TicketNumber), in.RunID)
-	id, err := a.deps.Pods.Create(ctx, spec, credential)
+	id, err := a.deps.Pods.Create(ctx, spec)
 	if err != nil {
 		return "", fail(ctx, fmt.Sprintf("creating the sandbox for ticket #%d", in.TicketNumber), err)
 	}
@@ -277,20 +256,8 @@ func (a *Activities) WaitSandboxReady(ctx context.Context, sandbox work.SandboxI
 
 // CloneRepo checks the ticket's repository out inside the sandbox and pushes
 // this run's branch. It must run once the sandbox is ready and before the
-// first stage: codex refuses to run outside a git repository and exits before
-// any model call, so a run that discovered a missing checkout inside `plan`
-// would already have paid for that stage against a sandbox that could never
-// have worked.
-//
-// There used to be a WriteCodexCredential activity that had to run before
-// this one, writing the codex OAuth credential into the sandbox over
-// pods/exec. D3 (#434) replaced that transport with a per-ticket Kubernetes
-// Secret CreateSandbox provisions and the pod's own spec mounts at
-// work.CodexAuthSecretMountFile; cmd/sandbox-worker symlinks
-// work.CodexAuthFile to it before registering any activity — so the
-// credential is already there by the time any activity runs, and the
-// activity that used to write it had nothing left to do. It,
-// activities.CredentialWriter and workticket.go's call to it are deleted.
+// first tool call: repository tools are intentionally unavailable until the
+// checkout exists.
 //
 // The credential is minted here, inside the activity that uses it, and never
 // returned: like InstallationToken's own doc says, Temporal persists an

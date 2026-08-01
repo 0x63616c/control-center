@@ -8,7 +8,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codexauth"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/k8s"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock/clocktest"
@@ -67,7 +66,6 @@ func TestBuildDepsSatisfiesActivitiesNew(t *testing.T) {
 		renderer,
 		telemetry.NewMetrics(prometheus.NewRegistry()),
 		nil, // temporal.Client: runs.New only stores it, it is never dialled here
-		(*codexauth.Source)(nil),
 		(*store.Store)(nil),
 		clocktest.NewFake(time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)),
 		discardLogger(),

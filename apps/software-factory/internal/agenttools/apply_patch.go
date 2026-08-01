@@ -20,19 +20,15 @@ type ApplyPatchInput struct {
 
 // NewApplyPatch builds a git-apply tool rooted in the repository.
 func NewApplyPatch(repositoryRoot string, timeout time.Duration) (*agenttool.BoundTool[ApplyPatchInput], error) {
-	root, err := filepath.EvalSymlinks(repositoryRoot)
-	if err != nil {
-		return nil, fmt.Errorf("resolve repository root: %w", err)
-	}
-	root, err = filepath.Abs(root)
-	if err != nil {
-		return nil, fmt.Errorf("make repository root absolute: %w", err)
-	}
-	if timeout <= 0 {
+	if !filepath.IsAbs(repositoryRoot) || timeout <= 0 {
 		return nil, fmt.Errorf("apply_patch timeout must be positive")
 	}
 	definition := agenttool.Define[ApplyPatchInput]("apply_patch", "Apply one unified diff inside the ticket repository.")
 	return agenttool.Bind(definition, func(ctx context.Context, input ApplyPatchInput) (agenttool.Result, error) {
+		root, err := resolveRepositoryRoot(repositoryRoot)
+		if err != nil {
+			return toolError("repository is unavailable: %v", err), nil
+		}
 		runCtx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		command := exec.CommandContext(runCtx, "git", "apply", "--whitespace=nowarn", "-")
@@ -41,7 +37,7 @@ func NewApplyPatch(repositoryRoot string, timeout time.Duration) (*agenttool.Bou
 		var stdout, stderr bytes.Buffer
 		command.Stdout = &stdout
 		command.Stderr = &stderr
-		err := command.Run()
+		err = command.Run()
 		if ctx.Err() != nil {
 			return agenttool.Result{}, fmt.Errorf("apply patch: %w", ctx.Err())
 		}

@@ -54,14 +54,8 @@ type StageRunner interface {
 // return the identifier of a pod it created but could not wait for, and would
 // leak it. Splitting them means the caller always holds the ID it needs to
 // clean up.
-//
-// Create's codexCredential parameter is D3's (#434) credential transport: an
-// implementation writes it into a per-ticket Kubernetes Secret and mounts
-// that Secret into the pod it builds, before the pod exists — never as a
-// Temporal activity payload, and never returned from Create. Delete removes
-// that Secret alongside the pod it mounted into, symmetric with Create.
 type PodLifecycle interface {
-	Create(ctx context.Context, spec work.SandboxSpec, codexCredential work.CredentialFile) (work.SandboxID, error)
+	Create(ctx context.Context, spec work.SandboxSpec) (work.SandboxID, error)
 	WaitReady(ctx context.Context, sandbox work.SandboxID) error
 	Delete(ctx context.Context, sandbox work.SandboxID) error
 }
@@ -169,29 +163,6 @@ type RepoCloner interface {
 	// must not reach a workflow: Temporal would persist it to history for the
 	// namespace's whole retention.
 	CloneRepo(ctx context.Context, sandbox work.SandboxID, cloneURL string, credential work.SandboxCredential) error
-}
-
-// TokenSource yields the credential document to write into a sandbox.
-//
-// One method hides the whole of the credential problem: expiry, the OAuth
-// refresh, the single-use rotation of the refresh token, persisting the rotated
-// value before it is used — and the codex CLI's own file format.
-//
-// It yields a whole file rather than an access token because a sandbox's
-// auth.json composed from a token alone does not merely go unscoped, it FAILS
-// TO PARSE, and codex exec never starts. What makes it parse is a set of
-// non-uniform serde attributes on a Rust struct (id_token mandatory and
-// JWT-parsed, OPENAI_API_KEY present-but-nullable, refresh_token
-// present-but-blankable). Those are facts about codex, so they live in the one
-// package that has read its source; a caller assembling the JSON would have to
-// know them, and would drift from them.
-//
-// The returned document always has its refresh token blanked, so a caller
-// cannot leak one it never receives. There is deliberately no method returning
-// a bare token: nothing needs one today, and absent API surface is a stronger
-// guarantee than a documented convention.
-type TokenSource interface {
-	SandboxCredentialFile(ctx context.Context) (work.CredentialFile, error)
 }
 
 // PromptRenderer turns a ticket and the preceding stage's output into the

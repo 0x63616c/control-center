@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codexauth"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/github"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock/clocktest"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
@@ -113,17 +112,15 @@ func (f *fakeGitHub) MergePullRequest(_ context.Context, number int, expectedHea
 }
 
 type fakePods struct {
-	created    []work.SandboxSpec
-	sawCredent []work.CredentialFile
-	deleted    []work.SandboxID
-	createErr  error
-	readyErr   error
-	deleteErr  error
+	created   []work.SandboxSpec
+	deleted   []work.SandboxID
+	createErr error
+	readyErr  error
+	deleteErr error
 }
 
-func (f *fakePods) Create(_ context.Context, spec work.SandboxSpec, credential work.CredentialFile) (work.SandboxID, error) {
+func (f *fakePods) Create(_ context.Context, spec work.SandboxSpec) (work.SandboxID, error) {
 	f.created = append(f.created, spec)
-	f.sawCredent = append(f.sawCredent, credential)
 	return work.SandboxID(fmt.Sprintf("sandbox-%d", spec.TicketNumber)), f.createErr
 }
 
@@ -298,19 +295,6 @@ func (f *fakeDispatcherState) PutDispatcherState(_ context.Context, state store.
 	return nil
 }
 
-// fakeTokenSource stands in for codexauth.Source: it yields a fixed document
-// or a fixed error, and records whether it was called.
-type fakeTokenSource struct {
-	file    work.CredentialFile
-	err     error
-	fetched int
-}
-
-func (f *fakeTokenSource) SandboxCredentialFile(context.Context) (work.CredentialFile, error) {
-	f.fetched++
-	return f.file, f.err
-}
-
 // --- harness ---------------------------------------------------------------
 
 func template() work.SandboxTemplate {
@@ -335,7 +319,6 @@ func deps() Deps {
 		Sweeper:         &fakeSweeper{},
 		Metrics:         &fakeMetrics{},
 		DispatcherState: &fakeDispatcherState{},
-		TokenSource:     &fakeTokenSource{},
 		Log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Clock:           clocktest.NewFake(time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)),
 		Sandbox:         template(),
@@ -371,7 +354,7 @@ func TestNewNamesEveryDependencyItIsMissing(t *testing.T) {
 	}
 	for _, name := range []string{
 		"GitHub", "Pods", "Repo", "Stages", "Transcripts", "Prompts", "Runs", "Sweeper", "Metrics",
-		"DispatcherState", "TokenSource", "Clock", "Log",
+		"DispatcherState", "Clock", "Log",
 	} {
 		if !strings.Contains(err.Error(), name) {
 			t.Fatalf("error %q does not name the missing %s", err, name)
@@ -461,10 +444,8 @@ func TestNewRefusesToConstructWithNoRepositoryToClone(t *testing.T) {
 func TestCreateSandboxRefusesAPodDeadlineTheRunCanOutlive(t *testing.T) {
 	t.Parallel()
 
-	tokens := &fakeTokenSource{}
 	d := deps()
 	d.Sandbox.DeadlineSeconds = 60
-	d.TokenSource = tokens
 	e := env(t)
 	a := mustNew(t, d)
 	e.RegisterActivity(a.CreateSandbox)
@@ -477,9 +458,6 @@ func TestCreateSandboxRefusesAPodDeadlineTheRunCanOutlive(t *testing.T) {
 	}
 	if d.Pods.(*fakePods).created != nil {
 		t.Fatal("the pod must not have been created at all")
-	}
-	if tokens.fetched != 0 {
-		t.Fatal("the credential must not be fetched for a deadline that was refused before it")
 	}
 	if got := errTypeOf(t, err); got != ErrTypePermanent {
 		t.Fatalf("type = %q, want %q — no retry changes a deploy-time number", got, ErrTypePermanent)
@@ -511,59 +489,6 @@ func TestCreateSandboxNamesThePodForTheRunAndTheTicket(t *testing.T) {
 	}
 	if spec.Image != template().Image || spec.CPURequest != template().CPURequest {
 		t.Fatalf("spec did not come from the template: %+v", spec)
-	}
-}
-
-func TestCreateSandboxFetchesTheCredentialAndPassesItToPodsCreate(t *testing.T) {
-	t.Parallel()
-
-	doc := work.NewCredentialFile([]byte(`{"tokens":{"access_token":"t"}}`))
-	pods := &fakePods{}
-	tokens := &fakeTokenSource{file: doc}
-	d := deps()
-	d.Pods, d.TokenSource = pods, tokens
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.CreateSandbox)
-
-	if _, err := e.ExecuteActivity(a.CreateSandbox, CreateSandboxInput{
-		TicketNumber: 328, RunID: "run-1", RunTimeout: 5 * time.Hour,
-	}); err != nil {
-		t.Fatalf("CreateSandbox: %v", err)
-	}
-
-	if tokens.fetched != 1 {
-		t.Fatalf("fetched the credential %d times, want 1", tokens.fetched)
-	}
-	if len(pods.sawCredent) != 1 || string(pods.sawCredent[0].Reveal()) != string(doc.Reveal()) {
-		t.Fatalf("Pods.Create did not receive the document TokenSource yielded: %+v", pods.sawCredent)
-	}
-	// CreateSandboxInput above is this activity's whole recorded input — the
-	// credential must never reach it (#434 D3, acceptance criterion 5).
-}
-
-func TestCreateSandboxFailsLoudlyWhenTheCredentialCannotBeFetched(t *testing.T) {
-	t.Parallel()
-
-	pods := &fakePods{}
-	tokens := &fakeTokenSource{err: permanent(codexauth.ErrUnseeded)}
-	d := deps()
-	d.Pods, d.TokenSource = pods, tokens
-	e := env(t)
-	a := mustNew(t, d)
-	e.RegisterActivity(a.CreateSandbox)
-
-	_, err := e.ExecuteActivity(a.CreateSandbox, CreateSandboxInput{
-		TicketNumber: 328, RunID: "run-1", RunTimeout: 5 * time.Hour,
-	})
-	if err == nil {
-		t.Fatal("an unseeded credential must fail CreateSandbox before any pod is created")
-	}
-	if pods.created != nil {
-		t.Fatal("the pod must not be created without a credential to seal into its Secret")
-	}
-	if got := FailureKindOf(err); got != work.FailureAuth {
-		t.Fatalf("FailureKindOf = %q, want %q — a missing codex-auth secret must pause the dispatcher, not spin", got, work.FailureAuth)
 	}
 }
 

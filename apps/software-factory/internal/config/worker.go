@@ -54,6 +54,10 @@ type Worker struct {
 	// their future payload codec clients use the same durable service.
 	BlobsURL string
 
+	// CodexResponsesEndpoint is the direct subscription-backed model endpoint.
+	// Only the main worker receives it; sandbox pods never call the provider.
+	CodexResponsesEndpoint string
+
 	// CodexAuthSecretName is the Kubernetes Secret holding the codex
 	// credential.
 	//
@@ -133,6 +137,7 @@ const (
 	envPodName                = "POD_NAME"
 	envTranscriptsRoot        = "TRANSCRIPTS_ROOT"
 	envBlobsURL               = "BLOBS_URL"
+	envCodexResponsesEndpoint = "CODEX_RESPONSES_ENDPOINT"
 	envCodexAuthSecret        = "CODEX_AUTH_SECRET_NAME"
 	envSandboxImagePullSecret = "SANDBOX_IMAGE_PULL_SECRET_NAME"
 	envLogLevel               = "LOG_LEVEL"
@@ -154,6 +159,7 @@ func workerEnvNames() []string {
 		envPodName,
 		envTranscriptsRoot,
 		envBlobsURL,
+		envCodexResponsesEndpoint,
 		envCodexAuthSecret,
 		envSandboxImagePullSecret,
 	}
@@ -175,6 +181,7 @@ func (w Worker) Validate() error {
 		envPodName:                w.PodName,
 		envTranscriptsRoot:        w.TranscriptsRoot,
 		envBlobsURL:               w.BlobsURL,
+		envCodexResponsesEndpoint: w.CodexResponsesEndpoint,
 		envCodexAuthSecret:        w.CodexAuthSecretName,
 		envSandboxImagePullSecret: w.SandboxImagePullSecretName,
 	}
@@ -202,9 +209,10 @@ func LoadWorker() (Worker, error) {
 		MetricsAddr:       os.Getenv(envMetricsAddr),
 		PodName:           os.Getenv(envPodName),
 
-		TranscriptsRoot:     os.Getenv(envTranscriptsRoot),
-		BlobsURL:            os.Getenv(envBlobsURL),
-		CodexAuthSecretName: os.Getenv(envCodexAuthSecret),
+		TranscriptsRoot:        os.Getenv(envTranscriptsRoot),
+		BlobsURL:               os.Getenv(envBlobsURL),
+		CodexResponsesEndpoint: os.Getenv(envCodexResponsesEndpoint),
+		CodexAuthSecretName:    os.Getenv(envCodexAuthSecret),
 
 		SandboxImagePullSecretName: os.Getenv(envSandboxImagePullSecret),
 	}
@@ -246,6 +254,7 @@ func describeWorkerRequirement(err error) error {
 		envPodName:                "this pod's own name, from the downward API; it identifies the credential lease holder",
 		envTranscriptsRoot:        "the mount point of the transcript volume, where stage transcripts are written",
 		envBlobsURL:               "the in-cluster payload blob API copied into sandbox pods",
+		envCodexResponsesEndpoint: "the direct subscription-backed Codex Responses endpoint",
 		envCodexAuthSecret:        "the Kubernetes Secret holding the codex credential; the worker's Role is pinned to this exact name",
 		envSandboxImagePullSecret: "the Kubernetes Secret every sandbox pod authenticates its image pull with; without it a sandbox pod ErrImagePulls against GHCR",
 	}

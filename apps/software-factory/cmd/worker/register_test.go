@@ -12,7 +12,7 @@ import (
 // rather than the function staying the one log line it started as (#340). See TestTheWorkerPollsTheQueueTheWorkflowsScheduleOnto for why this
 // is a source-level assertion rather than a run against a live worker: the
 // alternative is a live Temporal, and this file already has that pattern.
-func TestRegisterRegistersBothWorkflowsAndTheActivities(t *testing.T) {
+func TestRegisterExposesTheAgentWorkflowAndMainQueueActivities(t *testing.T) {
 	t.Parallel()
 
 	source, err := os.ReadFile("main.go")
@@ -24,10 +24,19 @@ func TestRegisterRegistersBothWorkflowsAndTheActivities(t *testing.T) {
 	for _, want := range []string{
 		"w.RegisterWorkflow(workflows.FactoryWorkTicket)",
 		"w.RegisterWorkflow(workflows.FactoryDispatcher)",
-		"w.RegisterActivity(",
+		"w.RegisterWorkflowWithOptions(workflows.AgentWorkflow",
+		"agent.PrepareActivityName",
+		"agent.ModelTurnActivityName",
+		"agent.FinalizeActivityName",
+		"agent.PersistTranscriptActivityName",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("register()'s body does not contain %q; the worker registers nothing it does not name here", want)
+		}
+	}
+	for _, forbidden := range []string{"acts.RunPlan", "acts.RunImplement", "acts.RunReview"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("register() exposes legacy CLI activity %q", forbidden)
 		}
 	}
 }

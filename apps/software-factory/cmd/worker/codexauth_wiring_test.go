@@ -6,48 +6,27 @@ import (
 	"testing"
 )
 
-// TestNewActivitiesBuildsTheCodexCredentialSource is the source-level
-// assertion that newActivities still constructs the codex token source and
-// hands it to buildDeps — the half of #398's seam that
-// TestBuildDepsSatisfiesActivitiesNew cannot see, because that test calls
-// buildDeps directly with a hand-supplied TokenSource and would stay green
-// even if newActivities stopped building a real one.
+// TestRunBuildsTheDirectModelCredentialSource is the source-level assertion
+// that the composition root constructs one durable source and adapts it for
+// direct Responses calls on the main worker.
 //
 // It reads main.go's source rather than executing newActivities, for the same
 // reason TestRegisterRegistersBothWorkflowsAndTheActivities does: newActivities
 // dials Kubernetes and reads process configuration, neither of which exists
 // in a unit test.
-func TestNewActivitiesBuildsTheCodexCredentialSource(t *testing.T) {
+func TestRunBuildsTheDirectModelCredentialSource(t *testing.T) {
 	t.Parallel()
 
 	source, err := os.ReadFile("main.go")
 	if err != nil {
 		t.Fatalf("reading main.go: %v", err)
 	}
-	body := extractFuncBody(t, string(source), "func newActivities(")
+	body := extractFuncBody(t, string(source), "func run(")
 
-	if !strings.Contains(body, "newCodexAuthSource(") {
-		t.Error("newActivities()'s body does not call newCodexAuthSource; the codex credential seam is unwired again (#398)")
-	}
-}
-
-// TestBuildDepsWiresTheCodexCredentialSeam is the source-level companion to
-// TestBuildDepsSatisfiesActivitiesNew: that test proves the Deps buildDeps
-// returns is one activities.New accepts, which already fails loudly if
-// TokenSource goes nil, but it would stay green even if buildDeps silently
-// swapped in the wrong TokenSource — anything non-nil satisfies presence.
-// This checks the actual wiring, not just that something was plugged in.
-func TestBuildDepsWiresTheCodexCredentialSeam(t *testing.T) {
-	t.Parallel()
-
-	source, err := os.ReadFile("main.go")
-	if err != nil {
-		t.Fatalf("reading main.go: %v", err)
-	}
-	body := extractFuncBody(t, string(source), "func buildDeps(")
-
-	if want := "TokenSource: tokenSource"; !strings.Contains(body, want) {
-		t.Errorf("buildDeps()'s body does not contain %q; the codex credential seam is unwired again (#398)", want)
+	for _, want := range []string{"newCodexAuthSource(", "codexresponses.NewManagedCredentialSource(", "codexresponses.New("} {
+		if !strings.Contains(body, want) {
+			t.Errorf("run() does not contain %q; the direct model credential seam is unwired", want)
+		}
 	}
 }
 
@@ -76,10 +55,6 @@ func TestSandboxTemplateCarriesItsPathEnvironment(t *testing.T) {
 	body := collapseSpace(extractFuncBody(t, string(source), "func buildDeps("))
 
 	for _, tc := range []struct{ entry, why string }{
-		{
-			"work.CodexHomeEnv: work.CodexHomeDir",
-			"codex exec in the sandbox has nowhere to read its credential from",
-		},
 		{
 			"work.GhConfigDirEnv: work.GhConfigDir",
 			"gh looks in $HOME/.config/gh instead and finds no credential",

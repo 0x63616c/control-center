@@ -1,0 +1,47 @@
+package agenttools
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agenttool"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
+)
+
+const maxInlineToolOutputBytes = 64 << 10
+
+// NewToolsets constructs both immutable production catalogues from the same
+// Go definitions used by the sandbox handlers. Repository resolution is
+// deferred until execution so the main worker can advertise schemas without a
+// checkout and the sandbox worker can start before CloneRepo completes.
+func NewToolsets(repositoryRoot, artifactIdentity string, blobStore blobs.Store) ([]agenttool.Set, error) {
+	if blobStore == nil {
+		return nil, fmt.Errorf("agent toolsets need a blob store")
+	}
+	artifacts := agent.NewArtifactStore(blobStore)
+	readFile, err := NewReadFile(repositoryRoot, artifactIdentity, artifacts, maxInlineToolOutputBytes)
+	if err != nil {
+		return nil, err
+	}
+	readOnlyExec, err := NewReadOnlyExecCommand(
+		repositoryRoot, artifactIdentity, artifacts, maxInlineToolOutputBytes, 30*time.Minute,
+	)
+	if err != nil {
+		return nil, err
+	}
+	writeExec, err := NewExecCommand(
+		repositoryRoot, artifactIdentity, artifacts, maxInlineToolOutputBytes, 30*time.Minute,
+	)
+	if err != nil {
+		return nil, err
+	}
+	applyPatch, err := NewApplyPatch(repositoryRoot, time.Minute)
+	if err != nil {
+		return nil, err
+	}
+	return []agenttool.Set{
+		agenttool.MustSet(agent.ToolsetCodingReadV1, readFile, readOnlyExec),
+		agenttool.MustSet(agent.ToolsetCodingWriteV1, readFile, writeExec, applyPatch),
+	}, nil
+}
