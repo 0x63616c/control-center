@@ -9,6 +9,8 @@ import (
 const (
 	// TaskQueue is polled only by the local POC worker.
 	TaskQueue = "codex-agent-poc"
+	// WorkflowName is the stable Temporal registration for the POC workflow.
+	WorkflowName = "AgentPOCWorkflow"
 	// ModelTurnActivityName is the durable boundary around one provider turn.
 	ModelTurnActivityName = "agent-poc.model-turn"
 	// ToolActivityName is the durable boundary around one allowlisted tool call.
