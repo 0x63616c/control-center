@@ -63,7 +63,8 @@ func TestTargetAgentChildOptionsAllowSameAttemptRecovery(t *testing.T) {
 	policy := work.DefaultTargetRunPolicy().Agent
 	options := targetAgentChildOptions("agent/run-1/step/5/attempt/1", policy)
 	if options.WorkflowID != "agent/run-1/step/5/attempt/1" || options.WorkflowExecutionTimeout != policy.ScheduleToCloseTimeout ||
-		options.WorkflowIDReusePolicy != enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE {
+		options.WorkflowIDReusePolicy != enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE ||
+		!options.WaitForCancellation || options.ParentClosePolicy != enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL {
 		t.Fatalf("target child options = %#v", options)
 	}
 }

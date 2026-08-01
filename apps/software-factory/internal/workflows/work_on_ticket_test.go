@@ -932,6 +932,50 @@ func TestWorkOnTicketStartsFreshSemanticAttemptOnlyForClassifiedTerminalChildFai
 	}
 }
 
+// A terminal child failure outside the replacement vocabulary ends the Run
+// after recording its one failed Attempt. It must not silently schedule a
+// second semantic execution under the same Step.
+func TestWorkOnTicketDoesNotReplaceUnclassifiedTerminalChildFailure(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "model exhausted", "do not retry semantically", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000034", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.deleteErr = nil
+	h.agentResult = func(input workflows.AgentWorkflowInput) (workflows.AgentWorkflowResult, error) {
+		if input.Attempt.Key.Stage == work.StageImplement {
+			return workflows.AgentWorkflowResult{Failure: &agent.TerminalFailure{Kind: agent.TerminalFailureModelExhausted}}, nil
+		}
+		return targetAgentWorkflowResult(t, input), nil
+	}
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err == nil {
+		t.Fatal("WorkOnTicket succeeded after a terminal model failure")
+	}
+	implements := agentChildrenAtStage(h.agentInputs, work.StageImplement)
+	if len(implements) != 1 || implements[0].Identity != fmt.Sprintf("agent/%s/step/5/attempt/1", in.RunID) {
+		t.Fatalf("implement children = %+v, want exactly one unreplaceable semantic Attempt", implements)
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	for _, step := range detail.Steps {
+		if step.Step.Kind == work.StepImplement {
+			if len(step.Attempts) != 1 || step.Attempts[0].State != work.AgentAttemptFailed || step.Attempts[0].FailureKind != work.RunFailureAgentUnrecoverable {
+				t.Fatalf("implement history = %+v, want one failed terminal Attempt", step)
+			}
+			return
+		}
+	}
+	t.Fatal("target history did not retain the implement Step")
+}
+
 // A replacement is a new semantic Attempt, not a technical retry. It must
 // spend the Run-wide budget, so exhausting that budget after a recovery stops
 // the next fresh implementer authorization.

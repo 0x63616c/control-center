@@ -2,51 +2,12 @@ package activities
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
-
-// ProviderThreadContinuation is retained only to decode dormant pre-port
-// WorkOnTicket histories. New target steps use AgentWorkflow conversation refs.
-type ProviderThreadContinuation struct {
-	Identity work.RunWorkerIdentity
-	ThreadID string
-}
-
-// CredentialRevisionExpectation is retained for the dormant direct-agent wire shape.
-type CredentialRevisionExpectation struct {
-	Identity work.RunWorkerIdentity
-	Revision string
-}
-
-// TargetAgentInput is the retired direct-agent activity wire contract.
-// New code starts AgentWorkflow and must not schedule this activity.
-type TargetAgentInput struct {
-	AttemptID           store.TargetAttemptID
-	TicketNumber        int
-	Iteration           int
-	Stage               work.AgentStage
-	Model               work.Model
-	Detail              work.TicketDetail
-	Prior               work.PriorTurns
-	PromptContext       work.AgentPromptContext
-	MaxReviewSteps      int
-	PriorProviderThread *ProviderThreadContinuation
-	CredentialRevision  CredentialRevisionExpectation
-}
-
-// TargetAgentOutput is retained for dormant workflow decoding only.
-type TargetAgentOutput struct {
-	Output     json.RawMessage
-	Result     work.StageOutput
-	ThreadID   string
-	Usage      work.Usage
-	UsageState work.UsageState
-}
 
 // TargetRepository owns the Run Worker's credentialed repository checkout.
 type TargetRepository interface {
@@ -93,10 +54,4 @@ func NewRunWorkerActivities(deps RunWorkerDeps) (*RunWorkerActivities, error) {
 		return nil, fmt.Errorf("run worker activities require a valid identity: %w", err)
 	}
 	return &RunWorkerActivities{deps: deps}, nil
-}
-
-// RunTargetAgent makes an accidental use of the retired direct-agent command
-// fail closed. Agent executions are now child workflows, never local CLI runs.
-func (*RunWorkerActivities) RunTargetAgent(context.Context, TargetAgentInput) (TargetAgentOutput, error) {
-	return TargetAgentOutput{}, fmt.Errorf("RunTargetAgent is retired: %w", work.ErrPermanent)
 }
