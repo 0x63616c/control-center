@@ -58,7 +58,7 @@ func TestAgentWorkflowCompletesFromOneFinalModelTurn(t *testing.T) {
 			if input.Stage != work.StagePlan || input.TextRef != textRef {
 				t.Fatalf("finalize input = %#v", input)
 			}
-			return agentactivities.FinalizeOutput{Result: expected}, nil
+			return agentactivities.FinalizeOutput{Result: &expected}, nil
 		}, activity.RegisterOptions{Name: agent.FinalizeActivityName},
 	)
 	input := workflows.AgentWorkflowInput{
@@ -149,7 +149,7 @@ func TestAgentWorkflowUsesTheSuppliedModelTurnPolicy(t *testing.T) {
 		}, nil
 	}, activity.RegisterOptions{Name: agent.ModelTurnActivityName})
 	environment.RegisterActivityWithOptions(func(context.Context, agentactivities.FinalizeInput) (agentactivities.FinalizeOutput, error) {
-		return agentactivities.FinalizeOutput{Result: work.NewStageOutput(work.StageImplement, work.ImplementOutput{Report: "done"})}, nil
+		return testAgentFinalizeOutput(work.NewStageOutput(work.StageImplement, work.ImplementOutput{Report: "done"})), nil
 	}, activity.RegisterOptions{Name: agent.FinalizeActivityName})
 
 	environment.ExecuteWorkflow(workflows.AgentWorkflow, input)
@@ -204,7 +204,7 @@ func TestAgentWorkflowPassesAConversationSeedToPrepare(t *testing.T) {
 		}, nil
 	}, activity.RegisterOptions{Name: agent.ModelTurnActivityName})
 	environment.RegisterActivityWithOptions(func(context.Context, agentactivities.FinalizeInput) (agentactivities.FinalizeOutput, error) {
-		return agentactivities.FinalizeOutput{Result: work.NewStageOutput(work.StageImplement, work.ImplementOutput{Report: "done"})}, nil
+		return testAgentFinalizeOutput(work.NewStageOutput(work.StageImplement, work.ImplementOutput{Report: "done"})), nil
 	}, activity.RegisterOptions{Name: agent.FinalizeActivityName})
 
 	environment.ExecuteWorkflow(workflows.AgentWorkflow, input)
@@ -507,9 +507,7 @@ func TestAgentWorkflowResumesFromReferencesWithoutPreparingAgain(t *testing.T) {
 		}, nil
 	}, activity.RegisterOptions{Name: agent.ModelTurnActivityName})
 	environment.RegisterActivityWithOptions(func(context.Context, agentactivities.FinalizeInput) (agentactivities.FinalizeOutput, error) {
-		return agentactivities.FinalizeOutput{
-			Result: work.NewStageOutput(work.StageImplement, work.ImplementOutput{Report: "resumed"}),
-		}, nil
+		return testAgentFinalizeOutput(work.NewStageOutput(work.StageImplement, work.ImplementOutput{Report: "resumed"})), nil
 	}, activity.RegisterOptions{Name: agent.FinalizeActivityName})
 	input := validAgentWorkflowInput(work.StageImplement)
 	input.State = &workflows.AgentWorkflowState{
@@ -648,7 +646,7 @@ func TestAgentWorkflowExecutesARequestedToolAndContinuesWithItsOutput(t *testing
 	)
 	environment.RegisterActivityWithOptions(
 		func(context.Context, agentactivities.FinalizeInput) (agentactivities.FinalizeOutput, error) {
-			return agentactivities.FinalizeOutput{Result: work.NewStageOutput(work.StageImplement, work.ImplementOutput{Report: "done"})}, nil
+			return testAgentFinalizeOutput(work.NewStageOutput(work.StageImplement, work.ImplementOutput{Report: "done"})), nil
 		}, activity.RegisterOptions{Name: agent.FinalizeActivityName},
 	)
 	input := validAgentWorkflowInput(work.StageImplement)
@@ -770,6 +768,10 @@ func TestAgentToolActivityOutlivesTheLongestToolCommand(t *testing.T) {
 	if got != 31*time.Minute {
 		t.Fatalf("tool activity timeout = %s, want the 30 minute command bound plus persistence margin", got)
 	}
+}
+
+func testAgentFinalizeOutput(result work.StageOutput) agentactivities.FinalizeOutput {
+	return agentactivities.FinalizeOutput{Result: &result}
 }
 
 func validAgentWorkflowInput(stage work.Stage) workflows.AgentWorkflowInput {

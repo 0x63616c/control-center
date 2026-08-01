@@ -299,7 +299,10 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (workflowResu
 			}
 			return result, fmt.Errorf("finalize agent output: %w", err)
 		}
-		result.Result = finalized.Result
+		if finalized.Result == nil || finalized.Result.Value() == nil {
+			return terminalAgentFailure(result, agent.TerminalFailureInvalidProviderOutcome)
+		}
+		result.Result = *finalized.Result
 		if finalized.TranscriptRef.Key != "" {
 			result.TranscriptRef = finalized.TranscriptRef
 		}
