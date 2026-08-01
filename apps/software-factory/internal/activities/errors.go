@@ -72,6 +72,11 @@ const (
 	// ErrTypeUnresumableIncompleteAttempt requires explicit workflow
 	// authorization of another Agent Attempt; native retry must never start fresh.
 	ErrTypeUnresumableIncompleteAttempt = "unresumable_incomplete_attempt"
+
+	// ErrTypeRunWorkerSessionLost reports permanent loss of the private Run
+	// Worker Session. The workflow may provision one replacement generation;
+	// this is never a native activity retry.
+	ErrTypeRunWorkerSessionLost = "run_worker_session_lost"
 )
 
 // fail translates this service's error vocabulary into Temporal's, once.

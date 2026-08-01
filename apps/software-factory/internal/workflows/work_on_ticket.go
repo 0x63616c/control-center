@@ -41,15 +41,6 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 	if err := validateWorkOnTicket(in); err != nil {
 		return err
 	}
-	identity, err := work.NewRunWorkerIdentity(in.RunID, 1)
-	if err != nil {
-		return temporal.NewNonRetryableApplicationError(
-			fmt.Sprintf("the target Run %q cannot own a Run Worker: %v", in.RunID, err),
-			activities.ErrTypeInvalid,
-			nil,
-		)
-	}
-
 	claimCtx := workflow.WithActivityOptions(ctx, targetActivityOptions(in.Policy.Recording))
 	var claimed store.ClaimRunResult
 	if err := workflow.ExecuteActivity(claimCtx, targetRecordingActs.ClaimAndStartRun, store.ClaimRunInput{
@@ -61,60 +52,40 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 	}
 
 	branch := work.FactoryTicketBranchName(int64(claimed.Ticket.ID), in.RunID)
-	controlCtx := workflow.WithActivityOptions(ctx, targetActivityOptions(in.Policy.Provisioning))
-	if err := workflow.ExecuteActivity(controlCtx, runWorkerControlActs.ProvisionRunWorker, activities.ProvisionRunWorkerInput{
-		TicketNumber: int(claimed.Ticket.ID),
-		Identity:     identity,
-		Branch:       branch,
-	}).Get(controlCtx, nil); err != nil {
-		return fmt.Errorf("provisioning Run Worker generation one: %w", err)
-	}
-
-	privateQueue, err := work.RunWorkerTaskQueue(identity)
+	session, err := newTargetRunSession(ctx, in, int(claimed.Ticket.ID), branch)
 	if err != nil {
-		return fmt.Errorf("building Run Worker private task queue: %w", err)
+		return err
 	}
-	sessionOptions := targetActivityOptions(in.Policy.Provisioning)
-	sessionOptions.TaskQueue = privateQueue
-	sessionCtx, err := workflow.CreateSession(workflow.WithActivityOptions(ctx, sessionOptions), &workflow.SessionOptions{
-		ExecutionTimeout: in.Policy.HardDeadline,
-		CreationTimeout:  in.Policy.Provisioning.ScheduleToCloseTimeout,
-		HeartbeatTimeout: in.Policy.Agent.HeartbeatTimeout,
-	})
-	if err != nil {
-		return fmt.Errorf("creating Run Worker Session: %w", err)
-	}
-	sessionOpen := true
-	defer func() {
-		if sessionOpen {
-			workflow.CompleteSession(sessionCtx)
-		}
-	}()
+	defer session.close()
 
 	if err := startTargetStep(ctx, in, 1, work.StepCloneRepository); err != nil {
 		return err
 	}
 	var clone activities.CloneTargetRepositoryOutput
-	if err := workflow.ExecuteActivity(sessionCtx, targetRunWorkerActs.CloneTargetRepository, activities.CloneTargetRepositoryInput{
-		Step:     activities.RepositoryStep{StepOrdinal: 1, Branch: branch},
-		CloneURL: in.CloneURL,
-	}).Get(sessionCtx, &clone); err != nil {
+	if err := session.execute(ctx, func(sessionCtx workflow.Context) error {
+		return workflow.ExecuteActivity(sessionCtx, targetRunWorkerActs.CloneTargetRepository, activities.CloneTargetRepositoryInput{
+			Step:     activities.RepositoryStep{StepOrdinal: 1, Branch: branch},
+			CloneURL: in.CloneURL,
+		}).Get(sessionCtx, &clone)
+	}); err != nil {
 		return fmt.Errorf("cloning the target repository: %w", err)
 	}
+	session.checkoutReady = true
 
 	detail := work.TicketDetail{Ticket: work.Ticket{Number: int(claimed.Ticket.ID), Title: claimed.Ticket.Title, Body: claimed.Ticket.Body}}
 	ordinal, agentAttempts, reviewSteps := 2, 0, 0
-	plan, used, err := runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStagePlan, work.PriorTurns{}, work.AgentPromptContext{}, nil, 1, in.Policy.MaxAgentAttempts-agentAttempts)
+	plan, used, err := runTargetAgentStep(ctx, session, in, detail, ordinal, work.AgentStagePlan, work.PriorTurns{}, work.AgentPromptContext{}, nil, 1, in.Policy.MaxAgentAttempts-agentAttempts)
 	agentAttempts += used
 	if err != nil {
 		return err
 	}
 	ordinal++
-	implement, used, err := runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result}, work.AgentPromptContext{}, nil, 1, in.Policy.MaxAgentAttempts-agentAttempts)
+	implement, used, err := runTargetAgentStep(ctx, session, in, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result}, work.AgentPromptContext{}, nil, 1, in.Policy.MaxAgentAttempts-agentAttempts)
 	agentAttempts += used
 	if err != nil {
 		return err
 	}
+	implementIdentity := session.identity
 	ordinal++
 	implementTurn := 1
 	var pullRequest work.PullRequest
@@ -136,9 +107,11 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 				return err
 			}
 			ordinal++
-			if err := workflow.ExecuteActivity(sessionCtx, targetRunWorkerActs.TargetSyncPullRequest, activities.TargetSyncPullRequestInput{
-				Step: syncStep, Title: implementTitle(implement.Result), Body: implementBody(implement.Result), Existing: optionalPullRequest(pullRequest),
-			}).Get(sessionCtx, &pullRequest); err != nil {
+			if err := session.execute(ctx, func(sessionCtx workflow.Context) error {
+				return workflow.ExecuteActivity(sessionCtx, targetRunWorkerActs.TargetSyncPullRequest, activities.TargetSyncPullRequestInput{
+					Step: syncStep, Title: implementTitle(implement.Result), Body: implementBody(implement.Result), Existing: optionalPullRequest(pullRequest),
+				}).Get(sessionCtx, &pullRequest)
+			}); err != nil {
 				return fmt.Errorf("synchronizing target pull request: %w", err)
 			}
 		}
@@ -151,9 +124,11 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 			return err
 		}
 		ordinal++
-		ciCtx := workflow.WithActivityOptions(sessionCtx, targetActivityOptions(in.Policy.AwaitCI))
 		var ci activities.AwaitCIOutput
-		if err := workflow.ExecuteActivity(ciCtx, targetRunWorkerActs.TargetAwaitCI, activities.TargetAwaitCIInput{Step: candidate, CI: activities.AwaitCIInput{CommitSHA: candidate.PushedHead, RequiredChecks: in.Policy.RequiredChecks}}).Get(ciCtx, &ci); err != nil {
+		if err := session.execute(ctx, func(sessionCtx workflow.Context) error {
+			ciCtx := workflow.WithActivityOptions(sessionCtx, targetActivityOptions(in.Policy.AwaitCI))
+			return workflow.ExecuteActivity(ciCtx, targetRunWorkerActs.TargetAwaitCI, activities.TargetAwaitCIInput{Step: candidate, CI: activities.AwaitCIInput{CommitSHA: candidate.PushedHead, RequiredChecks: in.Policy.RequiredChecks}}).Get(ciCtx, &ci)
+		}); err != nil {
 			return fmt.Errorf("awaiting target CI for %s: %w", candidate.PushedHead, err)
 		}
 		if ci.CommitSHA != candidate.PushedHead {
@@ -165,11 +140,12 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 			}
 			implementTurn++
 			feedback = work.AgentPromptContext{CandidateHeadSHA: candidate.PushedHead, CIFailures: ci.RedFailures}
-			implement, used, err = runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result}, feedback, &activities.ProviderThreadContinuation{Identity: identity, ThreadID: implement.ThreadID}, implementTurn, in.Policy.MaxAgentAttempts-agentAttempts)
+			implement, used, err = runTargetAgentStep(ctx, session, in, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result}, feedback, sameGenerationContinuation(session, implementIdentity, implement.ThreadID), implementTurn, in.Policy.MaxAgentAttempts-agentAttempts)
 			agentAttempts += used
 			if err != nil {
 				return err
 			}
+			implementIdentity = session.identity
 			ordinal++
 			continue
 		}
@@ -180,7 +156,7 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 			return exhaustedAgentAttempts(in.Policy.MaxAgentAttempts)
 		}
 		reviewSteps++
-		review, used, reviewErr := runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageReview, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: latestReview, ReviewLedger: reviewLedger}, work.AgentPromptContext{CandidateHeadSHA: candidate.PushedHead}, nil, reviewSteps, in.Policy.MaxAgentAttempts-agentAttempts)
+		review, used, reviewErr := runTargetAgentStep(ctx, session, in, detail, ordinal, work.AgentStageReview, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: latestReview, ReviewLedger: reviewLedger}, work.AgentPromptContext{CandidateHeadSHA: candidate.PushedHead}, nil, reviewSteps, in.Policy.MaxAgentAttempts-agentAttempts)
 		agentAttempts += used
 		if reviewErr != nil {
 			return reviewErr
@@ -198,11 +174,12 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 			}
 			implementTurn++
 			feedback = work.AgentPromptContext{CandidateHeadSHA: candidate.PushedHead, ReviewFindings: findings.Findings}
-			implement, used, err = runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: latestReview}, feedback, &activities.ProviderThreadContinuation{Identity: identity, ThreadID: implement.ThreadID}, implementTurn, in.Policy.MaxAgentAttempts-agentAttempts)
+			implement, used, err = runTargetAgentStep(ctx, session, in, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: latestReview}, feedback, sameGenerationContinuation(session, implementIdentity, implement.ThreadID), implementTurn, in.Policy.MaxAgentAttempts-agentAttempts)
 			agentAttempts += used
 			if err != nil {
 				return err
 			}
+			implementIdentity = session.identity
 			ordinal++
 			continue
 		}
@@ -212,7 +189,9 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 				return err
 			}
 			ordinal++
-			if err := workflow.ExecuteActivity(sessionCtx, targetRunWorkerActs.TargetMarkPullRequestReady, activities.TargetMarkPullRequestReadyInput{Step: readyStep}).Get(sessionCtx, nil); err != nil {
+			if err := session.execute(ctx, func(sessionCtx workflow.Context) error {
+				return workflow.ExecuteActivity(sessionCtx, targetRunWorkerActs.TargetMarkPullRequestReady, activities.TargetMarkPullRequestReadyInput{Step: readyStep}).Get(sessionCtx, nil)
+			}); err != nil {
 				return fmt.Errorf("marking target pull request ready: %w", err)
 			}
 			ready = true
@@ -222,8 +201,10 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 			return err
 		}
 		ordinal++
-		mergeCtx := workflow.WithActivityOptions(sessionCtx, targetActivityOptions(in.Policy.Merge))
-		if err := workflow.ExecuteActivity(mergeCtx, targetRunWorkerActs.TargetMergePullRequest, activities.TargetMergePullRequestInput{Step: mergeStep, ExpectedHeadSHA: candidate.PushedHead}).Get(mergeCtx, &merge); err != nil {
+		if err := session.execute(ctx, func(sessionCtx workflow.Context) error {
+			mergeCtx := workflow.WithActivityOptions(sessionCtx, targetActivityOptions(in.Policy.Merge))
+			return workflow.ExecuteActivity(mergeCtx, targetRunWorkerActs.TargetMergePullRequest, activities.TargetMergePullRequestInput{Step: mergeStep, ExpectedHeadSHA: candidate.PushedHead}).Get(mergeCtx, &merge)
+		}); err != nil {
 			return fmt.Errorf("merging reviewed target candidate %s: %w", candidate.PushedHead, err)
 		}
 		if merge.Outcome == work.PullRequestMergeConfirmed && strings.TrimSpace(merge.MergeSHA) != "" {
@@ -251,11 +232,12 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 		}
 		implementTurn++
 		feedback = work.AgentPromptContext{CandidateHeadSHA: candidate.PushedHead, Merge: &work.MergeFeedback{Outcome: merge.Outcome, ReviewedHeadSHA: candidate.PushedHead, CurrentHeadSHA: merge.PullRequest.HeadSHA, CurrentBaseSHA: merge.PullRequest.BaseSHA, Diagnostic: merge.Diagnostic}}
-		implement, used, err = runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: latestReview}, feedback, &activities.ProviderThreadContinuation{Identity: identity, ThreadID: implement.ThreadID}, implementTurn, in.Policy.MaxAgentAttempts-agentAttempts)
+		implement, used, err = runTargetAgentStep(ctx, session, in, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: latestReview}, feedback, sameGenerationContinuation(session, implementIdentity, implement.ThreadID), implementTurn, in.Policy.MaxAgentAttempts-agentAttempts)
 		agentAttempts += used
 		if err != nil {
 			return err
 		}
+		implementIdentity = session.identity
 		ordinal++
 	}
 
@@ -267,10 +249,8 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 		return fmt.Errorf("recording confirmed target merge: %w", err)
 	}
 
-	workflow.CompleteSession(sessionCtx)
-	sessionOpen = false
-	teardownCtx := workflow.WithActivityOptions(ctx, targetActivityOptions(in.Policy.Teardown))
-	_ = workflow.ExecuteActivity(teardownCtx, runWorkerControlActs.DeleteRunWorker, activities.DeleteRunWorkerInput{Identity: identity}).Get(teardownCtx, nil)
+	session.close()
+	session.delete(ctx)
 	return nil
 }
 
@@ -284,7 +264,7 @@ func startTargetStep(ctx workflow.Context, in WorkOnTicketInput, ordinal int, ki
 	return nil
 }
 
-func runTargetAgentStep(ctx workflow.Context, sessionCtx workflow.Context, in WorkOnTicketInput, identity work.RunWorkerIdentity, detail work.TicketDetail, ordinal int, stage work.AgentStage, prior work.PriorTurns, promptContext work.AgentPromptContext, continuation *activities.ProviderThreadContinuation, iteration, remainingAttempts int) (activities.TargetAgentOutput, int, error) {
+func runTargetAgentStep(ctx workflow.Context, session *targetRunSession, in WorkOnTicketInput, detail work.TicketDetail, ordinal int, stage work.AgentStage, prior work.PriorTurns, promptContext work.AgentPromptContext, continuation *activities.ProviderThreadContinuation, iteration, remainingAttempts int) (activities.TargetAgentOutput, int, error) {
 	if err := promptContext.Validate(); err != nil {
 		return activities.TargetAgentOutput{}, 0, temporal.NewNonRetryableApplicationError(fmt.Sprintf("validating %s prompt context: %v", stage, err), activities.ErrTypeInvalid, nil)
 	}
@@ -306,23 +286,23 @@ func runTargetAgentStep(ctx workflow.Context, sessionCtx workflow.Context, in Wo
 			return activities.TargetAgentOutput{}, attemptNo - 1, fmt.Errorf("authorizing %s agent attempt: %w", stage, err)
 		}
 		if err := workflow.ExecuteActivity(controlCtx, runWorkerControlActs.AuthorizeRunWorkerAttempt, activities.AuthorizeRunWorkerAttemptInput{
-			Identity: identity, AttemptID: attempt,
+			Identity: session.identity, AttemptID: attempt,
 		}).Get(controlCtx, nil); err != nil {
 			return activities.TargetAgentOutput{}, attemptNo, fmt.Errorf("installing %s checkpoint capability: %w", stage, err)
 		}
 		var revision work.RunWorkerCredentialRevision
-		if err := workflow.ExecuteActivity(credentialCtx, runWorkerControlActs.RotateRunWorkerGitHubCredential, activities.RotateRunWorkerGitHubCredentialInput{Identity: identity}).Get(credentialCtx, &revision); err != nil {
+		if err := workflow.ExecuteActivity(credentialCtx, runWorkerControlActs.RotateRunWorkerGitHubCredential, activities.RotateRunWorkerGitHubCredentialInput{Identity: session.identity}).Get(credentialCtx, &revision); err != nil {
 			return activities.TargetAgentOutput{}, attemptNo, fmt.Errorf("rotating %s GitHub credential: %w", stage, err)
 		}
 		if err := revision.Validate(); err != nil {
 			return activities.TargetAgentOutput{}, attemptNo, fmt.Errorf("validating %s credential revision: %w", stage, err)
 		}
-		agentCtx, cancelAgent := workflow.WithCancel(workflow.WithActivityOptions(sessionCtx, targetAgentActivityOptions(in.Policy.Agent)))
+		agentCtx, cancelAgent := workflow.WithCancel(workflow.WithActivityOptions(session.sessionCtx, targetAgentActivityOptions(in.Policy.Agent)))
 		var out activities.TargetAgentOutput
 		agentFuture := workflow.ExecuteActivity(agentCtx, targetRunWorkerActs.RunTargetAgent, activities.TargetAgentInput{
 			AttemptID: attempt, TicketNumber: detail.Number, Iteration: iteration, Stage: stage, Model: in.Model,
 			Detail: detail, Prior: prior, PromptContext: promptContext, MaxReviewSteps: in.Policy.MaxReviewSteps, PriorProviderThread: attemptContinuation,
-			CredentialRevision: activities.CredentialRevisionExpectation{Identity: identity, Revision: revision.Revision},
+			CredentialRevision: activities.CredentialRevisionExpectation{Identity: session.identity, Revision: revision.Revision},
 		})
 		renewalCtx, cancelRenewal := workflow.WithCancel(ctx)
 		var agentErr error
@@ -339,7 +319,7 @@ func runTargetAgentStep(ctx workflow.Context, sessionCtx workflow.Context, in Wo
 				break
 			}
 			var renewed work.RunWorkerCredentialRevision
-			if err := workflow.ExecuteActivity(controlCtx, runWorkerControlActs.RotateRunWorkerGitHubCredential, activities.RotateRunWorkerGitHubCredentialInput{Identity: identity}).Get(controlCtx, &renewed); err != nil {
+			if err := workflow.ExecuteActivity(controlCtx, runWorkerControlActs.RotateRunWorkerGitHubCredential, activities.RotateRunWorkerGitHubCredentialInput{Identity: session.identity}).Get(controlCtx, &renewed); err != nil {
 				cancelRenewal()
 				cancelAgent()
 				return activities.TargetAgentOutput{}, attemptNo, fmt.Errorf("renewing %s GitHub credential: %w", stage, err)
@@ -362,6 +342,13 @@ func runTargetAgentStep(ctx workflow.Context, sessionCtx workflow.Context, in Wo
 			}).Get(recordingCtx, nil); err != nil {
 				return activities.TargetAgentOutput{}, attemptNo, fmt.Errorf("recording failed %s agent attempt: %w", stage, err)
 			}
+			if isRunWorkerSessionLoss(agentErr) {
+				if err := session.replace(ctx); err != nil {
+					return activities.TargetAgentOutput{}, attemptNo, fmt.Errorf("replacing lost Run Worker Session: %w", err)
+				}
+				attemptContinuation = nil
+				continue
+			}
 			if isUnresumableAttempt(agentErr) && attemptNo < remainingAttempts {
 				attemptContinuation = nil
 				continue
@@ -383,9 +370,123 @@ func runTargetAgentStep(ctx workflow.Context, sessionCtx workflow.Context, in Wo
 	return activities.TargetAgentOutput{}, remainingAttempts, exhaustedAgentAttempts(in.Policy.MaxAgentAttempts)
 }
 
+// targetRunSession owns one live Run Worker generation. It is the only
+// workflow-local state allowed to replace that worker, which serializes loss
+// recovery and prevents two generations from receiving repository work.
+type targetRunSession struct {
+	in            WorkOnTicketInput
+	ticketNumber  int
+	branch        string
+	identity      work.RunWorkerIdentity
+	sessionCtx    workflow.Context
+	open          bool
+	replaced      bool
+	checkoutReady bool
+}
+
+func newTargetRunSession(ctx workflow.Context, in WorkOnTicketInput, ticketNumber int, branch string) (*targetRunSession, error) {
+	session := &targetRunSession{in: in, ticketNumber: ticketNumber, branch: branch}
+	if err := session.provisionAndCreate(ctx, 1); err != nil {
+		return nil, err
+	}
+	return session, nil
+}
+
+func (s *targetRunSession) provisionAndCreate(ctx workflow.Context, generation int) error {
+	identity, err := work.NewRunWorkerIdentity(s.in.RunID, generation)
+	if err != nil {
+		return temporal.NewNonRetryableApplicationError(fmt.Sprintf("the target Run %q cannot own a Run Worker: %v", s.in.RunID, err), activities.ErrTypeInvalid, nil)
+	}
+	controlCtx := workflow.WithActivityOptions(ctx, targetActivityOptions(s.in.Policy.Provisioning))
+	if err := workflow.ExecuteActivity(controlCtx, runWorkerControlActs.ProvisionRunWorker, activities.ProvisionRunWorkerInput{
+		TicketNumber: s.ticketNumber, Identity: identity, Branch: s.branch,
+	}).Get(controlCtx, nil); err != nil {
+		return fmt.Errorf("provisioning Run Worker generation %d: %w", generation, err)
+	}
+	privateQueue, err := work.RunWorkerTaskQueue(identity)
+	if err != nil {
+		s.deleteIdentity(ctx, identity)
+		return fmt.Errorf("building Run Worker private task queue: %w", err)
+	}
+	sessionOptions := targetActivityOptions(s.in.Policy.Provisioning)
+	sessionOptions.TaskQueue = privateQueue
+	sessionCtx, err := workflow.CreateSession(workflow.WithActivityOptions(ctx, sessionOptions), &workflow.SessionOptions{
+		ExecutionTimeout: s.in.Policy.HardDeadline, CreationTimeout: s.in.Policy.Provisioning.ScheduleToCloseTimeout, HeartbeatTimeout: s.in.Policy.Agent.HeartbeatTimeout,
+	})
+	if err != nil {
+		s.deleteIdentity(ctx, identity)
+		return fmt.Errorf("creating Run Worker Session for generation %d: %w", generation, err)
+	}
+	s.identity, s.sessionCtx, s.open = identity, sessionCtx, true
+	return nil
+}
+
+func (s *targetRunSession) execute(ctx workflow.Context, run func(workflow.Context) error) error {
+	err := run(s.sessionCtx)
+	if !isRunWorkerSessionLoss(err) {
+		return err
+	}
+	if err := s.replace(ctx); err != nil {
+		return fmt.Errorf("replacing lost Run Worker Session: %w", err)
+	}
+	return run(s.sessionCtx)
+}
+
+func (s *targetRunSession) replace(ctx workflow.Context) error {
+	if s.replaced {
+		return temporal.NewNonRetryableApplicationError("Run Worker Session replacement already used", activities.ErrTypeRunWorkerSessionLost, nil)
+	}
+	s.close()
+	s.delete(ctx)
+	if err := s.provisionAndCreate(ctx, s.identity.Generation+1); err != nil {
+		return err
+	}
+	s.replaced = true
+	if !s.checkoutReady {
+		return nil
+	}
+	if err := workflow.ExecuteActivity(s.sessionCtx, targetRunWorkerActs.RestoreTargetRepository, activities.RestoreTargetRepositoryInput{
+		CloneURL: s.in.CloneURL, Branch: s.branch,
+	}).Get(s.sessionCtx, nil); err != nil {
+		return fmt.Errorf("restoring replacement repository: %w", err)
+	}
+	return nil
+}
+
+func (s *targetRunSession) close() {
+	if s.open {
+		workflow.CompleteSession(s.sessionCtx)
+		s.open = false
+	}
+}
+
+func (s *targetRunSession) delete(ctx workflow.Context) {
+	s.deleteIdentity(ctx, s.identity)
+}
+
+func (s *targetRunSession) deleteIdentity(ctx workflow.Context, identity work.RunWorkerIdentity) {
+	teardownCtx := workflow.WithActivityOptions(ctx, targetActivityOptions(s.in.Policy.Teardown))
+	_ = workflow.ExecuteActivity(teardownCtx, runWorkerControlActs.DeleteRunWorker, activities.DeleteRunWorkerInput{Identity: identity}).Get(teardownCtx, nil)
+}
+
 func isUnresumableAttempt(err error) bool {
 	var application *temporal.ApplicationError
 	return errors.As(err, &application) && application.Type() == activities.ErrTypeUnresumableIncompleteAttempt
+}
+
+func isRunWorkerSessionLoss(err error) bool {
+	if errors.Is(err, workflow.ErrSessionFailed) {
+		return true
+	}
+	var application *temporal.ApplicationError
+	return errors.As(err, &application) && application.Type() == activities.ErrTypeRunWorkerSessionLost
+}
+
+func sameGenerationContinuation(session *targetRunSession, identity work.RunWorkerIdentity, threadID string) *activities.ProviderThreadContinuation {
+	if identity != session.identity || strings.TrimSpace(threadID) == "" {
+		return nil
+	}
+	return &activities.ProviderThreadContinuation{Identity: identity, ThreadID: threadID}
 }
 
 func agentStepKind(stage work.AgentStage) work.StepKind {
