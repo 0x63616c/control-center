@@ -1,6 +1,7 @@
 package workflows
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -170,6 +171,17 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 			ciCtx := workflow.WithActivityOptions(sessionCtx, targetActivityOptions(in.Policy.AwaitCI))
 			return workflow.ExecuteActivity(ciCtx, targetRunWorkerActs.TargetAwaitCI, activities.TargetAwaitCIInput{Step: candidate, CI: activities.AwaitCIInput{CommitSHA: candidate.PushedHead, RequiredChecks: in.Policy.RequiredChecks}}).Get(ciCtx, &ci)
 		}); err != nil {
+			if !semanticTimeRemaining(ctx) {
+				terminalCtx, cancel := workflow.NewDisconnectedContext(ctx)
+				defer cancel()
+				finalCtx := workflow.WithActivityOptions(terminalCtx, targetActivityOptions(in.Policy.Recording))
+				if finalErr := workflow.ExecuteActivity(finalCtx, targetRecordingActs.FinalizeRunFailure, store.RunFailureInput{RunID: in.RunID, TicketID: in.TicketID, Outcome: work.RunOutcomeFailed, FailureKind: work.RunFailureCIUnobserved, StepOrdinal: candidate.StepOrdinal, StepResult: json.RawMessage(`{"kind":"ci_unobserved"}`), EndedAt: workflow.Now(terminalCtx)}).Get(finalCtx, nil); finalErr != nil {
+					return fmt.Errorf("recording unobserved CI: %w", finalErr)
+				}
+				session.close()
+				session.delete(terminalCtx)
+				return temporal.NewNonRetryableApplicationError("target CI was unobserved before semantic deadline", activities.ErrTypeCIUnobserved, nil)
+			}
 			return fmt.Errorf("awaiting target CI for %s: %w", candidate.PushedHead, err)
 		}
 		if ci.CommitSHA != candidate.PushedHead {
@@ -545,6 +557,11 @@ func requireSemanticTime(ctx workflow.Context) error {
 		return temporal.NewNonRetryableApplicationError("target run reached its semantic deadline", activities.ErrTypeSemanticDeadline, nil)
 	}
 	return nil
+}
+
+func semanticTimeRemaining(ctx workflow.Context) bool {
+	deadline, ok := ctx.Value(semanticDeadlineContextKey{}).(time.Time)
+	return ok && workflow.Now(ctx).Before(deadline)
 }
 
 func terminalFailureKind(err error) (work.RunOutcome, work.RunFailureKind, bool) {
