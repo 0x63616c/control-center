@@ -52,7 +52,7 @@ type CloneTargetRepositoryOutput struct{ HeadSHA string }
 func (a *RunWorkerActivities) CloneTargetRepository(ctx context.Context, in CloneTargetRepositoryInput) (CloneTargetRepositoryOutput, error) {
 	cp, raw, found, err := a.loadRepositoryResult(ctx, in.Step, repositoryEffectClone)
 	if err != nil {
-		return CloneTargetRepositoryOutput{}, err
+		return CloneTargetRepositoryOutput{}, fmt.Errorf("loading target repository clone effect: %w", err)
 	}
 	head, err := a.deps.Repository.Prepare(ctx, in.CloneURL, in.Step.Branch)
 	if err != nil {
@@ -68,7 +68,7 @@ func (a *RunWorkerActivities) CloneTargetRepository(ctx context.Context, in Clon
 	position := in.Step
 	position.PushedHead = head
 	if err := a.checkpointRepositoryResult(ctx, cp, position, repositoryEffectClone, out); err != nil {
-		return CloneTargetRepositoryOutput{}, err
+		return CloneTargetRepositoryOutput{}, fmt.Errorf("checkpointing target repository clone effect: %w", err)
 	}
 	return out, nil
 }
@@ -83,7 +83,7 @@ type TargetAwaitCIInput struct {
 func (a *RunWorkerActivities) TargetAwaitCI(ctx context.Context, in TargetAwaitCIInput) (AwaitCIOutput, error) {
 	cp, raw, found, err := a.loadRepositoryResult(ctx, in.Step, repositoryEffectCI)
 	if err != nil {
-		return AwaitCIOutput{}, err
+		return AwaitCIOutput{}, fmt.Errorf("loading target CI effect: %w", err)
 	}
 	if found {
 		return decodeRepositoryResult[AwaitCIOutput](raw)
@@ -106,7 +106,7 @@ func (a *RunWorkerActivities) TargetAwaitCI(ctx context.Context, in TargetAwaitC
 	}
 	out := AwaitCIOutput{CommitSHA: in.CI.CommitSHA, Green: green, RedFailures: failures}
 	if err := a.checkpointRepositoryResult(ctx, cp, in.Step, repositoryEffectCI, out); err != nil {
-		return AwaitCIOutput{}, err
+		return AwaitCIOutput{}, fmt.Errorf("checkpointing target CI effect: %w", err)
 	}
 	return out, nil
 }
@@ -118,7 +118,7 @@ type TargetFindPullRequestInput struct{ Step RepositoryStep }
 func (a *RunWorkerActivities) TargetFindPullRequest(ctx context.Context, in TargetFindPullRequestInput) (FindPullRequestOutput, error) {
 	cp, raw, found, err := a.loadRepositoryResult(ctx, in.Step, repositoryEffectFind)
 	if err != nil {
-		return FindPullRequestOutput{}, err
+		return FindPullRequestOutput{}, fmt.Errorf("loading target pull request discovery effect: %w", err)
 	}
 	if found {
 		return decodeRepositoryResult[FindPullRequestOutput](raw)
@@ -133,7 +133,7 @@ func (a *RunWorkerActivities) TargetFindPullRequest(ctx context.Context, in Targ
 		position.PullRequestNumber, position.PullRequestNodeID = pr.Number, pr.NodeID
 	}
 	if err := a.checkpointRepositoryResult(ctx, cp, position, repositoryEffectFind, out); err != nil {
-		return FindPullRequestOutput{}, err
+		return FindPullRequestOutput{}, fmt.Errorf("checkpointing target pull request discovery effect: %w", err)
 	}
 	return out, nil
 }
@@ -150,7 +150,7 @@ type TargetSyncPullRequestInput struct {
 func (a *RunWorkerActivities) TargetSyncPullRequest(ctx context.Context, in TargetSyncPullRequestInput) (work.PullRequest, error) {
 	cp, raw, found, err := a.loadRepositoryResult(ctx, in.Step, repositoryEffectSync)
 	if err != nil {
-		return work.PullRequest{}, err
+		return work.PullRequest{}, fmt.Errorf("loading target pull request sync effect: %w", err)
 	}
 	if found {
 		return decodeRepositoryResult[work.PullRequest](raw)
@@ -165,7 +165,7 @@ func (a *RunWorkerActivities) TargetSyncPullRequest(ctx context.Context, in Targ
 	position := in.Step
 	position.PullRequestNumber, position.PullRequestNodeID = pr.Number, pr.NodeID
 	if err := a.checkpointRepositoryResult(ctx, cp, position, repositoryEffectSync, pr); err != nil {
-		return work.PullRequest{}, err
+		return work.PullRequest{}, fmt.Errorf("checkpointing target pull request sync effect: %w", err)
 	}
 	return pr, nil
 }
@@ -176,8 +176,11 @@ type TargetMarkPullRequestReadyInput struct{ Step RepositoryStep }
 // TargetMarkPullRequestReady removes draft status and checkpoints the effect.
 func (a *RunWorkerActivities) TargetMarkPullRequestReady(ctx context.Context, in TargetMarkPullRequestReadyInput) error {
 	cp, _, found, err := a.loadRepositoryResult(ctx, in.Step, repositoryEffectReady)
-	if err != nil || found {
-		return err
+	if err != nil {
+		return fmt.Errorf("loading target pull request ready effect: %w", err)
+	}
+	if found {
+		return nil
 	}
 	if strings.TrimSpace(in.Step.PullRequestNodeID) == "" {
 		return fail(ctx, "marking the target pull request ready", fmt.Errorf("pull request node ID is empty: %w", work.ErrPermanent))
@@ -198,7 +201,7 @@ type TargetMergePullRequestInput struct {
 func (a *RunWorkerActivities) TargetMergePullRequest(ctx context.Context, in TargetMergePullRequestInput) (work.PullRequestMergeResult, error) {
 	cp, raw, found, err := a.loadRepositoryResult(ctx, in.Step, repositoryEffectMerge)
 	if err != nil {
-		return work.PullRequestMergeResult{}, err
+		return work.PullRequestMergeResult{}, fmt.Errorf("loading target pull request merge effect: %w", err)
 	}
 	if found {
 		return decodeRepositoryResult[work.PullRequestMergeResult](raw)
@@ -211,7 +214,7 @@ func (a *RunWorkerActivities) TargetMergePullRequest(ctx context.Context, in Tar
 		return work.PullRequestMergeResult{}, fail(ctx, "merging the target pull request", err)
 	}
 	if err := a.checkpointRepositoryResult(ctx, cp, in.Step, repositoryEffectMerge, result); err != nil {
-		return work.PullRequestMergeResult{}, err
+		return work.PullRequestMergeResult{}, fmt.Errorf("checkpointing target pull request merge effect: %w", err)
 	}
 	return result, nil
 }

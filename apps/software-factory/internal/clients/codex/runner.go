@@ -106,7 +106,7 @@ func (r *Runner) RunTargetStage(ctx context.Context, run work.StageRun, resumeTh
 	}
 	stream, exitCode, err := r.exec(ctx, run, events, resumeThreadID)
 	if err != nil {
-		return work.StageResult{}, err
+		return work.StageResult{}, fmt.Errorf("executing target Codex stage %s: %w", run.Key, err)
 	}
 	result = work.StageResult{ThreadID: stream.ThreadID, Usage: stream.Usage, UsageMeasured: true}
 	if err := classify(exitCode, stream.outcome, stream.stderr); err != nil {
@@ -114,7 +114,7 @@ func (r *Runner) RunTargetStage(ctx context.Context, run work.StageRun, resumeTh
 	}
 	result.Output, err = r.readResult(ctx, run, paths)
 	if err != nil {
-		return result, err
+		return result, fmt.Errorf("reading target Codex result for %s: %w", run.Key, err)
 	}
 	return result, nil
 }

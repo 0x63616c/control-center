@@ -68,7 +68,7 @@ func run() error {
 
 	acts, targetActs, err := newActivities(cfg, logger)
 	if err != nil {
-		return err
+		return fmt.Errorf("building Run Worker activities: %w", err)
 	}
 	w := worker.New(temporal, cfg.TaskQueue, worker.Options{
 		WorkerStopTimeout:                  runWorkerStopTimeout,
