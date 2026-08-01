@@ -388,6 +388,121 @@ func TestWorkOnTicketNeverMergesAHeadChangedAfterReview(t *testing.T) {
 	}
 }
 
+// A repository ruleset can be repaired by an operator without changing the
+// reviewed candidate. Native activity retry keeps that repair window inside
+// the one Merge Step, bounded by the Run's remaining semantic deadline.
+func TestWorkOnTicketRetriesRepairableMergeFailuresWithinOneStepUntilSemanticDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		activityType string
+	}{
+		{name: "ruleset", activityType: activities.ErrTypeRuleset},
+		{name: "availability", activityType: activities.ErrTypeTransient},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			s := storefake.New()
+			ticket, err := s.CreateTicket(ctx, "merge repair", "wait for the repairable merge failure", nil)
+			if err != nil {
+				t.Fatalf("CreateTicket: %v", err)
+			}
+			in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000025", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+			h := newWorkOnTicketHarness(t, s)
+			mergeTries := 0
+			var mergeScheduleToClose time.Duration
+			h.env.SetOnActivityStartedListener(func(info *activity.Info, _ context.Context, _ converter.EncodedValues) {
+				if info.ActivityType.Name == "TargetMergePullRequest" {
+					mergeScheduleToClose = info.ScheduleToCloseTimeout
+				}
+			})
+			h.mergeResult = func(activities.TargetMergePullRequestInput) (work.PullRequestMergeResult, error) {
+				mergeTries++
+				if mergeTries == 1 {
+					return work.PullRequestMergeResult{}, temporal.NewApplicationError("repairable merge failure", tc.activityType, nil)
+				}
+				return work.PullRequestMergeResult{Outcome: work.PullRequestMergeConfirmed, MergeSHA: "M1"}, nil
+			}
+
+			h.run(in)
+			if err := h.env.GetWorkflowError(); err != nil {
+				t.Fatalf("WorkOnTicket: %v", err)
+			}
+			if mergeTries != 2 || len(h.mergeInputs) != 2 || h.mergeInputs[0].ExpectedHeadSHA != "H1" || h.mergeInputs[1].ExpectedHeadSHA != "H1" {
+				t.Fatalf("%s retries = %d, merge inputs = %+v; want two exact-H1 attempts", tc.name, mergeTries, h.mergeInputs)
+			}
+			if mergeScheduleToClose != in.Policy.SemanticDeadline {
+				t.Fatalf("merge ScheduleToClose = %s, want remaining semantic deadline %s", mergeScheduleToClose, in.Policy.SemanticDeadline)
+			}
+			detail, err := s.TargetRunDetail(ctx, in.RunID)
+			if err != nil {
+				t.Fatalf("TargetRunDetail: %v", err)
+			}
+			var merges, attempts int
+			for _, step := range detail.Steps {
+				if step.Step.Kind == work.StepMergePullRequest {
+					merges++
+				}
+				attempts += len(step.Attempts)
+			}
+			if merges != 1 || attempts != 3 || detail.Run.TargetOutcome != work.RunOutcomeSucceeded {
+				t.Fatalf("%s repair result = %+v, want one merge step, three agent attempts, and success", tc.name, detail)
+			}
+		})
+	}
+}
+
+func TestWorkOnTicketFinalizesMergeRetryDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		activityType string
+		failure      work.RunFailureKind
+		result       string
+	}{
+		{name: "ruleset", activityType: activities.ErrTypeRuleset, failure: work.RunFailureGitHubRuleset, result: `{"kind":"github_ruleset"}`},
+		{name: "availability", activityType: activities.ErrTypeTransient, failure: work.RunFailureGitHubUnavailable, result: `{"kind":"github_unavailable"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			s := storefake.New()
+			ticket, err := s.CreateTicket(ctx, "merge retry deadline", "terminalize exhausted repair window", nil)
+			if err != nil {
+				t.Fatalf("CreateTicket: %v", err)
+			}
+			in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000026", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+			h := newWorkOnTicketHarness(t, s)
+			h.mergeResult = func(activities.TargetMergePullRequestInput) (work.PullRequestMergeResult, error) {
+				lastFailure := temporal.NewApplicationError("merge remains unavailable", tc.activityType, nil)
+				return work.PullRequestMergeResult{}, temporal.NewTimeoutError(enumspb.TIMEOUT_TYPE_SCHEDULE_TO_CLOSE, lastFailure)
+			}
+
+			h.run(in)
+			var application *temporal.ApplicationError
+			if err := h.env.GetWorkflowError(); !errors.As(err, &application) || application.Type() != tc.activityType || !application.NonRetryable() {
+				t.Fatalf("WorkOnTicket error = %v, want non-retryable %s", err, tc.activityType)
+			}
+			got, err := s.Ticket(ctx, ticket.ID)
+			if err != nil {
+				t.Fatalf("Ticket: %v", err)
+			}
+			if got.State != store.TicketFailed || got.ActiveRunID != "" {
+				t.Fatalf("merge-deadline ticket = %+v, want failed with no active owner", got)
+			}
+			detail, err := s.TargetRunDetail(ctx, in.RunID)
+			if err != nil {
+				t.Fatalf("TargetRunDetail: %v", err)
+			}
+			if detail.Run.TargetOutcome != work.RunOutcomeFailed || detail.Run.TargetFailure != tc.failure {
+				t.Fatalf("merge-deadline run = %+v, want failed %s", detail.Run, tc.failure)
+			}
+			for _, step := range detail.Steps {
+				if step.Step.Kind == work.StepMergePullRequest && (step.Step.State != work.StepStateCompleted || string(step.Step.Result) != tc.result) {
+					t.Fatalf("merge-deadline step = %+v, want completed %s", step.Step, tc.result)
+				}
+			}
+		})
+	}
+}
+
 func TestWorkOnTicketRetriesPendingCIInsideOneStep(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
