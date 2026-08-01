@@ -23,6 +23,9 @@ var ErrTicketClaimed = errors.New("ticket already has an active run")
 // ErrRunOwnership reports a terminal operation naming a stale owner.
 var ErrRunOwnership = errors.New("run does not own ticket")
 
+// ErrNoOwnedClaim reports that a conditional cancellation found no Run claim.
+var ErrNoOwnedClaim = errors.New("run claim does not exist")
+
 // ErrActiveTicketOwnership reports an attempt to create target ownership outside
 // ClaimAndStartRun.
 var ErrActiveTicketOwnership = errors.New("active ticket ownership is store-managed")
@@ -1267,6 +1270,9 @@ func (s *Store) CancelRun(ctx context.Context, in CancelRunInput) (TerminalResul
 	q := s.q.WithTx(tx)
 	runRow, err := q.TargetRunForUpdate(ctx, id)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return TerminalResult{}, fmt.Errorf("canceling run: %w", ErrNoOwnedClaim)
+		}
 		return TerminalResult{}, fmt.Errorf("canceling run: reading run: %w", wrapQueryErr(err))
 	}
 	if runRow.TicketID != int64(in.TicketID) {

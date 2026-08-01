@@ -122,7 +122,7 @@ func (a *TargetRecordingActivities) CancelRun(ctx context.Context, in store.Canc
 // A missing or later-owned Run means the claim did not become this workflow's
 // cancellable ownership and is therefore an idempotent no-op.
 func (a *TargetRecordingActivities) CancelRunIfClaimed(ctx context.Context, in store.CancelRunInput) error {
-	if _, err := a.store.CancelRun(ctx, in); err != nil && !errors.Is(err, store.ErrRunOwnership) {
+	if _, err := a.store.CancelRun(ctx, in); err != nil && !errors.Is(err, store.ErrRunOwnership) && !errors.Is(err, store.ErrNoOwnedClaim) {
 		return fail(ctx, fmt.Sprintf("canceling run %s if claimed", in.RunID), err)
 	}
 	return nil
