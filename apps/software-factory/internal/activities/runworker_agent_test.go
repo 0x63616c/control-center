@@ -341,6 +341,39 @@ func TestRunTargetAgentCheckpointsProviderAndTerminalBeforeSuccess(t *testing.T)
 	}
 }
 
+// Provider progress, rather than elapsed time or a separate liveness loop,
+// keeps the running Agent activity alive. One heartbeat per observed provider
+// event lets Temporal enforce the five-minute silence bound independently.
+func TestRunTargetAgentHeartbeatsEveryProviderProgressEvent(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)
+	cp := &attemptCheckpointProbe{}
+	runner := &targetStageRunnerProbe{
+		events: [][]byte{
+			providerThreadStartedEvent(testProviderThreadLive),
+			[]byte(`{"type":"item.started"}`),
+			[]byte(`{"type":"item.completed"}`),
+		},
+		result: work.StageResult{Output: []byte(`{"document":"done"}`), ThreadID: testProviderThreadLive},
+	}
+	heartbeats := 0
+	a, err := NewRunWorkerActivities(RunWorkerDeps{
+		Stages: runner, Prompts: promptProbe{}, Checkpoints: func(store.TargetAttemptID) (AttemptCheckpoint, error) { return cp, nil },
+		CredentialRevision: observedCredentialRevision, SecretRedactor: passthroughSecretRedactor{}, ProviderState: providerStateProbe{available: true}, Clock: fixedClock{now: now},
+		Heartbeat: func(context.Context) { heartbeats++ }, Repository: &targetRepositoryProbe{}, GitHub: &targetGitHubProbe{}, Identity: targetTestIdentity,
+		RepositoryCheckpoints: testRepositoryCheckpointFactory,
+	})
+	if err != nil {
+		t.Fatalf("NewRunWorkerActivities: %v", err)
+	}
+	if _, err := a.RunTargetAgent(context.Background(), targetAgentInput()); err != nil {
+		t.Fatalf("RunTargetAgent: %v", err)
+	}
+	if heartbeats != len(runner.events) {
+		t.Fatalf("progress heartbeats = %d, want one for each of %d provider events", heartbeats, len(runner.events))
+	}
+}
+
 func TestRunTargetAgentRedactsProjectedSecretsBeforeCheckpointOrOutput(t *testing.T) {
 	t.Parallel()
 	secrets := [][]byte{

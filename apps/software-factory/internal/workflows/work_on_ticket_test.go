@@ -13,6 +13,7 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/workflows"
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/worker"
@@ -510,6 +511,168 @@ func TestWorkOnTicketReconcilesNativeAgentRetryWithoutAnotherAttempt(t *testing.
 	}
 	if attempts != 3 || len(h.rotations) != 3 {
 		t.Fatalf("native retry = %d durable attempts, %d credential lifecycles; want three and three", attempts, len(h.rotations))
+	}
+}
+
+// The Agent policy is only a contract if it reaches Temporal's scheduled
+// activity. These are the bounds that distinguish a silent model from one
+// that continues to report progress, and the retry shape remains technical:
+// it cannot manufacture a second durable Agent Attempt.
+func TestWorkOnTicketSchedulesAgentAttemptsWithAcceptanceTimeouts(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "agent scheduling", "schedule the attempt", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000010", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	var infos []activity.Info
+	h.env.SetOnActivityStartedListener(func(info *activity.Info, _ context.Context, _ converter.EncodedValues) {
+		if info.ActivityType.Name == "RunTargetAgent" {
+			infos = append(infos, *info)
+		}
+	})
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket: %v", err)
+	}
+	if len(infos) != 3 {
+		t.Fatalf("scheduled agent activities = %d, want plan, implement, and review", len(infos))
+	}
+	for _, info := range infos {
+		if info.HeartbeatTimeout != 5*time.Minute || info.StartToCloseTimeout != 55*time.Minute || info.ScheduleToCloseTimeout != 90*time.Minute {
+			t.Fatalf("scheduled agent timeouts = heartbeat %s start-to-close %s schedule-to-close %s, want 5m/55m/90m", info.HeartbeatTimeout, info.StartToCloseTimeout, info.ScheduleToCloseTimeout)
+		}
+	}
+}
+
+// The SDK's runtime ActivityInfo intentionally does not promise to echo a
+// RetryPolicy. Exercise Temporal's schedule instead: a continuously
+// unavailable model receives exactly ten technical tries, with the 10s x2
+// backoff capped at five minutes, under the same authorized Attempt.
+func TestWorkOnTicketSchedulesTenAgentRetriesWithTheAcceptanceBackoff(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "agent retry cap", "bound unavailable model retries", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000013", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
+		return targetAgentOutput(t, input.Stage), temporal.NewApplicationError("model unavailable", activities.ErrTypeTransient, nil)
+	}
+	started := h.env.Now()
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err == nil {
+		t.Fatal("WorkOnTicket succeeded after ten unavailable model tries")
+	}
+	if len(h.agentInputs) != 10 {
+		t.Fatalf("scheduled agent tries = %d, want exactly 10", len(h.agentInputs))
+	}
+	for _, input := range h.agentInputs {
+		if input.Stage != work.AgentStagePlan || input.AttemptID.AttemptNo != 1 {
+			t.Fatalf("retry input = %+v, want plan Attempt 1 retried natively", input)
+		}
+	}
+	if elapsed := h.env.Now().Sub(started); elapsed != 25*time.Minute+10*time.Second {
+		t.Fatalf("retry schedule elapsed = %s, want 25m10s from 10s x2 capped at 5m", elapsed)
+	}
+}
+
+// A heartbeat timeout is a technical retry of the same authorized execution.
+// It cannot create another semantic Agent Attempt or re-run credential setup
+// as if the model had been deliberately asked for fresh work.
+func TestWorkOnTicketRetriesHeartbeatTimeoutWithoutAnotherAttempt(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "heartbeat timeout", "retry the same execution", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000011", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	implementTries := 0
+	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
+		if input.Stage == work.AgentStageImplement {
+			implementTries++
+			if implementTries == 1 {
+				return targetAgentOutput(t, input.Stage), temporal.NewHeartbeatTimeoutError()
+			}
+		}
+		return targetAgentOutput(t, input.Stage), nil
+	}
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket: %v", err)
+	}
+	var implementInputs []activities.TargetAgentInput
+	for _, input := range h.agentInputs {
+		if input.Stage == work.AgentStageImplement {
+			implementInputs = append(implementInputs, input)
+		}
+	}
+	if len(implementInputs) != 2 || implementInputs[0].AttemptID != implementInputs[1].AttemptID {
+		t.Fatalf("heartbeat-timeout retry inputs = %+v, want two tries of one durable Agent Attempt", implementInputs)
+	}
+}
+
+// A provider's durable attempt record can prove an execution was interrupted
+// but not restore its local state. That ends the failed execution and requires
+// a second, explicitly authorized attempt under the same Step; native retries
+// may not turn into unbounded fresh executions.
+func TestWorkOnTicketReplacesAnUnresumableAttemptInsideTheSameStep(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "unresumable attempt", "authorize a replacement", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000012", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
+		if input.Stage == work.AgentStageImplement && input.AttemptID.AttemptNo == 1 {
+			return targetAgentOutput(t, input.Stage), temporal.NewNonRetryableApplicationError("provider execution cannot resume", activities.ErrTypeUnresumableIncompleteAttempt, nil)
+		}
+		return targetAgentOutput(t, input.Stage), nil
+	}
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket: %v", err)
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	var implement store.TargetStepDetail
+	for _, step := range detail.Steps {
+		if step.Step.Kind == work.StepImplement {
+			implement = step
+			break
+		}
+	}
+	if implement.Step.State != work.StepStateCompleted || len(implement.Attempts) != 2 {
+		t.Fatalf("implement step = %+v, want one completed Step with two attempts", implement)
+	}
+	if first, second := implement.Attempts[0], implement.Attempts[1]; first.ID.AttemptNo != 1 || first.State != work.AgentAttemptFailed || first.FailureKind != work.RunFailureAgentUnrecoverable || second.ID.AttemptNo != 2 || second.State != work.AgentAttemptSucceeded {
+		t.Fatalf("implement attempts = %+v, want failed unresumable attempt 1 then successful attempt 2", implement.Attempts)
+	}
+	if len(h.authorized) != 4 || h.authorized[1].AttemptID.AttemptNo != 1 || h.authorized[2].AttemptID.AttemptNo != 2 {
+		t.Fatalf("authorized attempts = %+v, want plan, implement attempt 1, implement attempt 2, and review", h.authorized)
+	}
+	for _, input := range h.agentInputs {
+		if input.Stage == work.AgentStageImplement && input.AttemptID.AttemptNo == 2 && input.PriorProviderThread != nil {
+			t.Fatalf("replacement attempt resumed an unresumable provider thread: %+v", input.PriorProviderThread)
+		}
 	}
 }
 
