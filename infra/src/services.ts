@@ -67,26 +67,17 @@ const IMAGE_REPOSITORIES = {
     digestKey: controlCenterProduct.imageDigestKey("temporal-worker"),
     repository: controlCenterProduct.imageRepository("temporal-worker"),
   },
-  // The software-factory module's eight images (ADR-0011). A DIFFERENT product, so the
+  // The software-factory module's activated images (ADR-0011). A DIFFERENT product, so the
   // keys carry the product prefix and cannot collide with control-center's own
   // `worker` above — `www-software-factory-worker` is not a control-center
   // component.
   //
-  // `sandbox` is here even though no workload runs it: the worker CREATES those
-  // pods at runtime and is handed the digest-pinned ref as env. Same map, same
-  // shape validation, same CI collection — so a sandbox is as reproducible as
-  // the worker that created it, rather than resolving `:main` at 3am. `relay`
-  // is the separately deployed platform webhook edge, but shares this product
+  // `relay` is the separately deployed platform webhook edge, but shares this product
   // image/digest registry so CI pins every Go module image together.
   "software-factory-worker": {
     product: "software-factory",
     digestKey: softwareFactoryProduct.imageDigestKey("worker"),
     repository: softwareFactoryProduct.imageRepository("worker"),
-  },
-  "software-factory-sandbox": {
-    product: "software-factory",
-    digestKey: softwareFactoryProduct.imageDigestKey("sandbox"),
-    repository: softwareFactoryProduct.imageRepository("sandbox"),
   },
   "software-factory-run-worker": {
     product: "software-factory",

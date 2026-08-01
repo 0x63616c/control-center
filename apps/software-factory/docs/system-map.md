@@ -1,310 +1,229 @@
-# The software factory, end to end, as it is today
+# The software factory, end to end
 
-What happens when a ticket gets worked. This is an operational map of the
-current implementation, not ADR-0011's historical design rationale. It names
-the source symbols that own the behavior so a future change can be checked at
-the source rather than preserving this prose by inertia.
-
-Read it to answer: what reads what, what can write, what is trusted for what,
-where a model sits, where a human is required — and what is absent.
+This is the operational map of the activated v0 runtime. It names the source
+symbols that own each boundary so changes can be checked against code instead
+of preserving this prose by inertia.
 
 ## One glance
 
-```
-a `ready` Ticket in the factory's own Postgres
-        │
-        │ dispatcher: one long-running Temporal workflow
-        │ claim: workflow-ID uniqueness on `factory-ticket-<id>`
-        ▼
-factory-ticket-<id> (child workflow; one disposable sandbox pod)
-        │
-        ├─ TransitionTicketState open → working
-        ├─ CreateSandbox → WaitSandboxReady → CloneRepo
-        ├─ AgentWorkflow(plan/1): main-worker model calls + sandbox tools
-        │
-        │    ┌─ AgentWorkflow(implement/N) → draft PR → observe CI ─────────┐
-        │    │       ▲ red or not concluded                                  │
-        │    │       └──────────────────────────────────────────────────────┘
-        │    │
-        │    └─ green CI → AgentWorkflow(review/N)
-        │                     │ blocking finding
-        │                     └──────────────► a fresh implement window
-        │
-        └─ finish: delete sandbox, record the run's end and transition the
-                   Ticket; a clean review makes the draft PR ready for human
-                   review and enables auto-merge
-        ▼
-human approval → GitHub auto-merges when requirements are satisfied → deploy
+```text
+an open, dependency-ready Ticket in the factory Postgres
+        |
+        | Dispatcher, workflow ID software-factory-target-dispatcher
+        | acknowledged unpaused policy, maximum one Run in flight by default
+        v
+factory-ticket-<ticket-id> (WorkOnTicket)
+        |
+        | atomically claim Ticket: open -> active, active_run_id = Run ID
+        | create one generation-scoped Run Worker pod
+        | clone repository and create a Run-owned branch
+        | AgentWorkflow(plan)
+        | AgentWorkflow(implement) -> synchronize draft PR -> required CI
+        | AgentWorkflow(review)
+        |   blocking findings or merge conflict -> another implement cycle
+        | clean review -> mark PR ready -> exact reviewed-head squash merge
+        v
+confirmed merge: Run succeeded, Ticket done
+terminal failure/exhaustion: Run failed or exhausted, Ticket failed
+cancellation or abandoned ownership repair: Run canceled, Ticket open
 ```
 
-The fixed first pass is `plan → implement → review`, defined by
-`work.Pipeline`. It is not a forward-only schedule:
-`factoryTicketRun.factoryImplementReviewLoop` repeats implement while CI is red or unobserved, and starts another CI window
-after a blocking review finding. A blocked implement verdict, stalled or
-exhausted CI/review progress, or an activity failure terminates the run.
+There is no GitHub Issue work queue, webhook-owned Ticket transition, or
+GitHub auto-merge step. The factory owns Tickets in Postgres. `WorkOnTicket`
+waits for the required checks, performs its own review, and requests a squash
+merge bound to the exact reviewed head. Only the Confirmed Merge transaction
+may move the Ticket to `done`.
 
-That diagram is the deployed legacy workflow. The additive target Store uses
-an ownership-bearing `active` Ticket state instead of `working`/`review`: an
-atomic claim sets `active_run_id`, and only that Run may checkpoint or release
-the Ticket. The API accepts and projects all six schema states during the
-cutover: `open`, target `active`, legacy `working` and `review`, `done`, and
-`failed`.
-
-## The control plane
+## Control plane
 
 ### Dispatcher
 
-`FactoryDispatcher` is a timer loop, not a Temporal Schedule. It applies any
-`UpdateConfig` signal that arrived, drains completion signals, reconciles known
-child workflows, sweeps orphaned sandboxes, then lists `ready` Tickets and
-starts as many as its in-flight cap allows. Starting the child workflow with ID
-`factory-ticket-<id>` is the claim: Temporal will not allow another open
-workflow with the same ID. See `workflows/factory_dispatcher.go` and
-`work.FactoryTicketWorkflowID`.
+`workflows.Dispatcher` is the stable singleton
+`software-factory-target-dispatcher`. It polls the dedicated
+`software-factory-dispatcher-control` task queue for acknowledged policy
+updates. Ticket admission uses `activities.AwaitDispatchableTickets` on the
+main `software-factory` task queue. No-work cadence is Temporal activity retry
+state, not a workflow timer.
 
-**`dispatcher_state` is retired.** The row and its `RecordDispatcherState`
-activity were written by the retired GitHub-backed dispatcher (#551), and #559
-deleted the only caller. The console no longer reads or exposes that stale
-GitHub-Issue projection; its list is derived only from factory Tickets.
+Worker activation in `cmd/worker/activation.go` is deliberately ordered:
 
-The configured defaults are owned by `work.DefaultFactoryConfig` and
-`work.DefaultDispatcherTuning`: one in flight, a 30-second poll interval, a
-30-minute orphan grace, and `gpt-5.6-terra` at medium effort unless a stage
-override is configured. There is no `DISPATCHER_CONFIG` environment variable
-any more — a live change is the `UpdateConfig` signal the API sends.
+1. Refuse activation while a legacy workflow or legacy Ticket state remains.
+2. Start the control worker.
+3. publish the complete resolved Dispatcher policy through Update-With-Start
+   and wait for `APPLIED` or `ALREADY_CURRENT`.
+4. Reconcile the `software-factory-maintain` Schedule.
+5. Start the main worker.
+6. Mark `/readyz` ready.
 
-The HTTP API (`internal/api`) is reached at `factory.worldwidewebb.co` through
-Cloudflare Access. The tunnel targets the namespace-local `web` Service; nginx
-serves the console and proxies `/api/*` to the namespace-local `api` Service.
-The API applies migrations before its readiness endpoint can answer. Both API and
-console run without Kubernetes credentials; only the worker mounts a Kubernetes
-token. Transcript and conversation bytes use the blob service and factory Store.
-Its authenticated write commands use `internal/clients/temporal.Commands` to
-send `workflows.SignalUpdateConfig` to `work.FactoryDispatcherWorkflowID`
-(pause, resume, max-in-flight, or an empty update that wakes the next tick);
-the console never connects to Temporal. Cancelling a Ticket asks Temporal to
-cancel the `work.FactoryTicketWorkflowID` run so its disconnected cleanup can
-delete the sandbox. There is no status query: `workflows.QueryStatus` belonged
-to the retired dispatcher and went with it (#559).
-Command acceptance means Temporal accepted the request, not that the database
-has observed its effect.
+The default policy comes from `work.DefaultDispatcherPolicy`: it is unpaused,
+admits one Run at a time, and carries the immutable target Run policy. A policy
+is part of the child input at admission, so a later publication cannot change
+an already-running Run.
 
-### Pipeline identity namespace
+`Dispatcher` drains tracked children before Continue-As-New. The continued
+input carries the last accepted policy. The stable workflow ID and separate
+control queue let a new worker publish policy before it starts polling the main
+queue.
 
-One pipeline, one identity namespace:
+### MaintainFactory
 
-| Temporal workflow ID | branch |
+`workflows.MaintainFactory` is a finite recovery pass started every five
+minutes by the `software-factory-maintain` Temporal Schedule with overlap
+policy `SKIP`. Worker boot creates or updates the Schedule definition while
+preserving its live paused state.
+
+Each pass compares three facts:
+
+- active Ticket/Run ownership in Postgres;
+- open `factory-ticket-<ticket-id>` executions in Temporal;
+- generation-labelled Run Worker pods in Kubernetes.
+
+It leaves a matching open owner alone. It deletes Run Worker generations for
+terminal or abandoned Runs, records an abandoned Run as canceled, and returns
+only that Run's still-owned Ticket to `open`. This is repair, not dispatch.
+
+## Durable state and identity
+
+Ticket state is exactly:
+
+| state | meaning |
 |---|---|
-| `factory-ticket-<id>` (`work.FactoryTicketWorkflowID`) | `software-factory/factory-ticket-<id>/<runID>` (`work.FactoryTicketBranchName`) |
+| `open` | filed and eligible when every blocker is `done` |
+| `active` | owned by the one Run named by `active_run_id` |
+| `done` | terminal Confirmed Merge; satisfies dependencies |
+| `failed` | terminal failure or exhausted budget; a human may move it to `open` |
 
-The `factory-ticket-` prefix must not be reused for anything else, and in
-particular must stay disjoint from the retired `work-ticket-<n>` scheme:
-Temporal can reuse a closed workflow ID, so a small Ticket id under that prefix
-would share a history lineage with the GitHub issue of the same number. One
-branch constructor keeps the sandbox branch and the PR head aligned; see
-`SandboxTemplate.SpecForFactoryTicket` for the #603 fix.
+Run outcome is exactly `succeeded`, `canceled`, `exhausted`, or `failed`.
+`succeeded` requires immutable `reviewed_head` and `merge_sha` evidence.
+Cancellation returns its Ticket to `open`; failure and exhaustion move it to
+`failed`. A `done` Ticket never reopens.
 
-### Work ticket and deadlines
-
-`factoryTicketRun.execute` claims the Ticket, performs setup, runs the one plan
-child, then calls `factoryImplementReviewLoop`. Each stage is a synchronous
-`AgentWorkflow` child. The child creates its own Session for sandbox-affine tool
-activities; prompt, model and finalization activities stay on the main queue.
-Cleanup is run on a disconnected workflow context so cancellation does not
-strand the sandbox.
-
-The child input carries a typed tool target. Current `FactoryWorkTicket` runs
-set `legacy_sandbox`; the additive, still-inactive `WorkOnTicket` path sets a
-validated Run Worker identity. The child derives the corresponding private tool
-queue and carries that target through Continue-As-New, so no raw task-queue
-string crosses a workflow boundary.
-
-`work.DefaultRunPolicy` and `work/durations.go` own the deadline ladder:
-
-| bound | value |
-|---|---:|
-| stage timeout | 60 minutes |
-| stage heartbeat timeout | 5 minutes |
-| stage activity retries | bounded exponential backoff; see `work.DefaultRunPolicy` and `work.StageRetry*` |
-| run timeout | 24 hours |
-| sandbox `activeDeadlineSeconds` | 25 hours |
-| control activity timeout / attempts | 2 minutes / 5 |
-
-The theoretical maximum is 19 stage invocations: one plan, up to 15 implement
-turns (three CI windows of five), and up to three reviews. `work.MaxStageInvocations`
-and `RunPolicy.Validate` centralize and check that arithmetic against the
-24-hour run budget.
-
-## The three stage contracts
-
-Every stage starts an `AgentWorkflow` child with a versioned toolset. Direct
-subscription-backed Responses calls and OAuth credentials stay on the main
-worker. Only typed tool calls cross onto the sandbox Session queue. Tool schemas
-are reflected from Go input types at startup, strict-decoded at runtime and
-fingerprinted as part of an immutable toolset. There are no handwritten JSON
-tool schema files.
-
-| stage | purpose and inputs | write/trust boundary |
-|---|---|---|
-| `plan` | Turn the ticket and discussion into an implementation plan. | Receives `coding-read-v1`; its document guides implement but workflow code does not act on it directly. |
-| `implement` | Change, verify, commit, and push the checked-out branch using the plan, its own previous report, and the latest review findings. | The only intended writing stage. It returns `report`, `blocked`, `blocked_reason`, `title`, and `body`. |
-| `review` | Fresh adversarial review of the implementation after green CI, using the report and previous review findings. | Receives `coding-read-v1`. It returns a document plus structured, stable-ID findings; blocking findings control the next loop decision. |
-
-`work.ImplementOutput` and `work.ReviewOutput` define these structured
-contracts. `work.PriorTurns` limits each stage activity input to the plan and
-the latest implement/review outputs; the workflow separately retains the full
-ordered turn history for CI and repeated-finding progress checks.
-
-Each invocation is a separate child workflow with a deterministic ID of
-`agent/<run-id>/<stage>/<turn>`. Conversation revisions and tool arguments are
-blob-backed references, not growing values copied into every history event.
-The bounded `work.PriorTurns` handoff carries the plan, latest implement and
-latest review result into the next semantic stage.
-
-### Inactive target Run path
-
-`WorkOnTicket` is registered for replay and integration tests but is not yet
-dispatched in production. It records an ordinal Step and durable Agent Attempt
-before starting each child `AgentWorkflow`. Its child identity is
-`agent/<run-id>/step/<ordinal>/attempt/<n>`; the same identity owns the
-conversation, transcript, idempotency keys, and main-control evidence record.
-
-The target path uses `TargetRunPolicy.Agent` as immutable child model-turn
-policy: 55-minute start-to-close, 90-minute schedule-to-close, five-minute
-heartbeat, and at most ten retries with 10-second initial, 2x, five-minute-max
-backoff. This does not reinterpret legacy `FactoryWorkTicket` histories, which
-keep the older 2-minute/15-second/three-attempt model policy.
-
-A later implement child copies the complete conversation from the most recent
-successful implement child in the same Run, into a new attempt-owned lineage,
-then appends the structured CI, review, or merge feedback. A review child is
-always unseeded and therefore fresh. Failed children never become a seed. The
-parent renews the projected GitHub credential before a child and every 30
-minutes while it waits; it replaces a lost Run Worker generation only through
-the main-control recovery path.
-
-### Pull request and CI ownership
-
-After every non-blocked implement return, `factoryImplementReviewLoop` calls
-`openOrUpdatePullRequest`. Workflow code finds or creates the pull request for
-the branch it named, makes it draft-first, and uses implement's title/body as
-descriptive content; the model supplies no PR identifier and does not execute a
-separate PR-opening stage. `observeCI` runs before review. A clean review ends
-with `OutcomeProposed`; `factoryTicketRun.finish` makes the draft ready for
-review, enables auto-merge and transitions the Ticket to `review`. Required GitHub review/approval remains outside the
-pipeline.
-
-## Prompt fences and records
-
-`internal/prompts/templates/base.md` fences Ticket title, body, and
-prior-stage documents with an untrusted-content nonce. The renderer generates
-and removes the nonce from untrusted input, then checks fence counts. This is a
-prompt-injection mitigation, not an authorization boundary: plan, report, and
-review prose can still be fallible and must be checked by the stage reading it.
-
-The durable record locations are:
-
-| record | where |
+| identity | form |
 |---|---|
-| workflow decisions and state | Temporal history in the `software-factory` namespace |
-| raw stage event stream | transcript sink under the configured transcript root |
-| human-facing progress | the console, over the run/step/attempt rows below. The factory posts nothing to GitHub except the pull request itself (ADR-0012, #559). |
-| outcomes and usage | workflow result, Attempt rows, and Prometheus metrics |
-| worker logs | Loki |
-| run/step/attempt rows (ADR-0012) | `internal/store`'s Postgres tables, written through `internal/activities.RecordingActivities` as the run happens |
-| transcript rows (ADR-0012) | `internal/store`'s `transcript` table, written through `internal/activities.TranscriptRecordingActivities.PersistTranscriptToStore` |
+| Dispatcher workflow | `software-factory-target-dispatcher` |
+| Ticket workflow | `factory-ticket-<ticket-id>` |
+| Run-owned branch | `software-factory/factory-ticket-<ticket-id>/<run-id>` |
+| Agent Attempt workflow | `agent/<run-id>/step/<ordinal>/attempt/<attempt-no>` |
+| Run Worker generation | `run-worker-<run-id>-g<generation>` |
 
-`factoryTicketRun.persistTranscript` deliberately runs on the main worker queue:
-the stage that produced the bytes ran on the sandbox's own Session queue, and
-the database is reachable only from the main worker.
+The Store atomically claims an `open` Ticket by setting `active_run_id`. Every
+Step, Attempt, checkpoint, terminal transition, and recovery write is fenced by
+that ownership. Temporal workflow IDs provide orchestration identity; they do
+not replace the database ownership check.
 
-## How the factory learns a pull request merged (#557)
+Steps are ordinal and durable. Infrastructure, repository, CI, agent, review,
+and merge operations record their start and terminal result. Agent Attempts
+record model, effort, execution identity, usage state, token counts, result,
+and transcript reference. Raw transcript and conversation bodies are stored by
+reference in the blob service rather than copied into Temporal history.
 
-The pipeline above never polls GitHub for pull request state. The public
-webhook relay (#535, `apps/software-factory/cmd/relay`) verifies each GitHub
-delivery once and forwards it, independently, to every configured target;
-`internal/webhook.Handler` is the factory's own target, mounted at
-`/v1/hooks/github` on the factory API — deliberately outside the API's
-Cloudflare Access/bearer middleware, since its caller is the relay rather than
-a human or an agent, and it authenticates each delivery itself, by HMAC
-(duplicating the relay's own verification until #532 closes the in-cluster
-network hole; see `internal/webhook`'s own doc comment).
+## WorkOnTicket
 
-It acts on exactly one thing: a `pull_request` `closed` event whose branch
-`internal/work.ParseFactoryTicketBranchName` resolves to a factory Ticket.
-`store.RecordWebhookDeliveryAndTransition` records the GitHub delivery id and
-applies the Ticket's `review -> done` (merged) or `review -> failed` (closed
-unmerged) transition in one Postgres transaction, so acknowledging the
-delivery and having durably acted on it are the same fact — there is no window
-after the response in which the effect could still be lost, and no separate
-queue or worker is needed. `done` is what ADR-0012's `ready(T)` reads to
-unblock a Ticket's dependents; this is the only thing in the factory that ever
-sets it. This is unrelated to the legacy pipeline's own PR lifecycle described
-under "Where a human is required" below, which still relies on GitHub
-auto-merge and carries no Ticket to transition.
+`workflows.WorkOnTicket` owns the complete Run lifecycle:
 
-## Sandbox and retries
+1. Validate the admitted policy and atomically claim the Ticket.
+2. Read any canceled predecessor checkpoint for safe branch recovery.
+3. Provision Run Worker generation one and acquire a Temporal Session.
+4. Clone the repository onto the generation's shared `/work` volume.
+5. Run one plan and one initial implement Agent Step.
+6. Create or update the Run-owned draft pull request.
+7. Wait for every required check in the immutable policy, currently
+   `test-software-factory`, on the exact candidate head.
+8. Run an independent review Agent Step.
+9. Feed red CI, blocking findings, head changes, base refreshes, and merge
+   conflicts into bounded new implement Attempts.
+10. Mark a clean candidate ready and request an exact-head squash merge.
+11. Atomically record Confirmed Merge, finish the Run, move the Ticket to
+    `done`, and delete the Run Worker.
 
-`CreateSandbox` creates one `restartPolicy: Never` pod per ticket. It has an
-`emptyDir` work volume, no provider credential, no automatically mounted
-service-account token, a non-root security context, no privilege escalation,
-and all Linux capabilities dropped. The main worker registers `AgentWorkflow`
-plus prompt, model, finalization, lifecycle and transcript activities. The
-sandbox worker registers only the generic typed `agent.tool` activity and
-hosts one concurrent Temporal Session. Tool calls are Session-bound to the
-run-specific sandbox queue, which only that sandbox pod polls. The separately
-named Run Worker pod has two isolated workers: its credentialed `run-worker`
-container polls only repository-affine activities, while the credential-free
-`tools` container polls the private `agent.tool` queue. The main worker owns
-direct model calls, prompt/finalization, durable Agent Attempt evidence, and
-credential rotation. `WorkOnTicket` remains inactive until the activation gate.
+The semantic deadline reserves time before the hard execution deadline for
+finalization and cleanup. Agent Attempts and review Steps have independent
+budgets. Terminal errors are classified into stable failure kinds; raw errors
+do not drive later business decisions.
 
-Each child workflow is parent-owned with request-cancel close policy and waits
-for cancellation. Model activity cancellation closes the HTTP request; tool
-activity cancellation kills the local process. A sandbox-pod loss fails the
-Session (`workflow.ErrSessionFailed`); the pod's `emptyDir` checkout is gone and
-cannot be resumed. The parent always runs sandbox deletion on its disconnected
-cleanup context.
+A lost Run Worker generation fails its Temporal Session. `WorkOnTicket`
+deletes that generation, provisions the next generation, restores the latest
+durable repository checkpoint, and continues within the original Run budget.
+It never resumes a partial provider conversation. A new Agent Attempt clones
+only a successful prior conversation reference and appends structured
+feedback.
 
-The sandbox image includes Node, Go, `gcc`/`libc6-dev`, and a pinned
-`golangci-lint`; the previous toolchain-gap warning no longer applies. It also
-ships checksum-pinned Playwright Chromium at `/ms-playwright`; Playwright's
-dependency resolver supplies the native Trixie libraries, and the smoke test
-proves uid 1000 can write a real headless page PNG while `/work` is masked.
-The resolver also supplies Xvfb and `xauth`; smoke keeps a headed Chromium
-window open at a 1366×1024 page viewport on a 1400×1100 display, so browser
-chrome does not silently shrink the panel viewport. Playwright page PNGs remain
-headless and do not themselves capture native browser chrome.
+## Run Worker isolation
 
-## Where a human is required
+One digest-pinned Run Worker pod exists per active Run generation. It has two
+containers built from the same image and a shared `emptyDir` checkout:
 
-1. File the Ticket, through the API or the console. The service never files
-   its own.
-2. Review and approve a successful PR. The workflow opens/updates the draft,
-   but approval is a GitHub policy decision.
-3. GitHub auto-merges after approval and any other required checks complete.
-   A human can still merge manually if arming auto-merge failed; merging deploys.
-4. Resolve a blocked, exhausted, or failed outcome and move the Ticket back to
-   `open` if another machine pass is wanted. `failed` never auto-retries.
-5. Re-seed Codex credentials if their refresh credential becomes unusable.
+| container | authority |
+|---|---|
+| `run-worker` | fixed typed repository, GitHub, CI, and checkpoint activities; projected GitHub and capability Secrets |
+| `tool-worker` | model-selected typed tools inside the checkout; no projected Secret, provider credential, or Kubernetes token |
 
-## Current limitations
+The containers poll distinct generation-specific Temporal queues. The
+credentialed `run-worker` cannot execute model-selected argv. The
+credential-free `tool-worker` cannot read the repository/GitHub capability
+mounts because they are mounted only into its sibling. Both run as uid 1000
+without a service-account token, privilege escalation, or added Linux
+capabilities. The main worker creates and deletes pods through the Kubernetes
+API; it never uses `pods/exec` or remote file transfer.
 
-- The sandbox has no network isolation: the cluster currently has no effective
-  egress policy for it.
-- The agent can read its GitHub credential inside the sandbox ([#416][416]).
-- The installation token is not refreshed during a run ([#417][417]); the run
-  budget is now 24 hours, so the issue title's former six-hour wording is
-  historical rather than a current duration.
+Direct Responses model calls, prompt rendering, lifecycle evidence, and final
+transcript persistence stay on the main worker. Only the typed tool activity is
+routed to `tool-worker` through the Agent Attempt's Session.
 
-## Open tickets this map makes legible
+## Pull requests, CI, and webhooks
 
-- [#416][416] — agent-readable GitHub token.
-- [#417][417] — installation-token refresh during the now-longer run budget.
+Repository operations are workflow-owned and checkpointed. The model may edit,
+test, and commit inside the checkout, but fixed repository activities own
+clone, push, PR synchronization, readiness, and merge.
 
-Resolved historical context deliberately omitted here: #415's output-contract
-work, #425's generic activity-name problem, #428's sandbox-toolchain work, and
-#331's status-token accounting item are closed and are not current open work.
+`WorkOnTicket` accepts a merge only when GitHub confirms that the merged head
+is the exact head that passed required CI and the latest review. A changed head
+returns to CI and review. Text conflicts or a required base refresh return to
+implement. Ruleset rejection and exhausted GitHub availability are terminal,
+classified Run failures.
 
-[416]: https://github.com/0x63616c/world-wide-webb/issues/416
-[417]: https://github.com/0x63616c/world-wide-webb/issues/417
+The public relay still forwards authenticated GitHub deliveries to
+`/v1/hooks/github`. `internal/webhook.TargetHandler` authenticates and
+deduplicates them for audit only. It does not change Ticket or Run state.
+There is no auto-merge enablement anywhere in the target pipeline.
+
+## API, console, and records
+
+[factory.worldwidewebb.co](https://factory.worldwidewebb.co) is behind
+Cloudflare Access. Nginx serves the console and proxies `/api/*` to the API.
+The API applies embedded Postgres migrations before it binds `/healthz`, which
+is why API readiness is also the first migration-success signal.
+
+The console reads the factory's Postgres record through the API. It shows
+Tickets and their dependency graph, Runs, ordinal Steps, semantic Agent
+Attempts, usage, failure classifications, Confirmed Merge evidence, and
+downloadable transcripts. It does not read GitHub Issues or a dispatcher-state
+projection.
+
+| record | authority |
+|---|---|
+| workflow decisions | Temporal history in namespace `software-factory` |
+| Ticket, Run, Step, Attempt, checkpoint, and merge evidence | software-factory Postgres |
+| transcript and conversation bodies | content-addressed blob service |
+| service logs | Loki |
+| metrics | Prometheus |
+| user-facing operational view | console and authenticated API |
+
+## Human boundaries
+
+A human files and prioritizes Tickets, resolves failed or exhausted work, and
+may return a failed Ticket to `open`. GitHub's ruleset still requires the
+configured Code Owner approval for ordinary actors. The Software Factory App
+may bypass that approval requirement only for pull-request merge, while the
+separate `test-software-factory` required-check ruleset has no bypass actors.
+
+The workflow, not a human and not GitHub auto-merge, performs the final
+exact-head squash merge after its own review and required-check proof. Merging
+to `main` triggers the normal CI and production deployment.
+
+## Historical boundary
+
+Legacy workflows, sandbox pods, `working`/`review` Ticket states, webhook
+transitions, and auto-merge belong to the completed v0 cutover only. The cutover
+runbook retains their exact resource names because it is the audit record for
+removing them. They are not valid templates for new runtime code.

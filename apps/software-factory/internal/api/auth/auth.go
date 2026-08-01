@@ -40,8 +40,8 @@ const (
 	IdentityAccess IdentityKind = "access"
 	// IdentityWorker is the factory worker's in-cluster bearer.
 	IdentityWorker IdentityKind = "worker"
-	// IdentitySandbox is a sandbox's read-only in-cluster bearer.
-	IdentitySandbox IdentityKind = "sandbox"
+	// IdentityRunWorker is a Run Worker's read-only in-cluster bearer.
+	IdentityRunWorker IdentityKind = "run_worker"
 )
 
 // Identity is the typed caller value available to API handlers.
@@ -52,21 +52,21 @@ type Identity struct {
 
 // Options configures a Middleware instance.
 type Options struct {
-	AccessIssuer   string
-	AccessAudience string
-	AccessCertsURL string
-	WorkerBearer   string
-	SandboxBearer  string
-	HTTPClient     *http.Client
+	AccessIssuer    string
+	AccessAudience  string
+	AccessCertsURL  string
+	WorkerBearer    string
+	RunWorkerBearer string
+	HTTPClient      *http.Client
 }
 
 // Middleware authenticates API callers and enforces their scope before handlers run.
 type Middleware struct {
-	accessVerifier keyfunc.Keyfunc
-	accessIssuer   string
-	accessAudience string
-	workerBearer   []byte
-	sandboxBearer  []byte
+	accessVerifier  keyfunc.Keyfunc
+	accessIssuer    string
+	accessAudience  string
+	workerBearer    []byte
+	runWorkerBearer []byte
 }
 
 // New constructs authentication middleware and loads the current Cloudflare JWKS.
@@ -97,11 +97,11 @@ func New(options Options) (*Middleware, error) {
 		return nil, fmt.Errorf("create Cloudflare Access JWT verifier: %w", err)
 	}
 	return &Middleware{
-		accessVerifier: verifier,
-		accessIssuer:   options.AccessIssuer,
-		accessAudience: options.AccessAudience,
-		workerBearer:   []byte(options.WorkerBearer),
-		sandboxBearer:  []byte(options.SandboxBearer),
+		accessVerifier:  verifier,
+		accessIssuer:    options.AccessIssuer,
+		accessAudience:  options.AccessAudience,
+		workerBearer:    []byte(options.WorkerBearer),
+		runWorkerBearer: []byte(options.RunWorkerBearer),
 	}, nil
 }
 
@@ -109,7 +109,7 @@ func (options Options) validate() error {
 	for name, value := range map[string]string{
 		"access issuer": options.AccessIssuer, "access audience": options.AccessAudience,
 		"access certificates URL": options.AccessCertsURL, "worker bearer": options.WorkerBearer,
-		"sandbox bearer": options.SandboxBearer,
+		"run worker bearer": options.RunWorkerBearer,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("%s is required", name)
@@ -141,8 +141,8 @@ func (middleware *Middleware) authenticate(request *http.Request) (Identity, boo
 	if subtle.ConstantTimeCompare([]byte(bearer), middleware.workerBearer) == 1 {
 		return Identity{Kind: IdentityWorker, Scope: ScopeWrite}, true
 	}
-	if subtle.ConstantTimeCompare([]byte(bearer), middleware.sandboxBearer) == 1 {
-		return Identity{Kind: IdentitySandbox, Scope: ScopeRead}, true
+	if subtle.ConstantTimeCompare([]byte(bearer), middleware.runWorkerBearer) == 1 {
+		return Identity{Kind: IdentityRunWorker, Scope: ScopeRead}, true
 	}
 	return Identity{}, false
 }

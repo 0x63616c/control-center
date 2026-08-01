@@ -14,7 +14,7 @@ import (
 // rather than the function staying the one log line it started as (#340). See TestTheWorkerPollsTheQueueTheWorkflowsScheduleOnto for why this
 // is a source-level assertion rather than a run against a live worker: the
 // alternative is a live Temporal, and this file already has that pattern.
-func TestRegisterExposesTheAgentWorkflowAndMainQueueActivities(t *testing.T) {
+func TestRegisterExposesOnlyActivatedWorkflowsAndMainQueueActivities(t *testing.T) {
 	t.Parallel()
 
 	source, err := os.ReadFile("main.go")
@@ -24,9 +24,8 @@ func TestRegisterExposesTheAgentWorkflowAndMainQueueActivities(t *testing.T) {
 	body := extractRegisterBody(t, string(source))
 
 	for _, want := range []string{
-		"w.RegisterWorkflow(workflows.FactoryWorkTicket)",
-		"w.RegisterWorkflow(workflows.FactoryDispatcher)",
 		"w.RegisterWorkflow(workflows.WorkOnTicket)",
+		"w.RegisterWorkflow(workflows.MaintainFactory)",
 		"w.RegisterActivity(targetRecordingActs)",
 		"w.RegisterActivity(targetRecoveryActs)",
 		"w.RegisterActivity(targetEvidenceActs)",
@@ -35,15 +34,52 @@ func TestRegisterExposesTheAgentWorkflowAndMainQueueActivities(t *testing.T) {
 		"agent.ModelTurnActivityName",
 		"agent.LifecycleActivityName",
 		"agent.FinalizeActivityName",
-		"agent.PersistTranscriptActivityName",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("register()'s body does not contain %q; the worker registers nothing it does not name here", want)
 		}
 	}
-	for _, forbidden := range []string{"w.RegisterActivity(acts)", "acts.RunPlan", "acts.RunImplement", "acts.RunReview"} {
+	for _, forbidden := range []string{
+		"w.RegisterWorkflow(workflows.Dispatcher)",
+		"w.RegisterWorkflow(workflows.FactoryWorkTicket)",
+		"w.RegisterWorkflow(workflows.FactoryDispatcher)",
+		"w.RegisterActivity(acts)",
+		"acts.RunPlan",
+		"acts.RunImplement",
+		"acts.RunReview",
+		"acts.CreateSandbox",
+		"acts.WaitSandboxReady",
+		"acts.CloneRepo",
+		"acts.PushRepo",
+		"acts.DeleteSandbox",
+		"acts.EnablePullRequestAutoMerge",
+		"acts.SweepOrphanSandboxes",
+	} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("register() exposes legacy CLI activity %q", forbidden)
+		}
+	}
+}
+
+func TestRegisterControlExposesOnlyDispatcherAdmission(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("reading main.go: %v", err)
+	}
+	body := extractNamedFunctionBody(t, string(source), "func registerControl(")
+	for _, want := range []string{
+		"w.RegisterWorkflow(workflows.Dispatcher)",
+		"w.RegisterActivity(ticketActs.AwaitDispatchableTickets)",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("registerControl() does not contain %q", want)
+		}
+	}
+	for _, forbidden := range []string{"WorkOnTicket", "MaintainFactory", "RegisterActivity(ticketActs)"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("registerControl() exposes main-queue capability %q", forbidden)
 		}
 	}
 }
@@ -91,10 +127,15 @@ func TestProductionSourceCannotInvokeCodexCLI(t *testing.T) {
 // there is exactly one place to look.
 func extractRegisterBody(t *testing.T, source string) string {
 	t.Helper()
+	return extractNamedFunctionBody(t, source, "func register(")
+}
 
-	start := strings.Index(source, "func register(")
+func extractNamedFunctionBody(t *testing.T, source, declaration string) string {
+	t.Helper()
+
+	start := strings.Index(source, declaration)
 	if start < 0 {
-		t.Fatal("main.go has no register( function")
+		t.Fatalf("main.go has no %s function", declaration)
 	}
 	// The next top-level "\n}\n" after the opening brace ends the function;
 	// register has no nested func literals today, so a brace-depth scan is

@@ -21,7 +21,7 @@ func TestDispatchWaitActivityOptionsLeaveIdleRetriesOutsideWorkflowHistory(t *te
 func TestDispatchChildOptionsRequestCancellationWhenTheDispatcherCloses(t *testing.T) {
 	policy := work.DefaultTargetRunPolicy()
 	options := dispatchChildWorkflowOptions(store.TicketID(41), policy)
-	if options.WorkflowID != work.FactoryTicketWorkflowID(41) {
+	if options.WorkflowID != work.TicketWorkflowID(41) {
 		t.Errorf("WorkflowID = %q, want ticket-scoped target workflow ID", options.WorkflowID)
 	}
 	if options.TaskQueue != work.TaskQueue {

@@ -44,9 +44,7 @@ export function AttemptRow({
       ) : (
         <p className="row-meta">No transcript stored for this attempt.</p>
       )}
-      {attempt.providerThreadId && (
-        <p className="row-meta">Provider thread: {attempt.providerThreadId}</p>
-      )}
+      {attempt.executionId && <p className="row-meta">Execution: {attempt.executionId}</p>}
       {attempt.failureKind && <p className="row-meta">Failure: {attempt.failureKind}</p>}
       {result && (
         <details>

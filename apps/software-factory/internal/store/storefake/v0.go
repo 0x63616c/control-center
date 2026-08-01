@@ -113,61 +113,6 @@ func (f *Store) TargetRunDetail(_ context.Context, runID string) (store.TargetRu
 	return store.TargetRunDetail{Run: run, Steps: steps}, nil
 }
 
-// History mirrors the target-first compatibility projection used by the real Store.
-func (f *Store) History(ctx context.Context, runID string) (store.RunHistory, error) {
-	target, err := f.TargetRunDetail(ctx, runID)
-	if err != nil {
-		return store.RunHistory{}, err
-	}
-	if len(target.Steps) > 0 || target.Run.TargetOutcome != "" {
-		return store.RunHistory{Run: target.Run, Steps: target.Steps}, nil
-	}
-	legacy, err := f.RunDetail(ctx, runID)
-	if err != nil {
-		return store.RunHistory{}, err
-	}
-	transcriptKeys, err := f.TranscriptKeysForRun(ctx, runID)
-	if err != nil {
-		return store.RunHistory{}, err
-	}
-	transcriptPresent := make(map[store.TranscriptKey]bool, len(transcriptKeys))
-	for _, key := range transcriptKeys {
-		transcriptPresent[key] = true
-	}
-	steps := make([]store.TargetStepDetail, 0, len(legacy.Steps))
-	for index, legacyStep := range legacy.Steps {
-		step := store.RunStep{RunID: runID, Ordinal: index + 1, Kind: work.StepKind(legacyStep.Stage), Iteration: legacyStep.Turn, State: work.StepStateCompleted}
-		attempts := make([]store.AgentAttempt, 0, len(legacyStep.Attempts))
-		for _, legacyAttempt := range legacyStep.Attempts {
-			state := work.AgentAttemptRunning
-			switch legacyAttempt.Result {
-			case store.AttemptSucceeded:
-				state = work.AgentAttemptSucceeded
-			case store.AttemptFailed:
-				state = work.AgentAttemptFailed
-			}
-			usageState := work.UsageUnknown
-			if legacyAttempt.Measured {
-				usageState = work.UsageMeasured
-			}
-			attempts = append(attempts, store.AgentAttempt{
-				ID: store.TargetAttemptID{RunID: runID, StepOrdinal: index + 1, AttemptNo: legacyAttempt.AttemptNo}, AgentStage: work.AgentStage(legacyStep.Stage), Model: legacyAttempt.Model,
-				State: state, UsageState: usageState, Usage: legacyAttempt.Usage, StartedAt: legacyAttempt.StartedAt, EndedAt: legacyAttempt.EndedAt,
-				TranscriptPresent: transcriptPresent[store.TranscriptKey{Stage: legacyStep.Stage, Turn: legacyStep.Turn, AttemptNo: legacyAttempt.AttemptNo}],
-			})
-		}
-		if len(attempts) > 0 {
-			step.StartedAt = attempts[0].StartedAt
-			step.EndedAt = attempts[len(attempts)-1].EndedAt
-			if step.EndedAt.IsZero() {
-				step.State = work.StepStateRunning
-			}
-		}
-		steps = append(steps, store.TargetStepDetail{Step: step, Attempts: attempts})
-	}
-	return store.RunHistory{Run: legacy.Run, Steps: steps, Legacy: true}, nil
-}
-
 // TargetTranscript reads target transcript evidence without a write capability.
 func (f *Store) TargetTranscript(_ context.Context, id store.TargetAttemptID) (store.TargetTranscript, error) {
 	f.mu.Lock()
@@ -280,7 +225,7 @@ func (f *Store) checkpointAgentAttempt(in store.AgentCheckpointInput, requireCap
 		}
 		return attempt, nil
 	}
-	if in.State == work.AgentAttemptRunning && attempt.ProviderThreadID != "" {
+	if in.State == work.AgentAttemptRunning && attempt.ExecutionID != "" {
 		if !runningAgentCheckpointMatches(attempt, in) || !targetTranscriptMatches(f.targetTranscripts[in.ID], in.Transcript) {
 			return store.AgentAttempt{}, fmt.Errorf("checkpoint: conflicting running checkpoint: %w", work.ErrPermanent)
 		}
@@ -289,7 +234,7 @@ func (f *Store) checkpointAgentAttempt(in store.AgentCheckpointInput, requireCap
 	if in.Transcript != nil {
 		f.targetTranscripts[in.ID] = *in.Transcript
 	}
-	attempt.ProviderThreadID, attempt.State, attempt.FailureKind, attempt.UsageState, attempt.Usage, attempt.EndedAt, attempt.Result = in.ThreadID, in.State, in.FailureKind, in.UsageState, in.Usage, in.EndedAt, in.Result
+	attempt.ExecutionID, attempt.State, attempt.FailureKind, attempt.UsageState, attempt.Usage, attempt.EndedAt, attempt.Result = in.ExecutionID, in.State, in.FailureKind, in.UsageState, in.Usage, in.EndedAt, in.Result
 	_, attempt.TranscriptPresent = f.targetTranscripts[in.ID]
 	f.targetAttempts[in.ID] = attempt
 	return attempt, nil
@@ -303,7 +248,7 @@ func (f *Store) LoadAgentCheckpoint(_ context.Context, id store.TargetAttemptID,
 	if !ok || f.capabilityHash[id] != capability {
 		return store.AgentAttempt{}, nil, false, fmt.Errorf("loading checkpoint: %w", store.ErrRunOwnership)
 	}
-	if attempt.State == work.AgentAttemptRunning && attempt.ProviderThreadID == "" {
+	if attempt.State == work.AgentAttemptRunning && attempt.ExecutionID == "" {
 		return attempt, nil, false, nil
 	}
 	var transcript *store.TargetTranscript
@@ -316,7 +261,7 @@ func (f *Store) LoadAgentCheckpoint(_ context.Context, id store.TargetAttemptID,
 
 func terminalAgentCheckpointMatches(attempt store.AgentAttempt, in store.AgentCheckpointInput) bool {
 	return attempt.State == in.State &&
-		attempt.ProviderThreadID == in.ThreadID &&
+		attempt.ExecutionID == in.ExecutionID &&
 		attempt.FailureKind == in.FailureKind &&
 		attempt.UsageState == in.UsageState &&
 		attempt.Usage == in.Usage &&

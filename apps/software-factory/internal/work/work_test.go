@@ -18,12 +18,11 @@ import (
 // way the code does would assert nothing, so a change that alters them has to
 // change this test too, deliberately.
 
-func TestFactoryDispatcherWorkflowIDIsStable(t *testing.T) {
+func TestTargetDispatcherWorkflowIDIsStable(t *testing.T) {
 	t.Parallel()
 
-	if got, want := work.FactoryDispatcherWorkflowID, "software-factory-ticket-dispatcher"; got != want {
-		t.Errorf("FactoryDispatcherWorkflowID = %q, want %q — the composition root starts on this ID every boot; "+
-			"changing it orphans whatever dispatcher is already running under the old one", got, want)
+	if got, want := work.TargetDispatcherWorkflowID, "software-factory-target-dispatcher"; got != want {
+		t.Errorf("TargetDispatcherWorkflowID = %q, want %q; changing it orphans the active dispatcher", got, want)
 	}
 }
 
@@ -271,19 +270,6 @@ func TestPermanentIsDistinctFromOtherSentinels(t *testing.T) {
 
 	if errors.Is(work.ErrFileNotFound, work.ErrPermanent) {
 		t.Error("a missing sandbox file reports as permanent; absence is a signal a stage keys off, not a reason to stop retrying")
-	}
-}
-
-func TestSandboxSpecCarriesTheRunIDInTheSameFormAsAStageKey(t *testing.T) {
-	t.Parallel()
-
-	// One representation of a run id, not two: a pod named from the spec and a
-	// path derived from the key have to agree about which run they belong to.
-	key := work.StageKey{Ticket: 312, RunID: "0198c2f1", Stage: work.StagePlan}
-	spec := work.SandboxSpec{TicketNumber: key.Ticket, RunID: key.RunID}
-
-	if spec.RunID != key.RunID {
-		t.Errorf("SandboxSpec.RunID = %q, want %q", spec.RunID, key.RunID)
 	}
 }
 

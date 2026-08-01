@@ -73,10 +73,18 @@ type TargetTerminalRecorder interface {
 	FinalizeRunFailure(context.Context, RunFailureInput) (TerminalResult, error)
 }
 
-// TargetHistoryReader exposes the durable compatibility projection used by
-// the console while target and legacy Runs coexist.
+// LegacyTicketCount proves the final target-state migration has no old rows.
+func (s *Store) LegacyTicketCount(ctx context.Context) (int64, error) {
+	count, err := s.q.CountLegacyTicketStates(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("counting pre-activation Ticket states: %w", wrapQueryErr(err))
+	}
+	return count, nil
+}
+
+// TargetHistoryReader exposes the durable target projection used by the console.
 type TargetHistoryReader interface {
-	History(context.Context, string) (RunHistory, error)
+	TargetRunDetail(context.Context, string) (TargetRunDetail, error)
 	TargetTranscript(context.Context, TargetAttemptID) (TargetTranscript, error)
 }
 
@@ -244,7 +252,7 @@ type AgentAttempt struct {
 	Model             work.Model
 	State             work.AgentAttemptState
 	FailureKind       work.RunFailureKind
-	ProviderThreadID  string
+	ExecutionID       string
 	UsageState        work.UsageState
 	Usage             work.Usage
 	StartedAt         time.Time
@@ -273,72 +281,10 @@ type TargetStepDetail struct {
 	Attempts []AgentAttempt
 }
 
-// TargetRunDetail is the target ordinal projection. Legacy reads remain available
-// through RunDetail until the quiesced PR 8 history backfill.
+// TargetRunDetail is the target ordinal projection.
 type TargetRunDetail struct {
 	Run   Run
 	Steps []TargetStepDetail
-}
-
-// RunHistory is the compatibility read model while both legacy and target
-// writers exist. Legacy rows are projected at read time and are never copied
-// into target tables before cutover quiescence.
-type RunHistory struct {
-	Run    Run
-	Steps  []TargetStepDetail
-	Legacy bool
-}
-
-// History reads target ordinal rows when present and otherwise projects the
-// legacy stage/turn history in its existing deterministic order.
-func (s *Store) History(ctx context.Context, runID string) (RunHistory, error) {
-	target, err := s.TargetRunDetail(ctx, runID)
-	if err != nil {
-		return RunHistory{}, err
-	}
-	if len(target.Steps) > 0 || target.Run.TargetOutcome != "" {
-		return RunHistory{Run: target.Run, Steps: target.Steps}, nil
-	}
-	legacy, err := s.RunDetail(ctx, runID)
-	if err != nil {
-		return RunHistory{}, err
-	}
-	transcriptKeys, err := s.TranscriptKeysForRun(ctx, runID)
-	if err != nil {
-		return RunHistory{}, err
-	}
-	transcriptPresent := make(map[TranscriptKey]bool, len(transcriptKeys))
-	for _, key := range transcriptKeys {
-		transcriptPresent[key] = true
-	}
-	steps := make([]TargetStepDetail, 0, len(legacy.Steps))
-	for ordinal, legacyStep := range legacy.Steps {
-		step := RunStep{RunID: runID, Ordinal: ordinal + 1, Kind: work.StepKind(legacyStep.Stage), Iteration: legacyStep.Turn, State: work.StepStateCompleted}
-		attempts := make([]AgentAttempt, 0, len(legacyStep.Attempts))
-		for _, legacyAttempt := range legacyStep.Attempts {
-			state := work.AgentAttemptRunning
-			switch legacyAttempt.Result {
-			case AttemptSucceeded:
-				state = work.AgentAttemptSucceeded
-			case AttemptFailed:
-				state = work.AgentAttemptFailed
-			}
-			usageState := work.UsageUnknown
-			if legacyAttempt.Measured {
-				usageState = work.UsageMeasured
-			}
-			attempts = append(attempts, AgentAttempt{ID: TargetAttemptID{RunID: runID, StepOrdinal: ordinal + 1, AttemptNo: legacyAttempt.AttemptNo}, AgentStage: work.AgentStage(legacyAttempt.Key.Stage), Model: legacyAttempt.Model, State: state, UsageState: usageState, Usage: legacyAttempt.Usage, StartedAt: legacyAttempt.StartedAt, EndedAt: legacyAttempt.EndedAt, TranscriptPresent: transcriptPresent[TranscriptKey{Stage: legacyStep.Stage, Turn: legacyStep.Turn, AttemptNo: legacyAttempt.AttemptNo}]})
-		}
-		if len(attempts) > 0 {
-			step.StartedAt = attempts[0].StartedAt
-			step.EndedAt = attempts[len(attempts)-1].EndedAt
-			if step.EndedAt.IsZero() {
-				step.State = work.StepStateRunning
-			}
-		}
-		steps = append(steps, TargetStepDetail{Step: step, Attempts: attempts})
-	}
-	return RunHistory{Run: legacy.Run, Steps: steps, Legacy: true}, nil
 }
 
 // TargetRunDetail reads one target Run's complete ordinal history without Temporal.
@@ -424,7 +370,7 @@ func (s *Store) StartAgentAttempt(ctx context.Context, in StartAgentAttemptInput
 type AgentCheckpointInput struct {
 	ID          TargetAttemptID
 	Capability  string
-	ThreadID    string
+	ExecutionID string
 	State       work.AgentAttemptState
 	FailureKind work.RunFailureKind
 	UsageState  work.UsageState
@@ -808,7 +754,7 @@ func (s *Store) FailAgentAttempt(ctx context.Context, in AgentAttemptFailureInpu
 	}
 	row, err := q.CheckpointTargetAgentAttempt(ctx, storedb.CheckpointTargetAgentAttemptParams{
 		RunID: id, StepOrdinal: int32(in.ID.StepOrdinal), AttemptNo: int32(in.ID.AttemptNo),
-		ProviderThreadID: current.ProviderThreadID, State: string(work.AgentAttemptFailed), FailureKind: string(in.FailureKind),
+		ExecutionID: current.ExecutionID, State: string(work.AgentAttemptFailed), FailureKind: string(in.FailureKind),
 		UsageState: current.UsageState, InputTokens: current.InputTokens, CachedInputTokens: current.CachedInputTokens,
 		OutputTokens: current.OutputTokens, ReasoningTokens: current.ReasoningTokens, EndedAt: pgTimestamp(in.EndedAt),
 	})
@@ -890,7 +836,7 @@ func (s *Store) checkpointAgentAttempt(ctx context.Context, in AgentCheckpointIn
 		}
 		return agentAttemptFromRow(current), nil
 	}
-	if in.State == work.AgentAttemptRunning && current.ProviderThreadID != "" {
+	if in.State == work.AgentAttemptRunning && current.ExecutionID != "" {
 		if !runningAgentCheckpointMatches(current, in) {
 			return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt: conflicting running checkpoint: %w", work.ErrPermanent)
 		}
@@ -909,7 +855,7 @@ func (s *Store) checkpointAgentAttempt(ctx context.Context, in AgentCheckpointIn
 		}
 		return agentAttemptFromRow(current), nil
 	}
-	row, err := q.CheckpointTargetAgentAttempt(ctx, storedb.CheckpointTargetAgentAttemptParams{RunID: id, StepOrdinal: int32(in.ID.StepOrdinal), AttemptNo: int32(in.ID.AttemptNo), ProviderThreadID: in.ThreadID, State: string(in.State), FailureKind: string(in.FailureKind), UsageState: string(in.UsageState), InputTokens: in.Usage.InputTokens, CachedInputTokens: in.Usage.CachedInputTokens, OutputTokens: in.Usage.OutputTokens, ReasoningTokens: in.Usage.ReasoningTokens, EndedAt: pgOptionalTimestamp(in.EndedAt), Result: in.Result})
+	row, err := q.CheckpointTargetAgentAttempt(ctx, storedb.CheckpointTargetAgentAttemptParams{RunID: id, StepOrdinal: int32(in.ID.StepOrdinal), AttemptNo: int32(in.ID.AttemptNo), ExecutionID: in.ExecutionID, State: string(in.State), FailureKind: string(in.FailureKind), UsageState: string(in.UsageState), InputTokens: in.Usage.InputTokens, CachedInputTokens: in.Usage.CachedInputTokens, OutputTokens: in.Usage.OutputTokens, ReasoningTokens: in.Usage.ReasoningTokens, EndedAt: pgOptionalTimestamp(in.EndedAt), Result: in.Result})
 	if err != nil {
 		return AgentAttempt{}, fmt.Errorf("checkpointing agent attempt %s: %w", in.ID, wrapQueryErr(err))
 	}
@@ -943,7 +889,7 @@ func (s *Store) LoadAgentCheckpoint(ctx context.Context, attemptID TargetAttempt
 		return AgentAttempt{}, nil, false, fmt.Errorf("loading agent checkpoint: %w", ErrRunOwnership)
 	}
 	attempt := agentAttemptFromRow(row)
-	if attempt.State == work.AgentAttemptRunning && attempt.ProviderThreadID == "" {
+	if attempt.State == work.AgentAttemptRunning && attempt.ExecutionID == "" {
 		return attempt, nil, false, nil
 	}
 	transcriptRow, transcriptErr := s.q.TargetAgentTranscript(ctx, storedb.TargetAgentTranscriptParams{RunID: id, StepOrdinal: int32(attemptID.StepOrdinal), AttemptNo: int32(attemptID.AttemptNo)})
@@ -1394,8 +1340,8 @@ func (in AgentCheckpointInput) Validate() error {
 		return fmt.Errorf("checkpointing agent attempt %s: usage state is required: %w", in.ID, work.ErrPermanent)
 	}
 	if in.State == work.AgentAttemptRunning {
-		if in.ThreadID == "" {
-			return fmt.Errorf("checkpointing agent attempt %s: provider identity is required: %w", in.ID, work.ErrPermanent)
+		if in.ExecutionID == "" {
+			return fmt.Errorf("checkpointing agent attempt %s: execution identity is required: %w", in.ID, work.ErrPermanent)
 		}
 		if !in.EndedAt.IsZero() || len(in.Result) != 0 {
 			return fmt.Errorf("checkpointing agent attempt %s: running checkpoint cannot be terminal: %w", in.ID, work.ErrPermanent)
@@ -1408,8 +1354,8 @@ func (in AgentCheckpointInput) Validate() error {
 	if in.State != work.AgentAttemptSucceeded {
 		return nil
 	}
-	if in.ThreadID == "" {
-		return fmt.Errorf("checkpointing agent attempt %s: provider identity is required: %w", in.ID, work.ErrPermanent)
+	if in.ExecutionID == "" {
+		return fmt.Errorf("checkpointing agent attempt %s: execution identity is required: %w", in.ID, work.ErrPermanent)
 	}
 	if len(in.Result) == 0 || !json.Valid(in.Result) {
 		return fmt.Errorf("checkpointing agent attempt %s: terminal result is required: %w", in.ID, work.ErrPermanent)
@@ -1432,7 +1378,7 @@ func repositoryCapabilityHash(identity work.RunWorkerIdentity, capability string
 
 func terminalAgentCheckpointMatches(current storedb.RunAgentAttempt, in AgentCheckpointInput) bool {
 	return current.State == string(in.State) &&
-		current.ProviderThreadID == in.ThreadID &&
+		current.ExecutionID == in.ExecutionID &&
 		current.FailureKind == string(in.FailureKind) &&
 		current.UsageState == string(in.UsageState) &&
 		current.InputTokens == in.Usage.InputTokens &&
@@ -1484,7 +1430,7 @@ func runStepFromRow(row storedb.RunStep) RunStep {
 }
 
 func agentAttemptFromRow(row storedb.RunAgentAttempt) AgentAttempt {
-	return AgentAttempt{ID: TargetAttemptID{RunID: runIDString(row.RunID), StepOrdinal: int(row.StepOrdinal), AttemptNo: int(row.AttemptNo)}, AgentStage: work.AgentStage(row.AgentStage), Model: work.Model{Name: row.Model, Effort: row.Effort}, State: work.AgentAttemptState(row.State), FailureKind: work.RunFailureKind(row.FailureKind), ProviderThreadID: row.ProviderThreadID, UsageState: work.UsageState(row.UsageState), Usage: work.Usage{InputTokens: row.InputTokens, CachedInputTokens: row.CachedInputTokens, OutputTokens: row.OutputTokens, ReasoningTokens: row.ReasoningTokens}, StartedAt: timeFromPg(row.StartedAt), EndedAt: timeFromPg(row.EndedAt), Result: row.Result}
+	return AgentAttempt{ID: TargetAttemptID{RunID: runIDString(row.RunID), StepOrdinal: int(row.StepOrdinal), AttemptNo: int(row.AttemptNo)}, AgentStage: work.AgentStage(row.AgentStage), Model: work.Model{Name: row.Model, Effort: row.Effort}, State: work.AgentAttemptState(row.State), FailureKind: work.RunFailureKind(row.FailureKind), ExecutionID: row.ExecutionID, UsageState: work.UsageState(row.UsageState), Usage: work.Usage{InputTokens: row.InputTokens, CachedInputTokens: row.CachedInputTokens, OutputTokens: row.OutputTokens, ReasoningTokens: row.ReasoningTokens}, StartedAt: timeFromPg(row.StartedAt), EndedAt: timeFromPg(row.EndedAt), Result: row.Result}
 }
 
 func gitCheckpointFromRow(row storedb.RunGitCheckpoint) GitCheckpoint {

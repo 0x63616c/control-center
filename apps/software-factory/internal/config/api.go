@@ -19,7 +19,7 @@ const (
 	envAccessTeamDomain    = "CLOUDFLARE_ACCESS_TEAM_DOMAIN"
 	envAccessAudience      = "CLOUDFLARE_ACCESS_AUD"
 	envAPIWorkerBearer     = "SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN"
-	envAPISandboxBearer    = "SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN"
+	envAPIRunWorkerBearer  = "SOFTWARE_FACTORY_API__RUN_WORKER_BEARER_TOKEN"
 	envAPITemporalHost     = "TEMPORAL_HOST_PORT"
 	envAPITemporalNS       = "TEMPORAL_NAMESPACE"
 	envAPIWebhookSecret    = "GITHUB_BOT_APP__WEBHOOK_SECRET"
@@ -35,7 +35,7 @@ type API struct {
 	AccessAudience    string
 	AccessCertsURL    string
 	WorkerBearer      string
-	SandboxBearer     string
+	RunWorkerBearer   string
 	TemporalHostPort  string
 	TemporalNamespace string
 	// WebhookSecret is the GitHub App webhook secret internal/webhook verifies
@@ -63,7 +63,7 @@ func LoadAPI() (API, error) {
 		MetricsAddr:       os.Getenv(envAPIMetricsAddr),
 		AccessAudience:    os.Getenv(envAccessAudience),
 		WorkerBearer:      os.Getenv(envAPIWorkerBearer),
-		SandboxBearer:     os.Getenv(envAPISandboxBearer),
+		RunWorkerBearer:   os.Getenv(envAPIRunWorkerBearer),
 		TemporalHostPort:  os.Getenv(envAPITemporalHost),
 		TemporalNamespace: os.Getenv(envAPITemporalNS),
 		WebhookSecret:     []byte(os.Getenv(envAPIWebhookSecret)),
@@ -75,7 +75,7 @@ func LoadAPI() (API, error) {
 		{envAccessTeamDomain, teamDomain},
 		{envAccessAudience, cfg.AccessAudience},
 		{envAPIWorkerBearer, cfg.WorkerBearer},
-		{envAPISandboxBearer, cfg.SandboxBearer},
+		{envAPIRunWorkerBearer, cfg.RunWorkerBearer},
 		{envAPITemporalHost, cfg.TemporalHostPort},
 		{envAPITemporalNS, cfg.TemporalNamespace},
 		{envAPIWebhookSecret, string(cfg.WebhookSecret)},

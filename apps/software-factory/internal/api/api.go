@@ -40,7 +40,6 @@ type factoryStore interface {
 	store.TicketDependencyReader
 	store.RunLister
 	store.RunReader
-	store.TranscriptReader
 	store.TargetHistoryReader
 }
 
@@ -49,6 +48,7 @@ type factoryStore interface {
 // learns its SDK vocabulary or connection details.
 type commandClient interface {
 	UpdateConfig(context.Context, work.ConfigUpdate) error
+	WorkNow(context.Context, int) error
 	CancelTicket(context.Context, int) error
 }
 
@@ -79,7 +79,7 @@ type createTicketInput struct {
 type stateTicketInput struct {
 	TicketID int64 `path:"ticketID" minimum:"1" doc:"The Ticket identifier."`
 	Body     struct {
-		State store.TicketState `json:"state" doc:"The lifecycle state: open, active, working, review, done, or failed. Active is owned by a target Run; working and review belong to the legacy workflow."`
+		State store.TicketState `json:"state" enum:"open,active,done,failed" doc:"The lifecycle state. Active is owned by a target Run."`
 	}
 }
 
@@ -93,7 +93,7 @@ type getTicketInput struct {
 }
 
 type listTicketsInput struct {
-	State store.TicketState `query:"state" doc:"Limit results to this lifecycle state."`
+	State store.TicketState `query:"state" enum:"open,active,done,failed" doc:"Limit results to this lifecycle state."`
 	Ready string            `query:"ready" doc:"Limit results by derived readiness: true or false."`
 }
 
@@ -209,7 +209,7 @@ func New(version string, commands commandClient, ticketStores ...factoryStore) *
 		},
 		"inClusterBearer": {
 			Type: "http", Scheme: "bearer",
-			Description: "Static bearer for in-cluster worker or sandbox callers.",
+			Description: "Static bearer for in-cluster worker or Run Worker callers.",
 		},
 		"agentCheckpointCapability": {
 			Type: "apiKey", In: "header", Name: checkpoint.CapabilityHeader,
@@ -237,11 +237,11 @@ func New(version string, commands commandClient, ticketStores ...factoryStore) *
 	huma.Patch(api, checkpoint.RepositoryPath, service.checkpointRepositoryEffect, repositoryEffectCheckpointOperation)
 	huma.Get(api, checkpoint.RepositoryPath, service.loadRepositoryCheckpoint, readRepositoryCheckpointOperation)
 	huma.Get(api, "/v1/console", service.console, commandOperation("Read console snapshot", "Returns the factory Tickets for the console."))
-	huma.Post(api, "/v1/factory/pause", service.pause, commandOperation("Pause the factory", "Success means Temporal accepted the UpdateConfig signal. The dispatcher applies this configuration on its next tick; this endpoint does not poll for observable state."))
-	huma.Post(api, "/v1/factory/resume", service.resume, commandOperation("Resume the factory", "Success means Temporal accepted the UpdateConfig signal. The dispatcher applies this configuration on its next tick; this endpoint does not poll for observable state."))
-	huma.Post(api, "/v1/factory/max-in-flight", service.setMaxInFlight, commandOperation("Set factory max in flight", "Success means Temporal accepted the UpdateConfig signal. The dispatcher applies this configuration on its next tick; this endpoint does not poll for observable state."))
+	huma.Post(api, "/v1/factory/pause", service.pause, commandOperation("Pause the factory", "Success means the target Dispatcher acknowledged the update; the requested policy is current when this returns. Any outstanding dispatch poll is canceled so the policy takes effect immediately."))
+	huma.Post(api, "/v1/factory/resume", service.resume, commandOperation("Resume the factory", "Success means the target Dispatcher acknowledged the update; the requested policy is current when this returns. Any outstanding dispatch poll is canceled so the policy takes effect immediately."))
+	huma.Post(api, "/v1/factory/max-in-flight", service.setMaxInFlight, commandOperation("Set factory max in flight", "Success means the target Dispatcher acknowledged the update; the requested policy is current when this returns. Any outstanding dispatch poll is canceled so the policy takes effect immediately."))
 	huma.Post(api, "/v1/tickets/{ticketID}/cancel", service.cancelTicket, commandOperation("Cancel a ticket run", "Success means Temporal accepted cancellation of the ticket workflow. This endpoint does not wait for cleanup or database state to become observable."))
-	huma.Post(api, "/v1/tickets/{ticketID}/work", service.workNow, commandOperation("Nudge the factory", "Success means Temporal accepted an empty UpdateConfig signal that wakes the dispatcher without changing configuration. This endpoint does not poll for observable state."))
+	huma.Post(api, "/v1/tickets/{ticketID}/work", service.workNow, commandOperation("Nudge the factory", "Success means the target Dispatcher acknowledged this Ticket-specific work-now request and scheduled an immediate re-evaluation. Readiness, capacity, and the current admission policy still determine whether the Ticket starts."))
 	huma.Post(api, "/v1/tickets", service.createTicket, commandOperation("Create a Ticket", "Files a new open Ticket."))
 	huma.Get(api, "/v1/tickets/{ticketID}", service.getTicket, commandOperation("Read a Ticket", "Returns the Ticket, both dependency directions, and derived readiness."))
 	huma.Get(api, "/v1/tickets", service.listTickets, commandOperation("List Tickets", "Lists Tickets with optional state and derived ready filters."))
@@ -249,7 +249,6 @@ func New(version string, commands commandClient, ticketStores ...factoryStore) *
 	huma.Put(api, "/v1/tickets/{ticketID}/blockers/{blockerTicketID}", service.addBlocker, commandOperation("Add a Ticket blocker", "Records that the first Ticket is blocked by the second."))
 	huma.Delete(api, "/v1/tickets/{ticketID}/blockers/{blockerTicketID}", service.removeBlocker, commandOperation("Remove a Ticket blocker", "Removes a dependency edge when it exists."))
 	huma.Get(api, "/v1/tickets/{ticketID}/runs", service.getTicketRuns, commandOperation("List a Ticket's Runs", "Returns every Run of the Ticket, most recent first, each with its Steps and Attempts and rolled-up token usage."))
-	huma.Get(api, "/v1/tickets/{ticketID}/runs/{runID}/stages/{stage}/turns/{turn}/attempts/{attemptNo}/transcript", service.getAttemptTranscript, commandOperation("Download an Attempt's transcript", "Returns the Attempt's raw JSONL event stream, decompressed, as a downloadable file."))
 	huma.Get(api, "/v1/tickets/{ticketID}/runs/{runID}/steps/{ordinal}/attempts/{attemptNo}/transcript", service.getTargetAttemptTranscript, commandOperation("Download a target Attempt's transcript", "Returns an ordinal Step Attempt's raw JSONL event stream, decompressed, as a downloadable file."))
 	errorSchema := api.OpenAPI().Components.Schemas.Map()["ErrorModel"]
 	errorSchema.Properties["reason"] = &huma.Schema{Type: "string", Description: "Stable machine-readable reason for the error."}
@@ -482,30 +481,32 @@ func commandOperation(summary, description string) func(*huma.Operation) {
 	}
 }
 
-// pause accepts the dispatcher configuration signal; it does not wait for the
-// dispatcher to observe it, which happens on the next tick.
+// pause waits for the Dispatcher to acknowledge and apply the policy update.
 func (service *Service) pause(ctx context.Context, _ *struct{}) (*struct{}, error) {
 	paused := true
 	return service.updateConfig(ctx, work.ConfigUpdate{Paused: &paused})
 }
 
-// resume accepts the dispatcher configuration signal; it does not wait for the
-// dispatcher to observe it, which happens on the next tick.
+// resume waits for the Dispatcher to acknowledge and apply the policy update.
 func (service *Service) resume(ctx context.Context, _ *struct{}) (*struct{}, error) {
 	paused := false
 	return service.updateConfig(ctx, work.ConfigUpdate{Paused: &paused})
 }
 
-// setMaxInFlight accepts the dispatcher configuration signal; it does not wait
-// for the dispatcher to observe it, which happens on the next tick.
+// setMaxInFlight waits for the Dispatcher to acknowledge and apply the policy update.
 func (service *Service) setMaxInFlight(ctx context.Context, input *maxInFlightInput) (*struct{}, error) {
 	return service.updateConfig(ctx, work.ConfigUpdate{MaxInFlight: &input.Body.MaxInFlight})
 }
 
-// workNow accepts an empty dispatcher configuration signal, waking its select
-// without changing configuration; it does not wait for observable dispatch.
-func (service *Service) workNow(ctx context.Context, _ *ticketInput) (*struct{}, error) {
-	return service.updateConfig(ctx, work.ConfigUpdate{})
+// workNow waits for the Dispatcher to acknowledge an immediate re-evaluation.
+func (service *Service) workNow(ctx context.Context, input *ticketInput) (*struct{}, error) {
+	if service.commands == nil {
+		return nil, clientError(http.StatusServiceUnavailable, "commands_unavailable", "factory commands are not configured")
+	}
+	if err := service.commands.WorkNow(ctx, input.TicketID); err != nil {
+		return nil, commandError(err)
+	}
+	return &struct{}{}, nil
 }
 
 // cancelTicket accepts cancellation of the ticket workflow; it does not wait

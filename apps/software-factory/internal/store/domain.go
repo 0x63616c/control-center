@@ -34,7 +34,7 @@ type TicketID int64
 
 // TicketState is a Ticket's lifecycle state.
 //
-// Six values, enforced twice: the ticket table's CHECK constraint is the
+// Four values, enforced twice: the ticket table's CHECK constraint is the
 // database's wall, and Valid is Go's. Neither is a formality — a state read
 // out of a row is trusted afterwards precisely because it passed one of these
 // on the way in.
@@ -42,9 +42,9 @@ type TicketState struct{ value ticketStateValue }
 
 type ticketStateValue uint8
 
-// The six accepted ticket states during the additive target-store cutover.
-// Working and review belong to the legacy workflow; active is the target
-// workflow's ownership state.
+// The target workflow owns active Tickets. The two legacy values remain only
+// so the pre-activation cutover inventory compiles; they are not valid domain
+// values and the final schema rejects them.
 const (
 	ticketStateOpen ticketStateValue = iota + 1
 	ticketStateWorking
@@ -70,10 +70,10 @@ var (
 	TicketFailed = TicketState{value: ticketStateFailed}
 )
 
-// Valid reports whether s is one of the six states the schema enforces.
+// Valid reports whether s is one of the four states the schema enforces.
 func (s TicketState) Valid() bool {
 	switch s {
-	case TicketOpen, TicketWorking, TicketReview, TicketActive, TicketDone, TicketFailed:
+	case TicketOpen, TicketActive, TicketDone, TicketFailed:
 		return true
 	default:
 		return false
@@ -107,10 +107,6 @@ func ParseTicketState(value string) (TicketState, error) {
 	switch value {
 	case "open":
 		return TicketOpen, nil
-	case "working":
-		return TicketWorking, nil
-	case "review":
-		return TicketReview, nil
 	case "active":
 		return TicketActive, nil
 	case "done":
@@ -156,12 +152,6 @@ func (s TicketState) MarshalJSON() ([]byte, error) {
 // domain decision rather than a property of any HTTP handler.
 func (s TicketState) CanTransitionTo(next TicketState) bool {
 	switch s {
-	case TicketOpen:
-		return next == TicketWorking
-	case TicketWorking:
-		return next == TicketReview || next == TicketFailed
-	case TicketReview:
-		return next == TicketDone || next == TicketFailed
 	case TicketActive:
 		return next == TicketDone || next == TicketOpen || next == TicketFailed
 	case TicketFailed:

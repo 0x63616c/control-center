@@ -46,14 +46,14 @@ const (
 
 // Attempt is running progress or terminal evidence for one active Agent Attempt.
 type Attempt struct {
-	ProviderThreadID string                 `json:"providerThreadId,omitempty" doc:"The provider thread identity exposed by the active execution."`
-	State            work.AgentAttemptState `json:"state" enum:"running,succeeded,failed" doc:"The execution state this checkpoint proves."`
-	FailureKind      work.RunFailureKind    `json:"failureKind,omitempty" doc:"The classified terminal failure, when state is failed."`
-	UsageState       work.UsageState        `json:"usageState" enum:"unknown,measured" doc:"Whether provider usage is available."`
-	Usage            Usage                  `json:"usage" doc:"Provider-reported token usage; all fields are zero while usage is unknown."`
-	EndedAt          *time.Time             `json:"endedAt,omitempty" doc:"RFC3339 UTC terminal time; absent while running."`
-	Result           json.RawMessage        `json:"result,omitempty" doc:"The terminal provider envelope; absent while running."`
-	Transcript       *Transcript            `json:"transcript,omitempty" doc:"Durable partial or terminal transcript material."`
+	ExecutionID string                 `json:"executionId,omitempty" doc:"The opaque identity of the active execution."`
+	State       work.AgentAttemptState `json:"state" enum:"running,succeeded,failed" doc:"The execution state this checkpoint proves."`
+	FailureKind work.RunFailureKind    `json:"failureKind,omitempty" doc:"The classified terminal failure, when state is failed."`
+	UsageState  work.UsageState        `json:"usageState" enum:"unknown,measured" doc:"Whether provider usage is available."`
+	Usage       Usage                  `json:"usage" doc:"Provider-reported token usage; all fields are zero while usage is unknown."`
+	EndedAt     *time.Time             `json:"endedAt,omitempty" doc:"RFC3339 UTC terminal time; absent while running."`
+	Result      json.RawMessage        `json:"result,omitempty" doc:"The terminal provider envelope; absent while running."`
+	Transcript  *Transcript            `json:"transcript,omitempty" doc:"Durable partial or terminal transcript material."`
 }
 
 // Repository is the durable Git/PR position for the latest repository-affine

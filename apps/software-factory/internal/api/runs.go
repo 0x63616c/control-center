@@ -41,7 +41,7 @@ type attemptOutput struct {
 	Effort            string          `json:"effort" doc:"The reasoning effort this attempt ran on."`
 	State             string          `json:"state" enum:"running,succeeded,failed" doc:"The durable Attempt lifecycle state."`
 	FailureKind       string          `json:"failureKind" enum:",invalid_input,agent_unrecoverable,agent_attempt_budget,review_budget,ci_unobserved,github_auth,github_ruleset,github_unavailable,run_worker_unavailable,persistence_unavailable,infrastructure" doc:"The terminal failure category, empty unless this Attempt failed."`
-	ProviderThreadID  string          `json:"providerThreadId" doc:"The provider thread identity captured by this semantic Attempt."`
+	ExecutionID       string          `json:"executionId" doc:"The opaque identity captured for this semantic Attempt."`
 	UsageState        string          `json:"usageState" enum:"unknown,measured" doc:"Whether token usage is unknown or measured."`
 	Measured          bool            `json:"measured" doc:"Compatibility projection of usageState == measured."`
 	InputTokens       *int64          `json:"inputTokens" doc:"The whole input, including cachedInputTokens. Null unless usageState is measured."`
@@ -55,16 +55,13 @@ type attemptOutput struct {
 	TranscriptPath    string          `json:"transcriptPath" doc:"The download path for this transcript, empty when none is stored."`
 }
 
-// stepOutput is one durable target Step. Stage and Turn remain as historical
-// aliases while old Runs are projected through this ordinal model.
+// stepOutput is one durable target Step.
 type stepOutput struct {
 	Ordinal   int             `json:"ordinal" doc:"The stable Step identity within this Run, starting at 1."`
-	Kind      string          `json:"kind" enum:"prepare_run_worker,acquire_run_worker_session,clone_repository,plan,implement,sync_pull_request,await_ci,review,mark_pull_request_ready,merge_pull_request" doc:"The operation this Step records."`
+	Kind      string          `json:"kind" enum:"create_run_worker,acquire_run_worker_session,clone_repository,plan,implement,sync_pull_request,await_ci,review,mark_pull_request_ready,merge_pull_request" doc:"The operation this Step records."`
 	Iteration int             `json:"iteration" doc:"The semantic repetition number for this Step kind, when applicable."`
 	Reason    string          `json:"reason" doc:"Why this Step was authorized, when applicable."`
 	State     string          `json:"state" enum:"running,completed,failed" doc:"The durable Step lifecycle state."`
-	Stage     string          `json:"stage" enum:"prepare_run_worker,acquire_run_worker_session,clone_repository,plan,implement,sync_pull_request,await_ci,review,mark_pull_request_ready,merge_pull_request" doc:"Historical alias for agent-backed legacy Steps."`
-	Turn      int             `json:"turn" doc:"Historical alias for a legacy Step iteration."`
 	StartedAt string          `json:"startedAt" doc:"RFC3339 UTC."`
 	EndedAt   *string         `json:"endedAt" doc:"RFC3339 UTC. Null while its last Attempt is still running."`
 	Result    json.RawMessage `json:"result" doc:"The durable structured result envelope. Null until one is recorded."`
@@ -83,10 +80,10 @@ type runOutput struct {
 	TicketID       int64                 `json:"ticketId" doc:"The Ticket this Run belongs to."`
 	StartedAt      string                `json:"startedAt" doc:"RFC3339 UTC."`
 	EndedAt        *string               `json:"endedAt" doc:"RFC3339 UTC. Null until the Run ends."`
-	Outcome        string                `json:"outcome" enum:",succeeded,canceled,exhausted,failed,proposed,blocked" doc:"The target Run outcome, or the historical outcome for a legacy Run. Empty until terminal."`
-	FailureKind    string                `json:"failureKind" enum:",invalid_input,agent_unrecoverable,agent_attempt_budget,review_budget,ci_unobserved,github_auth,github_ruleset,github_unavailable,run_worker_unavailable,persistence_unavailable,infrastructure,auth,rate-limit,other" doc:"The target Run failure category, or the historical category for a legacy Run. Empty when not failed."`
+	Outcome        string                `json:"outcome" enum:",succeeded,canceled,exhausted,failed" doc:"The target Run outcome. Empty until terminal."`
+	FailureKind    string                `json:"failureKind" enum:",invalid_input,agent_unrecoverable,agent_attempt_budget,review_budget,ci_unobserved,github_auth,github_ruleset,github_unavailable,run_worker_unavailable,persistence_unavailable,semantic_deadline,infrastructure" doc:"The target Run failure category. Empty when not failed."`
 	Active         bool                  `json:"active" doc:"Whether this Run is still nonterminal."`
-	Phase          string                `json:"phase" enum:",prepare_run_worker,acquire_run_worker_session,clone_repository,plan,implement,sync_pull_request,await_ci,review,mark_pull_request_ready,merge_pull_request" doc:"The latest active Step kind, falling back to the latest terminal Step kind."`
+	Phase          string                `json:"phase" enum:",create_run_worker,acquire_run_worker_session,clone_repository,plan,implement,sync_pull_request,await_ci,review,mark_pull_request_ready,merge_pull_request" doc:"The latest active Step kind, falling back to the latest terminal Step kind."`
 	ConfirmedMerge *confirmedMergeOutput `json:"confirmedMerge,omitempty" doc:"Immutable merge evidence, absent unless this Run ended in a Confirmed Merge."`
 	Steps          []stepOutput          `json:"steps" doc:"This Run's Steps, in pipeline order."`
 	Usage          usageOutput           `json:"usage" doc:"Rolled up across this Run's Steps."`
@@ -118,7 +115,7 @@ func (service *Service) getTicketRuns(ctx context.Context, input *ticketRunsInpu
 	}
 	output := &ticketRunsOutput{}
 	for _, run := range runs {
-		detail, err := service.tickets.History(ctx, run.ID)
+		detail, err := service.tickets.TargetRunDetail(ctx, run.ID)
 		if err != nil {
 			return nil, ticketStoreError(err)
 		}
@@ -127,14 +124,10 @@ func (service *Service) getTicketRuns(ctx context.Context, input *ticketRunsInpu
 	return output, nil
 }
 
-func runOutputFrom(detail store.RunHistory) runOutput {
+func runOutputFrom(detail store.TargetRunDetail) runOutput {
 	usage, complete := historyUsage(detail.Steps)
 	outcome := string(detail.Run.TargetOutcome)
 	failureKind := string(detail.Run.TargetFailure)
-	if detail.Legacy {
-		outcome = string(detail.Run.Outcome)
-		failureKind = string(detail.Run.Failure)
-	}
 	out := runOutput{
 		ID:          detail.Run.ID,
 		TicketID:    int64(detail.Run.TicketID),
@@ -150,12 +143,12 @@ func runOutputFrom(detail store.RunHistory) runOutput {
 		out.ConfirmedMerge = &confirmedMergeOutput{ReviewedHead: detail.Run.ReviewedHead, MergeSHA: detail.Run.MergeSHA}
 	}
 	for _, step := range detail.Steps {
-		out.Steps = append(out.Steps, stepOutputFrom(step, detail.Run.TicketID, detail.Legacy))
+		out.Steps = append(out.Steps, stepOutputFrom(step, detail.Run.TicketID))
 	}
 	return out
 }
 
-func stepOutputFrom(detail store.TargetStepDetail, ticketID store.TicketID, legacy bool) stepOutput {
+func stepOutputFrom(detail store.TargetStepDetail, ticketID store.TicketID) stepOutput {
 	step := detail.Step
 	usage, complete := attemptsUsage(detail.Attempts)
 	out := stepOutput{
@@ -164,41 +157,35 @@ func stepOutputFrom(detail store.TargetStepDetail, ticketID store.TicketID, lega
 		Iteration: step.Iteration,
 		Reason:    step.Reason,
 		State:     string(step.State),
-		Stage:     string(step.Kind),
-		Turn:      step.Iteration,
 		StartedAt: wireTime(step.StartedAt),
 		EndedAt:   optionalWireTime(step.EndedAt),
 		Result:    step.Result,
 		Usage:     usageOutputFrom(usage, complete),
 	}
 	for _, attempt := range detail.Attempts {
-		out.Attempts = append(out.Attempts, attemptOutputFrom(attempt, ticketID, step, legacy))
+		out.Attempts = append(out.Attempts, attemptOutputFrom(attempt, ticketID, step))
 	}
 	return out
 }
 
-func attemptOutputFrom(attempt store.AgentAttempt, ticketID store.TicketID, step store.RunStep, legacy bool) attemptOutput {
+func attemptOutputFrom(attempt store.AgentAttempt, ticketID store.TicketID, step store.RunStep) attemptOutput {
 	out := attemptOutput{
-		AttemptNo:        attempt.ID.AttemptNo,
-		AgentStage:       string(attempt.AgentStage),
-		Model:            attempt.Model.Name,
-		Effort:           attempt.Model.Effort,
-		State:            string(attempt.State),
-		FailureKind:      string(attempt.FailureKind),
-		ProviderThreadID: attempt.ProviderThreadID,
-		UsageState:       string(attempt.UsageState),
-		Measured:         attempt.UsageState == work.UsageMeasured,
-		StartedAt:        wireTime(attempt.StartedAt),
-		EndedAt:          optionalWireTime(attempt.EndedAt),
-		Result:           attempt.Result,
-		HasTranscript:    attempt.TranscriptPresent,
+		AttemptNo:     attempt.ID.AttemptNo,
+		AgentStage:    string(attempt.AgentStage),
+		Model:         attempt.Model.Name,
+		Effort:        attempt.Model.Effort,
+		State:         string(attempt.State),
+		FailureKind:   string(attempt.FailureKind),
+		ExecutionID:   attempt.ExecutionID,
+		UsageState:    string(attempt.UsageState),
+		Measured:      attempt.UsageState == work.UsageMeasured,
+		StartedAt:     wireTime(attempt.StartedAt),
+		EndedAt:       optionalWireTime(attempt.EndedAt),
+		Result:        attempt.Result,
+		HasTranscript: attempt.TranscriptPresent,
 	}
 	if attempt.TranscriptPresent {
-		if legacy {
-			out.TranscriptPath = fmt.Sprintf("/v1/tickets/%d/runs/%s/stages/%s/turns/%d/attempts/%d/transcript", ticketID, attempt.ID.RunID, attempt.AgentStage, step.Iteration, attempt.ID.AttemptNo)
-		} else {
-			out.TranscriptPath = fmt.Sprintf("/v1/tickets/%d/runs/%s/steps/%d/attempts/%d/transcript", ticketID, attempt.ID.RunID, step.Ordinal, attempt.ID.AttemptNo)
-		}
+		out.TranscriptPath = fmt.Sprintf("/v1/tickets/%d/runs/%s/steps/%d/attempts/%d/transcript", ticketID, attempt.ID.RunID, step.Ordinal, attempt.ID.AttemptNo)
 	}
 	if attempt.UsageState == work.UsageMeasured {
 		out.InputTokens = &attempt.Usage.InputTokens
@@ -272,14 +259,6 @@ func optionalWireTime(t time.Time) *string {
 	return &formatted
 }
 
-type ticketRunTranscriptInput struct {
-	TicketID  int64  `path:"ticketID" minimum:"1" doc:"The Ticket identifier."`
-	RunID     string `path:"runID" doc:"The Run's Temporal run id."`
-	Stage     string `path:"stage" enum:"plan,implement,review" doc:"The Stage of the Step this Attempt belongs to."`
-	Turn      int    `path:"turn" minimum:"1" doc:"The Step's turn number."`
-	AttemptNo int    `path:"attemptNo" minimum:"1" doc:"Which attempt of the Step to download."`
-}
-
 type targetRunTranscriptInput struct {
 	TicketID  int64  `path:"ticketID" minimum:"1" doc:"The Ticket identifier."`
 	RunID     string `path:"runID" doc:"The Run's Temporal run id."`
@@ -293,41 +272,7 @@ type transcriptOutput struct {
 	Body               []byte
 }
 
-// getAttemptTranscript downloads one Attempt's decompressed JSONL transcript.
-func (service *Service) getAttemptTranscript(ctx context.Context, input *ticketRunTranscriptInput) (*transcriptOutput, error) {
-	if service.tickets == nil {
-		return nil, clientError(http.StatusServiceUnavailable, "store_unavailable", "ticket store is not configured")
-	}
-	run, err := service.tickets.Run(ctx, input.RunID)
-	if err != nil {
-		return nil, ticketStoreError(err)
-	}
-	if run.TicketID != store.TicketID(input.TicketID) {
-		return nil, clientError(http.StatusNotFound, "not_found", "run does not belong to this ticket")
-	}
-	key := work.StageKey{Ticket: int(run.TicketID), RunID: input.RunID, Stage: work.Stage(input.Stage), Turn: input.Turn}
-	transcript, err := service.tickets.Transcript(ctx, key, input.AttemptNo)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return nil, clientError(http.StatusNotFound, "not_found", "no transcript is stored for this attempt")
-		}
-		return nil, ticketStoreError(err)
-	}
-	raw, err := decompress(transcript)
-	if err != nil {
-		return nil, clientError(http.StatusInternalServerError, "internal", err.Error())
-	}
-	filename := fmt.Sprintf("ticket-%d-%s-turn%d-attempt%d-%s.jsonl",
-		run.TicketID, input.Stage, input.Turn, input.AttemptNo, input.RunID)
-	return &transcriptOutput{
-		ContentType:        "application/x-ndjson",
-		ContentDisposition: fmt.Sprintf(`attachment; filename="%s"`, filename),
-		Body:               raw,
-	}, nil
-}
-
-// getTargetAttemptTranscript downloads one target transcript by the durable
-// ordinal Step identity. Historical stage/turn reads remain registered above.
+// getTargetAttemptTranscript downloads one target transcript by the durable ordinal Step identity.
 func (service *Service) getTargetAttemptTranscript(ctx context.Context, input *targetRunTranscriptInput) (*transcriptOutput, error) {
 	if service.tickets == nil {
 		return nil, clientError(http.StatusServiceUnavailable, "store_unavailable", "ticket store is not configured")
@@ -357,13 +302,6 @@ func (service *Service) getTargetAttemptTranscript(ctx context.Context, input *t
 		ContentDisposition: fmt.Sprintf(`attachment; filename="%s"`, filename),
 		Body:               raw,
 	}, nil
-}
-
-// decompress inflates t's stored bytes. gzip is the only codec
-// PersistTranscriptToStore writes today; an unrecognised value is a stored
-// row this API does not know how to read, not something to guess at.
-func decompress(t store.Transcript) ([]byte, error) {
-	return decompressBytes(t.CompressedBytes, t.Compression)
 }
 
 func decompressBytes(compressed []byte, compression string) ([]byte, error) {

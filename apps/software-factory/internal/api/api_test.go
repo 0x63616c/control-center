@@ -53,13 +53,15 @@ func TestTicketAPIProjectsAndFiltersTargetActiveState(t *testing.T) {
 
 type commandFake struct {
 	updates  []work.ConfigUpdate
+	workNow  []int
 	canceled []int
 	err      error
 }
 
 func TestTicketsCreateDependenciesAndReadiness(t *testing.T) {
 	t.Parallel()
-	service := New("test-build", nil, storefake.New())
+	fake := storefake.New()
+	service := New("test-build", nil, fake)
 	create := func(title string) int64 {
 		t.Helper()
 		response := ticketRequest(t, service, http.MethodPost, "/v1/tickets", `{"title":"`+title+`","body":"detail"}`)
@@ -108,7 +110,8 @@ func TestTicketsCreateDependenciesAndReadiness(t *testing.T) {
 
 func TestCreateTicketAttachesDeclaredBlockersBeforeItIsVisible(t *testing.T) {
 	t.Parallel()
-	service := New("test-build", nil, storefake.New())
+	fake := storefake.New()
+	service := New("test-build", nil, fake)
 
 	upstream := ticketRequest(t, service, http.MethodPost, "/v1/tickets", `{"title":"upstream","body":"finish first"}`)
 	if upstream.Code != http.StatusOK {
@@ -137,11 +140,14 @@ func TestCreateTicketAttachesDeclaredBlockersBeforeItIsVisible(t *testing.T) {
 	if ready.Code != http.StatusOK || strings.Contains(ready.Body.String(), `"id":2`) {
 		t.Fatalf("ready tickets = (%d, %s), want downstream excluded", ready.Code, ready.Body.String())
 	}
-	for _, state := range []string{"working", "review", "done"} {
+	for _, state := range []string{"working", "review"} {
 		response := ticketRequest(t, service, http.MethodPatch, "/v1/tickets/"+strconv.FormatInt(upstreamBody.ID, 10)+"/state", `{"state":"`+state+`"}`)
-		if response.Code != http.StatusOK {
-			t.Fatalf("move upstream to %s = %d: %s", state, response.Code, response.Body.String())
+		if response.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("legacy state %s = %d: %s, want 422", state, response.Code, response.Body.String())
 		}
+	}
+	if _, err := fake.UpdateTicketState(context.Background(), store.TicketID(upstreamBody.ID), store.TicketDone); err != nil {
+		t.Fatalf("complete upstream fixture: %v", err)
 	}
 	ready = ticketRequest(t, service, http.MethodGet, "/v1/tickets?ready=true", "")
 	if ready.Code != http.StatusOK || !strings.Contains(ready.Body.String(), `"id":`+strconv.FormatInt(downstreamBody.ID, 10)) {
@@ -205,6 +211,11 @@ func ticketErrorReason(t *testing.T, response *httptest.ResponseRecorder) string
 
 func (fake *commandFake) UpdateConfig(_ context.Context, update work.ConfigUpdate) error {
 	fake.updates = append(fake.updates, update)
+	return fake.err
+}
+
+func (fake *commandFake) WorkNow(_ context.Context, ticketID int) error {
+	fake.workNow = append(fake.workNow, ticketID)
 	return fake.err
 }
 
@@ -284,8 +295,8 @@ func TestCommandsTranslateHTTPRequestsToDispatcherCommands(t *testing.T) {
 		{
 			name: "work now", path: "/v1/tickets/42/work",
 			assert: func(t *testing.T) {
-				if len(commands.updates) != 4 || commands.updates[3] != (work.ConfigUpdate{}) {
-					t.Fatalf("updates = %#v, want empty config update", commands.updates)
+				if len(commands.updates) != 3 || len(commands.workNow) != 1 || commands.workNow[0] != 42 {
+					t.Fatalf("updates = %#v, work-now = %#v, want acknowledged Ticket 42 request", commands.updates, commands.workNow)
 				}
 			},
 		},

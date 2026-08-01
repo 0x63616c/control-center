@@ -213,9 +213,9 @@ func BranchName(ticketNumber int, runID string) string {
 	return fmt.Sprintf("software-factory/ticket-%d/%s", ticketNumber, runID)
 }
 
-// SandboxBranchEnv is the environment variable the sandbox reads its branch
-// from. It is part of the contract with the sandbox image, like SandboxRoot.
-const SandboxBranchEnv = "SF_BRANCH"
+// RunWorkerBranchEnv is the environment variable the sandbox reads its branch
+// from. It is part of the contract with the sandbox image, like WorkspaceRoot.
+const RunWorkerBranchEnv = "SF_BRANCH"
 
 // PullRequest is a pull request GitHub reported, as GitHub reported it.
 //

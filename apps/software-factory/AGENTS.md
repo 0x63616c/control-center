@@ -1,11 +1,12 @@
-# AGENTS.md — software-factory
+# AGENTS.md - software-factory
 
 > **Scope: this directory tree only.**
-> Everything in this file and in `docs/` under it governs `apps/software-factory/` —
-> the Go module **and** the sandbox image under `images/` — and nothing else. That the
-> sandbox is in scope is deliberate: the argv-only guarantee below spans both, and a
+> Everything in this file and in `docs/` under it governs `apps/software-factory/` -
+> the Go module **and** every image under `images/` - and nothing else. The Run Worker
+> image is in scope because the credential boundary below spans Go code, container layout,
+> and the pod specification; a
 > standard that stopped at the Go code would disclaim one of its own enforcement sites.
-> The rest of world-wide-webb — every TypeScript app, `features/`, `packages/`, `infra/` —
+> The rest of world-wide-webb - every TypeScript app, `features/`, `packages/`, `infra/` -
 > is **unaffected** and keeps following the root `AGENTS.md`. Do not cite these standards
 > in a review of code outside this tree. If we ever want them repo-wide, that is a
 > separate, deliberate decision.
@@ -18,18 +19,23 @@ issue tracking). This file **adds** to it; it does not replace it.
 
 ## What this is
 
-A Go Temporal worker that autonomously works Tickets from its own Postgres (ADR-0012): a
-dispatcher workflow polls for `ready` Tickets and a FactoryWorkTicket workflow per Ticket
-runs `plan → implement → review`, looping implement/review under turn budgets, each stage a
-an `AgentWorkflow` child workflow. Direct model calls run on the main worker and typed
-tool activities run inside a disposable per-Ticket Kubernetes pod. The workflow opens or
-updates the pull request after every push implement makes. Merging stays human.
+A Go Temporal worker that autonomously works Tickets from its own Postgres (ADR-0012).
+The stable `Dispatcher` admits dependency-ready `open` Tickets to one `WorkOnTicket`
+workflow each. `WorkOnTicket` owns plan, implement, required CI, independent review,
+bounded revision, and exact-reviewed-head squash merge. `MaintainFactory` periodically
+repairs orphaned Run ownership and Run Worker generations. A confirmed merge records the
+Run as `succeeded` and the Ticket as `done`; cancellation returns the Ticket to `open`;
+terminal failure or exhausted budget records `failed` or `exhausted` and moves the Ticket
+to `failed`.
 
-It does not read GitHub Issues and posts nothing to them (#559). GitHub owns the pull
-request, CI and merge, and nothing else here. Progress is the run record in Postgres, read
-through the console.
+Direct model calls run on the main worker. Each disposable per-Run pod has a credentialed
+repository worker for fixed operations and a separate credential-free tool worker for
+model-selected typed tools. The factory does not read GitHub Issues. Webhooks are
+authenticated, deduplicated audit input only: they do not transition Tickets. GitHub
+auto-merge is not used; the workflow performs the final exact-head merge itself. Progress
+is the Run record in Postgres, read through the console.
 
-What actually happens end to end — what each stage reads, may write and is trusted for, where
+What actually happens end to end - what each stage reads, may write and is trusted for, where
 a human is required, and what is absent: [`docs/system-map.md`](./docs/system-map.md).
 Design and rationale: [ADR-0011](../../docs/adr/0011-software-factory-autonomous-ticket-work.md),
 superseded on the work source, the record and the console by
@@ -40,41 +46,50 @@ Running it for the first time, and stopping it:
 ## Layout
 
 One Go module rooted here, not one per component, because more components are expected and
-splitting a module later is cheap while unsplitting is not. A third Go binary is `cmd/api/`;
-run `scripts/regenerate.sh` to refresh its committed API artefacts.
+splitting a module later is cheap while unsplitting is not. Run
+`scripts/regenerate.sh` to refresh committed API and database artefacts.
 
 ```
-cmd/worker/        composition root: manual DI, graceful shutdown
+cmd/worker/        activated Temporal worker and readiness composition root
+cmd/api/           authenticated Ticket and Run record API
+cmd/blobs/         content-addressed transcript blob service
+cmd/codec/         Temporal payload codec service
+cmd/relay/         stateless GitHub webhook relay
+cmd/run-worker/    fixed repository and GitHub activity worker
+cmd/tool-worker/   credential-free typed-tool activity worker
 internal/
-  work/            domain vocabulary — every seam is expressed in these types
+  work/            domain vocabulary - every seam is expressed in these types
   config/          the only place os.Getenv is legal
   clock/           the only place time.Now is legal
   telemetry/       logging + Prometheus, injected
-  workflows/       deterministic only — see the section below
+  workflows/       deterministic only - see the section below
   activities/      all side effects; declares the interfaces it consumes
-  clients/         github, k8s, codex, codexauth — each seals its SDK
-  store/           the factory's Postgres store — narrow interfaces over sqlc, sealed in store/storedb
-  status/          the comments a run posts on its ticket, as golden files
-  transcripts/     stage event streams on the worker's volume, as JSONL
+  clients/         github, k8s, codex, codexauth - each seals its SDK
+  store/           narrow Postgres interfaces over sqlc, sealed in store/storedb
+  transcripts/     persisted conversation and transcript evidence
   prompts/         stage prompts + JSON schemas, go:embed
 images/
   worker/          the worker image
-  sandbox/         the per-ticket sandbox image and its entrypoint
+  run-worker/      both per-Run worker binaries and repository toolchains
   relay/           the stateless GitHub webhook fan-out edge service
+  api/             the factory API
+  blobs/           the blob service
+  codec/           the payload codec
+web/                the console and same-origin API proxy image
 ```
 
 This nests where the rest of `apps/*` is flat. That is deliberate: `software-factory` is one
-product with several components, and nothing in the repo globs `apps/*` — every CI path
+product with several components, and nothing in the repo globs `apps/*` - every CI path
 filter, Dockerfile path and bun workspace is enumerated by name, so the nesting costs
-nothing. The Go worker, sandbox, relay, and API images build off the single path filter
-`apps/software-factory/**`; a change therefore rebuilds the worker, sandbox, and
-relay together, which prevents a shared module edit from shipping a stale image.
+nothing. The worker, Run Worker, relay, API, blob, codec, and console images build off
+the single path filter `apps/software-factory/**`; a change therefore rebuilds all seven,
+which prevents a shared module edit from shipping a stale image.
 
 ## Where the standards came from
 
 Adapted from the `software-factory` repo's SoftwareStyle, which was written for a Go
 codebase maintained by agents. What we took, translated and deliberately skipped is
-recorded in [`docs/style-adoption.md`](./docs/style-adoption.md) — read it before arguing
+recorded in [`docs/style-adoption.md`](./docs/style-adoption.md) - read it before arguing
 that a rule from that repo applies here, because several do not.
 
 - Values and tenets: [`docs/SoftwareStyle.md`](./docs/SoftwareStyle.md)
@@ -82,20 +97,20 @@ that a rule from that repo applies here, because several do not.
 
 ## Priority ordering (resolves every trade-off, high beats low)
 
-**Legibility > Correctness > Operability > Economy.** Machine performance is unranked —
+**Legibility > Correctness > Operability > Economy.** Machine performance is unranked -
 this is LLM-latency-bound; below ~1s, don't care. Testability is a floor beneath all four
 and is never traded.
 
 ## The floor
 
-No unit test touches the real world. Every external edge — codex, the k8s API, GitHub, the
-clock, the filesystem — sits behind a narrow injectable interface so a test hands it a
+No unit test touches the real world. Every external edge - codex, the k8s API, GitHub, the
+clock, the filesystem - sits behind a narrow injectable interface so a test hands it a
 fake. Temporal's `testsuite` covers workflow replay without a real server.
 
 ## The one thing this codebase gets wrong most easily
 
 **Workflow code is not normal Go.** Inside `internal/workflows/**` you must use
-`workflow.Now`, `workflow.Sleep`, `workflow.Go` and `workflow.SideEffect` — never
+`workflow.Now`, `workflow.Sleep`, `workflow.Go` and `workflow.SideEffect` - never
 `time.Now`, `time.Sleep`, `go` or `rand`. Replay determinism depends on it, and a
 violation surfaces later as a corrupted run, not a compile error. The linter enforces what
 it can; the rest is on you.
@@ -117,24 +132,28 @@ or to a helper the workflow never calls. Normal `testsuite` tests prove intended
 they do not prove that a persisted old history still replays.
 
 `Dispatcher` is the primary risk here. It is the singleton
-`software-factory-dispatcher`, remains open for hours, and carries its state over
-`ContinueAsNew`, so a normal deploy commonly reaches an open run. `WorkTicket` normally
-finishes sooner and is less exposed, but an open ticket workflow can still replay and is not
-exempt.
+`software-factory-target-dispatcher`, remains open for hours, and carries its latest
+accepted policy over Continue-As-New, so a normal deploy commonly reaches an open run.
+`WorkOnTicket` normally finishes sooner and is less exposed, but an open Ticket workflow
+can still replay and is not exempt. `MaintainFactory` executions are finite, but their
+command sequences have the same compatibility requirement while open.
 
 When changing a command sequence, put the old and new decision branches behind
 `workflow.GetVersion` **at the changed command branch**. Give the change a stable, unique ID
 for that compatibility transition; do not add an unrelated marker elsewhere. Histories from
-before the change must keep replaying the legacy branch, while new histories take the new
-branch. Keep the legacy branch until no retained history can need it. For example:
+before the future change must keep replaying the prior target branch, while new histories take
+the new branch. Keep the prior branch until no retained target history can need it. The v0
+activation itself did not use this mechanism: operational quiescence closed every legacy
+execution before target registration, and those legacy workflow sources and fixtures were
+then removed. For a future target change, for example:
 
 ```go
-version := workflow.GetVersion(ctx, "dispatcher-claim-v2", workflow.DefaultVersion, 1)
+version := workflow.GetVersion(ctx, "dispatcher-admission-v2", workflow.DefaultVersion, 1)
 if version == workflow.DefaultVersion {
-	// Preserve the command sequence recorded by pre-change histories.
-	return claimLegacy(ctx, ticket)
+    // Preserve the activated v0 command sequence for existing target histories.
+    return admitV1(ctx, ticket)
 }
-return claimV2(ctx, ticket)
+return admitV2(ctx, ticket)
 ```
 
 When unsure whether an edit is compatible, replay an exported real or production-like history
@@ -161,35 +180,6 @@ func TestReplayDispatcherHistory(t *testing.T) {
 		nil, "testdata/dispatcher-history.json"))
 }
 ```
-
-### Recovery for an already wedged dispatcher
-
-This is the recovery for the known dispatcher non-determinism failure, not a substitute for
-versioning or a replay check. PR #478 changed the dispatcher's `claim()` command path and is
-the concrete incident that prompted this rule. Terminate the wedged execution, restart the
-worker so startup ensures a fresh dispatcher, then unpause that fresh dispatcher: it currently
-starts paused by configuration.
-
-```sh
-kubectl -n temporal run tmp-temporal-cli --rm -i --restart=Never \
-  --image=temporalio/admin-tools:1.31.2 --command -- \
-  temporal --address temporal-server:7233 --namespace software-factory \
-  workflow terminate --workflow-id software-factory-dispatcher
-
-kubectl -n software-factory rollout restart deploy/software-factory-worker
-
-kubectl -n software-factory rollout status deploy/software-factory-worker --timeout=5m
-
-kubectl -n temporal run tmp-temporal-cli --rm -i --restart=Never \
-  --image=temporalio/admin-tools:1.31.2 --command -- \
-  temporal --address temporal-server:7233 --namespace software-factory \
-  workflow signal --workflow-id software-factory-dispatcher \
-  --name update-config --input '{"paused":false}'
-```
-
-Confirm the replacement execution is running with `workflow describe --workflow-id
-software-factory-dispatcher` in the same CLI context. The separate workflow-task retry and
-alerting problem is out of scope here.
 
 ## Operating protocol
 

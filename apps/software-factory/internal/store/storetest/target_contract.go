@@ -21,13 +21,12 @@ type TargetStore interface {
 	store.TicketCreator
 	store.TicketReader
 	store.TicketStateWriter
-	store.WebhookDeliveryRecorder
+	store.WebhookDeliveryAcknowledger
 	store.TargetRunClaimer
 	store.TargetStepRecorder
 	store.TargetAgentRecorder
 	store.TargetTerminalRecorder
 	TargetRunDetail(context.Context, string) (store.TargetRunDetail, error)
-	History(context.Context, string) (store.RunHistory, error)
 	BindCheckpointCapability(context.Context, store.TargetAttemptID, string) error
 	LoadAgentCheckpoint(context.Context, store.TargetAttemptID, string) (store.AgentAttempt, *store.TargetTranscript, bool, error)
 	CheckpointGitEffect(context.Context, store.GitCheckpointInput) (store.GitCheckpoint, error)
@@ -56,12 +55,12 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 		if _, err := s.CancelRun(ctx, store.CancelRunInput{TicketID: ticket.ID, RunID: runID, EndedAt: startedAt.Add(time.Minute)}); err != nil {
 			t.Fatalf("CancelRun: %v", err)
 		}
-		history, err := s.History(ctx, runID)
+		history, err := s.TargetRunDetail(ctx, runID)
 		if err != nil {
-			t.Fatalf("History: %v", err)
+			t.Fatalf("TargetRunDetail: %v", err)
 		}
-		if history.Legacy || history.Run.TargetOutcome != work.RunOutcomeCanceled || len(history.Steps) != 0 {
-			t.Fatalf("History = %+v, want a zero-Step canceled target Run", history)
+		if history.Run.TargetOutcome != work.RunOutcomeCanceled || len(history.Steps) != 0 {
+			t.Fatalf("TargetRunDetail = %+v, want a zero-Step canceled target Run", history)
 		}
 	})
 
@@ -81,19 +80,12 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 		if _, err := s.TransitionTicketState(ctx, done.ID, store.TicketDone, store.TicketFailed); err == nil {
 			t.Fatal("TransitionTicketState(done -> failed) succeeded, want terminal-state rejection")
 		}
-		outcome, err := s.RecordWebhookDeliveryAndTransition(ctx, "terminal-delivery-"+uuid.NewString(), done.ID, store.TicketDone, store.TicketFailed)
+		first, err := s.RecordWebhookDelivery(ctx, "terminal-delivery-"+uuid.NewString())
 		if err != nil {
-			t.Fatalf("RecordWebhookDeliveryAndTransition(done -> failed): %v", err)
+			t.Fatalf("RecordWebhookDelivery: %v", err)
 		}
-		if outcome != store.WebhookDeliveryStale {
-			t.Fatalf("webhook outcome = %v, want stale", outcome)
-		}
-		outcome, err = s.RecordWebhookDeliveryAndTransition(ctx, "terminal-retry-delivery-"+uuid.NewString(), done.ID, store.TicketDone, store.TicketDone)
-		if err != nil {
-			t.Fatalf("RecordWebhookDeliveryAndTransition(done -> done): %v", err)
-		}
-		if outcome != store.WebhookDeliveryApplied {
-			t.Fatalf("webhook done -> done outcome = %v, want applied idempotent transition", outcome)
+		if !first {
+			t.Fatal("RecordWebhookDelivery first delivery = false, want true")
 		}
 		stored, err := s.Ticket(ctx, done.ID)
 		if err != nil {
@@ -128,19 +120,6 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 		if _, err := s.TransitionTicketState(ctx, ticket.ID, store.TicketOpen, store.TicketActive); !errors.Is(err, store.ErrActiveTicketOwnership) {
 			t.Fatalf("TransitionTicketState(active) error = %v, want ErrActiveTicketOwnership", err)
 		}
-		outcome, err := s.RecordWebhookDeliveryAndTransition(ctx, "active-target-delivery-"+uuid.NewString(), ticket.ID, store.TicketOpen, store.TicketActive)
-		if err != nil {
-			t.Fatalf("RecordWebhookDeliveryAndTransition(open -> active): %v", err)
-		}
-		if outcome != store.WebhookDeliveryStale {
-			t.Fatalf("webhook open -> active outcome = %v, want stale", outcome)
-		}
-		if _, err := s.TransitionTicketState(ctx, ticket.ID, store.TicketOpen, store.TicketWorking); err != nil {
-			t.Fatalf("TransitionTicketState(working): %v", err)
-		}
-		if _, err := s.TransitionTicketState(ctx, ticket.ID, store.TicketWorking, store.TicketReview); err != nil {
-			t.Fatalf("TransitionTicketState(review): %v", err)
-		}
 	})
 
 	t.Run("generic ticket state cannot release target ownership", func(t *testing.T) {
@@ -151,13 +130,6 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 		}
 		if _, err := s.TransitionTicketState(ctx, ticket.ID, store.TicketActive, store.TicketFailed); !errors.Is(err, store.ErrActiveTicketOwnership) {
 			t.Fatalf("TransitionTicketState(active -> failed) error = %v, want ErrActiveTicketOwnership", err)
-		}
-		outcome, err := s.RecordWebhookDeliveryAndTransition(ctx, "active-owner-delivery-"+uuid.NewString(), ticket.ID, store.TicketActive, store.TicketFailed)
-		if err != nil {
-			t.Fatalf("RecordWebhookDeliveryAndTransition(active -> failed): %v", err)
-		}
-		if outcome != store.WebhookDeliveryStale {
-			t.Fatalf("webhook active -> failed outcome = %v, want stale", outcome)
 		}
 		stored, err := s.Ticket(ctx, ticket.ID)
 		if err != nil {
@@ -351,7 +323,7 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 			t.Fatalf("LoadAgentCheckpoint(wrong capability) error = %v, want ownership", err)
 		}
 		running := store.AgentCheckpointInput{
-			ID: attemptID, Capability: "contract-capability", ThreadID: "thread-1",
+			ID: attemptID, Capability: "contract-capability", ExecutionID: "thread-1",
 			State: work.AgentAttemptRunning, UsageState: work.UsageMeasured,
 			Usage:      work.Usage{InputTokens: 3, CachedInputTokens: 1, OutputTokens: 2, ReasoningTokens: 1},
 			Transcript: &store.TargetTranscript{CompressedBytes: []byte("partial transcript"), Compression: "zstd", UncompressedSizeBytes: 18, Checksum: []byte("partial-checksum")},
@@ -363,7 +335,7 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 			t.Fatalf("CheckpointAgentAttempt(running exact retry): %v", err)
 		}
 		loaded, loadedTranscript, found, err := s.LoadAgentCheckpoint(ctx, attemptID, "contract-capability")
-		if err != nil || !found || loaded.State != work.AgentAttemptRunning || loaded.ProviderThreadID != "thread-1" || loadedTranscript == nil {
+		if err != nil || !found || loaded.State != work.AgentAttemptRunning || loaded.ExecutionID != "thread-1" || loadedTranscript == nil {
 			t.Fatalf("LoadAgentCheckpoint(running) = (%+v, %+v, %v, %v)", loaded, loadedTranscript, found, err)
 		}
 		detail, err := s.TargetRunDetail(ctx, runID)
@@ -374,16 +346,16 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 			t.Fatalf("TargetRunDetail(running checkpoint) = %+v, want one Attempt", detail)
 		}
 		persisted := detail.Steps[0].Attempts[0]
-		if persisted.State != work.AgentAttemptRunning || !persisted.EndedAt.IsZero() || persisted.ProviderThreadID != running.ThreadID || persisted.Usage != running.Usage || !persisted.TranscriptPresent {
+		if persisted.State != work.AgentAttemptRunning || !persisted.EndedAt.IsZero() || persisted.ExecutionID != running.ExecutionID || persisted.Usage != running.Usage || !persisted.TranscriptPresent {
 			t.Fatalf("running checkpoint = %+v, want durable non-terminal progress", persisted)
 		}
-		running.ThreadID = "different-thread"
+		running.ExecutionID = "different-execution"
 		if _, err := s.CheckpointAgentAttempt(ctx, running); !errors.Is(err, work.ErrPermanent) {
 			t.Fatalf("CheckpointAgentAttempt(running conflict) error = %v, want permanent", err)
 		}
 
 		checkpoint := store.AgentCheckpointInput{
-			ID: attemptID, Capability: "contract-capability", ThreadID: "thread-1",
+			ID: attemptID, Capability: "contract-capability", ExecutionID: "thread-1",
 			State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured,
 			Usage:   work.Usage{InputTokens: 3, CachedInputTokens: 1, OutputTokens: 2, ReasoningTokens: 1},
 			EndedAt: startedAt.Add(time.Minute), Result: []byte(`{"kind":"done"}`),
@@ -428,7 +400,7 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 			t.Fatalf("CheckpointAgentAttempt(failed before thread): %v", err)
 		}
 		loaded, _, found, err := s.LoadAgentCheckpoint(ctx, attemptID, "contract-capability")
-		if err != nil || !found || loaded.State != work.AgentAttemptFailed || loaded.ProviderThreadID != "" {
+		if err != nil || !found || loaded.State != work.AgentAttemptFailed || loaded.ExecutionID != "" {
 			t.Fatalf("LoadAgentCheckpoint(failed before thread) = (%+v, %v, %v)", loaded, found, err)
 		}
 	})
@@ -478,7 +450,7 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 		}
 		usage := work.Usage{InputTokens: 3, CachedInputTokens: 1, OutputTokens: 2, ReasoningTokens: 1}
 		running := store.AgentCheckpointInput{
-			ID: attemptID, Capability: "contract-capability", ThreadID: "thread-1",
+			ID: attemptID, Capability: "contract-capability", ExecutionID: "thread-1",
 			State: work.AgentAttemptRunning, UsageState: work.UsageMeasured, Usage: usage,
 			Transcript: &store.TargetTranscript{CompressedBytes: []byte("partial transcript"), Compression: "zstd", UncompressedSizeBytes: 18, Checksum: []byte("partial-checksum")},
 		}
@@ -486,7 +458,7 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 			t.Fatalf("CheckpointAgentAttempt(running): %v", err)
 		}
 		failed := store.AgentCheckpointInput{
-			ID: attemptID, Capability: "contract-capability", ThreadID: "thread-1",
+			ID: attemptID, Capability: "contract-capability", ExecutionID: "thread-1",
 			State: work.AgentAttemptFailed, FailureKind: work.RunFailureAgentUnrecoverable,
 			UsageState: work.UsageMeasured, Usage: usage, EndedAt: startedAt.Add(time.Minute),
 		}
@@ -522,7 +494,7 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 		if _, err := s.CancelRun(ctx, store.CancelRunInput{RunID: runID, TicketID: ticket.ID, EndedAt: startedAt.Add(time.Minute)}); err != nil {
 			t.Fatalf("CancelRun: %v", err)
 		}
-		_, err := s.CheckpointAgentAttempt(ctx, store.AgentCheckpointInput{ID: attemptID, Capability: "contract-capability", ThreadID: "thread-1", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured, EndedAt: startedAt.Add(2 * time.Minute), Result: []byte(`{"kind":"done"}`), Transcript: &store.TargetTranscript{CompressedBytes: []byte("transcript"), Compression: "zstd", UncompressedSizeBytes: 10, Checksum: []byte("checksum")}})
+		_, err := s.CheckpointAgentAttempt(ctx, store.AgentCheckpointInput{ID: attemptID, Capability: "contract-capability", ExecutionID: "thread-1", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured, EndedAt: startedAt.Add(2 * time.Minute), Result: []byte(`{"kind":"done"}`), Transcript: &store.TargetTranscript{CompressedBytes: []byte("transcript"), Compression: "zstd", UncompressedSizeBytes: 10, Checksum: []byte("checksum")}})
 		if !errors.Is(err, store.ErrRunOwnership) {
 			t.Fatalf("CheckpointAgentAttempt after cancellation error = %v, want ErrRunOwnership", err)
 		}
@@ -830,7 +802,7 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 		_, err = s.StartAgentAttempt(ctx, secondAttempt)
 		assertOwnership("StartAgentAttempt", err)
 		assertOwnership("BindCheckpointCapability", s.BindCheckpointCapability(ctx, store.TargetAttemptID{RunID: secondRunID, StepOrdinal: 1, AttemptNo: 1}, "second-capability"))
-		_, err = s.CheckpointAgentAttempt(ctx, store.AgentCheckpointInput{ID: store.TargetAttemptID{RunID: secondRunID, StepOrdinal: 1, AttemptNo: 1}, Capability: "second-capability", ThreadID: "second-thread", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured, EndedAt: startedAt.Add(4 * time.Minute), Result: []byte(`{"kind":"done"}`), Transcript: &store.TargetTranscript{CompressedBytes: []byte("transcript"), Compression: "zstd", UncompressedSizeBytes: 10, Checksum: []byte("checksum")}})
+		_, err = s.CheckpointAgentAttempt(ctx, store.AgentCheckpointInput{ID: store.TargetAttemptID{RunID: secondRunID, StepOrdinal: 1, AttemptNo: 1}, Capability: "second-capability", ExecutionID: "second-thread", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured, EndedAt: startedAt.Add(4 * time.Minute), Result: []byte(`{"kind":"done"}`), Transcript: &store.TargetTranscript{CompressedBytes: []byte("transcript"), Compression: "zstd", UncompressedSizeBytes: 10, Checksum: []byte("checksum")}})
 		assertOwnership("CheckpointAgentAttempt", err)
 		_, err = s.CheckpointGitEffect(ctx, secondGit)
 		assertOwnership("CheckpointGitEffect", err)

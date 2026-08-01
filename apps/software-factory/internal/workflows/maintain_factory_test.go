@@ -17,6 +17,7 @@ import (
 var (
 	maintenanceActs          *activities.TargetMaintenanceActivities
 	maintenanceRunWorkerActs *activities.RunWorkerControlActivities
+	maintenanceExecutionActs *activities.TargetExecutionActivities
 )
 
 func TestMaintainFactoryReconcilesClosedOwnerAndDeletesItsRunWorker(t *testing.T) {
@@ -33,7 +34,7 @@ func TestMaintainFactoryReconcilesClosedOwnerAndDeletesItsRunWorker(t *testing.T
 		t.Fatalf("NewRunWorkerIdentity(first): %v", err)
 	}
 	env.OnActivity(maintenanceRunWorkerActs.ListRunWorkers, mock.Anything).Return([]work.RunWorkerIdentity{firstGeneration, identity}, nil)
-	env.OnActivity(acts.DescribeRun, mock.Anything, work.FactoryTicketWorkflowID(int64(owner.TicketID))).Return(work.RunState{Open: false}, nil)
+	env.OnActivity(maintenanceExecutionActs.DescribeRun, mock.Anything, work.TicketWorkflowID(int64(owner.TicketID))).Return(work.RunState{Open: false}, nil)
 	deleted := map[work.RunWorkerIdentity]bool{}
 	env.OnActivity(maintenanceRunWorkerActs.DeleteRunWorker, mock.Anything, mock.Anything).
 		Return(func(_ context.Context, in activities.DeleteRunWorkerInput) error {
@@ -70,7 +71,7 @@ func TestMaintainFactoryDoesNotReopenAReplacementRun(t *testing.T) {
 	}
 	env.OnActivity(maintenanceActs.ListActiveTargetRunOwners, mock.Anything).Return([]store.ActiveTargetRunOwner{owner}, nil)
 	env.OnActivity(maintenanceRunWorkerActs.ListRunWorkers, mock.Anything).Return([]work.RunWorkerIdentity{identity}, nil)
-	env.OnActivity(acts.DescribeRun, mock.Anything, work.FactoryTicketWorkflowID(int64(owner.TicketID))).Return(work.RunState{Open: true, RunID: replacement}, nil)
+	env.OnActivity(maintenanceExecutionActs.DescribeRun, mock.Anything, work.TicketWorkflowID(int64(owner.TicketID))).Return(work.RunState{Open: true, RunID: replacement}, nil)
 	env.OnActivity(maintenanceRunWorkerActs.DeleteRunWorker, mock.Anything, activities.DeleteRunWorkerInput{Identity: identity}).Return(nil)
 	env.OnActivity(maintenanceActs.ReconcileAbandonedTargetRun, mock.Anything, owner.RunID, owner.TicketID).Return(false, nil)
 
@@ -90,7 +91,7 @@ func TestMaintainFactoryLeavesTheCurrentLiveOwnerUntouched(t *testing.T) {
 	}
 	env.OnActivity(maintenanceActs.ListActiveTargetRunOwners, mock.Anything).Return([]store.ActiveTargetRunOwner{owner}, nil)
 	env.OnActivity(maintenanceRunWorkerActs.ListRunWorkers, mock.Anything).Return([]work.RunWorkerIdentity{identity}, nil)
-	env.OnActivity(acts.DescribeRun, mock.Anything, work.FactoryTicketWorkflowID(int64(owner.TicketID))).Return(work.RunState{Open: true, RunID: owner.RunID}, nil)
+	env.OnActivity(maintenanceExecutionActs.DescribeRun, mock.Anything, work.TicketWorkflowID(int64(owner.TicketID))).Return(work.RunState{Open: true, RunID: owner.RunID}, nil)
 
 	env.ExecuteWorkflow(workflows.MaintainFactory)
 	if err := env.GetWorkflowError(); err != nil {

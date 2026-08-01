@@ -17,6 +17,9 @@ import (
 // register with a Temporal Schedule later without changing its behavior.
 var maintainActs *activities.TargetMaintenanceActivities
 
+// targetExecutionActs is the target-only Temporal visibility activity set.
+var targetExecutionActs *activities.TargetExecutionActivities
+
 // MaintainFactory performs one bounded recovery pass. Its eventual Temporal
 // Schedule supplies recurrence; keeping this workflow finite means a failed
 // pass is naturally retried by the Schedule rather than holding live state.
@@ -34,8 +37,8 @@ func MaintainFactory(ctx workflow.Context) error {
 	handled := make(map[string]bool, len(owners))
 	for _, owner := range owners {
 		var state work.RunState
-		workflowID := work.FactoryTicketWorkflowID(int64(owner.TicketID))
-		if err := workflow.ExecuteActivity(control, acts.DescribeRun, workflowID).Get(control, &state); err != nil {
+		workflowID := work.TicketWorkflowID(int64(owner.TicketID))
+		if err := workflow.ExecuteActivity(control, targetExecutionActs.DescribeRun, workflowID).Get(control, &state); err != nil {
 			return fmt.Errorf("describing target ticket workflow %s: %w", workflowID, err)
 		}
 		if state.Open && state.RunID == owner.RunID {
@@ -68,9 +71,9 @@ func MaintainFactory(ctx workflow.Context) error {
 			}
 			continue
 		}
-		workflowID := work.FactoryTicketWorkflowID(int64(run.TicketID))
+		workflowID := work.TicketWorkflowID(int64(run.TicketID))
 		var state work.RunState
-		if err := workflow.ExecuteActivity(control, acts.DescribeRun, workflowID).Get(control, &state); err != nil {
+		if err := workflow.ExecuteActivity(control, targetExecutionActs.DescribeRun, workflowID).Get(control, &state); err != nil {
 			return fmt.Errorf("describing inventoried target ticket workflow %s: %w", workflowID, err)
 		}
 		if state.Open && state.RunID == runID {

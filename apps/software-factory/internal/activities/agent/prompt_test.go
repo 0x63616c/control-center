@@ -109,8 +109,8 @@ func TestPrepareRendersTheStageAndStoresReferenceBackedModelInput(t *testing.T) 
 		t.Fatalf("NewPromptActivities() error = %v", err)
 	}
 	attempt := activities.StageAttempt{
-		Key:     work.StageKey{Ticket: 7, RunID: "run-7", Stage: work.StageImplement, Turn: 2},
-		Sandbox: "sandbox-7", Model: work.Model{Name: "gpt-test", Effort: "medium"},
+		Key:    work.StageKey{Ticket: 7, RunID: "run-7", Stage: work.StageImplement, Turn: 2},
+		Model:  work.Model{Name: "gpt-test", Effort: "medium"},
 		Detail: work.TicketDetail{Ticket: work.Ticket{Number: 7, Title: "Do the work", Body: "Please ship it"}},
 	}
 	prepared, err := promptActivities.Prepare(t.Context(), agentactivities.PrepareInput{Attempt: attempt, CacheKey: "run-7-implement"})

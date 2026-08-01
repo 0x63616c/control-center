@@ -42,16 +42,16 @@ type runsResponse struct {
 			State     string          `json:"state"`
 			Result    json.RawMessage `json:"result"`
 			Attempts  []struct {
-				AttemptNo        int             `json:"attemptNo"`
-				AgentStage       string          `json:"agentStage"`
-				State            string          `json:"state"`
-				UsageState       string          `json:"usageState"`
-				Measured         bool            `json:"measured"`
-				InputTokens      *int64          `json:"inputTokens"`
-				ProviderThreadID string          `json:"providerThreadId"`
-				Result           json.RawMessage `json:"result"`
-				HasTranscript    bool            `json:"hasTranscript"`
-				TranscriptPath   string          `json:"transcriptPath"`
+				AttemptNo      int             `json:"attemptNo"`
+				AgentStage     string          `json:"agentStage"`
+				State          string          `json:"state"`
+				UsageState     string          `json:"usageState"`
+				Measured       bool            `json:"measured"`
+				InputTokens    *int64          `json:"inputTokens"`
+				ExecutionID    string          `json:"executionId"`
+				Result         json.RawMessage `json:"result"`
+				HasTranscript  bool            `json:"hasTranscript"`
+				TranscriptPath string          `json:"transcriptPath"`
 			} `json:"attempts"`
 		} `json:"steps"`
 	} `json:"runs"`
@@ -92,7 +92,7 @@ func TestGetTicketRunsProjectsTargetHistoryFromPostgresModel(t *testing.T) {
 	compressed := gzipBytes(t, rawTranscript)
 	checksum := sha256.Sum256(rawTranscript)
 	if _, err := fake.CheckpointAgentAttempt(ctx, store.AgentCheckpointInput{
-		ID: attemptID, Capability: "capability", ThreadID: "thread-plan-1",
+		ID: attemptID, Capability: "capability", ExecutionID: "opaque-execution-1",
 		State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured,
 		Usage:   work.Usage{InputTokens: 120, CachedInputTokens: 20, OutputTokens: 40, ReasoningTokens: 10},
 		EndedAt: started.Add(2 * time.Minute), Result: json.RawMessage(`{"kind":"planned"}`),
@@ -138,8 +138,13 @@ func TestGetTicketRunsProjectsTargetHistoryFromPostgresModel(t *testing.T) {
 		t.Fatalf("plan attempts = %d, want one semantic attempt (no Temporal retry rows)", len(run.Steps[1].Attempts))
 	}
 	attempt := run.Steps[1].Attempts[0]
-	if attempt.AgentStage != string(work.AgentStagePlan) || attempt.UsageState != string(work.UsageMeasured) || attempt.ProviderThreadID != "thread-plan-1" || string(attempt.Result) != `{"kind":"planned"}` {
+	if attempt.AgentStage != string(work.AgentStagePlan) || attempt.UsageState != string(work.UsageMeasured) || attempt.ExecutionID != "opaque-execution-1" || string(attempt.Result) != `{"kind":"planned"}` {
 		t.Fatalf("attempt = %+v, want durable target identity, usage state, and result", attempt)
+	}
+	for _, legacyField := range [][]byte{[]byte(`"providerThreadId"`), []byte(`"stage"`), []byte(`"turn"`)} {
+		if bytes.Contains(response.Body.Bytes(), legacyField) {
+			t.Fatalf("target run response contains legacy field %s: %s", legacyField, response.Body.String())
+		}
 	}
 	wantPath := "/v1/tickets/1/runs/" + runID + "/steps/2/attempts/1/transcript"
 	if attempt.TranscriptPath != wantPath {
@@ -199,12 +204,6 @@ func gzipBytes(t *testing.T, raw []byte) []byte {
 	return compressed.Bytes()
 }
 
-// transcriptFor builds the store.Transcript row for key's attemptNo, given
-// already-compressed bytes.
-func transcriptFor(key work.StageKey, attemptNo int, compressed []byte) store.Transcript {
-	return store.Transcript{Key: key, AttemptNo: attemptNo, CompressedBytes: compressed, Compression: "gzip"}
-}
-
 func TestGetTicketRunsRollsUpUsageAndFlagsIncompleteRuns(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -217,21 +216,31 @@ func TestGetTicketRunsRollsUpUsageAndFlagsIncompleteRuns(t *testing.T) {
 	}
 	runID := "11111111-1111-1111-1111-111111111111"
 	started := time.Date(2026, 7, 31, 10, 0, 0, 0, time.UTC)
-	if _, err := fake.StartRun(ctx, runID, ticket.ID, started); err != nil {
-		t.Fatalf("StartRun: %v", err)
+	if _, err := fake.ClaimAndStartRun(ctx, store.ClaimRunInput{TicketID: ticket.ID, RunID: runID, StartedAt: started}); err != nil {
+		t.Fatalf("ClaimAndStartRun: %v", err)
 	}
-	key := work.StageKey{Ticket: int(ticket.ID), RunID: runID, Stage: work.StageImplement, Turn: 1}
-	if err := fake.RecordStep(ctx, key); err != nil {
-		t.Fatalf("RecordStep: %v", err)
+	if _, err := fake.StartStep(ctx, store.StartStepInput{RunID: runID, Ordinal: 1, Kind: work.StepImplement, Iteration: 1, StartedAt: started}); err != nil {
+		t.Fatalf("StartStep: %v", err)
 	}
-	// Attempt 1 measured with real usage.
-	if _, err := fake.RecordAttempt(ctx, key, 1, work.Model{Name: "gpt-5.6", Effort: "medium"},
-		work.Usage{InputTokens: 100, CachedInputTokens: 10, OutputTokens: 40, ReasoningTokens: 5}, true, started); err != nil {
-		t.Fatalf("RecordAttempt(1): %v", err)
+	first := store.TargetAttemptID{RunID: runID, StepOrdinal: 1, AttemptNo: 1}
+	if _, err := fake.StartAgentAttempt(ctx, store.StartAgentAttemptInput{ID: first, AgentStage: work.AgentStageImplement, Model: work.Model{Name: "gpt-5.6", Effort: "medium"}, UsageState: work.UsageUnknown, StartedAt: started}); err != nil {
+		t.Fatalf("StartAgentAttempt(1): %v", err)
 	}
-	// Attempt 2 resumed: not measured, zero usage — the #426 case.
-	if _, err := fake.RecordAttempt(ctx, key, 2, work.Model{}, work.Usage{}, false, started.Add(time.Minute)); err != nil {
-		t.Fatalf("RecordAttempt(2): %v", err)
+	if err := fake.BindCheckpointCapability(ctx, first, "capability"); err != nil {
+		t.Fatalf("BindCheckpointCapability: %v", err)
+	}
+	if _, err := fake.CheckpointAgentAttempt(ctx, store.AgentCheckpointInput{
+		ID: first, Capability: "capability", ExecutionID: "opaque-execution-1",
+		State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured,
+		Usage:   work.Usage{InputTokens: 100, CachedInputTokens: 10, OutputTokens: 40, ReasoningTokens: 5},
+		EndedAt: started.Add(time.Minute), Result: []byte(`{"kind":"done"}`),
+		Transcript: &store.TargetTranscript{CompressedBytes: []byte("transcript"), Compression: "zstd", UncompressedSizeBytes: 10, Checksum: []byte("checksum")},
+	}); err != nil {
+		t.Fatalf("CheckpointAgentAttempt(1): %v", err)
+	}
+	secondID := store.TargetAttemptID{RunID: runID, StepOrdinal: 1, AttemptNo: 2}
+	if _, err := fake.StartAgentAttempt(ctx, store.StartAgentAttemptInput{ID: secondID, AgentStage: work.AgentStageImplement, Model: work.Model{Name: "gpt-5.6", Effort: "medium"}, UsageState: work.UsageUnknown, StartedAt: started.Add(time.Minute)}); err != nil {
+		t.Fatalf("StartAgentAttempt(2): %v", err)
 	}
 
 	response := ticketRequest(t, service, http.MethodGet, "/v1/tickets/1/runs", "")
@@ -280,64 +289,6 @@ func TestGetTicketRunsForAnUnknownTicketIs404(t *testing.T) {
 	}
 }
 
-func TestDownloadAttemptTranscriptDecompressesGzip(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	fake := storefake.New()
-	service := New("test-build", nil, fake)
-
-	ticket, err := fake.CreateTicket(ctx, "T", "body", nil)
-	if err != nil {
-		t.Fatalf("CreateTicket: %v", err)
-	}
-	runID := "22222222-2222-2222-2222-222222222222"
-	started := time.Date(2026, 7, 31, 11, 0, 0, 0, time.UTC)
-	if _, err := fake.StartRun(ctx, runID, ticket.ID, started); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
-	key := work.StageKey{Ticket: int(ticket.ID), RunID: runID, Stage: work.StagePlan, Turn: 1}
-	if err := fake.RecordStep(ctx, key); err != nil {
-		t.Fatalf("RecordStep: %v", err)
-	}
-	if _, err := fake.RecordAttempt(ctx, key, 1, work.Model{Name: "m", Effort: "e"}, work.Usage{}, true, started); err != nil {
-		t.Fatalf("RecordAttempt: %v", err)
-	}
-
-	raw := []byte(`{"event":"one"}` + "\n" + `{"event":"two"}` + "\n")
-	var compressed bytes.Buffer
-	gz := gzip.NewWriter(&compressed)
-	if _, err := gz.Write(raw); err != nil {
-		t.Fatalf("gzip write: %v", err)
-	}
-	if err := gz.Close(); err != nil {
-		t.Fatalf("gzip close: %v", err)
-	}
-	if err := fake.PutTranscript(ctx, transcriptFor(key, 1, compressed.Bytes())); err != nil {
-		t.Fatalf("PutTranscript: %v", err)
-	}
-
-	// Confirm the run listing now reports the transcript as present.
-	runs := ticketRequest(t, service, http.MethodGet, "/v1/tickets/1/runs", "")
-	var body runsResponse
-	if err := json.Unmarshal(runs.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode runs: %v", err)
-	}
-	if !body.Runs[0].Steps[0].Attempts[0].HasTranscript {
-		t.Fatalf("hasTranscript = false, want true once a transcript is stored")
-	}
-
-	response := ticketRequest(t, service, http.MethodGet, "/v1/tickets/1/runs/"+runID+"/stages/plan/turns/1/attempts/1/transcript", "")
-	if response.Code != http.StatusOK {
-		t.Fatalf("download status = %d: %s", response.Code, response.Body.String())
-	}
-	if response.Body.String() != string(raw) {
-		t.Fatalf("download body = %q, want the decompressed transcript %q", response.Body.String(), raw)
-	}
-	if disposition := response.Header().Get("Content-Disposition"); disposition == "" {
-		t.Fatalf("Content-Disposition header is empty, want an attachment filename")
-	}
-}
-
 func TestDownloadAttemptTranscriptForWrongTicketIs404(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -353,14 +304,27 @@ func TestDownloadAttemptTranscriptForWrongTicketIs404(t *testing.T) {
 		t.Fatalf("CreateTicket(B): %v", err)
 	}
 	runID := "33333333-3333-3333-3333-333333333333"
-	if _, err := fake.StartRun(ctx, runID, other.ID, time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)); err != nil {
-		t.Fatalf("StartRun: %v", err)
+	started := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	if _, err := fake.ClaimAndStartRun(ctx, store.ClaimRunInput{TicketID: other.ID, RunID: runID, StartedAt: started}); err != nil {
+		t.Fatalf("ClaimAndStartRun: %v", err)
+	}
+	if _, err := fake.StartStep(ctx, store.StartStepInput{RunID: runID, Ordinal: 1, Kind: work.StepPlan, StartedAt: started}); err != nil {
+		t.Fatalf("StartStep: %v", err)
 	}
 
 	// runID belongs to ticket B; asking for it under ticket A's path is a 404,
 	// not a leak of another ticket's run.
-	response := ticketRequest(t, service, http.MethodGet, "/v1/tickets/1/runs/"+runID+"/stages/plan/turns/1/attempts/1/transcript", "")
+	response := ticketRequest(t, service, http.MethodGet, "/v1/tickets/1/runs/"+runID+"/steps/1/attempts/1/transcript", "")
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestLegacyStageTurnTranscriptRouteIsNotRegistered(t *testing.T) {
+	t.Parallel()
+	service := New("test-build", nil, storefake.New())
+	response := ticketRequest(t, service, http.MethodGet, "/v1/tickets/1/runs/33333333-3333-4333-8333-333333333333/stages/plan/turns/1/attempts/1/transcript", "")
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("legacy transcript route status = %d, want 404: %s", response.Code, response.Body.String())
 	}
 }

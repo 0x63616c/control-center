@@ -1,3 +1,4 @@
+// Package workflows contains the factory's deterministic Temporal orchestration.
 package workflows
 
 import (
@@ -24,7 +25,7 @@ type AgentWorkflowInput struct {
 	ModelTurnPolicy work.AgentActivityPolicy
 	ControlPolicy   work.ActivityPolicy
 	// Identity pins every durable agent artifact to one semantic execution.
-	// Empty preserves the pre-target-run stage identity for existing histories.
+	// Empty derives the identity from the stage key.
 	Identity string
 	CacheKey string
 	Seed     *agent.ConversationSeed
@@ -45,7 +46,7 @@ type AgentWorkflowState struct {
 	TurnsSinceContinueAsNew int
 }
 
-// AgentWorkflowResult is the bounded typed result returned to FactoryWorkTicket.
+// AgentWorkflowResult is the bounded typed result returned to WorkOnTicket.
 type AgentWorkflowResult struct {
 	Result          work.StageOutput
 	Usage           work.Usage
@@ -55,35 +56,6 @@ type AgentWorkflowResult struct {
 	Failure         *agent.TerminalFailure
 	ModelTurns      int
 	ToolCalls       int
-}
-
-// LegacyAgentWorkflowModelTurnPolicy preserves the model-turn behavior of
-// FactoryWorkTicket histories. Target runs carry their distinct immutable
-// policy in WorkOnTicketInput instead of changing this compatibility default.
-func LegacyAgentWorkflowModelTurnPolicy() work.AgentActivityPolicy {
-	return work.AgentActivityPolicy{
-		StartToCloseTimeout:    2 * time.Minute,
-		ScheduleToCloseTimeout: 2*time.Minute + 15*time.Second,
-		HeartbeatTimeout:       15 * time.Second,
-		Retry: work.RetryPolicy{
-			InitialInterval: time.Second, BackoffCoefficient: 2,
-			MaximumInterval: 10 * time.Second, MaximumAttempts: 3,
-		},
-	}
-}
-
-// LegacyAgentWorkflowControlPolicy preserves the short control activity retry
-// shape recorded by FactoryWorkTicket histories. Target runs instead supply
-// their immutable recording policy for prompt and finalization persistence.
-func LegacyAgentWorkflowControlPolicy() work.ActivityPolicy {
-	return work.ActivityPolicy{
-		StartToCloseTimeout:    2 * time.Minute,
-		ScheduleToCloseTimeout: 2*time.Minute + 15*time.Second,
-		Retry: work.RetryPolicy{
-			InitialInterval: time.Second, BackoffCoefficient: 2,
-			MaximumInterval: 10 * time.Second, MaximumAttempts: 3,
-		},
-	}
 }
 
 // MarshalJSON requires exactly one terminal outcome. A StageOutput deliberately
@@ -463,7 +435,7 @@ func agentLifecycleInput(terminalErr error, failure *agent.TerminalFailure) (age
 func continueAgentWorkflowAsNew(ctx workflow.Context, input AgentWorkflowInput, state AgentWorkflowState) error {
 	return workflow.NewContinueAsNewError(ctx, AgentWorkflow, AgentWorkflowInput{
 		Attempt: activities.StageAttempt{
-			Key: input.Attempt.Key, Sandbox: input.Attempt.Sandbox, Model: input.Attempt.Model,
+			Key: input.Attempt.Key, Model: input.Attempt.Model,
 		},
 		ToolsetID:       input.ToolsetID,
 		ToolTarget:      input.ToolTarget,

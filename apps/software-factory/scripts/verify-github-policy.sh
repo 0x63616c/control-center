@@ -8,6 +8,7 @@ usage() {
 repository=""
 app_id=""
 branch="main"
+gh_bin="${GH_BIN:-gh}"
 while (($# > 0)); do
   case "$1" in
     --repository)
@@ -29,7 +30,7 @@ while (($# > 0)); do
   esac
 done
 
-if [[ ! "$repository" =~ ^[^/]+/[^/]+$ ]] || [[ ! "$app_id" =~ ^[1-9][0-9]*$ ]] || [[ -z "$branch" ]]; then
+if [[ ! "$repository" =~ ^[^/]+/[^/]+$ ]] || [[ ! "$app_id" =~ ^[1-9][0-9]*$ ]] || [[ ! "$branch" =~ ^[A-Za-z0-9._/-]+$ ]]; then
   usage
   exit 2
 fi
@@ -40,15 +41,15 @@ trap 'rm -rf -- "$details_dir"' EXIT
 ruleset_ids=()
 while IFS= read -r ruleset_id; do
   ruleset_ids+=("$ruleset_id")
-done < <(gh api "repos/${repository}/rulesets?includes_parents=true&per_page=100" --jq '.[].id')
+done < <("$gh_bin" api "repos/${repository}/rulesets?includes_parents=true&per_page=100" --jq '.[].id')
 if ((${#ruleset_ids[@]} == 0)); then
-  echo '[]' | (cd "$(dirname "$0")/.." && go run ./cmd/factoryctl verify-github-policy --app-id "$app_id" --branch "$branch")
+  echo '[]' | (cd "$(dirname "$0")/.." && go run ./cmd/verify-github-policy --app-id "$app_id" --branch "$branch")
   exit $?
 fi
 
 for ruleset_id in "${ruleset_ids[@]}"; do
-  gh api "repos/${repository}/rulesets/${ruleset_id}" >"${details_dir}/${ruleset_id}.json"
+  "$gh_bin" api "repos/${repository}/rulesets/${ruleset_id}" >"${details_dir}/${ruleset_id}.json"
 done
 
 jq -s '.' "${details_dir}"/*.json |
-  (cd "$(dirname "$0")/.." && go run ./cmd/factoryctl verify-github-policy --app-id "$app_id" --branch "$branch")
+  (cd "$(dirname "$0")/.." && go run ./cmd/verify-github-policy --app-id "$app_id" --branch "$branch")

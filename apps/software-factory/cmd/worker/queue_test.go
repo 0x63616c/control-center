@@ -38,7 +38,7 @@ import (
 // vacuously true of no matches, and a refactor that moves registration out of
 // this file would otherwise turn this test into one that asserts nothing while
 // still passing.
-func TestTheWorkerPollsTheQueueTheWorkflowsScheduleOnto(t *testing.T) {
+func TestTheWorkerPollsTheActivatedControlAndMainQueues(t *testing.T) {
 	t.Parallel()
 
 	source, err := os.ReadFile("main.go")
@@ -51,18 +51,30 @@ func TestTheWorkerPollsTheQueueTheWorkflowsScheduleOnto(t *testing.T) {
 	registration := regexp.MustCompile(`worker\.New\([^,]+,\s*([^,]+),`)
 	found := registration.FindAllSubmatch(source, -1)
 
-	// One worker, one queue. If a second is ever registered deliberately, this
-	// is the line to change — and changing it means saying which queue the new
-	// one polls, which is the whole point.
-	const wantRegistrations = 1
+	// Activation has one control worker for the singleton Dispatcher and one
+	// main worker for ticket workflows and activities. The control worker must
+	// be able to acknowledge policy before the main queue begins polling.
+	const wantRegistrations = 2
 	if len(found) != wantRegistrations {
 		t.Fatalf("main.go makes %d worker.New calls, want %d; this test can only vouch for the registrations it can see",
 			len(found), wantRegistrations)
 	}
 
+	wantQueues := map[string]bool{
+		"work.TargetDispatcherTaskQueue": false,
+		"work.TaskQueue":                 false,
+	}
 	for _, match := range found {
-		if got := string(match[1]); got != "work.TaskQueue" {
-			t.Errorf("the worker registers on %s, want work.TaskQueue; a worker polling a queue nothing schedules onto reports no error at either end and looks like an idle system", got)
+		got := string(match[1])
+		if _, ok := wantQueues[got]; !ok {
+			t.Errorf("the worker registers on unexpected queue %s", got)
+			continue
+		}
+		wantQueues[got] = true
+	}
+	for queue, found := range wantQueues {
+		if !found {
+			t.Errorf("the worker does not poll activated queue %s", queue)
 		}
 	}
 }

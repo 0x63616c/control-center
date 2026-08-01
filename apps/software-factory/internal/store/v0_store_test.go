@@ -308,7 +308,7 @@ func TestConfirmedMergeFencesSuccessorThatClaimedReopenedTicket(t *testing.T) {
 	}()
 	go func() {
 		<-start
-		_, checkpointErr := s.CheckpointAgentAttempt(ctx, store.AgentCheckpointInput{ID: secondAttemptID, Capability: "second-capability", ThreadID: "second-thread", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured, EndedAt: confirmedAt, Result: []byte(`{"kind":"done"}`), Transcript: targetTranscript()})
+		_, checkpointErr := s.CheckpointAgentAttempt(ctx, store.AgentCheckpointInput{ID: secondAttemptID, Capability: "second-capability", ExecutionID: "second-thread", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured, EndedAt: confirmedAt, Result: []byte(`{"kind":"done"}`), Transcript: targetTranscript()})
 		checkpointErrors <- checkpointErr
 	}()
 	close(start)
@@ -330,7 +330,7 @@ func TestConfirmedMergeFencesSuccessorThatClaimedReopenedTicket(t *testing.T) {
 		t.Fatalf("second Run outcome = %q, want canceled fence", secondRun.TargetOutcome)
 	}
 
-	_, err = s.CheckpointAgentAttempt(ctx, store.AgentCheckpointInput{ID: secondAttemptID, Capability: "second-capability", ThreadID: "second-thread", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured, EndedAt: confirmedAt.Add(time.Minute), Result: []byte(`{"kind":"done"}`), Transcript: targetTranscript()})
+	_, err = s.CheckpointAgentAttempt(ctx, store.AgentCheckpointInput{ID: secondAttemptID, Capability: "second-capability", ExecutionID: "second-thread", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured, EndedAt: confirmedAt.Add(time.Minute), Result: []byte(`{"kind":"done"}`), Transcript: targetTranscript()})
 	if !errors.Is(err, store.ErrRunOwnership) {
 		t.Fatalf("CheckpointAgentAttempt(second after fence) error = %v, want ErrRunOwnership", err)
 	}
@@ -601,7 +601,7 @@ func TestTargetHistoryProjectsTranscriptPresence(t *testing.T) {
 	if err := s.BindCheckpointCapability(ctx, attemptID, "capability"); err != nil {
 		t.Fatalf("BindCheckpointCapability: %v", err)
 	}
-	if _, err := s.CheckpointAgentAttempt(ctx, store.AgentCheckpointInput{ID: attemptID, Capability: "capability", ThreadID: "thread-1", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured, EndedAt: startedAt.Add(time.Minute), Result: []byte(`{"kind":"done"}`), Transcript: targetTranscript()}); err != nil {
+	if _, err := s.CheckpointAgentAttempt(ctx, store.AgentCheckpointInput{ID: attemptID, Capability: "capability", ExecutionID: "thread-1", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured, EndedAt: startedAt.Add(time.Minute), Result: []byte(`{"kind":"done"}`), Transcript: targetTranscript()}); err != nil {
 		t.Fatalf("CheckpointAgentAttempt: %v", err)
 	}
 	detail, err := s.TargetRunDetail(ctx, runID)
@@ -643,7 +643,7 @@ func TestCheckpointCapabilityCannotMutateAnotherRunAndGitCheckpointDoesNotRegres
 	if err := s.BindCheckpointCapability(ctx, firstAttempt, "first-capability"); err != nil {
 		t.Fatalf("BindCheckpointCapability: %v", err)
 	}
-	_, err = s.CheckpointAgentAttempt(ctx, store.AgentCheckpointInput{ID: store.TargetAttemptID{RunID: secondRun, StepOrdinal: 1, AttemptNo: 1}, Capability: "first-capability", ThreadID: "thread", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured, EndedAt: startedAt.Add(time.Minute), Result: []byte(`{"kind":"done"}`), Transcript: targetTranscript()})
+	_, err = s.CheckpointAgentAttempt(ctx, store.AgentCheckpointInput{ID: store.TargetAttemptID{RunID: secondRun, StepOrdinal: 1, AttemptNo: 1}, Capability: "first-capability", ExecutionID: "thread", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured, EndedAt: startedAt.Add(time.Minute), Result: []byte(`{"kind":"done"}`), Transcript: targetTranscript()})
 	if !errors.Is(err, store.ErrRunOwnership) {
 		t.Fatalf("cross-run checkpoint error = %v, want ErrRunOwnership", err)
 	}
@@ -693,7 +693,7 @@ func TestSucceededAgentCheckpointRequiresCompleteDurableEvidence(t *testing.T) {
 			if err := s.BindCheckpointCapability(ctx, attemptID, "capability"); err != nil {
 				t.Fatalf("BindCheckpointCapability: %v", err)
 			}
-			_, err = s.CheckpointAgentAttempt(ctx, store.AgentCheckpointInput{ID: attemptID, Capability: "capability", ThreadID: tt.threadID, State: work.AgentAttemptSucceeded, UsageState: tt.usageState, EndedAt: startedAt.Add(time.Minute), Result: tt.result, Transcript: tt.transcript})
+			_, err = s.CheckpointAgentAttempt(ctx, store.AgentCheckpointInput{ID: attemptID, Capability: "capability", ExecutionID: tt.threadID, State: work.AgentAttemptSucceeded, UsageState: tt.usageState, EndedAt: startedAt.Add(time.Minute), Result: tt.result, Transcript: tt.transcript})
 			if !errors.Is(err, work.ErrPermanent) {
 				t.Fatalf("CheckpointAgentAttempt error = %v, want permanent invalid evidence", err)
 			}
@@ -753,7 +753,7 @@ func persistedRunningCheckpoint(t *testing.T) (*store.Store, *pgxpool.Pool, stor
 		t.Fatalf("BindCheckpointCapability: %v", err)
 	}
 	checkpoint := store.AgentCheckpointInput{
-		ID: attemptID, Capability: "capability", ThreadID: "thread-1",
+		ID: attemptID, Capability: "capability", ExecutionID: "thread-1",
 		State: work.AgentAttemptRunning, UsageState: work.UsageMeasured,
 		Transcript: &store.TargetTranscript{CompressedBytes: []byte("partial"), Compression: "zstd", UncompressedSizeBytes: 7, Checksum: []byte("checksum")},
 	}
@@ -819,40 +819,9 @@ func TestCheckpointCapabilityCannotSelectAnotherAttemptInTheSameRun(t *testing.T
 	if err := s.BindCheckpointCapability(ctx, store.TargetAttemptID{RunID: runID, StepOrdinal: 1, AttemptNo: 1}, "attempt-one-capability"); err != nil {
 		t.Fatalf("BindCheckpointCapability: %v", err)
 	}
-	_, err = s.CheckpointAgentAttempt(ctx, store.AgentCheckpointInput{ID: store.TargetAttemptID{RunID: runID, StepOrdinal: 1, AttemptNo: 2}, Capability: "attempt-one-capability", ThreadID: "thread-2", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured, EndedAt: startedAt.Add(time.Minute), Result: []byte(`{"kind":"done"}`), Transcript: targetTranscript()})
+	_, err = s.CheckpointAgentAttempt(ctx, store.AgentCheckpointInput{ID: store.TargetAttemptID{RunID: runID, StepOrdinal: 1, AttemptNo: 2}, Capability: "attempt-one-capability", ExecutionID: "thread-2", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured, EndedAt: startedAt.Add(time.Minute), Result: []byte(`{"kind":"done"}`), Transcript: targetTranscript()})
 	if !errors.Is(err, store.ErrRunOwnership) {
 		t.Fatalf("cross-attempt checkpoint error = %v, want ErrRunOwnership", err)
-	}
-}
-
-func TestHistoryProjectsLegacyTranscriptPresence(t *testing.T) {
-	s := newTestStore(t)
-	ctx := context.Background()
-	ticket, err := s.CreateTicket(ctx, "legacy history", "", nil)
-	if err != nil {
-		t.Fatalf("CreateTicket: %v", err)
-	}
-	runID := newTestRunID(t)
-	startedAt := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
-	if _, err := s.StartRun(ctx, runID, ticket.ID, startedAt); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
-	key := work.StageKey{RunID: runID, Stage: work.StageImplement, Turn: 1}
-	if err := s.RecordStep(ctx, key); err != nil {
-		t.Fatalf("RecordStep: %v", err)
-	}
-	if _, err := s.RecordAttempt(ctx, key, 1, work.Model{Name: "m", Effort: "medium"}, work.Usage{}, true, startedAt); err != nil {
-		t.Fatalf("RecordAttempt: %v", err)
-	}
-	if err := s.PutTranscript(ctx, store.Transcript{Key: key, AttemptNo: 1, CompressedBytes: []byte("bytes"), Compression: "zstd", UncompressedSizeBytes: 5, Checksum: []byte("sum")}); err != nil {
-		t.Fatalf("PutTranscript: %v", err)
-	}
-	history, err := s.History(ctx, runID)
-	if err != nil {
-		t.Fatalf("History: %v", err)
-	}
-	if !history.Legacy || len(history.Steps) != 1 || len(history.Steps[0].Attempts) != 1 || !history.Steps[0].Attempts[0].TranscriptPresent {
-		t.Fatalf("History = %+v, want legacy transcript present", history)
 	}
 }
 

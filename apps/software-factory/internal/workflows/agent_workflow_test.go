@@ -24,15 +24,7 @@ import (
 
 const testToolsetFingerprint = "sha256:test-toolset"
 
-func TestLegacyAgentWorkflowModelTurnPolicyPreservesPreTargetDefaults(t *testing.T) {
-	t.Parallel()
-	policy := workflows.LegacyAgentWorkflowModelTurnPolicy()
-	if policy.StartToCloseTimeout != 2*time.Minute || policy.ScheduleToCloseTimeout != 2*time.Minute+15*time.Second ||
-		policy.HeartbeatTimeout != 15*time.Second || policy.Retry.InitialInterval != time.Second ||
-		policy.Retry.BackoffCoefficient != 2 || policy.Retry.MaximumInterval != 10*time.Second || policy.Retry.MaximumAttempts != 3 {
-		t.Fatalf("legacy model-turn policy = %#v", policy)
-	}
-}
+const testAgentRunID = "019fb900-0000-7000-8000-000000000001"
 
 func TestAgentWorkflowCompletesFromOneFinalModelTurn(t *testing.T) {
 	t.Parallel()
@@ -71,8 +63,12 @@ func TestAgentWorkflowCompletesFromOneFinalModelTurn(t *testing.T) {
 	)
 	input := workflows.AgentWorkflowInput{
 		Attempt: activities.StageAttempt{
-			Key:     work.StageKey{Ticket: 7, RunID: "run-7", Stage: work.StagePlan, Turn: 1},
-			Sandbox: "sandbox-7", Model: work.Model{Name: "gpt-test", Effort: "medium"},
+			Key:   work.StageKey{Ticket: 7, RunID: testAgentRunID, Stage: work.StagePlan, Turn: 1},
+			Model: work.Model{Name: "gpt-test", Effort: "medium"},
+		},
+		ToolTarget: agent.ToolTarget{
+			Kind:              agent.ToolTargetRunWorker,
+			RunWorkerIdentity: work.RunWorkerIdentity{RunID: testAgentRunID, Generation: 1},
 		},
 		ToolsetID: "coding-read-v1", CacheKey: "run-7-plan",
 		ModelTurnPolicy: work.DefaultTargetRunPolicy().Agent,
@@ -154,7 +150,7 @@ func TestAgentWorkflowPassesAConversationSeedToPrepare(t *testing.T) {
 	input := validAgentWorkflowInput(work.StageImplement)
 	input.Attempt.Key.Turn = 2
 	seed := &agent.ConversationSeed{
-		Source:          work.StageKey{Ticket: 7, RunID: "run-7", Stage: work.StageImplement, Turn: 1},
+		Source:          work.StageKey{Ticket: 7, RunID: testAgentRunID, Stage: work.StageImplement, Turn: 1},
 		SourceIdentity:  "agent/run-7/step/8/attempt/1",
 		ConversationRef: agent.ConversationRef{Key: "conversations/agent/run-7/implement/1/0/digest", Bytes: 1, Digest: "digest"},
 	}
@@ -692,7 +688,7 @@ func TestAgentWorkflowRejectsInvalidRunWorkerToolTarget(t *testing.T) {
 	input := validAgentWorkflowInput(work.StageImplement)
 	input.ToolTarget = agent.ToolTarget{
 		Kind:              agent.ToolTargetRunWorker,
-		RunWorkerIdentity: work.RunWorkerIdentity{RunID: "019fb900-0000-7000-8000-000000000001", Generation: 1},
+		RunWorkerIdentity: work.RunWorkerIdentity{RunID: "019fb900-0000-7000-8000-000000000002", Generation: 1},
 	}
 	environment.ExecuteWorkflow(workflows.AgentWorkflow, input)
 	var applicationError *temporal.ApplicationError
@@ -744,8 +740,12 @@ func TestAgentToolActivityOutlivesTheLongestToolCommand(t *testing.T) {
 func validAgentWorkflowInput(stage work.Stage) workflows.AgentWorkflowInput {
 	return workflows.AgentWorkflowInput{
 		Attempt: activities.StageAttempt{
-			Key:     work.StageKey{Ticket: 7, RunID: "run-7", Stage: stage, Turn: 1},
-			Sandbox: "sandbox-7", Model: work.Model{Name: "gpt-test", Effort: "medium"},
+			Key:   work.StageKey{Ticket: 7, RunID: testAgentRunID, Stage: stage, Turn: 1},
+			Model: work.Model{Name: "gpt-test", Effort: "medium"},
+		},
+		ToolTarget: agent.ToolTarget{
+			Kind:              agent.ToolTargetRunWorker,
+			RunWorkerIdentity: work.RunWorkerIdentity{RunID: testAgentRunID, Generation: 1},
 		},
 		ToolsetID: "coding-write-v1", CacheKey: "run-7-stage",
 		ModelTurnPolicy: work.DefaultTargetRunPolicy().Agent,

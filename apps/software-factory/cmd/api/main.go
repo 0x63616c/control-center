@@ -79,11 +79,11 @@ func run() error {
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	authentication, err := auth.New(auth.Options{
-		AccessIssuer:   cfg.AccessIssuer,
-		AccessAudience: cfg.AccessAudience,
-		AccessCertsURL: cfg.AccessCertsURL,
-		WorkerBearer:   cfg.WorkerBearer,
-		SandboxBearer:  cfg.SandboxBearer,
+		AccessIssuer:    cfg.AccessIssuer,
+		AccessAudience:  cfg.AccessAudience,
+		AccessCertsURL:  cfg.AccessCertsURL,
+		WorkerBearer:    cfg.WorkerBearer,
+		RunWorkerBearer: cfg.RunWorkerBearer,
 	})
 	if err != nil {
 		return fmt.Errorf("starting API authentication: %w", err)
@@ -142,7 +142,7 @@ func run() error {
 	// The checkpoint route is the other exception: its exact-attempt capability
 	// is authenticated by the Store. Legacy API paths stay behind Cloudflare
 	// Access or the in-cluster bearer.
-	mux.Handle("/v1/hooks/github", webhook.NewHandler(cfg.WebhookSecret, ticketStore, logger, registry))
+	mountGitHubWebhook(mux, cfg.WebhookSecret, ticketStore, logger, registry)
 	factory := factoryapi.NewWithRunWorkerStores(buildVersion, temporalapi.NewCommands(temporal), ticketStore, ticketStore, ticketStore)
 	mountFactoryAPI(mux, authentication, factory)
 
@@ -169,6 +169,10 @@ func run() error {
 		}
 	}
 	return nil
+}
+
+func mountGitHubWebhook(mux *http.ServeMux, secret []byte, deliveries store.WebhookDeliveryAcknowledger, logger *slog.Logger, registry prometheus.Registerer) {
+	mux.Handle("/v1/hooks/github", webhook.NewTargetHandler(secret, deliveries, logger, registry))
 }
 
 type routeAuthenticator interface {

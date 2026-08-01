@@ -33,6 +33,9 @@ var (
 // for one target Ticket workflow.
 type WorkOnTicketInput struct {
 	TicketID store.TicketID
+	// RunID is retained for checked-in replay fixtures and focused workflow
+	// tests. Production admission leaves it empty so WorkOnTicket binds the
+	// durable Run to its authoritative Temporal execution Run ID.
 	RunID    string
 	Policy   work.TargetRunPolicy
 	CloneURL string
@@ -80,6 +83,9 @@ func (e *terminalRunError) Unwrap() error { return e.err }
 // private Run Worker Session, and clones the repository as that Session's
 // first repository-affine activity.
 func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
+	if in.RunID == "" {
+		in.RunID = workflow.GetInfo(ctx).WorkflowExecution.RunID
+	}
 	var claimed store.ClaimRunResult
 	var session *targetRunSession
 	claimedRun := false
@@ -550,7 +556,7 @@ func runTargetAgentStep(ctx workflow.Context, session *targetRunSession, in Work
 		child := workflow.WithChildOptions(ctx, targetAgentChildOptions(identity, in.Policy.Agent))
 		var result AgentWorkflowResult
 		childFuture := workflow.ExecuteChildWorkflow(child, AgentWorkflow, AgentWorkflowInput{
-			Attempt:   activities.StageAttempt{Key: key, Sandbox: work.SandboxID("run-worker-" + in.RunID), Model: in.Model, Detail: detail, Prior: prior, PromptContext: promptContext, MaxReviewSteps: in.Policy.MaxReviewSteps},
+			Attempt:   activities.StageAttempt{Key: key, Model: in.Model, Detail: detail, Prior: prior, PromptContext: promptContext, MaxReviewSteps: in.Policy.MaxReviewSteps},
 			ToolsetID: targetToolset(stage), ToolTarget: agent.ToolTarget{Kind: agent.ToolTargetRunWorker, RunWorkerIdentity: session.identity},
 			Limits: agent.DefaultLimits(), ModelTurnPolicy: in.Policy.Agent, ControlPolicy: in.Policy.Recording, CacheKey: identity, Identity: identity, Seed: seed,
 		})

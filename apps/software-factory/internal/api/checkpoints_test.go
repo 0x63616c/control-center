@@ -33,7 +33,7 @@ func TestAgentCheckpointReadReconcilesDurableTerminalEvidence(t *testing.T) {
 	endedAt := time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)
 	fake := &checkpointStoreFake{
 		loadFound:  true,
-		loaded:     store.AgentAttempt{ProviderThreadID: "thread-9", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured, Usage: work.Usage{InputTokens: 100, OutputTokens: 30}, EndedAt: endedAt, Result: json.RawMessage(`{"kind":"done"}`)},
+		loaded:     store.AgentAttempt{ExecutionID: "opaque-execution-9", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured, Usage: work.Usage{InputTokens: 100, OutputTokens: 30}, EndedAt: endedAt, Result: json.RawMessage(`{"kind":"done"}`)},
 		transcript: &store.TargetTranscript{CompressedBytes: []byte("terminal"), Compression: "zstd", UncompressedSizeBytes: 8, Checksum: []byte("checksum")},
 	}
 	request := httptest.NewRequest(http.MethodGet, checkpoint.AttemptPath("0f466627-b3ae-4ba2-9c96-6ef44ec6f578", 4, 2), nil)
@@ -48,7 +48,7 @@ func TestAgentCheckpointReadReconcilesDurableTerminalEvidence(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode checkpoint: %v", err)
 	}
-	if got.ProviderThreadID != "thread-9" || got.State != work.AgentAttemptSucceeded || got.Transcript == nil || string(got.Transcript.CompressedBytes) != "terminal" {
+	if got.ExecutionID != "opaque-execution-9" || got.State != work.AgentAttemptSucceeded || got.Transcript == nil || string(got.Transcript.CompressedBytes) != "terminal" {
 		t.Fatalf("GET checkpoint = %+v, want terminal evidence", got)
 	}
 	if strings.Contains(response.Body.String(), "attempt-two-capability") {
@@ -67,7 +67,7 @@ func TestAgentCheckpointStoresTerminalEvidenceBeforeAcknowledgement(t *testing.T
 		t.Fatalf("terminal checkpoint response = (%d, %q), want empty 204", response.Code, response.Body.String())
 	}
 	wantEndedAt := time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)
-	if fake.calls != 1 || fake.input.State != work.AgentAttemptSucceeded || fake.input.ThreadID != "thread-9" || fake.input.UsageState != work.UsageMeasured || !fake.input.EndedAt.Equal(wantEndedAt) {
+	if fake.calls != 1 || fake.input.State != work.AgentAttemptSucceeded || fake.input.ExecutionID != "opaque-execution-9" || fake.input.UsageState != work.UsageMeasured || !fake.input.EndedAt.Equal(wantEndedAt) {
 		t.Fatalf("terminal checkpoint = %+v across %d calls, want succeeded provider evidence", fake.input, fake.calls)
 	}
 	if fake.input.Usage != (work.Usage{InputTokens: 100, CachedInputTokens: 25, OutputTokens: 30, ReasoningTokens: 10}) || string(fake.input.Result) != `{"kind":"done"}` {
@@ -88,7 +88,7 @@ func TestAgentCheckpointRejectsMissingCapabilitiesAndInvalidEvidenceBeforeTheSto
 		wantReason string
 	}{
 		"missing capability": {
-			body:       `{"providerThreadId":"thread-9","state":"running","usageState":"unknown","usage":{"inputTokens":0,"cachedInputTokens":0,"outputTokens":0,"reasoningTokens":0}}`,
+			body:       `{"executionId":"opaque-execution-9","state":"running","usageState":"unknown","usage":{"inputTokens":0,"cachedInputTokens":0,"outputTokens":0,"reasoningTokens":0}}`,
 			wantStatus: http.StatusUnauthorized, wantReason: "checkpoint_unauthorized",
 		},
 		"running without provider identity": {
@@ -98,7 +98,7 @@ func TestAgentCheckpointRejectsMissingCapabilitiesAndInvalidEvidenceBeforeTheSto
 		},
 		"terminal success without result and transcript": {
 			capability: "attempt-capability",
-			body:       `{"providerThreadId":"thread-9","state":"succeeded","usageState":"measured","usage":{"inputTokens":1,"cachedInputTokens":0,"outputTokens":1,"reasoningTokens":0},"endedAt":"2026-07-31T20:00:00Z"}`,
+			body:       `{"executionId":"opaque-execution-9","state":"succeeded","usageState":"measured","usage":{"inputTokens":1,"cachedInputTokens":0,"outputTokens":1,"reasoningTokens":0},"endedAt":"2026-07-31T20:00:00Z"}`,
 			wantStatus: http.StatusUnprocessableEntity, wantReason: "invalid_checkpoint",
 		},
 	}
@@ -135,7 +135,7 @@ func TestAgentCheckpointMapsOwnershipConflictsAndOutagesWithoutLeakingTheCapabil
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			fake := &checkpointStoreFake{err: test.err}
-			response := checkpointRequest(t, NewWithCheckpointStore("test-build", nil, fake), "0f466627-b3ae-4ba2-9c96-6ef44ec6f578", 1, 1, "do-not-leak", `{"providerThreadId":"thread-1","state":"running","usageState":"unknown","usage":{"inputTokens":0,"cachedInputTokens":0,"outputTokens":0,"reasoningTokens":0}}`)
+			response := checkpointRequest(t, NewWithCheckpointStore("test-build", nil, fake), "0f466627-b3ae-4ba2-9c96-6ef44ec6f578", 1, 1, "do-not-leak", `{"executionId":"opaque-execution-1","state":"running","usageState":"unknown","usage":{"inputTokens":0,"cachedInputTokens":0,"outputTokens":0,"reasoningTokens":0}}`)
 			if response.Code != test.wantStatus || ticketErrorReason(t, response) != test.wantReason {
 				t.Fatalf("checkpoint response = (%d, %s), want %d/%s", response.Code, response.Body.String(), test.wantStatus, test.wantReason)
 			}
@@ -173,7 +173,7 @@ func TestAgentCheckpointCapabilityRotatesWithTheActiveAttempt(t *testing.T) {
 		}
 	}
 	service := NewWithCheckpointStore("test-build", nil, fake)
-	body := `{"providerThreadId":"thread-2","state":"running","usageState":"unknown","usage":{"inputTokens":0,"cachedInputTokens":0,"outputTokens":0,"reasoningTokens":0}}`
+	body := `{"executionId":"opaque-execution-2","state":"running","usageState":"unknown","usage":{"inputTokens":0,"cachedInputTokens":0,"outputTokens":0,"reasoningTokens":0}}`
 
 	foreign := checkpointRequest(t, service, runID, 1, 2, "attempt-one-capability", body)
 	if foreign.Code != http.StatusUnauthorized {
@@ -220,7 +220,7 @@ func TestAgentCheckpointStoresRunningProviderProgressForTheExactAttempt(t *testi
 	request := httptest.NewRequest(http.MethodPut,
 		"/v1/run-worker/runs/0f466627-b3ae-4ba2-9c96-6ef44ec6f578/steps/4/attempts/2/checkpoint",
 		strings.NewReader(`{
-			"providerThreadId":"thread-9",
+			"executionId":"opaque-execution-9",
 			"state":"running",
 			"usageState":"unknown",
 			"usage":{"inputTokens":0,"cachedInputTokens":0,"outputTokens":0,"reasoningTokens":0},
@@ -239,7 +239,7 @@ func TestAgentCheckpointStoresRunningProviderProgressForTheExactAttempt(t *testi
 	if fake.calls != 1 || fake.input.ID != wantID || fake.input.Capability != "attempt-two-capability" {
 		t.Fatalf("checkpoint store input = %+v across %d calls, want exact attempt and dedicated capability", fake.input, fake.calls)
 	}
-	if fake.input.ThreadID != "thread-9" || fake.input.State != work.AgentAttemptRunning || fake.input.UsageState != work.UsageUnknown || !fake.input.EndedAt.IsZero() || len(fake.input.Result) != 0 {
+	if fake.input.ExecutionID != "opaque-execution-9" || fake.input.State != work.AgentAttemptRunning || fake.input.UsageState != work.UsageUnknown || !fake.input.EndedAt.IsZero() || len(fake.input.Result) != 0 {
 		t.Fatalf("running checkpoint = %+v, want durable non-terminal provider progress", fake.input)
 	}
 	if fake.input.Transcript == nil || string(fake.input.Transcript.CompressedBytes) != "partial" || fake.input.Transcript.Compression != "zstd" || fake.input.Transcript.UncompressedSizeBytes != 7 || string(fake.input.Transcript.Checksum) != "checksum" {
@@ -253,9 +253,9 @@ func TestAgentCheckpointStoresRunningProviderProgressForTheExactAttempt(t *testi
 func terminalCheckpointBody(t *testing.T) string {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
-		"providerThreadId": "thread-9",
-		"state":            "succeeded",
-		"usageState":       "measured",
+		"executionId": "opaque-execution-9",
+		"state":       "succeeded",
+		"usageState":  "measured",
 		"usage": map[string]int64{
 			"inputTokens": 100, "cachedInputTokens": 25, "outputTokens": 30, "reasoningTokens": 10,
 		},

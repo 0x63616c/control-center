@@ -33,14 +33,13 @@ const vault = {
   GITHUB_BOT_APP__PRIVATE_KEY_PEM: "mock-base64-pem",
   SOFTWARE_FACTORY_POSTGRES__PASSWORD: "mock-postgres-password",
   SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN: "mock-worker-bearer",
-  SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN: "mock-sandbox-bearer",
+  SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN: "mock-run-worker-bearer",
   SOFTWARE_FACTORY_CLOUDFLARE_ACCESS__TEAM_DOMAIN: "example.cloudflareaccess.com",
   GITHUB_BOT_APP__WEBHOOK_SECRET: "mock-webhook-secret",
 };
 
 const digests = {
   "software-factory-worker": `sha256:${"a".repeat(64)}`,
-  "software-factory-sandbox": `sha256:${"b".repeat(64)}`,
   "software-factory-run-worker": `sha256:${"1".repeat(64)}`,
   "software-factory-relay": `sha256:${"c".repeat(64)}`,
   "software-factory-api": `sha256:${"d".repeat(64)}`,

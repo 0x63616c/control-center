@@ -222,7 +222,7 @@ describe("TicketDetail", () => {
       runs: [
         fixtureRun({
           outcome: "failed",
-          failureKind: "rate-limit",
+          failureKind: "github_unavailable",
           endedAt: "2026-07-31T11:00:00Z",
         }),
       ],

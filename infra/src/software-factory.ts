@@ -1,13 +1,13 @@
 // The `software-factory` k8s namespace and its workloads (ADR-0011): the Go
-// Temporal worker that works GitHub tickets, its private API and console, and
-// the per-ticket sandboxes the worker creates for agent-authored code.
+// Temporal worker that works factory Tickets, its private API and console, and
+// the per-Run workers it creates for agent-authored code.
 //
 // The shared cluster namespace map creates this namespace because the factory
 // now owns a CNPG Cluster and nightly database backup. This installer owns the
-// namespace-local worker, API, console, and sandbox isolation boundary.
+// namespace-local worker, API, console, and Run Worker isolation boundary.
 //
 // Why its own namespace at all, rather than running in `control-center`: the
-// sandbox executes code an agent wrote. That boundary wants its own RBAC,
+// Run Worker executes code an agent wrote. That boundary wants its own RBAC,
 // quotas and network policy, and it wants them somewhere a mistake cannot reach
 // the house's own workloads. Same reasoning as its separate Temporal namespace.
 //
@@ -170,7 +170,7 @@ export interface SoftwareFactoryArgs {
   /** The shared namespace that orders the factory's CNPG and worker resources. */
   namespace: k8s.core.v1.Namespace;
   /**
-   * Decrypted vault (vault.ts): the GHCR pull token (the worker and sandbox
+   * Decrypted vault (vault.ts): the GHCR pull token (the worker and Run Worker
    * images are private; the separately installed relay has its own copy)
    * and the www-software-factory-bot App credential set. NOT the codex
    * credential — see CODEX_AUTH_SECRET_NAME.
@@ -191,7 +191,7 @@ export interface SoftwareFactoryArgs {
   /**
    * On a production cluster, refuse to render a mutable `:main` ref. Same rule
    * serviceSpecs applies to control-center, asserted here rather than there so
-   * a broken sandbox build cannot block the house's own deploy.
+   * a broken Run Worker build cannot block the house's own deploy.
    */
   requireImageDigestPins: boolean;
   /** The NAS used by the content-addressed blob PV. */
@@ -220,8 +220,8 @@ export interface SoftwareFactoryResources {
 }
 
 /**
- * @public - installs the worker in the shared `software-factory` namespace. The sandbox image is deliberately not a workload here: the worker
- * creates those pods itself at runtime, from the digest-pinned ref below.
+ * @public - installs the activated worker in the shared `software-factory`
+ * namespace. It creates digest-pinned Run Worker pods at runtime.
  */
 export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFactoryResources {
   const {
@@ -241,12 +241,9 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
   const namespaceName = namespace.metadata.name;
   const inNamespace = { ...opts, dependsOn: [namespace] };
 
-  // Both images are private on GHCR, so this namespace needs its own copy of
-  // the pull secret (a Secret is always namespace-local). The SANDBOX image is
-  // pulled with this same Secret by pods the worker creates — podspec.go sets
-  // `imagePullSecrets` on every sandbox pod EXPLICITLY, from
-  // `SANDBOX_IMAGE_PULL_SECRET_NAME` below, which is why the name is the
-  // shared GHCR_PULL_SECRET_NAME.
+  // The worker and Run Worker images are private on GHCR, so this namespace
+  // needs its own copy of the pull secret. Run Worker pods receive the same
+  // namespace-local Secret explicitly from the main worker.
   //
   // There is deliberately no namespace `default`-ServiceAccount fallback:
   // #404 found the first live run failing ErrImagePull because an earlier
@@ -289,21 +286,7 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
         {
           apiGroups: [""],
           resources: ["pods"],
-          // `watch` is load-bearing: WaitReady is watch-based (lifecycle.go),
-          // so without it EVERY sandbox start 403s. It is NOT interchangeable
-          // with `list`: the authorizer maps `GET .../pods?watch=true` to
-          // `watch`, so neither verb covers the other.
-          //
-          // `list` is the orphan sweeper's entire operation — list by label,
-          // filter by age, delete. At the time of writing no `Pods().List`
-          // caller has landed (grep the tree: there is none), so this is
-          // granted AHEAD of its caller deliberately, to spare a second deploy
-          // and because the alternative failure is a `Forbidden` that reads as
-          // an infrastructure problem and gets debugged at the wrong layer.
-          //
-          // It widens nothing that was narrow: this rule already cannot be
-          // scoped (below), so the verb adds enumeration inside a namespace
-          // this ServiceAccount can already create, watch and delete in.
+          // `list` inventories target generations for MaintainFactory cleanup.
           //
           // This rule CANNOT be narrowed with `resourceNames`: Kubernetes
           // silently ignores that clause for `list`, `watch`, `create` and
@@ -313,17 +296,7 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
           // as a scoped grant while behaving as a namespace-wide one, which is
           // worse than an honest wide grant. Tighter pod isolation has to come
           // from a dedicated namespace or an admission policy.
-          verbs: ["create", "get", "list", "watch", "delete"],
-        },
-        {
-          apiGroups: [""],
-          resources: ["pods/exec"],
-          // `get` as well as `create`: the WebSocket executor issues a GET
-          // (exec.go) and only the deprecated SPDY fallback uses POST. With
-          // `create` alone every exec either silently takes the deprecated path
-          // or fails outright, depending on what httpstream.IsUpgradeFailure
-          // makes of a 403.
-          verbs: ["get", "create"],
+          verbs: ["create", "get", "list", "delete"],
         },
         {
           apiGroups: [""],
@@ -335,6 +308,14 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
           // one decision seen from two sides.
           resourceNames: [CODEX_AUTH_SECRET_NAME],
           verbs: ["get", "update"],
+        },
+        {
+          apiGroups: [""],
+          resources: ["secrets"],
+          // Run Worker generation Secrets have deterministic runtime names,
+          // so create/list cannot be resourceNames-scoped. The namespace is
+          // the honest boundary; pods/exec is deliberately absent.
+          verbs: ["create", "get", "list", "update", "delete"],
         },
       ],
     },
@@ -443,6 +424,7 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
               {
                 name: WORKER_SERVICE_ACCOUNT,
                 image: ghcrImage("software-factory-worker", imageDigests),
+                ports: [{ name: "metrics", containerPort: DEFAULT_METRICS_PORT }],
                 env: [
                   { name: "GITHUB_OWNER", value: GITHUB_OWNER },
                   { name: "GITHUB_REPO", value: GITHUB_REPO },
@@ -485,27 +467,14 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
                     name: "POD_NAME",
                     valueFrom: { fieldRef: { fieldPath: "metadata.name" } },
                   },
-                  // The sandbox image, digest-pinned by the same CI map that
-                  // pins this one, so a sandbox is as reproducible as the
-                  // worker that created it.
-                  {
-                    name: "SANDBOX_IMAGE",
-                    value: ghcrImage("software-factory-sandbox", imageDigests),
-                  },
-                  // Additive target image. New Runs use this separately named,
-                  // digest-pinned runtime; SANDBOX_IMAGE remains wired until
-                  // legacy workflows are quiesced in PR 8.
+                  // Every target generation uses this digest-pinned runtime.
                   {
                     name: "RUN_WORKER_IMAGE",
                     value: ghcrImage("software-factory-run-worker", imageDigests),
                   },
-                  { name: "SANDBOX_NAMESPACE", value: SOFTWARE_FACTORY_NAMESPACE },
+                  { name: "RUN_WORKER_NAMESPACE", value: SOFTWARE_FACTORY_NAMESPACE },
                   { name: "CODEX_AUTH_SECRET_NAME", value: CODEX_AUTH_SECRET_NAME },
-                  // The Secret podspec.go sets as `imagePullSecrets` on every
-                  // sandbox pod it creates (#404). Same name this Deployment's
-                  // own `imagePullSecrets` above uses, because both pull the
-                  // same private GHCR images with the same token.
-                  { name: "SANDBOX_IMAGE_PULL_SECRET_NAME", value: GHCR_PULL_SECRET_NAME },
+                  { name: "RUN_WORKER_IMAGE_PULL_SECRET_NAME", value: GHCR_PULL_SECRET_NAME },
                   // config.LoadWorker's one required database input (#551):
                   // the dispatcher's per-tick RecordDispatcherState activity
                   // writes through this connection. Same variable name
@@ -531,6 +500,16 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
                   allowPrivilegeEscalation: false,
                   readOnlyRootFilesystem: true,
                   capabilities: { drop: ["ALL"] },
+                },
+                readinessProbe: {
+                  httpGet: { path: "/readyz", port: "metrics" },
+                  periodSeconds: 5,
+                  failureThreshold: 3,
+                },
+                livenessProbe: {
+                  httpGet: { path: "/healthz", port: "metrics" },
+                  periodSeconds: 10,
+                  failureThreshold: 3,
                 },
                 resources: {
                   limits: { memory: "512Mi" },
@@ -771,7 +750,7 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
                     "CLOUDFLARE_ACCESS_TEAM_DOMAIN",
                     "CLOUDFLARE_ACCESS_AUD",
                     "SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN",
-                    "SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN",
+                    "SOFTWARE_FACTORY_API__RUN_WORKER_BEARER_TOKEN",
                     "GITHUB_BOT_APP__WEBHOOK_SECRET",
                   ].map((name) => ({
                     name,
@@ -919,7 +898,7 @@ function createAPISecret(
         SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN: pulumi.secret(
           fromVault("SOFTWARE_FACTORY_API__WORKER_BEARER_TOKEN"),
         ),
-        SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN: pulumi.secret(
+        SOFTWARE_FACTORY_API__RUN_WORKER_BEARER_TOKEN: pulumi.secret(
           fromVault("SOFTWARE_FACTORY_API__SANDBOX_BEARER_TOKEN"),
         ),
         // The same GitHub App webhook secret the relay verifies with

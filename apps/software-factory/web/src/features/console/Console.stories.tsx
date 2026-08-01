@@ -25,7 +25,7 @@ export const TicketsNewestFirst: Story = {
       kind: "ready",
       snapshot: snapshot([
         ticket(1, "Older Ticket", "done", "2026-07-30T10:00:00Z"),
-        ticket(2, "Newest Ticket", "working", "2026-07-31T10:00:00Z"),
+        ticket(2, "Newest Ticket", "active", "2026-07-31T10:00:00Z"),
         ticket(3, "Middle Ticket", "open", "2026-07-30T18:00:00Z"),
       ]),
     },

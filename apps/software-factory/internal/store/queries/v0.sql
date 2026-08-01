@@ -1,6 +1,9 @@
 -- name: TicketForTargetClaim :one
 SELECT * FROM ticket WHERE id = $1 FOR UPDATE;
 
+-- name: CountLegacyTicketStates :one
+SELECT COUNT(*) FROM ticket WHERE state IN ('working', 'review');
+
 -- name: InsertTargetRun :one
 INSERT INTO run (id, ticket_id, started_at)
 VALUES ($1, $2, $3)
@@ -116,7 +119,7 @@ WHERE run_id = $1 AND step_ordinal = $2 AND attempt_no = $3;
 
 -- name: CheckpointTargetAgentAttempt :one
 UPDATE run_agent_attempt SET
-    provider_thread_id = $4,
+    execution_id = $4,
     state = $5,
     failure_kind = $6,
     usage_state = $7,

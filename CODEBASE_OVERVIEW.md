@@ -48,7 +48,7 @@ Talos machine config source of truth is `infra/talos/talconfig.yaml`.
 
 Naming to be aware of: the Talos/kubectl context is `prod` / `home-server`, and the
 Pulumi stack is `home-server`. A second Pulumi stack named `prod` still exists but
-targets the **retired Mac mini** — never deploy it (its cloudflared would split-brain
+targets the **retired Mac mini** - never deploy it (its cloudflared would split-brain
 the live tunnel). The mini was powered off on 2026-07-25 and is kept as a cold spare,
 so anything in this repo still referencing `homelab` is stale by definition.
 
@@ -84,15 +84,21 @@ that run/deploy, `packages/` = things you import); product features live under
 - `apps/storybook` - Thin wrapper delegating to the web Storybook.
 - `apps/map-provision` - Basemap tile provisioner image.
 - `apps/software-factory` - **Go**, not TypeScript, and the only Go in the repo (ADR-0011).
-  A Temporal worker that autonomously works issues labelled `auto` through
-  `plan → review → revise → implement → propose`, each stage an agent CLI invocation in a
-  disposable per-ticket pod. It opens a PR and stops; merging stays human. Carries its own
+  A Temporal worker that autonomously works Tickets from its own Postgres. The stable
+  `Dispatcher` admits dependency-ready Tickets to one `WorkOnTicket` workflow each;
+  `MaintainFactory` repairs orphaned ownership and Run Worker generations. A Run moves through
+  plan, implement, required CI, independent review, and bounded revision before the workflow
+  performs an exact-reviewed-head squash merge. Confirmed merge records the Run as `succeeded`
+  and the Ticket as `done`; cancellation returns it to `open`, while terminal failure or
+  exhaustion moves it to `failed`. Each Run Worker pod has a credentialed fixed-operation
+  repository worker and a credential-free typed-tool worker. GitHub webhooks are informational
+  only, and GitHub auto-merge is not part of the runtime. Carries its own
   `AGENTS.md`, `docs/SoftwareStyle.md` and `.golangci.yml`, scoped to that tree and binding
-  on nothing else — do not cite them in a review of TypeScript. Nests (`cmd/`, `internal/`,
-  `images/{worker,sandbox,relay,api}/`) where the rest of `apps/*` is flat, deliberately: it is one
+  on nothing else - do not cite them in a review of TypeScript. Nests (`cmd/`, `internal/`,
+  `images/{worker,run-worker,relay,api,blobs,codec}/`, `web/`) where the rest of `apps/*` is flat, deliberately: it is one
   product with several components and one Go module. Its single CI filter builds and pins all
-  eight images: the worker, legacy sandbox, target Run Worker, stateless webhook
-  relay, API, console, blob service, and codec service.
+  seven images: the worker, Run Worker, stateless webhook relay, API, console, blob service,
+  and codec service.
 - `packages/api` - Browser-safe type bridge that re-exports the API router type only.
 - `packages/core` - Owns the `device_state` table: schema, the `DeviceStateStore` interface, pg + in-memory adapters, and the desired/reported merge logic.
 - `packages/logger` - Shared pino logger with centralized redaction and runtime-safe config.
@@ -128,17 +134,17 @@ Tile placement is declared per-feature, not centralized. Each feature's `manifes
 declares its tile's id, label, components, and world position/size via `defineApp`
 (ADR-0001). At runtime, `apps/web/src/lib/tile-registry.ts` still statically imports
 all 16 feature manifests by hand and unions them with a now-empty `REGISTRY_ENTRIES`
-array — every real tile today comes from a feature, there is no hand-placed tile left,
+array - every real tile today comes from a feature, there is no hand-placed tile left,
 but the board does not read from codegen for this. `bun run apps:gen` also emits
 `features/_generated/tiles.gen.ts` (`GENERATED_TILES`), a data-only projection of the
-same manifests, but as of this writing it has **no runtime consumer** — it's written
+same manifests, but as of this writing it has **no runtime consumer** - it's written
 and drift-checked but nothing imports it (open issue: #97, "tiles.gen.ts has no
 runtime consumer"). Placement data is therefore dual-sourced until that's resolved
 one way or the other. There is no runtime
 placement override table; a tile's position is edited by changing its manifest's
 `worldCol`/`worldRow`/`cols`/`rows` and re-running codegen.
 
-Settings is a full-page (`1366x1024`) body-portal overlay, not a modal: `components/settings-page/` holds the shell (`SettingsPage.tsx`, sidebar + page routing), shared framing (`blocks.tsx`), the page registry (`pages.ts`), and eight presentational pages under `pages/` (Device, Display, Board, Network, Notifications, Debug, About, Security). Live state comes from the module-level settings store (`lib/settings.ts`), which syncs every field across panels through the server's settings singleton. Sensitive surfaces (Settings gear, Wake photos viewer, any tile detail flagged `sensitive`) share ONE PIN unlock per panel session (`components/pin/`, `PinGateModal` + `PinPadView`, on `panelSession.unlock()`): a successful PIN entry unlocks everything sensitive until the session ends (idle timeout relocks). The PIN is a synced settings field (`pinCode`, default `"000000"`), enforced frontend-only — the API never validates it beyond schema shape (ADR-0004: accepted until Slice S lands server-side `session.unlock(pin)`; the relock is only as strong as the client).
+Settings is a full-page (`1366x1024`) body-portal overlay, not a modal: `components/settings-page/` holds the shell (`SettingsPage.tsx`, sidebar + page routing), shared framing (`blocks.tsx`), the page registry (`pages.ts`), and eight presentational pages under `pages/` (Device, Display, Board, Network, Notifications, Debug, About, Security). Live state comes from the module-level settings store (`lib/settings.ts`), which syncs every field across panels through the server's settings singleton. Sensitive surfaces (Settings gear, Wake photos viewer, any tile detail flagged `sensitive`) share ONE PIN unlock per panel session (`components/pin/`, `PinGateModal` + `PinPadView`, on `panelSession.unlock()`): a successful PIN entry unlocks everything sensitive until the session ends (idle timeout relocks). The PIN is a synced settings field (`pinCode`, default `"000000"`), enforced frontend-only - the API never validates it beyond schema shape (ADR-0004: accepted until Slice S lands server-side `session.unlock(pin)`; the relock is only as strong as the client).
 
 Data access is through tRPC React Query in `apps/web/src/lib/trpc.ts`. Queries retry with bounded exponential backoff; mutations do not retry. Unavailable data should render skeleton/error states, not invented values.
 
@@ -247,20 +253,20 @@ The shared runtime in `packages/worker-runtime` prevents overlapping cycles per 
 ## Temporal
 
 Temporal runs on the cluster in its own `temporal` k8s namespace, declared by
-hand in `infra/src/temporal.ts` — plain Deployments/Services/Jobs, no Helm chart
+hand in `infra/src/temporal.ts` - plain Deployments/Services/Jobs, no Helm chart
 and no operator owning the cluster:
 
-- `temporal-server` — 2 replicas of the combined frontend+history+matching+worker
+- `temporal-server` - 2 replicas of the combined frontend+history+matching+worker
   process, backed by its own CNPG Postgres (`temporal-postgres`) holding both the
   `temporal` and `temporal_visibility` databases. Two replicas survive a pod
   crash; on a single-node cluster nothing survives the node.
-- `temporal-schema-setup` / `temporal-namespace-setup` — Jobs that install the
+- `temporal-schema-setup` / `temporal-namespace-setup` - Jobs that install the
   schemas and register the `control-center` Temporal namespace. Schema work is a
   Job precisely so two server replicas cannot race the same migration, which is
   what the `auto-setup` image would do.
-- `temporal-ui` — ClusterIP only; reach it with
+- `temporal-ui` - ClusterIP only; reach it with
   `kubectl -n temporal port-forward svc/temporal-ui 8080:8080`.
-- `temporal-worker` — our worker (`apps/temporal-worker`), namespace
+- `temporal-worker` - our worker (`apps/temporal-worker`), namespace
   `control-center`, task queue `main`. It registers every feature-declared
   workflow/activity from `features/_generated/` and RECONCILES the schedule set
   on each boot (ADR-0008): declared schedules are upserted, managed
@@ -313,7 +319,7 @@ Important infra files:
   prometheus-operator/CRDs (ADR #207); the vendored dashboards and recording
   rules it mounts live in `infra/observability/`. See `docs/observability.md`.
 
-GitHub Actions builds **amd64-only** images in `.github/workflows/ci.yml`: each Dockerfile builds once on a native `ubuntu-24.04` runner (no QEMU emulation) and pushes the final tags directly (`:<sha>`, plus `:main` on main). The arm64 leg and the `merge-*` manifest-index jobs were dropped when the arm64 Mac mini was retired (2026-07-25) — the home-server node is x86 and is the only deploy target. `scripts/test-build-matrix.sh` guards that (it fails if an arm64 leg or QEMU emulation reappears). CI then joins the tailnet with an ephemeral `tag:ci` identity, writes kubeconfig, sets Pulumi image digest config, and runs `pulumi up --stack home-server`.
+GitHub Actions builds **amd64-only** images in `.github/workflows/ci.yml`: each Dockerfile builds once on a native `ubuntu-24.04` runner (no QEMU emulation) and pushes the final tags directly (`:<sha>`, plus `:main` on main). The arm64 leg and the `merge-*` manifest-index jobs were dropped when the arm64 Mac mini was retired (2026-07-25) - the home-server node is x86 and is the only deploy target. `scripts/test-build-matrix.sh` guards that (it fails if an arm64 leg or QEMU emulation reappears). CI then joins the tailnet with an ephemeral `tag:ci` identity, writes kubeconfig, sets Pulumi image digest config, and runs `pulumi up --stack home-server`.
 
 The image digest config key must be namespaced as `wwwinfra:imageDigests.<svc>`. Without `wwwinfra:`, the Pulumi program does not read the values correctly.
 
@@ -321,7 +327,7 @@ The image digest config key must be namespaced as `wwwinfra:imageDigests.<svc>`.
 
 App-level scheduled work (every retention purge, plus health-check) runs as
 Temporal Schedules declared from each feature's `temporal.ts` facet (ADR-0008,
-tracked concern) — per-run history in the Temporal UI, retries, SKIP overlap, and
+tracked concern) - per-run history in the Temporal UI, retries, SKIP overlap, and
 boot-time reconciliation from `features/_generated/schedules.gen.ts`.
 
 Only infra-level jobs remain Kubernetes CronJobs in `infra/src/crons.ts`:

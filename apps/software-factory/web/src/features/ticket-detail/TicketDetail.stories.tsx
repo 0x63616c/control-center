@@ -47,13 +47,12 @@ export const MultiTurnRun: Story = {
       runs: [
         fixtureRun({
           steps: [
-            fixtureStep({ ordinal: 1, kind: "plan", stage: "plan", iteration: 1, turn: 1 }),
-            fixtureStep({ ordinal: 2, kind: "implement", iteration: 1, turn: 1 }),
+            fixtureStep({ ordinal: 1, kind: "plan", iteration: 1 }),
+            fixtureStep({ ordinal: 2, kind: "implement", iteration: 1 }),
             fixtureStep({
               ordinal: 3,
               kind: "implement",
               iteration: 2,
-              turn: 2,
               reason: "review_findings",
               attempts: [
                 fixtureAttempt({
@@ -66,9 +65,7 @@ export const MultiTurnRun: Story = {
             fixtureStep({
               ordinal: 4,
               kind: "review",
-              stage: "review",
               iteration: 1,
-              turn: 1,
             }),
           ],
         }),
@@ -124,9 +121,7 @@ export const InfrastructureStepsAndActivePhase: Story = {
             fixtureStep({
               ordinal: 1,
               kind: "clone_repository",
-              stage: "clone_repository",
               iteration: 0,
-              turn: 0,
               reason: "",
               attempts: [],
               result: { kind: "cloned" },
@@ -134,9 +129,7 @@ export const InfrastructureStepsAndActivePhase: Story = {
             fixtureStep({
               ordinal: 2,
               kind: "await_ci",
-              stage: "await_ci",
               iteration: 1,
-              turn: 1,
               reason: "pull_request_updated",
               state: "running",
               endedAt: null,
@@ -219,7 +212,7 @@ export const FailedRun: Story = {
         fixtureRun({
           endedAt: "2026-07-31T11:00:00Z",
           outcome: "failed",
-          failureKind: "rate-limit",
+          failureKind: "github_unavailable",
         }),
       ],
     },
@@ -240,7 +233,7 @@ export const TicketWithSeveralRuns: Story = {
           startedAt: "2026-07-31T09:00:00Z",
           endedAt: "2026-07-31T09:40:00Z",
           outcome: "failed",
-          failureKind: "other",
+          failureKind: "infrastructure",
         }),
       ],
     },
