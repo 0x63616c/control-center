@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-poc-worker
+  namespace: codex-agent-poc
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: agent-poc-worker
+  template:
+    metadata:
+      labels:
+        app: agent-poc-worker
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+      initContainers:
+        - name: copy-codex-auth
+          image: busybox@sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
+          command: ["/bin/cp"]
+          args: ["/seed/auth.json", "/runtime/auth.json"]
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: auth-seed
+              mountPath: /seed
+              readOnly: true
+            - name: auth-runtime
+              mountPath: /runtime
+      containers:
+        - name: worker
+          image: codex-agent-poc:dev
+          imagePullPolicy: Never
+          env:
+            - name: TEMPORAL_HOST_PORT
+              value: temporal:7233
+            - name: TEMPORAL_NAMESPACE
+              value: default
+            - name: CODEX_RESPONSES_ENDPOINT
+              value: https://chatgpt.com/backend-api/codex/responses
+            - name: CODEX_AUTH_FILE
+              value: /runtime/auth.json
+            - name: LOG_LEVEL
+              value: info
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: auth-runtime
+              mountPath: /runtime
+      volumes:
+        - name: auth-seed
+          secret:
+            secretName: codex-auth-seed
+            defaultMode: 416
+        - name: auth-runtime
+          emptyDir: {}

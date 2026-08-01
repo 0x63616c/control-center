@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codexresponses"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
 )
@@ -22,6 +24,7 @@ type TurnClient interface {
 // Activities contain the POC's two side-effect boundaries.
 type Activities struct {
 	client TurnClient
+	clock  clock.Clock
 }
 
 // StreamProgress is safe heartbeat metadata. It deliberately contains no chunk text.
@@ -31,11 +34,14 @@ type StreamProgress struct {
 }
 
 // NewActivities constructs the POC activity set.
-func NewActivities(client TurnClient) (*Activities, error) {
+func NewActivities(client TurnClient, clk clock.Clock) (*Activities, error) {
 	if client == nil {
 		return nil, fmt.Errorf("agent POC activities need a turn client")
 	}
-	return &Activities{client: client}, nil
+	if clk == nil {
+		return nil, fmt.Errorf("agent POC activities need a clock")
+	}
+	return &Activities{client: client, clock: clk}, nil
 }
 
 // ModelTurn runs one streamed provider turn and heartbeats content-free progress.
@@ -52,7 +58,7 @@ func (a *Activities) ModelTurn(ctx context.Context, input ModelTurnInput) (codex
 }
 
 // Tool executes one strictly allowlisted prototype tool call.
-func (a *Activities) Tool(_ context.Context, input ToolInput) (ToolOutput, error) {
+func (a *Activities) Tool(ctx context.Context, input ToolInput) (ToolOutput, error) {
 	if input.Call.Name != PrototypeToolName {
 		return ToolOutput{}, rejectTool("tool %q is not allowlisted", input.Call.Name)
 	}
@@ -72,6 +78,13 @@ func (a *Activities) Tool(_ context.Context, input ToolInput) (ToolOutput, error
 	}
 	if arguments.Key != "temporal" {
 		return ToolOutput{}, rejectTool("the allowlisted tool does not recognize key %q", arguments.Key)
+	}
+	for elapsed := time.Duration(0); elapsed < input.Delay; elapsed += time.Second {
+		activity.RecordHeartbeat(ctx, ToolProgress{Elapsed: elapsed})
+		step := min(time.Second, input.Delay-elapsed)
+		if err := a.clock.Sleep(ctx, step); err != nil {
+			return ToolOutput{}, fmt.Errorf("waiting in the restart-proof tool: %w", err)
+		}
 	}
 	return ToolOutput{
 		CallID: input.Call.CallID,

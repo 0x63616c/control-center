@@ -2,6 +2,7 @@ package agentpoc
 
 import (
 	"errors"
+	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codexresponses"
 )
@@ -30,6 +31,7 @@ type Input struct {
 	Model          string
 	MaxTurns       int
 	PromptCacheKey string
+	ToolDelay      time.Duration
 }
 
 // Result is the compact durable outcome; stream chunks and transcripts stay out.
@@ -47,11 +49,17 @@ type ModelTurnInput struct {
 
 // ToolInput asks the allowlist to execute one complete provider tool call.
 type ToolInput struct {
-	Call codexresponses.ToolCall
+	Call  codexresponses.ToolCall
+	Delay time.Duration
 }
 
 // ToolOutput returns a compact result to the matching provider call.
 type ToolOutput struct {
 	CallID string
 	Output string
+}
+
+// ToolProgress is content-free heartbeat metadata for the restart proof.
+type ToolProgress struct {
+	Elapsed time.Duration
 }

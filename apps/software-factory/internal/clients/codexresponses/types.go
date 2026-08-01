@@ -90,19 +90,30 @@ const (
 	InputUserText InputType = "user_text"
 	// InputFunctionOutput returns one allowlisted tool's result to the model.
 	InputFunctionOutput InputType = "function_output"
+	// InputFunctionCall replays one prior assistant tool call for stateless SSE.
+	InputFunctionCall InputType = "function_call"
 )
 
 // InputItem is one typed item in a turn's conversation input.
 type InputItem struct {
-	Type   InputType
-	Text   string
-	CallID string
-	Output string
+	Type      InputType
+	Text      string
+	CallID    string
+	Output    string
+	Name      string
+	Arguments json.RawMessage
 }
 
 // FunctionOutput constructs the continuation item for a completed tool call.
 func FunctionOutput(callID, output string) InputItem {
 	return InputItem{Type: InputFunctionOutput, CallID: callID, Output: output}
+}
+
+// FunctionCall constructs a compact replay item for a prior assistant call.
+func FunctionCall(call ToolCall) InputItem {
+	return InputItem{
+		Type: InputFunctionCall, CallID: call.CallID, Name: call.Name, Arguments: call.Arguments,
+	}
 }
 
 // UserText constructs a user text input.
@@ -123,6 +134,7 @@ type TurnRequest struct {
 	TextVerbosity      TextVerbosity
 	PromptCacheKey     string
 	PreviousResponseID string
+	Include            []string
 }
 
 // Outcome distinguishes a final answer from a turn requiring tool execution.

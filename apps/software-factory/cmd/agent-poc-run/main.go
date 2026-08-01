@@ -29,6 +29,9 @@ func run() error {
 	model := flag.String("model", "", "Codex model name")
 	prompt := flag.String("prompt", "Use the prototype tool and tell me the exact fact it returns.", "agent prompt")
 	maxTurns := flag.Int("max-turns", 3, "maximum model turns")
+	toolDelay := flag.Duration("tool-delay", 0, "prototype tool delay used to prove worker recovery")
+	attach := flag.Bool("attach", false, "wait for an already-started workflow")
+	wait := flag.Bool("wait", true, "wait for and print the workflow result")
 	flag.Parse()
 	if *workflowID == "" || *model == "" || *prompt == "" {
 		return fmt.Errorf("workflow-id, model, and prompt are required")
@@ -47,17 +50,33 @@ func run() error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	run, err := temporal.ExecuteWorkflow(ctx, temporalapi.StartWorkflowOptions{
-		ID:        *workflowID,
-		TaskQueue: agentpoc.TaskQueue,
-	}, agentpoc.WorkflowName, agentpoc.Input{
-		Prompt:         *prompt,
-		Model:          *model,
-		MaxTurns:       *maxTurns,
-		PromptCacheKey: *workflowID,
-	})
-	if err != nil {
-		return fmt.Errorf("starting workflow: %w", err)
+	var run temporalapi.WorkflowRun
+	if *attach {
+		run = temporal.GetWorkflow(ctx, *workflowID, "")
+	} else {
+		run, err = temporal.ExecuteWorkflow(ctx, temporalapi.StartWorkflowOptions{
+			ID:        *workflowID,
+			TaskQueue: agentpoc.TaskQueue,
+		}, agentpoc.WorkflowName, agentpoc.Input{
+			Prompt:         *prompt,
+			Model:          *model,
+			MaxTurns:       *maxTurns,
+			PromptCacheKey: *workflowID,
+			ToolDelay:      *toolDelay,
+		})
+		if err != nil {
+			return fmt.Errorf("starting workflow: %w", err)
+		}
+	}
+	if !*wait {
+		if err := json.NewEncoder(os.Stdout).Encode(struct {
+			WorkflowID string `json:"workflow_id"`
+			RunID      string `json:"run_id"`
+			Status     string `json:"status"`
+		}{WorkflowID: run.GetID(), RunID: run.GetRunID(), Status: "started"}); err != nil {
+			return fmt.Errorf("printing workflow start evidence: %w", err)
+		}
+		return nil
 	}
 	var result agentpoc.Result
 	if err := run.Get(ctx, &result); err != nil {

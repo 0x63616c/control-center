@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agentpoc"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/codexresponses"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clock/clocktest"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/testsuite"
@@ -41,7 +43,7 @@ func TestModelTurnActivityDelegatesAndHeartbeatsWithoutChunkContent(t *testing.T
 			{Type: codexresponses.EventTextDelta, Delta: "done"},
 		},
 	}
-	activities, err := agentpoc.NewActivities(client)
+	activities, err := agentpoc.NewActivities(client, clocktest.NewFake(time.Date(2026, time.July, 31, 12, 0, 0, 0, time.UTC)))
 	if err != nil {
 		t.Fatalf("constructing activities: %v", err)
 	}
@@ -78,7 +80,7 @@ func TestModelTurnActivityDelegatesAndHeartbeatsWithoutChunkContent(t *testing.T
 func TestToolActivityEnforcesTheAllowlist(t *testing.T) {
 	t.Parallel()
 
-	activities, err := agentpoc.NewActivities(&fakeTurnClient{})
+	activities, err := agentpoc.NewActivities(&fakeTurnClient{}, clocktest.NewFake(time.Date(2026, time.July, 31, 12, 0, 0, 0, time.UTC)))
 	if err != nil {
 		t.Fatalf("constructing activities: %v", err)
 	}

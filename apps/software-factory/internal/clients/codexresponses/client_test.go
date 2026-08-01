@@ -23,22 +23,30 @@ func TestTurnEncodesAFunctionOutputContinuation(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("session-id") != "workflow-123" || r.Header.Get("x-client-request-id") != "workflow-123" {
+			t.Errorf("session affinity headers are absent")
+		}
 		var request struct {
 			PreviousResponseID string `json:"previous_response_id"`
 			Input              []struct {
-				Type   string `json:"type"`
-				CallID string `json:"call_id"`
-				Output string `json:"output"`
+				Type      string `json:"type"`
+				CallID    string `json:"call_id"`
+				Name      string `json:"name"`
+				Arguments string `json:"arguments"`
+				Output    string `json:"output"`
 			} `json:"input"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Errorf("decoding request: %v", err)
 			return
 		}
-		if request.PreviousResponseID != "resp_tool" || len(request.Input) != 1 {
+		if request.PreviousResponseID != "resp_tool" || len(request.Input) != 2 {
 			t.Fatalf("continuation request = %#v", request)
 		}
-		if got := request.Input[0]; got.Type != "function_call_output" || got.CallID != "call_123" || got.Output != `{"temperature_c":18}` {
+		if got := request.Input[0]; got.Type != "function_call" || got.CallID != "call_123" || got.Name != "lookup_weather" || got.Arguments != `{"city":"London"}` {
+			t.Errorf("function call = %#v", got)
+		}
+		if got := request.Input[1]; got.Type != "function_call_output" || got.CallID != "call_123" || got.Output != `{"temperature_c":18}` {
 			t.Errorf("function output = %#v", got)
 		}
 
@@ -50,13 +58,17 @@ func TestTurnEncodesAFunctionOutputContinuation(t *testing.T) {
 
 	client := newTestClient(t, server.URL)
 	result, err := client.Turn(context.Background(), TurnRequest{
-		Model:              "gpt-test",
-		Instructions:       "Answer briefly.",
-		Input:              []InputItem{FunctionOutput("call_123", `{"temperature_c":18}`)},
+		Model:        "gpt-test",
+		Instructions: "Answer briefly.",
+		Input: []InputItem{
+			FunctionCall(ToolCall{CallID: "call_123", Name: "lookup_weather", Arguments: json.RawMessage(`{"city":"London"}`)}),
+			FunctionOutput("call_123", `{"temperature_c":18}`),
+		},
 		Store:              true,
 		PreviousResponseID: "resp_tool",
 		ToolChoice:         ToolChoiceAuto,
 		TextVerbosity:      TextVerbosityLow,
+		PromptCacheKey:     "workflow-123",
 	}, nil)
 	if err != nil {
 		t.Fatalf("running continuation: %v", err)
@@ -101,6 +113,29 @@ func TestTurnReportsTerminalFailuresWithoutLeakingProviderBodies(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "credential rejected") {
 		t.Fatalf("error leaked provider body: %v", err)
+	}
+}
+
+func TestTurnReportsOnlySafeProviderErrorMetadata(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"code":"invalid_type","type":"invalid_request_error","message":"Invalid type for 'tools[0].strict': sensitive provider prose"}}`)
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server.URL)
+	_, err := client.Turn(context.Background(), TurnRequest{
+		Model: "gpt-test", Instructions: "Answer.", Input: []InputItem{UserText("Hello")},
+		ToolChoice: ToolChoiceNone, TextVerbosity: TextVerbosityLow,
+	}, nil)
+	if err == nil {
+		t.Fatal("running turn succeeded, want HTTP error")
+	}
+	if !strings.Contains(err.Error(), "code=invalid_type") || !strings.Contains(err.Error(), "param=tools[0].strict") ||
+		strings.Contains(err.Error(), "sensitive provider prose") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

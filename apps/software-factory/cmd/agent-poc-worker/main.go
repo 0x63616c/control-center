@@ -2,6 +2,9 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -28,6 +31,8 @@ func main() {
 }
 
 func run() error {
+	directSmokeModel := flag.String("direct-smoke-model", "", "run one direct subscription-backed smoke turn and exit")
+	flag.Parse()
 	config, err := config.LoadAgentPOCWorker()
 	if err != nil {
 		return fmt.Errorf("loading configuration: %w", err)
@@ -60,7 +65,10 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("constructing the direct Codex client: %w", err)
 	}
-	activities, err := agentpoc.NewActivities(turnClient)
+	if *directSmokeModel != "" {
+		return directSmoke(turnClient, *directSmokeModel)
+	}
+	activities, err := agentpoc.NewActivities(turnClient, clock.System{})
 	if err != nil {
 		return fmt.Errorf("constructing activities: %w", err)
 	}
@@ -85,6 +93,29 @@ func run() error {
 	logger.Info("agent POC worker polling", "task_queue", agentpoc.TaskQueue)
 	if err := pocWorker.Run(worker.InterruptCh()); err != nil {
 		return fmt.Errorf("running the Temporal worker: %w", err)
+	}
+	return nil
+}
+
+func directSmoke(turnClient *codexresponses.Client, model string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	result, err := turnClient.Turn(ctx, codexresponses.TurnRequest{
+		Model:         model,
+		Instructions:  "This is a direct transport smoke test. Reply with DIRECT_OK and nothing else.",
+		Input:         []codexresponses.InputItem{codexresponses.UserText("Run the direct transport smoke test.")},
+		Store:         false,
+		ToolChoice:    codexresponses.ToolChoiceNone,
+		TextVerbosity: codexresponses.TextVerbosityLow,
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("running the direct Codex smoke turn: %w", err)
+	}
+	if result.Outcome != codexresponses.OutcomeFinalText || result.Text == "" {
+		return fmt.Errorf("the direct Codex smoke turn returned outcome %q without final text", result.Outcome)
+	}
+	if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
+		return fmt.Errorf("printing direct smoke evidence: %w", err)
 	}
 	return nil
 }

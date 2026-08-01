@@ -13,6 +13,7 @@ import (
 const (
 	invalidInputErrorType = "AgentPOCInvalidInput"
 	maximumAllowedTurns   = 8
+	maximumToolDelay      = 15 * time.Second
 )
 
 var prototypeToolParameters = json.RawMessage(
@@ -37,6 +38,7 @@ func Workflow(ctx workflow.Context, input Input) (Result, error) {
 	})
 	toolContext := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 		StartToCloseTimeout: 30 * time.Second,
+		HeartbeatTimeout:    3 * time.Second,
 		RetryPolicy: &temporal.RetryPolicy{
 			InitialInterval:    time.Second,
 			BackoffCoefficient: 2,
@@ -67,21 +69,23 @@ func Workflow(ctx workflow.Context, input Input) (Result, error) {
 				return result, temporal.NewNonRetryableApplicationError(
 					"the model returned an incomplete tool-call result", invalidInputErrorType, nil)
 			}
-			outputs := make([]codexresponses.InputItem, 0, len(turn.ToolCalls))
+			nextInput := append([]codexresponses.InputItem(nil), request.Input...)
+			for _, call := range turn.ToolCalls {
+				nextInput = append(nextInput, codexresponses.FunctionCall(call))
+			}
 			for _, call := range turn.ToolCalls {
 				var output ToolOutput
-				if err := workflow.ExecuteActivity(toolContext, ToolActivityName, ToolInput{Call: call}).Get(ctx, &output); err != nil {
+				if err := workflow.ExecuteActivity(toolContext, ToolActivityName, ToolInput{Call: call, Delay: input.ToolDelay}).Get(ctx, &output); err != nil {
 					return result, err
 				}
 				if output.CallID != call.CallID || output.Output == "" {
 					return result, temporal.NewNonRetryableApplicationError(
 						"the tool returned an incomplete or mismatched output", invalidInputErrorType, nil)
 				}
-				outputs = append(outputs, codexresponses.FunctionOutput(output.CallID, output.Output))
+				nextInput = append(nextInput, codexresponses.FunctionOutput(output.CallID, output.Output))
 				result.ToolCalls++
 			}
-			request.Input = outputs
-			request.PreviousResponseID = turn.ResponseID
+			request.Input = nextInput
 			request.ToolChoice = codexresponses.ToolChoiceAuto
 		default:
 			return result, temporal.NewNonRetryableApplicationError(
@@ -102,6 +106,10 @@ func validateInput(input Input) error {
 		return temporal.NewNonRetryableApplicationError(
 			fmt.Sprintf("the agent POC max turns must be between 1 and %d", maximumAllowedTurns), invalidInputErrorType, nil)
 	}
+	if input.ToolDelay < 0 || input.ToolDelay > maximumToolDelay {
+		return temporal.NewNonRetryableApplicationError(
+			fmt.Sprintf("the agent POC tool delay must be between zero and %s", maximumToolDelay), invalidInputErrorType, nil)
+	}
 	return nil
 }
 
@@ -111,7 +119,7 @@ func initialRequest(input Input) codexresponses.TurnRequest {
 		Instructions: "You are proving a Temporal-backed agent loop. You must first call the provided tool with key temporal, " +
 			"then answer the user using its exact result. Do not invent a tool result.",
 		Input: []codexresponses.InputItem{codexresponses.UserText(input.Prompt)},
-		Store: true,
+		Store: false,
 		Tools: []codexresponses.Tool{{
 			Name:        PrototypeToolName,
 			Description: "Return one deterministic fact used to prove the Temporal tool loop.",
@@ -125,6 +133,7 @@ func initialRequest(input Input) codexresponses.TurnRequest {
 		},
 		TextVerbosity:  codexresponses.TextVerbosityLow,
 		PromptCacheKey: input.PromptCacheKey,
+		Include:        []string{"reasoning.encrypted_content"},
 	}
 }
 

@@ -78,7 +78,9 @@ func TestAgentWorkflowExecutesToolAndContinuesTheStoredResponse(t *testing.T) {
 		t.Fatalf("model requests = %d, tool calls = %d", len(requests), len(toolCalls))
 	}
 	continuation := requests[1].Request
-	if continuation.PreviousResponseID != "resp_tool" || len(continuation.Input) != 1 || continuation.Input[0].CallID != "call_1" {
+	if continuation.Store || continuation.PreviousResponseID != "" || len(continuation.Input) != 3 ||
+		continuation.Input[1].Type != codexresponses.InputFunctionCall || continuation.Input[1].CallID != "call_1" ||
+		continuation.Input[2].Type != codexresponses.InputFunctionOutput || continuation.Input[2].CallID != "call_1" {
 		t.Fatalf("continuation = %#v", continuation)
 	}
 	if result.FinalText == "" || result.ModelTurns != 2 || result.ToolCalls != 1 || result.Usage.TotalTokens != 32 {

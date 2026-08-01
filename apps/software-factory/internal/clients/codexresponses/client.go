@@ -84,6 +84,10 @@ func (c *Client) Turn(ctx context.Context, request TurnRequest, emit EmitFunc) (
 	req.Header.Set("OpenAI-Beta", "responses=experimental")
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Content-Type", "application/json")
+	if request.PromptCacheKey != "" {
+		req.Header.Set("session-id", request.PromptCacheKey)
+		req.Header.Set("x-client-request-id", request.PromptCacheKey)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -91,8 +95,9 @@ func (c *Client) Turn(ctx context.Context, request TurnRequest, emit EmitFunc) (
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
-		return TurnResult{}, fmt.Errorf("the Codex Responses endpoint answered HTTP %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		metadata := safeProviderErrorMetadata(body)
+		return TurnResult{}, fmt.Errorf("the Codex Responses endpoint answered HTTP %d%s", resp.StatusCode, metadata)
 	}
 
 	result, err := parseStream(resp.Body, emit)
@@ -108,6 +113,89 @@ func (c *Client) Turn(ctx context.Context, request TurnRequest, emit EmitFunc) (
 	return result, nil
 }
 
+func safeProviderErrorMetadata(body []byte) string {
+	var response struct {
+		Code  string `json:"code"`
+		Param string `json:"param"`
+		Type  string `json:"type"`
+		Error struct {
+			Code    string `json:"code"`
+			Param   string `json:"param"`
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return ""
+	}
+	code := firstNonEmpty(response.Error.Code, response.Code)
+	param := firstNonEmpty(response.Error.Param, response.Param)
+	if param == "" {
+		param = invalidTypeField(response.Error.Message)
+	}
+	errorType := firstNonEmpty(response.Error.Type, response.Type)
+	parts := make([]string, 0, 3)
+	for _, field := range []struct{ key, value string }{
+		{key: "code", value: code},
+		{key: "param", value: param},
+		{key: "type", value: errorType},
+	} {
+		if safeProviderLabel(field.value) {
+			parts = append(parts, field.key+"="+field.value)
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(parts, " ") + ")"
+}
+
+func invalidTypeField(message string) string {
+	const prefix = "Invalid type for '"
+	start := strings.Index(message, prefix)
+	if start < 0 {
+		return ""
+	}
+	remainder := message[start+len(prefix):]
+	end := strings.IndexByte(remainder, '\'')
+	if end < 1 {
+		return ""
+	}
+	field := remainder[:end]
+	if len(field) > 128 {
+		return ""
+	}
+	for _, character := range field {
+		if (character < 'a' || character > 'z') && (character < 'A' || character > 'Z') &&
+			(character < '0' || character > '9') && !strings.ContainsRune("_.-[]", character) {
+			return ""
+		}
+	}
+	return field
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func safeProviderLabel(value string) bool {
+	if value == "" || len(value) > 64 {
+		return false
+	}
+	for _, character := range value {
+		if (character < 'a' || character > 'z') && (character < 'A' || character > 'Z') &&
+			(character < '0' || character > '9') && !strings.ContainsRune("_.-/[]", character) {
+			return false
+		}
+	}
+	return true
+}
+
 type wireRequest struct {
 	Model              string            `json:"model"`
 	Store              bool              `json:"store"`
@@ -121,14 +209,17 @@ type wireRequest struct {
 	Text               wireText          `json:"text"`
 	PromptCacheKey     string            `json:"prompt_cache_key,omitempty"`
 	PreviousResponseID string            `json:"previous_response_id,omitempty"`
+	Include            []string          `json:"include,omitempty"`
 }
 
 type wireInputItem struct {
-	Role    string             `json:"role,omitempty"`
-	Content []wireInputContent `json:"content,omitempty"`
-	Type    string             `json:"type,omitempty"`
-	CallID  string             `json:"call_id,omitempty"`
-	Output  string             `json:"output,omitempty"`
+	Role      string             `json:"role,omitempty"`
+	Content   []wireInputContent `json:"content,omitempty"`
+	Type      string             `json:"type,omitempty"`
+	CallID    string             `json:"call_id,omitempty"`
+	Output    string             `json:"output,omitempty"`
+	Name      string             `json:"name,omitempty"`
+	Arguments string             `json:"arguments,omitempty"`
 }
 
 type wireInputContent struct {
@@ -172,12 +263,16 @@ func encodeRequest(request TurnRequest) ([]byte, error) {
 				CallID: item.CallID,
 				Output: item.Output,
 			})
+		case InputFunctionCall:
+			if item.CallID == "" || item.Name == "" || !json.Valid(item.Arguments) {
+				return nil, fmt.Errorf("the Codex Responses turn contains an incomplete function call")
+			}
+			input = append(input, wireInputItem{
+				Type: "function_call", CallID: item.CallID, Name: item.Name, Arguments: string(item.Arguments),
+			})
 		default:
 			return nil, fmt.Errorf("the Codex Responses turn contains an unsupported or blank input item")
 		}
-	}
-	if request.PreviousResponseID != "" && !request.Store {
-		return nil, fmt.Errorf("a Codex Responses continuation must enable response storage")
 	}
 	tools := make([]wireTool, 0, len(request.Tools))
 	for _, tool := range request.Tools {
@@ -209,6 +304,7 @@ func encodeRequest(request TurnRequest) ([]byte, error) {
 		Text:               wireText{Verbosity: request.TextVerbosity},
 		PromptCacheKey:     request.PromptCacheKey,
 		PreviousResponseID: request.PreviousResponseID,
+		Include:            request.Include,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("encoding the Codex Responses request: %w", err)
