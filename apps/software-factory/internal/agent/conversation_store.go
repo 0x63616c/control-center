@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/blobs"
 )
@@ -29,6 +30,20 @@ func (store ConversationStore) Append(
 ) (ConversationRef, error) {
 	revision := 0
 	if predecessor != nil {
+		predecessorIdentity, err := conversationIdentity(*predecessor)
+		if err != nil {
+			return ConversationRef{}, fmt.Errorf("verify predecessor: %w", err)
+		}
+		if predecessorIdentity != identity {
+			return ConversationRef{}, fmt.Errorf(
+				"predecessor belongs to %q, not %q",
+				predecessorIdentity,
+				identity,
+			)
+		}
+		if _, err := store.Load(ctx, *predecessor); err != nil {
+			return ConversationRef{}, fmt.Errorf("verify predecessor: %w", err)
+		}
 		revision = predecessor.Revision + 1
 	}
 	record := ConversationRevision{Predecessor: predecessor, Items: items}
@@ -50,6 +65,9 @@ func (store ConversationStore) Append(
 
 // Load reads and verifies one immutable conversation revision.
 func (store ConversationStore) Load(ctx context.Context, ref ConversationRef) (ConversationRevision, error) {
+	if _, err := conversationIdentity(ref); err != nil {
+		return ConversationRevision{}, fmt.Errorf("load conversation revision %d: %w", ref.Revision, err)
+	}
 	key, err := blobs.ParseKey(ref.Key)
 	if err != nil {
 		return ConversationRevision{}, fmt.Errorf("load conversation revision %d: %w", ref.Revision, err)
@@ -70,4 +88,23 @@ func (store ConversationStore) Load(ctx context.Context, ref ConversationRef) (C
 		return ConversationRevision{}, fmt.Errorf("decode conversation revision %d: %w", ref.Revision, err)
 	}
 	return revision, nil
+}
+
+func conversationIdentity(ref ConversationRef) (string, error) {
+	key, err := blobs.ParseKey(ref.Key)
+	if err != nil {
+		return "", err
+	}
+	if key.Bucket != blobs.BucketConversations {
+		return "", fmt.Errorf("key %q is not a conversation", key)
+	}
+	suffix := fmt.Sprintf("/%d/%s", ref.Revision, ref.Digest)
+	if !strings.HasSuffix(key.Path, suffix) {
+		return "", fmt.Errorf("key %q does not match revision reference", key)
+	}
+	identity := strings.TrimSuffix(key.Path, suffix)
+	if identity == "" {
+		return "", fmt.Errorf("key %q has no conversation identity", key)
+	}
+	return identity, nil
 }
