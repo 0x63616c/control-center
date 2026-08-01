@@ -6,16 +6,11 @@ describe("product identity", () => {
     expect(productSlugs).toEqual(["control-center", "captive-portal", "software-factory"]);
   });
 
-  // Software Factory's product identity derives its worker/sandbox image names.
-  test("derives software-factory image identity from the product slug", () => {
+  test("retains software-factory deployment digest identity", () => {
     const factory = defineProduct("software-factory");
 
-    expect(factory.imageRepository("worker")).toBe("ghcr.io/0x63616c/www-software-factory-worker");
-    expect(factory.imageRepository("sandbox")).toBe(
-      "ghcr.io/0x63616c/www-software-factory-sandbox",
-    );
     expect(factory.imageDigestKey("worker")).toBe("software-factory-worker");
-    expect(factory.imageDigestKey("sandbox")).toBe("software-factory-sandbox");
+    expect(factory.imageDigestKey("run-worker")).toBe("software-factory-run-worker");
   });
 
   test("derives Control Center identity from the product slug", () => {

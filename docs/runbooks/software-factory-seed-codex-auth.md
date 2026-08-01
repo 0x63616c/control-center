@@ -53,7 +53,7 @@ wins — it is what the Role and the worker both read.
 | Secret name | `codex-auth` | `CODEX_AUTH_SECRET_NAME` | `infra/src/software-factory.ts` |
 | Deployment | `software-factory-worker` | `WORKER_SERVICE_ACCOUNT`, reused as the Deployment's `metadata.name` | `infra/src/software-factory.ts` |
 | Pod label | `app=software-factory-worker` | `workerLabels` | `infra/src/software-factory.ts` — what §1's wait selects on |
-| Credential key | `auth.json` | `CredentialKey` | `apps/software-factory/internal/clients/codexauth/state.go` |
+| Credential key | `auth.json` | `CredentialKey` | standalone `software-factory/internal/clients/codexauth/state.go` |
 | Lease key | `refresh_state.json` | `StateKey` | same file — **the seed must NOT write this** |
 
 The Secret name is load-bearing twice over: the worker's Role pins `secrets`

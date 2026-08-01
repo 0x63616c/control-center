@@ -10,7 +10,6 @@ export default defineConfig({
       "apps/api",
       "apps/web",
       "apps/manage",
-      "apps/software-factory/web",
       "apps/worker",
       "packages/core",
       "packages/logger",

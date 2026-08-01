@@ -3,7 +3,8 @@
 > **ACTIVATED.** Sections 1 through 6 are the retained historical procedure for
 > the completed legacy cutover. Their old workflow, sandbox, `factoryctl`, and
 > PR 8 names are intentionally explicit so retained JSON artifacts remain
-> interpretable. Do not rerun those retired commands. Section 7 is the permanent
+> interpretable. Their `apps/software-factory/...` paths no longer exist in WWW;
+> do not rerun or translate those retired commands. Section 7 is the permanent
 > post-main evidence gate for the activated runtime.
 
 This is the one-time boundary between the legacy `FactoryDispatcher` /

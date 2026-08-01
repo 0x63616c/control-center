@@ -433,7 +433,7 @@ describe("Cloudflare Access AUD bootstrap (#593)", () => {
   });
 
   test("marks the API Deployment skipAwait, so a still-missing AUD can't fail the apply", async () => {
-    // cmd/api's config.LoadAPI (apps/software-factory/internal/config/api.go)
+    // The standalone API's config loader
     // refuses to start on an empty CLOUDFLARE_ACCESS_AUD — correct fail-closed
     // behavior, but it means the pod CrashLoopBackOffs for as long as the AUD
     // is unresolved. Without skipAwait, Pulumi would wait for that Deployment

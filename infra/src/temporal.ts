@@ -64,7 +64,7 @@ export const TEMPORAL_CLUSTER_NAMESPACE = "control-center";
 export const TEMPORAL_TASK_QUEUE = "main";
 
 /**
- * The Temporal namespace `apps/software-factory` runs ticket work in (ADR-0011).
+ * The Temporal namespace the standalone software-factory runs ticket work in (ADR-0011).
  * Isolated from control-center's so a runaway ticket workflow cannot exhaust the
  * task-queue or history budget the house's own workflows depend on.
  */

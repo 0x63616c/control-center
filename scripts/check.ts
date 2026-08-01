@@ -1,5 +1,4 @@
 type CheckSelection = {
-  readonly go: boolean;
   readonly typescript: boolean;
   readonly reason: string;
 };
@@ -48,23 +47,19 @@ export function selectChecks(paths: readonly string[]): CheckSelection {
     );
   }
 
-  const hasGo = paths.some((path) => path.endsWith(".go"));
   const hasTypeScript = paths.some((path) => /\.(?:ts|tsx|json|css)$/.test(path));
-  const unrecognised = paths.filter(
-    (path) => !path.endsWith(".go") && !/\.(?:ts|tsx|json|css)$/.test(path),
-  );
+  const unrecognised = paths.filter((path) => !/\.(?:ts|tsx|json|css)$/.test(path));
 
   if (unrecognised.length > 0) {
     return {
-      go: true,
       typescript: true,
       reason: `unrecognised changed paths: ${unrecognised.join(", ")}`,
     };
   }
-  if (hasGo && hasTypeScript)
-    return { go: true, typescript: true, reason: "changed Go and TypeScript files" };
-  if (hasGo) return { go: true, typescript: false, reason: "changed Go files" };
-  return { go: false, typescript: true, reason: "changed TypeScript files" };
+  return {
+    typescript: hasTypeScript,
+    reason: hasTypeScript ? "changed TypeScript files" : "no TypeScript files changed",
+  };
 }
 
 function runGit(runner: CommandRunner, args: readonly string[]): string {
@@ -114,14 +109,6 @@ function run(command: readonly string[], cwd = repositoryRoot): void {
 export function runCheck(runner: CommandRunner = shellRunner): void {
   const selection = selectChecks(changedPaths(runner));
   console.error(`check selection: ${selection.reason}`);
-
-  if (selection.go) {
-    run(["golangci-lint", "run"], `${repositoryRoot}apps/software-factory`);
-    run(["go", "test", "-race", "./..."], `${repositoryRoot}apps/software-factory`);
-  } else {
-    console.error("skipped golangci-lint: no Go changed");
-    console.error("skipped go test -race ./...: no Go changed");
-  }
 
   if (selection.typescript) {
     run(["bunx", "biome", "check", "."]);

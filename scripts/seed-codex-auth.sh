@@ -152,7 +152,7 @@ chmod 600 "$TMP_AUTH"
 [ -s "$TMP_AUTH" ] || { echo "FATAL: '$SRC' is empty" >&2; exit 1; }
 
 # Validate before applying — the same shape checks
-# apps/software-factory/internal/clients/codexauth/authfile.go enforces at
+# the standalone software-factory credential loader enforces at
 # read time, run here so a bad seed fails loudly by name instead of as an
 # undifferentiated stage failure later.
 if ! jq -e . "$TMP_AUTH" >/dev/null 2>&1; then

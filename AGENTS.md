@@ -18,10 +18,8 @@
   prints the token.
 - Read the `docs/writing-scalable-typescript/` guide (start at its `README.md`)
   before writing or reviewing TS/TSX. It is docs, not an invokable skill.
-- **`apps/software-factory/` is Go and has its own standards**, in its nested
-  `AGENTS.md` + `docs/SoftwareStyle.md` + `.golangci.yml`. Those apply to **that
-  directory only** and say nothing about the rest of this repo - do not cite them in a
-  review of TS code. Everything in this file still applies there.
+- **Software-factory source lives in `0x63616c/software-factory`.** This repo
+  owns only its release lock, verification adapter, and production deployment.
 
 ## Invariants
 

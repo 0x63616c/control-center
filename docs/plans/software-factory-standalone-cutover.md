@@ -9,6 +9,8 @@
   and excluded from active build, lint, code generation, and test surfaces.
 - Software Factory remains unlicensed for now. Do not add a license as part of
   this cutover without a separate decision.
+- WWW's GitHub CodeQL Default Setup no longer includes Go now that this repo has
+  no active Go source; its other configured languages remain enabled.
 - The immutable `v0.1.0` tag is the failed first release attempt. Its gate
   stopped before publishing because the runner lacked `ripgrep`; no images or
   GitHub Release were published, and the tag was not moved.
@@ -45,19 +47,19 @@
   digests, required standalone CI/release evidence, and durable
   `AgentWorkflow` runtime path.
 - [x] Validate the Pulumi preview and all relevant repository checks.
-- [ ] Open a first WWW PR for immutable release consumption and the adapted
+- [x] Open WWW PR #673 for immutable release consumption and the adapted
   Gate 10 proof.
-- [ ] Merge only with green CI, deploy `home-server`, and capture production
+- [x] Merge only with green CI, deploy `home-server`, and capture production
   proof before deleting the embedded implementation.
 
 ## Embedded ownership removal
 
-- [ ] Open a follow-up WWW PR removing `apps/software-factory/` active source.
-- [ ] Remove WWW CI path filters, image builds, code generation, lint, tests,
+- [x] Open WWW PR #674 removing `apps/software-factory/` active source.
+- [x] Remove WWW CI path filters, image builds, code generation, lint, tests,
   and contributor documentation that claim ownership of the embedded product.
-- [ ] Retain only deployment/consumer integration that is still required by
+- [x] Retain only deployment/consumer integration that is still required by
   the standalone release.
-- [ ] Confirm no active WWW surface imports, builds, or tests the removed Go
+- [x] Confirm no active WWW surface imports, builds, or tests the removed Go
   module or revives the retired Codex CLI design.
 - [ ] Run the final adapted Gate 10 proof after merge and production deploy.
 

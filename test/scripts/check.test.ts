@@ -8,33 +8,22 @@ import {
 } from "../../scripts/check";
 
 describe("check", () => {
-  it("selects the Go tree for Go-only changes", () => {
-    expect(selectChecks(["apps/software-factory/internal/work/work.go"])).toEqual({
-      go: true,
-      typescript: false,
-      reason: "changed Go files",
-    });
-  });
-
   it("selects the TypeScript tree for TypeScript, JSON, and CSS changes", () => {
     expect(selectChecks(["apps/web/src/App.tsx", "biome.json", "apps/web/src/app.css"])).toEqual({
-      go: false,
       typescript: true,
       reason: "changed TypeScript files",
     });
   });
 
-  it("selects both trees for mixed changes", () => {
-    expect(selectChecks(["scripts/check.ts", "apps/software-factory/main.go"])).toEqual({
-      go: true,
+  it("runs TypeScript checks for mixed recognised and unrecognised changes", () => {
+    expect(selectChecks(["scripts/check.ts", "README.md"])).toEqual({
       typescript: true,
-      reason: "changed Go and TypeScript files",
+      reason: "unrecognised changed paths: README.md",
     });
   });
 
-  it("selects both trees for unrecognised paths", () => {
+  it("runs TypeScript checks for unrecognised paths", () => {
     expect(selectChecks([".github/workflows/ci.yml"])).toEqual({
-      go: true,
       typescript: true,
       reason: "unrecognised changed paths: .github/workflows/ci.yml",
     });
