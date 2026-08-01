@@ -2,8 +2,98 @@ package github
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 )
+
+func TestChecksForCommitUsesTheExactCommitSHAAndBoundsFailureEvidence(t *testing.T) {
+	t.Parallel()
+
+	const sha = "0a1b2c3d4e5f"
+	s, _ := newStub(t)
+	s.handle("GET /repos/"+testOwner+"/"+testRepo+"/commits/"+sha+"/check-runs", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"check_runs": []map[string]any{{
+			"id": 91, "name": "test", "status": "completed", "conclusion": "failure",
+			"output": map[string]any{"summary": strings.Repeat("x", checkFailureEvidenceMaxBytes+100)},
+		}}})
+	})
+	s.handle("GET /repos/"+testOwner+"/"+testRepo+"/check-runs/91/annotations", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, []map[string]any{})
+	})
+	c, _ := s.client(t)
+
+	checks, err := c.ChecksForCommit(t.Context(), sha, []string{"test"})
+	if err != nil {
+		t.Fatalf("ChecksForCommit: %v", err)
+	}
+	if len(checks) != 1 || len(checks[0].FailureEvidence) != checkFailureEvidenceMaxBytes {
+		t.Fatalf("checks = %+v, want one check with %d-byte evidence", checks, checkFailureEvidenceMaxBytes)
+	}
+	if s.count("GET /repos/"+testOwner+"/"+testRepo+"/commits/"+sha+"/check-runs") != 1 {
+		t.Fatalf("did not query the exact commit SHA: %s", s)
+	}
+}
+
+func TestChecksForCommitIgnoresUnrelatedNonGreenChecksBeforeReadingTheirDetails(t *testing.T) {
+	t.Parallel()
+
+	for _, conclusion := range []string{"failure", "cancelled"} {
+		t.Run(conclusion, func(t *testing.T) {
+			t.Parallel()
+
+			const sha = "0a1b2c3d4e5f"
+			s, _ := newStub(t)
+			s.handle("GET /repos/"+testOwner+"/"+testRepo+"/commits/"+sha+"/check-runs", func(w http.ResponseWriter, _ *http.Request) {
+				writeJSON(w, http.StatusOK, map[string]any{"check_runs": []map[string]any{
+					{"id": 91, "name": "required", "status": "completed", "conclusion": "success"},
+					{"id": 92, "name": "unrelated", "status": "completed", "conclusion": conclusion},
+				}})
+			})
+			s.handle("GET /repos/"+testOwner+"/"+testRepo+"/check-runs/92/annotations", func(w http.ResponseWriter, _ *http.Request) {
+				writeError(w, http.StatusInternalServerError, "unrelated annotation lookup failed")
+			})
+			c, _ := s.client(t)
+
+			checks, err := c.ChecksForCommit(t.Context(), sha, []string{"required"})
+			if err != nil {
+				t.Fatalf("ChecksForCommit: %v", err)
+			}
+			if len(checks) != 1 || checks[0].Name != "required" || !checks[0].Green() {
+				t.Fatalf("checks = %+v, want only the required green check", checks)
+			}
+			if got := s.count("GET /repos/" + testOwner + "/" + testRepo + "/check-runs/92/annotations"); got != 0 {
+				t.Fatalf("unrelated annotation requests = %d, want none", got)
+			}
+		})
+	}
+}
+
+func TestChecksForCommitReturnsARequiredCancelledCheckWithoutReadingFailureDetails(t *testing.T) {
+	t.Parallel()
+
+	const sha = "0a1b2c3d4e5f"
+	s, _ := newStub(t)
+	s.handle("GET /repos/"+testOwner+"/"+testRepo+"/commits/"+sha+"/check-runs", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"check_runs": []map[string]any{{
+			"id": 91, "name": "required", "status": "completed", "conclusion": "cancelled",
+		}}})
+	})
+	s.handle("GET /repos/"+testOwner+"/"+testRepo+"/check-runs/91/annotations", func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusInternalServerError, "cancelled check has no failure details")
+	})
+	c, _ := s.client(t)
+
+	checks, err := c.ChecksForCommit(t.Context(), sha, []string{"required"})
+	if err != nil {
+		t.Fatalf("ChecksForCommit: %v", err)
+	}
+	if len(checks) != 1 || !checks[0].Superseded() || checks[0].FailureEvidence != "" || checks[0].FailureFingerprint != "" {
+		t.Fatalf("checks = %+v, want one unenriched required cancelled check", checks)
+	}
+	if got := s.count("GET /repos/" + testOwner + "/" + testRepo + "/check-runs/91/annotations"); got != 0 {
+		t.Fatalf("cancelled-check annotation requests = %d, want none", got)
+	}
+}
 
 func TestChecksForRefFingerprintsFailedOutputAndEveryAnnotation(t *testing.T) {
 	t.Parallel()

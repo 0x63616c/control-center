@@ -78,6 +78,10 @@ func (f *fakeGitHub) ChecksForRef(_ context.Context, ref string) ([]work.CheckRu
 	return f.checks, f.checksErr
 }
 
+func (f *fakeGitHub) ChecksForCommit(ctx context.Context, commitSHA string, _ []string) ([]work.CheckRun, error) {
+	return f.ChecksForRef(ctx, commitSHA)
+}
+
 func (f *fakeGitHub) OpenOrUpdatePullRequest(_ context.Context, branch, title, body string, existing *work.PullRequest) (work.PullRequest, error) {
 	f.openOrUpdateInput.branch, f.openOrUpdateInput.title, f.openOrUpdateInput.body, f.openOrUpdateInput.existing = branch, title, body, existing
 	return f.openOrUpdatePR, f.openOrUpdateErr

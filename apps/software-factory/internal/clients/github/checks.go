@@ -28,6 +28,30 @@ import (
 // annotations needed to identify its failed runs. Polling belongs to the
 // activity, which owns the wait and the bound on it.
 func (c *Client) ChecksForRef(ctx context.Context, ref string) ([]work.CheckRun, error) {
+	return c.checksForRef(ctx, ref, nil, false)
+}
+
+// ChecksForCommit returns one check-run snapshot for exactly commitSHA.
+// GitHub accepts a SHA in the same reference position as a branch; this
+// separate method makes the immutable target-path contract explicit. Only
+// required checks are returned or enriched with failure details.
+func (c *Client) ChecksForCommit(ctx context.Context, commitSHA string, requiredChecks []string) ([]work.CheckRun, error) {
+	if strings.TrimSpace(commitSHA) == "" {
+		return nil, fmt.Errorf("listing check runs for an empty commit SHA: %w", work.ErrPermanent)
+	}
+	required := make(map[string]struct{}, len(requiredChecks))
+	for _, name := range requiredChecks {
+		required[name] = struct{}{}
+	}
+	return c.checksForRef(ctx, commitSHA, required, true)
+}
+
+func (c *Client) checksForRef(
+	ctx context.Context,
+	ref string,
+	includedChecks map[string]struct{},
+	includeFailureEvidence bool,
+) ([]work.CheckRun, error) {
 	op := fmt.Sprintf("listing check runs for %s", ref)
 
 	opts := &gh.ListCheckRunsOptions{ListOptions: gh.ListOptions{PerPage: perPage}}
@@ -39,12 +63,20 @@ func (c *Client) ChecksForRef(ctx context.Context, ref string) ([]work.CheckRun,
 			return nil, classify(ctx, op, err)
 		}
 		for _, run := range result.CheckRuns {
+			if includedChecks != nil {
+				if _, included := includedChecks[run.GetName()]; !included {
+					continue
+				}
+			}
 			check := work.CheckRun{
 				Name:       run.GetName(),
 				Completed:  run.GetStatus() == "completed",
 				Conclusion: run.GetConclusion(),
 			}
-			if check.Completed && !check.Green() {
+			if check.Completed && !check.Green() && !check.Superseded() {
+				if includeFailureEvidence {
+					check.FailureEvidence = boundedCheckFailureEvidence(run)
+				}
 				fingerprint, err := c.checkFailureFingerprint(ctx, run)
 				if err != nil {
 					return nil, err
@@ -58,6 +90,32 @@ func (c *Client) ChecksForRef(ctx context.Context, ref string) ([]work.CheckRun,
 		}
 		opts.Page = resp.NextPage
 	}
+}
+
+// checkFailureEvidenceMaxBytes bounds untrusted check output retained in a
+// target Run handoff. Fingerprints keep their separate legacy identity role.
+const checkFailureEvidenceMaxBytes = 2 << 10
+
+func boundedCheckFailureEvidence(run *gh.CheckRun) string {
+	output := run.GetOutput()
+	parts := make([]string, 0, 3)
+	for _, value := range []string{output.GetTitle(), output.GetSummary(), output.GetText()} {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			parts = append(parts, trimmed)
+		}
+	}
+	return truncateUTF8(strings.Join(parts, "\n"), checkFailureEvidenceMaxBytes)
+}
+
+func truncateUTF8(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	cut := limit
+	for cut > 0 && (value[cut]&0xc0) == 0x80 {
+		cut--
+	}
+	return value[:cut]
 }
 
 // checkFailureFingerprint reduces one failed check's output to a stable,

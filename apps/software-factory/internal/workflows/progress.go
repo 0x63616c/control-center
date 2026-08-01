@@ -20,13 +20,13 @@ func sameCheckFailures(a, b []work.CheckFailure) bool {
 		}
 	}
 
-	aSet := make(map[work.CheckFailure]struct{}, len(a))
+	aSet := make(map[checkFailureIdentity]struct{}, len(a))
 	for _, failure := range a {
-		aSet[failure] = struct{}{}
+		aSet[checkFailureIdentity{Name: failure.Name, Fingerprint: failure.Fingerprint}] = struct{}{}
 	}
-	bSet := make(map[work.CheckFailure]struct{}, len(b))
+	bSet := make(map[checkFailureIdentity]struct{}, len(b))
 	for _, x := range b {
-		bSet[x] = struct{}{}
+		bSet[checkFailureIdentity{Name: x.Name, Fingerprint: x.Fingerprint}] = struct{}{}
 	}
 	if len(aSet) != len(bSet) {
 		return false
@@ -37,6 +37,13 @@ func sameCheckFailures(a, b []work.CheckFailure) bool {
 		}
 	}
 	return true
+}
+
+// checkFailureIdentity excludes bounded evidence deliberately: it is handoff
+// context for an implementer, not CI progress control vocabulary.
+type checkFailureIdentity struct {
+	Name        string
+	Fingerprint string
 }
 
 // intersects reports whether a and b share at least one element.
