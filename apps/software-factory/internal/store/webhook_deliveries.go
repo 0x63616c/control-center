@@ -37,6 +37,24 @@ type WebhookDeliveryRecorder interface {
 	RecordWebhookDeliveryAndTransition(ctx context.Context, deliveryID string, id TicketID, from, to TicketState) (WebhookDeliveryOutcome, error)
 }
 
+// WebhookDeliveryAcknowledger records a target webhook delivery exactly once
+// without coupling receipt to a Ticket state transition.
+type WebhookDeliveryAcknowledger interface {
+	RecordWebhookDelivery(ctx context.Context, deliveryID string) (bool, error)
+}
+
+// RecordWebhookDelivery persists deliveryID once. It returns true only for
+// the first receipt; a relay retry or GitHub redelivery returns false.
+func (s *Store) RecordWebhookDelivery(ctx context.Context, deliveryID string) (bool, error) {
+	if _, err := s.q.RecordWebhookDelivery(ctx, deliveryID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("recording webhook delivery %s: %w", deliveryID, wrapQueryErr(err))
+	}
+	return true, nil
+}
+
 // RecordWebhookDeliveryAndTransition records deliveryID as seen and, only the
 // first time it is seen, attempts to move ticket id from `from` to `to` — in
 // one Postgres transaction, so "this delivery is durably recorded" and "the
@@ -90,3 +108,4 @@ func (s *Store) RecordWebhookDeliveryAndTransition(ctx context.Context, delivery
 }
 
 var _ WebhookDeliveryRecorder = (*Store)(nil)
+var _ WebhookDeliveryAcknowledger = (*Store)(nil)
