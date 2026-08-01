@@ -13,6 +13,7 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/workflows"
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/worker"
 )
@@ -230,6 +231,7 @@ func TestWorkOnTicketRepairsRedCIThenReviewsTheNewHead(t *testing.T) {
 	var reviews []activities.TargetAgentInput
 	for _, agent := range h.agentInputs {
 		switch agent.Stage {
+		case work.AgentStagePlan:
 		case work.AgentStageImplement:
 			implements = append(implements, agent)
 		case work.AgentStageReview:
@@ -292,6 +294,194 @@ func TestWorkOnTicketNeverMergesAHeadChangedAfterReview(t *testing.T) {
 	if detail.Run.ReviewedHead != "H2" || detail.Run.MergeSHA != "M2" {
 		t.Fatalf("terminal run = %+v, want reviewed H2 / M2", detail.Run)
 	}
+	for _, step := range detail.Steps {
+		if step.Step.Kind == work.StepMergePullRequest && step.Step.State != work.StepStateCompleted {
+			t.Fatalf("feedback merge step = %+v, want completed history rather than a stranded running step", step.Step)
+		}
+	}
+}
+
+func TestWorkOnTicketRetriesPendingCIInsideOneStep(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "pending CI", "wait", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000003", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.awaitCI = func(input activities.TargetAwaitCIInput) (activities.AwaitCIOutput, error) {
+		if len(h.ciInputs) == 1 {
+			return activities.AwaitCIOutput{}, temporal.NewApplicationErrorWithOptions("checks still pending", activities.ErrTypeCINotConcluded, temporal.ApplicationErrorOptions{NextRetryDelay: 15 * time.Second})
+		}
+		if err := h.checkpointRepositoryStep(input.Step); err != nil {
+			return activities.AwaitCIOutput{}, err
+		}
+		return activities.AwaitCIOutput{CommitSHA: input.CI.CommitSHA, Green: true}, nil
+	}
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket: %v", err)
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	var ciSteps, attempts int
+	for _, step := range detail.Steps {
+		if step.Step.Kind == work.StepAwaitCI {
+			ciSteps++
+		}
+		attempts += len(step.Attempts)
+	}
+	if len(h.ciInputs) != 2 || ciSteps != 1 || attempts != 3 {
+		t.Fatalf("pending CI = %d reads, %d CI steps, %d agent attempts; want 2, 1, 3", len(h.ciInputs), ciSteps, attempts)
+	}
+}
+
+func TestWorkOnTicketStopsBeforeSixthReviewOrTwentySixthAttempt(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "review budget", "find it all", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000004", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
+		if input.Stage != work.AgentStageReview {
+			return targetAgentOutput(t, input.Stage), nil
+		}
+		var result work.StageOutput
+		if err := json.Unmarshal([]byte(`{"stage":"review","value":{"document":"still blocked","findings":[{"id":"same","blocking":true,"summary":"fix it"}]}}`), &result); err != nil {
+			return activities.TargetAgentOutput{}, err
+		}
+		return activities.TargetAgentOutput{Output: []byte(`{"stage":"review","value":{"document":"still blocked","findings":[{"id":"same","blocking":true,"summary":"fix it"}]}}`), Result: result, ThreadID: "review-thread", UsageState: work.UsageMeasured}, nil
+	}
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err == nil {
+		t.Fatal("review-budget workflow succeeded")
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	var reviews, attempts, merges int
+	for _, step := range detail.Steps {
+		if step.Step.Kind == work.StepReview {
+			reviews++
+		}
+		if step.Step.Kind == work.StepMergePullRequest {
+			merges++
+		}
+		attempts += len(step.Attempts)
+	}
+	if reviews != 5 || attempts > in.Policy.MaxAgentAttempts || merges != 0 {
+		t.Fatalf("budget history = %d reviews, %d attempts, %d merges; want five reviews, <=25 attempts, and no merge", reviews, attempts, merges)
+	}
+}
+
+func TestWorkOnTicketStopsBeforeTwentySixthAgentAttempt(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "attempt budget", "repair CI", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000005", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.awaitCI = func(input activities.TargetAwaitCIInput) (activities.AwaitCIOutput, error) {
+		if err := h.checkpointRepositoryStep(input.Step); err != nil {
+			return activities.AwaitCIOutput{}, err
+		}
+		return activities.AwaitCIOutput{CommitSHA: input.CI.CommitSHA, Green: false, RedFailures: []work.CheckFailure{{Name: "test", Fingerprint: "same", Evidence: "still red"}}}, nil
+	}
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err == nil {
+		t.Fatal("agent-attempt-budget workflow succeeded")
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	attempts := 0
+	for _, step := range detail.Steps {
+		attempts += len(step.Attempts)
+	}
+	if attempts != in.Policy.MaxAgentAttempts || len(h.agentInputs) != in.Policy.MaxAgentAttempts {
+		t.Fatalf("agent attempts = %d/%d, want exactly the cap %d and never a twenty-sixth", attempts, len(h.agentInputs), in.Policy.MaxAgentAttempts)
+	}
+}
+
+func TestWorkOnTicketRepairsTextConflictOrStaleBaseWithFreshReview(t *testing.T) {
+	for _, outcome := range []work.PullRequestMergeOutcome{work.PullRequestMergeTextConflict, work.PullRequestMergeBaseRefreshRequired} {
+		t.Run(string(outcome), func(t *testing.T) {
+			ctx := context.Background()
+			s := storefake.New()
+			ticket, err := s.CreateTicket(ctx, "merge feedback", "repair it", nil)
+			if err != nil {
+				t.Fatalf("CreateTicket: %v", err)
+			}
+			in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000006", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+			h := newWorkOnTicketHarness(t, s)
+			h.sync = func(input activities.TargetSyncPullRequestInput) (work.PullRequest, error) {
+				head := "H1"
+				if len(h.syncInputs) == 2 {
+					head = "H2"
+				}
+				position := input.Step
+				position.PushedHead, position.PullRequestNumber, position.PullRequestNodeID = head, 1, "PR_node1"
+				if err := h.checkpointRepositoryStep(position); err != nil {
+					return work.PullRequest{}, err
+				}
+				return work.PullRequest{Number: 1, NodeID: "PR_node1", HeadSHA: head, Draft: true}, nil
+			}
+			h.awaitCI = func(input activities.TargetAwaitCIInput) (activities.AwaitCIOutput, error) {
+				if err := h.checkpointRepositoryStep(input.Step); err != nil {
+					return activities.AwaitCIOutput{}, err
+				}
+				return activities.AwaitCIOutput{CommitSHA: input.CI.CommitSHA, Green: true}, nil
+			}
+			h.mergeResult = func(input activities.TargetMergePullRequestInput) (work.PullRequestMergeResult, error) {
+				if len(h.mergeInputs) == 1 {
+					return work.PullRequestMergeResult{Outcome: outcome, PullRequest: work.PullRequest{Number: 1, NodeID: "PR_node1", HeadSHA: "H1", BaseSHA: "B2"}, Diagnostic: "reconcile the branch"}, nil
+				}
+				return work.PullRequestMergeResult{Outcome: work.PullRequestMergeConfirmed, MergeSHA: "M2"}, nil
+			}
+			h.run(in)
+			if err := h.env.GetWorkflowError(); err != nil {
+				t.Fatalf("WorkOnTicket: %v", err)
+			}
+			var implements, reviews []activities.TargetAgentInput
+			for _, agent := range h.agentInputs {
+				switch agent.Stage {
+				case work.AgentStagePlan:
+				case work.AgentStageImplement:
+					implements = append(implements, agent)
+				case work.AgentStageReview:
+					reviews = append(reviews, agent)
+				}
+			}
+			if len(implements) != 2 || implements[1].PriorProviderThread == nil || implements[1].PromptContext.Merge == nil || implements[1].PromptContext.Merge.Outcome != outcome || implements[1].PromptContext.Merge.CurrentBaseSHA != "B2" || implements[1].PromptContext.Merge.Diagnostic != "reconcile the branch" {
+				t.Fatalf("merge-feedback implementation = %+v, want same-generation typed %s handoff", implements, outcome)
+			}
+			if len(reviews) != 2 || reviews[1].PromptContext.CandidateHeadSHA != "H2" || reviews[0].PriorProviderThread != nil || reviews[1].PriorProviderThread != nil {
+				t.Fatalf("reviews = %+v, want fresh H1 then H2 reviewers", reviews)
+			}
+			detail, err := s.TargetRunDetail(ctx, in.RunID)
+			if err != nil {
+				t.Fatalf("TargetRunDetail: %v", err)
+			}
+			for _, step := range detail.Steps {
+				if step.Step.Kind == work.StepMergePullRequest && step.Step.State != work.StepStateCompleted {
+					t.Fatalf("feedback merge step = %+v, want completed history rather than a stranded running step", step.Step)
+				}
+			}
+		})
+	}
 }
 
 type workOnTicketHarness struct {
@@ -316,6 +506,7 @@ type workOnTicketHarness struct {
 	sync        func(activities.TargetSyncPullRequestInput) (work.PullRequest, error)
 	awaitCI     func(activities.TargetAwaitCIInput) (activities.AwaitCIOutput, error)
 	mergeResult func(activities.TargetMergePullRequestInput) (work.PullRequestMergeResult, error)
+	agentResult func(activities.TargetAgentInput) (activities.TargetAgentOutput, error)
 }
 
 func newWorkOnTicketHarness(t *testing.T, recorderStore *storefake.Store) *workOnTicketHarness {
@@ -376,6 +567,9 @@ func newWorkOnTicketHarness(t *testing.T, recorderStore *storefake.Store) *workO
 			if in.Stage == work.AgentStageReview {
 				h.reviewHead = in.PromptContext.CandidateHeadSHA
 			}
+			if h.agentResult != nil {
+				return h.agentResult(in)
+			}
 			return targetAgentOutput(t, in.Stage), nil
 		},
 		activity.RegisterOptions{Name: "RunTargetAgent"},
@@ -422,7 +616,11 @@ func newWorkOnTicketHarness(t *testing.T, recorderStore *storefake.Store) *workO
 			h.merge = in
 			h.mergeInputs = append(h.mergeInputs, in)
 			if h.mergeResult != nil {
-				return h.mergeResult(in)
+				result, err := h.mergeResult(in)
+				if err != nil || result.Outcome == work.PullRequestMergeConfirmed {
+					return result, err
+				}
+				return result, h.checkpointRepositoryStep(in.Step)
 			}
 			return work.PullRequestMergeResult{Outcome: work.PullRequestMergeConfirmed, MergeSHA: "M1"}, nil
 		},
