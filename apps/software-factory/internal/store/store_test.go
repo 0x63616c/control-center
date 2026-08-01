@@ -244,6 +244,134 @@ func TestStoreCarriesATicketThroughItsWholeLifecycle(t *testing.T) {
 	}
 }
 
+func TestReopenLegacyTicketsMovesOnlyWorkingAndReviewInOneOperation(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	working, err := s.CreateTicket(ctx, "working", "legacy", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	working, err = s.TransitionTicketState(ctx, working.ID, store.TicketOpen, store.TicketWorking)
+	if err != nil {
+		t.Fatal(err)
+	}
+	review, err := s.CreateTicket(ctx, "review", "legacy", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	review, err = s.TransitionTicketState(ctx, review.ID, store.TicketOpen, store.TicketWorking)
+	if err != nil {
+		t.Fatal(err)
+	}
+	review, err = s.TransitionTicketState(ctx, review.ID, store.TicketWorking, store.TicketReview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done, err := s.CreateTicket(ctx, "done", "target", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateTicketState(ctx, done.ID, store.TicketDone); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := s.ReopenLegacyTickets(ctx, []store.Ticket{working, review})
+	if err != nil {
+		t.Fatalf("ReopenLegacyTickets: %v", err)
+	}
+	if len(reopened) != 2 || reopened[0].ID != working.ID || reopened[1].ID != review.ID {
+		t.Fatalf("reopened = %+v, want working and review tickets", reopened)
+	}
+	for _, ticket := range reopened {
+		if ticket.State != store.TicketOpen {
+			t.Errorf("ticket %d state = %s, want open", ticket.ID, ticket.State)
+		}
+	}
+	gotDone, err := s.Ticket(ctx, done.ID)
+	if err != nil || gotDone.State != store.TicketDone {
+		t.Fatalf("done ticket = %+v, %v; want unchanged", gotDone, err)
+	}
+}
+
+func TestReopenLegacyTicketsRollsBackEveryRowWhenOneSnapshotIsStale(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	first, err := s.CreateTicket(ctx, "first", "legacy", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err = s.TransitionTicketState(ctx, first.ID, store.TicketOpen, store.TicketWorking)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.CreateTicket(ctx, "second", "legacy", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err = s.TransitionTicketState(ctx, second.ID, store.TicketOpen, store.TicketWorking)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleSecond := second
+	if _, err := s.TransitionTicketState(ctx, second.ID, store.TicketWorking, store.TicketReview); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.ReopenLegacyTickets(ctx, []store.Ticket{first, staleSecond}); err == nil {
+		t.Fatal("ReopenLegacyTickets accepted a stale second snapshot")
+	}
+	gotFirst, err := s.Ticket(ctx, first.ID)
+	if err != nil || gotFirst.State != store.TicketWorking {
+		t.Fatalf("first Ticket = %+v, %v; want transaction rollback to working", gotFirst, err)
+	}
+	gotSecond, err := s.Ticket(ctx, second.ID)
+	if err != nil || gotSecond.State != store.TicketReview {
+		t.Fatalf("second Ticket = %+v, %v; want concurrent review state preserved", gotSecond, err)
+	}
+}
+
+func TestReconcileLegacyStateClosesRunsAndReopensTicketsAtomically(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	ticket, err := s.CreateTicket(ctx, "legacy cutover", "", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	ticket, err = s.TransitionTicketState(ctx, ticket.ID, store.TicketOpen, store.TicketWorking)
+	if err != nil {
+		t.Fatalf("TransitionTicketState: %v", err)
+	}
+	startedAt := time.Date(2026, time.July, 31, 20, 0, 0, 0, time.UTC)
+	runID := newTestRunID(t)
+	if _, err := s.StartRun(ctx, runID, ticket.ID, startedAt); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	runs, err := s.OpenLegacyRuns(ctx)
+	if err != nil {
+		t.Fatalf("OpenLegacyRuns: %v", err)
+	}
+	if len(runs) != 1 || runs[0].ID != runID {
+		t.Fatalf("OpenLegacyRuns = %+v, want %s", runs, runID)
+	}
+	endedAt := startedAt.Add(time.Hour)
+	reopened, err := s.ReconcileLegacyState(ctx, []store.Ticket{ticket}, runs, endedAt)
+	if err != nil {
+		t.Fatalf("ReconcileLegacyState: %v", err)
+	}
+	if len(reopened) != 1 || reopened[0].State != store.TicketOpen {
+		t.Fatalf("reopened = %+v, want one open Ticket", reopened)
+	}
+	closed, err := s.Run(ctx, runID)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if closed.EndedAt != endedAt || closed.Outcome != work.OutcomeFailed || closed.Failure != work.FailureOther {
+		t.Fatalf("closed Run = %+v, want failed/other at %s", closed, endedAt)
+	}
+}
+
 func TestCreateTicketCommitsDeclaredBlockersWithTheTicket(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

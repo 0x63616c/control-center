@@ -23,6 +23,10 @@ import (
 // dispatcher's map being decoded against the other's key space.
 const SignalFactoryTicketDone = "factory-ticket-done"
 
+// QueryFactoryDispatcherStatus proves a control update was applied by the
+// workflow, rather than merely accepted by Temporal's signal endpoint.
+const QueryFactoryDispatcherStatus = "factory-dispatcher-status"
+
 // FactoryTicketDone is what FactoryWorkTicket reports when it ends, whatever
 // the outcome. Reporting unconditionally (not just on success) is what lets
 // the dispatcher free the slot without waiting for its own reconcile sweep.
@@ -68,6 +72,16 @@ func FactoryDispatcher(ctx workflow.Context, in FactoryDispatcherInput) error {
 	inFlight := make(map[store.TicketID]store.InFlightTicket, len(in.InFlight))
 	for _, f := range in.InFlight {
 		inFlight[f.TicketID] = f
+	}
+	if err := workflow.SetQueryHandler(ctx, QueryFactoryDispatcherStatus, func() (work.FactoryDispatcherStatus, error) {
+		ids := sortedTicketIDs(inFlight)
+		inFlightIDs := make([]int64, 0, len(ids))
+		for _, id := range ids {
+			inFlightIDs = append(inFlightIDs, int64(id))
+		}
+		return work.FactoryDispatcherStatus{Config: in.Config, InFlight: inFlightIDs}, nil
+	}); err != nil {
+		return fmt.Errorf("registering factory dispatcher status query: %w", err)
 	}
 
 	dones := workflow.GetSignalChannel(ctx, SignalFactoryTicketDone)

@@ -73,6 +73,13 @@ type TargetTerminalRecorder interface {
 	FinalizeRunFailure(context.Context, RunFailureInput) (TerminalResult, error)
 }
 
+// TargetHistoryReader exposes the durable compatibility projection used by
+// the console while target and legacy Runs coexist.
+type TargetHistoryReader interface {
+	History(context.Context, string) (RunHistory, error)
+	TargetTranscript(context.Context, TargetAttemptID) (TargetTranscript, error)
+}
+
 // ClaimRunInput is the stable identity for an atomic target claim.
 type ClaimRunInput struct {
 	TicketID  TicketID
@@ -289,7 +296,7 @@ func (s *Store) History(ctx context.Context, runID string) (RunHistory, error) {
 	if err != nil {
 		return RunHistory{}, err
 	}
-	if len(target.Steps) > 0 {
+	if len(target.Steps) > 0 || target.Run.TargetOutcome != "" {
 		return RunHistory{Run: target.Run, Steps: target.Steps}, nil
 	}
 	legacy, err := s.RunDetail(ctx, runID)
@@ -321,6 +328,13 @@ func (s *Store) History(ctx context.Context, runID string) (RunHistory, error) {
 				usageState = work.UsageMeasured
 			}
 			attempts = append(attempts, AgentAttempt{ID: TargetAttemptID{RunID: runID, StepOrdinal: ordinal + 1, AttemptNo: legacyAttempt.AttemptNo}, AgentStage: work.AgentStage(legacyAttempt.Key.Stage), Model: legacyAttempt.Model, State: state, UsageState: usageState, Usage: legacyAttempt.Usage, StartedAt: legacyAttempt.StartedAt, EndedAt: legacyAttempt.EndedAt, TranscriptPresent: transcriptPresent[TranscriptKey{Stage: legacyStep.Stage, Turn: legacyStep.Turn, AttemptNo: legacyAttempt.AttemptNo}]})
+		}
+		if len(attempts) > 0 {
+			step.StartedAt = attempts[0].StartedAt
+			step.EndedAt = attempts[len(attempts)-1].EndedAt
+			if step.EndedAt.IsZero() {
+				step.State = work.StepStateRunning
+			}
 		}
 		steps = append(steps, TargetStepDetail{Step: step, Attempts: attempts})
 	}
@@ -941,6 +955,24 @@ func (s *Store) LoadAgentCheckpoint(ctx context.Context, attemptID TargetAttempt
 		transcript = &TargetTranscript{CompressedBytes: transcriptRow.CompressedBytes, Compression: transcriptRow.Compression, UncompressedSizeBytes: transcriptRow.UncompressedSizeBytes, Checksum: transcriptRow.Checksum}
 	}
 	return attempt, transcript, true, nil
+}
+
+// TargetTranscript reads one transcript by ordinal Step identity. Unlike
+// LoadAgentCheckpoint, this read-only console seam does not grant checkpoint
+// authority and therefore accepts no capability.
+func (s *Store) TargetTranscript(ctx context.Context, attemptID TargetAttemptID) (TargetTranscript, error) {
+	runID, err := pgUUID(attemptID.RunID)
+	if err != nil {
+		return TargetTranscript{}, fmt.Errorf("reading target transcript: %w", err)
+	}
+	row, err := s.q.TargetAgentTranscript(ctx, storedb.TargetAgentTranscriptParams{RunID: runID, StepOrdinal: int32(attemptID.StepOrdinal), AttemptNo: int32(attemptID.AttemptNo)})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return TargetTranscript{}, fmt.Errorf("reading target transcript %s: %w", attemptID, ErrNotFound)
+		}
+		return TargetTranscript{}, fmt.Errorf("reading target transcript %s: %w", attemptID, wrapQueryErr(err))
+	}
+	return TargetTranscript{CompressedBytes: row.CompressedBytes, Compression: row.Compression, UncompressedSizeBytes: row.UncompressedSizeBytes, Checksum: row.Checksum}, nil
 }
 
 // ConfirmedMergeInput names the immutable merge evidence and its Merge Step.

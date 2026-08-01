@@ -21,8 +21,13 @@ export function fixtureTicket(overrides: Partial<TicketResponse> = {}): TicketRe
 export function fixtureAttempt(overrides: Partial<AttemptOutput> = {}): AttemptOutput {
   return {
     attemptNo: 1,
+    agentStage: "implement",
     model: "gpt-5.6-terra",
     effort: "medium",
+    state: "succeeded",
+    failureKind: "",
+    providerThreadId: "thread-implement-1",
+    usageState: "measured",
     measured: true,
     inputTokens: 12_400,
     cachedInputTokens: 8_000,
@@ -30,8 +35,10 @@ export function fixtureAttempt(overrides: Partial<AttemptOutput> = {}): AttemptO
     reasoningTokens: 1_100,
     startedAt: "2026-07-31T10:00:00Z",
     endedAt: "2026-07-31T10:47:00Z",
-    result: "succeeded",
+    result: { kind: "changes_pushed", head: "abc123" },
     hasTranscript: true,
+    transcriptPath:
+      "/v1/tickets/42/runs/019fb6a0-c159-7a3a-9067-eda7a63a8ac7/steps/1/attempts/1/transcript",
     ...overrides,
   };
 }
@@ -39,13 +46,16 @@ export function fixtureAttempt(overrides: Partial<AttemptOutput> = {}): AttemptO
 export function fixtureUnmeasuredAttempt(overrides: Partial<AttemptOutput> = {}): AttemptOutput {
   return fixtureAttempt({
     attemptNo: 2,
+    state: "running",
+    usageState: "unknown",
     measured: false,
     inputTokens: null,
     cachedInputTokens: null,
     outputTokens: null,
     reasoningTokens: null,
-    result: "",
+    result: null,
     hasTranscript: false,
+    transcriptPath: "",
     ...overrides,
   });
 }
@@ -53,10 +63,16 @@ export function fixtureUnmeasuredAttempt(overrides: Partial<AttemptOutput> = {})
 export function fixtureStep(overrides: Partial<StepOutput> = {}): StepOutput {
   const attempts = overrides.attempts ?? [fixtureAttempt()];
   return {
+    ordinal: 1,
+    kind: "implement",
+    iteration: 1,
+    reason: "initial",
+    state: "completed",
     stage: "implement",
     turn: 1,
     startedAt: attempts[0]?.startedAt ?? "2026-07-31T10:00:00Z",
     endedAt: attempts.at(-1)?.endedAt ?? null,
+    result: { kind: "changes_pushed", head: "abc123" },
     attempts,
     usage: rollup(attempts),
     ...overrides,
@@ -73,6 +89,8 @@ export function fixtureRun(overrides: Partial<RunOutput> = {}): RunOutput {
     endedAt: null,
     outcome: "",
     failureKind: "",
+    active: true,
+    phase: steps.at(-1)?.kind ?? "",
     steps,
     usage: rollup(allAttempts),
     ...overrides,

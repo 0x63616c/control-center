@@ -100,6 +100,19 @@ func (s *Store) RunsForTicket(ctx context.Context, ticket TicketID) ([]Run, erro
 	return runs, nil
 }
 
+// OpenLegacyRuns lists database Runs still owned by working/review Tickets.
+func (s *Store) OpenLegacyRuns(ctx context.Context) ([]Run, error) {
+	rows, err := s.q.OpenLegacyRuns(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing open legacy runs: %w", wrapQueryErr(err))
+	}
+	runs := make([]Run, 0, len(rows))
+	for _, row := range rows {
+		runs = append(runs, runFromRow(row))
+	}
+	return runs, nil
+}
+
 // RunDetail reads a Run together with every Step it has recorded and every
 // Attempt of each Step, for the console's detail view. It composes Run,
 // StepsForRun and AttemptsForRun rather than a fourth query, because nothing
