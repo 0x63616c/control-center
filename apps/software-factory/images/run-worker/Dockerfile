@@ -37,7 +37,7 @@ COPY apps/software-factory/ ./
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags="-s -w" -o /out/run-worker ./cmd/run-worker \
     && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath -ldflags="-s -w" -o /out/sandbox-worker ./cmd/sandbox-worker
+    go build -trimpath -ldflags="-s -w" -o /out/tool-worker ./cmd/tool-worker
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 2: the per-Run worker runtime.
@@ -209,7 +209,7 @@ RUN printf 'package main\nimport "C"\nfunc main() {}\n' > /tmp/cgo_check.go \
 # queue and is what CMD below actually runs. runWorkerBinaryPath in podspec.go
 # is a contract with this exact install path.
 COPY --from=build /out/run-worker /usr/local/bin/run-worker
-COPY --from=build /out/sandbox-worker /usr/local/bin/sandbox-worker
+COPY --from=build /out/tool-worker /usr/local/bin/tool-worker
 COPY apps/software-factory/images/run-worker/bin/git-credential-projected /usr/local/bin/git-credential-projected
 COPY apps/software-factory/images/run-worker/bin/gh /usr/local/bin/gh
 

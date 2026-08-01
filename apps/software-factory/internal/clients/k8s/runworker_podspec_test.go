@@ -207,8 +207,8 @@ func TestRunWorkerPodExposesToolMetricsWithoutCodexCredentialProjection(t *testi
 func TestRunWorkerPodSeparatesCredentialFreeToolsFromRepositoryActivities(t *testing.T) {
 	t.Parallel()
 	pod := mustBuildRunWorker(t)
-	tool := runWorkerContainer(t, pod, runWorkerToolContainerName)
-	if !reflect.DeepEqual(tool.Command, []string{runWorkerToolBinaryPath}) {
+	tool := runWorkerContainer(t, pod, "tool-worker")
+	if !reflect.DeepEqual(tool.Command, []string{"/usr/local/bin/tool-worker"}) {
 		t.Fatalf("tool command = %#v", tool.Command)
 	}
 	if len(tool.VolumeMounts) != 1 || tool.VolumeMounts[0].Name != workVolumeName || tool.VolumeMounts[0].MountPath != work.SandboxRoot {
@@ -222,8 +222,11 @@ func TestRunWorkerPodSeparatesCredentialFreeToolsFromRepositoryActivities(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if env[work.SandboxTaskQueueEnv] != wantQueue {
-		t.Fatalf("tool queue = %q, want %q", env[work.SandboxTaskQueueEnv], wantQueue)
+	if env[work.ToolWorkerTaskQueueEnv] != wantQueue {
+		t.Fatalf("tool queue = %q, want %q", env[work.ToolWorkerTaskQueueEnv], wantQueue)
+	}
+	if _, exists := env["SANDBOX_TASK_QUEUE"]; exists {
+		t.Fatal("target Tool Worker still publishes the retired SANDBOX_TASK_QUEUE name")
 	}
 	for _, forbidden := range []string{work.RunWorkerGitHubCredentialDir, work.RunWorkerCheckpointCapabilityDir, work.RunWorkerRepositoryCapabilityDir} {
 		for _, mount := range tool.VolumeMounts {

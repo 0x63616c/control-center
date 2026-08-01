@@ -186,3 +186,14 @@ const (
 	RunWorkerRepositoryCapabilityDir  = "/var/run/secrets/software-factory/repository-checkpoint"
 	RunWorkerRepositoryCapabilityFile = RunWorkerRepositoryCapabilityDir + "/capability"
 )
+
+// Published environment names shared by the target pod renderer and the
+// credential-free Tool Worker composition root. The queue name is explicit so
+// the sidecar reads the exact generation-specific value rendered by the
+// provisioner instead of reconstructing it independently.
+const (
+	ToolWorkerTaskQueueEnv         = "TOOL_WORKER_TASK_QUEUE"
+	ToolWorkerTemporalHostPortEnv  = "TEMPORAL_HOST_PORT"
+	ToolWorkerTemporalNamespaceEnv = "TEMPORAL_NAMESPACE"
+	ToolWorkerBlobsURLEnv          = "BLOBS_URL"
+)

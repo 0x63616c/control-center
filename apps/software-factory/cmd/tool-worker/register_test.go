@@ -12,18 +12,18 @@ func TestRegisterExposesOnlyTheGenericAgentToolActivity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading main.go: %v", err)
 	}
-	body := sandboxRegisterBody(t, string(source))
+	body := toolWorkerRegisterBody(t, string(source))
 	if !strings.Contains(body, "agent.ToolActivityName") {
-		t.Fatal("sandbox register() does not name the generic agent tool activity")
+		t.Fatal("Tool Worker register() does not name the generic agent tool activity")
 	}
 	for _, forbidden := range []string{"RunPlan", "RunImplement", "RunReview", "RegisterWorkflow"} {
 		if strings.Contains(body, forbidden) {
-			t.Errorf("sandbox register() exposes forbidden production registration %q", forbidden)
+			t.Errorf("Tool Worker register() exposes forbidden production registration %q", forbidden)
 		}
 	}
 }
 
-func sandboxRegisterBody(t *testing.T, source string) string {
+func toolWorkerRegisterBody(t *testing.T, source string) string {
 	t.Helper()
 	start := strings.Index(source, "func register(")
 	if start < 0 {

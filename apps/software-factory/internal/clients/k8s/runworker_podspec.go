@@ -16,9 +16,9 @@ import (
 
 const (
 	runWorkerBinaryPath                 = "/usr/local/bin/run-worker"
-	runWorkerToolBinaryPath             = "/usr/local/bin/sandbox-worker"
+	runWorkerToolBinaryPath             = "/usr/local/bin/tool-worker"
 	runWorkerContainerName              = "run-worker"
-	runWorkerToolContainerName          = "tools"
+	runWorkerToolContainerName          = "tool-worker"
 	runWorkerUID                  int64 = 1000
 	runWorkerGitHubVolumeName           = "github-credential"
 	runWorkerCheckpointVolumeName       = "checkpoint-capability"
@@ -89,11 +89,11 @@ func buildRunWorkerPod(spec work.RunWorkerSpec, o runWorkerOptions) (*corev1.Pod
 		return nil, fmt.Errorf("building Run Worker tool task queue: %w", err)
 	}
 	toolEnv := map[string]string{
-		work.SandboxTemporalHostPortEnv:  spec.Env[work.RunWorkerTemporalHostPortEnv],
-		work.SandboxTemporalNamespaceEnv: spec.Env[work.RunWorkerTemporalNamespaceEnv],
-		work.SandboxTaskQueueEnv:         toolTaskQueue,
-		work.SandboxBlobsURLEnv:          spec.Env[work.RunWorkerBlobsURLEnv],
-		config.PayloadCodecModeEnv:       "full",
+		work.ToolWorkerTemporalHostPortEnv:  spec.Env[work.RunWorkerTemporalHostPortEnv],
+		work.ToolWorkerTemporalNamespaceEnv: spec.Env[work.RunWorkerTemporalNamespaceEnv],
+		work.ToolWorkerTaskQueueEnv:         toolTaskQueue,
+		work.ToolWorkerBlobsURLEnv:          spec.Env[work.RunWorkerBlobsURLEnv],
+		config.PayloadCodecModeEnv:          "full",
 	}
 
 	uid := runWorkerUID
