@@ -126,3 +126,22 @@ cd apps/software-factory
 go test -tags=manual -run '^TestExportLegacyFactoryDispatcherHistory$' \
   ./internal/runworkercapability
 ```
+
+## Target dispatcher replay fixture
+
+`internal/workflows/testdata/target-dispatcher-admission.json` is an export
+from a Temporal CLI dev-server execution of the dormant v0 `Dispatcher`. It
+completes one `AwaitDispatchableTickets` activity and starts one
+`WorkOnTicket` child, preserving the wait-to-admission command sequence before
+the PR 8 registration cutover makes the workflow live.
+`TestTargetDispatcherHistoryReplays` registers the target dispatcher exactly
+as the eventual worker does and replays that checked-in JSON export.
+
+Regenerate it only through the manual dev-server test when intentionally
+refreshing this compatibility evidence:
+
+```sh
+cd apps/software-factory
+go test -tags=manual -run '^TestExportTargetDispatcherHistory$' \
+  ./internal/runworkercapability
+```

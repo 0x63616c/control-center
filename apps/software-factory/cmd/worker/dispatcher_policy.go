@@ -31,6 +31,8 @@ type targetDispatcherPolicyPublisher struct {
 	input     workflows.DispatcherInput
 }
 
+var _ dispatcherPolicyPublisher = targetDispatcherPolicyPublisher{}
+
 func (p targetDispatcherPolicyPublisher) PublishDispatcherPolicy(ctx context.Context, request dispatcherPolicyPublicationRequest) (workflows.DispatcherPublication, error) {
 	input := p.input
 	input.Policy = request.Policy
@@ -64,10 +66,8 @@ func ensureTargetDispatcherPolicy(ctx context.Context, publisher dispatcherPolic
 	if err != nil {
 		return fmt.Errorf("publishing target dispatcher policy: %w", err)
 	}
-	switch outcome {
-	case workflows.DispatcherPublicationApplied, workflows.DispatcherPublicationAlreadyCurrent:
+	if outcome == workflows.DispatcherPublicationApplied || outcome == workflows.DispatcherPublicationAlreadyCurrent {
 		return nil
-	default:
-		return fmt.Errorf("publishing target dispatcher policy: Temporal returned %q", outcome)
 	}
+	return fmt.Errorf("publishing target dispatcher policy: Temporal returned %q", outcome)
 }

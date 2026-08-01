@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -97,6 +98,43 @@ func TestProvisionExactRetryLeavesPodAndSecretsStable(t *testing.T) {
 	for _, action := range cs.Actions()[actionCount:] {
 		if action.GetVerb() == "update" || action.GetVerb() == "patch" || action.GetVerb() == "delete" {
 			t.Fatalf("exact retry performed mutating Kubernetes action: %s %s", action.GetVerb(), action.GetResource().Resource)
+		}
+	}
+}
+
+func TestListRunWorkersDiscoversUniquePodAndSecretIdentities(t *testing.T) {
+	ctx := context.Background()
+	cs := fake.NewSimpleClientset()
+	workers := mustRunWorkers(t, cs)
+	first := validRunWorkerSpec()
+	if _, err := workers.Provision(ctx, first, validRunWorkerSecrets()); err != nil {
+		t.Fatalf("Provision(first): %v", err)
+	}
+	second := first.Identity
+	second.Generation = 2
+	if _, err := cs.CoreV1().Secrets("software-factory").Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+		Name: "surviving-run-worker-secret",
+		Labels: map[string]string{
+			labelName:       "software-factory-run-worker",
+			labelManagedBy:  labelManagedByValue,
+			labelRunID:      second.RunID,
+			labelGeneration: "2",
+		},
+	}}, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("creating orphaned Run Worker Secret: %v", err)
+	}
+
+	got, err := workers.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	want := []work.RunWorkerIdentity{first.Identity, second}
+	if len(got) != len(want) {
+		t.Fatalf("List() = %+v, want %+v", got, want)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Errorf("List()[%d] = %+v, want %+v", index, got[index], want[index])
 		}
 	}
 }

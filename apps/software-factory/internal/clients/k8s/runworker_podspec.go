@@ -157,10 +157,10 @@ func projectedSecretVolume(volumeName, secretName string) corev1.Volume {
 
 func runWorkerLabels(spec work.RunWorkerSpec) map[string]string {
 	return map[string]string{
-		labelName:      "software-factory-run-worker",
-		labelManagedBy: labelManagedByValue,
-		labelTicket:    strconv.Itoa(spec.TicketNumber),
-		labelRunID:     spec.Identity.RunID,
-		"software-factory.worldwidewebb.co/generation": strconv.Itoa(spec.Identity.Generation),
+		labelName:       "software-factory-run-worker",
+		labelManagedBy:  labelManagedByValue,
+		labelTicket:     strconv.Itoa(spec.TicketNumber),
+		labelRunID:      spec.Identity.RunID,
+		labelGeneration: strconv.Itoa(spec.Identity.Generation),
 	}
 }

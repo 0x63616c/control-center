@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
@@ -175,7 +177,7 @@ func (r *RunWorkers) InstallRepositoryCapability(ctx context.Context, identity w
 	if err != nil {
 		return work.Credential{}, fmt.Errorf("reading Run Worker %s before repository capability install: %w", id, err)
 	}
-	if pod.Labels[labelRunID] != identity.RunID || pod.Labels["software-factory.worldwidewebb.co/generation"] != strconv.Itoa(identity.Generation) {
+	if pod.Labels[labelRunID] != identity.RunID || pod.Labels[labelGeneration] != strconv.Itoa(identity.Generation) {
 		return work.Credential{}, fmt.Errorf("run worker %s does not match repository capability identity: %w", id, work.ErrPermanent)
 	}
 	secrets := r.cs.CoreV1().Secrets(r.ns)
@@ -195,6 +197,60 @@ func (r *RunWorkers) InstallRepositoryCapability(ctx context.Context, identity w
 		return work.Credential{}, fmt.Errorf("run worker %s repository capability Secret differs from its generation: %w", id, work.ErrPermanent)
 	}
 	return work.NewCredential(installed), nil
+}
+
+// List returns the unique Run Worker identities discoverable from Pods and
+// projected Secrets. It reads metadata only, so maintenance can recover a
+// terminal Run whose pod or one of its Secrets survived a failed teardown
+// without exposing any credential value.
+func (r *RunWorkers) List(ctx context.Context) ([]work.RunWorkerIdentity, error) {
+	selector := labels.SelectorFromSet(labels.Set{labelName: "software-factory-run-worker", labelManagedBy: labelManagedByValue}).String()
+	pods, err := r.cs.CoreV1().Pods(r.ns).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return nil, fmt.Errorf("listing Run Worker Pods: %w", err)
+	}
+	secrets, err := r.cs.CoreV1().Secrets(r.ns).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return nil, fmt.Errorf("listing Run Worker Secrets: %w", err)
+	}
+	identities := make(map[work.RunWorkerIdentity]bool, len(pods.Items)+len(secrets.Items))
+	for _, pod := range pods.Items {
+		identity, err := runWorkerIdentityFromLabels(pod.Labels)
+		if err != nil {
+			return nil, fmt.Errorf("reading Run Worker Pod %s identity: %w", pod.Name, err)
+		}
+		identities[identity] = true
+	}
+	for _, secret := range secrets.Items {
+		identity, err := runWorkerIdentityFromLabels(secret.Labels)
+		if err != nil {
+			return nil, fmt.Errorf("reading Run Worker Secret %s identity: %w", secret.Name, err)
+		}
+		identities[identity] = true
+	}
+	result := make([]work.RunWorkerIdentity, 0, len(identities))
+	for identity := range identities {
+		result = append(result, identity)
+	}
+	sort.Slice(result, func(left, right int) bool {
+		if result[left].RunID == result[right].RunID {
+			return result[left].Generation < result[right].Generation
+		}
+		return result[left].RunID < result[right].RunID
+	})
+	return result, nil
+}
+
+func runWorkerIdentityFromLabels(labels map[string]string) (work.RunWorkerIdentity, error) {
+	generation, err := strconv.Atoi(labels[labelGeneration])
+	if err != nil {
+		return work.RunWorkerIdentity{}, fmt.Errorf("parsing generation %q: %w", labels[labelGeneration], err)
+	}
+	identity, err := work.NewRunWorkerIdentity(labels[labelRunID], generation)
+	if err != nil {
+		return work.RunWorkerIdentity{}, err
+	}
+	return identity, nil
 }
 
 // Delete removes a target worker and every per-generation Secret. Absence is

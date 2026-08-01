@@ -18,8 +18,10 @@ import (
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
 	temporalclient "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/clients/temporal"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/workflows"
+	"go.temporal.io/sdk/workflow"
 )
 
 func TestExportLegacyFactoryDispatcherHistory(t *testing.T) {
@@ -95,6 +97,80 @@ func TestExportLegacyFactoryDispatcherHistory(t *testing.T) {
 	if err := os.WriteFile(legacyHistoryFixture, append(encoded, '\n'), 0o600); err != nil {
 		t.Fatalf("writing %s: %v", legacyHistoryFixture, err)
 	}
+}
+
+// TestExportTargetDispatcherHistory captures the v0 dispatcher while it makes
+// its core admission decision. It remains manual-only because a real Temporal
+// server is what turns those commands into the history replay protects.
+func TestExportTargetDispatcherHistory(t *testing.T) {
+	server, err := testsuite.StartDevServer(context.Background(), testsuite.DevServerOptions{
+		CachedDownload: testsuite.CachedDownload{Version: "v1.8.1"},
+		LogLevel:       "error",
+	})
+	if err != nil {
+		t.Fatalf("starting Temporal dev server: %v", err)
+	}
+	t.Cleanup(func() {
+		if stopErr := server.Stop(); stopErr != nil {
+			t.Errorf("stopping Temporal dev server: %v", stopErr)
+		}
+	})
+
+	const queue = "target-dispatcher-history-export"
+	w := worker.New(server.Client(), queue, worker.Options{
+		Identity:               "target-dispatcher-history-exporter",
+		DisableEagerActivities: true,
+	})
+	w.RegisterWorkflow(workflows.Dispatcher)
+	w.RegisterWorkflowWithOptions(targetDispatcherFixtureChild, workflow.RegisterOptions{Name: "WorkOnTicket"})
+	w.RegisterActivityWithOptions(
+		func(context.Context) ([]store.Ticket, error) {
+			return []store.Ticket{{ID: 17, Title: "replay fixture admission", State: store.TicketOpen}}, nil
+		},
+		activity.RegisterOptions{Name: "AwaitDispatchableTickets"},
+	)
+	if err := w.Start(); err != nil {
+		t.Fatalf("starting target dispatcher worker: %v", err)
+	}
+	t.Cleanup(w.Stop)
+
+	run, err := server.Client().ExecuteWorkflow(context.Background(), temporalclient.StartWorkflowOptions{
+		ID:        work.TargetDispatcherWorkflowID + "-history",
+		TaskQueue: queue,
+	}, workflows.Dispatcher, workflows.DispatcherInput{
+		Policy:   work.DefaultDispatcherPolicy(),
+		CloneURL: "https://github.com/example/repository.git",
+		Model:    work.Model{Name: "gpt-5", Effort: "high"},
+	})
+	if err != nil {
+		t.Fatalf("starting target dispatcher: %v", err)
+	}
+
+	// The child cannot start until the wait activity completed and the parent
+	// emitted its StartChildWorkflow command. Let both workflow tasks settle
+	// before terminating the finite exported history.
+	time.Sleep(time.Second)
+	if err := server.Client().TerminateWorkflow(context.Background(), run.GetID(), run.GetRunID(), "fixture export"); err != nil {
+		t.Fatalf("terminating target dispatcher: %v", err)
+	}
+
+	history := readTemporalHistory(t, server, run.GetID(), run.GetRunID())
+	assertRepresentativeTargetDispatcherHistory(t, history)
+	encoded, err := (temporalproto.CustomJSONMarshalOptions{Indent: "  "}).Marshal(history)
+	if err != nil {
+		t.Fatalf("encoding target dispatcher history: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(targetDispatcherHistoryFixture), 0o755); err != nil {
+		t.Fatalf("creating fixture directory: %v", err)
+	}
+	if err := os.WriteFile(targetDispatcherHistoryFixture, append(encoded, '\n'), 0o600); err != nil {
+		t.Fatalf("writing %s: %v", targetDispatcherHistoryFixture, err)
+	}
+}
+
+func targetDispatcherFixtureChild(ctx workflow.Context, _ workflows.WorkOnTicketInput) error {
+	workflow.GetLogger(ctx).Info("target dispatcher replay fixture child started")
+	return workflow.Await(ctx, func() bool { return false })
 }
 
 func readTemporalHistory(t *testing.T, server *testsuite.DevServer, workflowID, runID string) *historypb.History {

@@ -20,6 +20,13 @@ type RunWorkerLifecycle interface {
 	Delete(context.Context, work.RunWorkerIdentity) error
 }
 
+// RunWorkerInventory lists only public Run and generation identities. It is a
+// separate capability from lifecycle mutation because maintenance needs an
+// inventory without ever reading projected Secret data.
+type RunWorkerInventory interface {
+	List(context.Context) ([]work.RunWorkerIdentity, error)
+}
+
 // GitHubCredentialSource mints one short-lived repository credential inside a
 // main-control activity. The credential must never be returned by that method.
 type GitHubCredentialSource interface {
@@ -218,6 +225,21 @@ func (a *RunWorkerControlActivities) DeleteRunWorker(ctx context.Context, in Del
 		return fail(ctx, "deleting the Run Worker", err)
 	}
 	return nil
+}
+
+// ListRunWorkers exposes the non-secret Kubernetes worker inventory to the
+// finite maintenance workflow. Normal run control does not require inventory,
+// so deployments without it fail explicitly instead of reporting no workers.
+func (a *RunWorkerControlActivities) ListRunWorkers(ctx context.Context) ([]work.RunWorkerIdentity, error) {
+	inventory, ok := a.deps.Workers.(RunWorkerInventory)
+	if !ok {
+		return nil, fail(ctx, "listing Run Workers", fmt.Errorf("run-worker lifecycle does not expose inventory: %w", work.ErrPermanent))
+	}
+	workers, err := inventory.List(ctx)
+	if err != nil {
+		return nil, fail(ctx, "listing Run Workers", err)
+	}
+	return workers, nil
 }
 
 func cloneRunWorkerEnv(in map[string]string) map[string]string {

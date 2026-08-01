@@ -70,10 +70,10 @@ func assertRepresentativeTargetDispatcherHistory(t *testing.T, history *historyp
 	activityCompleted := false
 	childStarted := false
 	for _, event := range history.Events {
-		switch event.GetEventType() {
-		case enums.EVENT_TYPE_ACTIVITY_TASK_COMPLETED:
+		if event.GetEventType() == enums.EVENT_TYPE_ACTIVITY_TASK_COMPLETED {
 			activityCompleted = true
-		case enums.EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED:
+		}
+		if event.GetEventType() == enums.EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED {
 			childStarted = true
 		}
 	}

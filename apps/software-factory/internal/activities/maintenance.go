@@ -8,11 +8,11 @@ import (
 )
 
 // TargetMaintenanceStore is the narrow persistent ownership view the
-// scheduled maintainer needs. It deliberately does not expose Run rows: an
-// active Ticket already contains the one Run ID whose ownership may be
-// conditionally released.
+// scheduled maintainer needs. Run is non-secret terminal evidence for an
+// inventoried Run Worker's cleanup; it never carries worker credentials.
 type TargetMaintenanceStore interface {
 	TicketsByState(context.Context, store.TicketState) ([]store.Ticket, error)
+	Run(context.Context, string) (store.Run, error)
 	ReconcileAbandonedRun(context.Context, string, store.TicketID) (bool, error)
 }
 
@@ -45,6 +45,17 @@ func (a *TargetMaintenanceActivities) ListActiveTargetRunOwners(ctx context.Cont
 		owners = append(owners, store.ActiveTargetRunOwner{TicketID: ticket.ID, RunID: ticket.ActiveRunID})
 	}
 	return owners, nil
+}
+
+// LookupTargetRun reads durable terminal evidence for one inventoried Run
+// Worker. A terminal Run can lose its teardown after its Ticket is already
+// done, so it cannot be found by active-ticket ownership alone.
+func (a *TargetMaintenanceActivities) LookupTargetRun(ctx context.Context, runID string) (store.Run, error) {
+	run, err := a.store.Run(ctx, runID)
+	if err != nil {
+		return store.Run{}, fail(ctx, fmt.Sprintf("reading target run %s", runID), err)
+	}
+	return run, nil
 }
 
 // ReconcileAbandonedTargetRun conditionally releases the exact active owner.
