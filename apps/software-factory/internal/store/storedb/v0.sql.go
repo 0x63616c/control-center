@@ -277,6 +277,36 @@ func (q *Queries) CompleteTargetRunCanceled(ctx context.Context, arg CompleteTar
 	return i, err
 }
 
+const completeTargetRunFailure = `-- name: CompleteTargetRunFailure :one
+UPDATE run SET target_outcome = 'failed', target_failure_kind = $2, ended_at = $3
+WHERE id = $1 AND target_outcome IS NULL
+RETURNING id, ticket_id, started_at, ended_at, outcome, failure_kind, target_outcome, target_failure_kind, reviewed_head, merge_sha
+`
+
+type CompleteTargetRunFailureParams struct {
+	ID                pgtype.UUID
+	TargetFailureKind string
+	EndedAt           pgtype.Timestamptz
+}
+
+func (q *Queries) CompleteTargetRunFailure(ctx context.Context, arg CompleteTargetRunFailureParams) (Run, error) {
+	row := q.db.QueryRow(ctx, completeTargetRunFailure, arg.ID, arg.TargetFailureKind, arg.EndedAt)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.TicketID,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.Outcome,
+		&i.FailureKind,
+		&i.TargetOutcome,
+		&i.TargetFailureKind,
+		&i.ReviewedHead,
+		&i.MergeSha,
+	)
+	return i, err
+}
+
 const completeTargetRunSuccess = `-- name: CompleteTargetRunSuccess :one
 UPDATE run SET target_outcome = 'succeeded', target_failure_kind = '',
     reviewed_head = $2, merge_sha = $3, ended_at = $4
@@ -372,6 +402,32 @@ type CompleteTargetTicketParams struct {
 
 func (q *Queries) CompleteTargetTicket(ctx context.Context, arg CompleteTargetTicketParams) (Ticket, error) {
 	row := q.db.QueryRow(ctx, completeTargetTicket, arg.ID, arg.ActiveRunID)
+	var i Ticket
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Body,
+		&i.State,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ActiveRunID,
+	)
+	return i, err
+}
+
+const failTargetTicket = `-- name: FailTargetTicket :one
+UPDATE ticket SET state = 'failed', active_run_id = NULL, updated_at = CURRENT_TIMESTAMP
+WHERE id = $1 AND state = 'active' AND active_run_id = $2
+RETURNING id, title, body, state, created_at, updated_at, active_run_id
+`
+
+type FailTargetTicketParams struct {
+	ID          int64
+	ActiveRunID pgtype.UUID
+}
+
+func (q *Queries) FailTargetTicket(ctx context.Context, arg FailTargetTicketParams) (Ticket, error) {
+	row := q.db.QueryRow(ctx, failTargetTicket, arg.ID, arg.ActiveRunID)
 	var i Ticket
 	err := row.Scan(
 		&i.ID,

@@ -471,6 +471,30 @@ func (f *Store) CancelRun(_ context.Context, in store.CancelRunInput) (store.Ter
 	return store.TerminalResult{Ticket: f.tickets[in.TicketID], Run: f.runs[in.RunID]}, nil
 }
 
+// FinalizeRunFailure conditionally records a terminal workflow failure.
+func (f *Store) FinalizeRunFailure(_ context.Context, in store.RunFailureInput) (store.TerminalResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	run, ok := f.runs[in.RunID]
+	if !ok || run.TicketID != in.TicketID {
+		return store.TerminalResult{}, fmt.Errorf("failure: %w", store.ErrRunOwnership)
+	}
+	ticket := f.tickets[in.TicketID]
+	if run.TargetOutcome != "" {
+		if run.TargetOutcome == work.RunOutcomeFailed && run.TargetFailure != in.FailureKind {
+			return store.TerminalResult{}, fmt.Errorf("failure: %w", work.ErrPermanent)
+		}
+		return store.TerminalResult{Ticket: ticket, Run: run}, nil
+	}
+	if ticket.State != store.TicketActive || ticket.ActiveRunID != in.RunID {
+		return store.TerminalResult{}, fmt.Errorf("failure: %w", store.ErrRunOwnership)
+	}
+	run.TargetOutcome, run.TargetFailure, run.EndedAt = work.RunOutcomeFailed, in.FailureKind, in.EndedAt
+	ticket.State, ticket.ActiveRunID, ticket.UpdatedAt = store.TicketFailed, "", f.clk.Now()
+	f.runs[in.RunID], f.tickets[in.TicketID] = run, ticket
+	return store.TerminalResult{Ticket: ticket, Run: run}, nil
+}
+
 // ReconcileAbandonedRun releases only nonterminal ownership without inventing an outcome.
 func (f *Store) ReconcileAbandonedRun(_ context.Context, runID string, ticketID store.TicketID) (bool, error) {
 	f.mu.Lock()

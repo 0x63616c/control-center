@@ -34,6 +34,8 @@ type WorkOnTicketInput struct {
 	Model    work.Model
 }
 
+type semanticDeadlineContextKey struct{}
+
 // WorkOnTicket claims one Ticket before creating generation one, creates its
 // private Run Worker Session, and clones the repository as that Session's
 // first repository-affine activity.
@@ -42,7 +44,24 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 	var session *targetRunSession
 	claimedRun := false
 	defer func() {
-		if !temporal.IsCanceledError(runErr) || !claimedRun {
+		if !claimedRun {
+			return
+		}
+		if failureKind, failed := terminalFailureKind(runErr); failed {
+			terminalCtx, cancel := workflow.NewDisconnectedContext(ctx)
+			defer cancel()
+			finalCtx := workflow.WithActivityOptions(terminalCtx, targetActivityOptions(in.Policy.Recording))
+			if err := workflow.ExecuteActivity(finalCtx, targetRecordingActs.FinalizeRunFailure, store.RunFailureInput{RunID: in.RunID, TicketID: in.TicketID, FailureKind: failureKind, EndedAt: workflow.Now(terminalCtx)}).Get(finalCtx, nil); err != nil {
+				runErr = fmt.Errorf("recording failed target run: %w", err)
+				return
+			}
+			if session != nil {
+				session.close()
+				session.delete(terminalCtx)
+			}
+			return
+		}
+		if !temporal.IsCanceledError(runErr) {
 			return
 		}
 		cleanupCtx, cancel := workflow.NewDisconnectedContext(ctx)
@@ -71,6 +90,7 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 		return fmt.Errorf("claiming ticket %d: %w", in.TicketID, err)
 	}
 	claimedRun = true
+	ctx = workflow.WithValue(ctx, semanticDeadlineContextKey{}, workflow.Now(ctx).Add(in.Policy.SemanticDeadline))
 
 	branch := work.FactoryTicketBranchName(int64(claimed.Ticket.ID), in.RunID)
 	session, err := newTargetRunSession(ctx, in, int(claimed.Ticket.ID), branch)
@@ -278,6 +298,9 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 }
 
 func startTargetStep(ctx workflow.Context, in WorkOnTicketInput, ordinal int, kind work.StepKind) error {
+	if err := requireSemanticTime(ctx); err != nil {
+		return err
+	}
 	recordingCtx := workflow.WithActivityOptions(ctx, targetActivityOptions(in.Policy.Recording))
 	if err := workflow.ExecuteActivity(recordingCtx, targetRecordingActs.StartStep, store.StartStepInput{
 		RunID: in.RunID, Ordinal: ordinal, Kind: kind, StartedAt: workflow.Now(ctx),
@@ -303,6 +326,9 @@ func runTargetAgentStep(ctx workflow.Context, session *targetRunSession, in Work
 	attemptContinuation := continuation
 	attemptStartedAt := make(map[int]time.Time, remainingAttempts)
 	for attemptNo := 1; attemptNo <= remainingAttempts; {
+		if err := requireSemanticTime(ctx); err != nil {
+			return activities.TargetAgentOutput{}, attemptNo - 1, err
+		}
 		attempt := store.TargetAttemptID{RunID: in.RunID, StepOrdinal: ordinal, AttemptNo: attemptNo}
 		startedAt, exists := attemptStartedAt[attemptNo]
 		if !exists {
@@ -508,6 +534,25 @@ func isRunWorkerSessionLoss(err error) bool {
 	}
 	var application *temporal.ApplicationError
 	return errors.As(err, &application) && application.Type() == activities.ErrTypeRunWorkerSessionLost
+}
+
+func requireSemanticTime(ctx workflow.Context) error {
+	deadline, ok := ctx.Value(semanticDeadlineContextKey{}).(time.Time)
+	if !ok {
+		return temporal.NewNonRetryableApplicationError("target run semantic deadline is unavailable", activities.ErrTypeInvalid, nil)
+	}
+	if !workflow.Now(ctx).Before(deadline) {
+		return temporal.NewNonRetryableApplicationError("target run reached its semantic deadline", activities.ErrTypeSemanticDeadline, nil)
+	}
+	return nil
+}
+
+func terminalFailureKind(err error) (work.RunFailureKind, bool) {
+	var application *temporal.ApplicationError
+	if errors.As(err, &application) && application.Type() == activities.ErrTypeSemanticDeadline {
+		return work.RunFailureSemanticDeadline, true
+	}
+	return work.RunFailureNone, false
 }
 
 func sameGenerationContinuation(session *targetRunSession, identity work.RunWorkerIdentity, threadID string) *activities.ProviderThreadContinuation {

@@ -40,6 +40,8 @@ const (
 	RunFailureRunWorkerUnavailable RunFailureKind = "run_worker_unavailable"
 	// RunFailurePersistenceUnavailable records exhausted durable recording retries.
 	RunFailurePersistenceUnavailable RunFailureKind = "persistence_unavailable"
+	// RunFailureSemanticDeadline records work stopped before the hard deadline's finalization reserve.
+	RunFailureSemanticDeadline RunFailureKind = "semantic_deadline"
 	// RunFailureInfrastructure records another classified infrastructure failure.
 	RunFailureInfrastructure RunFailureKind = "infrastructure"
 )

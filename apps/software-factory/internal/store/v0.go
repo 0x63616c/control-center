@@ -60,6 +60,7 @@ type TargetAgentRecorder interface {
 type TargetTerminalRecorder interface {
 	FinalizeConfirmedMerge(context.Context, ConfirmedMergeInput) (TerminalResult, error)
 	CancelRun(context.Context, CancelRunInput) (TerminalResult, error)
+	FinalizeRunFailure(context.Context, RunFailureInput) (TerminalResult, error)
 }
 
 // ClaimRunInput is the stable identity for an atomic target claim.
@@ -1070,6 +1071,76 @@ type CancelRunInput struct {
 	RunID    string
 	TicketID TicketID
 	EndedAt  time.Time
+}
+
+// RunFailureInput names a workflow-owned terminal failure of an unmerged Run.
+type RunFailureInput struct {
+	RunID       string
+	TicketID    TicketID
+	FailureKind work.RunFailureKind
+	EndedAt     time.Time
+}
+
+// FinalizeRunFailure atomically records a specific failed Run and moves only
+// its still-owned Ticket to failed. Existing cancellation or confirmed merge is
+// authoritative and returned unchanged, so a late failure cannot reverse it.
+func (s *Store) FinalizeRunFailure(ctx context.Context, in RunFailureInput) (TerminalResult, error) {
+	if s.begin == nil {
+		return TerminalResult{}, fmt.Errorf("failing run: store cannot begin a transaction")
+	}
+	id, err := pgUUID(in.RunID)
+	if err != nil {
+		return TerminalResult{}, fmt.Errorf("failing run: %w", err)
+	}
+	tx, err := s.begin.Begin(ctx)
+	if err != nil {
+		return TerminalResult{}, fmt.Errorf("failing run: beginning transaction: %w", wrapQueryErr(err))
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := s.q.WithTx(tx)
+	runRow, err := q.TargetRunForUpdate(ctx, id)
+	if err != nil {
+		return TerminalResult{}, fmt.Errorf("failing run: reading run: %w", wrapQueryErr(err))
+	}
+	if runRow.TicketID != int64(in.TicketID) {
+		return TerminalResult{}, fmt.Errorf("failing run: %w", ErrRunOwnership)
+	}
+	ticketRow, err := q.TargetTicketForUpdate(ctx, int64(in.TicketID))
+	if err != nil {
+		return TerminalResult{}, fmt.Errorf("failing run: reading ticket: %w", wrapQueryErr(err))
+	}
+	if runRow.TargetOutcome.Valid {
+		if runRow.TargetOutcome.String == string(work.RunOutcomeFailed) && runRow.TargetFailureKind != string(in.FailureKind) {
+			return TerminalResult{}, fmt.Errorf("failing run: conflicting terminal result: %w", work.ErrPermanent)
+		}
+		ticket, parseErr := ticketFromRow(ticketRow)
+		if parseErr != nil {
+			return TerminalResult{}, parseErr
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return TerminalResult{}, fmt.Errorf("failing run retry: committing: %w", wrapQueryErr(err))
+		}
+		return TerminalResult{Ticket: ticket, Run: runFromRow(runRow)}, nil
+	}
+	if ticketRow.State != TicketActive.String() || ticketRow.ActiveRunID != id {
+		return TerminalResult{}, fmt.Errorf("failing run: %w", ErrRunOwnership)
+	}
+	failedRun, err := q.CompleteTargetRunFailure(ctx, storedb.CompleteTargetRunFailureParams{ID: id, TargetFailureKind: string(in.FailureKind), EndedAt: pgTimestamp(in.EndedAt)})
+	if err != nil {
+		return TerminalResult{}, fmt.Errorf("failing run: completing run: %w", wrapQueryErr(err))
+	}
+	failedTicket, err := q.FailTargetTicket(ctx, storedb.FailTargetTicketParams{ID: int64(in.TicketID), ActiveRunID: id})
+	if err != nil {
+		return TerminalResult{}, fmt.Errorf("failing run: completing ticket: %w", ErrRunOwnership)
+	}
+	ticket, err := ticketFromRow(failedTicket)
+	if err != nil {
+		return TerminalResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return TerminalResult{}, fmt.Errorf("failing run: committing: %w", wrapQueryErr(err))
+	}
+	return TerminalResult{Ticket: ticket, Run: runFromRow(failedRun)}, nil
 }
 
 // ReconcileAbandonedRun conditionally releases an active Ticket after direct

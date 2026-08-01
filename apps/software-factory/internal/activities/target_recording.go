@@ -22,6 +22,7 @@ type TargetRunRecorder interface {
 	CheckpointGitEffect(context.Context, store.GitCheckpointInput) (store.GitCheckpoint, error)
 	FinalizeConfirmedMerge(context.Context, store.ConfirmedMergeInput) (store.TerminalResult, error)
 	CancelRun(context.Context, store.CancelRunInput) (store.TerminalResult, error)
+	FinalizeRunFailure(context.Context, store.RunFailureInput) (store.TerminalResult, error)
 }
 
 // TargetRecordingActivities adapts target Store persistence to Temporal activities.
@@ -112,6 +113,15 @@ func (a *TargetRecordingActivities) CancelRun(ctx context.Context, in store.Canc
 	result, err := a.store.CancelRun(ctx, in)
 	if err != nil {
 		return store.TerminalResult{}, fail(ctx, fmt.Sprintf("canceling run %s", in.RunID), err)
+	}
+	return result, nil
+}
+
+// FinalizeRunFailure commits a workflow-owned terminal failure.
+func (a *TargetRecordingActivities) FinalizeRunFailure(ctx context.Context, in store.RunFailureInput) (store.TerminalResult, error) {
+	result, err := a.store.FinalizeRunFailure(ctx, in)
+	if err != nil {
+		return store.TerminalResult{}, fail(ctx, fmt.Sprintf("finalizing failed run %s", in.RunID), err)
 	}
 	return result, nil
 }
