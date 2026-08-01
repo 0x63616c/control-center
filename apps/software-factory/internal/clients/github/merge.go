@@ -28,6 +28,10 @@ const pullRequestMergeStateQuery = `query($owner: String!, $repo: String!, $numb
   }
 }`
 
+// mergeDiagnosticMaxBytes keeps untrusted GitHub text small in activity results
+// and Temporal history while leaving enough context for the next Step.
+const mergeDiagnosticMaxBytes = 2 << 10
+
 type pullRequestMergeStateResponse struct {
 	Data struct {
 		Repository struct {
@@ -71,6 +75,9 @@ func (c *Client) MergePullRequest(ctx context.Context, number int, expectedHeadS
 			MergeSHA: merged.GetSHA(),
 		})
 	}
+	if alreadyClassified(err) {
+		return c.recordMergeError(ctx, number, expectedHeadSHA, classify(ctx, op, err))
+	}
 	if mergePermissionRejected(err) {
 		return c.recordMergeError(ctx, number, expectedHeadSHA, rulesetRejected(op, err))
 	}
@@ -90,9 +97,10 @@ func (c *Client) MergePullRequest(ctx context.Context, number int, expectedHeadS
 	}
 
 	diagnostic := mergeMessage(err, merged)
+	boundedDiagnostic := boundedMergeDiagnostic(diagnostic)
 	result := classifyMergeState(state, expectedHeadSHA, diagnostic)
 	if result.Outcome == work.PullRequestMergeRetryableAmbiguity && repositoryPolicyRejected(diagnostic) {
-		return c.recordMergeError(ctx, number, expectedHeadSHA, rulesetRejected(op, errors.New(diagnostic)))
+		return c.recordMergeError(ctx, number, expectedHeadSHA, rulesetRejected(op, errors.New(boundedDiagnostic)))
 	}
 	return c.recordMergeOutcome(ctx, number, expectedHeadSHA, result)
 }
@@ -112,6 +120,7 @@ func (c *Client) recordMergeOutcome(
 		)
 		return result, nil
 	}
+	result.Diagnostic = boundedMergeDiagnostic(result.Diagnostic)
 
 	c.log.InfoContext(ctx, "classified pull request merge outcome",
 		"pull_request", number,
@@ -292,6 +301,10 @@ func mergeMessage(err error, result *gh.PullRequestMergeResult) string {
 		return response.Message
 	}
 	return ""
+}
+
+func boundedMergeDiagnostic(diagnostic string) string {
+	return truncateUTF8(diagnostic, mergeDiagnosticMaxBytes)
 }
 
 func baseRefreshRequired(diagnostic string) bool {

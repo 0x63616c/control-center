@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+	gh "github.com/google/go-github/v78/github"
 )
 
 const mergePath = "/repos/" + testOwner + "/" + testRepo + "/pulls/9/merge"
@@ -155,6 +158,65 @@ func TestMergePullRequestDoesNotConfirmA200ResponseWithMergedFalse(t *testing.T)
 	assertMergeOutcomeLog(t, logs, work.PullRequestMergeRetryableAmbiguity, "")
 }
 
+func TestMergePullRequestBoundsExternalDiagnosticsWithoutSplittingUTF8(t *testing.T) {
+	t.Parallel()
+
+	const wantDiagnosticMaxBytes = 2 << 10
+	oversized := strings.Repeat("界", wantDiagnosticMaxBytes)
+	cases := map[string]struct {
+		status       int
+		mergeability string
+		want         work.PullRequestMergeOutcome
+	}{
+		"HTTP 200 merged false": {
+			status:       http.StatusOK,
+			mergeability: "UNKNOWN",
+			want:         work.PullRequestMergeRetryableAmbiguity,
+		},
+		"conflict response": {
+			status:       http.StatusConflict,
+			mergeability: "CONFLICTING",
+			want:         work.PullRequestMergeTextConflict,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			s, _ := newStub(t)
+			s.handle("PUT "+mergePath, func(w http.ResponseWriter, _ *http.Request) {
+				if tc.status == http.StatusOK {
+					writeJSON(w, tc.status, map[string]any{"merged": false, "sha": "", "message": oversized})
+					return
+				}
+				writeError(w, tc.status, oversized)
+			})
+			s.handle("POST /graphql", func(w http.ResponseWriter, _ *http.Request) {
+				writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"repository": map[string]any{
+					"pullRequest": reconciledPullRequest("OPEN", "reviewed-head", tc.mergeability, false, ""),
+				}}})
+			})
+			c, logs := s.client(t)
+
+			result, err := c.MergePullRequest(t.Context(), 9, "reviewed-head")
+			if err != nil {
+				t.Fatalf("MergePullRequest: %v", err)
+			}
+			if result.Outcome != tc.want {
+				t.Fatalf("outcome = %s, want %s", result.Outcome, tc.want)
+			}
+			if len(result.Diagnostic) == 0 || len(result.Diagnostic) > wantDiagnosticMaxBytes {
+				t.Fatalf("diagnostic bytes = %d, want 1..%d", len(result.Diagnostic), wantDiagnosticMaxBytes)
+			}
+			if !utf8.ValidString(result.Diagnostic) {
+				t.Fatalf("diagnostic ends inside a UTF-8 rune: %q", result.Diagnostic)
+			}
+			assertMergeOutcomeLog(t, logs, tc.want, "")
+		})
+	}
+}
+
 func TestMergePullRequestDoesNotConfirmA200ResponseMissingTheMergeSHA(t *testing.T) {
 	t.Parallel()
 
@@ -193,6 +255,50 @@ func TestMergePullRequestClassifiesAForbiddenMergeAsRepairableRepositoryPolicy(t
 		t.Fatalf("error = %v, want a retryable repository-policy classification distinct from bad credentials", err)
 	}
 	assertMergeFailureLog(t, logs)
+}
+
+func TestMergePullRequestPreservesPreclassifiedForbiddenTransportErrors(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		classified error
+		wantKind   error
+		permanent  bool
+	}{
+		"authentication": {
+			classified: fmt.Errorf("refreshing the installation token: %w (%w)", ErrAuth, work.ErrPermanent),
+			wantKind:   ErrAuth,
+			permanent:  true,
+		},
+		"rate limit": {
+			classified: fmt.Errorf("refreshing the installation token: %w", ErrRateLimit),
+			wantKind:   ErrRateLimit,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			forbidden := &gh.ErrorResponse{
+				Response: &http.Response{StatusCode: http.StatusForbidden},
+				Message:  "token refresh forbidden",
+			}
+			transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return nil, fmt.Errorf("installation transport: %w: %w", tc.classified, forbidden)
+			})
+			s, _ := newStub(t)
+			c, _ := s.clientWithOptions(t, WithHTTPClient(&http.Client{Transport: transport}))
+
+			_, err := c.MergePullRequest(t.Context(), 9, "reviewed-head")
+			if !errors.Is(err, tc.wantKind) || errors.Is(err, ErrRuleset) {
+				t.Fatalf("error = %v, want preserved %v without repository-policy classification", err, tc.wantKind)
+			}
+			if got := errors.Is(err, work.ErrPermanent); got != tc.permanent {
+				t.Fatalf("error permanence = %t, want %t: %v", got, tc.permanent, err)
+			}
+		})
+	}
 }
 
 func TestMergePullRequestClassifiesPolicyRefusalsAfterAuthoritativeReconciliation(t *testing.T) {
@@ -450,6 +556,9 @@ func assertMergeOutcomeLog(t *testing.T, logs *bytes.Buffer, outcome work.PullRe
 	}
 	if mergeSHA != "" && (!hasMergeSHA || gotMergeSHA != mergeSHA) {
 		t.Fatalf("merge outcome log = %v, want merge_sha %q", record, mergeSHA)
+	}
+	if _, exists := record["diagnostic"]; exists {
+		t.Fatalf("merge outcome log = %v, want no untrusted diagnostic", record)
 	}
 }
 
