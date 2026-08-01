@@ -129,3 +129,32 @@ func TestMustSetRejectsBlankToolIdentity(t *testing.T) {
 		})
 	}
 }
+
+func TestMustSetRejectsNilTools(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil interface", func(t *testing.T) {
+		defer func() {
+			panicValue := recover()
+			if message := fmt.Sprint(panicValue); !strings.Contains(message, "nil tool") {
+				t.Fatalf("panic = %q", message)
+			}
+		}()
+		agenttool.MustSet("coding-read-v1", nil)
+	})
+
+	t.Run("typed nil", func(t *testing.T) {
+		tool := agenttool.Bind(
+			agenttool.Define[readInput]("read_file", "Read a repository file."),
+			func(_ context.Context, _ readInput) (agenttool.Result, error) { return agenttool.Result{}, nil },
+		)
+		tool = nil
+		defer func() {
+			panicValue := recover()
+			if message := fmt.Sprint(panicValue); !strings.Contains(message, "nil tool") {
+				t.Fatalf("panic = %q", message)
+			}
+		}()
+		agenttool.MustSet("coding-read-v1", tool)
+	})
+}

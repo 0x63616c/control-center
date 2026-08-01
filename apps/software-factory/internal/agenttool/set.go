@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 )
@@ -36,6 +37,9 @@ func MustSet(id ToolsetID, tools ...runtimeTool) Set {
 		specifications: make([]Specification, 0, len(tools)),
 	}
 	for _, tool := range tools {
+		if isNilRuntimeTool(tool) {
+			panic(fmt.Sprintf("agenttool: nil tool in toolset %q", id))
+		}
 		specification := tool.Specification()
 		if strings.TrimSpace(specification.Name) == "" {
 			panic(fmt.Sprintf("agenttool: tool name is blank in toolset %q", id))
@@ -61,6 +65,19 @@ func MustSet(id ToolsetID, tools ...runtimeTool) Set {
 	}
 	set.fingerprint = fmt.Sprintf("sha256:%x", sha256.Sum256(canonical))
 	return set
+}
+
+func isNilRuntimeTool(tool runtimeTool) bool {
+	if tool == nil {
+		return true
+	}
+	value := reflect.ValueOf(tool)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
 }
 
 // Specifications returns model-facing definitions in deterministic name order.
