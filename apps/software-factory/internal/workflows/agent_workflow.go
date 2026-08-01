@@ -50,6 +50,7 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (AgentWorkflo
 	}
 	result := AgentWorkflowResult{TranscriptRef: prepared.TranscriptRef, UsageMeasured: true}
 	conversationRef := prepared.ConversationRef
+	var sessionContext workflow.Context
 	for modelTurn := 1; modelTurn <= input.Limits.MaxModelTurns; modelTurn++ {
 		var turn agent.ModelTurnResult
 		if err := workflow.ExecuteActivity(mainContext, agent.ModelTurnActivityName, agent.ModelTurnInput{
@@ -63,7 +64,56 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (AgentWorkflo
 		result.Usage = result.Usage.Add(turn.Usage)
 		result.UsageMeasured = result.UsageMeasured && turn.UsageMeasured
 		conversationRef = turn.ConversationRef
-		if turn.Outcome != agent.OutcomeFinalText {
+		switch turn.Outcome {
+		case agent.OutcomeToolCalls:
+			if len(turn.ToolCalls) == 0 {
+				return result, temporal.NewNonRetryableApplicationError(
+					"agent tool-call turn contained no calls", agent.ErrorTypeInvalidProviderOutcome, nil,
+				)
+			}
+			if result.ToolCalls+len(turn.ToolCalls) > input.Limits.MaxToolCalls {
+				return result, temporal.NewNonRetryableApplicationError(
+					"agent tool-call budget exhausted", "AgentToolCallBudget", nil,
+				)
+			}
+			if sessionContext == nil {
+				sandboxQueue := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+					TaskQueue: work.SandboxTaskQueue(input.Attempt.Key.RunID),
+				})
+				created, err := workflow.CreateSession(sandboxQueue, &workflow.SessionOptions{
+					ExecutionTimeout: work.SessionExecutionTimeout,
+					CreationTimeout:  work.SessionCreationTimeout,
+				})
+				if err != nil {
+					return result, fmt.Errorf("create agent sandbox session: %w", err)
+				}
+				sessionContext = created
+				defer workflow.CompleteSession(sessionContext)
+			}
+			toolContext := workflow.WithActivityOptions(sessionContext, workflow.ActivityOptions{
+				StartToCloseTimeout: 2 * time.Minute,
+				HeartbeatTimeout:    15 * time.Second,
+				WaitForCancellation: true,
+				RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: 2},
+			})
+			for _, call := range turn.ToolCalls {
+				var toolOutput agent.ToolOutput
+				if err := workflow.ExecuteActivity(toolContext, agent.ToolActivityName, agent.ToolInput{
+					ToolsetID: input.ToolsetID, ConversationRef: conversationRef, Call: call,
+				}).Get(ctx, &toolOutput); err != nil {
+					return result, fmt.Errorf("run agent tool %q: %w", call.Name, err)
+				}
+				if toolOutput.CallID != call.CallID {
+					return result, temporal.NewNonRetryableApplicationError(
+						"agent tool output call id mismatch", agent.ErrorTypeInvalidProviderOutcome, nil,
+					)
+				}
+				conversationRef = toolOutput.ConversationRef
+				result.ToolCalls++
+			}
+			continue
+		case agent.OutcomeFinalText:
+		default:
 			return result, temporal.NewNonRetryableApplicationError(
 				fmt.Sprintf("agent model turn returned unsupported outcome %q", turn.Outcome),
 				agent.ErrorTypeInvalidProviderOutcome,
