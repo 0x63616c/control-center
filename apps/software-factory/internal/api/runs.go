@@ -127,15 +127,6 @@ func (service *Service) getTicketRuns(ctx context.Context, input *ticketRunsInpu
 	return output, nil
 }
 
-// transcriptSet indexes keys for a fast hasTranscript lookup per Attempt.
-func transcriptSet(keys []store.TranscriptKey) map[store.TranscriptKey]bool {
-	set := make(map[store.TranscriptKey]bool, len(keys))
-	for _, k := range keys {
-		set[k] = true
-	}
-	return set
-}
-
 func runOutputFrom(detail store.RunHistory) runOutput {
 	usage, complete := historyUsage(detail.Steps)
 	outcome := string(detail.Run.TargetOutcome)

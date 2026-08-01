@@ -107,5 +107,7 @@ func (s *Store) RecordWebhookDeliveryAndTransition(ctx context.Context, delivery
 	return outcome, nil
 }
 
-var _ WebhookDeliveryRecorder = (*Store)(nil)
-var _ WebhookDeliveryAcknowledger = (*Store)(nil)
+var (
+	_ WebhookDeliveryRecorder     = (*Store)(nil)
+	_ WebhookDeliveryAcknowledger = (*Store)(nil)
+)

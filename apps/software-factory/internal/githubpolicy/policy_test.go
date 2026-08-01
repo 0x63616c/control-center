@@ -9,15 +9,15 @@ import (
 func TestVerifyRequiresApprovalBypassAndSeparatelyEnforcedChecks(t *testing.T) {
 	rulesets := []githubpolicy.Ruleset{
 		{
-			Name:        "pull request approval",
-			Enforcement: "active",
+			Name:         "pull request approval",
+			Enforcement:  "active",
 			BypassActors: []githubpolicy.BypassActor{{ActorID: 42, ActorType: "Integration", BypassMode: "pull_request"}},
-			Rules: []githubpolicy.Rule{{Type: "pull_request", Parameters: githubpolicy.Parameters{RequiredApprovingReviewCount: 1}}},
+			Rules:        []githubpolicy.Rule{{Type: "pull_request", Parameters: githubpolicy.Parameters{RequiredApprovingReviewCount: 1}}},
 		},
 		{
 			Name:        "required checks",
 			Enforcement: "active",
-			Rules: []githubpolicy.Rule{{Type: "required_status_checks", Parameters: githubpolicy.Parameters{RequiredStatusChecks: []githubpolicy.StatusCheck{{Context: "test"}, {Context: "typecheck"}}}}},
+			Rules:       []githubpolicy.Rule{{Type: "required_status_checks", Parameters: githubpolicy.Parameters{RequiredStatusChecks: []githubpolicy.StatusCheck{{Context: "test"}, {Context: "typecheck"}}}}},
 		},
 	}
 
@@ -32,8 +32,8 @@ func TestVerifyRequiresApprovalBypassAndSeparatelyEnforcedChecks(t *testing.T) {
 
 func TestVerifyRejectsChecksInARulesetTheAppCanBypass(t *testing.T) {
 	rulesets := []githubpolicy.Ruleset{{
-		Name:        "one bypassable ruleset",
-		Enforcement: "active",
+		Name:         "one bypassable ruleset",
+		Enforcement:  "active",
 		BypassActors: []githubpolicy.BypassActor{{ActorID: 42, ActorType: "Integration", BypassMode: "pull_request"}},
 		Rules: []githubpolicy.Rule{
 			{Type: "pull_request", Parameters: githubpolicy.Parameters{RequiredApprovingReviewCount: 1}},

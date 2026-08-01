@@ -151,13 +151,13 @@ func TestExecuteRefusesUnknownModeBeforeMutation(t *testing.T) {
 }
 
 type fakeDependencies struct {
-	workflows    []WorkflowExecution
-	pullRequests []PullRequest
-	tickets      []LegacyTicket
-	calls        []string
+	workflows                []WorkflowExecution
+	pullRequests             []PullRequest
+	tickets                  []LegacyTicket
+	calls                    []string
 	disableAutoMergeFailures int
-	asynchronousTermination bool
-	staleTicketOnReopen bool
+	asynchronousTermination  bool
+	staleTicketOnReopen      bool
 }
 
 func newFakeDependencies() *fakeDependencies {

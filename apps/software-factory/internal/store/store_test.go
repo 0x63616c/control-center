@@ -252,17 +252,20 @@ func TestReopenLegacyTicketsMovesOnlyWorkingAndReviewInOneOperation(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.TransitionTicketState(ctx, working.ID, store.TicketOpen, store.TicketWorking); err != nil {
+	working, err = s.TransitionTicketState(ctx, working.ID, store.TicketOpen, store.TicketWorking)
+	if err != nil {
 		t.Fatal(err)
 	}
 	review, err := s.CreateTicket(ctx, "review", "legacy", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.TransitionTicketState(ctx, review.ID, store.TicketOpen, store.TicketWorking); err != nil {
+	review, err = s.TransitionTicketState(ctx, review.ID, store.TicketOpen, store.TicketWorking)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.TransitionTicketState(ctx, review.ID, store.TicketWorking, store.TicketReview); err != nil {
+	review, err = s.TransitionTicketState(ctx, review.ID, store.TicketWorking, store.TicketReview)
+	if err != nil {
 		t.Fatal(err)
 	}
 	done, err := s.CreateTicket(ctx, "done", "target", nil)
@@ -273,7 +276,7 @@ func TestReopenLegacyTicketsMovesOnlyWorkingAndReviewInOneOperation(t *testing.T
 		t.Fatal(err)
 	}
 
-	reopened, err := s.ReopenLegacyTickets(ctx)
+	reopened, err := s.ReopenLegacyTickets(ctx, []store.Ticket{working, review})
 	if err != nil {
 		t.Fatalf("ReopenLegacyTickets: %v", err)
 	}
@@ -288,6 +291,44 @@ func TestReopenLegacyTicketsMovesOnlyWorkingAndReviewInOneOperation(t *testing.T
 	gotDone, err := s.Ticket(ctx, done.ID)
 	if err != nil || gotDone.State != store.TicketDone {
 		t.Fatalf("done ticket = %+v, %v; want unchanged", gotDone, err)
+	}
+}
+
+func TestReopenLegacyTicketsRollsBackEveryRowWhenOneSnapshotIsStale(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	first, err := s.CreateTicket(ctx, "first", "legacy", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err = s.TransitionTicketState(ctx, first.ID, store.TicketOpen, store.TicketWorking)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.CreateTicket(ctx, "second", "legacy", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err = s.TransitionTicketState(ctx, second.ID, store.TicketOpen, store.TicketWorking)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleSecond := second
+	if _, err := s.TransitionTicketState(ctx, second.ID, store.TicketWorking, store.TicketReview); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.ReopenLegacyTickets(ctx, []store.Ticket{first, staleSecond}); err == nil {
+		t.Fatal("ReopenLegacyTickets accepted a stale second snapshot")
+	}
+	gotFirst, err := s.Ticket(ctx, first.ID)
+	if err != nil || gotFirst.State != store.TicketWorking {
+		t.Fatalf("first Ticket = %+v, %v; want transaction rollback to working", gotFirst, err)
+	}
+	gotSecond, err := s.Ticket(ctx, second.ID)
+	if err != nil || gotSecond.State != store.TicketReview {
+		t.Fatalf("second Ticket = %+v, %v; want concurrent review state preserved", gotSecond, err)
 	}
 }
 

@@ -38,6 +38,13 @@ type TicketStateWriter interface {
 	TransitionTicketState(ctx context.Context, id TicketID, from, to TicketState) (Ticket, error)
 }
 
+// LegacyTicketReopener performs the cutover-only optimistic repair from the
+// two legacy nonterminal states. The complete expected snapshots prevent a
+// concurrent state write from being mistaken for cutover-owned work.
+type LegacyTicketReopener interface {
+	ReopenLegacyTickets(ctx context.Context, expected []Ticket) ([]Ticket, error)
+}
+
 // ReadyTicketLister lists the Tickets the dispatcher may start next: open,
 // with every dependency done. The dispatcher is this method's one caller.
 type ReadyTicketLister interface {
@@ -104,6 +111,50 @@ func (s *Store) TicketsByState(ctx context.Context, state TicketState) ([]Ticket
 		return nil, fmt.Errorf("listing %s tickets: %w", state, wrapQueryErr(err))
 	}
 	return ticketsFromRows(rows)
+}
+
+// ReopenLegacyTickets atomically reopens exactly expected. A changed state or
+// updated_at version aborts the whole transaction, leaving every row untouched.
+func (s *Store) ReopenLegacyTickets(ctx context.Context, expected []Ticket) ([]Ticket, error) {
+	if len(expected) == 0 {
+		return []Ticket{}, nil
+	}
+	if s.begin == nil {
+		return nil, fmt.Errorf("reopening legacy tickets: store cannot begin a transaction")
+	}
+	tx, err := s.begin.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("reopening legacy tickets: beginning transaction: %w", wrapQueryErr(err))
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	q := s.q.WithTx(tx)
+	reopened := make([]Ticket, 0, len(expected))
+	for _, snapshot := range expected {
+		if snapshot.State != TicketWorking && snapshot.State != TicketReview {
+			return nil, fmt.Errorf("reopening legacy ticket %d: expected state %s is not legacy nonterminal", snapshot.ID, snapshot.State)
+		}
+		row, queryErr := q.ReopenLegacyTicket(ctx, storedb.ReopenLegacyTicketParams{
+			ID:        int64(snapshot.ID),
+			State:     snapshot.State.String(),
+			UpdatedAt: pgTimestamp(snapshot.UpdatedAt),
+		})
+		if errors.Is(queryErr, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("reopening legacy ticket %d: state/version changed after inventory", snapshot.ID)
+		}
+		if queryErr != nil {
+			return nil, fmt.Errorf("reopening legacy ticket %d: %w", snapshot.ID, wrapQueryErr(queryErr))
+		}
+		ticket, parseErr := ticketFromRow(row)
+		if parseErr != nil {
+			return nil, fmt.Errorf("reopening legacy ticket %d: parsing updated row: %w", snapshot.ID, parseErr)
+		}
+		reopened = append(reopened, ticket)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("reopening legacy tickets: committing transaction: %w", wrapQueryErr(err))
+	}
+	return reopened, nil
 }
 
 // UpdateTicketState moves ticket id to state and returns the updated row.

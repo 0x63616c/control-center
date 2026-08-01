@@ -4,6 +4,7 @@ package cutover
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -13,17 +14,22 @@ import (
 type Mode string
 
 const (
+	// ModeInventory observes the complete legacy boundary without mutation.
 	ModeInventory Mode = "inventory"
-	ModeDryRun    Mode = "dry-run"
-	ModeApply     Mode = "apply"
+	// ModeDryRun emits the actions apply would take without performing them.
+	ModeDryRun Mode = "dry-run"
+	// ModeApply performs the explicit quiesce and repair sequence.
+	ModeApply Mode = "apply"
 )
 
 // WorkflowKind distinguishes the singleton dispatcher from per-Ticket Runs.
 type WorkflowKind string
 
 const (
+	// WorkflowDispatcher identifies the pre-redesign singleton dispatcher.
 	WorkflowDispatcher WorkflowKind = "dispatcher"
-	WorkflowTicket     WorkflowKind = "ticket"
+	// WorkflowTicket identifies one pre-redesign per-ticket execution.
+	WorkflowTicket WorkflowKind = "ticket"
 )
 
 // WorkflowExecution is one still-open pre-redesign Temporal execution.
@@ -46,8 +52,9 @@ type PullRequest struct {
 
 // LegacyTicket is a Ticket still in the old working/review vocabulary.
 type LegacyTicket struct {
-	ID    int64  `json:"id"`
-	State string `json:"state"`
+	ID      int64  `json:"id"`
+	State   string `json:"state"`
+	Version string `json:"version"`
 }
 
 // Inventory is the complete cutover safety view at one instant.
@@ -80,6 +87,19 @@ type Options struct {
 	GracePeriod time.Duration
 }
 
+// ErrNotReady identifies a completed gate whose final inventory still blocks
+// target activation. Callers can distinguish that operational refusal from an
+// unavailable dependency while retaining the complete report.
+var ErrNotReady = errors.New("software factory cutover is not ready")
+
+// NotReadyError carries the exact report that made an apply refuse activation.
+type NotReadyError struct {
+	Report Report
+}
+
+func (err *NotReadyError) Error() string { return ErrNotReady.Error() }
+func (err *NotReadyError) Unwrap() error { return ErrNotReady }
+
 // Temporal is the exact legacy-execution control surface the gate needs.
 type Temporal interface {
 	ListLegacyExecutions(context.Context) ([]WorkflowExecution, error)
@@ -99,7 +119,7 @@ type GitHub interface {
 // Tickets owns the single transactional legacy-state repair.
 type Tickets interface {
 	ListLegacyTickets(context.Context) ([]LegacyTicket, error)
-	ReopenLegacyTickets(context.Context) ([]LegacyTicket, error)
+	ReopenLegacyTickets(context.Context, []LegacyTicket) ([]LegacyTicket, error)
 }
 
 // Dependencies groups the three independently fakeable external boundaries.
@@ -137,14 +157,23 @@ func Execute(ctx context.Context, dependencies Dependencies, options Options) (R
 		return report, nil
 	}
 
-	dispatchers, tickets := splitExecutions(before.Workflows)
+	dispatchers, _ := splitExecutions(before.Workflows)
 	if len(dispatchers) > 0 {
 		if err := dependencies.Temporal.PauseLegacyDispatcher(ctx); err != nil {
 			return report, fmt.Errorf("pausing legacy dispatcher: %w", err)
 		}
 		report.Actions = append(report.Actions, Action{Kind: "pause_dispatcher", Target: dispatchers[0].ID, Status: "applied"})
 	}
-	for _, pullRequest := range before.PullRequests {
+
+	// Re-inventory after Temporal accepted the pause signal. Anything admitted
+	// in the initial inventory/pause race is included in this run; anything
+	// admitted later is caught by the closure inventory before ticket repair.
+	quiesced, err := inventory(ctx, dependencies)
+	if err != nil {
+		return report, fmt.Errorf("inventorying after dispatcher pause: %w", err)
+	}
+	dispatchers, tickets := splitExecutions(quiesced.Workflows)
+	for _, pullRequest := range quiesced.PullRequests {
 		if !pullRequest.AutoMergeEnabled {
 			continue
 		}
@@ -171,15 +200,30 @@ func Execute(ctx context.Context, dependencies Dependencies, options Options) (R
 			return report, fmt.Errorf("terminating legacy execution %s/%s: %w", execution.ID, execution.RunID, err)
 		}
 		report.Actions = append(report.Actions, Action{Kind: "terminate_workflow", Target: executionTarget(execution), Status: "applied"})
+		if _, err := dependencies.Temporal.AwaitLegacyExecutionClosed(ctx, execution, options.GracePeriod); err != nil {
+			return report, fmt.Errorf("proving terminated legacy execution %s/%s closed: %w", execution.ID, execution.RunID, err)
+		}
 	}
 	for _, dispatcher := range dispatchers {
 		if err := dependencies.Temporal.TerminateLegacyDispatcher(ctx, dispatcher); err != nil {
 			return report, fmt.Errorf("terminating legacy dispatcher %s/%s: %w", dispatcher.ID, dispatcher.RunID, err)
 		}
 		report.Actions = append(report.Actions, Action{Kind: "terminate_dispatcher", Target: executionTarget(dispatcher), Status: "applied"})
+		if _, err := dependencies.Temporal.AwaitLegacyExecutionClosed(ctx, dispatcher, options.GracePeriod); err != nil {
+			return report, fmt.Errorf("proving terminated legacy dispatcher %s/%s closed: %w", dispatcher.ID, dispatcher.RunID, err)
+		}
 	}
-	if len(before.Tickets) > 0 {
-		reopened, err := dependencies.Tickets.ReopenLegacyTickets(ctx)
+
+	closedInventory, err := inventory(ctx, dependencies)
+	if err != nil {
+		return report, fmt.Errorf("verifying legacy workflows closed: %w", err)
+	}
+	report.After = closedInventory
+	if len(closedInventory.Workflows) > 0 {
+		return report, &NotReadyError{Report: report}
+	}
+	if len(quiesced.Tickets) > 0 {
+		reopened, err := dependencies.Tickets.ReopenLegacyTickets(ctx, quiesced.Tickets)
 		if err != nil {
 			return report, fmt.Errorf("reopening legacy tickets: %w", err)
 		}
@@ -194,6 +238,9 @@ func Execute(ctx context.Context, dependencies Dependencies, options Options) (R
 	}
 	report.After = after
 	report.Ready = ready(after)
+	if !report.Ready {
+		return report, &NotReadyError{Report: report}
+	}
 	return report, nil
 }
 
@@ -209,6 +256,11 @@ func inventory(ctx context.Context, dependencies Dependencies) (Inventory, error
 	tickets, err := dependencies.Tickets.ListLegacyTickets(ctx)
 	if err != nil {
 		return Inventory{}, fmt.Errorf("listing legacy tickets: %w", err)
+	}
+	for _, execution := range workflows {
+		if execution.Kind != WorkflowDispatcher && execution.Kind != WorkflowTicket {
+			return Inventory{}, fmt.Errorf("legacy workflow %s/%s has unknown kind %q", execution.ID, execution.RunID, execution.Kind)
+		}
 	}
 	sort.Slice(workflows, func(left, right int) bool {
 		if workflows[left].Kind != workflows[right].Kind {

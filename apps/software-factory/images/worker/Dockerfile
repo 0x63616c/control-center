@@ -22,6 +22,8 @@ RUN go mod download
 COPY apps/software-factory/ ./
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags="-s -w" -o /out/worker ./cmd/worker
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags="-s -w" -o /out/factoryctl ./cmd/factoryctl
 
 # distroless static: no shell, no package manager, nothing to exec into. That is
 # worth more here than in any other image in this repo — this is the only
@@ -35,6 +37,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 FROM gcr.io/distroless/static-debian12:nonroot
 
 COPY --from=build /out/worker /usr/local/bin/worker
+COPY --from=build /out/factoryctl /usr/local/bin/factoryctl
 
 # 65532 is distroless's `nonroot`. It is a contract with F1's Deployment: the
 # transcript volume is NFS-backed, and its fsGroup must match this uid's group
