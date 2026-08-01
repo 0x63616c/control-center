@@ -155,6 +155,8 @@ type productionEvidence struct {
 
 type productionSecretRedactor struct{}
 
+func (productionSecretRedactor) Prime(context.Context) error { return nil }
+
 func (productionSecretRedactor) Redact(_ context.Context, raw []byte) ([]byte, error) {
 	return bytes.Clone(raw), nil
 }

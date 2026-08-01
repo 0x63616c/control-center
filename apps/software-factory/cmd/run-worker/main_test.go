@@ -20,6 +20,8 @@ import (
 
 type runWorkerTestRedactor struct{}
 
+func (runWorkerTestRedactor) Prime(context.Context) error { return nil }
+
 func (runWorkerTestRedactor) Redact(_ context.Context, raw []byte) ([]byte, error) {
 	return bytes.Clone(raw), nil
 }
@@ -183,7 +185,7 @@ func TestRunTargetAgentRedactsPriorCredentialAfterProjectionRotation(t *testing.
 	stage := &sessionStageRunner{
 		filesystem: filesystem,
 		events:     [][]byte{[]byte(`{"type":"thread.started","thread_id":"thread-42"}`), []byte(`{"type":"item.completed","item":{"text":"github-token-before-rotation"}}`)},
-		afterEvents: func() {
+		beforeEvents: func() {
 			files[work.RunWorkerGitHubTokenFile] = []byte("github-token-after-rotation")
 		},
 		result: work.StageResult{
@@ -284,15 +286,19 @@ func (r *sessionRepository) Prepare(_ context.Context, _, _ string) (string, err
 }
 
 type sessionStageRunner struct {
-	filesystem  *pinnedFilesystem
-	result      work.StageResult
-	events      [][]byte
-	afterEvents func()
+	filesystem   *pinnedFilesystem
+	result       work.StageResult
+	events       [][]byte
+	beforeEvents func()
+	afterEvents  func()
 }
 
 func (r *sessionStageRunner) RunTargetStage(_ context.Context, _ work.StageRun, _ string, events work.StageEventSink) (work.StageResult, error) {
 	if err := r.filesystem.observe("agent"); err != nil {
 		return work.StageResult{}, err
+	}
+	if r.beforeEvents != nil {
+		r.beforeEvents()
 	}
 	stream := r.events
 	if len(stream) == 0 {
