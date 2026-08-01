@@ -116,7 +116,7 @@ func TestSessionPinsRepositoryWorkToOneIsolatedPrivateWorker(t *testing.T) {
 	server := startServer(t)
 	rootOne := t.TempDir()
 	rootTwo := t.TempDir()
-	startWorker(t, mainCapabilityWorker(server.Client()))
+	startWorker(t, mainCapabilityWorker(server.Client(), "main"))
 	privateOne := startPrivateWorkerProcess(t, server.FrontendHostPort(), privateQueueOne, "private-one", rootOne)
 	privateTwo := startPrivateWorkerProcess(t, server.FrontendHostPort(), privateQueueTwo, "private-two", rootTwo)
 
@@ -168,7 +168,7 @@ func TestSessionPinsRepositoryWorkToOneIsolatedPrivateWorker(t *testing.T) {
 func TestSessionCreationWaitsForRunWorkerReadiness(t *testing.T) {
 	server := startServer(t)
 	root := t.TempDir()
-	startWorker(t, mainCapabilityWorker(server.Client()))
+	startWorker(t, mainCapabilityWorker(server.Client(), "main"))
 
 	run, err := server.Client().ExecuteWorkflow(context.Background(), temporalclient.StartWorkflowOptions{
 		ID:        "session-target-readiness",
@@ -202,7 +202,7 @@ func TestSessionCreationWaitsForRunWorkerReadiness(t *testing.T) {
 func TestSessionStaysOnItsPrivateProcessAcrossAMainWorkerRestart(t *testing.T) {
 	server := startServer(t)
 	rootOne := t.TempDir()
-	mainWorker := mainCapabilityWorker(server.Client())
+	mainWorker := mainCapabilityWorker(server.Client(), "main-initial")
 	if err := mainWorker.Start(); err != nil {
 		t.Fatalf("starting initial main worker: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestSessionStaysOnItsPrivateProcessAcrossAMainWorkerRestart(t *testing.T) {
 	waitForFile(t, filepath.Join(rootOne, "repository.marker"), "first private activity marker")
 
 	mainWorker.Stop()
-	startWorker(t, mainCapabilityWorker(server.Client()))
+	startWorker(t, mainCapabilityWorker(server.Client(), "main-replacement"))
 	if err := server.Client().SignalWorkflow(context.Background(), run.GetID(), run.GetRunID(), "continue", "resume"); err != nil {
 		t.Fatalf("signalling workflow after main-worker restart: %v", err)
 	}
@@ -234,8 +234,15 @@ func TestSessionStaysOnItsPrivateProcessAcrossAMainWorkerRestart(t *testing.T) {
 	if evidence.First.Worker != "private-one" || evidence.Second.Worker != "private-one" ||
 		evidence.First.ProcessID != privateOne.processID() || evidence.Second.ProcessID != privateOne.processID() ||
 		evidence.First.Marker != "repository-state-v1" || evidence.Second.Marker != "repository-state-v1" ||
-		evidence.Control != "main-control" {
+		evidence.Control != "main-replacement-control" {
 		t.Fatalf("evidence after main-worker restart = %#v", evidence)
+	}
+	operations := make([]string, 0, len(evidence.Repository))
+	for _, operation := range evidence.Repository {
+		operations = append(operations, operation.Operation)
+	}
+	if !slices.Equal(operations, []string{"clone", "agent", "ci", "pull_request", "merge"}) {
+		t.Fatalf("repository operations across main-worker restart = %v", operations)
 	}
 }
 
@@ -243,7 +250,7 @@ func TestSessionLossLeavesMainControlAndRoutesAReplacementToItsOwnRoot(t *testin
 	server := startServer(t)
 	rootOne := t.TempDir()
 	rootTwo := t.TempDir()
-	startWorker(t, mainCapabilityWorker(server.Client()))
+	startWorker(t, mainCapabilityWorker(server.Client(), "main"))
 	privateOne := startPrivateWorkerProcess(t, server.FrontendHostPort(), privateQueueOne, "private-one", rootOne)
 
 	run, err := server.Client().ExecuteWorkflow(context.Background(), temporalclient.StartWorkflowOptions{
@@ -377,17 +384,25 @@ func sessionRestartWorkflow(ctx workflow.Context, in sessionWorkflowInput) (sess
 	}
 	defer workflow.CompleteSession(sessionCtx)
 
-	var result sessionEvidence
-	first := sessionActivityInput{Operation: "clone", MarkerName: in.MarkerName, Marker: in.Marker, Write: true}
-	if err := workflow.ExecuteActivity(sessionCtx, cloneActivityName, first).Get(sessionCtx, &result.First); err != nil {
+	result := sessionEvidence{Repository: make([]sessionActivityEvidence, 0, len(targetRepositoryActivities))}
+	first := sessionActivityInput{MarkerName: in.MarkerName, Marker: in.Marker, Write: true}
+	var firstEvidence sessionActivityEvidence
+	if err := workflow.ExecuteActivity(sessionCtx, cloneActivityName, first).Get(sessionCtx, &firstEvidence); err != nil {
 		return sessionEvidence{}, fmt.Errorf("running first private activity: %w", err)
 	}
+	result.Repository = append(result.Repository, firstEvidence)
 	var continueRun string
 	workflow.GetSignalChannel(ctx, "continue").Receive(ctx, &continueRun)
-	second := sessionActivityInput{Operation: "agent", MarkerName: in.MarkerName}
-	if err := workflow.ExecuteActivity(sessionCtx, agentActivityName, second).Get(sessionCtx, &result.Second); err != nil {
-		return sessionEvidence{}, fmt.Errorf("running second private activity: %w", err)
+	for _, definition := range targetRepositoryActivities[1:] {
+		var evidence sessionActivityEvidence
+		input := sessionActivityInput{MarkerName: in.MarkerName}
+		if err := workflow.ExecuteActivity(sessionCtx, definition.Name, input).Get(sessionCtx, &evidence); err != nil {
+			return sessionEvidence{}, fmt.Errorf("running %s private activity: %w", definition.Operation, err)
+		}
+		result.Repository = append(result.Repository, evidence)
 	}
+	result.First = result.Repository[0]
+	result.Second = result.Repository[1]
 	controlCtx := mainControlActivityContext(ctx)
 	if err := workflow.ExecuteActivity(controlCtx, controlActivityName).Get(controlCtx, &result.Control); err != nil {
 		return sessionEvidence{}, fmt.Errorf("running main-control activity: %w", err)
@@ -460,14 +475,14 @@ func createCapabilitySession(ctx workflow.Context, privateQueue string) (workflo
 	})
 }
 
-func mainCapabilityWorker(c temporalclient.Client) worker.Worker {
+func mainCapabilityWorker(c temporalclient.Client, identity string) worker.Worker {
 	w := worker.New(c, mainQueue, worker.Options{})
 	w.RegisterWorkflow(sessionEvidenceWorkflow)
 	w.RegisterWorkflow(sessionReadinessWorkflow)
 	w.RegisterWorkflow(sessionRestartWorkflow)
 	w.RegisterWorkflow(sessionLossWorkflow)
 	w.RegisterActivityWithOptions(
-		func(context.Context) (string, error) { return "main-control", nil },
+		func(context.Context) (string, error) { return identity + "-control", nil },
 		activity.RegisterOptions{Name: controlActivityName},
 	)
 	return w
