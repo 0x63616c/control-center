@@ -739,11 +739,11 @@ func TestWorkOnTicketCountsUnresumableReplacementAgainstTheRunWideAttemptBudget(
 	}
 }
 
-// A failed Session loses its generation's filesystem and provider state. The
-// workflow must first retire that generation, then create exactly one
-// replacement and continue from the durable Step boundary without resetting
-// the Run-wide attempt budget.
-func TestWorkOnTicketReplacesLostSessionWithoutRerunningCompletedSteps(t *testing.T) {
+// A lost response leaves the worker unable to tell whether the provider
+// completed. The replacement must reconcile the same durable Attempt before
+// authorizing another one. Here generation two returns the checkpointed output,
+// so only generation one represents a provider call.
+func TestWorkOnTicketReconcilesSameAttemptAfterLostAgentResponse(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	s := storefake.New()
@@ -753,8 +753,10 @@ func TestWorkOnTicketReplacesLostSessionWithoutRerunningCompletedSteps(t *testin
 	}
 	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000015", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
 	h := newWorkOnTicketHarness(t, s)
+	providerCalls := 0
 	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
 		if input.Stage == work.AgentStageImplement && input.CredentialRevision.Identity.Generation == 1 {
+			providerCalls++
 			return targetAgentOutput(t, input.Stage), temporal.NewNonRetryableApplicationError("Run Worker Session lost", activities.ErrTypeRunWorkerSessionLost, nil)
 		}
 		return targetAgentOutput(t, input.Stage), nil
@@ -791,15 +793,64 @@ func TestWorkOnTicketReplacesLostSessionWithoutRerunningCompletedSteps(t *testin
 			implements = append(implements, input)
 		}
 	}
-	if len(implements) != 2 || implements[0].AttemptID.AttemptNo != 1 || implements[0].CredentialRevision.Identity.Generation != 1 || implements[1].AttemptID.AttemptNo != 2 || implements[1].CredentialRevision.Identity.Generation != 2 || implements[1].PriorProviderThread != nil {
-		t.Fatalf("implement recovery = %+v, want fresh generation-two attempt without provider continuation", implements)
+	if providerCalls != 1 || len(implements) != 2 || implements[0].AttemptID.AttemptNo != 1 || implements[0].CredentialRevision.Identity.Generation != 1 || implements[1].AttemptID.AttemptNo != 1 || implements[1].CredentialRevision.Identity.Generation != 2 || implements[1].PriorProviderThread != nil {
+		t.Fatalf("implement recovery = calls %d / inputs %+v, want checkpoint reconciliation of the same Attempt without another provider call", providerCalls, implements)
 	}
 	detail, err := s.TargetRunDetail(ctx, in.RunID)
 	if err != nil {
 		t.Fatalf("TargetRunDetail: %v", err)
 	}
-	if len(detail.Steps) != 8 || detail.Steps[1].Step.Kind != work.StepPlan || len(detail.Steps[1].Attempts) != 1 || len(detail.Steps[2].Attempts) != 2 || detail.Steps[2].Attempts[0].State != work.AgentAttemptFailed {
-		t.Fatalf("durable recovery detail = %+v, want completed plan once and failed/fresh implementation attempts", detail)
+	if len(detail.Steps) != 8 || detail.Steps[1].Step.Kind != work.StepPlan || len(detail.Steps[1].Attempts) != 1 || len(detail.Steps[2].Attempts) != 1 || detail.Steps[2].Attempts[0].State != work.AgentAttemptRunning {
+		t.Fatalf("durable recovery detail = %+v, want completed plan once and the same implementation Attempt reconciled after loss", detail)
+	}
+}
+
+// Replacement generations serialize, but a later loss after the prior
+// recovery completed may advance the same Run again without resetting any
+// budget or leaving the preceding generation active.
+func TestWorkOnTicketSerializesSequentialSessionReplacements(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "two lost sessions", "recover twice", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000019", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
+		if input.Stage == work.AgentStageImplement && input.CredentialRevision.Identity.Generation < 3 {
+			return targetAgentOutput(t, input.Stage), temporal.NewNonRetryableApplicationError("Run Worker Session lost", activities.ErrTypeRunWorkerSessionLost, nil)
+		}
+		return targetAgentOutput(t, input.Stage), nil
+	}
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket: %v", err)
+	}
+	if len(h.provisionedInputs) != 3 || h.provisionedInputs[2].Identity.Generation != 3 {
+		t.Fatalf("provisioned generations = %+v, want sequential generations one through three", h.provisionedInputs)
+	}
+	for generation := 1; generation <= 2; generation++ {
+		provision, deleted := -1, -1
+		for index, operation := range h.controlSequence {
+			if operation == "provision:"+strconv.Itoa(generation+1) && provision == -1 {
+				provision = index
+			}
+			if operation == "delete:"+strconv.Itoa(generation) && deleted == -1 {
+				deleted = index
+			}
+		}
+		if deleted < 0 || provision <= deleted {
+			t.Fatalf("generation %d lifecycle = %v, want delete before next provision", generation, h.controlSequence)
+		}
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	if len(detail.Steps[2].Attempts) != 1 || detail.Steps[2].Attempts[0].ID.AttemptNo != 1 {
+		t.Fatalf("implementation attempts = %+v, want the same reconciled Attempt across sequential Session losses", detail.Steps[2].Attempts)
 	}
 }
 
@@ -908,6 +959,113 @@ func TestWorkOnTicketCleansUpWorkerWhenSessionCreationTimesOut(t *testing.T) {
 	}
 	if claimed.State != store.TicketActive || claimed.ActiveRunID != in.RunID {
 		t.Fatalf("ticket after failed Session creation = %+v, want still-active failed Run ownership", claimed)
+	}
+}
+
+// Cancellation before the ownership claim has committed must leave the
+// Ticket untouched. In particular, the disconnected cancellation finalizer
+// must not invent a canceled Run that was never admitted.
+func TestWorkOnTicketCancellationBeforeClaimLeavesTicketUntouched(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "cancel before claim", "do not admit this run", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000020", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.env.RegisterDelayedCallback(func() { h.env.CancelWorkflow() }, 0)
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); !temporal.IsCanceledError(err) {
+		t.Fatalf("WorkOnTicket cancellation error = %v, want cancellation", err)
+	}
+	got, err := s.Ticket(ctx, ticket.ID)
+	if err != nil {
+		t.Fatalf("Ticket: %v", err)
+	}
+	if got.State != store.TicketOpen || got.ActiveRunID != "" {
+		t.Fatalf("ticket after pre-claim cancellation = %+v, want untouched open ticket", got)
+	}
+	if _, err := s.TargetRunDetail(ctx, in.RunID); err == nil {
+		t.Fatal("TargetRunDetail succeeded for a run canceled before claim")
+	}
+}
+
+// Cancellation after claim is durable core work: it disconnects from the
+// canceled execution, returns only the owned Ticket to open, and tears down
+// the Run Worker after stopping the in-flight agent activity.
+func TestWorkOnTicketCancellationDuringAgentReopensTheOwnedTicket(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "cancel active run", "stop during implementation", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000018", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.pendingImplement = true
+	h.env.RegisterDelayedCallback(func() { h.env.CancelWorkflow() }, time.Minute)
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); !temporal.IsCanceledError(err) {
+		t.Fatalf("WorkOnTicket cancellation error = %v, want cancellation", err)
+	}
+	got, err := s.Ticket(ctx, ticket.ID)
+	if err != nil {
+		t.Fatalf("Ticket: %v", err)
+	}
+	if got.State != store.TicketOpen || got.ActiveRunID != "" {
+		t.Fatalf("canceled ticket = %+v, want reopened with no owner", got)
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	if detail.Run.TargetOutcome != work.RunOutcomeCanceled || len(h.deleted) != int(in.Policy.Teardown.Retry.MaximumAttempts) || h.deleted[0].Identity.Generation != 1 {
+		t.Fatalf("cancellation outcome = run %+v / deletes %+v, want durable cancellation despite bounded teardown failure", detail.Run, h.deleted)
+	}
+}
+
+// Once GitHub has confirmed the merge, the terminal Store recording is core
+// work. A late workflow cancellation cannot replace that success with a
+// canceled outcome, and disconnected teardown still receives its bounded
+// cleanup attempt afterward.
+func TestWorkOnTicketConfirmedMergeWinsLateCancellation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "late cancellation", "merge is authoritative", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000021", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.env.SetOnActivityStartedListener(func(info *activity.Info, _ context.Context, _ converter.EncodedValues) {
+		if info.ActivityType.Name == "FinalizeConfirmedMerge" {
+			h.env.CancelWorkflow()
+		}
+	})
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket after confirmed merge: %v", err)
+	}
+	got, err := s.Ticket(ctx, ticket.ID)
+	if err != nil {
+		t.Fatalf("Ticket: %v", err)
+	}
+	if got.State != store.TicketDone || got.ActiveRunID != "" {
+		t.Fatalf("ticket after confirmed merge = %+v, want durable done terminal", got)
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	if detail.Run.TargetOutcome != work.RunOutcomeSucceeded || len(h.deleted) != int(in.Policy.Teardown.Retry.MaximumAttempts) {
+		t.Fatalf("late cancellation result = run %+v / deletes %+v, want success with bounded cleanup", detail.Run, h.deleted)
 	}
 }
 
