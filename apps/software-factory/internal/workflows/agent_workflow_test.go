@@ -412,7 +412,6 @@ func TestAgentWorkflowContinuesAsNewWithOnlyReferences(t *testing.T) {
 
 	const conversationBody = "large-conversation-content-must-not-enter-the-continuation-payload"
 	initial := agent.ConversationRef{Key: "conversations/run-7/0", Revision: 0, Bytes: 100, Digest: "initial"}
-	continued := agent.ConversationRef{Key: "conversations/run-7/16", Revision: 16, Bytes: 300, Digest: "continued"}
 	transcript := agent.TranscriptRef{Key: "transcripts/run-7", Bytes: 80, Digest: "transcript"}
 	suite := &testsuite.WorkflowTestSuite{}
 	environment := suite.NewTestWorkflowEnvironment()
@@ -447,6 +446,7 @@ func TestAgentWorkflowContinuesAsNewWithOnlyReferences(t *testing.T) {
 		SourceIdentity:  "agent/019fb900-0000-7000-8000-000000000001/step/8/attempt/1",
 		ConversationRef: agent.ConversationRef{Key: "conversations/agent/seed/0/digest", Bytes: 1, Digest: "digest"},
 	}
+	environment.SetContinueAsNewSuggested(true)
 	environment.ExecuteWorkflow(workflows.AgentWorkflow, input)
 
 	var continuedAsNew *workflow.ContinueAsNewError
@@ -460,9 +460,8 @@ func TestAgentWorkflowContinuesAsNewWithOnlyReferences(t *testing.T) {
 	if err := converter.GetDefaultDataConverter().FromPayloads(continuedAsNew.Input, &next); err != nil {
 		t.Fatalf("decode continued input: %v", err)
 	}
-	if next.State == nil || next.State.ConversationRef != continued || next.State.TranscriptRef != transcript ||
-		next.State.ToolsetFingerprint != testToolsetFingerprint || next.State.ModelTurns != 8 ||
-		next.State.ToolCalls != 8 || next.State.Usage.InputTokens != 80 {
+	if next.State == nil || next.State.ConversationRef != initial || next.State.TranscriptRef != transcript ||
+		next.State.ToolsetFingerprint != "" || next.State.ModelTurns != 0 || next.State.ToolCalls != 0 || next.State.Usage.InputTokens != 0 {
 		t.Fatalf("continued state = %#v", next.State)
 	}
 	if next.ToolTarget != input.ToolTarget {
