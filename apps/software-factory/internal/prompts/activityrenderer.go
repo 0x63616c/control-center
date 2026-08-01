@@ -27,9 +27,9 @@ func NewActivityRenderer(renderer *Renderer) *ActivityRenderer {
 // Render renders a stage's prompt and returns it with that stage's own
 // output schema, looked up by stageSchema.
 func (a *ActivityRenderer) Render(
-	key work.StageKey, detail work.TicketDetail, prior work.PriorTurns,
+	key work.StageKey, detail work.TicketDetail, prior work.PriorTurns, promptContext work.AgentPromptContext, maxReviewSteps int,
 ) (prompt string, schema []byte, err error) {
-	prompt, err = a.renderer.Render(Input{Stage: key.Stage, Turn: key.Turn, Ticket: detail, Prior: prior})
+	prompt, err = a.renderer.Render(Input{Stage: key.Stage, Turn: key.Turn, Ticket: detail, Prior: prior, PromptContext: promptContext, MaxReviewTurns: maxReviewSteps})
 	if err != nil {
 		return "", nil, err
 	}

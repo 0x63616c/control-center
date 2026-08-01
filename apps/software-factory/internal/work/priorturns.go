@@ -49,10 +49,10 @@ type PriorTurns struct {
 	// MaxReviewTurns and each entry is a handful of one-line strings, so the
 	// ledger's whole size is a constant, not a function of run length. That
 	// is precisely what the implement turns have no analogue of — implement
-	// runs up to MaxImplementTurnsPerWindow*MaxReviewTurns times carrying a
+	// runs up to its immutable review budget times carrying a
 	// full report each, which is the O(N^2) history this type was built to
 	// stop. A ledger of implement reports would reintroduce it; a ledger of
-	// at most MaxReviewTurns finding lists cannot.
+	// bounded number of finding lists cannot.
 	//
 	// LatestReview does not subsume it. LatestReview is one turn's document;
 	// the ledger is the run's whole review memory, and without it a turn's

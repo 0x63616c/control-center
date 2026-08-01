@@ -23,6 +23,13 @@ type targetRepositoryProbe struct {
 	url, branch string
 	head        string
 	calls       int
+	carryHead   string
+}
+
+func (p *targetRepositoryProbe) PrepareFromCommit(_ context.Context, url, branch, commit string) (string, error) {
+	p.calls++
+	p.url, p.branch, p.carryHead = url, branch, commit
+	return p.head, nil
 }
 
 func (p *targetRepositoryProbe) Prepare(_ context.Context, url, branch string) (string, error) {
@@ -32,16 +39,23 @@ func (p *targetRepositoryProbe) Prepare(_ context.Context, url, branch string) (
 }
 
 type targetGitHubProbe struct {
-	commitSHA  string
-	required   []string
-	checks     []work.CheckRun
-	pr         work.PullRequest
-	merge      work.PullRequestMergeResult
-	merges     []work.PullRequestMergeResult
-	mergeHeads []string
-	syncCalls  int
-	readyCalls int
-	mergeCalls int
+	commitSHA    string
+	required     []string
+	checks       []work.CheckRun
+	pr           work.PullRequest
+	merge        work.PullRequestMergeResult
+	merges       []work.PullRequestMergeResult
+	mergeHeads   []string
+	syncCalls    int
+	readyCalls   int
+	mergeCalls   int
+	retired      []int
+	retireMerged bool
+}
+
+func (p *targetGitHubProbe) RetirePullRequest(_ context.Context, number int) (work.PullRequestRetirement, error) {
+	p.retired = append(p.retired, number)
+	return work.PullRequestRetirement{Merged: p.retireMerged, ReviewedHead: "reviewed-head", MergeSHA: "merge-sha"}, nil
 }
 
 func (p *targetGitHubProbe) PullRequestForBranch(context.Context, string) (work.PullRequest, bool, error) {
@@ -127,6 +141,59 @@ func TestCloneTargetRepositoryCompletesTheInfrastructureStepBeforeSuccess(t *tes
 	}
 	if repository.url != in.CloneURL || repository.branch != in.Step.Branch || out.HeadSHA != "head-sha" || len(cp.writes) != 1 || cp.writes[0].PushedHead != "head-sha" {
 		t.Fatalf("clone/checkpoint = %+v / %+v / %+v", repository, out, cp.writes)
+	}
+}
+
+func TestCloneTargetRepositoryCarriesForwardOnlyTheDurableCommit(t *testing.T) {
+	repository := &targetRepositoryProbe{head: "carried-head"}
+	cp := &repositoryCheckpointProbe{}
+	a := targetRepositoryActivities(repository, &targetGitHubProbe{}, cp)
+	in := CloneTargetRepositoryInput{
+		Step:             RepositoryStep{StepOrdinal: 1, Branch: "factory/ticket-42/new-run"},
+		CloneURL:         "https://github.com/example/repo.git",
+		CarryForwardHead: "0123456789abcdef0123456789abcdef01234567",
+	}
+	if _, err := a.CloneTargetRepository(context.Background(), in); err != nil {
+		t.Fatalf("CloneTargetRepository: %v", err)
+	}
+	if repository.carryHead != in.CarryForwardHead || repository.branch != in.Step.Branch {
+		t.Fatalf("carry-forward repository call = %+v", repository)
+	}
+}
+
+func TestCloneTargetRepositoryRetiresCanceledPullRequestBeforeCarryForward(t *testing.T) {
+	repository := &targetRepositoryProbe{head: "carried-head"}
+	github := &targetGitHubProbe{}
+	a := targetRepositoryActivities(repository, github, &repositoryCheckpointProbe{})
+	in := CloneTargetRepositoryInput{
+		Step:                    RepositoryStep{StepOrdinal: 1, Branch: "factory/ticket-42/new-run"},
+		CloneURL:                "https://github.com/example/repo.git",
+		CarryForwardHead:        "0123456789abcdef0123456789abcdef01234567",
+		RetirePullRequestNumber: 42,
+	}
+	if _, err := a.CloneTargetRepository(context.Background(), in); err != nil {
+		t.Fatalf("CloneTargetRepository: %v", err)
+	}
+	if len(github.retired) != 1 || github.retired[0] != 42 || repository.carryHead != in.CarryForwardHead {
+		t.Fatalf("retirement/carry-forward = %+v / %+v", github.retired, repository)
+	}
+}
+
+func TestCloneTargetRepositoryReturnsConfirmedPredecessorMergeWithoutPreparingRunB(t *testing.T) {
+	repository := &targetRepositoryProbe{head: "must-not-be-used"}
+	github := &targetGitHubProbe{retireMerged: true}
+	a := targetRepositoryActivities(repository, github, &repositoryCheckpointProbe{})
+	out, err := a.CloneTargetRepository(context.Background(), CloneTargetRepositoryInput{
+		Step:                    RepositoryStep{StepOrdinal: 1, Branch: "factory/ticket-42/new-run"},
+		CloneURL:                "https://github.com/example/repo.git",
+		CarryForwardHead:        "0123456789abcdef0123456789abcdef01234567",
+		RetirePullRequestNumber: 42,
+	})
+	if err != nil {
+		t.Fatalf("CloneTargetRepository: %v", err)
+	}
+	if out.PredecessorMerge == nil || !out.PredecessorMerge.Merged || repository.calls != 0 {
+		t.Fatalf("merge/repository calls = %+v / %d", out.PredecessorMerge, repository.calls)
 	}
 }
 

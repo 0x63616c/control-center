@@ -80,3 +80,9 @@ above, not instead of it.
 <untrusted-prior-document-{{fence_nonce}}>
 {{review_findings}}
 </untrusted-prior-document-{{fence_nonce}}>
+
+### Authoritative feedback that reopened this implementation step
+
+<untrusted-prior-document-{{fence_nonce}}>
+{{implementation_feedback}}
+</untrusted-prior-document-{{fence_nonce}}>

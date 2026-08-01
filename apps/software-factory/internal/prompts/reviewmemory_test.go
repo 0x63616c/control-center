@@ -27,7 +27,7 @@ func TestReviewPromptTellsTheTurnItsOwnBudget(t *testing.T) {
 
 	for turn := 1; turn <= work.MaxReviewTurns; turn++ {
 		rendered, err := r.Render(Input{
-			Stage: work.StageReview, Turn: turn, Ticket: ticket(), Prior: everyDocument(),
+			Stage: work.StageReview, Turn: turn, MaxReviewTurns: work.MaxReviewTurns, Ticket: ticket(), Prior: everyDocument(),
 		})
 		if err != nil {
 			t.Fatalf("Render(review turn %d): %v", turn, err)
@@ -47,7 +47,7 @@ func TestReviewPromptTellsTheTurnToSweepTheWholeClass(t *testing.T) {
 	t.Parallel()
 
 	rendered, err := newTestRenderer(t).Render(Input{
-		Stage: work.StageReview, Turn: 1, Ticket: ticket(), Prior: everyDocument(),
+		Stage: work.StageReview, Turn: 1, MaxReviewTurns: work.MaxReviewTurns, Ticket: ticket(), Prior: everyDocument(),
 	})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
@@ -84,7 +84,7 @@ func TestReviewPromptCarriesEveryEarlierTurnNotOnlyTheLast(t *testing.T) {
 	)
 
 	rendered, err := newTestRenderer(t).Render(Input{
-		Stage: work.StageReview, Turn: 3, Ticket: ticket(), Prior: prior,
+		Stage: work.StageReview, Turn: 3, MaxReviewTurns: work.MaxReviewTurns, Ticket: ticket(), Prior: prior,
 	})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
@@ -110,7 +110,7 @@ func TestReviewPromptDeclaresAnEmptyLedgerRatherThanLeavingAGap(t *testing.T) {
 	t.Parallel()
 
 	rendered, err := newTestRenderer(t).Render(Input{
-		Stage: work.StageReview, Turn: 1, Ticket: ticket(), Prior: everyDocument(),
+		Stage: work.StageReview, Turn: 1, MaxReviewTurns: work.MaxReviewTurns, Ticket: ticket(), Prior: everyDocument(),
 	})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
@@ -146,6 +146,7 @@ func TestReviewTurnBudgetIsNotFenced(t *testing.T) {
 	in := reviewInput{
 		Implementation: stageOutputOf(work.StageImplement, "the report"),
 		Turn:           2,
+		MaxTurns:       work.MaxReviewTurns,
 	}
 	documents, err := in.templateValues()
 	if err != nil {

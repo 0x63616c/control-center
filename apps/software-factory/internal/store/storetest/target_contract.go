@@ -408,6 +408,36 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 		}
 	})
 
+	t.Run("main control closes an exhausted attempt before authorizing its replacement", func(t *testing.T) {
+		s, _, runID, startedAt := claimedRun(t, newStore(t))
+		ctx := context.Background()
+		if _, err := s.StartStep(ctx, store.StartStepInput{RunID: runID, Ordinal: 1, Kind: work.StepImplement, StartedAt: startedAt}); err != nil {
+			t.Fatalf("StartStep: %v", err)
+		}
+		first := store.TargetAttemptID{RunID: runID, StepOrdinal: 1, AttemptNo: 1}
+		if _, err := s.StartAgentAttempt(ctx, store.StartAgentAttemptInput{ID: first, AgentStage: work.AgentStageImplement, Model: work.Model{Name: "contract-model", Effort: "medium"}, UsageState: work.UsageUnknown, StartedAt: startedAt}); err != nil {
+			t.Fatalf("StartAgentAttempt(first): %v", err)
+		}
+		failure := store.AgentAttemptFailureInput{ID: first, FailureKind: work.RunFailureAgentUnrecoverable, EndedAt: startedAt.Add(time.Minute)}
+		if _, err := s.FailAgentAttempt(ctx, failure); err != nil {
+			t.Fatalf("FailAgentAttempt: %v", err)
+		}
+		if _, err := s.FailAgentAttempt(ctx, failure); err != nil {
+			t.Fatalf("FailAgentAttempt(exact retry): %v", err)
+		}
+		second := store.TargetAttemptID{RunID: runID, StepOrdinal: 1, AttemptNo: 2}
+		if _, err := s.StartAgentAttempt(ctx, store.StartAgentAttemptInput{ID: second, AgentStage: work.AgentStageImplement, Model: work.Model{Name: "contract-model", Effort: "medium"}, UsageState: work.UsageUnknown, StartedAt: startedAt.Add(time.Minute)}); err != nil {
+			t.Fatalf("StartAgentAttempt(replacement): %v", err)
+		}
+		detail, err := s.TargetRunDetail(ctx, runID)
+		if err != nil {
+			t.Fatalf("TargetRunDetail: %v", err)
+		}
+		attempts := detail.Steps[0].Attempts
+		if len(attempts) != 2 || attempts[0].State != work.AgentAttemptFailed || attempts[0].FailureKind != work.RunFailureAgentUnrecoverable || attempts[1].ID.AttemptNo != 2 || attempts[1].State != work.AgentAttemptRunning {
+			t.Fatalf("attempt history = %+v, want failed attempt 1 then authorized attempt 2", attempts)
+		}
+	})
 	t.Run("failed agent checkpoint preserves running transcript", func(t *testing.T) {
 		s, _, runID, startedAt := claimedRun(t, newStore(t))
 		ctx := context.Background()
@@ -470,6 +500,19 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 		_, err := s.CheckpointAgentAttempt(ctx, store.AgentCheckpointInput{ID: attemptID, Capability: "contract-capability", ThreadID: "thread-1", State: work.AgentAttemptSucceeded, UsageState: work.UsageMeasured, EndedAt: startedAt.Add(2 * time.Minute), Result: []byte(`{"kind":"done"}`), Transcript: &store.TargetTranscript{CompressedBytes: []byte("transcript"), Compression: "zstd", UncompressedSizeBytes: 10, Checksum: []byte("checksum")}})
 		if !errors.Is(err, store.ErrRunOwnership) {
 			t.Fatalf("CheckpointAgentAttempt after cancellation error = %v, want ErrRunOwnership", err)
+		}
+	})
+
+	t.Run("canceling an absent claim has one typed outcome", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		ticket, err := s.CreateTicket(ctx, "missing claim", "", nil)
+		if err != nil {
+			t.Fatalf("CreateTicket: %v", err)
+		}
+		_, err = s.CancelRun(ctx, store.CancelRunInput{RunID: uuid.NewString(), TicketID: ticket.ID, EndedAt: time.Date(2026, 8, 1, 7, 0, 0, 0, time.UTC)})
+		if !errors.Is(err, store.ErrNoOwnedClaim) {
+			t.Fatalf("CancelRun(absent claim) error = %v, want ErrNoOwnedClaim", err)
 		}
 	})
 
@@ -665,6 +708,39 @@ func RunTargetConflictContract(t *testing.T, newStore func(*testing.T) TargetSto
 		terminal.MergeSHA = "merge-2"
 		if _, err := s.FinalizeConfirmedMerge(ctx, terminal); !errors.Is(err, work.ErrPermanent) {
 			t.Fatalf("FinalizeConfirmedMerge(conflict) error = %v, want permanent", err)
+		}
+	})
+
+	t.Run("late failure cannot reverse confirmed merge", func(t *testing.T) {
+		s, ticket, runID, startedAt := claimedRun(t, newStore(t))
+		ctx := context.Background()
+		if _, err := s.StartStep(ctx, store.StartStepInput{RunID: runID, Ordinal: 1, Kind: work.StepMergePullRequest, StartedAt: startedAt}); err != nil {
+			t.Fatalf("StartStep: %v", err)
+		}
+		if _, err := s.FinalizeConfirmedMerge(ctx, store.ConfirmedMergeInput{RunID: runID, TicketID: ticket.ID, StepOrdinal: 1, ReviewedHead: "head-1", MergeSHA: "merge-1", EndedAt: startedAt.Add(time.Minute)}); err != nil {
+			t.Fatalf("FinalizeConfirmedMerge: %v", err)
+		}
+		result, err := s.FinalizeRunFailure(ctx, store.RunFailureInput{RunID: runID, TicketID: ticket.ID, Outcome: work.RunOutcomeFailed, FailureKind: work.RunFailureInfrastructure, EndedAt: startedAt.Add(2 * time.Minute)})
+		if err != nil {
+			t.Fatalf("FinalizeRunFailure(after merge): %v", err)
+		}
+		if result.Run.TargetOutcome != work.RunOutcomeSucceeded || result.Run.ReviewedHead != "head-1" || result.Run.MergeSHA != "merge-1" || result.Ticket.State != store.TicketDone {
+			t.Fatalf("late failure result = %+v, want unchanged confirmed merge", result)
+		}
+	})
+
+	t.Run("late failure cannot reverse cancellation", func(t *testing.T) {
+		s, ticket, runID, startedAt := claimedRun(t, newStore(t))
+		ctx := context.Background()
+		if _, err := s.CancelRun(ctx, store.CancelRunInput{RunID: runID, TicketID: ticket.ID, EndedAt: startedAt.Add(time.Minute)}); err != nil {
+			t.Fatalf("CancelRun: %v", err)
+		}
+		result, err := s.FinalizeRunFailure(ctx, store.RunFailureInput{RunID: runID, TicketID: ticket.ID, Outcome: work.RunOutcomeFailed, FailureKind: work.RunFailureInfrastructure, EndedAt: startedAt.Add(2 * time.Minute)})
+		if err != nil {
+			t.Fatalf("FinalizeRunFailure(after cancellation): %v", err)
+		}
+		if result.Run.TargetOutcome != work.RunOutcomeCanceled || result.Ticket.State != store.TicketOpen || result.Ticket.ActiveRunID != "" {
+			t.Fatalf("late failure result = %+v, want unchanged cancellation", result)
 		}
 	})
 

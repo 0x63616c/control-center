@@ -11,4 +11,8 @@ const (
 	ErrorTypeAuth = "Auth"
 	// ErrorTypeTransient identifies a retryable provider or storage failure.
 	ErrorTypeTransient = "Transient"
+	// ErrorTypeSessionLost identifies a tool worker Session that cannot continue.
+	ErrorTypeSessionLost = "SessionLost"
+	// ErrorTypeAmbiguousToolExecution identifies a tool that may have run before interruption.
+	ErrorTypeAmbiguousToolExecution = "AmbiguousToolExecution"
 )
