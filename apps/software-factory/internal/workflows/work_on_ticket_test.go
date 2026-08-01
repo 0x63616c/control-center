@@ -957,6 +957,59 @@ func TestWorkOnTicketStartsFreshSemanticAttemptOnlyForClassifiedTerminalChildFai
 	}
 }
 
+// A failed child can still have a transcript. Its durable evidence must not
+// serialize the absent StageOutput before the parent starts the next Attempt.
+func TestWorkOnTicketRecordsTerminalChildFailureWithTranscriptThenStartsFreshAttempt(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "unresumable attempt with evidence", "retain the failed transcript", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000035", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	firstImplementIdentity := fmt.Sprintf("agent/%s/step/5/attempt/1", in.RunID)
+	h.agentResult = func(input workflows.AgentWorkflowInput) (workflows.AgentWorkflowResult, error) {
+		if input.Identity == firstImplementIdentity {
+			ordinary := targetAgentWorkflowResult(t, input)
+			return workflows.AgentWorkflowResult{
+				Failure:         &agent.TerminalFailure{Kind: agent.TerminalFailureInvalidProviderOutcome},
+				Usage:           ordinary.Usage,
+				UsageMeasured:   ordinary.UsageMeasured,
+				ConversationRef: ordinary.ConversationRef,
+				TranscriptRef:   ordinary.TranscriptRef,
+			}, nil
+		}
+		return targetAgentWorkflowResult(t, input), nil
+	}
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket: %v", err)
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	var implement store.TargetStepDetail
+	for _, step := range detail.Steps {
+		if step.Step.Kind == work.StepImplement {
+			implement = step
+			break
+		}
+	}
+	if implement.Step.State != work.StepStateCompleted || len(implement.Attempts) != 2 {
+		t.Fatalf("implement step = %+v, want one completed Step with two Attempts", implement)
+	}
+	if first, second := implement.Attempts[0], implement.Attempts[1]; first.ID.AttemptNo != 1 || first.State != work.AgentAttemptFailed || first.FailureKind != work.RunFailureAgentUnrecoverable || second.ID.AttemptNo != 2 || second.State != work.AgentAttemptSucceeded {
+		t.Fatalf("implement attempts = %+v, want failed transcript-backed Attempt 1 then succeeded Attempt 2", implement.Attempts)
+	}
+	if len(h.finalizedAttempts) != 4 || h.finalizedAttempts[1] != (store.TargetAttemptID{RunID: in.RunID, StepOrdinal: 5, AttemptNo: 1}) {
+		t.Fatalf("finalized evidence = %+v, want the failed transcript-backed implement Attempt finalized before its replacement", h.finalizedAttempts)
+	}
+}
+
 // A terminal child failure outside the replacement vocabulary ends the Run
 // after recording its one failed Attempt. It must not silently schedule a
 // second semantic execution under the same Step.

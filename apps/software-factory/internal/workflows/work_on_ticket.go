@@ -202,8 +202,6 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 	if err != nil {
 		return fmt.Errorf("preparing the initial Run Worker Session: %w", err)
 	}
-	defer session.close()
-
 	if err := startTargetStep(ctx, in, 3, work.StepCloneRepository); err != nil {
 		return fmt.Errorf("starting repository clone: %w", err)
 	}
@@ -644,7 +642,7 @@ func runTargetAgentStep(ctx workflow.Context, session *targetRunSession, in Work
 		}
 		endedAt := workflow.Now(ctx)
 		if err := workflow.ExecuteActivity(recordingCtx, targetEvidenceActs.Finalize, activities.TargetAgentEvidenceInput{
-			AttemptID: attemptID, Identity: identity, State: work.AgentAttemptSucceeded, Result: result.Result, Usage: result.Usage,
+			AttemptID: attemptID, Identity: identity, State: work.AgentAttemptSucceeded, Result: &result.Result, Usage: result.Usage,
 			UsageMeasured: result.UsageMeasured, TranscriptRef: result.TranscriptRef, EndedAt: endedAt,
 		}).Get(recordingCtx, nil); err != nil {
 			return targetAgentStepResult{}, attemptNo, fmt.Errorf("checkpointing %s agent evidence: %w", stage, err)

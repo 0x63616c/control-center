@@ -27,7 +27,7 @@ type TargetAgentEvidenceInput struct {
 	AttemptID     store.TargetAttemptID
 	Identity      string
 	State         work.AgentAttemptState
-	Result        work.StageOutput
+	Result        *work.StageOutput
 	FailureKind   work.RunFailureKind
 	Usage         work.Usage
 	UsageMeasured bool
@@ -50,16 +50,16 @@ func (activities *TargetAgentEvidenceActivities) Finalize(ctx context.Context, i
 	if input.AttemptID.RunID == "" || input.Identity == "" ||
 		(state != work.AgentAttemptRunning && state != work.AgentAttemptSucceeded && state != work.AgentAttemptFailed) ||
 		(state != work.AgentAttemptRunning && input.EndedAt.IsZero()) ||
-		(state == work.AgentAttemptSucceeded && input.Result.Value() == nil) {
+		(state == work.AgentAttemptSucceeded && (input.Result == nil || input.Result.Value() == nil)) {
 		return fail(ctx, "validating target agent evidence", fmt.Errorf("attempt identity, agent identity, state, and required terminal outcome are missing: %w", work.ErrPermanent))
 	}
-	if state == work.AgentAttemptRunning && (!input.EndedAt.IsZero() || input.FailureKind != "" || input.Result.Value() != nil) {
+	if state == work.AgentAttemptRunning && (!input.EndedAt.IsZero() || input.FailureKind != "" || input.Result != nil) {
 		return fail(ctx, "validating target agent evidence", fmt.Errorf("running target evidence cannot be terminal: %w", work.ErrPermanent))
 	}
 	if state == work.AgentAttemptSucceeded && input.FailureKind != "" {
 		return fail(ctx, "validating target agent evidence", fmt.Errorf("successful target evidence cannot carry a failure kind: %w", work.ErrPermanent))
 	}
-	if state == work.AgentAttemptFailed && (input.FailureKind == "" || input.Result.Value() != nil) {
+	if state == work.AgentAttemptFailed && (input.FailureKind == "" || input.Result != nil) {
 		return fail(ctx, "validating target agent evidence", fmt.Errorf("failed target evidence requires a failure kind and no result: %w", work.ErrPermanent))
 	}
 	var transcript *store.TargetTranscript
@@ -80,7 +80,7 @@ func (activities *TargetAgentEvidenceActivities) Finalize(ctx context.Context, i
 	result := json.RawMessage(nil)
 	if state == work.AgentAttemptSucceeded {
 		var err error
-		result, err = json.Marshal(input.Result)
+		result, err = json.Marshal(*input.Result)
 		if err != nil {
 			return fail(ctx, "encoding target agent result", err)
 		}
