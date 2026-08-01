@@ -139,6 +139,11 @@ func (s Set) Fingerprint() string {
 	return s.fingerprint
 }
 
+// ID returns the immutable toolset identity.
+func (s Set) ID() ToolsetID {
+	return s.id
+}
+
 // Execute dispatches provider arguments to the named typed tool.
 func (s Set) Execute(ctx context.Context, name string, arguments json.RawMessage) (Result, error) {
 	tool, ok := s.tools[name]

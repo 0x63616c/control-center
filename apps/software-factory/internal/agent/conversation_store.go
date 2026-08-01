@@ -90,6 +90,42 @@ func (store ConversationStore) Load(ctx context.Context, ref ConversationRef) (C
 	return revision, nil
 }
 
+// Items reconstructs the provider-neutral conversation in revision order.
+func (store ConversationStore) Items(ctx context.Context, ref ConversationRef) ([]ConversationItem, error) {
+	revisions := make([]ConversationRevision, ref.Revision+1)
+	current := ref
+	for revisionIndex := ref.Revision; revisionIndex >= 0; revisionIndex-- {
+		if current.Revision != revisionIndex {
+			return nil, fmt.Errorf("conversation revision chain jumps from %d to %d", revisionIndex, current.Revision)
+		}
+		revision, err := store.Load(ctx, current)
+		if err != nil {
+			return nil, err
+		}
+		revisions[revisionIndex] = revision
+		if revisionIndex == 0 {
+			if revision.Predecessor != nil {
+				return nil, fmt.Errorf("conversation revision zero has a predecessor")
+			}
+			break
+		}
+		if revision.Predecessor == nil {
+			return nil, fmt.Errorf("conversation revision %d has no predecessor", revisionIndex)
+		}
+		current = *revision.Predecessor
+	}
+	var items []ConversationItem
+	for _, revision := range revisions {
+		items = append(items, revision.Items...)
+	}
+	return items, nil
+}
+
+// Identity returns the workflow-owned identity encoded by a conversation reference.
+func (store ConversationStore) Identity(ref ConversationRef) (string, error) {
+	return conversationIdentity(ref)
+}
+
 func conversationIdentity(ref ConversationRef) (string, error) {
 	key, err := blobs.ParseKey(ref.Key)
 	if err != nil {

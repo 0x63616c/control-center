@@ -14,8 +14,12 @@ type ConversationRef struct {
 type ConversationItemKind string
 
 const (
+	// ItemInstructions is the durable system/developer instruction block.
+	ItemInstructions ConversationItemKind = "instructions"
 	// ItemUserText is an original user request.
 	ItemUserText ConversationItemKind = "user_text"
+	// ItemAssistantText is a terminal assistant response.
+	ItemAssistantText ConversationItemKind = "assistant_text"
 	// ItemFunctionCall is a model function request.
 	ItemFunctionCall ConversationItemKind = "function_call"
 	// ItemFunctionOutput is the result paired with a function call.
