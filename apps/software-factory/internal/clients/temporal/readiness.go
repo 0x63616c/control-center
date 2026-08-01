@@ -17,6 +17,7 @@ type ActivationReadiness struct {
 	namespace string
 }
 
+// NewActivationReadiness constructs the read-only legacy-history check.
 func NewActivationReadiness(client client.Client, namespace string) *ActivationReadiness {
 	return &ActivationReadiness{client: client, namespace: namespace}
 }

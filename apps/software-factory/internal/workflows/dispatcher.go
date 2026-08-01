@@ -215,7 +215,7 @@ func Dispatcher(ctx workflow.Context, in DispatcherInput) error {
 
 func dispatchChildWorkflowOptions(ticketID store.TicketID, policy work.TargetRunPolicy) workflow.ChildWorkflowOptions {
 	return workflow.ChildWorkflowOptions{
-		WorkflowID:               work.WorkOnTicketWorkflowID(int64(ticketID)),
+		WorkflowID:               work.TicketWorkflowID(int64(ticketID)),
 		TaskQueue:                work.TaskQueue,
 		WorkflowExecutionTimeout: policy.HardDeadline,
 		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL,

@@ -163,8 +163,8 @@ func TestCommandsCancelTargetTicket(t *testing.T) {
 	if err := (&Commands{client: fake}).CancelTicket(t.Context(), 42); err != nil {
 		t.Fatalf("CancelTicket() error = %v", err)
 	}
-	if fake.canceledID != work.WorkOnTicketWorkflowID(42) {
-		t.Fatalf("canceled workflow ID = %q, want %q", fake.canceledID, work.WorkOnTicketWorkflowID(42))
+	if fake.canceledID != work.TicketWorkflowID(42) {
+		t.Fatalf("canceled workflow ID = %q, want %q", fake.canceledID, work.TicketWorkflowID(42))
 	}
 }
 

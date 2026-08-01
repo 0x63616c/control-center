@@ -1,3 +1,4 @@
+// Package activities contains the factory's side-effecting Temporal activity adapters.
 package activities
 
 import (

@@ -158,12 +158,13 @@ fi
 	if err := os.WriteFile(path, []byte(fake), 0o700); err != nil {
 		t.Fatalf("write fake gh: %v", err)
 	}
-	return policyFixture{dir: dir, script: filepath.Join("configure-github-policy.sh")}
+	return policyFixture{dir: dir, script: "configure-github-policy.sh"}
 }
 
 func (fixture policyFixture) run(t *testing.T, extra ...string) (string, error) {
 	t.Helper()
-	args := []string{fixture.script,
+	args := []string{
+		fixture.script,
 		"--repository", "0x63616c/world-wide-webb",
 		"--approval-ruleset-id", approvalRulesetID,
 		"--app-id", factoryAppID,

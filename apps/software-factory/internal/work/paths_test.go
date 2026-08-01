@@ -112,7 +112,7 @@ func TestPayloadKeyIsAValidBlobsKeyPath(t *testing.T) {
 	}
 }
 
-func TestWorkOnTicketWorkflowIDsUseADisjointNamespace(t *testing.T) {
+func TestTicketWorkflowIDsUseADisjointNamespace(t *testing.T) {
 	t.Parallel()
 
 	for _, id := range []int64{0, 1, 7, 99} {
@@ -121,11 +121,11 @@ func TestWorkOnTicketWorkflowIDsUseADisjointNamespace(t *testing.T) {
 		// that prefix would share a history lineage with the issue of the same
 		// number — which is why this prefix must stay disjoint from it even now
 		// that nothing mints the old one.
-		if strings.HasPrefix(WorkOnTicketWorkflowID(id), "work-ticket-") {
+		if strings.HasPrefix(TicketWorkflowID(id), "work-ticket-") {
 			t.Fatalf("Ticket id %d claims the retired GitHub-issue workflow ID namespace", id)
 		}
-		if !strings.HasPrefix(WorkOnTicketWorkflowID(id), "factory-ticket-") {
-			t.Fatalf("WorkOnTicketWorkflowID(%d) = %q", id, WorkOnTicketWorkflowID(id))
+		if !strings.HasPrefix(TicketWorkflowID(id), "factory-ticket-") {
+			t.Fatalf("TicketWorkflowID(%d) = %q", id, TicketWorkflowID(id))
 		}
 	}
 }

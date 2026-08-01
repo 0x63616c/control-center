@@ -24,6 +24,7 @@ type commandClient interface {
 // Commands sends acknowledged target control commands to Temporal.
 type Commands struct{ client commandClient }
 
+// NewCommands wraps a live Temporal client. The composition root owns its lifetime.
 func NewCommands(temporal client.Client) *Commands { return &Commands{client: temporal} }
 
 // UpdateConfig applies the supported operational patch to the current target
@@ -100,7 +101,7 @@ func (commands *Commands) WorkNow(ctx context.Context, ticketID int) error {
 
 // CancelTicket requests cancellation of the target WorkOnTicket execution.
 func (commands *Commands) CancelTicket(ctx context.Context, ticketID int) error {
-	err := commands.client.CancelWorkflow(ctx, work.WorkOnTicketWorkflowID(int64(ticketID)), "")
+	err := commands.client.CancelWorkflow(ctx, work.TicketWorkflowID(int64(ticketID)), "")
 	if err != nil {
 		return classify(fmt.Sprintf("cancel target ticket %d", ticketID), err)
 	}

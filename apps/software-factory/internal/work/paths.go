@@ -154,7 +154,7 @@ func (k StageKey) String() string {
 	return fmt.Sprintf("ticket #%d stage %s turn %d run %s", k.Ticket, k.Stage, k.Turn, k.RunID)
 }
 
-// WorkOnTicketWorkflowID is the Temporal claim for a factory-owned Ticket.
+// TicketWorkflowID is the Temporal claim for a factory-owned Ticket.
 //
 // Starting a workflow with this ID *is* the claim: Temporal refuses a second
 // execution with an open run under the same ID, so uniqueness here replaces a
@@ -165,7 +165,7 @@ func (k StageKey) String() string {
 // `work-ticket-` scheme (#559): Temporal lets a closed run's ID be reused, so
 // sharing that namespace would have let a small Ticket id share a history
 // lineage with the GitHub issue of the same number.
-func WorkOnTicketWorkflowID(ticketID int64) string {
+func TicketWorkflowID(ticketID int64) string {
 	return fmt.Sprintf("factory-ticket-%d", ticketID)
 }
 

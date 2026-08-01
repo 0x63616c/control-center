@@ -1,3 +1,4 @@
+// Package workflows contains the factory's deterministic Temporal orchestration.
 package workflows
 
 import (
