@@ -28,15 +28,16 @@ func TestMaintainFactoryReconcilesClosedOwnerAndDeletesItsRunWorker(t *testing.T
 		t.Fatalf("NewRunWorkerIdentity: %v", err)
 	}
 	env.OnActivity(maintenanceActs.ListActiveTargetRunOwners, mock.Anything).Return([]store.ActiveTargetRunOwner{owner}, nil)
-	env.OnActivity(maintenanceRunWorkerActs.ListRunWorkers, mock.Anything).Return([]work.RunWorkerIdentity{identity}, nil)
+	firstGeneration, err := work.NewRunWorkerIdentity(owner.RunID, 1)
+	if err != nil {
+		t.Fatalf("NewRunWorkerIdentity(first): %v", err)
+	}
+	env.OnActivity(maintenanceRunWorkerActs.ListRunWorkers, mock.Anything).Return([]work.RunWorkerIdentity{firstGeneration, identity}, nil)
 	env.OnActivity(acts.DescribeRun, mock.Anything, work.FactoryTicketWorkflowID(int64(owner.TicketID))).Return(work.RunState{Open: false}, nil)
-	deleted := false
+	deleted := map[work.RunWorkerIdentity]bool{}
 	env.OnActivity(maintenanceRunWorkerActs.DeleteRunWorker, mock.Anything, mock.Anything).
 		Return(func(_ context.Context, in activities.DeleteRunWorkerInput) error {
-			if in.Identity != identity {
-				t.Errorf("deleted identity = %+v, want %+v", in.Identity, identity)
-			}
-			deleted = true
+			deleted[in.Identity] = true
 			return nil
 		})
 	var reconciled store.ActiveTargetRunOwner
@@ -50,11 +51,32 @@ func TestMaintainFactoryReconcilesClosedOwnerAndDeletesItsRunWorker(t *testing.T
 	if err := env.GetWorkflowError(); err != nil {
 		t.Fatalf("MaintainFactory: %v", err)
 	}
-	if !deleted {
-		t.Error("closed run's Run Worker was not deleted")
+	if !deleted[firstGeneration] || !deleted[identity] || len(deleted) != 2 {
+		t.Errorf("deleted Run Worker identities = %v, want every generation", deleted)
 	}
 	if reconciled != owner {
 		t.Errorf("reconciled owner = %+v, want %+v", reconciled, owner)
+	}
+}
+
+func TestMaintainFactoryDoesNotReopenAReplacementRun(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+	owner := store.ActiveTargetRunOwner{TicketID: 10, RunID: "019fb900-0000-7000-8000-000000000010"}
+	replacement := "019fb900-0000-7000-8000-000000000011"
+	identity, err := work.NewRunWorkerIdentity(owner.RunID, 2)
+	if err != nil {
+		t.Fatalf("NewRunWorkerIdentity: %v", err)
+	}
+	env.OnActivity(maintenanceActs.ListActiveTargetRunOwners, mock.Anything).Return([]store.ActiveTargetRunOwner{owner}, nil)
+	env.OnActivity(maintenanceRunWorkerActs.ListRunWorkers, mock.Anything).Return([]work.RunWorkerIdentity{identity}, nil)
+	env.OnActivity(acts.DescribeRun, mock.Anything, work.FactoryTicketWorkflowID(int64(owner.TicketID))).Return(work.RunState{Open: true, RunID: replacement}, nil)
+	env.OnActivity(maintenanceRunWorkerActs.DeleteRunWorker, mock.Anything, activities.DeleteRunWorkerInput{Identity: identity}).Return(nil)
+	env.OnActivity(maintenanceActs.ReconcileAbandonedTargetRun, mock.Anything, owner.RunID, owner.TicketID).Return(false, nil)
+
+	env.ExecuteWorkflow(workflows.MaintainFactory)
+	if err := env.GetWorkflowError(); err != nil {
+		t.Fatalf("MaintainFactory: %v", err)
 	}
 }
 

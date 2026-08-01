@@ -148,6 +148,66 @@ func TestDispatcherAdmitsTicketsUpToCapacityWithPolicySnapshots(t *testing.T) {
 	}
 }
 
+func TestDispatcherDoesNotPollUntilAnUnpausedPolicyIsPublished(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+	polls := 0
+	env.OnActivity(ticketActs.AwaitDispatchableTickets, mock.Anything).
+		Return(func(context.Context) ([]store.Ticket, error) {
+			polls++
+			return nil, temporal.NewApplicationError("no dispatchable tickets", activities.ErrTypeNoDispatchableTickets, nil)
+		})
+
+	in := targetDispatcherInput()
+	in.Policy.Paused = true
+	unpaused := in.Policy
+	unpaused.Paused = false
+	updates := map[string]workflows.DispatcherPublication{}
+	errs := map[string]error{}
+	env.RegisterDelayedCallback(func() {
+		env.UpdateWorkflow(workflows.UpdateDispatcherPolicy, "unpause", dispatcherUpdateCallback("unpause", updates, errs), targetDispatcherPolicyUpdate(t, unpaused))
+	}, 0)
+	env.RegisterDelayedCallback(env.CancelWorkflow, time.Minute)
+	env.ExecuteWorkflow(workflows.Dispatcher, in)
+
+	if err := env.GetWorkflowError(); !temporal.IsCanceledError(err) {
+		t.Fatalf("Dispatcher error = %v, want cancellation after the unpause assertion", err)
+	}
+	if err := errs["unpause"]; err != nil {
+		t.Fatalf("unpause publication failed: %v", err)
+	}
+	if updates["unpause"] != workflows.DispatcherPublicationApplied {
+		t.Errorf("unpause publication = %q, want APPLIED", updates["unpause"])
+	}
+	if polls != 1 {
+		t.Errorf("dispatch polls = %d, want exactly one after unpausing", polls)
+	}
+}
+
+func TestDispatcherReleasesACompletedChildSlotWithoutContinueAsNew(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+	polls := 0
+	env.OnActivity(ticketActs.AwaitDispatchableTickets, mock.Anything).
+		Return(func(context.Context) ([]store.Ticket, error) {
+			polls++
+			if polls == 1 {
+				return []store.Ticket{{ID: 23, Title: "finish me", State: store.TicketOpen}}, nil
+			}
+			return nil, temporal.NewApplicationError("no dispatchable tickets", activities.ErrTypeNoDispatchableTickets, nil)
+		})
+	env.OnWorkflow(workflows.WorkOnTicket, mock.Anything, mock.Anything).Return(nil)
+	env.RegisterDelayedCallback(env.CancelWorkflow, time.Minute)
+	env.ExecuteWorkflow(workflows.Dispatcher, targetDispatcherInput())
+
+	if err := env.GetWorkflowError(); !temporal.IsCanceledError(err) {
+		t.Fatalf("Dispatcher error = %v, want cancellation", err)
+	}
+	if polls != 2 {
+		t.Errorf("dispatch polls = %d, want a second wait after the child released its only slot", polls)
+	}
+}
+
 func TestDispatcherDrainsTrackedChildrenBeforeContinuingAsNew(t *testing.T) {
 	suite := &testsuite.WorkflowTestSuite{}
 	env := suite.NewTestWorkflowEnvironment()
