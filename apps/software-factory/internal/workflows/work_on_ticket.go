@@ -248,9 +248,12 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 		}
 		ordinal++
 		if err := session.execute(ctx, func(sessionCtx workflow.Context) error {
-			mergeCtx := workflow.WithActivityOptions(sessionCtx, targetActivityOptions(in.Policy.Merge))
+			mergeCtx := workflow.WithActivityOptions(sessionCtx, mergeActivityOptions(ctx, in.Policy.Merge))
 			return workflow.ExecuteActivity(mergeCtx, targetRunWorkerActs.TargetMergePullRequest, activities.TargetMergePullRequestInput{Step: mergeStep, ExpectedHeadSHA: candidate.PushedHead}).Get(mergeCtx, &merge)
 		}); err != nil {
+			if isScheduleToCloseTimeout(err) {
+				return finalizeMergeRetryDeadline(ctx, session, in, mergeStep.StepOrdinal, err)
+			}
 			return fmt.Errorf("merging reviewed target candidate %s: %w", candidate.PushedHead, err)
 		}
 		if merge.Outcome == work.PullRequestMergeConfirmed && strings.TrimSpace(merge.MergeSHA) != "" {
@@ -557,6 +560,14 @@ func semanticTimeRemaining(ctx workflow.Context) bool {
 	return ok && workflow.Now(ctx).Before(deadline)
 }
 
+func semanticTimeRemainingDuration(ctx workflow.Context) time.Duration {
+	deadline, ok := ctx.Value(semanticDeadlineContextKey{}).(time.Time)
+	if !ok {
+		return 0
+	}
+	return deadline.Sub(workflow.Now(ctx))
+}
+
 func isScheduleToCloseTimeout(err error) bool {
 	var timeout *temporal.TimeoutError
 	return errors.As(err, &timeout) && timeout.TimeoutType() == enums.TIMEOUT_TYPE_SCHEDULE_TO_CLOSE
@@ -580,6 +591,40 @@ func finalizeUnobservedCI(ctx workflow.Context, session *targetRunSession, in Wo
 	session.close()
 	session.delete(terminalCtx)
 	return temporal.NewNonRetryableApplicationError("target CI became unobserved", activities.ErrTypeCIUnobserved, nil)
+}
+
+func mergeActivityOptions(ctx workflow.Context, policy work.ActivityPolicy) workflow.ActivityOptions {
+	policy.ScheduleToCloseTimeout = semanticTimeRemainingDuration(ctx)
+	return targetActivityOptions(policy)
+}
+
+func finalizeMergeRetryDeadline(ctx workflow.Context, session *targetRunSession, in WorkOnTicketInput, stepOrdinal int, mergeErr error) error {
+	failureKind, stepResult, errorType := mergeRetryDeadlineFailure(mergeErr)
+	terminalCtx, cancel := workflow.NewDisconnectedContext(ctx)
+	defer cancel()
+	finalCtx := workflow.WithActivityOptions(terminalCtx, targetActivityOptions(in.Policy.Recording))
+	if err := workflow.ExecuteActivity(finalCtx, targetRecordingActs.FinalizeRunFailure, store.RunFailureInput{
+		RunID:       in.RunID,
+		TicketID:    in.TicketID,
+		Outcome:     work.RunOutcomeFailed,
+		FailureKind: failureKind,
+		StepOrdinal: stepOrdinal,
+		StepResult:  stepResult,
+		EndedAt:     workflow.Now(terminalCtx),
+	}).Get(finalCtx, nil); err != nil {
+		return fmt.Errorf("recording exhausted target merge retry window: %w", err)
+	}
+	session.close()
+	session.delete(terminalCtx)
+	return temporal.NewNonRetryableApplicationError("target merge remained unavailable through its retry window", errorType, nil)
+}
+
+func mergeRetryDeadlineFailure(err error) (work.RunFailureKind, json.RawMessage, string) {
+	var application *temporal.ApplicationError
+	if errors.As(err, &application) && application.Type() == activities.ErrTypeRuleset {
+		return work.RunFailureGitHubRuleset, json.RawMessage(`{"kind":"github_ruleset"}`), activities.ErrTypeRuleset
+	}
+	return work.RunFailureGitHubUnavailable, json.RawMessage(`{"kind":"github_unavailable"}`), activities.ErrTypeTransient
 }
 
 func terminalFailureKind(err error) (work.RunOutcome, work.RunFailureKind, bool) {
