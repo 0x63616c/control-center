@@ -1,0 +1,115 @@
+package codexresponses
+
+import (
+	"context"
+
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+)
+
+// Credential is the bearer credential and ChatGPT account selected for a call.
+type Credential struct {
+	AccessToken work.Credential
+	AccountID   string
+}
+
+// CredentialSource supplies a current credential without exposing storage details.
+type CredentialSource interface {
+	Credential(ctx context.Context) (Credential, error)
+}
+
+// ToolChoice controls whether the model may emit tool calls.
+type ToolChoice string
+
+const (
+	// ToolChoiceNone prevents tool calls.
+	ToolChoiceNone ToolChoice = "none"
+	// ToolChoiceAuto lets the model decide whether to call a tool.
+	ToolChoiceAuto ToolChoice = "auto"
+	// ToolChoiceRequired requires at least one tool call.
+	ToolChoiceRequired ToolChoice = "required"
+)
+
+// TextVerbosity controls the density of the final answer.
+type TextVerbosity string
+
+const (
+	// TextVerbosityLow asks for terse output.
+	TextVerbosityLow TextVerbosity = "low"
+	// TextVerbosityMedium asks for normal output.
+	TextVerbosityMedium TextVerbosity = "medium"
+	// TextVerbosityHigh asks for detailed output.
+	TextVerbosityHigh TextVerbosity = "high"
+)
+
+// InputType identifies one item supplied to a model turn.
+type InputType string
+
+const (
+	// InputUserText is a user-authored text message.
+	InputUserText InputType = "user_text"
+)
+
+// InputItem is one typed item in a turn's conversation input.
+type InputItem struct {
+	Type InputType `json:"type"`
+	Text string    `json:"text"`
+}
+
+// UserText constructs a user text input.
+func UserText(text string) InputItem {
+	return InputItem{Type: InputUserText, Text: text}
+}
+
+// TurnRequest describes one direct Codex Responses turn.
+type TurnRequest struct {
+	Model             string
+	Instructions      string
+	Input             []InputItem
+	Store             bool
+	ToolChoice        ToolChoice
+	ParallelToolCalls bool
+	TextVerbosity     TextVerbosity
+}
+
+// Outcome distinguishes a final answer from a turn requiring tool execution.
+type Outcome string
+
+const (
+	// OutcomeFinalText means the turn produced a terminal assistant answer.
+	OutcomeFinalText Outcome = "final_text"
+	// OutcomeToolCalls means the turn requires one or more tools.
+	OutcomeToolCalls Outcome = "tool_calls"
+)
+
+// Usage records provider token accounting for one completed turn.
+type Usage struct {
+	InputTokens  int64
+	OutputTokens int64
+	TotalTokens  int64
+}
+
+// TurnResult is the durable, provider-neutral result of one model turn.
+type TurnResult struct {
+	Outcome    Outcome
+	ResponseID string
+	Text       string
+	Status     string
+	Usage      Usage
+}
+
+// EventType identifies a transient stream event kept out of Temporal history.
+type EventType string
+
+const (
+	// EventTextDelta carries incremental final-answer text.
+	EventTextDelta EventType = "text_delta"
+)
+
+// Event is transient progress emitted while a turn is running.
+type Event struct {
+	Type  EventType
+	Delta string
+}
+
+// EmitFunc receives transient progress. It must not retain credentials.
+type EmitFunc func(Event)
