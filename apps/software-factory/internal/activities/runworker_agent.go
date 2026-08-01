@@ -38,14 +38,41 @@ type ProviderState interface {
 	Available(context.Context, string) (bool, error)
 }
 
+// TargetRepository prepares the Run Worker's own filesystem checkout.
+type TargetRepository interface {
+	Prepare(context.Context, string, string) (string, error)
+}
+
+// TargetGitHub is the repository-scoped external surface hosted by the Run
+// Worker. Its implementation reads the renewable projected token per request.
+type TargetGitHub interface {
+	PullRequestForBranch(context.Context, string) (work.PullRequest, bool, error)
+	OpenOrUpdatePullRequest(context.Context, string, string, string, *work.PullRequest) (work.PullRequest, error)
+	MarkPullRequestReadyForReview(context.Context, string) error
+	MergePullRequest(context.Context, int, string) (work.PullRequestMergeResult, error)
+	ChecksForCommit(context.Context, string, []string) ([]work.CheckRun, error)
+}
+
+// RepositoryCheckpoint is the distinct generation-scoped recovery boundary
+// for repository-affine Steps. It is intentionally not an Agent Attempt
+// checkpoint: its capability survives across many Steps on one generation.
+type RepositoryCheckpoint interface {
+	Load(context.Context) (store.GitCheckpoint, bool, error)
+	Checkpoint(context.Context, store.GitCheckpointInput) (store.GitCheckpoint, error)
+}
+
 // RunWorkerDeps are the narrow dependencies of target agent execution.
 type RunWorkerDeps struct {
-	Stages        TargetStageRunner
-	Prompts       PromptRenderer
-	Checkpoints   func(store.TargetAttemptID) (AttemptCheckpoint, error)
-	ProviderState ProviderState
-	Clock         interface{ Now() time.Time }
-	Heartbeat     func(context.Context)
+	Stages                TargetStageRunner
+	Prompts               PromptRenderer
+	Checkpoints           func(store.TargetAttemptID) (AttemptCheckpoint, error)
+	ProviderState         ProviderState
+	Clock                 interface{ Now() time.Time }
+	Heartbeat             func(context.Context)
+	Repository            TargetRepository
+	GitHub                TargetGitHub
+	Identity              work.RunWorkerIdentity
+	RepositoryCheckpoints func(work.RunWorkerIdentity) (RepositoryCheckpoint, error)
 }
 
 // RunWorkerActivities are repository-affine target activities. They are kept
@@ -55,8 +82,11 @@ type RunWorkerActivities struct{ deps RunWorkerDeps }
 
 // NewRunWorkerActivities validates the target agent activity set once.
 func NewRunWorkerActivities(deps RunWorkerDeps) (*RunWorkerActivities, error) {
-	if deps.Stages == nil || deps.Prompts == nil || deps.Checkpoints == nil || deps.ProviderState == nil || deps.Clock == nil || deps.Heartbeat == nil {
-		return nil, fmt.Errorf("Run Worker activities require stages, prompts, checkpoints, provider state, clock, and heartbeat")
+	if deps.Stages == nil || deps.Prompts == nil || deps.Checkpoints == nil || deps.ProviderState == nil || deps.Clock == nil || deps.Heartbeat == nil || deps.Repository == nil || deps.GitHub == nil || deps.RepositoryCheckpoints == nil {
+		return nil, fmt.Errorf("Run Worker activities require stages, prompts, checkpoints, provider state, clock, heartbeat, repository, GitHub, and repository checkpoints")
+	}
+	if err := deps.Identity.Validate(); err != nil {
+		return nil, fmt.Errorf("Run Worker activities require a valid identity: %w", err)
 	}
 	return &RunWorkerActivities{deps: deps}, nil
 }
