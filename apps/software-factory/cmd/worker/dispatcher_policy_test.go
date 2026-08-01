@@ -85,7 +85,11 @@ func TestDispatcherPolicyPublicationCarriesAnImmutableResolvedPolicy(t *testing.
 	t.Parallel()
 
 	request := defaultDispatcherPolicyPublicationRequest("request-policy")
-	if request.Policy != work.DefaultDispatcherPolicy() {
-		t.Fatalf("published policy = %+v, want the resolved default policy", request.Policy)
+	want, err := work.DefaultDispatcherPolicy().Fingerprint()
+	if err != nil {
+		t.Fatalf("fingerprinting default policy: %v", err)
+	}
+	if request.Fingerprint != want {
+		t.Fatalf("published fingerprint = %q, want resolved default %q", request.Fingerprint, want)
 	}
 }

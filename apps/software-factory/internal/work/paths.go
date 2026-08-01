@@ -262,6 +262,10 @@ func ParseFactoryTicketBranchName(branch string) (ticketID int64, ok bool) {
 // that idempotent. A second spelling anywhere would be a second dispatcher.
 const FactoryDispatcherWorkflowID = "software-factory-ticket-dispatcher"
 
+// TargetDispatcherWorkflowID is the stable singleton ID for the inactive v0
+// dispatcher. It stays disjoint from the legacy dispatcher until cutover.
+const TargetDispatcherWorkflowID = "software-factory-target-dispatcher"
+
 // StagePaths are the files one stage attempt reads and writes in the sandbox.
 type StagePaths struct {
 	// Dir holds everything belonging to this attempt.

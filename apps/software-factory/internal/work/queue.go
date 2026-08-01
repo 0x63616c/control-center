@@ -38,6 +38,10 @@ package work
 // nothing else may construct it.
 const TaskQueue = "software-factory"
 
+// TargetDispatcherTaskQueue is the inactive control-only queue that serves
+// policy publication before the target main worker begins polling.
+const TargetDispatcherTaskQueue = "software-factory-dispatcher-control"
+
 // sandboxTaskQueuePrefix opens every per-ticket sandbox queue name, so the two
 // families of queue are visually distinct in `temporal task-queue describe`
 // and in Temporal history, and so a literal "software-factory-sandbox-" typed
