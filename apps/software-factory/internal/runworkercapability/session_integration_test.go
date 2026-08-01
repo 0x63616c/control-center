@@ -774,6 +774,13 @@ func (r productionRepository) Prepare(context.Context, string, string) (string, 
 	return "candidate-head", nil
 }
 
+func (r productionRepository) PrepareFromCommit(context.Context, string, string, string) (string, error) {
+	if err := r.recorder.observe("clone_from_commit"); err != nil {
+		return "", fmt.Errorf("recording target repository recovery clone: %w", err)
+	}
+	return "candidate-head", nil
+}
+
 type productionClock struct{}
 
 func (productionClock) Now() time.Time { return time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC) }
@@ -836,6 +843,13 @@ func (g productionGitHub) ChecksForCommit(context.Context, string, []string) ([]
 		return nil, fmt.Errorf("recording target CI observation: %w", err)
 	}
 	return []work.CheckRun{{Name: "test", Completed: true, Conclusion: "success"}}, nil
+}
+
+func (g productionGitHub) RetirePullRequest(context.Context, int) (work.PullRequestRetirement, error) {
+	if err := g.recorder.observe("retire"); err != nil {
+		return work.PullRequestRetirement{}, fmt.Errorf("recording target pull request retirement: %w", err)
+	}
+	return work.PullRequestRetirement{}, nil
 }
 
 func privateMarkerPath(root, name string) (string, error) {
