@@ -6,14 +6,18 @@ import (
 	"time"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store/storefake"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/workflows"
 	"github.com/stretchr/testify/mock"
+	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/worker"
+	"go.temporal.io/sdk/workflow"
 )
 
 // factoryDispatcherID is the id FactoryWorkTicketInput.DispatcherID carries in
@@ -21,6 +25,10 @@ import (
 // a test's dispatcher never actually runs; any distinct string proves the
 // same thing.
 const factoryDispatcherID = "software-factory-ticket-dispatcher"
+
+func cancelableAgentWorkflow(ctx workflow.Context, _ workflows.AgentWorkflowInput) (workflows.AgentWorkflowResult, error) {
+	return workflows.AgentWorkflowResult{}, workflow.Await(ctx, func() bool { return false })
+}
 
 // factoryTicketHarness runs one FactoryWorkTicket workflow against a real
 // storefake.Store behind the ticket/recording/transcript activities — so the
@@ -80,6 +88,13 @@ type factoryTicketHarness struct {
 	// prove the push happens before the pull request is requested, not merely
 	// that both happened at some point.
 	callOrder []string
+
+	agentChildren  []workflows.AgentWorkflowInput
+	agentChildIDs  []string
+	activityStarts []string
+	lifecycle      []string
+
+	cancelDuringAgent bool
 }
 
 func newFactoryTicketHarness(t *testing.T) *factoryTicketHarness {
@@ -130,7 +145,31 @@ func newFactoryTicketHarness(t *testing.T) *factoryTicketHarness {
 }
 
 func (h *factoryTicketHarness) run() {
+	h.runVersion(workflow.DefaultVersion)
+}
+
+func (h *factoryTicketHarness) runVersion(version workflow.Version) {
 	env := h.env
+	if h.cancelDuringAgent {
+		env.RegisterWorkflowWithOptions(cancelableAgentWorkflow, workflow.RegisterOptions{Name: agent.WorkflowName})
+	}
+	env.OnGetVersion("factory-agent-workflow-v1", workflow.DefaultVersion, 1).Return(version)
+	env.SetOnChildWorkflowStartedListener(func(info *workflow.Info, _ workflow.Context, _ converter.EncodedValues) {
+		h.agentChildIDs = append(h.agentChildIDs, info.WorkflowExecution.ID)
+	})
+	env.SetOnActivityStartedListener(func(info *activity.Info, _ context.Context, _ converter.EncodedValues) {
+		h.activityStarts = append(h.activityStarts, info.ActivityType.Name)
+		if info.ActivityType.Name == "DeleteSandbox" {
+			h.lifecycle = append(h.lifecycle, "sandbox-deleted")
+		}
+	})
+	env.SetOnChildWorkflowCanceledListener(func(*workflow.Info) {
+		h.lifecycle = append(h.lifecycle, "child-canceled")
+	})
+	env.RegisterActivityWithOptions(
+		func(context.Context, activities.PersistAgentTranscriptInput) error { return nil },
+		activity.RegisterOptions{Name: agent.PersistTranscriptActivityName},
+	)
 
 	env.OnActivity(acts.CreateSandbox, mock.Anything, mock.Anything).
 		Return(func(_ context.Context, in activities.CreateSandboxInput) (work.SandboxID, error) {
@@ -174,6 +213,33 @@ func (h *factoryTicketHarness) run() {
 			}
 			return reviewOutput(nil, h.review[in.Key.Turn]...), nil
 		})
+
+	if !h.cancelDuringAgent {
+		env.OnWorkflow(workflows.AgentWorkflow, mock.Anything, mock.Anything).
+			Return(func(_ workflow.Context, in workflows.AgentWorkflowInput) (workflows.AgentWorkflowResult, error) {
+				h.agentChildren = append(h.agentChildren, in)
+				var result work.StageOutput
+				switch in.Attempt.Key.Stage {
+				case work.StagePlan:
+					result = planOutput().Result
+				case work.StageImplement:
+					h.implementTurns = append(h.implementTurns, in.Attempt.Key)
+					if out, ok := h.implement[in.Attempt.Key.Turn]; ok {
+						result = out.Result
+					} else {
+						result = implementOutput(false, "", "the title", "the body").Result
+					}
+				case work.StageReview:
+					h.reviewTurns = append(h.reviewTurns, in.Attempt.Key)
+					h.reviewAttempts = append(h.reviewAttempts, env.Now())
+					result = reviewOutput(nil, h.review[in.Attempt.Key.Turn]...).Result
+				}
+				return workflows.AgentWorkflowResult{
+					Result: result, Usage: work.Usage{InputTokens: 10, OutputTokens: 1}, UsageMeasured: true,
+					TranscriptRef: agent.TranscriptRef{Key: "conversations/agent/test/transcript/0/digest", Bytes: 1, Digest: "digest"},
+				}, nil
+			})
+	}
 
 	env.OnActivity(acts.FindPullRequest, mock.Anything, mock.Anything).
 		Return(activities.FindPullRequestOutput{Found: false}, nil)
@@ -221,6 +287,9 @@ func (h *factoryTicketHarness) run() {
 			return nil
 		})
 
+	if h.cancelDuringAgent {
+		env.RegisterDelayedCallback(env.CancelWorkflow, time.Second)
+	}
 	env.ExecuteWorkflow(workflows.FactoryWorkTicket, workflows.FactoryWorkTicketInput{
 		TicketID:     h.ticket,
 		Config:       h.config,
@@ -443,6 +512,81 @@ func TestFactoryWorkTicketReviewFindingsStayWorkingUntilTheyClear(t *testing.T) 
 	}
 	if len(h.reviewTurns) != 2 {
 		t.Fatalf("review turns = %v, want 2 — one that found something, one that confirmed it was fixed", h.reviewTurns)
+	}
+}
+
+func TestFactoryWorkTicketRunsPlanImplementAndReviewAsAgentChildren(t *testing.T) {
+	t.Parallel()
+
+	h := newFactoryTicketHarness(t)
+	h.runVersion(1)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+	result := h.result(t)
+	if result.Outcome != work.OutcomeProposed || result.Usage != (work.Usage{InputTokens: 30, OutputTokens: 3}) {
+		t.Fatalf("result = %#v", result)
+	}
+	wantStages := []work.Stage{work.StagePlan, work.StageImplement, work.StageReview}
+	wantToolsets := []agent.ToolsetID{agent.ToolsetCodingReadV1, agent.ToolsetCodingWriteV1, agent.ToolsetCodingReadV1}
+	if len(h.agentChildren) != len(wantStages) {
+		t.Fatalf("agent children=%d", len(h.agentChildren))
+	}
+	for index, stage := range wantStages {
+		input := h.agentChildren[index]
+		wantID := agent.WorkflowID(h.done.RunID, string(stage), 1)
+		if input.Attempt.Key.Stage != stage || input.ToolsetID != wantToolsets[index] || input.Limits != agent.DefaultLimits() {
+			t.Fatalf("child %d input = %#v", index, input)
+		}
+		if h.agentChildIDs[index] != wantID {
+			t.Fatalf("child %d id=%q want=%q", index, h.agentChildIDs[index], wantID)
+		}
+	}
+	for _, activityName := range h.activityStarts {
+		if activityName == "RunPlan" || activityName == "RunImplement" || activityName == "RunReview" {
+			t.Fatalf("new history invoked legacy stage activity %q", activityName)
+		}
+	}
+}
+
+func TestAgentTranscriptPersistsAfterAttemptRecording(t *testing.T) {
+	t.Parallel()
+
+	h := newFactoryTicketHarness(t)
+	h.runVersion(1)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+	lastAttemptEnd := -1
+	persisted := 0
+	for index, activityName := range h.activityStarts {
+		switch activityName {
+		case "RecordAttemptEnd":
+			lastAttemptEnd = index
+		case agent.PersistTranscriptActivityName:
+			if lastAttemptEnd < 0 || lastAttemptEnd >= index {
+				t.Fatalf("activity order = %v", h.activityStarts)
+			}
+			persisted++
+			lastAttemptEnd = -1
+		}
+	}
+	if persisted != 3 {
+		t.Fatalf("persisted transcripts = %d, want 3; activity order = %v", persisted, h.activityStarts)
+	}
+}
+
+func TestFactoryWorkTicketCancellationWaitsForTheAgentChildBeforeSandboxCleanup(t *testing.T) {
+	t.Parallel()
+
+	h := newFactoryTicketHarness(t)
+	h.cancelDuringAgent = true
+	h.runVersion(1)
+	if !temporal.IsCanceledError(h.env.GetWorkflowError()) {
+		t.Fatalf("workflow error = %v, want cancellation", h.env.GetWorkflowError())
+	}
+	if len(h.lifecycle) != 2 || h.lifecycle[0] != "child-canceled" || h.lifecycle[1] != "sandbox-deleted" {
+		t.Fatalf("cancellation lifecycle = %v", h.lifecycle)
 	}
 }
 

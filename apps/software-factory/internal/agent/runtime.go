@@ -5,6 +5,13 @@ import "github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 // ToolsetID identifies one immutable meaning of a tool catalogue.
 type ToolsetID string
 
+const (
+	// ToolsetCodingReadV1 is the immutable read-only plan/review catalogue.
+	ToolsetCodingReadV1 ToolsetID = "coding-read-v1"
+	// ToolsetCodingWriteV1 is the immutable implement catalogue.
+	ToolsetCodingWriteV1 ToolsetID = "coding-write-v1"
+)
+
 // Limits fixes one agent run's resource budgets at child-workflow start.
 type Limits struct {
 	MaxModelTurns        int   `json:"max_model_turns"`
@@ -13,6 +20,14 @@ type Limits struct {
 	MaxOutputTokens      int64 `json:"max_output_tokens"`
 	MaxConversationBytes int64 `json:"max_conversation_bytes"`
 	ContinueAsNewAfter   int   `json:"continue_as_new_after"`
+}
+
+// DefaultLimits returns the fixed V1 operational and spend bounds for one stage agent.
+func DefaultLimits() Limits {
+	return Limits{
+		MaxModelTurns: 24, MaxToolCalls: 96, MaxInputTokens: 500_000, MaxOutputTokens: 100_000,
+		MaxConversationBytes: 1 << 20, ContinueAsNewAfter: 8,
+	}
 }
 
 // ModelTurnInput routes one provider turn using only bounded metadata and a conversation reference.

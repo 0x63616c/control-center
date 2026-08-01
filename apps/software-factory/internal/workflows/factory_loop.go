@@ -4,8 +4,10 @@ import (
 	"fmt"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/agent"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
+	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/workflow"
 )
 
@@ -170,6 +172,17 @@ func (r *factoryTicketRun) runFactoryPlanTurn(
 	r.recordStep(ctx, key)
 
 	attempt := activities.StageAttempt{Key: key, Sandbox: r.sandbox, Model: model, Detail: detail, Prior: narrowPrior(prior)}
+	if r.agentWorkflow {
+		out, err := r.runAgentStage(ctx, attempt, agent.ToolsetCodingReadV1)
+		if err != nil {
+			r.recordAttempt(ctx, key, model, startedAt, out.Usage, out.UsageMeasured, store.AttemptFailed)
+			return work.StageOutput{}, err
+		}
+		r.usage = r.usage.Add(out.Usage)
+		r.recordAttempt(ctx, key, model, startedAt, out.Usage, out.UsageMeasured, store.AttemptSucceeded)
+		r.persistAgentTranscript(ctx, key, out.TranscriptRef)
+		return out.Result, nil
+	}
 
 	var out activities.RunPlanOutput
 	if err := workflow.ExecuteActivity(stages, acts.RunPlan, activities.NewRunPlanInput(attempt)).Get(ctx, &out); err != nil {
@@ -199,6 +212,17 @@ func (r *factoryTicketRun) runFactoryImplementTurn(
 	r.recordStep(ctx, key)
 
 	attempt := activities.StageAttempt{Key: key, Sandbox: r.sandbox, Model: model, Detail: detail, Prior: narrowPrior(prior)}
+	if r.agentWorkflow {
+		out, err := r.runAgentStage(ctx, attempt, agent.ToolsetCodingWriteV1)
+		if err != nil {
+			r.recordAttempt(ctx, key, model, startedAt, out.Usage, out.UsageMeasured, store.AttemptFailed)
+			return work.StageOutput{}, err
+		}
+		r.usage = r.usage.Add(out.Usage)
+		r.recordAttempt(ctx, key, model, startedAt, out.Usage, out.UsageMeasured, store.AttemptSucceeded)
+		r.persistAgentTranscript(ctx, key, out.TranscriptRef)
+		return out.Result, nil
+	}
 
 	var out activities.RunImplementOutput
 	if err := workflow.ExecuteActivity(stages, acts.RunImplement, activities.NewRunImplementInput(attempt)).Get(ctx, &out); err != nil {
@@ -225,6 +249,17 @@ func (r *factoryTicketRun) runFactoryReviewTurn(
 	r.recordStep(ctx, key)
 
 	attempt := activities.StageAttempt{Key: key, Sandbox: r.sandbox, Model: model, Detail: detail, Prior: narrowPrior(prior)}
+	if r.agentWorkflow {
+		out, err := r.runAgentStage(ctx, attempt, agent.ToolsetCodingReadV1)
+		if err != nil {
+			r.recordAttempt(ctx, key, model, startedAt, out.Usage, out.UsageMeasured, store.AttemptFailed)
+			return work.StageOutput{}, err
+		}
+		r.usage = r.usage.Add(out.Usage)
+		r.recordAttempt(ctx, key, model, startedAt, out.Usage, out.UsageMeasured, store.AttemptSucceeded)
+		r.persistAgentTranscript(ctx, key, out.TranscriptRef)
+		return out.Result, nil
+	}
 
 	var out activities.RunReviewOutput
 	if err := workflow.ExecuteActivity(stages, acts.RunReview, activities.NewRunReviewInput(attempt)).Get(ctx, &out); err != nil {
@@ -238,6 +273,30 @@ func (r *factoryTicketRun) runFactoryReviewTurn(
 	r.recordAttempt(ctx, key, model, startedAt, out.Usage, stageUsageAlwaysMeasured, store.AttemptSucceeded)
 	r.persistTranscript(ctx, key, out.Transcript)
 	return out.Result, nil
+}
+
+func (r *factoryTicketRun) runAgentStage(
+	ctx workflow.Context,
+	attempt activities.StageAttempt,
+	toolsetID agent.ToolsetID,
+) (AgentWorkflowResult, error) {
+	child := workflow.WithChildOptions(ctx, agentChildWorkflowOptions(r.in.Policy, attempt.Key))
+	input := AgentWorkflowInput{
+		Attempt: attempt, ToolsetID: toolsetID, Limits: agent.DefaultLimits(),
+		CacheKey: fmt.Sprintf("agent/%s/%s", r.runID, attempt.Key.Stage),
+	}
+	var result AgentWorkflowResult
+	err := workflow.ExecuteChildWorkflow(child, AgentWorkflow, input).Get(ctx, &result)
+	return result, err
+}
+
+func agentChildWorkflowOptions(policy work.RunPolicy, key work.StageKey) workflow.ChildWorkflowOptions {
+	return workflow.ChildWorkflowOptions{
+		WorkflowID:               agent.WorkflowID(key.RunID, string(key.Stage), key.Turn),
+		WorkflowExecutionTimeout: policy.StageTimeout,
+		WaitForCancellation:      true,
+		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
+	}
 }
 
 // openOrUpdatePullRequest mirrors ticketRun.openOrUpdatePullRequest exactly;

@@ -1,5 +1,7 @@
 package agent
 
+import "fmt"
+
 const (
 	// WorkflowName is the stable Temporal registration for the reusable agent runtime.
 	WorkflowName = "AgentWorkflow"
@@ -14,3 +16,8 @@ const (
 	// PersistTranscriptActivityName stores one finalized transcript ref against its recorded Attempt.
 	PersistTranscriptActivityName = "agent.persist-transcript"
 )
+
+// WorkflowID returns one stage turn's deterministic child workflow ID.
+func WorkflowID(runID, stage string, turn int) string {
+	return fmt.Sprintf("agent/%s/%s/%d", runID, stage, turn)
+}
