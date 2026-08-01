@@ -85,7 +85,11 @@ func run() error {
 	return nil
 }
 
-func register(w worker.Worker, acts *activities.Activities, targetActs *activities.RunWorkerActivities) {
+type activityRegistrar interface {
+	RegisterActivity(any)
+}
+
+func register(w activityRegistrar, acts *activities.Activities, targetActs *activities.RunWorkerActivities) {
 	w.RegisterActivity(acts.RunPlan)
 	w.RegisterActivity(acts.RunImplement)
 	w.RegisterActivity(acts.RunReview)
