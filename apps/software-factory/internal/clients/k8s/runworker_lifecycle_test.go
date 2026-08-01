@@ -25,11 +25,99 @@ func validRunWorkerSecrets() work.RunWorkerSecretMaterial {
 
 func mustRunWorkers(t *testing.T, cs *fake.Clientset) *RunWorkers {
 	t.Helper()
-	workers, err := newRunWorkers(cs, "software-factory", discardLogger(), testClock())
+	workers, err := newRunWorkers(cs, "software-factory", discardLogger(), "")
 	if err != nil {
 		t.Fatalf("newRunWorkers: %v", err)
 	}
 	return workers
+}
+
+func TestProvisionRejectsDriftBeforeMutatingGenerationSecrets(t *testing.T) {
+	ctx := context.Background()
+	cs := fake.NewSimpleClientset()
+	workers := mustRunWorkers(t, cs)
+	spec := validRunWorkerSpec()
+	id, err := workers.Provision(ctx, spec, validRunWorkerSecrets())
+	if err != nil {
+		t.Fatalf("initial Provision: %v", err)
+	}
+	pod, err := cs.CoreV1().Pods("software-factory").Get(ctx, string(id), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod.Spec.AutomountServiceAccountToken = ptr(true)
+	if _, err := cs.CoreV1().Pods("software-factory").Update(ctx, pod, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	changed := validRunWorkerSecrets()
+	changed.GitHubToken = work.NewCredential("must-not-be-installed")
+	if _, err := workers.Provision(ctx, spec, changed); err == nil {
+		t.Fatal("Provision accepted a drifted existing generation")
+	}
+	secret, err := cs.CoreV1().Secrets("software-factory").Get(ctx, runWorkerGitHubSecretName(id), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(secret.Data[runWorkerGitHubTokenKey]) != "ghs_initial_secret" || string(secret.Data[runWorkerGitHubRevisionKey]) != "1" {
+		t.Fatalf("drift rejection mutated credential Secret: %+v", secret.Data)
+	}
+}
+
+func TestProvisionExactRetryLeavesPodAndSecretsStable(t *testing.T) {
+	ctx := context.Background()
+	cs := fake.NewSimpleClientset()
+	workers := mustRunWorkers(t, cs)
+	spec := validRunWorkerSpec()
+	material := validRunWorkerSecrets()
+	id, err := workers.Provision(ctx, spec, material)
+	if err != nil {
+		t.Fatalf("initial Provision: %v", err)
+	}
+	before, err := cs.CoreV1().Secrets("software-factory").Get(ctx, runWorkerGitHubSecretName(id), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	actionCount := len(cs.Actions())
+	retryID, err := workers.Provision(ctx, spec, material)
+	if err != nil {
+		t.Fatalf("retry Provision: %v", err)
+	}
+	if retryID != id {
+		t.Fatalf("retry ID = %q, want %q", retryID, id)
+	}
+	after, err := cs.CoreV1().Secrets("software-factory").Get(ctx, runWorkerGitHubSecretName(id), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.ResourceVersion != after.ResourceVersion || string(after.Data[runWorkerGitHubRevisionKey]) != "1" {
+		t.Fatalf("exact retry mutated GitHub Secret: before rv=%q after rv=%q revision=%q", before.ResourceVersion, after.ResourceVersion, after.Data[runWorkerGitHubRevisionKey])
+	}
+	for _, action := range cs.Actions()[actionCount:] {
+		if action.GetVerb() == "update" || action.GetVerb() == "patch" || action.GetVerb() == "delete" {
+			t.Fatalf("exact retry performed mutating Kubernetes action: %s %s", action.GetVerb(), action.GetResource().Resource)
+		}
+	}
+}
+
+func TestNewRunWorkersValidatesOnlyItsTargetDependencies(t *testing.T) {
+	t.Parallel()
+
+	if _, err := newRunWorkers(fake.NewSimpleClientset(), "Not/A/Namespace", discardLogger(), ""); err == nil {
+		t.Fatal("newRunWorkers accepted an invalid namespace")
+	}
+	if _, err := newRunWorkers(fake.NewSimpleClientset(), "software-factory", nil, ""); err == nil {
+		t.Fatal("newRunWorkers accepted a nil logger")
+	}
+	if _, err := newRunWorkers(fake.NewSimpleClientset(), "software-factory", discardLogger(), "Not/A/Secret"); err == nil {
+		t.Fatal("newRunWorkers accepted an invalid image pull Secret")
+	}
+	if _, err := newRunWorkers(nil, "software-factory", discardLogger(), ""); err == nil {
+		t.Fatal("newRunWorkers accepted a nil clientset")
+	}
+	if _, err := newRunWorkers(fake.NewSimpleClientset(), "software-factory", discardLogger(), ""); err != nil {
+		t.Fatalf("newRunWorkers rejected its minimal valid dependencies: %v", err)
+	}
 }
 
 func TestProvisionRunWorkerCreatesPodAndGenerationSecrets(t *testing.T) {
@@ -39,7 +127,11 @@ func TestProvisionRunWorkerCreatesPodAndGenerationSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
-	if id != work.RunWorkerName(validRunWorkerSpec().Identity) {
+	wantID, err := work.RunWorkerName(validRunWorkerSpec().Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != wantID {
 		t.Errorf("ID = %q", id)
 	}
 	if _, err := cs.CoreV1().Pods("software-factory").Get(context.Background(), string(id), metav1.GetOptions{}); err != nil {
@@ -60,7 +152,7 @@ func TestRotateGitHubCredentialReturnsOnlyRevisionAndExpiry(t *testing.T) {
 		t.Fatalf("Provision: %v", err)
 	}
 	expires := time.Date(2026, 7, 31, 19, 30, 0, 0, time.UTC)
-	got, err := workers.RotateGitHubCredential(context.Background(), id, work.NewCredential("ghs_rotated_secret"), "bot[bot]", expires)
+	got, err := workers.RotateGitHubCredential(context.Background(), validRunWorkerSpec().Identity, work.NewCredential("ghs_rotated_secret"), "bot[bot]", expires)
 	if err != nil {
 		t.Fatalf("RotateGitHubCredential: %v", err)
 	}
@@ -90,7 +182,7 @@ func TestDeleteRunWorkerRemovesPodAndAllGenerationSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
-	if err := workers.Delete(context.Background(), id); err != nil {
+	if err := workers.Delete(context.Background(), validRunWorkerSpec().Identity); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if _, err := cs.CoreV1().Pods("software-factory").Get(context.Background(), string(id), metav1.GetOptions{}); err == nil {
@@ -100,5 +192,16 @@ func TestDeleteRunWorkerRemovesPodAndAllGenerationSecrets(t *testing.T) {
 		if _, err := cs.CoreV1().Secrets("software-factory").Get(context.Background(), name, metav1.GetOptions{}); err == nil {
 			t.Errorf("secret %s still exists", name)
 		}
+	}
+}
+
+func TestDeleteRejectsInvalidIdentityBeforeCallingKubernetes(t *testing.T) {
+	cs := fake.NewSimpleClientset()
+	workers := mustRunWorkers(t, cs)
+	if err := workers.Delete(context.Background(), work.RunWorkerIdentity{}); err == nil {
+		t.Fatal("Delete accepted an invalid identity")
+	}
+	if actions := cs.Actions(); len(actions) != 0 {
+		t.Fatalf("Delete called Kubernetes for invalid identity: %+v", actions)
 	}
 }

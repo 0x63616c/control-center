@@ -11,9 +11,13 @@ import (
 )
 
 func validRunWorkerSpec() work.RunWorkerSpec {
-	return work.RunWorkerSpec{
+	identity, err := work.NewRunWorkerIdentity("019fb900-0000-7000-8000-000000000001", 1)
+	if err != nil {
+		panic(err)
+	}
+	spec, err := work.NewRunWorkerSpec(work.RunWorkerSpec{
 		TicketNumber:    42,
-		Identity:        work.RunWorkerIdentity{RunID: "019fb900-0000-7000-8000-000000000001", Generation: 1},
+		Identity:        identity,
 		Image:           "ghcr.io/0x63616c/www-software-factory-run-worker@sha256:" + strings.Repeat("a", 64),
 		CPURequest:      "2",
 		MemoryLimit:     "8Gi",
@@ -27,16 +31,52 @@ func validRunWorkerSpec() work.RunWorkerSpec {
 			work.RunWorkerBlobsURLEnv:          "http://software-factory-blobs:8080",
 			work.RunWorkerCheckpointAPIURLEnv:  "http://software-factory-api:8080",
 		},
+	})
+	if err != nil {
+		panic(err)
 	}
+	return spec
 }
 
 func mustBuildRunWorker(t *testing.T) *corev1.Pod {
 	t.Helper()
-	pod, err := buildRunWorkerPod(validRunWorkerSpec(), defaultOptions())
+	pod, err := buildRunWorkerPod(validRunWorkerSpec(), runWorkerOptions{})
 	if err != nil {
 		t.Fatalf("buildRunWorkerPod: %v", err)
 	}
 	return pod
+}
+
+func TestRunWorkerPodMatchCoversTheAuthoritativeSecurityAndRuntimeSpec(t *testing.T) {
+	t.Parallel()
+
+	want := mustBuildRunWorker(t)
+	mutations := map[string]func(*corev1.Pod){
+		"labels":                func(p *corev1.Pod) { p.Labels[labelRunID] = "another-run" },
+		"deadline":              func(p *corev1.Pod) { p.Spec.ActiveDeadlineSeconds = ptr(int64(1)) },
+		"service account token": func(p *corev1.Pod) { p.Spec.AutomountServiceAccountToken = ptr(true) },
+		"pod security context":  func(p *corev1.Pod) { p.Spec.SecurityContext.FSGroup = ptr(int64(2000)) },
+		"projected volumes":     func(p *corev1.Pod) { p.Spec.Volumes[1].Projected.Sources[0].Secret.Name = "foreign" },
+		"resources":             func(p *corev1.Pod) { p.Spec.Containers[0].Resources.Limits = nil },
+		"container security":    func(p *corev1.Pod) { p.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation = ptr(true) },
+		"image":                 func(p *corev1.Pod) { p.Spec.Containers[0].Image += "-different" },
+		"command":               func(p *corev1.Pod) { p.Spec.Containers[0].Command = []string{"sleep"} },
+		"environment":           func(p *corev1.Pod) { p.Spec.Containers[0].Env[0].Value = "different" },
+	}
+	for name, mutate := range mutations {
+		name, mutate := name, mutate
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got := want.DeepCopy()
+			mutate(got)
+			if runWorkerPodMatches(got, want) {
+				t.Fatalf("pod drift in %s was accepted", name)
+			}
+		})
+	}
+	if !runWorkerPodMatches(want.DeepCopy(), want) {
+		t.Fatal("identical authoritative pod specs did not match")
+	}
 }
 
 func TestRunWorkerPodHasOneGenerationSpecificIdentityAndQueue(t *testing.T) {
@@ -56,7 +96,11 @@ func TestRunWorkerPodHasOneGenerationSpecificIdentityAndQueue(t *testing.T) {
 			t.Errorf("env %s reads a secret/value source", item.Name)
 		}
 	}
-	if env[work.RunWorkerTaskQueueEnv] != work.RunWorkerTaskQueue(validRunWorkerSpec().Identity.RunID, 1) {
+	wantQueue, err := work.RunWorkerTaskQueue(validRunWorkerSpec().Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env[work.RunWorkerTaskQueueEnv] != wantQueue {
 		t.Errorf("private queue = %q", env[work.RunWorkerTaskQueueEnv])
 	}
 	if env[work.RunWorkerIDEnv] != pod.Name || env[work.RunWorkerGenerationEnv] != "1" {

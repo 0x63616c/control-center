@@ -1,8 +1,12 @@
 package k8s
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -47,39 +51,45 @@ func runWorkerSecretNames(id work.RunWorkerID) []string {
 func (r *RunWorkers) Provision(ctx context.Context, spec work.RunWorkerSpec, material work.RunWorkerSecretMaterial) (work.RunWorkerID, error) {
 	pod, err := buildRunWorkerPod(spec, r.opts)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("provisioning Run Worker: %w", err)
 	}
 	if err := validateRunWorkerSecretMaterial(material); err != nil {
-		return "", err
+		return "", fmt.Errorf("provisioning Run Worker: %w", err)
 	}
-	id := work.RunWorkerID(pod.Name)
+	id, err := work.ParseRunWorkerID(pod.Name, spec.Identity)
+	if err != nil {
+		return "", fmt.Errorf("provisioning Run Worker: %w", err)
+	}
 	labels := runWorkerLabels(spec)
+	pods := r.cs.CoreV1().Pods(r.ns)
+	if _, err := pods.Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return "", fmt.Errorf("provisioning Run Worker %s: creating pod: %w", id, err)
+		}
+		existing, getErr := pods.Get(ctx, pod.Name, metav1.GetOptions{})
+		if getErr != nil {
+			return "", fmt.Errorf("provisioning Run Worker %s: reading existing pod: %w", id, getErr)
+		}
+		if !runWorkerPodMatches(existing, pod) {
+			return "", fmt.Errorf("provisioning Run Worker %s: existing generation differs from its authoritative spec: %w", id, work.ErrPermanent)
+		}
+	}
+
+	// The Pod is created or its complete target contract was proved compatible
+	// before any credential is updated. A retry can therefore never rotate a
+	// live but different generation's Secrets and only then discover the drift.
 	if err := r.putSecret(ctx, runWorkerCodexSecretName(id), labels, map[string][]byte{
 		runWorkerCodexAuthKey: material.CodexCredential.Reveal(),
 	}); err != nil {
-		return "", err
+		return "", fmt.Errorf("provisioning Run Worker %s Codex credential: %w", id, err)
 	}
 	if err := r.putSecret(ctx, runWorkerCheckpointSecretName(id), labels, map[string][]byte{
 		runWorkerCheckpointKey: []byte(material.CheckpointCapability.Reveal()),
 	}); err != nil {
-		return "", err
+		return "", fmt.Errorf("provisioning Run Worker %s checkpoint capability: %w", id, err)
 	}
 	if _, err := r.putGitHubSecret(ctx, id, labels, material.GitHubToken, material.GitHubLogin, material.GitHubExpiresAt); err != nil {
-		return "", err
-	}
-
-	pods := r.cs.CoreV1().Pods(r.ns)
-	if _, err := pods.Create(ctx, pod, metav1.CreateOptions{}); err != nil {
-		if !apierrors.IsAlreadyExists(err) {
-			return "", fmt.Errorf("creating Run Worker %s: %w", id, err)
-		}
-		existing, getErr := pods.Get(ctx, pod.Name, metav1.GetOptions{})
-		if getErr != nil {
-			return "", fmt.Errorf("reading existing Run Worker %s: %w", id, getErr)
-		}
-		if !runWorkerPodMatches(existing, pod) {
-			return "", fmt.Errorf("existing Run Worker %s differs from its requested generation: %w", id, work.ErrPermanent)
-		}
+		return "", fmt.Errorf("provisioning Run Worker %s GitHub credential: %w", id, err)
 	}
 	r.logger.InfoContext(ctx, "Run Worker provisioned", "run_worker", id, "run_id", spec.Identity.RunID, "generation", spec.Identity.Generation, "image", spec.Image)
 	return id, nil
@@ -87,7 +97,11 @@ func (r *RunWorkers) Provision(ctx context.Context, spec work.RunWorkerSpec, mat
 
 // RotateGitHubCredential atomically replaces the projected GitHub files and
 // returns only the revision the Run Worker can observe plus its expiry.
-func (r *RunWorkers) RotateGitHubCredential(ctx context.Context, id work.RunWorkerID, token work.Credential, login string, expiresAt time.Time) (work.RunWorkerCredentialRevision, error) {
+func (r *RunWorkers) RotateGitHubCredential(ctx context.Context, identity work.RunWorkerIdentity, token work.Credential, login string, expiresAt time.Time) (work.RunWorkerCredentialRevision, error) {
+	id, err := work.RunWorkerName(identity)
+	if err != nil {
+		return work.RunWorkerCredentialRevision{}, fmt.Errorf("rotating Run Worker GitHub credential: %w", err)
+	}
 	if strings.TrimSpace(token.Reveal()) == "" || strings.TrimSpace(login) == "" || expiresAt.IsZero() {
 		return work.RunWorkerCredentialRevision{}, fmt.Errorf("rotating Run Worker GitHub credential requires token, login, and expiry: %w", work.ErrPermanent)
 	}
@@ -97,7 +111,7 @@ func (r *RunWorkers) RotateGitHubCredential(ctx context.Context, id work.RunWork
 	}
 	result, err := r.updateGitHubSecret(ctx, secret, token, login, expiresAt)
 	if err != nil {
-		return work.RunWorkerCredentialRevision{}, err
+		return work.RunWorkerCredentialRevision{}, fmt.Errorf("rotating Run Worker %s GitHub credential: %w", id, err)
 	}
 	r.logger.InfoContext(ctx, "Run Worker GitHub credential rotated", "run_worker", id, "revision", result.Revision, "expires_at", result.ExpiresAt)
 	return result, nil
@@ -105,7 +119,11 @@ func (r *RunWorkers) RotateGitHubCredential(ctx context.Context, id work.RunWork
 
 // Delete removes a target worker and every per-generation Secret. Absence is
 // success so Temporal cleanup retries are idempotent.
-func (r *RunWorkers) Delete(ctx context.Context, id work.RunWorkerID) error {
+func (r *RunWorkers) Delete(ctx context.Context, identity work.RunWorkerIdentity) error {
+	id, err := work.RunWorkerName(identity)
+	if err != nil {
+		return fmt.Errorf("deleting Run Worker: %w", err)
+	}
 	if err := ignoreAbsent(r.cs.CoreV1().Pods(r.ns).Delete(ctx, string(id), metav1.DeleteOptions{})); err != nil {
 		return fmt.Errorf("deleting Run Worker %s: %w", id, err)
 	}
@@ -139,6 +157,9 @@ func (r *RunWorkers) putSecret(ctx context.Context, name string, labels map[stri
 	if err != nil {
 		return fmt.Errorf("reading Run Worker Secret %s: %w", name, err)
 	}
+	if reflect.DeepEqual(existing.Labels, labels) && reflect.DeepEqual(existing.Data, data) && existing.Type == corev1.SecretTypeOpaque {
+		return nil
+	}
 	existing.Labels = labels
 	existing.Data = data
 	if _, err := secrets.Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
@@ -159,14 +180,23 @@ func (r *RunWorkers) putGitHubSecret(ctx context.Context, id work.RunWorkerID, l
 	if err != nil {
 		return work.RunWorkerCredentialRevision{}, fmt.Errorf("reading Run Worker GitHub Secret: %w", err)
 	}
+	current, revisionErr := runWorkerGitHubRevision(existing)
+	if revisionErr != nil {
+		return work.RunWorkerCredentialRevision{}, revisionErr
+	}
+	if existing.Type == corev1.SecretTypeOpaque && reflect.DeepEqual(existing.Labels, labels) && bytes.Equal(existing.Data[runWorkerGitHubTokenKey], []byte(token.Reveal())) &&
+		bytes.Equal(existing.Data[runWorkerGitHubLoginKey], []byte(login)) &&
+		bytes.Equal(existing.Data[runWorkerGitHubExpiresAtKey], []byte(expiresAt.UTC().Format(time.RFC3339Nano))) {
+		return work.RunWorkerCredentialRevision{Revision: strconv.Itoa(current), ExpiresAt: expiresAt.UTC()}, nil
+	}
 	existing.Labels = labels
 	return r.updateGitHubSecret(ctx, existing, token, login, expiresAt)
 }
 
 func (r *RunWorkers) updateGitHubSecret(ctx context.Context, secret *corev1.Secret, token work.Credential, login string, expiresAt time.Time) (work.RunWorkerCredentialRevision, error) {
-	current, err := strconv.Atoi(string(secret.Data[runWorkerGitHubRevisionKey]))
-	if err != nil || current < 1 {
-		return work.RunWorkerCredentialRevision{}, fmt.Errorf("run worker GitHub Secret %s has invalid revision metadata: %w", secret.Name, work.ErrPermanent)
+	current, err := runWorkerGitHubRevision(secret)
+	if err != nil {
+		return work.RunWorkerCredentialRevision{}, err
 	}
 	revision := current + 1
 	secret.Data = githubSecretData(token, login, expiresAt, revision)
@@ -174,6 +204,14 @@ func (r *RunWorkers) updateGitHubSecret(ctx context.Context, secret *corev1.Secr
 		return work.RunWorkerCredentialRevision{}, fmt.Errorf("updating Run Worker GitHub Secret %s: %w", secret.Name, err)
 	}
 	return work.RunWorkerCredentialRevision{Revision: strconv.Itoa(revision), ExpiresAt: expiresAt.UTC()}, nil
+}
+
+func runWorkerGitHubRevision(secret *corev1.Secret) (int, error) {
+	current, err := strconv.Atoi(string(secret.Data[runWorkerGitHubRevisionKey]))
+	if err != nil || current < 1 {
+		return 0, fmt.Errorf("run worker GitHub Secret %s has invalid revision metadata: %w", secret.Name, work.ErrPermanent)
+	}
+	return current, nil
 }
 
 func githubSecret(name string, labels map[string]string, token work.Credential, login string, expiresAt time.Time, revision int) *corev1.Secret {
@@ -190,18 +228,62 @@ func githubSecretData(token work.Credential, login string, expiresAt time.Time, 
 }
 
 func runWorkerPodMatches(got, want *corev1.Pod) bool {
-	if len(got.Spec.Containers) != 1 || len(want.Spec.Containers) != 1 {
-		return false
-	}
-	g, w := got.Spec.Containers[0], want.Spec.Containers[0]
-	return g.Image == w.Image && strings.Join(g.Command, "\x00") == strings.Join(w.Command, "\x00") &&
-		strings.Join(renderEnv(g.Env), "\x00") == strings.Join(renderEnv(w.Env), "\x00")
+	gotFingerprint, gotErr := runWorkerPodFingerprint(got)
+	wantFingerprint, wantErr := runWorkerPodFingerprint(want)
+	return gotErr == nil && wantErr == nil && gotFingerprint == wantFingerprint
 }
 
-func renderEnv(env []corev1.EnvVar) []string {
-	out := make([]string, 0, len(env))
-	for _, item := range env {
-		out = append(out, item.Name+"="+item.Value)
+type runWorkerPodContract struct {
+	Name                         string
+	Labels                       map[string]string
+	RestartPolicy                corev1.RestartPolicy
+	ActiveDeadlineSeconds        *int64
+	AutomountServiceAccountToken *bool
+	EnableServiceLinks           *bool
+	TerminationGracePeriod       *int64
+	ServiceAccountName           string
+	SecurityContext              *corev1.PodSecurityContext
+	ImagePullSecrets             []corev1.LocalObjectReference
+	Containers                   []runWorkerContainerContract
+	Volumes                      []corev1.Volume
+}
+
+type runWorkerContainerContract struct {
+	Name            string
+	Image           string
+	ImagePullPolicy corev1.PullPolicy
+	Command         []string
+	Args            []string
+	Env             []corev1.EnvVar
+	Resources       corev1.ResourceRequirements
+	VolumeMounts    []corev1.VolumeMount
+	SecurityContext *corev1.SecurityContext
+}
+
+func runWorkerPodFingerprint(pod *corev1.Pod) ([sha256.Size]byte, error) {
+	if pod == nil || len(pod.Spec.Containers) != 1 {
+		return [sha256.Size]byte{}, fmt.Errorf("fingerprinting Run Worker pod: expected exactly one container: %w", work.ErrPermanent)
 	}
-	return out
+	container := pod.Spec.Containers[0]
+	serviceAccountName := pod.Spec.ServiceAccountName
+	if serviceAccountName == "" {
+		serviceAccountName = "default"
+	}
+	contract := runWorkerPodContract{
+		Name: pod.Name, Labels: pod.Labels, RestartPolicy: pod.Spec.RestartPolicy,
+		ActiveDeadlineSeconds: pod.Spec.ActiveDeadlineSeconds, AutomountServiceAccountToken: pod.Spec.AutomountServiceAccountToken,
+		EnableServiceLinks: pod.Spec.EnableServiceLinks, TerminationGracePeriod: pod.Spec.TerminationGracePeriodSeconds,
+		ServiceAccountName: serviceAccountName, SecurityContext: pod.Spec.SecurityContext,
+		ImagePullSecrets: pod.Spec.ImagePullSecrets, Volumes: pod.Spec.Volumes,
+		Containers: []runWorkerContainerContract{{
+			Name: container.Name, Image: container.Image, ImagePullPolicy: container.ImagePullPolicy,
+			Command: container.Command, Args: container.Args, Env: container.Env, Resources: container.Resources,
+			VolumeMounts: container.VolumeMounts, SecurityContext: container.SecurityContext,
+		}},
+	}
+	encoded, err := json.Marshal(contract)
+	if err != nil {
+		return [sha256.Size]byte{}, fmt.Errorf("fingerprinting Run Worker pod: %w", err)
+	}
+	return sha256.Sum256(encoded), nil
 }

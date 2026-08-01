@@ -67,7 +67,7 @@ const IMAGE_REPOSITORIES = {
     digestKey: controlCenterProduct.imageDigestKey("temporal-worker"),
     repository: controlCenterProduct.imageRepository("temporal-worker"),
   },
-  // The software-factory module's seven images (ADR-0011). A DIFFERENT product, so the
+  // The software-factory module's eight images (ADR-0011). A DIFFERENT product, so the
   // keys carry the product prefix and cannot collide with control-center's own
   // `worker` above — `www-software-factory-worker` is not a control-center
   // component.
