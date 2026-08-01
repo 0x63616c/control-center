@@ -108,6 +108,7 @@ func TestLiveAgentWorkflowWorker(t *testing.T) {
 	mainWorker.RegisterActivityWithOptions(gatedPrompts.Prepare, activity.RegisterOptions{Name: agent.PrepareActivityName})
 	mainWorker.RegisterActivityWithOptions(modelActivities.ModelTurn, activity.RegisterOptions{Name: agent.ModelTurnActivityName})
 	mainWorker.RegisterActivityWithOptions(promptActivities.Finalize, activity.RegisterOptions{Name: agent.FinalizeActivityName})
+	mainWorker.RegisterActivityWithOptions(modelActivities.RecordLifecycle, activity.RegisterOptions{Name: agent.LifecycleActivityName})
 
 	sandboxWorker := worker.New(temporalClient, work.SandboxTaskQueue(cfg.runID), worker.Options{
 		EnableSessionWorker: true, MaxConcurrentSessionExecutionSize: 1,
@@ -163,7 +164,8 @@ func TestLiveAgentWorkflowStart(t *testing.T) {
 					"You must use the supplied tools; do not merely describe the change.",
 			}},
 		},
-		ToolsetID: agent.ToolsetCodingWriteV1,
+		ToolsetID:  agent.ToolsetCodingWriteV1,
+		ToolTarget: agent.ToolTarget{Kind: agent.ToolTargetLegacySandbox},
 		Limits: agent.Limits{
 			MaxModelTurns: 8, MaxToolCalls: 12, MaxInputTokens: 150_000,
 			MaxOutputTokens: 20_000, MaxConversationBytes: 1 << 20, ContinueAsNewAfter: 3,
