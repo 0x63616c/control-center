@@ -71,6 +71,11 @@ type implementInput struct {
 	// raised blocking findings is the turn this matters for; every other turn
 	// simply sees the same findings again, which is redundant but not wrong.
 	MostRecentReview work.StageOutput
+
+	// Feedback is authoritative CI, review, or merge feedback that caused this
+	// implement Step. It is not PriorTurns because it did not come from an
+	// earlier agent document.
+	Feedback work.AgentPromptContext
 }
 
 func (in implementInput) templateValues() (map[string]string, error) {
@@ -81,6 +86,7 @@ func (in implementInput) templateValues() (map[string]string, error) {
 		"plan":                      in.Plan.Prose(),
 		"previous_implement_report": previousImplementReportProse(in.PreviousReport),
 		"review_findings":           findingsProse(in.MostRecentReview),
+		"implementation_feedback":   feedbackProse(in.Feedback),
 	}, nil
 }
 
@@ -121,6 +127,8 @@ type reviewInput struct {
 	// Turn is which review turn this is, 1-indexed, rendered against
 	// work.MaxReviewTurns.
 	Turn int
+
+	CandidateHeadSHA string
 }
 
 func (in reviewInput) templateValues() (map[string]string, error) {
@@ -138,9 +146,46 @@ func (in reviewInput) templateValues() (map[string]string, error) {
 // numbers, never a document, so neither is fenced.
 func (in reviewInput) scalarValues() map[string]string {
 	return map[string]string{
-		"review_turn":      strconv.Itoa(in.Turn),
-		"max_review_turns": strconv.Itoa(work.MaxReviewTurns),
+		"review_turn":        strconv.Itoa(in.Turn),
+		"max_review_turns":   strconv.Itoa(work.MaxReviewTurns),
+		"candidate_head_sha": in.CandidateHeadSHA,
 	}
+}
+
+// feedbackProse renders only structured, bounded feedback delivered by the
+// workflow. It remains a fenced document because CI and GitHub diagnostics are
+// untrusted text even though their envelope is authoritative.
+func feedbackProse(context work.AgentPromptContext) string {
+	var b strings.Builder
+	if len(context.CIFailures) != 0 {
+		b.WriteString("CI failures for the exact checked candidate:\n\n")
+		for _, failure := range context.CIFailures {
+			fmt.Fprintf(&b, "- check=%s fingerprint=%s: %s\n", failure.Name, failure.Fingerprint, failure.Evidence)
+		}
+	}
+	if len(context.ReviewFindings) != 0 {
+		if b.Len() != 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("Blocking review feedback:\n\n")
+		for _, finding := range context.ReviewFindings {
+			kind := "advisory"
+			if finding.Blocking {
+				kind = "blocking"
+			}
+			fmt.Fprintf(&b, "- id=%s (%s): %s\n", finding.ID, kind, finding.Summary)
+		}
+	}
+	if context.Merge != nil {
+		if b.Len() != 0 {
+			b.WriteString("\n")
+		}
+		fmt.Fprintf(&b, "Merge feedback: outcome=%s reviewed_head=%s current_head=%s current_base=%s\n\n%s\n", context.Merge.Outcome, context.Merge.ReviewedHeadSHA, context.Merge.CurrentHeadSHA, context.Merge.CurrentBaseSHA, context.Merge.Diagnostic)
+	}
+	if b.Len() == 0 {
+		return "(No external CI, review, or merge feedback reopened this implementation step.)"
+	}
+	return b.String()
 }
 
 // ledgerProse renders every earlier review turn's findings and verified list,
@@ -217,7 +262,7 @@ func findingsProse(out work.StageOutput) string {
 // turn is that stage's own 1-indexed turn number; only review reads it.
 //
 // Exhaustive, no default — matches stageTemplate.
-func buildStageInput(stage work.Stage, turn int, prior work.PriorTurns) (stageInput, error) {
+func buildStageInput(stage work.Stage, turn int, prior work.PriorTurns, promptContext work.AgentPromptContext) (stageInput, error) {
 	switch stage {
 	case work.StagePlan:
 		return planInput{}, nil
@@ -226,13 +271,15 @@ func buildStageInput(stage work.Stage, turn int, prior work.PriorTurns) (stageIn
 			Plan:             prior.Plan,
 			PreviousReport:   prior.LatestImplement,
 			MostRecentReview: prior.LatestReview,
+			Feedback:         promptContext,
 		}, nil
 	case work.StageReview:
 		return reviewInput{
-			Implementation: prior.LatestImplement,
-			PreviousReview: prior.LatestReview,
-			Ledger:         prior.ReviewLedger,
-			Turn:           turn,
+			Implementation:   prior.LatestImplement,
+			PreviousReview:   prior.LatestReview,
+			Ledger:           prior.ReviewLedger,
+			Turn:             turn,
+			CandidateHeadSHA: promptContext.CandidateHeadSHA,
 		}, nil
 	}
 	return nil, fmt.Errorf("no input shape for stage %q", stage)

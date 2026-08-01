@@ -813,7 +813,7 @@ func (r productionStageRunner) RunTargetStage(_ context.Context, _ work.StageRun
 
 type productionPrompts struct{}
 
-func (productionPrompts) Render(work.StageKey, work.TicketDetail, work.PriorTurns) (string, []byte, error) {
+func (productionPrompts) Render(work.StageKey, work.TicketDetail, work.PriorTurns, work.AgentPromptContext) (string, []byte, error) {
 	return "prompt", []byte(`{}`), nil
 }
 

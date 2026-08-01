@@ -72,6 +72,11 @@ type Input struct {
 	// purpose-built struct rather than the run's whole turn history. A stage
 	// that has not run yet reads as the zero StageOutput on the field for it.
 	Prior work.PriorTurns
+
+	// PromptContext is authoritative workflow/GitHub feedback for this agent
+	// invocation. It must not be smuggled into PriorTurns, which is strictly
+	// agent-produced history.
+	PromptContext work.AgentPromptContext
 }
 
 // Render assembles the stage's whole prompt.
@@ -169,7 +174,7 @@ func (in Input) staticValues() (map[string]string, int, error) {
 		"ticket_body":   body(in.Ticket),
 	}
 
-	stageInput, err := buildStageInput(in.Stage, in.Turn, in.Prior)
+	stageInput, err := buildStageInput(in.Stage, in.Turn, in.Prior, in.PromptContext)
 	if err != nil {
 		return nil, 0, err
 	}

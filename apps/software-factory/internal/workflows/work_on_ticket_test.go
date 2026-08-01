@@ -239,7 +239,7 @@ func TestWorkOnTicketRepairsRedCIThenReviewsTheNewHead(t *testing.T) {
 	if len(implements) != 2 || implements[1].PriorProviderThread == nil || implements[1].PriorProviderThread.Identity != h.provisioned.Identity || implements[1].PriorProviderThread.ThreadID != "implement-thread" {
 		t.Fatalf("implement feedback continuation = %+v, want the original implementer thread on generation one", implements)
 	}
-	if len(reviews) != 1 || reviews[0].CandidateHeadSHA != "H2" {
+	if len(reviews) != 1 || reviews[0].PromptContext.CandidateHeadSHA != "H2" {
 		t.Fatalf("reviews = %+v, want one fresh H2 review", reviews)
 	}
 	if h.merge.ExpectedHeadSHA != "H2" {
@@ -325,7 +325,7 @@ func newWorkOnTicketHarness(t *testing.T, recorderStore *storefake.Store) *workO
 		func(_ context.Context, in activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
 			h.agentInputs = append(h.agentInputs, in)
 			if in.Stage == work.AgentStageReview {
-				h.reviewHead = in.CandidateHeadSHA
+				h.reviewHead = in.PromptContext.CandidateHeadSHA
 			}
 			return targetAgentOutput(t, in.Stage), nil
 		},

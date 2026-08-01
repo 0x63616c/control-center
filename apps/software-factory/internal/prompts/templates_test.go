@@ -206,7 +206,7 @@ func TestBuildStageInputProducesTheDeclaredVariableNames(t *testing.T) {
 		want  []string
 	}{
 		{stage: work.StagePlan, want: nil},
-		{stage: work.StageImplement, want: []string{"plan", "previous_implement_report", "review_findings"}},
+		{stage: work.StageImplement, want: []string{"plan", "previous_implement_report", "review_findings", "implementation_feedback"}},
 		{stage: work.StageReview, want: []string{"implementation_report", "previous_review_findings", "review_ledger"}},
 	}
 
@@ -214,7 +214,7 @@ func TestBuildStageInputProducesTheDeclaredVariableNames(t *testing.T) {
 		t.Run(string(tc.stage), func(t *testing.T) {
 			t.Parallel()
 
-			in, err := buildStageInput(tc.stage, 1, prior)
+			in, err := buildStageInput(tc.stage, 1, prior, work.AgentPromptContext{})
 			if err != nil {
 				t.Fatalf("buildStageInput(%s): %v", tc.stage, err)
 			}

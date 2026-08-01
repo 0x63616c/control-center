@@ -113,10 +113,9 @@ type TargetAgentInput struct {
 	Model        work.Model
 	Detail       work.TicketDetail
 	Prior        work.PriorTurns
-	// CandidateHeadSHA binds review input to the exact candidate authorized by
-	// the preceding CI Step. It is empty for plan and implementation, which do
-	// not review an already-authorized candidate.
-	CandidateHeadSHA    string
+	// PromptContext carries the exact candidate and any authoritative feedback
+	// into the real renderer; it is separate from agent-produced PriorTurns.
+	PromptContext       work.AgentPromptContext
 	PriorProviderThread *ProviderThreadContinuation
 	CredentialRevision  CredentialRevisionExpectation
 }
@@ -199,7 +198,7 @@ func (a *RunWorkerActivities) RunTargetAgent(ctx context.Context, in TargetAgent
 
 	stage := work.Stage(in.Stage)
 	key := work.StageKey{Ticket: in.TicketNumber, RunID: in.AttemptID.RunID, Stage: stage, Turn: in.Iteration}
-	prompt, schema, err := a.deps.Prompts.Render(key, in.Detail, in.Prior)
+	prompt, schema, err := a.deps.Prompts.Render(key, in.Detail, in.Prior, in.PromptContext)
 	if err != nil {
 		return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("rendering target prompt for %s", in.AttemptID), err)
 	}

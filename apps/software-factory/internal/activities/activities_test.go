@@ -214,7 +214,7 @@ type fakePrompts struct {
 	sawPrior work.PriorTurns
 }
 
-func (f *fakePrompts) Render(key work.StageKey, _ work.TicketDetail, prior work.PriorTurns) (string, []byte, error) {
+func (f *fakePrompts) Render(key work.StageKey, _ work.TicketDetail, prior work.PriorTurns, _ work.AgentPromptContext) (string, []byte, error) {
 	f.sawStage = key.Stage
 	f.sawKey = key
 	f.sawPrior = prior

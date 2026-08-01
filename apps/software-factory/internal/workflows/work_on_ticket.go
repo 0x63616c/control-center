@@ -99,99 +99,142 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 	}
 
 	detail := work.TicketDetail{Ticket: work.Ticket{Number: int(claimed.Ticket.ID), Title: claimed.Ticket.Title, Body: claimed.Ticket.Body}}
-	plan, err := runTargetAgentStep(ctx, sessionCtx, in, identity, detail, 2, work.AgentStagePlan, work.PriorTurns{}, "")
+	ordinal, agentAttempts, reviewSteps := 2, 0, 0
+	plan, err := runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStagePlan, work.PriorTurns{}, work.AgentPromptContext{}, nil, 1)
 	if err != nil {
 		return err
 	}
-	implement, err := runTargetAgentStep(ctx, sessionCtx, in, identity, detail, 3, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result}, "")
+	agentAttempts++
+	ordinal++
+	implement, err := runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result}, work.AgentPromptContext{}, nil, 1)
 	if err != nil {
 		return err
 	}
-
-	syncStep := activities.RepositoryStep{StepOrdinal: 4, Branch: branch, PushedHead: clone.HeadSHA}
-	if err := startTargetStep(ctx, in, syncStep.StepOrdinal, work.StepSyncPullRequest); err != nil {
-		return err
-	}
+	agentAttempts++
+	ordinal++
+	implementTurn := 1
 	var pullRequest work.PullRequest
-	if err := workflow.ExecuteActivity(sessionCtx, targetRunWorkerActs.TargetSyncPullRequest, activities.TargetSyncPullRequestInput{
-		Step:  syncStep,
-		Title: implementTitle(implement.Result),
-		Body:  implementBody(implement.Result),
-	}).Get(sessionCtx, &pullRequest); err != nil {
-		return fmt.Errorf("synchronizing target pull request: %w", err)
-	}
-	if strings.TrimSpace(pullRequest.HeadSHA) == "" || pullRequest.Number <= 0 || strings.TrimSpace(pullRequest.NodeID) == "" {
-		return temporal.NewNonRetryableApplicationError(
-			"target pull request does not identify an authoritative candidate head",
-			activities.ErrTypeInvalid,
-			nil,
-		)
-	}
-	candidate := activities.RepositoryStep{StepOrdinal: 5, Branch: branch, PushedHead: pullRequest.HeadSHA, PullRequestNumber: pullRequest.Number, PullRequestNodeID: pullRequest.NodeID}
-	if err := startTargetStep(ctx, in, candidate.StepOrdinal, work.StepAwaitCI); err != nil {
-		return err
-	}
-	ciCtx := workflow.WithActivityOptions(sessionCtx, targetActivityOptions(in.Policy.AwaitCI))
-	var ci activities.AwaitCIOutput
-	if err := workflow.ExecuteActivity(ciCtx, targetRunWorkerActs.TargetAwaitCI, activities.TargetAwaitCIInput{
-		Step: candidate,
-		CI:   activities.AwaitCIInput{CommitSHA: candidate.PushedHead, RequiredChecks: in.Policy.RequiredChecks},
-	}).Get(ciCtx, &ci); err != nil {
-		return fmt.Errorf("awaiting target CI for %s: %w", candidate.PushedHead, err)
-	}
-	if !ci.Green || ci.CommitSHA != candidate.PushedHead {
-		return temporal.NewNonRetryableApplicationError(
-			fmt.Sprintf("target CI did not authorize candidate %q", candidate.PushedHead),
-			activities.ErrTypeInvalid,
-			nil,
-		)
-	}
-
-	review, err := runTargetAgentStep(ctx, sessionCtx, in, identity, detail, 6, work.AgentStageReview, work.PriorTurns{
-		Plan: plan.Result, LatestImplement: implement.Result,
-	}, candidate.PushedHead)
-	if err != nil {
-		return err
-	}
-	if findings, ok := review.Result.Value().(work.ReviewOutput); !ok || len(findings.BlockingFindingIDs()) != 0 {
-		return temporal.NewNonRetryableApplicationError(
-			fmt.Sprintf("target review did not approve candidate %q", candidate.PushedHead),
-			activities.ErrTypeInvalid,
-			nil,
-		)
-	}
-
-	readyStep := activities.RepositoryStep{StepOrdinal: 7, Branch: branch, PushedHead: candidate.PushedHead, PullRequestNumber: pullRequest.Number, PullRequestNodeID: pullRequest.NodeID}
-	if err := startTargetStep(ctx, in, readyStep.StepOrdinal, work.StepMarkPullRequestReady); err != nil {
-		return err
-	}
-	if err := workflow.ExecuteActivity(sessionCtx, targetRunWorkerActs.TargetMarkPullRequestReady, activities.TargetMarkPullRequestReadyInput{Step: readyStep}).Get(sessionCtx, nil); err != nil {
-		return fmt.Errorf("marking target pull request ready: %w", err)
-	}
-
-	mergeStep := activities.RepositoryStep{StepOrdinal: 8, Branch: branch, PushedHead: candidate.PushedHead, PullRequestNumber: pullRequest.Number, PullRequestNodeID: pullRequest.NodeID}
-	if err := startTargetStep(ctx, in, mergeStep.StepOrdinal, work.StepMergePullRequest); err != nil {
-		return err
-	}
-	mergeCtx := workflow.WithActivityOptions(sessionCtx, targetActivityOptions(in.Policy.Merge))
+	var mergeStep activities.RepositoryStep
 	var merge work.PullRequestMergeResult
-	if err := workflow.ExecuteActivity(mergeCtx, targetRunWorkerActs.TargetMergePullRequest, activities.TargetMergePullRequestInput{
-		Step: mergeStep, ExpectedHeadSHA: candidate.PushedHead,
-	}).Get(mergeCtx, &merge); err != nil {
-		return fmt.Errorf("merging reviewed target candidate %s: %w", candidate.PushedHead, err)
-	}
-	if merge.Outcome != work.PullRequestMergeConfirmed || strings.TrimSpace(merge.MergeSHA) == "" {
-		return temporal.NewNonRetryableApplicationError(
-			fmt.Sprintf("target merge did not confirm candidate %q", candidate.PushedHead),
-			activities.ErrTypeInvalid,
-			nil,
-		)
+	ready := false
+	var feedback work.AgentPromptContext
+
+	for {
+		syncStep := activities.RepositoryStep{StepOrdinal: ordinal, Branch: branch, PushedHead: clone.HeadSHA}
+		if err := startTargetStep(ctx, in, syncStep.StepOrdinal, work.StepSyncPullRequest); err != nil {
+			return err
+		}
+		ordinal++
+		if err := workflow.ExecuteActivity(sessionCtx, targetRunWorkerActs.TargetSyncPullRequest, activities.TargetSyncPullRequestInput{
+			Step: syncStep, Title: implementTitle(implement.Result), Body: implementBody(implement.Result), Existing: optionalPullRequest(pullRequest),
+		}).Get(sessionCtx, &pullRequest); err != nil {
+			return fmt.Errorf("synchronizing target pull request: %w", err)
+		}
+		if strings.TrimSpace(pullRequest.HeadSHA) == "" || pullRequest.Number <= 0 || strings.TrimSpace(pullRequest.NodeID) == "" {
+			return temporal.NewNonRetryableApplicationError("target pull request does not identify an authoritative candidate head", activities.ErrTypeInvalid, nil)
+		}
+
+		candidate := activities.RepositoryStep{StepOrdinal: ordinal, Branch: branch, PushedHead: pullRequest.HeadSHA, PullRequestNumber: pullRequest.Number, PullRequestNodeID: pullRequest.NodeID}
+		if err := startTargetStep(ctx, in, candidate.StepOrdinal, work.StepAwaitCI); err != nil {
+			return err
+		}
+		ordinal++
+		ciCtx := workflow.WithActivityOptions(sessionCtx, targetActivityOptions(in.Policy.AwaitCI))
+		var ci activities.AwaitCIOutput
+		if err := workflow.ExecuteActivity(ciCtx, targetRunWorkerActs.TargetAwaitCI, activities.TargetAwaitCIInput{Step: candidate, CI: activities.AwaitCIInput{CommitSHA: candidate.PushedHead, RequiredChecks: in.Policy.RequiredChecks}}).Get(ciCtx, &ci); err != nil {
+			return fmt.Errorf("awaiting target CI for %s: %w", candidate.PushedHead, err)
+		}
+		if ci.CommitSHA != candidate.PushedHead {
+			return temporal.NewNonRetryableApplicationError(fmt.Sprintf("target CI returned another candidate %q", ci.CommitSHA), activities.ErrTypeInvalid, nil)
+		}
+		if !ci.Green {
+			if agentAttempts >= in.Policy.MaxAgentAttempts {
+				return exhaustedAgentAttempts(in.Policy.MaxAgentAttempts)
+			}
+			implementTurn++
+			feedback = work.AgentPromptContext{CIFailures: ci.RedFailures}
+			implement, err = runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result}, feedback, &activities.ProviderThreadContinuation{Identity: identity, ThreadID: implement.ThreadID}, implementTurn)
+			if err != nil {
+				return err
+			}
+			agentAttempts++
+			ordinal++
+			continue
+		}
+		if reviewSteps >= in.Policy.MaxReviewSteps {
+			return exhaustedReviewSteps(in.Policy.MaxReviewSteps)
+		}
+		if agentAttempts >= in.Policy.MaxAgentAttempts {
+			return exhaustedAgentAttempts(in.Policy.MaxAgentAttempts)
+		}
+		reviewSteps++
+		review, reviewErr := runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageReview, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result}, work.AgentPromptContext{CandidateHeadSHA: candidate.PushedHead}, nil, reviewSteps)
+		if reviewErr != nil {
+			return reviewErr
+		}
+		agentAttempts++
+		ordinal++
+		findings, ok := review.Result.Value().(work.ReviewOutput)
+		if !ok {
+			return temporal.NewNonRetryableApplicationError("target review produced an invalid result", activities.ErrTypeInvalid, nil)
+		}
+		if len(findings.BlockingFindingIDs()) != 0 {
+			if agentAttempts >= in.Policy.MaxAgentAttempts {
+				return exhaustedAgentAttempts(in.Policy.MaxAgentAttempts)
+			}
+			implementTurn++
+			feedback = work.AgentPromptContext{ReviewFindings: findings.Findings}
+			implement, err = runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: review.Result}, feedback, &activities.ProviderThreadContinuation{Identity: identity, ThreadID: implement.ThreadID}, implementTurn)
+			if err != nil {
+				return err
+			}
+			agentAttempts++
+			ordinal++
+			continue
+		}
+		if !ready {
+			readyStep := activities.RepositoryStep{StepOrdinal: ordinal, Branch: branch, PushedHead: candidate.PushedHead, PullRequestNumber: pullRequest.Number, PullRequestNodeID: pullRequest.NodeID}
+			if err := startTargetStep(ctx, in, readyStep.StepOrdinal, work.StepMarkPullRequestReady); err != nil {
+				return err
+			}
+			ordinal++
+			if err := workflow.ExecuteActivity(sessionCtx, targetRunWorkerActs.TargetMarkPullRequestReady, activities.TargetMarkPullRequestReadyInput{Step: readyStep}).Get(sessionCtx, nil); err != nil {
+				return fmt.Errorf("marking target pull request ready: %w", err)
+			}
+			ready = true
+		}
+		mergeStep = activities.RepositoryStep{StepOrdinal: ordinal, Branch: branch, PushedHead: candidate.PushedHead, PullRequestNumber: pullRequest.Number, PullRequestNodeID: pullRequest.NodeID}
+		if err := startTargetStep(ctx, in, mergeStep.StepOrdinal, work.StepMergePullRequest); err != nil {
+			return err
+		}
+		ordinal++
+		mergeCtx := workflow.WithActivityOptions(sessionCtx, targetActivityOptions(in.Policy.Merge))
+		if err := workflow.ExecuteActivity(mergeCtx, targetRunWorkerActs.TargetMergePullRequest, activities.TargetMergePullRequestInput{Step: mergeStep, ExpectedHeadSHA: candidate.PushedHead}).Get(mergeCtx, &merge); err != nil {
+			return fmt.Errorf("merging reviewed target candidate %s: %w", candidate.PushedHead, err)
+		}
+		if merge.Outcome == work.PullRequestMergeConfirmed && strings.TrimSpace(merge.MergeSHA) != "" {
+			break
+		}
+		if merge.Outcome != work.PullRequestMergeTextConflict && merge.Outcome != work.PullRequestMergeBaseRefreshRequired {
+			return temporal.NewNonRetryableApplicationError(fmt.Sprintf("target merge did not confirm candidate %q", candidate.PushedHead), activities.ErrTypeInvalid, nil)
+		}
+		if agentAttempts >= in.Policy.MaxAgentAttempts {
+			return exhaustedAgentAttempts(in.Policy.MaxAgentAttempts)
+		}
+		implementTurn++
+		feedback = work.AgentPromptContext{Merge: &work.MergeFeedback{Outcome: merge.Outcome, ReviewedHeadSHA: candidate.PushedHead, CurrentHeadSHA: merge.PullRequest.HeadSHA, CurrentBaseSHA: merge.PullRequest.BaseSHA, Diagnostic: merge.Diagnostic}}
+		implement, err = runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: review.Result}, feedback, &activities.ProviderThreadContinuation{Identity: identity, ThreadID: implement.ThreadID}, implementTurn)
+		if err != nil {
+			return err
+		}
+		agentAttempts++
+		ordinal++
 	}
 
 	finalCtx := workflow.WithActivityOptions(ctx, targetActivityOptions(in.Policy.Recording))
 	if err := workflow.ExecuteActivity(finalCtx, targetRecordingActs.FinalizeConfirmedMerge, store.ConfirmedMergeInput{
 		RunID: in.RunID, TicketID: in.TicketID, StepOrdinal: mergeStep.StepOrdinal,
-		ReviewedHead: candidate.PushedHead, MergeSHA: merge.MergeSHA, EndedAt: workflow.Now(ctx),
+		ReviewedHead: mergeStep.PushedHead, MergeSHA: merge.MergeSHA, EndedAt: workflow.Now(ctx),
 	}).Get(finalCtx, nil); err != nil {
 		return fmt.Errorf("recording confirmed target merge: %w", err)
 	}
@@ -213,7 +256,10 @@ func startTargetStep(ctx workflow.Context, in WorkOnTicketInput, ordinal int, ki
 	return nil
 }
 
-func runTargetAgentStep(ctx workflow.Context, sessionCtx workflow.Context, in WorkOnTicketInput, identity work.RunWorkerIdentity, detail work.TicketDetail, ordinal int, stage work.AgentStage, prior work.PriorTurns, candidateHeadSHA string) (activities.TargetAgentOutput, error) {
+func runTargetAgentStep(ctx workflow.Context, sessionCtx workflow.Context, in WorkOnTicketInput, identity work.RunWorkerIdentity, detail work.TicketDetail, ordinal int, stage work.AgentStage, prior work.PriorTurns, promptContext work.AgentPromptContext, continuation *activities.ProviderThreadContinuation, iteration int) (activities.TargetAgentOutput, error) {
+	if err := promptContext.Validate(); err != nil {
+		return activities.TargetAgentOutput{}, temporal.NewNonRetryableApplicationError(fmt.Sprintf("validating %s prompt context: %v", stage, err), activities.ErrTypeInvalid, nil)
+	}
 	if err := startTargetStep(ctx, in, ordinal, agentStepKind(stage)); err != nil {
 		return activities.TargetAgentOutput{}, err
 	}
@@ -241,8 +287,8 @@ func runTargetAgentStep(ctx workflow.Context, sessionCtx workflow.Context, in Wo
 	agentCtx := workflow.WithActivityOptions(sessionCtx, targetAgentActivityOptions(in.Policy.Agent))
 	var out activities.TargetAgentOutput
 	if err := workflow.ExecuteActivity(agentCtx, targetRunWorkerActs.RunTargetAgent, activities.TargetAgentInput{
-		AttemptID: attempt, TicketNumber: detail.Number, Iteration: 1, Stage: stage, Model: in.Model,
-		Detail: detail, Prior: prior, CandidateHeadSHA: candidateHeadSHA,
+		AttemptID: attempt, TicketNumber: detail.Number, Iteration: iteration, Stage: stage, Model: in.Model,
+		Detail: detail, Prior: prior, PromptContext: promptContext, PriorProviderThread: continuation,
 		CredentialRevision: activities.CredentialRevisionExpectation{Identity: identity, Revision: revision.Revision},
 	}).Get(agentCtx, &out); err != nil {
 		return activities.TargetAgentOutput{}, fmt.Errorf("running %s agent attempt: %w", stage, err)
@@ -268,6 +314,23 @@ func agentStepKind(stage work.AgentStage) work.StepKind {
 	default:
 		return ""
 	}
+}
+
+func optionalPullRequest(pullRequest work.PullRequest) *work.PullRequest {
+	if pullRequest.Number <= 0 {
+		return nil
+	}
+	return &pullRequest
+}
+
+func exhaustedReviewSteps(limit int) error {
+	return temporal.NewNonRetryableApplicationError(
+		fmt.Sprintf("target run exhausted its %d review-step budget", limit), activities.ErrTypeInvalid, nil)
+}
+
+func exhaustedAgentAttempts(limit int) error {
+	return temporal.NewNonRetryableApplicationError(
+		fmt.Sprintf("target run exhausted its %d agent-attempt budget", limit), activities.ErrTypeInvalid, nil)
 }
 
 func implementTitle(out work.StageOutput) string {

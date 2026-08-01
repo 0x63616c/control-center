@@ -21,7 +21,7 @@ func TestActivityRendererMatchesTheUnderlyingRenderer(t *testing.T) {
 	detail := ticket()
 	prior := everyDocument()
 
-	prompt, schema, err := adapter.Render(work.StageKey{Ticket: detail.Number, RunID: "r", Stage: stage, Turn: 1}, detail, prior)
+	prompt, schema, err := adapter.Render(work.StageKey{Ticket: detail.Number, RunID: "r", Stage: stage, Turn: 1}, detail, prior, work.AgentPromptContext{})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestActivityRendererSchemaMatchesEachStagesOwnFile(t *testing.T) {
 			t.Fatalf("reading %s: %v", file, err)
 		}
 
-		_, schema, err := adapter.Render(work.StageKey{Ticket: detail.Number, RunID: "r", Stage: stage, Turn: 1}, detail, prior)
+		_, schema, err := adapter.Render(work.StageKey{Ticket: detail.Number, RunID: "r", Stage: stage, Turn: 1}, detail, prior, work.AgentPromptContext{})
 		if err != nil {
 			t.Fatalf("Render(%s): %v", stage, err)
 		}
@@ -103,7 +103,7 @@ func TestActivityRendererFailsLikeTheRendererItWraps(t *testing.T) {
 	t.Parallel()
 
 	adapter := NewActivityRenderer(newTestRenderer(t))
-	_, _, err := adapter.Render(work.StageKey{Stage: work.StagePlan, Turn: 1}, work.TicketDetail{}, work.PriorTurns{})
+	_, _, err := adapter.Render(work.StageKey{Stage: work.StagePlan, Turn: 1}, work.TicketDetail{}, work.PriorTurns{}, work.AgentPromptContext{})
 	if err == nil {
 		t.Fatal("Render with an empty ticket detail: want an error, got nil")
 	}
@@ -121,7 +121,7 @@ func TestActivityRendererRendersTheKeysOwnTurn(t *testing.T) {
 
 	prompt, _, err := adapter.Render(
 		work.StageKey{Ticket: detail.Number, RunID: "r", Stage: work.StageReview, Turn: work.MaxReviewTurns},
-		detail, everyDocument(),
+		detail, everyDocument(), work.AgentPromptContext{},
 	)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
@@ -132,5 +132,36 @@ func TestActivityRendererRendersTheKeysOwnTurn(t *testing.T) {
 	}
 	if strings.Contains(prompt, "turn 0 of") {
 		t.Error("the rendered review prompt says turn 0: the key's turn was dropped")
+	}
+}
+
+func TestActivityRendererCarriesAuthoritativeAgentPromptContext(t *testing.T) {
+	t.Parallel()
+	adapter := NewActivityRenderer(newTestRenderer(t))
+	detail := ticket()
+	prior := everyDocument()
+
+	reviewer, _, err := adapter.Render(
+		work.StageKey{Ticket: detail.Number, RunID: "r", Stage: work.StageReview, Turn: 1},
+		detail, prior, work.AgentPromptContext{CandidateHeadSHA: "H1"},
+	)
+	if err != nil {
+		t.Fatalf("Render(review): %v", err)
+	}
+	if !strings.Contains(reviewer, "reviewing exactly candidate commit H1") {
+		t.Fatalf("review prompt does not name its exact H1 candidate:\n%s", reviewer)
+	}
+
+	implementer, _, err := adapter.Render(
+		work.StageKey{Ticket: detail.Number, RunID: "r", Stage: work.StageImplement, Turn: 2},
+		detail, prior, work.AgentPromptContext{CIFailures: []work.CheckFailure{{Name: "test", Fingerprint: "abc", Evidence: "expected true to be false"}}},
+	)
+	if err != nil {
+		t.Fatalf("Render(implement): %v", err)
+	}
+	for _, want := range []string{"CI failures for the exact checked candidate", "check=test", "fingerprint=abc", "expected true to be false"} {
+		if !strings.Contains(implementer, want) {
+			t.Errorf("implement prompt does not contain %q", want)
+		}
 	}
 }
