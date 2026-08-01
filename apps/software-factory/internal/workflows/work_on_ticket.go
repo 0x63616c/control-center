@@ -116,19 +116,25 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 	var pullRequest work.PullRequest
 	var mergeStep activities.RepositoryStep
 	var merge work.PullRequestMergeResult
+	var replacementCandidate *work.PullRequest
 	ready := false
 	var feedback work.AgentPromptContext
 
 	for {
-		syncStep := activities.RepositoryStep{StepOrdinal: ordinal, Branch: branch, PushedHead: clone.HeadSHA}
-		if err := startTargetStep(ctx, in, syncStep.StepOrdinal, work.StepSyncPullRequest); err != nil {
-			return err
-		}
-		ordinal++
-		if err := workflow.ExecuteActivity(sessionCtx, targetRunWorkerActs.TargetSyncPullRequest, activities.TargetSyncPullRequestInput{
-			Step: syncStep, Title: implementTitle(implement.Result), Body: implementBody(implement.Result), Existing: optionalPullRequest(pullRequest),
-		}).Get(sessionCtx, &pullRequest); err != nil {
-			return fmt.Errorf("synchronizing target pull request: %w", err)
+		if replacementCandidate != nil {
+			pullRequest = *replacementCandidate
+			replacementCandidate = nil
+		} else {
+			syncStep := activities.RepositoryStep{StepOrdinal: ordinal, Branch: branch, PushedHead: clone.HeadSHA}
+			if err := startTargetStep(ctx, in, syncStep.StepOrdinal, work.StepSyncPullRequest); err != nil {
+				return err
+			}
+			ordinal++
+			if err := workflow.ExecuteActivity(sessionCtx, targetRunWorkerActs.TargetSyncPullRequest, activities.TargetSyncPullRequestInput{
+				Step: syncStep, Title: implementTitle(implement.Result), Body: implementBody(implement.Result), Existing: optionalPullRequest(pullRequest),
+			}).Get(sessionCtx, &pullRequest); err != nil {
+				return fmt.Errorf("synchronizing target pull request: %w", err)
+			}
 		}
 		if strings.TrimSpace(pullRequest.HeadSHA) == "" || pullRequest.Number <= 0 || strings.TrimSpace(pullRequest.NodeID) == "" {
 			return temporal.NewNonRetryableApplicationError("target pull request does not identify an authoritative candidate head", activities.ErrTypeInvalid, nil)
@@ -214,6 +220,20 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 		}
 		if merge.Outcome == work.PullRequestMergeConfirmed && strings.TrimSpace(merge.MergeSHA) != "" {
 			break
+		}
+		if merge.Outcome == work.PullRequestMergeHeadChanged {
+			if strings.TrimSpace(merge.PullRequest.HeadSHA) == "" {
+				return temporal.NewNonRetryableApplicationError("target merge reported a changed head without its SHA", activities.ErrTypeInvalid, nil)
+			}
+			updated := merge.PullRequest
+			if updated.Number == 0 {
+				updated.Number = pullRequest.Number
+			}
+			if updated.NodeID == "" {
+				updated.NodeID = pullRequest.NodeID
+			}
+			replacementCandidate = &updated
+			continue
 		}
 		if merge.Outcome != work.PullRequestMergeTextConflict && merge.Outcome != work.PullRequestMergeBaseRefreshRequired {
 			return temporal.NewNonRetryableApplicationError(fmt.Sprintf("target merge did not confirm candidate %q", candidate.PushedHead), activities.ErrTypeInvalid, nil)
