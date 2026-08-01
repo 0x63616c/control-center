@@ -55,6 +55,7 @@ describe("installWebhookRelay", () => {
         spec: {
           automountServiceAccountToken: boolean;
           containers: {
+            image: string;
             env: { name: string; value?: string; valueFrom?: unknown }[];
             securityContext: unknown;
           }[];
@@ -62,6 +63,9 @@ describe("installWebhookRelay", () => {
       };
     }>(install().relay, "spec");
     const container = spec.template.spec.containers[0];
+    expect(container.image).toBe(
+      `ghcr.io/0x63616c/software-factory-relay@sha256:${"a".repeat(64)}`,
+    );
     expect(spec.template.spec.automountServiceAccountToken).toBe(false);
     expect(container.env.find((value) => value.name === "RELAY_TARGETS")?.value).toBe(
       JSON.stringify([

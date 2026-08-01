@@ -67,47 +67,47 @@ const IMAGE_REPOSITORIES = {
     digestKey: controlCenterProduct.imageDigestKey("temporal-worker"),
     repository: controlCenterProduct.imageRepository("temporal-worker"),
   },
-  // The software-factory module's activated images (ADR-0011). A DIFFERENT product, so the
-  // keys carry the product prefix and cannot collide with control-center's own
-  // `worker` above — `www-software-factory-worker` is not a control-center
-  // component.
+  // Software Factory is now released by its standalone repository. Keep the
+  // existing Pulumi digest keys so the deployment interface stays stable, but
+  // render the producer-owned GHCR repositories instead of WWW's retired
+  // `www-software-factory-*` image family.
   //
   // `relay` is the separately deployed platform webhook edge, but shares this product
   // image/digest registry so CI pins every Go module image together.
   "software-factory-worker": {
     product: "software-factory",
     digestKey: softwareFactoryProduct.imageDigestKey("worker"),
-    repository: softwareFactoryProduct.imageRepository("worker"),
+    repository: "ghcr.io/0x63616c/software-factory-worker",
   },
   "software-factory-run-worker": {
     product: "software-factory",
     digestKey: softwareFactoryProduct.imageDigestKey("run-worker"),
-    repository: softwareFactoryProduct.imageRepository("run-worker"),
+    repository: "ghcr.io/0x63616c/software-factory-run-worker",
   },
   "software-factory-relay": {
     product: "software-factory",
     digestKey: softwareFactoryProduct.imageDigestKey("relay"),
-    repository: softwareFactoryProduct.imageRepository("relay"),
+    repository: "ghcr.io/0x63616c/software-factory-relay",
   },
   "software-factory-api": {
     product: "software-factory",
     digestKey: softwareFactoryProduct.imageDigestKey("api"),
-    repository: softwareFactoryProduct.imageRepository("api"),
+    repository: "ghcr.io/0x63616c/software-factory-api",
   },
   "software-factory-console": {
     product: "software-factory",
     digestKey: softwareFactoryProduct.imageDigestKey("console"),
-    repository: softwareFactoryProduct.imageRepository("console"),
+    repository: "ghcr.io/0x63616c/software-factory-console",
   },
   "software-factory-blobs": {
     product: "software-factory",
     digestKey: softwareFactoryProduct.imageDigestKey("blobs"),
-    repository: softwareFactoryProduct.imageRepository("blobs"),
+    repository: "ghcr.io/0x63616c/software-factory-blobs",
   },
   "software-factory-codec": {
     product: "software-factory",
     digestKey: softwareFactoryProduct.imageDigestKey("codec"),
-    repository: softwareFactoryProduct.imageRepository("codec"),
+    repository: "ghcr.io/0x63616c/software-factory-codec",
   },
 } as const satisfies Record<
   string,

@@ -236,7 +236,7 @@ describe("the worker Deployment (#343)", () => {
     const [container] = (await deploymentSpec(digests)).template.spec.containers;
     expect(container.env.find((e) => e.name === "SANDBOX_IMAGE")).toBeUndefined();
     expect(container.image).toBe(
-      `ghcr.io/0x63616c/www-software-factory-worker@${digests["software-factory-worker"]}`,
+      `ghcr.io/0x63616c/software-factory-worker@${digests["software-factory-worker"]}`,
     );
   });
 
@@ -244,7 +244,7 @@ describe("the worker Deployment (#343)", () => {
     const [container] = (await deploymentSpec(digests)).template.spec.containers;
     const runWorker = container.env.find((e) => e.name === "RUN_WORKER_IMAGE");
     expect(runWorker?.value).toBe(
-      `ghcr.io/0x63616c/www-software-factory-run-worker@${digests["software-factory-run-worker"]}`,
+      `ghcr.io/0x63616c/software-factory-run-worker@${digests["software-factory-run-worker"]}`,
     );
     expect(container.env.find((e) => e.name === "CHECKPOINT_API_URL")?.value).toBe(
       "http://api.software-factory.svc.cluster.local:8080",
@@ -370,7 +370,7 @@ describe("factory API and console workloads (#554)", () => {
       expect(container.securityContext?.capabilities?.drop).toEqual(["ALL"]);
     }
     expect(apiContainer.image).toBe(
-      `ghcr.io/0x63616c/www-software-factory-api@${digests["software-factory-api"]}`,
+      `ghcr.io/0x63616c/software-factory-api@${digests["software-factory-api"]}`,
     );
     expect(apiContainer.env.map((env) => env.name)).toEqual(
       expect.arrayContaining([
