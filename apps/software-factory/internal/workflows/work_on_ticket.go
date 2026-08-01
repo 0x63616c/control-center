@@ -119,6 +119,8 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 	var replacementCandidate *work.PullRequest
 	ready := false
 	var feedback work.AgentPromptContext
+	var latestReview work.StageOutput
+	var reviewLedger []work.ReviewTurnRecord
 
 	for {
 		if replacementCandidate != nil {
@@ -174,7 +176,7 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 			return exhaustedAgentAttempts(in.Policy.MaxAgentAttempts)
 		}
 		reviewSteps++
-		review, reviewErr := runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageReview, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result}, work.AgentPromptContext{CandidateHeadSHA: candidate.PushedHead}, nil, reviewSteps)
+		review, reviewErr := runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageReview, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: latestReview, ReviewLedger: reviewLedger}, work.AgentPromptContext{CandidateHeadSHA: candidate.PushedHead}, nil, reviewSteps)
 		if reviewErr != nil {
 			return reviewErr
 		}
@@ -184,13 +186,15 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 		if !ok {
 			return temporal.NewNonRetryableApplicationError("target review produced an invalid result", activities.ErrTypeInvalid, nil)
 		}
+		latestReview = review.Result
+		reviewLedger = append(reviewLedger, work.ReviewTurnRecord{Turn: reviewSteps, Findings: findings.Findings, Verified: findings.Verified})
 		if len(findings.BlockingFindingIDs()) != 0 {
 			if agentAttempts >= in.Policy.MaxAgentAttempts {
 				return exhaustedAgentAttempts(in.Policy.MaxAgentAttempts)
 			}
 			implementTurn++
 			feedback = work.AgentPromptContext{ReviewFindings: findings.Findings}
-			implement, err = runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: review.Result}, feedback, &activities.ProviderThreadContinuation{Identity: identity, ThreadID: implement.ThreadID}, implementTurn)
+			implement, err = runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: latestReview}, feedback, &activities.ProviderThreadContinuation{Identity: identity, ThreadID: implement.ThreadID}, implementTurn)
 			if err != nil {
 				return err
 			}
@@ -243,7 +247,7 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) error {
 		}
 		implementTurn++
 		feedback = work.AgentPromptContext{Merge: &work.MergeFeedback{Outcome: merge.Outcome, ReviewedHeadSHA: candidate.PushedHead, CurrentHeadSHA: merge.PullRequest.HeadSHA, CurrentBaseSHA: merge.PullRequest.BaseSHA, Diagnostic: merge.Diagnostic}}
-		implement, err = runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: review.Result}, feedback, &activities.ProviderThreadContinuation{Identity: identity, ThreadID: implement.ThreadID}, implementTurn)
+		implement, err = runTargetAgentStep(ctx, sessionCtx, in, identity, detail, ordinal, work.AgentStageImplement, work.PriorTurns{Plan: plan.Result, LatestImplement: implement.Result, LatestReview: latestReview}, feedback, &activities.ProviderThreadContinuation{Identity: identity, ThreadID: implement.ThreadID}, implementTurn)
 		if err != nil {
 			return err
 		}

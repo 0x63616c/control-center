@@ -284,7 +284,7 @@ func TestWorkOnTicketNeverMergesAHeadChangedAfterReview(t *testing.T) {
 			reviews = append(reviews, agent)
 		}
 	}
-	if len(reviews) != 2 || reviews[0].PromptContext.CandidateHeadSHA != "H1" || reviews[1].PromptContext.CandidateHeadSHA != "H2" || reviews[0].PriorProviderThread != nil || reviews[1].PriorProviderThread != nil {
+	if len(reviews) != 2 || reviews[0].PromptContext.CandidateHeadSHA != "H1" || reviews[1].PromptContext.CandidateHeadSHA != "H2" || reviews[0].PriorProviderThread != nil || reviews[1].PriorProviderThread != nil || reviews[1].Prior.LatestReview.Value() == nil || len(reviews[1].Prior.ReviewLedger) != 1 {
 		t.Fatalf("review handoffs = %+v, want independent fresh H1 and H2 reviews", reviews)
 	}
 	detail, err := recorderStore.TargetRunDetail(ctx, input.RunID)
