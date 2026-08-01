@@ -15,6 +15,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
@@ -28,6 +29,7 @@ const (
 	runWorkerGitHubRevisionKey      = "revision"
 	runWorkerGitHubExpiresAtKey     = "expires-at"
 	runWorkerCheckpointKey          = "capability"
+	runWorkerCheckpointAttempt      = "software-factory.worldwidewebb.co/checkpoint-attempt"
 )
 
 func runWorkerCodexSecretName(id work.RunWorkerID) string {
@@ -115,6 +117,41 @@ func (r *RunWorkers) RotateGitHubCredential(ctx context.Context, identity work.R
 	}
 	r.logger.InfoContext(ctx, "Run Worker GitHub credential rotated", "run_worker", id, "revision", result.Revision, "expires_at", result.ExpiresAt)
 	return result, nil
+}
+
+// InstallCheckpointCapability atomically projects one exact Attempt's narrow
+// API capability. A retry for that Attempt returns the already installed
+// value so a lost activity response cannot bind a different capability.
+func (r *RunWorkers) InstallCheckpointCapability(ctx context.Context, identity work.RunWorkerIdentity, attemptID store.TargetAttemptID, proposed work.Credential) (work.Credential, error) {
+	id, err := work.RunWorkerName(identity)
+	if err != nil {
+		return work.Credential{}, fmt.Errorf("installing Run Worker checkpoint capability: %w", err)
+	}
+	if attemptID.RunID != identity.RunID || attemptID.StepOrdinal <= 0 || attemptID.AttemptNo <= 0 || strings.TrimSpace(proposed.Reveal()) == "" {
+		return work.Credential{}, fmt.Errorf("installing Run Worker checkpoint capability requires this Run's exact Attempt and a value: %w", work.ErrPermanent)
+	}
+	secrets := r.cs.CoreV1().Secrets(r.ns)
+	secret, err := secrets.Get(ctx, runWorkerCheckpointSecretName(id), metav1.GetOptions{})
+	if err != nil {
+		return work.Credential{}, fmt.Errorf("reading Run Worker %s checkpoint Secret: %w", id, err)
+	}
+	wantAttempt := attemptID.String()
+	if secret.Annotations[runWorkerCheckpointAttempt] == wantAttempt {
+		installed := strings.TrimSpace(string(secret.Data[runWorkerCheckpointKey]))
+		if installed == "" {
+			return work.Credential{}, fmt.Errorf("Run Worker %s checkpoint Secret has no installed capability: %w", id, work.ErrPermanent)
+		}
+		return work.NewCredential(installed), nil
+	}
+	secret.Data = map[string][]byte{runWorkerCheckpointKey: []byte(proposed.Reveal())}
+	if secret.Annotations == nil {
+		secret.Annotations = map[string]string{}
+	}
+	secret.Annotations[runWorkerCheckpointAttempt] = wantAttempt
+	if _, err := secrets.Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+		return work.Credential{}, fmt.Errorf("updating Run Worker %s checkpoint Secret: %w", id, err)
+	}
+	return proposed, nil
 }
 
 // Delete removes a target worker and every per-generation Secret. Absence is

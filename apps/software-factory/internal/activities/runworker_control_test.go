@@ -15,10 +15,10 @@ import (
 type runWorkerLifecycleProbe struct {
 	provisioned work.RunWorkerSpec
 	material    work.RunWorkerSecretMaterial
-	rotatedID   work.RunWorkerID
-	rotated     work.SandboxCredential
-	deleted     work.RunWorkerID
-	installedID work.RunWorkerID
+	rotated     work.RunWorkerIdentity
+	credential  work.SandboxCredential
+	deleted     work.RunWorkerIdentity
+	installedOn work.RunWorkerIdentity
 	installedAt store.TargetAttemptID
 	installed   work.Credential
 	projected   work.Credential
@@ -26,25 +26,25 @@ type runWorkerLifecycleProbe struct {
 
 func (p *runWorkerLifecycleProbe) Provision(_ context.Context, spec work.RunWorkerSpec, material work.RunWorkerSecretMaterial) (work.RunWorkerID, error) {
 	p.provisioned, p.material = spec, material
-	return work.RunWorkerName(spec.Identity), nil
+	return work.RunWorkerName(spec.Identity)
 }
 
-func (p *runWorkerLifecycleProbe) RotateGitHubCredential(_ context.Context, id work.RunWorkerID, token work.Credential, login string, expiresAt time.Time) (work.RunWorkerCredentialRevision, error) {
-	p.rotatedID = id
-	p.rotated = work.SandboxCredential{Token: token, Login: login, ExpiresAt: expiresAt}
+func (p *runWorkerLifecycleProbe) RotateGitHubCredential(_ context.Context, identity work.RunWorkerIdentity, token work.Credential, login string, expiresAt time.Time) (work.RunWorkerCredentialRevision, error) {
+	p.rotated = identity
+	p.credential = work.SandboxCredential{Token: token, Login: login, ExpiresAt: expiresAt}
 	return work.RunWorkerCredentialRevision{Revision: "2", ExpiresAt: expiresAt}, nil
 }
 
-func (p *runWorkerLifecycleProbe) InstallCheckpointCapability(_ context.Context, id work.RunWorkerID, attemptID store.TargetAttemptID, proposed work.Credential) (work.Credential, error) {
-	p.installedID, p.installedAt, p.installed = id, attemptID, proposed
+func (p *runWorkerLifecycleProbe) InstallCheckpointCapability(_ context.Context, identity work.RunWorkerIdentity, attemptID store.TargetAttemptID, proposed work.Credential) (work.Credential, error) {
+	p.installedOn, p.installedAt, p.installed = identity, attemptID, proposed
 	if p.projected.Reveal() != "" {
 		return p.projected, nil
 	}
 	return proposed, nil
 }
 
-func (p *runWorkerLifecycleProbe) Delete(_ context.Context, id work.RunWorkerID) error {
-	p.deleted = id
+func (p *runWorkerLifecycleProbe) Delete(_ context.Context, identity work.RunWorkerIdentity) error {
+	p.deleted = identity
 	return nil
 }
 
@@ -113,7 +113,11 @@ func TestProvisionRunWorkerKeepsCredentialsInsideTheActivity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProvisionRunWorker: %v", err)
 	}
-	if out.ID != work.RunWorkerName(in.Identity) || lifecycle.provisioned.TicketNumber != 42 || lifecycle.provisioned.Image == "" {
+	wantID, nameErr := work.RunWorkerName(in.Identity)
+	if nameErr != nil {
+		t.Fatal(nameErr)
+	}
+	if out.ID != wantID || lifecycle.provisioned.TicketNumber != 42 || lifecycle.provisioned.Image == "" {
 		t.Fatalf("safe output/spec = %+v / %+v", out, lifecycle.provisioned)
 	}
 	if string(lifecycle.material.CodexCredential.Reveal()) != "codex-secret" || lifecycle.material.GitHubToken.Reveal() != "github-secret" || lifecycle.material.CheckpointCapability.Reveal() != "bootstrap-secret" {
@@ -124,22 +128,22 @@ func TestProvisionRunWorkerKeepsCredentialsInsideTheActivity(t *testing.T) {
 
 func TestRotateRunWorkerGitHubCredentialReturnsOnlySafeMetadata(t *testing.T) {
 	acts, lifecycle, _, _ := runWorkerControlHarness(t)
-	id := work.RunWorkerID("run-worker-0f466627-b3ae-4ba2-9c96-6ef44ec6f578-g1")
-	out, err := acts.RotateRunWorkerGitHubCredential(context.Background(), RotateRunWorkerGitHubCredentialInput{ID: id})
+	identity := work.RunWorkerIdentity{RunID: "0f466627-b3ae-4ba2-9c96-6ef44ec6f578", Generation: 1}
+	out, err := acts.RotateRunWorkerGitHubCredential(context.Background(), RotateRunWorkerGitHubCredentialInput{Identity: identity})
 	if err != nil {
 		t.Fatalf("RotateRunWorkerGitHubCredential: %v", err)
 	}
-	if lifecycle.rotatedID != id || lifecycle.rotated.Token.Reveal() != "github-secret" || out.Revision != "2" || out.ExpiresAt.IsZero() {
-		t.Fatalf("rotation = %+v / %+v", out, lifecycle.rotated)
+	if lifecycle.rotated != identity || lifecycle.credential.Token.Reveal() != "github-secret" || out.Revision != "2" || out.ExpiresAt.IsZero() {
+		t.Fatalf("rotation = %+v / %+v", out, lifecycle.credential)
 	}
-	assertHistoryHasNoSecrets(t, RotateRunWorkerGitHubCredentialInput{ID: id}, out)
+	assertHistoryHasNoSecrets(t, RotateRunWorkerGitHubCredentialInput{Identity: identity}, out)
 }
 
 func TestAuthorizeRunWorkerAttemptBindsTheActuallyProjectedCapability(t *testing.T) {
 	acts, lifecycle, _, binder := runWorkerControlHarness(t)
 	lifecycle.projected = work.NewCredential("already-projected-secret")
 	in := AuthorizeRunWorkerAttemptInput{
-		ID:        work.RunWorkerID("run-worker-0f466627-b3ae-4ba2-9c96-6ef44ec6f578-g1"),
+		Identity:  work.RunWorkerIdentity{RunID: "0f466627-b3ae-4ba2-9c96-6ef44ec6f578", Generation: 1},
 		AttemptID: store.TargetAttemptID{RunID: "0f466627-b3ae-4ba2-9c96-6ef44ec6f578", StepOrdinal: 3, AttemptNo: 1},
 	}
 	if err := acts.AuthorizeRunWorkerAttempt(context.Background(), in); err != nil {
@@ -153,12 +157,12 @@ func TestAuthorizeRunWorkerAttemptBindsTheActuallyProjectedCapability(t *testing
 
 func TestDeleteRunWorkerDelegatesOnlyTheValidatedIdentity(t *testing.T) {
 	acts, lifecycle, _, _ := runWorkerControlHarness(t)
-	id := work.RunWorkerID("run-worker-0f466627-b3ae-4ba2-9c96-6ef44ec6f578-g1")
-	if err := acts.DeleteRunWorker(context.Background(), DeleteRunWorkerInput{ID: id}); err != nil {
+	identity := work.RunWorkerIdentity{RunID: "0f466627-b3ae-4ba2-9c96-6ef44ec6f578", Generation: 1}
+	if err := acts.DeleteRunWorker(context.Background(), DeleteRunWorkerInput{Identity: identity}); err != nil {
 		t.Fatalf("DeleteRunWorker: %v", err)
 	}
-	if lifecycle.deleted != id {
-		t.Fatalf("deleted %q, want %q", lifecycle.deleted, id)
+	if lifecycle.deleted != identity {
+		t.Fatalf("deleted %+v, want %+v", lifecycle.deleted, identity)
 	}
 }
 

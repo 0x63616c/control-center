@@ -14,9 +14,9 @@ import (
 // Credentials enter these methods in-process and never cross Temporal.
 type RunWorkerLifecycle interface {
 	Provision(context.Context, work.RunWorkerSpec, work.RunWorkerSecretMaterial) (work.RunWorkerID, error)
-	RotateGitHubCredential(context.Context, work.RunWorkerID, work.Credential, string, time.Time) (work.RunWorkerCredentialRevision, error)
-	InstallCheckpointCapability(context.Context, work.RunWorkerID, store.TargetAttemptID, work.Credential) (work.Credential, error)
-	Delete(context.Context, work.RunWorkerID) error
+	RotateGitHubCredential(context.Context, work.RunWorkerIdentity, work.Credential, string, time.Time) (work.RunWorkerCredentialRevision, error)
+	InstallCheckpointCapability(context.Context, work.RunWorkerIdentity, store.TargetAttemptID, work.Credential) (work.Credential, error)
+	Delete(context.Context, work.RunWorkerIdentity) error
 }
 
 // GitHubCredentialSource mints one short-lived repository credential inside a
@@ -115,10 +115,13 @@ func (a *RunWorkerControlActivities) ProvisionRunWorker(ctx context.Context, in 
 	if err != nil {
 		return ProvisionRunWorkerOutput{}, fail(ctx, "minting the Run Worker bootstrap capability", err)
 	}
-	spec := work.RunWorkerSpec{
+	spec, err := work.NewRunWorkerSpec(work.RunWorkerSpec{
 		TicketNumber: in.TicketNumber, Identity: in.Identity,
 		Image: a.deps.Template.Image, CPURequest: a.deps.Template.CPURequest, MemoryLimit: a.deps.Template.MemoryLimit,
 		DeadlineSeconds: a.deps.Template.DeadlineSeconds, Env: cloneRunWorkerEnv(a.deps.Template.Env),
+	})
+	if err != nil {
+		return ProvisionRunWorkerOutput{}, fail(ctx, "constructing the Run Worker specification", err)
 	}
 	id, err := a.deps.Workers.Provision(ctx, spec, work.RunWorkerSecretMaterial{
 		CodexCredential: codexCredential, GitHubToken: githubCredential.Token, GitHubLogin: githubCredential.Login,
@@ -131,7 +134,7 @@ func (a *RunWorkerControlActivities) ProvisionRunWorker(ctx context.Context, in 
 }
 
 type RotateRunWorkerGitHubCredentialInput struct {
-	ID work.RunWorkerID
+	Identity work.RunWorkerIdentity
 }
 
 // RotateRunWorkerGitHubCredential combines mint and install so a token never
@@ -141,7 +144,7 @@ func (a *RunWorkerControlActivities) RotateRunWorkerGitHubCredential(ctx context
 	if err != nil {
 		return work.RunWorkerCredentialRevision{}, fail(ctx, "minting the Run Worker GitHub credential", err)
 	}
-	revision, err := a.deps.Workers.RotateGitHubCredential(ctx, in.ID, credential.Token, credential.Login, credential.ExpiresAt)
+	revision, err := a.deps.Workers.RotateGitHubCredential(ctx, in.Identity, credential.Token, credential.Login, credential.ExpiresAt)
 	if err != nil {
 		return work.RunWorkerCredentialRevision{}, fail(ctx, "installing the Run Worker GitHub credential", err)
 	}
@@ -152,7 +155,7 @@ func (a *RunWorkerControlActivities) RotateRunWorkerGitHubCredential(ctx context
 }
 
 type AuthorizeRunWorkerAttemptInput struct {
-	ID        work.RunWorkerID
+	Identity  work.RunWorkerIdentity
 	AttemptID store.TargetAttemptID
 }
 
@@ -164,7 +167,7 @@ func (a *RunWorkerControlActivities) AuthorizeRunWorkerAttempt(ctx context.Conte
 	if err != nil {
 		return fail(ctx, fmt.Sprintf("minting checkpoint capability for %s", in.AttemptID), err)
 	}
-	projected, err := a.deps.Workers.InstallCheckpointCapability(ctx, in.ID, in.AttemptID, proposed)
+	projected, err := a.deps.Workers.InstallCheckpointCapability(ctx, in.Identity, in.AttemptID, proposed)
 	if err != nil {
 		return fail(ctx, fmt.Sprintf("installing checkpoint capability for %s", in.AttemptID), err)
 	}
@@ -175,11 +178,11 @@ func (a *RunWorkerControlActivities) AuthorizeRunWorkerAttempt(ctx context.Conte
 }
 
 type DeleteRunWorkerInput struct {
-	ID work.RunWorkerID
+	Identity work.RunWorkerIdentity
 }
 
 func (a *RunWorkerControlActivities) DeleteRunWorker(ctx context.Context, in DeleteRunWorkerInput) error {
-	if err := a.deps.Workers.Delete(ctx, in.ID); err != nil {
+	if err := a.deps.Workers.Delete(ctx, in.Identity); err != nil {
 		return fail(ctx, "deleting the Run Worker", err)
 	}
 	return nil

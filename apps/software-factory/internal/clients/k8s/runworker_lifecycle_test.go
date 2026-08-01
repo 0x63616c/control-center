@@ -10,6 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
+	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 )
 
@@ -172,6 +173,44 @@ func TestRotateGitHubCredentialReturnsOnlyRevisionAndExpiry(t *testing.T) {
 	}
 	if string(secret.Data[runWorkerGitHubTokenKey]) != "ghs_rotated_secret" || string(secret.Data[runWorkerGitHubRevisionKey]) != "2" {
 		t.Error("rotated Secret data did not advance")
+	}
+}
+
+func TestInstallCheckpointCapabilityReusesTheExactAttemptsProjectedValue(t *testing.T) {
+	ctx := context.Background()
+	cs := fake.NewSimpleClientset()
+	workers := mustRunWorkers(t, cs)
+	spec := validRunWorkerSpec()
+	if _, err := workers.Provision(ctx, spec, validRunWorkerSecrets()); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	attempt := store.TargetAttemptID{RunID: spec.Identity.RunID, StepOrdinal: 3, AttemptNo: 1}
+	first, err := workers.InstallCheckpointCapability(ctx, spec.Identity, attempt, work.NewCredential("first-attempt-secret"))
+	if err != nil {
+		t.Fatalf("InstallCheckpointCapability: %v", err)
+	}
+	retry, err := workers.InstallCheckpointCapability(ctx, spec.Identity, attempt, work.NewCredential("must-not-replace"))
+	if err != nil {
+		t.Fatalf("InstallCheckpointCapability retry: %v", err)
+	}
+	if first.Reveal() != "first-attempt-secret" || retry.Reveal() != "first-attempt-secret" {
+		t.Fatal("exact retry replaced the projected capability")
+	}
+}
+
+func TestInstallCheckpointCapabilityRejectsAnotherRunBeforeCallingKubernetes(t *testing.T) {
+	cs := fake.NewSimpleClientset()
+	workers := mustRunWorkers(t, cs)
+	identity := validRunWorkerSpec().Identity
+	before := len(cs.Actions())
+	_, err := workers.InstallCheckpointCapability(context.Background(), identity, store.TargetAttemptID{
+		RunID: "5cc6ca8d-7af5-42f3-965f-4d9764fcaf53", StepOrdinal: 1, AttemptNo: 1,
+	}, work.NewCredential("secret"))
+	if err == nil {
+		t.Fatal("InstallCheckpointCapability accepted another Run")
+	}
+	if got := len(cs.Actions()); got != before {
+		t.Fatalf("invalid Attempt called Kubernetes: %d actions", got-before)
 	}
 }
 
