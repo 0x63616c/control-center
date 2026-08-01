@@ -16,8 +16,8 @@
 #   and this script never prints it.
 #
 #   --check    report whether the Secret is seeded correctly; change nothing.
-#              Exits 0 if seeded, non-zero otherwise (missing, wrong shape,
-#              or wrong key set).
+#              Exits 0 if auth.json is present with, at most, the worker-owned
+#              refresh_state.json lease; non-zero otherwise.
 #   --replace  required to overwrite an already-seeded Secret. Without it,
 #              an existing Secret is left alone and the script exits 0.
 #
@@ -37,6 +37,7 @@ set -euo pipefail
 NAMESPACE="software-factory"
 SECRET_NAME="codex-auth"
 CREDENTIAL_KEY="auth.json"
+LEASE_KEY="refresh_state.json"
 DEPLOYMENT="software-factory-worker"
 POD_LABEL="app=software-factory-worker"
 WAIT_TIMEOUT="180s"
@@ -101,14 +102,17 @@ if [ "$CHECK" -eq 1 ]; then
     exit 1
   fi
 
-  extra="$(printf '%s\n' "$keys" | grep -vx "$CREDENTIAL_KEY" || true)"
+  # The worker writes its own lease after a healthy refresh. It is legitimate
+  # state, not a second operator-seeded credential. Any other key is unsafe:
+  # this check must still catch accidental Secret shape drift.
+  extra="$(printf '%s\n' "$keys" | grep -vx -e "$CREDENTIAL_KEY" -e "$LEASE_KEY" || true)"
   if [ -n "$extra" ]; then
     echo "SEEDED but with unexpected extra key(s): $(printf '%s' "$extra" | tr '\n' ' ')"
-    echo "(refresh_state.json in particular should never be seeded by hand)"
+    echo "(the worker may own '$LEASE_KEY'; do not seed it by hand)"
     exit 1
   fi
 
-  echo "SEEDED: secret '$SECRET_NAME' in namespace '$NAMESPACE' has exactly the '$CREDENTIAL_KEY' key"
+  echo "SEEDED: secret '$SECRET_NAME' in namespace '$NAMESPACE' has the required '$CREDENTIAL_KEY' key"
   exit 0
 fi
 

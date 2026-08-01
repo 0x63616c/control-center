@@ -275,7 +275,7 @@ kubectl -n software-factory rollout status \
 kubectl -n software-factory wait \
   --for=condition=available deployment/software-factory-worker --timeout=5m
 kubectl -n software-factory port-forward \
-  deployment/software-factory-worker 19090:9090 \
+  deployment/software-factory-worker 19090:9464 \
   >"${gate10_dir}/07-worker-port-forward.log" 2>&1 &
 readyz_pid=$!
 cleanup_readyz() {
@@ -296,16 +296,29 @@ trap - EXIT
 
 temporal_cli() {
   local pod="sf-gate10-temporal-${RANDOM}"
-  kubectl -n temporal run "${pod}" --rm -i --quiet --restart=Never \
+  kubectl -n temporal run "${pod}" --quiet --restart=Never \
     --image=temporalio/admin-tools:1.31.2 --command -- \
     temporal --address temporal-server:7233 \
-    --namespace software-factory "$@"
+    --namespace software-factory \
+    --codec-endpoint http://codec.software-factory.svc.cluster.local:8080 "$@"
+  if ! kubectl -n temporal wait --for=jsonpath='{.status.phase}'=Succeeded \
+    "pod/${pod}" --timeout=90s; then
+    kubectl -n temporal logs "${pod}" >&2 || true
+    kubectl -n temporal delete pod "${pod}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+    return 1
+  fi
+  if kubectl -n temporal logs "${pod}"; then
+    kubectl -n temporal delete pod "${pod}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+    return 0
+  fi
+  kubectl -n temporal delete pod "${pod}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  return 1
 }
 temporal_cli workflow query \
   --workflow-id software-factory-target-dispatcher \
   --type target-dispatcher-policy \
   --output json >"${gate10_dir}/07-dispatcher-policy-query.json"
-jq -er '.queryResult.payloads[0].data' \
+jq -er '.queryResult[0].data' \
   "${gate10_dir}/07-dispatcher-policy-query.json" |
   base64 --decode >"${gate10_dir}/07-dispatcher-policy.json"
 jq -e '
@@ -341,7 +354,7 @@ jq -e '
   .schedule.policies.overlapPolicy == "SCHEDULE_OVERLAP_POLICY_SKIP"
 ' "${gate10_dir}/07-maintain-before-trigger.json"
 previous_maintain_run_id="$(jq -r \
-  '.info.recentActions[0].startWorkflowResult.runId // empty' \
+  '.info.recentActions[-1].startWorkflowResult.runId // empty' \
   "${gate10_dir}/07-maintain-before-trigger.json")"
 
 temporal_cli schedule trigger --schedule-id software-factory-maintain
@@ -349,9 +362,9 @@ for attempt in $(seq 1 30); do
   temporal_cli schedule describe \
     --schedule-id software-factory-maintain \
     --output json >"${gate10_dir}/07-maintain-after-trigger.json"
-  maintain_workflow_id="$(jq -r '.info.recentActions[0].startWorkflowResult.workflowId // empty' \
+  maintain_workflow_id="$(jq -r '.info.recentActions[-1].startWorkflowResult.workflowId // empty' \
     "${gate10_dir}/07-maintain-after-trigger.json")"
-  maintain_run_id="$(jq -r '.info.recentActions[0].startWorkflowResult.runId // empty' \
+  maintain_run_id="$(jq -r '.info.recentActions[-1].startWorkflowResult.runId // empty' \
     "${gate10_dir}/07-maintain-after-trigger.json")"
   if test -n "${maintain_workflow_id}" && \
     test -n "${maintain_run_id}" && \
