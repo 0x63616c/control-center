@@ -326,6 +326,37 @@ func TestDispatcherGivesEachChildItsAdmittedHardDeadline(t *testing.T) {
 	}
 }
 
+func TestDispatcherRoutesWorkOnTicketChildrenToTheMainRunQueue(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+	env.OnActivity(ticketActs.AwaitDispatchableTickets, mock.Anything).
+		Return([]store.Ticket{{ID: 41, Title: "run on main", State: store.TicketOpen}}, nil)
+	var childTaskQueue string
+	var childExecutionTimeout time.Duration
+	env.SetOnChildWorkflowStartedListener(func(info *workflow.Info, _ workflow.Context, _ converter.EncodedValues) {
+		childTaskQueue = info.TaskQueueName
+		childExecutionTimeout = info.WorkflowExecutionTimeout
+	})
+	env.OnWorkflow(workflows.WorkOnTicket, mock.Anything, mock.Anything).
+		Return(func(ctx workflow.Context, _ workflows.WorkOnTicketInput) error {
+			return workflow.Sleep(ctx, time.Hour)
+		})
+
+	in := targetDispatcherInput()
+	env.RegisterDelayedCallback(env.CancelWorkflow, time.Minute)
+	env.ExecuteWorkflow(workflows.Dispatcher, in)
+
+	if err := env.GetWorkflowError(); !temporal.IsCanceledError(err) {
+		t.Fatalf("Dispatcher error = %v, want cancellation after child option assertions", err)
+	}
+	if childTaskQueue != work.TaskQueue {
+		t.Errorf("child task queue = %q, want main run queue %q", childTaskQueue, work.TaskQueue)
+	}
+	if childExecutionTimeout != in.Policy.Run.HardDeadline {
+		t.Errorf("child WorkflowExecutionTimeout = %s, want immutable policy hard deadline %s", childExecutionTimeout, in.Policy.Run.HardDeadline)
+	}
+}
+
 func TestDispatcherCancelsAnOutstandingWaitBeforeDraining(t *testing.T) {
 	suite := &testsuite.WorkflowTestSuite{}
 	env := suite.NewTestWorkflowEnvironment()

@@ -24,6 +24,9 @@ func TestDispatchChildOptionsRequestCancellationWhenTheDispatcherCloses(t *testi
 	if options.WorkflowID != work.FactoryTicketWorkflowID(41) {
 		t.Errorf("WorkflowID = %q, want ticket-scoped target workflow ID", options.WorkflowID)
 	}
+	if options.TaskQueue != work.TaskQueue {
+		t.Errorf("TaskQueue = %q, want the target run queue %q", options.TaskQueue, work.TaskQueue)
+	}
 	if options.WorkflowExecutionTimeout != policy.HardDeadline {
 		t.Errorf("WorkflowExecutionTimeout = %s, want immutable policy hard deadline %s", options.WorkflowExecutionTimeout, policy.HardDeadline)
 	}
