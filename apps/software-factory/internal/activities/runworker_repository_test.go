@@ -38,19 +38,23 @@ type targetGitHubProbe struct {
 func (p *targetGitHubProbe) PullRequestForBranch(context.Context, string) (work.PullRequest, bool, error) {
 	return p.pr, p.pr.Number != 0, nil
 }
+
 func (p *targetGitHubProbe) OpenOrUpdatePullRequest(_ context.Context, _, _, _ string, _ *work.PullRequest) (work.PullRequest, error) {
 	p.syncCalls++
 	return p.pr, nil
 }
+
 func (p *targetGitHubProbe) MarkPullRequestReadyForReview(context.Context, string) error {
 	p.readyCalls++
 	return nil
 }
+
 func (p *targetGitHubProbe) MergePullRequest(_ context.Context, _ int, sha string) (work.PullRequestMergeResult, error) {
 	p.mergeCalls++
 	p.commitSHA = sha
 	return p.merge, nil
 }
+
 func (p *targetGitHubProbe) ChecksForCommit(_ context.Context, sha string, required []string) ([]work.CheckRun, error) {
 	p.commitSHA, p.required = sha, append([]string(nil), required...)
 	return p.checks, nil
@@ -65,6 +69,7 @@ type repositoryCheckpointProbe struct {
 func (p *repositoryCheckpointProbe) Load(context.Context) (store.GitCheckpoint, bool, error) {
 	return p.loaded, p.found, nil
 }
+
 func (p *repositoryCheckpointProbe) Checkpoint(_ context.Context, in store.GitCheckpointInput) (store.GitCheckpoint, error) {
 	p.writes = append(p.writes, in)
 	return in.GitCheckpoint, nil

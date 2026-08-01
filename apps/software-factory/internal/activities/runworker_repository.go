@@ -37,11 +37,14 @@ type repositoryEffectEnvelope struct {
 	Result json.RawMessage `json:"result"`
 }
 
+// CloneTargetRepositoryInput identifies the repository Step and source to
+// restore on this Run Worker generation.
 type CloneTargetRepositoryInput struct {
 	Step     RepositoryStep
 	CloneURL string
 }
 
+// CloneTargetRepositoryOutput records the exact restored candidate head.
 type CloneTargetRepositoryOutput struct{ HeadSHA string }
 
 // CloneTargetRepository is the first Session-bound operation. It restores the
@@ -70,11 +73,13 @@ func (a *RunWorkerActivities) CloneTargetRepository(ctx context.Context, in Clon
 	return out, nil
 }
 
+// TargetAwaitCIInput binds a CI observation to one durable repository Step.
 type TargetAwaitCIInput struct {
 	Step RepositoryStep
 	CI   AwaitCIInput
 }
 
+// TargetAwaitCI observes required checks for the exact durable candidate head.
 func (a *RunWorkerActivities) TargetAwaitCI(ctx context.Context, in TargetAwaitCIInput) (AwaitCIOutput, error) {
 	cp, raw, found, err := a.loadRepositoryResult(ctx, in.Step, repositoryEffectCI)
 	if err != nil {
@@ -106,8 +111,10 @@ func (a *RunWorkerActivities) TargetAwaitCI(ctx context.Context, in TargetAwaitC
 	return out, nil
 }
 
+// TargetFindPullRequestInput binds PR discovery to one repository Step.
 type TargetFindPullRequestInput struct{ Step RepositoryStep }
 
+// TargetFindPullRequest discovers the PR associated with the durable branch.
 func (a *RunWorkerActivities) TargetFindPullRequest(ctx context.Context, in TargetFindPullRequestInput) (FindPullRequestOutput, error) {
 	cp, raw, found, err := a.loadRepositoryResult(ctx, in.Step, repositoryEffectFind)
 	if err != nil {
@@ -131,6 +138,7 @@ func (a *RunWorkerActivities) TargetFindPullRequest(ctx context.Context, in Targ
 	return out, nil
 }
 
+// TargetSyncPullRequestInput carries the durable Step and desired PR content.
 type TargetSyncPullRequestInput struct {
 	Step     RepositoryStep
 	Title    string
@@ -138,6 +146,7 @@ type TargetSyncPullRequestInput struct {
 	Existing *work.PullRequest
 }
 
+// TargetSyncPullRequest opens or updates the branch PR and checkpoints it.
 func (a *RunWorkerActivities) TargetSyncPullRequest(ctx context.Context, in TargetSyncPullRequestInput) (work.PullRequest, error) {
 	cp, raw, found, err := a.loadRepositoryResult(ctx, in.Step, repositoryEffectSync)
 	if err != nil {
@@ -161,8 +170,10 @@ func (a *RunWorkerActivities) TargetSyncPullRequest(ctx context.Context, in Targ
 	return pr, nil
 }
 
+// TargetMarkPullRequestReadyInput identifies the PR Step to make reviewable.
 type TargetMarkPullRequestReadyInput struct{ Step RepositoryStep }
 
+// TargetMarkPullRequestReady removes draft status and checkpoints the effect.
 func (a *RunWorkerActivities) TargetMarkPullRequestReady(ctx context.Context, in TargetMarkPullRequestReadyInput) error {
 	cp, _, found, err := a.loadRepositoryResult(ctx, in.Step, repositoryEffectReady)
 	if err != nil || found {
@@ -177,11 +188,13 @@ func (a *RunWorkerActivities) TargetMarkPullRequestReady(ctx context.Context, in
 	return a.checkpointRepositoryResult(ctx, cp, in.Step, repositoryEffectReady, struct{}{})
 }
 
+// TargetMergePullRequestInput binds merge to the exact reviewed candidate.
 type TargetMergePullRequestInput struct {
 	Step            RepositoryStep
 	ExpectedHeadSHA string
 }
 
+// TargetMergePullRequest requests an exact-head merge and checkpoints GitHub's result.
 func (a *RunWorkerActivities) TargetMergePullRequest(ctx context.Context, in TargetMergePullRequestInput) (work.PullRequestMergeResult, error) {
 	cp, raw, found, err := a.loadRepositoryResult(ctx, in.Step, repositoryEffectMerge)
 	if err != nil {

@@ -21,6 +21,7 @@ type attemptCheckpointProbe struct {
 func (p *attemptCheckpointProbe) Load(context.Context) (checkpointprotocol.Attempt, bool, error) {
 	return p.loaded, p.found, nil
 }
+
 func (p *attemptCheckpointProbe) Checkpoint(_ context.Context, in checkpointprotocol.Attempt) error {
 	p.writes = append(p.writes, in)
 	return nil
@@ -49,6 +50,7 @@ type promptProbe struct{}
 func (promptProbe) Render(work.StageKey, work.TicketDetail, work.PriorTurns) (string, []byte, error) {
 	return "prompt", []byte(`{}`), nil
 }
+
 func (promptProbe) Decode(_ work.Stage, result []byte) (work.StageOutput, error) {
 	return work.StageOutput{}, nil
 }
@@ -83,7 +85,7 @@ func TestRunTargetAgentRefusesFreshExecutionForUnresumableCheckpoint(t *testing.
 	t.Parallel()
 	cp := &attemptCheckpointProbe{found: true, loaded: checkpointprotocol.Attempt{ProviderThreadID: "thread-lost", State: work.AgentAttemptRunning, UsageState: work.UsageUnknown}}
 	runner := &targetStageRunnerProbe{}
-	a, err := NewRunWorkerActivities(RunWorkerDeps{Stages: runner, Prompts: promptProbe{}, Checkpoints: func(store.TargetAttemptID) (AttemptCheckpoint, error) { return cp, nil }, ProviderState: providerStateProbe{}, Clock: fixedClock{now: time.Now()}, Heartbeat: func(context.Context) {}, Repository: &targetRepositoryProbe{}, GitHub: &targetGitHubProbe{}, Identity: targetTestIdentity, RepositoryCheckpoints: testRepositoryCheckpointFactory})
+	a, err := NewRunWorkerActivities(RunWorkerDeps{Stages: runner, Prompts: promptProbe{}, Checkpoints: func(store.TargetAttemptID) (AttemptCheckpoint, error) { return cp, nil }, ProviderState: providerStateProbe{}, Clock: fixedClock{now: time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)}, Heartbeat: func(context.Context) {}, Repository: &targetRepositoryProbe{}, GitHub: &targetGitHubProbe{}, Identity: targetTestIdentity, RepositoryCheckpoints: testRepositoryCheckpointFactory})
 	if err != nil {
 		t.Fatalf("NewRunWorkerActivities: %v", err)
 	}

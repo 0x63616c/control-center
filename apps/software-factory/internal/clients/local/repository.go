@@ -23,6 +23,7 @@ type GitRunner interface {
 // OSGitRunner runs Git as a local child process in the supplied checkout.
 type OSGitRunner struct{}
 
+// Run executes argv directly inside dir and reports process output and status.
 func (OSGitRunner) Run(ctx context.Context, dir string, argv []string) (string, int, error) {
 	if len(argv) == 0 {
 		return "", 0, fmt.Errorf("running local git command: argv is empty: %w", work.ErrPermanent)
@@ -51,6 +52,7 @@ type Repository struct {
 	runner GitRunner
 }
 
+// NewRepository constructs one local checkout rooted at a specific directory.
 func NewRepository(root string, runner GitRunner) (*Repository, error) {
 	clean := filepath.Clean(root)
 	if !filepath.IsAbs(root) || clean == string(filepath.Separator) {

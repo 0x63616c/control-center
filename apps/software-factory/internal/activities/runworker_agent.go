@@ -83,10 +83,10 @@ type RunWorkerActivities struct{ deps RunWorkerDeps }
 // NewRunWorkerActivities validates the target agent activity set once.
 func NewRunWorkerActivities(deps RunWorkerDeps) (*RunWorkerActivities, error) {
 	if deps.Stages == nil || deps.Prompts == nil || deps.Checkpoints == nil || deps.ProviderState == nil || deps.Clock == nil || deps.Heartbeat == nil || deps.Repository == nil || deps.GitHub == nil || deps.RepositoryCheckpoints == nil {
-		return nil, fmt.Errorf("Run Worker activities require stages, prompts, checkpoints, provider state, clock, heartbeat, repository, GitHub, and repository checkpoints")
+		return nil, fmt.Errorf("run worker activities require stages, prompts, checkpoints, provider state, clock, heartbeat, repository, GitHub, and repository checkpoints")
 	}
 	if err := deps.Identity.Validate(); err != nil {
-		return nil, fmt.Errorf("Run Worker activities require a valid identity: %w", err)
+		return nil, fmt.Errorf("run worker activities require a valid identity: %w", err)
 	}
 	return &RunWorkerActivities{deps: deps}, nil
 }
