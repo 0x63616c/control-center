@@ -477,11 +477,12 @@ func productionSessionWorkflow(ctx workflow.Context, in productionSessionInput) 
 		return fmt.Errorf("running registered clone activity: %w", err)
 	}
 	if err := workflow.ExecuteActivity(sessionCtx, "RunTargetAgent", activities.TargetAgentInput{
-		AttemptID:    store.TargetAttemptID{RunID: productionRunWorkerIdentity.RunID, StepOrdinal: 2, AttemptNo: 1},
-		TicketNumber: 42,
-		Iteration:    1,
-		Stage:        work.AgentStageImplement,
-		Model:        work.Model{Name: "gpt-5", Effort: "high"},
+		AttemptID:          store.TargetAttemptID{RunID: productionRunWorkerIdentity.RunID, StepOrdinal: 2, AttemptNo: 1},
+		TicketNumber:       42,
+		Iteration:          1,
+		Stage:              work.AgentStageImplement,
+		Model:              work.Model{Name: "gpt-5", Effort: "high"},
+		CredentialRevision: activities.CredentialRevisionExpectation{Identity: productionRunWorkerIdentity, Revision: "1"},
 	}).Get(sessionCtx, nil); err != nil {
 		return fmt.Errorf("running registered target agent activity: %w", err)
 	}
@@ -730,6 +731,7 @@ func productionRunWorkerActivities(root string) (*activities.RunWorkerActivities
 		Prompts:               productionPrompts{},
 		Checkpoints:           func(store.TargetAttemptID) (activities.AttemptCheckpoint, error) { return attempt, nil },
 		ProviderState:         productionProviderState{},
+		CredentialRevision:    productionCredentialRevision,
 		Clock:                 productionClock{},
 		Heartbeat:             func(context.Context) {},
 		Repository:            productionRepository{recorder: recorder},
@@ -738,6 +740,8 @@ func productionRunWorkerActivities(root string) (*activities.RunWorkerActivities
 		RepositoryCheckpoints: repository.open,
 	})
 }
+
+func productionCredentialRevision(context.Context) (string, error) { return "1", nil }
 
 type productionRecorder struct {
 	root     string
