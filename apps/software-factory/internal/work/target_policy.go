@@ -75,6 +75,27 @@ type AgentActivityPolicy struct {
 	Retry                  RetryPolicy
 }
 
+// Validate reports whether p defines a usable retry and timeout shape for one
+// direct model turn.
+func (p AgentActivityPolicy) Validate() error {
+	if p.StartToCloseTimeout <= 0 {
+		return fmt.Errorf("%w: agent start-to-close timeout must be positive", ErrInvalidRun)
+	}
+	if p.ScheduleToCloseTimeout <= 0 {
+		return fmt.Errorf("%w: agent schedule-to-close timeout must be positive", ErrInvalidRun)
+	}
+	if p.HeartbeatTimeout <= 0 {
+		return fmt.Errorf("%w: agent heartbeat timeout must be positive", ErrInvalidRun)
+	}
+	if p.HeartbeatTimeout >= p.StartToCloseTimeout {
+		return fmt.Errorf("%w: agent heartbeat timeout must be shorter than its start-to-close timeout", ErrInvalidRun)
+	}
+	if p.ScheduleToCloseTimeout < p.StartToCloseTimeout {
+		return fmt.Errorf("%w: agent schedule-to-close timeout is shorter than start-to-close timeout", ErrInvalidRun)
+	}
+	return p.Retry.Validate("agent")
+}
+
 // RetryPolicy is an SDK-independent resolved Temporal retry policy.
 type RetryPolicy struct {
 	InitialInterval    time.Duration
@@ -130,6 +151,15 @@ func DefaultTargetRunPolicy() TargetRunPolicy {
 		CredentialRotation: boundedActivityPolicy(time.Minute, 15*time.Minute, 10*time.Second, 2, 5*time.Minute, 10),
 		Recording:          boundedActivityPolicy(time.Minute, time.Hour, 10*time.Second, 2, 5*time.Minute, 0),
 		Teardown:           boundedActivityPolicy(2*time.Minute, 30*time.Minute, 10*time.Second, 2, 5*time.Minute, 10),
+	}
+}
+
+// DefaultLegacyAgentActivityPolicy returns the explicit AgentWorkflow policy
+// that FactoryWorkTicket used before target Runs supplied their own policy.
+func DefaultLegacyAgentActivityPolicy() AgentActivityPolicy {
+	return AgentActivityPolicy{
+		StartToCloseTimeout: 2 * time.Minute, ScheduleToCloseTimeout: 10 * time.Minute, HeartbeatTimeout: 15 * time.Second,
+		Retry: RetryPolicy{InitialInterval: time.Second, BackoffCoefficient: 2, MaximumInterval: 10 * time.Second, MaximumAttempts: 3},
 	}
 }
 
@@ -193,20 +223,5 @@ func (p TargetRunPolicy) Validate() error {
 }
 
 func (p TargetRunPolicy) validateAgent() error {
-	if p.Agent.StartToCloseTimeout <= 0 {
-		return fmt.Errorf("%w: agent start-to-close timeout must be positive", ErrInvalidRun)
-	}
-	if p.Agent.ScheduleToCloseTimeout <= 0 {
-		return fmt.Errorf("%w: agent schedule-to-close timeout must be positive", ErrInvalidRun)
-	}
-	if p.Agent.HeartbeatTimeout <= 0 {
-		return fmt.Errorf("%w: agent heartbeat timeout must be positive", ErrInvalidRun)
-	}
-	if p.Agent.HeartbeatTimeout >= p.Agent.StartToCloseTimeout {
-		return fmt.Errorf("%w: agent heartbeat timeout must be shorter than its start-to-close timeout", ErrInvalidRun)
-	}
-	if p.Agent.ScheduleToCloseTimeout < p.Agent.StartToCloseTimeout {
-		return fmt.Errorf("%w: agent schedule-to-close timeout is shorter than start-to-close timeout", ErrInvalidRun)
-	}
-	return p.Agent.Retry.Validate("agent")
+	return p.Agent.Validate()
 }

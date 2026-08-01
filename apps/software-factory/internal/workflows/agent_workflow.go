@@ -1,6 +1,7 @@
 package workflows
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -16,12 +17,18 @@ import (
 
 // AgentWorkflowInput starts one bounded stage agent.
 type AgentWorkflowInput struct {
-	Attempt    activities.StageAttempt
-	ToolsetID  agent.ToolsetID
-	ToolTarget agent.ToolTarget
-	Limits     agent.Limits
-	CacheKey   string
-	State      *AgentWorkflowState
+	Attempt         activities.StageAttempt
+	ToolsetID       agent.ToolsetID
+	ToolTarget      agent.ToolTarget
+	Limits          agent.Limits
+	ModelTurnPolicy work.AgentActivityPolicy
+	ControlPolicy   work.ActivityPolicy
+	// Identity pins every durable agent artifact to one semantic execution.
+	// Empty preserves the pre-target-run stage identity for existing histories.
+	Identity string
+	CacheKey string
+	Seed     *agent.ConversationSeed
+	State    *AgentWorkflowState
 }
 
 // AgentWorkflowState is the reference-only state carried across Continue-As-New.
@@ -40,17 +47,127 @@ type AgentWorkflowState struct {
 
 // AgentWorkflowResult is the bounded typed result returned to FactoryWorkTicket.
 type AgentWorkflowResult struct {
-	Result        work.StageOutput
-	Usage         work.Usage
-	UsageMeasured bool
-	TranscriptRef agent.TranscriptRef
-	ModelTurns    int
-	ToolCalls     int
+	Result          work.StageOutput
+	Usage           work.Usage
+	UsageMeasured   bool
+	ConversationRef agent.ConversationRef
+	TranscriptRef   agent.TranscriptRef
+	Failure         *agent.TerminalFailure
+	ModelTurns      int
+	ToolCalls       int
+}
+
+// LegacyAgentWorkflowModelTurnPolicy preserves the model-turn behavior of
+// FactoryWorkTicket histories. Target runs carry their distinct immutable
+// policy in WorkOnTicketInput instead of changing this compatibility default.
+func LegacyAgentWorkflowModelTurnPolicy() work.AgentActivityPolicy {
+	return work.AgentActivityPolicy{
+		StartToCloseTimeout:    2 * time.Minute,
+		ScheduleToCloseTimeout: 2*time.Minute + 15*time.Second,
+		HeartbeatTimeout:       15 * time.Second,
+		Retry: work.RetryPolicy{
+			InitialInterval: time.Second, BackoffCoefficient: 2,
+			MaximumInterval: 10 * time.Second, MaximumAttempts: 3,
+		},
+	}
+}
+
+// LegacyAgentWorkflowControlPolicy preserves the short control activity retry
+// shape recorded by FactoryWorkTicket histories. Target runs instead supply
+// their immutable recording policy for prompt and finalization persistence.
+func LegacyAgentWorkflowControlPolicy() work.ActivityPolicy {
+	return work.ActivityPolicy{
+		StartToCloseTimeout:    2 * time.Minute,
+		ScheduleToCloseTimeout: 2*time.Minute + 15*time.Second,
+		Retry: work.RetryPolicy{
+			InitialInterval: time.Second, BackoffCoefficient: 2,
+			MaximumInterval: 10 * time.Second, MaximumAttempts: 3,
+		},
+	}
+}
+
+// MarshalJSON requires exactly one terminal outcome. A StageOutput deliberately
+// refuses to marshal its invalid zero value, so a malformed child result can
+// never arrive at its parent looking successful.
+func (result AgentWorkflowResult) MarshalJSON() ([]byte, error) {
+	type wireResult struct {
+		Result          *work.StageOutput      `json:"result,omitempty"`
+		Usage           work.Usage             `json:"usage"`
+		UsageMeasured   bool                   `json:"usage_measured"`
+		ConversationRef agent.ConversationRef  `json:"conversation_ref"`
+		TranscriptRef   agent.TranscriptRef    `json:"transcript_ref"`
+		Failure         *agent.TerminalFailure `json:"failure,omitempty"`
+		ModelTurns      int                    `json:"model_turns"`
+		ToolCalls       int                    `json:"tool_calls"`
+	}
+	hasResult := result.Result.Stage() != ""
+	if err := validateAgentWorkflowResult(hasResult, result.Failure); err != nil {
+		return nil, err
+	}
+	encoded := wireResult{
+		Usage:           result.Usage,
+		UsageMeasured:   result.UsageMeasured,
+		ConversationRef: result.ConversationRef,
+		TranscriptRef:   result.TranscriptRef,
+		Failure:         result.Failure,
+		ModelTurns:      result.ModelTurns,
+		ToolCalls:       result.ToolCalls,
+	}
+	if hasResult {
+		encoded.Result = &result.Result
+	}
+	return json.Marshal(encoded)
+}
+
+// UnmarshalJSON restores exactly one successful stage result or terminal failure.
+func (result *AgentWorkflowResult) UnmarshalJSON(data []byte) error {
+	type wireResult struct {
+		Result          *work.StageOutput      `json:"result"`
+		Usage           work.Usage             `json:"usage"`
+		UsageMeasured   bool                   `json:"usage_measured"`
+		ConversationRef agent.ConversationRef  `json:"conversation_ref"`
+		TranscriptRef   agent.TranscriptRef    `json:"transcript_ref"`
+		Failure         *agent.TerminalFailure `json:"failure"`
+		ModelTurns      int                    `json:"model_turns"`
+		ToolCalls       int                    `json:"tool_calls"`
+	}
+	var decoded wireResult
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return fmt.Errorf("decode agent workflow result: %w", err)
+	}
+	if err := validateAgentWorkflowResult(decoded.Result != nil, decoded.Failure); err != nil {
+		return fmt.Errorf("decode agent workflow result: %w", err)
+	}
+	*result = AgentWorkflowResult{
+		Usage:           decoded.Usage,
+		UsageMeasured:   decoded.UsageMeasured,
+		ConversationRef: decoded.ConversationRef,
+		TranscriptRef:   decoded.TranscriptRef,
+		Failure:         decoded.Failure,
+		ModelTurns:      decoded.ModelTurns,
+		ToolCalls:       decoded.ToolCalls,
+	}
+	if decoded.Result != nil {
+		result.Result = *decoded.Result
+	}
+	return nil
+}
+
+func validateAgentWorkflowResult(hasResult bool, failure *agent.TerminalFailure) error {
+	if hasResult == (failure != nil) {
+		return fmt.Errorf("agent workflow result must contain exactly one of result or failure")
+	}
+	if failure != nil {
+		if err := failure.Validate(); err != nil {
+			return fmt.Errorf("validate agent workflow failure: %w", err)
+		}
+	}
+	return nil
 }
 
 // AgentWorkflow runs one bounded reference-only model/tool loop.
 func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (workflowResult AgentWorkflowResult, workflowErr error) {
-	defer func() { recordAgentLifecycle(ctx, workflowErr) }()
+	defer func() { recordAgentLifecycle(ctx, workflowErr, workflowResult.Failure) }()
 	if err := validateAgentInput(input); err != nil {
 		return AgentWorkflowResult{}, temporal.NewNonRetryableApplicationError(err.Error(), agent.ErrorTypeInvalidInput, err)
 	}
@@ -60,18 +177,19 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (workflowResu
 			fmt.Sprintf("resolve agent tool target: %v", err), agent.ErrorTypeInvalidInput, err,
 		)
 	}
-	mainContext := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-		StartToCloseTimeout: 2 * time.Minute,
-		HeartbeatTimeout:    15 * time.Second,
-		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval: time.Second, BackoffCoefficient: 2, MaximumInterval: 10 * time.Second, MaximumAttempts: 3,
-		},
-	})
+	identity, err := agent.ConversationIdentity(input.Identity, input.Attempt.Key)
+	if err != nil {
+		return AgentWorkflowResult{}, temporal.NewNonRetryableApplicationError(
+			fmt.Sprintf("resolve agent conversation identity: %v", err), agent.ErrorTypeInvalidInput, err,
+		)
+	}
+	controlContext := workflow.WithActivityOptions(ctx, agentControlActivityOptions(input.ControlPolicy))
+	modelContext := workflow.WithActivityOptions(ctx, agentModelTurnActivityOptions(input.ModelTurnPolicy))
 	state := AgentWorkflowState{}
 	if input.State == nil {
 		var prepared agentactivities.PrepareOutput
-		if err := workflow.ExecuteActivity(mainContext, agent.PrepareActivityName, agentactivities.PrepareInput{
-			Attempt: input.Attempt, CacheKey: input.CacheKey,
+		if err := workflow.ExecuteActivity(controlContext, agent.PrepareActivityName, agentactivities.PrepareInput{
+			Attempt: input.Attempt, Identity: identity, CacheKey: input.CacheKey, Seed: input.Seed,
 		}).Get(ctx, &prepared); err != nil {
 			return AgentWorkflowResult{}, fmt.Errorf("prepare agent workflow: %w", err)
 		}
@@ -84,17 +202,17 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (workflowResu
 		state = *input.State
 	}
 	result := AgentWorkflowResult{
-		Usage: state.Usage, UsageMeasured: state.UsageMeasured, TranscriptRef: state.TranscriptRef,
+		Usage: state.Usage, UsageMeasured: state.UsageMeasured, ConversationRef: state.ConversationRef, TranscriptRef: state.TranscriptRef,
 		ModelTurns: state.ModelTurns, ToolCalls: state.ToolCalls,
 	}
 	conversationRef := state.ConversationRef
 	if conversationRef.Bytes > input.Limits.MaxConversationBytes {
-		return result, agentBudgetError("agent conversation budget exhausted", "AgentConversationBudget")
+		return terminalAgentBudgetFailure(result, agent.BudgetConversationBytes)
 	}
 	var sessionContext workflow.Context
 	for {
 		if result.ModelTurns >= input.Limits.MaxModelTurns {
-			return result, temporal.NewNonRetryableApplicationError("agent model-turn budget exhausted", "AgentModelTurnBudget", nil)
+			return terminalAgentBudgetFailure(result, agent.BudgetModelTurns)
 		}
 		if state.TurnsSinceContinueAsNew >= input.Limits.ContinueAsNewAfter {
 			state.ConversationRef = conversationRef
@@ -108,54 +226,50 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (workflowResu
 		}
 		modelTurn := result.ModelTurns + 1
 		var turn agent.ModelTurnResult
-		if err := workflow.ExecuteActivity(mainContext, agent.ModelTurnActivityName, agent.ModelTurnInput{
+		if err := workflow.ExecuteActivity(modelContext, agent.ModelTurnActivityName, agent.ModelTurnInput{
 			Model: input.Attempt.Model, ToolsetID: input.ToolsetID, ToolsetFingerprint: state.ToolsetFingerprint,
 			ConversationRef: conversationRef, TranscriptRef: result.TranscriptRef,
 			ResponseFormat: state.ResponseFormat, PromptCacheKey: state.PromptCacheKey, ModelTurn: modelTurn,
-			IdempotencyKey: fmt.Sprintf("agent/%s/%s/%d/model/%d", input.Attempt.Key.RunID, input.Attempt.Key.Stage, input.Attempt.Key.Turn, modelTurn),
+			IdempotencyKey: fmt.Sprintf("%s/model/%d", identity, modelTurn),
 		}).Get(ctx, &turn); err != nil {
+			if failure := modelTerminalFailure(err); failure != nil {
+				return terminalAgentFailure(result, failure.Kind)
+			}
 			return result, fmt.Errorf("run agent model turn %d: %w", modelTurn, err)
 		}
 		result.ModelTurns++
 		if turn.ToolsetFingerprint == "" {
-			return result, temporal.NewNonRetryableApplicationError(
-				"agent model turn returned no toolset fingerprint", agent.ErrorTypeInvalidProviderOutcome, nil,
-			)
+			return terminalAgentFailure(result, agent.TerminalFailureInvalidProviderOutcome)
 		}
 		if state.ToolsetFingerprint == "" {
 			state.ToolsetFingerprint = turn.ToolsetFingerprint
 		} else if state.ToolsetFingerprint != turn.ToolsetFingerprint {
-			return result, temporal.NewNonRetryableApplicationError(
-				"agent model turn changed the pinned toolset fingerprint", agent.ErrorTypeInvalidProviderOutcome, nil,
-			)
+			return terminalAgentFailure(result, agent.TerminalFailureInvalidProviderOutcome)
 		}
 		state.TurnsSinceContinueAsNew++
 		result.Usage = result.Usage.Add(turn.Usage)
 		result.UsageMeasured = result.UsageMeasured && turn.UsageMeasured
 		conversationRef = turn.ConversationRef
+		result.ConversationRef = conversationRef
 		if turn.TranscriptRef.Key != "" {
 			result.TranscriptRef = turn.TranscriptRef
 		}
 		if result.UsageMeasured && result.Usage.InputTokens > input.Limits.MaxInputTokens {
-			return result, agentBudgetError("agent input-token budget exhausted", "AgentInputTokenBudget")
+			return terminalAgentBudgetFailure(result, agent.BudgetInputTokens)
 		}
 		if result.UsageMeasured && result.Usage.OutputTokens > input.Limits.MaxOutputTokens {
-			return result, agentBudgetError("agent output-token budget exhausted", "AgentOutputTokenBudget")
+			return terminalAgentBudgetFailure(result, agent.BudgetOutputTokens)
 		}
 		if conversationRef.Bytes > input.Limits.MaxConversationBytes {
-			return result, agentBudgetError("agent conversation budget exhausted", "AgentConversationBudget")
+			return terminalAgentBudgetFailure(result, agent.BudgetConversationBytes)
 		}
 		switch turn.Outcome {
 		case agent.OutcomeToolCalls:
 			if len(turn.ToolCalls) == 0 {
-				return result, temporal.NewNonRetryableApplicationError(
-					"agent tool-call turn contained no calls", agent.ErrorTypeInvalidProviderOutcome, nil,
-				)
+				return terminalAgentFailure(result, agent.TerminalFailureInvalidProviderOutcome)
 			}
 			if result.ToolCalls+len(turn.ToolCalls) > input.Limits.MaxToolCalls {
-				return result, temporal.NewNonRetryableApplicationError(
-					"agent tool-call budget exhausted", "AgentToolCallBudget", nil,
-				)
+				return terminalAgentBudgetFailure(result, agent.BudgetToolCalls)
 			}
 			if sessionContext == nil {
 				targetQueue := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
@@ -166,6 +280,9 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (workflowResu
 					CreationTimeout:  work.SessionCreationTimeout,
 				})
 				if err != nil {
+					if input.ToolTarget.Kind == agent.ToolTargetRunWorker || errors.Is(err, workflow.ErrSessionFailed) {
+						return terminalAgentFailure(result, agent.TerminalFailureSessionLost)
+					}
 					return result, fmt.Errorf("create agent tool session on %q: %w", toolTaskQueue, err)
 				}
 				sessionContext = created
@@ -178,35 +295,36 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (workflowResu
 					ToolsetID: input.ToolsetID, ToolsetFingerprint: state.ToolsetFingerprint,
 					ConversationRef: conversationRef, TranscriptRef: result.TranscriptRef, Call: call,
 				}).Get(ctx, &toolOutput); err != nil {
+					if failure := toolTerminalFailure(err); failure != nil {
+						return terminalAgentFailure(result, failure.Kind)
+					}
 					return result, fmt.Errorf("run agent tool %q: %w", call.Name, err)
 				}
 				if toolOutput.CallID != call.CallID {
-					return result, temporal.NewNonRetryableApplicationError(
-						"agent tool output call id mismatch", agent.ErrorTypeInvalidProviderOutcome, nil,
-					)
+					return terminalAgentFailure(result, agent.TerminalFailureInvalidProviderOutcome)
 				}
 				conversationRef = toolOutput.ConversationRef
+				result.ConversationRef = conversationRef
 				if toolOutput.TranscriptRef.Key != "" {
 					result.TranscriptRef = toolOutput.TranscriptRef
 				}
 				result.ToolCalls++
 				if conversationRef.Bytes > input.Limits.MaxConversationBytes {
-					return result, agentBudgetError("agent conversation budget exhausted", "AgentConversationBudget")
+					return terminalAgentBudgetFailure(result, agent.BudgetConversationBytes)
 				}
 			}
 			continue
 		case agent.OutcomeFinalText:
 		default:
-			return result, temporal.NewNonRetryableApplicationError(
-				fmt.Sprintf("agent model turn returned unsupported outcome %q", turn.Outcome),
-				agent.ErrorTypeInvalidProviderOutcome,
-				nil,
-			)
+			return terminalAgentFailure(result, agent.TerminalFailureInvalidProviderOutcome)
 		}
 		var finalized agentactivities.FinalizeOutput
-		if err := workflow.ExecuteActivity(mainContext, agent.FinalizeActivityName, agentactivities.FinalizeInput{
+		if err := workflow.ExecuteActivity(controlContext, agent.FinalizeActivityName, agentactivities.FinalizeInput{
 			Stage: input.Attempt.Key.Stage, TextRef: turn.FinalTextRef, TranscriptRef: result.TranscriptRef,
 		}).Get(ctx, &finalized); err != nil {
+			if failure := modelTerminalFailure(err); failure != nil {
+				return terminalAgentFailure(result, failure.Kind)
+			}
 			return result, fmt.Errorf("finalize agent output: %w", err)
 		}
 		result.Result = finalized.Result
@@ -214,6 +332,77 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (workflowResu
 			result.TranscriptRef = finalized.TranscriptRef
 		}
 		return result, nil
+	}
+}
+
+func terminalAgentFailure(result AgentWorkflowResult, kind agent.TerminalFailureKind) (AgentWorkflowResult, error) {
+	result.Failure = &agent.TerminalFailure{Kind: kind}
+	return result, nil
+}
+
+func terminalAgentBudgetFailure(result AgentWorkflowResult, budget agent.BudgetKind) (AgentWorkflowResult, error) {
+	result.Failure = &agent.TerminalFailure{Kind: agent.TerminalFailureBudgetExhausted, Budget: budget}
+	return result, nil
+}
+
+func modelTerminalFailure(err error) *agent.TerminalFailure {
+	var timeoutError *temporal.TimeoutError
+	if errors.As(err, &timeoutError) {
+		return &agent.TerminalFailure{Kind: agent.TerminalFailureModelExhausted}
+	}
+	var applicationError *temporal.ApplicationError
+	if !errors.As(err, &applicationError) {
+		return nil
+	}
+	switch applicationError.Type() {
+	case agent.ErrorTypeRateLimit:
+		return &agent.TerminalFailure{Kind: agent.TerminalFailureRateLimited}
+	case agent.ErrorTypeAuth:
+		return &agent.TerminalFailure{Kind: agent.TerminalFailureAuthentication}
+	case agent.ErrorTypeTransient:
+		return &agent.TerminalFailure{Kind: agent.TerminalFailureModelExhausted}
+	case agent.ErrorTypeInvalidProviderOutcome:
+		return &agent.TerminalFailure{Kind: agent.TerminalFailureInvalidProviderOutcome}
+	default:
+		return nil
+	}
+}
+
+func toolTerminalFailure(err error) *agent.TerminalFailure {
+	if errors.Is(err, workflow.ErrSessionFailed) {
+		return &agent.TerminalFailure{Kind: agent.TerminalFailureSessionLost}
+	}
+	var applicationError *temporal.ApplicationError
+	if errors.As(err, &applicationError) {
+		switch applicationError.Type() {
+		case agent.ErrorTypeSessionLost:
+			return &agent.TerminalFailure{Kind: agent.TerminalFailureSessionLost}
+		case agent.ErrorTypeAmbiguousToolExecution:
+			return &agent.TerminalFailure{Kind: agent.TerminalFailureAmbiguousToolExecution}
+		}
+	}
+	return nil
+}
+
+func agentModelTurnActivityOptions(policy work.AgentActivityPolicy) workflow.ActivityOptions {
+	return workflow.ActivityOptions{
+		StartToCloseTimeout:    policy.StartToCloseTimeout,
+		ScheduleToCloseTimeout: policy.ScheduleToCloseTimeout,
+		HeartbeatTimeout:       policy.HeartbeatTimeout,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval: policy.Retry.InitialInterval, BackoffCoefficient: policy.Retry.BackoffCoefficient,
+			MaximumInterval: policy.Retry.MaximumInterval, MaximumAttempts: policy.Retry.MaximumAttempts,
+		},
+	}
+}
+
+func agentControlActivityOptions(policy work.ActivityPolicy) workflow.ActivityOptions {
+	return workflow.ActivityOptions{
+		StartToCloseTimeout: policy.StartToCloseTimeout, ScheduleToCloseTimeout: policy.ScheduleToCloseTimeout,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval: policy.Retry.InitialInterval, BackoffCoefficient: policy.Retry.BackoffCoefficient,
+			MaximumInterval: policy.Retry.MaximumInterval, MaximumAttempts: policy.Retry.MaximumAttempts,
+		},
 	}
 }
 
@@ -226,8 +415,8 @@ func agentToolActivityOptions() workflow.ActivityOptions {
 	}
 }
 
-func recordAgentLifecycle(ctx workflow.Context, terminalErr error) {
-	input, record := agentLifecycleInput(terminalErr)
+func recordAgentLifecycle(ctx workflow.Context, terminalErr error, failure *agent.TerminalFailure) {
+	input, record := agentLifecycleInput(terminalErr, failure)
 	if !record {
 		return
 	}
@@ -244,11 +433,14 @@ func recordAgentLifecycle(ctx workflow.Context, terminalErr error) {
 	}
 }
 
-func agentLifecycleInput(terminalErr error) (agentactivities.LifecycleInput, bool) {
+func agentLifecycleInput(terminalErr error, failure *agent.TerminalFailure) (agentactivities.LifecycleInput, bool) {
 	if workflow.IsContinueAsNewError(terminalErr) {
 		return agentactivities.LifecycleInput{}, false
 	}
 	if terminalErr == nil {
+		if failure != nil {
+			return agentactivities.LifecycleInput{Outcome: telemetry.AgentOutcomeFailed, Budget: string(failure.Budget)}, true
+		}
 		return agentactivities.LifecycleInput{Outcome: telemetry.AgentOutcomeSucceeded}, true
 	}
 	if temporal.IsCanceledError(terminalErr) {
@@ -273,16 +465,16 @@ func continueAgentWorkflowAsNew(ctx workflow.Context, input AgentWorkflowInput, 
 		Attempt: activities.StageAttempt{
 			Key: input.Attempt.Key, Sandbox: input.Attempt.Sandbox, Model: input.Attempt.Model,
 		},
-		ToolsetID:  input.ToolsetID,
-		ToolTarget: input.ToolTarget,
-		Limits:     input.Limits,
-		CacheKey:   input.CacheKey,
-		State:      &state,
+		ToolsetID:       input.ToolsetID,
+		ToolTarget:      input.ToolTarget,
+		Limits:          input.Limits,
+		ModelTurnPolicy: input.ModelTurnPolicy,
+		ControlPolicy:   input.ControlPolicy,
+		Identity:        input.Identity,
+		CacheKey:        input.CacheKey,
+		Seed:            input.Seed,
+		State:           &state,
 	})
-}
-
-func agentBudgetError(message, errorType string) error {
-	return temporal.NewNonRetryableApplicationError(message, errorType, nil)
 }
 
 func validateAgentInput(input AgentWorkflowInput) error {
@@ -299,6 +491,20 @@ func validateAgentInput(input AgentWorkflowInput) error {
 	if input.Limits.MaxModelTurns < 1 || input.Limits.MaxToolCalls < 0 || input.Limits.MaxInputTokens < 1 ||
 		input.Limits.MaxOutputTokens < 1 || input.Limits.MaxConversationBytes < 1 || input.Limits.ContinueAsNewAfter < 1 {
 		return fmt.Errorf("agent workflow limits must be positive")
+	}
+	if err := input.ModelTurnPolicy.Validate(); err != nil {
+		return fmt.Errorf("validate agent workflow model-turn policy: %w", err)
+	}
+	if err := input.ControlPolicy.Validate("agent control"); err != nil {
+		return fmt.Errorf("validate agent workflow control policy: %w", err)
+	}
+	if _, err := agent.ConversationIdentity(input.Identity, input.Attempt.Key); err != nil {
+		return fmt.Errorf("validate agent workflow conversation identity: %w", err)
+	}
+	if input.Seed != nil {
+		if err := input.Seed.ValidateFor(input.Attempt.Key); err != nil {
+			return fmt.Errorf("validate agent workflow conversation seed: %w", err)
+		}
 	}
 	if input.State != nil {
 		if input.State.ModelTurns < 0 || input.State.ToolCalls < 0 || input.State.TurnsSinceContinueAsNew < 0 {

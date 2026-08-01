@@ -1,5 +1,15 @@
 package work
 
+const (
+	// MaxTargetTranscriptUncompressedBytes bounds legacy Run Worker checkpoint
+	// evidence. Target-run recovery still reads those rows while the agent
+	// transcript reference path is adopted, so its database contract remains
+	// deliberately independent of AgentWorkflow's blob-backed transcript.
+	MaxTargetTranscriptUncompressedBytes = 320 << 10
+	// MaxTargetTranscriptCompressedBytes is the matching durable-row bound.
+	MaxTargetTranscriptCompressedBytes = 384 << 10
+)
+
 // Transcript is one stage attempt's whole raw event stream, as JSONL.
 //
 // It is retained in the legacy stage activity result wire type so Temporal can

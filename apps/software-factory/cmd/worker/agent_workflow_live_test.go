@@ -164,8 +164,10 @@ func TestLiveAgentWorkflowStart(t *testing.T) {
 					"You must use the supplied tools; do not merely describe the change.",
 			}},
 		},
-		ToolsetID:  agent.ToolsetCodingWriteV1,
-		ToolTarget: agent.ToolTarget{Kind: agent.ToolTargetLegacySandbox},
+		ToolsetID:       agent.ToolsetCodingWriteV1,
+		ToolTarget:      agent.ToolTarget{Kind: agent.ToolTargetLegacySandbox},
+		ModelTurnPolicy: workflows.LegacyAgentWorkflowModelTurnPolicy(),
+		ControlPolicy:   workflows.LegacyAgentWorkflowControlPolicy(),
 		Limits: agent.Limits{
 			MaxModelTurns: 8, MaxToolCalls: 12, MaxInputTokens: 150_000,
 			MaxOutputTokens: 20_000, MaxConversationBytes: 1 << 20, ContinueAsNewAfter: 3,
@@ -310,7 +312,7 @@ func (activities liveGatedPromptActivities) Prepare(
 	}
 }
 
-func (liveAgentPromptRenderer) Render(_ work.StageKey, detail work.TicketDetail, _ work.PriorTurns) (string, []byte, error) {
+func (liveAgentPromptRenderer) Render(_ work.StageKey, detail work.TicketDetail, _ work.PriorTurns, _ work.AgentPromptContext, _ int) (string, []byte, error) {
 	prompt := fmt.Sprintf("%s\n\n%s", detail.Title, detail.Body)
 	return prompt, []byte(`{
   "type": "object",

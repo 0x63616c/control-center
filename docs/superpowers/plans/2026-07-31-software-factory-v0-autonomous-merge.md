@@ -363,8 +363,10 @@ additional Step, Review Step, or Agent Attempt budget.
 - [ ] Rename target vocabulary and image/runtime entry points from Sandbox to
   Run Worker while preserving legacy image compatibility until activation.
 - [ ] Provision one worker generation with deterministic Run/generation
-  identity, pinned image, private task queue, writable workspace, Codex auth,
-  GitHub credential projection, and per-Run checkpoint capability.
+  identity, pinned image, private queues, writable workspace, GitHub credential
+  projection, and repository-checkpoint capability. The pod separates the
+  credentialed repository worker from its credential-free typed-tools worker;
+  neither receives Codex credentials.
 - [ ] Mount renewable GitHub credentials as a Secret directory, not `subPath`.
   The main-control rotation activity updates it and returns only revision and
   expiry metadata.
@@ -373,13 +375,13 @@ additional Step, Review Step, or Agent Attempt budget.
   transcript, or the long-lived Codex environment.
 - [ ] Move clone to a local Run Worker client and make it the first
   Session-bound activity.
-- [ ] Add the narrow authenticated checkpoint API. It stores provider identity
-  early and terminal envelope, usage state, and transcript before activity
-  success; it cannot finalize or mutate another Run.
-- [ ] On retry, reconcile the checkpoint before spawning Codex. Resume the same
-  provider thread where supported; otherwise return an unrecoverable result so
-  workflow code, not the activity retry, decides whether to authorize another
-  Agent Attempt.
+- [ ] Retain the scoped checkpoint API only for legacy compatibility. The
+  main-control evidence bridge records the child workflow's terminal result,
+  usage state, and bounded transcript atomically before Step completion; it
+  cannot finalize or mutate another Run.
+- [ ] Classify child terminal failure rather than resuming a provider thread.
+  Preserve references and counters, reconcile durable evidence where available,
+  and let workflow code decide whether a fresh Agent Attempt is authorized.
 - [ ] Reconcile the durable Git/PR checkpoint before repeating clone, push, or
   PR synchronization. Test worker death after GitHub accepted the effect but
   before Temporal received the activity response.
@@ -416,17 +418,19 @@ pin its image and keep the suite hermetic.
   immediately, and execute clone as the first repository-affine Step.
 - [ ] Wrap each primary operation in one mandatory ordinal Step boundary;
   infrastructure Steps have zero Agent Attempts.
-- [ ] Start agent Steps with a durable Agent Attempt before Codex, and record
-  the terminal checkpoint before choosing the next Step.
+- [ ] Start agent Steps with a durable Agent Attempt before a child
+  `AgentWorkflow`, and record its terminal evidence before choosing the next
+  Step. The child identity is `agent/<run>/step/<ordinal>/attempt/<n>`.
 - [ ] Implement plan, implement, exact-SHA CI, fresh review, ready, and
   exact-head squash merge through Confirmed Merge.
 - [ ] Schedule `AwaitCI` with the immutable target `ActivityOptions`, convert a
   `ScheduleToClose` timeout into the persisted `ci_unobserved` Result, and
   prove native activity retries create no additional Step and consume neither
   Review Step nor Agent Attempt budget.
-- [ ] Resume the implementer thread after CI failure, review findings, textual
-  conflict, or base refresh. Every new reviewer is fresh and receives explicit
-  structured context.
+- [ ] Seed a later implement child from only the latest successful implement
+  conversation in the same Run, then append CI, review, textual-conflict, or
+  base-refresh feedback. Every new reviewer is fresh and receives explicit
+  structured context; no failed child conversation is reusable.
 - [ ] Invalidate CI/review authorization on any head change. Refreshing the
   base produces a new head and repeats both gates without resetting budgets.
 - [ ] Enforce five Review Steps and 25 total Agent Attempts cumulatively across
@@ -439,6 +443,12 @@ pin its image and keep the suite hermetic.
 - [ ] Return success only after the terminal Store transaction commits.
 - [ ] Replay representative target `WorkOnTicket` histories through the final
   workflow registration before this PR is accepted.
+
+The target child model activity uses the immutable `TargetRunPolicy.Agent`
+snapshot (55m start-to-close, 90m schedule-to-close, 5m heartbeat, ten native
+retries with 10s/2x/5m backoff). `WorkOnTicket` rotates the projected GitHub
+credential before the child and every 30 minutes while waiting. Legacy
+`FactoryWorkTicket` retains its old 2m/15s/three-attempt model policy.
 
 ## PR 6: dispatcher control queue, retry-driven admission, and maintenance
 
@@ -557,6 +567,10 @@ pin its image and keep the suite hermetic.
   empty and the final history backfill is verified.
 - [ ] Tighten Ticket state constraints to `open`, `active`, `done`, `failed`
   only and remove final legacy compatibility types after the data gate.
+- [ ] Replace the additive `provider_thread_id` checkpoint compatibility
+  column/API with an opaque target execution identity through a forward schema
+  migration and regenerated contracts. Preserve existing values as opaque
+  history; do not present them as provider threads.
 - [ ] Update permanent docs and standards to the activated vocabulary.
 
 ### Required pre-merge operational gate
