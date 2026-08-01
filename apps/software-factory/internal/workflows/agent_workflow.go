@@ -18,6 +18,18 @@ type AgentWorkflowInput struct {
 	ToolsetID agent.ToolsetID
 	Limits    agent.Limits
 	CacheKey  string
+	State     *AgentWorkflowState
+}
+
+// AgentWorkflowState is the reference-only state carried across Continue-As-New.
+type AgentWorkflowState struct {
+	ConversationRef         agent.ConversationRef
+	TranscriptRef           agent.TranscriptRef
+	Usage                   work.Usage
+	UsageMeasured           bool
+	ModelTurns              int
+	ToolCalls               int
+	TurnsSinceContinueAsNew int
 }
 
 // AgentWorkflowResult is the bounded typed result returned to FactoryWorkTicket.
@@ -42,19 +54,43 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (AgentWorkflo
 			InitialInterval: time.Second, BackoffCoefficient: 2, MaximumInterval: 10 * time.Second, MaximumAttempts: 3,
 		},
 	})
-	var prepared agentactivities.PrepareOutput
-	if err := workflow.ExecuteActivity(mainContext, agent.PrepareActivityName, agentactivities.PrepareInput{
-		Attempt: input.Attempt, CacheKey: input.CacheKey,
-	}).Get(ctx, &prepared); err != nil {
-		return AgentWorkflowResult{}, fmt.Errorf("prepare agent workflow: %w", err)
+	state := AgentWorkflowState{}
+	if input.State == nil {
+		var prepared agentactivities.PrepareOutput
+		if err := workflow.ExecuteActivity(mainContext, agent.PrepareActivityName, agentactivities.PrepareInput{
+			Attempt: input.Attempt, CacheKey: input.CacheKey,
+		}).Get(ctx, &prepared); err != nil {
+			return AgentWorkflowResult{}, fmt.Errorf("prepare agent workflow: %w", err)
+		}
+		state.ConversationRef = prepared.ConversationRef
+		state.TranscriptRef = prepared.TranscriptRef
+		state.UsageMeasured = true
+	} else {
+		state = *input.State
 	}
-	result := AgentWorkflowResult{TranscriptRef: prepared.TranscriptRef, UsageMeasured: true}
-	conversationRef := prepared.ConversationRef
+	result := AgentWorkflowResult{
+		Usage: state.Usage, UsageMeasured: state.UsageMeasured, TranscriptRef: state.TranscriptRef,
+		ModelTurns: state.ModelTurns, ToolCalls: state.ToolCalls,
+	}
+	conversationRef := state.ConversationRef
 	if conversationRef.Bytes > input.Limits.MaxConversationBytes {
 		return result, agentBudgetError("agent conversation budget exhausted", "AgentConversationBudget")
 	}
 	var sessionContext workflow.Context
-	for modelTurn := 1; modelTurn <= input.Limits.MaxModelTurns; modelTurn++ {
+	for {
+		if result.ModelTurns >= input.Limits.MaxModelTurns {
+			return result, temporal.NewNonRetryableApplicationError("agent model-turn budget exhausted", "AgentModelTurnBudget", nil)
+		}
+		if state.TurnsSinceContinueAsNew >= input.Limits.ContinueAsNewAfter {
+			state.ConversationRef = conversationRef
+			state.Usage = result.Usage
+			state.UsageMeasured = result.UsageMeasured
+			state.ModelTurns = result.ModelTurns
+			state.ToolCalls = result.ToolCalls
+			state.TurnsSinceContinueAsNew = 0
+			return result, continueAgentWorkflowAsNew(ctx, input, state)
+		}
+		modelTurn := result.ModelTurns + 1
 		var turn agent.ModelTurnResult
 		if err := workflow.ExecuteActivity(mainContext, agent.ModelTurnActivityName, agent.ModelTurnInput{
 			Model: input.Attempt.Model, ToolsetID: input.ToolsetID, ConversationRef: conversationRef,
@@ -64,6 +100,7 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (AgentWorkflo
 			return result, fmt.Errorf("run agent model turn %d: %w", modelTurn, err)
 		}
 		result.ModelTurns++
+		state.TurnsSinceContinueAsNew++
 		result.Usage = result.Usage.Add(turn.Usage)
 		result.UsageMeasured = result.UsageMeasured && turn.UsageMeasured
 		conversationRef = turn.ConversationRef
@@ -144,7 +181,18 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (AgentWorkflo
 		result.Result = finalized.Result
 		return result, nil
 	}
-	return result, temporal.NewNonRetryableApplicationError("agent model-turn budget exhausted", "AgentModelTurnBudget", nil)
+}
+
+func continueAgentWorkflowAsNew(ctx workflow.Context, input AgentWorkflowInput, state AgentWorkflowState) error {
+	return workflow.NewContinueAsNewError(ctx, AgentWorkflow, AgentWorkflowInput{
+		Attempt: activities.StageAttempt{
+			Key: input.Attempt.Key, Sandbox: input.Attempt.Sandbox, Model: input.Attempt.Model,
+		},
+		ToolsetID: input.ToolsetID,
+		Limits:    input.Limits,
+		CacheKey:  input.CacheKey,
+		State:     &state,
+	})
 }
 
 func agentBudgetError(message, errorType string) error {
@@ -162,6 +210,9 @@ func validateAgentInput(input AgentWorkflowInput) error {
 	if input.Limits.MaxModelTurns < 1 || input.Limits.MaxToolCalls < 0 || input.Limits.MaxInputTokens < 1 ||
 		input.Limits.MaxOutputTokens < 1 || input.Limits.MaxConversationBytes < 1 || input.Limits.ContinueAsNewAfter < 1 {
 		return fmt.Errorf("agent workflow limits must be positive")
+	}
+	if input.State != nil && (input.State.ModelTurns < 0 || input.State.ToolCalls < 0 || input.State.TurnsSinceContinueAsNew < 0) {
+		return fmt.Errorf("agent workflow continued counters must not be negative")
 	}
 	return nil
 }

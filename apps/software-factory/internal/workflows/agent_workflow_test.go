@@ -3,6 +3,7 @@ package workflows_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/activities"
@@ -11,9 +12,11 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/workflows"
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/worker"
+	"go.temporal.io/sdk/workflow"
 )
 
 func TestAgentWorkflowCompletesFromOneFinalModelTurn(t *testing.T) {
@@ -102,6 +105,97 @@ func TestAgentWorkflowRequestsCancellationOfTheActiveTool(t *testing.T) {
 	}
 	if !temporal.IsCanceledError(environment.GetWorkflowError()) {
 		t.Fatalf("workflow error = %v, want cancellation", environment.GetWorkflowError())
+	}
+}
+
+func TestAgentWorkflowContinuesAsNewWithOnlyReferences(t *testing.T) {
+	t.Parallel()
+
+	const conversationBody = "large-conversation-content-must-not-enter-the-continuation-payload"
+	initial := agent.ConversationRef{Key: "conversations/run-7/0", Revision: 0, Bytes: 100, Digest: "initial"}
+	requested := agent.ConversationRef{Key: "conversations/run-7/1", Revision: 1, Bytes: 200, Digest: "requested"}
+	continued := agent.ConversationRef{Key: "conversations/run-7/2", Revision: 2, Bytes: 300, Digest: "continued"}
+	transcript := agent.TranscriptRef{Key: "transcripts/run-7", Bytes: 80, Digest: "transcript"}
+	suite := &testsuite.WorkflowTestSuite{}
+	environment := suite.NewTestWorkflowEnvironment()
+	environment.SetWorkerOptions(worker.Options{EnableSessionWorker: true, MaxConcurrentSessionExecutionSize: 1})
+	environment.RegisterActivityWithOptions(func(context.Context, agentactivities.PrepareInput) (agentactivities.PrepareOutput, error) {
+		return agentactivities.PrepareOutput{ConversationRef: initial, TranscriptRef: transcript}, nil
+	}, activity.RegisterOptions{Name: agent.PrepareActivityName})
+	environment.RegisterActivityWithOptions(func(context.Context, agent.ModelTurnInput) (agent.ModelTurnResult, error) {
+		return agent.ModelTurnResult{
+			Outcome: agent.OutcomeToolCalls, ConversationRef: requested,
+			ToolCalls: []agent.PendingToolCall{{CallID: "call_1", Name: "read_file"}},
+			Usage:     work.Usage{InputTokens: 10, OutputTokens: 2}, UsageMeasured: true,
+		}, nil
+	}, activity.RegisterOptions{Name: agent.ModelTurnActivityName})
+	environment.RegisterActivityWithOptions(func(_ context.Context, input agent.ToolInput) (agent.ToolOutput, error) {
+		return agent.ToolOutput{CallID: input.Call.CallID, ConversationRef: continued}, nil
+	}, activity.RegisterOptions{Name: agent.ToolActivityName})
+	input := validAgentWorkflowInput(work.StageImplement)
+	input.Attempt.Detail = work.TicketDetail{Ticket: work.Ticket{Number: 7, Body: conversationBody}}
+	input.Limits.ContinueAsNewAfter = 1
+	environment.ExecuteWorkflow(workflows.AgentWorkflow, input)
+
+	var continuedAsNew *workflow.ContinueAsNewError
+	if !errors.As(environment.GetWorkflowError(), &continuedAsNew) {
+		t.Fatalf("workflow error = %v, want ContinueAsNew", environment.GetWorkflowError())
+	}
+	var next workflows.AgentWorkflowInput
+	if err := converter.GetDefaultDataConverter().FromPayloads(continuedAsNew.Input, &next); err != nil {
+		t.Fatalf("decode continued input: %v", err)
+	}
+	if next.State == nil || next.State.ConversationRef != continued || next.State.TranscriptRef != transcript ||
+		next.State.ModelTurns != 1 || next.State.ToolCalls != 1 || next.State.Usage.InputTokens != 10 {
+		t.Fatalf("continued state = %#v", next.State)
+	}
+	if next.Attempt.Detail != (work.TicketDetail{}) || next.Attempt.Prior.Plan.Prose() != "" ||
+		next.Attempt.Prior.LatestImplement.Prose() != "" || next.Attempt.Prior.LatestReview.Prose() != "" ||
+		len(next.Attempt.Prior.ReviewLedger) != 0 {
+		t.Fatalf("continued attempt retained prompt content: %#v", next.Attempt)
+	}
+	for _, payload := range continuedAsNew.Input.Payloads {
+		if strings.Contains(string(payload.Data), conversationBody) {
+			t.Fatal("continued payload contains the initial conversation body")
+		}
+	}
+}
+
+func TestAgentWorkflowResumesFromReferencesWithoutPreparingAgain(t *testing.T) {
+	t.Parallel()
+
+	conversation := agent.ConversationRef{Key: "conversations/run-7/2", Revision: 2, Bytes: 300, Digest: "continued"}
+	textRef := agent.TextRef{Key: "conversations/run-7/final", Bytes: 20, Digest: "final"}
+	suite := &testsuite.WorkflowTestSuite{}
+	environment := suite.NewTestWorkflowEnvironment()
+	environment.RegisterActivityWithOptions(func(_ context.Context, input agent.ModelTurnInput) (agent.ModelTurnResult, error) {
+		if input.ModelTurn != 2 || input.ConversationRef != conversation {
+			t.Fatalf("resumed model input = %#v", input)
+		}
+		return agent.ModelTurnResult{
+			Outcome: agent.OutcomeFinalText, ConversationRef: conversation, FinalTextRef: textRef,
+			Usage: work.Usage{InputTokens: 4, OutputTokens: 2}, UsageMeasured: true,
+		}, nil
+	}, activity.RegisterOptions{Name: agent.ModelTurnActivityName})
+	environment.RegisterActivityWithOptions(func(context.Context, agentactivities.FinalizeInput) (agentactivities.FinalizeOutput, error) {
+		return agentactivities.FinalizeOutput{
+			Result: work.NewStageOutput(work.StageImplement, work.ImplementOutput{Report: "resumed"}),
+		}, nil
+	}, activity.RegisterOptions{Name: agent.FinalizeActivityName})
+	input := validAgentWorkflowInput(work.StageImplement)
+	input.State = &workflows.AgentWorkflowState{
+		ConversationRef: conversation, Usage: work.Usage{InputTokens: 10, OutputTokens: 3}, UsageMeasured: true, ModelTurns: 1,
+	}
+	environment.ExecuteWorkflow(workflows.AgentWorkflow, input)
+	if err := environment.GetWorkflowError(); err != nil {
+		t.Fatalf("AgentWorkflow error = %v", err)
+	}
+	var result workflows.AgentWorkflowResult
+	if err := environment.GetWorkflowResult(&result); err != nil {
+		t.Fatalf("GetWorkflowResult() error = %v", err)
+	}
+	if result.Result.Prose() != "resumed" || result.ModelTurns != 2 || result.Usage.InputTokens != 14 || result.Usage.OutputTokens != 5 {
+		t.Fatalf("resumed result = %#v", result)
 	}
 }
 
