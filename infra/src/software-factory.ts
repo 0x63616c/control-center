@@ -559,6 +559,10 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
                   { name: "TEMPORAL_HOST_PORT", value: TEMPORAL_FRONTEND_CLUSTER_ADDRESS },
                   { name: "TEMPORAL_NAMESPACE", value: SOFTWARE_FACTORY_TEMPORAL_NAMESPACE },
                   { name: "BLOBS_URL", value: BLOBS_URL },
+                  {
+                    name: "CHECKPOINT_API_URL",
+                    value: `http://${API_SERVICE_NAME}.${SOFTWARE_FACTORY_NAMESPACE}.svc.cluster.local:${API_PORT}`,
+                  },
                   { name: "PAYLOAD_CODEC_MODE", value: "full" },
                   // Binds the /metrics AND /healthz server, so an absent value
                   // costs observability and liveness together.

@@ -30,6 +30,7 @@ func validRunWorkerSpec() work.RunWorkerSpec {
 			work.RunWorkerTemporalNamespaceEnv: "software-factory",
 			work.RunWorkerBlobsURLEnv:          "http://software-factory-blobs:8080",
 			work.RunWorkerCheckpointAPIURLEnv:  "http://software-factory-api:8080",
+			work.RunWorkerGitHubRepositoryEnv:  "0x63616c/world-wide-webb",
 		},
 	})
 	if err != nil {

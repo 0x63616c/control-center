@@ -21,6 +21,8 @@ type RunWorker struct {
 	TemporalNamespace string
 	BlobsURL          string
 	CheckpointAPIURL  string
+	GitHubOwner       string
+	GitHubRepo        string
 	LogLevel          slog.Level
 }
 
@@ -34,6 +36,7 @@ func runWorkerEnvNames() []string {
 		work.RunWorkerTemporalNamespaceEnv,
 		work.RunWorkerBlobsURLEnv,
 		work.RunWorkerCheckpointAPIURLEnv,
+		work.RunWorkerGitHubRepositoryEnv,
 	}
 }
 
@@ -47,6 +50,7 @@ func (w RunWorker) Validate() error {
 		work.RunWorkerTemporalNamespaceEnv: w.TemporalNamespace,
 		work.RunWorkerBlobsURLEnv:          w.BlobsURL,
 		work.RunWorkerCheckpointAPIURLEnv:  w.CheckpointAPIURL,
+		work.RunWorkerGitHubRepositoryEnv:  w.GitHubOwner + "/" + w.GitHubRepo,
 	}
 	for _, name := range runWorkerEnvNames() {
 		if name == work.RunWorkerGenerationEnv {
@@ -79,6 +83,9 @@ func (w RunWorker) Validate() error {
 			return fmt.Errorf("%s=%q must be an absolute HTTP URL", name, raw)
 		}
 	}
+	if strings.ContainsAny(w.GitHubOwner+w.GitHubRepo, " /\\\t\r\n") || w.GitHubOwner == "" || w.GitHubRepo == "" {
+		return fmt.Errorf("%s must be an owner/repository pair", work.RunWorkerGitHubRepositoryEnv)
+	}
 	return nil
 }
 
@@ -104,6 +111,10 @@ func LoadRunWorker() (RunWorker, error) {
 	if err != nil {
 		return RunWorker{}, fmt.Errorf("reading %s: %w", work.RunWorkerIDEnv, err)
 	}
+	repository := strings.Split(strings.TrimSpace(os.Getenv(work.RunWorkerGitHubRepositoryEnv)), "/")
+	if len(repository) != 2 {
+		return RunWorker{}, fmt.Errorf("%s must be an owner/repository pair", work.RunWorkerGitHubRepositoryEnv)
+	}
 	cfg := RunWorker{
 		ID:                id,
 		Identity:          identity,
@@ -112,6 +123,8 @@ func LoadRunWorker() (RunWorker, error) {
 		TemporalNamespace: os.Getenv(work.RunWorkerTemporalNamespaceEnv),
 		BlobsURL:          os.Getenv(work.RunWorkerBlobsURLEnv),
 		CheckpointAPIURL:  os.Getenv(work.RunWorkerCheckpointAPIURLEnv),
+		GitHubOwner:       repository[0],
+		GitHubRepo:        repository[1],
 	}
 	if err := cfg.Validate(); err != nil {
 		return RunWorker{}, fmt.Errorf("validating Run Worker configuration: %w", err)

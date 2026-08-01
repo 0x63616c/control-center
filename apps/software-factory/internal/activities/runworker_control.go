@@ -88,6 +88,7 @@ func NewRunWorkerControlActivities(deps RunWorkerControlDeps) (*RunWorkerControl
 type ProvisionRunWorkerInput struct {
 	TicketNumber int
 	Identity     work.RunWorkerIdentity
+	Branch       string
 }
 
 type ProvisionRunWorkerOutput struct {
@@ -97,7 +98,7 @@ type ProvisionRunWorkerOutput struct {
 // ProvisionRunWorker fetches all three credentials inside the activity and
 // returns only the deterministic worker identity.
 func (a *RunWorkerControlActivities) ProvisionRunWorker(ctx context.Context, in ProvisionRunWorkerInput) (ProvisionRunWorkerOutput, error) {
-	if in.TicketNumber <= 0 {
+	if in.TicketNumber <= 0 || strings.TrimSpace(in.Branch) == "" {
 		return ProvisionRunWorkerOutput{}, fail(ctx, "validating Run Worker provisioning", fmt.Errorf("ticket number must be positive: %w", work.ErrPermanent))
 	}
 	if err := in.Identity.Validate(); err != nil {
@@ -115,10 +116,12 @@ func (a *RunWorkerControlActivities) ProvisionRunWorker(ctx context.Context, in 
 	if err != nil {
 		return ProvisionRunWorkerOutput{}, fail(ctx, "minting the Run Worker bootstrap capability", err)
 	}
+	env := cloneRunWorkerEnv(a.deps.Template.Env)
+	env[work.SandboxBranchEnv] = in.Branch
 	spec, err := work.NewRunWorkerSpec(work.RunWorkerSpec{
 		TicketNumber: in.TicketNumber, Identity: in.Identity,
 		Image: a.deps.Template.Image, CPURequest: a.deps.Template.CPURequest, MemoryLimit: a.deps.Template.MemoryLimit,
-		DeadlineSeconds: a.deps.Template.DeadlineSeconds, Env: cloneRunWorkerEnv(a.deps.Template.Env),
+		DeadlineSeconds: a.deps.Template.DeadlineSeconds, Env: env,
 	})
 	if err != nil {
 		return ProvisionRunWorkerOutput{}, fail(ctx, "constructing the Run Worker specification", err)

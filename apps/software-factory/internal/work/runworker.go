@@ -165,6 +165,7 @@ const (
 	RunWorkerTemporalNamespaceEnv     = "TEMPORAL_NAMESPACE"
 	RunWorkerBlobsURLEnv              = "BLOBS_URL"
 	RunWorkerCheckpointAPIURLEnv      = "CHECKPOINT_API_URL"
+	RunWorkerGitHubRepositoryEnv      = "GITHUB_REPOSITORY"
 	RunWorkerGitHubCredentialDir      = "/var/run/secrets/software-factory/github"
 	RunWorkerGitHubTokenFile          = RunWorkerGitHubCredentialDir + "/token"
 	RunWorkerGitHubLoginFile          = RunWorkerGitHubCredentialDir + "/login"

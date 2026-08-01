@@ -292,6 +292,9 @@ describe("the worker Deployment (#343)", () => {
     expect(container.env.find((e) => e.name === "SANDBOX_IMAGE")?.value).toBe(
       `ghcr.io/0x63616c/www-software-factory-sandbox@${digests["software-factory-sandbox"]}`,
     );
+    expect(container.env.find((e) => e.name === "CHECKPOINT_API_URL")?.value).toBe(
+      "http://api.software-factory.svc.cluster.local:8080",
+    );
   });
 
   test("hands the worker the pull secret name every sandbox pod authenticates its image pull with", async () => {

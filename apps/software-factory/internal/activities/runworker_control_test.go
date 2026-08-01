@@ -108,7 +108,7 @@ func runWorkerControlHarness(t *testing.T) (*RunWorkerControlActivities, *runWor
 
 func TestProvisionRunWorkerKeepsCredentialsInsideTheActivity(t *testing.T) {
 	acts, lifecycle, _, _ := runWorkerControlHarness(t)
-	in := ProvisionRunWorkerInput{TicketNumber: 42, Identity: work.RunWorkerIdentity{RunID: "0f466627-b3ae-4ba2-9c96-6ef44ec6f578", Generation: 1}}
+	in := ProvisionRunWorkerInput{TicketNumber: 42, Identity: work.RunWorkerIdentity{RunID: "0f466627-b3ae-4ba2-9c96-6ef44ec6f578", Generation: 1}, Branch: "factory/ticket-42/run"}
 	out, err := acts.ProvisionRunWorker(context.Background(), in)
 	if err != nil {
 		t.Fatalf("ProvisionRunWorker: %v", err)
@@ -117,7 +117,7 @@ func TestProvisionRunWorkerKeepsCredentialsInsideTheActivity(t *testing.T) {
 	if nameErr != nil {
 		t.Fatal(nameErr)
 	}
-	if out.ID != wantID || lifecycle.provisioned.TicketNumber != 42 || lifecycle.provisioned.Image == "" {
+	if out.ID != wantID || lifecycle.provisioned.TicketNumber != 42 || lifecycle.provisioned.Image == "" || lifecycle.provisioned.Env[work.SandboxBranchEnv] != in.Branch {
 		t.Fatalf("safe output/spec = %+v / %+v", out, lifecycle.provisioned)
 	}
 	if string(lifecycle.material.CodexCredential.Reveal()) != "codex-secret" || lifecycle.material.GitHubToken.Reveal() != "github-secret" || lifecycle.material.CheckpointCapability.Reveal() != "bootstrap-secret" {

@@ -33,6 +33,7 @@ var allowedRunWorkerEnvKeys = map[string]bool{
 	work.RunWorkerTemporalNamespaceEnv: true,
 	work.RunWorkerBlobsURLEnv:          true,
 	work.RunWorkerCheckpointAPIURLEnv:  true,
+	work.RunWorkerGitHubRepositoryEnv:  true,
 }
 
 // buildRunWorkerPod is the pure target pod renderer. The legacy buildPod
