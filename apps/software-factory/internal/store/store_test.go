@@ -244,6 +244,53 @@ func TestStoreCarriesATicketThroughItsWholeLifecycle(t *testing.T) {
 	}
 }
 
+func TestReopenLegacyTicketsMovesOnlyWorkingAndReviewInOneOperation(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	working, err := s.CreateTicket(ctx, "working", "legacy", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.TransitionTicketState(ctx, working.ID, store.TicketOpen, store.TicketWorking); err != nil {
+		t.Fatal(err)
+	}
+	review, err := s.CreateTicket(ctx, "review", "legacy", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.TransitionTicketState(ctx, review.ID, store.TicketOpen, store.TicketWorking); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.TransitionTicketState(ctx, review.ID, store.TicketWorking, store.TicketReview); err != nil {
+		t.Fatal(err)
+	}
+	done, err := s.CreateTicket(ctx, "done", "target", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateTicketState(ctx, done.ID, store.TicketDone); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := s.ReopenLegacyTickets(ctx)
+	if err != nil {
+		t.Fatalf("ReopenLegacyTickets: %v", err)
+	}
+	if len(reopened) != 2 || reopened[0].ID != working.ID || reopened[1].ID != review.ID {
+		t.Fatalf("reopened = %+v, want working and review tickets", reopened)
+	}
+	for _, ticket := range reopened {
+		if ticket.State != store.TicketOpen {
+			t.Errorf("ticket %d state = %s, want open", ticket.ID, ticket.State)
+		}
+	}
+	gotDone, err := s.Ticket(ctx, done.ID)
+	if err != nil || gotDone.State != store.TicketDone {
+		t.Fatalf("done ticket = %+v, %v; want unchanged", gotDone, err)
+	}
+}
+
 func TestCreateTicketCommitsDeclaredBlockersWithTheTicket(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

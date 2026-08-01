@@ -191,6 +191,34 @@ func TestEnablePullRequestAutoMergeClassifiesAGraphQLBodyError(t *testing.T) {
 	}
 }
 
+func TestDisablePullRequestAutoMergePostsTheMutationWithTheNodeID(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newStub(t)
+	s.handle("POST /graphql", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decoding the graphql request: %v", err)
+		}
+		vars, _ := body["variables"].(map[string]any)
+		if vars["id"] != "PR_kwDOtest9" {
+			t.Errorf("variables.id = %v, want the pull request's node id", vars["id"])
+		}
+		query, _ := body["query"].(string)
+		if !containsSubstr(query, "disablePullRequestAutoMerge") {
+			t.Errorf("query = %q, want it to call disablePullRequestAutoMerge", query)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{"disablePullRequestAutoMerge": map[string]any{"pullRequest": map[string]any{"autoMergeRequest": nil}}},
+		})
+	})
+	c, _ := s.client(t)
+
+	if err := c.DisablePullRequestAutoMerge(t.Context(), "PR_kwDOtest9"); err != nil {
+		t.Fatalf("DisablePullRequestAutoMerge: %v", err)
+	}
+}
+
 // TestConvertPullRequestToDraftRefusesAnEmptyNodeID proves this fails before
 // ever posting a mutation with nothing to convert, rather than sending
 // GitHub a request with a null id and getting back an opaque GraphQL error.
