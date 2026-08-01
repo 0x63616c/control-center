@@ -48,6 +48,9 @@ type TextRef ArtifactRef
 // ArgumentsRef identifies immutable tool arguments.
 type ArgumentsRef ArtifactRef
 
+// OutputRef identifies immutable oversized tool output.
+type OutputRef ArtifactRef
+
 // PendingToolCall is bounded routing metadata for one provider function call.
 type PendingToolCall struct {
 	CallID       string       `json:"call_id"`

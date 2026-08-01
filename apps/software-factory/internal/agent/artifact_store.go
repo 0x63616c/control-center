@@ -45,6 +45,17 @@ func (store ArtifactStore) LoadArguments(ctx context.Context, ref ArgumentsRef) 
 	return store.get(ctx, ArtifactRef(ref))
 }
 
+// StoreOutput persists immutable oversized tool output below a workflow identity.
+func (store ArtifactStore) StoreOutput(ctx context.Context, identity string, value []byte) (OutputRef, error) {
+	ref, err := store.put(ctx, identity, "output", value)
+	return OutputRef(ref), err
+}
+
+// LoadOutput verifies and loads immutable oversized tool output.
+func (store ArtifactStore) LoadOutput(ctx context.Context, ref OutputRef) ([]byte, error) {
+	return store.get(ctx, ArtifactRef(ref))
+}
+
 func (store ArtifactStore) put(ctx context.Context, identity, kind string, value []byte) (ArtifactRef, error) {
 	digestBytes := sha256.Sum256(value)
 	digest := hex.EncodeToString(digestBytes[:])
