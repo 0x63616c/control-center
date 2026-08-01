@@ -167,6 +167,7 @@ func TestLiveAgentWorkflowStart(t *testing.T) {
 		ToolsetID:       agent.ToolsetCodingWriteV1,
 		ToolTarget:      agent.ToolTarget{Kind: agent.ToolTargetLegacySandbox},
 		ModelTurnPolicy: workflows.LegacyAgentWorkflowModelTurnPolicy(),
+		ControlPolicy:   workflows.LegacyAgentWorkflowControlPolicy(),
 		Limits: agent.Limits{
 			MaxModelTurns: 8, MaxToolCalls: 12, MaxInputTokens: 150_000,
 			MaxOutputTokens: 20_000, MaxConversationBytes: 1 << 20, ContinueAsNewAfter: 3,

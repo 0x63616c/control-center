@@ -75,6 +75,7 @@ func TestAgentWorkflowCompletesFromOneFinalModelTurn(t *testing.T) {
 		},
 		ToolsetID: "coding-read-v1", CacheKey: "run-7-plan",
 		ModelTurnPolicy: work.DefaultTargetRunPolicy().Agent,
+		ControlPolicy:   work.DefaultTargetRunPolicy().Recording,
 		Limits:          agent.Limits{MaxModelTurns: 3, MaxToolCalls: 4, MaxInputTokens: 1000, MaxOutputTokens: 1000, MaxConversationBytes: 1 << 20, ContinueAsNewAfter: 20},
 	}
 	environment.ExecuteWorkflow(workflows.AgentWorkflow, input)
@@ -137,7 +138,7 @@ func TestAgentWorkflowUsesTheSuppliedModelTurnPolicy(t *testing.T) {
 	}
 	for _, name := range []string{agent.PrepareActivityName, agent.FinalizeActivityName} {
 		control, found := started[name]
-		if !found || control.StartToCloseTimeout != 2*time.Minute || control.HeartbeatTimeout != 15*time.Second {
+		if !found || control.StartToCloseTimeout != time.Minute || control.ScheduleToCloseTimeout != time.Hour || control.HeartbeatTimeout != 0 {
 			t.Fatalf("%s control options = %#v", name, control)
 		}
 	}
@@ -283,6 +284,9 @@ func TestAgentWorkflowContinuesAsNewWithOnlyReferences(t *testing.T) {
 	}
 	if next.ModelTurnPolicy != input.ModelTurnPolicy {
 		t.Fatalf("continued model-turn policy = %#v, want %#v", next.ModelTurnPolicy, input.ModelTurnPolicy)
+	}
+	if next.ControlPolicy != input.ControlPolicy {
+		t.Fatalf("continued control policy = %#v, want %#v", next.ControlPolicy, input.ControlPolicy)
 	}
 	if next.Seed == nil || *next.Seed != *input.Seed {
 		t.Fatalf("continued seed = %#v, want %#v", next.Seed, input.Seed)
@@ -552,6 +556,21 @@ func TestAgentWorkflowRejectsAnInvalidModelTurnPolicy(t *testing.T) {
 	}
 }
 
+func TestAgentWorkflowRejectsAnInvalidControlPolicy(t *testing.T) {
+	t.Parallel()
+
+	suite := &testsuite.WorkflowTestSuite{}
+	environment := suite.NewTestWorkflowEnvironment()
+	registerAgentLifecycle(environment, nil)
+	input := validAgentWorkflowInput(work.StageImplement)
+	input.ControlPolicy.ScheduleToCloseTimeout = input.ControlPolicy.StartToCloseTimeout / 2
+	environment.ExecuteWorkflow(workflows.AgentWorkflow, input)
+	var applicationError *temporal.ApplicationError
+	if !errors.As(environment.GetWorkflowError(), &applicationError) || applicationError.Type() != agent.ErrorTypeInvalidInput || !applicationError.NonRetryable() {
+		t.Fatalf("workflow error = %v, want non-retryable invalid control policy", environment.GetWorkflowError())
+	}
+}
+
 func TestAgentToolActivityOutlivesTheLongestToolCommand(t *testing.T) {
 	got := workflows.AgentToolActivityOptionsForTest().StartToCloseTimeout
 	if got <= agent.MaxToolExecutionDuration {
@@ -570,6 +589,7 @@ func validAgentWorkflowInput(stage work.Stage) workflows.AgentWorkflowInput {
 		},
 		ToolsetID: "coding-write-v1", CacheKey: "run-7-stage",
 		ModelTurnPolicy: work.DefaultTargetRunPolicy().Agent,
+		ControlPolicy:   work.DefaultTargetRunPolicy().Recording,
 		Limits:          agent.Limits{MaxModelTurns: 3, MaxToolCalls: 4, MaxInputTokens: 1000, MaxOutputTokens: 1000, MaxConversationBytes: 1 << 20, ContinueAsNewAfter: 20},
 	}
 }

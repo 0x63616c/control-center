@@ -21,6 +21,7 @@ type AgentWorkflowInput struct {
 	ToolTarget      agent.ToolTarget
 	Limits          agent.Limits
 	ModelTurnPolicy work.AgentActivityPolicy
+	ControlPolicy   work.ActivityPolicy
 	// Identity pins every durable agent artifact to one semantic execution.
 	// Empty preserves the pre-target-run stage identity for existing histories.
 	Identity string
@@ -69,6 +70,20 @@ func LegacyAgentWorkflowModelTurnPolicy() work.AgentActivityPolicy {
 	}
 }
 
+// LegacyAgentWorkflowControlPolicy preserves the short control activity retry
+// shape recorded by FactoryWorkTicket histories. Target runs instead supply
+// their immutable recording policy for prompt and finalization persistence.
+func LegacyAgentWorkflowControlPolicy() work.ActivityPolicy {
+	return work.ActivityPolicy{
+		StartToCloseTimeout:    2 * time.Minute,
+		ScheduleToCloseTimeout: 2*time.Minute + 15*time.Second,
+		Retry: work.RetryPolicy{
+			InitialInterval: time.Second, BackoffCoefficient: 2,
+			MaximumInterval: 10 * time.Second, MaximumAttempts: 3,
+		},
+	}
+}
+
 // AgentWorkflow runs one bounded reference-only model/tool loop.
 func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (workflowResult AgentWorkflowResult, workflowErr error) {
 	defer func() { recordAgentLifecycle(ctx, workflowErr) }()
@@ -87,13 +102,7 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (workflowResu
 			fmt.Sprintf("resolve agent conversation identity: %v", err), agent.ErrorTypeInvalidInput, err,
 		)
 	}
-	controlContext := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-		StartToCloseTimeout: 2 * time.Minute,
-		HeartbeatTimeout:    15 * time.Second,
-		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval: time.Second, BackoffCoefficient: 2, MaximumInterval: 10 * time.Second, MaximumAttempts: 3,
-		},
-	})
+	controlContext := workflow.WithActivityOptions(ctx, agentControlActivityOptions(input.ControlPolicy))
 	modelContext := workflow.WithActivityOptions(ctx, agentModelTurnActivityOptions(input.ModelTurnPolicy))
 	state := AgentWorkflowState{}
 	if input.State == nil {
@@ -259,6 +268,16 @@ func agentModelTurnActivityOptions(policy work.AgentActivityPolicy) workflow.Act
 	}
 }
 
+func agentControlActivityOptions(policy work.ActivityPolicy) workflow.ActivityOptions {
+	return workflow.ActivityOptions{
+		StartToCloseTimeout: policy.StartToCloseTimeout, ScheduleToCloseTimeout: policy.ScheduleToCloseTimeout,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval: policy.Retry.InitialInterval, BackoffCoefficient: policy.Retry.BackoffCoefficient,
+			MaximumInterval: policy.Retry.MaximumInterval, MaximumAttempts: policy.Retry.MaximumAttempts,
+		},
+	}
+}
+
 func agentToolActivityOptions() workflow.ActivityOptions {
 	return workflow.ActivityOptions{
 		StartToCloseTimeout: agent.MaxToolExecutionDuration + agent.ToolActivityPersistenceMargin,
@@ -319,6 +338,7 @@ func continueAgentWorkflowAsNew(ctx workflow.Context, input AgentWorkflowInput, 
 		ToolTarget:      input.ToolTarget,
 		Limits:          input.Limits,
 		ModelTurnPolicy: input.ModelTurnPolicy,
+		ControlPolicy:   input.ControlPolicy,
 		Identity:        input.Identity,
 		CacheKey:        input.CacheKey,
 		Seed:            input.Seed,
@@ -347,6 +367,9 @@ func validateAgentInput(input AgentWorkflowInput) error {
 	}
 	if err := input.ModelTurnPolicy.Validate(); err != nil {
 		return fmt.Errorf("validate agent workflow model-turn policy: %w", err)
+	}
+	if err := input.ControlPolicy.Validate("agent control"); err != nil {
+		return fmt.Errorf("validate agent workflow control policy: %w", err)
 	}
 	if _, err := agent.ConversationIdentity(input.Identity, input.Attempt.Key); err != nil {
 		return fmt.Errorf("validate agent workflow conversation identity: %w", err)

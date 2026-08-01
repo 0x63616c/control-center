@@ -559,7 +559,7 @@ func runTargetAgentStep(ctx workflow.Context, session *targetRunSession, in Work
 		childFuture := workflow.ExecuteChildWorkflow(child, AgentWorkflow, AgentWorkflowInput{
 			Attempt:   activities.StageAttempt{Key: key, Sandbox: work.SandboxID("run-worker-" + in.RunID), Model: in.Model, Detail: detail, Prior: prior, PromptContext: promptContext, MaxReviewSteps: in.Policy.MaxReviewSteps},
 			ToolsetID: targetToolset(stage), ToolTarget: agent.ToolTarget{Kind: agent.ToolTargetRunWorker, RunWorkerIdentity: session.identity},
-			Limits: agent.DefaultLimits(), ModelTurnPolicy: in.Policy.Agent, CacheKey: identity, Identity: identity, Seed: seed,
+			Limits: agent.DefaultLimits(), ModelTurnPolicy: in.Policy.Agent, ControlPolicy: in.Policy.Recording, CacheKey: identity, Identity: identity, Seed: seed,
 		})
 		renewalCtx, cancelRenewal := workflow.WithCancel(ctx)
 		var childErr error
