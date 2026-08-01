@@ -6,6 +6,8 @@
 > `AgentWorkflow` children: direct model activities stay on the main worker and typed
 > tool activities run in the per-Ticket sandbox. The Codex CLI design below is retained
 > only as the historical decision record and must not be read as current behavior.
+> Source and build ownership moved to `0x63616c/software-factory`; embedded WWW
+> paths in this record describe the pre-extraction layout only.
 
 Tickets are picked up, planned, reviewed, implemented and turned into open
 PRs by a self-hosted service — no human in the loop until the PR exists. It runs as a Go

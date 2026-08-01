@@ -175,7 +175,7 @@ export const TOOLS: readonly Tool[] = [
     color: "#6366f1",
     mark: "SF",
     group: "Code",
-    // Our own nginx (apps/software-factory/web/nginx.conf) sets no frame-deny header.
+    // The standalone software-factory console permits this same-origin frame.
     needsExtension: false,
   },
   {

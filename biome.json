@@ -86,16 +86,6 @@
   },
   "overrides": [
     {
-      "includes": ["apps/software-factory/web/src/api/generated.ts"],
-      "linter": {
-        "rules": {
-          "suspicious": {
-            "noExplicitAny": "off"
-          }
-        }
-      }
-    },
-    {
       "includes": [
         "**/api/drizzle.config.ts",
         "**/web/vite.config.ts",

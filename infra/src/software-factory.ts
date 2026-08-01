@@ -700,9 +700,8 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
         // application is wired up, `accessAud` can still be "" — the
         // separate world-wide-webb-cloudflare project hasn't minted
         // `factory.<zone>` yet, so there's nothing to read via
-        // StackReference. cmd/api's own config.LoadAPI (apps/software-factory
-        // /internal/config/api.go) already refuses to start on an empty
-        // audience rather than skip validation, so that apply would
+        // StackReference. The standalone API's config loader already refuses
+        // to start on an empty audience rather than skip validation, so that apply would
         // otherwise CrashLoopBackOff forever and fail `pulumi up` on THIS
         // Deployment's rollout — reintroducing the exact whole-cluster
         // deadlock this AUD wiring exists to break. Same precedent as Plex's

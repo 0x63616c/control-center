@@ -10,7 +10,6 @@
     "apps/temporal-worker",
     "apps/storybook",
     "apps/map-provision",
-    "apps/software-factory/web",
     "packages/*",
     "infra",
     "infra/unifi",

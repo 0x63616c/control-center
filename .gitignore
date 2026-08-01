@@ -94,12 +94,3 @@ infra/talos/clusterconfig/
 # Local prod DB dumps taken during the #111 postgres migration. Multi-MB
 # snapshots of real data — never commit them.
 .pg-snapshots/
-
-# Bare `go build` output. `go build ./cmd/foo` drops the binary in the current
-# directory, so a multi-MB host-arch executable sits untracked in `git status`
-# until someone notices - and in a shared checkout that is everyone's noise.
-# One entry per cmd/, plus sandbox-exec, the shim #434 deleted (its stale
-# binaries outlive the source).
-apps/software-factory/worker
-apps/software-factory/sandbox-worker
-apps/software-factory/sandbox-exec

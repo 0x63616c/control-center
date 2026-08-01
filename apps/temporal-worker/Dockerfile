@@ -28,7 +28,6 @@ COPY apps/worker/package.json apps/worker/
 COPY apps/temporal-worker/package.json apps/temporal-worker/
 COPY apps/map-provision/package.json apps/map-provision/
 COPY apps/storybook/package.json apps/storybook/
-COPY apps/software-factory/web/package.json apps/software-factory/web/
 COPY packages/api/package.json packages/api/
 COPY packages/core/package.json packages/core/
 COPY packages/logger/package.json packages/logger/

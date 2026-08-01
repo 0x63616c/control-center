@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Guard: everything CI BUILDS, CI must also DEPLOY.
 #
-# The bug this exists to make impossible, found live on #355: `apps/software-factory/**`
+# The bug this exists to make impossible, found live on #355: a product tree
 # had its own path filter and its own build jobs, but that filter appeared in no
 # term of `deploy-home-server`'s `if:`. So the tree built, tested and merged
 # green — and never reached prod. Every PR in the project said "merged" and none

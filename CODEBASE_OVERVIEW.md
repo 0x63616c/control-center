@@ -83,23 +83,10 @@ that run/deploy, `packages/` = things you import); product features live under
 - `apps/temporal-worker` - Temporal worker (Node, not bun) serving `HealthCheckWorkflow` on the `main` task queue.
 - `apps/storybook` - Thin wrapper delegating to the web Storybook.
 - `apps/map-provision` - Basemap tile provisioner image.
-- `apps/software-factory` - **Go**, not TypeScript, and the only Go in the repo (ADR-0011).
-  A Temporal worker that autonomously works Tickets from its own Postgres. The stable
-  `Dispatcher` admits dependency-ready Tickets to one `WorkOnTicket` workflow each;
-  `MaintainFactory` repairs orphaned ownership and Run Worker generations. A Run moves through
-  plan, implement, required CI, and independent review. Revision continues until success or the Run deadline before the workflow
-  performs an exact-reviewed-head squash merge. Confirmed merge records the Run as `succeeded`
-  and the Ticket as `done`; cancellation returns it to `open`, while terminal failure or
-  exhaustion moves it to `failed`. Each Run Worker pod has a credentialed fixed-operation
-  repository worker and a credential-free typed-tool worker. GitHub webhooks are informational
-  only, and GitHub auto-merge is not part of the runtime. Carries its own
-  `AGENTS.md`, `docs/SoftwareStyle.md` and `.golangci.yml`, scoped to that tree and binding
-  on nothing else - do not cite them in a review of TypeScript. Nests (`cmd/`, `internal/`,
-  `images/{worker,run-worker,relay,api,blobs,codec}/`, `web/`) where the rest of `apps/*` is flat, deliberately: it is one
-  product with several components and one Go module. During the standalone cutover this source
-  remains temporarily for deletion-after-production-proof checks, but
-  `0x63616c/software-factory` owns the active builds and immutable releases. WWW deploys the
-  checked standalone seven-image manifest; it does not pin locally built `:main` images.
+- Software-factory source, tests, image builds, and immutable releases live in
+  `0x63616c/software-factory` (ADR-0011/0012). This repo owns the production deployment
+  integration: `infra/software-factory-release.json` pins one verified seven-image release,
+  CI validates its provenance and registry digests, and Pulumi deploys those exact digests.
 - `packages/api` - Browser-safe type bridge that re-exports the API router type only.
 - `packages/core` - Owns the `device_state` table: schema, the `DeviceStateStore` interface, pg + in-memory adapters, and the desired/reported merge logic.
 - `packages/logger` - Shared pino logger with centralized redaction and runtime-safe config.
@@ -361,13 +348,11 @@ tiles as living solely in `apps/web/src/lib/tile-registry.ts`, or business logic
 living solely in `apps/api/src/services`, treat this file and `AGENTS.md` as
 authoritative over it.
 
-CI path filters are now scoped per app directory (`apps/web/**`, `apps/api/**`,
-`apps/worker/**`, `apps/map-provision/**`), all rebuilding
-  on `packages/**`, `features/**`, or `bun.lock` changes too. During the standalone cutover,
-  `apps/software-factory/**` is a temporary migration-safety exception: it shares no code with
-  the workspace, so its retained checks gate only on its own tree and use the Go toolchain rather
-  than bun. Those checks do not produce deployment pins; WWW consumes the verified standalone
-  release manifest. The Tiltfile lives at the repo
+CI path filters are scoped per app directory (`apps/web/**`, `apps/api/**`,
+`apps/worker/**`, `apps/map-provision/**`), all rebuilding on `packages/**`,
+`features/**`, or `bun.lock` changes too. Software-factory is not a workspace app and is
+not built here; an `infra/**` change to its verified release lock triggers deployment.
+The Tiltfile lives at the repo
 root; root `bun run dev` runs `tilt up` directly. Local dev commands
 (`dev:web`, `dev:api`, `dev:worker`, `dev:storybook`, `dev:db`, `ios:*`) live
 on the root `package.json`.

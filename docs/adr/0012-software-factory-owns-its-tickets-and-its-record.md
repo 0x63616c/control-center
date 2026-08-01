@@ -1,5 +1,10 @@
 # The software factory owns its tickets, its record, and its console
 
+> **Repository location update:** source, tests, and image builds now live in
+> `0x63616c/software-factory`. Embedded `apps/software-factory` paths below are
+> retained as the historical implementation layout for this decision. WWW owns
+> only the verified release lock and production deployment integration.
+
 The factory owns **Tickets** in its own Postgres database, its own HTTP API, and its own web
 console. GitHub remains the code host for pull requests, CI, review, and merge-deploys-prod;
 software-factory is the sole work queue, state store, and progress log.

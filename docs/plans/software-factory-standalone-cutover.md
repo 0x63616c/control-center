@@ -45,19 +45,19 @@
   digests, required standalone CI/release evidence, and durable
   `AgentWorkflow` runtime path.
 - [x] Validate the Pulumi preview and all relevant repository checks.
-- [ ] Open a first WWW PR for immutable release consumption and the adapted
+- [x] Open WWW PR #673 for immutable release consumption and the adapted
   Gate 10 proof.
-- [ ] Merge only with green CI, deploy `home-server`, and capture production
+- [x] Merge only with green CI, deploy `home-server`, and capture production
   proof before deleting the embedded implementation.
 
 ## Embedded ownership removal
 
 - [ ] Open a follow-up WWW PR removing `apps/software-factory/` active source.
-- [ ] Remove WWW CI path filters, image builds, code generation, lint, tests,
+- [x] Remove WWW CI path filters, image builds, code generation, lint, tests,
   and contributor documentation that claim ownership of the embedded product.
-- [ ] Retain only deployment/consumer integration that is still required by
+- [x] Retain only deployment/consumer integration that is still required by
   the standalone release.
-- [ ] Confirm no active WWW surface imports, builds, or tests the removed Go
+- [x] Confirm no active WWW surface imports, builds, or tests the removed Go
   module or revives the retired Codex CLI design.
 - [ ] Run the final adapted Gate 10 proof after merge and production deploy.
 
