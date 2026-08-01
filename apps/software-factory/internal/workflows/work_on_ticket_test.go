@@ -859,7 +859,7 @@ func TestWorkOnTicketFinalizesChildEvidenceBeforeCompletingAgentStep(t *testing.
 	t.Parallel()
 	ctx := context.Background()
 	s := storefake.New()
-	ticket, err := s.CreateTicket(ctx, "heartbeat timeout", "retry the same execution", nil)
+	ticket, err := s.CreateTicket(ctx, "persist child evidence", "finalize before completing the step", nil)
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
@@ -869,28 +869,15 @@ func TestWorkOnTicketFinalizesChildEvidenceBeforeCompletingAgentStep(t *testing.
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("WorkOnTicket: %v", err)
 	}
-	finalizeIndexes := make([]int, 0, 3)
-	for index, name := range h.activityCompletions {
-		if name == "Finalize" {
-			finalizeIndexes = append(finalizeIndexes, index)
-		}
+	if len(h.finalizedAttempts) != 3 {
+		t.Fatalf("finalized evidence = %+v, want all three child results", h.finalizedAttempts)
 	}
-	if len(finalizeIndexes) != 3 || len(h.finalizedAttempts) != 3 {
-		t.Fatalf("finalized evidence = indexes %v / attempts %+v, want all three child results", finalizeIndexes, h.finalizedAttempts)
-	}
-	for _, finalizeIndex := range finalizeIndexes {
-		completed := false
-		for _, name := range h.activityCompletions[finalizeIndex+1:] {
-			if name == "Finalize" {
-				break
-			}
-			if name == "CompleteStep" {
-				completed = true
-				break
-			}
+	for index, event := range h.agentPersistenceEvents {
+		if event.kind != "finalize" {
+			continue
 		}
-		if !completed {
-			t.Fatalf("activity completions = %v, want each Finalize before its agent Step completion", h.activityCompletions)
+		if index+1 >= len(h.agentPersistenceEvents) || h.agentPersistenceEvents[index+1] != (agentPersistenceEvent{kind: "complete-step", stepOrdinal: event.stepOrdinal}) {
+			t.Fatalf("agent persistence events = %+v, want each exact Step completed immediately after its evidence finalization", h.agentPersistenceEvents)
 		}
 	}
 }
@@ -1752,34 +1739,39 @@ func TestWorkOnTicketRepairsTextConflictOrStaleBaseWithFreshReview(t *testing.T)
 	}
 }
 
+type agentPersistenceEvent struct {
+	kind        string
+	stepOrdinal int
+}
+
 type workOnTicketHarness struct {
 	env   *testsuite.TestWorkflowEnvironment
 	store workOnTicketStore
 	runID string
 
-	provisioned         activities.ProvisionRunWorkerInput
-	clone               activities.CloneTargetRepositoryInput
-	provisionedInputs   []activities.ProvisionRunWorkerInput
-	cloneInputs         []activities.CloneTargetRepositoryInput
-	restoreInputs       []activities.RestoreTargetRepositoryInput
-	restore             func(activities.RestoreTargetRepositoryInput) error
-	controlSequence     []string
-	rotations           []activities.RotateRunWorkerGitHubCredentialInput
-	authorized          []activities.AuthorizeRunWorkerAttemptInput
-	authorizeErr        error
-	agentInputs         []workflows.AgentWorkflowInput
-	agentChildIDs       []string
-	agentChildCanceled  int
-	activityCompletions []string
-	finalizedAttempts   []store.TargetAttemptID
-	ci                  activities.TargetAwaitCIInput
-	ready               activities.TargetMarkPullRequestReadyInput
-	merge               activities.TargetMergePullRequestInput
-	mergeInputs         []activities.TargetMergePullRequestInput
-	deleted             []activities.DeleteRunWorkerInput
-	reviewHead          string
-	deleteErr           error
-	cloneResult         func(activities.CloneTargetRepositoryInput) (activities.CloneTargetRepositoryOutput, error)
+	provisioned            activities.ProvisionRunWorkerInput
+	clone                  activities.CloneTargetRepositoryInput
+	provisionedInputs      []activities.ProvisionRunWorkerInput
+	cloneInputs            []activities.CloneTargetRepositoryInput
+	restoreInputs          []activities.RestoreTargetRepositoryInput
+	restore                func(activities.RestoreTargetRepositoryInput) error
+	controlSequence        []string
+	rotations              []activities.RotateRunWorkerGitHubCredentialInput
+	authorized             []activities.AuthorizeRunWorkerAttemptInput
+	authorizeErr           error
+	agentInputs            []workflows.AgentWorkflowInput
+	agentChildIDs          []string
+	agentChildCanceled     int
+	agentPersistenceEvents []agentPersistenceEvent
+	finalizedAttempts      []store.TargetAttemptID
+	ci                     activities.TargetAwaitCIInput
+	ready                  activities.TargetMarkPullRequestReadyInput
+	merge                  activities.TargetMergePullRequestInput
+	mergeInputs            []activities.TargetMergePullRequestInput
+	deleted                []activities.DeleteRunWorkerInput
+	reviewHead             string
+	deleteErr              error
+	cloneResult            func(activities.CloneTargetRepositoryInput) (activities.CloneTargetRepositoryOutput, error)
 
 	syncInputs       []activities.TargetSyncPullRequestInput
 	ciInputs         []activities.TargetAwaitCIInput
@@ -1819,8 +1811,18 @@ func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore workOnT
 		h.agentChildCanceled++
 		h.controlSequence = append(h.controlSequence, "child-canceled")
 	})
-	env.SetOnActivityCompletedListener(func(info *activity.Info, _ converter.EncodedValue, _ error) {
-		h.activityCompletions = append(h.activityCompletions, info.ActivityType.Name)
+	env.SetOnActivityStartedListener(func(info *activity.Info, _ context.Context, values converter.EncodedValues) {
+		if info.ActivityType.Name != "CompleteStep" {
+			return
+		}
+		var runID string
+		var ordinal int
+		var endedAt time.Time
+		var result json.RawMessage
+		if err := values.Get(&runID, &ordinal, &endedAt, &result); err != nil {
+			t.Fatalf("decode CompleteStep input: %v", err)
+		}
+		h.agentPersistenceEvents = append(h.agentPersistenceEvents, agentPersistenceEvent{kind: "complete-step", stepOrdinal: ordinal})
 	})
 	if enableSessionWorker {
 		env.SetWorkerOptions(worker.Options{
@@ -1861,6 +1863,9 @@ func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore workOnT
 			UsageState: usageState, Usage: input.Usage, EndedAt: input.EndedAt,
 			Result: result, Transcript: transcript,
 		})
+		if err == nil {
+			h.agentPersistenceEvents = append(h.agentPersistenceEvents, agentPersistenceEvent{kind: "finalize", stepOrdinal: input.AttemptID.StepOrdinal})
+		}
 		return err
 	}, activity.RegisterOptions{Name: "Finalize"})
 
@@ -2026,31 +2031,25 @@ func (h *workOnTicketHarness) checkpointRepositoryStep(position activities.Repos
 
 var targetTestTime = time.Date(2026, 7, 31, 21, 0, 0, 0, time.UTC)
 
-func targetAgentOutput(t *testing.T, stage work.AgentStage) activities.TargetAgentOutput {
-	t.Helper()
-	var result work.StageOutput
-	var raw string
-	switch stage {
-	case work.AgentStagePlan:
-		raw = `{"stage":"plan","value":{"document":"the plan"}}`
-	case work.AgentStageImplement:
-		raw = `{"stage":"implement","value":{"report":"implemented","blocked":false,"blockedReason":"","title":"target title","body":"target body"}}`
-	case work.AgentStageReview:
-		raw = `{"stage":"review","value":{"document":"approved","findings":[]}}`
-	default:
-		t.Fatalf("unknown target agent stage %q", stage)
-	}
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
-		t.Fatalf("decode %s output: %v", stage, err)
-	}
-	return activities.TargetAgentOutput{Output: json.RawMessage(raw), Result: result, ThreadID: string(stage) + "-thread", UsageState: work.UsageMeasured}
-}
-
 func targetAgentWorkflowResult(t *testing.T, input workflows.AgentWorkflowInput) workflows.AgentWorkflowResult {
 	t.Helper()
-	out := targetAgentOutput(t, work.AgentStage(input.Attempt.Key.Stage))
+	var raw string
+	switch input.Attempt.Key.Stage {
+	case work.StagePlan:
+		raw = `{"stage":"plan","value":{"document":"the plan"}}`
+	case work.StageImplement:
+		raw = `{"stage":"implement","value":{"report":"implemented","blocked":false,"blockedReason":"","title":"target title","body":"target body"}}`
+	case work.StageReview:
+		raw = `{"stage":"review","value":{"document":"approved","findings":[]}}`
+	default:
+		t.Fatalf("unknown target agent stage %q", input.Attempt.Key.Stage)
+	}
+	var result work.StageOutput
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		t.Fatalf("decode %s output: %v", input.Attempt.Key.Stage, err)
+	}
 	return workflows.AgentWorkflowResult{
-		Result: out.Result, Usage: out.Usage, UsageMeasured: out.UsageState == work.UsageMeasured,
+		Result: result, UsageMeasured: true,
 		ConversationRef: agent.ConversationRef{Key: input.Identity + "/conversation", Revision: 1, Bytes: 16, Digest: "conversation-digest"},
 		TranscriptRef:   agent.TranscriptRef{Key: input.Identity + "/transcript", Revision: 1, Bytes: 14, Digest: "transcript-digest"},
 	}
