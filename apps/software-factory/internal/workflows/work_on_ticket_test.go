@@ -785,11 +785,12 @@ func TestWorkOnTicketMapsAuthorizedAttemptsToBoundedChildIdentities(t *testing.T
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("WorkOnTicket: %v", err)
 	}
-	if len(h.authorized) != 0 || len(h.agentInputs) != 3 || len(h.agentChildIDs) != 3 {
-		t.Fatalf("legacy authorization/children = %d/%d/%d, want no legacy authorization and one child for plan, implement, and review", len(h.authorized), len(h.agentInputs), len(h.agentChildIDs))
+	if len(h.agentInputs) != 3 || len(h.agentChildIDs) != 3 || len(h.finalizedAttempts) != 3 {
+		t.Fatalf("children/evidence = %d/%d/%d, want one child and one finalized Attempt for plan, implement, and review", len(h.agentInputs), len(h.agentChildIDs), len(h.finalizedAttempts))
 	}
 	for index, input := range h.agentInputs {
-		want := fmt.Sprintf("agent/%s/step/%d/attempt/1", in.RunID, 4+index)
+		attempt := h.finalizedAttempts[index]
+		want := fmt.Sprintf("agent/%s/step/%d/attempt/%d", attempt.RunID, attempt.StepOrdinal, attempt.AttemptNo)
 		if input.Identity != want || input.CacheKey != want || h.agentChildIDs[index] != want {
 			t.Fatalf("child %d identity = input %q / cache %q / workflow %q, want %q", index, input.Identity, input.CacheKey, h.agentChildIDs[index], want)
 		}
@@ -837,11 +838,11 @@ func TestWorkOnTicketFailsRunningAttemptWithItsActiveStep(t *testing.T) {
 	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000033", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
 	h := newWorkOnTicketHarness(t, s)
 	h.deleteErr = nil
-	h.authorizeErr = temporal.NewNonRetryableApplicationError("checkpoint capability unavailable", activities.ErrTypePermanent, nil)
+	h.rotationErr = temporal.NewNonRetryableApplicationError("credential rotation unavailable", activities.ErrTypePermanent, nil)
 
 	h.run(in)
 	if err := h.env.GetWorkflowError(); err == nil {
-		t.Fatal("WorkOnTicket succeeded after attempt authorization failed")
+		t.Fatal("WorkOnTicket succeeded after credential rotation failed")
 	}
 	detail, err := s.TargetRunDetail(ctx, in.RunID)
 	if err != nil {
@@ -922,9 +923,6 @@ func TestWorkOnTicketStartsFreshSemanticAttemptOnlyForClassifiedTerminalChildFai
 	}
 	if first, second := implement.Attempts[0], implement.Attempts[1]; first.ID.AttemptNo != 1 || first.State != work.AgentAttemptFailed || first.FailureKind != work.RunFailureAgentUnrecoverable || second.ID.AttemptNo != 2 {
 		t.Fatalf("implement attempts = %+v, want failed unresumable attempt 1 then explicit attempt 2", implement.Attempts)
-	}
-	if len(h.authorized) != 0 {
-		t.Fatalf("legacy authorization calls = %+v, want none", h.authorized)
 	}
 	implements := agentChildrenAtStage(h.agentInputs, work.StageImplement)
 	if len(implements) != 2 || implements[0].Identity != firstImplementIdentity || implements[1].Identity != fmt.Sprintf("agent/%s/step/5/attempt/2", in.RunID) || implements[1].Seed != nil {
@@ -1801,8 +1799,7 @@ type workOnTicketHarness struct {
 	restore                func(activities.RestoreTargetRepositoryInput) error
 	controlSequence        []string
 	rotations              []activities.RotateRunWorkerGitHubCredentialInput
-	authorized             []activities.AuthorizeRunWorkerAttemptInput
-	authorizeErr           error
+	rotationErr            error
 	agentInputs            []workflows.AgentWorkflowInput
 	agentChildIDs          []string
 	agentChildCanceled     int
@@ -1830,10 +1827,7 @@ type workOnTicketHarness struct {
 type workOnTicketStore interface {
 	activities.TargetRunRecorder
 	store.CanceledRunRecoveryReader
-	BindCheckpointCapability(context.Context, store.TargetAttemptID, string) error
 }
-
-const workOnTicketCheckpointCapability = "work-on-ticket-test-capability"
 
 func newWorkOnTicketHarness(t *testing.T, recorderStore workOnTicketStore) *workOnTicketHarness {
 	return newWorkOnTicketHarnessWithSessionWorker(t, recorderStore, true)
@@ -1973,21 +1967,11 @@ func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore workOnT
 		activity.RegisterOptions{Name: "RestoreTargetRepository"},
 	)
 	env.RegisterActivityWithOptions(
-		func(ctx context.Context, in activities.AuthorizeRunWorkerAttemptInput) error {
-			h.authorized = append(h.authorized, in)
-			if h.authorizeErr != nil {
-				return h.authorizeErr
-			}
-			if err := h.store.BindCheckpointCapability(ctx, in.AttemptID, workOnTicketCheckpointCapability); err != nil {
-				return fmt.Errorf("binding test checkpoint capability for %s: %w", in.AttemptID, err)
-			}
-			return nil
-		},
-		activity.RegisterOptions{Name: "AuthorizeRunWorkerAttempt"},
-	)
-	env.RegisterActivityWithOptions(
 		func(_ context.Context, in activities.RotateRunWorkerGitHubCredentialInput) (work.RunWorkerCredentialRevision, error) {
 			h.rotations = append(h.rotations, in)
+			if h.rotationErr != nil {
+				return work.RunWorkerCredentialRevision{}, h.rotationErr
+			}
 			return work.RunWorkerCredentialRevision{Revision: strconv.Itoa(len(h.rotations)), ExpiresAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)}, nil
 		},
 		activity.RegisterOptions{Name: "RotateRunWorkerGitHubCredential"},
