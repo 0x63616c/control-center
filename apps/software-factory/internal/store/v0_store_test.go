@@ -139,7 +139,48 @@ func TestConfirmedMergeFinalizationIsIrreversible(t *testing.T) {
 	}
 }
 
-func TestFailedRunFinalizationIsIdempotentAndCannotReverseConfirmedMerge(t *testing.T) {
+func TestFailedRunFinalizationRecordsSemanticDeadlineHistory(t *testing.T) {
+	fixture := finalizeSemanticDeadlineRun(t)
+
+	if fixture.result.Ticket.State != store.TicketFailed || fixture.result.Ticket.ActiveRunID != "" || fixture.result.Run.TargetOutcome != work.RunOutcomeFailed || fixture.result.Run.TargetFailure != work.RunFailureSemanticDeadline {
+		t.Fatalf("failed result = %+v, want failed ticket/run with semantic deadline", fixture.result)
+	}
+	detail, err := fixture.store.TargetRunDetail(context.Background(), fixture.runID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	if len(detail.Steps) != 1 || detail.Steps[0].Step.State != work.StepStateFailed || len(detail.Steps[0].Attempts) != 1 || detail.Steps[0].Attempts[0].State != work.AgentAttemptFailed || detail.Steps[0].Attempts[0].FailureKind != work.RunFailureSemanticDeadline {
+		t.Fatalf("failed history = %+v, want failed Step and running Attempt closed with terminal classification", detail.Steps)
+	}
+}
+
+func TestFailedRunFinalizationAcceptsAnExactRetry(t *testing.T) {
+	fixture := finalizeSemanticDeadlineRun(t)
+
+	if _, err := fixture.store.FinalizeRunFailure(context.Background(), fixture.input); err != nil {
+		t.Fatalf("FinalizeRunFailure retry: %v", err)
+	}
+}
+
+func TestConfirmedMergeCannotReverseAnAlreadyFailedRun(t *testing.T) {
+	fixture := finalizeSemanticDeadlineRun(t)
+
+	if _, err := fixture.store.FinalizeConfirmedMerge(context.Background(), store.ConfirmedMergeInput{RunID: fixture.runID, TicketID: fixture.ticket.ID, StepOrdinal: 1, ReviewedHead: "h1", MergeSHA: "m1", EndedAt: fixture.startedAt.Add(2 * time.Minute)}); err == nil {
+		t.Fatal("FinalizeConfirmedMerge succeeded after failed terminal outcome")
+	}
+}
+
+type failedRunFixture struct {
+	store     *store.Store
+	ticket    store.Ticket
+	runID     string
+	startedAt time.Time
+	input     store.RunFailureInput
+	result    store.TerminalResult
+}
+
+func finalizeSemanticDeadlineRun(t *testing.T) failedRunFixture {
+	t.Helper()
 	s := newTestStore(t)
 	ctx := context.Background()
 	ticket, err := s.CreateTicket(ctx, "deadline", "", nil)
@@ -162,22 +203,7 @@ func TestFailedRunFinalizationIsIdempotentAndCannotReverseConfirmedMerge(t *test
 	if err != nil {
 		t.Fatalf("FinalizeRunFailure: %v", err)
 	}
-	if result.Ticket.State != store.TicketFailed || result.Ticket.ActiveRunID != "" || result.Run.TargetOutcome != work.RunOutcomeFailed || result.Run.TargetFailure != work.RunFailureSemanticDeadline {
-		t.Fatalf("failed result = %+v, want failed ticket/run with semantic deadline", result)
-	}
-	detail, err := s.TargetRunDetail(ctx, runID)
-	if err != nil {
-		t.Fatalf("TargetRunDetail: %v", err)
-	}
-	if len(detail.Steps) != 1 || detail.Steps[0].Step.State != work.StepStateFailed || len(detail.Steps[0].Attempts) != 1 || detail.Steps[0].Attempts[0].State != work.AgentAttemptFailed || detail.Steps[0].Attempts[0].FailureKind != work.RunFailureSemanticDeadline {
-		t.Fatalf("failed history = %+v, want failed Step and running Attempt closed with terminal classification", detail.Steps)
-	}
-	if _, err := s.FinalizeRunFailure(ctx, in); err != nil {
-		t.Fatalf("FinalizeRunFailure retry: %v", err)
-	}
-	if _, err := s.FinalizeConfirmedMerge(ctx, store.ConfirmedMergeInput{RunID: runID, TicketID: ticket.ID, StepOrdinal: 1, ReviewedHead: "h1", MergeSHA: "m1", EndedAt: startedAt.Add(2 * time.Minute)}); err == nil {
-		t.Fatal("FinalizeConfirmedMerge succeeded after failed terminal outcome")
-	}
+	return failedRunFixture{store: s, ticket: ticket, runID: runID, startedAt: startedAt, input: in, result: result}
 }
 
 func TestCancellationOnlyReopensItsActiveOwner(t *testing.T) {
