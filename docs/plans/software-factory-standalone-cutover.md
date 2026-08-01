@@ -9,6 +9,8 @@
   and excluded from active build, lint, code generation, and test surfaces.
 - Software Factory remains unlicensed for now. Do not add a license as part of
   this cutover without a separate decision.
+- WWW's GitHub CodeQL Default Setup no longer includes Go now that this repo has
+  no active Go source; its other configured languages remain enabled.
 - The immutable `v0.1.0` tag is the failed first release attempt. Its gate
   stopped before publishing because the runner lacked `ripgrep`; no images or
   GitHub Release were published, and the tag was not moved.
