@@ -43,6 +43,13 @@ type TargetRunClaimer interface {
 	ClaimAndStartRun(context.Context, ClaimRunInput) (ClaimRunResult, error)
 }
 
+// CanceledRunRecoveryReader returns only the non-secret Git position that a
+// newly claimed Run may carry forward from an earlier canceled Run for the
+// same Ticket. A confirmed merge never satisfies this boundary.
+type CanceledRunRecoveryReader interface {
+	LatestCanceledRunCheckpoint(context.Context, TicketID, string) (CanceledRunRecovery, bool, error)
+}
+
 // TargetStepRecorder records mandatory target Step lifecycle boundaries.
 type TargetStepRecorder interface {
 	StartStep(context.Context, StartStepInput) (RunStep, error)
@@ -52,6 +59,7 @@ type TargetStepRecorder interface {
 // TargetAgentRecorder records durable agent authorization and checkpoint boundaries.
 type TargetAgentRecorder interface {
 	StartAgentAttempt(context.Context, StartAgentAttemptInput) (AgentAttempt, error)
+	FailAgentAttempt(context.Context, AgentAttemptFailureInput) (AgentAttempt, error)
 	CheckpointAgentAttempt(context.Context, AgentCheckpointInput) (AgentAttempt, error)
 }
 
@@ -59,6 +67,7 @@ type TargetAgentRecorder interface {
 type TargetTerminalRecorder interface {
 	FinalizeConfirmedMerge(context.Context, ConfirmedMergeInput) (TerminalResult, error)
 	CancelRun(context.Context, CancelRunInput) (TerminalResult, error)
+	FinalizeRunFailure(context.Context, RunFailureInput) (TerminalResult, error)
 }
 
 // ClaimRunInput is the stable identity for an atomic target claim.
@@ -408,6 +417,16 @@ type AgentCheckpointInput struct {
 	Transcript  *TargetTranscript
 }
 
+// AgentAttemptFailureInput records that the workflow exhausted one authorized
+// execution without receiving a durable terminal response. It is deliberately
+// main-control authority, unlike AgentCheckpointInput's scoped Run Worker
+// capability: only the workflow may decide a fresh Agent Attempt is allowed.
+type AgentAttemptFailureInput struct {
+	ID          TargetAttemptID
+	FailureKind work.RunFailureKind
+	EndedAt     time.Time
+}
+
 // TargetTranscript is transcript material for one ordinal Agent Attempt.
 type TargetTranscript struct {
 	CompressedBytes       []byte
@@ -432,6 +451,43 @@ type GitCheckpoint struct {
 type GitCheckpointInput struct {
 	GitCheckpoint
 	CompletedAt time.Time
+}
+
+// CanceledRunRecovery contains the predecessor's only transferable state plus
+// the exact outstanding Merge Step that can reconcile a lost merge response.
+type CanceledRunRecovery struct {
+	Checkpoint       GitCheckpoint
+	MergeStepOrdinal int
+}
+
+// LatestCanceledRunCheckpoint finds the most recently canceled predecessor's
+// durable pushed head. It deliberately does not return provider state or any
+// credential material: a new Run gets only a Git object it can fetch itself.
+func (s *Store) LatestCanceledRunCheckpoint(ctx context.Context, ticketID TicketID, excludingRunID string) (CanceledRunRecovery, bool, error) {
+	excluding, err := pgUUID(excludingRunID)
+	if err != nil {
+		return CanceledRunRecovery{}, false, fmt.Errorf("reading canceled recovery checkpoint for ticket %d: %w", ticketID, err)
+	}
+	row, err := s.q.LatestCanceledRunGitCheckpoint(ctx, storedb.LatestCanceledRunGitCheckpointParams{
+		TicketID: int64(ticketID),
+		ID:       excluding,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CanceledRunRecovery{}, false, nil
+	}
+	if err != nil {
+		return CanceledRunRecovery{}, false, fmt.Errorf("reading canceled recovery checkpoint for ticket %d: %w", ticketID, wrapQueryErr(err))
+	}
+	return CanceledRunRecovery{Checkpoint: GitCheckpoint{
+		RunID:             runIDString(row.RunID),
+		StepOrdinal:       int(row.StepOrdinal),
+		Branch:            row.Branch,
+		PushedHead:        row.PushedHead,
+		ObservedBase:      row.ObservedBase,
+		PullRequestNumber: int(row.PullRequestNumber),
+		PullRequestNodeID: row.PullRequestNodeID,
+		StepResult:        row.StepResult,
+	}, MergeStepOrdinal: int(row.MergeStepOrdinal)}, true, nil
 }
 
 // RepositoryCheckpointInput is a repository Step checkpoint authorized by one
@@ -683,6 +739,69 @@ func (s *Store) BindCheckpointCapability(ctx context.Context, attemptID TargetAt
 		return fmt.Errorf("binding checkpoint capability to %s: %w", attemptID, wrapQueryErr(err))
 	}
 	return nil
+}
+
+// FailAgentAttempt records a terminal failure after Temporal has exhausted an
+// authorized activity execution. The main workflow owns this decision, so it
+// authenticates Run ownership rather than requiring the Run Worker's scoped
+// checkpoint capability, which may be unavailable precisely when this path is
+// needed.
+func (s *Store) FailAgentAttempt(ctx context.Context, in AgentAttemptFailureInput) (AgentAttempt, error) {
+	if s.begin == nil {
+		return AgentAttempt{}, fmt.Errorf("failing agent attempt: store cannot begin a transaction")
+	}
+	if in.FailureKind == "" || in.EndedAt.IsZero() {
+		return AgentAttempt{}, fmt.Errorf("failing agent attempt %s: failure kind and terminal time are required: %w", in.ID, work.ErrPermanent)
+	}
+	id, err := pgUUID(in.ID.RunID)
+	if err != nil {
+		return AgentAttempt{}, fmt.Errorf("failing agent attempt: %w", err)
+	}
+	tx, err := s.begin.Begin(ctx)
+	if err != nil {
+		return AgentAttempt{}, fmt.Errorf("failing agent attempt: beginning transaction: %w", wrapQueryErr(err))
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := s.q.WithTx(tx)
+	run, err := q.TargetRunForUpdate(ctx, id)
+	if err != nil {
+		return AgentAttempt{}, fmt.Errorf("failing agent attempt: reading run: %w", wrapQueryErr(err))
+	}
+	ticket, err := q.TargetTicketForUpdate(ctx, run.TicketID)
+	if err != nil {
+		return AgentAttempt{}, fmt.Errorf("failing agent attempt: reading ticket: %w", wrapQueryErr(err))
+	}
+	if run.TargetOutcome.Valid || ticket.State != TicketActive.String() || runIDString(ticket.ActiveRunID) != in.ID.RunID {
+		return AgentAttempt{}, fmt.Errorf("failing agent attempt: %w", ErrRunOwnership)
+	}
+	current, err := q.TargetAgentAttemptForUpdate(ctx, storedb.TargetAgentAttemptForUpdateParams{
+		RunID: id, StepOrdinal: int32(in.ID.StepOrdinal), AttemptNo: int32(in.ID.AttemptNo),
+	})
+	if err != nil {
+		return AgentAttempt{}, fmt.Errorf("failing agent attempt: reading attempt: %w", wrapQueryErr(err))
+	}
+	if current.State != string(work.AgentAttemptRunning) {
+		if current.State != string(work.AgentAttemptFailed) || current.FailureKind != string(in.FailureKind) || !timeFromPg(current.EndedAt).Equal(in.EndedAt.Truncate(time.Microsecond)) {
+			return AgentAttempt{}, fmt.Errorf("failing agent attempt: conflicting terminal failure: %w", work.ErrPermanent)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return AgentAttempt{}, fmt.Errorf("failing agent attempt: committing retry: %w", wrapQueryErr(err))
+		}
+		return agentAttemptFromRow(current), nil
+	}
+	row, err := q.CheckpointTargetAgentAttempt(ctx, storedb.CheckpointTargetAgentAttemptParams{
+		RunID: id, StepOrdinal: int32(in.ID.StepOrdinal), AttemptNo: int32(in.ID.AttemptNo),
+		ProviderThreadID: current.ProviderThreadID, State: string(work.AgentAttemptFailed), FailureKind: string(in.FailureKind),
+		UsageState: current.UsageState, InputTokens: current.InputTokens, CachedInputTokens: current.CachedInputTokens,
+		OutputTokens: current.OutputTokens, ReasoningTokens: current.ReasoningTokens, EndedAt: pgTimestamp(in.EndedAt),
+	})
+	if err != nil {
+		return AgentAttempt{}, fmt.Errorf("failing agent attempt %s: %w", in.ID, wrapQueryErr(err))
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return AgentAttempt{}, fmt.Errorf("failing agent attempt: committing: %w", wrapQueryErr(err))
+	}
+	return agentAttemptFromRow(row), nil
 }
 
 // CheckpointAgentAttempt records only the named active Attempt after verifying the Run capability.
@@ -951,6 +1070,15 @@ func reconcileConfirmedMergeAfterCancellation(
 	if err != nil {
 		return TerminalResult{}, err
 	}
+	if in.StepOrdinal == 0 {
+		recoveredStep, startErr := q.StartRecoveredTargetMergeStep(ctx, storedb.StartRecoveredTargetMergeStepParams{
+			RunID: runID, StartedAt: pgTimestamp(in.EndedAt),
+		})
+		if startErr != nil {
+			return TerminalResult{}, fmt.Errorf("reconciling confirmed merge: starting recovery merge step: %w", wrapQueryErr(startErr))
+		}
+		in.StepOrdinal = int(recoveredStep.Ordinal)
+	}
 	if _, err := q.CompleteTargetMergeStep(ctx, storedb.CompleteTargetMergeStepParams{RunID: runID, Ordinal: int32(in.StepOrdinal), EndedAt: pgTimestamp(in.EndedAt), Result: stepResult}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return TerminalResult{}, fmt.Errorf("reconciling confirmed merge: %w", ErrMergeStep)
@@ -996,6 +1124,90 @@ type CancelRunInput struct {
 	RunID    string
 	TicketID TicketID
 	EndedAt  time.Time
+}
+
+// RunFailureInput names a workflow-owned terminal failure of an unmerged Run.
+type RunFailureInput struct {
+	RunID       string
+	TicketID    TicketID
+	Outcome     work.RunOutcome
+	FailureKind work.RunFailureKind
+	StepOrdinal int
+	StepResult  json.RawMessage
+	EndedAt     time.Time
+}
+
+// FinalizeRunFailure atomically records a specific failed Run and moves only
+// its still-owned Ticket to failed. Existing cancellation or confirmed merge is
+// authoritative and returned unchanged, so a late failure cannot reverse it.
+func (s *Store) FinalizeRunFailure(ctx context.Context, in RunFailureInput) (TerminalResult, error) {
+	if s.begin == nil {
+		return TerminalResult{}, fmt.Errorf("failing run: store cannot begin a transaction")
+	}
+	id, err := pgUUID(in.RunID)
+	if err != nil {
+		return TerminalResult{}, fmt.Errorf("failing run: %w", err)
+	}
+	tx, err := s.begin.Begin(ctx)
+	if err != nil {
+		return TerminalResult{}, fmt.Errorf("failing run: beginning transaction: %w", wrapQueryErr(err))
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := s.q.WithTx(tx)
+	runRow, err := q.TargetRunForUpdate(ctx, id)
+	if err != nil {
+		return TerminalResult{}, fmt.Errorf("failing run: reading run: %w", wrapQueryErr(err))
+	}
+	if runRow.TicketID != int64(in.TicketID) {
+		return TerminalResult{}, fmt.Errorf("failing run: %w", ErrRunOwnership)
+	}
+	ticketRow, err := q.TargetTicketForUpdate(ctx, int64(in.TicketID))
+	if err != nil {
+		return TerminalResult{}, fmt.Errorf("failing run: reading ticket: %w", wrapQueryErr(err))
+	}
+	if runRow.TargetOutcome.Valid {
+		if (runRow.TargetOutcome.String != string(in.Outcome) || runRow.TargetFailureKind != string(in.FailureKind)) && runRow.TargetOutcome.String != string(work.RunOutcomeSucceeded) && runRow.TargetOutcome.String != string(work.RunOutcomeCanceled) {
+			return TerminalResult{}, fmt.Errorf("failing run: conflicting terminal result: %w", work.ErrPermanent)
+		}
+		ticket, parseErr := ticketFromRow(ticketRow)
+		if parseErr != nil {
+			return TerminalResult{}, parseErr
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return TerminalResult{}, fmt.Errorf("failing run retry: committing: %w", wrapQueryErr(err))
+		}
+		return TerminalResult{Ticket: ticket, Run: runFromRow(runRow)}, nil
+	}
+	if ticketRow.State != TicketActive.String() || ticketRow.ActiveRunID != id {
+		return TerminalResult{}, fmt.Errorf("failing run: %w", ErrRunOwnership)
+	}
+	if in.StepOrdinal > 0 {
+		if _, err := q.FailRunningTargetAgentAttempts(ctx, storedb.FailRunningTargetAgentAttemptsParams{RunID: id, StepOrdinal: int32(in.StepOrdinal), FailureKind: string(in.FailureKind), EndedAt: pgTimestamp(in.EndedAt)}); err != nil {
+			return TerminalResult{}, fmt.Errorf("failing run: failing active agent attempts: %w", wrapQueryErr(err))
+		}
+		if _, err := q.FailTargetStep(ctx, storedb.FailTargetStepParams{RunID: id, Ordinal: int32(in.StepOrdinal), EndedAt: pgTimestamp(in.EndedAt), Result: in.StepResult}); err != nil {
+			return TerminalResult{}, fmt.Errorf("failing run: failing step: %w", wrapQueryErr(err))
+		}
+	}
+	if in.Outcome != work.RunOutcomeFailed && in.Outcome != work.RunOutcomeExhausted {
+		return TerminalResult{}, fmt.Errorf("failing run: invalid terminal outcome: %w", work.ErrPermanent)
+	}
+	failedRun, err := q.CompleteTargetRunTerminal(ctx, storedb.CompleteTargetRunTerminalParams{ID: id, TargetOutcome: pgOptionalText(string(in.Outcome)), TargetFailureKind: string(in.FailureKind), EndedAt: pgTimestamp(in.EndedAt)})
+	if err != nil {
+		return TerminalResult{}, fmt.Errorf("failing run: completing run: %w", wrapQueryErr(err))
+	}
+	failedTicket, err := q.FailTargetTicket(ctx, storedb.FailTargetTicketParams{ID: int64(in.TicketID), ActiveRunID: id})
+	if err != nil {
+		return TerminalResult{}, fmt.Errorf("failing run: completing ticket: %w", ErrRunOwnership)
+	}
+	ticket, err := ticketFromRow(failedTicket)
+	if err != nil {
+		return TerminalResult{}, fmt.Errorf("failing run: decoding completed ticket: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return TerminalResult{}, fmt.Errorf("failing run: committing: %w", wrapQueryErr(err))
+	}
+	return TerminalResult{Ticket: ticket, Run: runFromRow(failedRun)}, nil
 }
 
 // ReconcileAbandonedRun conditionally releases an active Ticket after direct
@@ -1122,6 +1334,9 @@ func (s *Store) CancelRun(ctx context.Context, in CancelRunInput) (TerminalResul
 
 // Validate reports whether a checkpoint contains the durable evidence its state requires.
 func (in AgentCheckpointInput) Validate() error {
+	if in.Transcript != nil && (in.Transcript.UncompressedSizeBytes > work.MaxTargetTranscriptUncompressedBytes || len(in.Transcript.CompressedBytes) > work.MaxTargetTranscriptCompressedBytes) {
+		return fmt.Errorf("checkpointing agent attempt %s: transcript exceeds durable size limit: %w", in.ID, work.ErrPermanent)
+	}
 	if in.State != work.AgentAttemptRunning && in.State != work.AgentAttemptSucceeded && in.State != work.AgentAttemptFailed {
 		return fmt.Errorf("checkpointing agent attempt %s: invalid state: %w", in.ID, work.ErrPermanent)
 	}

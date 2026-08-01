@@ -54,6 +54,7 @@ type SecretRedactor interface {
 // TargetRepository prepares the Run Worker's own filesystem checkout.
 type TargetRepository interface {
 	Prepare(context.Context, string, string) (string, error)
+	PrepareFromCommit(context.Context, string, string, string) (string, error)
 }
 
 // TargetGitHub is the repository-scoped external surface hosted by the Run
@@ -64,6 +65,7 @@ type TargetGitHub interface {
 	MarkPullRequestReadyForReview(context.Context, string) error
 	MergePullRequest(context.Context, int, string) (work.PullRequestMergeResult, error)
 	ChecksForCommit(context.Context, string, []string) ([]work.CheckRun, error)
+	RetirePullRequest(context.Context, int) (work.PullRequestRetirement, error)
 }
 
 // RepositoryCheckpoint is the distinct generation-scoped recovery boundary
@@ -220,7 +222,7 @@ func (a *RunWorkerActivities) RunTargetAgent(ctx context.Context, in TargetAgent
 	if err != nil {
 		return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("rendering target prompt for %s", in.AttemptID), err)
 	}
-	var transcript bytes.Buffer
+	transcript := newBoundedTargetTranscript()
 	checkpointedThread := resumeThread != ""
 	expectedThreadID := resumeThread
 	var checkpointErr error
@@ -249,8 +251,7 @@ func (a *RunWorkerActivities) RunTargetAgent(ctx context.Context, in TargetAgent
 			redactionErr = fmt.Errorf("reading projected secret material before checkpointing target events")
 			return
 		}
-		transcript.Write(redacted)
-		transcript.WriteByte('\n')
+		transcript.Append(redacted)
 		if checkpointedThread || checkpointErr != nil {
 			return
 		}
@@ -258,7 +259,12 @@ func (a *RunWorkerActivities) RunTargetAgent(ctx context.Context, in TargetAgent
 			return
 		}
 		checkpointedThread = true
-		checkpointErr = cp.Checkpoint(ctx, checkpointprotocol.Attempt{ProviderThreadID: threadID, State: work.AgentAttemptRunning, UsageState: work.UsageUnknown, Usage: checkpointprotocol.Usage{}, Transcript: checkpointTranscript(transcript.Bytes())})
+		partial, transcriptErr := checkpointTranscript(transcript.Bytes())
+		if transcriptErr != nil {
+			checkpointErr = transcriptErr
+			return
+		}
+		checkpointErr = cp.Checkpoint(ctx, checkpointprotocol.Attempt{ProviderThreadID: threadID, State: work.AgentAttemptRunning, UsageState: work.UsageUnknown, Usage: checkpointprotocol.Usage{}, Transcript: partial})
 	}
 	if err := a.deps.SecretRedactor.Prime(ctx); err != nil {
 		return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("priming projected secret material for %s", in.AttemptID), fmt.Errorf("reading projected secret material before running target agent"))
@@ -292,10 +298,14 @@ func (a *RunWorkerActivities) RunTargetAgent(ctx context.Context, in TargetAgent
 		return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("redacting target result for %s", in.AttemptID), err)
 	}
 	endedAt := a.deps.Clock.Now().UTC()
+	terminalTranscript, err := checkpointTranscript(transcript.Bytes())
+	if err != nil {
+		return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("compressing target transcript for %s", in.AttemptID), err)
+	}
 	terminal := checkpointprotocol.Attempt{
 		ProviderThreadID: threadID, State: work.AgentAttemptSucceeded, UsageState: usageState,
 		Usage:   checkpointprotocol.Usage{InputTokens: result.Usage.InputTokens, CachedInputTokens: result.Usage.CachedInputTokens, OutputTokens: result.Usage.OutputTokens, ReasoningTokens: result.Usage.ReasoningTokens},
-		EndedAt: &endedAt, Result: redactedResult, Transcript: checkpointTranscript(transcript.Bytes()),
+		EndedAt: &endedAt, Result: redactedResult, Transcript: terminalTranscript,
 	}
 	if err := cp.Checkpoint(ctx, terminal); err != nil {
 		return TargetAgentOutput{}, fail(ctx, fmt.Sprintf("checkpointing terminal evidence for %s", in.AttemptID), err)
@@ -423,7 +433,7 @@ func credentialRevisionNumber(value string) (uint64, error) {
 func (a *RunWorkerActivities) targetAgentOutput(ctx context.Context, stage work.AgentStage, attempt checkpointprotocol.Attempt) (TargetAgentOutput, error) {
 	threadID, err := a.validateProviderThreadID(ctx, attempt.ProviderThreadID)
 	if err != nil {
-		return TargetAgentOutput{}, err
+		return TargetAgentOutput{}, fmt.Errorf("validating durable provider thread ID: %w", err)
 	}
 	if threadID == "" {
 		return TargetAgentOutput{}, fmt.Errorf("terminal provider thread ID is empty: %w", work.ErrPermanent)
@@ -435,14 +445,56 @@ func (a *RunWorkerActivities) targetAgentOutput(ctx context.Context, stage work.
 	return TargetAgentOutput{Output: attempt.Result, Result: decoded, ThreadID: threadID, Usage: work.Usage{InputTokens: attempt.Usage.InputTokens, CachedInputTokens: attempt.Usage.CachedInputTokens, OutputTokens: attempt.Usage.OutputTokens, ReasoningTokens: attempt.Usage.ReasoningTokens}, UsageState: attempt.UsageState}, nil
 }
 
-func checkpointTranscript(raw []byte) *checkpointprotocol.Transcript {
+func checkpointTranscript(raw []byte) (*checkpointprotocol.Transcript, error) {
 	if len(raw) == 0 {
-		return nil
+		return nil, nil
+	}
+	if len(raw) > work.MaxTargetTranscriptUncompressedBytes {
+		return nil, fmt.Errorf("target transcript exceeds %d uncompressed bytes: %w", work.MaxTargetTranscriptUncompressedBytes, work.ErrPermanent)
 	}
 	var compressed bytes.Buffer
 	gz := gzip.NewWriter(&compressed)
-	_, _ = gz.Write(raw)
-	_ = gz.Close()
+	if _, err := gz.Write(raw); err != nil {
+		return nil, fmt.Errorf("compressing target transcript: %w", err)
+	}
+	if err := gz.Close(); err != nil {
+		return nil, fmt.Errorf("closing target transcript compressor: %w", err)
+	}
+	if compressed.Len() > work.MaxTargetTranscriptCompressedBytes {
+		return nil, fmt.Errorf("target transcript exceeds %d compressed bytes: %w", work.MaxTargetTranscriptCompressedBytes, work.ErrPermanent)
+	}
 	checksum := sha256.Sum256(raw)
-	return &checkpointprotocol.Transcript{CompressedBytes: compressed.Bytes(), Compression: "gzip", UncompressedSizeBytes: int64(len(raw)), Checksum: checksum[:]}
+	return &checkpointprotocol.Transcript{CompressedBytes: compressed.Bytes(), Compression: "gzip", UncompressedSizeBytes: int64(len(raw)), Checksum: checksum[:]}, nil
+}
+
+const targetTranscriptTruncatedEvent = `{"type":"factory.transcript_truncated","reason":"size_limit"}` + "\n"
+
+type boundedTargetTranscript struct {
+	buffer    bytes.Buffer
+	truncated bool
+}
+
+func newBoundedTargetTranscript() *boundedTargetTranscript { return &boundedTargetTranscript{} }
+
+func (t *boundedTargetTranscript) Append(event []byte) {
+	if t.truncated {
+		return
+	}
+	limit := work.MaxTargetTranscriptUncompressedBytes - len(targetTranscriptTruncatedEvent)
+	if t.buffer.Len()+len(event)+1 > limit {
+		t.truncated = true
+		return
+	}
+	t.buffer.Write(event)
+	t.buffer.WriteByte('\n')
+}
+
+func (t *boundedTargetTranscript) Bytes() []byte {
+	if !t.truncated {
+		return t.buffer.Bytes()
+	}
+	bounded := make([]byte, 0, t.buffer.Len()+len(targetTranscriptTruncatedEvent))
+	bounded = append(bounded, t.buffer.Bytes()...)
+	bounded = append(bounded, targetTranscriptTruncatedEvent...)
+	return bounded
 }

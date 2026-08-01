@@ -57,6 +57,16 @@ WHERE run_id = $1 AND ordinal = $2
   AND (state = 'running' OR (state = 'completed' AND result = $4))
 RETURNING *;
 
+-- name: FailTargetStep :one
+UPDATE run_step SET state = 'failed', ended_at = $3, result = $4
+WHERE run_id = $1 AND ordinal = $2 AND state = 'running'
+RETURNING *;
+
+-- name: FailRunningTargetAgentAttempts :many
+UPDATE run_agent_attempt SET state = 'failed', failure_kind = $3, ended_at = $4
+WHERE run_id = $1 AND step_ordinal = $2 AND state = 'running'
+RETURNING *;
+
 -- name: CompleteTargetMergeStep :one
 UPDATE run_step SET state = 'completed', ended_at = $3, result = $4
 WHERE run_id = $1 AND ordinal = $2 AND kind = 'merge_pull_request'
@@ -153,6 +163,29 @@ RETURNING *;
 -- name: TargetGitCheckpoint :one
 SELECT * FROM run_git_checkpoint WHERE run_id = $1;
 
+-- name: StartRecoveredTargetMergeStep :one
+INSERT INTO run_step (run_id, ordinal, kind, iteration, reason, state, started_at)
+SELECT $1, COALESCE(MAX(ordinal), 0) + 1, 'merge_pull_request', 0,
+       'reconcile confirmed external merge', 'running', $2
+FROM run_step
+WHERE run_id = $1
+RETURNING *;
+
+-- name: LatestCanceledRunGitCheckpoint :one
+SELECT checkpoint.*, COALESCE(merge_step.ordinal, 0)::integer AS merge_step_ordinal
+FROM run AS predecessor
+JOIN run_git_checkpoint AS checkpoint ON checkpoint.run_id = predecessor.id
+LEFT JOIN run_step AS merge_step
+  ON merge_step.run_id = predecessor.id
+  AND merge_step.kind = 'merge_pull_request'
+  AND merge_step.state = 'running'
+WHERE predecessor.ticket_id = $1
+  AND predecessor.id <> $2
+  AND predecessor.target_outcome = 'canceled'
+  AND checkpoint.pushed_head <> ''
+ORDER BY predecessor.ended_at DESC, checkpoint.step_ordinal DESC
+LIMIT 1;
+
 -- name: BindTargetRepositoryCapability :one
 INSERT INTO run_repository_capability (run_id, generation, capability_hash)
 SELECT $1, $2, $3
@@ -213,6 +246,11 @@ UPDATE run SET target_outcome = 'canceled', target_failure_kind = '', ended_at =
 WHERE id = $1 AND target_outcome IS NULL
 RETURNING *;
 
+-- name: CompleteTargetRunTerminal :one
+UPDATE run SET target_outcome = $2, target_failure_kind = $3, ended_at = $4
+WHERE id = $1 AND target_outcome IS NULL
+RETURNING *;
+
 -- name: CompleteTargetTicket :one
 UPDATE ticket SET state = 'done', active_run_id = NULL, updated_at = CURRENT_TIMESTAMP
 WHERE id = $1 AND state = 'active' AND active_run_id = $2
@@ -225,5 +263,10 @@ RETURNING *;
 
 -- name: ReopenTargetTicket :one
 UPDATE ticket SET state = 'open', active_run_id = NULL, updated_at = CURRENT_TIMESTAMP
+WHERE id = $1 AND state = 'active' AND active_run_id = $2
+RETURNING *;
+
+-- name: FailTargetTicket :one
+UPDATE ticket SET state = 'failed', active_run_id = NULL, updated_at = CURRENT_TIMESTAMP
 WHERE id = $1 AND state = 'active' AND active_run_id = $2
 RETURNING *;

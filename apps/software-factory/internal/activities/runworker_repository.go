@@ -40,12 +40,24 @@ type repositoryEffectEnvelope struct {
 // CloneTargetRepositoryInput identifies the repository Step and source to
 // restore on this Run Worker generation.
 type CloneTargetRepositoryInput struct {
-	Step     RepositoryStep
-	CloneURL string
+	Step                    RepositoryStep
+	CloneURL                string
+	CarryForwardHead        string
+	RetirePullRequestNumber int
 }
 
 // CloneTargetRepositoryOutput records the exact restored candidate head.
-type CloneTargetRepositoryOutput struct{ HeadSHA string }
+type CloneTargetRepositoryOutput struct {
+	HeadSHA          string
+	PredecessorMerge *work.PullRequestRetirement
+}
+
+// RestoreTargetRepositoryInput names the durable branch a replacement
+// generation must materialize before resuming repository-affine work.
+type RestoreTargetRepositoryInput struct {
+	CloneURL string
+	Branch   string
+}
 
 // CloneTargetRepository is the first Session-bound operation. It restores the
 // local checkout, then completes its infrastructure Step before returning.
@@ -54,9 +66,12 @@ func (a *RunWorkerActivities) CloneTargetRepository(ctx context.Context, in Clon
 	if err != nil {
 		return CloneTargetRepositoryOutput{}, fmt.Errorf("loading target repository clone effect: %w", err)
 	}
-	head, err := a.deps.Repository.Prepare(ctx, in.CloneURL, in.Step.Branch)
+	head, predecessorMerge, err := a.prepareCloneRepository(ctx, in)
 	if err != nil {
 		return CloneTargetRepositoryOutput{}, fail(ctx, "preparing the target repository", err)
+	}
+	if predecessorMerge != nil {
+		return CloneTargetRepositoryOutput{PredecessorMerge: predecessorMerge}, nil
 	}
 	if found {
 		// A repository checkpoint survives replacement; this filesystem does
@@ -71,6 +86,54 @@ func (a *RunWorkerActivities) CloneTargetRepository(ctx context.Context, in Clon
 		return CloneTargetRepositoryOutput{}, fmt.Errorf("checkpointing target repository clone effect: %w", err)
 	}
 	return out, nil
+}
+
+func (a *RunWorkerActivities) prepareCloneRepository(ctx context.Context, in CloneTargetRepositoryInput) (string, *work.PullRequestRetirement, error) {
+	if in.RetirePullRequestNumber > 0 {
+		retirement, err := a.deps.GitHub.RetirePullRequest(ctx, in.RetirePullRequestNumber)
+		if err != nil {
+			return "", nil, fmt.Errorf("retiring the canceled run pull request: %w", err)
+		}
+		if retirement.Merged {
+			return "", &retirement, nil
+		}
+	}
+	if strings.TrimSpace(in.CarryForwardHead) == "" {
+		head, err := a.deps.Repository.Prepare(ctx, in.CloneURL, in.Step.Branch)
+		if err != nil {
+			return "", nil, fmt.Errorf("preparing the target repository checkout: %w", err)
+		}
+		return head, nil, nil
+	}
+	head, err := a.deps.Repository.PrepareFromCommit(ctx, in.CloneURL, in.Step.Branch, in.CarryForwardHead)
+	if err != nil {
+		return "", nil, fmt.Errorf("preparing the target repository from the durable recovery commit: %w", err)
+	}
+	return head, nil, nil
+}
+
+// RestoreTargetRepository reconstructs a replacement filesystem from the
+// newest durable Git checkpoint without opening another Step or repeating a
+// GitHub effect.
+func (a *RunWorkerActivities) RestoreTargetRepository(ctx context.Context, in RestoreTargetRepositoryInput) error {
+	if strings.TrimSpace(in.CloneURL) == "" || strings.TrimSpace(in.Branch) == "" {
+		return fail(ctx, "validating replacement repository restore", fmt.Errorf("clone URL and branch are required: %w", work.ErrPermanent))
+	}
+	cp, err := a.deps.RepositoryCheckpoints(a.deps.Identity)
+	if err != nil {
+		return fail(ctx, "opening replacement repository checkpoint", err)
+	}
+	checkpoint, found, err := cp.Load(ctx)
+	if err != nil {
+		return fail(ctx, "loading replacement repository checkpoint", err)
+	}
+	if !found || checkpoint.Branch != in.Branch {
+		return fail(ctx, "reconciling replacement repository checkpoint", fmt.Errorf("durable branch is unavailable or does not match replacement: %w", work.ErrPermanent))
+	}
+	if _, err := a.deps.Repository.Prepare(ctx, in.CloneURL, in.Branch); err != nil {
+		return fail(ctx, "restoring the replacement repository", err)
+	}
+	return nil
 }
 
 // TargetAwaitCIInput binds a CI observation to one durable repository Step.

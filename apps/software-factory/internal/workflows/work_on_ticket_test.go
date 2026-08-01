@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -12,7 +14,9 @@ import (
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/store/storefake"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/work"
 	"github.com/0x63616c/world-wide-webb/apps/software-factory/internal/workflows"
+	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/worker"
@@ -53,7 +57,7 @@ func TestWorkOnTicketClaimsBeforeProvisioningGenerationOneAndClonesThroughItsSes
 	if claimed.State != store.TicketDone || claimed.ActiveRunID != "" {
 		t.Fatalf("completed ticket = %+v, want done with no active owner", claimed)
 	}
-	if winner.clone.Step.StepOrdinal != 1 || winner.clone.Step.Branch != winner.provisioned.Branch || winner.clone.CloneURL != input.CloneURL {
+	if winner.clone.Step.StepOrdinal != 3 || winner.clone.Step.Branch != winner.provisioned.Branch || winner.clone.CloneURL != input.CloneURL {
 		t.Fatalf("clone = %+v, provision = %+v", winner.clone, winner.provisioned)
 	}
 	loser := newWorkOnTicketHarness(t, recorderStore)
@@ -99,6 +103,8 @@ func TestWorkOnTicketConfirmsMergeBeforeBestEffortTeardown(t *testing.T) {
 		t.Fatalf("TargetRunDetail: %v", err)
 	}
 	wantSteps := []work.StepKind{
+		work.StepCreateRunWorker,
+		work.StepAcquireRunWorkerSession,
 		work.StepCloneRepository,
 		work.StepPlan,
 		work.StepImplement,
@@ -122,6 +128,22 @@ func TestWorkOnTicketConfirmsMergeBeforeBestEffortTeardown(t *testing.T) {
 		}
 		if len(step.Attempts) != wantAttempts {
 			t.Fatalf("step %s attempts = %d, want %d", want, len(step.Attempts), wantAttempts)
+		}
+		if index < 2 {
+			var outcome struct {
+				Kind       string `json:"kind"`
+				Generation int    `json:"generation"`
+			}
+			if err := json.Unmarshal(step.Step.Result, &outcome); err != nil {
+				t.Fatalf("decode %s outcome: %v", want, err)
+			}
+			wantKind := "created"
+			if want == work.StepAcquireRunWorkerSession {
+				wantKind = "acquired"
+			}
+			if outcome.Kind != wantKind || outcome.Generation != 1 {
+				t.Fatalf("%s outcome = %+v, want %s generation 1", want, outcome, wantKind)
+			}
 		}
 	}
 
@@ -214,6 +236,7 @@ func TestWorkOnTicketRepairsRedCIThenReviewsTheNewHead(t *testing.T) {
 		t.Fatalf("TargetRunDetail: %v", err)
 	}
 	wantSteps := []work.StepKind{
+		work.StepCreateRunWorker, work.StepAcquireRunWorkerSession,
 		work.StepCloneRepository, work.StepPlan, work.StepImplement,
 		work.StepSyncPullRequest, work.StepAwaitCI, work.StepImplement,
 		work.StepSyncPullRequest, work.StepAwaitCI, work.StepReview,
@@ -385,6 +408,176 @@ func TestWorkOnTicketNeverMergesAHeadChangedAfterReview(t *testing.T) {
 	}
 }
 
+// A repository ruleset can be repaired by an operator without changing the
+// reviewed candidate. Native activity retry keeps that repair window inside
+// the one Merge Step, bounded by the Run's remaining semantic deadline.
+func TestWorkOnTicketRetriesRepairableMergeFailuresWithinOneStepUntilSemanticDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		activityType string
+	}{
+		{name: "ruleset", activityType: activities.ErrTypeRuleset},
+		{name: "availability", activityType: activities.ErrTypeTransient},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			s := storefake.New()
+			ticket, err := s.CreateTicket(ctx, "merge repair", "wait for the repairable merge failure", nil)
+			if err != nil {
+				t.Fatalf("CreateTicket: %v", err)
+			}
+			in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000025", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+			h := newWorkOnTicketHarness(t, s)
+			mergeTries := 0
+			var mergeScheduleToClose time.Duration
+			h.env.SetOnActivityStartedListener(func(info *activity.Info, _ context.Context, _ converter.EncodedValues) {
+				if info.ActivityType.Name == "TargetMergePullRequest" {
+					mergeScheduleToClose = info.ScheduleToCloseTimeout
+				}
+			})
+			h.mergeResult = func(activities.TargetMergePullRequestInput) (work.PullRequestMergeResult, error) {
+				mergeTries++
+				if mergeTries == 1 {
+					return work.PullRequestMergeResult{}, temporal.NewApplicationError("repairable merge failure", tc.activityType, nil)
+				}
+				return work.PullRequestMergeResult{Outcome: work.PullRequestMergeConfirmed, MergeSHA: "M1"}, nil
+			}
+
+			h.run(in)
+			if err := h.env.GetWorkflowError(); err != nil {
+				t.Fatalf("WorkOnTicket: %v", err)
+			}
+			if mergeTries != 2 || len(h.mergeInputs) != 2 || h.mergeInputs[0].ExpectedHeadSHA != "H1" || h.mergeInputs[1].ExpectedHeadSHA != "H1" {
+				t.Fatalf("%s retries = %d, merge inputs = %+v; want two exact-H1 attempts", tc.name, mergeTries, h.mergeInputs)
+			}
+			if mergeScheduleToClose != in.Policy.SemanticDeadline {
+				t.Fatalf("merge ScheduleToClose = %s, want remaining semantic deadline %s", mergeScheduleToClose, in.Policy.SemanticDeadline)
+			}
+			detail, err := s.TargetRunDetail(ctx, in.RunID)
+			if err != nil {
+				t.Fatalf("TargetRunDetail: %v", err)
+			}
+			var merges, attempts int
+			for _, step := range detail.Steps {
+				if step.Step.Kind == work.StepMergePullRequest {
+					merges++
+				}
+				attempts += len(step.Attempts)
+			}
+			if merges != 1 || attempts != 3 || detail.Run.TargetOutcome != work.RunOutcomeSucceeded {
+				t.Fatalf("%s repair result = %+v, want one merge step, three agent attempts, and success", tc.name, detail)
+			}
+		})
+	}
+}
+
+func TestWorkOnTicketFinalizesMergeRetryDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		activityType string
+		failure      work.RunFailureKind
+		result       string
+	}{
+		{name: "ruleset", activityType: activities.ErrTypeRuleset, failure: work.RunFailureGitHubRuleset, result: `{"kind":"github_ruleset"}`},
+		{name: "availability", activityType: activities.ErrTypeTransient, failure: work.RunFailureGitHubUnavailable, result: `{"kind":"github_unavailable"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			s := storefake.New()
+			ticket, err := s.CreateTicket(ctx, "merge retry deadline", "terminalize exhausted repair window", nil)
+			if err != nil {
+				t.Fatalf("CreateTicket: %v", err)
+			}
+			in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000026", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+			h := newWorkOnTicketHarness(t, s)
+			h.mergeResult = func(activities.TargetMergePullRequestInput) (work.PullRequestMergeResult, error) {
+				lastFailure := temporal.NewApplicationError("merge remains unavailable", tc.activityType, nil)
+				return work.PullRequestMergeResult{}, temporal.NewTimeoutError(enumspb.TIMEOUT_TYPE_SCHEDULE_TO_CLOSE, lastFailure)
+			}
+
+			h.run(in)
+			var application *temporal.ApplicationError
+			if err := h.env.GetWorkflowError(); !errors.As(err, &application) || application.Type() != tc.activityType || !application.NonRetryable() {
+				t.Fatalf("WorkOnTicket error = %v, want non-retryable %s", err, tc.activityType)
+			}
+			got, err := s.Ticket(ctx, ticket.ID)
+			if err != nil {
+				t.Fatalf("Ticket: %v", err)
+			}
+			if got.State != store.TicketFailed || got.ActiveRunID != "" {
+				t.Fatalf("merge-deadline ticket = %+v, want failed with no active owner", got)
+			}
+			detail, err := s.TargetRunDetail(ctx, in.RunID)
+			if err != nil {
+				t.Fatalf("TargetRunDetail: %v", err)
+			}
+			if detail.Run.TargetOutcome != work.RunOutcomeFailed || detail.Run.TargetFailure != tc.failure {
+				t.Fatalf("merge-deadline run = %+v, want failed %s", detail.Run, tc.failure)
+			}
+			for _, step := range detail.Steps {
+				if step.Step.Kind == work.StepMergePullRequest && (step.Step.State != work.StepStateFailed || string(step.Step.Result) != tc.result) {
+					t.Fatalf("merge-deadline step = %+v, want failed %s", step.Step, tc.result)
+				}
+			}
+		})
+	}
+}
+
+// A terminal recording activity can exhaust after the merge retry window
+// closes. The deferred finalizer must retry the same classified outcome rather
+// than strand ownership or rewrite it as a generic persistence failure.
+func TestWorkOnTicketRetriesFailedMergeTerminalRecording(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "merge terminal retry", "persist the classified outcome", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000032", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.deleteErr = nil
+	h.mergeResult = func(activities.TargetMergePullRequestInput) (work.PullRequestMergeResult, error) {
+		lastFailure := temporal.NewApplicationError("ruleset remains unavailable", activities.ErrTypeRuleset, nil)
+		return work.PullRequestMergeResult{}, temporal.NewTimeoutError(enumspb.TIMEOUT_TYPE_SCHEDULE_TO_CLOSE, lastFailure)
+	}
+	finalizeCalls := 0
+	h.env.RegisterActivityWithOptions(
+		func(_ context.Context, input store.RunFailureInput) (store.TerminalResult, error) {
+			finalizeCalls++
+			if finalizeCalls == 1 {
+				return store.TerminalResult{}, temporal.NewNonRetryableApplicationError("initial terminal write unavailable", activities.ErrTypePermanent, nil)
+			}
+			return s.FinalizeRunFailure(context.Background(), input)
+		},
+		activity.RegisterOptions{Name: "FinalizeRunFailure", DisableAlreadyRegisteredCheck: true},
+	)
+
+	h.run(in)
+	var application *temporal.ApplicationError
+	if err := h.env.GetWorkflowError(); !errors.As(err, &application) || application.Type() != activities.ErrTypeRuleset {
+		t.Fatalf("WorkOnTicket error = %v, want original ruleset classification", err)
+	}
+	if finalizeCalls != 2 {
+		t.Fatalf("FinalizeRunFailure calls = %d, want initial write and deferred reconciliation", finalizeCalls)
+	}
+	got, err := s.Ticket(ctx, ticket.ID)
+	if err != nil {
+		t.Fatalf("Ticket: %v", err)
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	if got.State != store.TicketFailed || got.ActiveRunID != "" || detail.Run.TargetOutcome != work.RunOutcomeFailed || detail.Run.TargetFailure != work.RunFailureGitHubRuleset {
+		t.Fatalf("reconciled terminal state = ticket %+v / run %+v, want failed GitHub ruleset", got, detail.Run)
+	}
+	mergeStep := detail.Steps[len(detail.Steps)-1].Step
+	if mergeStep.Kind != work.StepMergePullRequest || mergeStep.State != work.StepStateFailed || string(mergeStep.Result) != `{"kind":"github_ruleset"}` {
+		t.Fatalf("reconciled merge step = %+v, want failed GitHub ruleset result", mergeStep)
+	}
+}
+
 func TestWorkOnTicketRetriesPendingCIInsideOneStep(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -421,6 +614,105 @@ func TestWorkOnTicketRetriesPendingCIInsideOneStep(t *testing.T) {
 	}
 	if len(h.ciInputs) != 2 || ciSteps != 1 || attempts != 3 {
 		t.Fatalf("pending CI = %d reads, %d CI steps, %d agent attempts; want 2, 1, 3", len(h.ciInputs), ciSteps, attempts)
+	}
+}
+
+// A ScheduleToClose timeout means Temporal has exhausted the complete CI
+// observation window. It is terminal even when the broader semantic deadline
+// still has time left: leaving the await-ci Step running strands the Ticket.
+func TestWorkOnTicketFinalizesCIScheduleToCloseTimeoutImmediately(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "CI schedule timeout", "finish durable failure", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	policy := work.DefaultTargetRunPolicy()
+	// The test environment returns the server's terminal timeout directly. One
+	// activity attempt avoids simulating the full two-hour wall clock while
+	// retaining the exact ScheduleToClose timeout classification.
+	policy.AwaitCI.Retry.MaximumAttempts = 1
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000023", Policy: policy, CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.awaitCI = func(activities.TargetAwaitCIInput) (activities.AwaitCIOutput, error) {
+		return activities.AwaitCIOutput{}, temporal.NewTimeoutError(enumspb.TIMEOUT_TYPE_SCHEDULE_TO_CLOSE, nil)
+	}
+
+	h.run(in)
+	var application *temporal.ApplicationError
+	if err := h.env.GetWorkflowError(); !errors.As(err, &application) || application.Type() != activities.ErrTypeCIUnobserved {
+		t.Fatalf("WorkOnTicket error = %v, want non-retryable %s", err, activities.ErrTypeCIUnobserved)
+	}
+	got, err := s.Ticket(ctx, ticket.ID)
+	if err != nil {
+		t.Fatalf("Ticket: %v", err)
+	}
+	if got.State != store.TicketFailed || got.ActiveRunID != "" {
+		t.Fatalf("CI-timeout ticket = %+v, want failed with no active owner", got)
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	if detail.Run.TargetOutcome != work.RunOutcomeFailed || detail.Run.TargetFailure != work.RunFailureCIUnobserved {
+		t.Fatalf("CI-timeout run = %+v, want failed ci_unobserved", detail.Run)
+	}
+	for _, step := range detail.Steps {
+		if step.Step.Kind == work.StepAwaitCI && (step.Step.State != work.StepStateFailed || string(step.Step.Result) != `{"kind":"ci_unobserved"}`) {
+			t.Fatalf("CI timeout step = %+v, want failed ci_unobserved result", step.Step)
+		}
+		if step.Step.Kind == work.StepReview {
+			t.Fatalf("steps = %+v, want no post-timeout review", detail.Steps)
+		}
+	}
+}
+
+func TestWorkOnTicketClassifiesAnotherCITimeoutAsInfrastructure(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "CI retryable timeout", "do not conflate timeout classes", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	policy := work.DefaultTargetRunPolicy()
+	policy.AwaitCI.Retry.MaximumAttempts = 1
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000024", Policy: policy, CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.awaitCI = func(activities.TargetAwaitCIInput) (activities.AwaitCIOutput, error) {
+		return activities.AwaitCIOutput{}, temporal.NewTimeoutError(enumspb.TIMEOUT_TYPE_START_TO_CLOSE, nil)
+	}
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err == nil {
+		t.Fatal("WorkOnTicket succeeded after a non-ScheduleToClose timeout")
+	}
+	got, err := s.Ticket(ctx, ticket.ID)
+	if err != nil {
+		t.Fatalf("Ticket: %v", err)
+	}
+	if got.State != store.TicketFailed || got.ActiveRunID != "" {
+		t.Fatalf("non-ScheduleToClose ticket = %+v, want failed with no active owner", got)
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	if detail.Run.TargetOutcome != work.RunOutcomeFailed || detail.Run.TargetFailure != work.RunFailureInfrastructure {
+		t.Fatalf("non-ScheduleToClose run = %+v, want failed/infrastructure rather than CI-unobserved", detail.Run)
+	}
+	lastStep := detail.Steps[len(detail.Steps)-1].Step
+	var terminalResult struct {
+		Kind        string              `json:"kind"`
+		StepKind    work.StepKind       `json:"step_kind"`
+		FailureKind work.RunFailureKind `json:"failure_kind"`
+	}
+	if err := json.Unmarshal(lastStep.Result, &terminalResult); err != nil {
+		t.Fatalf("decode terminal Step result: %v", err)
+	}
+	if lastStep.Kind != work.StepAwaitCI || lastStep.State != work.StepStateFailed || terminalResult.Kind != "terminal_failure" || terminalResult.StepKind != work.StepAwaitCI || terminalResult.FailureKind != work.RunFailureInfrastructure {
+		t.Fatalf("terminal Step = %+v result %+v, want failed structured infrastructure result", lastStep, terminalResult)
 	}
 }
 
@@ -510,6 +802,877 @@ func TestWorkOnTicketReconcilesNativeAgentRetryWithoutAnotherAttempt(t *testing.
 	}
 	if attempts != 3 || len(h.rotations) != 3 {
 		t.Fatalf("native retry = %d durable attempts, %d credential lifecycles; want three and three", attempts, len(h.rotations))
+	}
+}
+
+// The Agent policy is only a contract if it reaches Temporal's scheduled
+// activity. These are the bounds that distinguish a silent model from one
+// that continues to report progress, and the retry shape remains technical:
+// it cannot manufacture a second durable Agent Attempt.
+func TestWorkOnTicketSchedulesAgentAttemptsWithAcceptanceTimeouts(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "agent scheduling", "schedule the attempt", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000010", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	var infos []activity.Info
+	h.env.SetOnActivityStartedListener(func(info *activity.Info, _ context.Context, _ converter.EncodedValues) {
+		if info.ActivityType.Name == "RunTargetAgent" {
+			infos = append(infos, *info)
+		}
+	})
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket: %v", err)
+	}
+	if len(infos) != 3 {
+		t.Fatalf("scheduled agent activities = %d, want plan, implement, and review", len(infos))
+	}
+	for _, info := range infos {
+		if info.HeartbeatTimeout != 5*time.Minute || info.StartToCloseTimeout != 55*time.Minute || info.ScheduleToCloseTimeout != 90*time.Minute {
+			t.Fatalf("scheduled agent timeouts = heartbeat %s start-to-close %s schedule-to-close %s, want 5m/55m/90m", info.HeartbeatTimeout, info.StartToCloseTimeout, info.ScheduleToCloseTimeout)
+		}
+	}
+}
+
+// The SDK's runtime ActivityInfo intentionally does not promise to echo a
+// RetryPolicy. Exercise Temporal's schedule instead: a continuously
+// unavailable model receives exactly ten technical tries, with the 10s x2
+// backoff capped at five minutes, under the same authorized Attempt.
+func TestWorkOnTicketSchedulesTenAgentRetriesWithTheAcceptanceBackoff(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "agent retry cap", "bound unavailable model retries", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000013", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.deleteErr = nil
+	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
+		return targetAgentOutput(t, input.Stage), temporal.NewApplicationError("model unavailable", activities.ErrTypeTransient, nil)
+	}
+	started := h.env.Now()
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err == nil {
+		t.Fatal("WorkOnTicket succeeded after ten unavailable model tries")
+	}
+	if len(h.agentInputs) != 10 {
+		t.Fatalf("scheduled agent tries = %d, want exactly 10", len(h.agentInputs))
+	}
+	for _, input := range h.agentInputs {
+		if input.Stage != work.AgentStagePlan || input.AttemptID.AttemptNo != 1 {
+			t.Fatalf("retry input = %+v, want plan Attempt 1 retried natively", input)
+		}
+	}
+	if elapsed := h.env.Now().Sub(started); elapsed != 25*time.Minute+10*time.Second {
+		t.Fatalf("retry schedule elapsed = %s, want 25m10s from 10s x2 capped at 5m", elapsed)
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	if len(detail.Steps) < 4 || len(detail.Steps[3].Attempts) != 1 || detail.Steps[3].Attempts[0].State != work.AgentAttemptFailed || detail.Steps[3].Attempts[0].FailureKind != work.RunFailureInfrastructure {
+		t.Fatalf("unavailable model attempt = %+v, want one durably failed plan Attempt", detail.Steps)
+	}
+}
+
+// Infrastructure can fail after an Agent Attempt is authorized but before an
+// agent activity runs. Terminalization must close both levels as failed so the
+// durable history never presents abandoned work as running or completed.
+func TestWorkOnTicketFailsRunningAttemptWithItsActiveStep(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "attempt infrastructure failure", "close active history", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000033", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.deleteErr = nil
+	h.authorizeErr = temporal.NewNonRetryableApplicationError("checkpoint capability unavailable", activities.ErrTypePermanent, nil)
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err == nil {
+		t.Fatal("WorkOnTicket succeeded after attempt authorization failed")
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	last := detail.Steps[len(detail.Steps)-1]
+	if last.Step.Kind != work.StepPlan || last.Step.State != work.StepStateFailed || len(last.Attempts) != 1 || last.Attempts[0].State != work.AgentAttemptFailed || last.Attempts[0].FailureKind != work.RunFailureInfrastructure {
+		t.Fatalf("terminal agent history = %+v, want failed plan Step and failed infrastructure Attempt", last)
+	}
+}
+
+// A heartbeat timeout is a technical retry of the same authorized execution.
+// It cannot create another semantic Agent Attempt or re-run credential setup
+// as if the model had been deliberately asked for fresh work.
+func TestWorkOnTicketRetriesHeartbeatTimeoutWithoutAnotherAttempt(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "heartbeat timeout", "retry the same execution", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000011", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	implementTries := 0
+	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
+		if input.Stage == work.AgentStageImplement {
+			implementTries++
+			if implementTries == 1 {
+				return targetAgentOutput(t, input.Stage), temporal.NewHeartbeatTimeoutError()
+			}
+		}
+		return targetAgentOutput(t, input.Stage), nil
+	}
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket: %v", err)
+	}
+	var implementInputs []activities.TargetAgentInput
+	for _, input := range h.agentInputs {
+		if input.Stage == work.AgentStageImplement {
+			implementInputs = append(implementInputs, input)
+		}
+	}
+	if len(implementInputs) != 2 || implementInputs[0].AttemptID != implementInputs[1].AttemptID {
+		t.Fatalf("heartbeat-timeout retry inputs = %+v, want two tries of one durable Agent Attempt", implementInputs)
+	}
+}
+
+// A provider's durable attempt record can prove an execution was interrupted
+// but not restore its local state. That ends the failed execution and requires
+// a second, explicitly authorized attempt under the same Step; native retries
+// may not turn into unbounded fresh executions.
+func TestWorkOnTicketReplacesAnUnresumableAttemptInsideTheSameStep(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "unresumable attempt", "authorize a replacement", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000012", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
+		if input.Stage == work.AgentStageImplement && input.AttemptID.AttemptNo == 1 {
+			return targetAgentOutput(t, input.Stage), temporal.NewNonRetryableApplicationError("provider execution cannot resume", activities.ErrTypeUnresumableIncompleteAttempt, nil)
+		}
+		return targetAgentOutput(t, input.Stage), nil
+	}
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket: %v", err)
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	var implement store.TargetStepDetail
+	for _, step := range detail.Steps {
+		if step.Step.Kind == work.StepImplement {
+			implement = step
+			break
+		}
+	}
+	if implement.Step.State != work.StepStateCompleted || len(implement.Attempts) != 2 {
+		t.Fatalf("implement step = %+v, want one completed Step with two attempts", implement)
+	}
+	if first, second := implement.Attempts[0], implement.Attempts[1]; first.ID.AttemptNo != 1 || first.State != work.AgentAttemptFailed || first.FailureKind != work.RunFailureAgentUnrecoverable || second.ID.AttemptNo != 2 {
+		t.Fatalf("implement attempts = %+v, want failed unresumable attempt 1 then explicit attempt 2", implement.Attempts)
+	}
+	if len(h.authorized) != 4 || h.authorized[1].AttemptID.AttemptNo != 1 || h.authorized[2].AttemptID.AttemptNo != 2 {
+		t.Fatalf("authorized attempts = %+v, want plan, implement attempt 1, implement attempt 2, and review", h.authorized)
+	}
+	for _, input := range h.agentInputs {
+		if input.Stage == work.AgentStageImplement && input.AttemptID.AttemptNo == 2 && input.PriorProviderThread != nil {
+			t.Fatalf("replacement attempt resumed an unresumable provider thread: %+v", input.PriorProviderThread)
+		}
+	}
+}
+
+// A replacement is a new semantic Attempt, not a technical retry. It must
+// spend the Run-wide budget, so exhausting that budget after a recovery stops
+// the next fresh implementer authorization.
+func TestWorkOnTicketCountsUnresumableReplacementAgainstTheRunWideAttemptBudget(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "replacement budget", "do not reset the attempt cap", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	policy := work.DefaultTargetRunPolicy()
+	policy.MaxAgentAttempts = 4
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000014", Policy: policy, CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
+		if input.Stage == work.AgentStageImplement && input.AttemptID.AttemptNo == 1 {
+			return targetAgentOutput(t, input.Stage), temporal.NewNonRetryableApplicationError("provider execution cannot resume", activities.ErrTypeUnresumableIncompleteAttempt, nil)
+		}
+		if input.Stage == work.AgentStageReview {
+			var result work.StageOutput
+			if err := json.Unmarshal([]byte(`{"stage":"review","value":{"document":"fix it","findings":[{"id":"blocking","blocking":true,"summary":"fix it"}]}}`), &result); err != nil {
+				return activities.TargetAgentOutput{}, err
+			}
+			return activities.TargetAgentOutput{Output: []byte(`{"stage":"review","value":{"document":"fix it","findings":[{"id":"blocking","blocking":true,"summary":"fix it"}]}}`), Result: result, ThreadID: "review-thread", UsageState: work.UsageMeasured}, nil
+		}
+		return targetAgentOutput(t, input.Stage), nil
+	}
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err == nil {
+		t.Fatal("WorkOnTicket succeeded after the replacement consumed the last agent-attempt budget")
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	total := 0
+	for _, step := range detail.Steps {
+		total += len(step.Attempts)
+	}
+	if total != policy.MaxAgentAttempts || len(h.agentInputs) != policy.MaxAgentAttempts {
+		t.Fatalf("attempts = durable %d / scheduled %d, want the %d-cap including the replacement", total, len(h.agentInputs), policy.MaxAgentAttempts)
+	}
+	implements := 0
+	for _, input := range h.agentInputs {
+		if input.Stage == work.AgentStageImplement {
+			implements++
+		}
+	}
+	if implements != 2 {
+		t.Fatalf("implement activity inputs = %d, want only the failed attempt and explicit replacement", implements)
+	}
+}
+
+// A lost response leaves the worker unable to tell whether the provider
+// completed. The replacement must reconcile the same durable Attempt before
+// authorizing another one. Here generation two returns the checkpointed output,
+// so only generation one represents a provider call.
+func TestWorkOnTicketReconcilesSameAttemptAfterLostAgentResponse(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "lost session", "recover the active run worker", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000015", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.deleteErr = nil
+	providerCalls := 0
+	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
+		if input.Stage == work.AgentStageImplement && input.CredentialRevision.Identity.Generation == 1 {
+			providerCalls++
+			return targetAgentOutput(t, input.Stage), temporal.NewNonRetryableApplicationError("Run Worker Session lost", activities.ErrTypeRunWorkerSessionLost, nil)
+		}
+		return targetAgentOutput(t, input.Stage), nil
+	}
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket: %v", err)
+	}
+	if len(h.provisionedInputs) != 2 || h.provisionedInputs[0].Identity.Generation != 1 || h.provisionedInputs[1].Identity.Generation != 2 {
+		t.Fatalf("provisioned generations = %+v, want generation one then one replacement", h.provisionedInputs)
+	}
+	if len(h.deleted) == 0 || h.deleted[0].Identity.Generation != 1 {
+		t.Fatalf("deleted workers = %+v, want lost generation one removed before replacement", h.deleted)
+	}
+	firstDelete, replacementProvision := -1, -1
+	for index, operation := range h.controlSequence {
+		if operation == "delete:1" && firstDelete == -1 {
+			firstDelete = index
+		}
+		if operation == "provision:2" && replacementProvision == -1 {
+			replacementProvision = index
+		}
+	}
+	if firstDelete < 0 || replacementProvision <= firstDelete {
+		t.Fatalf("generation lifecycle = %v, want generation one deletion before replacement provision", h.controlSequence)
+	}
+	if len(h.cloneInputs) != 1 || len(h.restoreInputs) != 1 || h.restoreInputs[0].Branch != h.cloneInputs[0].Step.Branch {
+		t.Fatalf("repository replacement restore = clone %+v / restore %+v, want one durable clone Step and one generation-local restore", h.cloneInputs, h.restoreInputs)
+	}
+	implements := make([]activities.TargetAgentInput, 0, 2)
+	for _, input := range h.agentInputs {
+		if input.Stage == work.AgentStageImplement {
+			implements = append(implements, input)
+		}
+	}
+	if providerCalls != 1 || len(implements) != 2 || implements[0].AttemptID.AttemptNo != 1 || implements[0].CredentialRevision.Identity.Generation != 1 || implements[1].AttemptID.AttemptNo != 1 || implements[1].CredentialRevision.Identity.Generation != 2 || implements[1].PriorProviderThread != nil {
+		t.Fatalf("implement recovery = calls %d / inputs %+v, want checkpoint reconciliation of the same Attempt without another provider call", providerCalls, implements)
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	if len(detail.Steps) != 10 || detail.Steps[3].Step.Kind != work.StepPlan || len(detail.Steps[3].Attempts) != 1 || len(detail.Steps[4].Attempts) != 1 || detail.Steps[4].Attempts[0].State != work.AgentAttemptRunning {
+		t.Fatalf("durable recovery detail = %+v, want completed plan once and the same implementation Attempt reconciled after loss", detail)
+	}
+}
+
+func TestWorkOnTicketDoesNotProvisionReplacementUntilLostGenerationIsDeleted(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "blocked replacement", "keep one live worker", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000025", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
+		if input.Stage == work.AgentStageImplement {
+			return targetAgentOutput(t, input.Stage), temporal.NewNonRetryableApplicationError("Run Worker Session lost", activities.ErrTypeRunWorkerSessionLost, nil)
+		}
+		return targetAgentOutput(t, input.Stage), nil
+	}
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err == nil {
+		t.Fatal("WorkOnTicket succeeded despite failed teardown of the lost generation")
+	}
+	if len(h.provisionedInputs) != 1 {
+		t.Fatalf("provisioned generations = %+v, want no generation two while generation one deletion is unconfirmed", h.provisionedInputs)
+	}
+}
+
+// Replacement generations serialize, but a later loss after the prior
+// recovery completed may advance the same Run again without resetting any
+// budget or leaving the preceding generation active.
+func TestWorkOnTicketSerializesSequentialSessionReplacements(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "two lost sessions", "recover twice", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000019", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.deleteErr = nil
+	h.agentResult = func(input activities.TargetAgentInput) (activities.TargetAgentOutput, error) {
+		if input.Stage == work.AgentStageImplement && input.CredentialRevision.Identity.Generation < 3 {
+			return targetAgentOutput(t, input.Stage), temporal.NewNonRetryableApplicationError("Run Worker Session lost", activities.ErrTypeRunWorkerSessionLost, nil)
+		}
+		return targetAgentOutput(t, input.Stage), nil
+	}
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket: %v", err)
+	}
+	if len(h.provisionedInputs) != 3 || h.provisionedInputs[2].Identity.Generation != 3 {
+		t.Fatalf("provisioned generations = %+v, want sequential generations one through three", h.provisionedInputs)
+	}
+	for generation := 1; generation <= 2; generation++ {
+		provision, deleted := -1, -1
+		for index, operation := range h.controlSequence {
+			if operation == "provision:"+strconv.Itoa(generation+1) && provision == -1 {
+				provision = index
+			}
+			if operation == "delete:"+strconv.Itoa(generation) && deleted == -1 {
+				deleted = index
+			}
+		}
+		if deleted < 0 || provision <= deleted {
+			t.Fatalf("generation %d lifecycle = %v, want delete before next provision", generation, h.controlSequence)
+		}
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	if len(detail.Steps[4].Attempts) != 1 || detail.Steps[4].Attempts[0].ID.AttemptNo != 1 {
+		t.Fatalf("implementation attempts = %+v, want the same reconciled Attempt across sequential Session losses", detail.Steps[4].Attempts)
+	}
+}
+
+// Repository-affine operations use the same serialized replacement policy as
+// agent execution. Consecutive Session losses may advance generations until
+// the absolute deadline, but never leave two workers live or create a new Step.
+func TestWorkOnTicketReplacesConsecutiveSessionsDuringRepositoryWork(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "repository session losses", "recover sync twice", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000029", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.deleteErr = nil
+	h.sync = func(input activities.TargetSyncPullRequestInput) (work.PullRequest, error) {
+		if h.provisioned.Identity.Generation < 3 {
+			return work.PullRequest{}, temporal.NewNonRetryableApplicationError("Run Worker Session lost", activities.ErrTypeRunWorkerSessionLost, nil)
+		}
+		position := input.Step
+		position.PushedHead, position.PullRequestNumber, position.PullRequestNodeID = "H1", 1, "PR_node1"
+		if err := h.checkpointRepositoryStep(position); err != nil {
+			return work.PullRequest{}, fmt.Errorf("checkpointing recovered pull request: %w", err)
+		}
+		return work.PullRequest{Number: 1, NodeID: "PR_node1", HeadSHA: "H1", Draft: true}, nil
+	}
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket: %v", err)
+	}
+	if len(h.provisionedInputs) != 3 || len(h.restoreInputs) != 2 {
+		t.Fatalf("repository recovery = provisions %+v / restores %+v, want generations one through three and two restores", h.provisionedInputs, h.restoreInputs)
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	syncSteps := 0
+	for _, step := range detail.Steps {
+		if step.Step.Kind == work.StepSyncPullRequest {
+			syncSteps++
+		}
+	}
+	if syncSteps != 1 {
+		t.Fatalf("sync steps = %d, want one durable Step across consecutive Session losses", syncSteps)
+	}
+}
+
+// A replacement Session can itself disappear while restoring the repository.
+// Recovery must delete that generation before provisioning the next one and
+// retry restoration until one generation is ready for the primary operation.
+func TestWorkOnTicketReplacesSessionLostDuringRepositoryRestore(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "restore session loss", "recover the replacement", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000031", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.deleteErr = nil
+	h.sync = func(input activities.TargetSyncPullRequestInput) (work.PullRequest, error) {
+		if h.provisioned.Identity.Generation == 1 {
+			return work.PullRequest{}, temporal.NewNonRetryableApplicationError("Run Worker Session lost", activities.ErrTypeRunWorkerSessionLost, nil)
+		}
+		position := input.Step
+		position.PushedHead, position.PullRequestNumber, position.PullRequestNodeID = "H1", 1, "PR_node1"
+		if err := h.checkpointRepositoryStep(position); err != nil {
+			return work.PullRequest{}, fmt.Errorf("checkpointing restored pull request: %w", err)
+		}
+		return work.PullRequest{Number: 1, NodeID: "PR_node1", HeadSHA: "H1", Draft: true}, nil
+	}
+	h.restore = func(activities.RestoreTargetRepositoryInput) error {
+		if len(h.restoreInputs) == 1 {
+			return temporal.NewNonRetryableApplicationError("replacement Session lost during restore", activities.ErrTypeRunWorkerSessionLost, nil)
+		}
+		return nil
+	}
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket: %v", err)
+	}
+	if len(h.provisionedInputs) != 3 || len(h.restoreInputs) != 2 {
+		t.Fatalf("restore recovery = provisions %+v / restores %+v, want generations one through three and two restores", h.provisionedInputs, h.restoreInputs)
+	}
+	wantControl := []string{"provision:1", "delete:1", "provision:2", "delete:2", "provision:3", "delete:3"}
+	if fmt.Sprint(h.controlSequence) != fmt.Sprint(wantControl) {
+		t.Fatalf("worker control sequence = %v, want serialized %v", h.controlSequence, wantControl)
+	}
+}
+
+// A durable Git/PR checkpoint is the answer after a lost activity response:
+// recovery may invoke the activity again, but it must return the checkpointed
+// result instead of repeating the GitHub write or moving back to an older head.
+func TestWorkOnTicketRecoversCheckpointedPullRequestAfterSessionLoss(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "checkpointed pull request", "do not repeat sync", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000016", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.deleteErr = nil
+	externalSyncs := 0
+	h.sync = func(input activities.TargetSyncPullRequestInput) (work.PullRequest, error) {
+		if len(h.syncInputs) == 1 {
+			externalSyncs++
+			position := input.Step
+			position.PushedHead = "H1"
+			position.PullRequestNumber, position.PullRequestNodeID = 1, "PR_node1"
+			if err := h.checkpointRepositoryStep(position); err != nil {
+				return work.PullRequest{}, err
+			}
+			return work.PullRequest{Number: 1, NodeID: "PR_node1", HeadSHA: "H1", Draft: true}, temporal.NewNonRetryableApplicationError("Run Worker Session lost", activities.ErrTypeRunWorkerSessionLost, nil)
+		}
+		position := input.Step
+		position.PushedHead = "H1"
+		position.PullRequestNumber, position.PullRequestNodeID = 1, "PR_node1"
+		if len(h.syncInputs) > 2 {
+			if err := h.checkpointRepositoryStep(position); err != nil {
+				return work.PullRequest{}, err
+			}
+		}
+		return work.PullRequest{Number: 1, NodeID: "PR_node1", HeadSHA: "H1", Draft: true}, nil
+	}
+	h.awaitCI = func(input activities.TargetAwaitCIInput) (activities.AwaitCIOutput, error) {
+		if err := h.checkpointRepositoryStep(input.Step); err != nil {
+			return activities.AwaitCIOutput{}, err
+		}
+		if len(h.ciInputs) == 1 {
+			return activities.AwaitCIOutput{CommitSHA: input.CI.CommitSHA, Green: false, RedFailures: []work.CheckFailure{{Name: "test", Evidence: "retry after replacement"}}}, nil
+		}
+		return activities.AwaitCIOutput{CommitSHA: input.CI.CommitSHA, Green: true}, nil
+	}
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket: %v", err)
+	}
+	if externalSyncs != 1 || len(h.syncInputs) != 3 {
+		t.Fatalf("pull request sync = external %d / calls %d, want one GitHub write, checkpoint recovery, then one later semantic sync", externalSyncs, len(h.syncInputs))
+	}
+	if len(h.provisionedInputs) != 2 || h.provisionedInputs[1].Identity.Generation != 2 {
+		t.Fatalf("recovery provision = %+v, want generation two", h.provisionedInputs)
+	}
+	implements := make([]activities.TargetAgentInput, 0, 2)
+	for _, input := range h.agentInputs {
+		if input.Stage == work.AgentStageImplement {
+			implements = append(implements, input)
+		}
+	}
+	if len(implements) != 2 || implements[1].CredentialRevision.Identity.Generation != 2 || implements[1].PriorProviderThread != nil {
+		t.Fatalf("post-replacement implementation = %+v, want a fresh generation-two agent without old provider thread", implements)
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	for _, step := range detail.Steps {
+		if step.Step.Kind == work.StepSyncPullRequest && step.Step.State != work.StepStateCompleted {
+			t.Fatalf("checkpointed sync Step = %+v, want completed durable effect", step.Step)
+		}
+	}
+}
+
+// A provisioned worker without a Session is not a successful Run. Session
+// creation timeout must durably fail the owned Run as unavailable and hand
+// that generation to bounded cleanup.
+func TestWorkOnTicketCleansUpWorkerWhenSessionCreationTimesOut(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "session timeout", "clean up the unclaimed worker", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	policy := work.DefaultTargetRunPolicy()
+	policy.Provisioning.StartToCloseTimeout = time.Minute
+	policy.Provisioning.ScheduleToCloseTimeout = time.Minute
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000017", Policy: policy, CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarnessWithoutSessionWorker(t, s)
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err == nil {
+		t.Fatal("WorkOnTicket succeeded despite no Run Worker Session")
+	}
+	if len(h.provisionedInputs) != 1 || len(h.deleted) == 0 || h.deleted[0].Identity != h.provisionedInputs[0].Identity {
+		t.Fatalf("session-creation cleanup = provision %+v / deletes %+v, want provisioned generation one removed", h.provisionedInputs, h.deleted)
+	}
+	claimed, err := s.Ticket(ctx, ticket.ID)
+	if err != nil {
+		t.Fatalf("Ticket: %v", err)
+	}
+	if claimed.State != store.TicketFailed || claimed.ActiveRunID != "" {
+		t.Fatalf("ticket after failed Session creation = %+v, want failed with no active owner", claimed)
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	if detail.Run.TargetOutcome != work.RunOutcomeFailed || detail.Run.TargetFailure != work.RunFailureRunWorkerUnavailable {
+		t.Fatalf("run after failed Session creation = %+v, want failed/run-worker-unavailable", detail.Run)
+	}
+}
+
+// Cancellation before the ownership claim has committed must leave the
+// Ticket untouched. In particular, the disconnected cancellation finalizer
+// must not invent a canceled Run that was never admitted.
+func TestWorkOnTicketCancellationBeforeClaimLeavesTicketUntouched(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "cancel before claim", "do not admit this run", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000020", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.env.RegisterDelayedCallback(func() { h.env.CancelWorkflow() }, 0)
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); !temporal.IsCanceledError(err) {
+		t.Fatalf("WorkOnTicket cancellation error = %v, want cancellation", err)
+	}
+	got, err := s.Ticket(ctx, ticket.ID)
+	if err != nil {
+		t.Fatalf("Ticket: %v", err)
+	}
+	if got.State != store.TicketOpen || got.ActiveRunID != "" {
+		t.Fatalf("ticket after pre-claim cancellation = %+v, want untouched open ticket", got)
+	}
+	if _, err := s.TargetRunDetail(ctx, in.RunID); err == nil {
+		t.Fatal("TargetRunDetail succeeded for a run canceled before claim")
+	}
+}
+
+// The claim transaction may commit before Temporal observes a canceled
+// activity response. Cancellation reconciles by deterministic Run identity so
+// that this narrow race cannot strand the Ticket as active.
+func TestWorkOnTicketCancellationAfterClaimCommitBeforeResponseReopensTicket(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "claim response lost", "reconcile cancellation", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000030", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.env.RegisterActivityWithOptions(
+		func(_ context.Context, input store.ClaimRunInput) (store.ClaimRunResult, error) {
+			result, err := s.ClaimAndStartRun(context.Background(), input)
+			if err != nil {
+				return store.ClaimRunResult{}, fmt.Errorf("committing claim before response loss: %w", err)
+			}
+			return result, activity.ErrResultPending
+		},
+		activity.RegisterOptions{Name: "ClaimAndStartRun", DisableAlreadyRegisteredCheck: true},
+	)
+	h.env.RegisterDelayedCallback(func() { h.env.CancelWorkflow() }, time.Minute)
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); !temporal.IsCanceledError(err) {
+		t.Fatalf("WorkOnTicket error = %v, want cancellation after committed claim response loss", err)
+	}
+	got, err := s.Ticket(ctx, ticket.ID)
+	if err != nil {
+		t.Fatalf("Ticket: %v", err)
+	}
+	if got.State != store.TicketOpen || got.ActiveRunID != "" {
+		t.Fatalf("ticket after committed claim response loss = %+v, want reopened with no owner", got)
+	}
+}
+
+// Cancellation after claim is durable core work: it disconnects from the
+// canceled execution, returns only the owned Ticket to open, and tears down
+// the Run Worker after stopping the in-flight agent activity.
+func TestWorkOnTicketCancellationDuringAgentReopensTheOwnedTicket(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "cancel active run", "stop during implementation", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000018", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.pendingImplement = true
+	h.env.RegisterDelayedCallback(func() { h.env.CancelWorkflow() }, time.Minute)
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); !temporal.IsCanceledError(err) {
+		t.Fatalf("WorkOnTicket cancellation error = %v, want cancellation", err)
+	}
+	got, err := s.Ticket(ctx, ticket.ID)
+	if err != nil {
+		t.Fatalf("Ticket: %v", err)
+	}
+	if got.State != store.TicketOpen || got.ActiveRunID != "" {
+		t.Fatalf("canceled ticket = %+v, want reopened with no owner", got)
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	if detail.Run.TargetOutcome != work.RunOutcomeCanceled || len(h.deleted) != int(in.Policy.Teardown.Retry.MaximumAttempts) || h.deleted[0].Identity.Generation != 1 {
+		t.Fatalf("cancellation outcome = run %+v / deletes %+v, want durable cancellation despite bounded teardown failure", detail.Run, h.deleted)
+	}
+}
+
+// Once GitHub has confirmed the merge, the terminal Store recording is core
+// work. A late workflow cancellation cannot replace that success with a
+// canceled outcome, and disconnected teardown still receives its bounded
+// cleanup attempt afterward.
+func TestWorkOnTicketConfirmedMergeWinsLateCancellation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "late cancellation", "merge is authoritative", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000021", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.env.SetOnActivityStartedListener(func(info *activity.Info, _ context.Context, _ converter.EncodedValues) {
+		if info.ActivityType.Name == "FinalizeConfirmedMerge" {
+			h.env.CancelWorkflow()
+		}
+	})
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("WorkOnTicket after confirmed merge: %v", err)
+	}
+	got, err := s.Ticket(ctx, ticket.ID)
+	if err != nil {
+		t.Fatalf("Ticket: %v", err)
+	}
+	if got.State != store.TicketDone || got.ActiveRunID != "" {
+		t.Fatalf("ticket after confirmed merge = %+v, want durable done terminal", got)
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	if detail.Run.TargetOutcome != work.RunOutcomeSucceeded || len(h.deleted) != int(in.Policy.Teardown.Retry.MaximumAttempts) {
+		t.Fatalf("late cancellation result = run %+v / deletes %+v, want success with bounded cleanup", detail.Run, h.deleted)
+	}
+}
+
+// A merge confirmed while replacing a canceled predecessor is success for the
+// Ticket but a fence for this workflow execution. The successor must report a
+// typed non-success outcome without reopening the Ticket or rewriting either
+// Run's durable terminal state.
+func TestWorkOnTicketReturnsTypedFenceWhenCanceledPredecessorMerged(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "predecessor merged", "fence the successor", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	predecessorRunID := "019fb901-0000-7000-8000-000000000026"
+	startedAt := targetTestTime.Add(-time.Hour)
+	if _, err := s.ClaimAndStartRun(ctx, store.ClaimRunInput{TicketID: ticket.ID, RunID: predecessorRunID, StartedAt: startedAt}); err != nil {
+		t.Fatalf("ClaimAndStartRun(predecessor): %v", err)
+	}
+	if _, err := s.StartStep(ctx, store.StartStepInput{RunID: predecessorRunID, Ordinal: 1, Kind: work.StepSyncPullRequest, StartedAt: startedAt}); err != nil {
+		t.Fatalf("StartStep(sync predecessor): %v", err)
+	}
+	if _, err := s.CheckpointGitEffect(ctx, store.GitCheckpointInput{
+		GitCheckpoint: store.GitCheckpoint{
+			RunID: predecessorRunID, StepOrdinal: 1, Branch: "software-factory/predecessor",
+			PushedHead: "H-old", PullRequestNumber: 41, PullRequestNodeID: "PR_old",
+			StepResult: json.RawMessage(`{"kind":"synced"}`),
+		},
+		CompletedAt: startedAt.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("CheckpointGitEffect(predecessor): %v", err)
+	}
+	if _, err := s.StartStep(ctx, store.StartStepInput{RunID: predecessorRunID, Ordinal: 2, Kind: work.StepMergePullRequest, StartedAt: startedAt.Add(2 * time.Minute)}); err != nil {
+		t.Fatalf("StartStep(merge predecessor): %v", err)
+	}
+	if _, err := s.CancelRun(ctx, store.CancelRunInput{RunID: predecessorRunID, TicketID: ticket.ID, EndedAt: startedAt.Add(3 * time.Minute)}); err != nil {
+		t.Fatalf("CancelRun(predecessor): %v", err)
+	}
+
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000027", Policy: work.DefaultTargetRunPolicy(), CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.deleteErr = nil
+	h.cloneResult = func(input activities.CloneTargetRepositoryInput) (activities.CloneTargetRepositoryOutput, error) {
+		if input.RetirePullRequestNumber != 41 || input.CarryForwardHead != "H-old" {
+			t.Fatalf("predecessor retirement input = %+v, want PR 41 at H-old", input)
+		}
+		return activities.CloneTargetRepositoryOutput{PredecessorMerge: &work.PullRequestRetirement{Merged: true, ReviewedHead: "H-old", MergeSHA: "M-old"}}, nil
+	}
+
+	h.run(in)
+	workflowErr := h.env.GetWorkflowError()
+	var application *temporal.ApplicationError
+	if !errors.As(workflowErr, &application) || application.Type() != activities.ErrTypePredecessorMergeFenced {
+		t.Fatalf("WorkOnTicket error = %v, want typed %q fence", workflowErr, activities.ErrTypePredecessorMergeFenced)
+	}
+	gotTicket, err := s.Ticket(ctx, ticket.ID)
+	if err != nil {
+		t.Fatalf("Ticket: %v", err)
+	}
+	predecessor, err := s.TargetRunDetail(ctx, predecessorRunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail(predecessor): %v", err)
+	}
+	successor, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail(successor): %v", err)
+	}
+	if gotTicket.State != store.TicketDone || gotTicket.ActiveRunID != "" || predecessor.Run.TargetOutcome != work.RunOutcomeSucceeded || predecessor.Run.MergeSHA != "M-old" || successor.Run.TargetOutcome != work.RunOutcomeCanceled {
+		t.Fatalf("fenced merge state = ticket %+v / predecessor %+v / successor %+v", gotTicket, predecessor.Run, successor.Run)
+	}
+}
+
+// The semantic deadline forbids the next primary operation while preserving
+// the hard-deadline reserve for durable failed finalization and cleanup.
+func TestWorkOnTicketSemanticDeadlineFailsBeforeStartingAnotherStep(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storefake.New()
+	ticket, err := s.CreateTicket(ctx, "semantic deadline", "reserve finalization time", nil)
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	policy := work.DefaultTargetRunPolicy()
+	policy.SemanticDeadline, policy.HardDeadline = time.Minute, 2*time.Minute
+	in := workflows.WorkOnTicketInput{TicketID: ticket.ID, RunID: "019fb901-0000-7000-8000-000000000022", Policy: policy, CloneURL: "https://github.com/example/repository.git", Model: work.Model{Name: "gpt-5", Effort: "high"}}
+	h := newWorkOnTicketHarness(t, s)
+	h.awaitCI = func(input activities.TargetAwaitCIInput) (activities.AwaitCIOutput, error) {
+		if len(h.ciInputs) == 1 {
+			return activities.AwaitCIOutput{}, temporal.NewApplicationErrorWithOptions("checks pending", activities.ErrTypeCINotConcluded, temporal.ApplicationErrorOptions{NextRetryDelay: 2 * time.Minute})
+		}
+		if err := h.checkpointRepositoryStep(input.Step); err != nil {
+			return activities.AwaitCIOutput{}, err
+		}
+		return activities.AwaitCIOutput{CommitSHA: input.CI.CommitSHA, Green: true}, nil
+	}
+
+	h.run(in)
+	if err := h.env.GetWorkflowError(); err == nil {
+		t.Fatal("WorkOnTicket succeeded after its semantic deadline")
+	}
+	got, err := s.Ticket(ctx, ticket.ID)
+	if err != nil {
+		t.Fatalf("Ticket: %v", err)
+	}
+	if got.State != store.TicketFailed || got.ActiveRunID != "" {
+		t.Fatalf("deadline ticket = %+v, want failed with no owner", got)
+	}
+	detail, err := s.TargetRunDetail(ctx, in.RunID)
+	if err != nil {
+		t.Fatalf("TargetRunDetail: %v", err)
+	}
+	if detail.Run.TargetOutcome != work.RunOutcomeFailed || detail.Run.TargetFailure != work.RunFailureSemanticDeadline {
+		t.Fatalf("deadline run = %+v, want semantic-deadline failure", detail.Run)
+	}
+	for _, step := range detail.Steps {
+		if step.Step.Kind == work.StepReview {
+			t.Fatalf("steps = %+v, want no post-deadline review", detail.Steps)
+		}
 	}
 }
 
@@ -659,20 +1822,28 @@ func TestWorkOnTicketRepairsTextConflictOrStaleBaseWithFreshReview(t *testing.T)
 
 type workOnTicketHarness struct {
 	env   *testsuite.TestWorkflowEnvironment
-	store *storefake.Store
+	store workOnTicketStore
 	runID string
 
-	provisioned activities.ProvisionRunWorkerInput
-	clone       activities.CloneTargetRepositoryInput
-	rotations   []activities.RotateRunWorkerGitHubCredentialInput
-	authorized  []activities.AuthorizeRunWorkerAttemptInput
-	agentInputs []activities.TargetAgentInput
-	ci          activities.TargetAwaitCIInput
-	ready       activities.TargetMarkPullRequestReadyInput
-	merge       activities.TargetMergePullRequestInput
-	mergeInputs []activities.TargetMergePullRequestInput
-	deleted     []activities.DeleteRunWorkerInput
-	reviewHead  string
+	provisioned       activities.ProvisionRunWorkerInput
+	clone             activities.CloneTargetRepositoryInput
+	provisionedInputs []activities.ProvisionRunWorkerInput
+	cloneInputs       []activities.CloneTargetRepositoryInput
+	restoreInputs     []activities.RestoreTargetRepositoryInput
+	restore           func(activities.RestoreTargetRepositoryInput) error
+	controlSequence   []string
+	rotations         []activities.RotateRunWorkerGitHubCredentialInput
+	authorized        []activities.AuthorizeRunWorkerAttemptInput
+	authorizeErr      error
+	agentInputs       []activities.TargetAgentInput
+	ci                activities.TargetAwaitCIInput
+	ready             activities.TargetMarkPullRequestReadyInput
+	merge             activities.TargetMergePullRequestInput
+	mergeInputs       []activities.TargetMergePullRequestInput
+	deleted           []activities.DeleteRunWorkerInput
+	reviewHead        string
+	deleteErr         error
+	cloneResult       func(activities.CloneTargetRepositoryInput) (activities.CloneTargetRepositoryOutput, error)
 
 	syncInputs            []activities.TargetSyncPullRequestInput
 	ciInputs              []activities.TargetAwaitCIInput
@@ -684,24 +1855,46 @@ type workOnTicketHarness struct {
 	pendingAgentTaskToken []byte
 }
 
-func newWorkOnTicketHarness(t *testing.T, recorderStore *storefake.Store) *workOnTicketHarness {
+type workOnTicketStore interface {
+	activities.TargetRunRecorder
+	store.CanceledRunRecoveryReader
+}
+
+func newWorkOnTicketHarness(t *testing.T, recorderStore workOnTicketStore) *workOnTicketHarness {
+	return newWorkOnTicketHarnessWithSessionWorker(t, recorderStore, true)
+}
+
+func newWorkOnTicketHarnessWithoutSessionWorker(t *testing.T, recorderStore workOnTicketStore) *workOnTicketHarness {
+	return newWorkOnTicketHarnessWithSessionWorker(t, recorderStore, false)
+}
+
+func newWorkOnTicketHarnessWithSessionWorker(t *testing.T, recorderStore workOnTicketStore, enableSessionWorker bool) *workOnTicketHarness {
 	t.Helper()
 	suite := &testsuite.WorkflowTestSuite{}
 	env := suite.NewTestWorkflowEnvironment()
-	env.SetWorkerOptions(worker.Options{
-		EnableSessionWorker:               true,
-		MaxConcurrentSessionExecutionSize: 1,
-	})
+	if enableSessionWorker {
+		env.SetWorkerOptions(worker.Options{
+			EnableSessionWorker:               true,
+			MaxConcurrentSessionExecutionSize: 1,
+		})
+	}
 	recording, err := activities.NewTargetRecordingActivities(recorderStore)
 	if err != nil {
 		t.Fatalf("NewTargetRecordingActivities: %v", err)
 	}
 	env.RegisterActivity(recording)
+	recovery, err := activities.NewTargetRecoveryActivities(recorderStore)
+	if err != nil {
+		t.Fatalf("NewTargetRecoveryActivities: %v", err)
+	}
+	env.RegisterActivity(recovery)
 
-	h := &workOnTicketHarness{env: env, store: recorderStore}
+	h := &workOnTicketHarness{env: env, store: recorderStore, deleteErr: errors.New("temporary teardown handoff")}
 	env.RegisterActivityWithOptions(
 		func(_ context.Context, in activities.ProvisionRunWorkerInput) (activities.ProvisionRunWorkerOutput, error) {
 			h.provisioned = in
+			h.provisionedInputs = append(h.provisionedInputs, in)
+			h.controlSequence = append(h.controlSequence, "provision:"+strconv.Itoa(in.Identity.Generation))
 			id, err := work.RunWorkerName(in.Identity)
 			if err != nil {
 				return activities.ProvisionRunWorkerOutput{}, err
@@ -713,6 +1906,10 @@ func newWorkOnTicketHarness(t *testing.T, recorderStore *storefake.Store) *workO
 	env.RegisterActivityWithOptions(
 		func(_ context.Context, in activities.CloneTargetRepositoryInput) (activities.CloneTargetRepositoryOutput, error) {
 			h.clone = in
+			h.cloneInputs = append(h.cloneInputs, in)
+			if h.cloneResult != nil {
+				return h.cloneResult(in)
+			}
 			position := in.Step
 			position.PushedHead = "B0"
 			if err := h.checkpointRepositoryStep(position); err != nil {
@@ -723,9 +1920,19 @@ func newWorkOnTicketHarness(t *testing.T, recorderStore *storefake.Store) *workO
 		activity.RegisterOptions{Name: "CloneTargetRepository"},
 	)
 	env.RegisterActivityWithOptions(
+		func(_ context.Context, in activities.RestoreTargetRepositoryInput) error {
+			h.restoreInputs = append(h.restoreInputs, in)
+			if h.restore != nil {
+				return h.restore(in)
+			}
+			return nil
+		},
+		activity.RegisterOptions{Name: "RestoreTargetRepository"},
+	)
+	env.RegisterActivityWithOptions(
 		func(_ context.Context, in activities.AuthorizeRunWorkerAttemptInput) error {
 			h.authorized = append(h.authorized, in)
-			return nil
+			return h.authorizeErr
 		},
 		activity.RegisterOptions{Name: "AuthorizeRunWorkerAttempt"},
 	)
@@ -808,7 +2015,8 @@ func newWorkOnTicketHarness(t *testing.T, recorderStore *storefake.Store) *workO
 	env.RegisterActivityWithOptions(
 		func(_ context.Context, in activities.DeleteRunWorkerInput) error {
 			h.deleted = append(h.deleted, in)
-			return errors.New("temporary teardown handoff")
+			h.controlSequence = append(h.controlSequence, "delete:"+strconv.Itoa(in.Identity.Generation))
+			return h.deleteErr
 		},
 		activity.RegisterOptions{Name: "DeleteRunWorker"},
 	)

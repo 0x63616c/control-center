@@ -26,7 +26,7 @@ func (p *gitRunnerProbe) Run(_ context.Context, dir string, argv []string) (stri
 	case strings.Contains(joined, "remote get-url"):
 		return "https://github.com/example/repo.git\n", 0, nil
 	case strings.Contains(joined, "rev-parse --verify --quiet"):
-		if p.remote {
+		if p.remote || strings.Contains(joined, "^{commit}") {
 			return "remote-head\n", 0, nil
 		}
 		return "", 1, nil
@@ -83,6 +83,31 @@ func TestRepositoryReplacementRestoresTheLastPushedBranch(t *testing.T) {
 		{"git", "rev-parse", "HEAD"},
 	}
 	assertGitArgv(t, runner.calls, want)
+}
+
+func TestRepositoryCarryForwardCreatesFreshBranchAtTheDurableCommit(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "repository")
+	runner := &gitRunnerProbe{}
+	repo, err := NewRepository(root, runner)
+	if err != nil {
+		t.Fatalf("NewRepository: %v", err)
+	}
+	commit := "0123456789abcdef0123456789abcdef01234567"
+	head, err := repo.PrepareFromCommit(context.Background(), "https://github.com/example/repo.git", "factory/ticket-42/new-run", commit)
+	if err != nil {
+		t.Fatalf("PrepareFromCommit: %v", err)
+	}
+	if head != "head-sha" {
+		t.Fatalf("head = %q", head)
+	}
+	assertGitArgv(t, runner.calls, [][]string{
+		{"git", "clone", "--origin", "origin", "https://github.com/example/repo.git", root},
+		{"git", "fetch", "--prune", "origin"},
+		{"git", "rev-parse", "--verify", "--quiet", commit + "^{commit}"},
+		{"git", "checkout", "-B", "factory/ticket-42/new-run", commit},
+		{"git", "push", "--set-upstream", "origin", "factory/ticket-42/new-run"},
+		{"git", "rev-parse", "HEAD"},
+	})
 }
 
 func TestRepositoryRejectsAnExistingCheckoutFromAnotherRemote(t *testing.T) {

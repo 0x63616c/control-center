@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -219,6 +220,37 @@ func TestRunTargetAgentResumesPriorImplementerThreadOnTheSameWorkerGeneration(t 
 	}
 }
 
+func TestRunTargetAgentBoundsVerboseProviderTranscriptBeforeCheckpointing(t *testing.T) {
+	t.Parallel()
+	cp := &attemptCheckpointProbe{}
+	runner := &targetStageRunnerProbe{
+		events: [][]byte{
+			providerThreadStartedEvent(testProviderThreadLive),
+			[]byte(`{"type":"item.completed","text":"` + strings.Repeat("x", work.MaxTargetTranscriptUncompressedBytes) + `"}`),
+		},
+		result: work.StageResult{Output: []byte(`{"document":"done"}`), ThreadID: testProviderThreadLive},
+	}
+	a, err := NewRunWorkerActivities(RunWorkerDeps{
+		Stages: runner, Prompts: promptProbe{}, Checkpoints: func(store.TargetAttemptID) (AttemptCheckpoint, error) { return cp, nil },
+		CredentialRevision: observedCredentialRevision, SecretRedactor: passthroughSecretRedactor{}, ProviderState: providerStateProbe{available: true},
+		Clock: fixedClock{now: time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)}, Heartbeat: func(context.Context) {},
+		Repository: &targetRepositoryProbe{}, GitHub: &targetGitHubProbe{}, Identity: targetTestIdentity, RepositoryCheckpoints: testRepositoryCheckpointFactory,
+	})
+	if err != nil {
+		t.Fatalf("NewRunWorkerActivities: %v", err)
+	}
+	if _, err := a.RunTargetAgent(context.Background(), targetAgentInput()); err != nil {
+		t.Fatalf("RunTargetAgent: %v", err)
+	}
+	terminal := cp.writes[len(cp.writes)-1].Transcript
+	if terminal == nil || terminal.UncompressedSizeBytes > work.MaxTargetTranscriptUncompressedBytes || len(terminal.CompressedBytes) > work.MaxTargetTranscriptCompressedBytes {
+		t.Fatalf("bounded transcript = %+v", terminal)
+	}
+	if !bytes.Contains(decompressTranscript(t, terminal.CompressedBytes), []byte(`"type":"factory.transcript_truncated"`)) {
+		t.Fatal("bounded transcript omitted its durable truncation marker")
+	}
+}
+
 func TestRunTargetAgentRefusesPriorImplementerThreadFromReplacementGeneration(t *testing.T) {
 	t.Parallel()
 	runner := &targetStageRunnerProbe{}
@@ -338,6 +370,39 @@ func TestRunTargetAgentCheckpointsProviderAndTerminalBeforeSuccess(t *testing.T)
 	}
 	if len(cp.writes) != 2 || cp.writes[0].State != work.AgentAttemptRunning || cp.writes[0].ProviderThreadID != testProviderThreadLive || cp.writes[1].State != work.AgentAttemptSucceeded || cp.writes[1].Transcript == nil || string(cp.writes[1].Result) != `{"document":"done"}` {
 		t.Fatalf("checkpoint writes = %+v", cp.writes)
+	}
+}
+
+// Provider progress, rather than elapsed time or a separate liveness loop,
+// keeps the running Agent activity alive. One heartbeat per observed provider
+// event lets Temporal enforce the five-minute silence bound independently.
+func TestRunTargetAgentHeartbeatsEveryProviderProgressEvent(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)
+	cp := &attemptCheckpointProbe{}
+	runner := &targetStageRunnerProbe{
+		events: [][]byte{
+			providerThreadStartedEvent(testProviderThreadLive),
+			[]byte(`{"type":"item.started"}`),
+			[]byte(`{"type":"item.completed"}`),
+		},
+		result: work.StageResult{Output: []byte(`{"document":"done"}`), ThreadID: testProviderThreadLive},
+	}
+	heartbeats := 0
+	a, err := NewRunWorkerActivities(RunWorkerDeps{
+		Stages: runner, Prompts: promptProbe{}, Checkpoints: func(store.TargetAttemptID) (AttemptCheckpoint, error) { return cp, nil },
+		CredentialRevision: observedCredentialRevision, SecretRedactor: passthroughSecretRedactor{}, ProviderState: providerStateProbe{available: true}, Clock: fixedClock{now: now},
+		Heartbeat: func(context.Context) { heartbeats++ }, Repository: &targetRepositoryProbe{}, GitHub: &targetGitHubProbe{}, Identity: targetTestIdentity,
+		RepositoryCheckpoints: testRepositoryCheckpointFactory,
+	})
+	if err != nil {
+		t.Fatalf("NewRunWorkerActivities: %v", err)
+	}
+	if _, err := a.RunTargetAgent(context.Background(), targetAgentInput()); err != nil {
+		t.Fatalf("RunTargetAgent: %v", err)
+	}
+	if heartbeats != len(runner.events) {
+		t.Fatalf("progress heartbeats = %d, want one for each of %d provider events", heartbeats, len(runner.events))
 	}
 }
 

@@ -189,11 +189,15 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("building the target recording activity set: %w", err)
 	}
+	targetRecoveryActs, err := activities.NewTargetRecoveryActivities(factoryStore)
+	if err != nil {
+		return fmt.Errorf("building the target recovery activity set: %w", err)
+	}
 
 	// Registration site. Every workflow and activity set this worker runs is
 	// registered here, on this worker, and nowhere else — one queue, one
 	// worker, one list.
-	register(w, acts, runWorkerControl, ticketActs, recordingActs, transcriptActs, targetRecordingActs, logger)
+	register(w, acts, runWorkerControl, ticketActs, recordingActs, transcriptActs, targetRecordingActs, targetRecoveryActs, logger)
 
 	// Idempotent: a worker replica that loses the race to start this simply
 	// attaches to the execution the winner started, which is why it happens on
@@ -278,6 +282,7 @@ func register(
 	recordingActs *activities.RecordingActivities,
 	transcriptActs *activities.TranscriptRecordingActivities,
 	targetRecordingActs *activities.TargetRecordingActivities,
+	targetRecoveryActs *activities.TargetRecoveryActivities,
 	logger *slog.Logger,
 ) {
 	w.RegisterWorkflow(workflows.FactoryWorkTicket)
@@ -289,6 +294,7 @@ func register(
 	w.RegisterActivity(recordingActs)
 	w.RegisterActivity(transcriptActs)
 	w.RegisterActivity(targetRecordingActs)
+	w.RegisterActivity(targetRecoveryActs)
 
 	logger.Info("registrations",
 		slog.Int("workflows", 3),

@@ -314,6 +314,42 @@ func (q *Queries) CompleteTargetRunSuccess(ctx context.Context, arg CompleteTarg
 	return i, err
 }
 
+const completeTargetRunTerminal = `-- name: CompleteTargetRunTerminal :one
+UPDATE run SET target_outcome = $2, target_failure_kind = $3, ended_at = $4
+WHERE id = $1 AND target_outcome IS NULL
+RETURNING id, ticket_id, started_at, ended_at, outcome, failure_kind, target_outcome, target_failure_kind, reviewed_head, merge_sha
+`
+
+type CompleteTargetRunTerminalParams struct {
+	ID                pgtype.UUID
+	TargetOutcome     pgtype.Text
+	TargetFailureKind string
+	EndedAt           pgtype.Timestamptz
+}
+
+func (q *Queries) CompleteTargetRunTerminal(ctx context.Context, arg CompleteTargetRunTerminalParams) (Run, error) {
+	row := q.db.QueryRow(ctx, completeTargetRunTerminal,
+		arg.ID,
+		arg.TargetOutcome,
+		arg.TargetFailureKind,
+		arg.EndedAt,
+	)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.TicketID,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.Outcome,
+		&i.FailureKind,
+		&i.TargetOutcome,
+		&i.TargetFailureKind,
+		&i.ReviewedHead,
+		&i.MergeSha,
+	)
+	return i, err
+}
+
 const completeTargetStep = `-- name: CompleteTargetStep :one
 UPDATE run_step SET
     state = 'completed',
@@ -385,6 +421,124 @@ func (q *Queries) CompleteTargetTicket(ctx context.Context, arg CompleteTargetTi
 	return i, err
 }
 
+const failRunningTargetAgentAttempts = `-- name: FailRunningTargetAgentAttempts :many
+UPDATE run_agent_attempt SET state = 'failed', failure_kind = $3, ended_at = $4
+WHERE run_id = $1 AND step_ordinal = $2 AND state = 'running'
+RETURNING run_id, step_ordinal, attempt_no, agent_stage, model, effort, state, failure_kind, provider_thread_id, usage_state, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, started_at, ended_at, result, checkpoint_capability_hash
+`
+
+type FailRunningTargetAgentAttemptsParams struct {
+	RunID       pgtype.UUID
+	StepOrdinal int32
+	FailureKind string
+	EndedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) FailRunningTargetAgentAttempts(ctx context.Context, arg FailRunningTargetAgentAttemptsParams) ([]RunAgentAttempt, error) {
+	rows, err := q.db.Query(ctx, failRunningTargetAgentAttempts,
+		arg.RunID,
+		arg.StepOrdinal,
+		arg.FailureKind,
+		arg.EndedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RunAgentAttempt
+	for rows.Next() {
+		var i RunAgentAttempt
+		if err := rows.Scan(
+			&i.RunID,
+			&i.StepOrdinal,
+			&i.AttemptNo,
+			&i.AgentStage,
+			&i.Model,
+			&i.Effort,
+			&i.State,
+			&i.FailureKind,
+			&i.ProviderThreadID,
+			&i.UsageState,
+			&i.InputTokens,
+			&i.CachedInputTokens,
+			&i.OutputTokens,
+			&i.ReasoningTokens,
+			&i.StartedAt,
+			&i.EndedAt,
+			&i.Result,
+			&i.CheckpointCapabilityHash,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const failTargetStep = `-- name: FailTargetStep :one
+UPDATE run_step SET state = 'failed', ended_at = $3, result = $4
+WHERE run_id = $1 AND ordinal = $2 AND state = 'running'
+RETURNING run_id, ordinal, kind, iteration, reason, state, started_at, ended_at, result
+`
+
+type FailTargetStepParams struct {
+	RunID   pgtype.UUID
+	Ordinal int32
+	EndedAt pgtype.Timestamptz
+	Result  []byte
+}
+
+func (q *Queries) FailTargetStep(ctx context.Context, arg FailTargetStepParams) (RunStep, error) {
+	row := q.db.QueryRow(ctx, failTargetStep,
+		arg.RunID,
+		arg.Ordinal,
+		arg.EndedAt,
+		arg.Result,
+	)
+	var i RunStep
+	err := row.Scan(
+		&i.RunID,
+		&i.Ordinal,
+		&i.Kind,
+		&i.Iteration,
+		&i.Reason,
+		&i.State,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.Result,
+	)
+	return i, err
+}
+
+const failTargetTicket = `-- name: FailTargetTicket :one
+UPDATE ticket SET state = 'failed', active_run_id = NULL, updated_at = CURRENT_TIMESTAMP
+WHERE id = $1 AND state = 'active' AND active_run_id = $2
+RETURNING id, title, body, state, created_at, updated_at, active_run_id
+`
+
+type FailTargetTicketParams struct {
+	ID          int64
+	ActiveRunID pgtype.UUID
+}
+
+func (q *Queries) FailTargetTicket(ctx context.Context, arg FailTargetTicketParams) (Ticket, error) {
+	row := q.db.QueryRow(ctx, failTargetTicket, arg.ID, arg.ActiveRunID)
+	var i Ticket
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Body,
+		&i.State,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ActiveRunID,
+	)
+	return i, err
+}
+
 const insertTargetRun = `-- name: InsertTargetRun :one
 INSERT INTO run (id, ticket_id, started_at)
 VALUES ($1, $2, $3)
@@ -412,6 +566,56 @@ func (q *Queries) InsertTargetRun(ctx context.Context, arg InsertTargetRunParams
 		&i.TargetFailureKind,
 		&i.ReviewedHead,
 		&i.MergeSha,
+	)
+	return i, err
+}
+
+const latestCanceledRunGitCheckpoint = `-- name: LatestCanceledRunGitCheckpoint :one
+SELECT checkpoint.run_id, checkpoint.step_ordinal, checkpoint.branch, checkpoint.pushed_head, checkpoint.observed_base, checkpoint.pull_request_number, checkpoint.pull_request_node_id, checkpoint.step_result, COALESCE(merge_step.ordinal, 0)::integer AS merge_step_ordinal
+FROM run AS predecessor
+JOIN run_git_checkpoint AS checkpoint ON checkpoint.run_id = predecessor.id
+LEFT JOIN run_step AS merge_step
+  ON merge_step.run_id = predecessor.id
+  AND merge_step.kind = 'merge_pull_request'
+  AND merge_step.state = 'running'
+WHERE predecessor.ticket_id = $1
+  AND predecessor.id <> $2
+  AND predecessor.target_outcome = 'canceled'
+  AND checkpoint.pushed_head <> ''
+ORDER BY predecessor.ended_at DESC, checkpoint.step_ordinal DESC
+LIMIT 1
+`
+
+type LatestCanceledRunGitCheckpointParams struct {
+	TicketID int64
+	ID       pgtype.UUID
+}
+
+type LatestCanceledRunGitCheckpointRow struct {
+	RunID             pgtype.UUID
+	StepOrdinal       int32
+	Branch            string
+	PushedHead        string
+	ObservedBase      string
+	PullRequestNumber int32
+	PullRequestNodeID string
+	StepResult        []byte
+	MergeStepOrdinal  int32
+}
+
+func (q *Queries) LatestCanceledRunGitCheckpoint(ctx context.Context, arg LatestCanceledRunGitCheckpointParams) (LatestCanceledRunGitCheckpointRow, error) {
+	row := q.db.QueryRow(ctx, latestCanceledRunGitCheckpoint, arg.TicketID, arg.ID)
+	var i LatestCanceledRunGitCheckpointRow
+	err := row.Scan(
+		&i.RunID,
+		&i.StepOrdinal,
+		&i.Branch,
+		&i.PushedHead,
+		&i.ObservedBase,
+		&i.PullRequestNumber,
+		&i.PullRequestNodeID,
+		&i.StepResult,
+		&i.MergeStepOrdinal,
 	)
 	return i, err
 }
@@ -570,6 +774,37 @@ func (q *Queries) ReopenTargetTicket(ctx context.Context, arg ReopenTargetTicket
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ActiveRunID,
+	)
+	return i, err
+}
+
+const startRecoveredTargetMergeStep = `-- name: StartRecoveredTargetMergeStep :one
+INSERT INTO run_step (run_id, ordinal, kind, iteration, reason, state, started_at)
+SELECT $1, COALESCE(MAX(ordinal), 0) + 1, 'merge_pull_request', 0,
+       'reconcile confirmed external merge', 'running', $2
+FROM run_step
+WHERE run_id = $1
+RETURNING run_id, ordinal, kind, iteration, reason, state, started_at, ended_at, result
+`
+
+type StartRecoveredTargetMergeStepParams struct {
+	RunID     pgtype.UUID
+	StartedAt pgtype.Timestamptz
+}
+
+func (q *Queries) StartRecoveredTargetMergeStep(ctx context.Context, arg StartRecoveredTargetMergeStepParams) (RunStep, error) {
+	row := q.db.QueryRow(ctx, startRecoveredTargetMergeStep, arg.RunID, arg.StartedAt)
+	var i RunStep
+	err := row.Scan(
+		&i.RunID,
+		&i.Ordinal,
+		&i.Kind,
+		&i.Iteration,
+		&i.Reason,
+		&i.State,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.Result,
 	)
 	return i, err
 }

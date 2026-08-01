@@ -105,3 +105,13 @@ func TestTargetRecordingActivitiesPropagateMandatoryRecorderFailures(t *testing.
 		t.Fatalf("CheckpointGitEffect error = %v, want wrapped recorder failure", err)
 	}
 }
+
+func TestTargetRecordingActivitiesCancelRunIfClaimedToleratesAMissingClaim(t *testing.T) {
+	t.Parallel()
+	activities := mustNewTargetRecording(t, storefake.New())
+	if err := activities.CancelRunIfClaimed(context.Background(), store.CancelRunInput{
+		RunID: uuid.NewString(), TicketID: 1, EndedAt: fixedTestTime,
+	}); err != nil {
+		t.Fatalf("CancelRunIfClaimed without committed claim: %v", err)
+	}
+}

@@ -803,6 +803,13 @@ func (r productionRepository) Prepare(context.Context, string, string) (string, 
 	return "candidate-head", nil
 }
 
+func (r productionRepository) PrepareFromCommit(context.Context, string, string, string) (string, error) {
+	if err := r.recorder.observe("clone"); err != nil {
+		return "", fmt.Errorf("recording target repository carry-forward: %w", err)
+	}
+	return "candidate-head", nil
+}
+
 type productionStageRunner struct{ recorder productionRecorder }
 
 func (r productionStageRunner) RunTargetStage(_ context.Context, _ work.StageRun, _ string, events work.StageEventSink) (work.StageResult, error) {
@@ -815,7 +822,7 @@ func (r productionStageRunner) RunTargetStage(_ context.Context, _ work.StageRun
 
 type productionPrompts struct{}
 
-func (productionPrompts) Render(work.StageKey, work.TicketDetail, work.PriorTurns, work.AgentPromptContext) (string, []byte, error) {
+func (productionPrompts) Render(work.StageKey, work.TicketDetail, work.PriorTurns, work.AgentPromptContext, int) (string, []byte, error) {
 	return "prompt", []byte(`{}`), nil
 }
 
@@ -876,6 +883,13 @@ func (c *productionRepositoryCheckpoint) CheckpointEffect(_ context.Context, val
 }
 
 type productionGitHub struct{ recorder productionRecorder }
+
+func (g productionGitHub) RetirePullRequest(context.Context, int) (work.PullRequestRetirement, error) {
+	if err := g.recorder.observe("retire"); err != nil {
+		return work.PullRequestRetirement{}, fmt.Errorf("recording target pull request retirement: %w", err)
+	}
+	return work.PullRequestRetirement{}, nil
+}
 
 func (g productionGitHub) PullRequestForBranch(context.Context, string) (work.PullRequest, bool, error) {
 	return work.PullRequest{}, false, nil
