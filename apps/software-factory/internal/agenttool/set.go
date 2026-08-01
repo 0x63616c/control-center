@@ -3,6 +3,7 @@ package agenttool
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 )
 
@@ -30,6 +31,9 @@ func MustSet(id ToolsetID, tools ...runtimeTool) Set {
 	}
 	for _, tool := range tools {
 		specification := tool.Specification()
+		if _, exists := set.tools[specification.Name]; exists {
+			panic(fmt.Sprintf("agenttool: duplicate tool %q in toolset %q", specification.Name, id))
+		}
 		set.tools[specification.Name] = tool
 		set.specifications = append(set.specifications, specification)
 	}
