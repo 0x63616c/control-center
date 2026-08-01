@@ -185,14 +185,27 @@ func TestActivityRendererCarriesAuthoritativeAgentPromptContext(t *testing.T) {
 
 	implementer, _, err := adapter.Render(
 		work.StageKey{Ticket: detail.Number, RunID: "r", Stage: work.StageImplement, Turn: 2},
-		detail, prior, work.AgentPromptContext{CIFailures: []work.CheckFailure{{Name: "test", Fingerprint: "abc", Evidence: "expected true to be false"}}}, work.MaxReviewTurns,
+		detail, prior, work.AgentPromptContext{CandidateHeadSHA: "H1", CIFailures: []work.CheckFailure{{Name: "test", Fingerprint: "abc", Evidence: "expected true to be false"}}}, work.MaxReviewTurns,
 	)
 	if err != nil {
 		t.Fatalf("Render(implement): %v", err)
 	}
-	for _, want := range []string{"CI failures for the exact checked candidate", "check=test", "fingerprint=abc", "expected true to be false"} {
+	for _, want := range []string{"CI failures for the exact checked candidate H1", "check=test", "fingerprint=abc", "expected true to be false"} {
 		if !strings.Contains(implementer, want) {
 			t.Errorf("implement prompt does not contain %q", want)
+		}
+	}
+
+	blockingReview, _, err := adapter.Render(
+		work.StageKey{Ticket: detail.Number, RunID: "r", Stage: work.StageImplement, Turn: 2},
+		detail, prior, work.AgentPromptContext{CandidateHeadSHA: "H1", ReviewFindings: []work.Finding{{ID: "finding_1", Blocking: true, Summary: "repair the boundary"}}}, work.MaxReviewTurns,
+	)
+	if err != nil {
+		t.Fatalf("Render(blocking-review implement): %v", err)
+	}
+	for _, want := range []string{"Blocking review feedback for candidate H1", "id=finding_1", "repair the boundary"} {
+		if !strings.Contains(blockingReview, want) {
+			t.Errorf("blocking review prompt does not contain %q", want)
 		}
 	}
 }
