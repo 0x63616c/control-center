@@ -6,7 +6,7 @@ uses `AgentWorkflow` and no longer installs or invokes the Codex CLI.
 
 ## Codex fresh-filesystem resume
 
-The target sandbox image pins `codex-cli 0.145.0`. On 2026-07-31, the exact
+The retired prototype sandbox image pinned `codex-cli 0.145.0`. On 2026-07-31, the exact
 image (`sf-sandbox:local`, built from `images/sandbox/Dockerfile`) was run twice
 with its normal authentication layout: an auth document mounted at
 `/var/run/secrets/software-factory/codex-auth.json`, symlinked into a fresh
@@ -24,8 +24,9 @@ built and separately running append-only sink. The sink fsyncs every accepted
 event before returning. It had received events while the target container was
 still running, retained all four events after Docker removed the container and
 its `/work` filesystem, and still exposed the terminal envelope and usage.
-This is the executable shape of the planned trusted Run Worker to per-Run
-checkpoint API boundary; it is not the production Store implementation.
+This proved the required durable sink shape. The activated runtime now persists
+Agent Attempt, usage, checkpoint, and transcript evidence through its production
+Store and blob-service boundaries.
 
 A second, fresh target-image process was given that exact ID through
 `codex exec resume <id> -`. It failed before producing a resumed turn:
@@ -96,43 +97,21 @@ replacement Session on a new helper process and second root. Its first activity
 proves the original marker is absent from that root; its next activity writes
 and reads `replacement-state-v1` while reporting the replacement identity and
 process ID.
-It proves Temporal's filesystem/routing capabilities and failure boundary. It
-does not prove domain Agent Attempt closure, Git restoration, budget
-preservation, `WorkOnTicket` recovery, or resumed Codex execution; those remain
-PR 4/5 behavior.
-
-## Legacy replay fixture
-
-`internal/workflows/testdata/factory-dispatcher-paused.json` is an export from
-a real Temporal CLI dev-server execution of the unchanged legacy
-`FactoryDispatcher` registration. It uses valid legacy policy/config input,
-completes the legacy orphan-sweep activity, starts and fires the dispatcher's
-poll timer, completes the subsequent workflow task, starts the next timer, and
-is then terminated so its history remains finite.
-`TestLegacyFactoryDispatcherHistoryReplays` registers only the unchanged
-legacy workflow with `worker.NewWorkflowReplayer` and replays that checked-in
-JSON export.
-
-Ordinary test runs only parse and replay the checked-in fixture; they start no
-server and use no real clock. Regenerate it only through the explicit `manual`
-build tag when intentionally refreshing the legacy evidence:
-
-```sh
-cd apps/software-factory
-go test -tags=manual -run '^TestExportLegacyFactoryDispatcherHistory$' \
-  ./internal/runworkercapability
-```
+It proves Temporal's filesystem/routing capabilities and failure boundary only.
+Domain tests for the activated `WorkOnTicket` runtime separately prove Agent
+Attempt closure, checkpoint restoration, generation replacement, and preservation
+of the original Run budget. Resumed Codex execution is intentionally absent.
 
 ## Target dispatcher replay fixture
 
 `internal/workflows/testdata/target-dispatcher-admission.json` is an export
-from a Temporal CLI dev-server execution of the dormant v0 `Dispatcher`. It
+from a Temporal CLI dev-server execution of the pre-activation v0 `Dispatcher`. It
 retries one no-work `AwaitDispatchableTickets` attempt, then completes the
 next wait and starts one `WorkOnTicket` child, preserving the
-wait-to-admission command sequence before the PR 8 registration cutover makes
-the workflow live.
-`TestTargetDispatcherHistoryReplays` registers the target dispatcher exactly
-as the eventual worker does and replays that checked-in JSON export.
+wait-to-admission command sequence before the registration cutover made the
+workflow live.
+`TestTargetDispatcherHistoryReplays` registers the activated Dispatcher exactly
+as the worker does and replays that checked-in JSON export.
 
 Regenerate it only through the manual dev-server test when intentionally
 refreshing this compatibility evidence:
@@ -143,13 +122,10 @@ go test -tags=manual -run '^TestExportTargetDispatcherHistory$' \
   ./internal/runworkercapability
 ```
 
-## Target vocabulary cleanup
+## Activated vocabulary
 
-The deployed additive Store still calls its opaque historical execution column
-`provider_thread_id` and exposes matching checkpoint compatibility fields.
-Target `WorkOnTicket` writes an AgentWorkflow execution identity there only as
-an opaque legacy value; it is not a provider thread and the target API must not
-present it as one. **PR 8** owns the forward migration, regenerated query/API
-contracts, and console rename to `agent_execution_id` (or
-`conversation_identity`) after the legacy checkpoint protocol is quiesced.
-This PR does not partially rename that deployed protocol.
+Migration 11 removed the legacy lifecycle vocabulary and renamed the opaque
+execution field to `agent_execution_id`. Ticket state is exactly `open`, `active`,
+`done`, or `failed`. Run outcome is exactly `succeeded`, `canceled`, `exhausted`,
+or `failed`. There are no deployed `working` or `review` Ticket states, provider
+thread fields, legacy Run projections, or webhook-owned lifecycle transitions.
