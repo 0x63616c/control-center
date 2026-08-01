@@ -40,9 +40,10 @@ type repositoryEffectEnvelope struct {
 // CloneTargetRepositoryInput identifies the repository Step and source to
 // restore on this Run Worker generation.
 type CloneTargetRepositoryInput struct {
-	Step             RepositoryStep
-	CloneURL         string
-	CarryForwardHead string
+	Step                    RepositoryStep
+	CloneURL                string
+	CarryForwardHead        string
+	RetirePullRequestNumber int
 }
 
 // CloneTargetRepositoryOutput records the exact restored candidate head.
@@ -82,6 +83,19 @@ func (a *RunWorkerActivities) CloneTargetRepository(ctx context.Context, in Clon
 }
 
 func (a *RunWorkerActivities) prepareCloneRepository(ctx context.Context, in CloneTargetRepositoryInput) (string, error) {
+	if in.RetirePullRequestNumber > 0 {
+		retirer, ok := a.deps.GitHub.(TargetPullRequestRetirer)
+		if !ok {
+			return "", fmt.Errorf("retiring the canceled run pull request: %w", work.ErrPermanent)
+		}
+		merged, err := retirer.RetirePullRequest(ctx, in.RetirePullRequestNumber)
+		if err != nil {
+			return "", fmt.Errorf("retiring the canceled run pull request: %w", err)
+		}
+		if merged {
+			return "", fmt.Errorf("canceled run pull request #%d was already merged: %w", in.RetirePullRequestNumber, work.ErrPermanent)
+		}
+	}
 	if strings.TrimSpace(in.CarryForwardHead) == "" {
 		return a.deps.Repository.Prepare(ctx, in.CloneURL, in.Step.Branch)
 	}

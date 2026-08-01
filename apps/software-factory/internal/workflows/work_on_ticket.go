@@ -112,9 +112,10 @@ func WorkOnTicket(ctx workflow.Context, in WorkOnTicketInput) (runErr error) {
 	var clone activities.CloneTargetRepositoryOutput
 	if err := session.execute(ctx, func(sessionCtx workflow.Context) error {
 		return workflow.ExecuteActivity(sessionCtx, targetRunWorkerActs.CloneTargetRepository, activities.CloneTargetRepositoryInput{
-			Step:             activities.RepositoryStep{StepOrdinal: 1, Branch: branch},
-			CloneURL:         in.CloneURL,
-			CarryForwardHead: carryForwardHead(recovery),
+			Step:                    activities.RepositoryStep{StepOrdinal: 1, Branch: branch},
+			CloneURL:                in.CloneURL,
+			CarryForwardHead:        carryForwardHead(recovery),
+			RetirePullRequestNumber: canceledRunPullRequestNumber(recovery),
 		}).Get(sessionCtx, &clone)
 	}); err != nil {
 		return fmt.Errorf("cloning the target repository: %w", err)
@@ -320,6 +321,13 @@ func carryForwardHead(recovery activities.CanceledRunCheckpoint) string {
 		return ""
 	}
 	return recovery.Checkpoint.PushedHead
+}
+
+func canceledRunPullRequestNumber(recovery activities.CanceledRunCheckpoint) int {
+	if !recovery.Found {
+		return 0
+	}
+	return recovery.Checkpoint.PullRequestNumber
 }
 
 func startTargetStep(ctx workflow.Context, in WorkOnTicketInput, ordinal int, kind work.StepKind) error {

@@ -72,6 +72,12 @@ type TargetGitHub interface {
 	ChecksForCommit(context.Context, string, []string) ([]work.CheckRun, error)
 }
 
+// TargetPullRequestRetirer is used only to fence a canceled predecessor's
+// pull request before the successor creates its own.
+type TargetPullRequestRetirer interface {
+	RetirePullRequest(context.Context, int) (merged bool, err error)
+}
+
 // RepositoryCheckpoint is the distinct generation-scoped recovery boundary
 // for repository-affine Steps. It is intentionally not an Agent Attempt
 // checkpoint: its capability survives across many Steps on one generation.

@@ -35,16 +35,23 @@ func (p *targetRepositoryProbe) Prepare(_ context.Context, url, branch string) (
 }
 
 type targetGitHubProbe struct {
-	commitSHA  string
-	required   []string
-	checks     []work.CheckRun
-	pr         work.PullRequest
-	merge      work.PullRequestMergeResult
-	merges     []work.PullRequestMergeResult
-	mergeHeads []string
-	syncCalls  int
-	readyCalls int
-	mergeCalls int
+	commitSHA    string
+	required     []string
+	checks       []work.CheckRun
+	pr           work.PullRequest
+	merge        work.PullRequestMergeResult
+	merges       []work.PullRequestMergeResult
+	mergeHeads   []string
+	syncCalls    int
+	readyCalls   int
+	mergeCalls   int
+	retired      []int
+	retireMerged bool
+}
+
+func (p *targetGitHubProbe) RetirePullRequest(_ context.Context, number int) (bool, error) {
+	p.retired = append(p.retired, number)
+	return p.retireMerged, nil
 }
 
 func (p *targetGitHubProbe) PullRequestForBranch(context.Context, string) (work.PullRequest, bool, error) {
@@ -152,6 +159,24 @@ func TestCloneTargetRepositoryCarriesForwardOnlyTheDurableCommit(t *testing.T) {
 	}
 	if repository.carryHead != in.CarryForwardHead || repository.branch != in.Step.Branch {
 		t.Fatalf("carry-forward repository call = %+v", repository)
+	}
+}
+
+func TestCloneTargetRepositoryRetiresCanceledPullRequestBeforeCarryForward(t *testing.T) {
+	repository := &targetRepositoryProbe{head: "carried-head"}
+	github := &targetGitHubProbe{}
+	a := targetRepositoryActivities(repository, github, &repositoryCheckpointProbe{})
+	in := CloneTargetRepositoryInput{
+		Step:                    RepositoryStep{StepOrdinal: 1, Branch: "factory/ticket-42/new-run"},
+		CloneURL:                "https://github.com/example/repo.git",
+		CarryForwardHead:        "0123456789abcdef0123456789abcdef01234567",
+		RetirePullRequestNumber: 42,
+	}
+	if _, err := a.CloneTargetRepository(context.Background(), in); err != nil {
+		t.Fatalf("CloneTargetRepository: %v", err)
+	}
+	if len(github.retired) != 1 || github.retired[0] != 42 || repository.carryHead != in.CarryForwardHead {
+		t.Fatalf("retirement/carry-forward = %+v / %+v", github.retired, repository)
 	}
 }
 
