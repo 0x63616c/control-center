@@ -30,14 +30,18 @@ func (noopAgentMetrics) AgentChildFinished(telemetry.AgentOutcome)              
 
 // PromptRenderer is the existing product-owned stage prompt and result format.
 type PromptRenderer interface {
-	Render(key work.StageKey, detail work.TicketDetail, prior work.PriorTurns) (prompt string, schema []byte, err error)
+	Render(key work.StageKey, detail work.TicketDetail, prior work.PriorTurns, promptContext work.AgentPromptContext, maxReviewSteps int) (prompt string, schema []byte, err error)
 	Decode(stage work.Stage, result []byte) (work.StageOutput, error)
 }
 
 // PrepareInput contains the bounded parent-owned stage attempt.
 type PrepareInput struct {
-	Attempt  activities.StageAttempt
+	Attempt activities.StageAttempt
+	// Identity is the durable semantic execution identity. Empty retains the
+	// stage-key-derived identity required by pre-target-run histories.
+	Identity string
 	CacheKey string
+	Seed     *agent.ConversationSeed
 }
 
 // PrepareOutput starts the reference-only workflow state.

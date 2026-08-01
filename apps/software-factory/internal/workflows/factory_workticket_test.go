@@ -100,6 +100,7 @@ type factoryTicketHarness struct {
 	lifecycle      []string
 
 	cancelDuringAgent bool
+	agentFailure      *agent.TerminalFailure
 }
 
 func newFactoryTicketHarness(t *testing.T) *factoryTicketHarness {
@@ -263,6 +264,7 @@ func (h *factoryTicketHarness) runVersion(version workflow.Version) {
 				}
 				return workflows.AgentWorkflowResult{
 					Result: result, Usage: work.Usage{InputTokens: 10, OutputTokens: 1}, UsageMeasured: true,
+					Failure:       h.agentFailure,
 					TranscriptRef: agent.TranscriptRef{Key: "conversations/agent/test/transcript/0/digest", Bytes: 1, Digest: "digest"},
 				}, nil
 			})
@@ -562,7 +564,9 @@ func TestFactoryWorkTicketRunsPlanImplementAndReviewAsAgentChildren(t *testing.T
 	for index, stage := range wantStages {
 		input := h.agentChildren[index]
 		wantID := agent.WorkflowID(h.done.RunID, string(stage), 1)
-		if input.Attempt.Key.Stage != stage || input.ToolsetID != wantToolsets[index] || input.Limits != agent.DefaultLimits() {
+		if input.Attempt.Key.Stage != stage || input.ToolsetID != wantToolsets[index] || input.Limits != agent.DefaultLimits() ||
+			input.ModelTurnPolicy != workflows.LegacyAgentWorkflowModelTurnPolicy() ||
+			input.ControlPolicy != workflows.LegacyAgentWorkflowControlPolicy() {
 			t.Fatalf("child %d input = %#v", index, input)
 		}
 		if h.agentChildIDs[index] != wantID {
@@ -572,6 +576,63 @@ func TestFactoryWorkTicketRunsPlanImplementAndReviewAsAgentChildren(t *testing.T
 	for _, activityName := range h.activityStarts {
 		if activityName == "RunPlan" || activityName == "RunImplement" || activityName == "RunReview" {
 			t.Fatalf("new history invoked legacy stage activity %q", activityName)
+		}
+	}
+}
+
+func TestFactoryWorkTicketFailsAnAgentTerminalFailureInsteadOfUsingAnEmptyResult(t *testing.T) {
+	t.Parallel()
+
+	h := newFactoryTicketHarness(t)
+	h.agentFailure = &agent.TerminalFailure{Kind: agent.TerminalFailureAmbiguousToolExecution}
+	h.runVersion(1)
+	if h.env.GetWorkflowError() == nil {
+		t.Fatal("FactoryWorkTicket accepted an agent terminal failure")
+	}
+	if got, want := h.ticketState(t), store.TicketFailed; got != want {
+		t.Fatalf("ticket state = %s, want %s", got, want)
+	}
+	if h.openOrUpdate != 0 {
+		t.Fatalf("opened pull requests = %d, want no proposal from a failed agent child", h.openOrUpdate)
+	}
+}
+
+func TestFactoryWorkTicketGivesEachImplementAttemptDistinctChildAndCacheIdentity(t *testing.T) {
+	t.Parallel()
+
+	h := newFactoryTicketHarness(t)
+	h.review[1] = []work.Finding{{ID: "f1", Blocking: true, Summary: "fix this"}}
+	h.runVersion(1)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+
+	var implements []workflows.AgentWorkflowInput
+	var implementChildIDs []string
+	var reviewers []workflows.AgentWorkflowInput
+	for index, child := range h.agentChildren {
+		switch child.Attempt.Key.Stage {
+		case work.StagePlan:
+		case work.StageImplement:
+			implements = append(implements, child)
+			implementChildIDs = append(implementChildIDs, h.agentChildIDs[index])
+		case work.StageReview:
+			reviewers = append(reviewers, child)
+		}
+	}
+	if len(implements) != 2 || implements[0].Attempt.Key.Turn != 1 || implements[1].Attempt.Key.Turn != 2 {
+		t.Fatalf("implement children = %#v", implements)
+	}
+	if implements[0].CacheKey == implements[1].CacheKey || implements[0].CacheKey != "agent/"+h.done.RunID+"/implement/1" || implements[1].CacheKey != "agent/"+h.done.RunID+"/implement/2" {
+		t.Fatalf("implement cache keys = %q, %q", implements[0].CacheKey, implements[1].CacheKey)
+	}
+	if len(implementChildIDs) != 2 || implementChildIDs[0] != agent.WorkflowID(h.done.RunID, "implement", 1) ||
+		implementChildIDs[1] != agent.WorkflowID(h.done.RunID, "implement", 2) || implementChildIDs[0] == implementChildIDs[1] {
+		t.Fatalf("implement child workflow IDs = %v", implementChildIDs)
+	}
+	for _, reviewer := range reviewers {
+		if reviewer.Seed != nil {
+			t.Fatalf("review child inherited an implement conversation seed: %#v", reviewer.Seed)
 		}
 	}
 }

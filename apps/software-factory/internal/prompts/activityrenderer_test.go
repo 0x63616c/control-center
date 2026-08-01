@@ -21,7 +21,7 @@ func TestActivityRendererMatchesTheUnderlyingRenderer(t *testing.T) {
 	detail := ticket()
 	prior := everyDocument()
 
-	prompt, schema, err := adapter.Render(work.StageKey{Ticket: detail.Number, RunID: "r", Stage: stage, Turn: 1}, detail, prior)
+	prompt, schema, err := adapter.Render(work.StageKey{Ticket: detail.Number, RunID: "r", Stage: stage, Turn: 1}, detail, prior, work.AgentPromptContext{}, work.MaxReviewTurns)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestActivityRendererSchemaMatchesEachStagesOwnFile(t *testing.T) {
 			t.Fatalf("reading %s: %v", file, err)
 		}
 
-		_, schema, err := adapter.Render(work.StageKey{Ticket: detail.Number, RunID: "r", Stage: stage, Turn: 1}, detail, prior)
+		_, schema, err := adapter.Render(work.StageKey{Ticket: detail.Number, RunID: "r", Stage: stage, Turn: 1}, detail, prior, work.AgentPromptContext{}, work.MaxReviewTurns)
 		if err != nil {
 			t.Fatalf("Render(%s): %v", stage, err)
 		}
@@ -103,7 +103,7 @@ func TestActivityRendererFailsLikeTheRendererItWraps(t *testing.T) {
 	t.Parallel()
 
 	adapter := NewActivityRenderer(newTestRenderer(t))
-	_, _, err := adapter.Render(work.StageKey{Stage: work.StagePlan, Turn: 1}, work.TicketDetail{}, work.PriorTurns{})
+	_, _, err := adapter.Render(work.StageKey{Stage: work.StagePlan, Turn: 1}, work.TicketDetail{}, work.PriorTurns{}, work.AgentPromptContext{}, work.MaxReviewTurns)
 	if err == nil {
 		t.Fatal("Render with an empty ticket detail: want an error, got nil")
 	}
@@ -121,7 +121,7 @@ func TestActivityRendererRendersTheKeysOwnTurn(t *testing.T) {
 
 	prompt, _, err := adapter.Render(
 		work.StageKey{Ticket: detail.Number, RunID: "r", Stage: work.StageReview, Turn: work.MaxReviewTurns},
-		detail, everyDocument(),
+		detail, everyDocument(), work.AgentPromptContext{}, work.MaxReviewTurns,
 	)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
@@ -132,5 +132,80 @@ func TestActivityRendererRendersTheKeysOwnTurn(t *testing.T) {
 	}
 	if strings.Contains(prompt, "turn 0 of") {
 		t.Error("the rendered review prompt says turn 0: the key's turn was dropped")
+	}
+}
+
+// Target runs have a five-review-step budget. That policy must reach the real
+// activity renderer rather than silently falling back to the legacy pipeline's
+// three-turn constant: the fourth and fifth target reviewers need to know
+// they are still within their allotted bounded ledger.
+func TestActivityRendererRendersTheTargetReviewBudgetAtTurnsFourAndFive(t *testing.T) {
+	t.Parallel()
+
+	adapter := NewActivityRenderer(newTestRenderer(t))
+	detail := ticket()
+	for _, turn := range []int{4, 5} {
+		prior := everyDocument()
+		for earlier := 1; earlier < turn; earlier++ {
+			prior.ReviewLedger = append(prior.ReviewLedger, work.ReviewTurnRecord{Turn: earlier})
+		}
+		prompt, _, err := adapter.Render(
+			work.StageKey{Ticket: detail.Number, RunID: "target-run", Stage: work.StageReview, Turn: turn},
+			detail, prior, work.AgentPromptContext{}, 5,
+		)
+		if err != nil {
+			t.Fatalf("Render(review turn %d): %v", turn, err)
+		}
+		want := "turn " + strconv.Itoa(turn) + " of 5"
+		if !strings.Contains(prompt, want) {
+			t.Errorf("target review prompt does not say %q:\n%s", want, prompt)
+		}
+		if len(prior.ReviewLedger) != turn-1 {
+			t.Fatalf("review %d ledger = %d entries, want bounded %d", turn, len(prior.ReviewLedger), turn-1)
+		}
+	}
+}
+
+func TestActivityRendererCarriesAuthoritativeAgentPromptContext(t *testing.T) {
+	t.Parallel()
+	adapter := NewActivityRenderer(newTestRenderer(t))
+	detail := ticket()
+	prior := everyDocument()
+
+	reviewer, _, err := adapter.Render(
+		work.StageKey{Ticket: detail.Number, RunID: "r", Stage: work.StageReview, Turn: 1},
+		detail, prior, work.AgentPromptContext{CandidateHeadSHA: "H1"}, work.MaxReviewTurns,
+	)
+	if err != nil {
+		t.Fatalf("Render(review): %v", err)
+	}
+	if !strings.Contains(reviewer, "reviewing exactly candidate commit H1") {
+		t.Fatalf("review prompt does not name its exact H1 candidate:\n%s", reviewer)
+	}
+
+	implementer, _, err := adapter.Render(
+		work.StageKey{Ticket: detail.Number, RunID: "r", Stage: work.StageImplement, Turn: 2},
+		detail, prior, work.AgentPromptContext{CandidateHeadSHA: "H1", CIFailures: []work.CheckFailure{{Name: "test", Fingerprint: "abc", Evidence: "expected true to be false"}}}, work.MaxReviewTurns,
+	)
+	if err != nil {
+		t.Fatalf("Render(implement): %v", err)
+	}
+	for _, want := range []string{"CI failures for the exact checked candidate H1", "check=test", "fingerprint=abc", "expected true to be false"} {
+		if !strings.Contains(implementer, want) {
+			t.Errorf("implement prompt does not contain %q", want)
+		}
+	}
+
+	blockingReview, _, err := adapter.Render(
+		work.StageKey{Ticket: detail.Number, RunID: "r", Stage: work.StageImplement, Turn: 2},
+		detail, prior, work.AgentPromptContext{CandidateHeadSHA: "H1", ReviewFindings: []work.Finding{{ID: "finding_1", Blocking: true, Summary: "repair the boundary"}}}, work.MaxReviewTurns,
+	)
+	if err != nil {
+		t.Fatalf("Render(blocking-review implement): %v", err)
+	}
+	for _, want := range []string{"Blocking review feedback for candidate H1", "id=finding_1", "repair the boundary"} {
+		if !strings.Contains(blockingReview, want) {
+			t.Errorf("blocking review prompt does not contain %q", want)
+		}
 	}
 }

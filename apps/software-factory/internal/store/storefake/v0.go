@@ -156,8 +156,43 @@ func (f *Store) BindCheckpointCapability(_ context.Context, attemptID store.Targ
 	return nil
 }
 
+// FailAgentAttempt mirrors the main workflow's authority to close one
+// exhausted execution before it may authorize a replacement Attempt.
+func (f *Store) FailAgentAttempt(_ context.Context, in store.AgentAttemptFailureInput) (store.AgentAttempt, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if in.FailureKind == "" || in.EndedAt.IsZero() {
+		return store.AgentAttempt{}, fmt.Errorf("failing agent attempt %s: failure kind and terminal time are required: %w", in.ID, work.ErrPermanent)
+	}
+	if !f.targetRunOwnedLocked(in.ID.RunID) {
+		return store.AgentAttempt{}, fmt.Errorf("failing agent attempt: %w", store.ErrRunOwnership)
+	}
+	attempt, ok := f.targetAttempts[in.ID]
+	if !ok {
+		return store.AgentAttempt{}, fmt.Errorf("attempt %s: %w", in.ID, store.ErrNotFound)
+	}
+	if attempt.State != work.AgentAttemptRunning {
+		if attempt.State != work.AgentAttemptFailed || attempt.FailureKind != in.FailureKind || !attempt.EndedAt.Equal(in.EndedAt) {
+			return store.AgentAttempt{}, fmt.Errorf("failing agent attempt: conflicting terminal failure: %w", work.ErrPermanent)
+		}
+		return attempt, nil
+	}
+	attempt.State, attempt.FailureKind, attempt.EndedAt = work.AgentAttemptFailed, in.FailureKind, in.EndedAt
+	f.targetAttempts[in.ID] = attempt
+	return attempt, nil
+}
+
 // CheckpointAgentAttempt writes only an Attempt owned by the supplied capability.
 func (f *Store) CheckpointAgentAttempt(_ context.Context, in store.AgentCheckpointInput) (store.AgentAttempt, error) {
+	return f.checkpointAgentAttempt(in, true)
+}
+
+// FinalizeAgentWorkflowAttempt mirrors the main-control immutable evidence path.
+func (f *Store) FinalizeAgentWorkflowAttempt(_ context.Context, in store.AgentCheckpointInput) (store.AgentAttempt, error) {
+	return f.checkpointAgentAttempt(in, false)
+}
+
+func (f *Store) checkpointAgentAttempt(in store.AgentCheckpointInput, requireCapability bool) (store.AgentAttempt, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := in.Validate(); err != nil {
@@ -166,7 +201,7 @@ func (f *Store) CheckpointAgentAttempt(_ context.Context, in store.AgentCheckpoi
 	if !f.targetRunOwnedLocked(in.ID.RunID) {
 		return store.AgentAttempt{}, fmt.Errorf("checkpoint: %w", store.ErrRunOwnership)
 	}
-	if f.capabilityHash[in.ID] != in.Capability {
+	if requireCapability && f.capabilityHash[in.ID] != in.Capability {
 		return store.AgentAttempt{}, fmt.Errorf("checkpoint: %w", store.ErrRunOwnership)
 	}
 	attempt, ok := f.targetAttempts[in.ID]
@@ -254,6 +289,37 @@ func (f *Store) CheckpointGitEffect(_ context.Context, in store.GitCheckpointInp
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.checkpointGitEffectLocked(in, true)
+}
+
+// LatestCanceledRunCheckpoint mirrors the production recovery fence: only a
+// canceled predecessor of the same Ticket can donate a durable pushed head.
+func (f *Store) LatestCanceledRunCheckpoint(_ context.Context, ticketID store.TicketID, excludingRunID string) (store.CanceledRunRecovery, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var chosen store.Run
+	found := false
+	for _, run := range f.runs {
+		if run.ID == excludingRunID || run.TicketID != ticketID || run.TargetOutcome != work.RunOutcomeCanceled {
+			continue
+		}
+		checkpoint, exists := f.targetGit[run.ID]
+		if !exists || checkpoint.PushedHead == "" {
+			continue
+		}
+		if !found || run.EndedAt.After(chosen.EndedAt) || (run.EndedAt.Equal(chosen.EndedAt) && run.ID > chosen.ID) {
+			chosen, found = run, true
+		}
+	}
+	if !found {
+		return store.CanceledRunRecovery{}, false, nil
+	}
+	mergeOrdinal := 0
+	for key, step := range f.targetSteps {
+		if key.runID == chosen.ID && step.Kind == work.StepMergePullRequest && step.State == work.StepStateRunning && key.ordinal > mergeOrdinal {
+			mergeOrdinal = key.ordinal
+		}
+	}
+	return store.CanceledRunRecovery{Checkpoint: f.targetGit[chosen.ID], MergeStepOrdinal: mergeOrdinal}, true, nil
 }
 
 // BindRepositoryCapability installs one monotonically increasing Run Worker
@@ -371,6 +437,17 @@ func (f *Store) FinalizeConfirmedMerge(_ context.Context, in store.ConfirmedMerg
 		}
 		return store.TerminalResult{Ticket: f.tickets[in.TicketID], Run: run}, nil
 	}
+	if in.StepOrdinal == 0 && run.TargetOutcome == work.RunOutcomeCanceled {
+		for key := range f.targetSteps {
+			if key.runID == in.RunID && key.ordinal >= in.StepOrdinal {
+				in.StepOrdinal = key.ordinal + 1
+			}
+		}
+		f.targetSteps[targetStepKey{runID: in.RunID, ordinal: in.StepOrdinal}] = store.RunStep{
+			RunID: in.RunID, Ordinal: in.StepOrdinal, Kind: work.StepMergePullRequest,
+			Reason: "reconcile confirmed external merge", State: work.StepStateRunning, StartedAt: in.EndedAt,
+		}
+	}
 	stepKey := targetStepKey{runID: in.RunID, ordinal: in.StepOrdinal}
 	step, ok := f.targetSteps[stepKey]
 	if !ok || step.Kind != work.StepMergePullRequest || step.State != work.StepStateRunning {
@@ -423,7 +500,10 @@ func (f *Store) CancelRun(_ context.Context, in store.CancelRunInput) (store.Ter
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	run, ok := f.runs[in.RunID]
-	if !ok || run.TicketID != in.TicketID {
+	if !ok {
+		return store.TerminalResult{}, fmt.Errorf("cancel: %w", store.ErrNoOwnedClaim)
+	}
+	if run.TicketID != in.TicketID {
 		return store.TerminalResult{}, fmt.Errorf("cancel: %w", store.ErrRunOwnership)
 	}
 	ticket := f.tickets[in.TicketID]
@@ -443,6 +523,48 @@ func (f *Store) CancelRun(_ context.Context, in store.CancelRunInput) (store.Ter
 	ticket.State, ticket.ActiveRunID, ticket.UpdatedAt = store.TicketOpen, "", f.clk.Now()
 	f.tickets[in.TicketID], f.runs[in.RunID] = ticket, run
 	return store.TerminalResult{Ticket: f.tickets[in.TicketID], Run: f.runs[in.RunID]}, nil
+}
+
+// FinalizeRunFailure conditionally records a terminal workflow failure.
+func (f *Store) FinalizeRunFailure(_ context.Context, in store.RunFailureInput) (store.TerminalResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	run, ok := f.runs[in.RunID]
+	if !ok || run.TicketID != in.TicketID {
+		return store.TerminalResult{}, fmt.Errorf("failure: %w", store.ErrRunOwnership)
+	}
+	ticket := f.tickets[in.TicketID]
+	if run.TargetOutcome != "" {
+		if (run.TargetOutcome != in.Outcome || run.TargetFailure != in.FailureKind) && run.TargetOutcome != work.RunOutcomeSucceeded && run.TargetOutcome != work.RunOutcomeCanceled {
+			return store.TerminalResult{}, fmt.Errorf("failure: %w", work.ErrPermanent)
+		}
+		return store.TerminalResult{Ticket: ticket, Run: run}, nil
+	}
+	if ticket.State != store.TicketActive || ticket.ActiveRunID != in.RunID {
+		return store.TerminalResult{}, fmt.Errorf("failure: %w", store.ErrRunOwnership)
+	}
+	if in.Outcome != work.RunOutcomeFailed && in.Outcome != work.RunOutcomeExhausted {
+		return store.TerminalResult{}, fmt.Errorf("failure: %w", work.ErrPermanent)
+	}
+	if in.StepOrdinal > 0 {
+		key := targetStepKey{runID: in.RunID, ordinal: in.StepOrdinal}
+		step, exists := f.targetSteps[key]
+		if !exists || step.State != work.StepStateRunning {
+			return store.TerminalResult{}, fmt.Errorf("failure: %w", store.ErrRunOwnership)
+		}
+		for attemptKey, attempt := range f.targetAttempts {
+			if attemptKey.RunID == in.RunID && attemptKey.StepOrdinal == in.StepOrdinal && attempt.State == work.AgentAttemptRunning {
+				attempt.State, attempt.FailureKind, attempt.EndedAt = work.AgentAttemptFailed, in.FailureKind, in.EndedAt
+				f.targetAttempts[attemptKey] = attempt
+			}
+		}
+		step.State, step.EndedAt, step.Result = work.StepStateFailed, in.EndedAt, in.StepResult
+		f.targetSteps[key] = step
+	}
+	run.TargetOutcome, run.TargetFailure, run.EndedAt = in.Outcome, in.FailureKind, in.EndedAt
+	ticket.State, ticket.ActiveRunID, ticket.UpdatedAt = store.TicketFailed, "", f.clk.Now()
+	f.runs[in.RunID], f.tickets[in.TicketID] = run, ticket
+	return store.TerminalResult{Ticket: ticket, Run: run}, nil
 }
 
 // ReconcileAbandonedRun releases only nonterminal ownership without inventing an outcome.

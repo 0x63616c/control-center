@@ -269,21 +269,25 @@ type StageAttempt struct {
 	Model   work.Model
 	Detail  work.TicketDetail
 	Prior   work.PriorTurns
+	// PromptContext carries authoritative CI, review, or merge feedback. It
+	// remains distinct from model-authored prior output.
+	PromptContext  work.AgentPromptContext
+	MaxReviewSteps int
 }
 
 // NewRunPlanInput builds the plan stage's one attempt.
 func NewRunPlanInput(attempt StageAttempt) RunPlanInput {
-	return RunPlanInput{stageInput: stageInput(attempt)}
+	return RunPlanInput{stageInput: stageInput{Key: attempt.Key, Sandbox: attempt.Sandbox, Model: attempt.Model, Detail: attempt.Detail, Prior: attempt.Prior}}
 }
 
 // NewRunImplementInput builds one implement turn's attempt.
 func NewRunImplementInput(attempt StageAttempt) RunImplementInput {
-	return RunImplementInput{stageInput: stageInput(attempt)}
+	return RunImplementInput{stageInput: stageInput{Key: attempt.Key, Sandbox: attempt.Sandbox, Model: attempt.Model, Detail: attempt.Detail, Prior: attempt.Prior}}
 }
 
 // NewRunReviewInput builds one review turn's attempt.
 func NewRunReviewInput(attempt StageAttempt) RunReviewInput {
-	return RunReviewInput{stageInput: stageInput(attempt)}
+	return RunReviewInput{stageInput: stageInput{Key: attempt.Key, Sandbox: attempt.Sandbox, Model: attempt.Model, Detail: attempt.Detail, Prior: attempt.Prior}}
 }
 
 // RunPlanInput is the plan attempt. There is only ever one per run: plan does

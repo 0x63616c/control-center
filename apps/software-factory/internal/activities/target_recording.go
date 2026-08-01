@@ -3,6 +3,7 @@ package activities
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -17,10 +18,13 @@ type TargetRunRecorder interface {
 	StartStep(context.Context, store.StartStepInput) (store.RunStep, error)
 	CompleteStep(context.Context, string, int, time.Time, json.RawMessage) (store.RunStep, error)
 	StartAgentAttempt(context.Context, store.StartAgentAttemptInput) (store.AgentAttempt, error)
+	FailAgentAttempt(context.Context, store.AgentAttemptFailureInput) (store.AgentAttempt, error)
 	CheckpointAgentAttempt(context.Context, store.AgentCheckpointInput) (store.AgentAttempt, error)
+	FinalizeAgentWorkflowAttempt(context.Context, store.AgentCheckpointInput) (store.AgentAttempt, error)
 	CheckpointGitEffect(context.Context, store.GitCheckpointInput) (store.GitCheckpoint, error)
 	FinalizeConfirmedMerge(context.Context, store.ConfirmedMergeInput) (store.TerminalResult, error)
 	CancelRun(context.Context, store.CancelRunInput) (store.TerminalResult, error)
+	FinalizeRunFailure(context.Context, store.RunFailureInput) (store.TerminalResult, error)
 }
 
 // TargetRecordingActivities adapts target Store persistence to Temporal activities.
@@ -70,6 +74,15 @@ func (a *TargetRecordingActivities) StartAgentAttempt(ctx context.Context, in st
 	return attempt, nil
 }
 
+// FailAgentAttempt closes an exhausted Agent Attempt before the workflow can authorize a replacement.
+func (a *TargetRecordingActivities) FailAgentAttempt(ctx context.Context, in store.AgentAttemptFailureInput) (store.AgentAttempt, error) {
+	attempt, err := a.store.FailAgentAttempt(ctx, in)
+	if err != nil {
+		return store.AgentAttempt{}, fail(ctx, fmt.Sprintf("failing agent attempt %s", in.ID), err)
+	}
+	return attempt, nil
+}
+
 // CheckpointAgentAttempt records terminal agent data before acknowledgement.
 func (a *TargetRecordingActivities) CheckpointAgentAttempt(ctx context.Context, in store.AgentCheckpointInput) (store.AgentAttempt, error) {
 	attempt, err := a.store.CheckpointAgentAttempt(ctx, in)
@@ -102,6 +115,25 @@ func (a *TargetRecordingActivities) CancelRun(ctx context.Context, in store.Canc
 	result, err := a.store.CancelRun(ctx, in)
 	if err != nil {
 		return store.TerminalResult{}, fail(ctx, fmt.Sprintf("canceling run %s", in.RunID), err)
+	}
+	return result, nil
+}
+
+// CancelRunIfClaimed reconciles cancellation across the claim-response race.
+// A missing or later-owned Run means the claim did not become this workflow's
+// cancellable ownership and is therefore an idempotent no-op.
+func (a *TargetRecordingActivities) CancelRunIfClaimed(ctx context.Context, in store.CancelRunInput) error {
+	if _, err := a.store.CancelRun(ctx, in); err != nil && !errors.Is(err, store.ErrRunOwnership) && !errors.Is(err, store.ErrNoOwnedClaim) {
+		return fail(ctx, fmt.Sprintf("canceling run %s if claimed", in.RunID), err)
+	}
+	return nil
+}
+
+// FinalizeRunFailure commits a workflow-owned terminal failure.
+func (a *TargetRecordingActivities) FinalizeRunFailure(ctx context.Context, in store.RunFailureInput) (store.TerminalResult, error) {
+	result, err := a.store.FinalizeRunFailure(ctx, in)
+	if err != nil {
+		return store.TerminalResult{}, fail(ctx, fmt.Sprintf("finalizing failed run %s", in.RunID), err)
 	}
 	return result, nil
 }

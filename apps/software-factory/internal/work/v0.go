@@ -40,6 +40,8 @@ const (
 	RunFailureRunWorkerUnavailable RunFailureKind = "run_worker_unavailable"
 	// RunFailurePersistenceUnavailable records exhausted durable recording retries.
 	RunFailurePersistenceUnavailable RunFailureKind = "persistence_unavailable"
+	// RunFailureSemanticDeadline records work stopped before the hard deadline's finalization reserve.
+	RunFailureSemanticDeadline RunFailureKind = "semantic_deadline"
 	// RunFailureInfrastructure records another classified infrastructure failure.
 	RunFailureInfrastructure RunFailureKind = "infrastructure"
 )
@@ -48,8 +50,8 @@ const (
 type StepKind string
 
 const (
-	// StepPrepareRunWorker creates the Run's execution worker.
-	StepPrepareRunWorker StepKind = "prepare_run_worker"
+	// StepCreateRunWorker creates the Run's execution worker.
+	StepCreateRunWorker StepKind = "create_run_worker"
 	// StepAcquireRunWorkerSession creates the worker-affine Temporal Session.
 	StepAcquireRunWorkerSession StepKind = "acquire_run_worker_session"
 	// StepCloneRepository clones the Run-owned repository workspace.
@@ -176,4 +178,12 @@ type PullRequestMergeResult struct {
 	MergeSHA    string
 	PullRequest PullRequest
 	Diagnostic  string
+}
+
+// PullRequestRetirement is the authoritative state observed while fencing a
+// canceled Run's pull request before a successor starts.
+type PullRequestRetirement struct {
+	Merged       bool
+	ReviewedHead string
+	MergeSHA     string
 }

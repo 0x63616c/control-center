@@ -66,6 +66,25 @@ const (
 	// ErrTypeCINotConcluded is an expected retryable wait. AwaitCI sets its
 	// exact next retry delay so pending CI never enters a workflow poll loop.
 	ErrTypeCINotConcluded = "CINotConcluded"
+
+	// ErrTypePredecessorMergeFenced preserves the target-run recovery outcome:
+	// an older canceled run merged before its successor could proceed.
+	ErrTypePredecessorMergeFenced = "predecessor_merge_fenced"
+	// ErrTypeRunWorkerSessionLost identifies a lost generation-affine tool session.
+	ErrTypeRunWorkerSessionLost = "run_worker_session_lost"
+	// ErrTypeAgentAttemptBudget is the target run's semantic agent budget.
+	ErrTypeAgentAttemptBudget = "agent_attempt_budget"
+	// ErrTypeReviewBudget is the target run's semantic review budget.
+	ErrTypeReviewBudget = "review_budget"
+	// ErrTypeCIUnobserved identifies an exhausted exact-head CI observation window.
+	ErrTypeCIUnobserved = "ci_unobserved"
+	// ErrTypeHardDeadline is the target run's absolute execution ceiling.
+	ErrTypeHardDeadline = "hard_deadline"
+	// ErrTypeSemanticDeadline reserves time for terminal recording and cleanup.
+	ErrTypeSemanticDeadline = "semantic_deadline"
+	// ErrTypeUnresumableIncompleteAttempt is retained for target recovery rows
+	// that predate durable AgentWorkflow conversation references.
+	ErrTypeUnresumableIncompleteAttempt = "unresumable_incomplete_attempt"
 )
 
 // fail translates this service's error vocabulary into Temporal's, once.
