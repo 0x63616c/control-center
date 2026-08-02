@@ -5,10 +5,9 @@ import { DeployTile, DeployTileView } from "./web";
  * The deploys app manifest (Track C, Wave 2). defineApp is the single source
  * of truth for the tile: id, board placement (copied verbatim from the
  * pre-fold tile-registry entry), and components. Not guest-exposed. The
- * github-poll worker cycle (10s interval) stays hand-wired in apps/worker,
- * importing this feature's service directly — Seam S1 (worker-job seam) only
- * covers queue jobs, not interval cycles (roadmap decision), so there is no
- * jobs.ts here.
+ * github-poll worker cycle (10s interval) is App-owned in worker.ts. Codegen
+ * collects that facet into workers.gen.ts, so apps/worker starts it without a
+ * feature-specific import.
  */
 export default defineApp({
   id: "tile_deploys",

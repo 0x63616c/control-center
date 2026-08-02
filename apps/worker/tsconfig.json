@@ -5,15 +5,9 @@
     // Mirrors api: the worker runs via `bun src/index.ts` and never emits.
     // allowImportingTsExtensions lets it resolve @control-center/api's .ts barrel.
     "allowImportingTsExtensions": true,
-    // The worker's own program transitively typechecks apps/api/src files it
-    // imports (worker-deps.ts -> weight-service.ts), which since the weight fold
-    // (Track C, Wave 2) reach @features/weight/* directly (hand-wired ingest
-    // interval, not a feature facet — see AGENTS.md). tsc uses ONE compilerOptions
-    // for the whole program, so this path must be restated here even though
-    // worker itself never imports @features from its own src.
-    // @app-kit* added at S1: the worker now imports @features/_generated/jobs.gen,
-    // whose generated import of features/notif/jobs.ts pulls in `defineJobs`
-    // from @app-kit transitively (worker still never imports @app-kit itself).
+    // The worker imports generated App facet aggregates for queue jobs and
+    // interval cycles. Those aggregates pull @features/* and @app-kit into the
+    // worker's TypeScript program, so their aliases must be restated here.
     "paths": {
       "@app-kit": ["../../app-kit/index.ts"],
       "@app-kit/server": ["../../app-kit/server.ts"],

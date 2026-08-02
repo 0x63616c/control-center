@@ -76,7 +76,16 @@ export const raiseNotificationSchema = z.object({
   dedupeKey: z.string().min(1).max(200).nullish(),
 });
 
+const durableNotificationIntentSchema = raiseNotificationSchema.extend({
+  dedupeKey: z.string().min(1).max(200),
+});
+
 export type RaiseNotificationInput = z.infer<typeof raiseNotificationSchema>;
+
+/** Durable boundary handler for notification intents published by other Apps. */
+export const runRaiseNotificationJob: JobHandler = async (rawPayload) => {
+  await raiseNotification(singletonDb, durableNotificationIntentSchema.parse(rawPayload));
+};
 
 /**
  * Feed filter. "all" is every notification; "unread" narrows to rows the user

@@ -1,6 +1,7 @@
 import {
   DeviceOwner,
   type DeviceStateStore,
+  type HaEntity,
   heartbeat,
   mapHaToReported,
   ownerOf,
@@ -8,10 +9,8 @@ import {
   stateEquals,
 } from "@www/core";
 import { getLogger, logChange } from "@www/logger";
-import { deviceStateStore } from "../db/device-state-store";
-import { integrationSyncStore } from "../db/integration-sync-store";
-import { ha } from "../integrations/homeassistant";
-import type { HaEntity } from "../integrations/homeassistant/types";
+import { deviceStateStore, integrationSyncStore } from "./db";
+import { ha } from "./deps";
 
 const SYNC_INTEGRATION_ID = "homeassistant";
 // Fan-only since the M2 cutover (www-7d5b.2.6): the light enforcer

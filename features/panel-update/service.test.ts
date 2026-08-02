@@ -7,7 +7,7 @@ const captured = vi.hoisted(() => ({
   upserts: [] as Record<string, unknown>[],
   statusRows: [] as Record<string, unknown>[],
 }));
-vi.mock("../db/index", () => ({
+vi.mock("./db", () => ({
   db: {
     insert: () => ({
       values: (row: Record<string, unknown>) => {
@@ -36,7 +36,7 @@ const envMock = vi.hoisted(() => ({
   ASC_KEY_CONTENT: "",
   ASC_APP_ID: "6762095888",
 }));
-vi.mock("@www/platform/env", () => ({ ENV: envMock }));
+vi.mock("./config", () => ({ config: envMock }));
 
 import {
   getAscBuildStatus,
@@ -44,7 +44,7 @@ import {
   parseAscBuildsResponse,
   runAscVersionPollCycle,
   signAscJwt,
-} from "../services/asc-version-service";
+} from "./service";
 
 async function generateP8Pem(): Promise<{ pem: string; publicKey: CryptoKey }> {
   const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [

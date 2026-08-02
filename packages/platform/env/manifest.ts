@@ -94,10 +94,10 @@ export const ENV = defineEnv({
   WITHINGS_CLIENT_SECRET: secret().optionalSecret().forRuntime("worker").forFeatures("weight"),
 
   // ── App Store Connect poll (worker) ───────────────────────────────────────
-  ASC_KEY_ID: secret().optionalSecret().forRuntime("worker"),
-  ASC_ISSUER_ID: secret().optionalSecret().forRuntime("worker"),
-  ASC_KEY_CONTENT: secret().optionalSecret().forRuntime("worker"),
-  ASC_APP_ID: str().default("6762095888").forRuntime("worker"),
+  ASC_KEY_ID: secret().optionalSecret().forRuntime("worker").forFeatures("panel-update"),
+  ASC_ISSUER_ID: secret().optionalSecret().forRuntime("worker").forFeatures("panel-update"),
+  ASC_KEY_CONTENT: secret().optionalSecret().forRuntime("worker").forFeatures("panel-update"),
+  ASC_APP_ID: str().default("6762095888").forRuntime("worker").forFeatures("panel-update"),
 
   // ── Deploys (deploys) ─────────────────────────────────────────────────────
   GITHUB_ACTIONS_TOKEN: secret().optionalSecret().forRuntime("worker").forFeatures("deploys"),

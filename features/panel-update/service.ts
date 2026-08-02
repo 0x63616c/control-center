@@ -1,9 +1,9 @@
 import { getLogger } from "@www/logger";
-import { ENV as config } from "@www/platform/env";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { db } from "../db/index";
-import { ASC_BUILD_STATUS_SINGLETON_ID, ascBuildStatus } from "../db/schema";
+import { config } from "./config";
+import { db } from "./db";
+import { ASC_BUILD_STATUS_SINGLETON_ID, ascBuildStatus } from "./schema";
 
 // App Store Connect version poller. Detects when a newer TestFlight build of
 // the wall-panel iOS shell exists than the one installed on the panel. The

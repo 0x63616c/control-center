@@ -11,9 +11,12 @@
   },
   "dependencies": {
     "@control-center/api": "workspace:*",
+    "@www/core": "workspace:*",
     "@www/logger": "workspace:*",
     "@www/platform": "workspace:*",
-    "@www/worker-runtime": "workspace:*"
+    "@www/worker-runtime": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "zod": "^4.4.2"
   },
   "devDependencies": {
     "@types/bun": "^1.3.13",

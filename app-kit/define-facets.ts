@@ -4,14 +4,16 @@
 // authoring surface. Re-exported here so feature authors and generated code
 // can import every facet type from this one barrel.
 import type { JobSpec } from "@www/core";
+import type { Worker } from "@www/worker-runtime";
 
 export const API_FACET_BRAND = Symbol.for("app-kit.api");
 export const JOBS_FACET_BRAND = Symbol.for("app-kit.jobs");
 export const HTTP_FACET_BRAND = Symbol.for("app-kit.http");
 export const TEMPORAL_FACET_BRAND = Symbol.for("app-kit.temporal");
 export const TILE_VIEWS_FACET_BRAND = Symbol.for("app-kit.tile-views");
+export const WORKER_CYCLES_FACET_BRAND = Symbol.for("app-kit.worker-cycles");
 
-export type { JobSpec };
+export type { JobSpec, Worker };
 
 /** The minimum Tile View declaration codegen needs to enforce App ownership. */
 export interface TileViewDeclaration {
@@ -94,6 +96,9 @@ export function defineTemporal(facet: TemporalFacet): TemporalFacet {
 }
 export function defineTileViews<T extends TileViewDeclaration>(tileViews: T[]): T[] {
   return brand(tileViews, TILE_VIEWS_FACET_BRAND);
+}
+export function defineWorkerCycles<T extends Worker>(cycles: T[]): T[] {
+  return brand(cycles, WORKER_CYCLES_FACET_BRAND);
 }
 
 function brand<T>(v: T, sym: symbol): T {

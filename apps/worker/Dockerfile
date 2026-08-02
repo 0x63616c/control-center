@@ -2,8 +2,8 @@
 
 # ── Stage 1: bundle the worker into a single file ────────────────────────────
 # Same shape as api/Dockerfile, but the entrypoint is the worker app. The
-# worker imports its domain cycles from @control-center/api, so this stage needs the api
-# source too; bun bundles the whole graph into one self-contained JS file, so the
+# worker imports domain cycles from generated App facets and API-owned migration/
+# queue infrastructure, so this stage needs both source trees; bun bundles the
 # runtime image ships no node_modules and no build toolchain (www-xjba).
 FROM oven/bun:1.2-alpine AS build
 
@@ -36,7 +36,7 @@ RUN bun install --frozen-lockfile --ignore-scripts
 COPY apps/api apps/api
 COPY apps/worker apps/worker
 COPY packages packages
-# C7 authoring surface: worker drains feature jobs from the folder tree.
+# App authoring surface: worker drains feature jobs and interval cycles from the folder tree.
 COPY app-kit app-kit
 COPY features features
 
@@ -44,8 +44,8 @@ COPY features features
 # runtime migrator (re-exported from @control-center/api), so drizzle-kit never ships.
 # `cd apps/worker` first: bun build resolves the `@features/*` alias via the
 # nearest tsconfig's `paths`, and the ROOT tsconfig is deliberately paths-free.
-# apps/worker/tsconfig.json carries `@features` (S1: the worker now imports
-# features/_generated/jobs.gen), so build from there. Mirrors apps/api/Dockerfile.
+# apps/worker/tsconfig.json carries `@features` for the generated jobs and worker
+# aggregates, so build from there. Mirrors apps/api/Dockerfile.
 RUN cd apps/worker && bun build src/index.ts --target=bun --outfile ../../dist/worker.js
 
 # ── Stage 2: runtime image ────────────────────────────────────────────────────

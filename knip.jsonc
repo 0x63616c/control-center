@@ -172,6 +172,11 @@
       // Tests are in test/ - declare explicitly so knip registers them as entries.
       "entry": ["test/**/*.test.ts"]
     },
+    "apps/worker": {
+      // workers.gen.ts is deliberately ignored as generated output, so knip
+      // cannot see these direct runtime edges from the generated App aggregate.
+      "ignoreDependencies": ["@www/core", "drizzle-orm", "zod"]
+    },
     "apps/manage": {
       // extension/content.js is loaded by Chrome from the unpacked extension,
       // never imported — knip sees no edge to it, and the same goes for the

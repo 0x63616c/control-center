@@ -10,7 +10,7 @@
  * satisfies).
  */
 import { defineJobs } from "@app-kit";
-import { runNotifyJob } from "./service";
+import { runNotifyJob, runRaiseNotificationJob } from "./service";
 
 // Also declared in ./service.ts (the file every consuming tsc program actually
 // imports); see the comment there for why. Declared here too, at the facet's
@@ -22,4 +22,7 @@ declare module "@www/core" {
   }
 }
 
-export const jobs = defineJobs([{ type: "notify", handler: runNotifyJob, maxMs: 60_000 }]);
+export const jobs = defineJobs([
+  { type: "notify", handler: runNotifyJob, maxMs: 60_000 },
+  { type: "raise_notification", handler: runRaiseNotificationJob, maxMs: 60_000 },
+]);

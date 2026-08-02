@@ -1,6 +1,10 @@
 import { beforeAll, expect, it } from "vitest";
-import { defineTileViews } from "../../../app-kit";
-import { collect, collectTileViewsExport } from "../../../scripts/apps-gen/collect";
+import { defineTileViews, defineWorkerCycles } from "../../../app-kit";
+import {
+  collect,
+  collectTileViewsExport,
+  collectWorkerCyclesExport,
+} from "../../../scripts/apps-gen/collect";
 import { validate } from "../../../scripts/apps-gen/validate";
 
 let collected: Awaited<ReturnType<typeof collect>>;
@@ -18,6 +22,20 @@ it("requires the conventional tileViews export consumed by web.gen.ts", () => {
   );
   expect(() => collectTileViewsExport({ tileViews, views: tileViews }, "weather")).toThrow(
     /exactly one.*named tileViews/,
+  );
+});
+
+it("requires the conventional cycles export consumed by workers.gen.ts", () => {
+  const cycles = defineWorkerCycles([
+    { name: "weather-ingest", intervalMs: 1000, run: async () => {} },
+  ]);
+
+  expect(collectWorkerCyclesExport({ cycles }, "weather")).toBe(cycles);
+  expect(() => collectWorkerCyclesExport({ workers: cycles }, "weather")).toThrow(
+    /exactly one.*named cycles/,
+  );
+  expect(() => collectWorkerCyclesExport({ cycles, workers: cycles }, "weather")).toThrow(
+    /exactly one.*named cycles/,
   );
 });
 
@@ -142,4 +160,29 @@ it("collect() finds one App-owned Tile View declaration for every board Tile", (
     tileId: "tile_weath",
     source: "feature:weather",
   });
+});
+
+it("collect() sources worker cycles from owning App facets", () => {
+  const model = collected;
+
+  expect(model.workerCycles).toContainEqual({
+    name: "weather-ingest",
+    source: "feature:weather",
+  });
+  expect(model.workerCycles).toContainEqual({
+    name: "sonos-volume-enforcer",
+    source: "feature:sound",
+  });
+  expect(model.features.find((feature) => feature.dir === "weather")?.hasWorker).toBe(true);
+  expect(model.workerCycles.map((cycle) => cycle.name).sort()).toEqual([
+    "asc-version-poll",
+    "climate-enforcer",
+    "device-sync",
+    "github-actions-poll",
+    "light-enforcer",
+    "party-mode",
+    "sonos-volume-enforcer",
+    "weather-ingest",
+    "withings-weight-ingest",
+  ]);
 });

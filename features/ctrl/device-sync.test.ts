@@ -14,12 +14,17 @@ const { mockDbSelect, mockDbInsert } = vi.hoisted(() => ({
   mockDbInsert: vi.fn(),
 }));
 
-vi.mock("../db/index", () => ({
-  db: {
+vi.mock("./db", async () => {
+  const { createPgIntegrationSyncStore } = await import("@www/core");
+  const db = {
     select: mockDbSelect,
     insert: mockDbInsert,
-  },
-}));
+  };
+  return {
+    db,
+    integrationSyncStore: createPgIntegrationSyncStore(db as never),
+  };
+});
 
 // ─── mock HA ─────────────────────────────────────────────────────────────────
 
@@ -27,7 +32,7 @@ const { mockGetEntities } = vi.hoisted(() => ({
   mockGetEntities: vi.fn(),
 }));
 
-vi.mock("../integrations/homeassistant", () => ({
+vi.mock("./deps", () => ({
   ha: {
     getEntities: mockGetEntities,
   },
@@ -35,11 +40,7 @@ vi.mock("../integrations/homeassistant", () => ({
 
 // ─── import after mocks ──────────────────────────────────────────────────────
 
-import {
-  reconcile,
-  runDeviceSyncCycle,
-  sweepExpiredWindows,
-} from "../services/device-sync-service";
+import { reconcile, runDeviceSyncCycle, sweepExpiredWindows } from "./device-sync";
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 

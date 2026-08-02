@@ -1,9 +1,9 @@
 /**
  * Barrel of everything the worker app (@control-center/worker) needs from the api domain
  * (www-xjba). The worker package owns the scheduling framework + job registry;
- * the actual reconcile/ingest cycles, the env, and the migrator still live here
- * and are re-exported through the `@control-center/api/worker` subpath so worker has a
- * single, explicit import surface rather than reaching into internal paths.
+ * the API-owned migrator and durable queue infrastructure are re-exported
+ * through the `@control-center/api/worker` subpath. Domain cycles are App-owned
+ * and reach the worker through features/_generated/workers.gen.ts.
  *
  * There is one barrel because there is one worker app: since media-worker was
  * folded into worker, that single process owns every loop and every job type ,
@@ -21,7 +21,6 @@
  * deploys re-export below no longer risks baking a pre-hydration default.
  */
 
-export { runGithubPollCycle } from "@features/deploys/service";
 export { runMigrations } from "./db/migrate";
 // Durable job queue (now @www/core, bound to apps/api's db behind ./jobs/queue).
 // Each type is wrapped as its own Worker at the entrypoint.
@@ -33,9 +32,3 @@ export {
   releaseInFlightJobsWithTimeout,
   staleJobReaper,
 } from "./jobs/queue";
-export { runAscVersionPollCycle } from "./services/asc-version-service";
-export { runClimateEnforcerCycle } from "./services/climate-enforcer-service";
-export { runDeviceSyncCycle } from "./services/device-sync-service";
-export { runEnforcerCycle } from "./services/light-enforcer-service";
-export { reconcilePartyMode } from "./services/party-service";
-export { runWithingsWeightIngestCycle } from "./services/withings-weight-service";

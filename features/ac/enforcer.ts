@@ -28,8 +28,10 @@ import {
   CLIMATE_DEVICE_ID,
   climateSetpointsObservable,
   climateStateConverged,
+  type DeviceClimateState,
   DeviceKind,
   type DeviceStateStore,
+  type HaEntity,
   heartbeat,
   isActivelyConditioning,
   isClimateState,
@@ -41,12 +43,8 @@ import {
   windowOpen,
 } from "@www/core";
 import { getLogger, logChange } from "@www/logger";
-import { ENV as config } from "@www/platform/env";
-import { deviceStateStore } from "../db/device-state-store";
-import { integrationSyncStore } from "../db/integration-sync-store";
-import type { DeviceClimateState } from "../db/schema";
-import { ha } from "../integrations/homeassistant";
-import type { HaEntity } from "../integrations/homeassistant/types";
+import { config } from "./config";
+import { deviceStateStore, ha, integrationSyncStore } from "./deps";
 
 const CLIMATE_ENFORCER_INTEGRATION_ID = "climate-enforcer";
 

@@ -5,30 +5,20 @@
  * it out of api keeps the api request-only and lets the loops build, ship,
  * scale, and restart on their own image (www-7d5b.1.2 promoted to a real app).
  *
- * The domain cycles (enforce lights/climate, sync fans, party, ingest weather)
- * still live in @control-center/api and are imported via its ./worker barrel; this package
- * owns only the worker framework (runtime/types) and the worker list below ,
- * which capability runs on what cadence. The eventual packages/core extraction
- * will dissolve the api dependency; until then this is the seam.
+ * Apps own domain cycles and cadence in features/<id>/worker.ts. Codegen folds
+ * those facets into workers.gen.ts; this package owns process lifecycle, queue
+ * workers, migrations, metrics, and graceful shutdown.
  */
 import "./boot-env";
 import {
   type JobSpec,
   jobWorker,
-  reconcilePartyMode,
   releaseInFlightJobsWithTimeout,
-  runAscVersionPollCycle,
-  runClimateEnforcerCycle,
-  runDeviceSyncCycle,
-  runEnforcerCycle,
-  runGithubPollCycle,
   runMigrations,
-  runWithingsWeightIngestCycle,
   staleJobReaper,
 } from "@control-center/api/worker";
 import { GENERATED_JOBS } from "@features/_generated/jobs.gen";
-import { runSonosVolumeEnforcerCycle } from "@features/sound/enforcer";
-import { runWeatherIngestCycle } from "@features/weather/ingest";
+import { GENERATED_WORKERS } from "@features/_generated/workers.gen";
 import { createLogger, installFatalHandlers } from "@www/logger";
 import { ENV as config } from "@www/platform/env";
 import { initMetrics, startMetricsServer } from "@www/platform/metrics";
@@ -70,86 +60,7 @@ try {
 const JOBS: JobSpec[] = [...GENERATED_JOBS];
 
 const workers: Worker[] = [
-  {
-    // DB-authoritative light enforcer (www-7d5b.2.6): reconciles desired→HA for the
-    // managed lights every ~1s. The sole owner of light/switch reconcile now ,
-    // device-sync no longer touches them.
-    name: "light-enforcer",
-    intervalMs: 1_000,
-    runOnStart: true,
-    run: runEnforcerCycle,
-  },
-  {
-    // DB-authoritative climate enforcer (www-unxz.2): reconciles desired→HA for the
-    // single house thermostat every ~1s (enforce policy , the dashboard wins).
-    // Writes real ambient/hvac_action into reportedState so getClimate reads the
-    // DB row with no HA call.
-    name: "climate-enforcer",
-    intervalMs: 1_000,
-    runOnStart: true,
-    run: runClimateEnforcerCycle,
-  },
-  {
-    // DB-authoritative Sonos volume enforcer (www-5mek): desiredState is truth,
-    // the player is the actuator. Reconciles every ~1s , push inside the command
-    // window, adopt external changes (Sonos app / hardware buttons) outside it.
-    name: "sonos-volume-enforcer",
-    intervalMs: 1_000,
-    runOnStart: true,
-    run: runSonosVolumeEnforcerCycle,
-  },
-  {
-    // Fan-only since the cutover; lights moved to the enforcer above.
-    name: "device-sync",
-    intervalMs: 1_000,
-    runOnStart: true,
-    run: runDeviceSyncCycle,
-  },
-  {
-    // Party-mode reconciler (www-7d5b.3.3): reads the lamp_mode DB row + lamp
-    // on-state and starts/stops/restarts the in-process party animation engine.
-    // DB-row-as-truth makes party durable across worker restarts (re-arms here).
-    name: "party-mode",
-    intervalMs: 2_000,
-    runOnStart: true,
-    run: reconcilePartyMode,
-  },
-  {
-    name: "weather-ingest",
-    intervalMs: 5 * 60_000,
-    runOnStart: true,
-    run: runWeatherIngestCycle,
-  },
-  {
-    // Withings direct-API weight ingest: fetches new measurements straight
-    // from Withings' cloud API. 10s so a weigh-in lands within ~30s
-    // end-to-end (matches POLL.weight on the panel), which must also absorb
-    // Withings' own scale→cloud sync lag. 6 req/min, trivial against
-    // Withings' 120/min limit.
-    name: "withings-weight-ingest",
-    intervalMs: 10_000,
-    runOnStart: true,
-    run: runWithingsWeightIngestCycle,
-  },
-  {
-    // GitHub Actions deploy poller (Deploys tile): 10s tick, but the cycle
-    // self-gates to one real poll per 60s while no run is in flight, so idle
-    // cost is ~60 req/hr and a deploy is picked up within 10s. A no-op when
-    // GITHUB_ACTIONS_TOKEN is unset.
-    name: "github-actions-poll",
-    intervalMs: 10_000,
-    runOnStart: true,
-    run: runGithubPollCycle,
-  },
-  {
-    // App Store Connect TestFlight-build poller: upserts the latest installable
-    // shell build into asc_build_status so the board can show "update available".
-    // 1/min is ~1.7% of ASC's 3600/hr budget; a no-op when ASC_* env is unset.
-    name: "asc-version-poll",
-    intervalMs: 60_000,
-    runOnStart: true,
-    run: runAscVersionPollCycle,
-  },
+  ...GENERATED_WORKERS,
   // One Worker per job type keeps feature-owned work independently scheduled.
   // The reaper recovers rows stranded at `running` by a process death that no
   // in-process timeout can observe.

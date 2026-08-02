@@ -120,7 +120,19 @@ import {
   newNotificationId,
   raiseNotification,
   registerPushToken,
+  runRaiseNotificationJob,
 } from "./service";
+
+describe("runRaiseNotificationJob", () => {
+  it("rejects durable intents without a stable dedupe key", async () => {
+    await expect(
+      runRaiseNotificationJob(
+        { category: "home", severity: "info", title: "New weight logged" },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow();
+  });
+});
 
 type Db = NodePgDatabase<typeof schema>;
 

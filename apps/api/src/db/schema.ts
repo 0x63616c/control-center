@@ -1,5 +1,5 @@
 // Drizzle schema. Backend agents add tables here.
-import { integer, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
 // The `job` durable queue table now lives in @www/core
 // (packages/core/src/jobs/schema.ts). Re-exported here (an identifier
@@ -27,9 +27,8 @@ export {
   type LightColor,
 } from "@www/core";
 
-// The lamp_mode table (LAMP_MODE_SINGLETON_ID) now lives in features/ctrl/schema.ts
-// (Track C fold) — imported by the hand-wired light-enforcer/party-service via
-// @features/ctrl/schema.
+// The lamp_mode table (LAMP_MODE_SINGLETON_ID) lives in features/ctrl/schema.ts.
+// The ctrl App's worker.ts facet owns the light-enforcer and party-mode cycles.
 
 // Global control-center settings, a SINGLETON row (id = SETTINGS_SINGLETON_ID).
 // Holds the wall panel's durable preferences (idle-dim, dev overlays, snap mode)
@@ -78,23 +77,6 @@ export const deviceSettings = pgTable("device_settings", {
   deviceId: text("device_id").primaryKey(),
   value: jsonb("value").$type<DeviceSettingsValue>().notNull(),
   updatedAtUtc: timestamp("updated_at_utc", { withTimezone: true }).notNull().defaultNow(),
-});
-
-// Latest known TestFlight build of the wall-panel iOS shell, a SINGLETON row
-// (id = ASC_BUILD_STATUS_SINGLETON_ID). Written by the asc-version-poll worker
-// (App Store Connect /v1/builds), read by the system.appUpdateStatus tRPC query
-// so the board can raise an "update available" banner. One row is enough: build
-// numbers are contiguous (fastlane latest_testflight_build_number + 1), so
-// "builds behind" is latest - installed with no history needed. Modeled on the
-// lamp_mode / settings keyed-singleton pattern.
-export const ASC_BUILD_STATUS_SINGLETON_ID = "singleton";
-
-export const ascBuildStatus = pgTable("asc_build_status", {
-  id: text("id").primaryKey(),
-  buildNumber: integer("build_number").notNull(),
-  marketingVersion: text("marketing_version").notNull(),
-  uploadedAtUtc: timestamp("uploaded_at_utc", { withTimezone: true }).notNull(),
-  fetchedAtUtc: timestamp("fetched_at_utc", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ─── Captive portal (www-q002) ──────────────────────────────────────────────

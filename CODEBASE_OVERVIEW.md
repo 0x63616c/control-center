@@ -16,7 +16,8 @@ iPad / browser
 
 background loops and jobs
   -> worker
-  -> @control-center/api/worker domain cycles (apps/api/src/worker-deps.ts barrel)
+  -> features/_generated/workers.gen.ts App-owned cycles
+  -> @control-center/api/worker migrations + durable queue infrastructure
   -> desired-state reconciliation, weather ingest, party mode, weight ingest,
      GitHub deploy polling
 
@@ -63,22 +64,22 @@ that run/deploy, `packages/` = things you import); product features live under
 `features/`:
 
 - `features/<id>/` - one folder per self-contained App (`ac`, `booth`, `ctrl`, `deploys`,
-  `dogcam`, `events`, `felogs`, `guest-wifi`, `network`, `notif`, `sound`, `tesla`, `tv`,
-  `wakes`, `weather`, `weight` today). Each has a `manifest.ts` (tile placement, id) plus
+  `dogcam`, `events`, `felogs`, `guest-wifi`, `network`, `notif`, `panel-update`, `sound`,
+  `tesla`, `tv`, `wakes`, `weather`, `weight` today). Each has a `manifest.ts` (tile placement, id) plus
   whichever convention facets it needs: `web.tsx` (Tile face), `detail.ts` (Tile View declaration), `api.ts` (tRPC
-  router slice), `jobs.ts` (queue job handlers), `schema.ts` (owned tables),
+  router slice), `jobs.ts` (queue job handlers), `worker.ts` (interval cycles), `schema.ts` (owned tables),
   `temporal.ts` (Temporal workflow types + schedules, ADR-0008) with its
   implementation siblings `workflows.ts` (sandboxed) and `activities.ts`.
 - `features/_generated/*.gen.ts` - committed codegen output (`bun run apps:gen`):
-  `tiles.gen.ts`, `web.gen.ts`, `router.gen.ts`, `guest-router.gen.ts`, `jobs.gen.ts`, `http.gen.ts`,
+  `tiles.gen.ts`, `web.gen.ts`, `router.gen.ts`, `guest-router.gen.ts`, `jobs.gen.ts`, `workers.gen.ts`, `http.gen.ts`,
   `schema.gen.ts`, `workflows.gen.ts`, `activities.gen.ts`, `schedules.gen.ts`.
   Never hand-edit.
 - `app-kit` - the `defineApp`/manifest types and server-side router-merging helpers
   every feature's `manifest.ts`/`api.ts` import.
 - `apps/web` - React dashboard, Storybook, and Capacitor iOS shell (`apps/web/ios`).
 - `apps/api` - Bun tRPC backend, DB schema/migrations, the non-feature base routers
-  (health, settings, device-settings, system), a handful of still-hand-wired worker
-  cycles pending hoist (see `## Workers`), and the guest-WiFi HTTP listener.
+  (health, settings, device-settings, system), durable queue infrastructure, and
+  the guest-WiFi HTTP listener.
 - `apps/worker` - Continuous interval workers for home-state reconciliation and ingest.
 - `apps/temporal-worker` - Temporal worker (Node, not bun) serving `HealthCheckWorkflow` on the `main` task queue.
 - `apps/storybook` - Thin wrapper delegating to the web Storybook.
@@ -160,16 +161,9 @@ re-running `bun run apps:gen`, not editing this file.
 
 ## Domain Services
 
-Most feature-owned business logic lives inside each feature's own facet files
-(`features/<id>/api.ts`, `jobs.ts`) rather than a shared `services/` directory.
-`apps/api/src/services/` still holds a residual set of interval-cycle enforcers that
-are hand-wired into `apps/worker` rather than folded into a feature yet: climate,
-light, and device-sync enforcers, party mode, ASC version polling, weight ingest
-(including the Withings variant). The sonos-volume enforcer has
-already been folded into `features/sound/enforcer.ts`. The rest are pending a hoist
-to a shared substrate (tracked as open structural debt); see
-`docs/superpowers/reviews/2026-07-23-post-track-c-codebase-review.md` for the current
-list.
+Feature-owned business logic lives inside each feature folder rather than a
+shared `services/` directory. Interval-cycle implementations and cadence live
+beside their owning App and are registered through `worker.ts` facets.
 
 The Sonos sound-system query (now under `features/sound/`) classifies each group's
 source from the coordinator's `GetMediaInfo` URI (`sourceKind`: line-in/tv/spotify/
@@ -213,7 +207,10 @@ Both the API and workers run migrations at boot so whichever starts first can sa
 
 ## Workers
 
-`worker` owns the interval runtime and imports domain cycles through the narrow `@control-center/api/worker` barrel at `apps/api/src/worker-deps.ts`. The product-owned wrapper is `worker`.
+`worker` owns process lifecycle, metrics, migrations, durable queue workers, and
+graceful shutdown. Apps own interval cadence in `features/<id>/worker.ts`; codegen
+composes those facets into `features/_generated/workers.gen.ts`. Duplicate names
+fail `apps:gen` because worker names are global stats keys.
 
 Registered workers currently include:
 
@@ -223,7 +220,8 @@ Registered workers currently include:
 - `device-sync` every 1s, currently fan-only.
 - `party-mode` every 2s.
 - `weather-ingest` every 5m.
-- `weight-ingest` every 1m (HA Renpho BLE weight sensor → `weight_measurement`).
+- `withings-weight-ingest` every 10s (Withings API → `weight_measurement`).
+- `github-actions-poll` every 10s (self-gated to one idle poll per minute).
 - `asc-version-poll` every 1m (latest TestFlight build of the iOS shell, powering the board's update-available banner).
 - Any feature-owned queue job types are aggregated into
   `features/_generated/jobs.gen.ts`; a feature adds a job by writing `jobs.ts` and
@@ -401,9 +399,9 @@ Persistent state
   -> features/<id>/schema.ts, if needed
 
 Background work
-  -> features/<id>/jobs.ts (queue jobs via codegen), features/<id>/temporal.ts
-     (scheduled workflows, ADR-0008), or apps/worker for a still-hand-wired
-     interval enforcer (see `## Domain Services`)
+  -> features/<id>/worker.ts (interval cycles via codegen),
+     features/<id>/jobs.ts (queue jobs via codegen), or
+     features/<id>/temporal.ts (scheduled workflows, ADR-0008)
 
 Deploy shape
   -> infra/src/services.ts or infra/src/crons.ts, if needed

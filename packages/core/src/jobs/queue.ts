@@ -25,6 +25,7 @@ import { getLogger } from "@www/logger";
 import { observeJobRun } from "@www/platform/metrics";
 import { sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type { NotificationIntent } from "../notifications";
 import { job } from "./schema";
 
 /** The minimal structural surface this module needs from a drizzle db instance. */
@@ -40,16 +41,24 @@ export type JobQueueDb = Pick<
  */
 export type JobHandler<T = unknown> = (payload: T, signal: AbortSignal) => Promise<void>;
 
+/** Values accepted by the durable JSONB queue boundary. */
+export type JsonValue = string | number | boolean | null | JsonValue[] | JsonObject;
+export interface JsonObject {
+  [key: string]: JsonValue | undefined;
+}
+
 /**
  * Open registry of job types. A feature (or apps/api, interim) augments this via
  * `declare module "@www/core"` so its type + payload are known at the enqueue AND
  * handler sites without core depending on the feature. An unregistered type is a
  * compile error at the producer, not a row that parks forever.
  */
-// biome-ignore lint/suspicious/noEmptyInterface: intentional declaration-merge target
-export interface JobTypeRegistry {}
+export interface JobTypeRegistry {
+  /** Core-owned producer port; the notif App supplies the handler. */
+  raise_notification: NotificationIntent;
+}
 export type JobType = keyof JobTypeRegistry & string;
-export type JobPayload<T extends JobType> = JobTypeRegistry[T];
+export type JobPayload<T extends JobType> = JobTypeRegistry[T] & JsonObject;
 
 /** One job type: what runs it, and how long it may take. */
 export interface JobSpec {
@@ -78,7 +87,7 @@ export async function enqueueJob<T extends JobType>(
     .insert(job)
     .values({
       type,
-      payload: payload as Record<string, unknown>,
+      payload,
       priority: opts.priority ?? 0,
       runAfter: opts.runAfter ?? new Date(),
       maxAttempts: opts.maxAttempts ?? 5,

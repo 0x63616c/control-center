@@ -108,6 +108,20 @@ it("throws when two features expose the same top-level router key", () => {
   ).toThrow(/duplicate router key/);
 });
 
+it("throws when two Apps declare the same worker cycle name", () => {
+  expect(() =>
+    validate(
+      model([app({ id: "a", home: true })], {
+        workerCycles: [
+          { name: "weather-ingest", source: "feature:weather" },
+          { name: "weather-ingest", source: "feature:other-weather" },
+        ],
+      }),
+      [],
+    ),
+  ).toThrow(/duplicate worker cycle name 'weather-ingest'/);
+});
+
 it("accepts distinct table names + router keys", () => {
   expect(() =>
     validate(

@@ -4,10 +4,21 @@
  * `createPgDeviceStateStore` substrate in `@www/core`, rather than importing
  * apps/api's db singleton.
  */
-import { createFeatureDb, createPgDeviceStateStore } from "@www/core";
+import {
+  createFeatureDb,
+  createPgDeviceStateStore,
+  createPgIntegrationSyncStore,
+  deviceState,
+  integrationSyncStatus,
+} from "@www/core";
 import { config } from "./config";
-import * as schema from "./schema";
+import * as ctrlSchema from "./schema";
 
-export const db = createFeatureDb(config.DATABASE_URL, schema);
+export const db = createFeatureDb(config.DATABASE_URL, {
+  ...ctrlSchema,
+  deviceState,
+  integrationSyncStatus,
+});
 /** The prod device-state store for this feature (pg adapter over the feature db). */
 export const deviceStateStore = createPgDeviceStateStore(db);
+export const integrationSyncStore = createPgIntegrationSyncStore(db);

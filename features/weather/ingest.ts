@@ -1,8 +1,7 @@
 /**
  * Weather ingest (Track C, Wave 7 fold — was apps/api's weather-ingest-service.ts).
- * Hand-wired as a 5-min Worker interval (apps/worker/src/index.ts), NOT an S1
- * queue job — importing this module directly via `@features/weather/ingest`
- * (apps/worker → @features is allowed).
+ * Registered as a 5-minute App-owned interval through worker.ts. It is not a
+ * durable queue job or a Temporal Schedule.
  */
 import { createPgIntegrationSyncStore, heartbeat, runCycle } from "@www/core";
 import { getLogger } from "@www/logger";
@@ -15,7 +14,7 @@ import { weatherDailyReading, weatherReading } from "./schema";
 const INGEST_INTEGRATION_ID = "weather";
 
 // This feature's own integration-sync store, over its own drizzle db (mirrors
-// apps/api/src/db/integration-sync-store.ts's pattern against apps/api's db).
+// the shared pg adapter's pattern against this App's db).
 const integrationSyncStore = createPgIntegrationSyncStore(db);
 
 // Edge schema: Open-Meteo's response is parsed here so the ingest cycle works

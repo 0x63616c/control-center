@@ -24,7 +24,7 @@ function makeChainable(getResult: () => unknown) {
   return chain;
 }
 
-vi.mock("../db/index", () => ({
+vi.mock("./db", () => ({
   db: {
     select: () => makeChainable(() => captured.selectQueue.shift() ?? []),
     update: () => ({
@@ -47,18 +47,20 @@ vi.mock("../db/index", () => ({
   },
 }));
 
-vi.mock("@features/notif/db", () => ({ db: {} }));
 const notifyMock = vi.hoisted(() => vi.fn());
-vi.mock("@features/notif/service", () => ({ raiseNotification: notifyMock }));
+vi.mock("@www/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@www/core")>()),
+  enqueueNotification: notifyMock,
+}));
 
 const withingsMock = vi.hoisted(() => ({
   isConfigured: vi.fn(() => true),
   refreshToken: vi.fn(),
   getMeasurementsSince: vi.fn(),
 }));
-vi.mock("../integrations/withings", () => ({ withings: withingsMock }));
+vi.mock("./deps", () => ({ withings: withingsMock }));
 
-import { runWithingsWeightIngestCycle } from "./withings-weight-service";
+import { runWithingsWeightIngestCycle } from "./ingest";
 
 const VALID_TOKEN_ROW = {
   id: "singleton",
@@ -146,7 +148,7 @@ describe("runWithingsWeightIngestCycle , token refresh", () => {
 });
 
 describe("runWithingsWeightIngestCycle , measurement ingest", () => {
-  it("inserts a new reading, notifies once, and advances the cursor to the max fetched date", async () => {
+  it("inserts a new reading, publishes one notification, and advances the cursor", async () => {
     captured.selectQueue.push([VALID_TOKEN_ROW]); // token
     captured.selectQueue.push([]); // no existing row for this grpid
     captured.selectQueue.push([]); // no recent readings (sanity band inactive < 3 readings)
@@ -165,7 +167,13 @@ describe("runWithingsWeightIngestCycle , measurement ingest", () => {
       withingsGrpid: "42",
       excludedReason: null,
     });
-    expect(notifyMock).toHaveBeenCalledOnce();
+    expect(notifyMock).toHaveBeenCalledWith(expect.anything(), {
+      category: "home",
+      severity: "info",
+      title: "New weight logged: 155.0lbs",
+      body: "",
+      dedupeKey: "withings-weight-42",
+    });
     const cursorUpdate = captured.updateCalls.find((c) => "lastMeasUpdate" in c);
     expect(cursorUpdate?.lastMeasUpdate).toBe(Math.floor(measuredAt.getTime() / 1000));
   });
