@@ -11,13 +11,13 @@
  * pattern from SettingsButton so the gate unmounts before the page appears.
  */
 
-import { getTileDetailEntry, registryEntryForTileId } from "@features/_generated/web.gen";
+import { getTileDetailEntry } from "@features/_generated/web.gen";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { PageHeader, Skeleton } from "@/components/ui";
 import { interaction } from "../../../lib/log/interaction";
 import { registerOpenModal } from "../../../lib/modal-open-store";
-import { panelSession } from "../../../lib/panel-session";
+import { usePanelAccess } from "../../../lib/panel-access";
 import { closeTileDetail, openTileDetail, useTileDetail } from "../../../lib/tile-detail-store";
 import { PinGateModal } from "../../pin/PinGateModal";
 import { VariantSwitcher } from "../views/VariantSwitcher";
@@ -36,15 +36,12 @@ export function TileDetailHost() {
 }
 
 /**
- * Runs the PIN gate before mounting a `sensitive` page , UNLESS the panel
- * session is already unlocked. A correct PIN unlocks the whole session
- * (panel-session, decision 13: one shared Unlock), so opening a second
- * sensitive page (or the same one again) within the session skips the gate; the
- * session relocks on session end. A non-sensitive page mounts straight away.
+ * Resolves the App manifest's Panel access policy before mounting the page.
+ * Session-gated Apps reuse the shared unlock; private Apps require a fresh PIN
+ * per opening. The detail entry itself carries no access facts.
  *
- * The gate and the page are mutually exclusive renders (no double-overlay
- * flash): while `needsGate` the gate is up and the page is not; unlocking flips
- * `useIsUnlocked`, which unmounts the gate and mounts the page in one commit.
+ * The gate and page are mutually exclusive renders, so protected content never
+ * mounts behind the PIN overlay.
  *
  * Exported for the host's stories, which drive it with fixture entries , the
  * real registry only carries live-wired entries.
@@ -56,29 +53,20 @@ export function GatedTileDetail({
   entry: TileDetailPageEntry;
   initialSlug: string | undefined;
 }) {
-  const sensitive = entry.sensitive ?? false;
-  const isPrivate = registryEntryForTileId(entry.tileId)?.private ?? false;
-  const unlocked = panelSession.useIsUnlocked();
-  const [privateUnlocked, setPrivateUnlocked] = useState(false);
-  const needsPrivateGate = isPrivate && !privateUnlocked;
-  const needsSensitiveGate = sensitive && !unlocked;
-  const needsGate = needsPrivateGate || needsSensitiveGate;
+  const access = usePanelAccess(entry.tileId);
 
   return (
     <>
-      {needsGate && (
+      {!access.canOpen && (
         <PinGateModal
           open
           title={entry.title}
           // A cancelled gate abandons the open , back to the board.
           onClose={closeTileDetail}
-          onSuccess={() => {
-            if (needsPrivateGate) setPrivateUnlocked(true);
-            else panelSession.unlock();
-          }}
+          onSuccess={access.unlock}
         />
       )}
-      {!needsGate && <TileDetailPage entry={entry} initialSlug={initialSlug} />}
+      {access.canOpen && <TileDetailPage entry={entry} initialSlug={initialSlug} />}
     </>
   );
 }

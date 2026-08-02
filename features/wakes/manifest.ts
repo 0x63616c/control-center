@@ -9,6 +9,7 @@ import { WakesTile, WakesTileView } from "./web";
  */
 export default defineApp({
   id: "tile_wakes",
+  sensitive: true,
   tiles: [
     {
       id: "tile_wakes",

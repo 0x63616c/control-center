@@ -33,13 +33,6 @@ export interface TileDetailPageEntry {
   /** Header title, matches the tile label. */
   title: string;
   /**
-   * Sensitive (Activity): the host runs PinGateModal before the page mounts,
-   * unless the panel session is already unlocked. A correct PIN unlocks the
-   * whole session (panel-session), so re-opening a sensitive page within the
-   * same session skips the gate , see TileDetailHost.
-   */
-  sensitive?: true;
-  /**
    * Page shell chrome. Default (`"header"`, or unset) gives the standard sticky
    * PageHeader + padded scroll region every tile detail uses. `"none"` drops
    * both , the host renders the variant edge-to-edge (full-bleed) and the page

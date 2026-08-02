@@ -12,7 +12,7 @@ import { describe, expect, it, vi } from "vitest";
 // at module load); keep any cue path silent , this test pins shape only.
 vi.mock("@/lib/sound", () => ({ playCue: vi.fn(), warmAudio: vi.fn() }));
 
-import { getTileDetailEntry } from "@features/_generated/web.gen";
+import { accessFor, getTileDetailEntry } from "@features/_generated/web.gen";
 import { renderHook } from "@testing-library/react";
 
 describe("clock detail entry", () => {
@@ -22,8 +22,10 @@ describe("clock detail entry", () => {
     if (entry?.kind !== "page") throw new Error("expected a page entry");
     expect(entry.title).toBe("Clock");
     expect(entry.defaultSlug).toBe("timer");
-    // No hand-wired gate , the clock page is not PIN-protected.
-    expect(entry.sensitive).toBeUndefined();
+    expect(accessFor("tile_clock")).toEqual({
+      requiresSessionUnlock: false,
+      requiresFreshUnlock: false,
+    });
   });
 
   it("exposes exactly the five variants, interactive trio first, never loading", () => {

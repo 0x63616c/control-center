@@ -45,7 +45,7 @@ function variant(slug: string, label: string): DetailVariant {
 
 const singleEntry: TileDetailPageEntry = {
   kind: "page",
-  tileId: "tile_story_single",
+  tileId: "tile_weath",
   title: "Single Variant",
   defaultSlug: "detail",
   useVariants: () => ({ variants: [variant("detail", "Detail")], loading: false }),
@@ -53,7 +53,7 @@ const singleEntry: TileDetailPageEntry = {
 
 const multiEntry: TileDetailPageEntry = {
   kind: "page",
-  tileId: "tile_story_multi",
+  tileId: "tile_ctrl",
   title: "Multi Variant",
   defaultSlug: "first",
   useVariants: () => ({
@@ -64,9 +64,8 @@ const multiEntry: TileDetailPageEntry = {
 
 const pinEntry: TileDetailPageEntry = {
   kind: "page",
-  tileId: "tile_story_pin",
+  tileId: "tile_wakes",
   title: "Gated Page",
-  sensitive: true,
   defaultSlug: "detail",
   useVariants: () => ({ variants: [variant("detail", "Behind the gate")], loading: false }),
 };

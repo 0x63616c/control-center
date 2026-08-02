@@ -1,6 +1,9 @@
 # `sensitive` is a client gate only; server-side PIN is deferred to a final separate slice
 
 The App `sensitive` flag drives the shell's `<PinGate>` (client-side Unlock / PIN Session) **only**.
+The generated web runtime normalizes that manifest flag through `accessFor(tileId)` as
+`requiresSessionUnlock`; `private` becomes the distinct `requiresFreshUnlock` policy. Tile View
+entries carry no access flags, so the App manifest is the single declaration seam.
 Until a dedicated, last-sequenced slice ("Slice S") ships server enforcement, `manifest.sensitive`
 means *client gate, parity with today* — a direct tRPC call to a sensitive App's procedures still
 returns the data. This is enforced as a rule: **no slice may ship a `sensitive` flag that looks

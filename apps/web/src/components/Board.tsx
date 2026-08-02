@@ -755,7 +755,7 @@ export function Board() {
               }}
             >
               <BoundedTile>
-                {entry.private ? (
+                {entry.access.requiresFreshUnlock ? (
                   <div
                     data-testid={`private-tile-${entry.id}`}
                     style={{

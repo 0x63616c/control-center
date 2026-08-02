@@ -119,16 +119,19 @@ The dashboard is not a normal responsive layout. It is a fixed wall-panel world:
 - Module-level web stores share one primitive: `createStore`/`useStore` at
   `apps/web/src/lib/store.ts` (settings, alarms, timers, tile-detail, modals, …).
 
-Tile Placement and Tile View registration are declared per-App, not centralized.
-Each `manifest.ts` declares Tile identity, rendering, and world placement; each
-`detail.ts` declares the owning App's Tile Views. `bun run apps:gen` emits the
+Tile Placement, Panel access policy, and Tile View registration are declared
+per-App, not centralized. Each `manifest.ts` declares Tile identity, rendering,
+world placement, and client-only access (`sensitive` = shared session unlock;
+`private` = fresh unlock per opening); each `detail.ts` declares only the owning
+App's Tile Views. `bun run apps:gen` emits the
 static `features/_generated/web.gen.ts` runtime consumed by the Board and Tile
-Detail Host, plus `tiles.gen.ts` as the data-only review projection. Codegen
+Detail Host. Its `accessFor(tileId)` seam normalizes the two policies before a
+Tile View mounts; `tiles.gen.ts` remains the data-only review projection. Codegen
 validates that every Tile has exactly one Tile View before emitting either file.
 There is no runtime placement override table; move or resize a Tile in its
 manifest and rerun codegen.
 
-Settings is a full-page (`1366x1024`) body-portal overlay, not a modal: `components/settings-page/` holds the shell (`SettingsPage.tsx`, sidebar + page routing), shared framing (`blocks.tsx`), the page registry (`pages.ts`), and eight presentational pages under `pages/` (Device, Display, Board, Network, Notifications, Debug, About, Security). Live state comes from the module-level settings store (`lib/settings.ts`), which syncs every field across panels through the server's settings singleton. Sensitive surfaces (Settings gear, Wake photos viewer, any tile detail flagged `sensitive`) share ONE PIN unlock per panel session (`components/pin/`, `PinGateModal` + `PinPadView`, on `panelSession.unlock()`): a successful PIN entry unlocks everything sensitive until the session ends (idle timeout relocks). The PIN is a synced settings field (`pinCode`, default `"000000"`), enforced frontend-only - the API never validates it beyond schema shape (ADR-0004: accepted until Slice S lands server-side `session.unlock(pin)`; the relock is only as strong as the client).
+Settings is a full-page (`1366x1024`) body-portal overlay, not a modal: `components/settings-page/` holds the shell (`SettingsPage.tsx`, sidebar + page routing), shared framing (`blocks.tsx`), the page registry (`pages.ts`), and eight presentational pages under `pages/` (Device, Display, Board, Network, Notifications, Debug, About, Security). Live state comes from the module-level settings store (`lib/settings.ts`), which syncs every field across panels through the server's settings singleton. Sensitive surfaces (Settings gear, Activity photos, and Apps whose manifest sets `sensitive`) share ONE PIN unlock per panel session (`components/pin/`, `PinGateModal` + `PinPadView`, on `panelSession.unlock()`): a successful PIN entry unlocks everything sensitive until the session ends (idle timeout relocks). A manifest's `private` policy remains distinct and prompts on every opening. The PIN is a synced settings field (`pinCode`, default `"000000"`), enforced frontend-only - the API never validates it beyond schema shape (ADR-0004: accepted until Slice S lands server-side `session.unlock(pin)`; the relock is only as strong as the client).
 
 Data access is through tRPC React Query in `apps/web/src/lib/trpc.ts`. Queries retry with bounded exponential backoff; mutations do not retry. Unavailable data should render skeleton/error states, not invented values.
 

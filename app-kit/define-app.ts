@@ -28,8 +28,12 @@ export interface AppManifest {
   id: string;
   tiles: TileSpec[];
   guestExposed?: boolean;
+  /** Require the shared Panel PIN Session before any Tile View mounts.
+   * Mutually exclusive with `private`. Client-only by ADR-0004; this does not
+   * gate direct API calls. */
   sensitive?: boolean;
-  /** Require a fresh PIN for every app opening, independent of session unlock. */
+  /** Require a fresh client-side PIN for every App opening, independent of
+   * session unlock. Mutually exclusive with `sensitive`. */
   private?: boolean;
 }
 
