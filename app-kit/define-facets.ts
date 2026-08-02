@@ -18,6 +18,10 @@ export type { JobSpec, Worker };
 /** The minimum Tile View declaration codegen needs to enforce App ownership. */
 export interface TileViewDeclaration {
   readonly tileId: string;
+  /** Access belongs to the owning App manifest, never the detail facet. */
+  readonly sensitive?: never;
+  readonly private?: never;
+  readonly access?: never;
 }
 
 /**

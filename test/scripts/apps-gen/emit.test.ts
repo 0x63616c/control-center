@@ -31,11 +31,14 @@ it("renders the wakes + booth feature http modules as an import barrel, stable a
 it("renders the App web runtime as static manifest and Tile View imports", async () => {
   const model = await collect();
   const rendered = renderWeb(model);
+  const tiles = renderTiles(model);
 
   expect(rendered).toContain('import acManifest from "../ac/manifest";');
   expect(rendered).toContain('import { tileViews as acTileViews } from "../ac/detail";');
   expect(rendered).toContain("createWebRegistry(");
+  expect(rendered).toContain("accessFor,");
   expect(rendered).toContain("...weatherTileViews");
+  expect(tiles).toMatch(/id: "tile_wakes",[\s\S]*?sensitive: true,/);
 });
 
 it("renders App-owned worker cycles as a deterministic import barrel", async () => {

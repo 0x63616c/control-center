@@ -27,6 +27,8 @@ interface ValApp {
   id: string;
   featureDir: string;
   guestExposed?: boolean;
+  sensitive?: boolean;
+  private?: boolean;
   tiles: TileRect[];
 }
 interface Model {
@@ -224,6 +226,9 @@ export function validate(model: Model, guestExposed: readonly string[]): void {
   for (const a of model.apps) {
     if (seen.has(a.id)) throw new CodegenError(`duplicate app id: ${a.id}`);
     seen.add(a.id);
+    if (a.sensitive && a.private) {
+      throw new CodegenError(`app ${a.id} cannot be both sensitive and private`);
+    }
     const inAllow = allow.has(a.id);
     if (Boolean(a.guestExposed) !== inAllow) {
       throw new CodegenError(

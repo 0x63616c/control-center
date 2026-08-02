@@ -30,7 +30,8 @@
     "apps/web/vitest.workspace.ts",
     "app-kit/**/*.ts",
     "features/**/*.ts",
-    "test/scripts/alias-parity.test.ts"
+    "test/scripts/alias-parity.test.ts",
+    "test/scripts/app-kit-type-contracts.test.ts"
   ],
   // app-kit's own *.test.ts is exercised by vitest (esbuild, no typecheck) and
   // uses runtime symbol-brand casts that tsc flags; it was never in a tsc

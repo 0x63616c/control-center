@@ -69,10 +69,9 @@ export const activityDetailEntry: TileDetailPageEntry = {
   tileId: "tile_wakes",
   title: "Activity",
   // Full-bleed so the gallery grid runs edge-to-edge like the photo booth's;
-  // ActivityPage owns its own PageHeader. The PIN gate is unaffected , it runs
-  // in GatedTileDetail, before chrome matters.
+  // ActivityPage owns its own PageHeader. The App manifest owns the PIN policy;
+  // GatedTileDetail resolves it before chrome matters.
   chrome: "none",
-  sensitive: true,
   defaultSlug: "activity",
   useVariants: useActivityVariants,
 };

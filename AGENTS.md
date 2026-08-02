@@ -41,6 +41,9 @@
   App's `manifest.ts`, glob-collected and emitted to checked-in
   `features/_generated/*.gen.ts` by `bun run apps:gen` (ADR-0002). The Board and
   Tile Detail Host consume `web.gen.ts`; never hand-edit `_generated/`.
+  App manifests also own Panel access policy: `sensitive` reuses the shared PIN
+  Session and `private` requires a fresh PIN per opening. Detail facets must not
+  redeclare access. Both remain deliberately client-only per ADR-0004.
   `bun run apps:check` re-runs codegen and fails on drift.
   `scripts/apps-gen/validate.ts` is the consistency check (dup id/router-key/table/worker-cycle,
   ≠1 `home` tile, overlapping tile rects, `guestExposed` ≠ `GUEST_EXPOSED` all

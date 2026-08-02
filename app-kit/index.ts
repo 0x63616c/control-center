@@ -26,5 +26,5 @@ export {
   TILE_VIEWS_FACET_BRAND,
   WORKER_CYCLES_FACET_BRAND,
 } from "./define-facets";
-export type { TileRegistryEntry } from "./web-runtime";
+export type { TileAccessPolicy, TileRegistryEntry } from "./web-runtime";
 export { createWebRegistry } from "./web-runtime";

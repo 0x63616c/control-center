@@ -85,7 +85,8 @@ export const {
   HOME_TILE,
   registryEntryForComponent,
   registryEntryForTileId,
+  accessFor,
   getTileDetailEntry,
 } = createWebRegistry(manifests, tileViews);
 
-export type { TileRegistryEntry } from "@app-kit";
+export type { TileAccessPolicy, TileRegistryEntry } from "@app-kit";

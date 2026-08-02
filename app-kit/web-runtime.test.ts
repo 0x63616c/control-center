@@ -34,4 +34,81 @@ describe("createWebRegistry", () => {
     expect(registry.registryEntryForTileId("tile_clock")?.label).toBe("Clock");
     expect(registry.getTileDetailEntry("tile_clock")).toBe(detail);
   });
+
+  it("normalizes App access policy behind one tile lookup", () => {
+    const registry = createWebRegistry(
+      [
+        {
+          id: "app_clock",
+          sensitive: true,
+          tiles: [
+            {
+              id: "tile_clock",
+              label: "Clock",
+              component: TileFace,
+              viewComponent: TileView,
+              worldCol: 1,
+              worldRow: 2,
+              cols: 3,
+              rows: 4,
+            },
+          ],
+        },
+        {
+          id: "app_booth",
+          private: true,
+          tiles: [
+            {
+              id: "tile_booth",
+              label: "Booth",
+              component: TileFace,
+              viewComponent: TileView,
+              worldCol: 5,
+              worldRow: 6,
+              cols: 2,
+              rows: 2,
+            },
+          ],
+        },
+      ],
+      [],
+    );
+
+    expect(registry.accessFor("tile_clock")).toEqual({
+      requiresSessionUnlock: true,
+      requiresFreshUnlock: false,
+    });
+    expect(registry.accessFor("tile_booth")).toEqual({
+      requiresSessionUnlock: false,
+      requiresFreshUnlock: true,
+    });
+    expect(() => registry.accessFor("tile_missing")).toThrow(/unknown Tile/);
+  });
+
+  it("rejects an App that combines session and fresh unlock policies", () => {
+    expect(() =>
+      createWebRegistry(
+        [
+          {
+            id: "app_invalid",
+            sensitive: true,
+            private: true,
+            tiles: [
+              {
+                id: "tile_invalid",
+                label: "Invalid",
+                component: TileFace,
+                viewComponent: TileView,
+                worldCol: 1,
+                worldRow: 2,
+                cols: 3,
+                rows: 4,
+              },
+            ],
+          },
+        ],
+        [],
+      ),
+    ).toThrow(/cannot be both sensitive and private/);
+  });
 });

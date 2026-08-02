@@ -7,7 +7,7 @@
  * the Settings Logs page through settings-overlay-store.
  */
 
-import { getTileDetailEntry, TILE_REGISTRY } from "@features/_generated/web.gen";
+import { accessFor, getTileDetailEntry, TILE_REGISTRY } from "@features/_generated/web.gen";
 import { renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { closeSettings, useSettingsOverlay } from "../../../../lib/settings-overlay-store";
@@ -18,7 +18,7 @@ describe("tile detail registry , Task 11 entries", () => {
     expect(entry?.kind).toBe("page");
     if (entry?.kind !== "page") throw new Error("expected a page entry");
     expect(entry.title).toBe("Activity");
-    expect(entry.sensitive).toBe(true);
+    expect(accessFor("tile_wakes").requiresSessionUnlock).toBe(true);
     expect(entry.defaultSlug).toBe("activity");
   });
 
@@ -28,8 +28,10 @@ describe("tile detail registry , Task 11 entries", () => {
       expect(entry?.kind).toBe("page");
       if (entry?.kind !== "page") throw new Error("expected a page entry");
       expect(entry.title).toBe(title);
-      // No hand-wired gate: neither camera preview is PIN-gated.
-      expect(entry.sensitive).toBeUndefined();
+      expect(accessFor(tileId)).toEqual({
+        requiresSessionUnlock: false,
+        requiresFreshUnlock: false,
+      });
     }
   });
 

@@ -18,12 +18,16 @@ const app = (
     worldRow: number;
     cols: number;
     rows: number;
+    sensitive: boolean;
+    private: boolean;
   }>,
 ) => ({
   ...base,
   id: over.id ?? "a",
   featureDir: over.id ?? "a",
   guestExposed: over.guestExposed ?? false,
+  sensitive: over.sensitive ?? false,
+  private: over.private ?? false,
   tiles: [
     {
       ...baseTile,
@@ -78,6 +82,12 @@ it("accepts a consistent model", () => {
   expect(() =>
     validate(model([app({ id: "a", home: true, guestExposed: true })]), ["a"]),
   ).not.toThrow();
+});
+
+it("rejects an App that combines session and fresh unlock policies", () => {
+  expect(() =>
+    validate(model([app({ id: "a", home: true, sensitive: true, private: true })]), []),
+  ).toThrow(/cannot be both sensitive and private/);
 });
 
 it("throws on a duplicate table name across the feature + base schemas", () => {

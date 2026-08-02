@@ -19,10 +19,12 @@ vi.mock("@features/_generated/web.gen", () => {
     cols: 4,
     rows: 2,
     home: true,
+    access: { requiresSessionUnlock: false, requiresFreshUnlock: false },
   };
   return {
     TILE_REGISTRY: [fake],
     HOME_TILE: fake,
+    accessFor: () => fake.access,
     registryEntryForTileId: (id: string) => (id === fake.id ? fake : undefined),
     getTileDetailEntry: () => undefined,
   };
