@@ -14,6 +14,7 @@ import guestWifiManifest from "../guest-wifi/manifest";
 import hooksManifest from "../hooks/manifest";
 import networkManifest from "../network/manifest";
 import notifManifest from "../notif/manifest";
+import panelUpdateManifest from "../panel-update/manifest";
 import soundManifest from "../sound/manifest";
 import temporalHealthManifest from "../temporal-health/manifest";
 import teslaManifest from "../tesla/manifest";
@@ -50,6 +51,7 @@ const manifests = [
   hooksManifest,
   networkManifest,
   notifManifest,
+  panelUpdateManifest,
   soundManifest,
   temporalHealthManifest,
   teslaManifest,

@@ -11,10 +11,8 @@ import { WeightTile, WeightTileView } from "./web";
  * col 34 / rows-22/23 slot; re-check placeholder-tiles.test.ts if that band's
  * bento fill regresses.
  *
- * The weight-ingest interval cycle (apps/api/src/services/weight-service.ts,
- * 15s HA poll) is NOT part of this app — it stays hand-wired in apps/worker,
- * importing this feature's schema/service directly. The S1 job-handler seam
- * only covers queue jobs (such as notify), not interval cycles.
+ * The App also owns its Withings ingest cadence through worker.ts; codegen
+ * registers that cycle with the worker runtime.
  */
 export default defineApp({
   id: "tile_weight",

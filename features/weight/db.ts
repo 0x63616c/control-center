@@ -6,8 +6,7 @@
  * importing this module — and therefore the branded facets that use it
  * (api.ts) — is side-effect free enough for the codegen to load.
  *
- * The weight-ingest interval cycle (apps/api/src/services/weight-service.ts)
- * and this feature's own api.ts/service.ts query surface both resolve
+ * The App-owned weight-ingest cycle and api.ts/service.ts query surface resolve
  * `config.DATABASE_URL` to the same connection string, so `createFeatureDb`
  * memoizes them onto the SAME underlying pool — one shared pool against the
  * `weight_measurement` table from the same process tree, not two.

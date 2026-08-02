@@ -16,15 +16,16 @@
  * detection) because HA round-trips rgb/kelvin/brightness with small deltas.
  */
 
-import { LampMode } from "@features/ctrl/lamp-scenes";
-import { LAMP_MODE_SINGLETON_ID, lampMode } from "@features/ctrl/schema";
 import {
+  type DeviceLightState,
   type DeviceStateStore,
   findLight,
+  type HaEntity,
   HaLightService,
   heartbeat,
   isLightState,
   LIGHTS,
+  type LightColor,
   LightControl,
   LightKind,
   lightControl,
@@ -35,12 +36,10 @@ import {
 } from "@www/core";
 import { getLogger, logChange } from "@www/logger";
 import { eq } from "drizzle-orm";
-import { deviceStateStore } from "../db/device-state-store";
-import { db } from "../db/index";
-import { integrationSyncStore } from "../db/integration-sync-store";
-import type { DeviceLightState, LightColor } from "../db/schema";
-import { ha } from "../integrations/homeassistant";
-import type { HaEntity } from "../integrations/homeassistant/types";
+import { db, deviceStateStore, integrationSyncStore } from "./db";
+import { ha } from "./deps";
+import { LampMode } from "./lamp-scenes";
+import { LAMP_MODE_SINGLETON_ID, lampMode } from "./schema";
 
 const ENFORCER_INTEGRATION_ID = "light-enforcer";
 const ENFORCER_DOMAINS = ["light", "switch"] as const;

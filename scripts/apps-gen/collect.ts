@@ -13,6 +13,8 @@ import {
   type TemporalFacet,
   TILE_VIEWS_FACET_BRAND,
   type TileViewDeclaration,
+  WORKER_CYCLES_FACET_BRAND,
+  type Worker,
 } from "../../app-kit/index";
 
 // scripts/apps-gen/collect.ts -> repo root is two directories up.
@@ -71,6 +73,12 @@ interface CollectedRouterKey {
 interface CollectedJob {
   type: string;
   maxMs: number;
+  source: string;
+}
+
+/** One App-owned interval worker declaration. */
+interface CollectedWorkerCycle {
+  name: string;
   source: string;
 }
 
@@ -151,6 +159,7 @@ export interface CollectedFeature {
   hasApi: boolean;
   hasSchema: boolean;
   hasJobs: boolean;
+  hasWorker: boolean;
   hasHttp: boolean;
   /** True when the App has a branded detail.ts Tile View facet. */
   hasDetail: boolean;
@@ -167,6 +176,7 @@ export interface AppModel {
   schemaExports: CollectedSchemaExport[];
   routerKeys: CollectedRouterKey[];
   jobs: CollectedJob[];
+  workerCycles: CollectedWorkerCycle[];
   httpRoutes: CollectedHttpRoute[];
   httpModules: CollectedHttpModule[];
   workflowTypes: CollectedWorkflowType[];
@@ -192,6 +202,24 @@ export function collectTileViewsExport(
     );
   }
   return branded[0][1] as TileViewDeclaration[];
+}
+
+/** Enforce the single conventional export consumed by workers.gen.ts. */
+export function collectWorkerCyclesExport(
+  workerMod: Record<string, unknown>,
+  dir: string,
+): Worker[] {
+  const branded = Object.entries(workerMod).filter(
+    ([, value]) =>
+      Array.isArray(value) &&
+      Boolean((value as Record<symbol, unknown>)[WORKER_CYCLES_FACET_BRAND]),
+  );
+  if (branded.length !== 1 || branded[0][0] !== "cycles") {
+    throw new Error(
+      `features/${dir}/worker.ts must export exactly one defineWorkerCycles() facet named cycles`,
+    );
+  }
+  return branded[0][1] as Worker[];
 }
 
 /**
@@ -265,6 +293,7 @@ export async function collect(): Promise<AppModel> {
   const schemaExports: CollectedSchemaExport[] = [];
   const routerKeys: CollectedRouterKey[] = [];
   const jobs: CollectedJob[] = [];
+  const workerCycles: CollectedWorkerCycle[] = [];
   const httpRoutes: CollectedHttpRoute[] = [];
   const httpModules: CollectedHttpModule[] = [];
   const workflowTypes: CollectedWorkflowType[] = [];
@@ -343,6 +372,17 @@ export async function collect(): Promise<AppModel> {
             jobs.push({ type: spec.type, maxMs: spec.maxMs, source: `feature:${dir}` });
           }
         }
+      }
+    }
+
+    let hasWorker = false;
+    const workerPath = join(base, "worker.ts");
+    if (existsSync(workerPath)) {
+      const workerMod = (await import(workerPath)) as Record<string, unknown>;
+      const cycles = collectWorkerCyclesExport(workerMod, dir);
+      hasWorker = true;
+      for (const cycle of cycles) {
+        workerCycles.push({ name: cycle.name, source: `feature:${dir}` });
       }
     }
 
@@ -429,6 +469,7 @@ export async function collect(): Promise<AppModel> {
       hasApi,
       hasSchema,
       hasJobs,
+      hasWorker,
       hasHttp,
       hasDetail,
       hasTemporal,
@@ -474,6 +515,7 @@ export async function collect(): Promise<AppModel> {
     schemaExports,
     routerKeys,
     jobs,
+    workerCycles,
     httpRoutes,
     httpModules,
     workflowTypes,

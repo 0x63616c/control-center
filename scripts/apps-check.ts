@@ -34,6 +34,7 @@ import {
   renderSchema,
   renderTiles,
   renderWeb,
+  renderWorkers,
   renderWorkflows,
 } from "./apps-gen/emit";
 import { validate } from "./apps-gen/validate";
@@ -86,6 +87,10 @@ const AGGREGATES: readonly Aggregate[] = [
   {
     file: "jobs.gen.ts",
     render: async () => renderJobs(await collect()),
+  },
+  {
+    file: "workers.gen.ts",
+    render: async () => renderWorkers(await collect()),
   },
   {
     file: "http.gen.ts",

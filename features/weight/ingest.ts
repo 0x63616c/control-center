@@ -15,19 +15,14 @@
  * Spec: docs/superpowers/specs/2026-07-21-weight-tile-design.md.
  */
 
-import { db as notifDb } from "@features/notif/db";
-import { raiseNotification } from "@features/notif/service";
-import {
-  WITHINGS_OAUTH_TOKEN_SINGLETON_ID,
-  weightMeasurement,
-  withingsOauthToken,
-} from "@features/weight/schema";
-import { formatWeighInAlert, isOutsideSanityBand, notDeleted } from "@features/weight/service";
+import { enqueueNotification } from "@www/core";
 import { getLogger, logChange } from "@www/logger";
 import { genId } from "@www/platform";
 import { and, eq, gte, isNull } from "drizzle-orm";
-import { db } from "../db/index";
-import { withings } from "../integrations/withings";
+import { db } from "./db";
+import { withings } from "./deps";
+import { WITHINGS_OAUTH_TOKEN_SINGLETON_ID, weightMeasurement, withingsOauthToken } from "./schema";
+import { formatWeighInAlert, isOutsideSanityBand, notDeleted } from "./service";
 
 // Refresh 60s before the access token actually expires so an in-flight cycle
 // never hits a stale token (mirrors SpotifyClient's EXPIRY_BUFFER_MS).
@@ -155,7 +150,13 @@ export async function runWithingsWeightIngestCycle(): Promise<void> {
       );
       const { title, body } = formatWeighInAlert(group.weightKg);
       try {
-        await raiseNotification(notifDb, { category: "home", severity: "info", title, body });
+        await enqueueNotification(db, {
+          category: "home",
+          severity: "info",
+          title,
+          body,
+          dedupeKey: `withings-weight-${group.grpid}`,
+        });
       } catch (err) {
         getLogger().error({ err }, "failed to raise weigh-in notification");
       }

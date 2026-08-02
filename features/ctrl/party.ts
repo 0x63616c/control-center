@@ -18,20 +18,19 @@
  * still enforces on/off), so the two never fight over lamp color.
  */
 
+import { type DeviceStateStore, HaLightService, isLightState, LAMP_ENTITY_IDS } from "@www/core";
+import { getLogger } from "@www/logger";
+import { eq } from "drizzle-orm";
+import { db, deviceStateStore } from "./db";
+import { ha } from "./deps";
 import {
   LAMP_MODE_SPEED_CONFIG,
   LampMode,
   LampModeSpeed,
   partyColorsAtTick,
   type RgbColor,
-} from "@features/ctrl/lamp-scenes";
-import { LAMP_MODE_SINGLETON_ID, lampMode } from "@features/ctrl/schema";
-import { type DeviceStateStore, HaLightService, isLightState, LAMP_ENTITY_IDS } from "@www/core";
-import { getLogger } from "@www/logger";
-import { eq } from "drizzle-orm";
-import { deviceStateStore } from "../db/device-state-store";
-import { db } from "../db/index";
-import { ha } from "../integrations/homeassistant";
+} from "./lamp-scenes";
+import { LAMP_MODE_SINGLETON_ID, lampMode } from "./schema";
 
 // ─── pure helpers ──────────────────────────────────────────────────────────────
 

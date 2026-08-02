@@ -20,28 +20,22 @@ const { mockDbSelect, mockDbInsert } = vi.hoisted(() => ({
   mockDbInsert: vi.fn(),
 }));
 
-vi.mock("../db/index", () => ({
-  db: { select: mockDbSelect, insert: mockDbInsert },
-}));
-
-// ─── mock HA ─────────────────────────────────────────────────────────────────
-
-const { mockGetEntities, mockCallService } = vi.hoisted(() => ({
+const { mockGetEntities, mockCallService, mockRecordOk, mockRecordFail } = vi.hoisted(() => ({
   mockGetEntities: vi.fn(),
   mockCallService: vi.fn(),
+  mockRecordOk: vi.fn(),
+  mockRecordFail: vi.fn(),
 }));
 
-vi.mock("../integrations/homeassistant", () => ({
+vi.mock("./deps", () => ({
+  deviceStateStore: {},
+  integrationSyncStore: { recordOk: mockRecordOk, recordFail: mockRecordFail },
   ha: { getEntities: mockGetEntities, callService: mockCallService },
 }));
 
-import type { MappedHaState } from "@www/core";
+import type { DeviceClimateState, MappedHaState } from "@www/core";
 import { CLIMATE_DEVICE_ID } from "@www/core";
-import type { DeviceClimateState } from "../db/schema";
-import {
-  decideClimateEnforcement,
-  runClimateEnforcerCycle,
-} from "../services/climate-enforcer-service";
+import { decideClimateEnforcement, runClimateEnforcerCycle } from "./enforcer";
 
 // ─── pure decision tests ──────────────────────────────────────────────────────
 
@@ -310,6 +304,8 @@ let infoSpy: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   vi.clearAllMocks();
   mockCallService.mockResolvedValue(undefined);
+  mockRecordOk.mockResolvedValue(undefined);
+  mockRecordFail.mockResolvedValue(1);
   // integrationSyncStatus -> no prior failure streak.
   mockDbSelect.mockImplementation(() => tableChain([]));
   // markHeartbeat: insert().values().onConflictDoUpdate()

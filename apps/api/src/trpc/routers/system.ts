@@ -1,5 +1,5 @@
+import { getAscBuildStatus } from "@features/panel-update/service";
 import { z } from "zod";
-import { getAscBuildStatus } from "../../services/asc-version-service";
 import { publicProcedure, router } from "../init";
 
 // System-level status about the wall panel itself (as opposed to the home it

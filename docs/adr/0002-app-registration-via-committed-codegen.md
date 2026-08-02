@@ -1,7 +1,7 @@
 # App registration is committed codegen over a file convention; runtime self-registration is forbidden
 
 An App folder becomes runtime wiring through a committed **codegen** step (`bun run apps:gen`) that
-globs `features/*/manifest.ts` + the convention facet files (`web.tsx`, `detail.ts`, `api.ts`, `jobs.ts`,
+globs `features/*/manifest.ts` + the convention facet files (`web.tsx`, `detail.ts`, `api.ts`, `jobs.ts`, `worker.ts`,
 `schema.ts`) and emits checked-in `features/_generated/*.gen.ts` aggregates — byte-compatible with
 today's hand-written `TILE_REGISTRY`, `appRouter` literal, and `Worker[]` array. The runtime stays
 100% static. A CI guard (`apps:check`) re-runs codegen in memory and fails when its fresh renders
@@ -45,6 +45,14 @@ propose again, so its rejection is recorded explicitly.
 runtime aggregate. It imports every App manifest and branded `detail.ts` Tile
 View facet. The former hand-maintained tile and detail registries are deleted;
 codegen rejects missing, duplicate, or orphaned Tile View declarations.
+
+## Runtime worker aggregate (completed 2026-08-02)
+
+`features/_generated/workers.gen.ts` is the worker process's static interval-cycle
+aggregate. Each App declares cadence beside its implementation in a branded
+`worker.ts` facet. The worker entrypoint owns lifecycle, migrations, durable queue
+workers, and shutdown but contains no domain cycle list. Codegen rejects duplicate
+worker names before emitting because those names are global runtime stats keys.
 
 Note: `app-kit/` and `features/` are plain source directories, **not** workspaces — they must never
 contain a `package.json`, or a workspace glob would register them and disturb the

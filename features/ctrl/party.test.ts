@@ -11,13 +11,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // device-state reads now go through the injected DeviceStateStore; `db` still
 // backs the lamp_mode singleton table (unrelated to the device_state migration).
 const { mockDbSelect } = vi.hoisted(() => ({ mockDbSelect: vi.fn() }));
-vi.mock("../db/index", () => ({ db: { select: mockDbSelect } }));
+vi.mock("./db", () => ({ db: { select: mockDbSelect } }));
 
 const { mockCallService } = vi.hoisted(() => ({ mockCallService: vi.fn() }));
-vi.mock("../integrations/homeassistant", () => ({ ha: { callService: mockCallService } }));
+vi.mock("./deps", () => ({ ha: { callService: mockCallService } }));
 
-import { LampMode, LampModeSpeed } from "@features/ctrl/lamp-scenes";
-import { decidePartyAction, partyTurnOnParams } from "../services/party-service";
+import { LampMode, LampModeSpeed } from "./lamp-scenes";
+import { decidePartyAction, partyTurnOnParams } from "./party";
 
 // ─── pure tick → HA params ─────────────────────────────────────────────────────
 
@@ -97,8 +97,8 @@ describe("decidePartyAction", () => {
 
 // ─── reconcile cycle with injected (stubbed) engine ────────────────────────────
 
-import type { PartyEngine } from "../services/party-service";
-import { reconcilePartyMode } from "../services/party-service";
+import type { PartyEngine } from "./party";
+import { reconcilePartyMode } from "./party";
 
 class Chain {
   constructor(private readonly rows: unknown[]) {}

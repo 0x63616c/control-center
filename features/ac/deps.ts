@@ -3,19 +3,22 @@
  * slice). Built from `@www/core` factories + this feature's own {@link config}
  * slice — the pattern apps/api/src/integrations/homeassistant.ts documents as
  * the intended end-state: each caller builds its own instance from its config
- * slice. This feature's `service.ts` and apps/api's climate-enforcer-service.ts
- * therefore operate independent client/store instances over the SAME HA + the
- * SAME shared `device_state` row (rendezvous via `CLIMATE_DEVICE_ID`) — correct,
- * they are stateless adapters, not owners of state.
+ * slice. The API service and App-owned enforcer operate independent adapters
+ * over the same HA instance and shared `device_state` row.
  */
-import { createFeatureDb, createPgDeviceStateStore, deviceState, haFromConfig } from "@www/core";
+import {
+  createFeatureDb,
+  createPgDeviceStateStore,
+  createPgIntegrationSyncStore,
+  deviceState,
+  haFromConfig,
+  integrationSyncStatus,
+} from "@www/core";
 import { config } from "./config";
 
-// The device_state store over this feature's own lazy pool (no connection
-// until first query).
-export const deviceStateStore = createPgDeviceStateStore(
-  createFeatureDb(config.DATABASE_URL, { deviceState }),
-);
+const db = createFeatureDb(config.DATABASE_URL, { deviceState, integrationSyncStatus });
+export const deviceStateStore = createPgDeviceStateStore(db);
+export const integrationSyncStore = createPgIntegrationSyncStore(db);
 
 // The env-free HA client bound to this feature's config slice.
 export const ha = haFromConfig(config);

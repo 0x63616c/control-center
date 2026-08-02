@@ -36,6 +36,7 @@ import {
   renderSchema,
   renderTiles,
   renderWeb,
+  renderWorkers,
   renderWorkflows,
 } from "./apps-gen/emit";
 import { validate } from "./apps-gen/validate";
@@ -57,6 +58,7 @@ async function main(): Promise<void> {
   writeFileSync(join(GEN_DIR, "guest-router.gen.ts"), renderGuestRouter(model, GUEST_EXPOSED));
   writeFileSync(join(GEN_DIR, "schema.gen.ts"), renderSchema(model));
   writeFileSync(join(GEN_DIR, "jobs.gen.ts"), renderJobs(model));
+  writeFileSync(join(GEN_DIR, "workers.gen.ts"), renderWorkers(model));
   writeFileSync(join(GEN_DIR, "http.gen.ts"), renderHttp(model));
   writeFileSync(join(GEN_DIR, "workflows.gen.ts"), renderWorkflows(model));
   writeFileSync(join(GEN_DIR, "activities.gen.ts"), renderActivities(model));

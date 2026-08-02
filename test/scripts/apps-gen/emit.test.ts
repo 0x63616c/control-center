@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { collect } from "../../../scripts/apps-gen/collect";
-import { renderHttp, renderTiles, renderWeb } from "../../../scripts/apps-gen/emit";
+import { renderHttp, renderTiles, renderWeb, renderWorkers } from "../../../scripts/apps-gen/emit";
 
 // The determinism gate for the emitter (Task 3.3): renderTiles() over the real
 // collected model must be stable across two calls, and the emitted apps must be
@@ -36,4 +36,15 @@ it("renders the App web runtime as static manifest and Tile View imports", async
   expect(rendered).toContain('import { tileViews as acTileViews } from "../ac/detail";');
   expect(rendered).toContain("createWebRegistry(");
   expect(rendered).toContain("...weatherTileViews");
+});
+
+it("renders App-owned worker cycles as a deterministic import barrel", async () => {
+  const model = await collect();
+  const rendered = renderWorkers(model);
+
+  expect(rendered).toContain('import { cycles as weatherCycles } from "../weather/worker";');
+  expect(rendered).toContain('import { cycles as soundCycles } from "../sound/worker";');
+  expect(rendered).toContain("export const GENERATED_WORKERS");
+  expect(rendered).toContain("...weatherCycles");
+  expect(rendered).toBe(renderWorkers(model));
 });

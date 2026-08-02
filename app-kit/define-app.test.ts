@@ -5,8 +5,10 @@ import {
   defineApi,
   defineJobs,
   defineTemporal,
+  defineWorkerCycles,
   JOBS_FACET_BRAND,
   TEMPORAL_FACET_BRAND,
+  WORKER_CYCLES_FACET_BRAND,
 } from "./define-facets";
 
 const Dummy = () => null;
@@ -77,5 +79,12 @@ it("facet wrappers brand their payload", () => {
     (defineTemporal({ workflowTypes: ["DemoWorkflow"], schedules: [] }) as Record<symbol, unknown>)[
       TEMPORAL_FACET_BRAND
     ],
+  ).toBe(true);
+  expect(
+    (
+      defineWorkerCycles([
+        { name: "demo-cycle", intervalMs: 1000, runOnStart: true, run: async () => {} },
+      ]) as Record<symbol, unknown>
+    )[WORKER_CYCLES_FACET_BRAND],
   ).toBe(true);
 });

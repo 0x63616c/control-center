@@ -38,6 +38,8 @@ interface Model {
   /** Collected `defineJobs` facet entries; a duplicate job type would let two
    *  features both claim the same queue rows. */
   jobs?: { type: string; source: string }[];
+  /** App-owned interval workers. Names are runtime stats keys and must be globally unique. */
+  workerCycles?: { name: string; source: string }[];
   /** Collected `defineHttp` routes; two routes with the same method+match+path
    *  would shadow each other in the generated route table. */
   httpRoutes?: { method?: string; path: string; match: string; source: string }[];
@@ -119,6 +121,19 @@ export function validate(model: Model, guestExposed: readonly string[]): void {
         );
       }
       seenJob.set(j.type, j.source);
+    }
+  }
+
+  if (model.workerCycles) {
+    const seenCycle = new Map<string, string>();
+    for (const cycle of model.workerCycles) {
+      const prev = seenCycle.get(cycle.name);
+      if (prev) {
+        throw new CodegenError(
+          `duplicate worker cycle name '${cycle.name}' (declared by ${prev} and ${cycle.source}) — worker cycle names are global runtime keys`,
+        );
+      }
+      seenCycle.set(cycle.name, cycle.source);
     }
   }
 

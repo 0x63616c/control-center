@@ -18,8 +18,12 @@ const { mockDbSelect, mockDbInsert } = vi.hoisted(() => ({
   mockDbInsert: vi.fn(),
 }));
 
-vi.mock("../db/index", () => ({
+vi.mock("./db", () => ({
   db: { select: mockDbSelect, insert: mockDbInsert },
+  integrationSyncStore: {
+    recordOk: vi.fn().mockResolvedValue(undefined),
+    recordFail: vi.fn().mockResolvedValue(1),
+  },
 }));
 
 // ─── mock HA ─────────────────────────────────────────────────────────────────
@@ -29,19 +33,13 @@ const { mockGetEntities, mockCallService } = vi.hoisted(() => ({
   mockCallService: vi.fn(),
 }));
 
-vi.mock("../integrations/homeassistant", () => ({
+vi.mock("./deps", () => ({
   ha: { getEntities: mockGetEntities, callService: mockCallService },
 }));
 
-import { lampMode } from "@features/ctrl/schema";
-import { LightControl } from "@www/core";
-import type { DeviceLightState } from "../db/schema";
-import { integrationSyncStatus } from "../db/schema";
-import {
-  decideEnforcement,
-  lightStateConverged,
-  runEnforcerCycle,
-} from "../services/light-enforcer-service";
+import { type DeviceLightState, integrationSyncStatus, LightControl } from "@www/core";
+import { decideEnforcement, lightStateConverged, runEnforcerCycle } from "./light-enforcer";
+import { lampMode } from "./schema";
 
 // ─── tolerant convergence compare ─────────────────────────────────────────────
 
