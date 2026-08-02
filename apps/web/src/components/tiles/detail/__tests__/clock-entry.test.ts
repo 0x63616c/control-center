@@ -12,8 +12,8 @@ import { describe, expect, it, vi } from "vitest";
 // at module load); keep any cue path silent , this test pins shape only.
 vi.mock("@/lib/sound", () => ({ playCue: vi.fn(), warmAudio: vi.fn() }));
 
+import { getTileDetailEntry } from "@features/_generated/web.gen";
 import { renderHook } from "@testing-library/react";
-import { getTileDetailEntry } from "../registry";
 
 describe("clock detail entry", () => {
   it("is a page titled 'Clock' defaulting to the Timer variant", () => {

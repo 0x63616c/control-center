@@ -11,6 +11,7 @@
  * pattern from SettingsButton so the gate unmounts before the page appears.
  */
 
+import { getTileDetailEntry, registryEntryForTileId } from "@features/_generated/web.gen";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { PageHeader, Skeleton } from "@/components/ui";
@@ -18,10 +19,8 @@ import { interaction } from "../../../lib/log/interaction";
 import { registerOpenModal } from "../../../lib/modal-open-store";
 import { panelSession } from "../../../lib/panel-session";
 import { closeTileDetail, openTileDetail, useTileDetail } from "../../../lib/tile-detail-store";
-import { registryEntryForTileId } from "../../../lib/tile-registry";
 import { PinGateModal } from "../../pin/PinGateModal";
 import { VariantSwitcher } from "../views/VariantSwitcher";
-import { getTileDetailEntry } from "./registry";
 import type { TileDetailPageEntry } from "./types";
 
 export function TileDetailHost() {

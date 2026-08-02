@@ -36,11 +36,12 @@
   is a no-op passthrough on native, so this never touches the panel/native
   behavior above.
 - Features are self-contained Apps under `features/<id>/` (manifest + facets:
-  `web.tsx`, `api.ts`, `jobs.ts`, `schema.ts`, `temporal.ts`); the folder existing is the App's
+  `web.tsx`, `detail.ts`, `api.ts`, `jobs.ts`, `schema.ts`, `temporal.ts`); the folder existing is the App's
   registration (ADR-0001). Tile placement is declared as registry coords in the
   App's `manifest.ts`, glob-collected and emitted to checked-in
-  `features/_generated/*.gen.ts` by `bun run apps:gen` (ADR-0002); never hand-edit
-  `_generated/`. `bun run apps:check` re-runs codegen and fails on drift.
+  `features/_generated/*.gen.ts` by `bun run apps:gen` (ADR-0002). The Board and
+  Tile Detail Host consume `web.gen.ts`; never hand-edit `_generated/`.
+  `bun run apps:check` re-runs codegen and fails on drift.
   `scripts/apps-gen/validate.ts` is the consistency check (dup id/router-key/table,
   ≠1 `home` tile, overlapping tile rects, `guestExposed` ≠ `GUEST_EXPOSED` all
   throw). Shared DB/UniFi substrate lives in `packages/core` (`@www/core`).

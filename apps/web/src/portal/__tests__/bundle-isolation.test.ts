@@ -109,7 +109,7 @@ describe("guest bundle isolation (src/portal/main.tsx import graph)", () => {
   });
 
   it("never imports the tile registry", () => {
-    const hit = [...graph.internalFiles].find((f) => f.includes("/lib/tile-registry"));
+    const hit = [...graph.internalFiles].find((f) => f.includes("/_generated/web.gen"));
     expect(hit).toBeUndefined();
   });
 

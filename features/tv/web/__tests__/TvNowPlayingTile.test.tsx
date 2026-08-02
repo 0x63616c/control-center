@@ -10,6 +10,7 @@
 import "@testing-library/jest-dom";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import tvManifest from "../../manifest";
 import { TvNowPlayingTile } from "../TvNowPlayingTile";
 import { TvNowPlayingTileView } from "../TvNowPlayingTileView";
 
@@ -506,25 +507,16 @@ describe("TvNowPlayingTileView , 2x transport buttons (www-d564)", () => {
   });
 });
 
-// ── Tile registry tests (A31, www-51hf.50) ────────────────────────────────────
+// ── App manifest tests (A31, www-51hf.50) ─────────────────────────────────────
 
-// maplibre-gl / pmtiles needed by TeslaTileView imported transitively
-vi.mock("pmtiles", () => ({ Protocol: vi.fn().mockImplementation(() => ({ tile: vi.fn() })) }));
-vi.mock("@protomaps/basemaps", () => ({
-  layers: vi.fn().mockReturnValue([]),
-  namedFlavor: vi.fn().mockReturnValue({}),
-}));
-
-describe("TILE_REGISTRY , TvNowPlayingTile registration (A31)", () => {
-  it("TvNowPlayingTile is registered in TILE_REGISTRY", async () => {
-    const { TILE_REGISTRY } = await import("@/lib/tile-registry");
-    const entry = TILE_REGISTRY.find((t) => t.component === TvNowPlayingTile);
-    expect(entry, "TvNowPlayingTile must be in TILE_REGISTRY").toBeDefined();
+describe("TV App manifest , TvNowPlayingTile registration (A31)", () => {
+  it("declares TvNowPlayingTile", () => {
+    const entry = tvManifest.tiles.find((tile) => tile.component === TvNowPlayingTile);
+    expect(entry, "TvNowPlayingTile must be declared by the TV App").toBeDefined();
   });
 
-  it("registry entry has required world placement fields", async () => {
-    const { TILE_REGISTRY } = await import("@/lib/tile-registry");
-    const entry = TILE_REGISTRY.find((t) => t.component === TvNowPlayingTile);
+  it("declares the required world Placement", () => {
+    const entry = tvManifest.tiles.find((tile) => tile.component === TvNowPlayingTile);
     expect(entry?.worldCol, "worldCol must be a number").toBeTypeOf("number");
     expect(entry?.worldRow, "worldRow must be a number").toBeTypeOf("number");
     expect(entry?.cols).toBe(4);

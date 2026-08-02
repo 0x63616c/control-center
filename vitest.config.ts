@@ -34,8 +34,8 @@ export default defineConfig({
       // test/scripts/apps-gen: tests for the codegen collector/validator (Track C Slice 3).
       // No package.json/vite config of its own (the production code is a scripts/ subdir, not a
       // workspace package), so it needs an inline project definition rather
-      // than a directory reference. collect.ts imports apps/web's
-      // TILE_REGISTRY, which transitively imports TSX tile components, so
+      // than a directory reference. collect.ts imports App manifests and Tile
+      // View facets, which transitively import TSX components, so
       // this project needs apps/web's "@" alias + the react plugin + jsdom
       // (mirrors apps/web/vitest.config.ts) even though validate.ts itself is
       // plain Node-shaped.
@@ -71,7 +71,7 @@ export default defineConfig({
           ],
           environment: "jsdom",
           // Same MapLibre stub as apps/web's unit project (www-355t.11):
-          // collect() pulls in the real TILE_REGISTRY, which imports
+          // collect() pulls in the real App web facets, which import
           // maplibre-gl-backed tiles (Tesla), and jsdom has no WebGL.
           setupFiles: [resolve(__dirname, "apps/web/vitest.setup.unit.ts")],
         },

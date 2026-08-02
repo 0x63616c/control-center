@@ -1,9 +1,9 @@
+import { registryEntryForComponent } from "@features/_generated/web.gen";
 import type { Decorator, Preview } from "@storybook/react-vite";
 import { createElement } from "react";
 import { create } from "storybook/theming/create";
 import { INITIAL_VIEWPORTS } from "storybook/viewport";
 import { BOARD_H, BOARD_W, tilePixelSize } from "../src/lib/grid-constants";
-import { registryEntryForComponent } from "../src/lib/tile-registry";
 
 // Shared design layer only , tokens, fonts, keyframes, tile classes. The
 // kiosk lockdown (app-shell.css) is deliberately NOT imported here, so docs

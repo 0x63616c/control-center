@@ -22,7 +22,7 @@ const TIMEOUT_MS = 60_000;
 
 const tileTap = vi.fn();
 
-vi.mock("../../lib/tile-registry", () => {
+vi.mock("@features/_generated/web.gen", () => {
   const fake = {
     id: "tile_fake",
     label: "Fake Tile",
@@ -42,11 +42,11 @@ vi.mock("../../lib/tile-registry", () => {
     TILE_REGISTRY: [fake],
     HOME_TILE: fake,
     registryEntryForTileId: (id: string) => (id === fake.id ? fake : undefined),
+    getTileDetailEntry: () => undefined,
   };
 });
 vi.mock("../ConnectionLostBanner", () => ({ ConnectionLostBanner: () => null }));
 vi.mock("../DevOverlayHud", () => ({ DevOverlayHud: () => null }));
-vi.mock("../tiles/detail/registry", () => ({ getTileDetailEntry: () => undefined }));
 // Native so the session is enabled; the backlight calls are inert.
 vi.mock("../../lib/brightness", () => ({
   isNativeDisplay: () => true,

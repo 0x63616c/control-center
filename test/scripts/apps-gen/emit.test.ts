@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { collect } from "../../../scripts/apps-gen/collect";
-import { renderHttp, renderTiles } from "../../../scripts/apps-gen/emit";
+import { renderHttp, renderTiles, renderWeb } from "../../../scripts/apps-gen/emit";
 
 // The determinism gate for the emitter (Task 3.3): renderTiles() over the real
 // collected model must be stable across two calls, and the emitted apps must be
@@ -26,4 +26,14 @@ it("renders the wakes + booth feature http modules as an import barrel, stable a
   expect(a).toContain('import { routes as wakesHttp } from "../wakes/http";');
   expect(a).toContain("...boothHttp");
   expect(a).toContain("...wakesHttp");
+});
+
+it("renders the App web runtime as static manifest and Tile View imports", async () => {
+  const model = await collect();
+  const rendered = renderWeb(model);
+
+  expect(rendered).toContain('import acManifest from "../ac/manifest";');
+  expect(rendered).toContain('import { tileViews as acTileViews } from "../ac/detail";');
+  expect(rendered).toContain("createWebRegistry(");
+  expect(rendered).toContain("...weatherTileViews");
 });

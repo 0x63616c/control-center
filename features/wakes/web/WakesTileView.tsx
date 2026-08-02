@@ -19,7 +19,7 @@ export function WakesTileView({ status, todayCount, lastWakeLabel }: WakesTileVi
 
   return (
     <Tile padding={22}>
-      {/* Title MUST stay in sync with the registry label in lib/tile-registry.ts. */}
+      {/* Title MUST stay in sync with the App manifest label. */}
       <TileHeader icon="moon" title="Activity" />
       <div style={{ marginTop: "auto" }}>
         {isLoading ? (

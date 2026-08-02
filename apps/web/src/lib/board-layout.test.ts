@@ -16,8 +16,8 @@ vi.mock("@protomaps/basemaps", () => ({
   namedFlavor: vi.fn().mockReturnValue({}),
 }));
 
+import { TILE_REGISTRY } from "@features/_generated/web.gen";
 import { resolveLayout, type TileRegistryEntry } from "./board-layout";
-import { TILE_REGISTRY } from "./tile-registry";
 
 // Assertion helper: registry lookups in these tests are for ids that must
 // exist; failing loudly beats a non-null assertion.

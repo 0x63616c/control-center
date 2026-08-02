@@ -1,18 +1,33 @@
-import { expect, it } from "vitest";
-import { collect } from "../../../scripts/apps-gen/collect";
+import { beforeAll, expect, it } from "vitest";
+import { defineTileViews } from "../../../app-kit";
+import { collect, collectTileViewsExport } from "../../../scripts/apps-gen/collect";
 import { validate } from "../../../scripts/apps-gen/validate";
 
-// Lightweight sanity check that collect() over the REAL tile registry produces
-// a model validate() accepts (exactly one home tile, no guestExposed
-// divergence against an empty allowlist — nothing is guest-exposed yet). The
-// dedicated collect.test.ts suite covering features/*/manifest.ts arrives in
-// Slice 5; this is just the registry-only guard for this slice.
-it("collect() unions the guest-wifi feature manifest, deduped against the registry", async () => {
-  const model = await collect();
+let collected: Awaited<ReturnType<typeof collect>>;
+
+beforeAll(async () => {
+  collected = await collect();
+}, 20_000);
+
+it("requires the conventional tileViews export consumed by web.gen.ts", () => {
+  const tileViews = defineTileViews([{ tileId: "tile_weather" }]);
+
+  expect(collectTileViewsExport({ tileViews }, "weather")).toBe(tileViews);
+  expect(() => collectTileViewsExport({ views: tileViews }, "weather")).toThrow(
+    /exactly one.*named tileViews/,
+  );
+  expect(() => collectTileViewsExport({ tileViews, views: tileViews }, "weather")).toThrow(
+    /exactly one.*named tileViews/,
+  );
+});
+
+// Sanity check that collection over the real App facets produces one complete,
+// valid model.
+it("collect() includes the guest-wifi App manifest exactly once", () => {
+  const model = collected;
 
   // The guest-wifi tile is sourced from features/guest-wifi/manifest.ts (source
-  // "feature"), and appears EXACTLY once — the tile-registry entry that renders
-  // it is deduped by id, so the feature is its only source in the model.
+  // "feature"), and appears exactly once.
   const guest = model.apps.filter((a) => a.id === "tile_guestwifi");
   expect(guest).toHaveLength(1);
   expect(guest[0].source).toBe("feature");
@@ -46,8 +61,8 @@ it("collect() unions the guest-wifi feature manifest, deduped against the regist
 // @www/core (`export { ... } from "@www/core"`, not a local declaration).
 // Object.keys() on the imported module module picks these up the same way as
 // locally-declared exports, so they must appear with source "base".
-it("collect() sources the base schema's @www/core re-exports with source 'base'", async () => {
-  const model = await collect();
+it("collect() sources the base schema's @www/core re-exports with source 'base'", () => {
+  const model = collected;
   const baseExportNames = model.schemaExports.filter((e) => e.source === "base").map((e) => e.name);
   expect(baseExportNames).toEqual(
     expect.arrayContaining(["deviceState", "integrationSyncStatus", "job", "DeviceKind"]),
@@ -58,8 +73,8 @@ it("collect() sources the base schema's @www/core re-exports with source 'base'"
 // interim http list into features/booth/http.ts, collected via Source A (the
 // same path api.ts/jobs.ts use), not the interim list — the last entry to
 // leave INTERIM_HTTP_MODULES, which is now permanently empty.
-it("sources the booth-photo route from the booth feature, not the interim list", async () => {
-  const model = await collect();
+it("sources the booth-photo route from the booth feature, not the interim list", () => {
+  const model = collected;
 
   expect(model.httpRoutes).toContainEqual({
     method: "POST",
@@ -73,8 +88,8 @@ it("sources the booth-photo route from the booth feature, not the interim list",
 // Track C, Wave 5 fold: the wake-photo upload facet moved out of the interim
 // http list into features/wakes/http.ts, collected via Source A (the same path
 // api.ts/jobs.ts use), not the interim list.
-it("collect() sources the wake-photo route from the wakes feature, not the interim list", async () => {
-  const model = await collect();
+it("collect() sources the wake-photo route from the wakes feature, not the interim list", () => {
+  const model = collected;
 
   expect(model.httpRoutes).toContainEqual({
     method: "POST",
@@ -90,8 +105,8 @@ it("collect() sources the wake-photo route from the wakes feature, not the inter
 // regression guard for the collect.ts dedup fix — a multi-tile app's tile ids
 // differ from its app id, so the registry-leftover filter must dedup on the
 // union of feature TILE ids, not app ids, or both tiles double-collect.
-it("collect() sources both weather tiles once from the two-tile feature manifest", async () => {
-  const model = await collect();
+it("collect() sources both weather tiles once from the two-tile feature manifest", () => {
+  const model = collected;
   const weather = model.apps.filter((a) => a.id === "tile_weather");
   expect(weather).toHaveLength(1);
   expect(weather[0].source).toBe("feature");
@@ -106,8 +121,8 @@ it("collect() sources both weather tiles once from the two-tile feature manifest
 // tile_clock) under one app id (tile_events). Same collect.ts dedup guard as
 // weather above, plus this is the first fold that moves the board HOME tile —
 // tile_clock's home:true must survive the collect into a single global home.
-it("collect() sources both events tiles once from the two-tile feature manifest", async () => {
-  const model = await collect();
+it("collect() sources both events tiles once from the two-tile feature manifest", () => {
+  const model = collected;
   const events = model.apps.filter((a) => a.id === "tile_events");
   expect(events).toHaveLength(1);
   expect(events[0].source).toBe("feature");
@@ -116,4 +131,15 @@ it("collect() sources both events tiles once from the two-tile feature manifest"
   expect(model.apps.filter((a) => a.id === "tile_clock")).toHaveLength(0);
   expect(model.apps.filter((a) => a.id === "tile_event")).toHaveLength(0);
   expect(() => validate(model, ["tile_guestwifi"])).not.toThrow();
+});
+
+it("collect() finds one App-owned Tile View declaration for every board Tile", () => {
+  const model = collected;
+  const tileIds = model.apps.flatMap((app) => app.tiles.map((tile) => tile.id)).sort();
+
+  expect(model.tileViews.map((view) => view.tileId).sort()).toEqual(tileIds);
+  expect(model.tileViews).toContainEqual({
+    tileId: "tile_weath",
+    source: "feature:weather",
+  });
 });

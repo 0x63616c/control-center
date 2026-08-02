@@ -4,9 +4,8 @@ import { createElement } from "react";
 import { tilePixelSize } from "@/lib/grid-constants";
 import { defineTileMeta } from "./__stories__/factory";
 
-// The tile is not in TILE_REGISTRY yet (its container and router don't exist),
-// so the global BoardDecorator can't derive its footprint. Size it here to the
-// proposed 4x3 placement so these stories render at true production size.
+// This story uses an explicit footprint rather than importing the generated web
+// aggregate and its complete Tile component graph.
 const TILE_COLS = 4;
 const TILE_ROWS = 3;
 

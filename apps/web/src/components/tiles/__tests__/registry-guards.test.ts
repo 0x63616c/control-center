@@ -6,7 +6,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
-// MapLibre (via TeslaTile, imported transitively by tile-registry) calls
+// MapLibre (via TeslaTile, imported transitively by web.gen.ts) calls
 // window.URL.createObjectURL at import time , unavailable in jsdom.
 vi.mock("pmtiles", () => ({ Protocol: vi.fn().mockImplementation(() => ({ tile: vi.fn() })) }));
 vi.mock("@protomaps/basemaps", () => ({
@@ -14,8 +14,8 @@ vi.mock("@protomaps/basemaps", () => ({
   namedFlavor: vi.fn().mockReturnValue({}),
 }));
 
+import { TILE_REGISTRY } from "@features/_generated/web.gen";
 import { tilePixelSize, WORLD_COLS, WORLD_ROWS } from "../../../lib/grid-constants";
-import { TILE_REGISTRY } from "../../../lib/tile-registry";
 
 describe("tile registry , free placement", () => {
   it("all tiles are defined with Stripe-style IDs", () => {

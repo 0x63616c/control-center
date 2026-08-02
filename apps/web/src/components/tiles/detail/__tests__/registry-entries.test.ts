@@ -7,12 +7,10 @@
  * the Settings Logs page through settings-overlay-store.
  */
 
+import { getTileDetailEntry, TILE_REGISTRY } from "@features/_generated/web.gen";
 import { renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-
 import { closeSettings, useSettingsOverlay } from "../../../../lib/settings-overlay-store";
-import { TILE_REGISTRY } from "../../../../lib/tile-registry";
-import { getTileDetailEntry } from "../registry";
 
 describe("tile detail registry , Task 11 entries", () => {
   it("Activity is a PIN-gated (sensitive) page titled 'Activity'", () => {

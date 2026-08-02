@@ -1,8 +1,8 @@
 /**
- * The codegen consistency check (Track C Q7). Every app collected from
- * features/*/ /*manifest.ts + the tile registry is validated as one model
- * before anything is emitted: duplicate ids, home-tile count, tile-rect
- * overlap, and the guestExposed flag agreeing with the reviewed
+ * The codegen consistency check (Track C Q7). Every App manifest and convention
+ * facet is validated as one model before anything is emitted: duplicate ids,
+ * App-local Tile View ownership, home-tile count, tile-rect overlap, and the
+ * guestExposed flag agreeing with the reviewed
  * GUEST_EXPOSED allowlist (widening the guest surface is a deliberate,
  * security-reviewed edit to that allowlist, never an implicit flag flip).
  */
@@ -25,6 +25,7 @@ interface TileRect extends Rect {
 }
 interface ValApp {
   id: string;
+  featureDir: string;
   guestExposed?: boolean;
   tiles: TileRect[];
 }
@@ -54,6 +55,8 @@ interface Model {
    *  schema.gen.ts is a flat `export *` barrel, so a duplicate export name
    *  across two schema.ts files would silently last-write-win in the barrel. */
   schemaExports?: { name: string; source: string }[];
+  /** App-owned Tile View declarations, one for every board Tile. */
+  tileViews: { tileId: string; source: string }[];
 }
 
 function overlaps(a: Rect, b: Rect): boolean {
@@ -230,6 +233,38 @@ export function validate(model: Model, guestExposed: readonly string[]): void {
       );
     }
     seenTile.set(t.id, t.appId);
+  }
+
+  const declaredByTile = new Map<string, string>();
+  for (const view of model.tileViews) {
+    const previous = declaredByTile.get(view.tileId);
+    if (previous) {
+      throw new CodegenError(
+        `duplicate Tile View for '${view.tileId}' (declared by ${previous} and ${view.source})`,
+      );
+    }
+    declaredByTile.set(view.tileId, view.source);
+  }
+  const ownerByTile = new Map(
+    model.apps.flatMap((app) =>
+      app.tiles.map((tile) => [tile.id, `feature:${app.featureDir}`] as const),
+    ),
+  );
+  for (const view of model.tileViews) {
+    const owner = ownerByTile.get(view.tileId);
+    if (!owner) {
+      throw new CodegenError(
+        `Tile View '${view.tileId}' from ${view.source} does not belong to a declared Tile`,
+      );
+    }
+    if (view.source !== owner) {
+      throw new CodegenError(`Tile View '${view.tileId}' belongs to ${owner}, not ${view.source}`);
+    }
+  }
+  for (const tile of tiles) {
+    if (!declaredByTile.has(tile.id)) {
+      throw new CodegenError(`missing Tile View for '${tile.id}'`);
+    }
   }
 
   // Exactly one home tile across ALL tiles of ALL apps.
