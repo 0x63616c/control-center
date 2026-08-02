@@ -9,8 +9,14 @@ export const API_FACET_BRAND = Symbol.for("app-kit.api");
 export const JOBS_FACET_BRAND = Symbol.for("app-kit.jobs");
 export const HTTP_FACET_BRAND = Symbol.for("app-kit.http");
 export const TEMPORAL_FACET_BRAND = Symbol.for("app-kit.temporal");
+export const TILE_VIEWS_FACET_BRAND = Symbol.for("app-kit.tile-views");
 
 export type { JobSpec };
+
+/** The minimum Tile View declaration codegen needs to enforce App ownership. */
+export interface TileViewDeclaration {
+  readonly tileId: string;
+}
 
 /**
  * One raw (non-tRPC) HTTP route (S3). `handler` mirrors apps/api's `handle()`
@@ -85,6 +91,9 @@ export function defineHttp(routes: HttpRoute[]): HttpRoute[] {
 }
 export function defineTemporal(facet: TemporalFacet): TemporalFacet {
   return brand(facet, TEMPORAL_FACET_BRAND);
+}
+export function defineTileViews<T extends TileViewDeclaration>(tileViews: T[]): T[] {
+  return brand(tileViews, TILE_VIEWS_FACET_BRAND);
 }
 
 function brand<T>(v: T, sym: symbol): T {

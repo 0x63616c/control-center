@@ -1,3 +1,8 @@
+import {
+  getTileDetailEntry,
+  HOME_TILE,
+  type TileRegistryEntry,
+} from "@features/_generated/web.gen";
 import { QueryErrorResetBoundary } from "@tanstack/react-query";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -30,7 +35,6 @@ import { panelSession, registerSessionEffects, setSessionEnabled } from "../lib/
 import { bentoFor } from "../lib/placeholder-tiles";
 import { useDeveloperOverlay, useSettings } from "../lib/settings";
 import { closeTileDetail, openTileDetail } from "../lib/tile-detail-store";
-import { HOME_TILE, type TileRegistryEntry } from "../lib/tile-registry";
 import { useAlarmFiring } from "../lib/time-suite/alarm-store";
 import { captureWakeBurst } from "../lib/wake-capture";
 import { AppUpdateBanner } from "./AppUpdateBanner";
@@ -52,7 +56,6 @@ import { PlaceholderTile } from "./PlaceholderTile";
 import { PinGateModal } from "./pin/PinGateModal";
 import { SettingsButton } from "./SettingsButton";
 import { TimeSuiteBanner } from "./TimeSuiteBanner";
-import { getTileDetailEntry } from "./tiles/detail/registry";
 import { TileDetailHost } from "./tiles/detail/TileDetailHost";
 import { UpdateReloadBanner } from "./UpdateReloadBanner";
 import { NotificationBanner, NotificationBannerStack } from "./ui/NotificationBanner";

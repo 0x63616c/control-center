@@ -4,12 +4,11 @@
  * `apps:gen` (scripts/apps-gen.ts), then diffs each render against the
  * committed `features/_generated/*.gen.ts` file. Exits non-zero on drift.
  *
- * This closes the gap the 3.3 reviewer flagged: nothing previously asserted
- * that the committed tiles.gen.ts matches a fresh render of its source
- * (TILE_REGISTRY this slice; the per-feature manifests join in Slice 5).
+ * Every committed aggregate, including the web runtime, must match a fresh
+ * render of its App-owned source facets.
  *
- * THE BUN RUNTIME: same constraint as apps-gen.ts. collect() imports apps/web's
- * TILE_REGISTRY, which pulls in ~40 tile TSX components using the `@/*` path
+ * THE BUN RUNTIME: same constraint as apps-gen.ts. collect() imports App
+ * manifests and Tile View facets, which pull in the TSX tree using the `@/*` path
  * alias, resolvable only when bun's cwd is apps/web (it reads
  * apps/web/tsconfig.json's paths there). The `apps:check` package.json script
  * mirrors `apps:gen`'s `cd apps/web && bun run ...` pattern, so every path here
@@ -34,6 +33,7 @@ import {
   renderSchedules,
   renderSchema,
   renderTiles,
+  renderWeb,
   renderWorkflows,
 } from "./apps-gen/emit";
 import { validate } from "./apps-gen/validate";
@@ -63,6 +63,10 @@ const AGGREGATES: readonly Aggregate[] = [
       validate(model, GUEST_EXPOSED);
       return renderTiles(model);
     },
+  },
+  {
+    file: "web.gen.ts",
+    render: async () => renderWeb(await collect()),
   },
   {
     file: "router.gen.ts",

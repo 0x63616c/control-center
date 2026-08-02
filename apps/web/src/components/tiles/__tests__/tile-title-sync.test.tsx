@@ -13,7 +13,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
-// MapLibre (via TeslaTileView, imported transitively by tile-registry) calls
+// MapLibre (via TeslaTileView, imported transitively by web.gen.ts) calls
 // window.URL.createObjectURL at import time , unavailable in jsdom.
 vi.mock("pmtiles", () => ({ Protocol: vi.fn().mockImplementation(() => ({ tile: vi.fn() })) }));
 vi.mock("@protomaps/basemaps", () => ({
@@ -21,7 +21,7 @@ vi.mock("@protomaps/basemaps", () => ({
   namedFlavor: vi.fn().mockReturnValue({}),
 }));
 
-import { TILE_REGISTRY } from "../../../lib/tile-registry";
+import { TILE_REGISTRY } from "@features/_generated/web.gen";
 
 // Tiles whose face carries no static TileHeader title, so their registry label
 // is purely a name with no `title="…"` literal to match:

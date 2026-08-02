@@ -23,9 +23,10 @@
 // BENTO_TILES below is `bentoFor(clusterWorldCells())` , the static
 // registry defaults , kept as module-load consts for the test and as the
 // initial/fallback fill before the server layout resolves.
+
+import { TILE_REGISTRY } from "@features/_generated/web.gen";
 import { fillAround, type Rect } from "./bento-fill";
 import { WALL_THICKNESS, WORLD_COLS, WORLD_ROWS } from "./grid-constants";
-import { TILE_REGISTRY } from "./tile-registry";
 
 export type PlaceholderTile = {
   id: string;

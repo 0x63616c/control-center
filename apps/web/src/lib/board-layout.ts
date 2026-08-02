@@ -16,8 +16,9 @@
 //   - A tile that genuinely finds no slot (unreachable given the real,
 //     collision-free registry; only reachable via the tiny synthetic fixtures
 //     in the test) is reported in `unplaced` and dropped from `tiles`.
+
+import { TILE_REGISTRY, type TileRegistryEntry } from "@features/_generated/web.gen";
 import { WALL_THICKNESS, WORLD_COLS, WORLD_ROWS } from "./grid-constants";
-import { TILE_REGISTRY, type TileRegistryEntry } from "./tile-registry";
 
 export type { TileRegistryEntry };
 

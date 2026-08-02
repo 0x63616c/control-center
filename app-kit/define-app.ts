@@ -9,7 +9,7 @@ export interface TileSpec {
   id: string;
   label: string;
   component: ComponentType;
-  // Matches the real tile-registry field (an identity-only slot: the full-screen
+  // Matches the generated web registry field (an identity-only slot: the full-screen
   // view is looked up by identity, never rendered generically), so it is typed
   // ComponentType<never> — which accepts a prop-taking view like a status tile.
   viewComponent?: ComponentType<never>;

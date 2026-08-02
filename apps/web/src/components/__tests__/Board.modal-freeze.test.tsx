@@ -23,7 +23,7 @@ function SelfModalTile() {
   );
 }
 
-vi.mock("../../lib/tile-registry", () => {
+vi.mock("@features/_generated/web.gen", () => {
   const self = {
     id: "tile_self",
     label: "Self Tile",
@@ -39,13 +39,11 @@ vi.mock("../../lib/tile-registry", () => {
     TILE_REGISTRY: [self],
     HOME_TILE: self,
     registryEntryForTileId: (id: string) => (id === self.id ? self : undefined),
+    getTileDetailEntry: () => undefined,
   };
 });
 vi.mock("../ConnectionLostBanner", () => ({ ConnectionLostBanner: () => null }));
 vi.mock("../DevOverlayHud", () => ({ DevOverlayHud: () => null }));
-// The detail registry imports real tile wiring (and transitively maplibre-gl),
-// which jsdom cannot load , stub it so taps resolve to no detail entry.
-vi.mock("../tiles/detail/registry", () => ({ getTileDetailEntry: () => undefined }));
 
 import { Board } from "../Board";
 

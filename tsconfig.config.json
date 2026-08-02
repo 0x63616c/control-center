@@ -42,8 +42,8 @@
   // detail pages, wiring, and any feature-local .ts libs like
   // features/wakes/web/lib/*.ts) use the web app's `@/*` alias + JSX, which this
   // server-shaped config deliberately does not carry. They are typechecked by
-  // apps/web instead (its tile-registry imports the manifest, its detail-wiring
-  // imports the wiring modules, both of which transitively pull in the whole
+  // apps/web instead (web.gen.ts imports the manifest and detail facet, which
+  // transitively pull in the whole
   // web/ tree), so exclude them here. `features/**/web/**` also drops the
   // closure's OWN .test.ts files from this program , consistent with every
   // other feature's web-closure .test.tsx files, which `*.ts`-only globbing
@@ -53,6 +53,8 @@
   "exclude": [
     "app-kit/**/*.test.ts",
     "features/**/manifest.ts",
+    "features/**/detail.ts",
+    "features/_generated/web.gen.ts",
     "features/**/modal-store.ts",
     "features/**/web.tsx",
     "features/**/web/**"

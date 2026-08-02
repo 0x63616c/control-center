@@ -63,5 +63,3 @@ export interface TileDetailActionEntry {
   /** Runs instead of opening a page, e.g. Frontend Logs → openSettings("logs"). */
   run: () => void;
 }
-
-export type TileDetailEntry = TileDetailPageEntry | TileDetailActionEntry;

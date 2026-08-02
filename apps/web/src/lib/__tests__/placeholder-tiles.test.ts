@@ -5,7 +5,7 @@
 // gap or collision.
 import { describe, expect, it, vi } from "vitest";
 
-// clusterWorldCells reads TILE_REGISTRY, which transitively imports TeslaTile →
+// clusterWorldCells reads the generated TILE_REGISTRY, which imports TeslaTile →
 // MapLibre. MapLibre calls window.URL.createObjectURL at import time, which jsdom
 // lacks , so stub it the same way registry-guards.test.ts does.
 vi.mock("pmtiles", () => ({ Protocol: vi.fn().mockImplementation(() => ({ tile: vi.fn() })) }));

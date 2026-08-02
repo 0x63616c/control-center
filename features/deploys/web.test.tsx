@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+import deploysManifest from "./manifest";
 import { formatAgo, formatElapsed, STALE_AFTER_MS, staleForOf, toModalCommits } from "./web";
 
 const NOW = Date.parse("2026-07-18T12:00:00Z");
@@ -103,15 +104,9 @@ describe("toModalCommits", () => {
   });
 });
 
-// The registry transitively imports maplibre-gl (Tesla tile), which explodes in
-// jsdom , same stub set TvNowPlayingTile.test.tsx uses.
-vi.mock("pmtiles", () => ({ Protocol: vi.fn().mockImplementation(() => ({ tile: vi.fn() })) }));
-vi.mock("@protomaps/basemaps", () => ({ layers: vi.fn(() => []), namedFlavor: vi.fn(() => ({})) }));
-
-describe("registry entry", () => {
-  it("registers tile_deploys at 34,24 4x3 (label matches the TileHeader title)", async () => {
-    const { TILE_REGISTRY } = await import("@/lib/tile-registry");
-    const entry = TILE_REGISTRY.find((t) => t.id === "tile_deploys");
+describe("App manifest", () => {
+  it("declares tile_deploys at 34,24 4x3 (label matches the TileHeader title)", () => {
+    const entry = deploysManifest.tiles.find((tile) => tile.id === "tile_deploys");
     expect(entry).toMatchObject({
       label: "Deploys",
       worldCol: 34,

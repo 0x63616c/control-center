@@ -8,7 +8,7 @@ import { WORLD_H, WORLD_W } from "../../lib/grid-constants";
 // idle-reset glide home and the mount centering , must never show them
 // (www-5teu: the wall panel flashed the minimap every time it idled back to the
 // clock).
-vi.mock("../../lib/tile-registry", () => {
+vi.mock("@features/_generated/web.gen", () => {
   const fake = {
     id: "tile_fake",
     label: "Fake Tile",
@@ -24,13 +24,11 @@ vi.mock("../../lib/tile-registry", () => {
     TILE_REGISTRY: [fake],
     HOME_TILE: fake,
     registryEntryForTileId: (id: string) => (id === fake.id ? fake : undefined),
+    getTileDetailEntry: () => undefined,
   };
 });
 vi.mock("../ConnectionLostBanner", () => ({ ConnectionLostBanner: () => null }));
 vi.mock("../DevOverlayHud", () => ({ DevOverlayHud: () => null }));
-// The detail registry imports real tile wiring (and transitively maplibre-gl),
-// which jsdom cannot load , stub it so taps resolve to no detail entry.
-vi.mock("../tiles/detail/registry", () => ({ getTileDetailEntry: () => undefined }));
 
 import { resetSettings, setShowMinimap } from "../../lib/settings";
 import { Board } from "../Board";

@@ -8,12 +8,12 @@ import { Tile, TileHeader } from "@/components/ui";
  * section-label `.ic` and TileDesign01 use). No status dot: the booth carries no
  * live board state, so nothing should read as one.
  *
- * Tapping the tile opens the fullscreen camera via the board's tile-detail registry
- * (detail/wiring/photo-booth.tsx), which hosts the camera ⇄ gallery navigation.
+ * Tapping the Tile opens the fullscreen camera through the App-owned detail facet,
+ * whose wiring hosts the camera ⇄ gallery navigation.
  * The tile itself is presentational and takes no props, so it serves as both the
- * board `component` and the minimap `viewComponent` in lib/tile-registry.ts.
+ * Board `component` and the minimap `viewComponent` in the App manifest.
  *
- * The title MUST stay in sync with the registry label in lib/tile-registry.ts
+ * The title MUST stay in sync with the manifest label
  * (asserted by tile-title-sync.test.tsx).
  */
 export function PhotoBoothTile() {

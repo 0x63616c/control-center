@@ -1,18 +1,27 @@
 import { expect, it } from "vitest";
-import { collect } from "../../../scripts/apps-gen/collect";
+import { defineTileViews } from "../../../app-kit";
+import { collect, collectTileViewsExport } from "../../../scripts/apps-gen/collect";
 import { validate } from "../../../scripts/apps-gen/validate";
 
-// Lightweight sanity check that collect() over the REAL tile registry produces
-// a model validate() accepts (exactly one home tile, no guestExposed
-// divergence against an empty allowlist — nothing is guest-exposed yet). The
-// dedicated collect.test.ts suite covering features/*/manifest.ts arrives in
-// Slice 5; this is just the registry-only guard for this slice.
-it("collect() unions the guest-wifi feature manifest, deduped against the registry", async () => {
+it("requires the conventional tileViews export consumed by web.gen.ts", () => {
+  const tileViews = defineTileViews([{ tileId: "tile_weather" }]);
+
+  expect(collectTileViewsExport({ tileViews }, "weather")).toBe(tileViews);
+  expect(() => collectTileViewsExport({ views: tileViews }, "weather")).toThrow(
+    /exactly one.*named tileViews/,
+  );
+  expect(() => collectTileViewsExport({ tileViews, views: tileViews }, "weather")).toThrow(
+    /exactly one.*named tileViews/,
+  );
+});
+
+// Sanity check that collection over the real App facets produces one complete,
+// valid model.
+it("collect() includes the guest-wifi App manifest exactly once", async () => {
   const model = await collect();
 
   // The guest-wifi tile is sourced from features/guest-wifi/manifest.ts (source
-  // "feature"), and appears EXACTLY once — the tile-registry entry that renders
-  // it is deduped by id, so the feature is its only source in the model.
+  // "feature"), and appears exactly once.
   const guest = model.apps.filter((a) => a.id === "tile_guestwifi");
   expect(guest).toHaveLength(1);
   expect(guest[0].source).toBe("feature");
@@ -116,4 +125,15 @@ it("collect() sources both events tiles once from the two-tile feature manifest"
   expect(model.apps.filter((a) => a.id === "tile_clock")).toHaveLength(0);
   expect(model.apps.filter((a) => a.id === "tile_event")).toHaveLength(0);
   expect(() => validate(model, ["tile_guestwifi"])).not.toThrow();
+});
+
+it("collect() finds one App-owned Tile View declaration for every board Tile", async () => {
+  const model = await collect();
+  const tileIds = model.apps.flatMap((app) => app.tiles.map((tile) => tile.id)).sort();
+
+  expect(model.tileViews.map((view) => view.tileId).sort()).toEqual(tileIds);
+  expect(model.tileViews).toContainEqual({
+    tileId: "tile_weath",
+    source: "feature:weather",
+  });
 });

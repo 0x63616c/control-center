@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // A fake one-tile registry so Board can be exercised without loading real tiles
 // (or their transitive deps like maplibre-gl) in jsdom. The fake tile renders an
 // inner button so we can prove control taps don't open the detail page.
-vi.mock("../../lib/tile-registry", () => {
+vi.mock("@features/_generated/web.gen", () => {
   const fake = {
     id: "tile_fake",
     label: "Fake Tile",
@@ -25,34 +25,29 @@ vi.mock("../../lib/tile-registry", () => {
     TILE_REGISTRY: [fake],
     HOME_TILE: fake,
     registryEntryForTileId: (id: string) => (id === fake.id ? fake : undefined),
+    getTileDetailEntry: (id: string) =>
+      id === "tile_fake"
+        ? {
+            kind: "page" as const,
+            tileId: "tile_fake",
+            title: "Fake Tile",
+            defaultSlug: "v1",
+            useVariants: () => ({
+              loading: false,
+              variants: [
+                {
+                  slug: "v1",
+                  label: "V1",
+                  render: () => <div data-testid="fake-detail">fake-detail-content</div>,
+                },
+              ],
+            }),
+          }
+        : undefined,
   };
 });
 vi.mock("../ConnectionLostBanner", () => ({ ConnectionLostBanner: () => null }));
 vi.mock("../DevOverlayHud", () => ({ DevOverlayHud: () => null }));
-
-// Fake detail registry: tile_fake opens a single-variant full page. Mocking it
-// also keeps jsdom clear of the real tile wiring (and transitively maplibre-gl).
-vi.mock("../tiles/detail/registry", () => ({
-  getTileDetailEntry: (id: string) =>
-    id === "tile_fake"
-      ? {
-          kind: "page" as const,
-          tileId: "tile_fake",
-          title: "Fake Tile",
-          defaultSlug: "v1",
-          useVariants: () => ({
-            loading: false,
-            variants: [
-              {
-                slug: "v1",
-                label: "V1",
-                render: () => <div data-testid="fake-detail">fake-detail-content</div>,
-              },
-            ],
-          }),
-        }
-      : undefined,
-}));
 
 import { closeTileDetail } from "../../lib/tile-detail-store";
 import { Board } from "../Board";

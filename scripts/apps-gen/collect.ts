@@ -11,8 +11,9 @@ import {
   JOBS_FACET_BRAND,
   TEMPORAL_FACET_BRAND,
   type TemporalFacet,
+  TILE_VIEWS_FACET_BRAND,
+  type TileViewDeclaration,
 } from "../../app-kit/index";
-import { TILE_REGISTRY } from "../../apps/web/src/lib/tile-registry";
 
 // scripts/apps-gen/collect.ts -> repo root is two directories up.
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -33,6 +34,8 @@ interface CollectedTile {
 /** @public shared shape between collect() and validate(); consumed by the codegen emitter. */
 export interface CollectedApp {
   id: string;
+  /** Owning features/<dir> folder, used to validate App-local facet ownership. */
+  featureDir: string;
   tiles: CollectedTile[];
   guestExposed: boolean;
   sensitive: boolean;
@@ -129,6 +132,12 @@ interface CollectedActivity {
   source: string;
 }
 
+/** One App-owned Tile View declaration from features/<id>/detail.ts. */
+interface CollectedTileView {
+  tileId: string;
+  source: string;
+}
+
 /**
  * Per-feature emit metadata — everything the emitter needs to render the
  * generated router/guest-router/schema aggregates as deterministic import
@@ -143,6 +152,8 @@ export interface CollectedFeature {
   hasSchema: boolean;
   hasJobs: boolean;
   hasHttp: boolean;
+  /** True when the App has a branded detail.ts Tile View facet. */
+  hasDetail: boolean;
   /** True when the feature has a `defineTemporal` facet (temporal.ts, ADR-0008). */
   hasTemporal: boolean;
   /** True when the feature ships `activities.ts` (requires hasTemporal). */
@@ -161,9 +172,27 @@ export interface AppModel {
   workflowTypes: CollectedWorkflowType[];
   temporalSchedules: CollectedTemporalSchedule[];
   activities: CollectedActivity[];
+  tileViews: CollectedTileView[];
 }
 
 const APP_BRAND = Symbol.for("app-kit.app");
+
+/** Enforce the single conventional export consumed by the generated import. */
+export function collectTileViewsExport(
+  detailMod: Record<string, unknown>,
+  dir: string,
+): TileViewDeclaration[] {
+  const branded = Object.entries(detailMod).filter(
+    ([, value]) =>
+      Array.isArray(value) && Boolean((value as Record<symbol, unknown>)[TILE_VIEWS_FACET_BRAND]),
+  );
+  if (branded.length !== 1 || branded[0][0] !== "tileViews") {
+    throw new Error(
+      `features/${dir}/detail.ts must export exactly one defineTileViews() facet named tileViews`,
+    );
+  }
+  return branded[0][1] as TileViewDeclaration[];
+}
 
 /**
  * S3 transitional: booth/wake raw routes lived in apps/api until F-booth/F-wakes
@@ -221,13 +250,11 @@ function tableNames(mod: Record<string, unknown>): string[] {
 }
 
 /**
- * Collect the whole app model as one consistent whole (Track C). The tile model
- * is the UNION of every `features/*` /manifest.ts` (source "feature") with the
- * tile-registry leftovers (source "registry") — a registry entry whose id is
- * already owned by a feature is deduped, so each tile has exactly one source.
- * The schema union (feature tables + base apps/api tables), the feature router
- * keys, and the collected facets ride alongside so validate() can reject
- * duplicate table names / router keys and the emitter can render the aggregates.
+ * Collect the whole App model as one consistent whole. Every Tile comes from
+ * its App manifest and every Tile View comes from the owning App's detail.ts
+ * facet; there is no registry fallback. The schema union, router keys, and
+ * remaining facets ride alongside so validation can reject collisions and the
+ * emitter can render every static runtime aggregate.
  */
 export async function collect(): Promise<AppModel> {
   const dirs = featureDirs();
@@ -243,6 +270,7 @@ export async function collect(): Promise<AppModel> {
   const workflowTypes: CollectedWorkflowType[] = [];
   const temporalSchedules: CollectedTemporalSchedule[] = [];
   const activities: CollectedActivity[] = [];
+  const tileViews: CollectedTileView[] = [];
 
   for (const dir of dirs) {
     const base = join(FEATURES_DIR, dir);
@@ -254,6 +282,7 @@ export async function collect(): Promise<AppModel> {
     }
     featureApps.push({
       id: m.id,
+      featureDir: dir,
       tiles: m.tiles.map((t) => ({
         id: t.id,
         label: t.label,
@@ -285,6 +314,21 @@ export async function collect(): Promise<AppModel> {
       };
       const record = apiMod.api?._def?.record ?? {};
       for (const key of Object.keys(record)) routerKeys.push({ key, source: `feature:${dir}` });
+    }
+
+    let hasDetail = false;
+    const detailPath = join(base, "detail.ts");
+    if (existsSync(detailPath)) {
+      const detailMod = (await import(detailPath)) as Record<string, unknown>;
+      const declarations = collectTileViewsExport(detailMod, dir);
+      hasDetail = true;
+      for (const declaration of declarations) {
+        tileViews.push({ tileId: declaration.tileId, source: `feature:${dir}` });
+      }
+    } else if (m.tiles.length > 0) {
+      throw new Error(
+        `features/${dir}/manifest.ts declares Tiles but features/${dir}/detail.ts is missing`,
+      );
     }
 
     let hasJobs = false;
@@ -386,6 +430,7 @@ export async function collect(): Promise<AppModel> {
       hasSchema,
       hasJobs,
       hasHttp,
+      hasDetail,
       hasTemporal,
       hasActivities,
     });
@@ -422,33 +467,8 @@ export async function collect(): Promise<AppModel> {
     schemaExports.push({ name, source: "base" });
   }
 
-  // Registry leftovers: every TILE_REGISTRY entry NOT already owned by a feature.
-  // Dedup by the union of feature TILE ids, not app ids — a multi-tile app's tile
-  // ids differ from its app id (first case: features/weather).
-  const featureTileIds = new Set(featureApps.flatMap((a) => a.tiles.map((t) => t.id)));
-  const registryApps: CollectedApp[] = TILE_REGISTRY.filter((t) => !featureTileIds.has(t.id)).map(
-    (t) => ({
-      id: t.id,
-      tiles: [
-        {
-          id: t.id,
-          label: t.label,
-          worldCol: t.worldCol,
-          worldRow: t.worldRow,
-          cols: t.cols,
-          rows: t.rows,
-          home: Boolean((t as { home?: boolean }).home),
-        },
-      ],
-      guestExposed: false,
-      sensitive: Boolean((t as { sensitive?: boolean }).sensitive),
-      private: false,
-      source: "registry",
-    }),
-  );
-
   return {
-    apps: [...featureApps, ...registryApps],
+    apps: featureApps,
     features,
     tables,
     schemaExports,
@@ -459,5 +479,6 @@ export async function collect(): Promise<AppModel> {
     workflowTypes,
     temporalSchedules,
     activities,
+    tileViews,
   };
 }

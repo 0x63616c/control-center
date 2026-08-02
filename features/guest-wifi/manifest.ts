@@ -7,10 +7,8 @@ import { GuestWifiTile, GuestWifiTileView } from "./web";
  * placement (copied verbatim from the pre-fold tile-registry entry), and the
  * fact that it is reachable by unauthenticated LAN guests (`guestExposed`).
  *
- * The codegen collects this manifest from `features/*` /manifest.ts` and unions
- * it with the tile-registry leftovers (D2). `apps/web`'s tile-registry imports
- * this manifest so the board still renders the tile; the id is deduped so the
- * feature is the tile's only source in the generated model.
+ * Codegen discovers this manifest by folder convention and emits it into the
+ * static web runtime consumed by the Board.
  *
  * `guestExposed: true` MUST agree with the hand-owned `features/guest-exposed.ts`
  * allowlist or the codegen validator throws — widening the guest surface is a

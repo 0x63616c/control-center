@@ -65,12 +65,12 @@ that run/deploy, `packages/` = things you import); product features live under
 - `features/<id>/` - one folder per self-contained App (`ac`, `booth`, `ctrl`, `deploys`,
   `dogcam`, `events`, `felogs`, `guest-wifi`, `network`, `notif`, `sound`, `tesla`, `tv`,
   `wakes`, `weather`, `weight` today). Each has a `manifest.ts` (tile placement, id) plus
-  whichever convention facets it needs: `web.tsx` (tile + detail view), `api.ts` (tRPC
+  whichever convention facets it needs: `web.tsx` (Tile face), `detail.ts` (Tile View declaration), `api.ts` (tRPC
   router slice), `jobs.ts` (queue job handlers), `schema.ts` (owned tables),
   `temporal.ts` (Temporal workflow types + schedules, ADR-0008) with its
   implementation siblings `workflows.ts` (sandboxed) and `activities.ts`.
 - `features/_generated/*.gen.ts` - committed codegen output (`bun run apps:gen`):
-  `tiles.gen.ts`, `router.gen.ts`, `guest-router.gen.ts`, `jobs.gen.ts`, `http.gen.ts`,
+  `tiles.gen.ts`, `web.gen.ts`, `router.gen.ts`, `guest-router.gen.ts`, `jobs.gen.ts`, `http.gen.ts`,
   `schema.gen.ts`, `workflows.gen.ts`, `activities.gen.ts`, `schedules.gen.ts`.
   Never hand-edit.
 - `app-kit` - the `defineApp`/manifest types and server-side router-merging helpers
@@ -118,19 +118,14 @@ The dashboard is not a normal responsive layout. It is a fixed wall-panel world:
 - Module-level web stores share one primitive: `createStore`/`useStore` at
   `apps/web/src/lib/store.ts` (settings, alarms, timers, tile-detail, modals, …).
 
-Tile placement is declared per-feature, not centralized. Each feature's `manifest.ts`
-declares its tile's id, label, components, and world position/size via `defineApp`
-(ADR-0001). At runtime, `apps/web/src/lib/tile-registry.ts` still statically imports
-all 16 feature manifests by hand and unions them with a now-empty `REGISTRY_ENTRIES`
-array - every real tile today comes from a feature, there is no hand-placed tile left,
-but the board does not read from codegen for this. `bun run apps:gen` also emits
-`features/_generated/tiles.gen.ts` (`GENERATED_TILES`), a data-only projection of the
-same manifests, but as of this writing it has **no runtime consumer** - it's written
-and drift-checked but nothing imports it (open issue: #97, "tiles.gen.ts has no
-runtime consumer"). Placement data is therefore dual-sourced until that's resolved
-one way or the other. There is no runtime
-placement override table; a tile's position is edited by changing its manifest's
-`worldCol`/`worldRow`/`cols`/`rows` and re-running codegen.
+Tile Placement and Tile View registration are declared per-App, not centralized.
+Each `manifest.ts` declares Tile identity, rendering, and world placement; each
+`detail.ts` declares the owning App's Tile Views. `bun run apps:gen` emits the
+static `features/_generated/web.gen.ts` runtime consumed by the Board and Tile
+Detail Host, plus `tiles.gen.ts` as the data-only review projection. Codegen
+validates that every Tile has exactly one Tile View before emitting either file.
+There is no runtime placement override table; move or resize a Tile in its
+manifest and rerun codegen.
 
 Settings is a full-page (`1366x1024`) body-portal overlay, not a modal: `components/settings-page/` holds the shell (`SettingsPage.tsx`, sidebar + page routing), shared framing (`blocks.tsx`), the page registry (`pages.ts`), and eight presentational pages under `pages/` (Device, Display, Board, Network, Notifications, Debug, About, Security). Live state comes from the module-level settings store (`lib/settings.ts`), which syncs every field across panels through the server's settings singleton. Sensitive surfaces (Settings gear, Wake photos viewer, any tile detail flagged `sensitive`) share ONE PIN unlock per panel session (`components/pin/`, `PinGateModal` + `PinPadView`, on `panelSession.unlock()`): a successful PIN entry unlocks everything sensitive until the session ends (idle timeout relocks). The PIN is a synced settings field (`pinCode`, default `"000000"`), enforced frontend-only - the API never validates it beyond schema shape (ADR-0004: accepted until Slice S lands server-side `session.unlock(pin)`; the relock is only as strong as the client).
 
