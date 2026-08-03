@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 import {
   BRIGHTNESS_MAX,
   BRIGHTNESS_MIN,
+  DEFAULT_TIME_ZONE,
   DIM_MAX,
   DIM_MIN,
   LOCK_SCREEN_BLUR_MAX_PERCENT,
@@ -42,6 +43,14 @@ describe("settings contract", () => {
     // getSettings would throw on a fresh install.
     expect(settingsSchema.parse(DEFAULTS)).toEqual(DEFAULTS);
     expect(DEFAULTS).toBe(SETTINGS_DEFAULTS);
+  });
+
+  it("defaults the panel's calendar zone to Los Angeles and rejects invalid zones", () => {
+    expect(DEFAULTS.timeZone).toBe(DEFAULT_TIME_ZONE);
+    expect(settingsSchema.parse({ ...DEFAULTS, timeZone: "Europe/London" }).timeZone).toBe(
+      "Europe/London",
+    );
+    expect(() => settingsSchema.parse({ ...DEFAULTS, timeZone: "not/a-zone" })).toThrow();
   });
 
   it("enforces the shared timeout window on the idle-dim timeout field", () => {

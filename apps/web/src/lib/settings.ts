@@ -16,6 +16,7 @@ import {
   type Accent,
   BRIGHTNESS_MAX,
   BRIGHTNESS_MIN,
+  DEFAULT_TIME_ZONE,
   DIM_MAX,
   DIM_MIN,
   LOCK_SCREEN_BLUR_MAX_PERCENT,
@@ -115,6 +116,8 @@ export interface Settings {
    *  that face needs (see lib/typeface.ts). Synced for the same reason as the
    *  accent: it is how the installation looks, not a property of one panel. */
   typeface: Typeface;
+  /** IANA zone used for panel-facing dates, schedules, and day boundaries. */
+  timeZone: string;
   /** Push notifications requested for THIS device. Drives the OS permission
    *  prompt + APNs token registration (lib/push.ts). Device-local by nature:
    *  a token belongs to one panel, so this must not sync across panels. */
@@ -162,6 +165,7 @@ const KEYS = {
   pinPadLayout: "cc-pin-pad-layout",
   accent: "cc-accent",
   typeface: "cc-typeface",
+  timeZone: "cc-time-zone",
   pushEnabled: "cc-push-enabled",
 } as const;
 
@@ -250,6 +254,7 @@ function loadInitial(): Settings {
   const legacyScramble = readRaw("cc-scramble-pin");
   const accent = readRaw(KEYS.accent);
   const typeface = readRaw(KEYS.typeface);
+  const timeZone = readRaw(KEYS.timeZone);
   const push = readRaw(KEYS.pushEnabled);
   return {
     activeBrightness:
@@ -287,6 +292,7 @@ function loadInitial(): Settings {
       typeface && (TYPEFACES as readonly string[]).includes(typeface)
         ? (typeface as Typeface)
         : DEFAULTS.typeface,
+    timeZone: isValidTimeZone(timeZone) ? timeZone : DEFAULT_TIME_ZONE,
     pushEnabled: push === null ? DEFAULTS.pushEnabled : push === "true",
   };
 }
@@ -477,6 +483,22 @@ export function setAccent(accent: Accent): void {
 /** Pick the board's type pair (see lib/typeface.ts). */
 export function setTypeface(typeface: Typeface): void {
   patch("typeface", typeface, typeface);
+}
+
+function isValidTimeZone(value: string | null): value is string {
+  if (!value) return false;
+  try {
+    new Intl.DateTimeFormat(undefined, { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Set the shared IANA zone that defines panel-facing calendar dates. */
+export function setTimeZone(timeZone: string): void {
+  if (!isValidTimeZone(timeZone)) return;
+  patch("timeZone", timeZone, timeZone);
 }
 
 export function setPushEnabled(v: boolean): void {

@@ -9,6 +9,7 @@ import type { PageProps } from "../SettingsPage";
 import { BoardPage } from "./BoardPage";
 import { DevicePage } from "./DevicePage";
 import { DisplayPage } from "./DisplayPage";
+import { TimePage } from "./TimePage";
 
 /**
  * Device now reads `trpc.health.buildHash` (folded in from About, #64), so its
@@ -137,5 +138,14 @@ export const Board: Story = {
     const canvas = within(canvasElement);
     await expect(canvas.getByRole("switch", { name: "Minimap" })).toBeInTheDocument();
     await expect(canvas.getByText("Board snap")).toBeInTheDocument();
+  },
+};
+
+export const Time: Story = {
+  render: () => <TimePage {...pageProps} />,
+  play: async ({ canvasElement }) => {
+    await expect(
+      within(canvasElement).getByRole("combobox", { name: "Time zone" }),
+    ).toBeInTheDocument();
   },
 };

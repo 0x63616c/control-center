@@ -7,6 +7,7 @@ import {
   ACCENTS,
   BRIGHTNESS_MAX,
   BRIGHTNESS_MIN,
+  DEFAULT_TIME_ZONE,
   DIM_MAX,
   DIM_MIN,
   LOCK_SCREEN_BLUR_MAX_PERCENT,
@@ -64,6 +65,19 @@ export const settingsSchema = z.object({
   // families, weights and tracking each key maps to are web's business
   // (styles/tokens.css + lib/typeface.ts).
   typeface: z.enum(TYPEFACES),
+  // An IANA name, not a browser/host offset. An offset changes with DST and
+  // cannot correctly identify a calendar day across a future transition.
+  timeZone: z.string().refine(
+    (value) => {
+      try {
+        new Intl.DateTimeFormat(undefined, { timeZone: value });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    { message: "must be a recognised IANA time zone" },
+  ),
 });
 
 /** A partial patch: any subset of the full settings object. */
@@ -76,6 +90,9 @@ export type SettingsPatch = z.infer<typeof settingsPatchSchema>;
  *  every read/write so a newly-added field falls back to its default. Shared with
  *  the web store, which layers its device-local fields on top. */
 export const DEFAULTS: Settings = SETTINGS_DEFAULTS;
+
+/** Default used only as an explicit named contract in callers and tests. */
+export { DEFAULT_TIME_ZONE };
 
 type Database = NodePgDatabase<typeof schema>;
 

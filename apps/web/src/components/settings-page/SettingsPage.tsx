@@ -29,6 +29,7 @@ import { NetworkPage } from "./pages/NetworkPage";
 import { NotificationsPage } from "./pages/NotificationsPage";
 import { SecurityPage } from "./pages/SecurityPage";
 import { SoundPage } from "./pages/SoundPage";
+import { TimePage } from "./pages/TimePage";
 
 export type PageProps = {
   onClose: () => void;
@@ -48,6 +49,7 @@ const PAGE_COMPONENTS: Partial<Record<PageKey, ComponentType<PageProps>>> = {
   network: NetworkPage,
   notifications: NotificationsPage,
   security: SecurityPage,
+  time: TimePage,
   logs: LogsPage,
 };
 
