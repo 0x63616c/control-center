@@ -169,6 +169,8 @@ export interface SoftwareFactoryArgs {
   provider: k8s.Provider;
   /** The shared namespace that orders the factory's CNPG and worker resources. */
   namespace: k8s.core.v1.Namespace;
+  /** One GitHub Actions deployment attempt, shared by every pod it renders. */
+  deployId: string;
   /**
    * Decrypted vault (vault.ts): the GHCR pull token (the worker and Run Worker
    * images are private; the separately installed relay has its own copy)
@@ -227,6 +229,7 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
   const {
     provider,
     namespace,
+    deployId,
     vault,
     accessAud,
     imageDigests,
@@ -467,6 +470,7 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
                     name: "POD_NAME",
                     valueFrom: { fieldRef: { fieldPath: "metadata.name" } },
                   },
+                  { name: "DEPLOY_ID", value: deployId },
                   // Every target generation uses this digest-pinned runtime.
                   {
                     name: "RUN_WORKER_IMAGE",

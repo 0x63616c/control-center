@@ -119,6 +119,7 @@ const controlCenterGuestCert = issuePortalCertificate({
 // The NAS NFS server, shared by the worker media share and the pg-backup target.
 const nasNfsServer = cfg.get("nasNfsServer") ?? "192.168.0.218";
 const imageDigests = cfg.getObject<Record<string, string>>("imageDigests") ?? {};
+const softwareFactoryDeployId = cfg.require("softwareFactoryDeployId");
 
 // coldStart: a one-time escape hatch for the FIRST `pulumi up` against a brand
 // new, empty cluster (the Talos home-server bring-up, www-j934.9). Two steady-
@@ -241,6 +242,7 @@ if (target.substrate === "talos") {
   installSoftwareFactory({
     provider: cluster.provider,
     namespace: cluster.namespaces["software-factory"],
+    deployId: softwareFactoryDeployId,
     vault,
     accessAud: factoryAccessAud,
     imageDigests,

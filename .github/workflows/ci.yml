@@ -670,6 +670,11 @@ jobs:
           STACK=home-server
           pulumi login
           pulumi stack select "$STACK"
+          # Scope the factory's Temporal activation idempotency key to one
+          # deployment attempt. A retry of this Actions run increments
+          # GITHUB_RUN_ATTEMPT, while ordinary pod restarts reuse this value.
+          deploy_id="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          pulumi config set wwwinfra:softwareFactoryDeployId "$deploy_id" --stack "$STACK"
           # Pin the k8s provider to the context the CI kubeconfig actually carries,
           # read from the file itself, so the provider never falls back to a
           # local context (which resolves per-machine to a DIFFERENT cluster). The
