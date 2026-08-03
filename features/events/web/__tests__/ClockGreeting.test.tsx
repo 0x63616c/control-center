@@ -14,7 +14,7 @@ describe("ClockGreeting", () => {
   it("renders the time, date, greeting, and location with a fixed clock", () => {
     // 2026-05-29 09:30:00 UTC , a Friday morning
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-05-29T09:30:00"));
+    vi.setSystemTime(new Date("2026-05-29T16:30:00Z"));
 
     render(<ClockGreeting />);
 
@@ -36,7 +36,7 @@ describe("ClockGreeting", () => {
 
   it("shows 'Good afternoon' for a 14:xx hour", () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-05-29T14:00:00"));
+    vi.setSystemTime(new Date("2026-05-29T21:00:00Z"));
 
     render(<ClockGreeting />);
 
@@ -47,7 +47,7 @@ describe("ClockGreeting", () => {
 
   it("shows 'Good evening' for a 19:xx hour", () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-05-29T19:45:00"));
+    vi.setSystemTime(new Date("2026-05-30T02:45:00Z"));
 
     render(<ClockGreeting />);
 
@@ -57,7 +57,7 @@ describe("ClockGreeting", () => {
 
   it("shows 'Good night' for a 23:xx hour", () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-05-29T23:15:00"));
+    vi.setSystemTime(new Date("2026-05-30T06:15:00Z"));
 
     render(<ClockGreeting />);
 
@@ -66,7 +66,7 @@ describe("ClockGreeting", () => {
 
   it("shows 'Good night' for a 02:xx hour", () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-05-29T02:05:00"));
+    vi.setSystemTime(new Date("2026-05-29T09:05:00Z"));
 
     render(<ClockGreeting />);
 
@@ -75,7 +75,7 @@ describe("ClockGreeting", () => {
 
   it("ticks the clock every second", () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-05-29T09:30:00"));
+    vi.setSystemTime(new Date("2026-05-29T16:30:00Z"));
 
     render(<ClockGreeting />);
 
@@ -83,7 +83,7 @@ describe("ClockGreeting", () => {
 
     // Advance one minute
     act(() => {
-      vi.setSystemTime(new Date("2026-05-29T09:31:00"));
+      vi.setSystemTime(new Date("2026-05-29T16:31:00Z"));
       vi.advanceTimersByTime(1000);
     });
 
@@ -92,7 +92,7 @@ describe("ClockGreeting", () => {
 
   it("uses 12:xx for noon (12-hour roll-over)", () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-05-29T12:00:00"));
+    vi.setSystemTime(new Date("2026-05-29T19:00:00Z"));
 
     render(<ClockGreeting />);
 
@@ -102,7 +102,7 @@ describe("ClockGreeting", () => {
 
   it("www-882: tile wrapper has padding 28", () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-05-29T09:30:00"));
+    vi.setSystemTime(new Date("2026-05-29T16:30:00Z"));
 
     const { container } = render(<ClockGreeting />);
     const tile = container.firstChild as HTMLElement;
@@ -112,7 +112,7 @@ describe("ClockGreeting", () => {
 
   it("www-882: date line has font-size 18", () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-05-29T09:30:00"));
+    vi.setSystemTime(new Date("2026-05-29T16:30:00Z"));
 
     render(<ClockGreeting />);
 
@@ -122,7 +122,7 @@ describe("ClockGreeting", () => {
 
   it("www-oi9: AM/PM span has non-negative letter-spacing (not inherited -.05em)", () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-05-29T09:30:00"));
+    vi.setSystemTime(new Date("2026-05-29T16:30:00Z"));
 
     render(<ClockGreeting />);
 
@@ -133,7 +133,7 @@ describe("ClockGreeting", () => {
 
   it("www-902: seconds ring is wired into the clock", () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-05-29T09:30:45"));
+    vi.setSystemTime(new Date("2026-05-29T16:30:45Z"));
 
     const { container } = render(<ClockGreeting />);
 
