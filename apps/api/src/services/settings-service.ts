@@ -7,7 +7,6 @@ import {
   ACCENTS,
   BRIGHTNESS_MAX,
   BRIGHTNESS_MIN,
-  DEFAULT_TIME_ZONE,
   DIM_MAX,
   DIM_MIN,
   LOCK_SCREEN_BLUR_MAX_PERCENT,
@@ -90,9 +89,6 @@ export type SettingsPatch = z.infer<typeof settingsPatchSchema>;
  *  every read/write so a newly-added field falls back to its default. Shared with
  *  the web store, which layers its device-local fields on top. */
 export const DEFAULTS: Settings = SETTINGS_DEFAULTS;
-
-/** Default used only as an explicit named contract in callers and tests. */
-export { DEFAULT_TIME_ZONE };
 
 type Database = NodePgDatabase<typeof schema>;
 
