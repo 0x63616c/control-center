@@ -5,7 +5,7 @@ import { goal, goalCheckin, goalSchedule, goalVacation } from "./schema";
 import { goalDayAt, mondayOf, shiftGoalDay, weekdayOf } from "./time";
 
 type Database = typeof db;
-export type GoalKind = "simple" | "measured" | "reflective";
+type GoalKind = "simple" | "measured" | "reflective";
 export type ScheduleInput =
   | { kind: "daily" }
   | { kind: "weekdays"; weekdays: number[] }
