@@ -11,7 +11,7 @@
  * `EventSelectSchema` and calls `.parse()` on it directly.
  */
 import { defineApi } from "@app-kit";
-import { publicProcedure, router } from "@app-kit/server";
+import { getSettings, publicProcedure, router } from "@app-kit/server";
 import { createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
 import { db } from "./db";
@@ -47,19 +47,26 @@ const eventsRouter = router({
     // wants them (edit/delete of stale rows).
     .input(z.object({ includePast: z.boolean().optional() }).optional())
     .output(z.array(EventSelectSchema))
-    .query(({ input }) => listEvents(db, { includePast: input?.includePast })),
+    .query(async ({ ctx, input }) => {
+      const { timeZone } = await getSettings(ctx.db);
+      return listEvents(db, { includePast: input?.includePast, timeZone });
+    }),
 
   create: publicProcedure
     .input(EventInputSchema)
     .output(EventSelectSchema)
-    .mutation(({ input }) => createEvent(db, input)),
+    .mutation(async ({ ctx, input }) => {
+      const { timeZone } = await getSettings(ctx.db);
+      return createEvent(db, input, new Date(), timeZone);
+    }),
 
   update: publicProcedure
     .input(z.object({ id: z.number().int().positive() }).and(EventInputSchema))
     .output(EventSelectSchema)
-    .mutation(({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const { id, ...fields } = input;
-      return updateEvent(db, id, fields);
+      const { timeZone } = await getSettings(ctx.db);
+      return updateEvent(db, id, fields, new Date(), timeZone);
     }),
 
   delete: publicProcedure

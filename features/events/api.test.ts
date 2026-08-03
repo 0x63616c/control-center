@@ -56,6 +56,12 @@ describe("daysUntil", () => {
     expect(daysUntil(target, now)).toBe(0);
   });
 
+  it("uses the selected panel timezone rather than the server timezone", () => {
+    const now = new Date("2025-06-02T02:00:00Z");
+    const target = new Date("2025-06-02T06:00:00Z");
+    expect(daysUntil(target, now, "America/New_York")).toBe(1);
+  });
+
   it("does not drift across year boundaries", () => {
     const now = la("2025-12-31");
     expect(daysUntil(la("2026-01-01"), now)).toBe(1);

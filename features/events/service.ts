@@ -1,3 +1,4 @@
+import { DEFAULT_TIME_ZONE } from "@cc/api/settings";
 import { asc, eq } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
@@ -22,17 +23,19 @@ export interface EventInput {
   date: string;
 }
 
-const TZ = "America/Los_Angeles";
-
 /**
- * Pure helper: whole days from now until `target` in America/Los_Angeles.
+ * Pure helper: whole days from now until `target` in the panel's chosen zone.
  * Negative for past events, 0 for today. Callers rely on the sign to tell a
  * stale event apart from one happening today.
  */
-export function daysUntil(target: Date, now: Date = new Date()): number {
+export function daysUntil(
+  target: Date,
+  now: Date = new Date(),
+  timeZone: string = DEFAULT_TIME_ZONE,
+): number {
   const fmt = (d: Date) =>
     new Intl.DateTimeFormat("en-US", {
-      timeZone: TZ,
+      timeZone,
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
@@ -51,12 +54,12 @@ export function daysUntil(target: Date, now: Date = new Date()): number {
 }
 
 /** Map a raw DB row to the API row shape (adds computed `days`, serializes date). */
-function toEventRow(r: typeof schema.events.$inferSelect, now: Date): EventRow {
+function toEventRow(r: typeof schema.events.$inferSelect, now: Date, timeZone: string): EventRow {
   return {
     id: r.id,
     name: r.name,
     place: r.place,
-    days: daysUntil(r.date, now),
+    days: daysUntil(r.date, now, timeZone),
     date: r.date.toISOString(),
   };
 }
@@ -64,6 +67,8 @@ function toEventRow(r: typeof schema.events.$inferSelect, now: Date): EventRow {
 export interface ListEventsOptions {
   /** Reference moment; injectable for tests. */
   now?: Date;
+  /** IANA timezone that defines the panel's calendar days. */
+  timeZone?: string;
   /**
    * Include events whose date has already passed. Off by default: the board
    * tile and the read modals only ever want what's still ahead. The manage
@@ -74,10 +79,10 @@ export interface ListEventsOptions {
 
 export async function listEvents(
   db: NodePgDatabase<typeof schema>,
-  { now = new Date(), includePast = false }: ListEventsOptions = {},
+  { now = new Date(), timeZone = DEFAULT_TIME_ZONE, includePast = false }: ListEventsOptions = {},
 ): Promise<EventRow[]> {
   const rows = await db.select().from(schema.events).orderBy(asc(schema.events.date));
-  const mapped = rows.map((r) => toEventRow(r, now));
+  const mapped = rows.map((r) => toEventRow(r, now, timeZone));
   return includePast ? mapped : mapped.filter((r) => r.days >= 0);
 }
 
@@ -85,12 +90,13 @@ export async function createEvent(
   db: NodePgDatabase<typeof schema>,
   input: EventInput,
   now: Date = new Date(),
+  timeZone: string = DEFAULT_TIME_ZONE,
 ): Promise<EventRow> {
   const [row] = await db
     .insert(schema.events)
     .values({ name: input.name, place: input.place, date: new Date(input.date) })
     .returning();
-  return toEventRow(row, now);
+  return toEventRow(row, now, timeZone);
 }
 
 export async function updateEvent(
@@ -98,6 +104,7 @@ export async function updateEvent(
   id: number,
   input: EventInput,
   now: Date = new Date(),
+  timeZone: string = DEFAULT_TIME_ZONE,
 ): Promise<EventRow> {
   const [row] = await db
     .update(schema.events)
@@ -105,7 +112,7 @@ export async function updateEvent(
     .where(eq(schema.events.id, id))
     .returning();
   if (!row) throw new Error(`event ${id} not found`);
-  return toEventRow(row, now);
+  return toEventRow(row, now, timeZone);
 }
 
 export async function deleteEvent(
