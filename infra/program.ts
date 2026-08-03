@@ -181,6 +181,7 @@ const crons = deployCrons({
 // neither a storage provisioner (OrbStack ships one) nor a LoadBalancer
 // implementation (OrbStack's expose_services), and has no GPU passthrough.
 if (target.substrate === "talos") {
+  const softwareFactoryDeployId = cfg.require("softwareFactoryDeployId");
   // Enforced local storage (ADR-0009): OpenEBS LocalPV-LVM replaces
   // local-path-provisioner. `local-lvm` is the cluster's only/default
   // StorageClass; PVC sizes are real LVM reservations in VG `storage`.
@@ -241,6 +242,7 @@ if (target.substrate === "talos") {
   installSoftwareFactory({
     provider: cluster.provider,
     namespace: cluster.namespaces["software-factory"],
+    deployId: softwareFactoryDeployId,
     vault,
     accessAud: factoryAccessAud,
     imageDigests,

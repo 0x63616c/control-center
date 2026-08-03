@@ -56,6 +56,7 @@ function install() {
   return softwareFactory.installSoftwareFactory({
     provider: new k8s.Provider("software-factory-blobs-test-provider", { context: "x" }),
     namespace,
+    deployId: "1785790005-2",
     vault,
     accessAud: "mock-audience",
     imageDigests: digests,

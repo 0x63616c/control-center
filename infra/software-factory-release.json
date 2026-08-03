@@ -1,42 +1,42 @@
 {
-  "version": "v0.1.2",
-  "commit": "f4c58c15e7e297b7f44434ff2fadd543304c7689",
+  "version": "v0.1.8",
+  "commit": "b44a99b9a99dcc82d6c22e5966421239f6352422",
   "platform": "linux/amd64",
   "images": [
     {
       "name": "api",
       "image": "ghcr.io/0x63616c/software-factory-api",
-      "digest": "sha256:d91fd59f8351039d31d9e47e684d4ba95b9d2d17cddfc938cc210ebae11bbe26"
+      "digest": "sha256:4181d1f62fdf888b9a4d611b7ce08aa10be7bdeaa62d99f58d6afc9aa66f449f"
     },
     {
       "name": "blobs",
       "image": "ghcr.io/0x63616c/software-factory-blobs",
-      "digest": "sha256:2e7c8f7d2f914ec387cad12ba2c4ab1cee6c6b7e45ae0d5b34e94ca429e13f8d"
+      "digest": "sha256:b80b598eba4007a4e2ce9a154426f43d4e5bc6256c87672e487f38ddb4f96da2"
     },
     {
       "name": "codec",
       "image": "ghcr.io/0x63616c/software-factory-codec",
-      "digest": "sha256:1ffe75185b6b70dbca06b4ab24f312b269fa6d44e26146108f6cfe9544b4acf6"
+      "digest": "sha256:3982f2ded7d66f3e44ecea0e7a0c8c6a8841603af14326efe3ec9a6f983dc522"
     },
     {
       "name": "console",
       "image": "ghcr.io/0x63616c/software-factory-console",
-      "digest": "sha256:7a4fff81ae60e80b934ef411b236d5a8885a8e534a6f55f16c95598b20e5abcb"
+      "digest": "sha256:3ede9a9fecafe053cd16912b6606ea8afd8dc68c31c8536767989840cbdb6a48"
     },
     {
       "name": "relay",
       "image": "ghcr.io/0x63616c/software-factory-relay",
-      "digest": "sha256:dfb0f4ee1a49716699a98094f909aa24447ba953972322968dc302fbbbac8d2e"
+      "digest": "sha256:2c5d0087abc8e564a6a0fdda0cd2c6db3a9880888061001d1282c1f1b4f00e17"
     },
     {
       "name": "run-worker",
       "image": "ghcr.io/0x63616c/software-factory-run-worker",
-      "digest": "sha256:1cf94fc7610ce8bf9712b0ae9a7e7ca1ea00337878defd39324d803669bd91d9"
+      "digest": "sha256:96fb4d8681de2c356832d425d2ed17bfde5795ed94d51a6afd28f009d82ddeed"
     },
     {
       "name": "worker",
       "image": "ghcr.io/0x63616c/software-factory-worker",
-      "digest": "sha256:a5358c07749929f4a7354f674f467a57ec0c2e820a7789b663280595750781c6"
+      "digest": "sha256:6efcbd9edb6ea246f817afa07c1dac7f0bac38e2167d459282c48651bb3b7602"
     }
   ]
 }

@@ -69,6 +69,7 @@ const install = (
     namespace,
     vault,
     accessAud: accessAudOverride,
+    deployId: "1785790005-2",
     imageDigests,
     nasNfsServer: "192.168.0.218",
     requireImageDigestPins,
@@ -274,6 +275,11 @@ describe("the worker Deployment (#343)", () => {
     const pod = container.env.find((e) => e.name === "POD_NAME");
     expect(pod?.value).toBeUndefined();
     expect(pod?.valueFrom?.fieldRef?.fieldPath).toBe("metadata.name");
+  });
+
+  test("hands every pod in one deployment the deployment attempt identity", async () => {
+    const [container] = (await deploymentSpec()).template.spec.containers;
+    expect(container.env.find((env) => env.name === "DEPLOY_ID")?.value).toBe("1785790005-2");
   });
 
   test("names the Temporal frontend var the way LoadWorker spells it", async () => {
