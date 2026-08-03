@@ -8,7 +8,7 @@
 # a normal image tag.
 FROM ghcr.io/protomaps/go-pmtiles:v1.30.3 AS pmtiles
 
-FROM alpine:3.21
+FROM alpine:3.24
 RUN apk add --no-cache curl
 COPY --from=pmtiles /go-pmtiles /usr/local/bin/pmtiles
 COPY apps/map-provision/provision.sh /provision.sh
