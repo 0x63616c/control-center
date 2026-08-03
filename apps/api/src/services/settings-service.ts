@@ -9,6 +9,8 @@ import {
   BRIGHTNESS_MIN,
   DIM_MAX,
   DIM_MIN,
+  GOAL_DAY_CUTOFF_MAX_HOUR,
+  GOAL_DAY_CUTOFF_MIN_HOUR,
   LOCK_SCREEN_BLUR_MAX_PERCENT,
   LOCK_SCREEN_BLUR_MIN_PERCENT,
   PIN_PAD_LAYOUTS,
@@ -77,6 +79,7 @@ export const settingsSchema = z.object({
     },
     { message: "must be a recognised IANA time zone" },
   ),
+  goalDayCutoffHour: z.number().int().min(GOAL_DAY_CUTOFF_MIN_HOUR).max(GOAL_DAY_CUTOFF_MAX_HOUR),
 });
 
 /** A partial patch: any subset of the full settings object. */

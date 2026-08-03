@@ -239,6 +239,13 @@
       "when": 1785446305802,
       "tag": "0034_blushing_cloak",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1785778823876,
+      "tag": "0035_puzzling_vector",
+      "breakpoints": true
     }
   ]
 }

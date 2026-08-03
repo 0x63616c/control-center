@@ -8,6 +8,7 @@ export * from "../ctrl/schema";
 export * from "../deploys/schema";
 export * from "../events/schema";
 export * from "../felogs/schema";
+export * from "../goals/schema";
 export * from "../guest-wifi/schema";
 export * from "../hooks/schema";
 export * from "../notif/schema";

@@ -10,6 +10,7 @@ import deploysManifest from "../deploys/manifest";
 import dogcamManifest from "../dogcam/manifest";
 import eventsManifest from "../events/manifest";
 import felogsManifest from "../felogs/manifest";
+import goalsManifest from "../goals/manifest";
 import guestWifiManifest from "../guest-wifi/manifest";
 import hooksManifest from "../hooks/manifest";
 import networkManifest from "../network/manifest";
@@ -29,6 +30,7 @@ import { tileViews as deploysTileViews } from "../deploys/detail";
 import { tileViews as dogcamTileViews } from "../dogcam/detail";
 import { tileViews as eventsTileViews } from "../events/detail";
 import { tileViews as felogsTileViews } from "../felogs/detail";
+import { tileViews as goalsTileViews } from "../goals/detail";
 import { tileViews as guestWifiTileViews } from "../guest-wifi/detail";
 import { tileViews as networkTileViews } from "../network/detail";
 import { tileViews as notifTileViews } from "../notif/detail";
@@ -47,6 +49,7 @@ const manifests = [
   dogcamManifest,
   eventsManifest,
   felogsManifest,
+  goalsManifest,
   guestWifiManifest,
   hooksManifest,
   networkManifest,
@@ -69,6 +72,7 @@ const tileViews = [
   ...dogcamTileViews,
   ...eventsTileViews,
   ...felogsTileViews,
+  ...goalsTileViews,
   ...guestWifiTileViews,
   ...networkTileViews,
   ...notifTileViews,
