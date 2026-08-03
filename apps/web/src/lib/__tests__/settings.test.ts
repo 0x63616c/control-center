@@ -12,6 +12,7 @@ import {
   setPinCode,
   setPinPadLayout,
   setShowMinimap,
+  setTimeZone,
   setTypeface,
   useSettings,
 } from "../settings";
@@ -54,6 +55,12 @@ describe("settings defaults", () => {
 
   it("caps the idle timeout at 10 minutes", () => {
     expect(MAX_IDLE_TIMEOUT_MS).toBe(600_000);
+  });
+
+  it("defaults to the panel timezone and accepts a valid IANA replacement", () => {
+    expect(read().current.timeZone).toBe(SETTINGS_DEFAULTS.timeZone);
+    act(() => setTimeZone("Europe/London"));
+    expect(read().current.timeZone).toBe("Europe/London");
   });
 });
 

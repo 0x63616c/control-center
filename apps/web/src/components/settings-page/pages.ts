@@ -19,6 +19,7 @@ export type PageKey =
   | "network"
   | "notifications"
   | "security"
+  | "time"
   | "logs";
 
 export interface PageDef {
@@ -83,6 +84,13 @@ export const PAGES: PageDef[] = [
     // clear of Board's sky blue (#4a90d9).
     tint: "#5c6bc0",
     blurb: "PIN for locked tiles and settings",
+  },
+  {
+    key: "time",
+    label: "Time",
+    icon: "globe",
+    tint: "#7e89c2",
+    blurb: "Time zone and day boundaries",
   },
   {
     key: "logs",

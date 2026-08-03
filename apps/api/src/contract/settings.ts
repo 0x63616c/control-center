@@ -88,6 +88,9 @@ export const BRIGHTNESS_MAX = 1;
 export const LOCK_SCREEN_BLUR_MIN_PERCENT = 0;
 export const LOCK_SCREEN_BLUR_MAX_PERCENT = 100;
 
+/** The panel's initial local calendar zone. The persisted setting may replace it. */
+export const DEFAULT_TIME_ZONE = "America/Los_Angeles";
+
 // ─── defaults ─────────────────────────────────────────────────────────────────
 
 /** Every SYNCED setting and its default , the baseline the server returns when
@@ -123,4 +126,5 @@ export const SETTINGS_DEFAULTS = {
   pinPadLayout: "scrambled-per-key",
   accent: "white",
   typeface: "sf",
+  timeZone: DEFAULT_TIME_ZONE,
 } as const satisfies Record<string, unknown>;

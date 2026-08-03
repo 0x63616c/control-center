@@ -64,6 +64,19 @@ export const settingsSchema = z.object({
   // families, weights and tracking each key maps to are web's business
   // (styles/tokens.css + lib/typeface.ts).
   typeface: z.enum(TYPEFACES),
+  // An IANA name, not a browser/host offset. An offset changes with DST and
+  // cannot correctly identify a calendar day across a future transition.
+  timeZone: z.string().refine(
+    (value) => {
+      try {
+        new Intl.DateTimeFormat(undefined, { timeZone: value });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    { message: "must be a recognised IANA time zone" },
+  ),
 });
 
 /** A partial patch: any subset of the full settings object. */

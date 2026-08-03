@@ -1,5 +1,6 @@
 import { HOME_LABEL } from "@/config/home";
 import { useNow } from "@/lib/hooks";
+import { timeZoneHour, timeZoneParts, useTimeZone } from "@/lib/time-zone";
 import { ClockGreetingView } from "./ClockGreetingView";
 
 function greeting(hour: number): string {
@@ -12,15 +13,13 @@ function greeting(hour: number): string {
 
 export function ClockGreeting() {
   const d = useNow();
-  const rawHour = d.getHours();
-  const ampm = rawHour >= 12 ? "PM" : "AM";
-  const hour12 = rawHour % 12 || 12;
-  const minutes = String(d.getMinutes()).padStart(2, "0");
-  const fullDate = d.toLocaleDateString("en-US", {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-  });
+  const timeZone = useTimeZone();
+  const parts = timeZoneParts(d, timeZone);
+  const rawHour = timeZoneHour(d, timeZone);
+  const hour12 = Number(parts.hour) || 12;
+  const minutes = parts.minute ?? "00";
+  const ampm = parts.dayPeriod === "PM" ? "PM" : "AM";
+  const fullDate = `${parts.weekday}, ${parts.month} ${parts.day}`;
 
   return (
     <ClockGreetingView
@@ -30,7 +29,7 @@ export function ClockGreeting() {
       ampm={ampm}
       fullDate={fullDate}
       location={HOME_LABEL}
-      seconds={d.getSeconds()}
+      seconds={Number(parts.second) || 0}
     />
   );
 }
