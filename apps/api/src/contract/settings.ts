@@ -91,6 +91,11 @@ export const LOCK_SCREEN_BLUR_MAX_PERCENT = 100;
 /** The panel's initial local calendar zone. The persisted setting may replace it. */
 export const DEFAULT_TIME_ZONE = "America/Los_Angeles";
 
+/** The latest hour that still belongs to the previous personal goal-day. */
+export const GOAL_DAY_CUTOFF_MIN_HOUR = 2;
+export const GOAL_DAY_CUTOFF_MAX_HOUR = 6;
+export const DEFAULT_GOAL_DAY_CUTOFF_HOUR = 3;
+
 // ─── defaults ─────────────────────────────────────────────────────────────────
 
 /** Every SYNCED setting and its default , the baseline the server returns when
@@ -127,4 +132,5 @@ export const SETTINGS_DEFAULTS = {
   accent: "white",
   typeface: "sf",
   timeZone: DEFAULT_TIME_ZONE,
+  goalDayCutoffHour: DEFAULT_GOAL_DAY_CUTOFF_HOUR,
 } as const satisfies Record<string, unknown>;

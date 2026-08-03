@@ -118,6 +118,8 @@ export interface Settings {
   typeface: Typeface;
   /** IANA zone used for panel-facing dates, schedules, and day boundaries. */
   timeZone: string;
+  /** Local goal-days close at this hour, from 2am through 6am. */
+  goalDayCutoffHour: number;
   /** Push notifications requested for THIS device. Drives the OS permission
    *  prompt + APNs token registration (lib/push.ts). Device-local by nature:
    *  a token belongs to one panel, so this must not sync across panels. */
@@ -166,6 +168,7 @@ const KEYS = {
   accent: "cc-accent",
   typeface: "cc-typeface",
   timeZone: "cc-time-zone",
+  goalDayCutoffHour: "cc-goal-day-cutoff-hour",
   pushEnabled: "cc-push-enabled",
 } as const;
 
@@ -255,6 +258,7 @@ function loadInitial(): Settings {
   const accent = readRaw(KEYS.accent);
   const typeface = readRaw(KEYS.typeface);
   const timeZone = readRaw(KEYS.timeZone);
+  const goalDayCutoffHour = readRaw(KEYS.goalDayCutoffHour);
   const push = readRaw(KEYS.pushEnabled);
   return {
     activeBrightness:
@@ -293,6 +297,11 @@ function loadInitial(): Settings {
         ? (typeface as Typeface)
         : DEFAULTS.typeface,
     timeZone: isValidTimeZone(timeZone) ? timeZone : DEFAULT_TIME_ZONE,
+    goalDayCutoffHour:
+      goalDayCutoffHour === null
+        ? DEFAULTS.goalDayCutoffHour
+        : Math.min(6, Math.max(2, Math.round(Number(goalDayCutoffHour)))) ||
+          DEFAULTS.goalDayCutoffHour,
     pushEnabled: push === null ? DEFAULTS.pushEnabled : push === "true",
   };
 }
@@ -499,6 +508,12 @@ function isValidTimeZone(value: string | null): value is string {
 export function setTimeZone(timeZone: string): void {
   if (!isValidTimeZone(timeZone)) return;
   patch("timeZone", timeZone, timeZone);
+}
+
+export function setGoalDayCutoffHour(hour: number): void {
+  if (!Number.isFinite(hour)) return;
+  const bounded = Math.min(6, Math.max(2, Math.round(hour)));
+  patch("goalDayCutoffHour", bounded, String(bounded));
 }
 
 export function setPushEnabled(v: boolean): void {

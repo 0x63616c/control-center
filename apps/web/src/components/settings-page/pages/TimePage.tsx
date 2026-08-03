@@ -1,4 +1,4 @@
-import { setTimeZone, useSettings } from "../../../lib/settings";
+import { setGoalDayCutoffHour, setTimeZone, useSettings } from "../../../lib/settings";
 import { RowShell, SectionCard } from "../blocks";
 import type { PageProps } from "../SettingsPage";
 
@@ -26,7 +26,7 @@ function timeZoneLabel(timeZone: string): string {
 }
 
 export function TimePage(_props: PageProps) {
-  const { timeZone } = useSettings();
+  const { goalDayCutoffHour, timeZone } = useSettings();
 
   return (
     <SectionCard title="Local time">
@@ -54,6 +54,34 @@ export function TimePage(_props: PageProps) {
               {TIME_ZONES.map((zone) => (
                 <option key={zone} value={zone}>
                   {timeZoneLabel(zone)}
+                </option>
+              ))}
+            </select>
+          }
+        />,
+        <RowShell
+          key="goal-day-cutoff"
+          label="Goal-day cutoff"
+          sub="A check-in before this hour belongs to the previous day."
+          control={
+            <select
+              aria-label="Goal-day cutoff"
+              value={goalDayCutoffHour}
+              onChange={(event) => setGoalDayCutoffHour(Number(event.target.value))}
+              style={{
+                width: 160,
+                padding: "9px 12px",
+                color: "var(--ink)",
+                background: "var(--nest)",
+                border: "1px solid var(--hair)",
+                borderRadius: 10,
+                fontFamily: "var(--ui)",
+                fontSize: 14,
+              }}
+            >
+              {[2, 3, 4, 5, 6].map((hour) => (
+                <option key={hour} value={hour}>
+                  {hour}:00 AM
                 </option>
               ))}
             </select>
