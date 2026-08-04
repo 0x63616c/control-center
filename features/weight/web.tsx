@@ -3,9 +3,11 @@
  * into one file per the tile-inlining convention (network.tsx precedent).
  * Spec: docs/superpowers/specs/2026-07-21-weight-tile-design.md.
  */
+import { useEffect } from "react";
 import { Icon } from "@/components/Icon";
 import { Skeleton, Tile, TileHeader, TileStatus } from "@/components/ui";
 import { POLL, useNow } from "@/lib/hooks";
+import { formatDateKey, timeZoneDateKey, useTimeZone } from "@/lib/time-zone";
 import { trpc } from "@/lib/trpc";
 import { useTileQuery } from "@/lib/useTileQuery";
 
@@ -14,9 +16,6 @@ import { useTileQuery } from "@/lib/useTileQuery";
 // cheap enough to just restate (was already duplicated pre-fold, from
 // apps/api's weight-domain).
 export const LB_PER_KG = 2.2046226218;
-
-/** The panel's own IANA zone, e.g. "America/Los_Angeles". */
-const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 export interface WeightTileViewProps {
   status: TileStatus;
@@ -32,13 +31,12 @@ export interface WeightTileViewProps {
 
 /** "Today" for the current local day, "Yesterday" for the previous, else "Jul 12".
  * Also consumed by detail/wiring/weight.tsx (apps/web) via @features/weight/web. */
-export function formatRecency(latestAt: string, now: Date): string {
-  const d = new Date(latestAt);
-  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const diffDays = Math.round((day(now) - day(d)) / (24 * 60 * 60 * 1000));
+export function formatRecency(dateKey: string, now: Date, timeZone: string): string {
+  const today = timeZoneDateKey(now, timeZone);
+  const diffDays = Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${dateKey}T00:00:00Z`)) / 86_400_000);
   if (diffDays === 0) return "Today";
   if (diffDays === 1) return "Yesterday";
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return formatDateKey(dateKey, { month: "short", day: "numeric" });
 }
 
 // Map the series onto an SVG viewBox. Padding keeps the 2px stroke inside the
@@ -200,9 +198,12 @@ export function WeightTileView(props: WeightTileViewProps) {
  * happens once here; the view and everything below it speak lb only.
  */
 export function WeightTile() {
-  const tile = useTileQuery(
-    trpc.weight.summary.useQuery({ range: "30d", tz: TZ }, { refetchInterval: POLL.weight }),
-  );
+  const timeZone = useTimeZone();
+  const utils = trpc.useUtils();
+  useEffect(() => {
+    void utils.weight.summary.invalidate();
+  }, [timeZone, utils]);
+  const tile = useTileQuery(trpc.weight.summary.useQuery({ range: "30d" }, { refetchInterval: POLL.weight }));
   const now = useNow();
 
   // Loading covers error-with-nothing-cached AND the day-one null summary
@@ -216,8 +217,8 @@ export function WeightTile() {
     <WeightTileView
       status={TileStatus.Populated}
       lb={data.latestKg * LB_PER_KG}
-      // day is a local YYYY-MM-DD; parse as local midnight, not UTC.
-      recencyLabel={formatRecency(`${data.latestDay}T00:00:00`, now)}
+      // day is a zone-independent YYYY-MM-DD key.
+      recencyLabel={formatRecency(data.latestDay, now, timeZone)}
       // A 1-day window has no change to speak of; hide the badge until 2+ days.
       deltaLb30={data.daily.length >= 2 ? data.change * LB_PER_KG : undefined}
       spark={data.daily.map((d) => d.kg * LB_PER_KG)}

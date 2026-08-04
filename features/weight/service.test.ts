@@ -2,16 +2,15 @@ import { PgDialect } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
 import {
   assembleDays,
+  calendarDay,
   dailyMedians,
   dayExpr,
   formatWeighInAlert,
   isOutsideSanityBand,
-  isValidTimeZone,
   median,
   metricExpr,
   metricInput,
   summarize,
-  tzInput,
   WEIGHT_METRICS,
 } from "./service";
 
@@ -107,14 +106,11 @@ describe("summarize", () => {
 
 const dialect = new PgDialect();
 
-describe("isValidTimeZone", () => {
-  it("accepts IANA names", () => {
-    expect(isValidTimeZone("America/Los_Angeles")).toBe(true);
-    expect(isValidTimeZone("UTC")).toBe(true);
-  });
-  it("rejects junk and injection attempts", () => {
-    expect(isValidTimeZone("Not/AZone")).toBe(false);
-    expect(isValidTimeZone("'; drop table weight_measurement; --")).toBe(false);
+describe("calendarDay", () => {
+  it("buckets one historical instant by the explicit configured zone", () => {
+    const instant = new Date("2026-03-08T07:30:00Z");
+    expect(calendarDay(instant, "America/Los_Angeles")).toBe("2026-03-07");
+    expect(calendarDay(instant, "Europe/London")).toBe("2026-03-08");
   });
 });
 
@@ -163,18 +159,6 @@ describe("WEIGHT_METRICS", () => {
     for (const [key, m] of Object.entries(WEIGHT_METRICS)) {
       if (key !== "fat_ratio_percent") expect(m.unit).toBe("kg");
     }
-  });
-});
-
-describe("tzInput", () => {
-  it("accepts a real zone", () => {
-    expect(tzInput.parse("America/Los_Angeles")).toBe("America/Los_Angeles");
-  });
-  it("rejects an unknown zone", () => {
-    expect(() => tzInput.parse("Mars/Olympus")).toThrow();
-  });
-  it("rejects a SQL injection attempt", () => {
-    expect(() => tzInput.parse("UTC'; drop table weight_measurement; --")).toThrow();
   });
 });
 

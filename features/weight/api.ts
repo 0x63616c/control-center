@@ -6,7 +6,7 @@
  * in ./service against this feature's own db.
  */
 import { defineApi } from "@app-kit";
-import { publicProcedure, router } from "@app-kit/server";
+import { getSettings, publicProcedure, router } from "@app-kit/server";
 import { TRPCError } from "@trpc/server";
 import { getLogger } from "@www/logger";
 import { z } from "zod";
@@ -19,25 +19,29 @@ export const weightRouter = router({
     .input(
       z.object({
         range: z.enum(["7d", "30d", "all"]),
-        tz: service.tzInput,
         // Which series to plot. Defaults to weight so the tile — which never
         // sends one — keeps its existing contract.
         metric: service.metricInput.default("weight_kg"),
       }),
     )
-    .query(({ input }) => service.getSummary(input.range, input.tz, input.metric)),
+    .query(async ({ ctx, input }) => {
+      const { timeZone } = await getSettings(ctx.db);
+      return service.getSummary(input.range, timeZone, input.metric);
+    }),
 
   // One page of days, newest first, for the Readings page.
   days: publicProcedure
     .input(
       z.object({
-        tz: service.tzInput,
         /** Exclusive: return days strictly older than this YYYY-MM-DD. */
         cursor: z.string().optional(),
         limit: z.number().int().min(1).max(90).default(14),
       }),
     )
-    .query(({ input }) => service.getDays(input.tz, input.cursor, input.limit)),
+    .query(async ({ ctx, input }) => {
+      const { timeZone } = await getSettings(ctx.db);
+      return service.getDays(timeZone, input.cursor, input.limit);
+    }),
 
   // Manual include/exclude toggle from the Readings page; overrides the
   // auto sanity-band flag in both directions.

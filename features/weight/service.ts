@@ -7,7 +7,6 @@
  */
 import type { SQL } from "drizzle-orm";
 import { and, desc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
-import { z } from "zod";
 import { db } from "./db";
 import { weightMeasurement } from "./schema";
 
@@ -98,21 +97,6 @@ export function notDeleted() {
   return isNull(weightMeasurement.deletedAt);
 }
 
-/** True when Intl recognises the name, which is what Postgres also accepts. */
-export function isValidTimeZone(tz: string): boolean {
-  try {
-    new Intl.DateTimeFormat(undefined, { timeZone: tz });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** The panel states its own zone; the api never infers one. */
-export const tzInput = z.string().refine(isValidTimeZone, {
-  message: "not a recognised IANA time zone",
-});
-
 /**
  * The plottable series. `weight_kg` is its own column; every other metric is a
  * key inside the `body_metrics` jsonb Withings reports alongside the weight.
@@ -142,6 +126,13 @@ export const metricInput = z.enum(Object.keys(WEIGHT_METRICS) as [WeightMetric, 
 export function metricExpr(metric: WeightMetric): SQL<number> {
   if (metric === "weight_kg") return sql<number>`${weightMeasurement.weightKg}`;
   return sql<number>`(${weightMeasurement.bodyMetrics} ->> ${metric})::double precision`;
+}
+
+/** Calendar day of an instant in the supplied IANA zone. */
+export function calendarDay(instant: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(instant);
+  const value = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value;
+  return [value("year"), value("month"), value("day")].join("-");
 }
 
 const RANGE_DAYS = { "7d": 7, "30d": 30, all: null } as const;
