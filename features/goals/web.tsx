@@ -23,6 +23,8 @@ export type GoalDashboard = {
     weeklyDone: number;
     weekTarget: number | null;
     streak: { count: number; unit: "day" | "week" };
+    weeklyConsistency: { expected: number; fulfilled: number; rate: number | null };
+    monthlyConsistency: { expected: number; fulfilled: number; rate: number | null };
     days: Array<{
       day: string;
       vacation: boolean;
@@ -233,9 +235,11 @@ function actionStyle(primary: boolean) {
 export function GoalsTileView({
   status,
   dashboard,
+  onCheckIn,
 }: {
   status: TileStatus;
   dashboard?: GoalDashboard;
+  onCheckIn?: (goalId: string, input: { state: "complete" | "partial" | "not_today"; value?: number; reflection?: string }) => void;
 }) {
   return (
     <Tile padding={18}>
@@ -264,7 +268,7 @@ export function GoalsTileView({
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, overflow: "hidden" }}>
           {dashboard.goals.slice(0, 4).map((goal) => (
-            <GoalsRhythmCard key={goal.id} goal={goal} compact />
+            <GoalsRhythmCard key={goal.id} goal={goal} compact onCheckIn={onCheckIn ? (input) => onCheckIn(goal.id, input) : undefined} />
           ))}
         </div>
       )}
@@ -274,5 +278,7 @@ export function GoalsTileView({
 
 export function GoalsTile() {
   const query = useTileQuery(trpc.goals.dashboard.useQuery());
-  return <GoalsTileView status={query.status} dashboard={query.data} />;
+  const utils = trpc.useUtils();
+  const checkIn = trpc.goals.checkIn.useMutation({ onSuccess: () => void utils.goals.dashboard.invalidate() });
+  return <GoalsTileView status={query.status} dashboard={query.data} onCheckIn={(goalId, input) => { if (query.data) checkIn.mutate({ goalId, day: query.data.endDay, ...input }); }} />;
 }

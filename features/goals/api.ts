@@ -1,11 +1,13 @@
 import { defineApi } from "@app-kit";
 import { getSettings, publicProcedure, router } from "@app-kit/server";
+import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { db } from "./db";
 import {
   addVacation,
   createGoal,
   dashboard,
+  deleteGoal,
   deleteVacation,
   saveCheckin,
   setGoalStatus,
@@ -63,7 +65,7 @@ const goalsRouter = router({
     .input(goalInput.and(z.object({ id: z.string().startsWith("goal_") })))
     .mutation(async ({ input }) => {
       const { id, ...fields } = input;
-      await updateGoal(db, id, fields);
+      if (!(await updateGoal(db, id, fields))) throw new TRPCError({ code: "NOT_FOUND", message: "Goal not found" });
       return { id };
     }),
   setStatus: publicProcedure
@@ -74,8 +76,14 @@ const goalsRouter = router({
       }),
     )
     .mutation(async ({ input }) => {
-      await setGoalStatus(db, input.id, input.status);
+      if (!(await setGoalStatus(db, input.id, input.status))) throw new TRPCError({ code: "NOT_FOUND", message: "Goal not found" });
       return { id: input.id };
+    }),
+  delete: publicProcedure
+    .input(z.object({ id: z.string().startsWith("goal_") }))
+    .mutation(async ({ input }) => {
+      if (!(await deleteGoal(db, input.id))) throw new TRPCError({ code: "NOT_FOUND", message: "Goal not found" });
+      return input;
     }),
   checkIn: publicProcedure
     .input(
