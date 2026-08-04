@@ -391,7 +391,11 @@ describe("factory API and console workloads (#554)", () => {
         "GITHUB_BOT_APP__WEBHOOK_SECRET",
         "TEMPORAL_HOST_PORT",
         "TEMPORAL_NAMESPACE",
+        "BLOBS_URL",
       ]),
+    );
+    expect(apiContainer.env.find((env) => env.name === "BLOBS_URL")?.value).toBe(
+      "http://blobs:8080",
     );
     expect(apiContainer.readinessProbe?.httpGet).toEqual({ path: "/healthz", port: "http" });
     expect(
