@@ -1,3 +1,5 @@
+> **HISTORICAL—DO NOT RUN.** This OrbStack/Mac-mini migration record is retained for audit only. Current application operations use `infra` stack `home-server` and Kubernetes context `home-server`; run `cd infra && pulumi preview --stack home-server` or `pulumi up --stack home-server`.
+
 # Control-Center Deployment Design
 
 Status: **CURRENT** (www-j934) · Scope: how control-center is built, deployed, and kept

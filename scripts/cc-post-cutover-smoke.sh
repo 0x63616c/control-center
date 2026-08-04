@@ -17,7 +17,7 @@
 
 set -uo pipefail
 
-KUBE_CONTEXT="${KUBE_CONTEXT:-cc-homelab}"
+KUBE_CONTEXT="${KUBE_CONTEXT:-home-server}"
 NAMESPACE="${NAMESPACE:-control-center}"
 API_BASE="${CC_API_BASE:-http://localhost:4201}"          # in-cluster the api listens on 4201
 WORKER_DEPLOY="${CC_WORKER_DEPLOY:-worker}"

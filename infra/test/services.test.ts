@@ -4,7 +4,6 @@ import {
   composeGhcrDockerConfigJson,
   composeGo2rtcConfig,
   haTarget,
-  parseSubstrate,
   parseSubstrateTarget,
   plexAdvertiseIp,
 } from "../src/services.ts";
@@ -177,46 +176,39 @@ describe("composeGhcrDockerConfigJson", () => {
   });
 });
 
-// The `substrate` flag (mini-migration Task 3): haTarget/plexAdvertiseIp must
-// keep the mini's ("orbstack") values byte-identical to today's live deploy
-// when the flag is absent, and switch to the node LAN IP on "talos".
-describe("parseSubstrate", () => {
-  test("undefined config defaults to orbstack (the mini)", () => {
-    expect(parseSubstrate(undefined)).toBe("orbstack");
+// The only supported deployment target is the Talos home-server node. The config
+// parser must reject omitted and retired values rather than silently rendering
+// the powered-off Mac mini shape.
+describe("parseSubstrateTarget", () => {
+  test("accepts explicit talos with an explicit node IP", () => {
+    expect(parseSubstrateTarget("talos", "10.0.0.9")).toEqual({
+      substrate: "talos",
+      nodeIp: "10.0.0.9",
+    });
   });
 
-  test("accepts the two known substrates verbatim", () => {
-    expect(parseSubstrate("orbstack")).toBe("orbstack");
-    expect(parseSubstrate("talos")).toBe("talos");
+  test("uses the locked node IP after an explicit talos selection", () => {
+    expect(parseSubstrateTarget("talos", undefined)).toEqual({
+      substrate: "talos",
+      nodeIp: "192.168.0.5",
+    });
   });
 
-  test("rejects an unknown substrate value", () => {
-    expect(() => parseSubstrate("swarm")).toThrow(/wwwinfra:substrate/);
-  });
-});
-
-describe("haTarget", () => {
-  test("ha target is the node LAN IP on talos (api/worker are non-hostNetwork pods)", () => {
-    expect(haTarget({ substrate: "talos", nodeIp: "192.168.0.5" })).toBe("192.168.0.5");
-    expect(haTarget({ substrate: "orbstack" })).toBe("homelab.tail8c014d.ts.net");
+  test.each([undefined, "", "orbstack", "swarm"])("rejects retired or missing substrate %j", (value) => {
+    expect(() => parseSubstrateTarget(value, undefined)).toThrow(/wwwinfra:substrate/);
   });
 });
 
-describe("plexAdvertiseIp", () => {
-  // Nothing listens on :32400 in the node's netns - Plex is reached only
-  // through its MetalLB LoadBalancer - so advertising the node IP hands every
-  // client a refused connection.
-  test("plex advertise uses the LoadBalancer address, not the node IP, on talos", () => {
-    expect(plexAdvertiseIp({ substrate: "talos", nodeIp: "192.168.0.5" })).toBe(
-      `http://${LAN_SERVICE_IPS.plex}:32400`,
-    );
-    expect(plexAdvertiseIp({ substrate: "talos", nodeIp: "192.168.0.5" })).not.toContain(
-      "192.168.0.5",
-    );
+describe("Talos service endpoints", () => {
+  const target = { substrate: "talos" as const, nodeIp: "192.168.0.5" };
+
+  test("routes Home Assistant through the home-server node", () => {
+    expect(haTarget(target)).toBe("192.168.0.5");
   });
 
-  test("orbstack is the mini's frozen LAN IP", () => {
-    expect(plexAdvertiseIp({ substrate: "orbstack" })).toBe("http://192.168.0.147:32400");
+  test("advertises Plex through its MetalLB address rather than the node", () => {
+    expect(plexAdvertiseIp()).toBe(`http://${LAN_SERVICE_IPS.plex}:32400`);
+    expect(plexAdvertiseIp()).not.toContain(target.nodeIp);
   });
 });
 

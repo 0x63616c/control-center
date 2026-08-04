@@ -94,9 +94,7 @@
   reference in this repo is stale by definition, including `scripts/ssh-homelab.sh`,
   which points at powered-off hardware. Home Assistant now answers on
   `192.168.0.5:8123`, not `.38`.
-- Deploy the `home-server` Pulumi stack. A stack named `prod` still exists but targets
-  the retired mini - **never deploy it** (its cloudflared would split-brain the live
-  Cloudflare tunnel). Images are **amd64-only**; the node is x86.
+- Deploy the `home-server` Pulumi stack; it is the only root application stack. Images are **amd64-only**; the node is x86.
 - Push to `main` triggers CI + deploy.
 - CI/deploy is product-aware: per-product path filters build only changed product
   images plus shared-package dependents.

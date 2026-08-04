@@ -1,4 +1,0 @@
-config:
-  wwwinfra:kubeContext: cc-homelab
-  wwwinfra:cloudflaredReplicas: "2"
-  wwwinfra:imageDigests: {}

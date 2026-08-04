@@ -1,3 +1,5 @@
+> **HISTORICAL—DO NOT RUN.** This document records the retired Mac-mini application stack. Current application operations use `home-server`.
+
 # Repo Simplification Implementation Plan
 
 > **Historical note (2026-07-27):** "Temporal is OUT" below meant the old
