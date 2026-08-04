@@ -749,6 +749,7 @@ export function installSoftwareFactory(args: SoftwareFactoryArgs): SoftwareFacto
                   { name: "METRICS_ADDR", value: METRICS_ADDR },
                   { name: "TEMPORAL_HOST_PORT", value: TEMPORAL_FRONTEND_CLUSTER_ADDRESS },
                   { name: "TEMPORAL_NAMESPACE", value: SOFTWARE_FACTORY_TEMPORAL_NAMESPACE },
+                  { name: "BLOBS_URL", value: BLOBS_URL },
                   ...[
                     "CLOUDFLARE_ACCESS_TEAM_DOMAIN",
                     "CLOUDFLARE_ACCESS_AUD",
