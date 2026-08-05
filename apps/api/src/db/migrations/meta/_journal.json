@@ -246,6 +246,13 @@
       "when": 1785778823876,
       "tag": "0035_puzzling_vector",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1785912628530,
+      "tag": "0036_far_mongu",
+      "breakpoints": true
     }
   ]
 }

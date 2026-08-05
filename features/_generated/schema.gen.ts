@@ -13,6 +13,7 @@ export * from "../guest-wifi/schema";
 export * from "../hooks/schema";
 export * from "../notif/schema";
 export * from "../panel-update/schema";
+export * from "../scenes/schema";
 export * from "../wakes/schema";
 export * from "../weather/schema";
 export * from "../weight/schema";

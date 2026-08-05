@@ -118,6 +118,77 @@ describe("SpotifyError", () => {
   });
 });
 
+describe("SpotifyClient , scene playback", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("parses available Connect devices", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            devices: [
+              {
+                id: "living",
+                name: "Living Room",
+                type: "Speaker",
+                is_active: true,
+                is_restricted: false,
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(new SpotifyClient(VALID_CREDS).getDevices()).resolves.toEqual([
+      {
+        id: "living",
+        name: "Living Room",
+        type: "Speaker",
+        isActive: true,
+        isRestricted: false,
+      },
+    ]);
+  });
+
+  it("transfers, configures shuffle, and starts an explicit playlist", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new SpotifyClient(VALID_CREDS);
+    await client.transferPlayback("living");
+    await client.setShuffle(true, "living");
+    await client.playContext("spotify:playlist:abc", "living");
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls[1]?.[1]?.body).toBe(
+      JSON.stringify({ device_ids: ["living"], play: false }),
+    );
+    expect(String(fetchMock.mock.calls[2]?.[0])).toContain("state=true&device_id=living");
+    expect(fetchMock.mock.calls[3]?.[1]?.body).toBe(
+      JSON.stringify({ context_uri: "spotify:playlist:abc" }),
+    );
+  });
+
+  it("does not treat Spotify 403 as a successful scene launch", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(tokenResponse())
+        .mockResolvedValueOnce(new Response("denied", { status: 403 })),
+    );
+    await expect(new SpotifyClient(VALID_CREDS).transferPlayback("living")).rejects.toThrow(
+      "HTTP 403",
+    );
+  });
+});
+
 // ---------------------------------------------------------------------------
 // getNowPlaying , missing optional fields (A3: no fabricated data)
 // www-51hf.36 / www-51hf.37

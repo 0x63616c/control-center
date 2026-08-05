@@ -44,3 +44,12 @@ export interface SpotifyBrowseResult {
   recentlyPlayed: SpotifyRecentTrack[];
   playlists: SpotifyPlaylistItem[];
 }
+
+/** One currently available Spotify Connect playback target. */
+export interface SpotifyDevice {
+  id: string;
+  name: string;
+  type: string;
+  isActive: boolean;
+  isRestricted: boolean;
+}
