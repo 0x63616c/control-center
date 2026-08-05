@@ -1,5 +1,4 @@
 import { index, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
-import type { ResolvedSceneExecution, SceneAction, SceneRunStatus } from "./model";
 
 export const scene = pgTable(
   "scene",
@@ -8,7 +7,7 @@ export const scene = pgTable(
     name: text("name").notNull(),
     description: text("description"),
     icon: text("icon").notNull(),
-    actions: jsonb("actions").$type<SceneAction[]>().notNull(),
+    actions: jsonb("actions").$type<unknown>().notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -21,8 +20,8 @@ export const sceneRun = pgTable(
     id: text("id").primaryKey(),
     sceneId: text("scene_id").references(() => scene.id, { onDelete: "set null" }),
     sceneName: text("scene_name").notNull(),
-    status: text("status").$type<SceneRunStatus>().notNull(),
-    resolved: jsonb("resolved").$type<ResolvedSceneExecution | null>(),
+    status: text("status").notNull(),
+    resolved: jsonb("resolved").$type<unknown>(),
     error: text("error"),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
     endedAt: timestamp("ended_at", { withTimezone: true }),

@@ -22,7 +22,7 @@ type SceneColor =
 
 export interface LightingAction {
   readonly kind: "lighting";
-  readonly targets: LightTarget[];
+  readonly targets: readonly LightTarget[];
   readonly power: boolean;
   readonly brightness: number;
   readonly color: SceneColor;
@@ -47,11 +47,11 @@ export interface MusicAction {
   readonly kind: "music";
   readonly source: {
     readonly kind: "spotify";
-    readonly playlists: ScenePlaylist[];
+    readonly playlists: readonly ScenePlaylist[];
     readonly selection: PlaylistSelection;
     readonly shuffleTracks: boolean;
   };
-  readonly outputs: SpeakerTarget[];
+  readonly outputs: readonly SpeakerTarget[];
 }
 
 export type SceneAction = LightingAction | MusicAction;
@@ -61,7 +61,7 @@ export interface SceneDefinition {
   readonly name: string;
   readonly description: string | null;
   readonly icon: string;
-  readonly actions: SceneAction[];
+  readonly actions: readonly SceneAction[];
   readonly createdAt: Date | string;
   readonly updatedAt: Date | string;
 }
@@ -75,7 +75,7 @@ export interface SceneSpeaker {
 
 export interface LaunchOverrides {
   readonly playlistUri?: string;
-  readonly speakers?: {
+  readonly speakers?: readonly {
     readonly speakerUuid: string;
     readonly enabled: boolean;
     readonly volume: number;
@@ -85,7 +85,7 @@ export interface LaunchOverrides {
 export interface ResolvedSceneExecution {
   readonly sceneName: string;
   readonly playlist: ScenePlaylist | null;
-  readonly speakers: SceneSpeaker[];
+  readonly speakers: readonly SceneSpeaker[];
   readonly lighting: LightingAction | null;
   readonly spotifyDeviceId: string | null;
 }

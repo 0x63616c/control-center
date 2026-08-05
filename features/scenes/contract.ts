@@ -59,7 +59,10 @@ const musicActionSchema = z.object({
   outputs: z.array(speakerTargetSchema).min(1).max(40),
 });
 
-const sceneActionSchema = z.discriminatedUnion("kind", [lightingActionSchema, musicActionSchema]);
+export const sceneActionSchema = z.discriminatedUnion("kind", [
+  lightingActionSchema,
+  musicActionSchema,
+]);
 
 export const sceneInputSchema = z.object({
   name: z.string().trim().min(1).max(80),
@@ -84,5 +87,22 @@ export const launchOverridesSchema = z.object({
     .max(40)
     .optional(),
 });
+
+export const resolvedSceneExecutionSchema = z.object({
+  sceneName: z.string(),
+  playlist: scenePlaylistSchema.nullable(),
+  speakers: z.array(
+    z.object({
+      uuid: z.string(),
+      name: z.string(),
+      deviceIp: z.string(),
+      volume: z.number().int().min(0).max(90),
+    }),
+  ),
+  lighting: lightingActionSchema.nullable(),
+  spotifyDeviceId: z.string().nullable(),
+});
+
+export const sceneRunStatusSchema = z.enum(["starting", "running", "failed", "stopped"]);
 
 export type SceneInput = z.infer<typeof sceneInputSchema>;

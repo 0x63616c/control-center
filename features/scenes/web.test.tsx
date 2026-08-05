@@ -66,6 +66,38 @@ describe("Scenes full-screen picker", () => {
 });
 
 describe("Scene launch overrides", () => {
+  it("requires an explicit choice for prompt mode with multiple playlists", () => {
+    const promptScene: SceneDefinition = {
+      ...scene,
+      actions: scene.actions.map((action) =>
+        action.kind === "music"
+          ? {
+              ...action,
+              source: {
+                ...action.source,
+                playlists: [
+                  ...action.source.playlists,
+                  { name: "Another", uri: "spotify:playlist:another" },
+                ],
+              },
+            }
+          : action,
+      ),
+    };
+    render(
+      <SceneLaunchView
+        scene={promptScene}
+        resources={resources}
+        onBack={vi.fn()}
+        onEdit={vi.fn()}
+        onLaunch={vi.fn()}
+        onSaveDefaults={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Start Explicit" })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Playlist" })).toHaveValue("");
+  });
+
   it("submits temporary per-speaker volume changes without mutating saved defaults", () => {
     const onLaunch = vi.fn();
     render(

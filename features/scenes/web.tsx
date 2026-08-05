@@ -1,7 +1,18 @@
 import { genId } from "@www/platform";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
-import { Button, Tile, TileHeader, TileStatus } from "@/components/ui";
+import {
+  Alert,
+  Button,
+  CheckboxRow,
+  ConfirmDialog,
+  Slider,
+  Switch,
+  TextInput,
+  Tile,
+  TileHeader,
+  TileStatus,
+} from "@/components/ui";
 import { trpc } from "@/lib/trpc";
 import { useTileQuery } from "@/lib/useTileQuery";
 import type { SceneInput } from "./contract";
@@ -13,14 +24,22 @@ import type {
   SceneDefinition,
   SceneSpeaker,
 } from "./model";
+import { PlaylistSelection, SceneActionKind } from "./model";
 
 export interface SceneResourceView {
-  lights: Array<{ entityId: string; label: string; room: string; capabilities: readonly string[] }>;
-  speakers: { status: "ready"; items: SceneSpeaker[] } | { status: "unavailable"; message: string };
+  lights: readonly {
+    entityId: string;
+    label: string;
+    room: string;
+    capabilities: readonly string[];
+  }[];
+  speakers:
+    | { status: "ready"; items: readonly SceneSpeaker[] }
+    | { status: "unavailable"; message: string };
   spotify:
     | {
         status: "ready";
-        playlists: Array<{ id: string; name: string; uri: string; imageUrl: string | null }>;
+        playlists: readonly { id: string; name: string; uri: string; imageUrl: string | null }[];
       }
     | { status: "unavailable"; message: string };
 }
@@ -31,21 +50,24 @@ type Screen =
   | { kind: "editor"; sceneId: string | null }
   | { kind: "running" };
 
-function findAction<T extends SceneAction["kind"]>(
+function findAction(
   scene: Pick<SceneDefinition, "actions">,
-  kind: T,
-): Extract<SceneAction, { kind: T }> | null {
-  return (
-    (scene.actions.find((action) => action.kind === kind) as Extract<
-      SceneAction,
-      { kind: T }
-    > | null) ?? null
-  );
+  kind: typeof SceneActionKind.Lighting,
+): LightingAction | null;
+function findAction(
+  scene: Pick<SceneDefinition, "actions">,
+  kind: typeof SceneActionKind.Music,
+): MusicAction | null;
+function findAction(
+  scene: Pick<SceneDefinition, "actions">,
+  kind: SceneAction["kind"],
+): SceneAction | null {
+  return scene.actions.find((action) => action.kind === kind) ?? null;
 }
 
 function sceneSummary(scene: Pick<SceneDefinition, "actions">): string {
-  const lighting = findAction(scene, "lighting");
-  const music = findAction(scene, "music");
+  const lighting = findAction(scene, SceneActionKind.Lighting);
+  const music = findAction(scene, SceneActionKind.Music);
   const parts: string[] = [];
   if (lighting) {
     const color =
@@ -177,7 +199,7 @@ interface SpeakerOverrideState {
 }
 
 function defaultSpeakerOverrides(scene: SceneDefinition, speakers: readonly SceneSpeaker[]) {
-  const music = findAction(scene, "music");
+  const music = findAction(scene, SceneActionKind.Music);
   if (!music) return [];
   const all = music.outputs.find((output) => output.kind === "all");
   return speakers.map((speaker): SpeakerOverrideState => {
@@ -210,14 +232,17 @@ export function SceneLaunchView({
   onLaunch: (overrides: LaunchOverrides) => void;
   onSaveDefaults: (scene: SceneInput) => void;
 }) {
-  const music = findAction(scene, "music");
-  const lighting = findAction(scene, "lighting");
+  const music = findAction(scene, SceneActionKind.Music);
+  const lighting = findAction(scene, SceneActionKind.Lighting);
   const availableSpeakers = useMemo(
     () => (resources.speakers.status === "ready" ? resources.speakers.items : []),
     [resources.speakers],
   );
   const [playlistUri, setPlaylistUri] = useState(
-    music?.source.selection === "random" ? "" : (music?.source.playlists[0]?.uri ?? ""),
+    music?.source.selection === PlaylistSelection.Random ||
+      (music?.source.selection === PlaylistSelection.Prompt && music.source.playlists.length > 1)
+      ? ""
+      : (music?.source.playlists[0]?.uri ?? ""),
   );
   const [speakers, setSpeakers] = useState<SpeakerOverrideState[]>(() =>
     defaultSpeakerOverrides(scene, availableSpeakers),
@@ -285,10 +310,11 @@ export function SceneLaunchView({
             onChange={(event) => setPlaylistUri(event.target.value)}
             style={inputStyle}
           >
-            {music.source.selection === "random" && <option value="">Choose randomly</option>}
-            {music.source.selection === "prompt" && music.source.playlists.length > 1 && (
-              <option value="">Choose a playlist…</option>
+            {music.source.selection === PlaylistSelection.Random && (
+              <option value="">Choose randomly</option>
             )}
+            {music.source.selection === PlaylistSelection.Prompt &&
+              music.source.playlists.length > 1 && <option value="">Choose a playlist…</option>}
             {music.source.playlists.map((playlist) => (
               <option key={playlist.uri} value={playlist.uri}>
                 {playlist.name}
@@ -306,42 +332,41 @@ export function SceneLaunchView({
         <section style={sectionStyle}>
           <h3 style={sectionHeadingStyle}>Speakers</h3>
           {resources.speakers.status === "unavailable" ? (
-            <div style={errorStyle}>Sonos unavailable: {resources.speakers.message}</div>
+            <Alert title="Sonos unavailable">{resources.speakers.message}</Alert>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               {speakers.map((speaker, index) => (
-                <label key={speaker.speakerUuid} style={speakerRowStyle}>
-                  <input
-                    type="checkbox"
+                <div key={speaker.speakerUuid} style={speakerRowStyle}>
+                  <Switch
+                    label={`Use ${speaker.name}`}
                     checked={speaker.enabled}
-                    onChange={(event) =>
+                    onChange={(enabled) =>
                       setSpeakers((current) =>
                         current.map((item, itemIndex) =>
-                          itemIndex === index ? { ...item, enabled: event.target.checked } : item,
+                          itemIndex === index ? { ...item, enabled } : item,
                         ),
                       )
                     }
                   />
                   <strong>{speaker.name}</strong>
-                  <input
-                    aria-label={`${speaker.name} volume`}
-                    type="range"
-                    min="0"
-                    max="90"
-                    value={speaker.volume}
-                    onChange={(event) =>
-                      setSpeakers((current) =>
-                        current.map((item, itemIndex) =>
-                          itemIndex === index
-                            ? { ...item, volume: Number(event.target.value) }
-                            : item,
-                        ),
-                      )
-                    }
-                    style={{ flex: 1 }}
-                  />
+                  <div style={{ flex: 1 }}>
+                    <Slider
+                      label={`${speaker.name} volume`}
+                      min={0}
+                      max={90}
+                      value={speaker.volume}
+                      showHeader={false}
+                      onChange={(volume) =>
+                        setSpeakers((current) =>
+                          current.map((item, itemIndex) =>
+                            itemIndex === index ? { ...item, volume } : item,
+                          ),
+                        )
+                      }
+                    />
+                  </div>
                   <span style={{ width: 34, textAlign: "right" }}>{speaker.volume}%</span>
-                </label>
+                </div>
               ))}
             </div>
           )}
@@ -362,7 +387,7 @@ export function SceneLaunchView({
           disabled={Boolean(
             music &&
               (!speakers.some((speaker) => speaker.enabled) ||
-                (!playlistUri && music.source.selection !== "random")),
+                (!playlistUri && music.source.selection !== PlaylistSelection.Random)),
           )}
           style={{ width: 210 }}
         >
@@ -383,7 +408,9 @@ function withLaunchDefaults(
     description: scene.description,
     icon: scene.icon,
     actions: scene.actions.map((action) => {
-      if (action.kind !== "music") return action;
+      if (action.kind !== SceneActionKind.Music) {
+        return { ...action, targets: [...action.targets] };
+      }
       const selected = playlistUri
         ? action.source.playlists.find((playlist) => playlist.uri === playlistUri)
         : null;
@@ -391,20 +418,19 @@ function withLaunchDefaults(
         ...action,
         source: {
           ...action.source,
+          playlists: selected
+            ? [selected, ...action.source.playlists.filter((item) => item.uri !== selected.uri)]
+            : [...action.source.playlists],
           ...(selected
             ? {
-                selection: "fixed" as const,
-                playlists: [
-                  selected,
-                  ...action.source.playlists.filter((item) => item.uri !== selected.uri),
-                ],
+                selection: PlaylistSelection.Fixed,
               }
             : {}),
         },
         outputs: speakers
           .filter((speaker) => speaker.enabled)
-          .map((speaker) => ({
-            kind: "speaker" as const,
+          .map((speaker): MusicAction["outputs"][number] => ({
+            kind: "speaker",
             speakerUuid: speaker.speakerUuid,
             label: speaker.name,
             volume: speaker.volume,
@@ -430,7 +456,7 @@ interface EditorState {
   transitionSeconds: number;
   musicEnabled: boolean;
   playlists: Array<{ key: string; name: string; uri: string }>;
-  selection: "fixed" | "prompt" | "random";
+  selection: PlaylistSelection;
   shuffleTracks: boolean;
   allSpeakers: boolean;
   allSpeakerVolume: number;
@@ -438,8 +464,8 @@ interface EditorState {
 }
 
 function editorState(scene: SceneDefinition | null, resources: SceneResourceView): EditorState {
-  const lighting = scene ? findAction(scene, "lighting") : null;
-  const music = scene ? findAction(scene, "music") : null;
+  const lighting = scene ? findAction(scene, SceneActionKind.Lighting) : null;
+  const music = scene ? findAction(scene, SceneActionKind.Music) : null;
   const rgb = lighting?.color.kind === "rgb" ? lighting.color : null;
   const temperature = lighting?.color.kind === "temperature" ? lighting.color : null;
   const resourceSpeakers = resources.speakers.status === "ready" ? resources.speakers.items : [];
@@ -466,7 +492,7 @@ function editorState(scene: SceneDefinition | null, resources: SceneResourceView
       key: genId("draft_playlist"),
       ...playlist,
     })) ?? [{ key: genId("draft_playlist"), name: "", uri: "" }],
-    selection: music?.source.selection ?? "fixed",
+    selection: music?.source.selection ?? PlaylistSelection.Fixed,
     shuffleTracks: music?.source.shuffleTracks ?? true,
     allSpeakers: Boolean(all) || !music,
     allSpeakerVolume: all?.volume ?? 25,
@@ -485,7 +511,7 @@ function editorState(scene: SceneDefinition | null, resources: SceneResourceView
 }
 
 function inputFromEditor(state: EditorState): SceneInput {
-  const actions: SceneAction[] = [];
+  const actions: SceneInput["actions"] = [];
   if (state.lightingEnabled) {
     const color: LightingAction["color"] =
       state.colorKind === "rgb"
@@ -494,7 +520,7 @@ function inputFromEditor(state: EditorState): SceneInput {
           ? { kind: "temperature", kelvin: state.kelvin }
           : { kind: "none" };
     actions.push({
-      kind: "lighting",
+      kind: SceneActionKind.Lighting,
       targets: state.lightTargets.includes("all")
         ? [{ kind: "all" }]
         : state.lightTargets.map((entityId) => ({ kind: "entity", entityId })),
@@ -506,7 +532,7 @@ function inputFromEditor(state: EditorState): SceneInput {
   }
   if (state.musicEnabled) {
     actions.push({
-      kind: "music",
+      kind: SceneActionKind.Music,
       source: {
         kind: "spotify",
         playlists: state.playlists.map(({ name, uri }) => ({ name, uri })),
@@ -570,26 +596,19 @@ export function SceneEditorView({
       <section style={sectionStyle}>
         <h3 style={sectionHeadingStyle}>General</h3>
         <div style={{ display: "grid", gridTemplateColumns: "90px 1fr", gap: 10 }}>
-          <input
-            aria-label="Icon"
-            value={state.icon}
-            onChange={(event) => set("icon", event.target.value)}
-            style={inputStyle}
-          />
-          <input
-            aria-label="Scene name"
+          <TextInput label="Icon" value={state.icon} onChange={(value) => set("icon", value)} />
+          <TextInput
+            label="Scene name"
             placeholder="Scene name"
             value={state.name}
-            onChange={(event) => set("name", event.target.value)}
-            style={inputStyle}
+            onChange={(value) => set("name", value)}
           />
         </div>
-        <input
-          aria-label="Description"
+        <TextInput
+          label="Description"
           placeholder="What should this scene feel like?"
           value={state.description}
-          onChange={(event) => set("description", event.target.value)}
-          style={inputStyle}
+          onChange={(value) => set("description", value)}
         />
       </section>
 
@@ -617,21 +636,22 @@ export function SceneEditorView({
             {!state.lightTargets.includes("all") && (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
                 {resources.lights.map((light) => (
-                  <label key={light.entityId} style={checkRowStyle}>
-                    <input
-                      type="checkbox"
+                  <div key={light.entityId} style={checkRowStyle}>
+                    <CheckboxRow
+                      id={`scene-light-${light.entityId.replaceAll(".", "-")}`}
                       checked={state.lightTargets.includes(light.entityId)}
-                      onChange={(event) =>
+                      onChange={(checked) =>
                         set(
                           "lightTargets",
-                          event.target.checked
+                          checked
                             ? [...state.lightTargets, light.entityId]
                             : state.lightTargets.filter((id) => id !== light.entityId),
                         )
                       }
-                    />
-                    {light.room} · {light.label}
-                  </label>
+                    >
+                      {light.room} · {light.label}
+                    </CheckboxRow>
+                  </div>
                 ))}
               </div>
             )}
@@ -652,9 +672,7 @@ export function SceneEditorView({
               Color
               <select
                 value={state.colorKind}
-                onChange={(event) =>
-                  set("colorKind", event.target.value as EditorState["colorKind"])
-                }
+                onChange={(event) => set("colorKind", parseColorKind(event.target.value))}
                 style={inputStyle}
               >
                 <option value="rgb">RGB color</option>
@@ -713,9 +731,7 @@ export function SceneEditorView({
               Playlist behavior
               <select
                 value={state.selection}
-                onChange={(event) =>
-                  set("selection", event.target.value as EditorState["selection"])
-                }
+                onChange={(event) => set("selection", parsePlaylistSelection(event.target.value))}
                 style={inputStyle}
               >
                 <option value="fixed">Always use the first playlist</option>
@@ -728,35 +744,31 @@ export function SceneEditorView({
                 key={playlist.key}
                 style={{ display: "grid", gridTemplateColumns: "1fr 2fr auto", gap: 8 }}
               >
-                <input
-                  aria-label={`Playlist ${index + 1} name`}
+                <TextInput
+                  label={`Playlist ${index + 1} name`}
                   placeholder="Playlist name"
                   value={playlist.name}
-                  onChange={(event) =>
+                  onChange={(name) =>
                     set(
                       "playlists",
                       state.playlists.map((item, itemIndex) =>
-                        itemIndex === index ? { ...item, name: event.target.value } : item,
+                        itemIndex === index ? { ...item, name } : item,
                       ),
                     )
                   }
-                  style={inputStyle}
                 />
-                <input
-                  aria-label={`Playlist ${index + 1} URI`}
+                <TextInput
+                  label={`Playlist ${index + 1} URI`}
                   placeholder="spotify:playlist:…"
                   value={playlist.uri}
-                  onChange={(event) =>
+                  onChange={(uri) =>
                     set(
                       "playlists",
                       state.playlists.map((item, itemIndex) =>
-                        itemIndex === index
-                          ? { ...item, uri: normalizeSpotifyUri(event.target.value) }
-                          : item,
+                        itemIndex === index ? { ...item, uri: normalizeSpotifyUri(uri) } : item,
                       ),
                     )
                   }
-                  style={inputStyle}
                 />
                 <Button
                   variant="ghost"
@@ -811,42 +823,42 @@ export function SceneEditorView({
               onChange={(value) => set("allSpeakerVolume", value)}
             />
           ) : resources.speakers.status === "unavailable" ? (
-            <div style={errorStyle}>{resources.speakers.message}</div>
+            <Alert title="Sonos unavailable">{resources.speakers.message}</Alert>
           ) : (
             state.speakers.map((speaker, index) => (
-              <label key={speaker.speakerUuid} style={speakerRowStyle}>
-                <input
-                  type="checkbox"
+              <div key={speaker.speakerUuid} style={speakerRowStyle}>
+                <Switch
+                  label={`Use ${speaker.label}`}
                   checked={speaker.enabled}
-                  onChange={(event) =>
+                  onChange={(enabled) =>
                     set(
                       "speakers",
                       state.speakers.map((item, itemIndex) =>
-                        itemIndex === index ? { ...item, enabled: event.target.checked } : item,
+                        itemIndex === index ? { ...item, enabled } : item,
                       ),
                     )
                   }
                 />
                 <strong>{speaker.label}</strong>
-                <input
-                  type="range"
-                  min="0"
-                  max="90"
-                  value={speaker.volume}
-                  onChange={(event) =>
-                    set(
-                      "speakers",
-                      state.speakers.map((item, itemIndex) =>
-                        itemIndex === index
-                          ? { ...item, volume: Number(event.target.value) }
-                          : item,
-                      ),
-                    )
-                  }
-                  style={{ flex: 1 }}
-                />
+                <div style={{ flex: 1 }}>
+                  <Slider
+                    label={`${speaker.label} volume`}
+                    min={0}
+                    max={90}
+                    value={speaker.volume}
+                    showHeader={false}
+                    onChange={(volume) =>
+                      set(
+                        "speakers",
+                        state.speakers.map((item, itemIndex) =>
+                          itemIndex === index ? { ...item, volume } : item,
+                        ),
+                      )
+                    }
+                  />
+                </div>
                 <span>{speaker.volume}%</span>
-              </label>
+              </div>
             ))
           )}
         </section>
@@ -869,6 +881,22 @@ export function SceneEditorView({
 function normalizeSpotifyUri(value: string): string {
   const match = value.match(/open\.spotify\.com\/playlist\/([A-Za-z0-9]+)/);
   return match?.[1] ? `spotify:playlist:${match[1]}` : value;
+}
+
+function parseColorKind(value: string): EditorState["colorKind"] {
+  if (value === "rgb" || value === "temperature" || value === "none") return value;
+  throw new Error(`Unknown scene color kind: ${value}`);
+}
+
+function parsePlaylistSelection(value: string): PlaylistSelection {
+  if (
+    value === PlaylistSelection.Fixed ||
+    value === PlaylistSelection.Prompt ||
+    value === PlaylistSelection.Random
+  ) {
+    return value;
+  }
+  throw new Error(`Unknown playlist selection: ${value}`);
 }
 
 export function RunningSceneView({
@@ -960,6 +988,7 @@ export function RunningSceneView({
 
 export function ScenesPage() {
   const [screen, setScreen] = useState<Screen>({ kind: "picker" });
+  const [deleteSceneId, setDeleteSceneId] = useState<string | null>(null);
   const list = trpc.scenes.list.useQuery();
   const resources = trpc.scenes.resources.useQuery();
   const current = trpc.scenes.current.useQuery(undefined, { refetchInterval: 4_000 });
@@ -998,9 +1027,8 @@ export function ScenesPage() {
   const queryError = list.error ?? resources.error ?? current.error;
   if (queryError) {
     return (
-      <div style={{ ...pageStyle, ...errorStyle }}>
-        <strong>Scenes could not be loaded</strong>
-        <span>{queryError.message}</span>
+      <div style={pageStyle}>
+        <Alert title="Scenes could not be loaded">{queryError.message}</Alert>
         <Button
           variant="ghost"
           onClick={() => {
@@ -1020,16 +1048,28 @@ export function ScenesPage() {
   const withError = (content: ReactNode) => (
     <>
       {mutationError && (
-        <div style={{ ...errorStyle, maxWidth: 1040, margin: "0 auto 12px" }}>
-          {mutationError.message}
+        <div style={{ maxWidth: 1040, margin: "0 auto 12px" }}>
+          <Alert>{mutationError.message}</Alert>
         </div>
       )}
       {content}
+      <ConfirmDialog
+        open={deleteSceneId !== null}
+        title="Delete scene?"
+        message="This removes the saved scene. Existing run history is retained."
+        confirmLabel="Delete scene"
+        tone="danger"
+        onClose={() => setDeleteSceneId(null)}
+        onConfirm={() => {
+          if (deleteSceneId) remove.mutate({ id: deleteSceneId });
+          setDeleteSceneId(null);
+        }}
+      />
     </>
   );
 
-  const scenes = (list.data ?? []) as SceneDefinition[];
-  const resourceData = resources.data as SceneResourceView | undefined;
+  const scenes = list.data ?? [];
+  const resourceData = resources.data;
   const selectedScene =
     screen.kind === "launch" || (screen.kind === "editor" && screen.sceneId)
       ? (scenes.find((scene) => scene.id === screen.sceneId) ?? null)
@@ -1055,7 +1095,17 @@ export function ScenesPage() {
         launching={launch.isPending}
         onBack={() => setScreen({ kind: "picker" })}
         onEdit={() => setScreen({ kind: "editor", sceneId: selectedScene.id })}
-        onLaunch={(overrides) => launch.mutate({ id: selectedScene.id, overrides })}
+        onLaunch={(overrides) =>
+          launch.mutate({
+            id: selectedScene.id,
+            overrides: {
+              ...(overrides.playlistUri ? { playlistUri: overrides.playlistUri } : {}),
+              ...(overrides.speakers
+                ? { speakers: overrides.speakers.map((speaker) => ({ ...speaker })) }
+                : {}),
+            },
+          })
+        }
         onSaveDefaults={(input) => update.mutate({ id: selectedScene.id, ...input })}
       />,
     );
@@ -1071,14 +1121,7 @@ export function ScenesPage() {
         onSave={(input) =>
           screen.sceneId ? update.mutate({ id: screen.sceneId, ...input }) : create.mutate(input)
         }
-        onDelete={
-          screen.sceneId
-            ? () => {
-                if (window.confirm("Delete this scene?"))
-                  remove.mutate({ id: screen.sceneId ?? "" });
-              }
-            : undefined
-        }
+        onDelete={screen.sceneId ? () => setDeleteSceneId(screen.sceneId) : undefined}
       />,
     );
   }
@@ -1112,15 +1155,12 @@ function ToggleLabel({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label style={{ ...speakerRowStyle, fontSize: 16 }}>
+    <div style={{ ...speakerRowStyle, fontSize: 16 }}>
       <strong>{label}</strong>
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(event) => onChange(event.target.checked)}
-        style={{ marginLeft: "auto" }}
-      />
-    </label>
+      <span style={{ marginLeft: "auto" }}>
+        <Switch label={label} checked={checked} onChange={onChange} />
+      </span>
+    </div>
   );
 }
 function RangeField({
@@ -1139,23 +1179,14 @@ function RangeField({
   onChange: (value: number) => void;
 }) {
   return (
-    <label style={fieldLabelStyle}>
-      {label}
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <input
-          type="range"
-          min={min}
-          max={max}
-          value={value}
-          onChange={(event) => onChange(Number(event.target.value))}
-          style={{ flex: 1 }}
-        />
-        <span style={{ width: 56, textAlign: "right" }}>
-          {value}
-          {suffix}
-        </span>
-      </div>
-    </label>
+    <Slider
+      label={label}
+      min={min}
+      max={max}
+      value={value}
+      format={(next) => `${next}${suffix}`}
+      onChange={onChange}
+    />
   );
 }
 
@@ -1233,11 +1264,4 @@ const runningBannerStyle = {
   color: "var(--ink)",
   cursor: "pointer",
   font: "14px var(--ui)",
-} as const;
-const errorStyle = {
-  padding: 12,
-  borderRadius: 10,
-  background: "color-mix(in srgb, var(--danger) 10%, var(--nest))",
-  color: "var(--danger)",
-  fontSize: 13,
 } as const;

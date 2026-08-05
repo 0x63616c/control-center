@@ -54,6 +54,56 @@ describe("scene launch resolution", () => {
 });
 
 describe("executeScene", () => {
+  it("preflights every integration before changing lights or Sonos", async () => {
+    const firstLight = LIGHTS[0];
+    if (!firstLight) throw new Error("test needs one configured light");
+    const store = createInMemoryDeviceStateStore();
+    const createSonosClient = vi.fn(() => {
+      throw new Error("Sonos must not be mutated during preflight");
+    });
+    const scene: SceneDefinition = {
+      id: "scene_preflight",
+      name: "Preflight",
+      description: null,
+      icon: "✨",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      actions: [
+        {
+          kind: "lighting",
+          targets: [{ kind: "entity", entityId: firstLight.entityId }],
+          power: true,
+          brightness: 50,
+          color: { kind: "none" },
+          transitionSeconds: 1,
+        },
+        { ...music, source: { ...music.source, selection: "fixed" } },
+      ],
+    };
+
+    await expect(
+      executeScene(
+        scene,
+        {},
+        {
+          ha: { isConfigured: () => true },
+          spotify: {
+            getDevices: vi.fn().mockResolvedValue([]),
+            transferPlayback: vi.fn(),
+            setShuffle: vi.fn(),
+            playContext: vi.fn(),
+            pauseDevice: vi.fn(),
+          },
+          deviceStateStore: store,
+          discoverSpeakers: async () => speakers,
+          createSonosClient,
+        },
+      ),
+    ).rejects.toThrow("Spotify Connect");
+    expect(await store.list()).toEqual([]);
+    expect(createSonosClient).not.toHaveBeenCalled();
+  });
+
   it("writes lighting intent, groups Sonos, sets volumes, and starts the Spotify context", async () => {
     const firstLight = LIGHTS[0];
     if (!firstLight) throw new Error("test needs one configured light");

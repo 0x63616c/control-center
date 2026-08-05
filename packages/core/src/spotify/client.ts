@@ -26,6 +26,10 @@ const TOKEN_URL = "https://accounts.spotify.com/api/token";
 // hit a stale token.
 const EXPIRY_BUFFER_MS = 60_000;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 interface CachedToken {
   accessToken: string;
   expiresAtMs: number;
@@ -162,16 +166,18 @@ export class SpotifyClient {
       if (typeof raw !== "object" || raw === null) {
         throw new SpotifyError(`devices: invalid device at index ${index}`);
       }
-      const device = raw as Record<string, unknown>;
-      if (typeof device.id !== "string" || typeof device.name !== "string") {
+      if (!isRecord(raw) || typeof raw.id !== "string" || typeof raw.name !== "string") {
         throw new SpotifyError(`devices: device at index ${index} is missing id or name`);
       }
+      if (typeof raw.is_active !== "boolean" || typeof raw.is_restricted !== "boolean") {
+        throw new SpotifyError(`devices: device at index ${index} is missing availability state`);
+      }
       return {
-        id: device.id,
-        name: device.name,
-        type: typeof device.type === "string" ? device.type : "unknown",
-        isActive: device.is_active === true,
-        isRestricted: device.is_restricted === true,
+        id: raw.id,
+        name: raw.name,
+        type: typeof raw.type === "string" ? raw.type : "unknown",
+        isActive: raw.is_active,
+        isRestricted: raw.is_restricted,
       };
     });
   }
@@ -432,10 +438,10 @@ export class SpotifyClient {
       throw new SpotifyError(`request: HTTP ${res.status} , ${body.slice(0, 200)}`);
     }
     const raw: unknown = await res.json();
-    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    if (!isRecord(raw)) {
       throw new SpotifyError("request: expected an object response");
     }
-    return raw as Record<string, unknown>;
+    return raw;
   }
 
   private async playerWrite(

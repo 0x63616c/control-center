@@ -40,7 +40,7 @@ INSERT INTO "scene" ("id", "name", "description", "icon", "actions") VALUES
 	'Bright warm-white lights with light EDM.',
 	'🌅',
 	'[
-		{"kind":"lighting","targets":[{"kind":"entity","entityId":"light.living_room_globe"},{"kind":"entity","entityId":"light.living_room_corner_lamp"},{"kind":"entity","entityId":"light.living_room_floor_lamp"},{"kind":"entity","entityId":"light.kitchen_lamp"},{"kind":"entity","entityId":"light.desk"},{"kind":"entity","entityId":"light.bed_lamp_left"},{"kind":"entity","entityId":"light.bed_lamp_right"},{"kind":"entity","entityId":"light.mirror"}],"power":true,"brightness":100,"color":{"kind":"temperature","kelvin":4000},"transitionSeconds":5},
+		{"kind":"lighting","targets":[{"kind":"all"}],"power":true,"brightness":100,"color":{"kind":"temperature","kelvin":4000},"transitionSeconds":5},
 		{"kind":"music","source":{"kind":"spotify","playlists":[{"name":"Light EDM","uri":"spotify:playlist:7aVilKgwoscbq0R36H0kuq"}],"selection":"fixed","shuffleTracks":true},"outputs":[{"kind":"all","volume":20}]}
 	]'::jsonb
 );

@@ -155,6 +155,23 @@ describe("SpotifyClient , scene playback", () => {
     ]);
   });
 
+  it("rejects Connect devices without real availability flags", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(tokenResponse())
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ devices: [{ id: "living", name: "Living Room" }] }), {
+            status: 200,
+          }),
+        ),
+    );
+    await expect(new SpotifyClient(VALID_CREDS).getDevices()).rejects.toThrow(
+      "missing availability state",
+    );
+  });
+
   it("transfers, configures shuffle, and starts an explicit playlist", async () => {
     const fetchMock = vi
       .fn()

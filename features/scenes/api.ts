@@ -5,16 +5,11 @@ import { z } from "zod";
 import { launchOverridesSchema, sceneInputSchema } from "./contract";
 import { db, deviceStateStore } from "./db";
 import { ha, spotify } from "./deps";
-import { launchScene, stopScene } from "./executor";
-import type { SceneDefinition } from "./model";
+import { launchScene, prepareScene, stopScene } from "./executor";
 import { createSceneRepository } from "./repository";
 import { discoverSpeakers, getSceneResources } from "./resources";
 
 const repository = createSceneRepository(db);
-
-function asDefinition(row: Awaited<ReturnType<typeof repository.read>>): SceneDefinition | null {
-  return row ? { ...row } : null;
-}
 
 const scenesRouter = router({
   list: publicProcedure.query(async () => (await repository.list()).map((row) => ({ ...row }))),
@@ -51,16 +46,13 @@ const scenesRouter = router({
       }),
     )
     .mutation(async ({ input }) => {
-      const scene = asDefinition(await repository.read(input.id));
+      const scene = await repository.read(input.id);
       if (!scene) throw new TRPCError({ code: "NOT_FOUND", message: "Scene not found" });
+      const dependencies = { ha, spotify, deviceStateStore, discoverSpeakers };
+      const prepared = await prepareScene(scene, input.overrides, dependencies);
       const current = await repository.currentRun();
       if (current) await stopScene(repository, current.id, current.resolved, spotify);
-      return launchScene(repository, scene, input.overrides, {
-        ha,
-        spotify,
-        deviceStateStore,
-        discoverSpeakers,
-      });
+      return launchScene(repository, scene, input.overrides, dependencies, prepared);
     }),
 
   current: publicProcedure.query(async () => {

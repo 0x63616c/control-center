@@ -2,6 +2,7 @@ import {
   DeviceKind,
   type DeviceLightState,
   type DeviceStateStore,
+  type DeviceStateValue,
   LIGHTS,
   type LightEntry,
   LightKind,
@@ -18,6 +19,7 @@ import type {
   ScenePlaylist,
   SceneSpeaker,
 } from "./model";
+import { PlaylistSelection, SceneActionKind, SceneRunStatus } from "./model";
 import type { SceneRepository } from "./repository";
 
 export interface SceneExecutorDependencies {
@@ -43,14 +45,23 @@ interface SceneSonos {
   setVolume(volume: number): Promise<void>;
 }
 
+function isDeviceLightState(value: DeviceStateValue | null): value is DeviceLightState {
+  return value !== null && "on" in value && typeof value.on === "boolean";
+}
+
 function lightingAction(scene: SceneDefinition): LightingAction | null {
   return (
-    scene.actions.find((action): action is LightingAction => action.kind === "lighting") ?? null
+    scene.actions.find(
+      (action): action is LightingAction => action.kind === SceneActionKind.Lighting,
+    ) ?? null
   );
 }
 
 function musicAction(scene: SceneDefinition): MusicAction | null {
-  return scene.actions.find((action): action is MusicAction => action.kind === "music") ?? null;
+  return (
+    scene.actions.find((action): action is MusicAction => action.kind === SceneActionKind.Music) ??
+    null
+  );
 }
 
 export function resolvePlaylist(
@@ -63,10 +74,10 @@ export function resolvePlaylist(
     if (!selected) throw new Error("The selected playlist is not part of this scene");
     return selected;
   }
-  if (action.source.selection === "prompt" && action.source.playlists.length > 1) {
+  if (action.source.selection === PlaylistSelection.Prompt && action.source.playlists.length > 1) {
     throw new Error("Choose a playlist before starting this scene");
   }
-  if (action.source.selection === "random") {
+  if (action.source.selection === PlaylistSelection.Random) {
     const index = Math.min(
       action.source.playlists.length - 1,
       Math.floor(random() * action.source.playlists.length),
@@ -136,10 +147,9 @@ async function applyLighting(
   await Promise.all(
     targets.map(async (target) => {
       const previous = byEntityId.get(target.entityId)?.desiredState;
-      const base =
-        previous && typeof previous === "object" && "on" in previous
-          ? (previous as DeviceLightState)
-          : null;
+      let base: DeviceLightState | null = null;
+      const candidate = previous ?? null;
+      if (isDeviceLightState(candidate)) base = candidate;
       const supportsBrightness = target.capabilities.includes("brightness");
       const supportsRgb = target.capabilities.includes("rgb");
       const supportsTemperature = target.capabilities.includes("colorTemp");
@@ -217,29 +227,57 @@ export async function executeScene(
   overrides: LaunchOverrides,
   deps: SceneExecutorDependencies,
 ): Promise<ResolvedSceneExecution> {
+  const resolved = await prepareScene(scene, overrides, deps);
+  await executePreparedScene(scene, resolved, deps);
+  return resolved;
+}
+
+/** Resolves every external dependency before the first household device is mutated. */
+export async function prepareScene(
+  scene: SceneDefinition,
+  overrides: LaunchOverrides,
+  deps: SceneExecutorDependencies,
+): Promise<ResolvedSceneExecution> {
   const lighting = lightingAction(scene);
   const music = musicAction(scene);
   let playlist: ScenePlaylist | null = null;
   let speakers: SceneSpeaker[] = [];
   let spotifyDeviceId: string | null = null;
 
-  if (lighting) await applyLighting(lighting, deps.ha, deps.deviceStateStore);
+  if (lighting) {
+    if (!deps.ha.isConfigured()) throw new Error("Home Assistant is not configured");
+    resolveLightTargets(lighting);
+  }
   if (music) {
     playlist = resolvePlaylist(music, overrides.playlistUri, deps.random);
     speakers = resolveSpeakers(music, await deps.discoverSpeakers(), overrides.speakers);
-    const coordinator = await groupAndSetVolumes(
-      speakers,
-      deps.deviceStateStore,
-      deps.createSonosClient ?? ((deviceIp) => new SonosClient(deviceIp)),
-    );
+    const coordinator = speakers[0];
+    if (!coordinator) throw new Error("Choose at least one speaker");
     const spotifyDevice = spotifyDeviceFor(coordinator, await deps.spotify.getDevices());
     spotifyDeviceId = spotifyDevice.id;
-    await deps.spotify.transferPlayback(spotifyDevice.id);
-    await deps.spotify.setShuffle(music.source.shuffleTracks, spotifyDevice.id);
-    await deps.spotify.playContext(playlist.uri, spotifyDevice.id);
   }
 
   return { sceneName: scene.name, playlist, speakers, lighting, spotifyDeviceId };
+}
+
+async function executePreparedScene(
+  scene: SceneDefinition,
+  resolved: ResolvedSceneExecution,
+  deps: SceneExecutorDependencies,
+): Promise<void> {
+  if (resolved.lighting) {
+    await applyLighting(resolved.lighting, deps.ha, deps.deviceStateStore);
+  }
+  const music = musicAction(scene);
+  if (!music || !resolved.playlist || !resolved.spotifyDeviceId) return;
+  await groupAndSetVolumes(
+    resolved.speakers,
+    deps.deviceStateStore,
+    deps.createSonosClient ?? ((deviceIp) => new SonosClient(deviceIp)),
+  );
+  await deps.spotify.transferPlayback(resolved.spotifyDeviceId);
+  await deps.spotify.setShuffle(music.source.shuffleTracks, resolved.spotifyDeviceId);
+  await deps.spotify.playContext(resolved.playlist.uri, resolved.spotifyDeviceId);
 }
 
 export async function launchScene(
@@ -247,19 +285,21 @@ export async function launchScene(
   scene: SceneDefinition,
   overrides: LaunchOverrides,
   deps: SceneExecutorDependencies,
+  prepared?: ResolvedSceneExecution,
 ) {
   const run = await repository.startRun(scene.id, scene.name);
   try {
-    const resolved = await executeScene(scene, overrides, deps);
+    const resolved = prepared ?? (await prepareScene(scene, overrides, deps));
+    await executePreparedScene(scene, resolved, deps);
     getLogger().info(
       { sceneId: scene.id, sceneRunId: run.id, speakerCount: resolved.speakers.length },
       "scene started",
     );
-    return repository.finishRun(run.id, "running", resolved);
+    return repository.finishRun(run.id, SceneRunStatus.Running, resolved);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Scene launch failed";
     getLogger().error({ sceneId: scene.id, sceneRunId: run.id, err: error }, "scene failed");
-    await repository.finishRun(run.id, "failed", null, message);
+    await repository.finishRun(run.id, SceneRunStatus.Failed, null, message);
     throw error;
   }
 }
@@ -271,5 +311,5 @@ export async function stopScene(
   spotify: Pick<SceneSpotify, "pauseDevice">,
 ) {
   if (resolved?.spotifyDeviceId) await spotify.pauseDevice(resolved.spotifyDeviceId);
-  return repository.finishRun(runId, "stopped", resolved);
+  return repository.finishRun(runId, SceneRunStatus.Stopped, resolved);
 }
