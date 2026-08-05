@@ -168,6 +168,7 @@ function buildTurnOnParams(entityId: string, desired: DeviceLightState): Record<
   if (desired.brightness != null) params.brightness = desired.brightness;
   if (desired.color?.rgb) params.rgb_color = desired.color.rgb;
   else if (desired.color?.kelvin != null) params.color_temp_kelvin = desired.color.kelvin;
+  if (desired.transitionSeconds != null) params.transition = desired.transitionSeconds;
   return params;
 }
 
@@ -315,7 +316,12 @@ async function applyDecision(
           buildTurnOnParams(device.entityId, decision.desired),
         );
       } else {
-        await ha.callService(device.domain, HaLightService.TurnOff, { entity_id: device.entityId });
+        await ha.callService(device.domain, HaLightService.TurnOff, {
+          entity_id: device.entityId,
+          ...(decision.desired.transitionSeconds != null
+            ? { transition: decision.desired.transitionSeconds }
+            : {}),
+        });
       }
       await store.writeReported({ id: device.id, reported: mapped.reported, available, now });
       return;

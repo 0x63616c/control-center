@@ -14,6 +14,7 @@ export { SpotifyError } from "./errors";
 export type {
   SpotifyBrowseResult,
   SpotifyCredentials,
+  SpotifyDevice,
   SpotifyNowPlaying,
   SpotifyPlaylistItem,
   SpotifyRecentTrack,

@@ -15,6 +15,7 @@ import { SpotifyError } from "./errors";
 import type {
   SpotifyBrowseResult,
   SpotifyCredentials,
+  SpotifyDevice,
   SpotifyNowPlaying,
   SpotifyPlaylistItem,
   SpotifyRecentTrack,
@@ -24,6 +25,10 @@ const TOKEN_URL = "https://accounts.spotify.com/api/token";
 // Refresh 60s before the token actually expires so in-flight requests never
 // hit a stale token.
 const EXPIRY_BUFFER_MS = 60_000;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 interface CachedToken {
   accessToken: string;
@@ -143,6 +148,77 @@ export class SpotifyClient {
     ]);
 
     return { recentlyPlayed, playlists };
+  }
+
+  /** Lists real Spotify Connect devices available to the account. */
+  async getDevices(): Promise<SpotifyDevice[]> {
+    const token = await this.getAccessToken();
+    const data = await this.requestJson(
+      "GET",
+      "https://api.spotify.com/v1/me/player/devices",
+      token,
+    );
+    const rawDevices = data.devices;
+    if (!Array.isArray(rawDevices)) {
+      throw new SpotifyError("devices: response missing devices array");
+    }
+    return rawDevices.map((raw, index) => {
+      if (typeof raw !== "object" || raw === null) {
+        throw new SpotifyError(`devices: invalid device at index ${index}`);
+      }
+      if (!isRecord(raw) || typeof raw.id !== "string" || typeof raw.name !== "string") {
+        throw new SpotifyError(`devices: device at index ${index} is missing id or name`);
+      }
+      if (typeof raw.is_active !== "boolean" || typeof raw.is_restricted !== "boolean") {
+        throw new SpotifyError(`devices: device at index ${index} is missing availability state`);
+      }
+      return {
+        id: raw.id,
+        name: raw.name,
+        type: typeof raw.type === "string" ? raw.type : "unknown",
+        isActive: raw.is_active,
+        isRestricted: raw.is_restricted,
+      };
+    });
+  }
+
+  /** Selects a Spotify Connect device without beginning playback. */
+  async transferPlayback(deviceId: string): Promise<void> {
+    await this.playerWrite("PUT", "https://api.spotify.com/v1/me/player", "transfer", {
+      device_ids: [deviceId],
+      play: false,
+    });
+  }
+
+  /** Configures shuffle on a specific active Spotify Connect device. */
+  async setShuffle(enabled: boolean, deviceId: string): Promise<void> {
+    const params = new URLSearchParams({ state: String(enabled), device_id: deviceId });
+    await this.playerWrite(
+      "PUT",
+      `https://api.spotify.com/v1/me/player/shuffle?${params}`,
+      "shuffle",
+    );
+  }
+
+  /** Starts a playlist/album context on the requested Spotify Connect device. */
+  async playContext(contextUri: string, deviceId: string): Promise<void> {
+    const params = new URLSearchParams({ device_id: deviceId });
+    await this.playerWrite(
+      "PUT",
+      `https://api.spotify.com/v1/me/player/play?${params}`,
+      "play-context",
+      { context_uri: contextUri },
+    );
+  }
+
+  /** Pauses one explicit Spotify Connect device. */
+  async pauseDevice(deviceId: string): Promise<void> {
+    const params = new URLSearchParams({ device_id: deviceId });
+    await this.playerWrite(
+      "PUT",
+      `https://api.spotify.com/v1/me/player/pause?${params}`,
+      "pause-device",
+    );
   }
 
   /**
@@ -344,6 +420,53 @@ export class SpotifyClient {
     getLogger().info({ expiresIn }, "spotify token refreshed");
 
     return accessToken;
+  }
+
+  private async requestJson(
+    method: string,
+    url: string,
+    token: string,
+  ): Promise<Record<string, unknown>> {
+    let res: Response;
+    try {
+      res = await fetch(url, { method, headers: { Authorization: `Bearer ${token}` } });
+    } catch (err) {
+      throw new SpotifyError(`request: network error , ${(err as Error).message}`);
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new SpotifyError(`request: HTTP ${res.status} , ${body.slice(0, 200)}`);
+    }
+    const raw: unknown = await res.json();
+    if (!isRecord(raw)) {
+      throw new SpotifyError("request: expected an object response");
+    }
+    return raw;
+  }
+
+  private async playerWrite(
+    method: string,
+    url: string,
+    label: string,
+    body?: Record<string, unknown>,
+  ): Promise<void> {
+    const token = await this.getAccessToken();
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(body ? { "Content-Type": "application/json" } : {}),
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+    } catch (err) {
+      throw new SpotifyError(`${label}: network error , ${(err as Error).message}`);
+    }
+    if (res.ok || res.status === 204) return;
+    const responseBody = await res.text().catch(() => "");
+    throw new SpotifyError(`${label}: HTTP ${res.status} , ${responseBody.slice(0, 200)}`);
   }
 
   /**

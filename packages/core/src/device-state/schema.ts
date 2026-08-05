@@ -18,6 +18,8 @@ export interface DeviceLightState {
   on: boolean;
   brightness?: number;
   color?: LightColor;
+  /** Home Assistant fade duration. Kept with desired state so retries preserve the scene transition. */
+  transitionSeconds?: number;
 }
 
 /**

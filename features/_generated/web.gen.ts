@@ -16,6 +16,7 @@ import hooksManifest from "../hooks/manifest";
 import networkManifest from "../network/manifest";
 import notifManifest from "../notif/manifest";
 import panelUpdateManifest from "../panel-update/manifest";
+import scenesManifest from "../scenes/manifest";
 import soundManifest from "../sound/manifest";
 import temporalHealthManifest from "../temporal-health/manifest";
 import teslaManifest from "../tesla/manifest";
@@ -34,6 +35,7 @@ import { tileViews as goalsTileViews } from "../goals/detail";
 import { tileViews as guestWifiTileViews } from "../guest-wifi/detail";
 import { tileViews as networkTileViews } from "../network/detail";
 import { tileViews as notifTileViews } from "../notif/detail";
+import { tileViews as scenesTileViews } from "../scenes/detail";
 import { tileViews as soundTileViews } from "../sound/detail";
 import { tileViews as teslaTileViews } from "../tesla/detail";
 import { tileViews as tvTileViews } from "../tv/detail";
@@ -55,6 +57,7 @@ const manifests = [
   networkManifest,
   notifManifest,
   panelUpdateManifest,
+  scenesManifest,
   soundManifest,
   temporalHealthManifest,
   teslaManifest,
@@ -76,6 +79,7 @@ const tileViews = [
   ...guestWifiTileViews,
   ...networkTileViews,
   ...notifTileViews,
+  ...scenesTileViews,
   ...soundTileViews,
   ...teslaTileViews,
   ...tvTileViews,
