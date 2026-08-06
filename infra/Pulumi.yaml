@@ -6,7 +6,7 @@ runtime:
     typescript: false
     nodeargs: ""
 description: >
-  world-wide-webb k3s cluster stack on OrbStack Kubernetes, managed by Pulumi
+  world-wide-webb Talos home-server Kubernetes cluster stack, managed by Pulumi
   (www-j934): ESO, CNPG, cert-manager, the app workloads + CronJobs. State in
   Pulumi Cloud under Calum's personal account.
 main: program.ts

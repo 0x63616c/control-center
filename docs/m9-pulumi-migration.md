@@ -1,3 +1,5 @@
+> **HISTORICAL—DO NOT RUN.** This document records the retired Mac-mini application stack. Current application operations use `home-server`.
+
 # M9 Pulumi Migration Notes (www-jtp0.9.6)
 
 **Status: REQUIRES CALUM - do NOT apply without explicit approval.**

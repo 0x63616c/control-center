@@ -85,15 +85,15 @@ describe("serviceSpecs image digest pinning", () => {
     expect(() => specsWith({ "control-center-api": "sha256:tooshort" })).toThrow(/sha256/);
   });
 
-  test("refuses prod app Deployment rendering when digest pins are missing", () => {
+  test("refuses home-server app Deployment rendering when digest pins are missing", () => {
     expect(() =>
       serviceSpecs({
         cloudflaredReplicas: 2,
         nasNfsServer: "192.168.0.218",
         imageDigests: {},
-        requireImageDigestPins: shouldRequireImageDigestPins("prod"),
+        requireImageDigestPins: shouldRequireImageDigestPins("home-server"),
       }),
-    ).toThrow(/prod stack requires wwwinfra:imageDigests pins/);
+    ).toThrow(/home-server stack requires wwwinfra:imageDigests pins/);
   });
 
   test("does not demand another product's pins", () => {
@@ -106,17 +106,17 @@ describe("serviceSpecs image digest pinning", () => {
         cloudflaredReplicas: 2,
         nasNfsServer: "192.168.0.218",
         imageDigests: ALL_IMAGE_DIGESTS,
-        requireImageDigestPins: shouldRequireImageDigestPins("prod"),
+        requireImageDigestPins: shouldRequireImageDigestPins("home-server"),
       }),
     ).not.toThrow();
   });
 
-  test("allows prod app Deployment rendering when every digest pin is present", () => {
+  test("allows home-server app Deployment rendering when every digest pin is present", () => {
     const specs = serviceSpecs({
       cloudflaredReplicas: 2,
       nasNfsServer: "192.168.0.218",
       imageDigests: ALL_IMAGE_DIGESTS,
-      requireImageDigestPins: shouldRequireImageDigestPins("prod"),
+      requireImageDigestPins: shouldRequireImageDigestPins("home-server"),
     });
     expect(imageOf(specs, "control-center-api")).toBe(
       `ghcr.io/0x63616c/www-control-center-api@${VALID}`,
@@ -128,11 +128,11 @@ describe("serviceSpecs image digest pinning", () => {
     expect(specsWith().length).toBeGreaterThan(0);
   });
 
-  test("requires digest pins on both production-cluster stacks (mini + home-server)", () => {
+  test("requires digest pins only on the home-server stack", () => {
     // "home-server" is the live Talos cluster CI deploys to; "prod" is the
     // retired mini. Both must fail-fast on an incomplete CI digest map rather
     // than silently render mutable :main images.
-    expect(shouldRequireImageDigestPins("prod")).toBe(true);
+    expect(shouldRequireImageDigestPins("home-server")).toBe(true);
     expect(shouldRequireImageDigestPins("home-server")).toBe(true);
   });
 });

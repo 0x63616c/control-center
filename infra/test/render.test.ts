@@ -479,71 +479,25 @@ describe("serviceSpecs: web map-provision initContainer (www-hn1i)", () => {
   });
 });
 
-// Task 4 (Talos migration): Plex's GPU/RuntimeClass wiring is talos-only. The
-// load-bearing safety property , an untouched ("orbstack") apply renders
-// Plex's spec BYTE-IDENTICAL to before this task , is asserted directly here.
-describe("serviceSpecs: Plex GPU transcode is talos-only (Task 4)", () => {
-  const baseOpts = {
-    cloudflaredReplicas: 2,
-    nasNfsServer: "192.168.0.218",
-  };
+// Plex always renders for the supported Talos home-server target.
+describe("serviceSpecs: Plex GPU transcode on Talos", () => {
+  const baseOpts = { cloudflaredReplicas: 2, nasNfsServer: "192.168.0.218" };
   const plexOf = (opts: Parameters<typeof serviceSpecs>[0]) =>
     serviceSpecs(opts).find((s) => s.name === "plex");
 
-  test("orbstack (default, no target passed): no gpu limit, no runtimeClassName", () => {
+  test("renders GPU, RuntimeClass, and asynchronous scheduling", () => {
     const plex = plexOf(baseOpts);
-    expect(plex?.resources?.gpu).toBeUndefined();
-    expect(plex?.runtimeClassName).toBeUndefined();
-  });
-
-  test("orbstack (explicit target): identical to the default", () => {
-    const plex = plexOf({ ...baseOpts, target: { substrate: "orbstack" } });
-    expect(plex?.resources?.gpu).toBeUndefined();
-    expect(plex?.runtimeClassName).toBeUndefined();
-  });
-
-  test("talos: gpu:1 limit + the nvidia RuntimeClass", () => {
-    const plex = plexOf({
-      ...baseOpts,
-      target: { substrate: "talos", nodeIp: "192.168.0.5" },
-    });
     expect(plex?.resources?.gpu).toBe(1);
     expect(plex?.runtimeClassName).toBe("nvidia");
+    expect(plex?.replicas).toBe(1);
+    expect(plex?.annotations?.["pulumi.com/skipAwait"]).toBe("true");
   });
 
-  test("talos: 1 replica with pulumi.com/skipAwait (async GPU scheduling), 1 on orbstack", () => {
-    // Plex runs 1 replica on the GPU now. skipAwait keeps the deploy from racing
-    // its own device-plugin-advertised GPU capacity on a cold apply; orbstack
-    // has neither the annotation nor the GPU.
-    const talos = plexOf({ ...baseOpts, target: { substrate: "talos", nodeIp: "192.168.0.5" } });
-    expect(talos?.replicas).toBe(1);
-    expect(talos?.annotations?.["pulumi.com/skipAwait"]).toBe("true");
-    const orbstack = plexOf({ ...baseOpts, target: { substrate: "orbstack" } });
-    expect(orbstack?.replicas).toBe(1);
-    expect(orbstack?.annotations).toBeUndefined();
-  });
-
-  test("talos ADVERTISE_IP matches the pinned LoadBalancer address on the same workload", () => {
-    // The advertised URL and the Service address are two independent
-    // declarations of the same fact; if they drift, Plex is healthy and
-    // unreachable at once. Assert them against each other, not against a
-    // literal that would be updated in lockstep with the bug.
-    const plex = plexOf({
-      ...baseOpts,
-      target: { substrate: "talos", nodeIp: "192.168.0.5" },
-    });
+  test("keeps ADVERTISE_IP aligned with its pinned MetalLB address", () => {
+    const plex = plexOf(baseOpts);
     expect(plex?.loadBalancerIp).toBe(LAN_SERVICE_IPS.plex);
     expect(plex?.env?.ADVERTISE_IP).toBe(`http://${plex?.loadBalancerIp}:32400`);
-    // The node IP is NOT a listener for :32400 - it was the old, broken value.
     expect(plex?.env?.ADVERTISE_IP).not.toContain("192.168.0.5");
-  });
-
-  test("orbstack pins no LoadBalancer address (OrbStack has no MetalLB pool)", () => {
-    expect(plexOf(baseOpts)?.loadBalancerIp).toBeUndefined();
-  });
-
-  test("orbstack ADVERTISE_IP is still the mini's frozen LAN IP", () => {
-    expect(plexOf(baseOpts)?.env?.ADVERTISE_IP).toBe("http://192.168.0.147:32400");
   });
 });
 
