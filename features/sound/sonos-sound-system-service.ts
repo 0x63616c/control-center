@@ -32,7 +32,7 @@ function roomRank(name: string): number {
   return i === -1 ? ROOM_ORDER.length : i;
 }
 
-export type SourceKind = "line-in" | "tv" | "spotify" | "airplay" | "other" | "idle";
+type SourceKind = "line-in" | "tv" | "spotify" | "airplay" | "other" | "idle";
 
 const SOURCE_LABELS: Record<SourceKind, string | null> = {
   "line-in": "Line-In",
