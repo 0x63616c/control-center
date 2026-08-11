@@ -100,7 +100,9 @@ export const resolvedSceneExecutionSchema = z.object({
     }),
   ),
   lighting: lightingActionSchema.nullable(),
-  spotifyDeviceId: z.string().nullable(),
+  // Kept optional to read historical runs created before the HA audio cutover.
+  spotifyDeviceId: z.string().nullable().optional(),
+  mediaPlayerEntityId: z.string().nullable().default(null),
 });
 
 export const sceneRunStatusSchema = z.enum(["starting", "running", "failed", "stopped"]);

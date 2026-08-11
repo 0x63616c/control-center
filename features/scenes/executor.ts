@@ -6,8 +6,6 @@ import {
   LIGHTS,
   type LightEntry,
   LightKind,
-  SonosClient,
-  type SpotifyDevice,
 } from "@www/core";
 import { getLogger } from "@www/logger";
 import type {
@@ -23,26 +21,18 @@ import { PlaylistSelection, SceneActionKind, SceneRunStatus } from "./model";
 import type { SceneRepository } from "./repository";
 
 export interface SceneExecutorDependencies {
-  readonly ha: { isConfigured(): boolean };
+  readonly ha: {
+    isConfigured(): boolean;
+    callService(domain: string, service: string, params: Record<string, unknown>): Promise<void>;
+  };
   readonly spotify: SceneSpotify;
   readonly deviceStateStore: DeviceStateStore;
   readonly discoverSpeakers: () => Promise<SceneSpeaker[]>;
   readonly random?: () => number;
-  readonly createSonosClient?: (deviceIp: string) => SceneSonos;
 }
 
 interface SceneSpotify {
-  getDevices(): Promise<SpotifyDevice[]>;
-  transferPlayback(deviceId: string): Promise<void>;
-  setShuffle(enabled: boolean, deviceId: string): Promise<void>;
-  playContext(contextUri: string, deviceId: string): Promise<void>;
   pauseDevice(deviceId: string): Promise<void>;
-}
-
-interface SceneSonos {
-  becomeCoordinatorOfStandaloneGroup(): Promise<void>;
-  setAVTransportURI(uri: string, metadata: string): Promise<void>;
-  setVolume(volume: number): Promise<void>;
 }
 
 function isDeviceLightState(value: DeviceStateValue | null): value is DeviceLightState {
@@ -183,43 +173,32 @@ async function applyLighting(
 
 async function groupAndSetVolumes(
   speakers: readonly SceneSpeaker[],
-  store: DeviceStateStore,
-  createClient: (deviceIp: string) => SceneSonos,
+  ha: SceneExecutorDependencies["ha"],
 ): Promise<SceneSpeaker> {
   const coordinator = speakers[0];
   if (!coordinator) throw new Error("Choose at least one speaker");
 
+  // HA owns grouping. Unjoin targets first so old groups cannot leak into a scene.
   await Promise.all(
-    speakers.map(async (speaker) => {
-      await createClient(speaker.deviceIp).becomeCoordinatorOfStandaloneGroup();
-    }),
+    speakers.map((speaker) =>
+      ha.callService("media_player", "unjoin", { entity_id: speaker.deviceIp }),
+    ),
   );
-  for (const speaker of speakers.slice(1)) {
-    const client = createClient(speaker.deviceIp);
-    await client.setAVTransportURI(`x-rincon:${coordinator.uuid}`, "");
+  if (speakers.length > 1) {
+    await ha.callService("media_player", "join", {
+      entity_id: coordinator.deviceIp,
+      group_members: speakers.slice(1).map((speaker) => speaker.deviceIp),
+    });
   }
   await Promise.all(
-    speakers.map(async (speaker) => {
-      await createClient(speaker.deviceIp).setVolume(speaker.volume);
-      const row = (await store.list({ entityIds: [speaker.deviceIp] }))[0];
-      if (row) await store.updateDesired({ id: row.id, desired: { volume: speaker.volume } });
-    }),
+    speakers.map((speaker) =>
+      ha.callService("media_player", "volume_set", {
+        entity_id: speaker.deviceIp,
+        volume_level: speaker.volume / 100,
+      }),
+    ),
   );
   return coordinator;
-}
-
-function spotifyDeviceFor(coordinator: SceneSpeaker, devices: SpotifyDevice[]) {
-  const normalizedName = coordinator.name.trim().toLocaleLowerCase();
-  const exact = devices.find(
-    (device) => !device.isRestricted && device.name.trim().toLocaleLowerCase() === normalizedName,
-  );
-  if (exact) return exact;
-  const partial = devices.find(
-    (device) =>
-      !device.isRestricted && device.name.trim().toLocaleLowerCase().includes(normalizedName),
-  );
-  if (partial) return partial;
-  throw new Error(`${coordinator.name} is not available as a Spotify Connect device`);
 }
 
 export async function executeScene(
@@ -242,7 +221,7 @@ export async function prepareScene(
   const music = musicAction(scene);
   let playlist: ScenePlaylist | null = null;
   let speakers: SceneSpeaker[] = [];
-  let spotifyDeviceId: string | null = null;
+  let mediaPlayerEntityId: string | null = null;
 
   if (lighting) {
     if (!deps.ha.isConfigured()) throw new Error("Home Assistant is not configured");
@@ -253,11 +232,10 @@ export async function prepareScene(
     speakers = resolveSpeakers(music, await deps.discoverSpeakers(), overrides.speakers);
     const coordinator = speakers[0];
     if (!coordinator) throw new Error("Choose at least one speaker");
-    const spotifyDevice = spotifyDeviceFor(coordinator, await deps.spotify.getDevices());
-    spotifyDeviceId = spotifyDevice.id;
+    mediaPlayerEntityId = coordinator.deviceIp;
   }
 
-  return { sceneName: scene.name, playlist, speakers, lighting, spotifyDeviceId };
+  return { sceneName: scene.name, playlist, speakers, lighting, mediaPlayerEntityId };
 }
 
 async function executePreparedScene(
@@ -269,15 +247,17 @@ async function executePreparedScene(
     await applyLighting(resolved.lighting, deps.ha, deps.deviceStateStore);
   }
   const music = musicAction(scene);
-  if (!music || !resolved.playlist || !resolved.spotifyDeviceId) return;
-  await groupAndSetVolumes(
-    resolved.speakers,
-    deps.deviceStateStore,
-    deps.createSonosClient ?? ((deviceIp) => new SonosClient(deviceIp)),
-  );
-  await deps.spotify.transferPlayback(resolved.spotifyDeviceId);
-  await deps.spotify.setShuffle(music.source.shuffleTracks, resolved.spotifyDeviceId);
-  await deps.spotify.playContext(resolved.playlist.uri, resolved.spotifyDeviceId);
+  if (!music || !resolved.playlist || !resolved.mediaPlayerEntityId) return;
+  await groupAndSetVolumes(resolved.speakers, deps.ha);
+  await deps.ha.callService("media_player", "shuffle_set", {
+    entity_id: resolved.mediaPlayerEntityId,
+    shuffle: music.source.shuffleTracks,
+  });
+  await deps.ha.callService("media_player", "play_media", {
+    entity_id: resolved.mediaPlayerEntityId,
+    media_content_id: resolved.playlist.uri,
+    media_content_type: "playlist",
+  });
 }
 
 export async function launchScene(
@@ -308,8 +288,12 @@ export async function stopScene(
   repository: SceneRepository,
   runId: string,
   resolved: ResolvedSceneExecution | null,
-  spotify: Pick<SceneSpotify, "pauseDevice">,
+  ha: Pick<SceneExecutorDependencies["ha"], "callService">,
 ) {
-  if (resolved?.spotifyDeviceId) await spotify.pauseDevice(resolved.spotifyDeviceId);
+  if (resolved?.mediaPlayerEntityId) {
+    await ha.callService("media_player", "media_pause", {
+      entity_id: resolved.mediaPlayerEntityId,
+    });
+  }
   return repository.finishRun(runId, SceneRunStatus.Stopped, resolved);
 }

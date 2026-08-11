@@ -17,31 +17,23 @@ import type { QuickPlayItem } from "./QuickPlayTileView";
 import { QuickPlayTileView } from "./QuickPlayTileView";
 
 export function QuickPlayTile() {
-  const { data: favData, isError: favError } = trpc.sound.sonosFavorites.useQuery(undefined, {
-    refetchInterval: POLL.quickPlay,
-  });
   const { data: spotifyData, isError: spotifyError } = trpc.sound.spotify.browse.useQuery(
     undefined,
-    { refetchInterval: POLL.quickPlay },
+    {
+      refetchInterval: POLL.quickPlay,
+    },
   );
 
   // The rail merges two independent sources: it has something to show as soon as
   // either resolves, and is only in error when BOTH failed with nothing cached
   // (previously an error left it stuck rendering an empty "populated" rail).
   const q = useTileQuery({
-    data: favData !== undefined || spotifyData !== undefined ? true : undefined,
-    isError: favError && spotifyError,
+    data: spotifyData !== undefined ? true : undefined,
+    isError: spotifyError,
   });
 
   // Build unified rail from favorites + spotify recently played.
   const items: QuickPlayItem[] = [
-    ...(favData ?? []).map((f) => ({
-      id: `fav:${f.uri}`,
-      title: f.title,
-      albumArtUri: f.albumArtUri,
-      source: "sonos" as const,
-      uri: f.uri,
-    })),
     ...(spotifyData?.recentlyPlayed ?? []).map((t) => ({
       id: `spo:${t.id}`,
       title: t.title,
@@ -70,7 +62,7 @@ export function QuickPlayTile() {
       items={items}
       playingItemId={null}
       onPlayItem={() => {}}
-      onOpenFavorites={() => openTileDetail("tile_quickplay", "favorites")}
+      onOpenFavorites={() => openTileDetail("tile_quickplay", "spotify")}
       onOpenSpotify={() => openTileDetail("tile_quickplay", "spotify")}
     />
   );

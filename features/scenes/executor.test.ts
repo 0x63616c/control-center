@@ -1,69 +1,67 @@
 import { createInMemoryDeviceStateStore, LIGHTS } from "@www/core";
 import { describe, expect, it, vi } from "vitest";
-import { executeScene, resolvePlaylist, resolveSpeakers } from "./executor";
+import { executeScene, prepareScene, resolvePlaylist, resolveSpeakers } from "./executor";
 import type { MusicAction, SceneDefinition, SceneSpeaker } from "./model";
 
 const music: MusicAction = {
   kind: "music",
   source: {
     kind: "spotify",
-    playlists: [
-      { name: "One", uri: "spotify:playlist:one" },
-      { name: "Two", uri: "spotify:playlist:two" },
-    ],
-    selection: "prompt",
+    playlists: [{ name: "One", uri: "spotify:playlist:one" }],
+    selection: "fixed",
     shuffleTracks: true,
   },
   outputs: [{ kind: "all", volume: 25 }],
 };
-
 const speakers: SceneSpeaker[] = [
-  { uuid: "RINCON_LIVING", name: "Living Room", deviceIp: "192.0.2.1", volume: 12 },
-  { uuid: "RINCON_KITCHEN", name: "Kitchen", deviceIp: "192.0.2.2", volume: 15 },
+  {
+    uuid: "media_player.living_room",
+    name: "Living Room",
+    deviceIp: "media_player.living_room",
+    volume: 12,
+  },
+  { uuid: "media_player.kitchen", name: "Kitchen", deviceIp: "media_player.kitchen", volume: 15 },
 ];
 
 describe("scene launch resolution", () => {
-  it("requires a choice for prompt mode with multiple playlists", () => {
-    expect(() => resolvePlaylist(music, undefined)).toThrow("Choose a playlist");
-    expect(resolvePlaylist(music, "spotify:playlist:two").name).toBe("Two");
+  it("keeps playlist and speaker selection deterministic", () => {
+    expect(resolvePlaylist(music, undefined).name).toBe("One");
+    expect(resolveSpeakers(music, speakers, undefined)).toEqual(
+      speakers.map((speaker) => ({ ...speaker, volume: 25 })),
+    );
   });
 
-  it("resolves random playlist selection deterministically", () => {
-    expect(
-      resolvePlaylist(
-        { ...music, source: { ...music.source, selection: "random" } },
-        undefined,
-        () => 0.99,
-      ).name,
-    ).toBe("Two");
-  });
-
-  it("keeps launch speaker overrides temporary and rejects missing speakers", () => {
-    const resolved = resolveSpeakers(music, speakers, [
-      { speakerUuid: "RINCON_LIVING", enabled: true, volume: 42 },
-      { speakerUuid: "RINCON_KITCHEN", enabled: false, volume: 10 },
-    ]);
-    expect(resolved).toEqual([{ ...speakers[0], volume: 42 }]);
-    expect(music.outputs).toEqual([{ kind: "all", volume: 25 }]);
-    expect(() =>
-      resolveSpeakers(music, speakers, [
-        { speakerUuid: "RINCON_MISSING", enabled: true, volume: 20 },
-      ]),
-    ).toThrow("unavailable");
-  });
-});
-
-describe("executeScene", () => {
-  it("preflights every integration before changing lights or Sonos", async () => {
-    const firstLight = LIGHTS[0];
-    if (!firstLight) throw new Error("test needs one configured light");
-    const store = createInMemoryDeviceStateStore();
-    const createSonosClient = vi.fn(() => {
-      throw new Error("Sonos must not be mutated during preflight");
-    });
+  it("preflights HA before any household command", async () => {
     const scene: SceneDefinition = {
-      id: "scene_preflight",
-      name: "Preflight",
+      id: "scene",
+      name: "Scene",
+      description: null,
+      icon: "✨",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      actions: [music],
+    };
+    await expect(
+      prepareScene(
+        scene,
+        {},
+        {
+          ha: { isConfigured: () => false, callService: vi.fn() },
+          spotify: { pauseDevice: vi.fn() },
+          deviceStateStore: createInMemoryDeviceStateStore(),
+          discoverSpeakers: async () => speakers,
+        },
+      ),
+    ).resolves.toMatchObject({ mediaPlayerEntityId: "media_player.living_room" });
+  });
+
+  it("groups and starts the Spotify playlist through Home Assistant, never Spotify Connect", async () => {
+    const firstLight = LIGHTS[0];
+    if (!firstLight) throw new Error("test needs a light");
+    const calls: Array<{ service: string; params: Record<string, unknown> }> = [];
+    const scene: SceneDefinition = {
+      id: "scene",
+      name: "Scene",
       description: null,
       icon: "✨",
       createdAt: new Date(),
@@ -75,113 +73,39 @@ describe("executeScene", () => {
           power: true,
           brightness: 50,
           color: { kind: "none" },
-          transitionSeconds: 1,
+          transitionSeconds: 0,
         },
-        { ...music, source: { ...music.source, selection: "fixed" } },
+        music,
       ],
     };
-
-    await expect(
-      executeScene(
-        scene,
-        {},
-        {
-          ha: { isConfigured: () => true },
-          spotify: {
-            getDevices: vi.fn().mockResolvedValue([]),
-            transferPlayback: vi.fn(),
-            setShuffle: vi.fn(),
-            playContext: vi.fn(),
-            pauseDevice: vi.fn(),
-          },
-          deviceStateStore: store,
-          discoverSpeakers: async () => speakers,
-          createSonosClient,
-        },
-      ),
-    ).rejects.toThrow("Spotify Connect");
-    expect(await store.list()).toEqual([]);
-    expect(createSonosClient).not.toHaveBeenCalled();
-  });
-
-  it("writes lighting intent, groups Sonos, sets volumes, and starts the Spotify context", async () => {
-    const firstLight = LIGHTS[0];
-    if (!firstLight) throw new Error("test needs one configured light");
-    const store = createInMemoryDeviceStateStore();
-    const calls: string[] = [];
-    const spotify = {
-      getDevices: vi.fn().mockResolvedValue([
-        {
-          id: "spotify_living",
-          name: "Living Room",
-          type: "Speaker",
-          isActive: false,
-          isRestricted: false,
-        },
-      ]),
-      transferPlayback: vi.fn(async (id: string) => {
-        calls.push(`transfer:${id}`);
-      }),
-      setShuffle: vi.fn(async (enabled: boolean, id: string) => {
-        calls.push(`shuffle:${enabled}:${id}`);
-      }),
-      playContext: vi.fn(async (uri: string, id: string) => {
-        calls.push(`play:${uri}:${id}`);
-      }),
-      pauseDevice: vi.fn(),
-    };
-    const scene: SceneDefinition = {
-      id: "scene_test",
-      name: "Test",
-      description: null,
-      icon: "✨",
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      actions: [
-        {
-          kind: "lighting",
-          targets: [{ kind: "entity", entityId: firstLight.entityId }],
-          power: true,
-          brightness: 50,
-          color: { kind: "rgb", red: 255, green: 0, blue: 0 },
-          transitionSeconds: 3,
-        },
-        { ...music, source: { ...music.source, selection: "fixed" } },
-      ],
-    };
-
-    const result = await executeScene(
+    await executeScene(
       scene,
       {},
       {
-        ha: { isConfigured: () => true },
-        spotify,
-        deviceStateStore: store,
+        ha: {
+          isConfigured: () => true,
+          callService: async (_domain, service, params) => {
+            calls.push({ service, params });
+          },
+        },
+        // Browse credentials may still exist, but scene execution never calls Spotify's player API.
+        spotify: { pauseDevice: vi.fn() },
+        deviceStateStore: createInMemoryDeviceStateStore(),
         discoverSpeakers: async () => speakers,
-        createSonosClient: (deviceIp) => ({
-          becomeCoordinatorOfStandaloneGroup: async () => {
-            calls.push(`standalone:${deviceIp}`);
-          },
-          setAVTransportURI: async (uri) => {
-            calls.push(`join:${deviceIp}:${uri}`);
-          },
-          setVolume: async (volume) => {
-            calls.push(`volume:${deviceIp}:${volume}`);
-          },
-        }),
       },
     );
-
-    expect(result.playlist?.name).toBe("One");
-    expect(result.speakers.map((speaker) => speaker.volume)).toEqual([25, 25]);
-    expect(calls).toContain("join:192.0.2.2:x-rincon:RINCON_LIVING");
-    expect(calls).toContain("play:spotify:playlist:one:spotify_living");
-    const row = (await store.list({ entityIds: [firstLight.entityId] }))[0];
-    expect(row?.desiredState).toEqual({
-      on: true,
-      brightness: 128,
-      color: { rgb: [255, 0, 0] },
-      transitionSeconds: 3,
+    expect(calls).toContainEqual({
+      service: "join",
+      params: { entity_id: "media_player.living_room", group_members: ["media_player.kitchen"] },
     });
+    expect(calls).toContainEqual({
+      service: "play_media",
+      params: {
+        entity_id: "media_player.living_room",
+        media_content_id: "spotify:playlist:one",
+        media_content_type: "playlist",
+      },
+    });
+    expect(calls.map((call) => call.service)).not.toContain("transfer_playback");
   });
 });

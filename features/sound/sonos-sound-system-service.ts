@@ -20,16 +20,8 @@
  *    transport state belongs to the group and is read from the coordinator.
  */
 
-import {
-  DESK_RF_BONDED_UUID,
-  DeviceKind,
-  type DeviceStateStore,
-  isSpeakerState,
-  SonosClient,
-  TOPOLOGY_ANCHOR_IP,
-  type ZoneGroup,
-} from "@www/core";
-import { deviceStateStore } from "./db";
+import { type HaEntity, type HomeAssistantClient, haFromConfig } from "@www/core";
+import { config } from "./config";
 
 // Stable display order for the rooms, so faders never reshuffle between polls. Rooms not in this
 // list (e.g. a new speaker) sort after the known ones, alphabetically.
@@ -93,10 +85,96 @@ export interface SoundSystemRoom {
   trackTitle: string | null;
   trackArtist: string | null;
   albumArtUri: string | null;
+  /** HA reports unavailable separately from whether a player is currently playing. */
+  availability: "available" | "unavailable" | "unknown";
+  /** `Standalone` or the room this player follows. Never rendered as ambiguous “off”. */
+  groupStatus: string;
 }
 
 export interface SoundSystemResult {
   rooms: SoundSystemRoom[];
+  diagnostics: {
+    controlPlane: "home-assistant";
+    queriedAt: string;
+    message: string;
+  };
+}
+
+const ha = haFromConfig(config);
+
+function stringAttr(entity: HaEntity, key: string): string | null {
+  const value = entity.attributes[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function stringArrayAttr(entity: HaEntity, key: string): string[] {
+  const value = entity.attributes[key];
+  return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : [];
+}
+
+function sourceKind(source: string | null): SourceKind {
+  const value = source?.toLocaleLowerCase() ?? "";
+  if (!value || value === "idle") return "idle";
+  if (value.includes("line")) return "line-in";
+  if (value.includes("tv")) return "tv";
+  if (value.includes("spotify")) return "spotify";
+  if (value.includes("airplay")) return "airplay";
+  return "other";
+}
+
+function transportState(state: string): string {
+  switch (state) {
+    case "playing":
+      return "PLAYING";
+    case "paused":
+      return "PAUSED_PLAYBACK";
+    case "unavailable":
+      return "UNAVAILABLE";
+    case "unknown":
+      return "UNKNOWN";
+    default:
+      return "STOPPED";
+  }
+}
+
+/** Convert HA's media-player state into the stable UI shape without any Sonos SOAP calls. */
+export function roomFromHaEntity(entity: HaEntity): SoundSystemRoom | null {
+  const memberUuids = stringArrayAttr(entity, "group_members");
+  // Sonos entities expose group_members. This deliberately excludes TVs and other HA media players.
+  if (memberUuids.length === 0) return null;
+  const uuid = entity.entity_id;
+  const coordinatorUuid = memberUuids[0] ?? uuid;
+  const source = stringAttr(entity, "source");
+  const kind = sourceKind(source);
+  const volumeLevel = entity.attributes.volume_level;
+  const volume = typeof volumeLevel === "number" ? Math.round(volumeLevel * 100) : 0;
+  const muted = entity.attributes.is_volume_muted === true;
+  const name = stringAttr(entity, "friendly_name") ?? uuid.replace(/^media_player\./, "");
+  const coordinatorName = coordinatorUuid.replace(/^media_player\./, "");
+  return {
+    name,
+    // These legacy field names are kept for the existing web component; their value is now the HA entity id.
+    uuid,
+    deviceIp: uuid,
+    coordinatorUuid,
+    memberUuids,
+    isCoordinator: coordinatorUuid === uuid,
+    volume,
+    muted,
+    transportState: transportState(entity.state),
+    sourceLabel: SOURCE_LABELS[kind] ?? source,
+    sourceKind: kind,
+    trackTitle: stringAttr(entity, "media_title"),
+    trackArtist: stringAttr(entity, "media_artist"),
+    albumArtUri: stringAttr(entity, "entity_picture"),
+    availability:
+      entity.state === "unavailable"
+        ? "unavailable"
+        : entity.state === "unknown"
+          ? "unknown"
+          : "available",
+    groupStatus: coordinatorUuid === uuid ? "Standalone" : `Following ${coordinatorName}`,
+  };
 }
 
 /**
@@ -105,91 +183,22 @@ export interface SoundSystemResult {
  * THROWS on any SonosClient error (network, SOAP, HTTP >= 4xx).
  */
 export async function getSoundSystem(
-  store: DeviceStateStore = deviceStateStore,
+  client: Pick<HomeAssistantClient, "getEntities" | "isConfigured"> = ha,
 ): Promise<SoundSystemResult> {
-  const anchorClient = new SonosClient(TOPOLOGY_ANCHOR_IP);
-
-  // GetZoneGroupState is read fresh every call , grouping is volatile (TV power reshapes it).
-  const groups: ZoneGroup[] = await anchorClient.getZoneGroupState();
-
-  // Drop any phantom group coordinated by the bonded RF satellite so it never appears as a room.
-  const visibleGroups = groups.filter((g) => g.coordinatorUuid !== DESK_RF_BONDED_UUID);
-
-  // One task per physical player. Transport is a group property, so read it once per group (from
-  // the coordinator) and share that promise across the group's members.
-  const tasks = visibleGroups.flatMap((group) => {
-    const coordinatorMember = group.members.find((m) => m.uuid === group.coordinatorUuid);
-    if (!coordinatorMember) {
-      throw new Error(
-        `getSoundSystem: no coordinator member found in group ${group.coordinatorUuid}`,
-      );
-    }
-    const memberUuids = group.members.map((m) => m.uuid);
-    const coordinatorClient = new SonosClient(coordinatorMember.ip);
-    const transportP = coordinatorClient.getTransportInfo();
-    const mediaP = coordinatorClient.getMediaInfo();
-    const positionP = coordinatorClient.getPositionInfo();
-
-    return group.members
-      .filter((m) => m.uuid !== DESK_RF_BONDED_UUID)
-      .map(async (member): Promise<SoundSystemRoom> => {
-        const deviceClient = new SonosClient(member.ip);
-        const [volume, muted, transportInfo, mediaInfo, positionInfo] = await Promise.all([
-          deviceClient.getVolume(),
-          deviceClient.getMute(),
-          transportP,
-          mediaP,
-          positionP,
-        ]);
-        const sourceKind = classifySourceUri(mediaInfo.currentUri);
-        return {
-          name: member.zoneName,
-          uuid: member.uuid,
-          deviceIp: member.ip,
-          coordinatorUuid: group.coordinatorUuid,
-          memberUuids,
-          isCoordinator: member.uuid === group.coordinatorUuid,
-          volume,
-          muted,
-          transportState: transportInfo.state,
-          sourceLabel: SOURCE_LABELS[sourceKind],
-          sourceKind,
-          trackTitle: positionInfo.trackTitle,
-          trackArtist: positionInfo.trackArtist,
-          albumArtUri: positionInfo.albumArtUri,
-        };
-      });
-  });
-
-  const rooms = await Promise.all(tasks);
+  if (!client.isConfigured()) throw new Error("Home Assistant is not configured");
+  const rooms = (await client.getEntities("media_player"))
+    .map(roomFromHaEntity)
+    .filter((room): room is SoundSystemRoom => room !== null);
   rooms.sort((a, b) => roomRank(a.name) - roomRank(b.name) || a.name.localeCompare(b.name));
-
-  // Desired-authoritative volume (www-5mek): device_state.desiredState is the
-  // source of truth, so the fader never snaps back to a pre-enforcer live read
-  // on the 10s poll , same model as lights (mergeDeviceState).
-  const desiredVolumeByIp = await readDesiredVolumes(store);
-  for (const room of rooms) {
-    const desired = desiredVolumeByIp.get(room.deviceIp);
-    if (desired != null) room.volume = desired;
-  }
-
-  return { rooms };
-}
-
-/**
- * Desired volume per device IP from the speaker rows. A DB outage degrades to
- * the live UPnP reads (real data, just eventually-consistent) rather than
- * failing the whole media tile.
- */
-async function readDesiredVolumes(store: DeviceStateStore): Promise<Map<string, number>> {
-  const byIp = new Map<string, number>();
-  try {
-    const rows = await store.list({ kind: DeviceKind.Speaker });
-    for (const row of rows) {
-      if (isSpeakerState(row.desiredState)) byIp.set(row.entityId, row.desiredState.volume);
-    }
-  } catch {
-    // DB unreachable , fall back to the live reads already in `rooms`.
-  }
-  return byIp;
+  return {
+    rooms,
+    diagnostics: {
+      controlPlane: "home-assistant",
+      queriedAt: new Date().toISOString(),
+      message:
+        rooms.length > 0
+          ? `${rooms.length} Sonos room${rooms.length === 1 ? "" : "s"} reported by Home Assistant`
+          : "Home Assistant returned no Sonos media-player entities",
+    },
+  };
 }

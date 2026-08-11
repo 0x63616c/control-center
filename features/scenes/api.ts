@@ -14,7 +14,7 @@ const repository = createSceneRepository(db);
 const scenesRouter = router({
   list: publicProcedure.query(async () => (await repository.list()).map((row) => ({ ...row }))),
 
-  resources: publicProcedure.query(() => getSceneResources(spotify)),
+  resources: publicProcedure.query(() => getSceneResources(ha, spotify)),
 
   create: publicProcedure.input(sceneInputSchema).mutation(async ({ input }) => {
     return repository.create(input);
@@ -48,10 +48,15 @@ const scenesRouter = router({
     .mutation(async ({ input }) => {
       const scene = await repository.read(input.id);
       if (!scene) throw new TRPCError({ code: "NOT_FOUND", message: "Scene not found" });
-      const dependencies = { ha, spotify, deviceStateStore, discoverSpeakers };
+      const dependencies = {
+        ha,
+        spotify,
+        deviceStateStore,
+        discoverSpeakers: () => discoverSpeakers(ha),
+      };
       const prepared = await prepareScene(scene, input.overrides, dependencies);
       const current = await repository.currentRun();
-      if (current) await stopScene(repository, current.id, current.resolved, spotify);
+      if (current) await stopScene(repository, current.id, current.resolved, ha);
       return launchScene(repository, scene, input.overrides, dependencies, prepared);
     }),
 
@@ -84,7 +89,7 @@ const scenesRouter = router({
       if (!current || current.id !== input.runId) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Running scene not found" });
       }
-      return stopScene(repository, current.id, current.resolved, spotify);
+      return stopScene(repository, current.id, current.resolved, ha);
     }),
 });
 

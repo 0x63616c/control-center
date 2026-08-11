@@ -1,169 +1,132 @@
-/**
- * GroupsModal , container for the Sonos Groups detail page body (www-51hf,
- * Task 7).
- *
- * Wires the pure derivation (deriveSources/membershipByUuid, Tasks 5/6) and the
- * optimistic membership hook (useGroupMembership, www-tavs-style stale-poll
- * reconcile) to the presentational GroupsModalView. Owns the tRPC mutations:
- * sonosGroupJoin/sonosGroupLeave for join/leave, sonosGrabTvToBeam for the
- * TV-hijack step that must land BEFORE a join targets the TV source.
- *
- * rooms/dataUpdatedAt come from the detail wiring's media.soundSystem query
- * (detail/wiring/sound.tsx). Mounted only while the page is open, so mount is
- * the old open-rising-edge: the default source selection is computed in the
- * useState initializer.
- */
-
-import { useMemo, useState } from "react";
+/** Home Assistant-backed Sound System page with an intentionally literal diagnostic view. */
+import { useState } from "react";
 import { trpc } from "@/lib/trpc";
-import { GroupsModalView } from "./GroupsModalView";
-import { useGroupMembership } from "./hooks/useGroupMembership";
-import type { GroupSource, SoundSystemRoom } from "./lib/derive-sources";
-import { deriveSources, membershipByUuid } from "./lib/derive-sources";
-import { BEAM_UUID, DESK_LINE_IN_UUID } from "./lib/sonos-constants";
+import type { SoundSystemRoom } from "./lib/derive-sources";
 
 export interface GroupsModalProps {
   rooms: SoundSystemRoom[];
-  dataUpdatedAt: number;
+  diagnostics: { controlPlane: "home-assistant"; queriedAt: string; message: string };
 }
 
-function defaultSourceId(sources: GroupSource[]): string {
-  return sources.find((s) => s.playing)?.id ?? "src_desk_linein";
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Home Assistant command failed";
 }
 
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : "Something went wrong";
-}
-
-export function GroupsModal({ rooms, dataUpdatedAt }: GroupsModalProps) {
+export function GroupsModal({ rooms, diagnostics }: GroupsModalProps) {
   const utils = trpc.useUtils();
-
-  const sources = deriveSources(rooms);
-  const polled = useMemo(() => membershipByUuid(rooms), [rooms]);
-  const { member, setMember } = useGroupMembership(polled, dataUpdatedAt);
-
-  // Default selection (first playing source, else the Desk hardware card) is
-  // computed at mount. The page fully unmounts on close, so mount IS the old
-  // open-rising-edge , and a live poll update never yanks the user's manual
-  // selection while the page is open.
-  const [selectedSourceId, setSelectedSourceId] = useState<string>(() => defaultSourceId(sources));
-  const [errorText, setErrorText] = useState<string | null>(null);
-
-  const invalidate = () => {
-    utils.sound.soundSystem.invalidate();
-  };
-
-  const onMutationError = (err: unknown) => setErrorText(errorMessage(err));
-
-  const groupJoin = trpc.sound.sonosGroupJoin.useMutation({
-    onSettled: invalidate,
-    onError: onMutationError,
+  const [error, setError] = useState<string | null>(null);
+  const invalidate = () => void utils.sound.soundSystem.invalidate();
+  const join = trpc.sound.sonosGroupJoin.useMutation({
+    onSuccess: invalidate,
+    onError: (e) => setError(errorMessage(e)),
   });
-  const groupLeave = trpc.sound.sonosGroupLeave.useMutation({
-    onSettled: invalidate,
-    onError: onMutationError,
+  const leave = trpc.sound.sonosGroupLeave.useMutation({
+    onSuccess: invalidate,
+    onError: (e) => setError(errorMessage(e)),
   });
-  const grabTv = trpc.sound.sonosGrabTvToBeam.useMutation({ onSettled: invalidate });
-  const setLineIn = trpc.sound.sonosSetLineIn.useMutation({ onSettled: invalidate });
-
-  const selectedSource = sources.find((s) => s.id === selectedSourceId) ?? sources[0];
-
-  // Grabs the hardware jack (TV or Desk line-in) onto its floor card, awaited
-  // so a subsequent join always targets a live hardware group, never a
-  // stale/idle coordinator , mirrors the TV-grab-before-join path for both
-  // hardware cards. Returns false (and surfaces errorText) on failure so the
-  // caller aborts instead of joining into a source that never actually grabbed.
-  async function grabHardwareIfNeeded(source: GroupSource): Promise<boolean> {
-    if (source.kind === "tv") {
-      const beamRoom = rooms.find((r) => r.uuid === BEAM_UUID);
-      if (beamRoom && beamRoom.sourceKind !== "tv") {
-        try {
-          await grabTv.mutateAsync({ beamIp: beamRoom.deviceIp, beamUuid: BEAM_UUID });
-        } catch (err) {
-          setErrorText(errorMessage(err));
-          return false;
-        }
-      }
-    } else if (source.id === "src_desk_linein") {
-      const deskRoom = rooms.find((r) => r.uuid === DESK_LINE_IN_UUID);
-      if (deskRoom && deskRoom.sourceKind !== "line-in") {
-        try {
-          await setLineIn.mutateAsync({
-            deviceIp: deskRoom.deviceIp,
-            sourceUuid: DESK_LINE_IN_UUID,
-          });
-        } catch (err) {
-          setErrorText(errorMessage(err));
-          return false;
-        }
-      }
-    }
-    return true;
-  }
-
-  // Join a single speaker to `source`. Assumes any hardware-jack grab this
-  // source needed has already landed (grabHardwareIfNeeded , called once by
-  // the caller, not per-speaker; see onAll). Reverts the optimistic LED if the
-  // join mutation itself fails.
-  function joinSpeaker(room: SoundSystemRoom, source: GroupSource) {
-    const previous = member[room.uuid] ?? null;
-    setMember(room.uuid, source.id);
-    groupJoin.mutate(
-      { memberIp: room.deviceIp, coordinatorUuid: source.anchorUuid },
-      { onError: () => setMember(room.uuid, previous) },
-    );
-  }
-
-  async function joinSpeakerWithGrab(room: SoundSystemRoom, source: GroupSource) {
-    const grabbed = await grabHardwareIfNeeded(source);
-    if (!grabbed) return;
-    joinSpeaker(room, source);
-  }
-
-  function onTapSpeaker(uuid: string) {
-    const source = selectedSource;
-    if (!source) return;
-    const room = rooms.find((r) => r.uuid === uuid);
-    if (!room) return;
-
-    // Anchor guard: a standalone anchor (or one driving this source) can't
-    // join or leave its own source , no-op, mirroring the view's disabled row.
-    // But an anchor CAPTURED by another group (e.g. Desk joined into the TV
-    // group) must stay actionable: tapping it releases it back to standalone,
-    // where membership maps it to its own hardware card again.
-    if (uuid === source.anchorUuid) {
-      const followed = member[uuid] ?? null;
-      if (followed == null || followed === source.id) return;
-      setMember(uuid, source.id);
-      groupLeave.mutate(
-        { memberIp: room.deviceIp, memberUuid: uuid },
-        { onError: () => setMember(uuid, followed) },
-      );
-      return;
-    }
-
-    if (member[uuid] === source.id) {
-      const previous = member[uuid] ?? null;
-      setMember(uuid, null);
-      groupLeave.mutate(
-        { memberIp: room.deviceIp, memberUuid: uuid },
-        { onError: () => setMember(uuid, previous) },
-      );
-      return;
-    }
-
-    void joinSpeakerWithGrab(room, source);
-  }
 
   return (
-    <GroupsModalView
-      sources={sources}
-      member={member}
-      speakers={rooms.map((r) => ({ uuid: r.uuid, name: r.name }))}
-      selectedSourceId={selectedSource?.id ?? "src_desk_linein"}
-      onSelectSource={setSelectedSourceId}
-      onTapSpeaker={onTapSpeaker}
-      errorText={errorText}
-    />
+    <div style={{ maxWidth: 960, margin: "0 auto", display: "grid", gap: 24 }}>
+      <section
+        style={{
+          padding: 16,
+          border: "1px solid var(--hair)",
+          borderRadius: 14,
+          background: "var(--tile-2)",
+        }}
+      >
+        <div style={{ fontSize: 11, letterSpacing: "0.1em", color: "var(--ink-3)" }}>
+          AUDIO DIAGNOSTICS
+        </div>
+        <div style={{ marginTop: 8, fontWeight: 650 }}>Control path: Home Assistant → Sonos</div>
+        <div style={{ marginTop: 4, color: "var(--ink-2)", fontSize: 13 }}>
+          {diagnostics.message}
+        </div>
+        <div style={{ marginTop: 4, color: "var(--ink-3)", fontSize: 12 }}>
+          Last snapshot: {new Date(diagnostics.queriedAt).toLocaleString()}
+        </div>
+      </section>
+
+      <section>
+        <div
+          style={{ fontSize: 11, letterSpacing: "0.1em", color: "var(--ink-3)", marginBottom: 10 }}
+        >
+          ROOMS
+        </div>
+        <div style={{ display: "grid", gap: 10 }}>
+          {rooms.map((room) => {
+            const leaders = rooms.filter(
+              (candidate) => candidate.uuid !== room.uuid && candidate.availability === "available",
+            );
+            return (
+              <div
+                key={room.uuid}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(180px, 1fr) minmax(150px, 1fr) auto",
+                  alignItems: "center",
+                  gap: 12,
+                  padding: "14px 16px",
+                  border: "1px solid var(--hair)",
+                  borderRadius: 12,
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight: 650 }}>{room.name}</div>
+                  <div style={{ marginTop: 3, fontSize: 13, color: "var(--ink-3)" }}>
+                    {room.availability === "available"
+                      ? room.transportState === "PLAYING"
+                        ? "Playing"
+                        : room.transportState === "PAUSED_PLAYBACK"
+                          ? "Paused"
+                          : "Idle (online, not playing)"
+                      : room.availability === "unavailable"
+                        ? "Unavailable"
+                        : "Unknown"}
+                    {room.sourceLabel ? ` · ${room.sourceLabel}` : ""}
+                  </div>
+                </div>
+                <div style={{ fontSize: 13, color: "var(--ink-2)" }}>{room.groupStatus}</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {!room.isCoordinator && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        leave.mutate({ memberIp: room.deviceIp, memberUuid: room.uuid })
+                      }
+                    >
+                      Make standalone
+                    </button>
+                  )}
+                  {leaders
+                    .filter((leader) => leader.uuid !== room.coordinatorUuid)
+                    .slice(0, 1)
+                    .map((leader) => (
+                      <button
+                        key={leader.uuid}
+                        type="button"
+                        onClick={() =>
+                          join.mutate({ memberIp: room.deviceIp, coordinatorUuid: leader.uuid })
+                        }
+                      >
+                        Join {leader.name}
+                      </button>
+                    ))}
+                  {room.isCoordinator &&
+                    leaders.every((leader) => leader.uuid === room.coordinatorUuid) && (
+                      <span style={{ fontSize: 12, color: "var(--ink-3)" }}>Group leader</span>
+                    )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+      {error && (
+        <div role="alert" style={{ color: "var(--danger, #d44)" }}>
+          {error}
+        </div>
+      )}
+    </div>
   );
 }

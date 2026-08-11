@@ -17,16 +17,14 @@ function useSoundVariants(): { variants: DetailVariant[]; loading: boolean } {
   const query = trpc.sound.soundSystem.useQuery(undefined, {
     refetchInterval: POLL.soundSystem,
   });
-  const { dataUpdatedAt } = query;
-
-  const rooms = query.data?.rooms;
-  if (!rooms) return { variants: [], loading: true };
+  const snapshot = query.data;
+  if (!snapshot) return { variants: [], loading: true };
 
   const variants: DetailVariant[] = [
     {
       slug: "detail",
       label: "Sound System",
-      render: () => <GroupsModal rooms={rooms} dataUpdatedAt={dataUpdatedAt} />,
+      render: () => <GroupsModal rooms={snapshot.rooms} diagnostics={snapshot.diagnostics} />,
     },
   ];
 
