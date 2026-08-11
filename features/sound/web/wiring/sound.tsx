@@ -18,13 +18,20 @@ function useSoundVariants(): { variants: DetailVariant[]; loading: boolean } {
     refetchInterval: POLL.soundSystem,
   });
   const snapshot = query.data;
-  if (!snapshot) return { variants: [], loading: true };
+  if (!snapshot && !query.isError) return { variants: [], loading: true };
+  const diagnostics = snapshot
+    ? { kind: "ready" as const, ...snapshot.diagnostics }
+    : {
+        kind: "error" as const,
+        message:
+          query.error instanceof Error ? query.error.message : "Unable to query Home Assistant",
+      };
 
   const variants: DetailVariant[] = [
     {
       slug: "detail",
       label: "Sound System",
-      render: () => <GroupsModal rooms={snapshot.rooms} diagnostics={snapshot.diagnostics} />,
+      render: () => <GroupsModal rooms={snapshot?.rooms ?? []} diagnostics={diagnostics} />,
     },
   ];
 

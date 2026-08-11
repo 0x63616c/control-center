@@ -34,20 +34,6 @@ function roomRank(name: string): number {
 
 export type SourceKind = "line-in" | "tv" | "spotify" | "airplay" | "other" | "idle";
 
-/** Classifies a coordinator CurrentURI into a source kind. Pure. */
-export function classifySourceUri(uri: string): SourceKind {
-  if (uri === "" || uri.startsWith("x-rincon:")) return "idle";
-  if (uri.startsWith("x-rincon-stream:")) return "line-in";
-  if (uri.startsWith("x-sonos-htastream:")) return "tv";
-  if (uri.startsWith("x-sonos-spotify:")) return "spotify";
-  if (uri.startsWith("x-sonos-vli:")) {
-    if (uri.includes(",spotify:")) return "spotify";
-    if (uri.includes(",airplay:")) return "airplay";
-    return "other";
-  }
-  return "other";
-}
-
 const SOURCE_LABELS: Record<SourceKind, string | null> = {
   "line-in": "Line-In",
   tv: "TV",
@@ -180,7 +166,7 @@ export function roomFromHaEntity(entity: HaEntity): SoundSystemRoom | null {
 /**
  * Fetches the current Sonos sound system state.
  * Reads topology fresh every call , never caches grouping.
- * THROWS on any SonosClient error (network, SOAP, HTTP >= 4xx).
+ * Throws the Home Assistant error unchanged, so the panel can surface the real control-plane failure.
  */
 export async function getSoundSystem(
   client: Pick<HomeAssistantClient, "getEntities" | "isConfigured"> = ha,

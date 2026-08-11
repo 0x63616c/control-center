@@ -1,11 +1,16 @@
 /** Home Assistant-backed Sound System page with an intentionally literal diagnostic view. */
 import { useState } from "react";
+import { Alert, Button } from "@/components/ui";
+import type { RouterOutputs } from "@/lib/trpc";
 import { trpc } from "@/lib/trpc";
-import type { SoundSystemRoom } from "./lib/derive-sources";
+
+type SoundSystemRoom = RouterOutputs["sound"]["soundSystem"]["rooms"][number];
 
 export interface GroupsModalProps {
   rooms: SoundSystemRoom[];
-  diagnostics: { controlPlane: "home-assistant"; queriedAt: string; message: string };
+  diagnostics:
+    | { kind: "ready"; controlPlane: "home-assistant"; queriedAt: string; message: string }
+    | { kind: "error"; message: string };
 }
 
 function errorMessage(error: unknown): string {
@@ -15,6 +20,7 @@ function errorMessage(error: unknown): string {
 export function GroupsModal({ rooms, diagnostics }: GroupsModalProps) {
   const utils = trpc.useUtils();
   const [error, setError] = useState<string | null>(null);
+  const [leaderByRoom, setLeaderByRoom] = useState<Record<string, string>>({});
   const invalidate = () => void utils.sound.soundSystem.invalidate();
   const join = trpc.sound.sonosGroupJoin.useMutation({
     onSuccess: invalidate,
@@ -39,12 +45,18 @@ export function GroupsModal({ rooms, diagnostics }: GroupsModalProps) {
           AUDIO DIAGNOSTICS
         </div>
         <div style={{ marginTop: 8, fontWeight: 650 }}>Control path: Home Assistant → Sonos</div>
-        <div style={{ marginTop: 4, color: "var(--ink-2)", fontSize: 13 }}>
-          {diagnostics.message}
-        </div>
-        <div style={{ marginTop: 4, color: "var(--ink-3)", fontSize: 12 }}>
-          Last snapshot: {new Date(diagnostics.queriedAt).toLocaleString()}
-        </div>
+        {diagnostics.kind === "ready" ? (
+          <>
+            <div style={{ marginTop: 4, color: "var(--ink-2)", fontSize: 13 }}>
+              {diagnostics.message}
+            </div>
+            <div style={{ marginTop: 4, color: "var(--ink-3)", fontSize: 12 }}>
+              Last snapshot: {new Date(diagnostics.queriedAt).toLocaleString()}
+            </div>
+          </>
+        ) : (
+          <Alert title="Home Assistant is unavailable">{diagnostics.message}</Alert>
+        )}
       </section>
 
       <section>
@@ -89,29 +101,48 @@ export function GroupsModal({ rooms, diagnostics }: GroupsModalProps) {
                 <div style={{ fontSize: 13, color: "var(--ink-2)" }}>{room.groupStatus}</div>
                 <div style={{ display: "flex", gap: 8 }}>
                   {!room.isCoordinator && (
-                    <button
+                    <Button
+                      variant="ghost"
                       type="button"
                       onClick={() =>
                         leave.mutate({ memberIp: room.deviceIp, memberUuid: room.uuid })
                       }
                     >
                       Make standalone
-                    </button>
+                    </Button>
                   )}
-                  {leaders
-                    .filter((leader) => leader.uuid !== room.coordinatorUuid)
-                    .slice(0, 1)
-                    .map((leader) => (
-                      <button
-                        key={leader.uuid}
-                        type="button"
-                        onClick={() =>
-                          join.mutate({ memberIp: room.deviceIp, coordinatorUuid: leader.uuid })
+                  {leaders.length > 0 && (
+                    <>
+                      <select
+                        aria-label={`Group ${room.name} with`}
+                        value={leaderByRoom[room.uuid] ?? leaders[0]?.uuid ?? ""}
+                        onChange={(event) =>
+                          setLeaderByRoom((current) => ({
+                            ...current,
+                            [room.uuid]: event.target.value,
+                          }))
                         }
                       >
-                        Join {leader.name}
-                      </button>
-                    ))}
+                        {leaders.map((leader) => (
+                          <option key={leader.uuid} value={leader.uuid}>
+                            {leader.name}
+                          </option>
+                        ))}
+                      </select>
+                      <Button
+                        variant="ghost"
+                        type="button"
+                        onClick={() =>
+                          join.mutate({
+                            memberIp: room.deviceIp,
+                            coordinatorUuid: leaderByRoom[room.uuid] ?? leaders[0]?.uuid ?? "",
+                          })
+                        }
+                      >
+                        Join group
+                      </Button>
+                    </>
+                  )}
                   {room.isCoordinator &&
                     leaders.every((leader) => leader.uuid === room.coordinatorUuid) && (
                       <span style={{ fontSize: 12, color: "var(--ink-3)" }}>Group leader</span>
@@ -122,11 +153,7 @@ export function GroupsModal({ rooms, diagnostics }: GroupsModalProps) {
           })}
         </div>
       </section>
-      {error && (
-        <div role="alert" style={{ color: "var(--danger, #d44)" }}>
-          {error}
-        </div>
-      )}
+      {error && <Alert title="Audio command failed">{error}</Alert>}
     </div>
   );
 }
