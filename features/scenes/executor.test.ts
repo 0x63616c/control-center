@@ -31,6 +31,24 @@ describe("scene launch resolution", () => {
     );
   });
 
+  it("resolves a pre-cutover named scene by its room label", () => {
+    const namedScene: MusicAction = {
+      ...music,
+      outputs: [
+        {
+          kind: "speaker",
+          speakerUuid: "legacy-sonos-uuid",
+          label: "Kitchen",
+          volume: 32,
+        },
+      ],
+    };
+
+    expect(resolveSpeakers(namedScene, speakers, undefined)).toEqual([
+      { ...speakers[1], volume: 32 },
+    ]);
+  });
+
   it("preflights HA before any household command", async () => {
     const scene: SceneDefinition = {
       id: "scene",

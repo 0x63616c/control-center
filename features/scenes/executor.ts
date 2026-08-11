@@ -87,6 +87,9 @@ export function resolveSpeakers(
   overrides: LaunchOverrides["speakers"],
 ): SceneSpeaker[] {
   const availableByUuid = new Map(available.map((speaker) => [speaker.uuid, speaker]));
+  const availableByName = new Map(
+    available.map((speaker) => [speaker.name.trim().toLocaleLowerCase(), speaker]),
+  );
   if (overrides) {
     const selected = overrides
       .filter((override) => override.enabled)
@@ -106,7 +109,12 @@ export function resolveSpeakers(
   }
   const selected = action.outputs.map((output) => {
     if (output.kind !== "speaker") throw new Error("Unsupported speaker target");
-    const speaker = availableByUuid.get(output.speakerUuid);
+    // Existing scenes store the old direct-Sonos UUID. During the HA cutover,
+    // preserve those scenes by resolving their stable human room label to the
+    // current HA media_player entity.
+    const speaker =
+      availableByUuid.get(output.speakerUuid) ??
+      availableByName.get(output.label.trim().toLocaleLowerCase());
     if (!speaker) throw new Error(`${output.label} is unavailable`);
     return { ...speaker, volume: output.volume };
   });
