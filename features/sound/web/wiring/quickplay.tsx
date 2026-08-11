@@ -2,23 +2,16 @@
  * Quick Play tile , live wiring for its two detail-page variants: "Favorites"
  * (Sonos favorites cover grid) and "Spotify" (browse rows).
  *
- * Data: trpc.sound.sonosFavorites + spotify.browse + soundSystem (for the zone
- * chips), polled here while the page is open with the same query keys as the
- * tile face, so react-query dedupes the fetches. Playing still routes through
- * sonosTransport on the first room coordinator , a dedicated sonosPlayUri
- * mutation is follow-up backend work (mirrors the tile's old modal wiring).
+ * Spotify browsing remains useful, while every playback request routes through
+ * Home Assistant's media-player service for the selected room.
  */
 
 import type { DetailVariant, TileDetailPageEntry } from "@/components/tiles/detail/types";
 import { POLL } from "@/lib/hooks";
 import { trpc } from "@/lib/trpc";
-import { FavoritesModal } from "../FavoritesModal";
 import { SpotifyModal } from "../SpotifyModal";
 
 function useQuickPlayVariants(): { variants: DetailVariant[]; loading: boolean } {
-  const { data: favData } = trpc.sound.sonosFavorites.useQuery(undefined, {
-    refetchInterval: POLL.quickPlay,
-  });
   const { data: spotifyData } = trpc.sound.spotify.browse.useQuery(undefined, {
     refetchInterval: POLL.quickPlay,
   });
@@ -26,42 +19,21 @@ function useQuickPlayVariants(): { variants: DetailVariant[]; loading: boolean }
     refetchInterval: POLL.quickPlay,
   });
 
-  const sonosTransportMutation = trpc.sound.sonosTransport.useMutation();
+  const playMediaMutation = trpc.sound.playMedia.useMutation();
 
   // Ready as soon as either content source resolves , the same gate the tile
   // face uses for its merged rail.
-  if (favData === undefined && spotifyData === undefined) {
+  if (spotifyData === undefined) {
     return { variants: [], loading: true };
   }
 
-  const zones = (soundData?.rooms ?? []).map((r) => r.name);
+  const zones = (soundData?.rooms ?? []).map((r) => ({ name: r.name, entityId: r.deviceIp }));
 
-  // Playing a favorite/track requires a SetAVTransportURI call which maps to
-  // sonosTransport play after setting the URI. For now trigger play on the
-  // first room coordinator , a full implementation requires a dedicated
-  // sonosPlayUri mutation (follow-up work).
-  function playOnFirstRoom() {
-    const firstRoom = soundData?.rooms[0];
-    if (firstRoom) {
-      sonosTransportMutation.mutate({
-        coordinatorIp: firstRoom.coordinatorUuid,
-        command: "play",
-      });
-    }
+  function playOnRoom(uri: string, entityId: string) {
+    playMediaMutation.mutate({ entityId, uri });
   }
 
   const variants: DetailVariant[] = [
-    {
-      slug: "favorites",
-      label: "Favorites",
-      render: () => (
-        <FavoritesModal
-          favorites={favData ?? []}
-          zones={zones}
-          onPlay={(_fav, _zone) => playOnFirstRoom()}
-        />
-      ),
-    },
     {
       slug: "spotify",
       label: "Spotify",
@@ -76,7 +48,7 @@ function useQuickPlayVariants(): { variants: DetailVariant[]; loading: boolean }
             albumArtUrl: p.imageUrl ?? null,
           }))}
           zones={zones}
-          onPlay={(_uri, _zone) => playOnFirstRoom()}
+          onPlay={playOnRoom}
         />
       ),
     },
@@ -89,6 +61,6 @@ export const quickPlayDetailEntry: TileDetailPageEntry = {
   kind: "page",
   tileId: "tile_quickplay",
   title: "Quick Play",
-  defaultSlug: "favorites",
+  defaultSlug: "spotify",
   useVariants: useQuickPlayVariants,
 };

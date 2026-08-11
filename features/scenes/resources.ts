@@ -1,10 +1,4 @@
-import {
-  DESK_RF_BONDED_UUID,
-  LIGHTS,
-  SonosClient,
-  type SpotifyClient,
-  TOPOLOGY_ANCHOR_IP,
-} from "@www/core";
+import { type HomeAssistantClient, LIGHTS, type SpotifyClient } from "@www/core";
 import type { SceneSpeaker } from "./model";
 
 export interface SceneResources {
@@ -23,20 +17,30 @@ export interface SceneResources {
     | { status: "unavailable"; message: string };
 }
 
-export async function discoverSpeakers(): Promise<SceneSpeaker[]> {
-  const groups = await new SonosClient(TOPOLOGY_ANCHOR_IP).getZoneGroupState();
-  const members = groups
-    .flatMap((group) => group.members)
-    .filter((member) => member.uuid !== DESK_RF_BONDED_UUID);
-  const unique = [...new Map(members.map((member) => [member.uuid, member])).values()];
-  const speakers = await Promise.all(
-    unique.map(async (member) => ({
-      uuid: member.uuid,
-      name: member.zoneName,
-      deviceIp: member.ip,
-      volume: await new SonosClient(member.ip).getVolume(),
-    })),
-  );
+export async function discoverSpeakers(
+  ha: Pick<HomeAssistantClient, "getEntities" | "isConfigured">,
+): Promise<SceneSpeaker[]> {
+  if (!ha.isConfigured()) throw new Error("Home Assistant is not configured");
+  const entities = await ha.getEntities("media_player");
+  const speakers = entities.flatMap((entity): SceneSpeaker[] => {
+    const members = entity.attributes.group_members;
+    if (!Array.isArray(members) || !members.every((member) => typeof member === "string"))
+      return [];
+    const volumeLevel = entity.attributes.volume_level;
+    const friendlyName = entity.attributes.friendly_name;
+    return [
+      {
+        // HA entity ids replace transient Sonos LAN identity for all new scenes.
+        uuid: entity.entity_id,
+        name:
+          typeof friendlyName === "string"
+            ? friendlyName
+            : entity.entity_id.replace(/^media_player\./, ""),
+        deviceIp: entity.entity_id,
+        volume: typeof volumeLevel === "number" ? Math.round(volumeLevel * 100) : 0,
+      },
+    ];
+  });
   return speakers.sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -44,8 +48,11 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "integration unavailable";
 }
 
-export async function getSceneResources(spotify: SpotifyClient): Promise<SceneResources> {
-  const [speakers, browse] = await Promise.allSettled([discoverSpeakers(), spotify.browse()]);
+export async function getSceneResources(
+  ha: Pick<HomeAssistantClient, "getEntities" | "isConfigured">,
+  spotify: SpotifyClient,
+): Promise<SceneResources> {
+  const [speakers, browse] = await Promise.allSettled([discoverSpeakers(ha), spotify.browse()]);
   return {
     lights: LIGHTS.map((light) => ({
       entityId: light.entityId,

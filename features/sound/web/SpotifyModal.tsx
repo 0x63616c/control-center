@@ -53,8 +53,8 @@ export interface SpotifyModalProps {
   recentlyPlayed: SpotifyBrowseTrack[];
   /** Made-for-you playlists from spotify.browse. */
   playlists: SpotifyBrowsePlaylist[];
-  zones: string[];
-  onPlay: (uri: string, zone: string) => void;
+  zones: Array<{ name: string; entityId: string }> | string[];
+  onPlay: (uri: string, entityId: string) => void;
 }
 
 // ── Cover item ────────────────────────────────────────────────────────────────
@@ -168,7 +168,10 @@ function HorizontalRow({ children }: { children: React.ReactNode }) {
 // ── Main view ─────────────────────────────────────────────────────────────────
 
 export function SpotifyModal({ recentlyPlayed, playlists, zones, onPlay }: SpotifyModalProps) {
-  const [selectedZone, setSelectedZone] = useState<string>(zones[0] ?? "");
+  const normalizedZones = zones.map((zone) =>
+    typeof zone === "string" ? { name: zone, entityId: zone } : zone,
+  );
+  const [selectedZone, setSelectedZone] = useState<string>(normalizedZones[0]?.entityId ?? "");
 
   return (
     <div style={{ maxWidth: 920, margin: "0 auto" }}>
@@ -177,23 +180,23 @@ export function SpotifyModal({ recentlyPlayed, playlists, zones, onPlay }: Spoti
         <div>
           <div style={{ fontSize: 11, color: "var(--ink-3)", marginBottom: 6 }}>PLAY TO</div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {zones.map((zone) => (
+            {normalizedZones.map((zone) => (
               <button
-                key={zone}
+                key={zone.entityId}
                 type="button"
-                onClick={() => setSelectedZone(zone)}
+                onClick={() => setSelectedZone(zone.entityId)}
                 style={{
                   padding: "4px 10px",
                   borderRadius: 20,
                   border: "1px solid var(--tile-3)",
-                  background: zone === selectedZone ? "var(--accent)" : "transparent",
-                  color: zone === selectedZone ? "#fff" : "var(--ink-2)",
+                  background: zone.entityId === selectedZone ? "var(--accent)" : "transparent",
+                  color: zone.entityId === selectedZone ? "#fff" : "var(--ink-2)",
                   fontSize: 12,
                   cursor: "pointer",
-                  fontWeight: zone === selectedZone ? 600 : 500,
+                  fontWeight: zone.entityId === selectedZone ? 600 : 500,
                 }}
               >
-                {zone}
+                {zone.name}
               </button>
             ))}
           </div>

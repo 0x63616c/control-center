@@ -1,11 +1,5 @@
 import { defineWorkerCycles } from "@app-kit";
-import { runSonosVolumeEnforcerCycle } from "./enforcer";
 
-export const cycles = defineWorkerCycles([
-  {
-    name: "sonos-volume-enforcer",
-    intervalMs: 1_000,
-    runOnStart: true,
-    run: runSonosVolumeEnforcerCycle,
-  },
-]);
+// HA's Sonos integration is the sole writer. In particular, do not run a
+// second, polling desired-volume enforcer against the speakers.
+export const cycles = defineWorkerCycles([]);

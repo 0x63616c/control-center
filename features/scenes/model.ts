@@ -87,7 +87,8 @@ export interface ResolvedSceneExecution {
   readonly playlist: ScenePlaylist | null;
   readonly speakers: readonly SceneSpeaker[];
   readonly lighting: LightingAction | null;
-  readonly spotifyDeviceId: string | null;
+  /** HA Sonos group leader used for this run; no Spotify Connect device matching. */
+  readonly mediaPlayerEntityId: string | null;
 }
 
 export const SceneRunStatus = {

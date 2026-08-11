@@ -21,7 +21,6 @@ export * from "./jobs/schema";
 export * from "./lights";
 export * from "./media-path";
 export * from "./notifications";
-export * from "./sonos";
 export * from "./spotify";
 export * from "./unifi";
 export * from "./withings";

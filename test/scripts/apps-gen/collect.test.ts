@@ -169,7 +169,8 @@ it("collect() sources worker cycles from owning App facets", () => {
     name: "weather-ingest",
     source: "feature:weather",
   });
-  expect(model.workerCycles).toContainEqual({
+  // Sound delegates writes to HA and deliberately has no second polling writer.
+  expect(model.workerCycles).not.toContainEqual({
     name: "sonos-volume-enforcer",
     source: "feature:sound",
   });
@@ -181,7 +182,6 @@ it("collect() sources worker cycles from owning App facets", () => {
     "github-actions-poll",
     "light-enforcer",
     "party-mode",
-    "sonos-volume-enforcer",
     "weather-ingest",
     "withings-weight-ingest",
   ]);
