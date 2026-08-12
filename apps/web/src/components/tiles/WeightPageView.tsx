@@ -464,13 +464,13 @@ export function WeightPageView(props: WeightPageViewProps) {
                 )}
               </>
             ) : null}
-            {windowLabel && pts.length === 0 && (
+            {windowLabel && (
               <span
                 className="mono"
                 style={{
                   position: "absolute",
                   right: 0,
-                  bottom: -18,
+                  bottom: -36,
                   fontSize: 12,
                   color: "var(--ink-2)",
                 }}
