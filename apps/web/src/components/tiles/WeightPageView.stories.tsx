@@ -87,7 +87,7 @@ export const SingleDay: Story = {
   },
 };
 
-/** A skipped day must leave a real gap, not be drawn as an even interval. */
+/** A skipped day must be visibly distinct from consecutive readings. */
 export const WithGap: Story = {
   args: {
     status: "populated",
@@ -105,15 +105,19 @@ export const WithGap: Story = {
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const path = canvasElement.querySelector("svg path");
-    expect(path).toBeTruthy();
-    const [, second, third] = (path?.getAttribute("d") ?? "")
-      .split(/[ML]/)
-      .filter(Boolean)
-      .map((p) => Number(p.split(",")[0]));
-    // Jul 14→15 is one day; Jul 15→22 is seven. The second span must be far
-    // wider than the first, which index-based spacing would make equal.
-    expect((third ?? 0) - (second ?? 0)).toBeGreaterThan(((second ?? 0) - 16) * 3);
+    const solid = canvas.getByTestId("weight-trend-solid");
+    const gap = canvas.getByTestId("weight-trend-gap");
+    expect(solid).not.toHaveAttribute("stroke-dasharray");
+    expect(gap).toHaveAttribute("stroke-dasharray");
+    // Curves use cubic segments instead of sharp line commands.
+    expect(solid.getAttribute("d")).toContain("C");
+    expect(gap.getAttribute("d")).toContain("C");
+    // Every measured day is marked; missing days are communicated by the
+    // dotted bridge, not by inventing measurements.
+    expect(canvas.getAllByTestId("weight-trend-point")).toHaveLength(3);
+    // Calendar dates make elapsed time readable from the x-axis itself.
+    expect(canvas.getByText("Jul 14")).toBeInTheDocument();
+    expect(canvas.getByText("Jul 22")).toBeInTheDocument();
     // Axis label reflects the daily-series max (162.4), not the raw `high`
     // stat (162.6) — the two diverge on purpose once labels stop sitting on
     // the raw low/high figures.

@@ -78,24 +78,82 @@ function fmt(value: number, unit: WeightUnit): string {
 const W = 1120;
 const H = 380;
 const PAD = 16;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+interface ChartPoint {
+  readonly day: string;
+  readonly time: number;
+  readonly x: number;
+  readonly y: number;
+}
+
+interface ChartSegment {
+  readonly id: string;
+  readonly kind: "solid" | "gap";
+  readonly path: string;
+}
+
+function dayTime(day: string): number {
+  return Date.parse(`${day}T00:00:00Z`);
+}
 
 /** Position by real elapsed days, not array index — a skipped weigh-in has to
  *  read as a gap, or the line misstates how fast the weight moved. */
-function linePoints(daily: { day: string; lb: number }[]): { x: number; y: number }[] {
+function linePoints(daily: { day: string; lb: number }[]): ChartPoint[] {
   const lbs = daily.map((d) => d.lb);
   const min = Math.min(...lbs);
   const max = Math.max(...lbs);
-  const t = daily.map((d) => new Date(`${d.day}T00:00:00`).getTime());
+  const t = daily.map((d) => dayTime(d.day));
   const t0 = t[0] ?? 0;
   const span = (t[t.length - 1] ?? t0) - t0 || 1;
   return daily.map((d, i) => ({
+    day: d.day,
+    time: t[i] ?? t0,
     x: PAD + (((t[i] ?? t0) - t0) / span) * (W - 2 * PAD),
     y: PAD + ((max - d.lb) / (max - min || 1)) * (H - 2 * PAD),
   }));
 }
 
-function pathFrom(pts: { x: number; y: number }[]): string {
-  return pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+/** Catmull-Rom controls keep joins smooth while separate SVG paths let each
+ * interval communicate whether the intervening calendar days have data. */
+function chartSegments(pts: readonly ChartPoint[]): ChartSegment[] {
+  return pts.slice(0, -1).flatMap((start, index) => {
+    const end = pts[index + 1];
+    if (!end) return [];
+    const before = pts[index - 1] ?? start;
+    const after = pts[index + 2] ?? end;
+    const c1x = start.x + (end.x - before.x) / 6;
+    const c1y = start.y + (end.y - before.y) / 6;
+    const c2x = end.x - (after.x - start.x) / 6;
+    const c2y = end.y - (after.y - start.y) / 6;
+    return [
+      {
+        id: `${start.day}-${end.day}`,
+        kind: end.time - start.time > DAY_MS ? "gap" : "solid",
+        path: `M${start.x.toFixed(1)},${start.y.toFixed(1)} C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${end.x.toFixed(1)},${end.y.toFixed(1)}`,
+      },
+    ];
+  });
+}
+
+function dateTicks(pts: readonly ChartPoint[], maximum = 5): ChartPoint[] {
+  const count = Math.min(maximum, pts.length);
+  if (count === 0) return [];
+  const indexes = Array.from({ length: count }, (_, i) =>
+    Math.round((i * (pts.length - 1)) / Math.max(count - 1, 1)),
+  );
+  return indexes.flatMap((index, i) => {
+    const point = pts[index];
+    return point && indexes.indexOf(index) === i ? [point] : [];
+  });
+}
+
+function formatDay(day: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(dayTime(day));
 }
 
 /** Chart + stats placeholder. The pickers are NOT part of this: they stay
@@ -184,13 +242,14 @@ export function WeightPageView(props: WeightPageViewProps) {
   // yet". Matches what 3e68f7ff6 did for the tile sparkline.
   const enoughForChart = hasData && daily != null && daily.length >= 2;
   const pts = enoughForChart && daily != null ? linePoints(daily) : [];
+  const segments = chartSegments(pts);
+  const ticks = dateTicks(pts);
   const dailyMin = lbs.length ? Math.min(...lbs) : 0;
   const dailyMax = lbs.length ? Math.max(...lbs) : 0;
   const iMin = lbs.indexOf(dailyMin);
   const iMax = lbs.indexOf(dailyMax);
   const gridMin = pts[iMin];
   const gridMax = pts[iMax];
-  const last = pts[pts.length - 1];
 
   return (
     <div
@@ -283,29 +342,37 @@ export function WeightPageView(props: WeightPageViewProps) {
                       strokeWidth={1}
                     />
                   )}
-                  <path
-                    d={pathFrom(pts)}
-                    fill="none"
-                    stroke="var(--acc)"
-                    strokeWidth={2}
-                    strokeLinejoin="round"
-                  />
+                  {segments.map((segment) => (
+                    <path
+                      key={segment.id}
+                      data-testid={`weight-trend-${segment.kind}`}
+                      d={segment.path}
+                      fill="none"
+                      stroke="var(--acc)"
+                      strokeWidth={2}
+                      strokeDasharray={segment.kind === "gap" ? "2 7" : undefined}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  ))}
                 </svg>
-                {/* Round latest-point dot — outside the stretched svg so it stays round */}
-                {last && (
+                {/* HTML markers stay round even though the SVG stretches to the chart box. */}
+                {pts.map((point) => (
                   <span
+                    key={point.day}
+                    data-testid="weight-trend-point"
                     style={{
                       position: "absolute",
-                      left: `${(last.x / W) * 100}%`,
-                      top: `${(last.y / H) * 100}%`,
-                      width: 9,
-                      height: 9,
-                      borderRadius: 5,
+                      left: `${(point.x / W) * 100}%`,
+                      top: `${(point.y / H) * 100}%`,
+                      width: 7,
+                      height: 7,
+                      borderRadius: "50%",
                       background: "var(--acc)",
                       transform: "translate(-50%, -50%)",
                     }}
                   />
-                )}
+                ))}
                 {/* Axis labels describe the DAILY series, which is what the line
                 plots. low/high are raw-reading figures and no longer sit on it. */}
                 {gridMax && (
@@ -336,6 +403,28 @@ export function WeightPageView(props: WeightPageViewProps) {
                     {dailyMin.toFixed(1)}
                   </span>
                 )}
+                {ticks.map((point, index) => (
+                  <span
+                    key={point.day}
+                    className="mono"
+                    style={{
+                      position: "absolute",
+                      left: `${(point.x / W) * 100}%`,
+                      bottom: -18,
+                      transform:
+                        index === 0
+                          ? "translateX(0)"
+                          : index === ticks.length - 1
+                            ? "translateX(-100%)"
+                            : "translateX(-50%)",
+                      fontSize: 12,
+                      color: "var(--ink-2)",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {formatDay(point.day)}
+                  </span>
+                ))}
               </>
             ) : (
               <div
@@ -354,7 +443,7 @@ export function WeightPageView(props: WeightPageViewProps) {
                 </span>
               </div>
             )}
-            {windowLabel && (
+            {windowLabel && !enoughForChart && (
               <span
                 className="mono"
                 style={{
