@@ -81,6 +81,10 @@ export const SingleDay: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     expect(canvas.getByText(/Not enough data yet/)).toBeInTheDocument();
+    // The first reading is still visible and dated, even though it cannot yet
+    // form a line segment.
+    expect(canvas.getAllByTestId("weight-trend-point")).toHaveLength(1);
+    expect(canvas.getByText("Jul 22")).toBeInTheDocument();
     // Stats still show — they are real even with one day.
     expect(canvas.getByText("160.2 lb")).toBeInTheDocument();
     expect(canvas.getByText("160.9 lb")).toBeInTheDocument();
@@ -117,6 +121,8 @@ export const WithGap: Story = {
     expect(canvas.getAllByTestId("weight-trend-point")).toHaveLength(3);
     // Calendar dates make elapsed time readable from the x-axis itself.
     expect(canvas.getByText("Jul 14")).toBeInTheDocument();
+    expect(canvas.getByText("Jul 16")).toBeInTheDocument();
+    expect(canvas.getByText("Jul 20")).toBeInTheDocument();
     expect(canvas.getByText("Jul 22")).toBeInTheDocument();
     // Axis label reflects the daily-series max (162.4), not the raw `high`
     // stat (162.6) — the two diverge on purpose once labels stop sitting on
