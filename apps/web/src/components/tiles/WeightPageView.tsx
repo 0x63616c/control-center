@@ -75,27 +75,103 @@ function fmt(value: number, unit: WeightUnit): string {
 }
 
 // Chart viewBox; stretched to the flexed box with preserveAspectRatio none.
-const W = 1120;
-const H = 380;
-const PAD = 16;
+const CHART_WIDTH = 1120;
+const CHART_HEIGHT = 380;
+const CHART_PADDING = 16;
+const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
+const MAX_DATE_TICKS = 5;
+
+interface ChartPoint {
+  readonly day: string;
+  readonly time: number;
+  readonly x: number;
+  readonly y: number;
+}
+
+interface ChartSegment {
+  readonly id: string;
+  readonly kind: "solid" | "gap";
+  readonly path: string;
+}
+
+interface ChartTick {
+  readonly id: string;
+  readonly time: number;
+  readonly x: number;
+}
+
+function dayTime(day: string): number {
+  return Date.parse(`${day}T00:00:00Z`);
+}
 
 /** Position by real elapsed days, not array index — a skipped weigh-in has to
  *  read as a gap, or the line misstates how fast the weight moved. */
-function linePoints(daily: { day: string; lb: number }[]): { x: number; y: number }[] {
+function linePoints(daily: { day: string; lb: number }[]): ChartPoint[] {
   const lbs = daily.map((d) => d.lb);
   const min = Math.min(...lbs);
   const max = Math.max(...lbs);
-  const t = daily.map((d) => new Date(`${d.day}T00:00:00`).getTime());
+  const t = daily.map((d) => dayTime(d.day));
   const t0 = t[0] ?? 0;
-  const span = (t[t.length - 1] ?? t0) - t0 || 1;
+  const span = (t[t.length - 1] ?? t0) - t0;
   return daily.map((d, i) => ({
-    x: PAD + (((t[i] ?? t0) - t0) / span) * (W - 2 * PAD),
-    y: PAD + ((max - d.lb) / (max - min || 1)) * (H - 2 * PAD),
+    day: d.day,
+    time: t[i] ?? t0,
+    // One recorded day is still a real data point. Centre it because the
+    // chronological span is zero rather than pinning it to the chart edge.
+    x:
+      span === 0
+        ? CHART_WIDTH / 2
+        : CHART_PADDING + (((t[i] ?? t0) - t0) / span) * (CHART_WIDTH - 2 * CHART_PADDING),
+    y: CHART_PADDING + ((max - d.lb) / (max - min || 1)) * (CHART_HEIGHT - 2 * CHART_PADDING),
   }));
 }
 
-function pathFrom(pts: { x: number; y: number }[]): string {
-  return pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+/** Catmull-Rom controls keep joins smooth while separate SVG paths let each
+ * interval communicate whether the intervening calendar days have data. */
+function chartSegments(pts: readonly ChartPoint[]): ChartSegment[] {
+  return pts.slice(0, -1).flatMap((start, index) => {
+    const end = pts[index + 1];
+    if (!end) return [];
+    const before = pts[index - 1] ?? start;
+    const after = pts[index + 2] ?? end;
+    const c1x = start.x + (end.x - before.x) / 6;
+    const c1y = start.y + (end.y - before.y) / 6;
+    const c2x = end.x - (after.x - start.x) / 6;
+    const c2y = end.y - (after.y - start.y) / 6;
+    return [
+      {
+        id: `${start.day}-${end.day}`,
+        kind: end.time - start.time > MILLISECONDS_PER_DAY ? "gap" : "solid",
+        path: `M${start.x.toFixed(1)},${start.y.toFixed(1)} C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${end.x.toFixed(1)},${end.y.toFixed(1)}`,
+      },
+    ];
+  });
+}
+
+function dateTicks(pts: readonly ChartPoint[]): readonly ChartTick[] {
+  const first = pts[0];
+  const last = pts[pts.length - 1];
+  if (!first || !last) return [];
+  if (first.time === last.time) return [{ id: first.day, time: first.time, x: first.x }];
+
+  // Ticks describe calendar time, including a long no-data span. Sampling only
+  // recorded-day indexes would crowd labels around a burst of measurements.
+  return Array.from({ length: MAX_DATE_TICKS }, (_, index) => {
+    const progress = index / (MAX_DATE_TICKS - 1);
+    return {
+      id: `${first.time}-${index}`,
+      time: first.time + (last.time - first.time) * progress,
+      x: CHART_PADDING + progress * (CHART_WIDTH - 2 * CHART_PADDING),
+    };
+  });
+}
+
+function formatDay(time: number): string {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(time);
 }
 
 /** Chart + stats placeholder. The pickers are NOT part of this: they stay
@@ -182,15 +258,16 @@ export function WeightPageView(props: WeightPageViewProps) {
   // Below two daily points there is no line to draw: one dot on an axis whose
   // min and max labels are identical reads as a broken chart, not as "no data
   // yet". Matches what 3e68f7ff6 did for the tile sparkline.
-  const enoughForChart = hasData && daily != null && daily.length >= 2;
-  const pts = enoughForChart && daily != null ? linePoints(daily) : [];
+  const pts = hasData && daily != null ? linePoints(daily) : [];
+  const enoughForLine = pts.length >= 2;
+  const segments = chartSegments(pts);
+  const ticks = dateTicks(pts);
   const dailyMin = lbs.length ? Math.min(...lbs) : 0;
   const dailyMax = lbs.length ? Math.max(...lbs) : 0;
   const iMin = lbs.indexOf(dailyMin);
   const iMax = lbs.indexOf(dailyMax);
   const gridMin = pts[iMin];
   const gridMax = pts[iMax];
-  const last = pts[pts.length - 1];
 
   return (
     <div
@@ -255,57 +332,65 @@ export function WeightPageView(props: WeightPageViewProps) {
         <>
           {/* Chart fills the space between picker and stats */}
           <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
-            {enoughForChart ? (
+            {pts.length > 0 ? (
               <>
                 <svg
-                  viewBox={`0 0 ${W} ${H}`}
+                  viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
                   preserveAspectRatio="none"
                   style={{ width: "100%", height: "100%", display: "block" }}
                   aria-hidden="true"
                 >
                   {gridMax && (
                     <line
-                      x1={PAD}
-                      x2={W - PAD}
+                      x1={CHART_PADDING}
+                      x2={CHART_WIDTH - CHART_PADDING}
                       y1={gridMax.y}
                       y2={gridMax.y}
                       stroke="rgba(255,255,255,0.08)"
                       strokeWidth={1}
                     />
                   )}
-                  {gridMin && (
+                  {gridMin && gridMin !== gridMax && (
                     <line
-                      x1={PAD}
-                      x2={W - PAD}
+                      x1={CHART_PADDING}
+                      x2={CHART_WIDTH - CHART_PADDING}
                       y1={gridMin.y}
                       y2={gridMin.y}
                       stroke="rgba(255,255,255,0.08)"
                       strokeWidth={1}
                     />
                   )}
-                  <path
-                    d={pathFrom(pts)}
-                    fill="none"
-                    stroke="var(--acc)"
-                    strokeWidth={2}
-                    strokeLinejoin="round"
-                  />
+                  {segments.map((segment) => (
+                    <path
+                      key={segment.id}
+                      data-testid={`weight-trend-${segment.kind}`}
+                      d={segment.path}
+                      fill="none"
+                      stroke="var(--acc)"
+                      strokeWidth={2}
+                      strokeDasharray={segment.kind === "gap" ? "2 7" : undefined}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  ))}
                 </svg>
-                {/* Round latest-point dot — outside the stretched svg so it stays round */}
-                {last && (
+                {/* HTML markers stay round even though the SVG stretches to the chart box. */}
+                {pts.map((point) => (
                   <span
+                    key={point.day}
+                    data-testid="weight-trend-point"
                     style={{
                       position: "absolute",
-                      left: `${(last.x / W) * 100}%`,
-                      top: `${(last.y / H) * 100}%`,
-                      width: 9,
-                      height: 9,
-                      borderRadius: 5,
+                      left: `${(point.x / CHART_WIDTH) * 100}%`,
+                      top: `${(point.y / CHART_HEIGHT) * 100}%`,
+                      width: 7,
+                      height: 7,
+                      borderRadius: "50%",
                       background: "var(--acc)",
                       transform: "translate(-50%, -50%)",
                     }}
                   />
-                )}
+                ))}
                 {/* Axis labels describe the DAILY series, which is what the line
                 plots. low/high are raw-reading figures and no longer sit on it. */}
                 {gridMax && (
@@ -314,7 +399,7 @@ export function WeightPageView(props: WeightPageViewProps) {
                     style={{
                       position: "absolute",
                       left: 0,
-                      top: `calc(${(gridMax.y / H) * 100}% - 20px)`,
+                      top: `calc(${(gridMax.y / CHART_HEIGHT) * 100}% - 20px)`,
                       fontSize: 12,
                       color: "var(--ink-2)",
                     }}
@@ -322,13 +407,13 @@ export function WeightPageView(props: WeightPageViewProps) {
                     {dailyMax.toFixed(1)}
                   </span>
                 )}
-                {gridMin && (
+                {gridMin && gridMin !== gridMax && (
                   <span
                     className="mono"
                     style={{
                       position: "absolute",
                       left: 0,
-                      top: `calc(${(gridMin.y / H) * 100}% + 8px)`,
+                      top: `calc(${(gridMin.y / CHART_HEIGHT) * 100}% + 8px)`,
                       fontSize: 12,
                       color: "var(--ink-2)",
                     }}
@@ -336,31 +421,56 @@ export function WeightPageView(props: WeightPageViewProps) {
                     {dailyMin.toFixed(1)}
                   </span>
                 )}
+                {ticks.map((point, index) => (
+                  <span
+                    key={point.id}
+                    className="mono"
+                    style={{
+                      position: "absolute",
+                      left: `${(point.x / CHART_WIDTH) * 100}%`,
+                      bottom: -18,
+                      transform:
+                        index === 0
+                          ? "translateX(0)"
+                          : index === ticks.length - 1
+                            ? "translateX(-100%)"
+                            : "translateX(-50%)",
+                      fontSize: 12,
+                      color: "var(--ink-2)",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {formatDay(point.time)}
+                  </span>
+                ))}
+                {!enoughForLine && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      inset: 0,
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 6,
+                      pointerEvents: "none",
+                    }}
+                  >
+                    <span style={{ fontSize: 15, color: "var(--ink-2)" }}>Not enough data yet</span>
+                    <span style={{ fontSize: 13, color: "var(--ink-3)" }}>
+                      The trend starts once you have weighed in on a second day.
+                    </span>
+                  </div>
+                )}
               </>
-            ) : (
-              <div
-                style={{
-                  height: "100%",
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 6,
-                }}
-              >
-                <span style={{ fontSize: 15, color: "var(--ink-2)" }}>Not enough data yet</span>
-                <span style={{ fontSize: 13, color: "var(--ink-3)" }}>
-                  The trend starts once you have weighed in on a second day.
-                </span>
-              </div>
-            )}
+            ) : null}
             {windowLabel && (
               <span
                 className="mono"
                 style={{
                   position: "absolute",
                   right: 0,
-                  bottom: -18,
+                  bottom: -36,
                   fontSize: 12,
                   color: "var(--ink-2)",
                 }}
