@@ -6,6 +6,7 @@ import {
   LIGHTS,
   type LightEntry,
   LightKind,
+  rgbToXy,
 } from "@www/core";
 import { getLogger } from "@www/logger";
 import type {
@@ -158,7 +159,11 @@ async function applyLighting(
               ? { brightness: Math.round((action.brightness / 100) * 255) }
               : {}),
             ...(action.color.kind === "rgb" && supportsRgb
-              ? { color: { rgb: [action.color.red, action.color.green, action.color.blue] } }
+              ? {
+                  color: {
+                    xy: rgbToXy([action.color.red, action.color.green, action.color.blue]),
+                  },
+                }
               : action.color.kind === "temperature" && supportsTemperature
                 ? { color: { kelvin: action.color.kelvin } }
                 : base?.color

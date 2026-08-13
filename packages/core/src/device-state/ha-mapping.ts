@@ -67,12 +67,28 @@ function mapHaClimate(entity: HaEntity): DeviceClimateState {
 }
 
 /**
- * Extract a light's color from HA attributes: an `rgb_color` triple or a white
- * `color_temp_kelvin`. Returns undefined when neither is present (e.g. a plain
- * on/off switch, or a light HA hasn't reported color for yet) so we never
- * fabricate a color. Whichever color mode HA reports is the one we record.
+ * Extract a light's active color representation from HA attributes. Home
+ * Assistant includes derived RGB/XY/HS values alongside the active mode, so
+ * `color_mode` decides which value is authoritative. The fallback preserves
+ * reports from integrations that omit `color_mode`.
  */
 function mapHaColor(entity: HaEntity): LightColor | undefined {
+  const mode = entity.attributes.color_mode;
+  if (mode === "color_temp") {
+    const kelvin = entity.attributes.color_temp_kelvin;
+    return typeof kelvin === "number" ? { kelvin } : undefined;
+  }
+  if (mode === "xy") {
+    const xy = entity.attributes.xy_color;
+    if (
+      Array.isArray(xy) &&
+      xy.length === 2 &&
+      xy.every((component) => typeof component === "number")
+    ) {
+      return { xy: [xy[0], xy[1]] as [number, number] };
+    }
+    return undefined;
+  }
   const rgb = entity.attributes.rgb_color;
   if (Array.isArray(rgb) && rgb.length === 3 && rgb.every((c) => typeof c === "number")) {
     return { rgb: [rgb[0], rgb[1], rgb[2]] as [number, number, number] };
@@ -167,6 +183,12 @@ function colorEquals(a: LightColor | undefined, b: LightColor | undefined): bool
   if (a === b) return true;
   if (!a || !b) return !a && !b;
   if ((a.kelvin ?? null) !== (b.kelvin ?? null)) return false;
+  const axy = a.xy;
+  const bxy = b.xy;
+  if (axy || bxy) {
+    if (!axy || !bxy) return false;
+    if (axy[0] !== bxy[0] || axy[1] !== bxy[1]) return false;
+  }
   const ar = a.rgb;
   const br = b.rgb;
   if (!ar && !br) return true;

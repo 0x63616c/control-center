@@ -73,6 +73,45 @@ describe("scene launch resolution", () => {
     ).resolves.toMatchObject({ mediaPlayerEntityId: "media_player.living_room" });
   });
 
+  it("stores colored lighting intent in the Hue-native xy mode", async () => {
+    const firstLight = LIGHTS[0];
+    if (!firstLight) throw new Error("test needs a light");
+    const store = createInMemoryDeviceStateStore();
+    const scene: SceneDefinition = {
+      id: "scene",
+      name: "Red",
+      description: null,
+      icon: "🔴",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      actions: [
+        {
+          kind: "lighting",
+          targets: [{ kind: "entity", entityId: firstLight.entityId }],
+          power: true,
+          brightness: 50,
+          color: { kind: "rgb", red: 255, green: 0, blue: 0 },
+          transitionSeconds: 2,
+        },
+      ],
+    };
+
+    await executeScene(
+      scene,
+      {},
+      {
+        ha: { isConfigured: () => true, callService: vi.fn() },
+        spotify: { pauseDevice: vi.fn() },
+        deviceStateStore: store,
+        discoverSpeakers: async () => speakers,
+      },
+    );
+
+    expect((await store.read(firstLight.id))?.desiredState).toMatchObject({
+      color: { xy: [0.64, 0.33] },
+    });
+  });
+
   it("groups and starts the Spotify playlist through Home Assistant, never Spotify Connect", async () => {
     const firstLight = LIGHTS[0];
     if (!firstLight) throw new Error("test needs a light");

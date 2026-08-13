@@ -78,6 +78,21 @@ describe("lightStateConverged (drift tolerance)", () => {
     ).toBe(false);
   });
 
+  it("tolerates small xy drift but flags a different color", () => {
+    expect(
+      lightStateConverged(
+        { on: true, color: { xy: [0.701, 0.299] } },
+        { on: true, color: { xy: [0.7, 0.3] } },
+      ),
+    ).toBe(true);
+    expect(
+      lightStateConverged(
+        { on: true, color: { xy: [0.701, 0.299] } },
+        { on: true, color: { xy: [0.15, 0.06] } },
+      ),
+    ).toBe(false);
+  });
+
   it("tolerates small brightness drift but flags a large one", () => {
     expect(lightStateConverged({ on: true, brightness: 200 }, { on: true, brightness: 202 })).toBe(
       true,
@@ -373,6 +388,90 @@ describe("runEnforcerCycle", () => {
     const row = await store.read("living-globe");
     expect(row?.reportedState).toEqual({ on: true, color: { rgb: [0, 1, 254] } });
     expect(row?.available).toBe(true);
+  });
+
+  it("does not re-send the 4000 K outage response reported in color_temp mode", async () => {
+    const store = await seededStore({
+      desiredState: { on: true, color: { kelvin: 4000 } },
+      reportedState: { on: true, color: { kelvin: 4000 } },
+      available: true,
+    });
+    mockGetEntities.mockImplementation((domain: string) =>
+      domain === "light"
+        ? Promise.resolve([
+            haEntity("light.living_room_globe", "on", {
+              color_mode: "color_temp",
+              supported_color_modes: ["color_temp", "xy"],
+              color_temp_kelvin: 4000,
+              rgb_color: [255, 206, 166],
+              xy_color: [0.42, 0.365],
+              hs_color: [26.812, 34.87],
+            }),
+          ])
+        : Promise.resolve([]),
+    );
+
+    await runEnforcerCycle(store);
+
+    expect(mockCallService).not.toHaveBeenCalled();
+    expect((await store.read("living-globe"))?.reportedState).toEqual({
+      on: true,
+      color: { kelvin: 4000 },
+    });
+  });
+
+  it("does not re-send a colored light already reported in xy mode", async () => {
+    const store = await seededStore({
+      desiredState: { on: true, color: { xy: [0.701, 0.299] } },
+      reportedState: { on: true, color: { xy: [0.701, 0.299] } },
+      available: true,
+    });
+    mockGetEntities.mockImplementation((domain: string) =>
+      domain === "light"
+        ? Promise.resolve([
+            haEntity("light.living_room_globe", "on", {
+              color_mode: "xy",
+              supported_color_modes: ["color_temp", "xy"],
+              xy_color: [0.7, 0.3],
+              rgb_color: [255, 0, 0],
+            }),
+          ])
+        : Promise.resolve([]),
+    );
+
+    await runEnforcerCycle(store);
+
+    expect(mockCallService).not.toHaveBeenCalled();
+    expect((await store.read("living-globe"))?.reportedState).toEqual({
+      on: true,
+      color: { xy: [0.7, 0.3] },
+    });
+  });
+
+  it("pushes a divergent xy color using Home Assistant's xy_color parameter", async () => {
+    const store = await seededStore({
+      desiredState: { on: true, color: { xy: [0.701, 0.299] } },
+      reportedState: { on: true, color: { xy: [0.15, 0.06] } },
+      available: true,
+    });
+    mockGetEntities.mockImplementation((domain: string) =>
+      domain === "light"
+        ? Promise.resolve([
+            haEntity("light.living_room_globe", "on", {
+              color_mode: "xy",
+              xy_color: [0.15, 0.06],
+              rgb_color: [0, 0, 255],
+            }),
+          ])
+        : Promise.resolve([]),
+    );
+
+    await runEnforcerCycle(store);
+
+    expect(mockCallService).toHaveBeenCalledWith("light", "turn_on", {
+      entity_id: "light.living_room_globe",
+      xy_color: [0.701, 0.299],
+    });
   });
 
   it("persists FRESH reportedState from HA every cycle (panel never reads stale/zero)", async () => {
