@@ -11,6 +11,7 @@ import { boolean, index, jsonb, pgTable, text, timestamp, uniqueIndex } from "dr
  */
 export interface LightColor {
   rgb?: [number, number, number];
+  xy?: [number, number];
   kelvin?: number;
 }
 

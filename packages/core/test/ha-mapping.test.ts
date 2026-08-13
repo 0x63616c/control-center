@@ -60,14 +60,36 @@ describe("mapHaToReported", () => {
     expect(result.reported).toEqual({ on: true, color: { kelvin: 4000 } });
   });
 
-  it("prefers rgb over kelvin when both are present", () => {
+  it("uses active color_temp instead of Home Assistant's derived color representations", () => {
     const result = mapHaToReported("light", {
       entity_id: "light.lamp",
       state: "on",
-      attributes: { rgb_color: [10, 20, 30], color_temp_kelvin: 4000 },
+      attributes: {
+        color_mode: "color_temp",
+        supported_color_modes: ["color_temp", "xy"],
+        color_temp_kelvin: 4000,
+        rgb_color: [255, 206, 166],
+        xy_color: [0.42, 0.365],
+        hs_color: [26.812, 34.87],
+      },
       last_updated: new Date().toISOString(),
     });
-    expect(result.reported).toEqual({ on: true, color: { rgb: [10, 20, 30] } });
+    expect(result.reported).toEqual({ on: true, color: { kelvin: 4000 } });
+  });
+
+  it("uses active xy instead of Home Assistant's derived RGB representation", () => {
+    const result = mapHaToReported("light", {
+      entity_id: "light.lamp",
+      state: "on",
+      attributes: {
+        color_mode: "xy",
+        supported_color_modes: ["color_temp", "xy"],
+        xy_color: [0.701, 0.299],
+        rgb_color: [255, 0, 0],
+      },
+      last_updated: new Date().toISOString(),
+    });
+    expect(result.reported).toEqual({ on: true, color: { xy: [0.701, 0.299] } });
   });
 
   it("omits color when rgb_color is malformed", () => {
