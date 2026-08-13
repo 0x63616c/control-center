@@ -104,8 +104,8 @@ function tileSceneSummary(scene: Pick<SceneDefinition, "actions">): string {
 }
 
 type SceneTileRowProps =
-  | { kind: "running"; name: string }
-  | { kind: "saved"; name: string; summary: string };
+  | { readonly kind: "running"; readonly name: string }
+  | { readonly kind: "saved"; readonly name: string; readonly summary: string };
 
 function SceneTileRow(props: SceneTileRowProps) {
   const running = props.kind === "running";
@@ -125,9 +125,9 @@ export function ScenesTileView({
   scenes,
   runningScene,
 }: {
-  status: TileStatus;
-  scenes?: readonly Pick<SceneDefinition, "id" | "name" | "icon" | "actions">[];
-  runningScene?: { id: string | null; name: string } | null;
+  readonly status: TileStatus;
+  readonly scenes?: readonly Pick<SceneDefinition, "id" | "name" | "icon" | "actions">[];
+  readonly runningScene?: { readonly id: string | null; readonly name: string } | null;
 }) {
   const visibleScenes = runningScene
     ? scenes?.filter((scene) => scene.id !== runningScene.id).slice(0, 2)
