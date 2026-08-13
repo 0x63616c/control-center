@@ -67,56 +67,54 @@ function findAction(
   return scene.actions.find((action) => action.kind === kind) ?? null;
 }
 
-function sceneSummary(scene: Pick<SceneDefinition, "actions">): string {
+function sceneSummaryParts(
+  scene: Pick<SceneDefinition, "actions">,
+  lightingSummary: (lighting: LightingAction) => string,
+): string[] {
   const lighting = findAction(scene, SceneActionKind.Lighting);
   const music = findAction(scene, SceneActionKind.Music);
   const parts: string[] = [];
   if (lighting) {
-    const color =
-      lighting.color.kind === "rgb"
-        ? `rgb(${lighting.color.red}, ${lighting.color.green}, ${lighting.color.blue})`
-        : lighting.color.kind === "temperature"
-          ? `${lighting.color.kelvin}K`
-          : "no color change";
-    parts.push(lighting.power ? `${color} · ${lighting.brightness}%` : "lights off");
+    parts.push(lightingSummary(lighting));
   }
   if (music) {
     parts.push(
       `${music.source.playlists.length} playlist${music.source.playlists.length === 1 ? "" : "s"}`,
     );
   }
-  return parts.join(" · ");
+  return parts;
+}
+
+function sceneSummary(scene: Pick<SceneDefinition, "actions">): string {
+  return sceneSummaryParts(scene, (lighting) => {
+    const color =
+      lighting.color.kind === "rgb"
+        ? `rgb(${lighting.color.red}, ${lighting.color.green}, ${lighting.color.blue})`
+        : lighting.color.kind === "temperature"
+          ? `${lighting.color.kelvin}K`
+          : "no color change";
+    return lighting.power ? `${color} · ${lighting.brightness}%` : "lights off";
+  }).join(" · ");
 }
 
 function tileSceneSummary(scene: Pick<SceneDefinition, "actions">): string {
-  const lighting = findAction(scene, SceneActionKind.Lighting);
-  const music = findAction(scene, SceneActionKind.Music);
-  const parts: string[] = [];
-  if (lighting) {
-    parts.push(lighting.power ? `Lights ${lighting.brightness}%` : "Lights off");
-  }
-  if (music) {
-    const count = music.source.playlists.length;
-    parts.push(`${count} playlist${count === 1 ? "" : "s"}`);
-  }
-  return parts.join(" · ");
+  return sceneSummaryParts(scene, (lighting) =>
+    lighting.power ? `Lights ${lighting.brightness}%` : "Lights off",
+  ).join(" · ");
 }
 
-function SceneTileRow({
-  name,
-  summary,
-  running = false,
-}: {
-  name: string;
-  summary: string;
-  running?: boolean;
-}) {
+type SceneTileRowProps =
+  | { kind: "running"; name: string }
+  | { kind: "saved"; name: string; summary: string };
+
+function SceneTileRow(props: SceneTileRowProps) {
+  const running = props.kind === "running";
   return (
     <div style={running ? runningSceneTileRowStyle : sceneTileRowStyle}>
       <span style={running ? runningSceneTileMarkerStyle : sceneTileMarkerStyle} />
       <div style={{ minWidth: 0 }}>
-        <strong style={sceneTileNameStyle}>{name}</strong>
-        <span style={sceneTileSummaryStyle}>{running ? "Playing now" : summary}</span>
+        <strong style={sceneTileNameStyle}>{props.name}</strong>
+        <span style={sceneTileSummaryStyle}>{running ? "Playing now" : props.summary}</span>
       </div>
     </div>
   );
@@ -125,14 +123,14 @@ function SceneTileRow({
 export function ScenesTileView({
   status,
   scenes,
-  runningName,
+  runningScene,
 }: {
   status: TileStatus;
   scenes?: readonly Pick<SceneDefinition, "id" | "name" | "icon" | "actions">[];
-  runningName?: string | null;
+  runningScene?: { id: string | null; name: string } | null;
 }) {
-  const visibleScenes = runningName
-    ? scenes?.filter((scene) => scene.name !== runningName).slice(0, 2)
+  const visibleScenes = runningScene
+    ? scenes?.filter((scene) => scene.id !== runningScene.id).slice(0, 2)
     : scenes?.slice(0, 3);
 
   return (
@@ -141,7 +139,7 @@ export function ScenesTileView({
         icon="sparkles"
         title="Scenes"
         right={
-          runningName ? (
+          runningScene ? (
             <Pill tone={PillTone.On}>Live</Pill>
           ) : scenes ? (
             <span style={sceneCountStyle}>{scenes.length} saved</span>
@@ -154,9 +152,14 @@ export function ScenesTileView({
         <div style={emptyScenesStyle}>Create a scene to set the room in one tap.</div>
       ) : (
         <div style={sceneTileListStyle}>
-          {runningName && <SceneTileRow name={runningName} summary="" running />}
+          {runningScene && <SceneTileRow kind="running" name={runningScene.name} />}
           {visibleScenes?.map((scene) => (
-            <SceneTileRow key={scene.id} name={scene.name} summary={tileSceneSummary(scene)} />
+            <SceneTileRow
+              key={scene.id}
+              kind="saved"
+              name={scene.name}
+              summary={tileSceneSummary(scene)}
+            />
           ))}
         </div>
       )}
@@ -171,7 +174,11 @@ export function ScenesTile() {
     <ScenesTileView
       status={list.status}
       scenes={list.data}
-      runningName={current.data?.run?.sceneName}
+      runningScene={
+        current.data?.run
+          ? { id: current.data.run.sceneId, name: current.data.run.sceneName }
+          : null
+      }
     />
   );
 }

@@ -73,7 +73,15 @@ export const Populated: Story = {
 };
 
 export const Running: Story = {
-  args: { status: TileStatus.Populated, scenes, runningName: "Explicit" },
+  args: {
+    status: TileStatus.Populated,
+    scenes,
+    runningScene: { id: "scene_explicit", name: "Explicit" },
+  },
+};
+
+export const Empty: Story = {
+  args: { status: TileStatus.Populated, scenes: [] },
 };
 
 export const Loading: Story = {
