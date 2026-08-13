@@ -204,6 +204,18 @@ describe("stateEquals", () => {
     ).toBe(false);
   });
 
+  it("compares active xy coordinates exactly for reported-state change detection", () => {
+    expect(
+      stateEquals({ on: true, color: { xy: [0.7, 0.3] } }, { on: true, color: { xy: [0.7, 0.3] } }),
+    ).toBe(true);
+    expect(
+      stateEquals(
+        { on: true, color: { xy: [0.7, 0.3] } },
+        { on: true, color: { xy: [0.15, 0.06] } },
+      ),
+    ).toBe(false);
+  });
+
   it("returns false when one has color and the other does not", () => {
     expect(stateEquals({ on: true, color: { rgb: [1, 2, 3] } }, { on: true })).toBe(false);
   });

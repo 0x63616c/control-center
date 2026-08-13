@@ -57,6 +57,15 @@ describe("mergeDeviceState (light)", () => {
     expect(result).toEqual({ state: { on: false }, pending: false, available: true });
   });
 
+  it("clears pending when native xy color converges within HA rounding", () => {
+    const result = mergeDeviceState({
+      reportedState: { on: true, color: { xy: [0.7, 0.3] } },
+      desiredState: { on: true, color: { xy: [0.701, 0.299] } },
+      available: true,
+    });
+    expect(result.pending).toBe(false);
+  });
+
   it("overlays a bare {on} desired onto reported brightness/color (no zeroing, not pending)", () => {
     // www-7d5b.2.4 regression: a bare on/off toggle writes only { on } and must
     // NOT zero out brightness/color, nor sit perpetually pending.

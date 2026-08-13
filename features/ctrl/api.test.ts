@@ -14,6 +14,7 @@ import {
   type DeviceStateStore,
   FIXTURE_ENTITY_IDS,
   LAMP_ENTITY_IDS,
+  rgbToXy,
 } from "@www/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -892,7 +893,7 @@ describe("setLampScene", () => {
     }
   });
 
-  it("writes a uniform red rgb desired on every lamp, NO HA call", async () => {
+  it("writes a uniform red xy desired on every lamp, NO HA call", async () => {
     mockIsConfigured.mockReturnValue(true);
     const writes = captureDesiredWrites();
 
@@ -903,12 +904,12 @@ describe("setLampScene", () => {
     for (const entityId of LAMP_ENTITY_IDS) {
       expect(writes.get(entityId)?.desiredState).toMatchObject({
         on: true,
-        color: { rgb: [255, 0, 0] },
+        color: { xy: rgbToXy([255, 0, 0]) },
       });
     }
   });
 
-  it("writes a uniform blue rgb desired on every lamp, NO HA call", async () => {
+  it("writes a uniform blue xy desired on every lamp, NO HA call", async () => {
     mockIsConfigured.mockReturnValue(true);
     const writes = captureDesiredWrites();
 
@@ -918,12 +919,12 @@ describe("setLampScene", () => {
     for (const entityId of LAMP_ENTITY_IDS) {
       expect(writes.get(entityId)?.desiredState).toMatchObject({
         on: true,
-        color: { rgb: [0, 0, 255] },
+        color: { xy: rgbToXy([0, 0, 255]) },
       });
     }
   });
 
-  it("mood: writes a DIFFERENT rgb desired across lamps (varied wash), NO HA call", async () => {
+  it("mood: writes a DIFFERENT xy desired across lamps (varied wash), NO HA call", async () => {
     mockIsConfigured.mockReturnValue(true);
     const writes = captureDesiredWrites();
 
@@ -932,24 +933,24 @@ describe("setLampScene", () => {
     expect(writes.size).toBe(LAMP_ENTITY_IDS.length);
     expect(mockCallService).not.toHaveBeenCalled();
 
-    // Collect the desired rgb keyed by entity_id.
-    const rgbByEntity = new Map<string, string>();
+    // Collect the desired xy keyed by entity_id.
+    const xyByEntity = new Map<string, string>();
     for (const entityId of LAMP_ENTITY_IDS) {
       const desired = writes.get(entityId)?.desiredState as
-        | { color?: { rgb?: number[] } }
+        | { color?: { xy?: number[] } }
         | undefined;
-      expect(desired?.color?.rgb).toBeDefined();
-      rgbByEntity.set(entityId, JSON.stringify(desired?.color?.rgb));
+      expect(desired?.color?.xy).toBeDefined();
+      xyByEntity.set(entityId, JSON.stringify(desired?.color?.xy));
     }
 
     // Every lamp gets a DISTINCT color , no repeats across the room.
-    const distinct = new Set(rgbByEntity.values());
+    const distinct = new Set(xyByEntity.values());
     expect(distinct.size).toBe(LAMP_ENTITY_IDS.length);
 
     // Each color must come from the curated palette.
-    const paletteSet = new Set(MOOD_PALETTE.map((c) => JSON.stringify(c)));
-    for (const rgb of rgbByEntity.values()) {
-      expect(paletteSet.has(rgb)).toBe(true);
+    const paletteSet = new Set(MOOD_PALETTE.map((rgb) => JSON.stringify(rgbToXy(rgb))));
+    for (const xy of xyByEntity.values()) {
+      expect(paletteSet.has(xy)).toBe(true);
     }
   });
 

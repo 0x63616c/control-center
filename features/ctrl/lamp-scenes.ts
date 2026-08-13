@@ -3,8 +3,8 @@
  *
  * Scenes drive `light.turn_on` calls across every lamp (LAMP_ENTITY_IDS):
  *  - white → uniform crisp daylight white via color_temp_kelvin
- *  - red   → uniform pure-red rgb_color
- *  - blue  → uniform pure-blue rgb_color
+ *  - red   → uniform red in the Hue-native xy mode
+ *  - blue  → uniform blue in the Hue-native xy mode
  *  - mood  → EACH lamp gets a DIFFERENT color, assigned RANDOMLY from
  *            MOOD_PALETTE on every invocation (no repeats , each lamp is
  *            unique). The point of "mood" is a varied purples/blues/party wash

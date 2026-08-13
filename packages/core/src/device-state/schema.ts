@@ -4,10 +4,10 @@ import { boolean, index, jsonb, pgTable, text, timestamp, uniqueIndex } from "dr
 // Ported from evee device-state-sync pattern. Desired window is 5s for CC.
 
 /**
- * Color of a light: either an RGB triple or a white color temperature in
- * Kelvin (mutually exclusive in practice, HA reports whichever color mode is
- * active). Carried in desired/reported state so the DB-authoritative enforcer
- * can drive and detect color drift, not just on/off + brightness (www-7d5b.2.2).
+ * Color of a light: RGB, native CIE XY, or a white color temperature in Kelvin
+ * (mutually exclusive in practice; HA reports whichever color mode is active).
+ * Carried in desired/reported state so the DB-authoritative enforcer can drive
+ * and detect color drift, not just on/off + brightness (www-7d5b.2.2).
  */
 export interface LightColor {
   rgb?: [number, number, number];

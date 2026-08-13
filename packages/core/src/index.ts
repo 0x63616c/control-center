@@ -1,4 +1,5 @@
 export * from "./db/pool";
+export * from "./device-state/color";
 export * from "./device-state/command-window";
 export * from "./device-state/ha-mapping";
 export * from "./device-state/identity";

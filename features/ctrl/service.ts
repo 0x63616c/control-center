@@ -14,6 +14,7 @@ import {
   type LightEntry,
   LightKind,
   mergeDeviceState,
+  rgbToXy,
 } from "@www/core";
 import { getLogger } from "@www/logger";
 import { eq } from "drizzle-orm";
@@ -171,6 +172,14 @@ function rgbEquals(a: readonly number[] | undefined, b: readonly number[]): bool
   return !!a && a.length === 3 && a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
 }
 
+function xyEquals(a: readonly number[] | undefined, b: readonly number[]): boolean {
+  return !!a && a.length === 2 && a[0] === b[0] && a[1] === b[1];
+}
+
+const RED_XY = rgbToXy(RED_RGB);
+const BLUE_XY = rgbToXy(BLUE_RGB);
+const MOOD_XY = MOOD_PALETTE.map(rgbToXy);
+
 /** Map one desired color to the scene it represents, or null. Exact compare ,
  *  these are our OWN written values, so no HA round-trip tolerance is needed.
  *  A MOOD_PALETTE color maps to Mood (www-vhht): mood writes a distinct palette
@@ -179,9 +188,14 @@ function rgbEquals(a: readonly number[] | undefined, b: readonly number[]): bool
 function colorToScene(color: LightColor | undefined): LampScene | null {
   if (!color) return null;
   if (color.kelvin === WHITE_SCENE_KELVIN) return LampScene.White;
-  if (rgbEquals(color.rgb, RED_RGB)) return LampScene.Red;
-  if (rgbEquals(color.rgb, BLUE_RGB)) return LampScene.Blue;
-  if (MOOD_PALETTE.some((c) => rgbEquals(color.rgb, c))) return LampScene.Mood;
+  if (xyEquals(color.xy, RED_XY) || rgbEquals(color.rgb, RED_RGB)) return LampScene.Red;
+  if (xyEquals(color.xy, BLUE_XY) || rgbEquals(color.rgb, BLUE_RGB)) return LampScene.Blue;
+  if (
+    MOOD_XY.some((xy) => xyEquals(color.xy, xy)) ||
+    MOOD_PALETTE.some((rgb) => rgbEquals(color.rgb, rgb))
+  ) {
+    return LampScene.Mood;
+  }
   return null;
 }
 
@@ -486,15 +500,13 @@ export async function toggleControl(
  */
 function sceneColors(scene: LampScene): LightColor[] {
   if (scene === LampScene.Mood) {
-    return assignMoodColors(LAMP_ENTITY_IDS.length).map((rgb) => ({
-      rgb: [rgb[0], rgb[1], rgb[2]],
-    }));
+    return assignMoodColors(LAMP_ENTITY_IDS.length).map((rgb) => ({ xy: rgbToXy(rgb) }));
   }
   if (scene === LampScene.White) {
     return LAMP_ENTITY_IDS.map(() => ({ kelvin: WHITE_SCENE_KELVIN }));
   }
   const rgb = scene === LampScene.Red ? RED_RGB : BLUE_RGB;
-  return LAMP_ENTITY_IDS.map(() => ({ rgb: [rgb[0], rgb[1], rgb[2]] }));
+  return LAMP_ENTITY_IDS.map(() => ({ xy: rgbToXy(rgb) }));
 }
 
 /**

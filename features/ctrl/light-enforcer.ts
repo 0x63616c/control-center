@@ -48,6 +48,7 @@ const ENFORCER_DOMAINS = ["light", "switch"] as const;
 // reports [0,0,255] back as [0,2,254]); a per-channel/absolute slack stops the
 // enforcer from fighting its own writes forever. Tuned per team-lead's guidance.
 const RGB_CHANNEL_TOLERANCE = 12;
+const XY_COMPONENT_TOLERANCE = 0.005;
 const KELVIN_TOLERANCE = 250;
 const BRIGHTNESS_TOLERANCE = 3;
 
@@ -63,6 +64,14 @@ function colorConverged(a: LightColor | undefined, b: LightColor | undefined): b
   const bKelvin = b.kelvin != null;
   if (aKelvin !== bKelvin) return false;
   if (aKelvin && bKelvin) return Math.abs((a.kelvin ?? 0) - (b.kelvin ?? 0)) <= KELVIN_TOLERANCE;
+  const axy = a.xy;
+  const bxy = b.xy;
+  if (axy || bxy) {
+    if (!axy || !bxy) return false;
+    return axy.every(
+      (component, index) => Math.abs(component - bxy[index]) <= XY_COMPONENT_TOLERANCE,
+    );
+  }
   const ar = a.rgb;
   const br = b.rgb;
   if (!ar || !br) return !ar && !br;
@@ -166,7 +175,8 @@ export function decideEnforcement(
 function buildTurnOnParams(entityId: string, desired: DeviceLightState): Record<string, unknown> {
   const params: Record<string, unknown> = { entity_id: entityId };
   if (desired.brightness != null) params.brightness = desired.brightness;
-  if (desired.color?.rgb) params.rgb_color = desired.color.rgb;
+  if (desired.color?.xy) params.xy_color = desired.color.xy;
+  else if (desired.color?.rgb) params.rgb_color = desired.color.rgb;
   else if (desired.color?.kelvin != null) params.color_temp_kelvin = desired.color.kelvin;
   if (desired.transitionSeconds != null) params.transition = desired.transitionSeconds;
   return params;
@@ -303,9 +313,11 @@ async function applyDecision(
           color:
             decision.desired.color?.kelvin != null
               ? { kelvin: decision.desired.color.kelvin }
-              : decision.desired.color?.rgb != null
-                ? { rgb: decision.desired.color.rgb }
-                : undefined,
+              : decision.desired.color?.xy != null
+                ? { xy: decision.desired.color.xy }
+                : decision.desired.color?.rgb != null
+                  ? { rgb: decision.desired.color.rgb }
+                  : undefined,
         },
         "light-enforcer pushing desired to HA",
       );
