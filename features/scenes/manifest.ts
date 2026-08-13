@@ -3,7 +3,6 @@ import { ScenesTile, ScenesTileView } from "./web";
 
 export default defineApp({
   id: "tile_scenes",
-  sensitive: true,
   tiles: [
     {
       id: "tile_scenes",

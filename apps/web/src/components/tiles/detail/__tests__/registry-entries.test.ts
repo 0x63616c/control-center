@@ -35,6 +35,13 @@ describe("tile detail registry , Task 11 entries", () => {
     }
   });
 
+  it("Scenes opens without a PIN unlock", () => {
+    expect(accessFor("tile_scenes")).toEqual({
+      requiresSessionUnlock: false,
+      requiresFreshUnlock: false,
+    });
+  });
+
   it("Frontend Logs is an action that deep-links Settings → Logs", () => {
     const entry = getTileDetailEntry("tile_felogs");
     expect(entry?.kind).toBe("action");

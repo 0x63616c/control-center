@@ -6,6 +6,8 @@ import {
   Button,
   CheckboxRow,
   ConfirmDialog,
+  Pill,
+  PillTone,
   Slider,
   Switch,
   TextInput,
@@ -86,6 +88,40 @@ function sceneSummary(scene: Pick<SceneDefinition, "actions">): string {
   return parts.join(" · ");
 }
 
+function tileSceneSummary(scene: Pick<SceneDefinition, "actions">): string {
+  const lighting = findAction(scene, SceneActionKind.Lighting);
+  const music = findAction(scene, SceneActionKind.Music);
+  const parts: string[] = [];
+  if (lighting) {
+    parts.push(lighting.power ? `Lights ${lighting.brightness}%` : "Lights off");
+  }
+  if (music) {
+    const count = music.source.playlists.length;
+    parts.push(`${count} playlist${count === 1 ? "" : "s"}`);
+  }
+  return parts.join(" · ");
+}
+
+function SceneTileRow({
+  name,
+  summary,
+  running = false,
+}: {
+  name: string;
+  summary: string;
+  running?: boolean;
+}) {
+  return (
+    <div style={running ? runningSceneTileRowStyle : sceneTileRowStyle}>
+      <span style={running ? runningSceneTileMarkerStyle : sceneTileMarkerStyle} />
+      <div style={{ minWidth: 0 }}>
+        <strong style={sceneTileNameStyle}>{name}</strong>
+        <span style={sceneTileSummaryStyle}>{running ? "Playing now" : summary}</span>
+      </div>
+    </div>
+  );
+}
+
 export function ScenesTileView({
   status,
   scenes,
@@ -95,26 +131,32 @@ export function ScenesTileView({
   scenes?: readonly Pick<SceneDefinition, "id" | "name" | "icon" | "actions">[];
   runningName?: string | null;
 }) {
+  const visibleScenes = runningName
+    ? scenes?.filter((scene) => scene.name !== runningName).slice(0, 2)
+    : scenes?.slice(0, 3);
+
   return (
     <Tile padding={18}>
-      <TileHeader icon="sparkles" title="Scenes" right={runningName ? "Running" : undefined} />
+      <TileHeader
+        icon="sparkles"
+        title="Scenes"
+        right={
+          runningName ? (
+            <Pill tone={PillTone.On}>Live</Pill>
+          ) : scenes ? (
+            <span style={sceneCountStyle}>{scenes.length} saved</span>
+          ) : undefined
+        }
+      />
       {status !== TileStatus.Populated || !scenes ? (
         <div style={{ flex: 1, borderRadius: 14, background: "var(--nest)" }} />
+      ) : scenes.length === 0 ? (
+        <div style={emptyScenesStyle}>Create a scene to set the room in one tap.</div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, overflow: "hidden" }}>
-          {runningName && (
-            <div style={{ ...cardStyle, borderColor: "var(--acc)", padding: 12 }}>
-              <strong>{runningName}</strong>
-              <span style={mutedStyle}>playing now</span>
-            </div>
-          )}
-          {scenes.slice(0, runningName ? 2 : 3).map((scene) => (
-            <div key={scene.id} style={{ ...cardStyle, padding: 12 }}>
-              <strong>
-                {scene.icon} {scene.name}
-              </strong>
-              <span style={mutedStyle}>{sceneSummary(scene)}</span>
-            </div>
+        <div style={sceneTileListStyle}>
+          {runningName && <SceneTileRow name={runningName} summary="" running />}
+          {visibleScenes?.map((scene) => (
+            <SceneTileRow key={scene.id} name={scene.name} summary={tileSceneSummary(scene)} />
           ))}
         </div>
       )}
@@ -1208,6 +1250,70 @@ const headingRowStyle = {
 const headingStyle = { margin: "6px 0", fontSize: 30, letterSpacing: "-0.03em" } as const;
 const ledeStyle = { margin: 0, color: "var(--ink-2)", lineHeight: 1.45 } as const;
 const mutedStyle = { color: "var(--ink-2)", fontSize: 13 } as const;
+const sceneCountStyle = { color: "var(--ink-2)", fontSize: 12 } as const;
+const sceneTileListStyle = {
+  display: "flex",
+  flex: 1,
+  flexDirection: "column",
+  overflow: "hidden",
+  borderTop: "1px solid var(--hair)",
+} as const;
+const sceneTileRowStyle = {
+  display: "grid",
+  gridTemplateColumns: "3px minmax(0, 1fr)",
+  alignItems: "center",
+  gap: 12,
+  flex: 1,
+  minHeight: 0,
+  padding: "10px 2px",
+  borderBottom: "1px solid var(--hair)",
+} as const;
+const runningSceneTileRowStyle = {
+  ...sceneTileRowStyle,
+  margin: "6px 0 0",
+  padding: "9px 10px",
+  border: "1px solid color-mix(in srgb, var(--acc) 38%, var(--hair))",
+  borderRadius: 12,
+  background: "color-mix(in srgb, var(--acc) 8%, var(--nest))",
+} as const;
+const sceneTileMarkerStyle = {
+  width: 3,
+  height: 22,
+  borderRadius: 999,
+  background: "var(--hair-2)",
+} as const;
+const runningSceneTileMarkerStyle = {
+  ...sceneTileMarkerStyle,
+  background: "var(--acc)",
+  boxShadow: "0 0 12px color-mix(in srgb, var(--acc) 65%, transparent)",
+} as const;
+const sceneTileNameStyle = {
+  display: "block",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  fontSize: 15,
+  lineHeight: 1.2,
+} as const;
+const sceneTileSummaryStyle = {
+  display: "block",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  color: "var(--ink-2)",
+  fontSize: 12,
+  lineHeight: 1.45,
+} as const;
+const emptyScenesStyle = {
+  flex: 1,
+  display: "grid",
+  placeItems: "center",
+  padding: 24,
+  textAlign: "center",
+  color: "var(--ink-2)",
+  fontSize: 14,
+  lineHeight: 1.5,
+} as const;
 const cardStyle = {
   display: "flex",
   flexDirection: "column",
