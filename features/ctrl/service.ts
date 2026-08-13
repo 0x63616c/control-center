@@ -499,14 +499,16 @@ export async function toggleControl(
  * LAMP_ENTITY_IDS order so it lines up with the lamp entries.
  */
 function sceneColors(scene: LampScene): LightColor[] {
-  if (scene === LampScene.Mood) {
-    return assignMoodColors(LAMP_ENTITY_IDS.length).map((rgb) => ({ xy: rgbToXy(rgb) }));
+  switch (scene) {
+    case LampScene.Mood:
+      return assignMoodColors(LAMP_ENTITY_IDS.length).map((rgb) => ({ xy: rgbToXy(rgb) }));
+    case LampScene.White:
+      return LAMP_ENTITY_IDS.map(() => ({ kelvin: WHITE_SCENE_KELVIN }));
+    case LampScene.Red:
+      return LAMP_ENTITY_IDS.map(() => ({ xy: RED_XY }));
+    case LampScene.Blue:
+      return LAMP_ENTITY_IDS.map(() => ({ xy: BLUE_XY }));
   }
-  if (scene === LampScene.White) {
-    return LAMP_ENTITY_IDS.map(() => ({ kelvin: WHITE_SCENE_KELVIN }));
-  }
-  const rgb = scene === LampScene.Red ? RED_RGB : BLUE_RGB;
-  return LAMP_ENTITY_IDS.map(() => ({ xy: rgbToXy(rgb) }));
 }
 
 /**

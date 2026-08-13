@@ -25,9 +25,9 @@ import {
   heartbeat,
   isLightState,
   LIGHTS,
-  type LightColor,
   LightControl,
   LightKind,
+  lightColorConverged,
   lightControl,
   type MappedHaState,
   mapHaToReported,
@@ -47,37 +47,12 @@ const ENFORCER_DOMAINS = ["light", "switch"] as const;
 // Drift tolerances. HA does not round-trip color/brightness exactly (e.g. it
 // reports [0,0,255] back as [0,2,254]); a per-channel/absolute slack stops the
 // enforcer from fighting its own writes forever. Tuned per team-lead's guidance.
-const RGB_CHANNEL_TOLERANCE = 12;
-const XY_COMPONENT_TOLERANCE = 0.005;
-const KELVIN_TOLERANCE = 250;
 const BRIGHTNESS_TOLERANCE = 3;
 
 // Entity ids the enforcer manages: every LIGHTS entry (lamps + fixtures).
 const MANAGED_ENTITY_IDS: readonly string[] = LIGHTS.map((l) => l.entityId);
 
 /** True when two colors are within HA round-trip tolerance (or both absent). */
-function colorConverged(a: LightColor | undefined, b: LightColor | undefined): boolean {
-  if (!a && !b) return true;
-  if (!a || !b) return false;
-  // A device is in one color mode at a time; rgb-vs-kelvin is a real divergence.
-  const aKelvin = a.kelvin != null;
-  const bKelvin = b.kelvin != null;
-  if (aKelvin !== bKelvin) return false;
-  if (aKelvin && bKelvin) return Math.abs((a.kelvin ?? 0) - (b.kelvin ?? 0)) <= KELVIN_TOLERANCE;
-  const axy = a.xy;
-  const bxy = b.xy;
-  if (axy || bxy) {
-    if (!axy || !bxy) return false;
-    return axy.every(
-      (component, index) => Math.abs(component - bxy[index]) <= XY_COMPONENT_TOLERANCE,
-    );
-  }
-  const ar = a.rgb;
-  const br = b.rgb;
-  if (!ar || !br) return !ar && !br;
-  return ar.every((c, i) => Math.abs(c - br[i]) <= RGB_CHANNEL_TOLERANCE);
-}
-
 /**
  * Tolerant desired-vs-reported convergence check used for DRIFT detection. On/off
  * must match exactly; brightness and color within tolerance. (Exact equality is
@@ -99,7 +74,7 @@ export function lightStateConverged(
   ) {
     return false;
   }
-  return colorConverged(desired.color, reported.color);
+  return lightColorConverged(desired.color, reported.color);
 }
 
 // A device row as the reconciler needs it (subset of the deviceState row).
@@ -308,7 +283,7 @@ async function applyDecision(
           entityId: device.entityId,
           on: decision.desired.on,
           brightness: decision.desired.brightness,
-          // Color logged as kelvin or rgb tuple , never a raw object that could
+          // Color logged as kelvin, xy, or rgb tuple , never a raw object that could
           // contain unexpected fields. Never logs HA_TOKEN or auth headers.
           color:
             decision.desired.color?.kelvin != null

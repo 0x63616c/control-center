@@ -1,7 +1,7 @@
 /**
  * Curated lamp scene palette config.
  *
- * Scenes drive `light.turn_on` calls across every lamp (LAMP_ENTITY_IDS):
+ * Scenes write desired colors for the Enforcer to drive across every lamp:
  *  - white → uniform crisp daylight white via color_temp_kelvin
  *  - red   → uniform red in the Hue-native xy mode
  *  - blue  → uniform blue in the Hue-native xy mode

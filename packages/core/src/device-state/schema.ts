@@ -9,11 +9,22 @@ import { boolean, index, jsonb, pgTable, text, timestamp, uniqueIndex } from "dr
  * Carried in desired/reported state so the DB-authoritative enforcer can drive
  * and detect color drift, not just on/off + brightness (www-7d5b.2.2).
  */
-export interface LightColor {
-  rgb?: [number, number, number];
-  xy?: [number, number];
-  kelvin?: number;
-}
+export type LightColor =
+  | {
+      readonly rgb: readonly [number, number, number];
+      readonly xy?: never;
+      readonly kelvin?: never;
+    }
+  | {
+      readonly xy: readonly [number, number];
+      readonly rgb?: never;
+      readonly kelvin?: never;
+    }
+  | {
+      readonly kelvin: number;
+      readonly rgb?: never;
+      readonly xy?: never;
+    };
 
 export interface DeviceLightState {
   on: boolean;

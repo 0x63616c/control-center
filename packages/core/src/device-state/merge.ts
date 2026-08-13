@@ -1,9 +1,9 @@
+import { lightColorConverged } from "./color";
 import type {
   DeviceClimateState,
   DeviceLightState,
   DeviceSpeakerState,
   DeviceStateValue,
-  LightColor,
 } from "./schema";
 import type { MergedDeviceState } from "./store";
 
@@ -98,36 +98,9 @@ export function climateStateConverged(
 }
 
 // Tolerances for desired-vs-reported convergence (pending detection). HA does not
-// round-trip color/brightness exactly, so a per-channel/absolute slack stops a
-// freshly-actuated light from reading as perpetually "pending". Mirrors the
-// enforcer's drift tolerances (kept local to avoid a circular import , the
-// enforcer imports from this module).
-const RGB_CHANNEL_TOLERANCE = 12;
-const XY_COMPONENT_TOLERANCE = 0.005;
-const KELVIN_TOLERANCE = 250;
+// round-trip color/brightness exactly, so a small slack stops a freshly-actuated
+// light from reading as perpetually "pending".
 const BRIGHTNESS_TOLERANCE = 3;
-
-/** True when two colors are within HA round-trip tolerance (or both absent). */
-function colorConverged(a: LightColor | undefined, b: LightColor | undefined): boolean {
-  if (!a && !b) return true;
-  if (!a || !b) return false;
-  const aKelvin = a.kelvin != null;
-  const bKelvin = b.kelvin != null;
-  if (aKelvin !== bKelvin) return false;
-  if (aKelvin && bKelvin) return Math.abs((a.kelvin ?? 0) - (b.kelvin ?? 0)) <= KELVIN_TOLERANCE;
-  const axy = a.xy;
-  const bxy = b.xy;
-  if (axy || bxy) {
-    if (!axy || !bxy) return false;
-    return axy.every(
-      (component, index) => Math.abs(component - bxy[index]) <= XY_COMPONENT_TOLERANCE,
-    );
-  }
-  const ar = a.rgb;
-  const br = b.rgb;
-  if (!ar || !br) return !ar && !br;
-  return ar.every((c, i) => Math.abs(c - br[i]) <= RGB_CHANNEL_TOLERANCE);
-}
 
 /**
  * Tolerant convergence of the desired fields that are SPECIFIED vs reported.
@@ -154,7 +127,7 @@ function converged(desired: DeviceStateValue, reported: DeviceStateValue): boole
   }
   // Only a SPECIFIED desired color can diverge; an absent desired color means
   // "no color intent" → reflect reported, never perpetually pending.
-  if (desired.color != null && !colorConverged(desired.color, reported.color)) {
+  if (desired.color != null && !lightColorConverged(desired.color, reported.color)) {
     return false;
   }
   return true;
