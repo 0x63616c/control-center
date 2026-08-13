@@ -210,7 +210,7 @@ export const GENERATED_TILES: readonly GeneratedTile[] = [
     rows: 3,
     home: false,
     guestExposed: false,
-    sensitive: true,
+    sensitive: false,
     private: false,
     source: "feature",
   },

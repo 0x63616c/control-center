@@ -6,6 +6,8 @@ import {
   Button,
   CheckboxRow,
   ConfirmDialog,
+  Pill,
+  PillTone,
   Slider,
   Switch,
   TextInput,
@@ -65,56 +67,99 @@ function findAction(
   return scene.actions.find((action) => action.kind === kind) ?? null;
 }
 
-function sceneSummary(scene: Pick<SceneDefinition, "actions">): string {
+function sceneSummaryParts(
+  scene: Pick<SceneDefinition, "actions">,
+  lightingSummary: (lighting: LightingAction) => string,
+): string[] {
   const lighting = findAction(scene, SceneActionKind.Lighting);
   const music = findAction(scene, SceneActionKind.Music);
   const parts: string[] = [];
   if (lighting) {
-    const color =
-      lighting.color.kind === "rgb"
-        ? `rgb(${lighting.color.red}, ${lighting.color.green}, ${lighting.color.blue})`
-        : lighting.color.kind === "temperature"
-          ? `${lighting.color.kelvin}K`
-          : "no color change";
-    parts.push(lighting.power ? `${color} · ${lighting.brightness}%` : "lights off");
+    parts.push(lightingSummary(lighting));
   }
   if (music) {
     parts.push(
       `${music.source.playlists.length} playlist${music.source.playlists.length === 1 ? "" : "s"}`,
     );
   }
-  return parts.join(" · ");
+  return parts;
+}
+
+function sceneSummary(scene: Pick<SceneDefinition, "actions">): string {
+  return sceneSummaryParts(scene, (lighting) => {
+    const color =
+      lighting.color.kind === "rgb"
+        ? `rgb(${lighting.color.red}, ${lighting.color.green}, ${lighting.color.blue})`
+        : lighting.color.kind === "temperature"
+          ? `${lighting.color.kelvin}K`
+          : "no color change";
+    return lighting.power ? `${color} · ${lighting.brightness}%` : "lights off";
+  }).join(" · ");
+}
+
+function tileSceneSummary(scene: Pick<SceneDefinition, "actions">): string {
+  return sceneSummaryParts(scene, (lighting) =>
+    lighting.power ? `Lights ${lighting.brightness}%` : "Lights off",
+  ).join(" · ");
+}
+
+type SceneTileRowProps =
+  | { readonly kind: "running"; readonly name: string }
+  | { readonly kind: "saved"; readonly name: string; readonly summary: string };
+
+function SceneTileRow(props: SceneTileRowProps) {
+  const running = props.kind === "running";
+  return (
+    <div style={running ? runningSceneTileRowStyle : sceneTileRowStyle}>
+      <span style={running ? runningSceneTileMarkerStyle : sceneTileMarkerStyle} />
+      <div style={{ minWidth: 0 }}>
+        <strong style={sceneTileNameStyle}>{props.name}</strong>
+        <span style={sceneTileSummaryStyle}>{running ? "Playing now" : props.summary}</span>
+      </div>
+    </div>
+  );
 }
 
 export function ScenesTileView({
   status,
   scenes,
-  runningName,
+  runningScene,
 }: {
-  status: TileStatus;
-  scenes?: readonly Pick<SceneDefinition, "id" | "name" | "icon" | "actions">[];
-  runningName?: string | null;
+  readonly status: TileStatus;
+  readonly scenes?: readonly Pick<SceneDefinition, "id" | "name" | "icon" | "actions">[];
+  readonly runningScene?: { readonly id: string | null; readonly name: string } | null;
 }) {
+  const visibleScenes = runningScene
+    ? scenes?.filter((scene) => scene.id !== runningScene.id).slice(0, 2)
+    : scenes?.slice(0, 3);
+
   return (
     <Tile padding={18}>
-      <TileHeader icon="sparkles" title="Scenes" right={runningName ? "Running" : undefined} />
+      <TileHeader
+        icon="sparkles"
+        title="Scenes"
+        right={
+          runningScene ? (
+            <Pill tone={PillTone.On}>Live</Pill>
+          ) : scenes ? (
+            <span style={sceneCountStyle}>{scenes.length} saved</span>
+          ) : undefined
+        }
+      />
       {status !== TileStatus.Populated || !scenes ? (
         <div style={{ flex: 1, borderRadius: 14, background: "var(--nest)" }} />
+      ) : scenes.length === 0 ? (
+        <div style={emptyScenesStyle}>Create a scene to set the room in one tap.</div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, overflow: "hidden" }}>
-          {runningName && (
-            <div style={{ ...cardStyle, borderColor: "var(--acc)", padding: 12 }}>
-              <strong>{runningName}</strong>
-              <span style={mutedStyle}>playing now</span>
-            </div>
-          )}
-          {scenes.slice(0, runningName ? 2 : 3).map((scene) => (
-            <div key={scene.id} style={{ ...cardStyle, padding: 12 }}>
-              <strong>
-                {scene.icon} {scene.name}
-              </strong>
-              <span style={mutedStyle}>{sceneSummary(scene)}</span>
-            </div>
+        <div style={sceneTileListStyle}>
+          {runningScene && <SceneTileRow kind="running" name={runningScene.name} />}
+          {visibleScenes?.map((scene) => (
+            <SceneTileRow
+              key={scene.id}
+              kind="saved"
+              name={scene.name}
+              summary={tileSceneSummary(scene)}
+            />
           ))}
         </div>
       )}
@@ -129,7 +174,11 @@ export function ScenesTile() {
     <ScenesTileView
       status={list.status}
       scenes={list.data}
-      runningName={current.data?.run?.sceneName}
+      runningScene={
+        current.data?.run
+          ? { id: current.data.run.sceneId, name: current.data.run.sceneName }
+          : null
+      }
     />
   );
 }
@@ -1208,6 +1257,70 @@ const headingRowStyle = {
 const headingStyle = { margin: "6px 0", fontSize: 30, letterSpacing: "-0.03em" } as const;
 const ledeStyle = { margin: 0, color: "var(--ink-2)", lineHeight: 1.45 } as const;
 const mutedStyle = { color: "var(--ink-2)", fontSize: 13 } as const;
+const sceneCountStyle = { color: "var(--ink-2)", fontSize: 12 } as const;
+const sceneTileListStyle = {
+  display: "flex",
+  flex: 1,
+  flexDirection: "column",
+  overflow: "hidden",
+  borderTop: "1px solid var(--hair)",
+} as const;
+const sceneTileRowStyle = {
+  display: "grid",
+  gridTemplateColumns: "3px minmax(0, 1fr)",
+  alignItems: "center",
+  gap: 12,
+  flex: 1,
+  minHeight: 0,
+  padding: "10px 2px",
+  borderBottom: "1px solid var(--hair)",
+} as const;
+const runningSceneTileRowStyle = {
+  ...sceneTileRowStyle,
+  margin: "6px 0 0",
+  padding: "9px 10px",
+  border: "1px solid color-mix(in srgb, var(--acc) 38%, var(--hair))",
+  borderRadius: 12,
+  background: "color-mix(in srgb, var(--acc) 8%, var(--nest))",
+} as const;
+const sceneTileMarkerStyle = {
+  width: 3,
+  height: 22,
+  borderRadius: 999,
+  background: "var(--hair-2)",
+} as const;
+const runningSceneTileMarkerStyle = {
+  ...sceneTileMarkerStyle,
+  background: "var(--acc)",
+  boxShadow: "0 0 12px color-mix(in srgb, var(--acc) 65%, transparent)",
+} as const;
+const sceneTileNameStyle = {
+  display: "block",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  fontSize: 15,
+  lineHeight: 1.2,
+} as const;
+const sceneTileSummaryStyle = {
+  display: "block",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  color: "var(--ink-2)",
+  fontSize: 12,
+  lineHeight: 1.45,
+} as const;
+const emptyScenesStyle = {
+  flex: 1,
+  display: "grid",
+  placeItems: "center",
+  padding: 24,
+  textAlign: "center",
+  color: "var(--ink-2)",
+  fontSize: 14,
+  lineHeight: 1.5,
+} as const;
 const cardStyle = {
   display: "flex",
   flexDirection: "column",

@@ -1,8 +1,9 @@
 import "@testing-library/jest-dom";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { TileStatus } from "@/components/ui";
 import type { SceneDefinition } from "./model";
-import { SceneLaunchView, ScenePickerView, type SceneResourceView } from "./web";
+import { SceneLaunchView, ScenePickerView, type SceneResourceView, ScenesTileView } from "./web";
 
 afterEach(cleanup);
 
@@ -46,6 +47,15 @@ const resources: SceneResourceView = {
   },
   spotify: { status: "ready", playlists: [] },
 };
+
+describe("Scenes tile", () => {
+  it("shows scene names without their stored emoji icons", () => {
+    const { container } = render(<ScenesTileView status={TileStatus.Populated} scenes={[scene]} />);
+
+    expect(screen.getByText("Explicit")).toBeInTheDocument();
+    expect(container).not.toHaveTextContent("🔥");
+  });
+});
 
 describe("Scenes full-screen picker", () => {
   it("opens a scene for review instead of launching immediately", () => {
