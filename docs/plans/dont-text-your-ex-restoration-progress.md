@@ -381,3 +381,29 @@ Local signing preflight captured 2026-08-14, without uploading a build:
   fetched-state set were committed. It explicitly stated the app was not yet
   deployed and listed close, report history, accessibility/mobile, production,
   signed TestFlight, and external-user proof as remaining.
+
+## Standards review remediation
+
+Captured 2026-08-14 on branch `codex/dont-text-your-ex-restoration`:
+
+- Native Capacitor plugin results and the API invite-code route are parsed at
+  their trust boundaries, with malformed payload and route tests.
+- App restore, Apple sign-in, jar lifecycle, invite, report resolution, slip,
+  create, and profile mutations use discriminated states; route and API status
+  switches are exhaustive.
+- Apple cancellation remains a quiet return to idle, while non-cancellation
+  native failures show an honest, retryable error with Storybook interaction
+  coverage.
+- Store and database-row seams retain nominal `UserId`, `JarId`, `ReportId`, and
+  `InviteCode` types; compile-time assertions protect the public persistence
+  contract.
+- Strict hosted Storybook fixtures were repaired for public user data and valid
+  report identifiers. The atomic-report rollback assertion now ignores the
+  legitimate membership join activity.
+- Implementation is present through commit `be07d1dcb`. Product API and frontend
+  TypeScript checks, targeted Biome checks, full Knip, and the pre-commit and
+  pre-push hooks passed locally.
+- Focused local Vitest processes could not execute because the host has existing
+  uninterruptible esbuild processes. Hosted CI runs `31868853900` (push) and
+  `31868856502` (pull request) are the runtime-test authority for this commit and
+  were still queued/in progress when this entry was written.
