@@ -1,0 +1,82 @@
+# Don’t Text Your Ex — Restoration Execution Ledger
+
+This file is the durable control-plane record for executing
+[`dont-text-your-ex-restoration.md`](./dont-text-your-ex-restoration.md). Update it
+whenever a lane commits work, a decision changes, a blocker appears, or production
+evidence is collected.
+
+## Locked outcome
+
+- App path: `apps/dont-text-your-ex`
+- Recovery source: commit `486a0ebbc`, path `products/text-your-ex`
+- Public host: `dont-text-your-ex.worldwidewebb.co`
+- Kubernetes namespace: `dont-text-your-ex`
+- Preserved Apple bundle ID: `co.worldwidewebb.textyourex`
+- Production target: `home-server` Talos cluster, Pulumi stack `home-server`
+- Completion threshold: deployed to production and every plan definition-of-done
+  item proven with recorded evidence
+
+## Tracking
+
+- Software-factory ticket: `T-39`
+- Branch: `codex/dont-text-your-ex-restoration`
+- Plan-only commit: `b021657b4`
+- Raw recovery commit: `c5e81c91c`
+
+## Delegated lanes
+
+| Lane | Plan steps | Owner | State | Last durable result |
+|---|---:|---|---|---|
+| Application recovery | 1–3 | `app_recovery` | In progress | Exact 116-file tree restored from `486a0ebbc`; modernization in progress |
+| Production infrastructure | 4–6 | `production_infra` | In progress | Confirmed frontend `:80`, API `:8787`, `/api` contract; current-pattern implementation in progress |
+| Apple and release | 7–9 | `apple_release` | In progress | Historical/current inventory in progress; recovered base now available |
+| End-to-end verification | 10 | Unassigned until integration | Pending | Must cover public, cluster, database, Apple, TestFlight, restart, backup, and repeat-deploy evidence |
+
+## Decisions
+
+1. The historical application source is authoritative; current `origin/main`
+   infrastructure and repository conventions are authoritative.
+2. Keep the conversation’s plan text unchanged. Record current-state adaptations
+   and evidence in this ledger.
+3. The old `homelab` wording maps to the current `home-server` production target;
+   never deploy the retired Pulumi `prod` stack.
+4. Use one public host. Route `/` to the frontend and `/api/*` to the API.
+5. Preserve Apple identity `co.worldwidewebb.textyourex`; change the displayed
+   product name to Don’t Text Your Ex.
+6. No secret values may be read or recorded. Presence/key-name checks are allowed.
+
+## Commit and verification log
+
+| Commit | Scope | Checks/evidence |
+|---|---|---|
+| `b021657b4` | Exact plan document only | Pre-commit secret guards; branch pre-push Biome and Knip gates passed |
+| `c5e81c91c` | Raw recovery into `apps/dont-text-your-ex` | Exact source tree recovered from commit `486a0ebbc`; modernization checks pending |
+
+## Production evidence checklist
+
+- [ ] PR reviewed and merged to `main`
+- [ ] GitHub CI green at immutable merge SHA
+- [ ] `home-server` Pulumi deployment green using stack `home-server`
+- [ ] Namespace `dont-text-your-ex` healthy
+- [ ] Frontend and API readiness/health green
+- [ ] CNPG healthy with persistent storage
+- [ ] Database migrations applied
+- [ ] Database write survives pod restart
+- [ ] Backup succeeds and restore evidence is recorded
+- [ ] Public HTTPS host resolves with valid TLS
+- [ ] `/` serves the production frontend externally
+- [ ] `/api/*` reaches the production API externally
+- [ ] Sign in with Apple succeeds end to end
+- [ ] Authenticated session/account persists in Postgres
+- [ ] TestFlight build uploaded to the existing app
+- [ ] External TestFlight group/link available
+- [ ] Non-team Apple ID installs and exercises core functionality
+- [ ] A subsequent deployment succeeds without manual recovery
+
+## Blockers and user-assisted gates
+
+- Apple sign-in/2FA: user is available; open App Store Connect early and pause at
+  the credential or second-factor prompt.
+- External TestFlight verification requires a non-development-team Apple ID and a
+  physical-device install; record who performed the check without recording an
+  email address or other personal data.
