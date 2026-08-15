@@ -16,6 +16,24 @@ type SlipMutationState =
   | { readonly status: "submitting" }
   | { readonly status: "failed" };
 
+function assertNever(value: never): never {
+  throw new Error(`Unexpected slip state: ${JSON.stringify(value)}`);
+}
+
+function slipButtonLabel(state: SlipMutationState): string {
+  switch (state.status) {
+    case "idle":
+    case "confirming":
+      return "Yeah. I did it. 💸";
+    case "submitting":
+      return "Logging slip…";
+    case "failed":
+      return "Retry logging slip";
+    default:
+      return assertNever(state);
+  }
+}
+
 export function LogSlip({
   ctx,
   services = api,
@@ -224,11 +242,7 @@ export function LogSlip({
               and tells the whole jar. No takebacks.
             </p>
             <Btn kind="red" disabled={mutation.status === "submitting"} onClick={doLog}>
-              {mutation.status === "submitting"
-                ? "Logging slip…"
-                : mutation.status === "failed"
-                  ? "Retry logging slip"
-                  : "Yeah. I did it. 💸"}
+              {slipButtonLabel(mutation)}
             </Btn>
             {mutation.status === "failed" && (
               <MutationError>

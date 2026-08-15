@@ -23,6 +23,23 @@ type SignOutState =
   | { readonly status: "submitting" }
   | { readonly status: "failed" };
 
+function assertNever(value: never): never {
+  throw new Error(`Unexpected sign-out state: ${JSON.stringify(value)}`);
+}
+
+function signOutButtonLabel(state: SignOutState): string {
+  switch (state.status) {
+    case "idle":
+      return "Sign out";
+    case "submitting":
+      return "Signing out…";
+    case "failed":
+      return "Try signing out again";
+    default:
+      return assertNever(state);
+  }
+}
+
 export function Profile({
   ctx,
   services = DEFAULT_SERVICES,
@@ -210,11 +227,7 @@ export function Profile({
           opacity: signOutState.status === "submitting" ? 0.7 : 1,
         }}
       >
-        {signOutState.status === "submitting"
-          ? "Signing out…"
-          : signOutState.status === "failed"
-            ? "Try signing out again"
-            : "Sign out"}
+        {signOutButtonLabel(signOutState)}
       </button>
       {signOutState.status === "failed" && (
         <p

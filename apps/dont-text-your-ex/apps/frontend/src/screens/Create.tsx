@@ -14,6 +14,23 @@ type CreateState =
   | { readonly status: "submitting" }
   | { readonly status: "failed" };
 
+function assertNever(value: never): never {
+  throw new Error(`Unexpected create state: ${JSON.stringify(value)}`);
+}
+
+function createButtonLabel(state: CreateState): string {
+  switch (state.status) {
+    case "idle":
+      return "Create jar & invite friends";
+    case "submitting":
+      return "Creating jar…";
+    case "failed":
+      return "Retry creating jar";
+    default:
+      return assertNever(state);
+  }
+}
+
 export function Create({
   ctx,
   services = api,
@@ -90,11 +107,7 @@ export function Create({
         disabled={!name.trim() || createState.status === "submitting"}
         onClick={create}
       >
-        {createState.status === "submitting"
-          ? "Creating jar…"
-          : createState.status === "failed"
-            ? "Retry creating jar"
-            : "Create jar & invite friends"}
+        {createButtonLabel(createState)}
       </Btn>
     </Screen>
   );

@@ -1,4 +1,5 @@
 import { expect, type Page } from "@playwright/test";
+import { AuthResponseSchema } from "../../../contracts";
 
 // The only real login is the native "Sign in with Apple" sheet, which can't run
 // in a headless browser. Tests obtain a session through the non-production
@@ -7,7 +8,7 @@ import { expect, type Page } from "@playwright/test";
 async function devLogin(page: Page, body: { as: "calum" | "new" }): Promise<void> {
   const res = await page.request.post("/api/auth/dev", { data: body });
   expect(res.ok()).toBeTruthy();
-  const { token } = (await res.json()) as { token: string };
+  const { token } = AuthResponseSchema.parse(await res.json());
   await page.addInitScript((t) => localStorage.setItem("tye_token", t), token);
 }
 

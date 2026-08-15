@@ -16,6 +16,24 @@ type ReplaceInviteState =
   | { readonly status: "submitting" }
   | { readonly status: "failed" };
 
+function assertNever(value: never): never {
+  throw new Error(`Unexpected invite replacement state: ${JSON.stringify(value)}`);
+}
+
+function replaceInviteButtonLabel(state: ReplaceInviteState): string {
+  switch (state.status) {
+    case "idle":
+    case "confirming":
+      return "Replace invite now";
+    case "submitting":
+      return "Replacing…";
+    case "failed":
+      return "Retry replacing invite";
+    default:
+      return assertNever(state);
+  }
+}
+
 export function Invite({
   ctx,
   services = api,
@@ -281,11 +299,7 @@ export function Invite({
                   disabled={replaceState.status === "submitting"}
                   onClick={replaceInvite}
                 >
-                  {replaceState.status === "submitting"
-                    ? "Replacing…"
-                    : replaceState.status === "failed"
-                      ? "Retry replacing invite"
-                      : "Replace invite now"}
+                  {replaceInviteButtonLabel(replaceState)}
                 </Btn>
               </div>
             </div>

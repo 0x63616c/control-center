@@ -55,6 +55,23 @@ type SignInState =
   | { readonly status: "submitting" }
   | { readonly status: "failed"; readonly message: string };
 
+function assertNever(value: never): never {
+  throw new Error(`Unexpected sign-in state: ${JSON.stringify(value)}`);
+}
+
+function signInButtonLabel(state: SignInState, sessionExpired: boolean): string {
+  switch (state.status) {
+    case "idle":
+      return sessionExpired ? "Continue with Apple" : "Sign in with Apple";
+    case "submitting":
+      return "Signing in…";
+    case "failed":
+      return "Try Sign in with Apple again";
+    default:
+      return assertNever(state);
+  }
+}
+
 export function Onboarding({
   ctx,
   services = DEFAULT_SERVICES,
@@ -345,13 +362,7 @@ export function Onboarding({
           }}
         >
           <Icon.apple style={{ marginTop: -2 }} />{" "}
-          {signInState.status === "submitting"
-            ? "Signing in…"
-            : signInState.status === "failed"
-              ? "Try Sign in with Apple again"
-              : ctx.sessionExpired
-                ? "Continue with Apple"
-                : "Sign in with Apple"}
+          {signInButtonLabel(signInState, ctx.sessionExpired)}
         </button>
       </div>
     </div>

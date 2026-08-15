@@ -343,11 +343,12 @@ test("owner closes a jar → history survives → invite and mutations stay revo
   if (!token) throw new Error("signed-in session token missing");
   const headers = { Authorization: `Bearer ${token}` };
   const jarsResponse = await request.get("/api/jars", { headers });
-  const jars = (await jarsResponse.json()) as Array<{ id: string; name: string }>;
+  const jars = JarSummarySchema.array().parse(await jarsResponse.json());
   const jar = jars.find((item) => item.name === "Dry January (Failed)");
   if (!jar) throw new Error("owner jar missing");
   const detailResponse = await request.get(`/api/jars/${jar.id}`, { headers });
-  const openDetail = (await detailResponse.json()) as { inviteCode: string };
+  const openDetail = JarDetailSchema.parse(await detailResponse.json());
+  if (!openDetail.inviteCode) throw new Error("owner jar invite missing before close");
 
   await page.getByRole("button", { name: "Close jar" }).click();
   await expect(page.getByRole("alert")).toContainText("Close this jar permanently?");
@@ -383,7 +384,7 @@ test("member confirms leave → loses access while owner-only close stays unavai
   if (!token) throw new Error("signed-in session token missing");
   const headers = { Authorization: `Bearer ${token}` };
   const jarsResponse = await request.get("/api/jars", { headers });
-  const jars = (await jarsResponse.json()) as Array<{ id: string; name: string }>;
+  const jars = JarSummarySchema.array().parse(await jarsResponse.json());
   const jar = jars.find((item) => item.name === "The Group Chat");
   if (!jar) throw new Error("member jar missing");
 

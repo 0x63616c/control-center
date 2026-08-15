@@ -17,6 +17,34 @@ type LifecycleMutationState =
   | { readonly status: "submitting"; readonly action: LifecycleAction }
   | { readonly status: "failed"; readonly action: LifecycleAction };
 
+function assertNever(value: never): never {
+  throw new Error(`Unexpected jar lifecycle state: ${JSON.stringify(value)}`);
+}
+
+function lifecycleActionLabel(action: LifecycleAction, inProgress: boolean): string {
+  switch (action) {
+    case "close":
+      return inProgress ? "Closing…" : "Close jar permanently";
+    case "leave":
+      return inProgress ? "Leaving…" : "Leave jar permanently";
+    default:
+      return assertNever(action);
+  }
+}
+
+function lifecycleButtonLabel(state: LifecycleMutationState, action: LifecycleAction): string {
+  switch (state.status) {
+    case "idle":
+    case "confirming":
+    case "failed":
+      return lifecycleActionLabel(action, false);
+    case "submitting":
+      return lifecycleActionLabel(state.action, true);
+    default:
+      return assertNever(state);
+  }
+}
+
 export function JarDetail({
   ctx,
   services = api,
@@ -379,7 +407,7 @@ export function JarDetail({
                   disabled={lifecycleMutation.status === "submitting"}
                   onClick={closeJar}
                 >
-                  {lifecycleMutation.status === "submitting" ? "Closing…" : "Close jar permanently"}
+                  {lifecycleButtonLabel(lifecycleMutation, "close")}
                 </Btn>
               </div>
             </div>
@@ -430,7 +458,7 @@ export function JarDetail({
                   disabled={lifecycleMutation.status === "submitting"}
                   onClick={leaveJar}
                 >
-                  {lifecycleMutation.status === "submitting" ? "Leaving…" : "Leave jar permanently"}
+                  {lifecycleButtonLabel(lifecycleMutation, "leave")}
                 </Btn>
               </div>
             </div>
