@@ -29,9 +29,9 @@ evidence is collected.
 
 | Lane | Plan steps | Owner | State | Last durable result |
 |---|---:|---|---|---|
-| Application recovery | 1–3 | `app_recovery` | In progress | Exact 116-file tree restored from `486a0ebbc`; modernization in progress |
-| Production infrastructure | 4–6 | `production_infra` | In progress | Confirmed frontend `:80`, API `:8787`, `/api` contract; current-pattern implementation in progress |
-| Apple and release | 7–9 | `apple_release` | In progress | Historical/current inventory in progress; recovered base now available |
+| Application recovery | 1–3 | `app_recovery` | In progress | `79824febc`: workspace/build paths and branding modernized; focused typechecks/build green |
+| Production infrastructure | 4–6 | `production_infra` | Implementation committed | `13b5dc054`: production infra, Cloudflare, CI, backup and health wiring; 413 tests green |
+| Apple and release | 7–9 | `apple_release` | In progress | Auth/native/release edits complete; local Apple/iOS validation in progress |
 | End-to-end verification | 10 | Unassigned until integration | Pending | Must cover public, cluster, database, Apple, TestFlight, restart, backup, and repeat-deploy evidence |
 
 ## Decisions
@@ -53,6 +53,8 @@ evidence is collected.
 |---|---|---|
 | `b021657b4` | Exact plan document only | Pre-commit secret guards; branch pre-push Biome and Knip gates passed |
 | `c5e81c91c` | Raw recovery into `apps/dont-text-your-ex` | Exact source tree recovered from commit `486a0ebbc`; modernization checks pending |
+| `79824febc` | Workspace/build modernization and product branding | API typecheck, frontend typecheck, and frontend production build green; DB contract tests discovered and skipped without `DATABASE_URL` |
+| `13b5dc054` | Production namespace, CNPG, services, probes, backup, immutable-image CI, and one-host Cloudflare routing | Infra typecheck; infra plus Cloudflare suite 413/413; focused 69/69; build-matrix and deploy-gate guards green |
 
 ## Production evidence checklist
 
