@@ -101,6 +101,51 @@ test("production invite path survives profile setup → previews → joins the j
   await expect(page.getByText("The Group Chat")).toBeVisible();
 });
 
+test("owner replaces a seven-day invite → old deep link stays revoked after reload", async ({
+  page,
+  request,
+}) => {
+  await signInAsCalum(page);
+  await openJar(page, "Dry January (Failed)");
+  await page.getByRole("button", { name: "Invite people" }).click();
+  await expect(page.getByRole("status")).toContainText("Expires");
+
+  const token = await page.evaluate(() => localStorage.getItem("tye_token"));
+  if (!token) throw new Error("signed-in session token missing");
+  const headers = { Authorization: `Bearer ${token}` };
+  const jars = (await (await request.get("/api/jars", { headers })).json()) as Array<{
+    id: string;
+    name: string;
+  }>;
+  const jar = jars.find((candidate) => candidate.name === "Dry January (Failed)");
+  if (!jar) throw new Error("owner jar missing");
+  const before = (await (await request.get(`/api/jars/${jar.id}`, { headers })).json()) as {
+    inviteCode: string;
+  };
+
+  await page.getByRole("button", { name: "Replace invite" }).click();
+  await expect(page.getByRole("alert")).toContainText("stop working immediately");
+  await page.getByRole("button", { name: "Replace invite now" }).click();
+
+  const after = (await (await request.get(`/api/jars/${jar.id}`, { headers })).json()) as {
+    inviteCode: string;
+  };
+  expect(after.inviteCode).not.toBe(before.inviteCode);
+  await expect(page.getByText(after.inviteCode)).toBeVisible();
+  expect((await request.get(`/api/jars/code/${before.inviteCode}`, { headers })).status()).toBe(
+    404,
+  );
+
+  await page.reload();
+  await expect(page.getByText(after.inviteCode)).toBeVisible();
+  await page.goto(`/j/${before.inviteCode}`);
+  await expect(page.getByRole("alert")).toHaveText(
+    "No active jar has that code. Check it and retry.",
+  );
+  await page.goto(`/j/${after.inviteCode}`);
+  await expect(page.getByText("Dry January (Failed)")).toBeVisible();
+});
+
 test("settle up is inert with a 'payments coming soon' badge", async ({ page }) => {
   await signInAsCalum(page);
   await openJar(page, "The Group Chat");

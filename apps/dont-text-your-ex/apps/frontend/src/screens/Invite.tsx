@@ -6,9 +6,9 @@ import { canonicalInviteUrl } from "../invite-links";
 import { T } from "../theme";
 import type { JarDetailDTO } from "../types";
 import { Btn, Screen, TopBar } from "../ui";
-import { ErrorState, type FetchedState, LoadingState } from "./fetched-state";
+import { ErrorState, type FetchedState, LoadingState, MutationError } from "./fetched-state";
 
-export type InviteServices = Pick<typeof api, "jar">;
+export type InviteServices = Pick<typeof api, "jar" | "rotateInvite">;
 
 export function Invite({
   ctx,
@@ -21,6 +21,9 @@ export function Invite({
   const [state, setState] = useState<FetchedState<JarDetailDTO>>({ status: "loading" });
   const [retry, setRetry] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [confirmingReplace, setConfirmingReplace] = useState(false);
+  const [replacing, setReplacing] = useState(false);
+  const [replaceError, setReplaceError] = useState(false);
 
   useEffect(() => {
     void retry;
@@ -63,9 +66,20 @@ export function Invite({
   const jar = state.value;
 
   const code = jar.inviteCode;
-  const ready = code != null;
+  const expiresAt = jar.inviteExpiresAt;
+  const ready = code != null && (expiresAt == null || expiresAt > Date.now());
+  const owner = jar.members.some(
+    (member) => member.user.id === ctx.me?.id && member.role === "owner",
+  );
   const link = ready ? canonicalInviteUrl(code) : null;
   const shareText = `Join my "${jar.name}" jar on Don’t Text Your Ex. Code: ${code} -> ${link}`;
+  const expiryLabel =
+    expiresAt == null
+      ? "Expiry unavailable"
+      : `${expiresAt <= Date.now() ? "Expired" : "Expires"} ${new Intl.DateTimeFormat(undefined, {
+          dateStyle: "medium",
+          timeStyle: "short",
+        }).format(expiresAt)}`;
 
   const copy = () => {
     if (code == null) return;
@@ -89,6 +103,21 @@ export function Invite({
       }
     }
     copy();
+  };
+
+  const replaceInvite = async () => {
+    if (replacing) return;
+    setReplacing(true);
+    setReplaceError(false);
+    try {
+      const replacement = await services.rotateInvite(jarId);
+      setState({ status: "loaded", value: replacement });
+      setConfirmingReplace(false);
+    } catch {
+      setReplaceError(true);
+    } finally {
+      setReplacing(false);
+    }
   };
 
   if (jar.closedAt != null || code == null) {
@@ -151,6 +180,7 @@ export function Invite({
         </div>
         <button
           type="button"
+          disabled={!ready}
           onClick={copy}
           style={{
             width: "100%",
@@ -158,7 +188,8 @@ export function Invite({
             border: `1px solid ${T.hair}`,
             borderRadius: 22,
             padding: "28px 16px",
-            cursor: "pointer",
+            cursor: ready ? "pointer" : "not-allowed",
+            opacity: ready ? 1 : 0.72,
             color: T.text,
             display: "flex",
             flexDirection: "column",
@@ -209,12 +240,55 @@ export function Invite({
             maxWidth: 260,
           }}
         >
-          Send the code to your friends. They enter it on "Join a jar" to drag themselves down with
-          you.
+          {ready
+            ? 'Send the code to your friends. They enter it on "Join a jar" to drag themselves down with you.'
+            : "This invite has expired. Replace it to share a new link."}
         </p>
+        <div role="status" style={{ color: ready ? T.sec : T.red, fontSize: 13, fontWeight: 700 }}>
+          {expiryLabel}
+        </div>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10, flexShrink: 0 }}>
+        {owner &&
+          (confirmingReplace ? (
+            <div role="alert" style={{ background: T.surface, borderRadius: 18, padding: 18 }}>
+              <div style={{ fontFamily: T.disp, fontWeight: 800, fontSize: 18 }}>
+                Replace this invite?
+              </div>
+              <p style={{ color: T.sec, lineHeight: 1.45, fontSize: 14 }}>
+                The current code and link will stop working immediately. The replacement expires in
+                seven days.
+              </p>
+              {replaceError && (
+                <MutationError>
+                  The invite wasn’t replaced. The current code still works.
+                </MutationError>
+              )}
+              <div style={{ display: "flex", gap: 10 }}>
+                <Btn kind="dark" disabled={replacing} onClick={() => setConfirmingReplace(false)}>
+                  Cancel
+                </Btn>
+                <Btn kind="red" disabled={replacing} onClick={replaceInvite}>
+                  {replacing
+                    ? "Replacing…"
+                    : replaceError
+                      ? "Retry replacing invite"
+                      : "Replace invite now"}
+                </Btn>
+              </div>
+            </div>
+          ) : (
+            <Btn
+              kind="dark"
+              onClick={() => {
+                setReplaceError(false);
+                setConfirmingReplace(true);
+              }}
+            >
+              Replace invite
+            </Btn>
+          ))}
         <Btn kind="dark" disabled={!ready} onClick={share}>
           Share invite
         </Btn>

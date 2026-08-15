@@ -112,6 +112,8 @@ export const api = {
   jar: (id: JarId) => req(JarDetailSchema, "GET", `/jars/${id}`),
   createJar: (input: CreateJarRequest) => req(JarSummarySchema, "POST", "/jars", input),
   closeJar: (id: JarId) => req(JarDetailSchema, "POST", `/jars/${id}/close`, { confirmed: true }),
+  rotateInvite: (id: JarId) =>
+    req(JarDetailSchema, "POST", `/jars/${id}/invite/rotate`, { confirmed: true }),
   leaveJar: (id: JarId) => req(OkResponseSchema, "POST", `/jars/${id}/leave`, { confirmed: true }),
   jarByCode: (code: string) =>
     req(JarPreviewSchema, "GET", `/jars/code/${encodeURIComponent(code)}`),

@@ -29,6 +29,7 @@ const jar = JarDetailSchema.parse({
   rule: "No contact.",
   defaultCents: 500,
   inviteCode: "TRY123",
+  inviteExpiresAt: Date.now() + 7 * 86_400_000,
   jarTotalCents: 500,
   members: [{ user: meUser, role: "owner", tallyCents: 500, daysClean: 4, shareStreak: true }],
   activity: [],
@@ -124,6 +125,7 @@ export const InviteFetchErrorAndRetry: Story = {
         if (attempts === 1) throw new Error("offline");
         return jar;
       }),
+      rotateInvite: fn(async () => jar),
     };
     return <Invite ctx={context({ name: "invite", jarId: jar.id })} services={services} />;
   },
@@ -132,6 +134,62 @@ export const InviteFetchErrorAndRetry: Story = {
     await expect(await canvas.findByRole("alert")).toHaveTextContent("couldn’t be loaded");
     await userEvent.click(canvas.getByRole("button", { name: "Retry" }));
     await expect(await canvas.findByText("TRY123")).toBeInTheDocument();
+  },
+};
+
+export const InviteOwnerReplacesExpiredLinkAfterRetry: Story = {
+  render: () => {
+    let attempts = 0;
+    const expired = JarDetailSchema.parse({
+      ...jar,
+      inviteExpiresAt: Date.now() - 1,
+    });
+    const services: InviteServices = {
+      jar: fn(async () => expired),
+      rotateInvite: fn(async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("offline");
+        return JarDetailSchema.parse({
+          ...jar,
+          inviteCode: "NEW123",
+          inviteExpiresAt: Date.now() + 7 * 86_400_000,
+        });
+      }),
+    };
+    return <Invite ctx={context({ name: "invite", jarId: jar.id })} services={services} />;
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(await canvas.findByText("TRY123")).toBeInTheDocument();
+    await expect(canvas.getByRole("button", { name: "Share invite" })).toBeDisabled();
+    await userEvent.click(canvas.getByRole("button", { name: "Replace invite" }));
+    await expect(canvas.getByRole("alert")).toHaveTextContent("stop working immediately");
+    await userEvent.click(canvas.getByRole("button", { name: "Replace invite now" }));
+    await expect(await canvas.findByRole("alert")).toHaveTextContent("current code still works");
+    await expect(canvas.getByText("TRY123")).toBeInTheDocument();
+    await userEvent.click(canvas.getByRole("button", { name: "Retry replacing invite" }));
+    await expect(await canvas.findByText("NEW123")).toBeInTheDocument();
+    await expect(canvas.getByRole("button", { name: "Share invite" })).toBeEnabled();
+  },
+};
+
+export const InviteMemberCanShareButCannotReplace: Story = {
+  render: () => {
+    const memberJar = JarDetailSchema.parse({
+      ...jar,
+      members: [{ ...jar.members[0], role: "member" }],
+    });
+    const services: InviteServices = {
+      jar: fn(async () => memberJar),
+      rotateInvite: fn(async () => memberJar),
+    };
+    return <Invite ctx={context({ name: "invite", jarId: jar.id })} services={services} />;
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(await canvas.findByRole("button", { name: "Share invite" })).toBeEnabled();
+    await expect(canvas.queryByRole("button", { name: "Replace invite" })).not.toBeInTheDocument();
+    await expect(canvas.getByRole("status")).toHaveTextContent("Expires");
   },
 };
 
