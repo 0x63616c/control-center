@@ -225,7 +225,9 @@ export function desiredIngressRules(zone: string): DesiredIngressRule[] {
     // frontend fallback or /api requests would be swallowed by the SPA server.
     {
       hostname: `dont-text-your-ex.${zone}`,
-      path: "^/api(?:/.*)?$",
+      // cloudflared compiles this with Go's RE2 engine; non-capturing groups
+      // (`(?:...)`) are unsupported, so keep the optional suffix capturing.
+      path: "^/api(/.*)?$",
       service: "http://api.dont-text-your-ex.svc.cluster.local:8787",
     },
     {

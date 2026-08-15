@@ -74,7 +74,7 @@ describe("desiredIngressRules", () => {
     expect(dontTextYourExRules).toEqual([
       {
         hostname: "dont-text-your-ex.worldwidewebb.co",
-        path: "^/api(?:/.*)?$",
+        path: "^/api(/.*)?$",
         service: "http://api.dont-text-your-ex.svc.cluster.local:8787",
       },
       {
