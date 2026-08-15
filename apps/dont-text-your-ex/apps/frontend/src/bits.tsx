@@ -151,6 +151,25 @@ export function EvidenceShot({
   );
   if (full) return picture;
 
+  if (!onOpen) {
+    return (
+      <div
+        style={{
+          width: w,
+          height: w * 1.5,
+          borderRadius: 16,
+          overflow: "hidden",
+          flexShrink: 0,
+          border: `1px solid ${T.hair}`,
+          background: "#000",
+          position: "relative",
+        }}
+      >
+        {picture}
+      </div>
+    );
+  }
+
   return (
     <button
       type="button"

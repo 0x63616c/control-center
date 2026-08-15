@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { EvidenceViewer, Toggle } from "./bits";
+import { EvidenceShot, EvidenceViewer, Toggle } from "./bits";
 import { AvatarEditor } from "./screens/common";
 import { TopBar } from "./ui";
 
@@ -41,6 +41,22 @@ describe("shared accessibility contracts", () => {
     expect(html).toContain('aria-modal="true"');
     expect(html).toContain('aria-label="Report attachment viewer"');
     expect(html).toContain('aria-label="Close attachment viewer"');
+  });
+
+  it("does not expose an inert attachment thumbnail as an actionable viewer control", () => {
+    const html = renderToStaticMarkup(
+      createElement(EvidenceShot, {
+        image: {
+          mimeType: "image/png",
+          dataUrl:
+            "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+        },
+      }),
+    );
+
+    expect(html).toContain('alt="Report attachment"');
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain("View report attachment");
   });
 
   it("names visual avatar choices and exposes their selected state", () => {
