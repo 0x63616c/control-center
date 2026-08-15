@@ -15,6 +15,8 @@ evidence is collected.
 - Production target: `home-server` Talos cluster, Pulumi stack `home-server`
 - Completion threshold: deployed to production and every plan definition-of-done
   item proven with recorded evidence
+- Completion notification: publish the final verified result to
+  `ntfy.sh/0x63616c` only after all production gates pass
 
 ## Tracking
 
@@ -72,6 +74,7 @@ evidence is collected.
 - [ ] External TestFlight group/link available
 - [ ] Non-team Apple ID installs and exercises core functionality
 - [ ] A subsequent deployment succeeds without manual recovery
+- [ ] Final verified completion notification sent to `ntfy.sh/0x63616c`
 
 ## Baseline before deployment
 
