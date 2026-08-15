@@ -181,6 +181,7 @@ export const CreateReportRequestSchema = z
   });
 
 export const ResolveReportRequestSchema = z.object({ action: z.enum(["own", "deny"]) }).strict();
+export const CloseJarRequestSchema = z.object({ confirmed: z.literal(true) }).strict();
 
 export type AppleAuthRequest = z.infer<typeof AppleAuthRequestSchema>;
 export type UpdateMeRequest = z.infer<typeof UpdateMeRequestSchema>;
@@ -188,6 +189,7 @@ export type CreateJarRequest = z.infer<typeof CreateJarRequestSchema>;
 export type LogSlipRequest = z.infer<typeof LogSlipRequestSchema>;
 export type EvidenceImageInput = z.infer<typeof EvidenceImageInputSchema>;
 export type CreateReportRequest = z.infer<typeof CreateReportRequestSchema>;
+export type CloseJarRequest = z.infer<typeof CloseJarRequestSchema>;
 
 export const UserSchema = z
   .object({
@@ -237,6 +239,8 @@ export const JarSummarySchema = z
     myTallyCents: z.number().int().nonnegative(),
     myDaysClean: z.number().int().min(-1),
     myShareStreak: z.boolean(),
+    closedAt: z.number().int().nullable().default(null),
+    closedBy: UserSchema.nullable().default(null),
   })
   .strict();
 
@@ -265,10 +269,12 @@ export const JarDetailSchema = z
     name: z.string(),
     rule: z.string(),
     defaultCents: cents,
-    inviteCode: InviteCodeSchema,
+    inviteCode: InviteCodeSchema.nullable(),
     jarTotalCents: z.number().int().nonnegative(),
     members: z.array(MemberSchema),
     activity: z.array(ActivitySchema),
+    closedAt: z.number().int().nullable().default(null),
+    closedBy: UserSchema.nullable().default(null),
   })
   .strict();
 

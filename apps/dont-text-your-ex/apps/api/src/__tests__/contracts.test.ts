@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AVATAR_MAX_BYTES,
   AvatarPhotoDataUrlSchema,
+  CloseJarRequestSchema,
   CreateJarRequestSchema,
   CreateReportRequestSchema,
   EVIDENCE_MAX_BYTES,
@@ -33,8 +34,14 @@ describe("request schemas", () => {
     ["slip logging", LogSlipRequestSchema, { amountCents: Number.NaN }],
     ["report creation", CreateReportRequestSchema, { accusedId: "jar_wrong" }],
     ["report resolution", ResolveReportRequestSchema, { action: "delete" }],
+    ["jar closure", CloseJarRequestSchema, { confirmed: false }],
   ])("rejects invalid %s JSON", (_name, schema, raw) => {
     expect(schema.safeParse(raw).success).toBe(false);
+  });
+
+  it("accepts only an explicit close-jar confirmation", () => {
+    expect(CloseJarRequestSchema.parse({ confirmed: true })).toEqual({ confirmed: true });
+    expect(CloseJarRequestSchema.safeParse({}).success).toBe(false);
   });
 });
 

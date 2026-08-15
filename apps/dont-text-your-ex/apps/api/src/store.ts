@@ -74,9 +74,17 @@ type JarRow = {
   default_cents: number;
   currency: string;
   created_by: string;
-  invite_code: string;
+  invite_code: string | null;
   created_at: number;
+  closed_at: number | null;
+  closed_by: string | null;
 };
+
+export class JarClosedError extends Error {
+  constructor() {
+    super("jar is closed");
+  }
+}
 
 const USER_COLORS = [
   "#FF375F",
@@ -264,10 +272,22 @@ async function jarRow(jarId: string): Promise<JarRow | null> {
 }
 
 async function jarRowByCode(code: string): Promise<JarRow | null> {
-  const { rows } = await pool.query<JarRow>("SELECT * FROM jars WHERE invite_code=$1", [
-    code.toUpperCase(),
-  ]);
+  const { rows } = await pool.query<JarRow>(
+    "SELECT * FROM jars WHERE invite_code=$1 AND closed_at IS NULL",
+    [code.toUpperCase()],
+  );
   return rows[0] ?? null;
+}
+
+async function assertJarOpen(jarId: string): Promise<JarRow> {
+  const jar = await jarRow(jarId);
+  if (!jar) throw new Error("jar not found");
+  if (jar.closed_at != null) throw new JarClosedError();
+  return jar;
+}
+
+async function closedByUser(jar: JarRow): Promise<UserDTO | null> {
+  return jar.closed_by ? getUser(jar.closed_by) : null;
 }
 
 async function membersOf(jarId: string): Promise<MembershipRow[]> {
@@ -316,6 +336,8 @@ export async function listJarsForUser(userId: string): Promise<JarSummaryDTO[]> 
         myTallyCents: mine?.tally_cents ?? 0,
         myDaysClean: daysClean(mine?.streak_start_at ?? null),
         myShareStreak: !!mine?.share_streak,
+        closedAt: j.closed_at,
+        closedBy: await closedByUser(j),
       });
     }),
   );
@@ -337,6 +359,8 @@ export async function getJarDetail(jarId: string, meId: string): Promise<JarDeta
     jarTotalCents: await jarTotal(jarId),
     members,
     activity: await activityForJar(jarId, 8),
+    closedAt: j.closed_at,
+    closedBy: await closedByUser(j),
   });
 }
 
@@ -410,7 +434,25 @@ export async function joinJarByCode(
   return { jarId: j.id };
 }
 
+export async function closeJar(
+  jarId: string,
+  userId: string,
+): Promise<{ status: "closed" | "forbidden" | "not_found" }> {
+  const jar = await jarRow(jarId);
+  if (!jar) return { status: "not_found" };
+  const membership = await membershipRow(jarId, userId);
+  if (membership?.role !== "owner") return { status: "forbidden" };
+  if (jar.closed_at == null) {
+    await pool.query(
+      "UPDATE jars SET closed_at=$1, closed_by=$2, invite_code=NULL WHERE id=$3 AND closed_at IS NULL",
+      [now(), userId, jarId],
+    );
+  }
+  return { status: "closed" };
+}
+
 export async function setShareStreak(jarId: string, userId: string, val: boolean): Promise<void> {
+  await assertJarOpen(jarId);
   await pool.query("UPDATE memberships SET share_streak=$1 WHERE jar_id=$2 AND user_id=$3", [
     val ? 1 : 0,
     jarId,
@@ -430,8 +472,7 @@ export async function logSlip(opts: {
   source?: "self" | "report";
   reportedBy?: string | null;
 }): Promise<void> {
-  const j = await jarRow(opts.jarId);
-  if (!j) throw new Error("jar not found");
+  await assertJarOpen(opts.jarId);
   const before = await jarTotal(opts.jarId);
 
   await pool.query(
@@ -485,6 +526,7 @@ export async function createReport(opts: {
   amountCents: number;
   evidence: EvidenceImageInput[];
 }): Promise<ReportDTO> {
+  await assertJarOpen(opts.jarId);
   const rid = id("rpt");
   await pool.query(
     "INSERT INTO reports (id, jar_id, accuser_id, accused_id, note, is_anonymous, amount_cents, status, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
@@ -580,6 +622,7 @@ export async function resolveReport(
 ): Promise<ReportDTO | null> {
   const r = await reportRow(reportId);
   if (!r || r.accused_id !== userId || r.status !== "pending") return null;
+  await assertJarOpen(r.jar_id);
   if (action === "own") {
     await logSlip({
       jarId: r.jar_id,

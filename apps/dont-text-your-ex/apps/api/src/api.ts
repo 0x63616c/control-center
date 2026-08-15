@@ -4,6 +4,7 @@ import { decodeJwt, decodeProtectedHeader } from "jose";
 import {
   AppleAuthRequestSchema,
   AuthDevRequestSchema,
+  CloseJarRequestSchema,
   CreateJarRequestSchema,
   CreateReportRequestSchema,
   JarIdSchema,
@@ -31,6 +32,7 @@ export const api = new Hono<Env>();
 const log = createLogger({ service: "dont-text-your-ex-api" });
 
 const unauth = { error: "not_authenticated" } as const;
+const jarClosed = { error: "jar_closed" } as const;
 
 // ─────────────────────────── health ───────────────────────────
 api.get("/health", (c) => c.json({ ok: true }));
@@ -208,6 +210,21 @@ api.get("/jars/:id", async (c) => {
   return c.json(detail);
 });
 
+api.post("/jars/:id/close", async (c) => {
+  const uid = requireUser(c);
+  if (!uid) return c.json(unauth, 401);
+  const parsedId = parseRequestValue(c, JarIdSchema, c.req.param("id"));
+  if (!parsedId.ok) return parsedId.response;
+  const parsed = await parseRequestJson(c, CloseJarRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  const result = await store.closeJar(parsedId.value, uid);
+  if (result.status === "not_found") return c.json({ error: "not_found" }, 404);
+  if (result.status === "forbidden") return c.json({ error: "owner_required" }, 403);
+  const detail = await store.getJarDetail(parsedId.value, uid);
+  if (!detail) return c.json({ error: "not_found" }, 404);
+  return c.json(detail);
+});
+
 api.post("/jars/:id/share-streak", async (c) => {
   const uid = requireUser(c);
   if (!uid) return c.json(unauth, 401);
@@ -217,7 +234,12 @@ api.post("/jars/:id/share-streak", async (c) => {
   if (!(await store.isMember(jarId, uid))) return c.json({ error: "not_member" }, 403);
   const parsed = await parseRequestJson(c, ShareStreakRequestSchema);
   if (!parsed.ok) return parsed.response;
-  await store.setShareStreak(jarId, uid, parsed.value.value);
+  try {
+    await store.setShareStreak(jarId, uid, parsed.value.value);
+  } catch (error) {
+    if (error instanceof store.JarClosedError) return c.json(jarClosed, 409);
+    throw error;
+  }
   return c.json({ ok: true });
 });
 
@@ -231,7 +253,12 @@ api.post("/jars/:id/slips", async (c) => {
   if (!(await store.isMember(jarId, uid))) return c.json({ error: "not_member" }, 403);
   const parsed = await parseRequestJson(c, LogSlipRequestSchema);
   if (!parsed.ok) return parsed.response;
-  await store.logSlip({ jarId, userId: uid, ...parsed.value, source: "self" });
+  try {
+    await store.logSlip({ jarId, userId: uid, ...parsed.value, source: "self" });
+  } catch (error) {
+    if (error instanceof store.JarClosedError) return c.json(jarClosed, 409);
+    throw error;
+  }
   return c.json(await store.getJarDetail(jarId, uid));
 });
 
@@ -251,15 +278,21 @@ api.post("/jars/:id/reports", async (c) => {
   const detail = await store.getJarDetail(jarId, uid);
   if (!detail) return c.json({ error: "jar_not_found" }, 404);
   const amount = body.amountCents ?? detail.defaultCents;
-  const report = await store.createReport({
-    jarId,
-    accuserId: uid,
-    accusedId: body.accusedId,
-    note: body.note ?? null,
-    anonymous: !!body.anonymous,
-    amountCents: amount,
-    evidence: body.evidence ?? [],
-  });
+  let report: Awaited<ReturnType<typeof store.createReport>>;
+  try {
+    report = await store.createReport({
+      jarId,
+      accuserId: uid,
+      accusedId: body.accusedId,
+      note: body.note ?? null,
+      anonymous: !!body.anonymous,
+      amountCents: amount,
+      evidence: body.evidence ?? [],
+    });
+  } catch (error) {
+    if (error instanceof store.JarClosedError) return c.json(jarClosed, 409);
+    throw error;
+  }
   return c.json(report);
 });
 
@@ -276,7 +309,13 @@ api.post("/reports/:id/resolve", async (c) => {
   if (!parsedId.ok) return parsedId.response;
   const parsed = await parseRequestJson(c, ResolveReportRequestSchema);
   if (!parsed.ok) return parsed.response;
-  const res = await store.resolveReport(parsedId.value, uid, parsed.value.action);
+  let res: Awaited<ReturnType<typeof store.resolveReport>>;
+  try {
+    res = await store.resolveReport(parsedId.value, uid, parsed.value.action);
+  } catch (error) {
+    if (error instanceof store.JarClosedError) return c.json(jarClosed, 409);
+    throw error;
+  }
   if (!res) return c.json({ error: "not_found_or_forbidden" }, 404);
   return c.json(res);
 });

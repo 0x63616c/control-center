@@ -11,6 +11,11 @@ import * as store from "../store";
 // Locally: DATABASE_URL=postgresql://postgres:test@localhost:5432/tye_test bun run test --project dont-text-your-ex-api
 const HAS_DB = !!process.env.DATABASE_URL;
 
+function requireInviteCode(detail: Awaited<ReturnType<typeof store.getJarDetail>>): string {
+  if (!detail?.inviteCode) throw new Error("open jar invite missing");
+  return detail.inviteCode;
+}
+
 beforeAll(async () => {
   if (!HAS_DB) return;
   await runMigrations();
@@ -120,7 +125,7 @@ describe.skipIf(!HAS_DB)("jar lifecycle", () => {
 
     const detail = await store.getJarDetail(jar.id, owner.id);
     if (!detail) throw new Error("created opt-in jar detail missing");
-    await store.joinJarByCode(member.id, detail.inviteCode);
+    await store.joinJarByCode(member.id, requireInviteCode(detail));
 
     const memberJars = await store.listJarsForUser(member.id);
     expect(memberJars.find((entry) => entry.id === jar.id)?.myShareStreak).toBe(false);
@@ -141,7 +146,7 @@ describe.skipIf(!HAS_DB)("jar lifecycle", () => {
     const detail = await store.getJarDetail(jar.id, owner.id);
     expect(detail).not.toBeNull();
     if (!detail) throw new Error("created jar detail missing");
-    const code = detail.inviteCode;
+    const code = requireInviteCode(detail);
 
     const preview = await store.getJarPreviewByCode(code);
     expect(preview?.members).toEqual([expect.objectContaining({ id: owner.id, name: "Frank" })]);
@@ -156,6 +161,108 @@ describe.skipIf(!HAS_DB)("jar lifecycle", () => {
     expect(joinedDetail?.members).toHaveLength(2);
   });
 
+  it("lets only the owner close a jar, persists closure, and revokes its invite", async () => {
+    const owner = await store.createUser({ name: "Close Owner" });
+    const member = await store.createUser({ name: "Close Member" });
+    const jar = await store.createJar({ userId: owner.id, name: "Finite Jar" });
+    const openDetail = await store.getJarDetail(jar.id, owner.id);
+    if (!openDetail?.inviteCode) throw new Error("open jar invite missing");
+    await store.joinJarByCode(member.id, openDetail.inviteCode);
+
+    await expect(store.closeJar(jar.id, member.id)).resolves.toEqual({ status: "forbidden" });
+    const ownerToken = await store.createSession(owner.id);
+    const memberToken = await store.createSession(member.id);
+    const unconfirmed = await buildApp().request(`/api/jars/${jar.id}/close`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${ownerToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmed: false }),
+    });
+    expect(unconfirmed.status).toBe(400);
+    const forbidden = await buildApp().request(`/api/jars/${jar.id}/close`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${memberToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmed: true }),
+    });
+    expect(forbidden.status).toBe(403);
+    const closed = await buildApp().request(`/api/jars/${jar.id}/close`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${ownerToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmed: true }),
+    });
+    expect(closed.status).toBe(200);
+    expect(JarDetailSchema.parse(await closed.json()).closedBy?.id).toBe(owner.id);
+
+    const reloaded = await store.getJarDetail(jar.id, owner.id);
+    expect(reloaded).toEqual(
+      expect.objectContaining({
+        id: jar.id,
+        closedAt: expect.any(Number),
+        closedBy: expect.objectContaining({ id: owner.id }),
+        inviteCode: null,
+      }),
+    );
+    expect(reloaded?.members).toHaveLength(2);
+    expect(await store.getJarPreviewByCode(openDetail.inviteCode)).toBeNull();
+    expect(
+      await store.joinJarByCode(
+        (await store.createUser({ name: "Late Joiner" })).id,
+        openDetail.inviteCode,
+      ),
+    ).toBeNull();
+  });
+
+  it("rejects every jar mutation after closure while preserving history", async () => {
+    const owner = await store.createUser({ name: "Archive Owner" });
+    const accused = await store.createUser({ name: "Archive Accused" });
+    const jar = await store.createJar({ userId: owner.id, name: "Archive Jar" });
+    const detail = await store.getJarDetail(jar.id, owner.id);
+    if (!detail?.inviteCode) throw new Error("open jar invite missing");
+    await store.joinJarByCode(accused.id, detail.inviteCode);
+    await store.logSlip({ jarId: jar.id, userId: owner.id, amountCents: 500 });
+    const report = await store.createReport({
+      jarId: jar.id,
+      accuserId: owner.id,
+      accusedId: accused.id,
+      note: "Before close",
+      anonymous: false,
+      amountCents: 500,
+      evidence: [],
+    });
+    await store.closeJar(jar.id, owner.id);
+
+    const ownerToken = await store.createSession(owner.id);
+    const slipResponse = await buildApp().request(`/api/jars/${jar.id}/slips`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${ownerToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ amountCents: 500 }),
+    });
+    expect(slipResponse.status).toBe(409);
+    expect(await slipResponse.json()).toEqual({ error: "jar_closed" });
+
+    await expect(
+      store.logSlip({ jarId: jar.id, userId: owner.id, amountCents: 500 }),
+    ).rejects.toThrow("jar is closed");
+    await expect(store.setShareStreak(jar.id, owner.id, true)).rejects.toThrow("jar is closed");
+    await expect(
+      store.createReport({
+        jarId: jar.id,
+        accuserId: owner.id,
+        accusedId: accused.id,
+        note: "After close",
+        anonymous: false,
+        amountCents: 500,
+        evidence: [],
+      }),
+    ).rejects.toThrow("jar is closed");
+    await expect(store.resolveReport(report.id, accused.id, "own")).rejects.toThrow(
+      "jar is closed",
+    );
+
+    const history = await store.getJarDetail(jar.id, owner.id);
+    expect(history?.jarTotalCents).toBe(500);
+    expect(history?.activity.length).toBeGreaterThan(0);
+  });
+
   it("hides a member's private streak from other members and rejects outsiders", async () => {
     const owner = await store.createUser({ name: "Streak Owner" });
     const member = await store.createUser({ name: "Jar Member" });
@@ -163,7 +270,7 @@ describe.skipIf(!HAS_DB)("jar lifecycle", () => {
     const jar = await store.createJar({ userId: owner.id, name: "Private Streak Jar" });
     const ownerDetail = await store.getJarDetail(jar.id, owner.id);
     if (!ownerDetail) throw new Error("created private streak jar detail missing");
-    await store.joinJarByCode(member.id, ownerDetail.inviteCode);
+    await store.joinJarByCode(member.id, requireInviteCode(ownerDetail));
     await store.setShareStreak(jar.id, owner.id, false);
     await store.logSlip({ jarId: jar.id, userId: owner.id, amountCents: 500 });
 
@@ -236,7 +343,7 @@ describe.skipIf(!HAS_DB)("reports", () => {
     const jar = await store.createJar({ userId: accuser.id, name: "Report Jar", rule: "" });
     const detail = await store.getJarDetail(jar.id, accuser.id);
     if (!detail) throw new Error("created report jar detail missing");
-    await store.joinJarByCode(accused.id, detail.inviteCode);
+    await store.joinJarByCode(accused.id, requireInviteCode(detail));
 
     const report = await store.createReport({
       jarId: jar.id,
@@ -279,7 +386,7 @@ describe.skipIf(!HAS_DB)("reports", () => {
     const jar = await store.createJar({ userId: accuser.id, name: "Deny Jar", rule: "" });
     const detail = await store.getJarDetail(jar.id, accuser.id);
     if (!detail) throw new Error("created deny jar detail missing");
-    await store.joinJarByCode(accused.id, detail.inviteCode);
+    await store.joinJarByCode(accused.id, requireInviteCode(detail));
 
     const report = await store.createReport({
       jarId: jar.id,
@@ -300,7 +407,7 @@ describe.skipIf(!HAS_DB)("reports", () => {
     const jar = await store.createJar({ userId: accuser.id, name: "Anonymous Report Jar" });
     const detail = await store.getJarDetail(jar.id, accuser.id);
     if (!detail) throw new Error("created anonymous report jar detail missing");
-    await store.joinJarByCode(accused.id, detail.inviteCode);
+    await store.joinJarByCode(accused.id, requireInviteCode(detail));
 
     const report = await store.createReport({
       jarId: jar.id,
@@ -350,7 +457,7 @@ describe.skipIf(!HAS_DB)("activity", () => {
     const jar = await store.createJar({ userId: owner.id, name: "Private Label Jar" });
     const detail = await store.getJarDetail(jar.id, owner.id);
     if (!detail) throw new Error("created private label jar detail missing");
-    await store.joinJarByCode(member.id, detail.inviteCode);
+    await store.joinJarByCode(member.id, requireInviteCode(detail));
     await store.logSlip({
       jarId: jar.id,
       userId: owner.id,
