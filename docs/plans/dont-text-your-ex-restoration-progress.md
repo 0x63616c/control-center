@@ -73,6 +73,18 @@ evidence is collected.
 - [ ] Non-team Apple ID installs and exercises core functionality
 - [ ] A subsequent deployment succeeds without manual recovery
 
+## Baseline before deployment
+
+Captured 2026-08-14 before implementation was merged:
+
+- `dont-text-your-ex` namespace did not exist on the `home-server` cluster.
+- `dont-text-your-ex.worldwidewebb.co` already resolved through Cloudflare to
+  `172.67.154.130` and `104.21.82.73`.
+- Public HTTPS returned Cloudflare `521`, proving the edge name existed but had no
+  reachable origin route yet.
+- GitHub authentication was available for repository and workflow operations; no
+  pull request existed yet for the restoration branch.
+
 ## Blockers and user-assisted gates
 
 - Apple sign-in/2FA: user is available; open App Store Connect early and pause at
