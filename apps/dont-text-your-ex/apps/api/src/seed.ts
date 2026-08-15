@@ -1,5 +1,6 @@
 import { DAY, now, pool } from "./db/index";
 import { runMigrations } from "./db/migrate";
+import { isProduction, shouldResetDatabase } from "./env";
 import { id } from "./ids";
 
 type ActivitySeed =
@@ -167,7 +168,7 @@ const PENDING = {
 
 // Production never seeds. Local dev and tests can call seed() or ensureSeed() explicitly.
 export async function ensureSeed(): Promise<void> {
-  if (process.env.APP_ENV === "production") return; // production starts empty
+  if (isProduction()) return; // production starts empty
   const { rows } = await pool.query<{ n: string }>("SELECT COUNT(*)::text AS n FROM users");
   if (Number(rows[0].n) > 0) return;
   await seed();
@@ -254,7 +255,7 @@ export async function resetAndSeed(): Promise<void> {
 // `bun run seed` or `bun run seed:reset` - explicit local dev reset + seed
 if (import.meta.main) {
   await runMigrations();
-  if (process.env.TYE_RESET === "1") {
+  if (shouldResetDatabase()) {
     await resetAndSeed();
   } else {
     await seed();

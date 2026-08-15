@@ -1,5 +1,5 @@
 import { runMigrations } from "./db/migrate";
-import { requireDatabaseUrl } from "./env";
+import { apiPort, requireDatabaseUrl, shouldResetDatabase } from "./env";
 import { resetAndSeed } from "./seed";
 import { buildApp } from "./server";
 
@@ -9,12 +9,12 @@ requireDatabaseUrl();
 
 await runMigrations();
 // TYE_RESET=1 is only for e2e/dev reset runs. Normal local app boot must stay empty.
-if (process.env.TYE_RESET === "1" && process.env.APP_ENV !== "production") {
+if (shouldResetDatabase()) {
   await resetAndSeed();
 }
 
 const app = buildApp();
 
-const port = Number(process.env.PORT ?? 8787);
+const port = apiPort();
 
 export default { port, fetch: app.fetch };

@@ -1,48 +1,62 @@
 import { readFileSync } from "node:fs";
+import { __resetEnvCache, defineEnv, enumOf, int, pgUrl, str } from "@www/platform/env";
 
-// Build DATABASE_URL from explicit env var (wins) or from a Postgres password file
-// mounted at /run/secrets/POSTGRES_PASSWORD (k8s ESO pattern, same as control-center).
-// Returns undefined when no DB config is present (no DATABASE_URL and no readable
-// password file) so importing the db layer never throws at module load, letting
-// unit suites that skip DB-integration tests load without a Postgres. The api
-// entrypoint calls requireDatabaseUrl() at boot so production still fails fast.
+const ENV = defineEnv({
+  APP_ENV: enumOf("development", "production", "test").default("development"),
+  PORT: int().default(8787),
+  DATABASE_URL: pgUrl().optional(),
+  POSTGRES_PASSWORD_FILE: str().default("/run/secrets/POSTGRES_PASSWORD"),
+  POSTGRES_HOST: str().default("localhost"),
+  POSTGRES_PORT: str().default("5432"),
+  POSTGRES_USER: str().default("postgres"),
+  // Preserve the historical database name so a restored deployment can attach
+  // to its existing data rather than silently provisioning an empty database.
+  POSTGRES_DB: str().default("text_your_ex"),
+  APPLE_BUNDLE_ID: str().default("co.worldwidewebb.textyourex"),
+  TYE_RESET: str().optional(),
+});
+
+// Build DATABASE_URL from an explicit value (local development/tests) or the
+// password file mounted by External Secrets in production.
 export function buildDatabaseUrl(): string | undefined {
-  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
-  const pwFile = process.env.POSTGRES_PASSWORD_FILE ?? "/run/secrets/POSTGRES_PASSWORD";
+  if (ENV.DATABASE_URL) return ENV.DATABASE_URL;
   let password: string;
   try {
-    password = readFileSync(pwFile, "utf-8").trim();
+    password = readFileSync(ENV.POSTGRES_PASSWORD_FILE, "utf-8").trim();
   } catch {
     return undefined;
   }
-  const host = process.env.POSTGRES_HOST ?? "localhost";
-  const port = process.env.POSTGRES_PORT ?? "5432";
-  const user = process.env.POSTGRES_USER ?? "postgres";
-  const name = process.env.POSTGRES_DB ?? "text_your_ex";
-  return `postgresql://${user}:${encodeURIComponent(password)}@${host}:${port}/${name}`;
+  if (!password) return undefined;
+  return `postgresql://${ENV.POSTGRES_USER}:${encodeURIComponent(password)}@${ENV.POSTGRES_HOST}:${ENV.POSTGRES_PORT}/${ENV.POSTGRES_DB}`;
 }
 
-// Apple bundle id used as the `aud` claim when verifying Sign In with Apple
-// identity tokens. Must match the App ID registered in the Apple Developer Portal.
 export function appleBundleId(): string {
-  return process.env.APPLE_BUNDLE_ID ?? "co.worldwidewebb.textyourex";
+  return ENV.APPLE_BUNDLE_ID;
 }
 
-// Boot-time guard: production must have a configured database URL. Call this from
-// the api entrypoint so a misconfigured deploy fails fast instead of lazily.
 export function requireDatabaseUrl(): string {
   const url = buildDatabaseUrl();
   if (!url) {
     throw new Error(
-      "TYE: DATABASE_URL or POSTGRES_PASSWORD_FILE must be set. " +
+      "Don't Text Your Ex: DATABASE_URL or POSTGRES_PASSWORD_FILE must be set. " +
         "For local dev set DATABASE_URL=postgresql://postgres:password@localhost:5432/text_your_ex",
     );
   }
   return url;
 }
 
-// Centralized APP_ENV check so the rest of the app doesn't read process.env
-// directly (biome noProcessEnv); production guards go through this.
 export function isProduction(): boolean {
-  return process.env.APP_ENV === "production";
+  return ENV.APP_ENV === "production";
+}
+
+export function shouldResetDatabase(): boolean {
+  return ENV.TYE_RESET === "1" && !isProduction();
+}
+
+export function apiPort(): number {
+  return ENV.PORT;
+}
+
+export function resetEnvCache(): void {
+  __resetEnvCache(ENV);
 }

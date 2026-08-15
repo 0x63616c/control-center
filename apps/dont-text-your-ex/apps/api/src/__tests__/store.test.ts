@@ -6,7 +6,7 @@ import * as store from "../store";
 // DB-integration suite: requires a real Postgres (DATABASE_URL). The default unit
 // gate has no DB, so these skip and the hooks no-op; the db layer still imports
 // (buildDatabaseUrl returns undefined when unconfigured rather than throwing).
-// Locally: DATABASE_URL=postgresql://postgres:test@localhost:5432/tye_test bun run test --project tye-api
+// Locally: DATABASE_URL=postgresql://postgres:test@localhost:5432/tye_test bun run test --project dont-text-your-ex-api
 const HAS_DB = !!process.env.DATABASE_URL;
 
 beforeAll(async () => {
@@ -74,15 +74,16 @@ describe.skipIf(!HAS_DB)("jar lifecycle", () => {
     const jar = await store.createJar({ userId: owner.id, name: "Shared Jar", rule: "" });
     const detail = await store.getJarDetail(jar.id, owner.id);
     expect(detail).not.toBeNull();
-    const code = detail!.inviteCode;
+    if (!detail) throw new Error("created jar detail missing");
+    const code = detail.inviteCode;
 
     const joiner = await store.createUser({ name: "Grace" });
     const result = await store.joinJarByCode(joiner.id, code);
     expect(result).not.toBeNull();
-    expect(result!.jarId).toBe(jar.id);
+    expect(result?.jarId).toBe(jar.id);
 
-    const members = (await store.getJarDetail(jar.id, owner.id))!.members;
-    expect(members).toHaveLength(2);
+    const joinedDetail = await store.getJarDetail(jar.id, owner.id);
+    expect(joinedDetail?.members).toHaveLength(2);
   });
 });
 
@@ -107,7 +108,8 @@ describe.skipIf(!HAS_DB)("reports", () => {
     const accused = await store.createUser({ name: "Jack" });
     const jar = await store.createJar({ userId: accuser.id, name: "Report Jar", rule: "" });
     const detail = await store.getJarDetail(jar.id, accuser.id);
-    await store.joinJarByCode(accused.id, detail!.inviteCode);
+    if (!detail) throw new Error("created report jar detail missing");
+    await store.joinJarByCode(accused.id, detail.inviteCode);
 
     const report = await store.createReport({
       jarId: jar.id,
@@ -124,11 +126,10 @@ describe.skipIf(!HAS_DB)("reports", () => {
     expect(pending).toHaveLength(1);
 
     const resolved = await store.resolveReport(report.id, accused.id, "own");
-    expect(resolved!.status).toBe("owned");
+    expect(resolved?.status).toBe("owned");
 
     const jars = await store.listJarsForUser(accused.id);
-    const tally = jars.find((j) => j.id === jar.id)!.myTallyCents;
-    expect(tally).toBe(500);
+    expect(jars.find((j) => j.id === jar.id)?.myTallyCents).toBe(500);
   });
 
   it("denies a report", async () => {
@@ -136,7 +137,8 @@ describe.skipIf(!HAS_DB)("reports", () => {
     const accused = await store.createUser({ name: "Leo" });
     const jar = await store.createJar({ userId: accuser.id, name: "Deny Jar", rule: "" });
     const detail = await store.getJarDetail(jar.id, accuser.id);
-    await store.joinJarByCode(accused.id, detail!.inviteCode);
+    if (!detail) throw new Error("created deny jar detail missing");
+    await store.joinJarByCode(accused.id, detail.inviteCode);
 
     const report = await store.createReport({
       jarId: jar.id,
@@ -148,7 +150,7 @@ describe.skipIf(!HAS_DB)("reports", () => {
       evidence: [],
     });
     const denied = await store.resolveReport(report.id, accused.id, "deny");
-    expect(denied!.status).toBe("denied");
+    expect(denied?.status).toBe("denied");
   });
 });
 

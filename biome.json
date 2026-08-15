@@ -79,6 +79,7 @@
       "!**/docs/media-tiles",
       "!**/docs/captive-portal/design",
       "!**/docs/design",
+      "!apps/dont-text-your-ex/docs/design-reference",
       "!**/DerivedData",
       "!**/ios/App/App/public",
       "!**/ios/App/App/capacitor.config.json"
@@ -147,6 +148,7 @@
       "includes": [
         "packages/platform/env/**",
         "packages/platform/test/env.test.ts",
+        "apps/dont-text-your-ex/apps/api/src/__tests__/**",
         "apps/temporal-worker/src/config.test.ts"
       ],
       "linter": {

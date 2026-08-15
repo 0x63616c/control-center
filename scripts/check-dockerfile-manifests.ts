@@ -41,8 +41,7 @@ if (workspaceManifests.length === 0) {
 // --- 2. Dockerfiles that run `bun install --frozen-lockfile` against the full workspace graph ---
 //
 // These are built from the repo root (.), so they must COPY every workspace manifest
-// before the frozen install. Some Dockerfiles use a product-dir context and
-// relative paths (apps/*), so it is intentionally excluded.
+// before the frozen install.
 
 const FULL_INSTALL_DOCKERFILES = [
   "apps/manage/Dockerfile",
@@ -50,6 +49,8 @@ const FULL_INSTALL_DOCKERFILES = [
   "apps/worker/Dockerfile",
   "apps/temporal-worker/Dockerfile",
   "apps/web/Dockerfile",
+  "apps/dont-text-your-ex/Dockerfile.api",
+  "apps/dont-text-your-ex/Dockerfile.frontend",
 ];
 
 // --- 3. Parse each Dockerfile for `COPY <src>/package.json` lines ---

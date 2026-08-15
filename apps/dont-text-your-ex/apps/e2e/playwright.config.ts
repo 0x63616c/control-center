@@ -14,6 +14,7 @@ const WEB_PORT = 15173;
 // CI: a postgres service container sets DATABASE_URL automatically.
 // If DATABASE_URL is unset, the webServer command will fail and tests are skipped.
 const DATABASE_URL =
+  // biome-ignore lint/style/noProcessEnv: Playwright process configuration is a boundary.
   process.env.DATABASE_URL ?? "postgresql://postgres:devpass@localhost:5432/text_your_ex";
 
 export default defineConfig({
