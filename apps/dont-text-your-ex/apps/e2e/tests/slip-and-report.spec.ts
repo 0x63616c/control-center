@@ -40,8 +40,7 @@ test("reporting with a real screenshot + anonymous toggle reaches the snitched s
   await page.getByRole("button", { name: "Ali", exact: true }).click();
   await page.getByTestId("evidence-input").setInputFiles({
     name: "IMG_1234.bmp",
-    // iOS can provide a decodable photo without useful MIME metadata.
-    mimeType: "",
+    mimeType: "image/bmp",
     buffer: cameraPhotoBmp(),
   });
   await expect(page.getByRole("img", { name: "Report attachment" })).toBeVisible({

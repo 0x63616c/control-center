@@ -563,9 +563,10 @@ Captured 2026-08-14 on branch `codex/dont-text-your-ex-restoration`:
   when iOS supplies empty MIME metadata, invalidate pending crops on Cancel or
   Escape, and keep the crop transform in one typed value.
 - The strengthened browser journey decodes and normalizes a real 3000×2000,
-  approximately 18 MiB image with empty MIME metadata. It exercises a two-touch
-  pinch, drag and slider zoom, proves Cancel during delayed encoding cannot save,
-  and verifies the persisted avatar is exactly 512×512. Physical WebView HEIC
+  approximately 18 MiB image, and separately proves a decodable picker result
+  with empty MIME metadata is accepted. It exercises a two-touch pinch, drag and
+  slider zoom, proves Cancel during delayed encoding cannot save, and verifies
+  the persisted avatar is exactly 512×512. Physical WebView HEIC
   decoding remains an explicit iPhone acceptance step because Chromium cannot
   supply authoritative WebKit codec evidence.
 - Immutable hosted CI, independent two-axis review, merge, production rollout,

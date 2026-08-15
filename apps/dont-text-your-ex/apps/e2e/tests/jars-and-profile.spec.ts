@@ -317,7 +317,8 @@ test("profile: edit avatar and toggle share-streak", async ({ page }) => {
 
   await choosePhoto({
     name: "cancel-me.png",
-    mimeType: "image/png",
+    // iOS can provide a decodable photo without useful MIME metadata.
+    mimeType: "",
     buffer: Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
       "base64",
@@ -330,7 +331,11 @@ test("profile: edit avatar and toggle share-streak", async ({ page }) => {
   await page.waitForTimeout(250);
   await expect(page.getByRole("button", { name: "Remove photo" })).toBeHidden();
 
-  await choosePhoto({ name: "IMG_1234.bmp", mimeType: "", buffer: cameraPhotoBmp() });
+  await choosePhoto({
+    name: "IMG_1234.bmp",
+    mimeType: "image/bmp",
+    buffer: cameraPhotoBmp(),
+  });
   crop = page.getByRole("dialog", { name: "Crop profile photo" });
   await expect(crop).toBeVisible();
   const surface = crop.getByTestId("photo-crop-surface");
