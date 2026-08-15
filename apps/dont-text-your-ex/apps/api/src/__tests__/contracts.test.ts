@@ -21,6 +21,8 @@ import { parseEvidenceImageJson, serializeEvidenceImageJson } from "../persisten
 
 const PNG_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+const JPEG_DATA_URL = "data:image/jpeg;base64,/9j/AA==";
+const WEBP_DATA_URL = "data:image/webp;base64,UklGRgAAAABXRUJQ";
 
 describe("request schemas", () => {
   it.each([
@@ -37,14 +39,24 @@ describe("request schemas", () => {
 });
 
 describe("avatar photo boundary", () => {
-  it("accepts a real supported image and rejects arbitrary or spoofed data", () => {
-    expect(AvatarPhotoDataUrlSchema.safeParse(PNG_DATA_URL).success).toBe(true);
+  it.each([
+    PNG_DATA_URL,
+    JPEG_DATA_URL,
+    WEBP_DATA_URL,
+  ])("accepts a supported image with a matching signature", (dataUrl) => {
+    expect(AvatarPhotoDataUrlSchema.safeParse(dataUrl).success).toBe(true);
+  });
+
+  it("rejects arbitrary or MIME-spoofed data", () => {
     expect(AvatarPhotoDataUrlSchema.safeParse("https://example.invalid/avatar.png").success).toBe(
       false,
     );
     expect(
       AvatarPhotoDataUrlSchema.safeParse("data:image/png;base64,R0lGODlhAQABAIAAAAAAAP///yw=")
         .success,
+    ).toBe(false);
+    expect(
+      AvatarPhotoDataUrlSchema.safeParse(PNG_DATA_URL.replace("image/png", "image/jpeg")).success,
     ).toBe(false);
   });
 

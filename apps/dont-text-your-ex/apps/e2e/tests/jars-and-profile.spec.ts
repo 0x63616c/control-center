@@ -72,10 +72,37 @@ test("profile: edit avatar and toggle share-streak", async ({ page }) => {
   // edit the profile avatar
   await page.getByText("Edit", { exact: true }).click();
   await expect(page.getByText("Edit profile")).toBeVisible();
-  await page.getByRole("button", { name: "🫠" }).click();
+
+  const invalidChooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Choose profile photo" }).click();
+  await (await invalidChooser).setFiles({
+    name: "spoofed.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("not a png"),
+  });
+  await expect(page.getByRole("alert")).toHaveText("Choose a real PNG, JPEG, or WebP image.");
+
+  const validChooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Choose profile photo" }).click();
+  await (await validChooser).setFiles({
+    name: "avatar.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64",
+    ),
+  });
+  await expect(page.getByRole("button", { name: "Remove photo" })).toBeVisible();
   await page.getByRole("button", { name: "Save changes" }).click();
   const editProfile = page.getByRole("button", { name: /Edit$/ });
-  await expect(editProfile.locator("div[aria-hidden='true']")).toHaveText("🫠");
+  await expect(editProfile.locator("img")).toHaveAttribute("src", /^data:image\/png;base64,/);
+
+  await page.reload();
+  await page.getByTestId("tab-profile").click();
+  await expect(page.getByRole("button", { name: /Edit$/ }).locator("img")).toHaveAttribute(
+    "src",
+    /^data:image\/png;base64,/,
+  );
 
   // toggle the first jar's share-streak switch and confirm the subtitle flips
   const firstShareRow = page.getByTestId("share-row").first();
