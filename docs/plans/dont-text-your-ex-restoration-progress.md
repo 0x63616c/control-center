@@ -127,6 +127,23 @@ Captured 2026-08-14 before implementation was merged:
 - GitHub authentication was available for repository and workflow operations; no
   pull request existed yet for the restoration branch.
 
+Apple/App Store Connect read-only baseline captured after user sign-in:
+
+- Existing App Store Connect app record: **Text Your Ex**, Apple app id
+  `6778544752`, iOS version `1.0`, status `Prepare for Submission`; no build was
+  attached to that App Store version.
+- TestFlight already contained builds `14` through `23`; build `23` was the newest,
+  `Ready to Submit`, assigned only to the internal `Internal` group, with 3
+  recorded installs.
+- Only the internal TestFlight group was present. No external Friends group or
+  public-link group was visible.
+- Developer App ID `co.worldwidewebb.textyourex` existed and had **Sign In with
+  Apple** enabled as the primary App ID.
+- App Store provisioning profile `match AppStore co.worldwidewebb.textyourex`
+  existed and was valid through `2027-04-12`.
+- This inspection was read-only: no Apple capability, profile, build, group, link,
+  or distribution state was changed.
+
 ## Blockers and user-assisted gates
 
 - Apple sign-in/2FA: user is available; open App Store Connect early and pause at
