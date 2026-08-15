@@ -7,6 +7,7 @@ import {
   CloseJarRequestSchema,
   CreateJarRequestSchema,
   CreateReportRequestSchema,
+  InviteCodeSchema,
   JarIdSchema,
   JoinJarRequestSchema,
   LeaveJarRequestSchema,
@@ -36,6 +37,10 @@ const log = createLogger({ service: "dont-text-your-ex-api" });
 const unauth = { error: "not_authenticated" } as const;
 const jarClosed = { error: "jar_closed" } as const;
 const notFound = { error: "not_found" } as const;
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled state: ${JSON.stringify(value)}`);
+}
 
 // ─────────────────────────── health ───────────────────────────
 api.get("/health", (c) => c.json({ ok: true }));
@@ -186,7 +191,9 @@ api.post("/jars", async (c) => {
 api.get("/jars/code/:code", async (c) => {
   const uid = requireUser(c);
   if (!uid) return c.json(unauth, 401);
-  const preview = await store.getJarPreviewByCode(c.req.param("code"));
+  const parsed = parseRequestValue(c, InviteCodeSchema, c.req.param("code"));
+  if (!parsed.ok) return parsed.response;
+  const preview = await store.getJarPreviewByCode(parsed.value);
   if (!preview) return c.json({ error: "not_found" }, 404);
   return c.json(preview);
 });
@@ -221,8 +228,18 @@ api.post("/jars/:id/close", async (c) => {
   const parsed = await parseRequestJson(c, CloseJarRequestSchema);
   if (!parsed.ok) return parsed.response;
   const result = await store.closeJar(parsedId.value, uid);
-  if (result.status === "not_found" || result.status === "not_member") return c.json(notFound, 404);
-  if (result.status === "forbidden") return c.json({ error: "owner_required" }, 403);
+  const closeStatus = result.status;
+  switch (closeStatus) {
+    case "not_found":
+    case "not_member":
+      return c.json(notFound, 404);
+    case "forbidden":
+      return c.json({ error: "owner_required" }, 403);
+    case "closed":
+      break;
+    default:
+      assertNever(closeStatus);
+  }
   const detail = await store.getJarDetail(parsedId.value, uid);
   if (!detail) return c.json({ error: "not_found" }, 404);
   return c.json(detail);
@@ -236,9 +253,20 @@ api.post("/jars/:id/invite/rotate", async (c) => {
   const parsed = await parseRequestJson(c, RotateInviteRequestSchema);
   if (!parsed.ok) return parsed.response;
   const result = await store.rotateInvite(parsedId.value, uid);
-  if (result.status === "not_found" || result.status === "not_member") return c.json(notFound, 404);
-  if (result.status === "forbidden") return c.json({ error: "owner_required" }, 403);
-  if (result.status === "jar_closed") return c.json(jarClosed, 409);
+  const rotateStatus = result.status;
+  switch (rotateStatus) {
+    case "not_found":
+    case "not_member":
+      return c.json(notFound, 404);
+    case "forbidden":
+      return c.json({ error: "owner_required" }, 403);
+    case "jar_closed":
+      return c.json(jarClosed, 409);
+    case "rotated":
+      break;
+    default:
+      assertNever(rotateStatus);
+  }
   const detail = await store.getJarDetail(parsedId.value, uid);
   if (!detail) return c.json(notFound, 404);
   return c.json(detail);
@@ -252,10 +280,20 @@ api.post("/jars/:id/leave", async (c) => {
   const parsed = await parseRequestJson(c, LeaveJarRequestSchema);
   if (!parsed.ok) return parsed.response;
   const result = await store.leaveJar(parsedId.value, uid);
-  if (result.status === "left") return c.json({ ok: true } as const);
-  if (result.status === "owner_must_close") return c.json({ error: "owner_must_close" }, 409);
-  if (result.status === "jar_closed") return c.json(jarClosed, 409);
-  return c.json(notFound, 404);
+  const leaveStatus = result.status;
+  switch (leaveStatus) {
+    case "left":
+      return c.json({ ok: true } as const);
+    case "owner_must_close":
+      return c.json({ error: "owner_must_close" }, 409);
+    case "jar_closed":
+      return c.json(jarClosed, 409);
+    case "not_found":
+    case "not_member":
+      return c.json(notFound, 404);
+    default:
+      return assertNever(leaveStatus);
+  }
 });
 
 api.post("/jars/:id/share-streak", async (c) => {
