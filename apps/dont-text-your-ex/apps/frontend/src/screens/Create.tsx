@@ -9,6 +9,11 @@ import { MutationError } from "./fetched-state";
 
 export type CreateServices = Pick<typeof api, "createJar">;
 
+type CreateState =
+  | { readonly status: "idle" }
+  | { readonly status: "submitting" }
+  | { readonly status: "failed" };
+
 export function Create({
   ctx,
   services = api,
@@ -19,13 +24,11 @@ export function Create({
   const [name, setName] = useState("");
   const [rule, setRule] = useState("");
   const [cents, setCents] = useState(500);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(false);
+  const [createState, setCreateState] = useState<CreateState>({ status: "idle" });
 
   const create = async () => {
-    if (!name.trim() || busy) return;
-    setBusy(true);
-    setError(false);
+    if (!name.trim() || createState.status === "submitting") return;
+    setCreateState({ status: "submitting" });
     try {
       const jar = await services.createJar({
         name: name.trim(),
@@ -34,8 +37,7 @@ export function Create({
       });
       ctx.nav({ name: "invite", jarId: jar.id, fresh: true });
     } catch {
-      setBusy(false);
-      setError(true);
+      setCreateState({ status: "failed" });
     }
   };
 
@@ -78,13 +80,21 @@ export function Create({
       </div>
 
       <div style={{ flex: 1, minHeight: 24 }} />
-      {error && (
+      {createState.status === "failed" && (
         <MutationError>
           The jar couldn’t be created. Check your connection, then retry with the same details.
         </MutationError>
       )}
-      <Btn kind="gold" disabled={!name.trim() || busy} onClick={create}>
-        {busy ? "Creating jar…" : error ? "Retry creating jar" : "Create jar & invite friends"}
+      <Btn
+        kind="gold"
+        disabled={!name.trim() || createState.status === "submitting"}
+        onClick={create}
+      >
+        {createState.status === "submitting"
+          ? "Creating jar…"
+          : createState.status === "failed"
+            ? "Retry creating jar"
+            : "Create jar & invite friends"}
       </Btn>
     </Screen>
   );

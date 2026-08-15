@@ -18,6 +18,11 @@ const DEFAULT_SERVICES: ProfileServices = {
   getNativeAppInfo,
 };
 
+type SignOutState =
+  | { readonly status: "idle" }
+  | { readonly status: "submitting" }
+  | { readonly status: "failed" };
+
 export function Profile({
   ctx,
   services = DEFAULT_SERVICES,
@@ -29,8 +34,7 @@ export function Profile({
   const [jars, setJars] = useState<JarSummaryDTO[]>([]);
   const [shares, setShares] = useState<Record<string, boolean>>({});
   const [appVersion, setAppVersion] = useState("v1.0");
-  const [signingOut, setSigningOut] = useState(false);
-  const [signOutFailed, setSignOutFailed] = useState(false);
+  const [signOutState, setSignOutState] = useState<SignOutState>({ status: "idle" });
 
   const meId = me?.id;
   useEffect(() => {
@@ -79,13 +83,12 @@ export function Profile({
   };
 
   const signOut = async () => {
-    setSigningOut(true);
-    setSignOutFailed(false);
+    if (signOutState.status === "submitting") return;
+    setSignOutState({ status: "submitting" });
     try {
       await ctx.signOut();
     } catch {
-      setSignOutFailed(true);
-      setSigningOut(false);
+      setSignOutState({ status: "failed" });
     }
   };
 
@@ -192,7 +195,7 @@ export function Profile({
       <button
         type="button"
         onClick={signOut}
-        disabled={signingOut}
+        disabled={signOutState.status === "submitting"}
         style={{
           width: "100%",
           height: 54,
@@ -203,13 +206,17 @@ export function Profile({
           fontFamily: T.disp,
           fontWeight: 700,
           fontSize: 17,
-          cursor: signingOut ? "wait" : "pointer",
-          opacity: signingOut ? 0.7 : 1,
+          cursor: signOutState.status === "submitting" ? "wait" : "pointer",
+          opacity: signOutState.status === "submitting" ? 0.7 : 1,
         }}
       >
-        {signingOut ? "Signing out…" : signOutFailed ? "Try signing out again" : "Sign out"}
+        {signOutState.status === "submitting"
+          ? "Signing out…"
+          : signOutState.status === "failed"
+            ? "Try signing out again"
+            : "Sign out"}
       </button>
-      {signOutFailed && (
+      {signOutState.status === "failed" && (
         <p
           role="alert"
           style={{ textAlign: "center", fontSize: 13, color: T.red, margin: "10px 0 0" }}
