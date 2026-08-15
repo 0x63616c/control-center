@@ -132,7 +132,16 @@ export function IOSDevice({
         }}
       />
       {/* status bar */}
-      <div style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 10 }}>
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          zIndex: 10,
+          pointerEvents: "none",
+        }}
+      >
         <IOSStatusBar dark />
       </div>
       {/* content */}
