@@ -137,6 +137,8 @@ test("owner replaces a seven-day invite → old deep link stays revoked after re
   );
 
   await page.reload();
+  await openJar(page, "Dry January (Failed)");
+  await page.getByRole("button", { name: "Invite people" }).click();
   await expect(page.getByText(after.inviteCode)).toBeVisible();
   await page.goto(`/j/${before.inviteCode}`);
   await expect(page.getByRole("alert")).toHaveText(
