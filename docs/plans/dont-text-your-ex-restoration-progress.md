@@ -5,6 +5,16 @@ This file is the durable control-plane record for executing
 whenever a lane commits work, a decision changes, a blocker appears, or production
 evidence is collected.
 
+The expanded product-completion contract is
+[`dont-text-your-ex-v1-release.md`](./dont-text-your-ex-v1-release.md). Read and
+maintain both documents; infrastructure completion without v1 feature and QA
+acceptance is not done.
+
+The v1 document requires feature-by-feature QA. Record the responsible
+implementation agent, independent QA agent, expected behavior, automated and
+hands-on evidence, defects/fixes, and final result for every capability before
+marking it complete.
+
 ## Locked outcome
 
 - App path: `apps/dont-text-your-ex`
