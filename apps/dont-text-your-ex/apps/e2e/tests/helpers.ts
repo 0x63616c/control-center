@@ -11,11 +11,16 @@ async function devLogin(page: Page, body: { as: "calum" | "new" }): Promise<void
   await page.addInitScript((t) => localStorage.setItem("tye_token", t), token);
 }
 
+async function waitForHomeReady(page: Page): Promise<void> {
+  await expect(page.getByText("Your jars", { exact: true })).toBeVisible();
+  await expect(page.getByText("Loading your jars…", { exact: true })).toBeHidden();
+}
+
 // Sign in as the seeded primary user (Calum), who already has jars + slips.
 export async function signInAsCalum(page: Page): Promise<void> {
   await devLogin(page, { as: "calum" });
   await page.goto("/");
-  await expect(page.getByText("Your jars")).toBeVisible();
+  await waitForHomeReady(page);
 }
 
 // Sign in as a brand-new user (no name yet) and complete profile setup, mirroring
@@ -26,7 +31,7 @@ export async function signUpNew(page: Page, name = "Maker"): Promise<void> {
   await expect(page.getByText("Make it official")).toBeVisible();
   await page.getByRole("textbox", { name: "Your name" }).fill(name);
   await page.getByRole("button", { name: "Start the shame →" }).click();
-  await expect(page.getByText("Your jars")).toBeVisible();
+  await waitForHomeReady(page);
 }
 
 export async function signUpNewFromInvite(
