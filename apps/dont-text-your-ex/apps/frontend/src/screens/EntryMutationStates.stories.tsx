@@ -137,6 +137,43 @@ export const InviteFetchErrorAndRetry: Story = {
   },
 };
 
+export const InviteLoading: Story = {
+  render: () => {
+    const services: InviteServices = {
+      jar: fn(() => new Promise<never>(() => {})),
+      rotateInvite: fn(async () => jar),
+    };
+    return <Invite ctx={context({ name: "invite", jarId: jar.id })} services={services} />;
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByRole("status")).toHaveTextContent("Loading invite…");
+    await expect(canvas.queryByText("TRY123")).not.toBeInTheDocument();
+  },
+};
+
+export const InviteMissingExpiryCannotBeShared: Story = {
+  render: () => {
+    const unverifiable = JarDetailSchema.parse({
+      ...jar,
+      inviteExpiresAt: null,
+    });
+    const services: InviteServices = {
+      jar: fn(async () => unverifiable),
+      rotateInvite: fn(async () => jar),
+    };
+    return <Invite ctx={context({ name: "invite", jarId: jar.id })} services={services} />;
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(await canvas.findByText("Expiry unavailable")).toBeInTheDocument();
+    await expect(canvas.getByRole("button", { name: "Share invite" })).toBeDisabled();
+    await expect(canvas.getByRole("button", { name: "Done" })).toBeDisabled();
+    await expect(canvas.getByRole("button", { name: "Replace invite" })).toBeEnabled();
+    await expect(canvas.getByText(/can’t be verified/)).toBeInTheDocument();
+  },
+};
+
 export const InviteOwnerReplacesExpiredLinkAfterRetry: Story = {
   render: () => {
     let attempts = 0;
@@ -190,6 +227,8 @@ export const InviteMemberCanShareButCannotReplace: Story = {
     await expect(await canvas.findByRole("button", { name: "Share invite" })).toBeEnabled();
     await expect(canvas.queryByRole("button", { name: "Replace invite" })).not.toBeInTheDocument();
     await expect(canvas.getByRole("status")).toHaveTextContent("Expires");
+    await userEvent.click(canvas.getByRole("button", { name: /TRY123.*Tap to copy code/ }));
+    await expect(canvas.getByText("Copied to clipboard")).toBeInTheDocument();
   },
 };
 

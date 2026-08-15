@@ -67,7 +67,7 @@ export function Invite({
 
   const code = jar.inviteCode;
   const expiresAt = jar.inviteExpiresAt;
-  const ready = code != null && (expiresAt == null || expiresAt > Date.now());
+  const ready = code != null && expiresAt != null && expiresAt > Date.now();
   const owner = jar.members.some(
     (member) => member.user.id === ctx.me?.id && member.role === "owner",
   );
@@ -242,7 +242,9 @@ export function Invite({
         >
           {ready
             ? 'Send the code to your friends. They enter it on "Join a jar" to drag themselves down with you.'
-            : "This invite has expired. Replace it to share a new link."}
+            : expiresAt == null
+              ? "This invite can’t be verified. Replace it to share a new link."
+              : "This invite has expired. Replace it to share a new link."}
         </p>
         <div role="status" style={{ color: ready ? T.sec : T.red, fontSize: 13, fontWeight: 700 }}>
           {expiryLabel}
