@@ -171,8 +171,8 @@ export async function seed(): Promise<void> {
   }
   for (const j of JARS) {
     await pool.query(
-      "INSERT INTO jars (id, name, rule, default_cents, currency, created_by, invite_code, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-      [j.id, j.name, j.rule, j.defaultCents, "usd", j.createdBy, j.code, t],
+      "INSERT INTO jars (id, name, rule, default_cents, currency, created_by, invite_code, invite_expires_at, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+      [j.id, j.name, j.rule, j.defaultCents, "usd", j.createdBy, j.code, t + 7 * DAY, t],
     );
     for (const m of j.members) {
       await pool.query(
