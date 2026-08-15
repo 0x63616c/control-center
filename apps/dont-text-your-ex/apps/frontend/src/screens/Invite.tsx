@@ -159,8 +159,11 @@ export function Invite({ ctx }: { ctx: AppCtx<RouteFor<"invite">> }) {
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10, flexShrink: 0 }}>
-        <Btn kind="gold" disabled={!ready} onClick={share}>
+        <Btn kind="dark" disabled={!ready} onClick={share}>
           Share invite
+        </Btn>
+        <Btn kind="gold" disabled={!ready} onClick={() => ctx.nav({ name: "jar", jarId }, true)}>
+          {fresh ? "Take me to my jar" : "Done"}
         </Btn>
       </div>
     </Screen>

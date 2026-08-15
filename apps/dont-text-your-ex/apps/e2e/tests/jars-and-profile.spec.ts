@@ -43,7 +43,7 @@ test("profile: edit avatar and toggle share-streak", async ({ page }) => {
   await page.getByRole("button", { name: "🫠" }).click();
   await page.getByRole("button", { name: "Save changes" }).click();
   const editProfile = page.getByRole("button", { name: /Edit$/ });
-  await expect(editProfile.locator("[aria-hidden='true']")).toHaveText("🫠");
+  await expect(editProfile.locator("div[aria-hidden='true']")).toHaveText("🫠");
 
   // toggle the first jar's share-streak switch and confirm the subtitle flips
   const firstShareRow = page.getByTestId("share-row").first();
