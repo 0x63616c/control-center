@@ -1,44 +1,93 @@
-# Publishing to TestFlight (iOS)
+# Publishing Don’t Text Your Ex to TestFlight
 
-Text Your Ex is a Vite + React web app wrapped in a **Capacitor** iOS shell. The
-native app bundles the built web assets offline and talks to a hosted backend.
+Don’t Text Your Ex is a Vite + React application wrapped in a Capacitor iOS
+shell. The native bundle contains the frontend and talks to the production API
+over the public internet.
 
-## Layout
+## Identity and production origin
 
-- `capacitor.config.ts` - appId `co.worldwidewebb.textyourex`, `webDir: web/dist`.
-- `ios/` - Capacitor-generated Xcode project (`ios/App/App.xcodeproj`, scheme `App`).
-- `Fastfile` / `Gemfile` - fastlane lanes for signing + TestFlight upload.
-- `.github/workflows/release-ios.yml` - CI: tag `vX.Y.Z` → build → TestFlight.
+- Display name: **Don’t Text Your Ex**
+- Preserved bundle ID: `co.worldwidewebb.textyourex`
+- Xcode project: `ios/App/App.xcodeproj`
+- Scheme: `App`
+- Production origin: `https://dont-text-your-ex.worldwidewebb.co`
+- API route: `https://dont-text-your-ex.worldwidewebb.co/api/*`
 
-## The API base (important)
+The native `ASAuthorizationAppleIDProvider` flow produces an identity token
+whose audience is the bundle ID. The API verifies that audience and Apple’s
+issuer/signature. This native flow does not use a web Service ID or redirect
+URL; any future browser-based Apple flow would require those separately.
 
-The web client calls `/api` (relative, same-origin) on the web. The bundled iOS
-app has no same-origin server, so it must point at an absolute backend via the
-build-time env `VITE_API_BASE` (see `web/src/api.ts`).
+## Local verification
 
-- **Web build:** leave `VITE_API_BASE` unset → relative `/api`.
-- **iOS build:** set `VITE_API_BASE` to the hosted API, e.g.
-  `https://api.textyourex.app`.
+From `apps/dont-text-your-ex`:
 
-There is no hosted backend yet. Before the first real TestFlight build, set the
-GitHub Actions **repository variable** `VITE_API_BASE` (Settings → Secrets and
-variables → Actions → Variables) to the deployed API URL. CI threads it into the
-web build automatically.
-
-## Local loop
-
-```
-bun run ios:sync   # build web + copy into the iOS project
-bun run ios:open   # open in Xcode
-```
-
-## Shipping
-
-One-time signing setup is handled by the `publish-setup` skill (mints certs into
-1Password, syncs them to GitHub secrets). Once that's done:
-
-```
-git tag v0.1.0 && git push --tags
+```sh
+VITE_API_BASE=https://dont-text-your-ex.worldwidewebb.co bun run build
+VITE_API_BASE=https://dont-text-your-ex.worldwidewebb.co bunx cap sync ios
+xcodebuild -project ios/App/App.xcodeproj -scheme App \
+  -configuration Debug -sdk iphonesimulator \
+  -destination 'generic/platform=iOS Simulator' \
+  CODE_SIGNING_ALLOWED=NO build
 ```
 
-CI builds, signs, and uploads to TestFlight. No further manual steps.
+This proves the TypeScript bundle, Capacitor synchronization, and Swift bridge
+compile together. It does not prove signing, the App ID capability, an upload,
+or a real Sign in with Apple exchange.
+
+## Signing and upload
+
+`.github/workflows/dont-text-your-ex-ios.yml` builds and uploads on relevant
+pushes to `main`, on manual dispatch, and monthly to keep a TestFlight build
+fresh. The workflow:
+
+1. obtains the existing App Store Connect and match credentials from the
+   encrypted repository vault;
+2. builds the frontend with the fixed production origin;
+3. synchronizes Capacitor;
+4. checks the bundle ID, display name, entitlements, and Xcode signing wiring;
+5. signs with the shared match repository;
+6. verifies the Sign in with Apple entitlement in both the signed app and the
+   provisioning profile before uploading.
+
+Routine builds use match in read-only mode. After changing an App ID capability,
+manually dispatch the workflow once with `regenerate_profile=true`; subsequent
+builds should return to the read-only default.
+
+## External TestFlight
+
+The Fastfile provides two repository-controlled pieces:
+
+```sh
+bundle exec fastlane ios setup_external_testflight
+```
+
+This idempotently creates the external `Friends` group and requests a public
+link. It changes App Store Connect state and therefore requires live release
+credentials.
+
+Then manually dispatch **Don’t Text Your Ex iOS** with
+`distribute_external=true`. The release waits for processing, associates the
+build with `Friends`, submits Beta App Review when required, and notifies the
+external testers. An external-distribution error remains a failed release even
+if the binary itself uploaded successfully.
+
+Apple may require Beta App Review before it exposes the build or public link.
+Completion therefore requires live evidence from App Store Connect plus a clean
+installation and sign-in by an Apple ID that is not on the development team.
+
+## Production acceptance evidence
+
+Do not mark the iOS restoration complete until all of the following are
+observed:
+
+- App ID `co.worldwidewebb.textyourex` has Sign in with Apple enabled.
+- The current distribution profile carries
+  `com.apple.developer.applesignin = Default`.
+- A newly uploaded build is processed and available in TestFlight.
+- The signed app installs and launches on a physical iPhone.
+- Sign in with Apple reaches the production `/api/auth/apple` endpoint.
+- The resulting account/session persists in production Postgres.
+- The primary application flows work over cellular or another external network.
+- The `Friends` external group has the build and a non-team Apple ID can install
+  it, either by invite or the public link.

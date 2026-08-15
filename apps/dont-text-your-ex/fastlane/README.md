@@ -39,6 +39,14 @@ Enable Sign In with Apple on the App ID + refresh the profile
 
 Create an internal TestFlight group + add the account holder as a tester
 
+### ios setup_external_testflight
+
+```sh
+[bundle exec] fastlane ios setup_external_testflight
+```
+
+Create the external Friends group and enable its public TestFlight link
+
 ### ios release
 
 ```sh
