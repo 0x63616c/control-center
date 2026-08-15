@@ -1,5 +1,10 @@
 # There is one product; captive-portal becomes the guest-wifi App
 
+> **Partially superseded by [ADR-0013](./0013-dont-text-your-ex-colocated-independent-product.md).**
+> The captive-portal fold remains in force. The later, explicitly requested
+> Don’t Text Your Ex restoration supersedes only the repository-wide claim that
+> there can be no second colocated Product.
+
 The `captive-portal` product dissolves into `control-center`. There is one Product going forward.
 The guest surface — today an entire separate product with its own cluster, database, and DNS
 name — becomes a portal-only guest listener inside the control-center API image: a second HTTP
