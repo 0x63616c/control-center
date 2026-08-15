@@ -49,7 +49,7 @@ const resolved = ReportSchema.parse({
 });
 const denied = ReportSchema.parse({
   ...resolved,
-  id: "rpt_denied_history",
+  id: "rpt_deniedhistory",
   note: "Denied, but still part of the jar history.",
   status: "denied",
   evidence: [],

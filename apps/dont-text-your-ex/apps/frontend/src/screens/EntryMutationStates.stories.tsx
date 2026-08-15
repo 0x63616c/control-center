@@ -22,7 +22,14 @@ const me = MeSchema.parse({
   exes: ["Taylor"],
   phone: null,
 });
-const meUser = UserSchema.parse(me);
+const meUser = UserSchema.parse({
+  id: me.id,
+  name: me.name,
+  color: me.color,
+  emoji: me.emoji,
+  photo: me.photo,
+  exes: me.exes,
+});
 const jar = JarDetailSchema.parse({
   id: "jar_entryqa",
   name: "Recovery jar",
