@@ -84,6 +84,8 @@ jobs:
           grep -q 'appId: "co.worldwidewebb.textyourex"' capacitor.config.ts
           grep -q 'PRODUCT_BUNDLE_IDENTIFIER = co.worldwidewebb.textyourex;' ios/App/App.xcodeproj/project.pbxproj
           grep -q 'com.apple.developer.applesignin' ios/App/App/App.entitlements
+          grep -q 'com.apple.developer.associated-domains' ios/App/App/App.entitlements
+          grep -q 'applinks:dont-text-your-ex.worldwidewebb.co' ios/App/App/App.entitlements
           grep -q 'CODE_SIGN_ENTITLEMENTS = App/App.entitlements;' ios/App/App.xcodeproj/project.pbxproj
           grep -q 'Don’t Text Your Ex' ios/App/App/Info.plist
 

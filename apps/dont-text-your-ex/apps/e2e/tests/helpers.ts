@@ -29,6 +29,19 @@ export async function signUpNew(page: Page, name = "Maker"): Promise<void> {
   await expect(page.getByText("Your jars")).toBeVisible();
 }
 
+export async function signUpNewFromInvite(
+  page: Page,
+  code: string,
+  name = "Invitee",
+): Promise<void> {
+  await devLogin(page, { as: "new" });
+  await page.goto(`/j/${code}`);
+  await expect(page.getByText("Make it official")).toBeVisible();
+  await page.getByRole("textbox", { name: "Your name" }).fill(name);
+  await page.getByRole("button", { name: "Start the shame →" }).click();
+  await expect(page.getByText("Join jar")).toBeVisible();
+}
+
 export async function openJar(page: Page, name: string) {
   await page.locator(`[data-testid="jar-card"][data-jar-name="${name}"]`).click();
   await expect(page.getByTestId("jar-pot")).toBeVisible();

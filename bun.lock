@@ -47,6 +47,7 @@
       "name": "@dont-text-your-ex/app",
       "version": "0.0.0",
       "dependencies": {
+        "@capacitor/app": "^8.1.0",
         "@capacitor/core": "^8.4.0",
         "@capacitor/ios": "^8.4.0",
         "zod": "^4.4.2",
@@ -81,6 +82,7 @@
     "apps/dont-text-your-ex/apps/frontend": {
       "name": "@dont-text-your-ex/frontend",
       "dependencies": {
+        "@capacitor/app": "^8.1.0",
         "@capacitor/core": "^8.4.0",
         "react": "^18.3.1",
         "react-dom": "^18.3.1",

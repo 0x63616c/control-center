@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { AppCtx, RouteFor } from "../appctx";
 import { Icon } from "../icons";
+import { canonicalInviteUrl } from "../invite-links";
 import { T } from "../theme";
 import type { JarDetailDTO } from "../types";
 import { Btn, Screen, TopBar } from "../ui";
@@ -25,8 +26,8 @@ export function Invite({ ctx }: { ctx: AppCtx<RouteFor<"invite">> }) {
   }, [jarId]);
 
   const code = jar?.inviteCode ?? "······";
-  const link = `textyourex.app/j/${code}`;
   const ready = !!jar?.inviteCode;
+  const link = ready ? canonicalInviteUrl(code) : null;
   const shareText = `Join my "${jar?.name ?? "guilt"}" jar on Don’t Text Your Ex. Code: ${code} -> ${link}`;
 
   const copy = () => {
@@ -42,7 +43,7 @@ export function Invite({ ctx }: { ctx: AppCtx<RouteFor<"invite">> }) {
         await navigator.share({
           title: "Don’t Text Your Ex",
           text: shareText,
-          url: `https://${link}`,
+          url: link ?? undefined,
         });
         return;
       } catch {

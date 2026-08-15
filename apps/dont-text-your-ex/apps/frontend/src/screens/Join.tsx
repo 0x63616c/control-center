@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import type { AppCtx, RouteFor } from "../appctx";
 import { money, T } from "../theme";
@@ -7,18 +7,17 @@ import { AvatarStack, Btn, Screen, TopBar } from "../ui";
 import { inputStyle } from "./common";
 
 export function Join({ ctx }: { ctx: AppCtx<RouteFor<"join">> }) {
-  const [code, setCode] = useState("");
+  const [code, setCode] = useState(ctx.route.code ?? "");
   const [preview, setPreview] = useState<JarPreviewDTO | null>(null);
   const [members, setMembers] = useState<UserDTO[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const doPreview = async () => {
-    if (code.length < 4 || busy) return;
+  const loadPreview = useCallback(async (candidate: string) => {
     setBusy(true);
     setErr(null);
     try {
-      const p = await api.jarByCode(code);
+      const p = await api.jarByCode(candidate);
       setPreview(p);
       // hydrate member avatars
       try {
@@ -32,6 +31,15 @@ export function Join({ ctx }: { ctx: AppCtx<RouteFor<"join">> }) {
     } finally {
       setBusy(false);
     }
+  }, []);
+
+  useEffect(() => {
+    if (ctx.route.code) void loadPreview(ctx.route.code);
+  }, [ctx.route.code, loadPreview]);
+
+  const doPreview = async () => {
+    if (code.length < 4 || busy) return;
+    await loadPreview(code);
   };
 
   const join = async () => {
@@ -39,8 +47,12 @@ export function Join({ ctx }: { ctx: AppCtx<RouteFor<"join">> }) {
     setBusy(true);
     try {
       const { jarId } = await api.joinJar(code);
+      if (window.location.pathname.startsWith("/j/")) {
+        window.history.replaceState({}, "", "/");
+      }
       ctx.nav({ name: "jar", jarId }, true);
     } catch {
+      setErr("This invite could not be joined. Check the code and try again.");
       setBusy(false);
     }
   };
@@ -96,6 +108,11 @@ export function Join({ ctx }: { ctx: AppCtx<RouteFor<"join">> }) {
         <Btn kind="gold" disabled={busy} onClick={join}>
           Join the shame
         </Btn>
+        {err && (
+          <div style={{ color: T.red, fontSize: 14, textAlign: "center", marginTop: 12 }}>
+            {err}
+          </div>
+        )}
       </Screen>
     );
   }

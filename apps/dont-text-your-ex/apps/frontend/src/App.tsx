@@ -1,3 +1,4 @@
+import { App as NativeApp } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import { useCallback, useEffect, useState } from "react";
 import { api, getToken, setToken } from "./api";
@@ -5,6 +6,7 @@ import type { AppCtx, Route, TabName } from "./appctx";
 import { MoneyBurst } from "./bits";
 import { resolveDevice } from "./device";
 import { Icon } from "./icons";
+import { inviteCodeFromPath, inviteCodeFromUniversalLink } from "./invite-links";
 import { IOSDevice } from "./iosframe";
 import * as S from "./screens";
 import { T } from "./theme";
@@ -152,7 +154,37 @@ export default function App() {
   const [burst, setBurst] = useState(false);
   const [hasPendingReport, setHasPendingReport] = useState(false);
   const [sessionExpired, setSessionExpired] = useState(false);
+  const [pendingInviteCode, setPendingInviteCode] = useState<string | null>(() =>
+    inviteCodeFromPath(window.location.pathname),
+  );
   const scale = useFit();
+
+  useEffect(() => {
+    const readWebPath = () => {
+      const code = inviteCodeFromPath(window.location.pathname);
+      if (code) setPendingInviteCode(code);
+    };
+    window.addEventListener("popstate", readWebPath);
+
+    let removeNativeListener: (() => Promise<void>) | undefined;
+    if (NATIVE) {
+      void NativeApp.getLaunchUrl().then((launch) => {
+        const code = launch?.url ? inviteCodeFromUniversalLink(launch.url) : null;
+        if (code) setPendingInviteCode(code);
+      });
+      void NativeApp.addListener("appUrlOpen", ({ url }) => {
+        const code = inviteCodeFromUniversalLink(url);
+        if (code) setPendingInviteCode(code);
+      }).then((handle) => {
+        removeNativeListener = () => handle.remove();
+      });
+    }
+
+    return () => {
+      window.removeEventListener("popstate", readWebPath);
+      if (removeNativeListener) void removeNativeListener();
+    };
+  }, []);
 
   const refreshPending = useCallback(() => {
     api
@@ -184,6 +216,13 @@ export default function App() {
       })
       .finally(() => setBooted(true));
   }, [refreshPending]);
+
+  useEffect(() => {
+    if (!booted || !me?.name?.trim() || !pendingInviteCode) return;
+    setTabState("home");
+    setStack([{ name: "join", code: pendingInviteCode }]);
+    setPendingInviteCode(null);
+  }, [booted, me, pendingInviteCode]);
 
   const nav = useCallback((route: Route, replaceRoot = false) => {
     setStack((stack) => (replaceRoot ? [route] : [...stack, route]));

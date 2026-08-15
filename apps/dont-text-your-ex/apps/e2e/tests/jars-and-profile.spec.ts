@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { openJar, signInAsCalum, signUpNew } from "./helpers";
+import { openJar, signInAsCalum, signUpNew, signUpNewFromInvite } from "./helpers";
 
 // Each test starts from the seeded baseline (non-prod reset seam) so
 // absolute assertions on seeded values stay order-independent.
@@ -21,6 +21,18 @@ test("create a jar → invite screen shows a code → land in the new jar", asyn
   await page.getByRole("button", { name: "Take me to my jar" }).click();
   await expect(page.getByText("My Test Jar")).toBeVisible();
   await expect(page.getByTestId("jar-pot")).toHaveText("$0");
+});
+
+test("production invite path survives profile setup → previews → joins the jar", async ({
+  page,
+}) => {
+  await signUpNewFromInvite(page, "XEX24K");
+  await expect(page.getByText("The Group Chat")).toBeVisible();
+  await expect(page.getByText("$25")).toBeVisible();
+  await page.getByRole("button", { name: "Join the shame" }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByTestId("jar-pot")).toBeVisible();
+  await expect(page.getByText("The Group Chat")).toBeVisible();
 });
 
 test("settle up is inert with a 'payments coming soon' badge", async ({ page }) => {
