@@ -15,6 +15,9 @@ evidence is collected.
 - Production target: `home-server` Talos cluster, Pulumi stack `home-server`
 - Completion threshold: deployed to production and every plan definition-of-done
   item proven with recorded evidence
+- V1 product threshold: every recovered v1 feature is implemented and usable,
+  including reporting/evidence flows; design-to-implementation review and basic
+  mobile QA must find no unresolved release blockers
 - Completion notification: publish the final verified result to
   `ntfy.sh/0x63616c` only after all production gates pass
 
@@ -135,6 +138,24 @@ Review-fix commits:
 - [ ] A subsequent deployment succeeds without manual recovery
 - [ ] Final verified completion notification sent to `ntfy.sh/0x63616c`
 
+## V1 feature-completeness checklist
+
+- [ ] Apple and development authentication
+- [ ] First-run profile setup and later profile/avatar editing
+- [ ] Create, join, invite to, and leave/close jars
+- [ ] Home and activity states for empty and populated accounts
+- [ ] Log, confirm, and deny slips
+- [ ] Report members anonymously or named
+- [ ] Attach, validate, persist, retrieve, and render real screenshot evidence
+- [ ] Enforce note-or-image reporting invariant
+- [ ] View report/evidence threads and resolve report outcomes
+- [ ] Settle/close the jar lifecycle
+- [ ] Persist and revoke sessions/logout correctly
+- [ ] Authorization and jar/user isolation
+- [ ] Loading, error, validation, and empty states
+- [ ] Basic mobile pointer, layout, accessibility, and navigation QA
+- [ ] Recovered design vs implementation audit has no unresolved v1 blocker
+
 ## Baseline before deployment
 
 Captured 2026-08-14 before implementation was merged:
@@ -181,3 +202,6 @@ Apple/App Store Connect read-only baseline captured after user sign-in:
 - 70%: sent as event `lkiiKJPjkOJr` after all seven review-fix categories had
   committed changes. It stated that re-review and isolated CI were next and that
   production was not yet deployed.
+- 72%: sent as event `JTWgCfQFy016` when the completion goal expanded to include
+  every recovered v1 product feature and a full design/basic-QA audit. It noted
+  that hosted browser CI was still iterating and production remained pending.
