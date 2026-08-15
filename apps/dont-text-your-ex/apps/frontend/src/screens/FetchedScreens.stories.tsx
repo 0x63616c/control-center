@@ -52,6 +52,20 @@ const report = ReportSchema.parse({
   evidence: [],
 });
 
+const closedJar = JarDetailSchema.parse({
+  ...jar,
+  inviteCode: null,
+  closedAt: 1_724_000_000_000,
+  closedBy: meUser,
+});
+
+const memberJar = JarDetailSchema.parse({
+  ...jar,
+  members: jar.members.map((member) => ({ ...member, role: "member" as const })),
+});
+
+const leaveJarRequest = fn(async () => ({ ok: true as const }));
+
 function context<
   Name extends RouteFor<"home" | "activity" | "jar" | "settle" | "confirmDeny">["name"],
 >(route: RouteFor<Name>): AppCtx<RouteFor<Name>> {
@@ -125,7 +139,11 @@ export const JarDetailLoading: Story = {
   render: () => (
     <JarDetail
       ctx={context({ name: "jar", jarId: jar.id })}
-      services={{ jar: fn(() => never<Awaited<ReturnType<JarDetailServices["jar"]>>>()) }}
+      services={{
+        jar: fn(() => never<Awaited<ReturnType<JarDetailServices["jar"]>>>()),
+        closeJar: fn(async () => jar),
+        leaveJar: fn(async () => ({ ok: true as const })),
+      }}
     />
   ),
   play: async ({ canvasElement }) => {
@@ -223,6 +241,8 @@ export const JarDetailErrorAndRetry: Story = {
         if (failure) throw new Error(failure);
         return jar;
       }),
+      closeJar: fn(async () => jar),
+      leaveJar: fn(async () => ({ ok: true as const })),
     };
     return <JarDetail ctx={context({ name: "jar", jarId: jar.id })} services={services} />;
   },
@@ -240,6 +260,69 @@ export const JarDetailErrorAndRetry: Story = {
       }
     }
     await expect(await canvas.findByText("Recovery jar")).toBeInTheDocument();
+  },
+};
+
+export const JarOwnerClosesWithConfirmation: Story = {
+  render: () => {
+    const services: JarDetailServices = {
+      jar: fn(async () => jar),
+      closeJar: fn(async () => closedJar),
+      leaveJar: fn(async () => ({ ok: true as const })),
+    };
+    return <JarDetail ctx={context({ name: "jar", jarId: jar.id })} services={services} />;
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(await canvas.findByRole("button", { name: "Close jar" }));
+    await expect(canvas.getByRole("alert")).toHaveTextContent("Close this jar permanently?");
+    await userEvent.click(canvas.getByRole("button", { name: "Close jar permanently" }));
+    await expect(await canvas.findByRole("status")).toHaveTextContent("history is read-only");
+    await expect(canvas.queryByRole("button", { name: "I texted my ex" })).not.toBeInTheDocument();
+    await expect(canvas.queryByRole("button", { name: "Invite people" })).not.toBeInTheDocument();
+    await expect(canvas.queryByRole("button", { name: "Leave jar" })).not.toBeInTheDocument();
+  },
+};
+
+export const ClosedJarKeepsHistoryReadOnly: Story = {
+  render: () => (
+    <JarDetail
+      ctx={context({ name: "jar", jarId: jar.id })}
+      services={{
+        jar: fn(async () => closedJar),
+        closeJar: fn(async () => closedJar),
+        leaveJar: fn(async () => ({ ok: true as const })),
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(await canvas.findByRole("status")).toHaveTextContent("closed by Alex");
+    await expect(canvas.getByText("WALL OF SHAME", { exact: false })).toBeInTheDocument();
+    await expect(canvas.queryByRole("button", { name: "Report" })).not.toBeInTheDocument();
+    await expect(canvas.queryByRole("button", { name: "Close jar" })).not.toBeInTheDocument();
+  },
+};
+
+export const MemberLeavesWithConfirmation: Story = {
+  render: () => (
+    <JarDetail
+      ctx={context({ name: "jar", jarId: jar.id })}
+      services={{
+        jar: fn(async () => memberJar),
+        closeJar: fn(async () => closedJar),
+        leaveJar: leaveJarRequest,
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    leaveJarRequest.mockClear();
+    const canvas = within(canvasElement);
+    await userEvent.click(await canvas.findByRole("button", { name: "Leave jar" }));
+    await expect(canvas.getByRole("alert")).toHaveTextContent("Leave this jar?");
+    await userEvent.click(canvas.getByRole("button", { name: "Leave jar permanently" }));
+    await expect(leaveJarRequest).toHaveBeenCalledWith(jar.id);
+    await expect(canvas.queryByRole("button", { name: "Close jar" })).not.toBeInTheDocument();
   },
 };
 

@@ -6,9 +6,9 @@ import { money, streakLabel, T } from "../theme";
 import type { JarDetailDTO } from "../types";
 import { Avatar, Btn, IconBtn, Screen, TopBar } from "../ui";
 import { ActivityRow, useCountUp } from "./common";
-import { ErrorState, type FetchedState, LoadingState } from "./fetched-state";
+import { ErrorState, type FetchedState, LoadingState, MutationError } from "./fetched-state";
 
-export type JarDetailServices = Pick<typeof api, "jar">;
+export type JarDetailServices = Pick<typeof api, "jar" | "closeJar" | "leaveJar">;
 
 export function JarDetail({
   ctx,
@@ -20,6 +20,12 @@ export function JarDetail({
   const { jarId } = ctx.route;
   const [state, setState] = useState<FetchedState<JarDetailDTO>>({ status: "loading" });
   const [retry, setRetry] = useState(0);
+  const [confirmingClose, setConfirmingClose] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const [closeError, setCloseError] = useState(false);
+  const [confirmingLeave, setConfirmingLeave] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const [leaveError, setLeaveError] = useState(false);
 
   useEffect(() => {
     void retry;
@@ -75,6 +81,37 @@ export function JarDetail({
 
   const meId = ctx.me?.id;
   const feed = jar.activity.slice(0, 4);
+  const closed = jar.closedAt != null;
+  const owner = jar.members.some((member) => member.user.id === meId && member.role === "owner");
+  const activeMember = jar.members.some((member) => member.user.id === meId);
+
+  const closeJar = async () => {
+    if (closing || closed || !owner) return;
+    setClosing(true);
+    setCloseError(false);
+    try {
+      const updated = await services.closeJar(jar.id);
+      setState({ status: "loaded", value: updated });
+      setConfirmingClose(false);
+    } catch {
+      setCloseError(true);
+    } finally {
+      setClosing(false);
+    }
+  };
+
+  const leaveJar = async () => {
+    if (leaving || closed || owner || !activeMember) return;
+    setLeaving(true);
+    setLeaveError(false);
+    try {
+      await services.leaveJar(jar.id);
+      ctx.nav({ name: "home" }, true);
+    } catch {
+      setLeaveError(true);
+      setLeaving(false);
+    }
+  };
 
   return (
     <Screen>
@@ -82,11 +119,34 @@ export function JarDetail({
         onBack={() => ctx.back()}
         title={jar.name}
         trailing={
-          <IconBtn onClick={() => ctx.nav({ name: "invite", jarId: jar.id })}>
-            <Icon.share style={{ width: 17, height: 17 }} />
-          </IconBtn>
+          closed ? undefined : (
+            <IconBtn
+              aria-label="Invite people"
+              onClick={() => ctx.nav({ name: "invite", jarId: jar.id })}
+            >
+              <Icon.share style={{ width: 17, height: 17 }} />
+            </IconBtn>
+          )
         }
       />
+
+      {closed && (
+        <div
+          role="status"
+          style={{
+            border: `1px solid ${T.hair}`,
+            borderRadius: 16,
+            background: T.surface2,
+            color: T.sec,
+            padding: "13px 15px",
+            marginBottom: 18,
+            lineHeight: 1.45,
+          }}
+        >
+          This jar was closed{jar.closedBy ? ` by ${jar.closedBy.name}` : ""}. Its history is
+          read-only.
+        </div>
+      )}
 
       {/* HERO pot */}
       <div style={{ textAlign: "center", padding: "14px 0 6px" }}>
@@ -129,32 +189,36 @@ export function JarDetail({
       </div>
 
       {/* primary action */}
-      <div style={{ margin: "24px 0 10px" }}>
-        <Btn
-          kind="red"
-          icon={<span style={{ fontSize: 20 }}>💔</span>}
-          onClick={() => ctx.nav({ name: "logSlip", jarId: jar.id })}
-        >
-          I texted my ex
-        </Btn>
-      </div>
-      <div style={{ display: "flex", gap: 10, marginBottom: 26 }}>
-        <Btn
-          kind="dark"
-          style={{ height: 50, fontSize: 16 }}
-          icon={<Icon.flag style={{ width: 17, height: 17 }} />}
-          onClick={() => ctx.nav({ name: "report", jarId: jar.id })}
-        >
-          Report
-        </Btn>
-        <Btn
-          kind="dark"
-          style={{ height: 50, fontSize: 16 }}
-          onClick={() => ctx.nav({ name: "settle", jarId: jar.id })}
-        >
-          Settle up
-        </Btn>
-      </div>
+      {!closed && (
+        <>
+          <div style={{ margin: "24px 0 10px" }}>
+            <Btn
+              kind="red"
+              icon={<span style={{ fontSize: 20 }}>💔</span>}
+              onClick={() => ctx.nav({ name: "logSlip", jarId: jar.id })}
+            >
+              I texted my ex
+            </Btn>
+          </div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 26 }}>
+            <Btn
+              kind="dark"
+              style={{ height: 50, fontSize: 16 }}
+              icon={<Icon.flag style={{ width: 17, height: 17 }} />}
+              onClick={() => ctx.nav({ name: "report", jarId: jar.id })}
+            >
+              Report
+            </Btn>
+            <Btn
+              kind="dark"
+              style={{ height: 50, fontSize: 16 }}
+              onClick={() => ctx.nav({ name: "settle", jarId: jar.id })}
+            >
+              Settle up
+            </Btn>
+          </div>
+        </>
+      )}
 
       {/* WALL OF SHAME */}
       <div
@@ -289,6 +353,95 @@ export function JarDetail({
           </div>
         )}
       </div>
+
+      {!closed && owner && (
+        <div style={{ borderTop: `1px solid ${T.hair}`, marginTop: 30, paddingTop: 22 }}>
+          {confirmingClose ? (
+            <div role="alert" style={{ background: T.surface, borderRadius: 18, padding: 18 }}>
+              <div style={{ fontFamily: T.disp, fontWeight: 800, fontSize: 18 }}>
+                Close this jar permanently?
+              </div>
+              <p style={{ color: T.sec, lineHeight: 1.45, fontSize: 14 }}>
+                Everyone can still read its history, but invites and every jar action will stop.
+              </p>
+              {closeError && <MutationError>The jar couldn’t be closed. Try again.</MutationError>}
+              <div style={{ display: "flex", gap: 10 }}>
+                <Btn kind="dark" disabled={closing} onClick={() => setConfirmingClose(false)}>
+                  Cancel
+                </Btn>
+                <Btn kind="red" disabled={closing} onClick={closeJar}>
+                  {closing ? "Closing…" : "Close jar permanently"}
+                </Btn>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setCloseError(false);
+                setConfirmingClose(true);
+              }}
+              style={{
+                width: "100%",
+                border: "none",
+                background: "transparent",
+                color: T.red,
+                fontFamily: T.ui,
+                fontWeight: 700,
+                fontSize: 14,
+                cursor: "pointer",
+                padding: 12,
+              }}
+            >
+              Close jar
+            </button>
+          )}
+        </div>
+      )}
+      {!closed && activeMember && !owner && (
+        <div style={{ borderTop: `1px solid ${T.hair}`, marginTop: 30, paddingTop: 22 }}>
+          {confirmingLeave ? (
+            <div role="alert" style={{ background: T.surface, borderRadius: 18, padding: 18 }}>
+              <div style={{ fontFamily: T.disp, fontWeight: 800, fontSize: 18 }}>
+                Leave this jar?
+              </div>
+              <p style={{ color: T.sec, lineHeight: 1.45, fontSize: 14 }}>
+                You’ll lose access. Your existing tally and activity stay in the jar’s history.
+              </p>
+              {leaveError && <MutationError>The jar couldn’t be left. Try again.</MutationError>}
+              <div style={{ display: "flex", gap: 10 }}>
+                <Btn kind="dark" disabled={leaving} onClick={() => setConfirmingLeave(false)}>
+                  Cancel
+                </Btn>
+                <Btn kind="red" disabled={leaving} onClick={leaveJar}>
+                  {leaving ? "Leaving…" : "Leave jar permanently"}
+                </Btn>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setLeaveError(false);
+                setConfirmingLeave(true);
+              }}
+              style={{
+                width: "100%",
+                border: "none",
+                background: "transparent",
+                color: T.red,
+                fontFamily: T.ui,
+                fontWeight: 700,
+                fontSize: 14,
+                cursor: "pointer",
+                padding: 12,
+              }}
+            >
+              Leave jar
+            </button>
+          )}
+        </div>
+      )}
     </Screen>
   );
 }

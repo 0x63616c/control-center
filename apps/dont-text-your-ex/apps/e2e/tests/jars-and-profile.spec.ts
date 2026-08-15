@@ -118,3 +118,70 @@ test("activity tab shows the carnage feed", async ({ page }) => {
   await expect(page.getByText("caved", { exact: false }).first()).toBeVisible();
   await expect(page.getByText("That's all the carnage for now.")).toBeVisible();
 });
+
+test("owner closes a jar → history survives → invite and mutations stay revoked", async ({
+  page,
+  request,
+}) => {
+  await signInAsCalum(page);
+  await openJar(page, "Dry January (Failed)");
+
+  const token = await page.evaluate(() => localStorage.getItem("tye_token"));
+  if (!token) throw new Error("signed-in session token missing");
+  const headers = { Authorization: `Bearer ${token}` };
+  const jarsResponse = await request.get("/api/jars", { headers });
+  const jars = (await jarsResponse.json()) as Array<{ id: string; name: string }>;
+  const jar = jars.find((item) => item.name === "Dry January (Failed)");
+  if (!jar) throw new Error("owner jar missing");
+  const detailResponse = await request.get(`/api/jars/${jar.id}`, { headers });
+  const openDetail = (await detailResponse.json()) as { inviteCode: string };
+
+  await page.getByRole("button", { name: "Close jar" }).click();
+  await expect(page.getByRole("alert")).toContainText("Close this jar permanently?");
+  await page.getByRole("button", { name: "Close jar permanently" }).click();
+  await expect(page.getByRole("status")).toContainText("history is read-only");
+  await expect(page.getByText("WALL OF SHAME", { exact: false })).toBeVisible();
+  await expect(page.getByRole("button", { name: "I texted my ex" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Invite people" })).toHaveCount(0);
+
+  await page.reload();
+  await openJar(page, "Dry January (Failed)");
+  await expect(page.getByRole("status")).toContainText("history is read-only");
+  expect((await request.get(`/api/jars/code/${openDetail.inviteCode}`, { headers })).status()).toBe(
+    404,
+  );
+  const slip = await request.post(`/api/jars/${jar.id}/slips`, {
+    headers: { ...headers, "Content-Type": "application/json" },
+    data: { amountCents: 500 },
+  });
+  expect(slip.status()).toBe(409);
+  expect(await slip.json()).toEqual({ error: "jar_closed" });
+});
+
+test("member confirms leave → loses access while owner-only close stays unavailable", async ({
+  page,
+  request,
+}) => {
+  await signInAsCalum(page);
+  await openJar(page, "The Group Chat");
+  await expect(page.getByRole("button", { name: "Close jar" })).toHaveCount(0);
+
+  const token = await page.evaluate(() => localStorage.getItem("tye_token"));
+  if (!token) throw new Error("signed-in session token missing");
+  const headers = { Authorization: `Bearer ${token}` };
+  const jarsResponse = await request.get("/api/jars", { headers });
+  const jars = (await jarsResponse.json()) as Array<{ id: string; name: string }>;
+  const jar = jars.find((item) => item.name === "The Group Chat");
+  if (!jar) throw new Error("member jar missing");
+
+  await page.getByRole("button", { name: "Leave jar" }).click();
+  await expect(page.getByRole("alert")).toContainText("Leave this jar?");
+  await page.getByRole("button", { name: "Leave jar permanently" }).click();
+  await expect(page.getByText("Your jars")).toBeVisible();
+  await expect(page.getByTestId("jar-card").filter({ hasText: "The Group Chat" })).toHaveCount(0);
+  expect((await request.get(`/api/jars/${jar.id}`, { headers })).status()).toBe(403);
+
+  await page.reload();
+  await expect(page.getByText("Your jars")).toBeVisible();
+  await expect(page.getByTestId("jar-card").filter({ hasText: "The Group Chat" })).toHaveCount(0);
+});

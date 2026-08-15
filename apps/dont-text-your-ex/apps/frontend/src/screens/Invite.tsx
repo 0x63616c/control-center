@@ -53,6 +53,23 @@ export function Invite({ ctx }: { ctx: AppCtx<RouteFor<"invite">> }) {
     copy();
   };
 
+  if (jar?.closedAt != null) {
+    return (
+      <Screen style={{ display: "flex", flexDirection: "column", paddingBottom: 44 }}>
+        <TopBar onBack={() => ctx.back()} title="Invite unavailable" />
+        <div
+          role="status"
+          style={{ textAlign: "center", color: T.sec, lineHeight: 1.5, padding: "80px 24px" }}
+        >
+          This jar is closed. Its old invite code has been revoked.
+        </div>
+        <Btn kind="gold" onClick={() => ctx.nav({ name: "jar", jarId }, true)}>
+          View jar history
+        </Btn>
+      </Screen>
+    );
+  }
+
   return (
     <Screen style={{ display: "flex", flexDirection: "column", paddingBottom: 44 }}>
       <TopBar onBack={() => ctx.back()} title="Invite to jar" />
