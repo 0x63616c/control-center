@@ -196,8 +196,7 @@ export function Join({
     <Screen>
       <TopBar onBack={() => ctx.back()} title="Join a jar" />
       <p style={{ color: T.sec, fontSize: 15, lineHeight: 1.4, margin: "2px 0 18px" }}>
-        Got an invite code? Enter it here.{" "}
-        {import.meta.env.DEV && <span style={{ color: T.ter }}>(try XEX24K)</span>}
+        Got an invite code? Enter it here.
       </p>
       <input
         value={code}
