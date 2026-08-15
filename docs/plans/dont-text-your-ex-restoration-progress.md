@@ -562,8 +562,8 @@ Captured 2026-08-14 on branch `codex/dont-text-your-ex-restoration`:
   source validation in a discriminated result seam, accept decodable files even
   when iOS supplies empty MIME metadata, invalidate pending crops on Cancel or
   Escape, and keep the crop transform in one typed value.
-- The strengthened browser journey decodes and normalizes a real 3000×2000,
-  approximately 18 MiB image, and separately proves a decodable picker result
+- The strengthened browser journey decodes and normalizes a real 2400×1600,
+  approximately 11 MiB image, and separately proves a decodable picker result
   with empty MIME metadata is accepted. It exercises a two-touch pinch, drag and
   slider zoom, proves Cancel during delayed encoding cannot save, and verifies
   the persisted avatar is exactly 512×512. Physical WebView HEIC

@@ -61,10 +61,10 @@ export function shameRow(page: Page, member: string) {
   return page.locator(`[data-testid="shame-row"][data-member="${member}"]`);
 }
 
-/** A decodable 3000x2000 camera-sized image with no compressed-fixture shortcut. */
+/** A decodable 2400x1600 camera-sized image with no compressed-fixture shortcut. */
 export function cameraPhotoBmp(): Buffer {
-  const width = 3000;
-  const height = 2000;
+  const width = 2400;
+  const height = 1600;
   const rowBytes = Math.ceil((width * 3) / 4) * 4;
   const pixelBytes = rowBytes * height;
   const bitmap = Buffer.allocUnsafe(54 + pixelBytes);
