@@ -2,14 +2,13 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import type { AppCtx, RouteFor } from "../appctx";
 import { money, T } from "../theme";
-import type { JarPreviewDTO, UserDTO } from "../types";
+import type { JarPreviewDTO } from "../types";
 import { AvatarStack, Btn, Screen, TopBar } from "../ui";
 import { inputStyle } from "./common";
 
 export function Join({ ctx }: { ctx: AppCtx<RouteFor<"join">> }) {
   const [code, setCode] = useState(ctx.route.code ?? "");
   const [preview, setPreview] = useState<JarPreviewDTO | null>(null);
-  const [members, setMembers] = useState<UserDTO[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -19,13 +18,6 @@ export function Join({ ctx }: { ctx: AppCtx<RouteFor<"join">> }) {
     try {
       const p = await api.jarByCode(candidate);
       setPreview(p);
-      // hydrate member avatars
-      try {
-        const d = await api.jar(p.id).catch(() => null);
-        if (d) setMembers(d.members.map((m) => m.user));
-      } catch {
-        /* not a member yet - avatars optional */
-      }
     } catch {
       setErr("No jar with that code. Check it and try again.");
     } finally {
@@ -82,9 +74,13 @@ export function Join({ ctx }: { ctx: AppCtx<RouteFor<"join">> }) {
           >
             {preview.name}
           </div>
-          {members.length > 0 && (
-            <div style={{ display: "flex", justifyContent: "center", marginBottom: 14 }}>
-              <AvatarStack users={members} size={40} />
+          {preview.members.length > 0 && (
+            <div
+              role="img"
+              aria-label={`Members: ${preview.members.map((member) => member.name).join(", ")}`}
+              style={{ display: "flex", justifyContent: "center", marginBottom: 14 }}
+            >
+              <AvatarStack users={preview.members} size={40} />
             </div>
           )}
           <div style={{ fontSize: 14, color: T.sec, lineHeight: 1.4, marginBottom: 18 }}>

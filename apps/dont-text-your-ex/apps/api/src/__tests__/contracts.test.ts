@@ -7,6 +7,7 @@ import {
   EVIDENCE_MAX_BYTES,
   EVIDENCE_MAX_FILES,
   EvidenceImageInputSchema,
+  InviteCodeSchema,
   JarIdSchema,
   JoinJarRequestSchema,
   LogSlipRequestSchema,
@@ -58,6 +59,13 @@ describe("domain id parsers", () => {
     expect(UserIdSchema.safeParse("usr_123").success).toBe(true);
     expect(JarIdSchema.safeParse("usr_123").success).toBe(false);
     expect(ReportIdSchema.safeParse("jar_123").success).toBe(false);
+  });
+
+  it("normalizes valid invite codes and rejects malformed codes", () => {
+    expect(InviteCodeSchema.parse("xex24k")).toBe("XEX24K");
+    expect(InviteCodeSchema.safeParse("short").success).toBe(false);
+    expect(InviteCodeSchema.safeParse("XEX24!").success).toBe(false);
+    expect(JoinJarRequestSchema.parse({ code: "xex24k" })).toEqual({ code: "XEX24K" });
   });
 });
 

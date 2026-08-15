@@ -28,7 +28,27 @@ test("production invite path survives profile setup → previews → joins the j
 }) => {
   await signUpNewFromInvite(page, "XEX24K");
   await expect(page.getByText("The Group Chat")).toBeVisible();
-  await expect(page.getByText("$25")).toBeVisible();
+  await expect(page.getByText("$5")).toBeVisible();
+  await expect(
+    page.getByRole("img", { name: "Members: Ali, Calum, Giselle, Alyssa" }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/\/$/);
+
+  let firstJoin = true;
+  await page.route("**/api/jars/join", async (route) => {
+    if (firstJoin) {
+      firstJoin = false;
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: '{"error":"busy"}',
+      });
+      return;
+    }
+    await route.continue();
+  });
+  await page.getByRole("button", { name: "Join the shame" }).click();
+  await expect(page.getByText("This invite could not be joined")).toBeVisible();
   await page.getByRole("button", { name: "Join the shame" }).click();
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByTestId("jar-pot")).toBeVisible();

@@ -6,7 +6,7 @@ import type { AppCtx, Route, TabName } from "./appctx";
 import { MoneyBurst } from "./bits";
 import { resolveDevice } from "./device";
 import { Icon } from "./icons";
-import { inviteCodeFromPath, inviteCodeFromUniversalLink } from "./invite-links";
+import { installNativeInviteLinkListeners, inviteCodeFromPath } from "./invite-links";
 import { IOSDevice } from "./iosframe";
 import * as S from "./screens";
 import { T } from "./theme";
@@ -162,27 +162,21 @@ export default function App() {
   useEffect(() => {
     const readWebPath = () => {
       const code = inviteCodeFromPath(window.location.pathname);
-      if (code) setPendingInviteCode(code);
+      if (!code) return;
+      setPendingInviteCode(code);
+      window.history.replaceState({}, "", "/");
     };
     window.addEventListener("popstate", readWebPath);
+    readWebPath();
 
-    let removeNativeListener: (() => Promise<void>) | undefined;
+    let removeNativeListeners: (() => void) | undefined;
     if (NATIVE) {
-      void NativeApp.getLaunchUrl().then((launch) => {
-        const code = launch?.url ? inviteCodeFromUniversalLink(launch.url) : null;
-        if (code) setPendingInviteCode(code);
-      });
-      void NativeApp.addListener("appUrlOpen", ({ url }) => {
-        const code = inviteCodeFromUniversalLink(url);
-        if (code) setPendingInviteCode(code);
-      }).then((handle) => {
-        removeNativeListener = () => handle.remove();
-      });
+      removeNativeListeners = installNativeInviteLinkListeners(NativeApp, setPendingInviteCode);
     }
 
     return () => {
       window.removeEventListener("popstate", readWebPath);
-      if (removeNativeListener) void removeNativeListener();
+      removeNativeListeners?.();
     };
   }, []);
 

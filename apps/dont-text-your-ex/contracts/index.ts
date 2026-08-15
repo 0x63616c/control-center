@@ -18,6 +18,13 @@ export type JarId = z.infer<typeof JarIdSchema>;
 export type ReportId = z.infer<typeof ReportIdSchema>;
 export type SessionToken = z.infer<typeof SessionTokenSchema>;
 
+export const InviteCodeSchema = z
+  .string()
+  .trim()
+  .transform((value) => value.toUpperCase())
+  .pipe(z.string().regex(/^[A-Z0-9]{6}$/, "invalid InviteCode"));
+export type InviteCode = z.infer<typeof InviteCodeSchema>;
+
 const nonEmptyText = z.string().trim().min(1);
 const cents = z.number().int().positive();
 
@@ -43,7 +50,7 @@ export const CreateJarRequestSchema = z
   })
   .strict();
 
-export const JoinJarRequestSchema = z.object({ code: nonEmptyText }).strict();
+export const JoinJarRequestSchema = z.object({ code: InviteCodeSchema }).strict();
 export const ShareStreakRequestSchema = z.object({ value: z.boolean() }).strict();
 export const LogSlipRequestSchema = z
   .object({
@@ -258,7 +265,7 @@ export const JarDetailSchema = z
     name: z.string(),
     rule: z.string(),
     defaultCents: cents,
-    inviteCode: z.string(),
+    inviteCode: InviteCodeSchema,
     jarTotalCents: z.number().int().nonnegative(),
     members: z.array(MemberSchema),
     activity: z.array(ActivitySchema),
@@ -271,7 +278,9 @@ export const JarPreviewSchema = z
     name: z.string(),
     rule: z.string(),
     defaultCents: cents,
-    memberIds: z.array(UserIdSchema),
+    members: z.array(
+      UserSchema.pick({ id: true, name: true, color: true, emoji: true, photo: true }).strict(),
+    ),
     memberCount: z.number().int().nonnegative(),
   })
   .strict();

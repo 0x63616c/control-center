@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   canonicalInviteUrl,
+  installNativeInviteLinkListeners,
   inviteCodeFromPath,
   inviteCodeFromUniversalLink,
 } from "./invite-links";
@@ -33,5 +34,32 @@ describe("invite links", () => {
       inviteCodeFromUniversalLink("http://dont-text-your-ex.worldwidewebb.co/j/XEX24K"),
     ).toBeNull();
     expect(inviteCodeFromUniversalLink("not a url")).toBeNull();
+  });
+
+  it("removes a delayed native listener after disposal and ignores late launch URLs", async () => {
+    let resolveListener: ((handle: { remove: () => Promise<void> }) => void) | undefined;
+    let resolveLaunch: ((launch: { url: string }) => void) | undefined;
+    const remove = vi.fn(async () => undefined);
+    const onInvite = vi.fn();
+    const nativeApp = {
+      getLaunchUrl: () =>
+        new Promise<{ url: string }>((resolve) => {
+          resolveLaunch = resolve;
+        }),
+      addListener: () =>
+        new Promise<{ remove: () => Promise<void> }>((resolve) => {
+          resolveListener = resolve;
+        }),
+    };
+
+    const dispose = installNativeInviteLinkListeners(nativeApp, onInvite);
+    dispose();
+    resolveLaunch?.({ url: "https://dont-text-your-ex.worldwidewebb.co/j/XEX24K" });
+    resolveListener?.({ remove });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onInvite).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledOnce();
   });
 });

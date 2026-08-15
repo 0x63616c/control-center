@@ -143,6 +143,10 @@ describe.skipIf(!HAS_DB)("jar lifecycle", () => {
     if (!detail) throw new Error("created jar detail missing");
     const code = detail.inviteCode;
 
+    const preview = await store.getJarPreviewByCode(code);
+    expect(preview?.members).toEqual([expect.objectContaining({ id: owner.id, name: "Frank" })]);
+    expect(preview?.members[0]).not.toHaveProperty("exes");
+
     const joiner = await store.createUser({ name: "Grace" });
     const result = await store.joinJarByCode(joiner.id, code);
     expect(result).not.toBeNull();
