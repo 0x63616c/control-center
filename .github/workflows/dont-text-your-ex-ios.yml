@@ -120,5 +120,5 @@ jobs:
           MATCH_REGENERATE: ${{ inputs.regenerate_profile || 'false' }}
           TESTFLIGHT_DISTRIBUTE_EXTERNAL: ${{ inputs.distribute_external || 'false' }}
           TESTFLIGHT_EXTERNAL_GROUP: Friends
-          TESTFLIGHT_CHANGELOG: ${{ inputs.changelog || 'Restored Don’t Text Your Ex v1 with Sign in with Apple, shared jars, slips, reports, and production invite links.' }}
+          TESTFLIGHT_CHANGELOG: ${{ inputs.changelog }}
         run: bundle exec fastlane ios release

@@ -66,10 +66,12 @@ link. It changes App Store Connect state and therefore requires live release
 credentials.
 
 Then manually dispatch **Don’t Text Your Ex iOS** with
-`distribute_external=true`. The release waits for processing, associates the
-build with `Friends`, submits Beta App Review when required, and notifies the
-external testers. An external-distribution error remains a failed release even
-if the binary itself uploaded successfully.
+`distribute_external=true` and review the `changelog` value used for TestFlight's
+What to Test field. The workflow supplies a v1 restoration summary by default;
+external distribution rejects an empty changelog. The release waits for
+processing, associates the build with `Friends`, submits Beta App Review when
+required, and notifies the external testers. An external-distribution error
+remains a failed release even if the binary itself uploaded successfully.
 
 Apple may require Beta App Review before it exposes the build or public link.
 Completion therefore requires live evidence from App Store Connect plus a clean
