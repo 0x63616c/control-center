@@ -30,8 +30,8 @@ evidence is collected.
 | Lane | Plan steps | Owner | State | Last durable result |
 |---|---:|---|---|---|
 | Application recovery | 1–3 | `app_recovery` | In progress | `79824febc`: workspace/build paths and branding modernized; focused typechecks/build green |
-| Production infrastructure | 4–6 | `production_infra` | Implementation committed | `13b5dc054`: production infra, Cloudflare, CI, backup and health wiring; 413 tests green |
-| Apple and release | 7–9 | `apple_release` | In progress | Auth/native/release edits complete; local Apple/iOS validation in progress |
+| Production infrastructure | 4–6 | `production_infra` | Locally complete | Four commits through `d24742b83`; infra/Cloudflare/CI tests and lint green; live apply pending |
+| Apple and release | 7–9 | `apple_release` | Locally complete | `784b29b49`, `05eb9aadb`; simulator build and release-path validation green; live ASC/device proof pending |
 | End-to-end verification | 10 | Unassigned until integration | Pending | Must cover public, cluster, database, Apple, TestFlight, restart, backup, and repeat-deploy evidence |
 
 ## Decisions
@@ -55,6 +55,12 @@ evidence is collected.
 | `c5e81c91c` | Raw recovery into `apps/dont-text-your-ex` | Exact source tree recovered from commit `486a0ebbc`; modernization checks pending |
 | `79824febc` | Workspace/build modernization and product branding | API typecheck, frontend typecheck, and frontend production build green; DB contract tests discovered and skipped without `DATABASE_URL` |
 | `13b5dc054` | Production namespace, CNPG, services, probes, backup, immutable-image CI, and one-host Cloudflare routing | Infra typecheck; infra plus Cloudflare suite 413/413; focused 69/69; build-matrix and deploy-gate guards green |
+| `522ce187d` | Cloudflare API path compatibility | Route regex changed to Go RE2-compatible `^/api(/.*)?$`; route tests 12/12 |
+| `0926f77f5` | First-deploy GHCR secret bootstrap | Confirmed namespace-NotFound skips preflight without hiding auth/network/missing-secret failures; focused tests 6/6 |
+| `784b29b49` | Apple authentication, native app, signing guards, and TestFlight CI | Typecheck/build/Capacitor sync; Xcode 26.2 unsigned simulator `BUILD SUCCEEDED`; Fastfile and workflow parse |
+| `05eb9aadb` | TestFlight publishing and acceptance runbook | Explicit external Friends/public-link path and production acceptance gates documented |
+| `f96026309` | Runtime configuration guardrail alignment | Repository lint gate green; full app exit checks pending |
+| `d24742b83` | Infra export cleanup | Removed unused export found by integrated Knip run |
 
 ## Production evidence checklist
 
