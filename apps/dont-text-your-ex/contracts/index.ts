@@ -172,15 +172,28 @@ export const UserSchema = z
 
 export const MeSchema = UserSchema.extend({ phone: z.string().nullable() }).strict();
 
-export const MemberSchema = z
-  .object({
-    user: UserSchema,
-    role: z.enum(["owner", "member"]),
-    tallyCents: z.number().int().nonnegative(),
-    daysClean: z.number().int().min(-1),
-    shareStreak: z.boolean(),
-  })
-  .strict();
+const visibleMemberFields = {
+  user: UserSchema,
+  role: z.enum(["owner", "member"]),
+  tallyCents: z.number().int().nonnegative(),
+} as const;
+
+export const MemberSchema = z.discriminatedUnion("shareStreak", [
+  z
+    .object({
+      ...visibleMemberFields,
+      daysClean: z.number().int().min(-1),
+      shareStreak: z.literal(true),
+    })
+    .strict(),
+  z
+    .object({
+      ...visibleMemberFields,
+      daysClean: z.number().int().min(-1).optional(),
+      shareStreak: z.literal(false),
+    })
+    .strict(),
+]);
 
 export const JarSummarySchema = z
   .object({
@@ -209,7 +222,7 @@ export const ActivitySchema: z.ZodType<ActivityDTO> = z
     by: UserSchema.nullable(),
     anonymous: z.boolean(),
     amountCents: z.number().int().nonnegative().nullable(),
-    exLabel: z.string().nullable(),
+    exLabel: z.string().nullable().optional(),
     note: z.string().nullable(),
     text: z.string().nullable(),
     ago: z.string(),
@@ -298,7 +311,7 @@ export interface ActivityDTO {
   readonly by: UserDTO | null;
   readonly anonymous: boolean;
   readonly amountCents: number | null;
-  readonly exLabel: string | null;
+  readonly exLabel?: string | null;
   readonly note: string | null;
   readonly text: string | null;
   readonly ago: string;

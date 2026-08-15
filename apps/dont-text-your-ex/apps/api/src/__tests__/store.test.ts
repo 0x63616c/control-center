@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { JarDetailSchema } from "../../../../contracts";
 import { pool } from "../db/index";
 import { runMigrations } from "../db/migrate";
+import { buildApp } from "../server";
 import * as store from "../store";
 
 // DB-integration suite: requires a real Postgres (DATABASE_URL). The default unit
@@ -98,6 +100,41 @@ describe.skipIf(!HAS_DB)("jar lifecycle", () => {
     const joinedDetail = await store.getJarDetail(jar.id, owner.id);
     expect(joinedDetail?.members).toHaveLength(2);
   });
+
+  it("hides a member's private streak from other members and rejects outsiders", async () => {
+    const owner = await store.createUser({ name: "Streak Owner" });
+    const member = await store.createUser({ name: "Jar Member" });
+    const outsider = await store.createUser({ name: "Outsider" });
+    const jar = await store.createJar({ userId: owner.id, name: "Private Streak Jar" });
+    const ownerDetail = await store.getJarDetail(jar.id, owner.id);
+    if (!ownerDetail) throw new Error("created private streak jar detail missing");
+    await store.joinJarByCode(member.id, ownerDetail.inviteCode);
+    await store.setShareStreak(jar.id, owner.id, false);
+    await store.logSlip({ jarId: jar.id, userId: owner.id, amountCents: 500 });
+
+    const memberToken = await store.createSession(member.id);
+    const memberResponse = await buildApp().request(`/api/jars/${jar.id}`, {
+      headers: { Authorization: `Bearer ${memberToken}` },
+    });
+    expect(memberResponse.status).toBe(200);
+    const memberView = JarDetailSchema.parse(await memberResponse.json());
+    const privateMember = memberView.members.find((entry) => entry.user.id === owner.id);
+    expect(privateMember).toBeDefined();
+    expect(JSON.parse(JSON.stringify(privateMember))).not.toHaveProperty("daysClean");
+
+    const ownerView = await store.getJarDetail(jar.id, owner.id);
+    expect(ownerView?.members.find((entry) => entry.user.id === owner.id)).toHaveProperty(
+      "daysClean",
+      0,
+    );
+
+    const outsiderToken = await store.createSession(outsider.id);
+    const response = await buildApp().request(`/api/jars/${jar.id}`, {
+      headers: { Authorization: `Bearer ${outsiderToken}` },
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "not_member" });
+  });
 });
 
 describe.skipIf(!HAS_DB)("slip logging", () => {
@@ -179,6 +216,44 @@ describe.skipIf(!HAS_DB)("reports", () => {
     const denied = await store.resolveReport(report.id, accused.id, "deny");
     expect(denied?.status).toBe("denied");
   });
+
+  it("redacts an anonymous reporter from activity while retaining the protected reporter id", async () => {
+    const accuser = await store.createUser({ name: "Private Reporter" });
+    const accused = await store.createUser({ name: "Reported Member" });
+    const jar = await store.createJar({ userId: accuser.id, name: "Anonymous Report Jar" });
+    const detail = await store.getJarDetail(jar.id, accuser.id);
+    if (!detail) throw new Error("created anonymous report jar detail missing");
+    await store.joinJarByCode(accused.id, detail.inviteCode);
+
+    const report = await store.createReport({
+      jarId: jar.id,
+      accuserId: accuser.id,
+      accusedId: accused.id,
+      note: "private report",
+      anonymous: true,
+      amountCents: 500,
+      evidence: [],
+    });
+
+    const activity = await store.activityForUser(accused.id);
+    const reportActivity = activity.find((entry) => entry.type === "report");
+    expect(reportActivity?.by).toBeNull();
+    expect(JSON.stringify(reportActivity)).not.toContain(accuser.id);
+
+    const accusedToken = await store.createSession(accused.id);
+    const activityResponse = await buildApp().request("/api/activity", {
+      headers: { Authorization: `Bearer ${accusedToken}` },
+    });
+    expect(activityResponse.status).toBe(200);
+    const activityJson = await activityResponse.text();
+    expect(activityJson).not.toContain(accuser.id);
+
+    const persisted = await pool.query<{ accuser_id: string }>(
+      "SELECT accuser_id FROM reports WHERE id=$1",
+      [report.id],
+    );
+    expect(persisted.rows[0]?.accuser_id).toBe(accuser.id);
+  });
 });
 
 describe.skipIf(!HAS_DB)("activity", () => {
@@ -190,5 +265,31 @@ describe.skipIf(!HAS_DB)("activity", () => {
     expect(acts.length).toBeGreaterThan(0);
     const types = acts.map((a) => a.type);
     expect(types).toContain("slip");
+  });
+
+  it("does not expose a private ex label in shared jar or activity JSON", async () => {
+    const owner = await store.createUser({ name: "Slip Owner" });
+    const member = await store.createUser({ name: "Activity Member" });
+    const jar = await store.createJar({ userId: owner.id, name: "Private Label Jar" });
+    const detail = await store.getJarDetail(jar.id, owner.id);
+    if (!detail) throw new Error("created private label jar detail missing");
+    await store.joinJarByCode(member.id, detail.inviteCode);
+    await store.logSlip({
+      jarId: jar.id,
+      userId: owner.id,
+      amountCents: 500,
+      exLabel: "Secret Ex",
+    });
+
+    const memberToken = await store.createSession(member.id);
+    for (const path of ["/api/activity", `/api/jars/${jar.id}`]) {
+      const response = await buildApp().request(path, {
+        headers: { Authorization: `Bearer ${memberToken}` },
+      });
+      expect(response.status).toBe(200);
+      const rawJson = await response.text();
+      expect(rawJson).not.toContain('"exLabel"');
+      expect(rawJson).not.toContain("Secret Ex");
+    }
   });
 });

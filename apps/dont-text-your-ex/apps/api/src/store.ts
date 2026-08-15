@@ -280,13 +280,14 @@ async function jarTotal(jarId: string): Promise<number> {
   return Number(rows[0]?.t ?? 0);
 }
 
-async function serializeMember(m: MembershipRow): Promise<MemberDTO> {
+async function serializeMember(m: MembershipRow, viewerId: string): Promise<MemberDTO> {
+  const shareStreak = !!m.share_streak;
   return MemberSchema.parse({
     user: requireValue(await getUser(m.user_id), "membership user could not be loaded"),
-    role: MemberSchema.shape.role.parse(m.role),
+    role: m.role,
     tallyCents: m.tally_cents,
-    daysClean: daysClean(m.streak_start_at),
-    shareStreak: !!m.share_streak,
+    ...(shareStreak || m.user_id === viewerId ? { daysClean: daysClean(m.streak_start_at) } : {}),
+    shareStreak,
   });
 }
 
@@ -315,13 +316,13 @@ export async function listJarsForUser(userId: string): Promise<JarSummaryDTO[]> 
   );
 }
 
-export async function getJarDetail(jarId: string, _meId: string): Promise<JarDetailDTO | null> {
+export async function getJarDetail(jarId: string, meId: string): Promise<JarDetailDTO | null> {
   const j = await jarRow(jarId);
   if (!j) return null;
   const rawMembers = await membersOf(jarId);
-  const members = (await Promise.all(rawMembers.map(serializeMember))).sort(
-    (a, b) => b.tallyCents - a.tallyCents,
-  );
+  const members = (
+    await Promise.all(rawMembers.map((member) => serializeMember(member, meId)))
+  ).sort((a, b) => b.tallyCents - a.tallyCents);
   return JarDetailSchema.parse({
     id: j.id,
     name: j.name,
@@ -447,7 +448,6 @@ export async function logSlip(opts: {
     type: "slip",
     actorId: opts.userId,
     amountCents: opts.amountCents,
-    exLabel: opts.exLabel ?? null,
     note: opts.note ?? null,
   });
 
@@ -601,7 +601,6 @@ async function logActivity(opts: {
   targetId?: string | null;
   text?: string | null;
   amountCents?: number | null;
-  exLabel?: string | null;
   note?: string | null;
   anonymous?: boolean;
 }): Promise<void> {
@@ -615,7 +614,7 @@ async function logActivity(opts: {
       opts.targetId ?? null,
       opts.text ?? null,
       opts.amountCents ?? null,
-      opts.exLabel ?? null,
+      null,
       opts.note ?? null,
       opts.anonymous ? 1 : 0,
       now(),
@@ -645,10 +644,9 @@ async function serializeActivity(a: ActivityRow): Promise<ActivityDTO> {
     jarName: j?.name ?? "",
     type: a.type,
     user: a.actor_id ? await getUser(a.actor_id) : null,
-    by: a.target_id ? await getUser(a.target_id) : null,
+    by: a.anonymous || !a.target_id ? null : await getUser(a.target_id),
     anonymous: !!a.anonymous,
     amountCents: a.amount_cents,
-    exLabel: a.ex_label,
     note: a.note,
     text: a.text,
     ago: ago(a.created_at),
