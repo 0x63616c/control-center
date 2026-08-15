@@ -298,21 +298,24 @@ Apple/App Store Connect read-only baseline captured after user sign-in:
 - This inspection was read-only: no Apple capability, profile, build, group, link,
   or distribution state was changed.
 
-Associated Domains update captured 2026-08-14:
+Associated Domains update captured 2026-08-14 from the signed-in Apple Developer
+portal:
 
-- Enabled and saved **Associated Domains** on App ID
-  `co.worldwidewebb.textyourex` for production invite links.
-- Regenerated the existing App Store provisioning profile in the Developer
-  portal without uploading a build.
-- The profile summary still listed only In-App Purchase and Sign In with Apple
-  immediately after regeneration. Treat Associated Domains as unproven until the
-  signed-build guard reads it from both the embedded profile and app binary.
+- App ID `2L6ZW5KHV8` (`co.worldwidewebb.textyourex`) had Sign in with Apple
+  enabled, but Associated Domains was unchecked. Associated Domains was enabled
+  and saved for production invite links.
+- Existing App Store provisioning profile `86NB48QVCM` was regenerated without
+  uploading a build.
+- Apple's regenerated-profile review still listed only In-App Purchase and Sign
+  In with Apple. Associated Domains therefore remains unproven until the fresh
+  profile is downloaded and decoded and the signed-build guard reads the
+  entitlement from both the embedded profile and app binary.
 
 Local signing preflight captured 2026-08-14, without uploading a build:
 
-- The installed `match AppStore co.worldwidewebb.textyourex` profile is valid
-  through 2027-04-12, but decoding it with `security cms` shows that it contains
-  neither `com.apple.developer.applesignin` nor
+- The locally installed `match AppStore co.worldwidewebb.textyourex` profile,
+  decoded before the latest portal regeneration, is valid through 2027-04-12
+  but contains neither `com.apple.developer.applesignin` nor
   `com.apple.developer.associated-domains`.
 - The installed development profile contains Sign in with Apple but does not
   contain Associated Domains. It is not a substitute for the App Store profile.
@@ -322,10 +325,10 @@ Local signing preflight captured 2026-08-14, without uploading a build:
   compilation with Xcode exit 65: the profile does not include Sign in with
   Apple, Associated Domains, or their corresponding entitlements. No archive or
   upload was produced.
-- The Apple portal browser was not connected to the Codex task, and no local
-  App Store Connect/match credentials were available. Current portal state,
-  profile regeneration/download, and App Store Connect build/group state remain
-  gated on a signed-in browser session.
+- The portal capability change and profile regeneration are complete. A fresh
+  profile download and entitlement decode, successful signed archive, and any
+  upload remain blocked until profile `86NB48QVCM` is verified to carry both
+  required entitlements. Do not upload a build before that verification passes.
 
 ## Blockers and user-assisted gates
 
