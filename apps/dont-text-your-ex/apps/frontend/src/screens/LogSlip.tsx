@@ -6,41 +6,58 @@ import { money, T } from "../theme";
 import type { JarDetailDTO } from "../types";
 import { Btn, Screen, TopBar } from "../ui";
 import { inputStyle, labelStyle } from "./common";
+import { ErrorState, type FetchedState, LoadingState, MutationError } from "./fetched-state";
 
-export function LogSlip({ ctx }: { ctx: AppCtx<RouteFor<"logSlip">> }) {
+export type LogSlipServices = Pick<typeof api, "jar" | "logSlip">;
+
+export function LogSlip({
+  ctx,
+  services = api,
+}: {
+  ctx: AppCtx<RouteFor<"logSlip">>;
+  services?: LogSlipServices;
+}) {
   const { jarId } = ctx.route;
-  const [jar, setJar] = useState<JarDetailDTO | null>(null);
+  const [state, setState] = useState<FetchedState<JarDetailDTO>>({ status: "loading" });
+  const [retry, setRetry] = useState(0);
   const [cents, setCents] = useState(500);
   const [note, setNote] = useState("");
   const [ex, setEx] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [submitError, setSubmitError] = useState(false);
 
   const myExes = ctx.me?.exes ?? [];
+  const firstEx = myExes[0] ?? null;
+  const jar = state.status === "loaded" ? state.value : null;
   const myStreak = jar?.members.find((m) => m.user.id === ctx.me?.id)?.daysClean ?? 0;
 
   useEffect(() => {
+    void retry;
     let alive = true;
-    api
+    setState({ status: "loading" });
+    services
       .jar(jarId)
       .then((d) => {
         if (!alive) return;
-        setJar(d);
+        setState({ status: "loaded", value: d });
         setCents(d.defaultCents);
-        setEx(myExes[0] ?? null);
+        setEx(firstEx);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (alive) setState({ status: "error" });
+      });
     return () => {
       alive = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jarId, myExes[0]]);
+  }, [firstEx, jarId, retry, services]);
 
   const doLog = async () => {
     if (busy || !jar) return;
     setBusy(true);
+    setSubmitError(false);
     try {
-      await api.logSlip(jar.id, {
+      await services.logSlip(jar.id, {
         amountCents: cents,
         note: note || undefined,
         exLabel: ex || undefined,
@@ -50,19 +67,30 @@ export function LogSlip({ ctx }: { ctx: AppCtx<RouteFor<"logSlip">> }) {
       ctx.nav({ name: "jar", jarId: jar.id }, true);
     } catch {
       setBusy(false);
+      setSubmitError(true);
     }
   };
 
-  if (!jar) {
+  if (state.status === "loading") {
     return (
       <Screen>
         <TopBar onBack={() => ctx.back()} title="Fess up" />
-        <div style={{ color: T.ter, textAlign: "center", paddingTop: 60, fontFamily: T.disp }}>
-          …
-        </div>
+        <LoadingState>Loading jar details…</LoadingState>
       </Screen>
     );
   }
+  if (state.status === "error") {
+    return (
+      <Screen>
+        <TopBar onBack={() => ctx.back()} title="Fess up" />
+        <ErrorState
+          label="This jar couldn’t be loaded."
+          onRetry={() => setRetry((value) => value + 1)}
+        />
+      </Screen>
+    );
+  }
+  if (state.status === "empty" || !jar) return null;
 
   return (
     <Screen style={{ display: "flex", flexDirection: "column" }}>
@@ -194,8 +222,13 @@ export function LogSlip({ ctx }: { ctx: AppCtx<RouteFor<"logSlip">> }) {
               and tells the whole jar. No takebacks.
             </p>
             <Btn kind="red" disabled={busy} onClick={doLog}>
-              Yeah. I did it. 💸
+              {busy ? "Logging slip…" : submitError ? "Retry logging slip" : "Yeah. I did it. 💸"}
             </Btn>
+            {submitError && (
+              <MutationError>
+                The slip wasn’t logged. Check your connection and retry—your tally has not changed.
+              </MutationError>
+            )}
             <button
               type="button"
               onClick={() => setConfirming(false)}

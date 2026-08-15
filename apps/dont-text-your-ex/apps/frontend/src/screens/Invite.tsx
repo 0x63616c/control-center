@@ -6,31 +6,69 @@ import { canonicalInviteUrl } from "../invite-links";
 import { T } from "../theme";
 import type { JarDetailDTO } from "../types";
 import { Btn, Screen, TopBar } from "../ui";
+import { ErrorState, type FetchedState, LoadingState } from "./fetched-state";
 
-export function Invite({ ctx }: { ctx: AppCtx<RouteFor<"invite">> }) {
+export type InviteServices = Pick<typeof api, "jar">;
+
+export function Invite({
+  ctx,
+  services = api,
+}: {
+  ctx: AppCtx<RouteFor<"invite">>;
+  services?: InviteServices;
+}) {
   const { fresh = false, jarId } = ctx.route;
-  const [jar, setJar] = useState<JarDetailDTO | null>(null);
+  const [state, setState] = useState<FetchedState<JarDetailDTO>>({ status: "loading" });
+  const [retry, setRetry] = useState(0);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
+    void retry;
     let alive = true;
-    api
+    setState({ status: "loading" });
+    services
       .jar(jarId)
       .then((d) => {
-        if (alive) setJar(d);
+        if (alive) setState({ status: "loaded", value: d });
       })
-      .catch(() => {});
+      .catch(() => {
+        if (alive) setState({ status: "error" });
+      });
     return () => {
       alive = false;
     };
-  }, [jarId]);
+  }, [jarId, retry, services]);
 
-  const code = jar?.inviteCode ?? "······";
-  const ready = !!jar?.inviteCode;
+  if (state.status === "loading") {
+    return (
+      <Screen>
+        <TopBar onBack={() => ctx.back()} title="Invite to jar" />
+        <LoadingState>Loading invite…</LoadingState>
+      </Screen>
+    );
+  }
+  if (state.status === "error") {
+    return (
+      <Screen>
+        <TopBar onBack={() => ctx.back()} title="Invite unavailable" />
+        <ErrorState
+          label="This invite couldn’t be loaded."
+          onRetry={() => setRetry((value) => value + 1)}
+        />
+      </Screen>
+    );
+  }
+  if (state.status === "empty") return null;
+
+  const jar = state.value;
+
+  const code = jar.inviteCode;
+  const ready = code != null;
   const link = ready ? canonicalInviteUrl(code) : null;
-  const shareText = `Join my "${jar?.name ?? "guilt"}" jar on Don’t Text Your Ex. Code: ${code} -> ${link}`;
+  const shareText = `Join my "${jar.name}" jar on Don’t Text Your Ex. Code: ${code} -> ${link}`;
 
   const copy = () => {
+    if (code == null) return;
     if (navigator.clipboard) navigator.clipboard.writeText(code).catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 1600);
@@ -53,7 +91,7 @@ export function Invite({ ctx }: { ctx: AppCtx<RouteFor<"invite">> }) {
     copy();
   };
 
-  if (jar?.closedAt != null) {
+  if (jar.closedAt != null || code == null) {
     return (
       <Screen style={{ display: "flex", flexDirection: "column", paddingBottom: 44 }}>
         <TopBar onBack={() => ctx.back()} title="Invite unavailable" />

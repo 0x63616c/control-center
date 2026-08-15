@@ -1,36 +1,65 @@
 import { useCallback, useEffect, useState } from "react";
-import { api } from "../api";
+import { api, isApiErrorStatus } from "../api";
 import type { AppCtx, RouteFor } from "../appctx";
 import { money, T } from "../theme";
 import type { JarPreviewDTO } from "../types";
 import { AvatarStack, Btn, Screen, TopBar } from "../ui";
 import { inputStyle } from "./common";
 
-export function Join({ ctx }: { ctx: AppCtx<RouteFor<"join">> }) {
+export type JoinServices = Pick<typeof api, "jarByCode" | "joinJar">;
+
+function describeJoinError(error: unknown): string {
+  if (isApiErrorStatus(error, 403)) return "You don’t have permission to join this jar.";
+  if (isApiErrorStatus(error, 409)) return "This jar can’t be joined anymore.";
+  if (isApiErrorStatus(error, 404)) return "This invite is no longer valid.";
+  return "The jar couldn’t be joined. Check your connection and retry.";
+}
+
+function describePreviewError(error: unknown): string {
+  if (isApiErrorStatus(error, 404)) return "No active jar has that code. Check it and retry.";
+  if (isApiErrorStatus(error, 403)) return "You don’t have permission to view this invite.";
+  if (isApiErrorStatus(error, 409)) return "This invite is no longer active.";
+  return "The invite couldn’t be loaded. Check your connection and retry.";
+}
+
+export function Join({
+  ctx,
+  services = api,
+}: {
+  ctx: AppCtx<RouteFor<"join">>;
+  services?: JoinServices;
+}) {
   const [code, setCode] = useState(ctx.route.code ?? "");
   const [preview, setPreview] = useState<JarPreviewDTO | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const loadPreview = useCallback(async (candidate: string) => {
-    setBusy(true);
-    setErr(null);
-    try {
-      const p = await api.jarByCode(candidate);
-      setPreview(p);
-    } catch {
-      setErr("No jar with that code. Check it and try again.");
-    } finally {
-      setBusy(false);
-    }
-  }, []);
+  const loadPreview = useCallback(
+    async (candidate: string) => {
+      setBusy(true);
+      setErr(null);
+      try {
+        const p = await services.jarByCode(candidate);
+        setPreview(p);
+      } catch (error) {
+        setErr(describePreviewError(error));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [services],
+  );
 
   useEffect(() => {
     if (ctx.route.code) void loadPreview(ctx.route.code);
   }, [ctx.route.code, loadPreview]);
 
   const doPreview = async () => {
-    if (code.length < 4 || busy) return;
+    if (busy) return;
+    if (!/^[A-Z0-9]{6}$/.test(code)) {
+      setErr("Enter the full six-letter invite code.");
+      return;
+    }
     await loadPreview(code);
   };
 
@@ -38,13 +67,14 @@ export function Join({ ctx }: { ctx: AppCtx<RouteFor<"join">> }) {
     if (!preview || busy) return;
     setBusy(true);
     try {
-      const { jarId } = await api.joinJar(code);
+      setErr(null);
+      const { jarId } = await services.joinJar(code);
       if (window.location.pathname.startsWith("/j/")) {
         window.history.replaceState({}, "", "/");
       }
       ctx.nav({ name: "jar", jarId }, true);
-    } catch {
-      setErr("This invite could not be joined. Check the code and try again.");
+    } catch (error) {
+      setErr(describeJoinError(error));
       setBusy(false);
     }
   };
@@ -102,10 +132,13 @@ export function Join({ ctx }: { ctx: AppCtx<RouteFor<"join">> }) {
           </div>
         </div>
         <Btn kind="gold" disabled={busy} onClick={join}>
-          Join the shame
+          {busy ? "Joining…" : err ? "Retry joining jar" : "Join the shame"}
         </Btn>
         {err && (
-          <div style={{ color: T.red, fontSize: 14, textAlign: "center", marginTop: 12 }}>
+          <div
+            role="alert"
+            style={{ color: T.red, fontSize: 14, textAlign: "center", marginTop: 12 }}
+          >
             {err}
           </div>
         )}
@@ -130,6 +163,7 @@ export function Join({ ctx }: { ctx: AppCtx<RouteFor<"join">> }) {
       />
       {err && (
         <div
+          role="alert"
           style={{
             color: T.red,
             fontFamily: T.ui,
@@ -141,8 +175,8 @@ export function Join({ ctx }: { ctx: AppCtx<RouteFor<"join">> }) {
           {err}
         </div>
       )}
-      <Btn kind="gold" disabled={code.length < 4 || busy} onClick={doPreview}>
-        Preview jar
+      <Btn kind="gold" disabled={code.length === 0 || busy} onClick={doPreview}>
+        {busy ? "Loading invite…" : err ? "Retry invite" : "Preview jar"}
       </Btn>
     </Screen>
   );

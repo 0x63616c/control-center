@@ -5,18 +5,29 @@ import { Stepper } from "../bits";
 import { T } from "../theme";
 import { Btn, Screen, TopBar } from "../ui";
 import { inputStyle, labelStyle } from "./common";
+import { MutationError } from "./fetched-state";
 
-export function Create({ ctx }: { ctx: AppCtx<RouteFor<"create">> }) {
+export type CreateServices = Pick<typeof api, "createJar">;
+
+export function Create({
+  ctx,
+  services = api,
+}: {
+  ctx: AppCtx<RouteFor<"create">>;
+  services?: CreateServices;
+}) {
   const [name, setName] = useState("");
   const [rule, setRule] = useState("");
   const [cents, setCents] = useState(500);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(false);
 
   const create = async () => {
     if (!name.trim() || busy) return;
     setBusy(true);
+    setError(false);
     try {
-      const jar = await api.createJar({
+      const jar = await services.createJar({
         name: name.trim(),
         rule: rule.trim() || undefined,
         defaultCents: cents,
@@ -24,6 +35,7 @@ export function Create({ ctx }: { ctx: AppCtx<RouteFor<"create">> }) {
       ctx.nav({ name: "invite", jarId: jar.id, fresh: true });
     } catch {
       setBusy(false);
+      setError(true);
     }
   };
 
@@ -66,8 +78,13 @@ export function Create({ ctx }: { ctx: AppCtx<RouteFor<"create">> }) {
       </div>
 
       <div style={{ flex: 1, minHeight: 24 }} />
+      {error && (
+        <MutationError>
+          The jar couldn’t be created. Check your connection, then retry with the same details.
+        </MutationError>
+      )}
       <Btn kind="gold" disabled={!name.trim() || busy} onClick={create}>
-        Create jar & invite friends
+        {busy ? "Creating jar…" : error ? "Retry creating jar" : "Create jar & invite friends"}
       </Btn>
     </Screen>
   );

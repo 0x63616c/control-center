@@ -14,13 +14,42 @@ test("create a jar → invite screen shows a code → land in the new jar", asyn
 
   await page.getByPlaceholder("“The Group Chat”").fill("My Test Jar");
   await page.getByPlaceholder("“Don't text your ex. We mean it.”").fill("no texting allowed");
-  await page.getByRole("button", { name: "Create jar & invite friends" }).click();
 
+  let createAttempts = 0;
+  await page.route("**/api/jars", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    createAttempts += 1;
+    if (createAttempts === 1) return route.abort("internetdisconnected");
+    return route.continue();
+  });
+  await page.getByRole("button", { name: "Create jar & invite friends" }).click();
+  await expect(page.getByRole("alert")).toContainText("couldn’t be created");
+
+  let inviteAttempts = 0;
+  await page.route("**/api/jars/*", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    inviteAttempts += 1;
+    if (inviteAttempts === 1) {
+      return route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: '{"error":"busy"}',
+      });
+    }
+    return route.continue();
+  });
+  await page.getByRole("button", { name: "Retry creating jar" }).click();
+  expect(createAttempts).toBe(2);
+
+  await expect(page.getByRole("alert")).toContainText("invite couldn’t be loaded");
+  await page.getByRole("button", { name: "Retry" }).click();
   await expect(page.getByText("Your jar code")).toBeVisible();
   await expect(page.getByText("Jar created.", { exact: false })).toBeVisible();
   await page.getByRole("button", { name: "Take me to my jar" }).click();
   await expect(page.getByText("My Test Jar")).toBeVisible();
   await expect(page.getByTestId("jar-pot")).toHaveText("$0");
+  await page.reload();
+  await expect(page.getByTestId("jar-card").filter({ hasText: "My Test Jar" })).toBeVisible();
 });
 
 test("production invite path survives profile setup → previews → joins the jar", async ({
@@ -34,22 +63,39 @@ test("production invite path survives profile setup → previews → joins the j
   ).toBeVisible();
   await expect(page).toHaveURL(/\/$/);
 
-  let firstJoin = true;
+  let joinAttempt = 0;
   await page.route("**/api/jars/join", async (route) => {
-    if (firstJoin) {
-      firstJoin = false;
-      await route.fulfill({
+    joinAttempt += 1;
+    if (joinAttempt === 1)
+      return route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: '{"error":"forbidden"}',
+      });
+    if (joinAttempt === 2)
+      return route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: '{"error":"jar_closed"}',
+      });
+    if (joinAttempt === 3)
+      return route.fulfill({
         status: 503,
         contentType: "application/json",
         body: '{"error":"busy"}',
       });
-      return;
-    }
+    if (joinAttempt === 4) return route.abort("internetdisconnected");
     await route.continue();
   });
   await page.getByRole("button", { name: "Join the shame" }).click();
-  await expect(page.getByText("This invite could not be joined")).toBeVisible();
-  await page.getByRole("button", { name: "Join the shame" }).click();
+  await expect(page.getByRole("alert")).toContainText("don’t have permission");
+  await page.getByRole("button", { name: "Retry joining jar" }).click();
+  await expect(page.getByRole("alert")).toContainText("can’t be joined anymore");
+  await page.getByRole("button", { name: "Retry joining jar" }).click();
+  await expect(page.getByRole("alert")).toContainText("Check your connection");
+  await page.getByRole("button", { name: "Retry joining jar" }).click();
+  await expect(page.getByRole("alert")).toContainText("Check your connection");
+  await page.getByRole("button", { name: "Retry joining jar" }).click();
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByTestId("jar-pot")).toBeVisible();
   await expect(page.getByText("The Group Chat")).toBeVisible();
@@ -62,6 +108,55 @@ test("settle up is inert with a 'payments coming soon' badge", async ({ page }) 
   await expect(page.getByText("YOU OWE THE JAR")).toBeVisible();
   await expect(page.getByText("Payments coming soon")).toBeVisible();
   await expect(page.getByText("guilt scoreboard", { exact: false })).toBeVisible();
+});
+
+test("log slip fetch and submit failures stay retryable without false success", async ({
+  page,
+}) => {
+  await signInAsCalum(page);
+  await openJar(page, "The Group Chat");
+
+  let detailAttempts = 0;
+  await page.route("**/api/jars/*", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    detailAttempts += 1;
+    if (detailAttempts === 1) {
+      return route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: '{"error":"busy"}',
+      });
+    }
+    return route.continue();
+  });
+  await page.getByRole("button", { name: "I texted my ex" }).click();
+  await expect(page.getByRole("alert")).toContainText("jar couldn’t be loaded");
+  await page.getByRole("button", { name: "Retry" }).click();
+  await expect(page.getByRole("button", { name: /Add .* to my shame/ })).toBeVisible();
+
+  let slipAttempts = 0;
+  await page.route("**/api/jars/*/slips", async (route) => {
+    slipAttempts += 1;
+    if (slipAttempts === 1) {
+      return route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: '{"error":"busy"}',
+      });
+    }
+    return route.continue();
+  });
+  await page.getByRole("button", { name: /Add .* to my shame/ }).click();
+  await page.getByRole("button", { name: "Yeah. I did it. 💸" }).click();
+  await expect(page.getByRole("alert")).toContainText("tally has not changed");
+  await expect(page.getByText("You sure-sure?")).toBeVisible();
+  expect(slipAttempts).toBe(1);
+  await page.getByRole("button", { name: "Retry logging slip" }).click();
+  await expect(page.getByTestId("jar-pot")).toBeVisible();
+  expect(slipAttempts).toBe(2);
+  await page.reload();
+  await openJar(page, "The Group Chat");
+  await expect(page.getByTestId("jar-pot")).toBeVisible();
 });
 
 test("profile: edit avatar and toggle share-streak", async ({ page }) => {
