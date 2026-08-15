@@ -161,7 +161,16 @@ Review-fix commits:
 - `dc422b50b` and `583b06ec1`: validate avatar PNG/JPEG/WebP MIME, signatures,
   and 2 MiB limit at client/server boundaries, plus independent browser QA for
   rejection, save, rendering, and reload persistence. The independent QA commit
-  is local until the shared-tree pre-push gate is green.
+  passed the shared-tree pre-push gate and is pushed.
+- `7ea259720` and `f8df0df1d`: model loading, true empty, loaded, failed, and
+  retry states for Home, Activity, Jar Detail, Settle, and Confirm/Deny without
+  false empty, false `$0`, fallback reports, or infinite loaders. The full
+  pre-push Biome/Knip gate and frontend typecheck are green; hosted Storybook QA
+  is pending.
+- `acec8fc8a`: preserve a valid local session through network, HTTP 5xx, and
+  boundary failures; clear it only on confirmed 401; require successful server
+  revocation before local logout; and provide honest retry UI. Direct/unit seams
+  and the full pre-push gate are green; hosted UI/Storybook proof is pending.
 
 ## Production evidence checklist
 
@@ -215,12 +224,12 @@ boundaries being exercised.
 |---|---|---|---|---|---|
 | Apple auth, onboarding, profile | `apple_release`, `fix_ci_apple_arch` | v1 audit agents | Apple verifier/unit seams; onboarding/profile browser paths; unsigned simulator build; `dc422b50b`/`583b06ec1` cover avatar MIME/signature/size rejection and saved-image reload | Physical Apple success/cancel/reload/cellular pending; profile failure-state QA pending; signed profile still must prove Associated Domains | Blocked |
 | Create, join, invite, deep links | recovery/frontend agents + root | v1 audit agents | Create → Invite → Jar pointer path green; `3720d8609`/`456e5b619` add canonical URL, onboarding-preserved web path, strict pre-join boundary, Capacitor cold/warm plumbing, AASA and 11th browser flow; immutable run `31866340124` green | Public AASA/Apple CDN and physical cold/warm universal-link proof pending; invite expiry/revocation still missing | Blocked |
-| Home, jar detail, activity, streak privacy | recovery/frontend agents | v1 audit agents | Home/order/activity browser paths; multi-user raw API seam now omits hidden days and retains self view; new/existing memberships private | Hosted privacy contract pending; fetch failures look empty or load forever | Blocked — privacy fixed, failure states remain |
+| Home, jar detail, activity, streak privacy | recovery/frontend agents | v1 audit agents | Home/order/activity browser paths; multi-user raw API seam now omits hidden days and retains self view; new/existing memberships private; `7ea259720`/`f8df0df1d` add explicit error/retry/empty states | Hosted privacy and Storybook confirmation plus populated/mobile visual checks pending | Blocked — implementation fixed, independent/hosted QA pending |
 | Self-log slip | recovery/frontend agents | v1 audit agents | Amount/confirm/tally/pot/streak browser flow; other-member raw JSON now omits private ex label | Hosted privacy contract plus mutation/offline/duplicate/mobile states pending | Blocked — privacy fixed, failure states remain |
 | Reports, anonymity, real images, evidence, own/deny | reporting agents | v1 audit agents | Real PNG path, evidence contracts/Postgres round trip, Own/Deny; raw anonymous activity now has `by:null`; self-report rejected with zero persistence | Hosted boundary proof, resolved history, viewer accessibility and image/deny/authorization states missing | Blocked |
-| Settle and close lifecycle | recovery/frontend agents | v1 audit agents | Inert payment/owed amount browser path | Failed fetch renders a false `$0`; close/leave semantics and implementation absent | Blocked |
-| Sessions and logout | auth agents | v1 audit agents | `72dd17844` documents and proves backend creation, absolute expiry, lazy deletion, multiple sessions, migration, and current-token revocation against real Postgres/Hono | Frontend transient `/me`, retry, reload, and failed-logout semantics are still in implementation/QA | Blocked — backend lifecycle passes locally |
-| Loading, error, validation, empty | feature owners | v1 audit agents | Happy-path and selected empty/validation coverage only | Multiple screens swallow fetch/mutation failures or render false empty/success state | Blocked |
+| Settle and close lifecycle | recovery/frontend agents | v1 audit agents | Inert payment/owed amount browser path; `7ea259720` proves a failed fetch cannot render false `$0` and offers retry | Close/leave semantics and implementation absent; loaded positive/zero hands-on visual pending | Blocked |
+| Sessions and logout | auth agents | v1 audit agents | `72dd17844` proves backend lifecycle against real Postgres/Hono; `acec8fc8a` covers confirmed 401, transient network/5xx/invalid payload retention and retry, reload recovery, and revoke-before-clear logout | Hosted unit/Storybook UI run and physical-device presentation pending | Blocked — implementation passes direct seams, hosted QA pending |
+| Loading, error, validation, empty | feature owners | v1 audit agents | `7ea259720`/`f8df0df1d` cover Home, Activity, Jar Detail, Settle, and Confirm/Deny loading/error/retry/empty plus failed report mutation | Invite, Join, Log, Report, and remaining mutation/offline states plus independent hands-on/hosted coverage pending | Blocked — first screen set fixed |
 | Mobile accessibility and clickability | frontend agents | v1 audit agents | Create overlay regression fixed; iOS simulator build | Missing accessible names/dialog focus/Escape; mobile viewport, VoiceOver, rotation, dynamic type, and physical-device QA pending | Blocked |
 | Notifications | Future increment | v1 audit agents | README/migration and v1 scope decision agree | Explicitly excluded from this restoration v1; no silent claim that delivery exists | Not applicable — recorded v1 scope |
 | Authorization and data isolation | `fix_ci_apple_arch` follow-up | v1 audit agents | Multi-user Postgres/API seams cover hidden streak, ex label, anonymous reporter, outsider read, opt-in defaults/migration and self-target rejection | Hosted CI and the remaining complete owner/member/accused/outsider action matrix pending | Blocked — confirmed leaks fixed |
@@ -289,3 +298,12 @@ Associated Domains update captured 2026-08-14:
 - 72%: sent as event `JTWgCfQFy016` when the completion goal expanded to include
   every recovered v1 product feature and a full design/basic-QA audit. It noted
   that hosted browser CI was still iterating and production remained pending.
+- 78%: sent as event `b9jCrmgKpUxT` after privacy boundaries and the first
+  deep-link implementation landed. It explicitly listed sessions, close,
+  report history, error/avatar/accessibility QA, production, and TestFlight as
+  remaining.
+- 82%: sent as event `H3DHe2csbLRS` after immutable run `31866340124` went green
+  and avatar, backend/frontend session semantics, and the first recoverable
+  fetched-state set were committed. It explicitly stated the app was not yet
+  deployed and listed close, report history, accessibility/mobile, production,
+  signed TestFlight, and external-user proof as remaining.
