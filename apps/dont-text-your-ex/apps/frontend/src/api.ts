@@ -61,7 +61,7 @@ class ApiError extends Error {
 
 export const api = {
   // auth
-  signInWithApple: (input: { identityToken: string; fullName?: string }) =>
+  signInWithApple: (input: { identityToken: string; nonce: string; fullName?: string }) =>
     req<{ token: string; user: MeDTO; isNew: boolean }>("POST", "/auth/apple", input),
   logout: () => req<{ ok: boolean }>("POST", "/auth/logout"),
 

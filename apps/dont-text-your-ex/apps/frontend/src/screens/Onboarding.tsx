@@ -3,7 +3,11 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { AppCtx, RouteFor } from "../appctx";
 import { Icon } from "../icons";
-import { authorizeAppleSignIn, createAppleSignInRequest } from "../native/appleSignIn";
+import {
+  authorizeAppleSignIn,
+  createAppleSignInAttempt,
+  validateAppleSignInResponse,
+} from "../native/appleSignIn";
 import { T } from "../theme";
 import { DevBadge, PAGE_TOP_PADDING } from "../ui";
 
@@ -50,14 +54,16 @@ export function Onboarding({ ctx }: { ctx: AppCtx<RouteFor<"onboarding">> }) {
         return;
       }
       let identityToken: string;
+      let nonce: string;
       let fullName: string | undefined;
       try {
-        const request = createAppleSignInRequest();
-        const response = await authorizeAppleSignIn(request);
-        if (response.attemptId !== request.attemptId || response.state !== request.state) {
-          throw new Error("Apple sign-in response did not match the active request");
-        }
+        const attempt = await createAppleSignInAttempt();
+        const response = validateAppleSignInResponse(
+          attempt.request,
+          await authorizeAppleSignIn(attempt.request),
+        );
         identityToken = response.identityToken;
+        nonce = attempt.rawNonce;
         fullName = response.fullName;
       } catch (e) {
         console.error("[tye] signInApple native error", e);
@@ -65,7 +71,11 @@ export function Onboarding({ ctx }: { ctx: AppCtx<RouteFor<"onboarding">> }) {
         return;
       }
       try {
-        const { token, user, isNew } = await api.signInWithApple({ identityToken, fullName });
+        const { token, user, isNew } = await api.signInWithApple({
+          identityToken,
+          nonce,
+          fullName,
+        });
         ctx.signIn(token, user);
         if (isNew) ctx.nav({ name: "setup" });
       } catch (e) {

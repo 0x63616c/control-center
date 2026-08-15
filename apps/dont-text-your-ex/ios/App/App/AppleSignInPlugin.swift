@@ -55,9 +55,6 @@ extension AppleSignInPlugin: ASAuthorizationControllerDelegate {
         guard let call = activeCall else { return }
 
         let attemptId = call.getString("attemptId") ?? "attempt_unknown"
-        let state = call.getString("state") ?? "state_unknown"
-        let nonce = call.getString("nonce") ?? "nonce_unknown"
-
         guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential else {
             logger.error("Apple sign-in returned an unexpected credential attemptId=\(attemptId, privacy: .public)")
             reject(call, code: "apple_sign_in_bad_credential", message: "Apple sign-in returned an unexpected credential")
@@ -86,10 +83,11 @@ extension AppleSignInPlugin: ASAuthorizationControllerDelegate {
             "identityToken": identityToken,
             "hasAuthorizationCode": credential.authorizationCode != nil,
             "user": credential.user,
-            "attemptId": attemptId,
-            "state": credential.state ?? state,
-            "nonce": nonce
+            "attemptId": attemptId
         ]
+        if let state = credential.state {
+            response["state"] = state
+        }
         if let fullName, !fullName.isEmpty {
             response["fullName"] = fullName
         }

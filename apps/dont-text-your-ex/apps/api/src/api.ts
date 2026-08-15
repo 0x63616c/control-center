@@ -1,7 +1,8 @@
 import { createLogger } from "@www/logger";
 import { Hono } from "hono";
-import { createRemoteJWKSet, decodeJwt, decodeProtectedHeader, jwtVerify } from "jose";
+import { decodeJwt, decodeProtectedHeader } from "jose";
 import { AuthDevRequestSchema } from "../../../contracts";
+import { verifyAppleIdentityToken } from "./apple-auth";
 import { requireUser } from "./auth";
 import { parseRequestJson } from "./boundary";
 import { appleBundleId, isProduction } from "./env";
@@ -16,19 +17,6 @@ export const api = new Hono<Env>();
 const log = createLogger({ service: "dont-text-your-ex-api" });
 
 const unauth = { error: "not_authenticated" } as const;
-
-// Sign In with Apple: verify the identity token against Apple's public JWKS.
-// audience must equal the app's bundle id; no Apple private key is needed.
-const APPLE_JWKS = createRemoteJWKSet(new URL("https://appleid.apple.com/auth/keys"));
-
-async function verifyAppleToken(identityToken: string): Promise<{ sub: string }> {
-  const { payload } = await jwtVerify(identityToken, APPLE_JWKS, {
-    issuer: "https://appleid.apple.com",
-    audience: appleBundleId(),
-  });
-  if (!payload.sub) throw new Error("missing sub in Apple JWT");
-  return { sub: payload.sub };
-}
 
 // ─────────────────────────── health ───────────────────────────
 api.get("/health", (c) => c.json({ ok: true }));
@@ -68,13 +56,18 @@ api.post("/test/reset", async (c) => {
 // Real Sign In with Apple: verifies the JWT from the native
 // ASAuthorizationAppleIDProvider flow, then finds or creates the user.
 api.post("/auth/apple", async (c) => {
-  const { identityToken, fullName } = await c.req.json<{
+  const { identityToken, nonce, fullName } = await c.req.json<{
     identityToken?: string;
+    nonce?: string;
     fullName?: string;
   }>();
   if (!identityToken) {
     log.warn("auth/apple: missing identityToken in body");
     return c.json({ error: "identity_token_required" }, 400);
+  }
+  if (!nonce) {
+    log.warn("auth/apple: missing nonce in body");
+    return c.json({ error: "nonce_required" }, 400);
   }
 
   // Decode WITHOUT verifying first, so the logs show exactly what the device
@@ -102,7 +95,7 @@ api.post("/auth/apple", async (c) => {
 
   let sub: string;
   try {
-    ({ sub } = await verifyAppleToken(identityToken));
+    ({ sub } = await verifyAppleIdentityToken(identityToken, nonce));
   } catch (e) {
     const message = (e as Error).message;
     log.warn(

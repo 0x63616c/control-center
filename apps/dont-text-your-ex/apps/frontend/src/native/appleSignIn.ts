@@ -16,24 +16,47 @@ export type AppleSignInResponse = {
   readonly user: string;
   readonly fullName?: string;
   readonly attemptId: string;
-  readonly state: string;
-  readonly nonce: string;
+  readonly state?: string;
+};
+
+export type AppleSignInAttempt = {
+  readonly request: AppleSignInRequest;
+  readonly rawNonce: string;
 };
 
 const AppleSignIn = registerPlugin<AppleSignInPlugin>("AppleSignIn");
 
 function randomPart(): string {
-  const bytes = new Uint8Array(12);
+  const bytes = new Uint8Array(24);
   crypto.getRandomValues(bytes);
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export function createAppleSignInRequest(): AppleSignInRequest {
+async function sha256(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export async function createAppleSignInAttempt(): Promise<AppleSignInAttempt> {
+  const rawNonce = `nonce_${randomPart()}`;
   return {
-    attemptId: `attempt_${randomPart()}`,
-    state: `state_${randomPart()}`,
-    nonce: `nonce_${randomPart()}`,
+    request: {
+      attemptId: `attempt_${randomPart()}`,
+      state: `state_${randomPart()}`,
+      nonce: await sha256(rawNonce),
+    },
+    rawNonce,
   };
+}
+
+export function validateAppleSignInResponse(
+  request: AppleSignInRequest,
+  response: AppleSignInResponse,
+): AppleSignInResponse {
+  if (response.attemptId !== request.attemptId || response.state !== request.state) {
+    throw new Error("Apple sign-in response did not match the active request");
+  }
+  return response;
 }
 
 export function authorizeAppleSignIn(input: AppleSignInRequest): Promise<AppleSignInResponse> {

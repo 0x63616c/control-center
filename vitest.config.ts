@@ -12,6 +12,7 @@ export default defineConfig({
       "apps/manage",
       "apps/worker",
       "apps/dont-text-your-ex/apps/api",
+      "apps/dont-text-your-ex/apps/frontend",
       "packages/core",
       "packages/logger",
       "packages/platform",
