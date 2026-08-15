@@ -11,6 +11,12 @@ export type GhcrPullSecretPreflightOptions = {
   context?: string;
 };
 
+export function namespaceLookupState(result: KubectlResult): "exists" | "absent" | "error" {
+  if (result.exitCode === 0) return "exists";
+  const diagnostic = `${result.stdout}\n${result.stderr}`;
+  return /\bnot\s*found\b/i.test(diagnostic) ? "absent" : "error";
+}
+
 // Pulumi runs this program under its Node runtime (not Bun), so use the
 // cross-runtime node:child_process API rather than Bun.spawnSync (which is
 // undefined under Node and threw `ReferenceError: Bun is not defined`).
@@ -30,6 +36,21 @@ function withContext(args: string[], context?: string): string[] {
 export function verifyLiveGhcrPullSecrets(opts: GhcrPullSecretPreflightOptions = {}): void {
   const failures: string[] = [];
   for (const namespaceName of GHCR_PULL_SECRET_NAMESPACES) {
+    const namespace = kubectl(
+      withContext(["get", "namespace", namespaceName, "--output", "name"], opts.context),
+    );
+    const namespaceState = namespaceLookupState(namespace);
+    // A newly declared namespace cannot have its pull Secret before the first
+    // Pulumi apply. Confirmed NotFound is the one safe bootstrap exception;
+    // auth/network errors remain failures, and every existing namespace must
+    // already carry a valid Secret.
+    if (namespaceState === "absent") continue;
+    if (namespaceState === "error") {
+      failures.push(
+        `${namespaceName}: namespace unreadable (${namespace.stderr || "kubectl failed"})`,
+      );
+      continue;
+    }
     const type = kubectl(
       withContext(
         [
