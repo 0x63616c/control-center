@@ -387,6 +387,9 @@ test("member confirms leave → loses access while owner-only close stays unavai
   const jars = JarSummarySchema.array().parse(await jarsResponse.json());
   const jar = jars.find((item) => item.name === "The Group Chat");
   if (!jar) throw new Error("member jar missing");
+  const detailResponse = await request.get(`/api/jars/${jar.id}`, { headers });
+  const detail = JarDetailSchema.parse(await detailResponse.json());
+  if (!detail.inviteCode) throw new Error("member jar invite missing before leave");
 
   await page.getByRole("button", { name: "Leave jar" }).click();
   await expect(page.getByRole("alert")).toContainText("Leave this jar?");
@@ -402,4 +405,16 @@ test("member confirms leave → loses access while owner-only close stays unavai
   await expect(page.getByText("Your jars", { exact: true })).toBeVisible();
   await expect(page.getByText("Loading your jars…", { exact: true })).toBeHidden();
   await expect(page.getByTestId("jar-card").filter({ hasText: "The Group Chat" })).toHaveCount(0);
+
+  await page.goto(`/j/${detail.inviteCode}`);
+  await expect(page.getByText("Join jar")).toBeVisible();
+  await page.getByRole("button", { name: "Join the shame" }).click();
+  await expect(page.getByTestId("jar-pot")).toBeVisible();
+  await page.reload();
+  await openJar(page, "The Group Chat");
+  await expect(page.locator('[data-testid="shame-row"][data-member="Calum"]')).toContainText("$40");
+
+  await page.goto("/");
+  await openJar(page, "The Group Chat");
+  await expect(page.locator('[data-testid="shame-row"][data-member="Calum"]')).toContainText("$40");
 });

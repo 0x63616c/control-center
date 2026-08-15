@@ -590,6 +590,20 @@ describe.skipIf(!HAS_DB)("jar lifecycle", () => {
     });
     expect(denied.status).toBe(404);
     expect(await denied.json()).toEqual({ error: "not_found" });
+
+    await expect(store.joinJarByCode(member.id, code)).resolves.toEqual({ jarId: jar.id });
+    expect(await store.isMember(jar.id, member.id)).toBe(true);
+    const rejoined = await store.getJarDetail(jar.id, member.id);
+    expect(rejoined?.members.find((entry) => entry.user.id === member.id)).toMatchObject({
+      active: true,
+      tallyCents: 700,
+    });
+    expect(await store.listJarsForUser(member.id)).toEqual([
+      expect.objectContaining({ id: jar.id, myTallyCents: 700, memberCount: 2 }),
+    ]);
+    expect(await store.pendingReportsForUser(member.id)).toEqual([
+      expect.objectContaining({ accused: expect.objectContaining({ id: member.id }) }),
+    ]);
   });
 
   it("hides a member's private streak from other members and rejects outsiders", async () => {
