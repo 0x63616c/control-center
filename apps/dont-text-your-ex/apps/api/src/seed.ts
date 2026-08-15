@@ -2,7 +2,6 @@ import { DAY, now, pool } from "./db/index";
 import { runMigrations } from "./db/migrate";
 import { isProduction, shouldResetDatabase } from "./env";
 import { id } from "./ids";
-import { serializeEvidenceThreadJson } from "./persistence";
 
 type ActivitySeed =
   | {
@@ -144,27 +143,7 @@ const PENDING = {
   anonymous: 1,
   amount: 500,
   at: 8 * MIN,
-  note: "Christie posted a story and you replied in 4 seconds flat. We saw the screenshots. Pay up.",
-  evidence: [
-    {
-      to: "Christie",
-      time: "2:14 AM",
-      bubbles: [
-        { me: true, text: "u up?" },
-        { me: false, text: "calum it is 2am" },
-        { me: true, text: "i know. i just miss the way you-" },
-      ],
-    },
-    {
-      to: "Christie",
-      time: "2:21 AM",
-      bubbles: [
-        { me: false, text: "we broke up for a reason" },
-        { me: true, text: "name one" },
-        { me: true, text: "exactly" },
-      ],
-    },
-  ],
+  note: "Christie posted a story and you replied in 4 seconds flat. Pay up.",
 };
 
 // Production never seeds. Local dev and tests can call seed() or ensureSeed() explicitly.
@@ -234,12 +213,6 @@ export async function seed(): Promise<void> {
       now() - PENDING.at,
     ],
   );
-  for (const ev of PENDING.evidence) {
-    await pool.query(
-      "INSERT INTO report_evidence (id, report_id, kind, payload, created_at) VALUES ($1,$2,$3,$4,$5)",
-      [id("evi"), PENDING.id, "image", serializeEvidenceThreadJson(ev), now()],
-    );
-  }
 }
 
 // Truncate everything and reseed. Used by `bun run seed:reset`, by the server

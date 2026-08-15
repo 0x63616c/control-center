@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   CreateJarRequestSchema,
   CreateReportRequestSchema,
-  EvidenceThreadSchema,
+  EVIDENCE_MAX_BYTES,
+  EVIDENCE_MAX_FILES,
+  EvidenceImageInputSchema,
   JarIdSchema,
   JoinJarRequestSchema,
   LogSlipRequestSchema,
@@ -12,7 +14,10 @@ import {
   UpdateMeRequestSchema,
   UserIdSchema,
 } from "../../../../contracts";
-import { parseEvidenceThreadJson, serializeEvidenceThreadJson } from "../persistence";
+import { parseEvidenceImageJson, serializeEvidenceImageJson } from "../persistence";
+
+const PNG_DATA_URL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
 describe("request schemas", () => {
   it.each([
@@ -37,25 +42,46 @@ describe("domain id parsers", () => {
 });
 
 describe("persisted report evidence", () => {
-  it("rejects malformed thread JSON after deserialization", () => {
+  it("accepts real bounded image data and requires a note or image", () => {
     expect(
-      EvidenceThreadSchema.safeParse({
-        to: "Alex",
-        time: "2:14 AM",
-        bubbles: [{ me: "yes", text: "u up?" }],
+      EvidenceImageInputSchema.safeParse({ mimeType: "image/png", dataUrl: PNG_DATA_URL }).success,
+    ).toBe(true);
+    expect(
+      CreateReportRequestSchema.safeParse({ accusedId: "usr_123", anonymous: false }).success,
+    ).toBe(false);
+    expect(
+      CreateReportRequestSchema.safeParse({
+        accusedId: "usr_123",
+        anonymous: false,
+        evidence: [{ mimeType: "image/png", dataUrl: PNG_DATA_URL }],
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects unsupported, oversized, and excess attachments", () => {
+    const oversized = `data:image/png;base64,${Buffer.alloc(EVIDENCE_MAX_BYTES + 1).toString("base64")}`;
+    expect(
+      EvidenceImageInputSchema.safeParse({ mimeType: "image/gif", dataUrl: PNG_DATA_URL }).success,
+    ).toBe(false);
+    expect(
+      EvidenceImageInputSchema.safeParse({ mimeType: "image/png", dataUrl: oversized }).success,
+    ).toBe(false);
+    expect(
+      CreateReportRequestSchema.safeParse({
+        accusedId: "usr_123",
+        evidence: Array.from({ length: EVIDENCE_MAX_FILES + 1 }, () => ({
+          mimeType: "image/png",
+          dataUrl: PNG_DATA_URL,
+        })),
       }).success,
     ).toBe(false);
   });
 
-  it("parses valid persisted JSON and rejects corrupt persisted JSON", () => {
-    const thread = {
-      to: "Alex",
-      time: "2:14 AM",
-      bubbles: [{ me: true, text: "u up?" }],
-    };
+  it("parses valid persisted image JSON and rejects corrupt persisted JSON", () => {
+    const image = { mimeType: "image/png" as const, dataUrl: PNG_DATA_URL };
 
-    expect(parseEvidenceThreadJson(serializeEvidenceThreadJson(thread))).toEqual(thread);
-    expect(() => parseEvidenceThreadJson('{"to":"Alex","bubbles":[]}')).toThrow(
+    expect(parseEvidenceImageJson(serializeEvidenceImageJson(image))).toEqual(image);
+    expect(() => parseEvidenceImageJson('{"mimeType":"image/png","dataUrl":"nope"}')).toThrow(
       "invalid persisted report evidence",
     );
   });

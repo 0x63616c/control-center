@@ -15,11 +15,11 @@ import {
 } from "../../../contracts";
 import { DAY, now, pool } from "./db/index";
 import { id, inviteCode } from "./ids";
-import { parseEvidenceThreadJson, serializeEvidenceThreadJson } from "./persistence";
+import { parseEvidenceImageJson, serializeEvidenceImageJson } from "./persistence";
 import type {
   ActivityDTO,
   ActivityType,
-  EvidenceThread,
+  EvidenceImageInput,
   JarDetailDTO,
   JarSummaryDTO,
   MeDTO,
@@ -471,7 +471,7 @@ export async function createReport(opts: {
   note?: string | null;
   anonymous: boolean;
   amountCents: number;
-  evidence: EvidenceThread[];
+  evidence: EvidenceImageInput[];
 }): Promise<ReportDTO> {
   const rid = id("rpt");
   await pool.query(
@@ -488,10 +488,10 @@ export async function createReport(opts: {
       now(),
     ],
   );
-  for (const thread of opts.evidence) {
+  for (const image of opts.evidence) {
     await pool.query(
       "INSERT INTO report_evidence (id, report_id, kind, payload, created_at) VALUES ($1,$2,$3,$4,$5)",
-      [id("evi"), rid, "image", serializeEvidenceThreadJson(thread), now()],
+      [id("evi"), rid, "image", serializeEvidenceImageJson(image), now()],
     );
   }
   await logActivity({
@@ -535,7 +535,7 @@ async function serializeReport(reportId: string): Promise<ReportDTO | null> {
   const evidence = evRows.map((e) => ({
     id: EvidenceIdSchema.parse(e.id),
     kind: "image" as const,
-    thread: parseEvidenceThreadJson(e.payload),
+    ...parseEvidenceImageJson(e.payload),
   }));
   return ReportSchema.parse({
     id: r.id,

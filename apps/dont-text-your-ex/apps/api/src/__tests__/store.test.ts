@@ -103,7 +103,7 @@ describe.skipIf(!HAS_DB)("slip logging", () => {
 });
 
 describe.skipIf(!HAS_DB)("reports", () => {
-  it("creates pending report and resolves as owned", async () => {
+  it("persists image evidence, creates a pending report, and resolves as owned", async () => {
     const accuser = await store.createUser({ name: "Iris" });
     const accused = await store.createUser({ name: "Jack" });
     const jar = await store.createJar({ userId: accuser.id, name: "Report Jar", rule: "" });
@@ -118,9 +118,23 @@ describe.skipIf(!HAS_DB)("reports", () => {
       note: "saw it",
       anonymous: false,
       amountCents: 500,
-      evidence: [],
+      evidence: [
+        {
+          mimeType: "image/png",
+          dataUrl:
+            "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+        },
+      ],
     });
     expect(report.status).toBe("pending");
+    expect(report.evidence).toEqual([
+      expect.objectContaining({
+        kind: "image",
+        mimeType: "image/png",
+        dataUrl:
+          "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      }),
+    ]);
 
     const pending = await store.pendingReportsForUser(accused.id);
     expect(pending).toHaveLength(1);

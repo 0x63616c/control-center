@@ -174,7 +174,7 @@ export function ConfirmDeny({ ctx }: { ctx: AppCtx<RouteFor<"confirmDeny">> }) {
             }}
           >
             {report.evidence.map((e, i) => (
-              <EvidenceShot key={e.id} shot={e.thread} w={128} onOpen={() => setViewer(i)} />
+              <EvidenceShot key={e.id} image={e} w={128} onOpen={() => setViewer(i)} />
             ))}
           </div>
         </>
@@ -201,7 +201,7 @@ export function ConfirmDeny({ ctx }: { ctx: AppCtx<RouteFor<"confirmDeny">> }) {
       </p>
 
       <EvidenceViewer
-        shots={report.evidence.map((e) => e.thread)}
+        images={report.evidence}
         index={viewer}
         onClose={() => setViewer(null)}
         onIndex={setViewer}

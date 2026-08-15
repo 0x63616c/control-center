@@ -72,13 +72,13 @@ export function Onboarding({ ctx }: { ctx: AppCtx<RouteFor<"onboarding">> }) {
         return;
       }
       try {
-        const { token, user, isNew } = await api.signInWithApple({
+        const { token, user, status } = await api.signInWithApple({
           identityToken,
           nonce,
           fullName,
         });
         ctx.signIn(token, user);
-        if (isNew) ctx.nav({ name: "setup" });
+        if (status === "needs_profile") ctx.nav({ name: "setup" });
       } catch (e) {
         console.error("[tye] signInApple API error", e);
         setErr("Apple sign-in could not be verified. Please try again.");

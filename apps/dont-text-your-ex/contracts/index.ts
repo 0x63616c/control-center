@@ -37,6 +37,7 @@ export const AppleAuthRequestSchema = z
 
 export const UpdateMeRequestSchema = z
   .object({
+    name: nonEmptyText.optional(),
     color: z.string().optional(),
     emoji: z.string().nullable().optional(),
     photo: z.string().nullable().optional(),
@@ -62,30 +63,56 @@ export const LogSlipRequestSchema = z
   })
   .strict();
 
-export const EvidenceThreadSchema = z
+export const EVIDENCE_MAX_FILES = 3;
+export const EVIDENCE_MAX_BYTES = 2 * 1024 * 1024;
+export const EVIDENCE_IMAGE_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
+
+function decodedBase64Bytes(payload: string): number | null {
+  if (payload.length === 0 || payload.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(payload)) {
+    return null;
+  }
+  const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
+  return (payload.length / 4) * 3 - padding;
+}
+
+export const EvidenceImageInputSchema = z
   .object({
-    to: z.string(),
-    time: z.string(),
-    bubbles: z.array(
-      z
-        .object({
-          me: z.boolean(),
-          text: z.string(),
-        })
-        .strict(),
-    ),
+    mimeType: z.enum(EVIDENCE_IMAGE_MIME_TYPES),
+    dataUrl: z.string(),
   })
-  .strict();
+  .strict()
+  .superRefine((image, ctx) => {
+    const prefix = `data:${image.mimeType};base64,`;
+    if (!image.dataUrl.startsWith(prefix)) {
+      ctx.addIssue({ code: "custom", path: ["dataUrl"], message: "image data URL MIME mismatch" });
+      return;
+    }
+    const bytes = decodedBase64Bytes(image.dataUrl.slice(prefix.length));
+    if (bytes == null) {
+      ctx.addIssue({ code: "custom", path: ["dataUrl"], message: "invalid base64 image data" });
+    } else if (bytes > EVIDENCE_MAX_BYTES) {
+      ctx.addIssue({ code: "custom", path: ["dataUrl"], message: "image exceeds size limit" });
+    }
+  });
 
 export const CreateReportRequestSchema = z
   .object({
     accusedId: UserIdSchema,
-    note: z.string().optional(),
+    note: nonEmptyText.optional(),
     anonymous: z.boolean().optional(),
     amountCents: cents.optional(),
-    evidence: z.array(EvidenceThreadSchema).optional(),
+    evidence: z.array(EvidenceImageInputSchema).max(EVIDENCE_MAX_FILES).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((report, ctx) => {
+    if (report.note == null && (report.evidence?.length ?? 0) === 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["evidence"],
+        message: "a note or image attachment is required",
+      });
+    }
+  });
 
 export const ResolveReportRequestSchema = z.object({ action: z.enum(["own", "deny"]) }).strict();
 
@@ -93,7 +120,7 @@ export type AppleAuthRequest = z.infer<typeof AppleAuthRequestSchema>;
 export type UpdateMeRequest = z.infer<typeof UpdateMeRequestSchema>;
 export type CreateJarRequest = z.infer<typeof CreateJarRequestSchema>;
 export type LogSlipRequest = z.infer<typeof LogSlipRequestSchema>;
-export type EvidenceThread = z.infer<typeof EvidenceThreadSchema>;
+export type EvidenceImageInput = z.infer<typeof EvidenceImageInputSchema>;
 export type CreateReportRequest = z.infer<typeof CreateReportRequestSchema>;
 
 export const UserSchema = z
@@ -181,7 +208,8 @@ const EvidenceSchema = z
   .object({
     id: EvidenceIdSchema,
     kind: z.literal("image"),
-    thread: EvidenceThreadSchema,
+    mimeType: z.enum(EVIDENCE_IMAGE_MIME_TYPES),
+    dataUrl: z.string(),
   })
   .strict();
 
@@ -202,9 +230,14 @@ export const ReportSchema = z
   })
   .strict();
 
-export const AuthResponseSchema = z
-  .object({ token: SessionTokenSchema, user: MeSchema, isNew: z.boolean() })
-  .strict();
+export const AuthResponseSchema = z.discriminatedUnion("status", [
+  z
+    .object({ status: z.literal("authenticated"), token: SessionTokenSchema, user: MeSchema })
+    .strict(),
+  z
+    .object({ status: z.literal("needs_profile"), token: SessionTokenSchema, user: MeSchema })
+    .strict(),
+]);
 export const OkResponseSchema = z.object({ ok: z.literal(true) }).strict();
 export const JoinJarResponseSchema = z.object({ jarId: JarIdSchema }).strict();
 export const ApiErrorBodySchema = z

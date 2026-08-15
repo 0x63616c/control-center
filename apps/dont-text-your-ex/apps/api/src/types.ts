@@ -1,7 +1,7 @@
 export type {
   ActivityDTO,
   ActivityType,
-  EvidenceThread,
+  EvidenceImageInput,
   JarDetailDTO,
   JarSummaryDTO,
   MeDTO,

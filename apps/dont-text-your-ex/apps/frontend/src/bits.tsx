@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
 import { Icon } from "./icons";
 import { money, T } from "./theme";
-import type { EvidenceThread } from "./types";
+import type { EvidenceImageInput } from "./types";
 
 export function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -96,116 +96,37 @@ export function Stepper({
   );
 }
 
-// Fake iMessage-style screenshot used as report "evidence".
-// `interactive=false` renders just the thumbnail (no <button>), so callers can
-// place it inside their own button without nesting (invalid HTML).
 export function EvidenceShot({
-  shot,
+  image,
   w = 132,
   onOpen,
   full = false,
-  interactive = true,
 }: {
-  shot: EvidenceThread;
+  image: EvidenceImageInput;
   w?: number;
   onOpen?: () => void;
   full?: boolean;
-  interactive?: boolean;
 }) {
-  const scale = full ? 1 : w / 320;
-  const inner = (
-    <div
+  const picture = (
+    <img
+      src={image.dataUrl}
+      alt="Report attachment"
       style={{
-        width: 320,
-        transformOrigin: "top left",
-        transform: full ? "none" : `scale(${scale})`,
+        display: "block",
+        width: full ? "100%" : w,
+        height: full ? "auto" : w * 1.5,
+        maxHeight: full ? "70vh" : undefined,
+        objectFit: "contain",
         background: "#000",
       }}
-    >
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          gap: 6,
-          padding: "16px 0 14px",
-          borderBottom: "1px solid rgba(255,255,255,0.08)",
-        }}
-      >
-        <div
-          style={{
-            width: 46,
-            height: 46,
-            borderRadius: "50%",
-            background: "#3A3A3C",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontFamily: T.disp,
-            fontWeight: 700,
-            fontSize: 18,
-            color: "#fff",
-          }}
-        >
-          {shot.to.slice(0, 2)}
-        </div>
-        <div style={{ fontFamily: T.ui, fontSize: 14, color: "#fff", fontWeight: 600 }}>
-          {shot.to} <span style={{ color: "#8A8A8E" }}>›</span>
-        </div>
-        <div style={{ fontFamily: T.ui, fontSize: 11, color: "#8A8A8E" }}>{shot.time}</div>
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "16px 14px 22px" }}>
-        {shot.bubbles.map((b) => (
-          <div
-            key={b.text}
-            style={{ display: "flex", justifyContent: b.me ? "flex-end" : "flex-start" }}
-          >
-            <div
-              style={{
-                maxWidth: "74%",
-                padding: "9px 14px",
-                borderRadius: 20,
-                fontFamily: T.ui,
-                fontSize: 15,
-                lineHeight: 1.3,
-                color: "#fff",
-                background: b.me ? "#0A84FF" : "#26252A",
-                borderBottomRightRadius: b.me ? 5 : 20,
-                borderBottomLeftRadius: b.me ? 20 : 5,
-              }}
-            >
-              {b.text}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
+    />
   );
-  if (full) return inner;
-
-  // Non-interactive thumbnail: same visual, plain div (no button, no "tap" badge).
-  if (!interactive) {
-    return (
-      <div
-        style={{
-          width: w,
-          height: w * 1.5,
-          borderRadius: 16,
-          overflow: "hidden",
-          flexShrink: 0,
-          border: `1px solid ${T.hair}`,
-          background: "#000",
-          position: "relative",
-        }}
-      >
-        {inner}
-      </div>
-    );
-  }
+  if (full) return picture;
 
   return (
     <button
       type="button"
+      aria-label="View report attachment"
       onClick={onOpen}
       style={{
         width: w,
@@ -220,44 +141,29 @@ export function EvidenceShot({
         position: "relative",
       }}
     >
-      {inner}
-      <span
-        style={{
-          position: "absolute",
-          bottom: 8,
-          right: 8,
-          background: "rgba(0,0,0,0.6)",
-          color: "#fff",
-          fontFamily: T.ui,
-          fontSize: 10,
-          fontWeight: 600,
-          padding: "3px 7px",
-          borderRadius: 999,
-          backdropFilter: "blur(4px)",
-        }}
-      >
-        tap
-      </span>
+      {picture}
     </button>
   );
 }
 
 export function EvidenceViewer({
-  shots,
+  images,
   index,
   onClose,
   onIndex,
 }: {
-  shots: EvidenceThread[];
+  images: EvidenceImageInput[];
   index: number | null;
   onClose: () => void;
   onIndex: (i: number) => void;
 }) {
   if (index == null) return null;
-  const shot = shots[index];
+  const image = images[index];
+  if (!image) return null;
   return (
-    <button
-      type="button"
+    // biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismisses the image viewer
+    <div
+      role="presentation"
       onClick={onClose}
       style={{
         all: "unset",
@@ -281,7 +187,7 @@ export function EvidenceViewer({
         }}
       >
         <span style={{ fontFamily: T.ui, color: T.sec, fontSize: 14 }}>
-          {index + 1} / {shots.length}
+          {index + 1} / {images.length}
         </span>
         <button
           type="button"
@@ -311,26 +217,28 @@ export function EvidenceViewer({
       >
         <div
           style={{
-            width: 320,
+            maxWidth: 360,
+            maxHeight: "70vh",
             background: "#000",
             borderRadius: 22,
             border: `1px solid ${T.hair}`,
             overflow: "hidden",
           }}
         >
-          <EvidenceShot shot={shot} full />
+          <EvidenceShot image={image} full />
         </div>
       </div>
-      {shots.length > 1 && (
+      {images.length > 1 && (
         // biome-ignore lint/a11y/noStaticElementInteractions: propagation stopper only
         // biome-ignore lint/a11y/useKeyWithClickEvents: propagation stopper only
         <div
           onClick={(e) => e.stopPropagation()}
           style={{ display: "flex", justifyContent: "center", gap: 8, padding: "12px 0 40px" }}
         >
-          {shots.map((s, i) => (
+          {images.map((image, i) => (
             <button
-              key={`${s.to}-${s.time}`}
+              key={image.dataUrl}
+              aria-label={`View attachment ${i + 1}`}
               type="button"
               onClick={() => onIndex(i)}
               style={{
@@ -346,7 +254,7 @@ export function EvidenceViewer({
           ))}
         </div>
       )}
-    </button>
+    </div>
   );
 }
 
