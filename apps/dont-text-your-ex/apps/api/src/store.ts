@@ -384,7 +384,7 @@ async function addMembership(
 ): Promise<void> {
   await pool.query(
     "INSERT INTO memberships (id, jar_id, user_id, role, tally_cents, streak_start_at, share_streak, joined_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (jar_id, user_id) DO NOTHING",
-    [id("mem"), jarId, userId, role, 0, null, 1, now()],
+    [id("mem"), jarId, userId, role, 0, null, 0, now()],
   );
 }
 

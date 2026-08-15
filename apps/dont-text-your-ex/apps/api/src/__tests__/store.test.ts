@@ -75,6 +75,20 @@ describe.skipIf(!HAS_DB)("users / auth", () => {
 });
 
 describe.skipIf(!HAS_DB)("jar lifecycle", () => {
+  it("starts new owner and member streak sharing as private", async () => {
+    const owner = await store.createUser({ name: "Private Owner" });
+    const member = await store.createUser({ name: "Private Member" });
+    const jar = await store.createJar({ userId: owner.id, name: "Opt-in Jar" });
+    expect(jar.myShareStreak).toBe(false);
+
+    const detail = await store.getJarDetail(jar.id, owner.id);
+    if (!detail) throw new Error("created opt-in jar detail missing");
+    await store.joinJarByCode(member.id, detail.inviteCode);
+
+    const memberJars = await store.listJarsForUser(member.id);
+    expect(memberJars.find((entry) => entry.id === jar.id)?.myShareStreak).toBe(false);
+  });
+
   it("creates jar and lists for user", async () => {
     const u = await store.createUser({ name: "Eve" });
     const jar = await store.createJar({ userId: u.id, name: "Test Jar", rule: "no texting" });
