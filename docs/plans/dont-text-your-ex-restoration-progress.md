@@ -93,6 +93,26 @@ First independent two-axis review blockers:
 All seven are pre-merge gates. Live production and Apple evidence remains a
 separate post-merge completion gate.
 
+Review-fix commits:
+
+- `43a32d914`: discriminated, typed navigation routes.
+- `ac8c8818e`: removed fabricated camera-roll evidence; reporting is honestly
+  note-only.
+- `7f2d126da`: Storybook coverage for onboarding/session expiry, reporting, and
+  shared primitives; static and interaction builds green.
+- `c8560f331`: Sign in with Apple nonce/state bound across native and backend
+  validation; six focused tests green.
+- `ab3250bfd`: explicit ADR exception for this requested colocated independently
+  deployed product.
+- `4cc75f8bc` (plus `c3b5af54d`): shared browser-safe schemas, validated JSON
+  boundaries, persisted-evidence parsing, and branded critical IDs; API/frontend
+  typechecks, boundary tests, lint, and Knip green.
+- `7e32c4b0c`: isolated Postgres contract and Playwright browser CI wired into
+  deployment gates; local real-Postgres contracts 12/12 green. An initial local
+  browser run was 7/10 before three stale assertions were corrected; the final
+  local rerun was environment-blocked by uninterruptible macOS esbuild processes,
+  so isolated Linux PR CI is the required authority before merge.
+
 ## Production evidence checklist
 
 - [ ] PR reviewed and merged to `main`
@@ -158,3 +178,6 @@ Apple/App Store Connect read-only baseline captured after user sign-in:
   integrated review. It reported local implementation complete, enumerated the
   review-fix categories, and explicitly stated that production had not been
   deployed.
+- 70%: sent as event `lkiiKJPjkOJr` after all seven review-fix categories had
+  committed changes. It stated that re-review and isolated CI were next and that
+  production was not yet deployed.
