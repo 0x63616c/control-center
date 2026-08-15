@@ -178,6 +178,11 @@ test("owner replaces a seven-day invite → old deep link stays revoked after re
   await openJar(page, "Dry January (Failed)");
   await page.getByRole("button", { name: "Invite people" }).click();
   await expect(page.getByRole("status")).toContainText("Expires");
+  await page.getByRole("button", { name: "Share invite" }).click();
+  await expect(page.getByText("Copied to clipboard")).toBeVisible();
+  await page.getByRole("button", { name: "Done" }).click();
+  await expect(page.getByText("Dry January (Failed)")).toBeVisible();
+  await page.getByRole("button", { name: "Invite people" }).click();
 
   const token = await page.evaluate(() => localStorage.getItem("tye_token"));
   if (!token) throw new Error("signed-in session token missing");
