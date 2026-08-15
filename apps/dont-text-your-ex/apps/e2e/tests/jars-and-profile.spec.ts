@@ -202,7 +202,7 @@ test("profile: edit avatar and toggle share-streak", async ({ page }) => {
   // toggle the first jar's share-streak switch and confirm the subtitle flips
   const firstShareRow = page.getByTestId("share-row").first();
   const wasHidden = (await firstShareRow.innerText()).includes("Hidden");
-  await firstShareRow.getByRole("button").click();
+  await firstShareRow.getByRole("switch").click();
   await expect(firstShareRow).toContainText(wasHidden ? "Friends see your streak" : "Hidden");
 });
 
@@ -272,11 +272,13 @@ test("member confirms leave → loses access while owner-only close stays unavai
   await page.getByRole("button", { name: "Leave jar" }).click();
   await expect(page.getByRole("alert")).toContainText("Leave this jar?");
   await page.getByRole("button", { name: "Leave jar permanently" }).click();
-  await expect(page.getByText("Your jars")).toBeVisible();
+  await expect(page.getByText("Your jars", { exact: true })).toBeVisible();
+  await expect(page.getByText("Loading your jars…", { exact: true })).toBeHidden();
   await expect(page.getByTestId("jar-card").filter({ hasText: "The Group Chat" })).toHaveCount(0);
   expect((await request.get(`/api/jars/${jar.id}`, { headers })).status()).toBe(403);
 
   await page.reload();
-  await expect(page.getByText("Your jars")).toBeVisible();
+  await expect(page.getByText("Your jars", { exact: true })).toBeVisible();
+  await expect(page.getByText("Loading your jars…", { exact: true })).toBeHidden();
   await expect(page.getByTestId("jar-card").filter({ hasText: "The Group Chat" })).toHaveCount(0);
 });

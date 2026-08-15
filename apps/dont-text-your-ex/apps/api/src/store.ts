@@ -298,6 +298,14 @@ async function membersOf(jarId: string): Promise<MembershipRow[]> {
   return rows;
 }
 
+async function activeMembersOf(jarId: string): Promise<MembershipRow[]> {
+  const { rows } = await pool.query<MembershipRow>(
+    "SELECT * FROM memberships WHERE jar_id=$1 AND left_at IS NULL",
+    [jarId],
+  );
+  return rows;
+}
+
 async function jarTotal(jarId: string): Promise<number> {
   const { rows } = await pool.query<{ t: string }>(
     "SELECT COALESCE(SUM(tally_cents),0)::text AS t FROM memberships WHERE jar_id=$1",
@@ -325,14 +333,15 @@ export async function listJarsForUser(userId: string): Promise<JarSummaryDTO[]> 
   return Promise.all(
     rows.map(async (j) => {
       const members = await membersOf(j.id);
+      const activeMembers = members.filter((member) => member.left_at == null);
       const mine = members.find((m) => m.user_id === userId);
       return JarSummarySchema.parse({
         id: j.id,
         name: j.name,
         rule: j.rule,
         defaultCents: j.default_cents,
-        memberIds: members.map((m) => m.user_id),
-        memberCount: members.length,
+        memberIds: activeMembers.map((m) => m.user_id),
+        memberCount: activeMembers.length,
         jarTotalCents: members.reduce((s, m) => s + m.tally_cents, 0),
         myTallyCents: mine?.tally_cents ?? 0,
         myDaysClean: daysClean(mine?.streak_start_at ?? null),
@@ -375,7 +384,7 @@ export async function getJarPreviewByCode(code: string): Promise<{
 } | null> {
   const j = await jarRowByCode(code);
   if (!j) return null;
-  const members = await membersOf(j.id);
+  const members = await activeMembersOf(j.id);
   const users = await Promise.all(
     members.map(async (member) =>
       requireValue(await getUser(member.user_id), "preview member could not be loaded"),
@@ -639,7 +648,11 @@ async function serializeReport(reportId: string): Promise<ReportDTO | null> {
 
 export async function pendingReportsForUser(userId: string): Promise<ReportDTO[]> {
   const { rows } = await pool.query<{ id: string }>(
-    "SELECT id FROM reports WHERE accused_id=$1 AND status='pending' ORDER BY created_at DESC",
+    `SELECT r.id FROM reports r
+     JOIN memberships m ON m.jar_id=r.jar_id AND m.user_id=r.accused_id
+     JOIN jars j ON j.id=r.jar_id
+     WHERE r.accused_id=$1 AND r.status='pending' AND m.left_at IS NULL AND j.closed_at IS NULL
+     ORDER BY r.created_at DESC`,
     [userId],
   );
   const results = await Promise.all(rows.map((r) => serializeReport(r.id)));
@@ -777,7 +790,7 @@ async function activityForJar(jarId: string, limit = 50): Promise<ActivityDTO[]>
 export async function activityForUser(userId: string, limit = 50): Promise<ActivityDTO[]> {
   const { rows } = await pool.query<ActivityRow>(
     `SELECT a.* FROM activity a JOIN memberships m ON m.jar_id=a.jar_id
-     WHERE m.user_id=$1 ORDER BY a.created_at DESC LIMIT $2`,
+     WHERE m.user_id=$1 AND m.left_at IS NULL ORDER BY a.created_at DESC LIMIT $2`,
     [userId, limit],
   );
   return Promise.all(rows.map(serializeActivity));

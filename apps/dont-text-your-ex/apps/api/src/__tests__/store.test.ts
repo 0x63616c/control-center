@@ -230,6 +230,8 @@ describe.skipIf(!HAS_DB)("jar lifecycle", () => {
     });
     await store.closeJar(jar.id, owner.id);
 
+    expect(await store.pendingReportsForUser(accused.id)).toEqual([]);
+
     const ownerToken = await store.createSession(owner.id);
     const slipResponse = await buildApp().request(`/api/jars/${jar.id}/slips`, {
       method: "POST",
@@ -266,16 +268,48 @@ describe.skipIf(!HAS_DB)("jar lifecycle", () => {
   it("lets members leave without erasing history and requires owners to close", async () => {
     const owner = await store.createUser({ name: "Stay Owner" });
     const member = await store.createUser({ name: "Leaving Member" });
+    const outsider = await store.createUser({ name: "Leave Outsider" });
     const jar = await store.createJar({ userId: owner.id, name: "Leave Jar" });
     const detail = await store.getJarDetail(jar.id, owner.id);
     const code = requireInviteCode(detail);
     await store.joinJarByCode(member.id, code);
     await store.logSlip({ jarId: jar.id, userId: member.id, amountCents: 700 });
+    await store.createReport({
+      jarId: jar.id,
+      accuserId: owner.id,
+      accusedId: member.id,
+      note: "Pending before leave",
+      anonymous: false,
+      amountCents: 500,
+      evidence: [],
+    });
 
     await expect(store.leaveJar(jar.id, owner.id)).resolves.toEqual({
       status: "owner_must_close",
     });
+    const ownerToken = await store.createSession(owner.id);
     const memberToken = await store.createSession(member.id);
+    const outsiderToken = await store.createSession(outsider.id);
+    const unconfirmed = await buildApp().request(`/api/jars/${jar.id}/leave`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${memberToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmed: false }),
+    });
+    expect(unconfirmed.status).toBe(400);
+    const ownerCannotLeave = await buildApp().request(`/api/jars/${jar.id}/leave`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${ownerToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmed: true }),
+    });
+    expect(ownerCannotLeave.status).toBe(409);
+    expect(await ownerCannotLeave.json()).toEqual({ error: "owner_must_close" });
+    const outsiderCannotLeave = await buildApp().request(`/api/jars/${jar.id}/leave`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${outsiderToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmed: true }),
+    });
+    expect(outsiderCannotLeave.status).toBe(403);
+    expect(await outsiderCannotLeave.json()).toEqual({ error: "not_member" });
     const leave = await buildApp().request(`/api/jars/${jar.id}/leave`, {
       method: "POST",
       headers: { Authorization: `Bearer ${memberToken}`, "Content-Type": "application/json" },
@@ -286,6 +320,18 @@ describe.skipIf(!HAS_DB)("jar lifecycle", () => {
 
     expect(await store.isMember(jar.id, member.id)).toBe(false);
     expect(await store.listJarsForUser(member.id)).toHaveLength(0);
+    expect(await store.activityForUser(member.id)).toEqual([]);
+    expect(await store.pendingReportsForUser(member.id)).toEqual([]);
+    expect(await store.getJarPreviewByCode(code)).toMatchObject({
+      memberCount: 1,
+      members: [expect.objectContaining({ id: owner.id })],
+    });
+    const ownerHome = await store.listJarsForUser(owner.id);
+    expect(ownerHome[0]).toMatchObject({
+      memberCount: 1,
+      memberIds: [owner.id],
+      jarTotalCents: 700,
+    });
     const ownerHistory = await store.getJarDetail(jar.id, owner.id);
     expect(ownerHistory?.members).toEqual(
       expect.arrayContaining([
