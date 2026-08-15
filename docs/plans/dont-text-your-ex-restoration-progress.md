@@ -533,3 +533,27 @@ Captured 2026-08-14 on branch `codex/dont-text-your-ex-restoration`:
   uninterruptible esbuild processes. Hosted CI runs `31868853900` (push) and
   `31868856502` (pull request) are the runtime-test authority for this commit and
   were still queued/in progress when this entry was written.
+
+## 2026-08-15 iPhone photo and avatar-layout follow-up
+
+- Large source photos are accepted up to 25 MiB, decoded by the browser/WebView,
+  EXIF-oriented by the platform image decoder, resized as needed, and encoded as
+  JPEG before the existing 2 MiB server boundary. Report evidence and profile
+  photos share this source-image path; corrupt or unsupported files still fail
+  honestly without being sent.
+- Profile selection opens an accessible circular crop dialog with drag, pinch,
+  zoom-slider, Cancel, and Use Photo controls. The chosen square is persisted as
+  a validated 512×512 JPEG, and cancel returns focus to the photo chooser.
+- The eight emoji and eight color choices use one shared responsive grid. Browser
+  assertions prove one eight-item row at iPhone 16 Pro (`402px`) and Pro Max
+  (`440px`) widths, and two balanced four-item rows at `320px` with no horizontal
+  overflow.
+- Local red/green evidence: source-selection tests first failed on 8 MiB JPEG and
+  HEIC inputs, then passed after the 25 MiB source boundary. Real-Postgres
+  Playwright passed all 23 journeys, including the five photo/crop/layout cases.
+  The first full run usefully exposed stale magic-bytes-only JPEG/WebP fixtures;
+  replacing them with decodable images restored the format journey before the
+  exact full rerun. The complete shared Storybook run passed 146 files and 536
+  interactions, including the AvatarEditor and ReportMember stories.
+- Immutable hosted CI, independent two-axis review, merge, production rollout,
+  and physical iPhone picker/crop proof remain pending at this checkpoint.

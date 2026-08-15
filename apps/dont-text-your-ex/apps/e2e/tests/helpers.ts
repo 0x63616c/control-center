@@ -27,12 +27,16 @@ export async function signInAsCalum(page: Page): Promise<void> {
 // Sign in as a brand-new user (no name yet) and complete profile setup, mirroring
 // a first-time Apple sign-in where Apple returned no name.
 export async function signUpNew(page: Page, name = "Maker"): Promise<void> {
-  await devLogin(page, { as: "new" });
-  await page.goto("/");
-  await expect(page.getByText("Make it official")).toBeVisible();
+  await startSignUpNew(page);
   await page.getByRole("textbox", { name: "Your name" }).fill(name);
   await page.getByRole("button", { name: "Start the shame →" }).click();
   await waitForHomeReady(page);
+}
+
+export async function startSignUpNew(page: Page): Promise<void> {
+  await devLogin(page, { as: "new" });
+  await page.goto("/");
+  await expect(page.getByText("Make it official")).toBeVisible();
 }
 
 export async function signUpNewFromInvite(

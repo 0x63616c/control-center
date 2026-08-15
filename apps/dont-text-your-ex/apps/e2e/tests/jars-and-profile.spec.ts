@@ -298,28 +298,40 @@ test("profile: edit avatar and toggle share-streak", async ({ page }) => {
     mimeType: "image/png",
     buffer: Buffer.from("not a png"),
   });
-  await expect(page.getByRole("alert")).toHaveText("Choose a real PNG, JPEG, or WebP image.");
+  await expect(page.getByRole("alert")).toHaveText(
+    "Choose a real photo that this iPhone can open.",
+  );
 
   const validChooser = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Choose profile photo" }).click();
+  const avatarPng = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "base64",
+  );
   await (await validChooser).setFiles({
     name: "avatar.png",
     mimeType: "image/png",
-    buffer: Buffer.from(
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-      "base64",
-    ),
+    // A camera-sized source is accepted and normalized before it reaches the API.
+    buffer: Buffer.concat([avatarPng, Buffer.alloc(8 * 1024 * 1024)]),
   });
+  const crop = page.getByRole("dialog", { name: "Crop profile photo" });
+  await expect(crop).toBeVisible();
+  await crop.getByRole("slider", { name: "Zoom photo" }).fill("1.5");
+  await crop.getByTestId("photo-crop-surface").dragTo(crop.getByTestId("photo-crop-surface"), {
+    sourcePosition: { x: 120, y: 120 },
+    targetPosition: { x: 145, y: 135 },
+  });
+  await crop.getByRole("button", { name: "Use Photo" }).click();
   await expect(page.getByRole("button", { name: "Remove photo" })).toBeVisible();
   await page.getByRole("button", { name: "Save changes" }).click();
   const editProfile = page.getByRole("button", { name: /Edit$/ });
-  await expect(editProfile.locator("img")).toHaveAttribute("src", /^data:image\/png;base64,/);
+  await expect(editProfile.locator("img")).toHaveAttribute("src", /^data:image\/jpeg;base64,/);
 
   await page.reload();
   await page.getByTestId("tab-profile").click();
   await expect(page.getByRole("button", { name: /Edit$/ }).locator("img")).toHaveAttribute(
     "src",
-    /^data:image\/png;base64,/,
+    /^data:image\/jpeg;base64,/,
   );
 
   // toggle the first jar's share-streak switch and confirm the subtitle flips

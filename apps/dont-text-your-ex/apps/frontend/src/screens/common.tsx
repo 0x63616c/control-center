@@ -6,11 +6,13 @@ import {
   useRef,
   useState,
 } from "react";
-import { AVATAR_MAX_BYTES, AvatarPhotoDataUrlSchema } from "../../../../contracts";
+import "../avatar-editor.css";
 import { Icon } from "../icons";
+import { type LoadedImage, loadImageFile, SOURCE_IMAGE_MAX_BYTES } from "../image-processing";
 import { money, T } from "../theme";
 import type { ActivityDTO } from "../types";
 import { Avatar } from "../ui";
+import { PhotoCropDialog } from "./PhotoCropDialog";
 
 export const inputStyle: CSSProperties = {
   width: "100%",
@@ -199,26 +201,43 @@ export function AvatarEditor({
   setDraft: Dispatch<SetStateAction<AvatarDraft>>;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const choosePhotoRef = useRef<HTMLButtonElement>(null);
+  const restorePhotoFocus = useRef(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
-  const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
+  const [cropImage, setCropImage] = useState<LoadedImage | null>(null);
+  const closeCrop = () => {
+    if (cropImage) URL.revokeObjectURL(cropImage.objectUrl);
+    restorePhotoFocus.current = true;
+    setCropImage(null);
+    if (fileRef.current) fileRef.current.value = "";
+  };
+  useEffect(() => {
+    if (cropImage || !restorePhotoFocus.current) return;
+    restorePhotoFocus.current = false;
+    choosePhotoRef.current?.focus();
+  }, [cropImage]);
+  useEffect(
+    () => () => {
+      if (cropImage) URL.revokeObjectURL(cropImage.objectUrl);
+    },
+    [cropImage],
+  );
+  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const input = e.currentTarget;
+    const f = input.files?.[0];
     if (!f) return;
     setPhotoError(null);
-    if (f.size > AVATAR_MAX_BYTES) {
-      setPhotoError("Choose an image smaller than 2 MiB.");
+    if (!f.type.startsWith("image/") || f.size > SOURCE_IMAGE_MAX_BYTES) {
+      setPhotoError("Choose a photo smaller than 25 MiB.");
+      input.value = "";
       return;
     }
-    const r = new FileReader();
-    r.onload = () => {
-      const parsed = AvatarPhotoDataUrlSchema.safeParse(r.result);
-      if (!parsed.success) {
-        setPhotoError("Choose a real PNG, JPEG, or WebP image.");
-        return;
-      }
-      setDraft((d) => ({ ...d, photo: parsed.data }));
-    };
-    r.onerror = () => setPhotoError("That image could not be read. Try another one.");
-    r.readAsDataURL(f);
+    try {
+      setCropImage(await loadImageFile(f));
+    } catch {
+      setPhotoError("Choose a real photo that this iPhone can open.");
+      input.value = "";
+    }
   };
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
@@ -232,6 +251,7 @@ export function AvatarEditor({
       <div style={{ position: "relative", marginBottom: 18 }}>
         <Avatar user={draft} size={104} />
         <button
+          ref={choosePhotoRef}
           type="button"
           aria-label="Choose profile photo"
           onClick={() => fileRef.current?.click()}
@@ -257,7 +277,7 @@ export function AvatarEditor({
         <input
           ref={fileRef}
           type="file"
-          accept="image/png,image/jpeg,image/webp"
+          accept="image/*"
           onChange={onFile}
           style={{ display: "none" }}
         />
@@ -289,12 +309,9 @@ export function AvatarEditor({
       {!draft.photo && (
         <>
           <div
+            className="avatar-option-grid"
             style={{
-              display: "flex",
-              gap: 9,
               marginBottom: 14,
-              flexWrap: "wrap",
-              justifyContent: "center",
             }}
           >
             {AV_COLORS.map((c, index) => (
@@ -315,7 +332,7 @@ export function AvatarEditor({
               />
             ))}
           </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
+          <div className="avatar-option-grid">
             {AV_EMOJI.map((e) => {
               const active = draft.emoji === e || (e === "-" && !draft.emoji);
               return (
@@ -345,6 +362,16 @@ export function AvatarEditor({
             })}
           </div>
         </>
+      )}
+      {cropImage && (
+        <PhotoCropDialog
+          loaded={cropImage}
+          onCancel={closeCrop}
+          onUse={(photo) => {
+            setDraft((draft) => ({ ...draft, photo }));
+            closeCrop();
+          }}
+        />
       )}
     </div>
   );

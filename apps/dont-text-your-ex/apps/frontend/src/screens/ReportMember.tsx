@@ -45,8 +45,8 @@ function reportButtonLabel(state: ReportMutationState, anonymous: boolean): stri
 
 const EVIDENCE_ERROR_MESSAGE: Record<EvidenceFileError, string> = {
   too_many_files: `Add no more than ${EVIDENCE_MAX_FILES} screenshots.`,
-  unsupported_type: "Choose PNG, JPEG, or WebP screenshots.",
-  file_too_large: "Each screenshot must be 2 MB or smaller.",
+  unsupported_type: "Choose a photo or screenshot.",
+  file_too_large: "Each original photo must be 25 MB or smaller.",
   read_failed: "That screenshot could not be read. Try another file.",
 };
 
@@ -285,7 +285,7 @@ export function ReportMember({
           ref={fileInput}
           data-testid="evidence-input"
           type="file"
-          accept="image/png,image/jpeg,image/webp"
+          accept="image/*"
           multiple
           onChange={(event) => {
             void selectEvidence(event.currentTarget.files);
@@ -317,7 +317,7 @@ export function ReportMember({
             fontSize: 13,
           }}
         >
-          <Icon.plus /> {readingEvidence ? "Reading screenshots…" : "Add screenshots"}
+          <Icon.plus /> {readingEvidence ? "Optimizing photos…" : "Add screenshots"}
         </button>
         {evidenceError && (
           <div role="alert" style={{ color: T.red, fontSize: 12.5, marginTop: 8 }}>

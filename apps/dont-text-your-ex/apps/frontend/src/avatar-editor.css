@@ -1,0 +1,14 @@
+.avatar-option-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 44px);
+  justify-content: space-between;
+  width: min(100%, 400px);
+}
+
+@media (max-width: 391px) {
+  .avatar-option-grid {
+    grid-template-columns: repeat(4, 44px);
+    justify-content: center;
+    gap: 8px 16px;
+  }
+}

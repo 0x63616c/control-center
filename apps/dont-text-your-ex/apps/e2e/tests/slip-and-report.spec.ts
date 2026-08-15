@@ -38,13 +38,14 @@ test("reporting with a real screenshot + anonymous toggle reaches the snitched s
 
   // pick Ali
   await page.getByRole("button", { name: "Ali", exact: true }).click();
+  const receiptPng = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "base64",
+  );
   await page.getByTestId("evidence-input").setInputFiles({
     name: "receipt.png",
     mimeType: "image/png",
-    buffer: Buffer.from(
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-      "base64",
-    ),
+    buffer: Buffer.concat([receiptPng, Buffer.alloc(8 * 1024 * 1024)]),
   });
   await expect(page.getByRole("img", { name: "Report attachment" })).toBeVisible();
 
@@ -93,11 +94,18 @@ test("report picker enforces note-or-image, malicious boundaries, and three real
 
   await page.getByTestId("evidence-input").setInputFiles([
     { name: "receipt.png", mimeType: "image/png", buffer: png },
-    { name: "receipt.jpg", mimeType: "image/jpeg", buffer: Buffer.from([255, 216, 255, 0]) },
+    {
+      name: "receipt.jpg",
+      mimeType: "image/jpeg",
+      buffer: Buffer.from(
+        "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgICAgMCAgIDAwMDBAYEBAQEBAgGBgUGCQgKCgkICQkKDA8MCgsOCwkJDRENDg8QEBEQCgwSExIQEw8QEBD/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AVN//2Q==",
+        "base64",
+      ),
+    },
     {
       name: "receipt.webp",
       mimeType: "image/webp",
-      buffer: Buffer.from("RIFF\u0000\u0000\u0000\u0000WEBP"),
+      buffer: Buffer.from("UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAgA0JaQAA3AA/vuUAAA=", "base64"),
     },
   ]);
   await expect(page.getByRole("img", { name: "Report attachment" })).toHaveCount(3);
