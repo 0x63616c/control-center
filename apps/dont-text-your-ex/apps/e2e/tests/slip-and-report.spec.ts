@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { openJar, shameRow, signInAsCalum, signUpNew } from "./helpers";
+import { openJar, shameRow, signInAsCalum } from "./helpers";
 
 // Each test starts from the seeded baseline (non-prod reset seam) so
 // absolute assertions on seeded values stay order-independent.
@@ -8,15 +8,11 @@ test.beforeEach(async ({ request }) => {
 });
 
 test("logging a slip bumps the tally, resets streak, grows the pot", async ({ page }) => {
-  // fresh user + own jar for isolation
-  await signUpNew(page, "Slipper");
-  await page.getByRole("button", { name: "Join a jar with a code" }).click();
-  await page.getByPlaceholder("Type or paste code").fill("XEX24K");
-  await page.getByRole("button", { name: "Preview jar" }).click();
-  await page.getByRole("button", { name: "Join the shame" }).click();
-  await expect(page.getByTestId("jar-pot")).toBeVisible();
+  await signInAsCalum(page);
+  await openJar(page, "The Group Chat");
 
   const potBefore = await page.getByTestId("jar-pot").innerText();
+  await expect(shameRow(page, "Calum")).toContainText("$40");
 
   await page.getByRole("button", { name: "I texted my ex" }).click();
   await expect(page.getByText(/How much is that gonna cost you/)).toBeVisible();
@@ -27,9 +23,9 @@ test("logging a slip bumps the tally, resets streak, grows the pot", async ({ pa
   await expect(page.getByText("You sure-sure?")).toBeVisible();
   await page.getByRole("button", { name: /Yeah\. I did it/ }).click();
 
-  // back on jar detail; pot grew by $10 and Slipper now owes $10
+  // back on jar detail; pot grew by $10 and Calum's seeded $40 became $50
   await expect(page.getByTestId("jar-pot")).not.toHaveText(potBefore);
-  await expect(shameRow(page, "Slipper")).toContainText("$10");
+  await expect(shameRow(page, "Calum")).toContainText("$50");
 });
 
 test("reporting with an honest note + anonymous toggle reaches the snitched screen", async ({

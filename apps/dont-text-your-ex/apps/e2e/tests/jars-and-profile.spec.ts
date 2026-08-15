@@ -8,7 +8,7 @@ test.beforeEach(async ({ request }) => {
 });
 
 test("create a jar → invite screen shows a code → land in the new jar", async ({ page }) => {
-  await signUpNew(page, "Maker");
+  await signUpNew(page);
   await page.getByTestId("create-jar").click();
   await expect(page.getByText("New jar")).toBeVisible();
 
@@ -32,18 +32,17 @@ test("settle up is inert with a 'payments coming soon' badge", async ({ page }) 
   await expect(page.getByText("guilt scoreboard", { exact: false })).toBeVisible();
 });
 
-test("profile: edit name and toggle share-streak", async ({ page }) => {
+test("profile: edit avatar and toggle share-streak", async ({ page }) => {
   await signInAsCalum(page);
   await page.getByTestId("tab-profile").click();
   await expect(page.getByText("Share my clean streak")).toBeVisible();
 
-  // edit name
+  // edit the profile avatar
   await page.getByText("Edit", { exact: true }).click();
   await expect(page.getByText("Edit profile")).toBeVisible();
-  const nameInput = page.getByPlaceholder("Your name");
-  await nameInput.fill("Calum the Weak");
+  await page.getByRole("button", { name: "🫠" }).click();
   await page.getByRole("button", { name: "Save changes" }).click();
-  await expect(page.getByText("Calum the Weak")).toBeVisible();
+  await expect(page.getByText("🫠")).toBeVisible();
 
   // toggle the first jar's share-streak switch and confirm the subtitle flips
   const firstShareRow = page.getByTestId("share-row").first();

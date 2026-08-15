@@ -293,10 +293,62 @@ jobs:
       - name: Test (Storybook, chromium)
         run: bun run test:storybook
 
+  # Don’t Text Your Ex has a real Postgres contract and restored browser suite.
+  # Keep it separate from the hermetic root unit lane: the database service and
+  # Chromium install are product-specific, and a changed product must never go
+  # green because its integration tests silently skipped without DATABASE_URL.
+  test-dont-text-your-ex:
+    needs: [changes]
+    if: needs.changes.outputs.dont_text_your_ex == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: dont_text_your_ex_test
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d dont_text_your_ex_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/dont_text_your_ex_test
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.19
+      - name: Install deps
+        run: bun install --frozen-lockfile
+      - name: Test API contracts against Postgres
+        run: bun run --cwd apps/dont-text-your-ex/apps/api test
+      - name: Cache Playwright browsers
+        uses: actions/cache@v5
+        id: dont-text-your-ex-playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: dont-text-your-ex-playwright-chromium-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            dont-text-your-ex-playwright-chromium-${{ runner.os }}-
+      - name: Install Playwright Chromium
+        if: steps.dont-text-your-ex-playwright-cache.outputs.cache-hit != 'true'
+        run: bunx playwright install --with-deps chromium
+      - name: Install Playwright system deps (cached binary)
+        if: steps.dont-text-your-ex-playwright-cache.outputs.cache-hit == 'true'
+        run: bunx playwright install-deps chromium
+      - name: Test restored end-to-end flows
+        run: bun run --cwd apps/dont-text-your-ex test:e2e
+
   # Typecheck + dead-code run in parallel with the test suite so type
   # errors and knip regressions surface without waiting for Playwright to
   # install and all tests to run. `deploy-home-server` depends on `test-unit`,
-  # `test-storybook`, and `typecheck` all passing (www-q2p5). Build jobs do
+  # `test-storybook`, `test-dont-text-your-ex`, and `typecheck` all passing
+  # (www-q2p5). Build jobs do
   # NOT — they gate on `changes` alone, so they run concurrently with these.
   typecheck:
     needs: [changes]
@@ -350,7 +402,7 @@ jobs:
   # concurrently with the test suite instead of queueing behind it (measured
   # 180s off the critical path, because the build fan-in is shorter than the
   # test job and now hides entirely under it).
-  # This does NOT weaken the deploy gate: `deploy-home-server` still lists test-unit + test-storybook + typecheck
+  # This does NOT weaken the deploy gate: `deploy-home-server` still lists test-unit + test-storybook + test-dont-text-your-ex + typecheck
   # in its own `needs:`, so an image built for a commit that fails tests is
   # simply never deployed. The only cost is building images for the ~9% of
   # pushes that fail — they are content-addressed and otherwise inert.
@@ -532,6 +584,7 @@ jobs:
         changes,
         test-unit,
         test-storybook,
+        test-dont-text-your-ex,
         typecheck,
         test-software-factory,
         build-web,
@@ -827,6 +880,7 @@ jobs:
         changes,
         test-unit,
         test-storybook,
+        test-dont-text-your-ex,
         typecheck,
         build-web,
         build-manage,

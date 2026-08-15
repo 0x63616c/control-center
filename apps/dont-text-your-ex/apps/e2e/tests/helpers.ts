@@ -20,11 +20,10 @@ export async function signInAsCalum(page: Page): Promise<void> {
 
 // Sign in as a brand-new user (no name yet) and complete profile setup, mirroring
 // a first-time Apple sign-in where Apple returned no name.
-export async function signUpNew(page: Page, name: string): Promise<void> {
+export async function signUpNew(page: Page): Promise<void> {
   await devLogin(page, { as: "new" });
   await page.goto("/");
   await expect(page.getByText("Make it official")).toBeVisible();
-  await page.getByPlaceholder("Calum").fill(name);
   await page.getByRole("button", { name: "Start the shame →" }).click();
   await expect(page.getByText("Your jars")).toBeVisible();
 }
