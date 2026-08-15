@@ -157,6 +157,7 @@ export function ReportMember({
             <button
               key={m.user.id}
               type="button"
+              aria-pressed={on}
               onClick={() => setTarget(m.user.id)}
               style={{
                 display: "flex",
@@ -196,10 +197,10 @@ export function ReportMember({
               onClick={() => setEvidence((current) => current.filter((_, i) => i !== index))}
               style={{
                 position: "absolute",
-                top: -7,
-                right: -7,
-                width: 24,
-                height: 24,
+                top: -12,
+                right: -12,
+                width: 44,
+                height: 44,
                 borderRadius: "50%",
                 background: T.red,
                 border: "2px solid #000",
@@ -288,7 +289,7 @@ export function ReportMember({
             They'll just see “someone in the jar.”
           </div>
         </div>
-        <Toggle on={anon} onChange={setAnon} />
+        <Toggle label="Send anonymously" on={anon} onChange={setAnon} />
       </div>
 
       {!canSend && (

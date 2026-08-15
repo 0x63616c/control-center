@@ -1,39 +1,59 @@
-import type { CSSProperties } from "react";
+import { type CSSProperties, useEffect, useRef } from "react";
 import { Icon } from "./icons";
 import { money, T } from "./theme";
 import type { EvidenceImageInput } from "./types";
 
-export function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+export function Toggle({
+  label,
+  on,
+  onChange,
+}: {
+  label: string;
+  on: boolean;
+  onChange: (v: boolean) => void;
+}) {
   return (
     <button
       type="button"
+      role="switch"
+      aria-label={label}
+      aria-checked={on}
       onClick={() => onChange(!on)}
       style={{
         width: 51,
-        height: 31,
-        borderRadius: 999,
+        height: 44,
         border: "none",
         cursor: "pointer",
-        background: on ? T.green : "rgba(255,255,255,0.16)",
+        background: "transparent",
         position: "relative",
-        transition: "background .2s",
         flexShrink: 0,
         padding: 0,
       }}
     >
       <span
+        aria-hidden
         style={{
           position: "absolute",
-          top: 2,
-          left: on ? 22 : 2,
-          width: 27,
-          height: 27,
-          borderRadius: "50%",
-          background: "#fff",
-          transition: "left .2s",
-          boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+          inset: "6.5px 0",
+          borderRadius: 999,
+          background: on ? T.green : "rgba(255,255,255,0.16)",
+          transition: "background .2s",
         }}
-      />
+      >
+        <span
+          style={{
+            position: "absolute",
+            top: 2,
+            left: on ? 22 : 2,
+            width: 27,
+            height: 27,
+            borderRadius: "50%",
+            background: "#fff",
+            transition: "left .2s",
+            boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+          }}
+        />
+      </span>
     </button>
   );
 }
@@ -157,17 +177,57 @@ export function EvidenceViewer({
   onClose: () => void;
   onIndex: (i: number) => void;
 }) {
-  if (index == null) return null;
-  const image = images[index];
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const image = index == null ? undefined : images[index];
+  const isOpen = image != null;
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeRef.current?.focus();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const controls = dialogRef.current?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      if (!controls?.length) return;
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      opener?.focus();
+    };
+  }, [isOpen]);
+
   if (!image) return null;
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismisses the image viewer
     <div
-      role="presentation"
-      onClick={onClose}
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Report attachment viewer"
       style={{
         all: "unset",
-        position: "absolute",
+        position: "fixed",
         inset: 0,
         zIndex: 200,
         background: "rgba(0,0,0,0.96)",
@@ -187,26 +247,30 @@ export function EvidenceViewer({
         }}
       >
         <span style={{ fontFamily: T.ui, color: T.sec, fontSize: 14 }}>
-          {index + 1} / {images.length}
+          {(index ?? 0) + 1} / {images.length}
         </span>
         <button
+          ref={closeRef}
           type="button"
+          aria-label="Close attachment viewer"
           onClick={onClose}
           style={{
             background: "none",
             border: "none",
             color: "#fff",
             cursor: "pointer",
-            padding: 6,
+            width: 44,
+            height: 44,
+            padding: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
           }}
         >
           <Icon.x />
         </button>
       </div>
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: presentation container prevents event bubbling to backdrop */}
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: propagation stopper only, no semantic action */}
       <div
-        onClick={(e) => e.stopPropagation()}
         style={{
           flex: 1,
           display: "flex",
@@ -229,12 +293,7 @@ export function EvidenceViewer({
         </div>
       </div>
       {images.length > 1 && (
-        // biome-ignore lint/a11y/noStaticElementInteractions: propagation stopper only
-        // biome-ignore lint/a11y/useKeyWithClickEvents: propagation stopper only
-        <div
-          onClick={(e) => e.stopPropagation()}
-          style={{ display: "flex", justifyContent: "center", gap: 8, padding: "12px 0 40px" }}
-        >
+        <div style={{ display: "flex", justifyContent: "center", gap: 8, padding: "12px 0 40px" }}>
           {images.map((image, i) => (
             <button
               key={image.dataUrl}
@@ -242,15 +301,28 @@ export function EvidenceViewer({
               type="button"
               onClick={() => onIndex(i)}
               style={{
-                width: i === index ? 22 : 8,
-                height: 8,
-                borderRadius: 999,
+                width: 44,
+                height: 44,
                 border: "none",
-                background: i === index ? T.gold : "rgba(255,255,255,0.3)",
+                background: "transparent",
                 cursor: "pointer",
-                transition: "all .2s",
+                padding: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
               }}
-            />
+            >
+              <span
+                aria-hidden
+                style={{
+                  width: i === index ? 22 : 8,
+                  height: 8,
+                  borderRadius: 999,
+                  background: i === index ? T.gold : "rgba(255,255,255,0.3)",
+                  transition: "all .2s",
+                }}
+              />
+            </button>
           ))}
         </div>
       )}

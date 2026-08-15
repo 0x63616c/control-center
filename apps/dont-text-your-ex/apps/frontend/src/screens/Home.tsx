@@ -63,7 +63,11 @@ export function Home({
     <TopBar
       title="Your jars"
       trailing={
-        <IconBtn data-testid="create-jar" onClick={() => ctx.nav({ name: "create" })}>
+        <IconBtn
+          aria-label="Create jar"
+          data-testid="create-jar"
+          onClick={() => ctx.nav({ name: "create" })}
+        >
           <Icon.plus />
         </IconBtn>
       }

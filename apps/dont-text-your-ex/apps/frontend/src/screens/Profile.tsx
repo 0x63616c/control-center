@@ -177,7 +177,11 @@ export function Profile({
                 {shares[j.id] ? "Friends see your streak" : "Hidden - others see “-”"}
               </div>
             </div>
-            <Toggle on={!!shares[j.id]} onChange={(v) => toggleShare(j.id, v)} />
+            <Toggle
+              label={`Share streak for ${j.name}`}
+              on={!!shares[j.id]}
+              onChange={(v) => toggleShare(j.id, v)}
+            />
           </div>
         ))}
         {jars.length === 0 && (

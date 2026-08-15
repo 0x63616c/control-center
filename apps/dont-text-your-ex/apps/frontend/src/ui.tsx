@@ -168,6 +168,7 @@ export function IconBtn({
   children: ReactNode;
   onClick?: () => void;
   style?: CSSProperties;
+  "aria-label": string;
 } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
@@ -175,8 +176,8 @@ export function IconBtn({
       onClick={onClick}
       {...rest}
       style={{
-        width: 38,
-        height: 38,
+        width: 44,
+        height: 44,
         borderRadius: "50%",
         flexShrink: 0,
         background: T.surface2,
@@ -242,7 +243,7 @@ export function TopBar({
       }}
     >
       {onBack && (
-        <IconBtn onClick={onBack}>
+        <IconBtn aria-label="Back" onClick={onBack}>
           <Icon.back />
         </IconBtn>
       )}

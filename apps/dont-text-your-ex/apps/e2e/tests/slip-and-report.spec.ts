@@ -48,8 +48,7 @@ test("reporting with a real screenshot + anonymous toggle reaches the snitched s
   });
   await expect(page.getByRole("img", { name: "Report attachment" })).toBeVisible();
 
-  // turn on anonymous (click the toggle switch, not the label)
-  await page.getByTestId("anon-row").getByRole("button").click();
+  await page.getByRole("switch", { name: "Send anonymously" }).click();
   await page.getByRole("button", { name: /Send it anonymously/ }).click();
 
   await expect(page.getByText("Snitched.")).toBeVisible();

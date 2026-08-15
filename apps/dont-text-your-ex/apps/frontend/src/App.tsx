@@ -135,16 +135,18 @@ function renderRoute(ctx: AppCtx): React.ReactNode {
 
 function useFit() {
   const [scale, setScale] = useState(1);
+  const [compactWeb, setCompactWeb] = useState(false);
   useEffect(() => {
     const updateScale = () => {
       const { w: W, h: H } = DEVICE;
       setScale(Math.min(window.innerWidth / (W + 24), window.innerHeight / (H + 24), 1));
+      setCompactWeb(window.innerWidth < W + 24);
     };
     updateScale();
     window.addEventListener("resize", updateScale);
     return () => window.removeEventListener("resize", updateScale);
   }, []);
-  return scale;
+  return { compactWeb, scale };
 }
 
 export default function App() {
@@ -159,7 +161,7 @@ export default function App() {
   const [pendingInviteCode, setPendingInviteCode] = useState<string | null>(() =>
     inviteCodeFromPath(window.location.pathname),
   );
-  const scale = useFit();
+  const { compactWeb, scale } = useFit();
 
   useEffect(() => {
     const readWebPath = () => {
@@ -349,9 +351,10 @@ export default function App() {
     </>
   );
 
-  // Native (Capacitor): full-bleed into the real device, honoring safe areas.
-  // No simulated frame - the OS draws the real island/status bar/home indicator.
-  if (NATIVE) {
+  // Native and narrow web viewports render full-bleed. Scaling the simulated
+  // phone below its design width would make otherwise-correct 44px controls
+  // physically too small to tap and leave its 402px layout overflowing at 320px.
+  if (NATIVE || compactWeb) {
     return (
       <div
         style={{

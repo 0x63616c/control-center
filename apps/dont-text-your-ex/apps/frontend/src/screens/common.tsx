@@ -237,10 +237,10 @@ export function AvatarEditor({
           onClick={() => fileRef.current?.click()}
           style={{
             position: "absolute",
-            bottom: -2,
-            right: -2,
-            width: 36,
-            height: 36,
+            bottom: -6,
+            right: -6,
+            width: 44,
+            height: 44,
             borderRadius: "50%",
             background: T.gold,
             border: "3px solid #000",
@@ -280,6 +280,7 @@ export function AvatarEditor({
             fontWeight: 600,
             cursor: "pointer",
             marginBottom: 14,
+            minHeight: 44,
           }}
         >
           Remove photo
@@ -296,14 +297,16 @@ export function AvatarEditor({
               justifyContent: "center",
             }}
           >
-            {AV_COLORS.map((c) => (
+            {AV_COLORS.map((c, index) => (
               <button
                 key={c}
                 type="button"
+                aria-label={`Use profile color ${index + 1}`}
+                aria-pressed={draft.color === c}
                 onClick={() => setDraft((d) => ({ ...d, color: c }))}
                 style={{
-                  width: 30,
-                  height: 30,
+                  width: 44,
+                  height: 44,
                   borderRadius: "50%",
                   background: c,
                   cursor: "pointer",
@@ -319,10 +322,12 @@ export function AvatarEditor({
                 <button
                   key={e}
                   type="button"
+                  aria-label={e === "-" ? "Use initials avatar" : `Use ${e} avatar`}
+                  aria-pressed={active}
                   onClick={() => setDraft((d) => ({ ...d, emoji: e === "-" ? null : e }))}
                   style={{
-                    width: 38,
-                    height: 38,
+                    width: 44,
+                    height: 44,
                     borderRadius: 10,
                     cursor: "pointer",
                     fontSize: e === "-" ? 13 : 18,
