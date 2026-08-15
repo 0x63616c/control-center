@@ -9,6 +9,12 @@ import { ErrorState, type FetchedState, LoadingState, MutationError } from "./fe
 
 export type ConfirmDenyServices = Pick<typeof api, "pendingReports" | "resolveReport">;
 
+type ResolutionState =
+  | { readonly status: "idle" }
+  | { readonly status: "submitting" }
+  | { readonly status: "failed" }
+  | { readonly status: "resolved"; readonly outcome: "owned" | "denied" };
+
 export function ConfirmDeny({
   ctx,
   services = api,
@@ -20,9 +26,7 @@ export function ConfirmDeny({
   const [state, setState] = useState<FetchedState<ReportDTO>>({ status: "loading" });
   const [retry, setRetry] = useState(0);
   const [viewer, setViewer] = useState<number | null>(null);
-  const [done, setDone] = useState<"owned" | "denied" | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [mutationError, setMutationError] = useState(false);
+  const [resolution, setResolution] = useState<ResolutionState>({ status: "idle" });
 
   useEffect(() => {
     void retry;
@@ -46,16 +50,14 @@ export function ConfirmDeny({
   const report = state.status === "loaded" ? state.value : null;
 
   const resolve = async (action: "own" | "deny") => {
-    if (!report || busy) return;
-    setBusy(true);
-    setMutationError(false);
+    if (!report || resolution.status === "submitting") return;
+    setResolution({ status: "submitting" });
     try {
       await services.resolveReport(report.id, action);
       ctx.refreshPending();
-      setDone(action === "own" ? "owned" : "denied");
+      setResolution({ status: "resolved", outcome: action === "own" ? "owned" : "denied" });
     } catch {
-      setBusy(false);
-      setMutationError(true);
+      setResolution({ status: "failed" });
     }
   };
 
@@ -89,8 +91,8 @@ export function ConfirmDeny({
     );
   }
 
-  if (done) {
-    const owned = done === "owned";
+  if (resolution.status === "resolved") {
+    const owned = resolution.outcome === "owned";
     return (
       <Screen>
         <div
@@ -220,14 +222,22 @@ export function ConfirmDeny({
       )}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        <Btn kind="gold" disabled={busy} onClick={() => resolve("own")}>
+        <Btn
+          kind="gold"
+          disabled={resolution.status === "submitting"}
+          onClick={() => resolve("own")}
+        >
           Own it - add {money(report.amountCents)} 🫡
         </Btn>
-        <Btn kind="dark" disabled={busy} onClick={() => resolve("deny")}>
+        <Btn
+          kind="dark"
+          disabled={resolution.status === "submitting"}
+          onClick={() => resolve("deny")}
+        >
           Deny it - wasn't me
         </Btn>
       </div>
-      {mutationError && (
+      {resolution.status === "failed" && (
         <MutationError>
           The report couldn’t be updated. Check your connection and try again.
         </MutationError>

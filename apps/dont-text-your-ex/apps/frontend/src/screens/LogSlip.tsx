@@ -10,6 +10,12 @@ import { ErrorState, type FetchedState, LoadingState, MutationError } from "./fe
 
 export type LogSlipServices = Pick<typeof api, "jar" | "logSlip">;
 
+type SlipMutationState =
+  | { readonly status: "idle" }
+  | { readonly status: "confirming" }
+  | { readonly status: "submitting" }
+  | { readonly status: "failed" };
+
 export function LogSlip({
   ctx,
   services = api,
@@ -23,9 +29,7 @@ export function LogSlip({
   const [cents, setCents] = useState(500);
   const [note, setNote] = useState("");
   const [ex, setEx] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [submitError, setSubmitError] = useState(false);
+  const [mutation, setMutation] = useState<SlipMutationState>({ status: "idle" });
 
   const myExes = ctx.me?.exes ?? [];
   const firstEx = myExes[0] ?? null;
@@ -53,9 +57,8 @@ export function LogSlip({
   }, [firstEx, jarId, retry, services]);
 
   const doLog = async () => {
-    if (busy || !jar) return;
-    setBusy(true);
-    setSubmitError(false);
+    if (mutation.status === "submitting" || !jar) return;
+    setMutation({ status: "submitting" });
     try {
       await services.logSlip(jar.id, {
         amountCents: cents,
@@ -66,8 +69,7 @@ export function LogSlip({
       ctx.refreshPending();
       ctx.nav({ name: "jar", jarId: jar.id }, true);
     } catch {
-      setBusy(false);
-      setSubmitError(true);
+      setMutation({ status: "failed" });
     }
   };
 
@@ -160,16 +162,16 @@ export function LogSlip({
           />
         </div>
 
-        <Btn kind="red" onClick={() => setConfirming(true)}>
+        <Btn kind="red" onClick={() => setMutation({ status: "confirming" })}>
           Add {money(cents)} to my shame
         </Btn>
       </div>
 
-      {confirming && (
+      {mutation.status !== "idle" && (
         // biome-ignore lint/a11y/noStaticElementInteractions: dismiss backdrop, not a semantic action
         <div
           role="presentation"
-          onClick={() => setConfirming(false)}
+          onClick={() => setMutation({ status: "idle" })}
           style={{
             position: "absolute",
             inset: 0,
@@ -221,17 +223,21 @@ export function LogSlip({
               This resets your <b style={{ color: T.green }}>{myStreak}-day clean streak</b> to zero
               and tells the whole jar. No takebacks.
             </p>
-            <Btn kind="red" disabled={busy} onClick={doLog}>
-              {busy ? "Logging slip…" : submitError ? "Retry logging slip" : "Yeah. I did it. 💸"}
+            <Btn kind="red" disabled={mutation.status === "submitting"} onClick={doLog}>
+              {mutation.status === "submitting"
+                ? "Logging slip…"
+                : mutation.status === "failed"
+                  ? "Retry logging slip"
+                  : "Yeah. I did it. 💸"}
             </Btn>
-            {submitError && (
+            {mutation.status === "failed" && (
               <MutationError>
                 The slip wasn’t logged. Check your connection and retry—your tally has not changed.
               </MutationError>
             )}
             <button
               type="button"
-              onClick={() => setConfirming(false)}
+              onClick={() => setMutation({ status: "idle" })}
               style={{
                 width: "100%",
                 height: 50,
