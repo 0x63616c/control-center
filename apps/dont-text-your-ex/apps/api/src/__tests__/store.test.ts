@@ -568,9 +568,7 @@ describe.skipIf(!HAS_DB)("jar lifecycle", () => {
       headers: { Authorization: `Bearer ${ownerToken}` },
     });
     expect(ownerDetailResponse.status).toBe(200);
-    const rawOwnerDetail = (await ownerDetailResponse.json()) as {
-      members: Array<{ user: { id: string }; active: boolean }>;
-    };
+    const rawOwnerDetail = JarDetailSchema.parse(await ownerDetailResponse.json());
     expect(rawOwnerDetail.members).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1077,7 +1075,7 @@ describe.skipIf(!HAS_DB)("reports", () => {
       headers: { Authorization: `Bearer ${memberToken}` },
     });
     expect(memberListResponse.status).toBe(200);
-    expect((await memberListResponse.json()) as unknown[]).toHaveLength(2);
+    expect(ReportSchema.array().parse(await memberListResponse.json())).toHaveLength(2);
 
     const memberDetailResponse = await buildApp().request(`/api/reports/${owned.id}`, {
       headers: { Authorization: `Bearer ${memberToken}` },
@@ -1162,7 +1160,8 @@ describe.skipIf(!HAS_DB)("authorization matrix", () => {
     const accused = await store.createUser({ name: "Matrix Accused" });
     const former = await store.createUser({ name: "Matrix Former" });
     const outsider = await store.createUser({ name: "Matrix Outsider" });
-    const actors = { owner, member, accused, former, outsider } as const;
+    const actorNames = ["owner", "member", "accused", "former", "outsider"] as const;
+    type Actor = (typeof actorNames)[number];
     const tokens = {
       owner: await store.createSession(owner.id),
       member: await store.createSession(member.id),
@@ -1170,8 +1169,6 @@ describe.skipIf(!HAS_DB)("authorization matrix", () => {
       former: await store.createSession(former.id),
       outsider: await store.createSession(outsider.id),
     } as const;
-    type Actor = keyof typeof actors;
-
     const request = (actor: Actor, path: string, method = "GET", body?: unknown) =>
       buildApp().request(`/api${path}`, {
         method,
@@ -1187,7 +1184,7 @@ describe.skipIf(!HAS_DB)("authorization matrix", () => {
       method = "GET",
       body?: unknown,
     ) => {
-      for (const actor of Object.keys(actors) as Actor[]) {
+      for (const actor of actorNames) {
         expect(
           (await request(actor, path, method, body)).status,
           `${actor} ${method} ${path}`,
@@ -1273,7 +1270,7 @@ describe.skipIf(!HAS_DB)("authorization matrix", () => {
     const absentReport = await request("outsider", "/reports/rpt_doesnotexist");
     expect(await hiddenReport.json()).toEqual(await absentReport.json());
 
-    for (const actor of Object.keys(actors) as Actor[]) {
+    for (const actor of actorNames) {
       const pending = ReportSchema.array().parse(
         await (await request(actor, "/reports/pending")).json(),
       );
@@ -1292,7 +1289,7 @@ describe.skipIf(!HAS_DB)("authorization matrix", () => {
       "POST",
       { action: "deny" },
     );
-    for (const actor of Object.keys(actors) as Actor[]) {
+    for (const actor of actorNames) {
       const history = ReportSchema.array().parse(
         await (await request(actor, "/reports/history")).json(),
       );

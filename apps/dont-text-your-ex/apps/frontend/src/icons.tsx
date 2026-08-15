@@ -13,7 +13,7 @@ export const Icon = {
       viewBox="0 0 11 18"
       fill="none"
       {...p}
-      style={{ marginLeft: -2, ...(p.style as object) }}
+      style={{ marginLeft: -2, ...p.style }}
     >
       <path
         d="M9 1L2 9l7 8"

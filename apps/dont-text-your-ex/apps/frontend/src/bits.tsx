@@ -3,6 +3,10 @@ import { Icon } from "./icons";
 import { money, T } from "./theme";
 import type { EvidenceImageInput } from "./types";
 
+type MoneyBurstStyle = CSSProperties & {
+  readonly "--rot": string;
+};
+
 export function Toggle({
   label,
   on,
@@ -354,20 +358,16 @@ export function MoneyBurst({ show }: { show: boolean }) {
         const dur = 1.1 + Math.random() * 0.7;
         const size = 20 + Math.random() * 26;
         const rot = (Math.random() * 2 - 1) * 60;
+        const style: MoneyBurstStyle = {
+          position: "absolute",
+          left: `${left}%`,
+          top: "-12%",
+          fontSize: size,
+          animation: `tye-fall ${dur}s cubic-bezier(.4,0,.7,1) ${delay}s forwards`,
+          "--rot": `${rot}deg`,
+        };
         return (
-          <span
-            key={id}
-            style={
-              {
-                position: "absolute",
-                left: `${left}%`,
-                top: "-12%",
-                fontSize: size,
-                animation: `tye-fall ${dur}s cubic-bezier(.4,0,.7,1) ${delay}s forwards`,
-                ["--rot" as keyof CSSProperties]: `${rot}deg`,
-              } as CSSProperties
-            }
-          >
+          <span key={id} style={style}>
             💸
           </span>
         );
