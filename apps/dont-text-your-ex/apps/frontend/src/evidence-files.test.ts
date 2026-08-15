@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { EVIDENCE_MAX_BYTES, EVIDENCE_MAX_FILES } from "../../../contracts";
-import { validateEvidenceFiles } from "./evidence-files";
+import { EVIDENCE_MAX_FILES } from "../../../contracts";
+import { SOURCE_IMAGE_MAX_BYTES, validateEvidenceFiles } from "./evidence-files";
 
 function imageFile(name: string, type = "image/png", size = 1): File {
   return new File([new Uint8Array(size)], name, { type });
@@ -17,16 +17,17 @@ describe("report evidence file selection", () => {
     expect(validateEvidenceFiles(files)).toEqual({ ok: true, files });
   });
 
-  it("rejects unsupported image formats", () => {
-    expect(validateEvidenceFiles([imageFile("animated.gif", "image/gif")])).toEqual({
-      ok: false,
-      error: "unsupported_type",
-    });
+  it("accepts iPhone HEIC sources for browser decoding", () => {
+    const files = [imageFile("IMG_1234.HEIC", "image/heic")];
+    expect(validateEvidenceFiles(files)).toEqual({ ok: true, files });
   });
 
-  it("rejects files larger than the per-image limit", () => {
+  it("accepts large camera sources but rejects unreasonable source files", () => {
+    const cameraPhoto = imageFile("camera.jpg", "image/jpeg", 8 * 1024 * 1024);
+    expect(validateEvidenceFiles([cameraPhoto])).toEqual({ ok: true, files: [cameraPhoto] });
+
     expect(
-      validateEvidenceFiles([imageFile("huge.png", "image/png", EVIDENCE_MAX_BYTES + 1)]),
+      validateEvidenceFiles([imageFile("huge.png", "image/png", SOURCE_IMAGE_MAX_BYTES + 1)]),
     ).toEqual({ ok: false, error: "file_too_large" });
   });
 

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { openJar, shameRow, signInAsCalum } from "./helpers";
+import { cameraPhotoBmp, openJar, shameRow, signInAsCalum } from "./helpers";
 
 // Each test starts from the seeded baseline (non-prod reset seam) so
 // absolute assertions on seeded values stay order-independent.
@@ -39,14 +39,13 @@ test("reporting with a real screenshot + anonymous toggle reaches the snitched s
   // pick Ali
   await page.getByRole("button", { name: "Ali", exact: true }).click();
   await page.getByTestId("evidence-input").setInputFiles({
-    name: "receipt.png",
-    mimeType: "image/png",
-    buffer: Buffer.from(
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-      "base64",
-    ),
+    name: "IMG_1234.bmp",
+    mimeType: "image/bmp",
+    buffer: cameraPhotoBmp(),
   });
-  await expect(page.getByRole("img", { name: "Report attachment" })).toBeVisible();
+  await expect(page.getByRole("img", { name: "Report attachment" })).toBeVisible({
+    timeout: 15_000,
+  });
 
   await page.getByRole("switch", { name: "Send anonymously" }).click();
   await page.getByRole("button", { name: /Send it anonymously/ }).click();
@@ -93,11 +92,18 @@ test("report picker enforces note-or-image, malicious boundaries, and three real
 
   await page.getByTestId("evidence-input").setInputFiles([
     { name: "receipt.png", mimeType: "image/png", buffer: png },
-    { name: "receipt.jpg", mimeType: "image/jpeg", buffer: Buffer.from([255, 216, 255, 0]) },
+    {
+      name: "receipt.jpg",
+      mimeType: "image/jpeg",
+      buffer: Buffer.from(
+        "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgICAgMCAgIDAwMDBAYEBAQEBAgGBgUGCQgKCgkICQkKDA8MCgsOCwkJDRENDg8QEBEQCgwSExIQEw8QEBD/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AVN//2Q==",
+        "base64",
+      ),
+    },
     {
       name: "receipt.webp",
       mimeType: "image/webp",
-      buffer: Buffer.from("RIFF\u0000\u0000\u0000\u0000WEBP"),
+      buffer: Buffer.from("UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAgA0JaQAA3AA/vuUAAA=", "base64"),
     },
   ]);
   await expect(page.getByRole("img", { name: "Report attachment" })).toHaveCount(3);

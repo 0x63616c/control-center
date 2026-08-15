@@ -4,6 +4,9 @@ import {
   type EvidenceImageInput,
   EvidenceImageInputSchema,
 } from "../../../contracts";
+import { normalizeImageFile, validateImageSource } from "./image-processing";
+
+export { SOURCE_IMAGE_MAX_BYTES } from "./image-processing";
 
 export type EvidenceFileError =
   | "too_many_files"
@@ -19,29 +22,12 @@ type ReadEvidence =
   | { readonly ok: true; readonly evidence: readonly EvidenceImageInput[] }
   | { readonly ok: false; readonly error: EvidenceFileError };
 
-function isSupportedImageType(type: string): type is EvidenceImageInput["mimeType"] {
-  return type === "image/png" || type === "image/jpeg" || type === "image/webp";
-}
-
 export function validateEvidenceFiles(files: readonly File[]): ValidatedFiles {
   if (files.length > EVIDENCE_MAX_FILES) return { ok: false, error: "too_many_files" };
   for (const file of files) {
-    if (!isSupportedImageType(file.type)) return { ok: false, error: "unsupported_type" };
-    if (file.size > EVIDENCE_MAX_BYTES) return { ok: false, error: "file_too_large" };
+    if (!validateImageSource(file).ok) return { ok: false, error: "file_too_large" };
   }
   return { ok: true, files };
-}
-
-function readFileDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("could not read image"));
-    reader.onload = () => {
-      if (typeof reader.result === "string") resolve(reader.result);
-      else reject(new Error("image reader returned non-text data"));
-    };
-    reader.readAsDataURL(file);
-  });
 }
 
 export async function readEvidenceFiles(files: readonly File[]): Promise<ReadEvidence> {
@@ -50,12 +36,14 @@ export async function readEvidenceFiles(files: readonly File[]): Promise<ReadEvi
 
   try {
     const evidence = await Promise.all(
-      validated.files.map(async (file) =>
-        EvidenceImageInputSchema.parse({
-          mimeType: file.type,
-          dataUrl: await readFileDataUrl(file),
-        }),
-      ),
+      validated.files.map(async (file) => {
+        const normalized = await normalizeImageFile(file, EVIDENCE_MAX_BYTES);
+        if (!normalized.ok) throw new Error(normalized.error);
+        return EvidenceImageInputSchema.parse({
+          mimeType: "image/jpeg",
+          dataUrl: normalized.value,
+        });
+      }),
     );
     return { ok: true, evidence };
   } catch {

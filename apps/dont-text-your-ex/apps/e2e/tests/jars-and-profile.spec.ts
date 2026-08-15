@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { JarDetailSchema, JarSummarySchema } from "../../../contracts";
-import { openJar, signInAsCalum, signUpNew, signUpNewFromInvite } from "./helpers";
+import { cameraPhotoBmp, openJar, signInAsCalum, signUpNew, signUpNewFromInvite } from "./helpers";
 
 // Each test starts from the seeded baseline (non-prod reset seam) so
 // absolute assertions on seeded values stay order-independent.
@@ -298,28 +298,93 @@ test("profile: edit avatar and toggle share-streak", async ({ page }) => {
     mimeType: "image/png",
     buffer: Buffer.from("not a png"),
   });
-  await expect(page.getByRole("alert")).toHaveText("Choose a real PNG, JPEG, or WebP image.");
+  await expect(page.getByRole("alert")).toHaveText(
+    "Choose a real photo that this iPhone can open.",
+  );
 
-  const validChooser = page.waitForEvent("filechooser");
-  await page.getByRole("button", { name: "Choose profile photo" }).click();
-  await (await validChooser).setFiles({
-    name: "avatar.png",
-    mimeType: "image/png",
+  await page.evaluate(() => {
+    const original = HTMLCanvasElement.prototype.toBlob;
+    HTMLCanvasElement.prototype.toBlob = function delayedToBlob(callback, type, quality) {
+      original.call(this, (blob) => setTimeout(() => callback(blob), 150), type, quality);
+    };
+  });
+
+  const choosePhoto = async (file: { name: string; mimeType: string; buffer: Buffer }) => {
+    const chooser = page.waitForEvent("filechooser");
+    await page.getByRole("button", { name: "Choose profile photo" }).click();
+    await (await chooser).setFiles(file);
+  };
+
+  await choosePhoto({
+    name: "cancel-me.png",
+    // iOS can provide a decodable photo without useful MIME metadata.
+    mimeType: "",
     buffer: Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
       "base64",
     ),
   });
+  let crop = page.getByRole("dialog", { name: "Crop profile photo" });
+  await expect(crop).toBeVisible();
+  await crop.getByRole("button", { name: "Use Photo" }).click();
+  await crop.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.waitForTimeout(250);
+  await expect(page.getByRole("button", { name: "Remove photo" })).toBeHidden();
+
+  await choosePhoto({
+    name: "IMG_1234.bmp",
+    mimeType: "image/bmp",
+    buffer: cameraPhotoBmp(),
+  });
+  crop = page.getByRole("dialog", { name: "Crop profile photo" });
+  await expect(crop).toBeVisible();
+  const surface = crop.getByTestId("photo-crop-surface");
+  const bounds = await surface.boundingBox();
+  if (!bounds) throw new Error("crop surface has no bounds");
+  const cdp = await page.context().newCDPSession(page);
+  const centerX = bounds.x + bounds.width / 2;
+  const centerY = bounds.y + bounds.height / 2;
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [
+      { x: centerX - 20, y: centerY },
+      { x: centerX + 20, y: centerY },
+    ],
+  });
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchMove",
+    touchPoints: [
+      { x: centerX - 55, y: centerY },
+      { x: centerX + 55, y: centerY },
+    ],
+  });
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await expect
+    .poll(async () => Number(await crop.getByRole("slider", { name: "Zoom photo" }).inputValue()))
+    .toBeGreaterThan(1);
+  await crop.getByRole("slider", { name: "Zoom photo" }).fill("1.5");
+  await surface.dragTo(surface, {
+    sourcePosition: { x: 120, y: 120 },
+    targetPosition: { x: 145, y: 135 },
+  });
+  await crop.getByRole("button", { name: "Use Photo" }).click();
   await expect(page.getByRole("button", { name: "Remove photo" })).toBeVisible();
   await page.getByRole("button", { name: "Save changes" }).click();
   const editProfile = page.getByRole("button", { name: /Edit$/ });
-  await expect(editProfile.locator("img")).toHaveAttribute("src", /^data:image\/png;base64,/);
+  await expect(editProfile.locator("img")).toHaveAttribute("src", /^data:image\/jpeg;base64,/);
+  await expect
+    .poll(() =>
+      editProfile
+        .locator("img")
+        .evaluate((image: HTMLImageElement) => [image.naturalWidth, image.naturalHeight]),
+    )
+    .toEqual([512, 512]);
 
   await page.reload();
   await page.getByTestId("tab-profile").click();
   await expect(page.getByRole("button", { name: /Edit$/ }).locator("img")).toHaveAttribute(
     "src",
-    /^data:image\/png;base64,/,
+    /^data:image\/jpeg;base64,/,
   );
 
   // toggle the first jar's share-streak switch and confirm the subtitle flips

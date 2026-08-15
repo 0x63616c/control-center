@@ -64,11 +64,14 @@ Demo invite code: **`XEX24K`** (The Group Chat).
 - **Slips** - self-log "I texted my ex" with an amount, optional private ex label, and a note.
 - **Clean streak** - "days since I last texted my ex," opt-in to share per jar.
 - **Reports** - flag a friend with text and/or screenshot evidence, optionally anonymously.
-  The accused gets to own it (logs the slip) or deny it.
+  Camera originals up to 25 MiB are decoded and normalized in the app to a server-safe JPEG; the
+  accused gets to own it (logs the slip) or deny it.
 - **Wall of shame** - per-jar leaderboard sorted by tally, with streaks shown for sharers.
 - **Invites** - share an invite code / link from any jar; join by code with a preview first.
 - **Activity feed** - slips, reports, joins, and milestones ("the jar just cracked $100").
-- **Profile** - edit name/avatar and per-jar share-streak toggles.
+- **Profile** - edit name/avatar and per-jar share-streak toggles. Photo avatars use a movable,
+  zoomable circular crop and save a 512×512 JPEG. Emoji and color choices stay eight-across on
+  iPhone 16 Pro/Pro Max, with a balanced four-by-two fallback on narrower screens.
 
 ## Architecture
 
