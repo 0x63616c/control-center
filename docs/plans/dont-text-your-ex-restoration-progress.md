@@ -61,6 +61,37 @@ evidence is collected.
 | `05eb9aadb` | TestFlight publishing and acceptance runbook | Explicit external Friends/public-link path and production acceptance gates documented |
 | `f96026309` | Runtime configuration guardrail alignment | Repository lint gate green; full app exit checks pending |
 | `d24742b83` | Infra export cleanup | Removed unused export found by integrated Knip run |
+| `791f46407` | Restored design-reference classification | Knip now treats the recovered non-runtime JSX reference bundle as documentation; Knip green with one pre-existing hint |
+
+## Integrated review and acceptance
+
+First integrated local run before review fixes:
+
+- `bun run check`: green (Biome and all workspace/config typechecks).
+- Full Vitest: 289 files passed, 4 skipped; 3015 tests passed, 56 skipped.
+- The skipped set included 12 Don’t Text Your Ex Postgres tests because no local
+  `DATABASE_URL` was supplied; CI coverage for these is a review blocker, not
+  accepted evidence.
+- `bun run knip`: green with one pre-existing configuration hint.
+- `bun run apps:check`: green.
+- Dockerfile workspace/frozen-install manifest guard: all 7 images green.
+- Don’t Text Your Ex production frontend build: green.
+
+First independent two-axis review blockers:
+
+1. Validate request, response/error, and persisted JSON boundaries with schemas.
+2. Replace untyped screen parameters and broad casts with a discriminated route
+   model.
+3. Remove fabricated camera-roll/evidence behavior from production UI.
+4. Add Storybook coverage for shared primitives and major flow states.
+5. Run Postgres contract and Playwright E2E tests in CI rather than skipping them.
+6. Carry and validate Sign in with Apple nonce/state without substituting missing
+   Apple state.
+7. Record an explicit architectural exception/supersession for this requested
+   independently deployed app in the otherwise single-product repository.
+
+All seven are pre-merge gates. Live production and Apple evidence remains a
+separate post-merge completion gate.
 
 ## Production evidence checklist
 
@@ -103,3 +134,10 @@ Captured 2026-08-14 before implementation was merged:
 - External TestFlight verification requires a non-development-team Apple ID and a
   physical-device install; record who performed the check without recording an
   email address or other personal data.
+
+## Progress notifications
+
+- 55%: sent to `ntfy.sh/0x63616c` as event `FzZMz6K0N28Y` after the first
+  integrated review. It reported local implementation complete, enumerated the
+  review-fix categories, and explicitly stated that production had not been
+  deployed.
