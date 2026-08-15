@@ -96,6 +96,15 @@ function TabBar({
 
 type ScrollMode = "auto" | "hidden";
 
+type RestoreState =
+  | { readonly status: "loading" }
+  | { readonly status: "ready" }
+  | { readonly status: "failed" };
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled state: ${JSON.stringify(value)}`);
+}
+
 function routeForTab(tab: TabName): Route {
   return { name: tab };
 }
@@ -134,6 +143,8 @@ function renderRoute(ctx: AppCtx): React.ReactNode {
       return <S.SetupProfile ctx={{ ...ctx, route: ctx.route }} />;
     case "editProfile":
       return <S.EditProfile ctx={{ ...ctx, route: ctx.route }} />;
+    default:
+      return assertNever(ctx.route);
   }
 }
 
@@ -154,8 +165,7 @@ function useFit() {
 }
 
 export default function App() {
-  const [booted, setBooted] = useState(false);
-  const [restoreFailed, setRestoreFailed] = useState(false);
+  const [restoreState, setRestoreState] = useState<RestoreState>({ status: "loading" });
   const [me, setMeState] = useState<MeDTO | null>(null);
   const [tab, setTabState] = useState<TabName>("onboarding");
   const [stack, setStack] = useState<Route[]>([]);
@@ -196,11 +206,11 @@ export default function App() {
   }, []);
 
   const restoreAuth = useCallback(async () => {
-    setBooted(false);
-    setRestoreFailed(false);
+    setRestoreState({ status: "loading" });
     const result = await restoreSession();
     switch (result.status) {
       case "signed_out":
+        setRestoreState({ status: "ready" });
         break;
       case "authenticated":
         setMeState(result.user);
@@ -209,15 +219,18 @@ export default function App() {
         // complete profile setup before using the app.
         if (!result.user.name.trim()) setStack([{ name: "setup" }]);
         refreshPending();
+        setRestoreState({ status: "ready" });
         break;
       case "expired":
         setSessionExpired(true);
+        setRestoreState({ status: "ready" });
         break;
       case "retry":
-        setRestoreFailed(true);
+        setRestoreState({ status: "failed" });
         break;
+      default:
+        assertNever(result);
     }
-    setBooted(true);
   }, [refreshPending]);
 
   // boot: restore session if a token exists
@@ -226,11 +239,11 @@ export default function App() {
   }, [restoreAuth]);
 
   useEffect(() => {
-    if (!booted || !me?.name?.trim() || !pendingInviteCode) return;
+    if (restoreState.status !== "ready" || !me?.name?.trim() || !pendingInviteCode) return;
     setTabState("home");
     setStack([{ name: "join", code: pendingInviteCode }]);
     setPendingInviteCode(null);
-  }, [booted, me, pendingInviteCode]);
+  }, [restoreState.status, me, pendingInviteCode]);
 
   const nav = useCallback((route: Route, replaceRoot = false) => {
     setStack((stack) => (replaceRoot ? [route] : [...stack, route]));
@@ -286,11 +299,12 @@ export default function App() {
     refreshPending,
   };
 
-  const showTabs = booted && me != null && stack.length === 0 && tab !== "onboarding";
+  const showTabs =
+    restoreState.status === "ready" && me != null && stack.length === 0 && tab !== "onboarding";
 
   const inner = (
     <>
-      {!booted ? (
+      {restoreState.status === "loading" ? (
         <div
           style={{
             height: "100%",
@@ -304,7 +318,7 @@ export default function App() {
         >
           …
         </div>
-      ) : restoreFailed ? (
+      ) : restoreState.status === "failed" ? (
         <div
           role="alert"
           style={{
