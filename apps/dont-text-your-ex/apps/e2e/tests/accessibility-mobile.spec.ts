@@ -17,22 +17,24 @@ test("320px touch layout keeps named controls reachable and keyboard-operable", 
 
   const createJar = page.getByRole("button", { name: "Create jar" });
   const createBox = await createJar.boundingBox();
-  expect(createBox?.width).toBeGreaterThanOrEqual(44);
-  expect(createBox?.height).toBeGreaterThanOrEqual(44);
+  // Chromium can report a 44 CSS-pixel edge as 43.999998 after device-pixel
+  // conversion. Keep a sub-pixel tolerance without accepting a 43px target.
+  expect(createBox?.width).toBeGreaterThan(43.9);
+  expect(createBox?.height).toBeGreaterThan(43.9);
   await createJar.tap();
 
   await expect(page.getByText("New jar", { exact: true })).toBeVisible();
   const back = page.getByRole("button", { name: "Back" });
   const backBox = await back.boundingBox();
-  expect(backBox?.width).toBeGreaterThanOrEqual(44);
-  expect(backBox?.height).toBeGreaterThanOrEqual(44);
+  expect(backBox?.width).toBeGreaterThan(43.9);
+  expect(backBox?.height).toBeGreaterThan(43.9);
   await back.tap();
 
   await page.getByTestId("tab-profile").tap();
   const share = page.getByRole("switch", { name: /Share streak for/ }).first();
   const before = await share.getAttribute("aria-checked");
   const shareBox = await share.boundingBox();
-  expect(shareBox?.height).toBeGreaterThanOrEqual(44);
+  expect(shareBox?.height).toBeGreaterThan(43.9);
   await share.focus();
   await page.keyboard.press("Space");
   await expect(share).not.toHaveAttribute("aria-checked", before ?? "false");
