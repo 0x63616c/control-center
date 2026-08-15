@@ -15,9 +15,33 @@ export type ReportServices = Pick<typeof api, "jar" | "createReport">;
 
 type ReportMutationState =
   | { readonly status: "idle" }
-  | { readonly status: "submitting" }
+  | { readonly status: "submitting"; readonly submission: ReportSubmission }
   | { readonly status: "failed" }
-  | { readonly status: "sent" };
+  | { readonly status: "sent"; readonly submission: ReportSubmission };
+
+type ReportSubmission = {
+  readonly accusedId: MemberDTO["user"]["id"];
+  readonly anonymous: boolean;
+};
+
+function assertNever(value: never): never {
+  throw new Error(`Unexpected report state: ${JSON.stringify(value)}`);
+}
+
+function reportButtonLabel(state: ReportMutationState, anonymous: boolean): string {
+  switch (state.status) {
+    case "idle":
+      return anonymous ? "Send it anonymously" : "Send the report";
+    case "submitting":
+      return "Sending report…";
+    case "failed":
+      return "Retry sending report";
+    case "sent":
+      return "Report sent";
+    default:
+      return assertNever(state);
+  }
+}
 
 const EVIDENCE_ERROR_MESSAGE: Record<EvidenceFileError, string> = {
   too_many_files: `Add no more than ${EVIDENCE_MAX_FILES} screenshots.`,
@@ -52,7 +76,7 @@ export function ReportMember({
       .then((d) => {
         if (!alive) return;
         setJarState({ status: "loaded", value: d });
-        const others = d.members.filter((m) => m.user.id !== ctx.me?.id);
+        const others = d.members.filter((m) => m.active && m.user.id !== ctx.me?.id);
         setTarget(others[0]?.user.id ?? null);
       })
       .catch(() => {
@@ -67,7 +91,9 @@ export function ReportMember({
 
   const jar = jarState.status === "loaded" ? jarState.value : null;
 
-  const others: MemberDTO[] = (jar?.members ?? []).filter((m) => m.user.id !== ctx.me?.id);
+  const others: MemberDTO[] = (jar?.members ?? []).filter(
+    (m) => m.active && m.user.id !== ctx.me?.id,
+  );
   const canSend = !!target && (note.trim().length > 0 || evidence.length > 0);
 
   const selectEvidence = async (files: FileList | null) => {
@@ -90,7 +116,8 @@ export function ReportMember({
 
   const send = async () => {
     if (!canSend || !jar || !target || mutation.status === "submitting") return;
-    setMutation({ status: "submitting" });
+    const submission = { accusedId: target, anonymous: anon } as const;
+    setMutation({ status: "submitting", submission });
     try {
       await services.createReport(jar.id, {
         accusedId: target,
@@ -99,7 +126,7 @@ export function ReportMember({
         amountCents: jar.defaultCents,
         evidence: [...evidence],
       });
-      setMutation({ status: "sent" });
+      setMutation({ status: "sent", submission });
     } catch {
       setMutation({ status: "failed" });
     }
@@ -125,8 +152,8 @@ export function ReportMember({
 
   if (jarState.status === "empty" || !jar) return null;
 
-  if (mutation.status === "sent" && target) {
-    const p = jar.members.find((m) => m.user.id === target)?.user;
+  if (mutation.status === "sent") {
+    const p = jar.members.find((m) => m.user.id === mutation.submission.accusedId)?.user;
     return (
       <Screen>
         <div
@@ -153,7 +180,7 @@ export function ReportMember({
             Snitched.
           </h2>
           <p style={{ color: T.sec, fontSize: 16, lineHeight: 1.45, maxWidth: 280, margin: 0 }}>
-            {anon ? (
+            {mutation.submission.anonymous ? (
               <>
                 <b style={{ color: T.text }}>{p?.name}</b> is getting pinged - and they won't know
                 it was you. 🤫
@@ -191,6 +218,7 @@ export function ReportMember({
               key={m.user.id}
               type="button"
               aria-pressed={on}
+              disabled={mutation.status === "submitting"}
               onClick={() => setTarget(m.user.id)}
               style={{
                 display: "flex",
@@ -227,6 +255,7 @@ export function ReportMember({
             <button
               type="button"
               aria-label={`Remove attachment ${index + 1}`}
+              disabled={mutation.status === "submitting"}
               onClick={() => setEvidence((current) => current.filter((_, i) => i !== index))}
               style={{
                 position: "absolute",
@@ -266,7 +295,11 @@ export function ReportMember({
         <button
           type="button"
           onClick={() => fileInput.current?.click()}
-          disabled={readingEvidence || evidence.length >= EVIDENCE_MAX_FILES}
+          disabled={
+            readingEvidence ||
+            evidence.length >= EVIDENCE_MAX_FILES ||
+            mutation.status === "submitting"
+          }
           style={{
             width: "100%",
             minHeight: 58,
@@ -295,6 +328,7 @@ export function ReportMember({
       <span style={labelStyle}>Add what happened</span>
       <textarea
         value={note}
+        disabled={mutation.status === "submitting"}
         onChange={(e) => setNote(e.target.value)}
         rows={3}
         placeholder="“replied to her story in 4 seconds flat…”"
@@ -322,7 +356,12 @@ export function ReportMember({
             They'll just see “someone in the jar.”
           </div>
         </div>
-        <Toggle label="Send anonymously" on={anon} onChange={setAnon} />
+        <Toggle
+          label="Send anonymously"
+          on={anon}
+          onChange={setAnon}
+          disabled={mutation.status === "submitting"}
+        />
       </div>
 
       {!canSend && (
@@ -334,13 +373,7 @@ export function ReportMember({
         <MutationError>The report wasn’t sent. Check your connection, then retry.</MutationError>
       )}
       <Btn kind="red" disabled={!canSend || mutation.status === "submitting"} onClick={send}>
-        {mutation.status === "submitting"
-          ? "Sending report…"
-          : mutation.status === "failed"
-            ? "Retry sending report"
-            : anon
-              ? "Send it anonymously"
-              : "Send the report"}
+        {reportButtonLabel(mutation, anon)}
       </Btn>
     </Screen>
   );

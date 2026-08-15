@@ -556,9 +556,37 @@ describe.skipIf(!HAS_DB)("jar lifecycle", () => {
         expect.objectContaining({
           user: expect.objectContaining({ id: member.id }),
           tallyCents: 700,
+          active: false,
+        }),
+        expect.objectContaining({
+          user: expect.objectContaining({ id: owner.id }),
+          active: true,
         }),
       ]),
     );
+    const ownerDetailResponse = await buildApp().request(`/api/jars/${jar.id}`, {
+      headers: { Authorization: `Bearer ${ownerToken}` },
+    });
+    expect(ownerDetailResponse.status).toBe(200);
+    const rawOwnerDetail = (await ownerDetailResponse.json()) as {
+      members: Array<{ user: { id: string }; active: boolean }>;
+    };
+    expect(rawOwnerDetail.members).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          user: expect.objectContaining({ id: member.id }),
+          active: false,
+        }),
+        expect.objectContaining({ user: expect.objectContaining({ id: owner.id }), active: true }),
+      ]),
+    );
+    const reportFormer = await buildApp().request(`/api/jars/${jar.id}/reports`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${ownerToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ accusedId: member.id, note: "Former member must not be reportable" }),
+    });
+    expect(reportFormer.status).toBe(400);
+    expect(await reportFormer.json()).toEqual({ error: "bad_target" });
     const denied = await buildApp().request(`/api/jars/${jar.id}`, {
       headers: { Authorization: `Bearer ${memberToken}` },
     });

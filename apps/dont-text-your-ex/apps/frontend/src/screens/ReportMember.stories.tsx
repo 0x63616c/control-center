@@ -30,6 +30,14 @@ const accused = UserSchema.parse({
   photo: null,
 });
 
+const former = UserSchema.parse({
+  id: "usr_storyformer",
+  name: "Former Member",
+  color: "#8E8E93",
+  emoji: null,
+  photo: null,
+});
+
 const jar = JarDetailSchema.parse({
   id: "jar_story",
   name: "The Group Chat",
@@ -152,15 +160,23 @@ export const FetchAndSubmitFailureRetryWithoutFalseSuccess: Story = {
   render: () => {
     let fetchAttempts = 0;
     let submitAttempts = 0;
+    const jarWithFormerMember = JarDetailSchema.parse({
+      ...jar,
+      members: [
+        ...jar.members,
+        { user: former, role: "member", tallyCents: 0, shareStreak: false, active: false },
+      ],
+    });
     const retryServices: ReportServices = {
       jar: fn(async () => {
         fetchAttempts += 1;
         if (fetchAttempts === 1) throw new Error("offline");
-        return jar;
+        return jarWithFormerMember;
       }),
       createReport: fn(async () => {
         submitAttempts += 1;
         if (submitAttempts === 1) throw new Error("server unavailable");
+        await new Promise((resolve) => setTimeout(resolve, 50));
         return submittedReport;
       }),
     };
@@ -171,14 +187,37 @@ export const FetchAndSubmitFailureRetryWithoutFalseSuccess: Story = {
     await expect(await canvas.findByRole("alert")).toHaveTextContent("couldn’t be loaded");
     await expect(canvas.queryByText("Snitched.")).not.toBeInTheDocument();
     await userEvent.click(canvas.getByRole("button", { name: "Retry" }));
+    await expect(canvas.queryByRole("button", { name: former.name })).not.toBeInTheDocument();
     await userEvent.type(
       await canvas.findByPlaceholderText("“replied to her story in 4 seconds flat…”"),
       "Visible failure proof",
     );
-    await userEvent.click(canvas.getByRole("button", { name: "Send the report" }));
+    const payload =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    const screenshot = new File(
+      [Uint8Array.from(atob(payload), (character) => character.charCodeAt(0))],
+      "retry-receipt.png",
+      { type: "image/png" },
+    );
+    await userEvent.upload(canvas.getByTestId("evidence-input"), screenshot);
+    await userEvent.click(within(canvas.getByTestId("anon-row")).getByRole("switch"));
+    await userEvent.click(canvas.getByRole("button", { name: "Send it anonymously" }));
     await expect(await canvas.findByRole("alert")).toHaveTextContent("wasn’t sent");
     await expect(canvas.queryByText("Snitched.")).not.toBeInTheDocument();
+    await expect(
+      canvas.getByPlaceholderText("“replied to her story in 4 seconds flat…”"),
+    ).toHaveValue("Visible failure proof");
+    await expect(canvas.getByRole("img", { name: "Report attachment" })).toBeVisible();
+    await expect(within(canvas.getByTestId("anon-row")).getByRole("switch")).toBeChecked();
     await userEvent.click(canvas.getByRole("button", { name: "Retry sending report" }));
+    await expect(
+      canvas.getByPlaceholderText("“replied to her story in 4 seconds flat…”"),
+    ).toBeDisabled();
+    await expect(within(canvas.getByTestId("anon-row")).getByRole("switch")).toBeDisabled();
+    await expect(canvas.getByRole("button", { name: accused.name })).toBeDisabled();
+    await expect(canvas.getByRole("button", { name: "Remove attachment 1" })).toBeDisabled();
+    await expect(canvas.queryByText("Snitched.")).not.toBeInTheDocument();
     await expect(await canvas.findByText("Snitched.")).toBeInTheDocument();
+    await expect(canvas.getByText(/won't know it was you/)).toBeVisible();
   },
 };

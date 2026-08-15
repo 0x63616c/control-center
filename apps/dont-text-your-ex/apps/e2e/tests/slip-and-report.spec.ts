@@ -55,6 +55,84 @@ test("reporting with a real screenshot + anonymous toggle reaches the snitched s
   await expect(page.getByText("won't know it was you", { exact: false })).toBeVisible();
 });
 
+test("report member fetch/send failures preserve every choice and retry without false success", async ({
+  page,
+}) => {
+  await signInAsCalum(page);
+  await openJar(page, "The Group Chat");
+
+  let fetchAttempt = 0;
+  await page.route("**/api/jars/*", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    fetchAttempt += 1;
+    if (fetchAttempt === 1)
+      return route.fulfill({
+        status: 401,
+        contentType: "application/json",
+        body: '{"error":"not_authenticated"}',
+      });
+    if (fetchAttempt === 2)
+      return route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: '{"error":"forbidden"}',
+      });
+    if (fetchAttempt === 3)
+      return route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: '{"error":"busy"}',
+      });
+    if (fetchAttempt === 4) return route.abort("internetdisconnected");
+    return route.continue();
+  });
+  await page.getByRole("button", { name: "Report" }).click();
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    await expect(page.getByRole("alert")).toContainText("couldn’t be loaded");
+    await expect(page.getByText("Caught someone red-handed?")).toHaveCount(0);
+    await page.getByRole("button", { name: "Retry" }).click();
+  }
+  await expect(page.getByText("Caught someone red-handed?")).toBeVisible();
+
+  await page.getByRole("button", { name: "Ali", exact: true }).click();
+  const note = page.getByPlaceholder("“replied to her story in 4 seconds flat…”");
+  await note.fill("Preserve this exact note");
+  await page.getByTestId("evidence-input").setInputFiles({
+    name: "retry-receipt.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64",
+    ),
+  });
+  const anonymous = page.getByRole("switch", { name: "Send anonymously" });
+  await anonymous.click();
+
+  let submitAttempt = 0;
+  await page.route("**/api/jars/*/reports", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    submitAttempt += 1;
+    if (submitAttempt === 1) return route.abort("internetdisconnected");
+    return route.continue();
+  });
+  await page.getByRole("button", { name: "Send it anonymously" }).click();
+  await expect(page.getByRole("alert")).toContainText("wasn’t sent");
+  await expect(page.getByText("Snitched.")).toHaveCount(0);
+  await expect(note).toHaveValue("Preserve this exact note");
+  await expect(anonymous).toBeChecked();
+  await expect(page.getByRole("img", { name: "Report attachment" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Ali", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+
+  await page.getByRole("button", { name: "Retry sending report" }).click();
+  await expect(page.getByText("Snitched.")).toBeVisible();
+  await expect(page.getByText("Ali is getting pinged", { exact: false })).toBeVisible();
+  await expect(page.getByText("won't know it was you", { exact: false })).toBeVisible();
+  expect(submitAttempt).toBe(2);
+});
+
 test("confirm/deny: owning the seeded report adds to Calum's tally", async ({ page }) => {
   await signInAsCalum(page);
   await page.getByTestId("tab-activity").click();

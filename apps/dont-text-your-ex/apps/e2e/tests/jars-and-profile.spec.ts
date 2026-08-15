@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { JarDetailSchema, JarSummarySchema } from "../../../contracts";
 import { openJar, signInAsCalum, signUpNew, signUpNewFromInvite } from "./helpers";
 
 // Each test starts from the seeded baseline (non-prod reset seam) so
@@ -101,6 +102,74 @@ test("production invite path survives profile setup → previews → joins the j
   await expect(page.getByText("The Group Chat")).toBeVisible();
 });
 
+test("invite preview errors are explicit, non-contradictory, and recoverable", async ({ page }) => {
+  await signUpNew(page, "Preview QA");
+  await page.getByRole("button", { name: "Join a jar with a code" }).click();
+  const input = page.getByPlaceholder("Invite code");
+  await input.fill("BAD");
+  await page.getByRole("button", { name: "Preview jar" }).click();
+  await expect(page.getByRole("alert")).toContainText("full six-letter");
+
+  let previewAttempt = 0;
+  await page.route("**/api/jars/code/TRY123", async (route) => {
+    previewAttempt += 1;
+    if (previewAttempt === 1)
+      return route.fulfill({
+        status: 404,
+        contentType: "application/json",
+        body: '{"error":"not_found"}',
+      });
+    if (previewAttempt === 2)
+      return route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: '{"error":"forbidden"}',
+      });
+    if (previewAttempt === 3)
+      return route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: '{"error":"jar_closed"}',
+      });
+    if (previewAttempt === 4)
+      return route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: '{"error":"busy"}',
+      });
+    if (previewAttempt === 5) return route.abort("internetdisconnected");
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: "jar_previewqa",
+        name: "Recovered preview",
+        rule: "No contact.",
+        defaultCents: 500,
+        members: [],
+        memberCount: 0,
+      }),
+    });
+  });
+  await input.fill("TRY123");
+  const expectedErrors = [
+    "No active jar has that code",
+    "don’t have permission to view",
+    "no longer active",
+    "Check your connection and retry",
+    "Check your connection and retry",
+  ];
+  for (const expected of expectedErrors) {
+    await page.getByRole("button", { name: /Preview jar|Retry invite/ }).click();
+    await expect(page.getByRole("alert")).toContainText(expected);
+    await expect(page.getByText("Recovered preview")).toHaveCount(0);
+  }
+  await page.getByRole("button", { name: "Retry invite" }).click();
+  await expect(page.getByText("Recovered preview")).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Join the shame" })).toBeVisible();
+});
+
 test("owner replaces a seven-day invite → old deep link stays revoked after reload", async ({
   page,
   request,
@@ -113,24 +182,25 @@ test("owner replaces a seven-day invite → old deep link stays revoked after re
   const token = await page.evaluate(() => localStorage.getItem("tye_token"));
   if (!token) throw new Error("signed-in session token missing");
   const headers = { Authorization: `Bearer ${token}` };
-  const jars = (await (await request.get("/api/jars", { headers })).json()) as Array<{
-    id: string;
-    name: string;
-  }>;
+  const jars = JarSummarySchema.array().parse(
+    await (await request.get("/api/jars", { headers })).json(),
+  );
   const jar = jars.find((candidate) => candidate.name === "Dry January (Failed)");
   if (!jar) throw new Error("owner jar missing");
-  const before = (await (await request.get(`/api/jars/${jar.id}`, { headers })).json()) as {
-    inviteCode: string;
-  };
+  const before = JarDetailSchema.parse(
+    await (await request.get(`/api/jars/${jar.id}`, { headers })).json(),
+  );
+  if (!before.inviteCode) throw new Error("owner jar invite missing before rotation");
 
   await page.getByRole("button", { name: "Replace invite" }).click();
   await expect(page.getByRole("alert")).toContainText("stop working immediately");
   await page.getByRole("button", { name: "Replace invite now" }).click();
   await expect(page.getByRole("button", { name: "Replace invite" })).toBeVisible();
 
-  const after = (await (await request.get(`/api/jars/${jar.id}`, { headers })).json()) as {
-    inviteCode: string;
-  };
+  const after = JarDetailSchema.parse(
+    await (await request.get(`/api/jars/${jar.id}`, { headers })).json(),
+  );
+  if (!after.inviteCode) throw new Error("owner jar invite missing after rotation");
   expect(after.inviteCode).not.toBe(before.inviteCode);
   await expect(page.getByText(after.inviteCode)).toBeVisible();
   expect((await request.get(`/api/jars/code/${before.inviteCode}`, { headers })).status()).toBe(

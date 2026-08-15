@@ -23,6 +23,38 @@ type PreviewState =
       readonly join: JoinMutationState;
     };
 
+function assertNever(value: never): never {
+  throw new Error(`Unexpected join state: ${JSON.stringify(value)}`);
+}
+
+function joinButtonLabel(state: JoinMutationState): string {
+  switch (state.status) {
+    case "idle":
+      return "Join the shame";
+    case "submitting":
+      return "Joining…";
+    case "failed":
+      return "Retry joining jar";
+    default:
+      return assertNever(state);
+  }
+}
+
+function previewButtonLabel(state: PreviewState): string {
+  switch (state.status) {
+    case "idle":
+      return "Preview jar";
+    case "loading":
+      return "Loading invite…";
+    case "failed":
+      return "Retry invite";
+    case "loaded":
+      return "Preview loaded";
+    default:
+      return assertNever(state);
+  }
+}
+
 function describeJoinError(error: unknown): string {
   if (isApiErrorStatus(error, 403)) return "You don’t have permission to join this jar.";
   if (isApiErrorStatus(error, 409)) return "This jar can’t be joined anymore.";
@@ -146,11 +178,7 @@ export function Join({
           </div>
         </div>
         <Btn kind="gold" disabled={joinState.status === "submitting"} onClick={join}>
-          {joinState.status === "submitting"
-            ? "Joining…"
-            : joinState.status === "failed"
-              ? "Retry joining jar"
-              : "Join the shame"}
+          {joinButtonLabel(joinState)}
         </Btn>
         {joinState.status === "failed" && (
           <div
@@ -168,7 +196,8 @@ export function Join({
     <Screen>
       <TopBar onBack={() => ctx.back()} title="Join a jar" />
       <p style={{ color: T.sec, fontSize: 15, lineHeight: 1.4, margin: "2px 0 18px" }}>
-        Got an invite code? Enter it here. <span style={{ color: T.ter }}>(try XEX24K)</span>
+        Got an invite code? Enter it here.{" "}
+        {import.meta.env.DEV && <span style={{ color: T.ter }}>(try XEX24K)</span>}
       </p>
       <input
         value={code}
@@ -198,11 +227,7 @@ export function Join({
         disabled={code.length === 0 || state.status === "loading"}
         onClick={doPreview}
       >
-        {state.status === "loading"
-          ? "Loading invite…"
-          : state.status === "failed"
-            ? "Retry invite"
-            : "Preview jar"}
+        {previewButtonLabel(state)}
       </Btn>
     </Screen>
   );

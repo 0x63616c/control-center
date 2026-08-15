@@ -212,6 +212,7 @@ const visibleMemberFields = {
   user: UserSchema,
   role: z.enum(["owner", "member"]),
   tallyCents: z.number().int().nonnegative(),
+  active: z.boolean().default(true),
 } as const;
 
 export const MemberSchema = z.discriminatedUnion("shareStreak", [

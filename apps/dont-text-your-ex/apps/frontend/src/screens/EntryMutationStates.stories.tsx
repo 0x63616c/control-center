@@ -208,7 +208,7 @@ export const InviteOwnerReplacesExpiredLinkAfterRetry: Story = {
     await userEvent.click(canvas.getByRole("button", { name: "Replace invite" }));
     await expect(canvas.getByRole("alert")).toHaveTextContent("stop working immediately");
     await userEvent.click(canvas.getByRole("button", { name: "Replace invite now" }));
-    await expect(await canvas.findByRole("alert")).toHaveTextContent("current code still works");
+    await expect(await canvas.findByText(/current code still works/)).toBeInTheDocument();
     await expect(canvas.getByText("TRY123")).toBeInTheDocument();
     await userEvent.click(canvas.getByRole("button", { name: "Retry replacing invite" }));
     await expect(await canvas.findByText("NEW123")).toBeInTheDocument();
@@ -258,6 +258,7 @@ export const JoinValidationPreviewAndSubmitRetry: Story = {
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
+    await expect(canvas.queryByText(/try XEX24K/i)).not.toBeInTheDocument();
     const input = canvas.getByPlaceholderText("Invite code");
     await userEvent.type(input, "BAD!");
     await userEvent.click(canvas.getByRole("button", { name: "Preview jar" }));

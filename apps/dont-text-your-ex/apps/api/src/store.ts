@@ -413,6 +413,7 @@ async function serializeMember(m: MembershipRow, viewerId: UserId): Promise<Memb
     user: requireValue(await getUser(m.user_id), "membership user could not be loaded"),
     role: m.role,
     tallyCents: m.tally_cents,
+    active: m.left_at == null,
     ...(shareStreak || m.user_id === viewerId ? { daysClean: daysClean(m.streak_start_at) } : {}),
     shareStreak,
   });
