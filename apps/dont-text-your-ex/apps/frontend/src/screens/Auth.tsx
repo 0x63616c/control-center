@@ -16,10 +16,12 @@ export function SetupProfile({ ctx }: { ctx: AppCtx<RouteFor<"setup">> }) {
   const [busy, setBusy] = useState(false);
 
   const save = async () => {
-    if (busy) return;
+    const name = draft.name.trim();
+    if (busy || !name) return;
     setBusy(true);
     try {
       const me = await api.updateMe({
+        name,
         color: draft.color,
         emoji: draft.emoji,
         photo: draft.photo,
@@ -64,7 +66,7 @@ export function SetupProfile({ ctx }: { ctx: AppCtx<RouteFor<"setup">> }) {
         </div>
         <AvatarEditor draft={draft} setDraft={setDraft} />
       </div>
-      <Btn kind="gold" disabled={busy} onClick={save}>
+      <Btn kind="gold" disabled={busy || !draft.name.trim()} onClick={save}>
         Start the shame →
       </Btn>
     </Screen>
@@ -85,10 +87,12 @@ export function EditProfile({ ctx }: { ctx: AppCtx<RouteFor<"editProfile">> }) {
   if (!cur) return null;
 
   const save = async () => {
-    if (busy) return;
+    const name = draft.name.trim();
+    if (busy || !name) return;
     setBusy(true);
     try {
       const me = await api.updateMe({
+        name,
         color: draft.color,
         emoji: draft.emoji,
         photo: draft.photo,
@@ -126,7 +130,7 @@ export function EditProfile({ ctx }: { ctx: AppCtx<RouteFor<"editProfile">> }) {
       <div style={{ margin: "20px 0 26px" }}>
         <AvatarEditor draft={draft} setDraft={setDraft} />
       </div>
-      <Btn kind="gold" disabled={busy} onClick={save}>
+      <Btn kind="gold" disabled={busy || !draft.name.trim()} onClick={save}>
         Save changes
       </Btn>
     </Screen>

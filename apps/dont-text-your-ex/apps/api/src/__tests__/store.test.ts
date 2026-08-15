@@ -57,6 +57,19 @@ describe.skipIf(!HAS_DB)("users / auth", () => {
     const found = await store.findUserByPhone("+15550000099");
     expect(found?.name).toBe("Dave");
   });
+
+  it("completes an unnamed Apple recovery profile with a user-entered name", async () => {
+    const user = await store.createUser({
+      name: "",
+      appleId: "apple-user-123",
+      authProvider: "apple",
+    });
+
+    const updated = await store.updateUser(user.id, { name: "Taylor" });
+
+    expect(updated?.name).toBe("Taylor");
+    expect((await store.findUserByAppleId("apple-user-123"))?.name).toBe("Taylor");
+  });
 });
 
 describe.skipIf(!HAS_DB)("jar lifecycle", () => {

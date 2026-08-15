@@ -175,6 +175,7 @@ export async function createUser(opts: {
 export async function updateUser(
   userId: string,
   patch: {
+    name?: string;
     color?: string;
     emoji?: string | null;
     photo?: string | null;
@@ -182,7 +183,8 @@ export async function updateUser(
 ): Promise<UserDTO | null> {
   const u = await getUserRow(userId);
   if (!u) return null;
-  await pool.query("UPDATE users SET color=$1, emoji=$2, photo=$3 WHERE id=$4", [
+  await pool.query("UPDATE users SET name=$1, color=$2, emoji=$3, photo=$4 WHERE id=$5", [
+    patch.name ?? u.name,
     patch.color ?? u.color,
     patch.emoji === undefined ? u.emoji : patch.emoji,
     patch.photo === undefined ? u.photo : patch.photo,

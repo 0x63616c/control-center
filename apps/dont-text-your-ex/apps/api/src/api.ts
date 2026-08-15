@@ -16,7 +16,7 @@ import {
   UpdateMeRequestSchema,
   type UserId,
 } from "../../../contracts";
-import { verifyAppleIdentityToken } from "./apple-auth";
+import { completeAppleAccountSignIn, verifyAppleIdentityToken } from "./apple-auth";
 import { requireUser } from "./auth";
 import { errorDetails, parseRequestJson, parseRequestValue } from "./boundary";
 import { appleBundleId, isProduction } from "./env";
@@ -52,12 +52,12 @@ api.post("/auth/dev", async (c) => {
       authProvider: "apple",
     });
     const token = await store.createSession(fresh.id);
-    return c.json({ token, user: await store.getMe(fresh.id), isNew: true });
+    return c.json({ status: "needs_profile" as const, token, user: await store.getMe(fresh.id) });
   }
   const user = await store.findUserByPhone("+15550000001");
   if (!user) return c.json({ error: "seeded_user_not_found" }, 404);
   const token = await store.createSession(user.id);
-  return c.json({ token, user: await store.getMe(user.id), isNew: false });
+  return c.json({ status: "authenticated" as const, token, user: await store.getMe(user.id) });
 });
 
 // Non-production test seam: truncate + reseed for per-test isolation (404 in prod).
@@ -114,23 +114,17 @@ api.post("/auth/apple", async (c) => {
       401,
     );
   }
-  const existing = await store.findUserByAppleId(sub);
-  const isNew = !existing;
-  const appleName = fullName?.trim();
-  if (!existing && !appleName) {
-    log.warn({ sub }, "auth/apple: missing fullName for new Apple user");
-    return c.json({ error: "apple_full_name_required" }, 400);
-  }
-  let user = existing;
-  if (!user) {
-    if (!appleName) {
-      throw new Error("unreachable missing Apple fullName guard");
-    }
-    user = await store.createUser({ name: appleName, appleId: sub, authProvider: "apple" });
-  }
-  const token = await store.createSession(user.id);
-  log.info({ sub, isNew, userId: user.id }, "auth/apple: signed in");
-  return c.json({ token, user: await store.getMe(user.id), isNew });
+  const result = await completeAppleAccountSignIn(sub, fullName, {
+    findUserByAppleId: store.findUserByAppleId,
+    createUser: store.createUser,
+    createSession: store.createSession,
+    getMe: store.getMe,
+  });
+  log.info(
+    { created: result.created, status: result.response.status, userId: result.response.user.id },
+    "auth/apple: signed in",
+  );
+  return c.json(result.response);
 });
 
 api.post("/auth/logout", async (c) => {
@@ -152,8 +146,14 @@ api.patch("/me", async (c) => {
   const parsed = await parseRequestJson(c, UpdateMeRequestSchema);
   if (!parsed.ok) return parsed.response;
   const body = parsed.value;
-  if (body.color !== undefined || body.emoji !== undefined || body.photo !== undefined) {
+  if (
+    body.name !== undefined ||
+    body.color !== undefined ||
+    body.emoji !== undefined ||
+    body.photo !== undefined
+  ) {
     await store.updateUser(uid, {
+      name: body.name,
       color: body.color,
       emoji: body.emoji,
       photo: body.photo,

@@ -38,8 +38,7 @@ or a real Sign in with Apple exchange.
 ## Signing and upload
 
 `.github/workflows/dont-text-your-ex-ios.yml` builds and uploads on relevant
-pushes to `main`, on manual dispatch, and monthly to keep a TestFlight build
-fresh. The workflow:
+release changes pushed to `main` and on explicit manual dispatch. The workflow:
 
 1. obtains the existing App Store Connect and match credentials from the
    encrypted repository vault;

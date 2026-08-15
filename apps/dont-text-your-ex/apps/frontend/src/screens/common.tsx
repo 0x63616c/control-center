@@ -207,6 +207,13 @@ export function AvatarEditor({
   };
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+      <input
+        aria-label="Your name"
+        placeholder="Your name"
+        value={draft.name}
+        onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
+        style={{ ...inputStyle, width: 280, marginBottom: 22, textAlign: "center" }}
+      />
       <div style={{ position: "relative", marginBottom: 18 }}>
         <Avatar user={draft} size={104} />
         <button

@@ -1,6 +1,12 @@
 import { generateKeyPair, SignJWT } from "jose";
 import { describe, expect, it } from "vitest";
-import { hashAppleNonce, verifyAppleIdentityToken } from "../apple-auth";
+import { MeSchema, SessionTokenSchema, type UserDTO, UserIdSchema } from "../../../../contracts";
+import {
+  type AppleAccountStore,
+  completeAppleAccountSignIn,
+  hashAppleNonce,
+  verifyAppleIdentityToken,
+} from "../apple-auth";
 
 const RAW_NONCE = "nonce_6d09ef65cd477d5e04ff1d91";
 
@@ -52,5 +58,84 @@ describe("Sign in with Apple token verification", () => {
     await expect(verifyAppleIdentityToken(token, "", publicKey)).rejects.toThrow(
       "missing Sign in with Apple nonce",
     );
+  });
+});
+
+function accountStore(existing: UserDTO | null = null): {
+  readonly store: AppleAccountStore;
+  readonly createdNames: string[];
+} {
+  const createdNames: string[] = [];
+  const created = {
+    id: UserIdSchema.parse("usr_recovered"),
+    name: "",
+    color: "#5E5CE6",
+    emoji: null,
+    photo: null,
+    exes: [],
+  };
+  let current = existing ?? created;
+  return {
+    createdNames,
+    store: {
+      findUserByAppleId: async () => existing,
+      createUser: async ({ name }) => {
+        createdNames.push(name);
+        current = { ...created, name };
+        return current;
+      },
+      createSession: async () => SessionTokenSchema.parse("sess_recovered"),
+      getMe: async (userId) => MeSchema.parse({ ...current, id: userId, phone: null }),
+    },
+  };
+}
+
+describe("verified Apple account completion", () => {
+  it("creates an unnamed profile when Apple no longer returns fullName", async () => {
+    const fake = accountStore();
+
+    const result = await completeAppleAccountSignIn("apple-user-123", undefined, fake.store);
+
+    expect(fake.createdNames).toEqual([""]);
+    expect(result).toMatchObject({
+      created: true,
+      response: { status: "needs_profile", user: { name: "" } },
+    });
+  });
+
+  it("uses Apple's first-authorization name without inventing a fallback", async () => {
+    const fake = accountStore();
+
+    const result = await completeAppleAccountSignIn(
+      "apple-user-123",
+      "  Taylor Appleseed  ",
+      fake.store,
+    );
+
+    expect(fake.createdNames).toEqual(["Taylor Appleseed"]);
+    expect(result.response).toMatchObject({
+      status: "authenticated",
+      user: { name: "Taylor Appleseed" },
+    });
+  });
+
+  it("reauthorizes an existing account when fullName is absent", async () => {
+    const existing = {
+      id: UserIdSchema.parse("usr_existing"),
+      name: "Taylor",
+      color: "#5E5CE6",
+      emoji: null,
+      photo: null,
+      exes: [],
+    };
+    const fake = accountStore(existing);
+
+    const result = await completeAppleAccountSignIn("apple-user-123", undefined, fake.store);
+
+    expect(fake.createdNames).toEqual([]);
+    expect(result).toMatchObject({
+      created: false,
+      response: { status: "authenticated", user: { name: "Taylor" } },
+    });
   });
 });
