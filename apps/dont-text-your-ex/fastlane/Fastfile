@@ -5,6 +5,7 @@ require "fileutils"
 require "open3"
 require "tmpdir"
 require "spaceship"
+require_relative "release_entitlements"
 
 # Fastfile for publish-setup (fastlane match flow).
 #
@@ -83,7 +84,9 @@ def verify_release_entitlements!(ipa_path:, profile_path:)
     profile_value = plist_value!(profile_plist, ":Entitlements:com.apple.developer.applesignin:0")
     UI.user_error!("Provisioning profile is missing Sign in with Apple entitlement") unless profile_value == "Default"
     profile_domains = plist_array_values!(profile_plist, ":Entitlements:com.apple.developer.associated-domains")
-    UI.user_error!("Provisioning profile is missing production Associated Domain") unless profile_domains.include?(expected_domain)
+    unless ReleaseEntitlements.profile_allows_associated_domain?(profile_domains, expected_domain)
+      UI.user_error!("Provisioning profile is missing Associated Domains capability")
+    end
 
     UI.success("Sign in with Apple and Associated Domains verified in signed app and profile")
   end

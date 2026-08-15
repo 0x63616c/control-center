@@ -95,6 +95,9 @@ jobs:
           bundler-cache: true
           working-directory: apps/dont-text-your-ex
 
+      - name: Test release entitlement verifier
+        run: bundle exec ruby fastlane/release_entitlements_test.rb
+
       - name: Build and upload
         env:
           ASC_KEY_ID: ${{ env.ASC_KEY_ID }}
