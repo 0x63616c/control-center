@@ -492,6 +492,7 @@ export async function logSlip(opts: {
   exLabel?: string | null;
   source?: "self" | "report";
   reportedBy?: string | null;
+  reportId?: string | null;
 }): Promise<void> {
   await assertJarOpen(opts.jarId);
   if (!(await isMember(opts.jarId, opts.userId))) throw new Error("not a jar member");
@@ -522,6 +523,7 @@ export async function logSlip(opts: {
     actorId: opts.userId,
     amountCents: opts.amountCents,
     note: opts.note ?? null,
+    reportId: opts.reportId ?? null,
   });
 
   const after = before + opts.amountCents;
@@ -583,6 +585,7 @@ export async function createReport(opts: {
     targetId: opts.accuserId,
     anonymous: opts.anonymous,
     note: opts.note ?? null,
+    reportId: rid,
   });
   return requireValue(await serializeReport(rid), "created report could not be loaded");
 }
@@ -643,6 +646,24 @@ export async function pendingReportsForUser(userId: string): Promise<ReportDTO[]
   return results.filter((r): r is ReportDTO => r !== null);
 }
 
+export async function reportHistoryForUser(userId: string): Promise<ReportDTO[]> {
+  const { rows } = await pool.query<{ id: string }>(
+    `SELECT r.id FROM reports r
+     JOIN memberships m ON m.jar_id=r.jar_id
+     WHERE m.user_id=$1 AND m.left_at IS NULL AND r.status<>'pending'
+     ORDER BY COALESCE(r.resolved_at, r.created_at) DESC`,
+    [userId],
+  );
+  const results = await Promise.all(rows.map((row) => serializeReport(row.id)));
+  return results.filter((report): report is ReportDTO => report !== null);
+}
+
+export async function reportForUser(reportId: string, userId: string): Promise<ReportDTO | null> {
+  const report = await reportRow(reportId);
+  if (!report || !(await isMember(report.jar_id, userId))) return null;
+  return serializeReport(reportId);
+}
+
 export async function resolveReport(
   reportId: string,
   userId: string,
@@ -660,6 +681,7 @@ export async function resolveReport(
       note: r.note,
       source: "report",
       reportedBy: r.accuser_id,
+      reportId,
     });
     await pool.query("UPDATE reports SET status='owned', resolved_at=$1 WHERE id=$2", [
       now(),
@@ -670,7 +692,12 @@ export async function resolveReport(
       now(),
       reportId,
     ]);
-    await logActivity({ jarId: r.jar_id, type: "deny", actorId: r.accused_id });
+    await logActivity({
+      jarId: r.jar_id,
+      type: "deny",
+      actorId: r.accused_id,
+      reportId,
+    });
   }
   return serializeReport(reportId);
 }
@@ -685,9 +712,10 @@ async function logActivity(opts: {
   amountCents?: number | null;
   note?: string | null;
   anonymous?: boolean;
+  reportId?: string | null;
 }): Promise<void> {
   await pool.query(
-    "INSERT INTO activity (id, jar_id, type, actor_id, target_id, text, amount_cents, ex_label, note, anonymous, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+    "INSERT INTO activity (id, jar_id, type, actor_id, target_id, text, amount_cents, ex_label, note, anonymous, report_id, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
     [
       id("act"),
       opts.jarId,
@@ -699,6 +727,7 @@ async function logActivity(opts: {
       null,
       opts.note ?? null,
       opts.anonymous ? 1 : 0,
+      opts.reportId ?? null,
       now(),
     ],
   );
@@ -715,6 +744,7 @@ type ActivityRow = {
   ex_label: string | null;
   note: string | null;
   anonymous: number;
+  report_id: string | null;
   created_at: number;
 };
 
@@ -724,6 +754,7 @@ async function serializeActivity(a: ActivityRow): Promise<ActivityDTO> {
     id: a.id,
     jarId: a.jar_id,
     jarName: j?.name ?? "",
+    reportId: a.report_id,
     type: a.type,
     user: a.actor_id ? await getUser(a.actor_id) : null,
     by: a.anonymous || !a.target_id ? null : await getUser(a.target_id),

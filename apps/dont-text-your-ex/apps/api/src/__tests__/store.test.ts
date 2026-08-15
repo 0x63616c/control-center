@@ -439,6 +439,100 @@ describe.skipIf(!HAS_DB)("reports", () => {
     expect(denied?.status).toBe("denied");
   });
 
+  it("keeps owned and denied reports as anonymous-safe member history while isolating outsiders", async () => {
+    const accuser = await store.createUser({ name: "History Reporter" });
+    const accused = await store.createUser({ name: "History Accused" });
+    const member = await store.createUser({ name: "History Member" });
+    const outsider = await store.createUser({ name: "History Outsider" });
+    const jar = await store.createJar({ userId: accuser.id, name: "History Jar" });
+    const detail = await store.getJarDetail(jar.id, accuser.id);
+    if (!detail) throw new Error("created history jar detail missing");
+    const inviteCode = requireInviteCode(detail);
+    await store.joinJarByCode(accused.id, inviteCode);
+    await store.joinJarByCode(member.id, inviteCode);
+
+    const owned = await store.createReport({
+      jarId: jar.id,
+      accuserId: accuser.id,
+      accusedId: accused.id,
+      note: "anonymous evidence survives",
+      anonymous: true,
+      amountCents: 500,
+      evidence: [
+        {
+          mimeType: "image/png",
+          dataUrl:
+            "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+        },
+      ],
+    });
+    expect(await store.reportForUser(owned.id, member.id)).toMatchObject({ status: "pending" });
+    expect(await store.reportForUser(owned.id, outsider.id)).toBeNull();
+    expect(await store.resolveReport(owned.id, member.id, "deny")).toBeNull();
+    expect(await store.resolveReport(owned.id, accused.id, "own")).toMatchObject({
+      status: "owned",
+    });
+
+    const denied = await store.createReport({
+      jarId: jar.id,
+      accuserId: accuser.id,
+      accusedId: accused.id,
+      note: "denied but retained",
+      anonymous: false,
+      amountCents: 500,
+      evidence: [],
+    });
+    expect(await store.resolveReport(denied.id, accused.id, "deny")).toMatchObject({
+      status: "denied",
+    });
+
+    const accusedHistory = await store.reportHistoryForUser(accused.id);
+    const memberHistory = await store.reportHistoryForUser(member.id);
+    expect(accusedHistory.map((report) => report.status).sort()).toEqual(["denied", "owned"]);
+    expect(memberHistory.map((report) => report.status).sort()).toEqual(["denied", "owned"]);
+    expect(await store.reportHistoryForUser(outsider.id)).toEqual([]);
+
+    const protectedDetail = await store.reportForUser(owned.id, member.id);
+    expect(protectedDetail).toMatchObject({
+      id: owned.id,
+      status: "owned",
+      anonymous: true,
+      accuser: null,
+      evidence: [expect.objectContaining({ mimeType: "image/png" })],
+    });
+    expect(JSON.stringify(protectedDetail)).not.toContain(accuser.id);
+    expect(await store.reportForUser(owned.id, outsider.id)).toBeNull();
+
+    const memberToken = await store.createSession(member.id);
+    const outsiderToken = await store.createSession(outsider.id);
+    const memberListResponse = await buildApp().request("/api/reports/history", {
+      headers: { Authorization: `Bearer ${memberToken}` },
+    });
+    expect(memberListResponse.status).toBe(200);
+    expect((await memberListResponse.json()) as unknown[]).toHaveLength(2);
+
+    const memberDetailResponse = await buildApp().request(`/api/reports/${owned.id}`, {
+      headers: { Authorization: `Bearer ${memberToken}` },
+    });
+    expect(memberDetailResponse.status).toBe(200);
+    const memberDetailJson = await memberDetailResponse.text();
+    expect(memberDetailJson).not.toContain(accuser.id);
+    expect(memberDetailJson).toContain("anonymous evidence survives");
+
+    const outsiderDetailResponse = await buildApp().request(`/api/reports/${owned.id}`, {
+      headers: { Authorization: `Bearer ${outsiderToken}` },
+    });
+    expect(outsiderDetailResponse.status).toBe(404);
+    const outsiderListResponse = await buildApp().request("/api/reports/history", {
+      headers: { Authorization: `Bearer ${outsiderToken}` },
+    });
+    expect(await outsiderListResponse.json()).toEqual([]);
+
+    const activity = await store.activityForUser(member.id);
+    expect(activity.some((entry) => entry.reportId === owned.id)).toBe(true);
+    expect(activity.some((entry) => entry.reportId === denied.id)).toBe(true);
+  });
+
   it("redacts an anonymous reporter from activity while retaining the protected reporter id", async () => {
     const accuser = await store.createUser({ name: "Private Reporter" });
     const accused = await store.createUser({ name: "Reported Member" });

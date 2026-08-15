@@ -318,6 +318,22 @@ api.get("/reports/pending", async (c) => {
   return c.json(await store.pendingReportsForUser(uid));
 });
 
+api.get("/reports/history", async (c) => {
+  const uid = requireUser(c);
+  if (!uid) return c.json(unauth, 401);
+  return c.json(await store.reportHistoryForUser(uid));
+});
+
+api.get("/reports/:id", async (c) => {
+  const uid = requireUser(c);
+  if (!uid) return c.json(unauth, 401);
+  const parsedId = parseRequestValue(c, ReportIdSchema, c.req.param("id"));
+  if (!parsedId.ok) return parsedId.response;
+  const report = await store.reportForUser(parsedId.value, uid);
+  if (!report) return c.json({ error: "not_found_or_forbidden" }, 404);
+  return c.json(report);
+});
+
 api.post("/reports/:id/resolve", async (c) => {
   const uid = requireUser(c);
   if (!uid) return c.json(unauth, 401);

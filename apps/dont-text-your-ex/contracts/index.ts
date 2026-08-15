@@ -251,6 +251,7 @@ export const ActivitySchema: z.ZodType<ActivityDTO> = z
     id: ActivityIdSchema,
     jarId: JarIdSchema,
     jarName: z.string(),
+    reportId: ReportIdSchema.nullable().default(null),
     type: ActivityTypeSchema,
     user: UserSchema.nullable(),
     by: UserSchema.nullable(),
@@ -344,6 +345,7 @@ export interface ActivityDTO {
   readonly id: z.infer<typeof ActivityIdSchema>;
   readonly jarId: JarId;
   readonly jarName: string;
+  readonly reportId: ReportId | null;
   readonly type: ActivityType;
   readonly user: UserDTO | null;
   readonly by: UserDTO | null;
