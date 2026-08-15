@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, isApiErrorStatus } from "../api";
+import { api, inviteRetryAfterSeconds, isApiErrorStatus } from "../api";
 import type { AppCtx, RouteFor } from "../appctx";
 import { money, T } from "../theme";
 import type { JarPreviewDTO } from "../types";
@@ -56,6 +56,8 @@ function previewButtonLabel(state: PreviewState): string {
 }
 
 function describeJoinError(error: unknown): string {
+  const retryAfter = inviteRetryAfterSeconds(error);
+  if (retryAfter !== null) return `Too many invite attempts. Try again in ${retryAfter} seconds.`;
   if (isApiErrorStatus(error, 403)) return "You don’t have permission to join this jar.";
   if (isApiErrorStatus(error, 409)) return "This jar can’t be joined anymore.";
   if (isApiErrorStatus(error, 404)) return "This invite is no longer valid.";
@@ -63,6 +65,8 @@ function describeJoinError(error: unknown): string {
 }
 
 function describePreviewError(error: unknown): string {
+  const retryAfter = inviteRetryAfterSeconds(error);
+  if (retryAfter !== null) return `Too many invite attempts. Try again in ${retryAfter} seconds.`;
   if (isApiErrorStatus(error, 404)) return "No active jar has that code. Check it and retry.";
   if (isApiErrorStatus(error, 403)) return "You don’t have permission to view this invite.";
   if (isApiErrorStatus(error, 409)) return "This invite is no longer active.";

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { JarIdSchema, ReportIdSchema } from "../../../contracts";
-import { api, isApiErrorStatus } from "./api";
+import { api, inviteRetryAfterSeconds, isApiErrorStatus } from "./api";
 
 describe("frontend response JSON boundary", () => {
   beforeEach(() => {
@@ -55,6 +55,19 @@ describe("frontend response JSON boundary", () => {
     expect(isApiErrorStatus(error, 401)).toBe(true);
     expect(isApiErrorStatus(error, 500)).toBe(false);
     expect(isApiErrorStatus(new Error("network unavailable"), 401)).toBe(false);
+  });
+
+  it("exposes a typed retry delay only for invite rate limits", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({ error: "invite_rate_limited", retryAfterSeconds: 47 }, { status: 429 }),
+      ),
+    );
+
+    const error = await api.jarByCode("XEX24K").catch((caught: unknown) => caught);
+    expect(inviteRetryAfterSeconds(error)).toBe(47);
+    expect(inviteRetryAfterSeconds(new Error("network unavailable"))).toBeNull();
   });
 
   it("routes branded jar and report identifiers to their matching resources", async () => {

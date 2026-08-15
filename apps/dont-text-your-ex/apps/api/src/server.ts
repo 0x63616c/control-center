@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { api, type Env } from "./api";
 import { authMiddleware } from "./auth";
+import { createInviteProbeLimiter, inviteProbeRateLimit } from "./invite-rate-limit";
 
 const log = createLogger({ service: "dont-text-your-ex-api" });
 
@@ -17,6 +18,7 @@ const ALLOWED_ORIGINS = [
 
 export function buildApp(): Hono<Env> {
   const app = new Hono<Env>();
+  const inviteLimiter = createInviteProbeLimiter();
 
   // Request log: proves whether a call (e.g. the native /auth/apple) actually
   // reaches the api and from which origin, with status + latency.
@@ -46,6 +48,8 @@ export function buildApp(): Hono<Env> {
   );
 
   app.use("/api/*", authMiddleware);
+  app.use("/api/jars/code/*", inviteProbeRateLimit(inviteLimiter));
+  app.use("/api/jars/join", inviteProbeRateLimit(inviteLimiter));
   app.route("/api", api);
 
   return app;

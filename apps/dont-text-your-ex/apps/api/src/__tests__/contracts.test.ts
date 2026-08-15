@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   AVATAR_MAX_BYTES,
@@ -86,6 +87,14 @@ describe("avatar photo boundary", () => {
 });
 
 describe("domain id parsers", () => {
+  it("keeps six-character invite codes on a cryptographic uniform source", () => {
+    const source = readFileSync(new URL("../ids.ts", import.meta.url), "utf8");
+
+    expect(source).toContain('from "node:crypto"');
+    expect(source).toContain("randomInt(CODE_ALPHABET.length)");
+    expect(source).not.toContain("Math.random");
+  });
+
   it("does not allow user, jar, and report ids to cross domains", () => {
     expect(UserIdSchema.safeParse("usr_123").success).toBe(true);
     expect(JarIdSchema.safeParse("usr_123").success).toBe(false);

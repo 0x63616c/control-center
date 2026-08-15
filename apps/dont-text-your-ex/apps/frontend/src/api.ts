@@ -73,7 +73,9 @@ async function req<T>(
     const parsed = ApiErrorBodySchema.safeParse(detail);
     const apiDetail = parsed.success ? parsed.data : undefined;
     const message = apiDetail
-      ? [apiDetail.error, apiDetail.message].filter(Boolean).join(": ")
+      ? [apiDetail.error, "message" in apiDetail ? apiDetail.message : undefined]
+          .filter(Boolean)
+          .join(": ")
       : res.statusText;
     throw new ApiError(res.status, message || `HTTP ${res.status}`, apiDetail);
   }
@@ -95,6 +97,14 @@ class ApiError extends Error {
 
 export function isApiErrorStatus(error: unknown, status: number): boolean {
   return error instanceof ApiError && error.status === status;
+}
+
+export function inviteRetryAfterSeconds(error: unknown): number | null {
+  return error instanceof ApiError &&
+    error.detail?.error === "invite_rate_limited" &&
+    "retryAfterSeconds" in error.detail
+    ? error.detail.retryAfterSeconds
+    : null;
 }
 
 export const api = {

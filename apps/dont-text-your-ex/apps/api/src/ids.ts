@@ -1,3 +1,4 @@
+import { randomInt } from "node:crypto";
 import { genId } from "@www/platform";
 import {
   type InviteCode,
@@ -22,7 +23,7 @@ const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 export function inviteCode(len = 6): InviteCode {
   let s = "";
   for (let i = 0; i < len; i++) {
-    s += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
+    s += CODE_ALPHABET[randomInt(CODE_ALPHABET.length)];
   }
   return InviteCodeSchema.parse(s);
 }

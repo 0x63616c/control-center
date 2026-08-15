@@ -334,13 +334,20 @@ export const AuthResponseSchema = z.discriminatedUnion("status", [
 ]);
 export const OkResponseSchema = z.object({ ok: z.literal(true) }).strict();
 export const JoinJarResponseSchema = z.object({ jarId: JarIdSchema }).strict();
-export const ApiErrorBodySchema = z
+export const InviteRateLimitErrorSchema = z
+  .object({
+    error: z.literal("invite_rate_limited"),
+    retryAfterSeconds: z.number().int().positive(),
+  })
+  .strict();
+const GeneralApiErrorBodySchema = z
   .object({
     error: z.string(),
     message: z.string().optional(),
     expectedAud: z.string().optional(),
   })
   .strict();
+export const ApiErrorBodySchema = z.union([InviteRateLimitErrorSchema, GeneralApiErrorBodySchema]);
 
 export type UserDTO = z.infer<typeof UserSchema>;
 export type MeDTO = z.infer<typeof MeSchema>;

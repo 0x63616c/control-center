@@ -84,9 +84,8 @@ api.post("/auth/apple", async (c) => {
   if (!parsed.ok) return parsed.response;
   const { identityToken, nonce, fullName } = parsed.value;
 
-  // Decode WITHOUT verifying first, so the logs show exactly what the device
-  // sent (the token itself is never logged - only its non-secret claims). The
-  // most common failure is an `aud` that doesn't match our bundle id.
+  // Decode diagnostic metadata before verification, but never log the stable
+  // Apple subject or token. The most common failure is an `aud` mismatch.
   try {
     const header = decodeProtectedHeader(identityToken);
     const payload = decodeJwt(identityToken);
@@ -96,7 +95,6 @@ api.post("/auth/apple", async (c) => {
         kid: header.kid,
         aud: payload.aud,
         iss: payload.iss,
-        sub: payload.sub,
         exp: payload.exp,
         expectedAud: appleBundleId(),
         tokenLen: identityToken.length,
