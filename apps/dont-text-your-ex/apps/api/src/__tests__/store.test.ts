@@ -671,6 +671,21 @@ describe.skipIf(!HAS_DB)("reports", () => {
     const activity = await store.activityForUser(member.id);
     expect(activity.some((entry) => entry.reportId === owned.id)).toBe(true);
     expect(activity.some((entry) => entry.reportId === denied.id)).toBe(true);
+
+    await store.closeJar(jar.id, accuser.id);
+    expect((await store.reportHistoryForUser(member.id)).map((report) => report.id)).toEqual(
+      expect.arrayContaining([denied.id, owned.id]),
+    );
+    const closedDetailResponse = await buildApp().request(`/api/reports/${owned.id}`, {
+      headers: { Authorization: `Bearer ${memberToken}` },
+    });
+    expect(closedDetailResponse.status).toBe(200);
+    expect(ReportSchema.parse(await closedDetailResponse.json())).toMatchObject({
+      id: owned.id,
+      status: "owned",
+      accuser: null,
+      evidence: [expect.objectContaining({ mimeType: "image/png" })],
+    });
   });
 
   it("redacts an anonymous reporter from activity while retaining the protected reporter id", async () => {
