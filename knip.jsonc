@@ -201,6 +201,12 @@
       // boundary. The route contract is compiler-only and intentionally has no
       // runtime importer.
       "entry": ["src/**/*.stories.tsx", "src/appctx.type-test.ts"]
+    },
+    "apps/dont-text-your-ex": {
+      // Capacitor discovers this native plugin from the product package during
+      // `cap sync`; the frontend workspace also imports it directly, but that
+      // import cannot make the app-shell declaration visible to Knip.
+      "ignoreDependencies": ["@capacitor/app"]
     }
   }
 }
