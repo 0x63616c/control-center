@@ -148,6 +148,20 @@ Review-fix commits:
   preservation, AASA, Associated Domains entitlement, signing guard, and an
   eleventh Playwright flow. Focused typecheck/seams/discovery green; independent
   feature QA and hosted browser proof pending.
+- `72dd17844`: documented and enforced a 30-day absolute session lifetime,
+  independent concurrent sessions, lazy expired-session deletion, last-used
+  observation without sliding expiry, and current-token-only logout. A migrated
+  real-Postgres/Hono seam passed locally; frontend transient-error behavior is a
+  separate acceptance gate.
+- `456e5b619`: independently hardened the production invite-link boundary,
+  native listener lifecycle, strict host/path validation, and safe pre-join
+  member summaries. GitHub Actions run `31866340124` is green at this immutable
+  SHA: real-Postgres contracts, all 11 Playwright flows, Storybook, typecheck,
+  Knip, and both production images.
+- `dc422b50b` and `583b06ec1`: validate avatar PNG/JPEG/WebP MIME, signatures,
+  and 2 MiB limit at client/server boundaries, plus independent browser QA for
+  rejection, save, rendering, and reload persistence. The independent QA commit
+  is local until the shared-tree pre-push gate is green.
 
 ## Production evidence checklist
 
@@ -199,18 +213,18 @@ boundaries being exercised.
 
 | Feature | Implementation owner | Independent QA | Automated/hands-on evidence | Defects or missing states | Result |
 |---|---|---|---|---|---|
-| Apple auth, onboarding, profile | `apple_release`, `fix_ci_apple_arch` | v1 audit agents | Apple verifier/unit seams; onboarding/profile browser paths; unsigned simulator build | Physical Apple success/cancel/reload/cellular pending; avatar boundary validation, profile failures, and notification preferences incomplete | Blocked |
-| Create, join, invite, deep links | recovery/frontend agents + root | v1 audit agents | Create → Invite → Jar pointer path green; `3720d8609` adds canonical URL, onboarding-preserved web path, Capacitor cold/warm plumbing, AASA and 11th browser flow | Independent QA/hosted flow and physical universal-link proof pending; invite expiry/revocation still missing | Blocked |
+| Apple auth, onboarding, profile | `apple_release`, `fix_ci_apple_arch` | v1 audit agents | Apple verifier/unit seams; onboarding/profile browser paths; unsigned simulator build; `dc422b50b`/`583b06ec1` cover avatar MIME/signature/size rejection and saved-image reload | Physical Apple success/cancel/reload/cellular pending; profile failure-state QA pending; signed profile still must prove Associated Domains | Blocked |
+| Create, join, invite, deep links | recovery/frontend agents + root | v1 audit agents | Create → Invite → Jar pointer path green; `3720d8609`/`456e5b619` add canonical URL, onboarding-preserved web path, strict pre-join boundary, Capacitor cold/warm plumbing, AASA and 11th browser flow; immutable run `31866340124` green | Public AASA/Apple CDN and physical cold/warm universal-link proof pending; invite expiry/revocation still missing | Blocked |
 | Home, jar detail, activity, streak privacy | recovery/frontend agents | v1 audit agents | Home/order/activity browser paths; multi-user raw API seam now omits hidden days and retains self view; new/existing memberships private | Hosted privacy contract pending; fetch failures look empty or load forever | Blocked — privacy fixed, failure states remain |
 | Self-log slip | recovery/frontend agents | v1 audit agents | Amount/confirm/tally/pot/streak browser flow; other-member raw JSON now omits private ex label | Hosted privacy contract plus mutation/offline/duplicate/mobile states pending | Blocked — privacy fixed, failure states remain |
 | Reports, anonymity, real images, evidence, own/deny | reporting agents | v1 audit agents | Real PNG path, evidence contracts/Postgres round trip, Own/Deny; raw anonymous activity now has `by:null`; self-report rejected with zero persistence | Hosted boundary proof, resolved history, viewer accessibility and image/deny/authorization states missing | Blocked |
 | Settle and close lifecycle | recovery/frontend agents | v1 audit agents | Inert payment/owed amount browser path | Failed fetch renders a false `$0`; close/leave semantics and implementation absent | Blocked |
-| Sessions and logout | auth agents | v1 audit agents | Store session creation/deletion contracts | Transient `/me` error clears credentials; logout can leave server session; expiry/rotation/reload/revoke states missing | Blocked |
+| Sessions and logout | auth agents | v1 audit agents | `72dd17844` documents and proves backend creation, absolute expiry, lazy deletion, multiple sessions, migration, and current-token revocation against real Postgres/Hono | Frontend transient `/me`, retry, reload, and failed-logout semantics are still in implementation/QA | Blocked — backend lifecycle passes locally |
 | Loading, error, validation, empty | feature owners | v1 audit agents | Happy-path and selected empty/validation coverage only | Multiple screens swallow fetch/mutation failures or render false empty/success state | Blocked |
 | Mobile accessibility and clickability | frontend agents | v1 audit agents | Create overlay regression fixed; iOS simulator build | Missing accessible names/dialog focus/Escape; mobile viewport, VoiceOver, rotation, dynamic type, and physical-device QA pending | Blocked |
 | Notifications | Future increment | v1 audit agents | README/migration and v1 scope decision agree | Explicitly excluded from this restoration v1; no silent claim that delivery exists | Not applicable — recorded v1 scope |
 | Authorization and data isolation | `fix_ci_apple_arch` follow-up | v1 audit agents | Multi-user Postgres/API seams cover hidden streak, ex label, anonymous reporter, outsider read, opt-in defaults/migration and self-target rejection | Hosted CI and the remaining complete owner/member/accused/outsider action matrix pending | Blocked — confirmed leaks fixed |
-| Production and external TestFlight | infra/release agents | external-user acceptance | Container builds and product CI green at `9bae5c9fa`; ASC read-only baseline recorded | Merge/deploy, public/auth, restart, backup/restore, second deploy, signed build, Friends group and non-team install all pending | Blocked |
+| Production and external TestFlight | infra/release agents | external-user acceptance | Container builds and product CI green at immutable `456e5b619` in run `31866340124`; ASC read-only baseline recorded | Merge/deploy, public/auth, restart, backup/restore, second deploy, signed build, Friends group and non-team install all pending | Blocked |
 
 Every blocked row requires a fixing commit and a fresh evidence entry. This table
 must be expanded or split if the audit discovers another independently testable
