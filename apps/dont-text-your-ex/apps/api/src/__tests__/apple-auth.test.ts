@@ -10,7 +10,10 @@ import {
 
 const RAW_NONCE = "nonce_6d09ef65cd477d5e04ff1d91";
 
-async function signedAppleToken(nonce: string | undefined): Promise<{
+async function signedAppleToken(
+  nonce: string | undefined,
+  overrides: { readonly issuer?: string; readonly audience?: string } = {},
+): Promise<{
   readonly token: string;
   readonly publicKey: CryptoKey;
 }> {
@@ -18,8 +21,8 @@ async function signedAppleToken(nonce: string | undefined): Promise<{
   const claims = nonce === undefined ? {} : { nonce };
   const token = await new SignJWT(claims)
     .setProtectedHeader({ alg: "RS256", kid: "test-key" })
-    .setIssuer("https://appleid.apple.com")
-    .setAudience("co.worldwidewebb.textyourex")
+    .setIssuer(overrides.issuer ?? "https://appleid.apple.com")
+    .setAudience(overrides.audience ?? "co.worldwidewebb.textyourex")
     .setSubject("apple-user-123")
     .setIssuedAt()
     .setExpirationTime("5m")
@@ -58,6 +61,29 @@ describe("Sign in with Apple token verification", () => {
     await expect(verifyAppleIdentityToken(token, "", publicKey)).rejects.toThrow(
       "missing Sign in with Apple nonce",
     );
+  });
+
+  it("rejects a correctly signed token from the wrong issuer", async () => {
+    const { token, publicKey } = await signedAppleToken(hashAppleNonce(RAW_NONCE), {
+      issuer: "https://attacker.invalid",
+    });
+
+    await expect(verifyAppleIdentityToken(token, RAW_NONCE, publicKey)).rejects.toThrow();
+  });
+
+  it("rejects a correctly signed token for the wrong audience", async () => {
+    const { token, publicKey } = await signedAppleToken(hashAppleNonce(RAW_NONCE), {
+      audience: "co.attacker.invalid",
+    });
+
+    await expect(verifyAppleIdentityToken(token, RAW_NONCE, publicKey)).rejects.toThrow();
+  });
+
+  it("rejects a token whose signature does not match the verification key", async () => {
+    const { token } = await signedAppleToken(hashAppleNonce(RAW_NONCE));
+    const { publicKey: unrelatedKey } = await generateKeyPair("RS256");
+
+    await expect(verifyAppleIdentityToken(token, RAW_NONCE, unrelatedKey)).rejects.toThrow();
   });
 });
 

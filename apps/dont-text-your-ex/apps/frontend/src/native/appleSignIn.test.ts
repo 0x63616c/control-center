@@ -48,6 +48,9 @@ describe("native Sign in with Apple request binding", () => {
     expect(() =>
       validateAppleSignInResponse(request, response({ state: "state_substituted" })),
     ).toThrow("Apple sign-in response did not match the active request");
+    expect(() =>
+      validateAppleSignInResponse(request, response({ attemptId: "attempt_replayed" })),
+    ).toThrow("Apple sign-in response did not match the active request");
   });
 
   it("parses the untrusted Capacitor plugin response before exposing it", async () => {
