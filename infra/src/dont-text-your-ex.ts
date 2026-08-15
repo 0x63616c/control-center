@@ -9,7 +9,7 @@ import type { ImageDigests } from "./services.ts";
 export const DONT_TEXT_YOUR_EX_NAMESPACE = "dont-text-your-ex" as const;
 export const DONT_TEXT_YOUR_EX_HOSTNAME = "dont-text-your-ex.worldwidewebb.co";
 export const DONT_TEXT_YOUR_EX_API_PORT = 8787;
-export const DONT_TEXT_YOUR_EX_FRONTEND_PORT = 80;
+const DONT_TEXT_YOUR_EX_FRONTEND_PORT = 80;
 
 export const DONT_TEXT_YOUR_EX_DATABASE = {
   clusterName: "dont-text-your-ex-postgres",
