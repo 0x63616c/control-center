@@ -810,6 +810,154 @@ describe.skipIf(!HAS_DB)("reports", () => {
     }
   });
 
+  it("rolls back a failed own resolution and succeeds exactly once on retry", async () => {
+    const accuser = await store.createUser({ name: "Own Rollback Reporter" });
+    const accused = await store.createUser({ name: "Own Rollback Accused" });
+    const jar = await store.createJar({ userId: accuser.id, name: "Own Rollback Jar" });
+    await store.joinJarByCode(
+      accused.id,
+      requireInviteCode(await store.getJarDetail(jar.id, accuser.id)),
+    );
+    const report = await store.createReport({
+      jarId: jar.id,
+      accuserId: accuser.id,
+      accusedId: accused.id,
+      note: "rollback own resolution",
+      anonymous: false,
+      amountCents: 500,
+      evidence: [],
+    });
+    const accuserToken = await store.createSession(accuser.id);
+    const accusedToken = await store.createSession(accused.id);
+    const resolve = (token: string) =>
+      buildApp().request(`/api/reports/${report.id}/resolve`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "own" }),
+      });
+
+    expect((await resolve(accuserToken)).status).toBe(404);
+    await pool.query(`
+      CREATE OR REPLACE FUNCTION fail_owned_report_status() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.status = 'owned' AND OLD.note = 'rollback own resolution' THEN
+          RAISE EXCEPTION 'forced owned report status failure';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      DROP TRIGGER IF EXISTS fail_owned_report_status ON reports;
+      CREATE TRIGGER fail_owned_report_status BEFORE UPDATE ON reports
+      FOR EACH ROW EXECUTE FUNCTION fail_owned_report_status();
+    `);
+
+    try {
+      expect((await resolve(accusedToken)).status).toBe(500);
+      const rolledBack = await pool.query<{
+        status: string;
+        slip_count: string;
+        tally_cents: number;
+        activity_count: string;
+      }>(
+        `SELECT
+          (SELECT status FROM reports WHERE id=$1) AS status,
+          (SELECT COUNT(*)::text FROM slips WHERE source='report' AND user_id=$2) AS slip_count,
+          (SELECT tally_cents FROM memberships WHERE jar_id=$3 AND user_id=$2) AS tally_cents,
+          (SELECT COUNT(*)::text FROM activity WHERE type='slip' AND report_id=$1) AS activity_count`,
+        [report.id, accused.id, jar.id],
+      );
+      expect(rolledBack.rows[0]).toEqual({
+        status: "pending",
+        slip_count: "0",
+        tally_cents: 0,
+        activity_count: "0",
+      });
+    } finally {
+      await pool.query("DROP TRIGGER IF EXISTS fail_owned_report_status ON reports");
+      await pool.query("DROP FUNCTION IF EXISTS fail_owned_report_status()");
+    }
+
+    expect((await resolve(accusedToken)).status).toBe(200);
+    expect((await resolve(accusedToken)).status).toBe(404);
+    const reloaded = await buildApp().request(`/api/reports/${report.id}`, {
+      headers: { Authorization: `Bearer ${accusedToken}` },
+    });
+    expect(reloaded.status).toBe(200);
+    expect(ReportSchema.parse(await reloaded.json()).status).toBe("owned");
+  });
+
+  it("rolls back a failed deny resolution and preserves authorization and retry semantics", async () => {
+    const accuser = await store.createUser({ name: "Deny Rollback Reporter" });
+    const accused = await store.createUser({ name: "Deny Rollback Accused" });
+    const jar = await store.createJar({ userId: accuser.id, name: "Deny Rollback Jar" });
+    await store.joinJarByCode(
+      accused.id,
+      requireInviteCode(await store.getJarDetail(jar.id, accuser.id)),
+    );
+    const report = await store.createReport({
+      jarId: jar.id,
+      accuserId: accuser.id,
+      accusedId: accused.id,
+      note: "rollback deny resolution",
+      anonymous: false,
+      amountCents: 500,
+      evidence: [],
+    });
+    const accuserToken = await store.createSession(accuser.id);
+    const accusedToken = await store.createSession(accused.id);
+    const resolve = (token: string) =>
+      buildApp().request(`/api/reports/${report.id}/resolve`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "deny" }),
+      });
+
+    expect((await resolve(accuserToken)).status).toBe(404);
+    await pool.query(`
+      CREATE OR REPLACE FUNCTION fail_deny_report_activity() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.type = 'deny' AND NEW.report_id IS NOT NULL THEN
+          RAISE EXCEPTION 'forced deny report activity failure';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      DROP TRIGGER IF EXISTS fail_deny_report_activity ON activity;
+      CREATE TRIGGER fail_deny_report_activity BEFORE INSERT ON activity
+      FOR EACH ROW EXECUTE FUNCTION fail_deny_report_activity();
+    `);
+
+    try {
+      expect((await resolve(accusedToken)).status).toBe(500);
+      const rolledBack = await pool.query<{ status: string; activity_count: string }>(
+        `SELECT
+          (SELECT status FROM reports WHERE id=$1) AS status,
+          (SELECT COUNT(*)::text FROM activity WHERE type='deny' AND report_id=$1) AS activity_count`,
+        [report.id],
+      );
+      expect(rolledBack.rows[0]).toEqual({ status: "pending", activity_count: "0" });
+    } finally {
+      await pool.query("DROP TRIGGER IF EXISTS fail_deny_report_activity ON activity");
+      await pool.query("DROP FUNCTION IF EXISTS fail_deny_report_activity()");
+    }
+
+    expect((await resolve(accusedToken)).status).toBe(200);
+    expect((await resolve(accusedToken)).status).toBe(404);
+    const history = await buildApp().request("/api/reports/history", {
+      headers: { Authorization: `Bearer ${accusedToken}` },
+    });
+    expect(history.status).toBe(200);
+    expect(ReportSchema.array().parse(await history.json())).toEqual([
+      expect.objectContaining({ id: report.id, status: "denied" }),
+    ]);
+  });
+
   it("denies a report", async () => {
     const accuser = await store.createUser({ name: "Karen" });
     const accused = await store.createUser({ name: "Leo" });
@@ -1230,42 +1378,99 @@ describe.skipIf(!HAS_DB)("activity", () => {
     }
   });
 
-  it("keeps profile ex labels out of every shared API DTO while retaining them on me", async () => {
+  it("keeps profile ex labels out of every pending and resolved shared API DTO", async () => {
     const owner = await store.createUser({ name: "Private Owner", exes: ["Owner Secret"] });
     const member = await store.createUser({ name: "Private Member", exes: ["Member Secret"] });
     const jar = await store.createJar({ userId: owner.id, name: "Private DTO Jar" });
     const ownerDetail = await store.getJarDetail(jar.id, owner.id);
-    await store.joinJarByCode(member.id, requireInviteCode(ownerDetail));
-    await store.logSlip({ jarId: jar.id, userId: owner.id, amountCents: 500 });
-    const report = await store.createReport({
+    const inviteCode = requireInviteCode(ownerDetail);
+    await store.joinJarByCode(member.id, inviteCode);
+    await store.logSlip({
+      jarId: jar.id,
+      userId: owner.id,
+      amountCents: 500,
+      exLabel: "Owner Slip Secret",
+    });
+    const ownedReport = await store.createReport({
       jarId: jar.id,
       accuserId: owner.id,
       accusedId: member.id,
-      note: "Shared report",
+      note: "Owned shared report",
       anonymous: false,
       amountCents: 500,
       evidence: [],
     });
+    const deniedReport = await store.createReport({
+      jarId: jar.id,
+      accuserId: member.id,
+      accusedId: owner.id,
+      note: "Denied shared report",
+      anonymous: false,
+      amountCents: 500,
+      evidence: [],
+    });
+    const tokens = {
+      owner: await store.createSession(owner.id),
+      member: await store.createSession(member.id),
+    } as const;
+    const request = (token: string, path: string, method = "GET", body?: unknown) =>
+      buildApp().request(path, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    const expectPrivateLabelsAbsent = async (response: Response, context: string) => {
+      expect(response.status, context).toBe(200);
+      const raw = await response.text();
+      expect(raw, context).not.toContain('"exes"');
+      expect(raw, context).not.toContain('"exLabel"');
+      for (const privateValue of ["Owner Secret", "Member Secret", "Owner Slip Secret"]) {
+        expect(raw, context).not.toContain(privateValue);
+      }
+    };
 
-    const token = await store.createSession(member.id);
-    const request = (path: string) =>
-      buildApp().request(path, { headers: { Authorization: `Bearer ${token}` } });
-    const me = await request("/api/me");
-    expect(me.status).toBe(200);
-    expect(await me.json()).toMatchObject({ exes: ["Member Secret"] });
+    for (const [viewer, token] of Object.entries(tokens)) {
+      const me = await request(token, "/api/me");
+      expect(me.status, `${viewer} me`).toBe(200);
+      expect(await me.json()).toMatchObject({
+        exes: [viewer === "owner" ? "Owner Secret" : "Member Secret"],
+      });
+      await expectPrivateLabelsAbsent(
+        await request(token, "/api/reports/pending"),
+        `${viewer} pending reports`,
+      );
+    }
 
-    for (const path of [
+    await expectPrivateLabelsAbsent(
+      await request(tokens.member, `/api/reports/${ownedReport.id}/resolve`, "POST", {
+        action: "own",
+      }),
+      "member own response",
+    );
+    await expectPrivateLabelsAbsent(
+      await request(tokens.owner, `/api/reports/${deniedReport.id}/resolve`, "POST", {
+        action: "deny",
+      }),
+      "owner deny response",
+    );
+
+    const sharedPaths = [
+      "/api/jars",
       `/api/jars/${jar.id}`,
+      `/api/jars/code/${inviteCode}`,
       "/api/activity",
       "/api/reports/pending",
-      `/api/reports/${report.id}`,
-    ]) {
-      const response = await request(path);
-      expect(response.status, path).toBe(200);
-      const raw = await response.text();
-      expect(raw, path).not.toContain('"exes"');
-      expect(raw, path).not.toContain("Owner Secret");
-      expect(raw, path).not.toContain("Member Secret");
+      "/api/reports/history",
+      `/api/reports/${ownedReport.id}`,
+      `/api/reports/${deniedReport.id}`,
+    ];
+    for (const [viewer, token] of Object.entries(tokens)) {
+      for (const path of sharedPaths) {
+        await expectPrivateLabelsAbsent(await request(token, path), `${viewer} ${path}`);
+      }
     }
   });
 });
