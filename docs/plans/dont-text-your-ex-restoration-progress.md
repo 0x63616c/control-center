@@ -308,6 +308,25 @@ Associated Domains update captured 2026-08-14:
   immediately after regeneration. Treat Associated Domains as unproven until the
   signed-build guard reads it from both the embedded profile and app binary.
 
+Local signing preflight captured 2026-08-14, without uploading a build:
+
+- The installed `match AppStore co.worldwidewebb.textyourex` profile is valid
+  through 2027-04-12, but decoding it with `security cms` shows that it contains
+  neither `com.apple.developer.applesignin` nor
+  `com.apple.developer.associated-domains`.
+- The installed development profile contains Sign in with Apple but does not
+  contain Associated Domains. It is not a substitute for the App Store profile.
+- A valid Apple Distribution identity for team `X9E4HG27NK`, Xcode 26.2, and
+  fastlane 2.236.0 are available locally.
+- A manual Release archive using the existing App Store profile stops before
+  compilation with Xcode exit 65: the profile does not include Sign in with
+  Apple, Associated Domains, or their corresponding entitlements. No archive or
+  upload was produced.
+- The Apple portal browser was not connected to the Codex task, and no local
+  App Store Connect/match credentials were available. Current portal state,
+  profile regeneration/download, and App Store Connect build/group state remain
+  gated on a signed-in browser session.
+
 ## Blockers and user-assisted gates
 
 - Apple sign-in/2FA: user is available; open App Store Connect early and pause at
