@@ -11,6 +11,7 @@ import {
   InviteCodeSchema,
   JarIdSchema,
   JoinJarRequestSchema,
+  LeaveJarRequestSchema,
   LogSlipRequestSchema,
   ReportIdSchema,
   ResolveReportRequestSchema,
@@ -35,6 +36,7 @@ describe("request schemas", () => {
     ["report creation", CreateReportRequestSchema, { accusedId: "jar_wrong" }],
     ["report resolution", ResolveReportRequestSchema, { action: "delete" }],
     ["jar closure", CloseJarRequestSchema, { confirmed: false }],
+    ["jar leave", LeaveJarRequestSchema, { confirmed: false }],
   ])("rejects invalid %s JSON", (_name, schema, raw) => {
     expect(schema.safeParse(raw).success).toBe(false);
   });
@@ -42,6 +44,11 @@ describe("request schemas", () => {
   it("accepts only an explicit close-jar confirmation", () => {
     expect(CloseJarRequestSchema.parse({ confirmed: true })).toEqual({ confirmed: true });
     expect(CloseJarRequestSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("accepts only an explicit leave-jar confirmation", () => {
+    expect(LeaveJarRequestSchema.parse({ confirmed: true })).toEqual({ confirmed: true });
+    expect(LeaveJarRequestSchema.safeParse({}).success).toBe(false);
   });
 });
 

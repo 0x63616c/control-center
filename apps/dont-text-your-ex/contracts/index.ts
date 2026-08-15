@@ -182,6 +182,7 @@ export const CreateReportRequestSchema = z
 
 export const ResolveReportRequestSchema = z.object({ action: z.enum(["own", "deny"]) }).strict();
 export const CloseJarRequestSchema = z.object({ confirmed: z.literal(true) }).strict();
+export const LeaveJarRequestSchema = z.object({ confirmed: z.literal(true) }).strict();
 
 export type AppleAuthRequest = z.infer<typeof AppleAuthRequestSchema>;
 export type UpdateMeRequest = z.infer<typeof UpdateMeRequestSchema>;
@@ -189,7 +190,6 @@ export type CreateJarRequest = z.infer<typeof CreateJarRequestSchema>;
 export type LogSlipRequest = z.infer<typeof LogSlipRequestSchema>;
 export type EvidenceImageInput = z.infer<typeof EvidenceImageInputSchema>;
 export type CreateReportRequest = z.infer<typeof CreateReportRequestSchema>;
-export type CloseJarRequest = z.infer<typeof CloseJarRequestSchema>;
 
 export const UserSchema = z
   .object({

@@ -263,6 +263,44 @@ describe.skipIf(!HAS_DB)("jar lifecycle", () => {
     expect(history?.activity.length).toBeGreaterThan(0);
   });
 
+  it("lets members leave without erasing history and requires owners to close", async () => {
+    const owner = await store.createUser({ name: "Stay Owner" });
+    const member = await store.createUser({ name: "Leaving Member" });
+    const jar = await store.createJar({ userId: owner.id, name: "Leave Jar" });
+    const detail = await store.getJarDetail(jar.id, owner.id);
+    const code = requireInviteCode(detail);
+    await store.joinJarByCode(member.id, code);
+    await store.logSlip({ jarId: jar.id, userId: member.id, amountCents: 700 });
+
+    await expect(store.leaveJar(jar.id, owner.id)).resolves.toEqual({
+      status: "owner_must_close",
+    });
+    const memberToken = await store.createSession(member.id);
+    const leave = await buildApp().request(`/api/jars/${jar.id}/leave`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${memberToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmed: true }),
+    });
+    expect(leave.status).toBe(200);
+    expect(await leave.json()).toEqual({ ok: true });
+
+    expect(await store.isMember(jar.id, member.id)).toBe(false);
+    expect(await store.listJarsForUser(member.id)).toHaveLength(0);
+    const ownerHistory = await store.getJarDetail(jar.id, owner.id);
+    expect(ownerHistory?.members).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          user: expect.objectContaining({ id: member.id }),
+          tallyCents: 700,
+        }),
+      ]),
+    );
+    const denied = await buildApp().request(`/api/jars/${jar.id}`, {
+      headers: { Authorization: `Bearer ${memberToken}` },
+    });
+    expect(denied.status).toBe(403);
+  });
+
   it("hides a member's private streak from other members and rejects outsiders", async () => {
     const owner = await store.createUser({ name: "Streak Owner" });
     const member = await store.createUser({ name: "Jar Member" });

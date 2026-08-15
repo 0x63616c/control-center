@@ -66,6 +66,7 @@ type MembershipRow = {
   streak_start_at: number | null;
   share_streak: number;
   joined_at: number;
+  left_at: number | null;
 };
 type JarRow = {
   id: string;
@@ -256,7 +257,7 @@ export async function findUserByAppleId(appleId: string): Promise<UserDTO | null
 // ─────────────────────────── memberships / jars ───────────────────────────
 async function membershipRow(jarId: string, userId: string): Promise<MembershipRow | null> {
   const { rows } = await pool.query<MembershipRow>(
-    "SELECT * FROM memberships WHERE jar_id=$1 AND user_id=$2",
+    "SELECT * FROM memberships WHERE jar_id=$1 AND user_id=$2 AND left_at IS NULL",
     [jarId, userId],
   );
   return rows[0] ?? null;
@@ -318,7 +319,7 @@ async function serializeMember(m: MembershipRow, viewerId: string): Promise<Memb
 
 export async function listJarsForUser(userId: string): Promise<JarSummaryDTO[]> {
   const { rows } = await pool.query<JarRow>(
-    "SELECT j.* FROM jars j JOIN memberships m ON m.jar_id=j.id WHERE m.user_id=$1 ORDER BY j.created_at",
+    "SELECT j.* FROM jars j JOIN memberships m ON m.jar_id=j.id WHERE m.user_id=$1 AND m.left_at IS NULL ORDER BY j.created_at",
     [userId],
   );
   return Promise.all(
@@ -417,7 +418,7 @@ async function addMembership(
   role: "owner" | "member",
 ): Promise<void> {
   await pool.query(
-    "INSERT INTO memberships (id, jar_id, user_id, role, tally_cents, streak_start_at, share_streak, joined_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (jar_id, user_id) DO NOTHING",
+    "INSERT INTO memberships (id, jar_id, user_id, role, tally_cents, streak_start_at, share_streak, joined_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (jar_id, user_id) DO UPDATE SET left_at=NULL",
     [id("mem"), jarId, userId, role, 0, null, 0, now()],
   );
 }
@@ -451,8 +452,28 @@ export async function closeJar(
   return { status: "closed" };
 }
 
+export async function leaveJar(
+  jarId: string,
+  userId: string,
+): Promise<{
+  status: "left" | "owner_must_close" | "not_member" | "not_found" | "jar_closed";
+}> {
+  const jar = await jarRow(jarId);
+  if (!jar) return { status: "not_found" };
+  if (jar.closed_at != null) return { status: "jar_closed" };
+  const membership = await membershipRow(jarId, userId);
+  if (!membership) return { status: "not_member" };
+  if (membership.role === "owner") return { status: "owner_must_close" };
+  await pool.query(
+    "UPDATE memberships SET left_at=$1 WHERE jar_id=$2 AND user_id=$3 AND left_at IS NULL",
+    [now(), jarId, userId],
+  );
+  return { status: "left" };
+}
+
 export async function setShareStreak(jarId: string, userId: string, val: boolean): Promise<void> {
   await assertJarOpen(jarId);
+  if (!(await isMember(jarId, userId))) throw new Error("not a jar member");
   await pool.query("UPDATE memberships SET share_streak=$1 WHERE jar_id=$2 AND user_id=$3", [
     val ? 1 : 0,
     jarId,
@@ -473,6 +494,7 @@ export async function logSlip(opts: {
   reportedBy?: string | null;
 }): Promise<void> {
   await assertJarOpen(opts.jarId);
+  if (!(await isMember(opts.jarId, opts.userId))) throw new Error("not a jar member");
   const before = await jarTotal(opts.jarId);
 
   await pool.query(
@@ -527,6 +549,12 @@ export async function createReport(opts: {
   evidence: EvidenceImageInput[];
 }): Promise<ReportDTO> {
   await assertJarOpen(opts.jarId);
+  if (
+    !(await isMember(opts.jarId, opts.accuserId)) ||
+    !(await isMember(opts.jarId, opts.accusedId))
+  ) {
+    throw new Error("not a jar member");
+  }
   const rid = id("rpt");
   await pool.query(
     "INSERT INTO reports (id, jar_id, accuser_id, accused_id, note, is_anonymous, amount_cents, status, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
@@ -622,6 +650,7 @@ export async function resolveReport(
 ): Promise<ReportDTO | null> {
   const r = await reportRow(reportId);
   if (!r || r.accused_id !== userId || r.status !== "pending") return null;
+  if (!(await isMember(r.jar_id, userId))) return null;
   await assertJarOpen(r.jar_id);
   if (action === "own") {
     await logSlip({

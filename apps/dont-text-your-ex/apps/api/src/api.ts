@@ -9,6 +9,7 @@ import {
   CreateReportRequestSchema,
   JarIdSchema,
   JoinJarRequestSchema,
+  LeaveJarRequestSchema,
   LogSlipRequestSchema,
   ReportIdSchema,
   ResolveReportRequestSchema,
@@ -223,6 +224,21 @@ api.post("/jars/:id/close", async (c) => {
   const detail = await store.getJarDetail(parsedId.value, uid);
   if (!detail) return c.json({ error: "not_found" }, 404);
   return c.json(detail);
+});
+
+api.post("/jars/:id/leave", async (c) => {
+  const uid = requireUser(c);
+  if (!uid) return c.json(unauth, 401);
+  const parsedId = parseRequestValue(c, JarIdSchema, c.req.param("id"));
+  if (!parsedId.ok) return parsedId.response;
+  const parsed = await parseRequestJson(c, LeaveJarRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  const result = await store.leaveJar(parsedId.value, uid);
+  if (result.status === "left") return c.json({ ok: true } as const);
+  if (result.status === "owner_must_close") return c.json({ error: "owner_must_close" }, 409);
+  if (result.status === "jar_closed") return c.json(jarClosed, 409);
+  if (result.status === "not_member") return c.json({ error: "not_member" }, 403);
+  return c.json({ error: "not_found" }, 404);
 });
 
 api.post("/jars/:id/share-streak", async (c) => {
