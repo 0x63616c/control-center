@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   AVATAR_MAX_BYTES,
   AvatarPhotoDataUrlSchema,
@@ -8,18 +8,23 @@ import {
   EVIDENCE_MAX_BYTES,
   EVIDENCE_MAX_FILES,
   EvidenceImageInputSchema,
+  type InviteCode,
   InviteCodeSchema,
+  type JarId,
   JarIdSchema,
   JoinJarRequestSchema,
   LeaveJarRequestSchema,
   LogSlipRequestSchema,
+  type ReportId,
   ReportIdSchema,
   ResolveReportRequestSchema,
   ShareStreakRequestSchema,
   UpdateMeRequestSchema,
+  type UserId,
   UserIdSchema,
 } from "../../../../contracts";
 import { parseEvidenceImageJson, serializeEvidenceImageJson } from "../persistence";
+import type * as store from "../store";
 
 const PNG_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
@@ -92,6 +97,13 @@ describe("domain id parsers", () => {
     expect(InviteCodeSchema.safeParse("short").success).toBe(false);
     expect(InviteCodeSchema.safeParse("XEX24!").success).toBe(false);
     expect(JoinJarRequestSchema.parse({ code: "xex24k" })).toEqual({ code: "XEX24K" });
+  });
+
+  it("preserves branded ids across persistence seams", () => {
+    expectTypeOf<Parameters<typeof store.getJarDetail>[0]>().toEqualTypeOf<JarId>();
+    expectTypeOf<Parameters<typeof store.getJarDetail>[1]>().toEqualTypeOf<UserId>();
+    expectTypeOf<Parameters<typeof store.reportForUser>[0]>().toEqualTypeOf<ReportId>();
+    expectTypeOf<Parameters<typeof store.joinJarByCode>[1]>().toEqualTypeOf<InviteCode>();
   });
 });
 

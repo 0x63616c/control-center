@@ -5,10 +5,10 @@ type ParsedJson<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly response: Response };
 
-export async function parseRequestJson<T>(
+export async function parseRequestJson<Schema extends z.ZodType>(
   context: Context,
-  schema: z.ZodType<T>,
-): Promise<ParsedJson<T>> {
+  schema: Schema,
+): Promise<ParsedJson<z.output<Schema>>> {
   let raw: unknown;
   try {
     raw = await context.req.json();
@@ -23,11 +23,11 @@ export async function parseRequestJson<T>(
   return { ok: true, value: parsed.data };
 }
 
-export function parseRequestValue<T>(
+export function parseRequestValue<Schema extends z.ZodType>(
   context: Context,
-  schema: z.ZodType<T>,
+  schema: Schema,
   raw: unknown,
-): ParsedJson<T> {
+): ParsedJson<z.output<Schema>> {
   const parsed = schema.safeParse(raw);
   if (!parsed.success) {
     return { ok: false, response: context.json({ error: "invalid_request" }, 400) };

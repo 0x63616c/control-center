@@ -22,7 +22,8 @@ export const InviteCodeSchema = z
   .string()
   .trim()
   .transform((value) => value.toUpperCase())
-  .pipe(z.string().regex(/^[A-Z0-9]{6}$/, "invalid InviteCode"));
+  .pipe(z.string().regex(/^[A-Z0-9]{6}$/, "invalid InviteCode"))
+  .brand<"InviteCode">();
 export type InviteCode = z.infer<typeof InviteCodeSchema>;
 
 const nonEmptyText = z.string().trim().min(1);

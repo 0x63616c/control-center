@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { JarDetailSchema, ReportSchema } from "../../../../contracts";
+import { type InviteCode, JarDetailSchema, ReportSchema } from "../../../../contracts";
 import { pool } from "../db/index";
 import { runMigrations } from "../db/migrate";
 import { buildApp } from "../server";
@@ -11,7 +11,7 @@ import * as store from "../store";
 // Locally: DATABASE_URL=postgresql://postgres:test@localhost:5432/tye_test bun run test --project dont-text-your-ex-api
 const HAS_DB = !!process.env.DATABASE_URL;
 
-function requireInviteCode(detail: Awaited<ReturnType<typeof store.getJarDetail>>): string {
+function requireInviteCode(detail: Awaited<ReturnType<typeof store.getJarDetail>>): InviteCode {
   if (!detail?.inviteCode) throw new Error("open jar invite missing");
   return detail.inviteCode;
 }

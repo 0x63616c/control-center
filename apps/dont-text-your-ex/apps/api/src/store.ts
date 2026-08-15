@@ -2,10 +2,16 @@ import type { PoolClient } from "pg";
 import {
   ActivitySchema,
   EvidenceIdSchema,
+  type InviteCode,
+  InviteCodeSchema,
   JarDetailSchema,
+  type JarId,
+  JarIdSchema,
   JarPreviewSchema,
   JarSummarySchema,
   MemberSchema,
+  type ReportId,
+  ReportIdSchema,
   ReportSchema,
   ReportStatusSchema,
   type SessionToken,
@@ -48,7 +54,7 @@ function ago(ts: number): string {
 
 // ─────────────────────────── row types ───────────────────────────
 type UserRow = {
-  id: string;
+  id: UserId;
   name: string;
   color: string;
   emoji: string | null;
@@ -60,8 +66,8 @@ type UserRow = {
 };
 type MembershipRow = {
   id: string;
-  jar_id: string;
-  user_id: string;
+  jar_id: JarId;
+  user_id: UserId;
   role: string;
   tally_cents: number;
   streak_start_at: number | null;
@@ -70,18 +76,52 @@ type MembershipRow = {
   left_at: number | null;
 };
 type JarRow = {
-  id: string;
+  id: JarId;
   name: string;
   rule: string;
   default_cents: number;
   currency: string;
-  created_by: string;
-  invite_code: string | null;
+  created_by: UserId;
+  invite_code: InviteCode | null;
   invite_expires_at: string | null;
   created_at: number;
   closed_at: string | null;
-  closed_by: string | null;
+  closed_by: UserId | null;
 };
+
+type UserDbRow = Omit<UserRow, "id"> & { readonly id: string };
+type MembershipDbRow = Omit<MembershipRow, "jar_id" | "user_id"> & {
+  readonly jar_id: string;
+  readonly user_id: string;
+};
+type JarDbRow = Omit<JarRow, "id" | "created_by" | "invite_code" | "closed_by"> & {
+  readonly id: string;
+  readonly created_by: string;
+  readonly invite_code: string | null;
+  readonly closed_by: string | null;
+};
+
+function parseUserRow(row: UserDbRow): UserRow {
+  return { ...row, id: UserIdSchema.parse(row.id) };
+}
+
+function parseMembershipRow(row: MembershipDbRow): MembershipRow {
+  return {
+    ...row,
+    jar_id: JarIdSchema.parse(row.jar_id),
+    user_id: UserIdSchema.parse(row.user_id),
+  };
+}
+
+function parseJarRow(row: JarDbRow): JarRow {
+  return {
+    ...row,
+    id: JarIdSchema.parse(row.id),
+    created_by: UserIdSchema.parse(row.created_by),
+    invite_code: row.invite_code == null ? null : InviteCodeSchema.parse(row.invite_code),
+    closed_by: row.closed_by == null ? null : UserIdSchema.parse(row.closed_by),
+  };
+}
 
 type Queryable = Pick<PoolClient, "query">;
 
@@ -122,7 +162,7 @@ function randomUserColor(): string {
 }
 
 // ─────────────────────────── users / auth ───────────────────────────
-async function exesFor(userId: string): Promise<string[]> {
+async function exesFor(userId: UserId): Promise<string[]> {
   const { rows } = await pool.query<{ label: string }>(
     "SELECT label FROM user_exes WHERE user_id = $1 ORDER BY id",
     [userId],
@@ -145,17 +185,17 @@ function requireValue<T>(value: T | null | undefined, message: string): T {
   return value;
 }
 
-async function getUserRow(userId: string): Promise<UserRow | null> {
-  const { rows } = await pool.query<UserRow>("SELECT * FROM users WHERE id = $1", [userId]);
-  return rows[0] ?? null;
+async function getUserRow(userId: UserId): Promise<UserRow | null> {
+  const { rows } = await pool.query<UserDbRow>("SELECT * FROM users WHERE id = $1", [userId]);
+  return rows[0] ? parseUserRow(rows[0]) : null;
 }
 
-async function getUser(userId: string): Promise<UserDTO | null> {
+async function getUser(userId: UserId): Promise<UserDTO | null> {
   const u = await getUserRow(userId);
   return u ? serializeUser(u) : null;
 }
 
-export async function getMe(userId: string): Promise<MeDTO | null> {
+export async function getMe(userId: UserId): Promise<MeDTO | null> {
   const u = await getUserRow(userId);
   if (!u) return null;
   return {
@@ -201,7 +241,7 @@ export async function createUser(opts: {
 }
 
 export async function updateUser(
-  userId: string,
+  userId: UserId,
   patch: {
     name?: string;
     color?: string;
@@ -221,7 +261,7 @@ export async function updateUser(
   return getUser(userId);
 }
 
-export async function setExes(userId: string, exes: string[]): Promise<void> {
+export async function setExes(userId: UserId, exes: string[]): Promise<void> {
   await pool.query("DELETE FROM user_exes WHERE user_id=$1", [userId]);
   for (const label of exes) {
     await pool.query("INSERT INTO user_exes (id, user_id, label) VALUES ($1,$2,$3)", [
@@ -262,72 +302,74 @@ export async function deleteSession(token: SessionToken): Promise<void> {
 }
 
 export async function findUserByPhone(phone: string): Promise<UserDTO | null> {
-  const { rows } = await pool.query<UserRow>("SELECT * FROM users WHERE phone = $1", [phone]);
+  const { rows } = await pool.query<UserDbRow>("SELECT * FROM users WHERE phone = $1", [phone]);
   const u = rows[0];
-  return u ? serializeUser(u) : null;
+  return u ? serializeUser(parseUserRow(u)) : null;
 }
 
 export async function findUserByAppleId(appleId: string): Promise<UserDTO | null> {
-  const { rows } = await pool.query<UserRow>("SELECT * FROM users WHERE apple_id = $1", [appleId]);
+  const { rows } = await pool.query<UserDbRow>("SELECT * FROM users WHERE apple_id = $1", [
+    appleId,
+  ]);
   const u = rows[0];
-  return u ? serializeUser(u) : null;
+  return u ? serializeUser(parseUserRow(u)) : null;
 }
 
 // ─────────────────────────── memberships / jars ───────────────────────────
 async function membershipRow(
-  jarId: string,
-  userId: string,
+  jarId: JarId,
+  userId: UserId,
   db: Queryable = pool,
   lock = false,
 ): Promise<MembershipRow | null> {
-  const { rows } = await db.query<MembershipRow>(
+  const { rows } = await db.query<MembershipDbRow>(
     `SELECT * FROM memberships WHERE jar_id=$1 AND user_id=$2 AND left_at IS NULL${lock ? " FOR UPDATE" : ""}`,
     [jarId, userId],
   );
-  return rows[0] ?? null;
+  return rows[0] ? parseMembershipRow(rows[0]) : null;
 }
 
 async function isMemberIn(
   db: Queryable,
-  jarId: string,
-  userId: string,
+  jarId: JarId,
+  userId: UserId,
   lock = false,
 ): Promise<boolean> {
   return !!(await membershipRow(jarId, userId, db, lock));
 }
 
-export async function isMember(jarId: string, userId: string): Promise<boolean> {
+export async function isMember(jarId: JarId, userId: UserId): Promise<boolean> {
   return isMemberIn(pool, jarId, userId);
 }
 
-async function jarRow(jarId: string, db: Queryable = pool, lock = false): Promise<JarRow | null> {
-  const { rows } = await db.query<JarRow>(
+async function jarRow(jarId: JarId, db: Queryable = pool, lock = false): Promise<JarRow | null> {
+  const { rows } = await db.query<JarDbRow>(
     `SELECT * FROM jars WHERE id=$1${lock ? " FOR UPDATE" : ""}`,
     [jarId],
   );
-  return rows[0] ?? null;
+  return rows[0] ? parseJarRow(rows[0]) : null;
 }
 
-async function jarRowByCode(code: string): Promise<JarRow | null> {
-  const { rows } = await pool.query<JarRow>(
+async function jarRowByCode(code: InviteCode): Promise<JarRow | null> {
+  const { rows } = await pool.query<JarDbRow>(
     "SELECT * FROM jars WHERE invite_code=$1 AND invite_expires_at>$2 AND closed_at IS NULL",
-    [code.toUpperCase(), now()],
+    [code, now()],
   );
-  return rows[0] ?? null;
+  return rows[0] ? parseJarRow(rows[0]) : null;
 }
 
-async function inviteCodeExists(code: string): Promise<boolean> {
+async function inviteCodeExists(code: InviteCode): Promise<boolean> {
   const { rowCount } = await pool.query("SELECT 1 FROM jars WHERE invite_code=$1", [code]);
   return (rowCount ?? 0) > 0;
 }
 
-async function freshInvite(): Promise<{ code: string; expiresAt: number }> {
+async function freshInvite(): Promise<{ code: InviteCode; expiresAt: number }> {
   let code = inviteCode();
   while (await inviteCodeExists(code)) code = inviteCode();
   return { code, expiresAt: now() + 7 * DAY };
 }
 
-async function assertJarOpen(jarId: string, db: Queryable = pool, lock = false): Promise<JarRow> {
+async function assertJarOpen(jarId: JarId, db: Queryable = pool, lock = false): Promise<JarRow> {
   const jar = await jarRow(jarId, db, lock);
   if (!jar) throw new Error("jar not found");
   if (jar.closed_at != null) throw new JarClosedError();
@@ -338,22 +380,22 @@ async function closedByUser(jar: JarRow): Promise<UserDTO | null> {
   return jar.closed_by ? getUser(jar.closed_by) : null;
 }
 
-async function membersOf(jarId: string): Promise<MembershipRow[]> {
-  const { rows } = await pool.query<MembershipRow>("SELECT * FROM memberships WHERE jar_id=$1", [
+async function membersOf(jarId: JarId): Promise<MembershipRow[]> {
+  const { rows } = await pool.query<MembershipDbRow>("SELECT * FROM memberships WHERE jar_id=$1", [
     jarId,
   ]);
-  return rows;
+  return rows.map(parseMembershipRow);
 }
 
-async function activeMembersOf(jarId: string): Promise<MembershipRow[]> {
-  const { rows } = await pool.query<MembershipRow>(
+async function activeMembersOf(jarId: JarId): Promise<MembershipRow[]> {
+  const { rows } = await pool.query<MembershipDbRow>(
     "SELECT * FROM memberships WHERE jar_id=$1 AND left_at IS NULL",
     [jarId],
   );
-  return rows;
+  return rows.map(parseMembershipRow);
 }
 
-async function jarTotal(jarId: string, db: Queryable = pool): Promise<number> {
+async function jarTotal(jarId: JarId, db: Queryable = pool): Promise<number> {
   const { rows } = await db.query<{ t: string }>(
     "SELECT COALESCE(SUM(tally_cents),0)::text AS t FROM memberships WHERE jar_id=$1",
     [jarId],
@@ -361,7 +403,7 @@ async function jarTotal(jarId: string, db: Queryable = pool): Promise<number> {
   return Number(rows[0]?.t ?? 0);
 }
 
-async function serializeMember(m: MembershipRow, viewerId: string): Promise<MemberDTO> {
+async function serializeMember(m: MembershipRow, viewerId: UserId): Promise<MemberDTO> {
   const shareStreak = !!m.share_streak;
   return MemberSchema.parse({
     user: requireValue(await getUser(m.user_id), "membership user could not be loaded"),
@@ -372,11 +414,12 @@ async function serializeMember(m: MembershipRow, viewerId: string): Promise<Memb
   });
 }
 
-export async function listJarsForUser(userId: string): Promise<JarSummaryDTO[]> {
-  const { rows } = await pool.query<JarRow>(
+export async function listJarsForUser(userId: UserId): Promise<JarSummaryDTO[]> {
+  const { rows: dbRows } = await pool.query<JarDbRow>(
     "SELECT j.* FROM jars j JOIN memberships m ON m.jar_id=j.id WHERE m.user_id=$1 AND m.left_at IS NULL ORDER BY j.created_at",
     [userId],
   );
+  const rows = dbRows.map(parseJarRow);
   return Promise.all(
     rows.map(async (j) => {
       const members = await membersOf(j.id);
@@ -400,7 +443,7 @@ export async function listJarsForUser(userId: string): Promise<JarSummaryDTO[]> 
   );
 }
 
-export async function getJarDetail(jarId: string, meId: string): Promise<JarDetailDTO | null> {
+export async function getJarDetail(jarId: JarId, meId: UserId): Promise<JarDetailDTO | null> {
   const j = await jarRow(jarId);
   if (!j) return null;
   const rawMembers = await membersOf(jarId);
@@ -422,8 +465,8 @@ export async function getJarDetail(jarId: string, meId: string): Promise<JarDeta
   });
 }
 
-export async function getJarPreviewByCode(code: string): Promise<{
-  id: string;
+export async function getJarPreviewByCode(code: InviteCode): Promise<{
+  id: JarId;
   name: string;
   rule: string;
   defaultCents: number;
@@ -449,7 +492,7 @@ export async function getJarPreviewByCode(code: string): Promise<{
 }
 
 export async function createJar(opts: {
-  userId: string;
+  userId: UserId;
   name: string;
   rule?: string;
   defaultCents?: number;
@@ -479,8 +522,8 @@ export async function createJar(opts: {
 }
 
 async function addMembership(
-  jarId: string,
-  userId: string,
+  jarId: JarId,
+  userId: UserId,
   role: "owner" | "member",
 ): Promise<void> {
   await pool.query(
@@ -490,9 +533,9 @@ async function addMembership(
 }
 
 export async function joinJarByCode(
-  userId: string,
-  code: string,
-): Promise<{ jarId: string } | null> {
+  userId: UserId,
+  code: InviteCode,
+): Promise<{ jarId: JarId } | null> {
   const j = await jarRowByCode(code);
   if (!j) return null;
   const already = await isMember(j.id, userId);
@@ -502,8 +545,8 @@ export async function joinJarByCode(
 }
 
 export async function closeJar(
-  jarId: string,
-  userId: string,
+  jarId: JarId,
+  userId: UserId,
 ): Promise<{ status: "closed" | "forbidden" | "not_member" | "not_found" }> {
   const jar = await jarRow(jarId);
   if (!jar) return { status: "not_found" };
@@ -520,8 +563,8 @@ export async function closeJar(
 }
 
 export async function rotateInvite(
-  jarId: string,
-  userId: string,
+  jarId: JarId,
+  userId: UserId,
 ): Promise<{ status: "rotated" | "forbidden" | "jar_closed" | "not_member" | "not_found" }> {
   const jar = await jarRow(jarId);
   if (!jar) return { status: "not_found" };
@@ -538,8 +581,8 @@ export async function rotateInvite(
 }
 
 export async function leaveJar(
-  jarId: string,
-  userId: string,
+  jarId: JarId,
+  userId: UserId,
 ): Promise<{
   status: "left" | "owner_must_close" | "not_member" | "not_found" | "jar_closed";
 }> {
@@ -556,7 +599,7 @@ export async function leaveJar(
   return { status: "left" };
 }
 
-export async function setShareStreak(jarId: string, userId: string, val: boolean): Promise<void> {
+export async function setShareStreak(jarId: JarId, userId: UserId, val: boolean): Promise<void> {
   await assertJarOpen(jarId);
   if (!(await isMember(jarId, userId))) throw new Error("not a jar member");
   await pool.query("UPDATE memberships SET share_streak=$1 WHERE jar_id=$2 AND user_id=$3", [
@@ -570,14 +613,14 @@ export async function setShareStreak(jarId: string, userId: string, val: boolean
 const MILESTONE_STEP = 5000; // $50
 
 export async function logSlip(opts: {
-  jarId: string;
-  userId: string;
+  jarId: JarId;
+  userId: UserId;
   amountCents: number;
   note?: string | null;
   exLabel?: string | null;
   source?: "self" | "report";
-  reportedBy?: string | null;
-  reportId?: string | null;
+  reportedBy?: UserId | null;
+  reportId?: ReportId | null;
 }): Promise<void> {
   await withTransaction((client) => logSlipInTransaction(client, opts));
 }
@@ -585,14 +628,14 @@ export async function logSlip(opts: {
 async function logSlipInTransaction(
   db: Queryable,
   opts: {
-    jarId: string;
-    userId: string;
+    jarId: JarId;
+    userId: UserId;
     amountCents: number;
     note?: string | null;
     exLabel?: string | null;
     source?: "self" | "report";
-    reportedBy?: string | null;
-    reportId?: string | null;
+    reportedBy?: UserId | null;
+    reportId?: ReportId | null;
   },
 ): Promise<void> {
   await assertJarOpen(opts.jarId, db, true);
@@ -651,9 +694,9 @@ async function logSlipInTransaction(
 
 // ─────────────────────────── reports ───────────────────────────
 export async function createReport(opts: {
-  jarId: string;
-  accuserId: string;
-  accusedId: string;
+  jarId: JarId;
+  accuserId: UserId;
+  accusedId: UserId;
   note?: string | null;
   anonymous: boolean;
   amountCents: number;
@@ -705,10 +748,10 @@ export async function createReport(opts: {
 }
 
 type ReportRow = {
-  id: string;
-  jar_id: string;
-  accuser_id: string;
-  accused_id: string;
+  id: ReportId;
+  jar_id: JarId;
+  accuser_id: UserId;
+  accused_id: UserId;
   note: string | null;
   is_anonymous: number;
   amount_cents: number;
@@ -717,19 +760,36 @@ type ReportRow = {
   resolved_at: number | null;
 };
 
+type ReportDbRow = Omit<ReportRow, "id" | "jar_id" | "accuser_id" | "accused_id"> & {
+  readonly id: string;
+  readonly jar_id: string;
+  readonly accuser_id: string;
+  readonly accused_id: string;
+};
+
+function parseReportRow(row: ReportDbRow): ReportRow {
+  return {
+    ...row,
+    id: ReportIdSchema.parse(row.id),
+    jar_id: JarIdSchema.parse(row.jar_id),
+    accuser_id: UserIdSchema.parse(row.accuser_id),
+    accused_id: UserIdSchema.parse(row.accused_id),
+  };
+}
+
 async function reportRow(
-  reportId: string,
+  reportId: ReportId,
   db: Queryable = pool,
   lock = false,
 ): Promise<ReportRow | null> {
-  const { rows } = await db.query<ReportRow>(
+  const { rows } = await db.query<ReportDbRow>(
     `SELECT * FROM reports WHERE id=$1${lock ? " FOR UPDATE" : ""}`,
     [reportId],
   );
-  return rows[0] ?? null;
+  return rows[0] ? parseReportRow(rows[0]) : null;
 }
 
-async function serializeReport(reportId: string): Promise<ReportDTO | null> {
+async function serializeReport(reportId: ReportId): Promise<ReportDTO | null> {
   const r = await reportRow(reportId);
   if (!r) return null;
   const j = await jarRow(r.jar_id);
@@ -758,7 +818,7 @@ async function serializeReport(reportId: string): Promise<ReportDTO | null> {
   });
 }
 
-export async function pendingReportsForUser(userId: string): Promise<ReportDTO[]> {
+export async function pendingReportsForUser(userId: UserId): Promise<ReportDTO[]> {
   const { rows } = await pool.query<{ id: string }>(
     `SELECT r.id FROM reports r
      JOIN memberships m ON m.jar_id=r.jar_id AND m.user_id=r.accused_id
@@ -767,11 +827,11 @@ export async function pendingReportsForUser(userId: string): Promise<ReportDTO[]
      ORDER BY r.created_at DESC`,
     [userId],
   );
-  const results = await Promise.all(rows.map((r) => serializeReport(r.id)));
+  const results = await Promise.all(rows.map((r) => serializeReport(ReportIdSchema.parse(r.id))));
   return results.filter((r): r is ReportDTO => r !== null);
 }
 
-export async function reportHistoryForUser(userId: string): Promise<ReportDTO[]> {
+export async function reportHistoryForUser(userId: UserId): Promise<ReportDTO[]> {
   const { rows } = await pool.query<{ id: string }>(
     `SELECT r.id FROM reports r
      JOIN memberships m ON m.jar_id=r.jar_id
@@ -779,19 +839,21 @@ export async function reportHistoryForUser(userId: string): Promise<ReportDTO[]>
      ORDER BY COALESCE(r.resolved_at, r.created_at) DESC`,
     [userId],
   );
-  const results = await Promise.all(rows.map((row) => serializeReport(row.id)));
+  const results = await Promise.all(
+    rows.map((row) => serializeReport(ReportIdSchema.parse(row.id))),
+  );
   return results.filter((report): report is ReportDTO => report !== null);
 }
 
-export async function reportForUser(reportId: string, userId: string): Promise<ReportDTO | null> {
+export async function reportForUser(reportId: ReportId, userId: UserId): Promise<ReportDTO | null> {
   const report = await reportRow(reportId);
   if (!report || !(await isMember(report.jar_id, userId))) return null;
   return serializeReport(reportId);
 }
 
 export async function resolveReport(
-  reportId: string,
-  userId: string,
+  reportId: ReportId,
+  userId: UserId,
   action: "own" | "deny",
 ): Promise<ReportDTO | null> {
   const resolved = await withTransaction(async (db) => {
@@ -837,15 +899,15 @@ export async function resolveReport(
 // ─────────────────────────── activity ───────────────────────────
 async function logActivity(
   opts: {
-    jarId: string;
+    jarId: JarId;
     type: ActivityType;
-    actorId?: string | null;
-    targetId?: string | null;
+    actorId?: UserId | null;
+    targetId?: UserId | null;
     text?: string | null;
     amountCents?: number | null;
     note?: string | null;
     anonymous?: boolean;
-    reportId?: string | null;
+    reportId?: ReportId | null;
   },
   db: Queryable = pool,
 ): Promise<void> {
@@ -870,18 +932,35 @@ async function logActivity(
 
 type ActivityRow = {
   id: string;
-  jar_id: string;
+  jar_id: JarId;
   type: ActivityType;
-  actor_id: string | null;
-  target_id: string | null;
+  actor_id: UserId | null;
+  target_id: UserId | null;
   text: string | null;
   amount_cents: number | null;
   ex_label: string | null;
   note: string | null;
   anonymous: number;
-  report_id: string | null;
+  report_id: ReportId | null;
   created_at: number;
 };
+
+type ActivityDbRow = Omit<ActivityRow, "jar_id" | "actor_id" | "target_id" | "report_id"> & {
+  readonly jar_id: string;
+  readonly actor_id: string | null;
+  readonly target_id: string | null;
+  readonly report_id: string | null;
+};
+
+function parseActivityRow(row: ActivityDbRow): ActivityRow {
+  return {
+    ...row,
+    jar_id: JarIdSchema.parse(row.jar_id),
+    actor_id: row.actor_id == null ? null : UserIdSchema.parse(row.actor_id),
+    target_id: row.target_id == null ? null : UserIdSchema.parse(row.target_id),
+    report_id: row.report_id == null ? null : ReportIdSchema.parse(row.report_id),
+  };
+}
 
 async function serializeActivity(a: ActivityRow): Promise<ActivityDTO> {
   const j = await jarRow(a.jar_id);
@@ -901,19 +980,19 @@ async function serializeActivity(a: ActivityRow): Promise<ActivityDTO> {
   });
 }
 
-async function activityForJar(jarId: string, limit = 50): Promise<ActivityDTO[]> {
-  const { rows } = await pool.query<ActivityRow>(
+async function activityForJar(jarId: JarId, limit = 50): Promise<ActivityDTO[]> {
+  const { rows } = await pool.query<ActivityDbRow>(
     "SELECT * FROM activity WHERE jar_id=$1 ORDER BY created_at DESC LIMIT $2",
     [jarId, limit],
   );
-  return Promise.all(rows.map(serializeActivity));
+  return Promise.all(rows.map(parseActivityRow).map(serializeActivity));
 }
 
-export async function activityForUser(userId: string, limit = 50): Promise<ActivityDTO[]> {
-  const { rows } = await pool.query<ActivityRow>(
+export async function activityForUser(userId: UserId, limit = 50): Promise<ActivityDTO[]> {
+  const { rows } = await pool.query<ActivityDbRow>(
     `SELECT a.* FROM activity a JOIN memberships m ON m.jar_id=a.jar_id
      WHERE m.user_id=$1 AND m.left_at IS NULL ORDER BY a.created_at DESC LIMIT $2`,
     [userId, limit],
   );
-  return Promise.all(rows.map(serializeActivity));
+  return Promise.all(rows.map(parseActivityRow).map(serializeActivity));
 }
