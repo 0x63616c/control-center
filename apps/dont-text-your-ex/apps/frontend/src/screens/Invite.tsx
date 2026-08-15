@@ -10,6 +10,12 @@ import { ErrorState, type FetchedState, LoadingState, MutationError } from "./fe
 
 export type InviteServices = Pick<typeof api, "jar" | "rotateInvite">;
 
+type ReplaceInviteState =
+  | { readonly status: "idle" }
+  | { readonly status: "confirming" }
+  | { readonly status: "submitting" }
+  | { readonly status: "failed" };
+
 export function Invite({
   ctx,
   services = api,
@@ -21,9 +27,7 @@ export function Invite({
   const [state, setState] = useState<FetchedState<JarDetailDTO>>({ status: "loading" });
   const [retry, setRetry] = useState(0);
   const [copied, setCopied] = useState(false);
-  const [confirmingReplace, setConfirmingReplace] = useState(false);
-  const [replacing, setReplacing] = useState(false);
-  const [replaceError, setReplaceError] = useState(false);
+  const [replaceState, setReplaceState] = useState<ReplaceInviteState>({ status: "idle" });
 
   useEffect(() => {
     void retry;
@@ -106,17 +110,14 @@ export function Invite({
   };
 
   const replaceInvite = async () => {
-    if (replacing) return;
-    setReplacing(true);
-    setReplaceError(false);
+    if (replaceState.status === "submitting") return;
+    setReplaceState({ status: "submitting" });
     try {
       const replacement = await services.rotateInvite(jarId);
       setState({ status: "loaded", value: replacement });
-      setConfirmingReplace(false);
+      setReplaceState({ status: "idle" });
     } catch {
-      setReplaceError(true);
-    } finally {
-      setReplacing(false);
+      setReplaceState({ status: "failed" });
     }
   };
 
@@ -253,7 +254,7 @@ export function Invite({
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10, flexShrink: 0 }}>
         {owner &&
-          (confirmingReplace ? (
+          (replaceState.status !== "idle" ? (
             <div role="alert" style={{ background: T.surface, borderRadius: 18, padding: 18 }}>
               <div style={{ fontFamily: T.disp, fontWeight: 800, fontSize: 18 }}>
                 Replace this invite?
@@ -262,32 +263,34 @@ export function Invite({
                 The current code and link will stop working immediately. The replacement expires in
                 seven days.
               </p>
-              {replaceError && (
+              {replaceState.status === "failed" && (
                 <MutationError>
                   The invite wasn’t replaced. The current code still works.
                 </MutationError>
               )}
               <div style={{ display: "flex", gap: 10 }}>
-                <Btn kind="dark" disabled={replacing} onClick={() => setConfirmingReplace(false)}>
+                <Btn
+                  kind="dark"
+                  disabled={replaceState.status === "submitting"}
+                  onClick={() => setReplaceState({ status: "idle" })}
+                >
                   Cancel
                 </Btn>
-                <Btn kind="red" disabled={replacing} onClick={replaceInvite}>
-                  {replacing
+                <Btn
+                  kind="red"
+                  disabled={replaceState.status === "submitting"}
+                  onClick={replaceInvite}
+                >
+                  {replaceState.status === "submitting"
                     ? "Replacing…"
-                    : replaceError
+                    : replaceState.status === "failed"
                       ? "Retry replacing invite"
                       : "Replace invite now"}
                 </Btn>
               </div>
             </div>
           ) : (
-            <Btn
-              kind="dark"
-              onClick={() => {
-                setReplaceError(false);
-                setConfirmingReplace(true);
-              }}
-            >
+            <Btn kind="dark" onClick={() => setReplaceState({ status: "confirming" })}>
               Replace invite
             </Btn>
           ))}

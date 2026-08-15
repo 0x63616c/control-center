@@ -10,6 +10,13 @@ import { ErrorState, type FetchedState, LoadingState, MutationError } from "./fe
 
 export type JarDetailServices = Pick<typeof api, "jar" | "closeJar" | "leaveJar">;
 
+type LifecycleAction = "close" | "leave";
+type LifecycleMutationState =
+  | { readonly status: "idle" }
+  | { readonly status: "confirming"; readonly action: LifecycleAction }
+  | { readonly status: "submitting"; readonly action: LifecycleAction }
+  | { readonly status: "failed"; readonly action: LifecycleAction };
+
 export function JarDetail({
   ctx,
   services = api,
@@ -20,12 +27,9 @@ export function JarDetail({
   const { jarId } = ctx.route;
   const [state, setState] = useState<FetchedState<JarDetailDTO>>({ status: "loading" });
   const [retry, setRetry] = useState(0);
-  const [confirmingClose, setConfirmingClose] = useState(false);
-  const [closing, setClosing] = useState(false);
-  const [closeError, setCloseError] = useState(false);
-  const [confirmingLeave, setConfirmingLeave] = useState(false);
-  const [leaving, setLeaving] = useState(false);
-  const [leaveError, setLeaveError] = useState(false);
+  const [lifecycleMutation, setLifecycleMutation] = useState<LifecycleMutationState>({
+    status: "idle",
+  });
 
   useEffect(() => {
     void retry;
@@ -86,30 +90,25 @@ export function JarDetail({
   const activeMember = jar.members.some((member) => member.user.id === meId);
 
   const closeJar = async () => {
-    if (closing || closed || !owner) return;
-    setClosing(true);
-    setCloseError(false);
+    if (lifecycleMutation.status === "submitting" || closed || !owner) return;
+    setLifecycleMutation({ status: "submitting", action: "close" });
     try {
       const updated = await services.closeJar(jar.id);
       setState({ status: "loaded", value: updated });
-      setConfirmingClose(false);
+      setLifecycleMutation({ status: "idle" });
     } catch {
-      setCloseError(true);
-    } finally {
-      setClosing(false);
+      setLifecycleMutation({ status: "failed", action: "close" });
     }
   };
 
   const leaveJar = async () => {
-    if (leaving || closed || owner || !activeMember) return;
-    setLeaving(true);
-    setLeaveError(false);
+    if (lifecycleMutation.status === "submitting" || closed || owner || !activeMember) return;
+    setLifecycleMutation({ status: "submitting", action: "leave" });
     try {
       await services.leaveJar(jar.id);
       ctx.nav({ name: "home" }, true);
     } catch {
-      setLeaveError(true);
-      setLeaving(false);
+      setLifecycleMutation({ status: "failed", action: "leave" });
     }
   };
 
@@ -356,7 +355,7 @@ export function JarDetail({
 
       {!closed && owner && (
         <div style={{ borderTop: `1px solid ${T.hair}`, marginTop: 30, paddingTop: 22 }}>
-          {confirmingClose ? (
+          {lifecycleMutation.status !== "idle" && lifecycleMutation.action === "close" ? (
             <div role="alert" style={{ background: T.surface, borderRadius: 18, padding: 18 }}>
               <div style={{ fontFamily: T.disp, fontWeight: 800, fontSize: 18 }}>
                 Close this jar permanently?
@@ -364,23 +363,30 @@ export function JarDetail({
               <p style={{ color: T.sec, lineHeight: 1.45, fontSize: 14 }}>
                 Everyone can still read its history, but invites and every jar action will stop.
               </p>
-              {closeError && <MutationError>The jar couldn’t be closed. Try again.</MutationError>}
+              {lifecycleMutation.status === "failed" && (
+                <MutationError>The jar couldn’t be closed. Try again.</MutationError>
+              )}
               <div style={{ display: "flex", gap: 10 }}>
-                <Btn kind="dark" disabled={closing} onClick={() => setConfirmingClose(false)}>
+                <Btn
+                  kind="dark"
+                  disabled={lifecycleMutation.status === "submitting"}
+                  onClick={() => setLifecycleMutation({ status: "idle" })}
+                >
                   Cancel
                 </Btn>
-                <Btn kind="red" disabled={closing} onClick={closeJar}>
-                  {closing ? "Closing…" : "Close jar permanently"}
+                <Btn
+                  kind="red"
+                  disabled={lifecycleMutation.status === "submitting"}
+                  onClick={closeJar}
+                >
+                  {lifecycleMutation.status === "submitting" ? "Closing…" : "Close jar permanently"}
                 </Btn>
               </div>
             </div>
           ) : (
             <button
               type="button"
-              onClick={() => {
-                setCloseError(false);
-                setConfirmingClose(true);
-              }}
+              onClick={() => setLifecycleMutation({ status: "confirming", action: "close" })}
               style={{
                 width: "100%",
                 border: "none",
@@ -400,7 +406,7 @@ export function JarDetail({
       )}
       {!closed && activeMember && !owner && (
         <div style={{ borderTop: `1px solid ${T.hair}`, marginTop: 30, paddingTop: 22 }}>
-          {confirmingLeave ? (
+          {lifecycleMutation.status !== "idle" && lifecycleMutation.action === "leave" ? (
             <div role="alert" style={{ background: T.surface, borderRadius: 18, padding: 18 }}>
               <div style={{ fontFamily: T.disp, fontWeight: 800, fontSize: 18 }}>
                 Leave this jar?
@@ -408,23 +414,30 @@ export function JarDetail({
               <p style={{ color: T.sec, lineHeight: 1.45, fontSize: 14 }}>
                 You’ll lose access. Your existing tally and activity stay in the jar’s history.
               </p>
-              {leaveError && <MutationError>The jar couldn’t be left. Try again.</MutationError>}
+              {lifecycleMutation.status === "failed" && (
+                <MutationError>The jar couldn’t be left. Try again.</MutationError>
+              )}
               <div style={{ display: "flex", gap: 10 }}>
-                <Btn kind="dark" disabled={leaving} onClick={() => setConfirmingLeave(false)}>
+                <Btn
+                  kind="dark"
+                  disabled={lifecycleMutation.status === "submitting"}
+                  onClick={() => setLifecycleMutation({ status: "idle" })}
+                >
                   Cancel
                 </Btn>
-                <Btn kind="red" disabled={leaving} onClick={leaveJar}>
-                  {leaving ? "Leaving…" : "Leave jar permanently"}
+                <Btn
+                  kind="red"
+                  disabled={lifecycleMutation.status === "submitting"}
+                  onClick={leaveJar}
+                >
+                  {lifecycleMutation.status === "submitting" ? "Leaving…" : "Leave jar permanently"}
                 </Btn>
               </div>
             </div>
           ) : (
             <button
               type="button"
-              onClick={() => {
-                setLeaveError(false);
-                setConfirmingLeave(true);
-              }}
+              onClick={() => setLifecycleMutation({ status: "confirming", action: "leave" })}
               style={{
                 width: "100%",
                 border: "none",
