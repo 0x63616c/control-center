@@ -119,9 +119,10 @@ export function ReportMember({
     const submission = { accusedId: target, anonymous: anon } as const;
     setMutation({ status: "submitting", submission });
     try {
+      const trimmedNote = note.trim();
       await services.createReport(jar.id, {
         accusedId: target,
-        note: note || undefined,
+        note: trimmedNote || undefined,
         anonymous: anon,
         amountCents: jar.defaultCents,
         evidence: [...evidence],
