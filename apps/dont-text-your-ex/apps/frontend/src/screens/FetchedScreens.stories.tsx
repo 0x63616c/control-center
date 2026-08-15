@@ -87,6 +87,85 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
+function never<T>(): Promise<T> {
+  return new Promise<T>(() => undefined);
+}
+
+export const HomeLoading: Story = {
+  render: () => (
+    <Home
+      ctx={context({ name: "home" })}
+      services={{
+        jars: fn(() => never<Awaited<ReturnType<HomeServices["jars"]>>>()),
+        jar: fn(() => never<Awaited<ReturnType<HomeServices["jar"]>>>()),
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getByRole("status")).toHaveTextContent("Loading your jars");
+  },
+};
+
+export const ActivityLoading: Story = {
+  render: () => (
+    <ActivityTab
+      ctx={context({ name: "activity" })}
+      services={{
+        activity: fn(() => never<Awaited<ReturnType<ActivityServices["activity"]>>>()),
+        pendingReports: fn(() => never<Awaited<ReturnType<ActivityServices["pendingReports"]>>>()),
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getByRole("status")).toHaveTextContent("Loading activity");
+  },
+};
+
+export const JarDetailLoading: Story = {
+  render: () => (
+    <JarDetail
+      ctx={context({ name: "jar", jarId: jar.id })}
+      services={{ jar: fn(() => never<Awaited<ReturnType<JarDetailServices["jar"]>>>()) }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getByRole("status")).toHaveTextContent("Loading jar");
+  },
+};
+
+export const SettleLoading: Story = {
+  render: () => (
+    <Settle
+      ctx={context({ name: "settle", jarId: jar.id })}
+      services={{ jar: fn(() => never<Awaited<ReturnType<SettleServices["jar"]>>>()) }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getByRole("status")).toHaveTextContent(
+      "Loading your balance",
+    );
+    await expect(within(canvasElement).queryByText("$0.00")).not.toBeInTheDocument();
+  },
+};
+
+export const ConfirmDenyLoading: Story = {
+  render: () => (
+    <ConfirmDeny
+      ctx={context({ name: "confirmDeny", reportId: report.id })}
+      services={{
+        pendingReports: fn(() =>
+          never<Awaited<ReturnType<ConfirmDenyServices["pendingReports"]>>>(),
+        ),
+        resolveReport: fn(async () => report),
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getByRole("status")).toHaveTextContent("Loading report");
+    await expect(within(canvasElement).queryByText(/Nothing pending/)).not.toBeInTheDocument();
+  },
+};
+
 export const HomeErrorRetryAndEmpty: Story = {
   render: () => {
     let attempts = 0;
@@ -135,8 +214,15 @@ export const ActivityErrorRetryAndEmpty: Story = {
 
 export const JarDetailErrorAndRetry: Story = {
   render: () => {
+    const failures = ["401", "403", "500", "offline"];
+    let attempts = 0;
     const services: JarDetailServices = {
-      jar: fn(async () => Promise.reject(new Error("offline"))),
+      jar: fn(async () => {
+        const failure = failures[attempts];
+        attempts += 1;
+        if (failure) throw new Error(failure);
+        return jar;
+      }),
     };
     return <JarDetail ctx={context({ name: "jar", jarId: jar.id })} services={services} />;
   },
@@ -145,16 +231,28 @@ export const JarDetailErrorAndRetry: Story = {
     await expect(await canvas.findByRole("alert")).toHaveTextContent(
       "This jar couldn’t be loaded.",
     );
-    await userEvent.click(canvas.getByRole("button", { name: "Retry" }));
-    await expect(await canvas.findByRole("alert")).toHaveTextContent(
-      "This jar couldn’t be loaded.",
-    );
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await userEvent.click(canvas.getByRole("button", { name: "Retry" }));
+      if (attempt < 3) {
+        await expect(await canvas.findByRole("alert")).toHaveTextContent(
+          "This jar couldn’t be loaded.",
+        );
+      }
+    }
+    await expect(await canvas.findByText("Recovery jar")).toBeInTheDocument();
   },
 };
 
 export const SettleErrorAndRetry: Story = {
   render: () => {
-    const services: SettleServices = { jar: fn(async () => Promise.reject(new Error("offline"))) };
+    let attempts = 0;
+    const services: SettleServices = {
+      jar: fn(async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("offline");
+        return jar;
+      }),
+    };
     return <Settle ctx={context({ name: "settle", jarId: jar.id })} services={services} />;
   },
   play: async ({ canvasElement }) => {
@@ -164,9 +262,34 @@ export const SettleErrorAndRetry: Story = {
     );
     await expect(canvas.queryByText("$0.00")).not.toBeInTheDocument();
     await userEvent.click(canvas.getByRole("button", { name: "Retry" }));
-    await expect(await canvas.findByRole("alert")).toHaveTextContent(
-      "Your balance couldn’t be loaded.",
+    await expect(await canvas.findByText("$5.00")).toBeInTheDocument();
+  },
+};
+
+export const SettleGenuineNotMemberEmpty: Story = {
+  render: () => {
+    const unavailable = JarDetailSchema.parse({
+      ...jar,
+      members: [
+        {
+          ...jar.members[0],
+          user: { ...meUser, id: "usr_someoneelse", name: "Someone else" },
+        },
+      ],
+    });
+    return (
+      <Settle
+        ctx={context({ name: "settle", jarId: jar.id })}
+        services={{ jar: fn(async () => unavailable) }}
+      />
     );
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(await canvas.findByRole("status")).toHaveTextContent(
+      "You aren’t a member of this jar.",
+    );
+    await expect(canvas.queryByText("$0.00")).not.toBeInTheDocument();
   },
 };
 
