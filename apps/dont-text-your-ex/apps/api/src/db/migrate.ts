@@ -5,7 +5,7 @@ import { createLogger } from "@www/logger";
 import { pool } from "./index";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const log = createLogger({ service: "tye-api" });
+const log = createLogger({ service: "dont-text-your-ex-api" });
 
 export async function runMigrations(): Promise<void> {
   const folder = resolve(__dirname, "migrations");

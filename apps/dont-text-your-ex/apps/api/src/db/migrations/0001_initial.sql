@@ -1,4 +1,4 @@
--- Text Your Ex: initial schema (Postgres port of the SQLite prototype).
+-- Don’t Text Your Ex: initial schema (Postgres port of the SQLite prototype).
 -- All timestamps are millisecond epoch integers (BIGINT) to match the JS layer.
 
 CREATE TABLE IF NOT EXISTS users (

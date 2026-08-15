@@ -174,7 +174,7 @@ export function Profile({ ctx }: { ctx: AppCtx }) {
         Sign out
       </button>
       <p style={{ textAlign: "center", fontSize: 12, color: T.ter, marginTop: 16 }}>
-        Text Your Ex · {appVersion} · made for people with poor impulse control
+        Don’t Text Your Ex · {appVersion} · made for people with poor impulse control
       </p>
     </Screen>
   );

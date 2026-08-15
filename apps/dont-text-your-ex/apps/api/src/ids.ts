@@ -1,12 +1,7 @@
-// Stripe-style ids: prefix_<hex>
-const hex = (n: number) => {
-  let s = "";
-  for (let i = 0; i < n; i++) s += Math.floor(Math.random() * 16).toString(16);
-  return s;
-};
+import { genId } from "@www/platform";
 
 export function id(prefix: string, len = 8): string {
-  return `${prefix}_${hex(len)}`;
+  return genId(prefix, { length: len });
 }
 
 // Short human-friendly invite code, e.g. "XEX24K"

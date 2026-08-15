@@ -4,12 +4,12 @@ import { cors } from "hono/cors";
 import { api, type Env } from "./api";
 import { authMiddleware } from "./auth";
 
-const log = createLogger({ service: "tye-api" });
+const log = createLogger({ service: "dont-text-your-ex-api" });
 
 // Allowed origins: prod web app, local Vite dev server, local Vite preview, Capacitor iOS shell.
 // VITE_API_BASE is the prod URL; add localhost variants for local dev.
 const ALLOWED_ORIGINS = [
-  "https://app--tye.worldwidewebb.co",
+  "https://dont-text-your-ex.worldwidewebb.co",
   "http://localhost:5173",
   "http://localhost:4173",
   "capacitor://localhost",

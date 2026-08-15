@@ -1,4 +1,4 @@
-# Text Your Ex
+# Don’t Text Your Ex
 
 > A shared guilt jar for friends trying not to text their exes.
 
@@ -16,7 +16,7 @@ you log it yourself or a friend reports you.
 | Layer | Tech |
 |---|---|
 | Web | React 18 + TypeScript + Vite, iPhone-framed web app + iOS Capacitor shell |
-| API | Bun + Hono, Postgres (CNPG on k3s in prod, Docker for local dev) |
+| API | Bun + Hono, Postgres (CNPG on the production Talos cluster, Docker for local dev) |
 | Auth | Real "Sign in with Apple" (iOS native) + bearer-token sessions |
 | Tests | Vitest (API contract tests) + Playwright (E2E, requires Postgres) |
 | Deploy | Two images: `Dockerfile.api` (Bun/Hono) + `Dockerfile.frontend` (nginx static) |
@@ -86,7 +86,7 @@ apps/
       env.ts          buildDatabaseUrl() (k8s ESO pattern + DATABASE_URL override)
       seed.ts         explicit demo/e2e seed data; guarded off in production
       index.ts        entry: runMigrations + ensureSeed + buildApp()
-      server.ts       CORS allow-list (app--tye.worldwidewebb.co, localhost:*, capacitor://)
+      server.ts       CORS allow-list (production host, localhost:*, capacitor://)
   frontend/           React + TS app (iPhone frame, 16 screens)
     src/
       api.ts          typed client (VITE_API_BASE baked at Docker build time)
@@ -99,33 +99,31 @@ The design is preserved under `docs/design-reference/` and the product spec unde
 
 ## Production deployment
 
-Two images, built by CI on push to main:
+Two images are built by CI on push to main:
 
-| Image | Dockerfile | Registry |
+| Workload | Dockerfile | Port |
 |---|---|---|
-| `control-center-tye-api` | `Dockerfile.api` | `ghcr.io/0x63616c/` |
-| `control-center-tye-frontend` | `Dockerfile.frontend` | `ghcr.io/0x63616c/` |
+| API | `Dockerfile.api` | `8787` |
+| Frontend | `Dockerfile.frontend` | `80` |
 
-The API image sets `APP_ENV=production` (seed guard). The frontend image bakes `VITE_API_BASE`
-at build time via `--build-arg VITE_API_BASE=https://api--tye.worldwidewebb.co`.
+The API image sets `APP_ENV=production` (seed guard). The frontend and API share one public
+origin, so browser requests use relative `/api/*` paths.
 
-TYE is live in production at `https://app--tye.worldwidewebb.co` (API at
-`https://api--tye.worldwidewebb.co`).
+The production target is `https://dont-text-your-ex.worldwidewebb.co` in the
+`dont-text-your-ex` Kubernetes namespace.
 
-### Production acceptance checklist (www-jtp0.6.10)
+### Production acceptance checklist
 
-The M6 acceptance pass, all verified:
+Do not mark these complete until they have been verified against the current production cluster:
 
-- [x] `pulumi up` applied TYE CNPG cluster + API + frontend workloads
-- [x] `kubectl get pod -n text-your-ex` shows api + frontend Running
-- [x] `curl https://app--tye.worldwidewebb.co/api/health` returns `{"ok":true}`
-- [x] Real "Sign in with Apple" (iOS native, entitlement wired): two Apple IDs create two distinct accounts
-- [x] Local/e2e: `/auth/dev` seam mints a session (404 in production)
-- [x] Jar creation, slip log, anonymous report flow tested end-to-end
-- [x] Postgres backup CronJob fired and artifact present on NAS
-- [x] iOS TestFlight: `tye-ios-release.yml` gate removed, workflow active
-- [x] TestFlight build installs on iPad, loads `https://app--tye.worldwidewebb.co`
-- [x] Production: `ensureSeed()` is a no-op (users table is empty, app starts clean)
+- [ ] Pulumi applied the CNPG cluster, API, and frontend workloads.
+- [ ] API and frontend pods are healthy in `dont-text-your-ex`.
+- [ ] `https://dont-text-your-ex.worldwidewebb.co/api/health` returns `{"ok":true}`.
+- [ ] Native Sign in with Apple creates and resumes a production account.
+- [ ] Jar creation, slip logging, and report flows work end to end.
+- [ ] A database backup completed and its artifact was verified.
+- [ ] A TestFlight build installs and uses the production host.
+- [ ] Production boot does not seed demo users.
 
 ## Not in v1
 

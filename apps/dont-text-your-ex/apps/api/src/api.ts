@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { createRemoteJWKSet, decodeJwt, decodeProtectedHeader, jwtVerify } from "jose";
 import { requireUser } from "./auth";
 import { appleBundleId, isProduction } from "./env";
+import { id } from "./ids";
 import { resetAndSeed } from "./seed";
 import * as store from "./store";
 
@@ -10,7 +11,7 @@ export type Env = { Variables: { userId: string | null; token: string } };
 
 export const api = new Hono<Env>();
 
-const log = createLogger({ service: "tye-api" });
+const log = createLogger({ service: "dont-text-your-ex-api" });
 
 const unauth = { error: "not_authenticated" } as const;
 
@@ -41,7 +42,7 @@ api.post("/auth/dev", async (c) => {
   if (body.as === "new") {
     const fresh = await store.createUser({
       name: "",
-      appleId: `dev_${crypto.randomUUID()}`,
+      appleId: id("dev", 32),
       authProvider: "apple",
     });
     const token = await store.createSession(fresh.id);

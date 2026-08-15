@@ -12,7 +12,7 @@ DERIVED_DATA="${TYE_IOS_DERIVED_DATA:-ios/DerivedData/$DESTINATION_ID}"
 APP_PATH="$DERIVED_DATA/Build/Products/Debug-iphoneos/App.app"
 CONFIG_PATH="ios/App/App/capacitor.config.json"
 
-printf 'Preparing Text Your Ex for iPhone (%s)\n' "$COREDEVICE_ID"
+printf 'Preparing Don’t Text Your Ex for iPhone (%s)\n' "$COREDEVICE_ID"
 printf 'Live reload: %s\n' "$SERVER_URL"
 
 bunx cap sync ios

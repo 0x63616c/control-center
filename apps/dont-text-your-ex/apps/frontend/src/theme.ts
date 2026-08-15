@@ -1,4 +1,4 @@
-// Design tokens for Text Your Ex - true black + gold, loud and roasty.
+// Design tokens for Don’t Text Your Ex - true black + gold, loud and roasty.
 export const T = {
   bg: "#000000",
   surface: "#121212",

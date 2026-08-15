@@ -28,7 +28,7 @@ export function Invite({ ctx }: { ctx: AppCtx }) {
   const code = jar?.inviteCode ?? "······";
   const link = `textyourex.app/j/${code}`;
   const ready = !!jar?.inviteCode;
-  const shareText = `Join my "${jar?.name ?? "guilt"}" jar on Text Your Ex. Code: ${code} -> ${link}`;
+  const shareText = `Join my "${jar?.name ?? "guilt"}" jar on Don’t Text Your Ex. Code: ${code} -> ${link}`;
 
   const copy = () => {
     if (navigator.clipboard) navigator.clipboard.writeText(code).catch(() => {});
@@ -40,7 +40,11 @@ export function Invite({ ctx }: { ctx: AppCtx }) {
     // Native share sheet on iOS WKWebView + web; falls back to copy where unsupported.
     if (typeof navigator.share === "function") {
       try {
-        await navigator.share({ title: "Text Your Ex", text: shareText, url: `https://${link}` });
+        await navigator.share({
+          title: "Don’t Text Your Ex",
+          text: shareText,
+          url: `https://${link}`,
+        });
         return;
       } catch {
         // user dismissed or unsupported, fall through to copy

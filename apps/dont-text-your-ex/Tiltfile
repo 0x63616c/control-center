@@ -1,4 +1,4 @@
-# Tiltfile - run Text Your Ex locally (Docker Postgres + local processes).
+# Tiltfile - run Don’t Text Your Ex locally (Docker Postgres + local processes).
 #
 #   tilt up        starts Postgres (:5432) + API (:8787) + web dev server (:5173)
 #   tilt down      stops everything, data is in the named docker volume
@@ -7,8 +7,8 @@
 # iPhone 16 Pro Max view: http://localhost:5173/?device=16promax
 #
 # Seed / reset:
-#   bun run --filter @tye/api seed         (dev mode, seeds if empty)
-#   bun run --filter @tye/api seed:reset   (dev mode, truncates then seeds)
+#   bun run --filter @dont-text-your-ex/api seed         (dev mode, seeds if empty)
+#   bun run --filter @dont-text-your-ex/api seed:reset   (dev mode, truncates then seeds)
 
 load('ext://uibutton', 'cmd_button')
 
@@ -89,7 +89,7 @@ local_resource(
     labels=['app'],
 )
 
-print('Text Your Ex - web on :%d, api on :%d, postgres on :%d' % (WEB_PORT, API_PORT, PG_PORT))
+print('Don’t Text Your Ex - web on :%d, api on :%d, postgres on :%d' % (WEB_PORT, API_PORT, PG_PORT))
 print('iPhone 16 Pro Max view: http://localhost:%d/?device=16promax' % WEB_PORT)
 
 # Button: open iOS simulator with live-reload pointing at local dev server.

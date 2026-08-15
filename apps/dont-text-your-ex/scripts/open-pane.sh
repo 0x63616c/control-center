@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Open Text Your Ex in a cmux browser pane to the right, framed as an iPhone 16 Pro Max.
+# Open Don’t Text Your Ex in a cmux browser pane to the right, framed as an iPhone 16 Pro Max.
 #
 # Run this from a REAL cmux terminal pane (your interactive shell), NOT via Claude's `!`
 # or a background agent - cmux rejects CLI calls whose process ancestry isn't a
@@ -77,4 +77,4 @@ fi
 if curl -sf "$URL" >/dev/null 2>&1; then
   say "✓ app responds at ${URL}"
 fi
-say "done - Text Your Ex loaded to the right as iPhone ${DEVICE}. Take a look 👀"
+say "done - Don’t Text Your Ex loaded to the right as iPhone ${DEVICE}. Take a look 👀"
