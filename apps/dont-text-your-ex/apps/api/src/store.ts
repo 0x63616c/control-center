@@ -350,9 +350,13 @@ async function jarRow(jarId: JarId, db: Queryable = pool, lock = false): Promise
   return rows[0] ? parseJarRow(rows[0]) : null;
 }
 
-async function jarRowByCode(code: InviteCode): Promise<JarRow | null> {
-  const { rows } = await pool.query<JarDbRow>(
-    "SELECT * FROM jars WHERE invite_code=$1 AND invite_expires_at>$2 AND closed_at IS NULL",
+async function jarRowByCode(
+  code: InviteCode,
+  db: Queryable = pool,
+  lock = false,
+): Promise<JarRow | null> {
+  const { rows } = await db.query<JarDbRow>(
+    `SELECT * FROM jars WHERE invite_code=$1 AND invite_expires_at>$2 AND closed_at IS NULL${lock ? " FOR UPDATE" : ""}`,
     [code, now()],
   );
   return rows[0] ? parseJarRow(rows[0]) : null;
@@ -499,21 +503,23 @@ export async function createJar(opts: {
 }): Promise<JarSummaryDTO> {
   const jid = id("jar");
   const invite = await freshInvite();
-  await pool.query(
-    "INSERT INTO jars (id, name, rule, default_cents, currency, created_by, invite_code, invite_expires_at, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
-    [
-      jid,
-      opts.name,
-      opts.rule ?? "",
-      opts.defaultCents ?? 500,
-      "usd",
-      opts.userId,
-      invite.code,
-      invite.expiresAt,
-      now(),
-    ],
-  );
-  await addMembership(jid, opts.userId, "owner");
+  await withTransaction(async (db) => {
+    await db.query(
+      "INSERT INTO jars (id, name, rule, default_cents, currency, created_by, invite_code, invite_expires_at, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+      [
+        jid,
+        opts.name,
+        opts.rule ?? "",
+        opts.defaultCents ?? 500,
+        "usd",
+        opts.userId,
+        invite.code,
+        invite.expiresAt,
+        now(),
+      ],
+    );
+    await addMembership(jid, opts.userId, "owner", db);
+  });
   const jars = await listJarsForUser(opts.userId);
   return requireValue(
     jars.find((jar) => jar.id === jid),
@@ -525,8 +531,9 @@ async function addMembership(
   jarId: JarId,
   userId: UserId,
   role: "owner" | "member",
+  db: Queryable = pool,
 ): Promise<void> {
-  await pool.query(
+  await db.query(
     "INSERT INTO memberships (id, jar_id, user_id, role, tally_cents, streak_start_at, share_streak, joined_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (jar_id, user_id) DO UPDATE SET left_at=NULL",
     [id("mem"), jarId, userId, role, 0, null, 0, now()],
   );
@@ -536,12 +543,19 @@ export async function joinJarByCode(
   userId: UserId,
   code: InviteCode,
 ): Promise<{ jarId: JarId } | null> {
-  const j = await jarRowByCode(code);
-  if (!j) return null;
-  const already = await isMember(j.id, userId);
-  await addMembership(j.id, userId, "member");
-  if (!already) await logActivity({ jarId: j.id, type: "join", actorId: userId });
-  return { jarId: j.id };
+  return withTransaction(async (db) => {
+    // Lock and revalidate the invite in the same transaction that admits the
+    // member. A concurrent close/rotation must serialize before or after this
+    // join; it can no longer invalidate the code and then have this join commit.
+    const j = await jarRowByCode(code, db, true);
+    if (!j) return null;
+    const already = await isMemberIn(db, j.id, userId, true);
+    await addMembership(j.id, userId, "member", db);
+    if (!already) {
+      await logActivity({ jarId: j.id, type: "join", actorId: userId }, db);
+    }
+    return { jarId: j.id };
+  });
 }
 
 export async function closeJar(

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type InviteCode, JarDetailSchema, ReportSchema } from "../../../../contracts";
 import { pool } from "../db/index";
 import { runMigrations } from "../db/migrate";
@@ -118,6 +118,63 @@ describe.skipIf(!HAS_DB)("users / auth", () => {
 });
 
 describe.skipIf(!HAS_DB)("jar lifecycle", () => {
+  it("rolls back the jar and invite when owner membership creation fails", async () => {
+    const owner = await store.createUser({ name: "Rollback Owner" });
+    const joiner = await store.createUser({ name: "Rollback Joiner" });
+    const ownerToken = await store.createSession(owner.id);
+    const joinerToken = await store.createSession(joiner.id);
+    const random = vi.spyOn(Math, "random").mockReturnValue(0);
+    await pool.query(`
+      CREATE OR REPLACE FUNCTION fail_owner_membership() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.role = 'owner' THEN RAISE EXCEPTION 'forced owner membership failure'; END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      DROP TRIGGER IF EXISTS fail_owner_membership ON memberships;
+      CREATE TRIGGER fail_owner_membership BEFORE INSERT ON memberships
+      FOR EACH ROW EXECUTE FUNCTION fail_owner_membership();
+    `);
+
+    try {
+      const response = await buildApp().request("/api/jars", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${ownerToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Must Roll Back" }),
+      });
+      expect(response.status).toBe(500);
+
+      const persisted = await pool.query<{ count: string }>(
+        "SELECT COUNT(*)::text AS count FROM jars WHERE name=$1 OR invite_code=$2",
+        ["Must Roll Back", "AAAAAA"],
+      );
+      expect(persisted.rows[0]?.count).toBe("0");
+      expect(
+        (
+          await buildApp().request("/api/jars/code/AAAAAA", {
+            headers: { Authorization: `Bearer ${joinerToken}` },
+          })
+        ).status,
+      ).toBe(404);
+      expect(
+        (
+          await buildApp().request("/api/jars/join", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${joinerToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ code: "AAAAAA" }),
+          })
+        ).status,
+      ).toBe(404);
+    } finally {
+      random.mockRestore();
+      await pool.query("DROP TRIGGER IF EXISTS fail_owner_membership ON memberships");
+      await pool.query("DROP FUNCTION IF EXISTS fail_owner_membership()");
+    }
+  });
+
   it("starts new owner and member streak sharing as private", async () => {
     const owner = await store.createUser({ name: "Private Owner" });
     const member = await store.createUser({ name: "Private Member" });
@@ -253,6 +310,73 @@ describe.skipIf(!HAS_DB)("jar lifecycle", () => {
     const closedRotation = await rotate(ownerToken);
     expect(closedRotation.status).toBe(409);
     expect(await closedRotation.json()).toEqual({ error: "jar_closed" });
+  });
+
+  it("does not admit a join after concurrent close or invite rotation has locked invalidation", async () => {
+    await pool.query(`
+      CREATE OR REPLACE FUNCTION delay_invite_invalidation() RETURNS trigger AS $$
+      BEGIN
+        IF OLD.invite_code IS DISTINCT FROM NEW.invite_code THEN PERFORM pg_sleep(0.4); END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      DROP TRIGGER IF EXISTS delay_invite_invalidation ON jars;
+      CREATE TRIGGER delay_invite_invalidation BEFORE UPDATE ON jars
+      FOR EACH ROW EXECUTE FUNCTION delay_invite_invalidation();
+    `);
+
+    const waitForInvalidationLock = async () => {
+      const deadline = Date.now() + 2_000;
+      while (Date.now() < deadline) {
+        const sleeping = await pool.query<{ count: string }>(
+          `SELECT COUNT(*)::text AS count FROM pg_stat_activity
+           WHERE wait_event='PgSleep' AND query LIKE 'UPDATE jars SET%'`,
+        );
+        if (sleeping.rows[0]?.count !== "0") return;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error("invite invalidation did not acquire its database lock");
+    };
+
+    try {
+      for (const action of ["close", "rotate"] as const) {
+        const owner = await store.createUser({ name: `${action} owner` });
+        const joiner = await store.createUser({ name: `${action} joiner` });
+        const jar = await store.createJar({ userId: owner.id, name: `${action} race` });
+        const detail = await store.getJarDetail(jar.id, owner.id);
+        const oldCode = requireInviteCode(detail);
+        const ownerToken = await store.createSession(owner.id);
+        const joinerToken = await store.createSession(joiner.id);
+
+        const invalidation = buildApp().request(
+          action === "close" ? `/api/jars/${jar.id}/close` : `/api/jars/${jar.id}/invite/rotate`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${ownerToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ confirmed: true }),
+          },
+        );
+        await waitForInvalidationLock();
+        const join = buildApp().request("/api/jars/join", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${joinerToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ code: oldCode }),
+        });
+
+        expect((await invalidation).status).toBe(200);
+        expect((await join).status).toBe(404);
+        expect(await store.isMember(jar.id, joiner.id)).toBe(false);
+      }
+    } finally {
+      await pool.query("DROP TRIGGER IF EXISTS delay_invite_invalidation ON jars");
+      await pool.query("DROP FUNCTION IF EXISTS delay_invite_invalidation()");
+    }
   });
 
   it("lets only the owner close a jar, persists closure, and revokes its invite", async () => {
