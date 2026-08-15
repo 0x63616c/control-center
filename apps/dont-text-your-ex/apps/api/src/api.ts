@@ -1,7 +1,9 @@
 import { createLogger } from "@www/logger";
 import { Hono } from "hono";
 import { createRemoteJWKSet, decodeJwt, decodeProtectedHeader, jwtVerify } from "jose";
+import { AuthDevRequestSchema } from "../../../contracts";
 import { requireUser } from "./auth";
+import { parseRequestJson } from "./boundary";
 import { appleBundleId, isProduction } from "./env";
 import { id } from "./ids";
 import { resetAndSeed } from "./seed";
@@ -38,7 +40,9 @@ api.get("/health", (c) => c.json({ ok: true }));
 // first-run setup flow); otherwise it logs in as the seeded primary user.
 api.post("/auth/dev", async (c) => {
   if (isProduction()) return c.json({ error: "not_found" }, 404);
-  const body = await c.req.json<{ as?: "new" | "calum" }>().catch(() => ({}) as { as?: string });
+  const parsed = await parseRequestJson(c, AuthDevRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value;
   if (body.as === "new") {
     const fresh = await store.createUser({
       name: "",
