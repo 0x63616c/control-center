@@ -40,7 +40,8 @@ describe.skipIf(!HAS_DB)("users / auth", () => {
     const u = await store.createUser({ name: "Alice", color: "#FF0000", exes: ["Bob"] });
     expect(u.id).toMatch(/^usr_/);
     expect(u.name).toBe("Alice");
-    expect(u.exes).toEqual(["Bob"]);
+    expect(u).not.toHaveProperty("exes");
+    expect(await store.getMe(u.id)).toMatchObject({ exes: ["Bob"] });
   });
 
   it("creates a 30-day session and refreshes last-used time without extending expiry", async () => {
@@ -975,6 +976,45 @@ describe.skipIf(!HAS_DB)("activity", () => {
       const rawJson = await response.text();
       expect(rawJson).not.toContain('"exLabel"');
       expect(rawJson).not.toContain("Secret Ex");
+    }
+  });
+
+  it("keeps profile ex labels out of every shared API DTO while retaining them on me", async () => {
+    const owner = await store.createUser({ name: "Private Owner", exes: ["Owner Secret"] });
+    const member = await store.createUser({ name: "Private Member", exes: ["Member Secret"] });
+    const jar = await store.createJar({ userId: owner.id, name: "Private DTO Jar" });
+    const ownerDetail = await store.getJarDetail(jar.id, owner.id);
+    await store.joinJarByCode(member.id, requireInviteCode(ownerDetail));
+    await store.logSlip({ jarId: jar.id, userId: owner.id, amountCents: 500 });
+    const report = await store.createReport({
+      jarId: jar.id,
+      accuserId: owner.id,
+      accusedId: member.id,
+      note: "Shared report",
+      anonymous: false,
+      amountCents: 500,
+      evidence: [],
+    });
+
+    const token = await store.createSession(member.id);
+    const request = (path: string) =>
+      buildApp().request(path, { headers: { Authorization: `Bearer ${token}` } });
+    const me = await request("/api/me");
+    expect(me.status).toBe(200);
+    expect(await me.json()).toMatchObject({ exes: ["Member Secret"] });
+
+    for (const path of [
+      `/api/jars/${jar.id}`,
+      "/api/activity",
+      "/api/reports/pending",
+      `/api/reports/${report.id}`,
+    ]) {
+      const response = await request(path);
+      expect(response.status, path).toBe(200);
+      const raw = await response.text();
+      expect(raw, path).not.toContain('"exes"');
+      expect(raw, path).not.toContain("Owner Secret");
+      expect(raw, path).not.toContain("Member Secret");
     }
   });
 });

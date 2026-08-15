@@ -72,7 +72,6 @@ function accountStore(existing: UserDTO | null = null): {
     color: "#5E5CE6",
     emoji: null,
     photo: null,
-    exes: [],
   };
   let current = existing ?? created;
   return {
@@ -85,7 +84,7 @@ function accountStore(existing: UserDTO | null = null): {
         return current;
       },
       createSession: async () => SessionTokenSchema.parse("sess_recovered"),
-      getMe: async (userId) => MeSchema.parse({ ...current, id: userId, phone: null }),
+      getMe: async (userId) => MeSchema.parse({ ...current, id: userId, exes: [], phone: null }),
     },
   };
 }

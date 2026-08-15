@@ -24,7 +24,6 @@ const meUser = UserSchema.parse({
   color: me.color,
   emoji: me.emoji,
   photo: me.photo,
-  exes: me.exes,
 });
 
 const jar = JarDetailSchema.parse({

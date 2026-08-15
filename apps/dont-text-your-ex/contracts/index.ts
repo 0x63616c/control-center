@@ -199,11 +199,13 @@ export const UserSchema = z
     color: z.string(),
     emoji: z.string().nullable(),
     photo: z.string().nullable(),
-    exes: z.array(z.string()),
   })
   .strict();
 
-export const MeSchema = UserSchema.extend({ phone: z.string().nullable() }).strict();
+export const MeSchema = UserSchema.extend({
+  exes: z.array(z.string()),
+  phone: z.string().nullable(),
+}).strict();
 
 const visibleMemberFields = {
   user: UserSchema,

@@ -20,7 +20,6 @@ const meUser = UserSchema.parse({
   color: me.color,
   emoji: me.emoji,
   photo: me.photo,
-  exes: me.exes,
 });
 
 const accused = UserSchema.parse({
@@ -29,7 +28,6 @@ const accused = UserSchema.parse({
   color: "#FF375F",
   emoji: "🙈",
   photo: null,
-  exes: [],
 });
 
 const jar = JarDetailSchema.parse({

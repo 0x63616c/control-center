@@ -24,7 +24,6 @@ const accused = UserSchema.parse({
   color: me.color,
   emoji: me.emoji,
   photo: me.photo,
-  exes: me.exes,
 });
 const resolved = ReportSchema.parse({
   id: "rpt_history",

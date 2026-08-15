@@ -26,7 +26,6 @@ export function money(cents: number): string {
 import type { MemberDTO } from "./types";
 export function streakLabel(m: MemberDTO): string | null {
   if (!m.shareStreak) return null;
-  if (m.user.exes.length === 0) return "forever clean";
   if (m.daysClean === 0) return "just caved";
   if (m.daysClean < 0) return "forever clean";
   return `${m.daysClean} ${m.daysClean === 1 ? "day" : "days"} clean`;

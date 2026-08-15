@@ -119,7 +119,6 @@ async function serializeUser(u: UserRow): Promise<UserDTO> {
     color: u.color,
     emoji: u.emoji,
     photo: u.photo,
-    exes: await exesFor(u.id),
   });
 }
 
@@ -143,6 +142,7 @@ export async function getMe(userId: string): Promise<MeDTO | null> {
   if (!u) return null;
   return {
     ...(await serializeUser(u)),
+    exes: await exesFor(u.id),
     phone: u.phone,
   };
 }
