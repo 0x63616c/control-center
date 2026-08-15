@@ -559,6 +559,129 @@ describe.skipIf(!HAS_DB)("reports", () => {
     expect(jars.find((j) => j.id === jar.id)?.myTallyCents).toBe(500);
   });
 
+  it("rolls back a failed authenticated report creation without partial evidence", async () => {
+    const accuser = await store.createUser({ name: "Atomic Reporter" });
+    const accused = await store.createUser({ name: "Atomic Accused" });
+    const jar = await store.createJar({ userId: accuser.id, name: "Atomic Create Jar" });
+    await store.joinJarByCode(
+      accused.id,
+      requireInviteCode(await store.getJarDetail(jar.id, accuser.id)),
+    );
+    const token = await store.createSession(accuser.id);
+    await pool.query(`
+      CREATE OR REPLACE FUNCTION fail_atomic_report_activity() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.type = 'report' AND NEW.note = 'rollback creation' THEN
+          RAISE EXCEPTION 'forced report activity failure';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      DROP TRIGGER IF EXISTS fail_atomic_report_activity ON activity;
+      CREATE TRIGGER fail_atomic_report_activity BEFORE INSERT ON activity
+      FOR EACH ROW EXECUTE FUNCTION fail_atomic_report_activity();
+    `);
+
+    try {
+      const response = await buildApp().request(`/api/jars/${jar.id}/reports`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          accusedId: accused.id,
+          note: "rollback creation",
+          evidence: [
+            {
+              mimeType: "image/png",
+              dataUrl:
+                "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+            },
+          ],
+        }),
+      });
+      expect(response.status).toBe(500);
+      for (const table of ["reports", "report_evidence", "activity"] as const) {
+        const persisted = await pool.query<{ count: string }>(
+          `SELECT COUNT(*)::text AS count FROM ${table}`,
+        );
+        expect(persisted.rows[0]?.count, table).toBe("0");
+      }
+    } finally {
+      await pool.query("DROP TRIGGER IF EXISTS fail_atomic_report_activity ON activity");
+      await pool.query("DROP FUNCTION IF EXISTS fail_atomic_report_activity()");
+    }
+  });
+
+  it("owns a report exactly once under concurrent authenticated requests", async () => {
+    const accuser = await store.createUser({ name: "Concurrent Reporter" });
+    const accused = await store.createUser({ name: "Concurrent Accused" });
+    const jar = await store.createJar({ userId: accuser.id, name: "Concurrent Resolve Jar" });
+    await store.joinJarByCode(
+      accused.id,
+      requireInviteCode(await store.getJarDetail(jar.id, accuser.id)),
+    );
+    const report = await store.createReport({
+      jarId: jar.id,
+      accuserId: accuser.id,
+      accusedId: accused.id,
+      note: "exactly once",
+      anonymous: false,
+      amountCents: 500,
+      evidence: [],
+    });
+    const token = await store.createSession(accused.id);
+    await pool.query(`
+      CREATE OR REPLACE FUNCTION delay_report_slip() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.source = 'report' THEN PERFORM pg_sleep(0.2); END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      DROP TRIGGER IF EXISTS delay_report_slip ON slips;
+      CREATE TRIGGER delay_report_slip BEFORE INSERT ON slips
+      FOR EACH ROW EXECUTE FUNCTION delay_report_slip();
+    `);
+
+    try {
+      const resolve = () =>
+        buildApp().request(`/api/reports/${report.id}/resolve`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ action: "own" }),
+        });
+      const responses = await Promise.all([resolve(), resolve()]);
+      expect(responses.map((response) => response.status).sort()).toEqual([200, 404]);
+
+      const persisted = await pool.query<{
+        report_status: string;
+        slip_count: string;
+        tally_cents: number;
+        activity_count: string;
+      }>(
+        `SELECT
+          (SELECT status FROM reports WHERE id=$1) AS report_status,
+          (SELECT COUNT(*)::text FROM slips WHERE source='report' AND user_id=$2) AS slip_count,
+          (SELECT tally_cents FROM memberships WHERE jar_id=$3 AND user_id=$2) AS tally_cents,
+          (SELECT COUNT(*)::text FROM activity WHERE type='slip' AND report_id=$1) AS activity_count`,
+        [report.id, accused.id, jar.id],
+      );
+      expect(persisted.rows[0]).toEqual({
+        report_status: "owned",
+        slip_count: "1",
+        tally_cents: 500,
+        activity_count: "1",
+      });
+    } finally {
+      await pool.query("DROP TRIGGER IF EXISTS delay_report_slip ON slips");
+      await pool.query("DROP FUNCTION IF EXISTS delay_report_slip()");
+    }
+  });
+
   it("denies a report", async () => {
     const accuser = await store.createUser({ name: "Karen" });
     const accused = await store.createUser({ name: "Leo" });

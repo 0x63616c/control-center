@@ -1,3 +1,4 @@
+import type { PoolClient } from "pg";
 import {
   ActivitySchema,
   EvidenceIdSchema,
@@ -81,6 +82,23 @@ type JarRow = {
   closed_at: string | null;
   closed_by: string | null;
 };
+
+type Queryable = Pick<PoolClient, "query">;
+
+async function withTransaction<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await operation(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
 
 export class JarClosedError extends Error {
   constructor() {
@@ -256,20 +274,37 @@ export async function findUserByAppleId(appleId: string): Promise<UserDTO | null
 }
 
 // ─────────────────────────── memberships / jars ───────────────────────────
-async function membershipRow(jarId: string, userId: string): Promise<MembershipRow | null> {
-  const { rows } = await pool.query<MembershipRow>(
-    "SELECT * FROM memberships WHERE jar_id=$1 AND user_id=$2 AND left_at IS NULL",
+async function membershipRow(
+  jarId: string,
+  userId: string,
+  db: Queryable = pool,
+  lock = false,
+): Promise<MembershipRow | null> {
+  const { rows } = await db.query<MembershipRow>(
+    `SELECT * FROM memberships WHERE jar_id=$1 AND user_id=$2 AND left_at IS NULL${lock ? " FOR UPDATE" : ""}`,
     [jarId, userId],
   );
   return rows[0] ?? null;
 }
 
-export async function isMember(jarId: string, userId: string): Promise<boolean> {
-  return !!(await membershipRow(jarId, userId));
+async function isMemberIn(
+  db: Queryable,
+  jarId: string,
+  userId: string,
+  lock = false,
+): Promise<boolean> {
+  return !!(await membershipRow(jarId, userId, db, lock));
 }
 
-async function jarRow(jarId: string): Promise<JarRow | null> {
-  const { rows } = await pool.query<JarRow>("SELECT * FROM jars WHERE id=$1", [jarId]);
+export async function isMember(jarId: string, userId: string): Promise<boolean> {
+  return isMemberIn(pool, jarId, userId);
+}
+
+async function jarRow(jarId: string, db: Queryable = pool, lock = false): Promise<JarRow | null> {
+  const { rows } = await db.query<JarRow>(
+    `SELECT * FROM jars WHERE id=$1${lock ? " FOR UPDATE" : ""}`,
+    [jarId],
+  );
   return rows[0] ?? null;
 }
 
@@ -292,8 +327,8 @@ async function freshInvite(): Promise<{ code: string; expiresAt: number }> {
   return { code, expiresAt: now() + 7 * DAY };
 }
 
-async function assertJarOpen(jarId: string): Promise<JarRow> {
-  const jar = await jarRow(jarId);
+async function assertJarOpen(jarId: string, db: Queryable = pool, lock = false): Promise<JarRow> {
+  const jar = await jarRow(jarId, db, lock);
   if (!jar) throw new Error("jar not found");
   if (jar.closed_at != null) throw new JarClosedError();
   return jar;
@@ -318,8 +353,8 @@ async function activeMembersOf(jarId: string): Promise<MembershipRow[]> {
   return rows;
 }
 
-async function jarTotal(jarId: string): Promise<number> {
-  const { rows } = await pool.query<{ t: string }>(
+async function jarTotal(jarId: string, db: Queryable = pool): Promise<number> {
+  const { rows } = await db.query<{ t: string }>(
     "SELECT COALESCE(SUM(tally_cents),0)::text AS t FROM memberships WHERE jar_id=$1",
     [jarId],
   );
@@ -544,11 +579,29 @@ export async function logSlip(opts: {
   reportedBy?: string | null;
   reportId?: string | null;
 }): Promise<void> {
-  await assertJarOpen(opts.jarId);
-  if (!(await isMember(opts.jarId, opts.userId))) throw new Error("not a jar member");
-  const before = await jarTotal(opts.jarId);
+  await withTransaction((client) => logSlipInTransaction(client, opts));
+}
 
-  await pool.query(
+async function logSlipInTransaction(
+  db: Queryable,
+  opts: {
+    jarId: string;
+    userId: string;
+    amountCents: number;
+    note?: string | null;
+    exLabel?: string | null;
+    source?: "self" | "report";
+    reportedBy?: string | null;
+    reportId?: string | null;
+  },
+): Promise<void> {
+  await assertJarOpen(opts.jarId, db, true);
+  if (!(await isMemberIn(db, opts.jarId, opts.userId, true))) {
+    throw new Error("not a jar member");
+  }
+  const before = await jarTotal(opts.jarId, db);
+
+  await db.query(
     "INSERT INTO slips (id, jar_id, user_id, amount_cents, note, ex_label, source, reported_by, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
     [
       id("slip"),
@@ -562,19 +615,22 @@ export async function logSlip(opts: {
       now(),
     ],
   );
-  await pool.query(
+  await db.query(
     "UPDATE memberships SET tally_cents = tally_cents + $1, streak_start_at = $2 WHERE jar_id=$3 AND user_id=$4",
     [opts.amountCents, now(), opts.jarId, opts.userId],
   );
 
-  await logActivity({
-    jarId: opts.jarId,
-    type: "slip",
-    actorId: opts.userId,
-    amountCents: opts.amountCents,
-    note: opts.note ?? null,
-    reportId: opts.reportId ?? null,
-  });
+  await logActivity(
+    {
+      jarId: opts.jarId,
+      type: "slip",
+      actorId: opts.userId,
+      amountCents: opts.amountCents,
+      note: opts.note ?? null,
+      reportId: opts.reportId ?? null,
+    },
+    db,
+  );
 
   const after = before + opts.amountCents;
   for (
@@ -582,11 +638,14 @@ export async function logSlip(opts: {
     t <= after;
     t += MILESTONE_STEP
   ) {
-    await logActivity({
-      jarId: opts.jarId,
-      type: "milestone",
-      text: `The jar just cracked $${t / 100}. Disgraceful.`,
-    });
+    await logActivity(
+      {
+        jarId: opts.jarId,
+        type: "milestone",
+        text: `The jar just cracked $${t / 100}. Disgraceful.`,
+      },
+      db,
+    );
   }
 }
 
@@ -600,42 +659,47 @@ export async function createReport(opts: {
   amountCents: number;
   evidence: EvidenceImageInput[];
 }): Promise<ReportDTO> {
-  await assertJarOpen(opts.jarId);
-  if (
-    !(await isMember(opts.jarId, opts.accuserId)) ||
-    !(await isMember(opts.jarId, opts.accusedId))
-  ) {
-    throw new Error("not a jar member");
-  }
   const rid = id("rpt");
-  await pool.query(
-    "INSERT INTO reports (id, jar_id, accuser_id, accused_id, note, is_anonymous, amount_cents, status, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
-    [
-      rid,
-      opts.jarId,
-      opts.accuserId,
-      opts.accusedId,
-      opts.note ?? null,
-      opts.anonymous ? 1 : 0,
-      opts.amountCents,
-      "pending",
-      now(),
-    ],
-  );
-  for (const image of opts.evidence) {
-    await pool.query(
-      "INSERT INTO report_evidence (id, report_id, kind, payload, created_at) VALUES ($1,$2,$3,$4,$5)",
-      [id("evi"), rid, "image", serializeEvidenceImageJson(image), now()],
+  await withTransaction(async (db) => {
+    await assertJarOpen(opts.jarId, db, true);
+    if (
+      !(await isMemberIn(db, opts.jarId, opts.accuserId, true)) ||
+      !(await isMemberIn(db, opts.jarId, opts.accusedId, true))
+    ) {
+      throw new Error("not a jar member");
+    }
+    await db.query(
+      "INSERT INTO reports (id, jar_id, accuser_id, accused_id, note, is_anonymous, amount_cents, status, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+      [
+        rid,
+        opts.jarId,
+        opts.accuserId,
+        opts.accusedId,
+        opts.note ?? null,
+        opts.anonymous ? 1 : 0,
+        opts.amountCents,
+        "pending",
+        now(),
+      ],
     );
-  }
-  await logActivity({
-    jarId: opts.jarId,
-    type: "report",
-    actorId: opts.accusedId,
-    targetId: opts.accuserId,
-    anonymous: opts.anonymous,
-    note: opts.note ?? null,
-    reportId: rid,
+    for (const image of opts.evidence) {
+      await db.query(
+        "INSERT INTO report_evidence (id, report_id, kind, payload, created_at) VALUES ($1,$2,$3,$4,$5)",
+        [id("evi"), rid, "image", serializeEvidenceImageJson(image), now()],
+      );
+    }
+    await logActivity(
+      {
+        jarId: opts.jarId,
+        type: "report",
+        actorId: opts.accusedId,
+        targetId: opts.accuserId,
+        anonymous: opts.anonymous,
+        note: opts.note ?? null,
+        reportId: rid,
+      },
+      db,
+    );
   });
   return requireValue(await serializeReport(rid), "created report could not be loaded");
 }
@@ -653,8 +717,15 @@ type ReportRow = {
   resolved_at: number | null;
 };
 
-async function reportRow(reportId: string): Promise<ReportRow | null> {
-  const { rows } = await pool.query<ReportRow>("SELECT * FROM reports WHERE id=$1", [reportId]);
+async function reportRow(
+  reportId: string,
+  db: Queryable = pool,
+  lock = false,
+): Promise<ReportRow | null> {
+  const { rows } = await db.query<ReportRow>(
+    `SELECT * FROM reports WHERE id=$1${lock ? " FOR UPDATE" : ""}`,
+    [reportId],
+  );
   return rows[0] ?? null;
 }
 
@@ -723,52 +794,62 @@ export async function resolveReport(
   userId: string,
   action: "own" | "deny",
 ): Promise<ReportDTO | null> {
-  const r = await reportRow(reportId);
-  if (!r || r.accused_id !== userId || r.status !== "pending") return null;
-  if (!(await isMember(r.jar_id, userId))) return null;
-  await assertJarOpen(r.jar_id);
-  if (action === "own") {
-    await logSlip({
-      jarId: r.jar_id,
-      userId: r.accused_id,
-      amountCents: r.amount_cents,
-      note: r.note,
-      source: "report",
-      reportedBy: r.accuser_id,
-      reportId,
-    });
-    await pool.query("UPDATE reports SET status='owned', resolved_at=$1 WHERE id=$2", [
-      now(),
-      reportId,
-    ]);
-  } else {
-    await pool.query("UPDATE reports SET status='denied', resolved_at=$1 WHERE id=$2", [
-      now(),
-      reportId,
-    ]);
-    await logActivity({
-      jarId: r.jar_id,
-      type: "deny",
-      actorId: r.accused_id,
-      reportId,
-    });
-  }
+  const resolved = await withTransaction(async (db) => {
+    const r = await reportRow(reportId, db, true);
+    if (!r || r.accused_id !== userId || r.status !== "pending") return false;
+    await assertJarOpen(r.jar_id, db, true);
+    if (!(await isMemberIn(db, r.jar_id, userId, true))) return false;
+    if (action === "own") {
+      await logSlipInTransaction(db, {
+        jarId: r.jar_id,
+        userId: r.accused_id,
+        amountCents: r.amount_cents,
+        note: r.note,
+        source: "report",
+        reportedBy: r.accuser_id,
+        reportId,
+      });
+      await db.query("UPDATE reports SET status='owned', resolved_at=$1 WHERE id=$2", [
+        now(),
+        reportId,
+      ]);
+    } else {
+      await db.query("UPDATE reports SET status='denied', resolved_at=$1 WHERE id=$2", [
+        now(),
+        reportId,
+      ]);
+      await logActivity(
+        {
+          jarId: r.jar_id,
+          type: "deny",
+          actorId: r.accused_id,
+          reportId,
+        },
+        db,
+      );
+    }
+    return true;
+  });
+  if (!resolved) return null;
   return serializeReport(reportId);
 }
 
 // ─────────────────────────── activity ───────────────────────────
-async function logActivity(opts: {
-  jarId: string;
-  type: ActivityType;
-  actorId?: string | null;
-  targetId?: string | null;
-  text?: string | null;
-  amountCents?: number | null;
-  note?: string | null;
-  anonymous?: boolean;
-  reportId?: string | null;
-}): Promise<void> {
-  await pool.query(
+async function logActivity(
+  opts: {
+    jarId: string;
+    type: ActivityType;
+    actorId?: string | null;
+    targetId?: string | null;
+    text?: string | null;
+    amountCents?: number | null;
+    note?: string | null;
+    anonymous?: boolean;
+    reportId?: string | null;
+  },
+  db: Queryable = pool,
+): Promise<void> {
+  await db.query(
     "INSERT INTO activity (id, jar_id, type, actor_id, target_id, text, amount_cents, ex_label, note, anonymous, report_id, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
     [
       id("act"),
