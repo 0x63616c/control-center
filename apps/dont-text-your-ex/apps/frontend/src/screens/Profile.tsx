@@ -50,7 +50,7 @@ export function Profile({ ctx }: { ctx: AppCtx<RouteFor<"profile">> }) {
   const totalDamage = jars.reduce((s, j) => s + j.myTallyCents, 0);
   const bestStreak = jars.reduce((m, j) => Math.max(m, j.myDaysClean), 0);
 
-  const toggleShare = async (jarId: string, v: boolean) => {
+  const toggleShare = async (jarId: JarSummaryDTO["id"], v: boolean) => {
     setShares((s) => ({ ...s, [jarId]: v }));
     try {
       await api.setShareStreak(jarId, v);

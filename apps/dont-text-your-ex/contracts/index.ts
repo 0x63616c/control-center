@@ -14,7 +14,8 @@ const ActivityIdSchema = idSchema("act", "ActivityId");
 export const EvidenceIdSchema = idSchema("evi", "EvidenceId");
 
 export type UserId = z.infer<typeof UserIdSchema>;
-type JarId = z.infer<typeof JarIdSchema>;
+export type JarId = z.infer<typeof JarIdSchema>;
+export type ReportId = z.infer<typeof ReportIdSchema>;
 export type SessionToken = z.infer<typeof SessionTokenSchema>;
 
 const nonEmptyText = z.string().trim().min(1);

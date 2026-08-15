@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { JarIdSchema, ReportIdSchema } from "../../../contracts";
 import { api } from "./api";
 
 describe("frontend response JSON boundary", () => {
@@ -42,5 +43,28 @@ describe("frontend response JSON boundary", () => {
       message: "Bad Request",
       detail: undefined,
     });
+  });
+
+  it("routes branded jar and report identifiers to their matching resources", async () => {
+    const fetchMock = vi.fn(async () => Response.json({}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.jar(JarIdSchema.parse("jar_123"))).rejects.toThrow(
+      "invalid response for GET /jars/jar_123",
+    );
+    await expect(api.resolveReport(ReportIdSchema.parse("rpt_123"), "deny")).rejects.toThrow(
+      "invalid response for POST /reports/rpt_123/resolve",
+    );
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/jars/jar_123",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/reports/rpt_123/resolve",
+      expect.objectContaining({ method: "POST" }),
+    );
   });
 });

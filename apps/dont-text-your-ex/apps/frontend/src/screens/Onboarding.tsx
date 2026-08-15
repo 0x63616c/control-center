@@ -22,8 +22,9 @@ const SIGNUP_EYEBROWS = [
 function describeError(error: unknown): {
   message: string;
 } {
-  const message = (error as { message?: string })?.message ?? "unknown error";
-  return { message };
+  if (error instanceof Error) return { message: error.message };
+  if (typeof error === "string" && error.trim() !== "") return { message: error };
+  return { message: "unknown error" };
 }
 
 export function Onboarding({ ctx }: { ctx: AppCtx<RouteFor<"onboarding">> }) {

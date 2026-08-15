@@ -1,16 +1,17 @@
+import type { JarId, ReportId } from "../../../contracts";
 import type { MeDTO } from "./types";
 
 export type Route =
   | { readonly name: "onboarding" }
   | { readonly name: "home" }
-  | { readonly name: "jar"; readonly jarId: string }
-  | { readonly name: "logSlip"; readonly jarId: string }
-  | { readonly name: "report"; readonly jarId: string }
-  | { readonly name: "confirmDeny"; readonly reportId: string }
-  | { readonly name: "settle"; readonly jarId: string }
+  | { readonly name: "jar"; readonly jarId: JarId }
+  | { readonly name: "logSlip"; readonly jarId: JarId }
+  | { readonly name: "report"; readonly jarId: JarId }
+  | { readonly name: "confirmDeny"; readonly reportId: ReportId }
+  | { readonly name: "settle"; readonly jarId: JarId }
   | { readonly name: "create" }
   | { readonly name: "join" }
-  | { readonly name: "invite"; readonly jarId: string; readonly fresh?: boolean }
+  | { readonly name: "invite"; readonly jarId: JarId; readonly fresh?: boolean }
   | { readonly name: "activity" }
   | { readonly name: "profile" }
   | { readonly name: "setup" }

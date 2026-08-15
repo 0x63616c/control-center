@@ -7,12 +7,14 @@ import {
   type CreateJarRequest,
   type CreateReportRequest,
   JarDetailSchema,
+  type JarId,
   JarPreviewSchema,
   JarSummarySchema,
   JoinJarResponseSchema,
   type LogSlipRequest,
   MeSchema,
   OkResponseSchema,
+  type ReportId,
   ReportSchema,
   type SessionToken,
   SessionTokenSchema,
@@ -103,23 +105,23 @@ export const api = {
 
   // jars
   jars: () => req(JarSummarySchema.array(), "GET", "/jars"),
-  jar: (id: string) => req(JarDetailSchema, "GET", `/jars/${id}`),
+  jar: (id: JarId) => req(JarDetailSchema, "GET", `/jars/${id}`),
   createJar: (input: CreateJarRequest) => req(JarSummarySchema, "POST", "/jars", input),
   jarByCode: (code: string) =>
     req(JarPreviewSchema, "GET", `/jars/code/${encodeURIComponent(code)}`),
   joinJar: (code: string) => req(JoinJarResponseSchema, "POST", "/jars/join", { code }),
-  setShareStreak: (jarId: string, value: boolean) =>
+  setShareStreak: (jarId: JarId, value: boolean) =>
     req(OkResponseSchema, "POST", `/jars/${jarId}/share-streak`, { value }),
 
   // slips
-  logSlip: (jarId: string, input: LogSlipRequest) =>
+  logSlip: (jarId: JarId, input: LogSlipRequest) =>
     req(JarDetailSchema, "POST", `/jars/${jarId}/slips`, input),
 
   // reports
-  createReport: (jarId: string, input: CreateReportRequest) =>
+  createReport: (jarId: JarId, input: CreateReportRequest) =>
     req(ReportSchema, "POST", `/jars/${jarId}/reports`, input),
   pendingReports: () => req(ReportSchema.array(), "GET", "/reports/pending"),
-  resolveReport: (id: string, action: "own" | "deny") =>
+  resolveReport: (id: ReportId, action: "own" | "deny") =>
     req(ReportSchema, "POST", `/reports/${id}/resolve`, { action }),
 
   // activity
