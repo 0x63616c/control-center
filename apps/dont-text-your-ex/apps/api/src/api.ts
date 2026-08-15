@@ -13,6 +13,7 @@ import {
   LogSlipRequestSchema,
   ReportIdSchema,
   ResolveReportRequestSchema,
+  RotateInviteRequestSchema,
   type SessionToken,
   ShareStreakRequestSchema,
   UpdateMeRequestSchema,
@@ -224,6 +225,22 @@ api.post("/jars/:id/close", async (c) => {
   if (result.status === "forbidden") return c.json({ error: "owner_required" }, 403);
   const detail = await store.getJarDetail(parsedId.value, uid);
   if (!detail) return c.json({ error: "not_found" }, 404);
+  return c.json(detail);
+});
+
+api.post("/jars/:id/invite/rotate", async (c) => {
+  const uid = requireUser(c);
+  if (!uid) return c.json(unauth, 401);
+  const parsedId = parseRequestValue(c, JarIdSchema, c.req.param("id"));
+  if (!parsedId.ok) return parsedId.response;
+  const parsed = await parseRequestJson(c, RotateInviteRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  const result = await store.rotateInvite(parsedId.value, uid);
+  if (result.status === "not_found" || result.status === "not_member") return c.json(notFound, 404);
+  if (result.status === "forbidden") return c.json({ error: "owner_required" }, 403);
+  if (result.status === "jar_closed") return c.json(jarClosed, 409);
+  const detail = await store.getJarDetail(parsedId.value, uid);
+  if (!detail) return c.json(notFound, 404);
   return c.json(detail);
 });
 

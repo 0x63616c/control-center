@@ -76,6 +76,7 @@ type JarRow = {
   currency: string;
   created_by: string;
   invite_code: string | null;
+  invite_expires_at: string | null;
   created_at: number;
   closed_at: string | null;
   closed_by: string | null;
@@ -274,10 +275,21 @@ async function jarRow(jarId: string): Promise<JarRow | null> {
 
 async function jarRowByCode(code: string): Promise<JarRow | null> {
   const { rows } = await pool.query<JarRow>(
-    "SELECT * FROM jars WHERE invite_code=$1 AND closed_at IS NULL",
-    [code.toUpperCase()],
+    "SELECT * FROM jars WHERE invite_code=$1 AND invite_expires_at>$2 AND closed_at IS NULL",
+    [code.toUpperCase(), now()],
   );
   return rows[0] ?? null;
+}
+
+async function inviteCodeExists(code: string): Promise<boolean> {
+  const { rowCount } = await pool.query("SELECT 1 FROM jars WHERE invite_code=$1", [code]);
+  return (rowCount ?? 0) > 0;
+}
+
+async function freshInvite(): Promise<{ code: string; expiresAt: number }> {
+  let code = inviteCode();
+  while (await inviteCodeExists(code)) code = inviteCode();
+  return { code, expiresAt: now() + 7 * DAY };
 }
 
 async function assertJarOpen(jarId: string): Promise<JarRow> {
@@ -366,6 +378,7 @@ export async function getJarDetail(jarId: string, meId: string): Promise<JarDeta
     rule: j.rule,
     defaultCents: j.default_cents,
     inviteCode: j.invite_code,
+    inviteExpiresAt: j.invite_expires_at == null ? null : Number(j.invite_expires_at),
     jarTotalCents: await jarTotal(jarId),
     members,
     activity: await activityForJar(jarId, 8),
@@ -407,11 +420,20 @@ export async function createJar(opts: {
   defaultCents?: number;
 }): Promise<JarSummaryDTO> {
   const jid = id("jar");
-  let code = inviteCode();
-  while (await jarRowByCode(code)) code = inviteCode();
+  const invite = await freshInvite();
   await pool.query(
-    "INSERT INTO jars (id, name, rule, default_cents, currency, created_by, invite_code, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-    [jid, opts.name, opts.rule ?? "", opts.defaultCents ?? 500, "usd", opts.userId, code, now()],
+    "INSERT INTO jars (id, name, rule, default_cents, currency, created_by, invite_code, invite_expires_at, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+    [
+      jid,
+      opts.name,
+      opts.rule ?? "",
+      opts.defaultCents ?? 500,
+      "usd",
+      opts.userId,
+      invite.code,
+      invite.expiresAt,
+      now(),
+    ],
   );
   await addMembership(jid, opts.userId, "owner");
   const jars = await listJarsForUser(opts.userId);
@@ -455,11 +477,29 @@ export async function closeJar(
   if (membership.role !== "owner") return { status: "forbidden" };
   if (jar.closed_at == null) {
     await pool.query(
-      "UPDATE jars SET closed_at=$1, closed_by=$2, invite_code=NULL WHERE id=$3 AND closed_at IS NULL",
+      "UPDATE jars SET closed_at=$1, closed_by=$2, invite_code=NULL, invite_expires_at=NULL WHERE id=$3 AND closed_at IS NULL",
       [now(), userId, jarId],
     );
   }
   return { status: "closed" };
+}
+
+export async function rotateInvite(
+  jarId: string,
+  userId: string,
+): Promise<{ status: "rotated" | "forbidden" | "jar_closed" | "not_member" | "not_found" }> {
+  const jar = await jarRow(jarId);
+  if (!jar) return { status: "not_found" };
+  const membership = await membershipRow(jarId, userId);
+  if (!membership) return { status: "not_member" };
+  if (membership.role !== "owner") return { status: "forbidden" };
+  if (jar.closed_at != null) return { status: "jar_closed" };
+  const invite = await freshInvite();
+  await pool.query(
+    "UPDATE jars SET invite_code=$1, invite_expires_at=$2 WHERE id=$3 AND closed_at IS NULL",
+    [invite.code, invite.expiresAt, jarId],
+  );
+  return { status: "rotated" };
 }
 
 export async function leaveJar(

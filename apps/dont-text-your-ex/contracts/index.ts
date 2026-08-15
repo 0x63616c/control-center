@@ -183,6 +183,7 @@ export const CreateReportRequestSchema = z
 export const ResolveReportRequestSchema = z.object({ action: z.enum(["own", "deny"]) }).strict();
 export const CloseJarRequestSchema = z.object({ confirmed: z.literal(true) }).strict();
 export const LeaveJarRequestSchema = z.object({ confirmed: z.literal(true) }).strict();
+export const RotateInviteRequestSchema = z.object({ confirmed: z.literal(true) }).strict();
 
 export type AppleAuthRequest = z.infer<typeof AppleAuthRequestSchema>;
 export type UpdateMeRequest = z.infer<typeof UpdateMeRequestSchema>;
@@ -271,6 +272,7 @@ export const JarDetailSchema = z
     rule: z.string(),
     defaultCents: cents,
     inviteCode: InviteCodeSchema.nullable(),
+    inviteExpiresAt: z.number().int().nullable().default(null),
     jarTotalCents: z.number().int().nonnegative(),
     members: z.array(MemberSchema),
     activity: z.array(ActivitySchema),

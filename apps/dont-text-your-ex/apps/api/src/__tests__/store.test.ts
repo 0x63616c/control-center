@@ -161,6 +161,99 @@ describe.skipIf(!HAS_DB)("jar lifecycle", () => {
     expect(joinedDetail?.members).toHaveLength(2);
   });
 
+  it("expires invites after seven days and lets only the owner replace them", async () => {
+    const owner = await store.createUser({ name: "Invite Owner" });
+    const member = await store.createUser({ name: "Invite Member" });
+    const former = await store.createUser({ name: "Former Member" });
+    const outsider = await store.createUser({ name: "Invite Outsider" });
+    const jar = await store.createJar({ userId: owner.id, name: "Expiring Invite" });
+    const original = await store.getJarDetail(jar.id, owner.id);
+    const originalCode = requireInviteCode(original);
+    await store.joinJarByCode(member.id, originalCode);
+    await store.joinJarByCode(former.id, originalCode);
+    await store.leaveJar(jar.id, former.id);
+
+    const ownerToken = await store.createSession(owner.id);
+    const memberToken = await store.createSession(member.id);
+    const formerToken = await store.createSession(former.id);
+    const outsiderToken = await store.createSession(outsider.id);
+    const rotate = (token: string, confirmed = true) =>
+      buildApp().request(`/api/jars/${jar.id}/invite/rotate`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmed }),
+      });
+
+    expect((await rotate(ownerToken, false)).status).toBe(400);
+    expect((await rotate(memberToken)).status).toBe(403);
+    expect((await rotate(formerToken)).status).toBe(404);
+    expect((await rotate(outsiderToken)).status).toBe(404);
+
+    const rotatedResponse = await rotate(ownerToken);
+    expect(rotatedResponse.status).toBe(200);
+    const rotated = JarDetailSchema.parse(await rotatedResponse.json());
+    expect(rotated.inviteCode).not.toBe(originalCode);
+    expect(rotated.inviteExpiresAt).toBeGreaterThan(Date.now() + 6 * 86_400_000);
+    expect(rotated.inviteExpiresAt).toBeLessThanOrEqual(Date.now() + 7 * 86_400_000);
+
+    for (const token of [ownerToken, memberToken, formerToken, outsiderToken]) {
+      const oldPreview = await buildApp().request(`/api/jars/code/${originalCode}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(oldPreview.status).toBe(404);
+      const oldJoin = await buildApp().request("/api/jars/join", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ code: originalCode }),
+      });
+      expect(oldJoin.status).toBe(404);
+    }
+
+    const newCode = requireInviteCode(rotated);
+    expect(
+      (
+        await buildApp().request(`/api/jars/code/${newCode}`, {
+          headers: { Authorization: `Bearer ${outsiderToken}` },
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await buildApp().request("/api/jars/join", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${outsiderToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ code: newCode }),
+        })
+      ).status,
+    ).toBe(200);
+
+    await pool.query("UPDATE jars SET invite_expires_at=$1 WHERE id=$2", [Date.now() - 1, jar.id]);
+    const expiredPreview = await buildApp().request(`/api/jars/code/${newCode}`, {
+      headers: { Authorization: `Bearer ${ownerToken}` },
+    });
+    expect(expiredPreview.status).toBe(404);
+    const expiredJoin = await buildApp().request("/api/jars/join", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${ownerToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ code: newCode }),
+    });
+    expect(expiredJoin.status).toBe(404);
+
+    const replacementAfterReload = await rotate(ownerToken);
+    expect(replacementAfterReload.status).toBe(200);
+    const reloaded = await store.getJarDetail(jar.id, owner.id);
+    expect(reloaded?.inviteCode).not.toBe(newCode);
+    expect(reloaded?.inviteExpiresAt).toBeGreaterThan(Date.now() + 6 * 86_400_000);
+
+    await store.closeJar(jar.id, owner.id);
+    const closedRotation = await rotate(ownerToken);
+    expect(closedRotation.status).toBe(409);
+    expect(await closedRotation.json()).toEqual({ error: "jar_closed" });
+  });
+
   it("lets only the owner close a jar, persists closure, and revokes its invite", async () => {
     const owner = await store.createUser({ name: "Close Owner" });
     const member = await store.createUser({ name: "Close Member" });
