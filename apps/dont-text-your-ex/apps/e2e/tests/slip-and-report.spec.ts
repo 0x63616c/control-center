@@ -32,7 +32,7 @@ test("logging a slip bumps the tally, resets streak, grows the pot", async ({ pa
   await expect(shameRow(page, "Slipper")).toContainText("$10");
 });
 
-test("reporting a member with evidence + anonymous toggle reaches the snitched screen", async ({
+test("reporting with an honest note + anonymous toggle reaches the snitched screen", async ({
   page,
 }) => {
   await signInAsCalum(page);
@@ -42,11 +42,15 @@ test("reporting a member with evidence + anonymous toggle reaches the snitched s
 
   // pick Ali
   await page.getByRole("button", { name: "Ali", exact: true }).click();
-  // open camera roll, pick first screenshot
-  await page.getByRole("button", { name: "Add" }).click();
-  await expect(page.getByText("Camera roll")).toBeVisible();
-  await page.getByTestId("roll-shot").first().click();
-  await page.getByRole("button", { name: "Done" }).click();
+  // Image upload is not implemented yet. The UI says so and never presents
+  // fabricated camera-roll content as if it came from this device.
+  await expect(
+    page.getByRole("button", { name: "Screenshot attachments unavailable" }),
+  ).toBeDisabled();
+  await expect(page.getByText("Camera roll")).toHaveCount(0);
+  await page
+    .getByPlaceholder("“replied to her story in 4 seconds flat…”")
+    .fill("Saw the reply land in real time.");
 
   // turn on anonymous (click the toggle switch, not the label)
   await page.getByTestId("anon-row").getByRole("button").click();
