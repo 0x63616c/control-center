@@ -1,0 +1,12 @@
+{
+  "name": "@tye/e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "pretest": "bun run --cwd ../frontend build",
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.57.0"
+  }
+}

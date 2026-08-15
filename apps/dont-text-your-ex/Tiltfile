@@ -1,0 +1,114 @@
+# Tiltfile - run Text Your Ex locally (Docker Postgres + local processes).
+#
+#   tilt up        starts Postgres (:5432) + API (:8787) + web dev server (:5173)
+#   tilt down      stops everything, data is in the named docker volume
+#
+# Open the app at http://localhost:5173
+# iPhone 16 Pro Max view: http://localhost:5173/?device=16promax
+#
+# Seed / reset:
+#   bun run --filter @tye/api seed         (dev mode, seeds if empty)
+#   bun run --filter @tye/api seed:reset   (dev mode, truncates then seeds)
+
+load('ext://uibutton', 'cmd_button')
+
+WEB_PORT = 5173
+API_PORT = 8787
+PG_PORT  = 5432
+PG_DB    = 'text_your_ex'
+PG_USER  = 'postgres'
+PG_PASS  = 'devpass'
+
+# Local Postgres (docker) for the API to connect to. [reload]
+local_resource(
+    'postgres',
+    serve_cmd=(
+        'docker rm -f tye-postgres 2>/dev/null; docker run --rm --name tye-postgres' +
+        ' -e POSTGRES_DB=%s' +
+        ' -e POSTGRES_USER=%s' +
+        ' -e POSTGRES_PASSWORD=%s' +
+        ' -p %d:5432' +
+        ' -v tye-postgres-data:/var/lib/postgresql/data' +
+        ' postgres:17-alpine'
+    ) % (PG_DB, PG_USER, PG_PASS, PG_PORT),
+    readiness_probe=probe(
+        period_secs=2,
+        exec=exec_action(
+            command=['docker', 'exec', 'tye-postgres', 'pg_isready', '-U', PG_USER, '-d', PG_DB],
+        ),
+    ),
+    labels=['infra'],
+)
+
+DATABASE_URL = 'postgresql://%s:%s@localhost:%d/%s' % (PG_USER, PG_PASS, PG_PORT, PG_DB)
+
+# Install dependencies once (re-runs only when a package.json changes).
+local_resource(
+    'install',
+    cmd='bun install',
+    deps=[
+        'package.json',
+        'apps/frontend/package.json',
+        'apps/api/package.json',
+        'apps/e2e/package.json',
+    ],
+    labels=['setup'],
+)
+
+# API server (Bun + Hono + Postgres). Runs migrations + seeds on first boot.
+local_resource(
+    'api',
+    serve_cmd='bun run --cwd apps/api dev',
+    serve_env={
+        'PORT': str(API_PORT),
+        'DATABASE_URL': DATABASE_URL,
+        'APP_ENV': 'development',
+    },
+    resource_deps=['install', 'postgres'],
+    readiness_probe=probe(
+        period_secs=2,
+        http_get=http_get_action(port=API_PORT, path='/api/health'),
+    ),
+    links=[link('http://localhost:%d/api/health' % API_PORT, 'health')],
+    labels=['app'],
+)
+
+# Web dev server (Vite + React). Proxies /api to the API server.
+local_resource(
+    'frontend',
+    serve_cmd='bun run --cwd apps/frontend dev',
+    resource_deps=['api'],
+    readiness_probe=probe(
+        period_secs=2,
+        http_get=http_get_action(port=WEB_PORT, path='/'),
+    ),
+    links=[
+        link('http://localhost:%d' % WEB_PORT, 'app'),
+        link('http://localhost:%d/?device=16promax' % WEB_PORT, 'iPhone 16 Pro Max'),
+    ],
+    labels=['app'],
+)
+
+print('Text Your Ex - web on :%d, api on :%d, postgres on :%d' % (WEB_PORT, API_PORT, PG_PORT))
+print('iPhone 16 Pro Max view: http://localhost:%d/?device=16promax' % WEB_PORT)
+
+# Button: open iOS simulator with live-reload pointing at local dev server.
+cmd_button(
+    'ios-simulator',
+    argv=[
+        'sh', '-c',
+        'bunx cap run ios --live-reload --host localhost --port %d --target-name "iPhone 17 Pro Max"' % WEB_PORT,
+    ],
+    resource='frontend',
+    icon_name='developer_mode',
+    text='iOS Simulator',
+)
+
+# Button: build, install, and launch the native shell on Calum's physical iPhone.
+cmd_button(
+    'ios-phone',
+    argv=['scripts/run-on-iphone.sh'],
+    resource='frontend',
+    icon_name='phone_iphone',
+    text='Run on iPhone',
+)

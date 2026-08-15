@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Text Your Ex</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Hanken+Grotesk:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: #0a0a0b;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh; font-family: 'Hanken Grotesk', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  #stage { transform-origin: center center; }
+  /* hide scrollbars inside the phone */
+  ::-webkit-scrollbar { width: 0; height: 0; }
+  * { scrollbar-width: none; }
+
+  @keyframes tye-fade { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes tye-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+  @keyframes tye-fall {
+    to { transform: translateY(140vh) rotate(var(--rot)); opacity: 0; }
+  }
+  @keyframes tye-screen-in {
+    from { transform: translateY(10px); }
+    to { transform: translateY(0); }
+  }
+  .screen-anim { animation: tye-screen-in .26s cubic-bezier(.2,.8,.2,1) both; }
+  @keyframes tye-pop { 0%{transform:scale(.8);opacity:0} 60%{transform:scale(1.08)} 100%{transform:scale(1);opacity:1} }
+</style>
+</head>
+<body>
+<div id="stage"><div id="root"></div></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="ios-frame.jsx"></script>
+<script type="text/babel" src="app-data.jsx"></script>
+<script type="text/babel" src="app-ui.jsx"></script>
+<script type="text/babel" src="app-bits.jsx"></script>
+<script type="text/babel" src="app-screens-core.jsx"></script>
+<script type="text/babel" src="app-screens-flows.jsx"></script>
+<script type="text/babel" src="app-screens-admin.jsx"></script>
+<script type="text/babel" src="app-screens-auth.jsx"></script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useRef, useCallback } = React;
+
+// deep clone the seed jars so we can mutate tallies live
+function cloneJars() { return JSON.parse(JSON.stringify(JARS)); }
+
+const TABS = [
+  { id: 'home',     label: 'Jars',     icon: Icon.jars },
+  { id: 'activity', label: 'Activity', icon: Icon.bell },
+  { id: 'profile',  label: 'You',      icon: Icon.user },
+];
+
+function TabBar({ active, onTab, badge }) {
+  return (
+    <div style={{
+      position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 40,
+      paddingBottom: 26, paddingTop: 10, display: 'flex', justifyContent: 'space-around',
+      background: 'linear-gradient(to top, #000 62%, rgba(0,0,0,0))',
+    }}>
+      {TABS.map(t => {
+        const on = active === t.id;
+        return (
+          <button key={t.id} onClick={() => onTab(t.id)} style={{
+            background: 'none', border: 'none', cursor: 'pointer', position: 'relative',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+            color: on ? T.gold : T.ter, padding: '4px 18px',
+          }}>
+            <t.icon style={{ width: 25, height: 25 }} />
+            <span style={{ fontFamily: T.ui, fontSize: 10.5, fontWeight: 700 }}>{t.label}</span>
+            {t.id === 'activity' && badge && (
+              <span style={{ position: 'absolute', top: 0, right: 12, width: 9, height: 9, borderRadius: '50%', background: T.red, boxShadow: '0 0 0 2px #000' }} />
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function App() {
+  const [jars, setJars] = useState(cloneJars);
+  const [tab, setTab] = useState('onboarding'); // onboarding | home | activity | profile
+  const [stack, setStack] = useState([]); // pushed routes on top of the active tab
+  const [burst, setBurst] = useState(false);
+  const [reportResolved, setReportResolved] = useState(false);
+  const [meVer, setMeVer] = useState(0);
+  const scrollRef = useRef(null);
+
+  const setMe = useCallback((obj) => { Object.assign(PEOPLE[ME], obj); setMeVer(v => v + 1); }, []);
+
+  const route = stack.length ? stack[stack.length - 1] : { name: tab, params: {} };
+
+  const resetScroll = () => { if (scrollRef.current) scrollRef.current.scrollTop = 0; };
+
+  const nav = useCallback((name, params = {}, replaceRoot = false) => {
+    if (replaceRoot) { setStack([{ name, params }]); }
+    else setStack(s => [...s, { name, params }]);
+    setTimeout(resetScroll, 0);
+  }, []);
+  const back = useCallback(() => { setStack(s => s.slice(0, -1)); setTimeout(resetScroll, 0); }, []);
+  const goTab = useCallback((t) => {
+    if (t === 'onboarding') { setTab('onboarding'); setStack([]); return; }
+    setTab(t); setStack([]); setTimeout(resetScroll, 0);
+  }, []);
+
+  const fireBurst = useCallback(() => { setBurst(true); setTimeout(() => setBurst(false), 2200); }, []);
+
+  const logSlip = useCallback((jarId, cents) => {
+    setJars(prev => prev.map(j => j.id !== jarId ? j : {
+      ...j, members: j.members.map(m => m.user === ME ? { ...m, tallyCents: m.tallyCents + cents, daysClean: 0 } : m),
+    }));
+  }, []);
+  const setShare = useCallback((jarId, val) => {
+    setJars(prev => prev.map(j => j.id !== jarId ? j : {
+      ...j, members: j.members.map(m => m.user === ME ? { ...m, shareStreak: val } : m),
+    }));
+  }, []);
+  const ownReport = useCallback(() => {
+    setReportResolved(true);
+    logSlip(PENDING_REPORT.jar, PENDING_REPORT.amountCents);
+  }, [logSlip]);
+  const denyReport = useCallback(() => setReportResolved(true), []);
+
+  const ctx = {
+    jars, route, nav, back, tab: goTab,
+    logSlip, setShare, ownReport, denyReport, fireBurst, reportResolved,
+    me: PEOPLE[ME], setMe, meVer,
+  };
+
+  const SCREENS = {
+    onboarding: Onboarding, home: Home, jar: JarDetail, logSlip: LogSlip,
+    report: ReportMember, confirmDeny: ConfirmDeny, settle: Settle,
+    create: Create, join: Join, invite: Invite,
+    activity: ActivityTab, profile: Profile,
+    phone: PhoneEntry, code: CodeEntry, setup: SetupProfile, editProfile: EditProfile,
+  };
+  const Cmp = SCREENS[route.name] || Home;
+  const showTabs = stack.length === 0 && tab !== 'onboarding';
+
+  const contentRef = useCallback((node) => {
+    if (node) { scrollRef.current = node.parentElement; }
+  }, []);
+
+  return (
+    <IOSDevice dark>
+      <div ref={contentRef} key={route.name + JSON.stringify(route.params)} className="screen-anim" style={{ minHeight: '100%' }}>
+        <Cmp ctx={ctx} />
+      </div>
+      <MoneyBurst show={burst} />
+      {showTabs && <TabBar active={tab} onTab={goTab} badge={!reportResolved} />}
+    </IOSDevice>
+  );
+}
+
+// ── scale the phone to fit viewport ──
+function fit() {
+  const stage = document.getElementById('stage');
+  const W = 402, H = 874;
+  const s = Math.min(window.innerWidth / (W + 40), window.innerHeight / (H + 40), 1);
+  stage.style.transform = `scale(${s})`;
+}
+window.addEventListener('resize', fit);
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+setTimeout(fit, 60);
+</script>
+</body>
+</html>

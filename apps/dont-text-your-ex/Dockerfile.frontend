@@ -1,0 +1,59 @@
+# Text Your Ex - frontend image (nginx static).
+# VITE_API_BASE must be set at build time to the production API URL.
+# e.g. --build-arg VITE_API_BASE=https://api.tye.worldwidewebb.co
+#
+# Build context: REPO ROOT (.). The root bun.lock covers all workspaces, so we
+# build from root to resolve the full graph (same reason as Dockerfile.api).
+# Mirror: products/captive-portal/apps/frontend/Dockerfile (www-jtp0.6.6).
+FROM oven/bun:1.2.19 AS build
+
+WORKDIR /app
+
+ARG VITE_API_BASE
+ENV VITE_API_BASE=${VITE_API_BASE}
+
+# ── 1. workspace manifests (layer-cache friendly) ────────────────────────────
+COPY package.json bun.lock ./
+
+COPY packages/api/package.json ./packages/api/package.json
+COPY packages/logger/package.json ./packages/logger/package.json
+COPY packages/platform/package.json ./packages/platform/package.json
+
+COPY products/amp/package.json ./products/amp/package.json
+COPY products/captive-portal/package.json ./products/captive-portal/package.json
+COPY products/captive-portal/apps/api/package.json ./products/captive-portal/apps/api/package.json
+COPY products/captive-portal/apps/frontend/package.json ./products/captive-portal/apps/frontend/package.json
+COPY products/control-center/package.json ./products/control-center/package.json
+COPY products/control-center/api/package.json ./products/control-center/api/package.json
+COPY products/control-center/drizzle/package.json ./products/control-center/drizzle/package.json
+COPY products/control-center/ios/package.json ./products/control-center/ios/package.json
+COPY products/control-center/map-provision/package.json ./products/control-center/map-provision/package.json
+COPY products/control-center/media-worker/package.json ./products/control-center/media-worker/package.json
+COPY products/control-center/storybook/package.json ./products/control-center/storybook/package.json
+COPY products/control-center/web/package.json ./products/control-center/web/package.json
+COPY products/control-center/worker/package.json ./products/control-center/worker/package.json
+COPY products/project-management/package.json ./products/project-management/package.json
+COPY products/text-your-ex/package.json ./products/text-your-ex/package.json
+COPY products/text-your-ex/apps/api/package.json ./products/text-your-ex/apps/api/package.json
+COPY products/text-your-ex/apps/e2e/package.json ./products/text-your-ex/apps/e2e/package.json
+COPY products/text-your-ex/apps/frontend/package.json ./products/text-your-ex/apps/frontend/package.json
+
+# Infra Pulumi workspaces: root package.json declares these, bun install needs their manifests.
+COPY infra/package.json ./infra/package.json
+COPY infra/cloudflare/package.json ./infra/cloudflare/package.json
+COPY infra/unifi/package.json ./infra/unifi/package.json
+
+# --ignore-scripts skips the lefthook prepare hook (needs git, not in alpine).
+RUN bun install --frozen-lockfile --ignore-scripts
+
+# ── 2. application source + build ────────────────────────────────────────────
+COPY products/text-your-ex/apps/frontend/ ./products/text-your-ex/apps/frontend/
+RUN bun run --cwd products/text-your-ex/apps/frontend build
+
+# ── runtime: nginx serves the static bundle ──────────────────────────────────
+FROM nginx:1.27-alpine AS runtime
+COPY --from=build /app/products/text-your-ex/apps/frontend/dist /usr/share/nginx/html
+# SPA: fall through to index.html for any unknown path
+RUN printf 'server {\n  listen 80;\n  root /usr/share/nginx/html;\n  index index.html;\n  location / { try_files $uri $uri/ /index.html; }\n}\n' \
+  > /etc/nginx/conf.d/default.conf
+EXPOSE 80

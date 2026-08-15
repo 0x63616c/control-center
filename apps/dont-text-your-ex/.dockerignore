@@ -1,0 +1,11 @@
+node_modules
+**/node_modules
+**/dist
+server/data
+e2e/test-results
+e2e/playwright-report
+e2e/.tmp
+.git
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

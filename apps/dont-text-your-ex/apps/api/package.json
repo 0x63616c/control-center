@@ -1,0 +1,24 @@
+{
+  "name": "@tye/server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "seed": "APP_ENV=development bun run src/seed.ts",
+    "typecheck": "tsc --noEmit",
+    "seed:reset": "APP_ENV=development TYE_RESET=1 bun run src/seed.ts"
+  },
+  "dependencies": {
+    "hono": "^4.6.14",
+    "jose": "^6.2.3",
+    "@www/logger": "workspace:*",
+    "pg": "^8.13.3"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "typescript": "^6.0.3",
+    "@types/pg": "^8.11.10",
+    "vitest": "^3.2.4"
+  }
+}

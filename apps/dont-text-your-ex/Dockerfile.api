@@ -1,0 +1,66 @@
+# Text Your Ex - API image (Bun/Hono). No static files.
+#
+# Build context: REPO ROOT (.). The root bun.lock pins @repo/logger (a
+# packages/* workspace dep of the api), so we must resolve the full workspace
+# graph from the repo root — a product-directory context can't see packages/*.
+# Mirror: products/captive-portal/apps/frontend/Dockerfile (www-jtp0.6.6).
+FROM oven/bun:1.2.19 AS build
+
+WORKDIR /app
+
+# ── 1. workspace manifests (layer-cache friendly) ────────────────────────────
+# Copy every package.json the root bun.lock touches so `bun install` can
+# resolve the full workspace graph. Order: root → packages → products → infra.
+COPY package.json bun.lock ./
+
+COPY packages/api/package.json ./packages/api/package.json
+COPY packages/logger/package.json ./packages/logger/package.json
+COPY packages/platform/package.json ./packages/platform/package.json
+
+COPY products/amp/package.json ./products/amp/package.json
+COPY products/captive-portal/package.json ./products/captive-portal/package.json
+COPY products/captive-portal/apps/api/package.json ./products/captive-portal/apps/api/package.json
+COPY products/captive-portal/apps/frontend/package.json ./products/captive-portal/apps/frontend/package.json
+COPY products/control-center/package.json ./products/control-center/package.json
+COPY products/control-center/api/package.json ./products/control-center/api/package.json
+COPY products/control-center/drizzle/package.json ./products/control-center/drizzle/package.json
+COPY products/control-center/ios/package.json ./products/control-center/ios/package.json
+COPY products/control-center/map-provision/package.json ./products/control-center/map-provision/package.json
+COPY products/control-center/media-worker/package.json ./products/control-center/media-worker/package.json
+COPY products/control-center/storybook/package.json ./products/control-center/storybook/package.json
+COPY products/control-center/web/package.json ./products/control-center/web/package.json
+COPY products/control-center/worker/package.json ./products/control-center/worker/package.json
+COPY products/project-management/package.json ./products/project-management/package.json
+COPY products/text-your-ex/package.json ./products/text-your-ex/package.json
+COPY products/text-your-ex/apps/api/package.json ./products/text-your-ex/apps/api/package.json
+COPY products/text-your-ex/apps/e2e/package.json ./products/text-your-ex/apps/e2e/package.json
+COPY products/text-your-ex/apps/frontend/package.json ./products/text-your-ex/apps/frontend/package.json
+
+# Infra Pulumi workspaces: root package.json declares these, bun install needs their manifests.
+COPY infra/package.json ./infra/package.json
+COPY infra/cloudflare/package.json ./infra/cloudflare/package.json
+COPY infra/unifi/package.json ./infra/unifi/package.json
+
+# --ignore-scripts skips the lefthook prepare hook (needs git, not in alpine).
+RUN bun install --frozen-lockfile --ignore-scripts
+
+# ── 2. application source ─────────────────────────────────────────────────────
+COPY packages/ ./packages/
+COPY products/text-your-ex/apps/api/ ./products/text-your-ex/apps/api/
+
+# ── runtime ───────────────────────────────────────────────────────────────────
+FROM oven/bun:1.2.19 AS runtime
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV APP_ENV=production
+ENV PORT=8787
+
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/packages ./packages
+COPY --from=build /app/products/text-your-ex/apps/api ./products/text-your-ex/apps/api
+COPY --from=build /app/package.json ./package.json
+
+EXPOSE 8787
+CMD ["bun", "run", "products/text-your-ex/apps/api/src/index.ts"]

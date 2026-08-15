@@ -1,0 +1,293 @@
+default_platform(:ios)
+
+require "base64"
+require "fileutils"
+require "open3"
+require "tmpdir"
+require "spaceship"
+
+# Fastfile for publish-setup (fastlane match flow).
+#
+# Signing is shared across every app in the account via fastlane match against a
+# central git repo (MATCH_GIT_URL, e.g. github.com/0x63616c/certificates). ONE
+# distribution certificate signs all apps; each app gets its own provisioning
+# profile minted into that same repo. The match passphrase + ASC API key live in
+# 1Password; CI reads everything from GitHub secrets (synced by sync-secrets.sh).
+#
+# Env in (all paths): MATCH_PASSWORD, MATCH_GIT_URL, MATCH_GIT_BASIC_AUTHORIZATION,
+#   ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_CONTENT (base64 .p8).
+# App-specific (set by CI / setup-app.sh): BUNDLE_ID, APPLE_TEAM_ID, IOS_PROJECT
+#   (default App/App.xcodeproj), IOS_SCHEME (default App), INITIAL_BUILD_NUMBER.
+
+def asc_key
+  # Write the decoded .p8 to disk and pass key_filepath. altool (the TestFlight
+  # uploader) generates its own JWT and fails on in-memory base64 key_content with
+  # "file isn't in the correct format"; a real AuthKey_<id>.p8 file works for both
+  # the App Store Connect API and altool. Base64.decode64 tolerates line wrapping.
+  $asc_key ||= begin
+    key_id = ENV.fetch("ASC_KEY_ID")
+    dir = File.join(Dir.tmpdir, "asc_private_keys")
+    FileUtils.mkdir_p(dir)
+    path = File.join(dir, "AuthKey_#{key_id}.p8")
+    File.write(path, Base64.decode64(ENV.fetch("ASC_KEY_CONTENT")))
+    app_store_connect_api_key(
+      key_id: key_id,
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_filepath: path
+    )
+  end
+end
+
+def bundle_id
+  ENV.fetch("BUNDLE_ID")
+end
+
+def ios_project
+  ENV.fetch("IOS_PROJECT", "App/App.xcodeproj")
+end
+
+def run_capture!(*cmd)
+  stdout, stderr, status = Open3.capture3(*cmd)
+  UI.user_error!("#{cmd.join(' ')} failed: #{stderr}") unless status.success?
+  stdout
+end
+
+def plist_value!(plist_path, key_path)
+  run_capture!("/usr/libexec/PlistBuddy", "-c", "Print #{key_path}", plist_path).strip
+end
+
+def verify_apple_sign_in_entitlements!(ipa_path:, profile_path:)
+  UI.message("Verifying signed app + provisioning profile carry Sign in with Apple")
+  Dir.mktmpdir("tye-siwa-") do |dir|
+    run_capture!("unzip", "-q", ipa_path, "-d", dir)
+    app_path = Dir[File.join(dir, "Payload", "*.app")].first
+    UI.user_error!("No .app found in #{ipa_path}") unless app_path
+
+    app_entitlements = File.join(dir, "app-entitlements.plist")
+    File.write(app_entitlements, run_capture!("codesign", "-d", "--entitlements", ":-", app_path))
+    app_value = plist_value!(app_entitlements, ":com.apple.developer.applesignin:0")
+    UI.user_error!("Signed app is missing Sign in with Apple entitlement") unless app_value == "Default"
+
+    profile_plist = File.join(dir, "profile.plist")
+    File.write(profile_plist, run_capture!("security", "cms", "-D", "-i", profile_path))
+    profile_value = plist_value!(profile_plist, ":Entitlements:com.apple.developer.applesignin:0")
+    UI.user_error!("Provisioning profile is missing Sign in with Apple entitlement") unless profile_value == "Default"
+
+    UI.success("Sign in with Apple entitlement verified in signed app and profile")
+  end
+end
+
+platform :ios do
+  # Run ONCE per new app, locally. produce registers the bundle id (developer
+  # portal) + App Store Connect app record; match then mints this app's profile
+  # into the certificates repo, reusing the shared distribution cert
+  # (readonly:false so it creates the profile if absent). setup-app.sh calls this.
+  desc "Register a new app + mint its profile against the shared match repo"
+  lane :setup_ios do
+    require "spaceship"
+    require "base64"
+
+    # Authenticate Spaceship with the App Store Connect API key (NO Apple ID, no
+    # 2FA). produce's Developer-Portal path otherwise demands a username; doing
+    # bundle-id + app-record creation over the API key avoids that entirely.
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key: Base64.decode64(ENV.fetch("ASC_KEY_CONTENT"))
+    )
+
+    name = ENV.fetch("APP_NAME", bundle_id)
+
+    # 1. Register the bundle id on the Developer Portal (idempotent) - match needs it.
+    unless Spaceship::ConnectAPI::BundleId.all.any? { |b| b.identifier == bundle_id }
+      UI.message("Registering bundle id #{bundle_id}")
+      Spaceship::ConnectAPI::BundleId.create(
+        name: name.gsub(/[^0-9A-Za-z ]/, ""),
+        identifier: bundle_id,
+        platform: Spaceship::ConnectAPI::Platform::IOS
+      )
+    end
+
+    # 2. App Store Connect app record. Apple's API can't create apps (the 'apps'
+    #    resource is GET/UPDATE only), so app creation needs an Apple ID web
+    #    session via produce. If FASTLANE_SESSION is present (save-apple-session.sh)
+    #    we create it headlessly; otherwise warn with the manual steps.
+    if (Spaceship::ConnectAPI::App.find(bundle_id) rescue nil).nil?
+      if ENV["FASTLANE_SESSION"].to_s.empty?
+        UI.important("No App Store Connect app record for #{bundle_id}, and no Apple ID session.")
+        UI.important("Either run save-apple-session.sh (then re-run setup-app.sh), or create it once:")
+        UI.important("  https://appstoreconnect.apple.com → Apps → (+) → New App")
+        UI.important("  name: #{name}   bundle id: #{bundle_id}   platform: iOS")
+        UI.important("Required before the TestFlight upload.")
+      else
+        UI.message("Creating App Store Connect app record for #{bundle_id} via Apple ID session")
+        # produce uses the web session (FASTLANE_USER + FASTLANE_SESSION); the
+        # bundle id is already registered above, so skip the dev-portal step.
+        produce(
+          username: ENV.fetch("FASTLANE_USER"),
+          app_identifier: bundle_id,
+          app_name: name,
+          skip_devcenter: true
+        )
+      end
+    end
+
+    # 3. Mint this app's provisioning profile, reusing the shared distribution cert.
+    match(type: "appstore", api_key: asc_key, app_identifier: bundle_id, readonly: false)
+  end
+
+  # Run ONCE (locally or via the tye-ios-enable-apple-sign-in workflow) to turn on
+  # Sign In with Apple for this app. It enables the APPLE_ID_AUTH capability on the
+  # App ID and force-regenerates the provisioning profile so it carries the
+  # com.apple.developer.applesignin entitlement; the regular release lane (match
+  # readonly) then picks that profile up. Idempotent.
+  desc "Enable Sign In with Apple on the App ID + refresh the profile"
+  lane :enable_apple_sign_in do
+    require "spaceship"
+    require "base64"
+
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key: Base64.decode64(ENV.fetch("ASC_KEY_CONTENT"))
+    )
+
+    bid = Spaceship::ConnectAPI::BundleId.all.find { |b| b.identifier == bundle_id }
+    UI.user_error!("Bundle id #{bundle_id} not registered - run setup_ios first") unless bid
+
+    # NOTE: enabling APPLE_ID_AUTH via Spaceship has been unreliable (the
+    # regenerated profile didn't carry the entitlement). The dependable path is
+    # one click in the Apple Developer portal: Identifiers -> the tye App ID ->
+    # check "Sign In with Apple" -> Save. After that, re-wire CODE_SIGN_ENTITLEMENTS
+    # (App.entitlements is already in the repo) and the release lane signs it.
+    # This lane is kept as the automated attempt; it surfaces the real error
+    # rather than masking it, and only treats a genuine "already exists" as ok.
+    begin
+      bid.create_capability("APPLE_ID_AUTH")
+      UI.success("Enabled Sign In with Apple on #{bundle_id}")
+    rescue => e
+      raise unless e.message =~ /already exist|ENTITY_ERROR.*exist|409/i
+      UI.success("Sign In with Apple already enabled on #{bundle_id}")
+    end
+
+    # force:true regenerates the profile so it includes the new capability.
+    match(type: "appstore", api_key: asc_key, app_identifier: bundle_id, readonly: false, force: true)
+    UI.success("Profile refreshed with Sign In with Apple. Re-run the release lane to ship it.")
+  end
+
+  # Run ONCE per app (setup-app.sh calls it). Creates an internal TestFlight group
+  # set to receive ALL builds and adds the account holder as a tester, so every
+  # future tagged build appears in TestFlight with no clicks. Key-based (no Apple
+  # ID session needed). Internal testers must be App Store Connect users; the
+  # account holder qualifies. Set TESTFLIGHT_TESTER to the tester email.
+  desc "Create an internal TestFlight group + add the account holder as a tester"
+  lane :setup_testflight do
+    asc_key # sets the ConnectAPI token
+    app = Spaceship::ConnectAPI::App.find(bundle_id)
+    UI.user_error!("No app record for #{bundle_id} - run setup_ios first") unless app
+
+    group_name = ENV.fetch("TESTFLIGHT_GROUP", "Internal")
+    group = app.get_beta_groups.find { |g| g.name == group_name }
+    if group.nil?
+      UI.message("Creating internal TestFlight group '#{group_name}' (auto-receives all builds)")
+      # NOTE: app.create_beta_group sends publicLinkLimitEnabled, which Apple
+      # rejects for internal groups (fastlane#29556). POST the betaGroup directly.
+      Spaceship::ConnectAPI.test_flight_request_client.post("v1/betaGroups", {
+        data: {
+          type: "betaGroups",
+          attributes: { name: group_name, isInternalGroup: true, hasAccessToAllBuilds: true },
+          relationships: { app: { data: { type: "apps", id: app.id } } }
+        }
+      })
+      group = app.get_beta_groups.find { |g| g.name == group_name }
+    end
+
+    email = (ENV["TESTFLIGHT_TESTER"] || ENV["FASTLANE_USER"]).to_s
+    if email.empty?
+      UI.important("No tester email (TESTFLIGHT_TESTER/FASTLANE_USER) - skipping tester add.")
+    elsif app.get_beta_testers(filter: { email: email }).any?
+      UI.message("#{email} is already a tester.")
+    else
+      UI.message("Adding internal tester #{email} to '#{group_name}'")
+      # post_bulk_beta_tester_assignments hits a dead endpoint (404); the single
+      # betaTesters create with a betaGroups relationship is the working path.
+      Spaceship::ConnectAPI.post_beta_tester_assignment(
+        beta_group_ids: [group.id],
+        attributes: {
+          email: email,
+          firstName: ENV.fetch("TESTFLIGHT_TESTER_FIRST", "Internal"),
+          lastName: ENV.fetch("TESTFLIGHT_TESTER_LAST", "Tester")
+        }
+      )
+    end
+    UI.success("Internal TestFlight ready: group '#{group_name}'#{email.empty? ? '' : ", tester #{email}"}.")
+  end
+
+  desc "Build and upload to TestFlight"
+  lane :release do
+    setup_ci # ephemeral CI keychain; no-op locally
+
+    # force:true regenerates the profile from the App ID's current capabilities so
+    # the (now-enabled) Sign In with Apple entitlement is included. Drop back to
+    # readonly:true once a capability-bearing profile is committed to the certs repo.
+    match(type: "appstore", api_key: asc_key, app_identifier: bundle_id, readonly: false, force: true)
+
+    update_code_signing_settings(
+      use_automatic_signing: false,
+      path: ios_project,
+      team_id: ENV["APPLE_TEAM_ID"],
+      bundle_identifier: bundle_id,
+      profile_name: ENV["sigh_#{bundle_id}_appstore_profile-name"],
+      code_sign_identity: "Apple Distribution"
+    )
+
+    # Build number from TestFlight (monotonic across repos), not the CI run number.
+    latest = latest_testflight_build_number(
+      api_key: asc_key,
+      app_identifier: bundle_id,
+      initial_build_number: ENV.fetch("INITIAL_BUILD_NUMBER", "0").to_i
+    )
+    target_build = (latest + 1).to_s
+    increment_build_number(build_number: target_build, xcodeproj: ios_project)
+
+    build_app(
+      project: ios_project,
+      scheme: ENV.fetch("IOS_SCHEME", "App"),
+      configuration: "Release",
+      export_method: "app-store",
+      output_directory: "./build",
+      clean: true,
+      codesigning_identity: "Apple Distribution"
+    )
+
+    verify_apple_sign_in_entitlements!(
+      ipa_path: lane_context[SharedValues::IPA_OUTPUT_PATH],
+      profile_path: ENV.fetch("sigh_#{bundle_id}_appstore_profile-path")
+    )
+
+    begin
+      upload_to_testflight(
+        api_key: asc_key,
+        skip_waiting_for_build_processing: true,
+        skip_submission: true
+      )
+    rescue => e
+      # altool routinely uploads the binary fine but then 500s on a follow-up
+      # status call ("RETRIEVE UPLOAD OPERATIONS"), which fastlane reports as a
+      # failure. Verify the build actually landed before failing the run.
+      UI.important("upload_to_testflight raised: #{e.message}")
+      UI.important("Verifying whether build #{target_build} reached App Store Connect anyway...")
+      landed = false
+      6.times do
+        sleep(20)
+        app = (Spaceship::ConnectAPI::App.find(bundle_id) rescue nil)
+        if app && app.get_builds.any? { |b| b.version.to_s == target_build }
+          landed = true
+          break
+        end
+      end
+      raise e unless landed
+      UI.success("Build #{target_build} is in App Store Connect - transient upload error ignored.")
+    end
+  end
+end
