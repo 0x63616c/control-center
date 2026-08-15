@@ -35,6 +35,7 @@ marking it complete.
 
 - Software-factory ticket: `T-39`
 - Branch: `codex/dont-text-your-ex-restoration`
+- Production-evidence branch: `agent/dont-text-your-ex-production-evidence`
 - Plan-only commit: `b021657b4`
 - Raw recovery commit: `c5e81c91c`
 
@@ -186,24 +187,24 @@ Review-fix commits:
 
 ## Production evidence checklist
 
-- [ ] PR reviewed and merged to `main`
-- [ ] GitHub CI green at immutable merge SHA
-- [ ] `home-server` Pulumi deployment green using stack `home-server`
-- [ ] Namespace `dont-text-your-ex` healthy
-- [ ] Frontend and API readiness/health green
-- [ ] CNPG healthy with persistent storage
-- [ ] Database migrations applied
-- [ ] Database write survives pod restart
-- [ ] Backup succeeds and restore evidence is recorded
-- [ ] Public HTTPS host resolves with valid TLS
-- [ ] `/` serves the production frontend externally
-- [ ] `/api/*` reaches the production API externally
+- [x] PR reviewed and merged to `main`
+- [x] GitHub CI green at immutable merge SHA
+- [x] `home-server` Pulumi deployment green using stack `home-server`
+- [x] Namespace `dont-text-your-ex` healthy
+- [x] Frontend and API readiness/health green
+- [x] CNPG healthy with persistent storage
+- [x] Database migrations applied
+- [x] Database write survives pod restart
+- [x] Backup succeeds and restore evidence is recorded
+- [x] Public HTTPS host resolves with valid TLS
+- [x] `/` serves the production frontend externally
+- [x] `/api/*` reaches the production API externally
 - [ ] Sign in with Apple succeeds end to end
-- [ ] Authenticated session/account persists in Postgres
-- [ ] TestFlight build uploaded to the existing app
+- [x] Authenticated session/account persists in Postgres
+- [x] TestFlight build uploaded to the existing app
 - [ ] External TestFlight group/link available
 - [ ] Non-team Apple ID installs and exercises core functionality
-- [ ] A subsequent deployment succeeds without manual recovery
+- [x] A subsequent deployment succeeds without manual recovery
 - [ ] Final verified completion notification sent to `ntfy.sh/0x63616c`
 
 ## V1 feature-completeness checklist
@@ -378,10 +379,106 @@ Local signing preflight captured 2026-08-14, without uploading a build:
   upload remain blocked until profile `86NB48QVCM` is verified to carry both
   required entitlements. Do not upload a build before that verification passes.
 
+## Live production evidence — 2026-08-15
+
+This section supersedes the pre-deployment and local-signing blockers above where
+newer live evidence is recorded. Historical per-feature rows remain the audit
+trail for their original checkpoint; the production infrastructure claims in
+those rows are superseded by this section.
+
+### Merge, deployment, and public service
+
+- Restoration PR `#697` merged at `5c1a3e251ce957443492bd73e0c42e988236e8db`.
+  Main workflow `31871426803` completed successfully, including both the
+  `home-server` and Cloudflare deployment jobs.
+- The final application main revision is
+  `ecf47add229d590bdce7238e7130fb802e07b9da`. A clean `force_all` workflow,
+  `31872702467`, completed successfully at that exact revision, including all
+  tests, builds, the second `home-server` deployment, and the second Cloudflare
+  deployment. This is also the clean retry after an earlier path-scoped run
+  passed all 512 Storybook tests but lost its browser transport after completion.
+- Post-second-deploy inspection used the explicit `home-server` Kubernetes
+  context. Namespace `dont-text-your-ex` is Active; the frontend and API
+  rollouts are ready; CNPG reports one ready primary and `Cluster in healthy
+  state`; and both the 2 GiB database PVC and 10 GiB NAS backup PVC are Bound.
+- The API applied the exact nine repository migrations, `0001` through `0009`.
+  The deployed migration table and repository filenames still matched after the
+  second deployment.
+- External HTTPS verification returned `200` for the branded frontend,
+  `{"ok":true}` from `/api/health`, and the expected `401` from unauthenticated
+  `/api/me`. The certificate verified successfully and was issued by Let's
+  Encrypt for `worldwidewebb.co`, valid from 2026-07-07 through 2026-10-05.
+
+### Production data durability and recovery
+
+- A controlled production QA flow created two temporary accounts and sessions,
+  created and joined jar `jar_63adc789`, filed report `rpt_f82411d2`, and attached
+  a real PNG through the public API. No token or private value was printed or
+  recorded.
+- The API pod was replaced, then the CNPG primary pod was replaced. A single
+  transient `500` occurred while the database primary was restarting; the next
+  bounded retry succeeded. The authenticated session, report, and evidence were
+  still readable, and the database evidence count/digest remained exactly
+  `1|32bc0b4da8b46c70ed555a5c25ef91ac` across both restarts.
+- A manual run of the production backup CronJob wrote the real NAS artifact
+  `text_your_ex-20260815.sql.gz`. The artifact used for the restore proof had
+  SHA-256 `e99f9d1367ffe14304dd0862c531739432f08b3caf6abf691e0d0df8e24de3b2`.
+- The gzip stream was integrity-checked and restored with stop-on-error into an
+  isolated scratch database in the production CNPG cluster. Every non-system
+  table row count matched the source, and the restored evidence count/digest was
+  exactly `1|32bc0b4da8b46c70ed555a5c25ef91ac`. The scratch database was dropped,
+  all temporary QA accounts and their cascading data were removed, and the
+  ordinary backup CronJob was run again after cleanup.
+- Final inspection after the second deployment found zero temporary QA accounts,
+  zero scratch databases, and the application and database still healthy.
+
+### Capacity action and recovery impact
+
+- The initial production pods could not schedule because the node had reached
+  its 110-pod limit. All 17 deployments in the stale ephemeral CI namespace
+  `ar-ci-agent-runtime-direct-live-lab-m1g` were first confirmed at one replica,
+  then scaled to zero. This freed capacity without deleting its namespace,
+  secrets, or PVCs; all 17 remain at zero after the second deployment.
+- The action is reversible by scaling those same 17 deployments back to one
+  replica. Doing so before adding cluster capacity would consume the released
+  slots and can make current workloads unschedulable again.
+- Kubernetes emitted warn-level restricted-PodSecurity recommendations for the
+  restored workloads. They did not block scheduling or readiness; hardening the
+  workload security contexts is a non-blocking operations follow-up.
+
+### Apple distribution and universal links
+
+- iOS workflow `31872510826` ran at final main revision
+  `ecf47add229d590bdce7238e7130fb802e07b9da`, regenerated the profile, built and
+  exported the signed archive, and passed the signed-entitlement guard. The app
+  requires Sign in with Apple and exact associated domain
+  `applinks:dont-text-your-ex.worldwidewebb.co`; the embedded App Store profile
+  accepts Apple's Associated Domains wildcard.
+- App Store Connect build `1.0 (24)`
+  (`0d340085-ab1e-4a9d-93d4-f4fe2cb72260`) uploaded, processed, reached
+  `Ready to Submit`, and is assigned to the Internal group. External group
+  `Friends` (`f3bfe9de-5fd7-4d25-b82e-93fa329035a8`) exists. The beta description,
+  What to Test, and feedback-email metadata are saved; no private value is
+  recorded here.
+- Origin GET of `/.well-known/apple-app-site-association` returned `200`
+  `application/json` with exact app ID
+  `X9E4HG27NK.co.worldwidewebb.textyourex` and path `/j/*`. Apple's CDN GET for
+  the same host returned identical JSON. Only GET is evidence because the Apple
+  CDN rejects HEAD with `405`.
+- The sole external TestFlight submission gate is a valid Beta App Review contact
+  phone number: the same-app contact fields were blank and reusable same-team
+  metadata had a name and email but no phone. Once supplied, build 24 can be
+  added to Friends, submitted for Beta App Review, and its public link enabled
+  and verified without rebuilding.
+- A non-team physical-device install and the resulting production Sign in with
+  Apple/core-flow exercise remain user-assisted acceptance gates. The project is
+  therefore deployed to production, but the full release completion threshold
+  and final notification have not yet been met.
+
 ## Blockers and user-assisted gates
 
-- Apple sign-in/2FA: user is available; open App Store Connect early and pause at
-  the credential or second-factor prompt.
+- External TestFlight submission is waiting only for a valid Beta App Review
+  contact phone number. Do not record the number in this ledger.
 - External TestFlight verification requires a non-development-team Apple ID and a
   physical-device install; record who performed the check without recording an
   email address or other personal data.
