@@ -54,6 +54,9 @@ export function Onboarding({ ctx }: { ctx: AppCtx }) {
       try {
         const request = createAppleSignInRequest();
         const response = await authorizeAppleSignIn(request);
+        if (response.attemptId !== request.attemptId || response.state !== request.state) {
+          throw new Error("Apple sign-in response did not match the active request");
+        }
         identityToken = response.identityToken;
         fullName = response.fullName;
       } catch (e) {

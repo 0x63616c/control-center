@@ -223,14 +223,56 @@ platform :ios do
     UI.success("Internal TestFlight ready: group '#{group_name}'#{email.empty? ? '' : ", tester #{email}"}.")
   end
 
+  # Creates the external group and public link. Apple still controls whether a
+  # particular build requires Beta App Review; the release lane submits that
+  # build when TESTFLIGHT_DISTRIBUTE_EXTERNAL=true.
+  desc "Create the external Friends group and enable its public TestFlight link"
+  lane :setup_external_testflight do
+    asc_key
+    app = Spaceship::ConnectAPI::App.find(bundle_id)
+    UI.user_error!("No app record for #{bundle_id} - run setup_ios first") unless app
+
+    group_name = ENV.fetch("TESTFLIGHT_EXTERNAL_GROUP", "Friends")
+    group = app.get_beta_groups.find { |candidate| candidate.name == group_name }
+    if group.nil?
+      UI.message("Creating external TestFlight group '#{group_name}'")
+      Spaceship::ConnectAPI.test_flight_request_client.post("v1/betaGroups", {
+        data: {
+          type: "betaGroups",
+          attributes: {
+            name: group_name,
+            isInternalGroup: false,
+            hasAccessToAllBuilds: true,
+            publicLinkEnabled: true,
+            publicLinkLimitEnabled: true,
+            publicLinkLimit: ENV.fetch("TESTFLIGHT_PUBLIC_LINK_LIMIT", "100").to_i,
+            feedbackEnabled: true
+          },
+          relationships: { app: { data: { type: "apps", id: app.id } } }
+        }
+      })
+      group = app.get_beta_groups.find { |candidate| candidate.name == group_name }
+    end
+
+    UI.user_error!("External TestFlight group '#{group_name}' was not created") unless group
+    UI.success("External TestFlight group '#{group_name}' is configured. App Store Connect exposes the public link after Apple approves an eligible build.")
+  end
+
   desc "Build and upload to TestFlight"
   lane :release do
     setup_ci # ephemeral CI keychain; no-op locally
 
-    # force:true regenerates the profile from the App ID's current capabilities so
-    # the (now-enabled) Sign In with Apple entitlement is included. Drop back to
-    # readonly:true once a capability-bearing profile is committed to the certs repo.
-    match(type: "appstore", api_key: asc_key, app_identifier: bundle_id, readonly: false, force: true)
+    # Routine CI is read-only against the shared signing repository. A capability
+    # change invalidates the old profile; opt into one regeneration run after the
+    # App ID has been updated, then return to the read-only default.
+    regenerate = ENV["MATCH_REGENERATE"] == "true"
+    match(
+      type: "appstore",
+      api_key: asc_key,
+      app_identifier: bundle_id,
+      readonly: !regenerate,
+      force: regenerate
+    )
 
     update_code_signing_settings(
       use_automatic_signing: false,
@@ -256,6 +298,7 @@ platform :ios do
       configuration: "Release",
       export_method: "app-store",
       output_directory: "./build",
+      output_name: "DontTextYourEx.ipa",
       clean: true,
       codesigning_identity: "Apple Distribution"
     )
@@ -266,15 +309,23 @@ platform :ios do
     )
 
     begin
+      external = ENV["TESTFLIGHT_DISTRIBUTE_EXTERNAL"] == "true"
       upload_to_testflight(
         api_key: asc_key,
-        skip_waiting_for_build_processing: true,
-        skip_submission: true
+        skip_waiting_for_build_processing: !external,
+        skip_submission: !external,
+        distribute_external: external,
+        groups: external ? [ENV.fetch("TESTFLIGHT_EXTERNAL_GROUP", "Friends")] : nil,
+        notify_external_testers: external
       )
     rescue => e
       # altool routinely uploads the binary fine but then 500s on a follow-up
       # status call ("RETRIEVE UPLOAD OPERATIONS"), which fastlane reports as a
       # failure. Verify the build actually landed before failing the run.
+      # External submission/distribution failures are never equivalent to a
+      # successful upload: the requested outcome is tester availability.
+      raise e if external
+
       UI.important("upload_to_testflight raised: #{e.message}")
       UI.important("Verifying whether build #{target_build} reached App Store Connect anyway...")
       landed = false

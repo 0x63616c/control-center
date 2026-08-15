@@ -26,6 +26,8 @@ public class AppleSignInPlugin: CAPPlugin, CAPBridgedPlugin {
         let request = ASAuthorizationAppleIDProvider().createRequest()
         request.requestedOperation = .operationLogin
         request.requestedScopes = [.fullName, .email]
+        request.state = call.getString("state")
+        request.nonce = call.getString("nonce")
 
         let controller = ASAuthorizationController(authorizationRequests: [request])
         controller.delegate = self

@@ -2,7 +2,7 @@ import type { CapacitorConfig } from "@capacitor/cli";
 
 const config: CapacitorConfig = {
   appId: "co.worldwidewebb.textyourex",
-  appName: "Text Your Ex",
+  appName: "Don’t Text Your Ex",
   // Vite builds the web app into apps/frontend/dist; Capacitor bundles that offline.
   webDir: "apps/frontend/dist",
   // Native view bg black so safe-area insets / overscroll never flash white.

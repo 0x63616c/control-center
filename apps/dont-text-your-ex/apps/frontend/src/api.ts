@@ -12,7 +12,8 @@ const TOKEN_KEY = "tye_token";
 
 // Web builds use the relative "/api" path (same-origin server). Native shells
 // (Capacitor iOS) have no same-origin backend, so they must point at a hosted
-// API via VITE_API_BASE at build time, e.g. "https://api.textyourex.app".
+// API via VITE_API_BASE at build time. Production iOS builds use the same public
+// origin as the web app: "https://dont-text-your-ex.worldwidewebb.co".
 const API_BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "");
 
 export function getToken(): string | null {
