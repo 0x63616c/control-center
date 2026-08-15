@@ -167,6 +167,28 @@ describe.skipIf(!HAS_DB)("slip logging", () => {
 });
 
 describe.skipIf(!HAS_DB)("reports", () => {
+  it("rejects reporting oneself without persisting a report", async () => {
+    const user = await store.createUser({ name: "Self Reporter" });
+    const jar = await store.createJar({ userId: user.id, name: "Self Report Jar" });
+    const token = await store.createSession(user.id);
+
+    const response = await buildApp().request(`/api/jars/${jar.id}/reports`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ accusedId: user.id, note: "reported myself" }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "cannot_report_self" });
+    const persisted = await pool.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM reports",
+    );
+    expect(persisted.rows[0]?.count).toBe("0");
+  });
+
   it("persists image evidence, creates a pending report, and resolves as owned", async () => {
     const accuser = await store.createUser({ name: "Iris" });
     const accused = await store.createUser({ name: "Jack" });

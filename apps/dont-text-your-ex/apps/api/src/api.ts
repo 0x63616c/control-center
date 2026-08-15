@@ -246,6 +246,7 @@ api.post("/jars/:id/reports", async (c) => {
   const parsed = await parseRequestJson(c, CreateReportRequestSchema);
   if (!parsed.ok) return parsed.response;
   const body = parsed.value;
+  if (body.accusedId === uid) return c.json({ error: "cannot_report_self" as const }, 400);
   if (!(await store.isMember(jarId, body.accusedId))) return c.json({ error: "bad_target" }, 400);
   const detail = await store.getJarDetail(jarId, uid);
   if (!detail) return c.json({ error: "jar_not_found" }, 404);
