@@ -118,27 +118,32 @@ export async function cropProfileImage(
   image: HTMLImageElement,
   transform: CropTransform,
 ): Promise<ImageResult<string, "encode_failed">> {
-  const { zoom, offset, viewportSize } = transform;
-  const coverScale = Math.max(
-    viewportSize / image.naturalWidth,
-    viewportSize / image.naturalHeight,
-  );
-  const renderedScale = coverScale * zoom;
-  const sourceSize = viewportSize / renderedScale;
-  const centerX = image.naturalWidth / 2 - offset.x / renderedScale;
-  const centerY = image.naturalHeight / 2 - offset.y / renderedScale;
-  const sourceX = Math.max(0, Math.min(image.naturalWidth - sourceSize, centerX - sourceSize / 2));
-  const sourceY = Math.max(0, Math.min(image.naturalHeight - sourceSize, centerY - sourceSize / 2));
-
-  const canvas = document.createElement("canvas");
-  canvas.width = 512;
-  canvas.height = 512;
-  const context = canvas.getContext("2d");
-  if (!context) throw new Error("canvas unavailable");
-  context.fillStyle = "#fff";
-  context.fillRect(0, 0, 512, 512);
-  context.drawImage(image, sourceX, sourceY, sourceSize, sourceSize, 0, 0, 512, 512);
   try {
+    const { zoom, offset, viewportSize } = transform;
+    const coverScale = Math.max(
+      viewportSize / image.naturalWidth,
+      viewportSize / image.naturalHeight,
+    );
+    const renderedScale = coverScale * zoom;
+    const sourceSize = viewportSize / renderedScale;
+    const centerX = image.naturalWidth / 2 - offset.x / renderedScale;
+    const centerY = image.naturalHeight / 2 - offset.y / renderedScale;
+    const sourceX = Math.max(
+      0,
+      Math.min(image.naturalWidth - sourceSize, centerX - sourceSize / 2),
+    );
+    const sourceY = Math.max(
+      0,
+      Math.min(image.naturalHeight - sourceSize, centerY - sourceSize / 2),
+    );
+    const canvas = document.createElement("canvas");
+    canvas.width = 512;
+    canvas.height = 512;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("canvas unavailable");
+    context.fillStyle = "#fff";
+    context.fillRect(0, 0, 512, 512);
+    context.drawImage(image, sourceX, sourceY, sourceSize, sourceSize, 0, 0, 512, 512);
     return {
       ok: true,
       value: AvatarPhotoDataUrlSchema.parse(await boundedJpeg(canvas, AVATAR_MAX_BYTES)),
