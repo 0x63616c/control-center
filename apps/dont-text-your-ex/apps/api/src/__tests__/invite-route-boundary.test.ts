@@ -3,6 +3,7 @@ import { InviteRateLimitErrorSchema, UserIdSchema } from "../../../../contracts"
 
 const store = vi.hoisted(() => ({
   getJarPreviewByCode: vi.fn(),
+  joinJarByCode: vi.fn(),
   userIdForToken: vi.fn(),
 }));
 
@@ -13,6 +14,7 @@ import { buildApp } from "../server";
 describe("invite-code route boundary", () => {
   beforeEach(() => {
     store.getJarPreviewByCode.mockReset();
+    store.joinJarByCode.mockReset();
     store.userIdForToken.mockReset();
     store.userIdForToken.mockImplementation(async (token: string) =>
       token === "sess_otherboundary"
@@ -20,6 +22,7 @@ describe("invite-code route boundary", () => {
         : UserIdSchema.parse("usr_routeboundary"),
     );
     store.getJarPreviewByCode.mockResolvedValue(null);
+    store.joinJarByCode.mockResolvedValue(null);
   });
 
   it("rejects malformed route params before persistence", async () => {
