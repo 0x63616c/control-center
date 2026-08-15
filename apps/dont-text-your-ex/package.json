@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@capacitor/core": "^8.4.0",
-    "@capacitor/ios": "^8.4.0"
+    "@capacitor/ios": "^8.4.0",
+    "zod": "^4.4.2"
   }
 }

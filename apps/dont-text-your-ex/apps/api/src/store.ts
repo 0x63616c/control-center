@@ -1,5 +1,21 @@
+import {
+  ActivitySchema,
+  EvidenceIdSchema,
+  JarDetailSchema,
+  JarPreviewSchema,
+  JarSummarySchema,
+  MemberSchema,
+  ReportSchema,
+  ReportStatusSchema,
+  type SessionToken,
+  SessionTokenSchema,
+  type UserId,
+  UserIdSchema,
+  UserSchema,
+} from "../../../contracts";
 import { DAY, now, pool } from "./db/index";
 import { id, inviteCode } from "./ids";
+import { parseEvidenceThreadJson, serializeEvidenceThreadJson } from "./persistence";
 import type {
   ActivityDTO,
   ActivityType,
@@ -87,14 +103,19 @@ async function exesFor(userId: string): Promise<string[]> {
 }
 
 async function serializeUser(u: UserRow): Promise<UserDTO> {
-  return {
+  return UserSchema.parse({
     id: u.id,
     name: u.name,
     color: u.color,
     emoji: u.emoji,
     photo: u.photo,
     exes: await exesFor(u.id),
-  };
+  });
+}
+
+function requireValue<T>(value: T | null | undefined, message: string): T {
+  if (value == null) throw new Error(message);
+  return value;
 }
 
 async function getUserRow(userId: string): Promise<UserRow | null> {
@@ -148,7 +169,7 @@ export async function createUser(opts: {
       label,
     ]);
   }
-  return (await getUser(uid)) as UserDTO;
+  return requireValue(await getUser(uid), "created user could not be loaded");
 }
 
 export async function updateUser(
@@ -182,8 +203,8 @@ export async function setExes(userId: string, exes: string[]): Promise<void> {
 }
 
 // ─────────────────────────── sessions ───────────────────────────
-export async function createSession(userId: string): Promise<string> {
-  const token = id("sess", 24);
+export async function createSession(userId: UserId): Promise<SessionToken> {
+  const token = SessionTokenSchema.parse(id("sess", 24));
   await pool.query("INSERT INTO sessions (token, user_id, created_at) VALUES ($1,$2,$3)", [
     token,
     userId,
@@ -192,15 +213,16 @@ export async function createSession(userId: string): Promise<string> {
   return token;
 }
 
-export async function userIdForToken(token: string): Promise<string | null> {
+export async function userIdForToken(token: SessionToken): Promise<UserId | null> {
   const { rows } = await pool.query<{ user_id: string }>(
     "SELECT user_id FROM sessions WHERE token = $1",
     [token],
   );
-  return rows[0]?.user_id ?? null;
+  const userId = rows[0]?.user_id;
+  return userId ? UserIdSchema.parse(userId) : null;
 }
 
-export async function deleteSession(token: string): Promise<void> {
+export async function deleteSession(token: SessionToken): Promise<void> {
   await pool.query("DELETE FROM sessions WHERE token=$1", [token]);
 }
 
@@ -257,13 +279,13 @@ async function jarTotal(jarId: string): Promise<number> {
 }
 
 async function serializeMember(m: MembershipRow): Promise<MemberDTO> {
-  return {
-    user: (await getUser(m.user_id)) as UserDTO,
-    role: m.role as "owner" | "member",
+  return MemberSchema.parse({
+    user: requireValue(await getUser(m.user_id), "membership user could not be loaded"),
+    role: MemberSchema.shape.role.parse(m.role),
     tallyCents: m.tally_cents,
     daysClean: daysClean(m.streak_start_at),
     shareStreak: !!m.share_streak,
-  };
+  });
 }
 
 export async function listJarsForUser(userId: string): Promise<JarSummaryDTO[]> {
@@ -275,7 +297,7 @@ export async function listJarsForUser(userId: string): Promise<JarSummaryDTO[]> 
     rows.map(async (j) => {
       const members = await membersOf(j.id);
       const mine = members.find((m) => m.user_id === userId);
-      return {
+      return JarSummarySchema.parse({
         id: j.id,
         name: j.name,
         rule: j.rule,
@@ -286,7 +308,7 @@ export async function listJarsForUser(userId: string): Promise<JarSummaryDTO[]> 
         myTallyCents: mine?.tally_cents ?? 0,
         myDaysClean: daysClean(mine?.streak_start_at ?? null),
         myShareStreak: !!mine?.share_streak,
-      };
+      });
     }),
   );
 }
@@ -298,7 +320,7 @@ export async function getJarDetail(jarId: string, _meId: string): Promise<JarDet
   const members = (await Promise.all(rawMembers.map(serializeMember))).sort(
     (a, b) => b.tallyCents - a.tallyCents,
   );
-  return {
+  return JarDetailSchema.parse({
     id: j.id,
     name: j.name,
     rule: j.rule,
@@ -307,7 +329,7 @@ export async function getJarDetail(jarId: string, _meId: string): Promise<JarDet
     jarTotalCents: await jarTotal(jarId),
     members,
     activity: await activityForJar(jarId, 8),
-  };
+  });
 }
 
 export async function getJarPreviewByCode(code: string): Promise<{
@@ -321,14 +343,14 @@ export async function getJarPreviewByCode(code: string): Promise<{
   const j = await jarRowByCode(code);
   if (!j) return null;
   const members = await membersOf(j.id);
-  return {
+  return JarPreviewSchema.parse({
     id: j.id,
     name: j.name,
     rule: j.rule,
     defaultCents: j.default_cents,
     memberIds: members.map((m) => m.user_id),
     memberCount: members.length,
-  };
+  });
 }
 
 export async function createJar(opts: {
@@ -346,7 +368,10 @@ export async function createJar(opts: {
   );
   await addMembership(jid, opts.userId, "owner");
   const jars = await listJarsForUser(opts.userId);
-  return jars.find((j) => j.id === jid) as JarSummaryDTO;
+  return requireValue(
+    jars.find((jar) => jar.id === jid),
+    "created jar could not be loaded",
+  );
 }
 
 async function addMembership(
@@ -466,7 +491,7 @@ export async function createReport(opts: {
   for (const thread of opts.evidence) {
     await pool.query(
       "INSERT INTO report_evidence (id, report_id, kind, payload, created_at) VALUES ($1,$2,$3,$4,$5)",
-      [id("evi"), rid, "image", JSON.stringify(thread), now()],
+      [id("evi"), rid, "image", serializeEvidenceThreadJson(thread), now()],
     );
   }
   await logActivity({
@@ -477,7 +502,7 @@ export async function createReport(opts: {
     anonymous: opts.anonymous,
     note: opts.note ?? null,
   });
-  return (await serializeReport(rid)) as ReportDTO;
+  return requireValue(await serializeReport(rid), "created report could not be loaded");
 }
 
 type ReportRow = {
@@ -508,23 +533,23 @@ async function serializeReport(reportId: string): Promise<ReportDTO | null> {
     [reportId],
   );
   const evidence = evRows.map((e) => ({
-    id: e.id,
+    id: EvidenceIdSchema.parse(e.id),
     kind: "image" as const,
-    thread: JSON.parse(e.payload) as EvidenceThread,
+    thread: parseEvidenceThreadJson(e.payload),
   }));
-  return {
+  return ReportSchema.parse({
     id: r.id,
     jarId: r.jar_id,
     jarName: j.name,
     accuser: r.is_anonymous ? null : await getUser(r.accuser_id),
-    accused: (await getUser(r.accused_id)) as UserDTO,
+    accused: requireValue(await getUser(r.accused_id), "report accused user could not be loaded"),
     note: r.note,
     anonymous: !!r.is_anonymous,
     amountCents: r.amount_cents,
-    status: r.status as "pending" | "owned" | "denied",
+    status: ReportStatusSchema.parse(r.status),
     ago: ago(r.created_at),
     evidence,
-  };
+  });
 }
 
 export async function pendingReportsForUser(userId: string): Promise<ReportDTO[]> {
@@ -612,7 +637,7 @@ type ActivityRow = {
 
 async function serializeActivity(a: ActivityRow): Promise<ActivityDTO> {
   const j = await jarRow(a.jar_id);
-  return {
+  return ActivitySchema.parse({
     id: a.id,
     jarId: a.jar_id,
     jarName: j?.name ?? "",
@@ -625,7 +650,7 @@ async function serializeActivity(a: ActivityRow): Promise<ActivityDTO> {
     note: a.note,
     text: a.text,
     ago: ago(a.created_at),
-  };
+  });
 }
 
 async function activityForJar(jarId: string, limit = 50): Promise<ActivityDTO[]> {

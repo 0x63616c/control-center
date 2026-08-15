@@ -1,12 +1,23 @@
-import type {
-  ActivityDTO,
-  EvidenceThread,
-  JarDetailDTO,
-  JarPreviewDTO,
-  JarSummaryDTO,
-  MeDTO,
-  ReportDTO,
-} from "./types";
+import type { z } from "zod";
+import {
+  ActivitySchema,
+  ApiErrorBodySchema,
+  type AppleAuthRequest,
+  AuthResponseSchema,
+  type CreateJarRequest,
+  type CreateReportRequest,
+  JarDetailSchema,
+  JarPreviewSchema,
+  JarSummarySchema,
+  JoinJarResponseSchema,
+  type LogSlipRequest,
+  MeSchema,
+  OkResponseSchema,
+  ReportSchema,
+  type SessionToken,
+  SessionTokenSchema,
+  type UpdateMeRequest,
+} from "../../../contracts";
 
 const TOKEN_KEY = "tye_token";
 
@@ -16,15 +27,30 @@ const TOKEN_KEY = "tye_token";
 // origin as the web app: "https://dont-text-your-ex.worldwidewebb.co".
 const API_BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "");
 
-export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+export function getToken(): SessionToken | null {
+  const parsed = SessionTokenSchema.safeParse(localStorage.getItem(TOKEN_KEY));
+  return parsed.success ? parsed.data : null;
 }
+
 export function setToken(token: string | null): void {
-  if (token) localStorage.setItem(TOKEN_KEY, token);
+  if (token) localStorage.setItem(TOKEN_KEY, SessionTokenSchema.parse(token));
   else localStorage.removeItem(TOKEN_KEY);
 }
 
-async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function responseJson(response: Response, description: string): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    throw new Error(`invalid response for ${description}`);
+  }
+}
+
+async function req<T>(
+  schema: z.ZodType<T>,
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<T> {
   const headers: Record<string, string> = {};
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -34,26 +60,32 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
+  const description = `${method} ${path}`;
   if (!res.ok) {
     let detail: unknown;
     try {
       detail = await res.json();
     } catch {
-      /* ignore */
+      detail = undefined;
     }
-    const apiDetail = detail as { error?: string; message?: string };
-    const message = [apiDetail?.error, apiDetail?.message].filter(Boolean).join(": ");
-    throw new ApiError(res.status, message || res.statusText, detail);
+    const parsed = ApiErrorBodySchema.safeParse(detail);
+    const apiDetail = parsed.success ? parsed.data : undefined;
+    const message = apiDetail
+      ? [apiDetail.error, apiDetail.message].filter(Boolean).join(": ")
+      : res.statusText;
+    throw new ApiError(res.status, message || `HTTP ${res.status}`, apiDetail);
   }
-  if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
+  const raw = await responseJson(res, description);
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success) throw new Error(`invalid response for ${description}`);
+  return parsed.data;
 }
 
 class ApiError extends Error {
   constructor(
-    public status: number,
+    public readonly status: number,
     message: string,
-    public detail?: unknown,
+    public readonly detail?: z.infer<typeof ApiErrorBodySchema>,
   ) {
     super(message);
   }
@@ -61,48 +93,35 @@ class ApiError extends Error {
 
 export const api = {
   // auth
-  signInWithApple: (input: { identityToken: string; nonce: string; fullName?: string }) =>
-    req<{ token: string; user: MeDTO; isNew: boolean }>("POST", "/auth/apple", input),
-  logout: () => req<{ ok: boolean }>("POST", "/auth/logout"),
+  signInWithApple: (input: AppleAuthRequest) =>
+    req(AuthResponseSchema, "POST", "/auth/apple", input),
+  logout: () => req(OkResponseSchema, "POST", "/auth/logout"),
 
   // me
-  me: () => req<MeDTO>("GET", "/me"),
-  updateMe: (patch: {
-    color?: string;
-    emoji?: string | null;
-    photo?: string | null;
-    exes?: string[];
-  }) => req<MeDTO>("PATCH", "/me", patch),
+  me: () => req(MeSchema, "GET", "/me"),
+  updateMe: (patch: UpdateMeRequest) => req(MeSchema, "PATCH", "/me", patch),
 
   // jars
-  jars: () => req<JarSummaryDTO[]>("GET", "/jars"),
-  jar: (id: string) => req<JarDetailDTO>("GET", `/jars/${id}`),
-  createJar: (input: { name: string; rule?: string; defaultCents?: number }) =>
-    req<JarSummaryDTO>("POST", "/jars", input),
-  jarByCode: (code: string) => req<JarPreviewDTO>("GET", `/jars/code/${encodeURIComponent(code)}`),
-  joinJar: (code: string) => req<{ jarId: string }>("POST", "/jars/join", { code }),
+  jars: () => req(JarSummarySchema.array(), "GET", "/jars"),
+  jar: (id: string) => req(JarDetailSchema, "GET", `/jars/${id}`),
+  createJar: (input: CreateJarRequest) => req(JarSummarySchema, "POST", "/jars", input),
+  jarByCode: (code: string) =>
+    req(JarPreviewSchema, "GET", `/jars/code/${encodeURIComponent(code)}`),
+  joinJar: (code: string) => req(JoinJarResponseSchema, "POST", "/jars/join", { code }),
   setShareStreak: (jarId: string, value: boolean) =>
-    req<{ ok: boolean }>("POST", `/jars/${jarId}/share-streak`, { value }),
+    req(OkResponseSchema, "POST", `/jars/${jarId}/share-streak`, { value }),
 
   // slips
-  logSlip: (jarId: string, input: { amountCents: number; note?: string; exLabel?: string }) =>
-    req<JarDetailDTO>("POST", `/jars/${jarId}/slips`, input),
+  logSlip: (jarId: string, input: LogSlipRequest) =>
+    req(JarDetailSchema, "POST", `/jars/${jarId}/slips`, input),
 
   // reports
-  createReport: (
-    jarId: string,
-    input: {
-      accusedId: string;
-      note?: string;
-      anonymous: boolean;
-      amountCents?: number;
-      evidence?: EvidenceThread[];
-    },
-  ) => req<ReportDTO>("POST", `/jars/${jarId}/reports`, input),
-  pendingReports: () => req<ReportDTO[]>("GET", "/reports/pending"),
+  createReport: (jarId: string, input: CreateReportRequest) =>
+    req(ReportSchema, "POST", `/jars/${jarId}/reports`, input),
+  pendingReports: () => req(ReportSchema.array(), "GET", "/reports/pending"),
   resolveReport: (id: string, action: "own" | "deny") =>
-    req<ReportDTO>("POST", `/reports/${id}/resolve`, { action }),
+    req(ReportSchema, "POST", `/reports/${id}/resolve`, { action }),
 
   // activity
-  activity: () => req<ActivityDTO[]>("GET", "/activity"),
+  activity: () => req(ActivitySchema.array(), "GET", "/activity"),
 };

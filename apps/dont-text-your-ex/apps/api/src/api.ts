@@ -1,16 +1,30 @@
 import { createLogger } from "@www/logger";
 import { Hono } from "hono";
 import { decodeJwt, decodeProtectedHeader } from "jose";
-import { AuthDevRequestSchema } from "../../../contracts";
+import {
+  AppleAuthRequestSchema,
+  AuthDevRequestSchema,
+  CreateJarRequestSchema,
+  CreateReportRequestSchema,
+  JarIdSchema,
+  JoinJarRequestSchema,
+  LogSlipRequestSchema,
+  ReportIdSchema,
+  ResolveReportRequestSchema,
+  type SessionToken,
+  ShareStreakRequestSchema,
+  UpdateMeRequestSchema,
+  type UserId,
+} from "../../../contracts";
 import { verifyAppleIdentityToken } from "./apple-auth";
 import { requireUser } from "./auth";
-import { parseRequestJson } from "./boundary";
+import { errorDetails, parseRequestJson, parseRequestValue } from "./boundary";
 import { appleBundleId, isProduction } from "./env";
 import { id } from "./ids";
 import { resetAndSeed } from "./seed";
 import * as store from "./store";
 
-export type Env = { Variables: { userId: string | null; token: string } };
+export type Env = { Variables: { userId: UserId | null; token: SessionToken | null } };
 
 export const api = new Hono<Env>();
 
@@ -56,19 +70,9 @@ api.post("/test/reset", async (c) => {
 // Real Sign In with Apple: verifies the JWT from the native
 // ASAuthorizationAppleIDProvider flow, then finds or creates the user.
 api.post("/auth/apple", async (c) => {
-  const { identityToken, nonce, fullName } = await c.req.json<{
-    identityToken?: string;
-    nonce?: string;
-    fullName?: string;
-  }>();
-  if (!identityToken) {
-    log.warn("auth/apple: missing identityToken in body");
-    return c.json({ error: "identity_token_required" }, 400);
-  }
-  if (!nonce) {
-    log.warn("auth/apple: missing nonce in body");
-    return c.json({ error: "nonce_required" }, 400);
-  }
+  const parsed = await parseRequestJson(c, AppleAuthRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  const { identityToken, nonce, fullName } = parsed.value;
 
   // Decode WITHOUT verifying first, so the logs show exactly what the device
   // sent (the token itself is never logged - only its non-secret claims). The
@@ -90,16 +94,16 @@ api.post("/auth/apple", async (c) => {
       "auth/apple: token received",
     );
   } catch (e) {
-    log.warn({ err: (e as Error).message }, "auth/apple: token could not be decoded");
+    log.warn({ err: errorDetails(e).message }, "auth/apple: token could not be decoded");
   }
 
   let sub: string;
   try {
     ({ sub } = await verifyAppleIdentityToken(identityToken, nonce));
   } catch (e) {
-    const message = (e as Error).message;
+    const { name, message } = errorDetails(e);
     log.warn(
-      { err: (e as Error).name, msg: message, expectedAud: appleBundleId() },
+      { err: name, msg: message, expectedAud: appleBundleId() },
       "auth/apple: verification failed",
     );
     return c.json(
@@ -145,12 +149,9 @@ api.get("/me", async (c) => {
 api.patch("/me", async (c) => {
   const uid = requireUser(c);
   if (!uid) return c.json(unauth, 401);
-  const body = await c.req.json<{
-    color?: string;
-    emoji?: string | null;
-    photo?: string | null;
-    exes?: string[];
-  }>();
+  const parsed = await parseRequestJson(c, UpdateMeRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value;
   if (body.color !== undefined || body.emoji !== undefined || body.photo !== undefined) {
     await store.updateUser(uid, {
       color: body.color,
@@ -172,13 +173,9 @@ api.get("/jars", async (c) => {
 api.post("/jars", async (c) => {
   const uid = requireUser(c);
   if (!uid) return c.json(unauth, 401);
-  const { name, rule, defaultCents } = await c.req.json<{
-    name: string;
-    rule?: string;
-    defaultCents?: number;
-  }>();
-  if (!name?.trim()) return c.json({ error: "name_required" }, 400);
-  return c.json(await store.createJar({ userId: uid, name: name.trim(), rule, defaultCents }));
+  const parsed = await parseRequestJson(c, CreateJarRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  return c.json(await store.createJar({ userId: uid, ...parsed.value }));
 });
 
 api.get("/jars/code/:code", async (c) => {
@@ -192,8 +189,9 @@ api.get("/jars/code/:code", async (c) => {
 api.post("/jars/join", async (c) => {
   const uid = requireUser(c);
   if (!uid) return c.json(unauth, 401);
-  const { code } = await c.req.json<{ code: string }>();
-  const res = await store.joinJarByCode(uid, code ?? "");
+  const parsed = await parseRequestJson(c, JoinJarRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  const res = await store.joinJarByCode(uid, parsed.value.code);
   if (!res) return c.json({ error: "not_found" }, 404);
   return c.json(res);
 });
@@ -201,7 +199,9 @@ api.post("/jars/join", async (c) => {
 api.get("/jars/:id", async (c) => {
   const uid = requireUser(c);
   if (!uid) return c.json(unauth, 401);
-  const jarId = c.req.param("id");
+  const parsed = parseRequestValue(c, JarIdSchema, c.req.param("id"));
+  if (!parsed.ok) return parsed.response;
+  const jarId = parsed.value;
   if (!(await store.isMember(jarId, uid))) return c.json({ error: "not_member" }, 403);
   const detail = await store.getJarDetail(jarId, uid);
   if (!detail) return c.json({ error: "not_found" }, 404);
@@ -211,10 +211,13 @@ api.get("/jars/:id", async (c) => {
 api.post("/jars/:id/share-streak", async (c) => {
   const uid = requireUser(c);
   if (!uid) return c.json(unauth, 401);
-  const jarId = c.req.param("id");
+  const parsedId = parseRequestValue(c, JarIdSchema, c.req.param("id"));
+  if (!parsedId.ok) return parsedId.response;
+  const jarId = parsedId.value;
   if (!(await store.isMember(jarId, uid))) return c.json({ error: "not_member" }, 403);
-  const { value } = await c.req.json<{ value: boolean }>();
-  await store.setShareStreak(jarId, uid, !!value);
+  const parsed = await parseRequestJson(c, ShareStreakRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  await store.setShareStreak(jarId, uid, parsed.value.value);
   return c.json({ ok: true });
 });
 
@@ -222,16 +225,13 @@ api.post("/jars/:id/share-streak", async (c) => {
 api.post("/jars/:id/slips", async (c) => {
   const uid = requireUser(c);
   if (!uid) return c.json(unauth, 401);
-  const jarId = c.req.param("id");
+  const parsedId = parseRequestValue(c, JarIdSchema, c.req.param("id"));
+  if (!parsedId.ok) return parsedId.response;
+  const jarId = parsedId.value;
   if (!(await store.isMember(jarId, uid))) return c.json({ error: "not_member" }, 403);
-  const { amountCents, note, exLabel } = await c.req.json<{
-    amountCents: number;
-    note?: string;
-    exLabel?: string;
-  }>();
-  if (!Number.isFinite(amountCents) || amountCents <= 0)
-    return c.json({ error: "bad_amount" }, 400);
-  await store.logSlip({ jarId, userId: uid, amountCents, note, exLabel, source: "self" });
+  const parsed = await parseRequestJson(c, LogSlipRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  await store.logSlip({ jarId, userId: uid, ...parsed.value, source: "self" });
   return c.json(await store.getJarDetail(jarId, uid));
 });
 
@@ -239,17 +239,14 @@ api.post("/jars/:id/slips", async (c) => {
 api.post("/jars/:id/reports", async (c) => {
   const uid = requireUser(c);
   if (!uid) return c.json(unauth, 401);
-  const jarId = c.req.param("id");
+  const parsedId = parseRequestValue(c, JarIdSchema, c.req.param("id"));
+  if (!parsedId.ok) return parsedId.response;
+  const jarId = parsedId.value;
   if (!(await store.isMember(jarId, uid))) return c.json({ error: "not_member" }, 403);
-  const body = await c.req.json<{
-    accusedId: string;
-    note?: string;
-    anonymous?: boolean;
-    amountCents?: number;
-    evidence?: import("./types").EvidenceThread[];
-  }>();
-  if (!body.accusedId || !(await store.isMember(jarId, body.accusedId)))
-    return c.json({ error: "bad_target" }, 400);
+  const parsed = await parseRequestJson(c, CreateReportRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value;
+  if (!(await store.isMember(jarId, body.accusedId))) return c.json({ error: "bad_target" }, 400);
   const detail = await store.getJarDetail(jarId, uid);
   if (!detail) return c.json({ error: "jar_not_found" }, 404);
   const amount = body.amountCents ?? detail.defaultCents;
@@ -274,9 +271,11 @@ api.get("/reports/pending", async (c) => {
 api.post("/reports/:id/resolve", async (c) => {
   const uid = requireUser(c);
   if (!uid) return c.json(unauth, 401);
-  const { action } = await c.req.json<{ action: "own" | "deny" }>();
-  if (action !== "own" && action !== "deny") return c.json({ error: "bad_action" }, 400);
-  const res = await store.resolveReport(c.req.param("id"), uid, action);
+  const parsedId = parseRequestValue(c, ReportIdSchema, c.req.param("id"));
+  if (!parsedId.ok) return parsedId.response;
+  const parsed = await parseRequestJson(c, ResolveReportRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  const res = await store.resolveReport(parsedId.value, uid, parsed.value.action);
   if (!res) return c.json({ error: "not_found_or_forbidden" }, 404);
   return c.json(res);
 });

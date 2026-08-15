@@ -1,9 +1,238 @@
 import { z } from "zod";
 
+const idSchema = <Prefix extends string, Brand extends string>(prefix: Prefix, brand: Brand) =>
+  z
+    .string()
+    .regex(new RegExp(`^${prefix}_[A-Za-z0-9]+$`), `invalid ${brand}`)
+    .brand<Brand>();
+
+export const UserIdSchema = idSchema("usr", "UserId");
+export const JarIdSchema = idSchema("jar", "JarId");
+export const ReportIdSchema = idSchema("rpt", "ReportId");
+export const SessionTokenSchema = idSchema("sess", "SessionToken");
+const ActivityIdSchema = idSchema("act", "ActivityId");
+export const EvidenceIdSchema = idSchema("evi", "EvidenceId");
+
+export type UserId = z.infer<typeof UserIdSchema>;
+type JarId = z.infer<typeof JarIdSchema>;
+export type SessionToken = z.infer<typeof SessionTokenSchema>;
+
+const nonEmptyText = z.string().trim().min(1);
+const cents = z.number().int().positive();
+
 export const AuthDevRequestSchema = z
   .object({
     as: z.enum(["new", "calum"]).optional(),
   })
   .strict();
 
-export type AuthDevRequest = z.infer<typeof AuthDevRequestSchema>;
+export const AppleAuthRequestSchema = z
+  .object({
+    identityToken: nonEmptyText,
+    nonce: z.string().regex(/^nonce_[a-f0-9]{48}$/),
+    fullName: z.string().optional(),
+  })
+  .strict();
+
+export const UpdateMeRequestSchema = z
+  .object({
+    color: z.string().optional(),
+    emoji: z.string().nullable().optional(),
+    photo: z.string().nullable().optional(),
+    exes: z.array(z.string()).optional(),
+  })
+  .strict();
+
+export const CreateJarRequestSchema = z
+  .object({
+    name: nonEmptyText,
+    rule: z.string().optional(),
+    defaultCents: cents.optional(),
+  })
+  .strict();
+
+export const JoinJarRequestSchema = z.object({ code: nonEmptyText }).strict();
+export const ShareStreakRequestSchema = z.object({ value: z.boolean() }).strict();
+export const LogSlipRequestSchema = z
+  .object({
+    amountCents: cents,
+    note: z.string().optional(),
+    exLabel: z.string().optional(),
+  })
+  .strict();
+
+export const EvidenceThreadSchema = z
+  .object({
+    to: z.string(),
+    time: z.string(),
+    bubbles: z.array(
+      z
+        .object({
+          me: z.boolean(),
+          text: z.string(),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+
+export const CreateReportRequestSchema = z
+  .object({
+    accusedId: UserIdSchema,
+    note: z.string().optional(),
+    anonymous: z.boolean().optional(),
+    amountCents: cents.optional(),
+    evidence: z.array(EvidenceThreadSchema).optional(),
+  })
+  .strict();
+
+export const ResolveReportRequestSchema = z.object({ action: z.enum(["own", "deny"]) }).strict();
+
+export type AppleAuthRequest = z.infer<typeof AppleAuthRequestSchema>;
+export type UpdateMeRequest = z.infer<typeof UpdateMeRequestSchema>;
+export type CreateJarRequest = z.infer<typeof CreateJarRequestSchema>;
+export type LogSlipRequest = z.infer<typeof LogSlipRequestSchema>;
+export type EvidenceThread = z.infer<typeof EvidenceThreadSchema>;
+export type CreateReportRequest = z.infer<typeof CreateReportRequestSchema>;
+
+export const UserSchema = z
+  .object({
+    id: UserIdSchema,
+    name: z.string(),
+    color: z.string(),
+    emoji: z.string().nullable(),
+    photo: z.string().nullable(),
+    exes: z.array(z.string()),
+  })
+  .strict();
+
+export const MeSchema = UserSchema.extend({ phone: z.string().nullable() }).strict();
+
+export const MemberSchema = z
+  .object({
+    user: UserSchema,
+    role: z.enum(["owner", "member"]),
+    tallyCents: z.number().int().nonnegative(),
+    daysClean: z.number().int().min(-1),
+    shareStreak: z.boolean(),
+  })
+  .strict();
+
+export const JarSummarySchema = z
+  .object({
+    id: JarIdSchema,
+    name: z.string(),
+    rule: z.string(),
+    defaultCents: cents,
+    memberIds: z.array(UserIdSchema),
+    memberCount: z.number().int().nonnegative(),
+    jarTotalCents: z.number().int().nonnegative(),
+    myTallyCents: z.number().int().nonnegative(),
+    myDaysClean: z.number().int().min(-1),
+    myShareStreak: z.boolean(),
+  })
+  .strict();
+
+const ActivityTypeSchema = z.enum(["slip", "report", "join", "milestone", "deny"]);
+
+export const ActivitySchema: z.ZodType<ActivityDTO> = z
+  .object({
+    id: ActivityIdSchema,
+    jarId: JarIdSchema,
+    jarName: z.string(),
+    type: ActivityTypeSchema,
+    user: UserSchema.nullable(),
+    by: UserSchema.nullable(),
+    anonymous: z.boolean(),
+    amountCents: z.number().int().nonnegative().nullable(),
+    exLabel: z.string().nullable(),
+    note: z.string().nullable(),
+    text: z.string().nullable(),
+    ago: z.string(),
+  })
+  .strict();
+
+export const JarDetailSchema = z
+  .object({
+    id: JarIdSchema,
+    name: z.string(),
+    rule: z.string(),
+    defaultCents: cents,
+    inviteCode: z.string(),
+    jarTotalCents: z.number().int().nonnegative(),
+    members: z.array(MemberSchema),
+    activity: z.array(ActivitySchema),
+  })
+  .strict();
+
+export const JarPreviewSchema = z
+  .object({
+    id: JarIdSchema,
+    name: z.string(),
+    rule: z.string(),
+    defaultCents: cents,
+    memberIds: z.array(UserIdSchema),
+    memberCount: z.number().int().nonnegative(),
+  })
+  .strict();
+
+const EvidenceSchema = z
+  .object({
+    id: EvidenceIdSchema,
+    kind: z.literal("image"),
+    thread: EvidenceThreadSchema,
+  })
+  .strict();
+
+export const ReportStatusSchema = z.enum(["pending", "owned", "denied"]);
+export const ReportSchema = z
+  .object({
+    id: ReportIdSchema,
+    jarId: JarIdSchema,
+    jarName: z.string(),
+    accuser: UserSchema.nullable(),
+    accused: UserSchema,
+    note: z.string().nullable(),
+    anonymous: z.boolean(),
+    amountCents: cents,
+    status: ReportStatusSchema,
+    ago: z.string(),
+    evidence: z.array(EvidenceSchema),
+  })
+  .strict();
+
+export const AuthResponseSchema = z
+  .object({ token: SessionTokenSchema, user: MeSchema, isNew: z.boolean() })
+  .strict();
+export const OkResponseSchema = z.object({ ok: z.literal(true) }).strict();
+export const JoinJarResponseSchema = z.object({ jarId: JarIdSchema }).strict();
+export const ApiErrorBodySchema = z
+  .object({
+    error: z.string(),
+    message: z.string().optional(),
+    expectedAud: z.string().optional(),
+  })
+  .strict();
+
+export type UserDTO = z.infer<typeof UserSchema>;
+export type MeDTO = z.infer<typeof MeSchema>;
+export type MemberDTO = z.infer<typeof MemberSchema>;
+export type JarSummaryDTO = z.infer<typeof JarSummarySchema>;
+export type ActivityType = z.infer<typeof ActivityTypeSchema>;
+export interface ActivityDTO {
+  readonly id: z.infer<typeof ActivityIdSchema>;
+  readonly jarId: JarId;
+  readonly jarName: string;
+  readonly type: ActivityType;
+  readonly user: UserDTO | null;
+  readonly by: UserDTO | null;
+  readonly anonymous: boolean;
+  readonly amountCents: number | null;
+  readonly exLabel: string | null;
+  readonly note: string | null;
+  readonly text: string | null;
+  readonly ago: string;
+}
+export type JarDetailDTO = z.infer<typeof JarDetailSchema>;
+export type JarPreviewDTO = z.infer<typeof JarPreviewSchema>;
+export type ReportDTO = z.infer<typeof ReportSchema>;

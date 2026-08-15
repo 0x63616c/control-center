@@ -2,6 +2,7 @@ import { DAY, now, pool } from "./db/index";
 import { runMigrations } from "./db/migrate";
 import { isProduction, shouldResetDatabase } from "./env";
 import { id } from "./ids";
+import { serializeEvidenceThreadJson } from "./persistence";
 
 type ActivitySeed =
   | {
@@ -236,7 +237,7 @@ export async function seed(): Promise<void> {
   for (const ev of PENDING.evidence) {
     await pool.query(
       "INSERT INTO report_evidence (id, report_id, kind, payload, created_at) VALUES ($1,$2,$3,$4,$5)",
-      [id("evi"), PENDING.id, "image", JSON.stringify(ev), now()],
+      [id("evi"), PENDING.id, "image", serializeEvidenceThreadJson(ev), now()],
     );
   }
 }

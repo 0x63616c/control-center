@@ -30,6 +30,7 @@ COPY infra/unifi/package.json infra/unifi/
 RUN bun install --frozen-lockfile --ignore-scripts
 
 COPY apps/dont-text-your-ex/apps/api apps/dont-text-your-ex/apps/api
+COPY apps/dont-text-your-ex/contracts apps/dont-text-your-ex/contracts
 COPY packages/logger packages/logger
 COPY packages/platform packages/platform
 
@@ -41,6 +42,7 @@ ENV PORT=8787
 
 COPY --from=build /app/node_modules node_modules
 COPY --from=build /app/apps/dont-text-your-ex/apps/api apps/dont-text-your-ex/apps/api
+COPY --from=build /app/apps/dont-text-your-ex/contracts apps/dont-text-your-ex/contracts
 COPY --from=build /app/packages/logger packages/logger
 COPY --from=build /app/packages/platform packages/platform
 COPY --from=build /app/package.json package.json
