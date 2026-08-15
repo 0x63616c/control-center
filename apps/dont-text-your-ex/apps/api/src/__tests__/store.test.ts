@@ -38,20 +38,57 @@ describe.skipIf(!HAS_DB)("users / auth", () => {
     expect(u.exes).toEqual(["Bob"]);
   });
 
-  it("creates session and resolves userId", async () => {
+  it("creates a 30-day session and refreshes last-used time without extending expiry", async () => {
     const u = await store.createUser({ name: "Bob" });
     const token = await store.createSession(u.id);
     expect(token).toMatch(/^sess_/);
+    const created = await pool.query<{
+      created_at: string;
+      expires_at: string;
+      last_used_at: string;
+    }>("SELECT created_at, expires_at, last_used_at FROM sessions WHERE token=$1", [token]);
+    const metadata = created.rows[0];
+    if (!metadata) throw new Error("created session metadata missing");
+    expect(Number(metadata.expires_at) - Number(metadata.created_at)).toBe(30 * 86_400_000);
+
+    await pool.query("UPDATE sessions SET last_used_at=$1 WHERE token=$2", [1, token]);
     const uid = await store.userIdForToken(token);
     expect(uid).toBe(u.id);
+    const used = await pool.query<{ expires_at: string; last_used_at: string }>(
+      "SELECT expires_at, last_used_at FROM sessions WHERE token=$1",
+      [token],
+    );
+    expect(Number(used.rows[0]?.last_used_at)).toBeGreaterThan(1);
+    expect(used.rows[0]?.expires_at).toBe(metadata.expires_at);
   });
 
-  it("deletes session", async () => {
+  it("rejects and deletes an expired session", async () => {
     const u = await store.createUser({ name: "Carol" });
     const token = await store.createSession(u.id);
-    await store.deleteSession(token);
+    await pool.query("UPDATE sessions SET expires_at=$1 WHERE token=$2", [Date.now() - 1, token]);
     const uid = await store.userIdForToken(token);
     expect(uid).toBeNull();
+    const persisted = await pool.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM sessions WHERE token=$1",
+      [token],
+    );
+    expect(persisted.rows[0]?.count).toBe("0");
+  });
+
+  it("creates independent tokens and logout revokes only the current session", async () => {
+    const u = await store.createUser({ name: "Multi-device User" });
+    const first = await store.createSession(u.id);
+    const second = await store.createSession(u.id);
+    expect(first).not.toBe(second);
+
+    const response = await buildApp().request("/api/auth/logout", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${first}` },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true });
+    expect(await store.userIdForToken(first)).toBeNull();
+    expect(await store.userIdForToken(second)).toBe(u.id);
   });
 
   it("finds user by phone", async () => {

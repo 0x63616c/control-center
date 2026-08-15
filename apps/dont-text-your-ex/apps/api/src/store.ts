@@ -205,23 +205,28 @@ export async function setExes(userId: string, exes: string[]): Promise<void> {
 }
 
 // ─────────────────────────── sessions ───────────────────────────
+const SESSION_ABSOLUTE_LIFETIME_MS = 30 * DAY;
+
 export async function createSession(userId: UserId): Promise<SessionToken> {
   const token = SessionTokenSchema.parse(id("sess", 24));
-  await pool.query("INSERT INTO sessions (token, user_id, created_at) VALUES ($1,$2,$3)", [
-    token,
-    userId,
-    now(),
-  ]);
+  const createdAt = now();
+  await pool.query(
+    "INSERT INTO sessions (token, user_id, created_at, expires_at, last_used_at) VALUES ($1,$2,$3,$4,$5)",
+    [token, userId, createdAt, createdAt + SESSION_ABSOLUTE_LIFETIME_MS, createdAt],
+  );
   return token;
 }
 
 export async function userIdForToken(token: SessionToken): Promise<UserId | null> {
+  const checkedAt = now();
   const { rows } = await pool.query<{ user_id: string }>(
-    "SELECT user_id FROM sessions WHERE token = $1",
-    [token],
+    "UPDATE sessions SET last_used_at=$2 WHERE token=$1 AND expires_at>$2 RETURNING user_id",
+    [token, checkedAt],
   );
   const userId = rows[0]?.user_id;
-  return userId ? UserIdSchema.parse(userId) : null;
+  if (userId) return UserIdSchema.parse(userId);
+  await pool.query("DELETE FROM sessions WHERE token=$1 AND expires_at<=$2", [token, checkedAt]);
+  return null;
 }
 
 export async function deleteSession(token: SessionToken): Promise<void> {
@@ -340,18 +345,23 @@ export async function getJarPreviewByCode(code: string): Promise<{
   name: string;
   rule: string;
   defaultCents: number;
-  memberIds: string[];
+  members: Array<Pick<UserDTO, "id" | "name" | "color" | "emoji" | "photo">>;
   memberCount: number;
 } | null> {
   const j = await jarRowByCode(code);
   if (!j) return null;
   const members = await membersOf(j.id);
+  const users = await Promise.all(
+    members.map(async (member) =>
+      requireValue(await getUser(member.user_id), "preview member could not be loaded"),
+    ),
+  );
   return JarPreviewSchema.parse({
     id: j.id,
     name: j.name,
     rule: j.rule,
     defaultCents: j.default_cents,
-    memberIds: members.map((m) => m.user_id),
+    members: users.map(({ id, name, color, emoji, photo }) => ({ id, name, color, emoji, photo })),
     memberCount: members.length,
   });
 }
