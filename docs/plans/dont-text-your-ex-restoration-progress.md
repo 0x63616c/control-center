@@ -138,6 +138,16 @@ Review-fix commits:
   and narrowed caught unknown errors without broad casts.
 - `caa619db8`: added the durable v1 acceptance contract and required individual
   agent QA evidence for every feature.
+- `a7accd733` and `03e4a2dd5`: protected hidden streaks, private ex labels, and
+  anonymous reporter identity at raw API boundaries; made streak sharing opt-in
+  and migrated existing memberships back to private. Multi-user Postgres/API
+  seams passed locally; hosted CI pending.
+- `eac6277ee`: rejects self-reporting with a typed `400 cannot_report_self` and
+  proves no report row is created.
+- `3720d8609`: production invite URL, web/native deep-link hydration, onboarding
+  preservation, AASA, Associated Domains entitlement, signing guard, and an
+  eleventh Playwright flow. Focused typecheck/seams/discovery green; independent
+  feature QA and hosted browser proof pending.
 
 ## Production evidence checklist
 
@@ -190,16 +200,16 @@ boundaries being exercised.
 | Feature | Implementation owner | Independent QA | Automated/hands-on evidence | Defects or missing states | Result |
 |---|---|---|---|---|---|
 | Apple auth, onboarding, profile | `apple_release`, `fix_ci_apple_arch` | v1 audit agents | Apple verifier/unit seams; onboarding/profile browser paths; unsigned simulator build | Physical Apple success/cancel/reload/cellular pending; avatar boundary validation, profile failures, and notification preferences incomplete | Blocked |
-| Create, join, invite, deep links | recovery/frontend agents | v1 audit agents | Create → Invite → Jar genuine-pointer browser path green; store join contract | Production invite URL, web/native deep-link hydration, share/copy, bad-code and auth-preserved link QA missing; join failure swallowed | Blocked |
-| Home, jar detail, activity, streak privacy | recovery/frontend agents | v1 audit agents | Home totals, ordering, and activity browser paths | Hidden `daysClean` is present in cross-user raw JSON; fetch failures look empty or load forever | Blocked — P0 privacy |
-| Self-log slip | recovery/frontend agents | v1 audit agents | Amount/confirm/tally/pot/streak browser flow; store tally contract | Private ex label is copied into shared activity; mutation/offline/duplicate/mobile states missing | Blocked — P0 privacy |
-| Reports, anonymity, real images, evidence, own/deny | reporting agents | v1 audit agents | Real PNG anonymous upload browser path; evidence contract/client tests; Postgres round trip; store Own and Deny | Anonymous accuser present in member-facing raw JSON; viewer accessibility and several image/deny/authorization states missing | Blocked — P0 privacy |
+| Create, join, invite, deep links | recovery/frontend agents + root | v1 audit agents | Create → Invite → Jar pointer path green; `3720d8609` adds canonical URL, onboarding-preserved web path, Capacitor cold/warm plumbing, AASA and 11th browser flow | Independent QA/hosted flow and physical universal-link proof pending; invite expiry/revocation still missing | Blocked |
+| Home, jar detail, activity, streak privacy | recovery/frontend agents | v1 audit agents | Home/order/activity browser paths; multi-user raw API seam now omits hidden days and retains self view; new/existing memberships private | Hosted privacy contract pending; fetch failures look empty or load forever | Blocked — privacy fixed, failure states remain |
+| Self-log slip | recovery/frontend agents | v1 audit agents | Amount/confirm/tally/pot/streak browser flow; other-member raw JSON now omits private ex label | Hosted privacy contract plus mutation/offline/duplicate/mobile states pending | Blocked — privacy fixed, failure states remain |
+| Reports, anonymity, real images, evidence, own/deny | reporting agents | v1 audit agents | Real PNG path, evidence contracts/Postgres round trip, Own/Deny; raw anonymous activity now has `by:null`; self-report rejected with zero persistence | Hosted boundary proof, resolved history, viewer accessibility and image/deny/authorization states missing | Blocked |
 | Settle and close lifecycle | recovery/frontend agents | v1 audit agents | Inert payment/owed amount browser path | Failed fetch renders a false `$0`; close/leave semantics and implementation absent | Blocked |
 | Sessions and logout | auth agents | v1 audit agents | Store session creation/deletion contracts | Transient `/me` error clears credentials; logout can leave server session; expiry/rotation/reload/revoke states missing | Blocked |
 | Loading, error, validation, empty | feature owners | v1 audit agents | Happy-path and selected empty/validation coverage only | Multiple screens swallow fetch/mutation failures or render false empty/success state | Blocked |
 | Mobile accessibility and clickability | frontend agents | v1 audit agents | Create overlay regression fixed; iOS simulator build | Missing accessible names/dialog focus/Escape; mobile viewport, VoiceOver, rotation, dynamic type, and physical-device QA pending | Blocked |
-| Notifications | Unassigned | v1 audit agents | None | Design calls notifications core; recovered README excludes them. Resolve scope explicitly, then implement preferences/APNs delivery or record a user-approved supersession | Blocked — product decision |
-| Authorization and data isolation | `fix_ci_apple_arch` follow-up | v1 audit agents | Existing membership checks plus new multi-user tests in progress | Three confirmed confidentiality leaks and incomplete outsider/role matrix | Blocked — P0 privacy |
+| Notifications | Future increment | v1 audit agents | README/migration and v1 scope decision agree | Explicitly excluded from this restoration v1; no silent claim that delivery exists | Not applicable — recorded v1 scope |
+| Authorization and data isolation | `fix_ci_apple_arch` follow-up | v1 audit agents | Multi-user Postgres/API seams cover hidden streak, ex label, anonymous reporter, outsider read, opt-in defaults/migration and self-target rejection | Hosted CI and the remaining complete owner/member/accused/outsider action matrix pending | Blocked — confirmed leaks fixed |
 | Production and external TestFlight | infra/release agents | external-user acceptance | Container builds and product CI green at `9bae5c9fa`; ASC read-only baseline recorded | Merge/deploy, public/auth, restart, backup/restore, second deploy, signed build, Friends group and non-team install all pending | Blocked |
 
 Every blocked row requires a fixing commit and a fresh evidence entry. This table
@@ -234,6 +244,16 @@ Apple/App Store Connect read-only baseline captured after user sign-in:
   existed and was valid through `2027-04-12`.
 - This inspection was read-only: no Apple capability, profile, build, group, link,
   or distribution state was changed.
+
+Associated Domains update captured 2026-08-14:
+
+- Enabled and saved **Associated Domains** on App ID
+  `co.worldwidewebb.textyourex` for production invite links.
+- Regenerated the existing App Store provisioning profile in the Developer
+  portal without uploading a build.
+- The profile summary still listed only In-App Purchase and Sign In with Apple
+  immediately after regeneration. Treat Associated Domains as unproven until the
+  signed-build guard reads it from both the embedded profile and app binary.
 
 ## Blockers and user-assisted gates
 

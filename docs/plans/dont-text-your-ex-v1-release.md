@@ -37,6 +37,19 @@ Review implementation against all of these rather than relying on memory:
 If code and design disagree, resolve the discrepancy explicitly. Do not silently
 delete a user capability to make a test or repository rule pass.
 
+## Explicit v1 scope decisions
+
+- Push notifications and notification-preference controls are not part of this
+  restoration v1. The recovered README and migration that deliberately removed
+  notification preferences supersede the older design draft's push section. APNs
+  delivery is a future product increment, not an unrecorded release blocker.
+- Validated report screenshots may be stored durably in Postgres JSONB for this
+  v1. They do not require a separate blob store, but backup/restore proof must
+  include the evidence payloads.
+- Closing a jar is part of this v1 because this acceptance contract names the
+  close lifecycle explicitly. Its permissions, retained history, mutation rules,
+  and invitation behavior must be implemented and tested.
+
 ## V1 capability acceptance
 
 ### Authentication and account
@@ -49,6 +62,7 @@ delete a user capability to make a test or repository rule pass.
 - [ ] Development authentication is unavailable in production.
 - [ ] Session creation, persistence, expiry, and logout/revocation work.
 - [ ] First-run onboarding and later profile/avatar editing work.
+- [ ] Avatar files have shared client/server MIME, signature, and size limits.
 
 ### Jars, invitations, and membership
 
@@ -57,6 +71,7 @@ delete a user capability to make a test or repository rule pass.
 - [ ] A user can copy/share an invitation and complete the invite screen.
 - [ ] A second user can join through a valid invitation.
 - [ ] Invalid, expired, or unauthorized join attempts fail clearly.
+- [ ] Invitations can be expired or revoked, and closed jars reject old links.
 - [ ] Jar membership and data are isolated from non-members.
 - [ ] A user can navigate back to their jar after creation/invitation.
 
@@ -85,6 +100,8 @@ delete a user capability to make a test or repository rule pass.
 - [ ] Anonymous reporting hides reporter identity from ordinary product views
   while preserving correct authorization and audit data.
 - [ ] Report outcomes and evidence threads remain usable after reload/restart.
+- [ ] Resolved reports remain available to authorized members as history rather
+  than disappearing when they leave the pending queue.
 
 ### Lifecycle and activity
 
