@@ -1,7 +1,7 @@
 import { App as NativeApp } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import { useCallback, useEffect, useState } from "react";
-import { api, getToken, setToken } from "./api";
+import { api, setToken } from "./api";
 import type { AppCtx, Route, TabName } from "./appctx";
 import { MoneyBurst } from "./bits";
 import { resolveDevice } from "./device";
@@ -9,6 +9,7 @@ import { Icon } from "./icons";
 import { installNativeInviteLinkListeners, inviteCodeFromPath } from "./invite-links";
 import { IOSDevice } from "./iosframe";
 import * as S from "./screens";
+import { restoreSession, revokeCurrentSession } from "./session-lifecycle";
 import { T } from "./theme";
 import type { MeDTO } from "./types";
 
@@ -148,6 +149,7 @@ function useFit() {
 
 export default function App() {
   const [booted, setBooted] = useState(false);
+  const [restoreFailed, setRestoreFailed] = useState(false);
   const [me, setMeState] = useState<MeDTO | null>(null);
   const [tab, setTabState] = useState<TabName>("onboarding");
   const [stack, setStack] = useState<Route[]>([]);
@@ -187,29 +189,35 @@ export default function App() {
       .catch(() => {});
   }, []);
 
-  // boot: restore session if a token exists
-  useEffect(() => {
-    const token = getToken();
-    if (!token) {
-      setBooted(true);
-      return;
-    }
-    api
-      .me()
-      .then((u) => {
-        setMeState(u);
+  const restoreAuth = useCallback(async () => {
+    setBooted(false);
+    setRestoreFailed(false);
+    const result = await restoreSession();
+    switch (result.status) {
+      case "signed_out":
+        break;
+      case "authenticated":
+        setMeState(result.user);
         setTabState("home");
         // A user with no name yet (Apple declined to share / first run) must
         // complete profile setup before using the app.
-        if (!u.name?.trim()) setStack([{ name: "setup" }]);
+        if (!result.user.name.trim()) setStack([{ name: "setup" }]);
         refreshPending();
-      })
-      .catch(() => {
-        setToken(null);
+        break;
+      case "expired":
         setSessionExpired(true);
-      })
-      .finally(() => setBooted(true));
+        break;
+      case "retry":
+        setRestoreFailed(true);
+        break;
+    }
+    setBooted(true);
   }, [refreshPending]);
+
+  // boot: restore session if a token exists
+  useEffect(() => {
+    void restoreAuth();
+  }, [restoreAuth]);
 
   useEffect(() => {
     if (!booted || !me?.name?.trim() || !pendingInviteCode) return;
@@ -239,9 +247,8 @@ export default function App() {
       .catch(() => {});
   }, []);
 
-  const signOut = useCallback(() => {
-    api.logout().catch(() => {});
-    setToken(null);
+  const signOut = useCallback(async () => {
+    await revokeCurrentSession();
     setMeState(null);
     setStack([]);
     setTabState("onboarding");
@@ -290,6 +297,43 @@ export default function App() {
           }}
         >
           …
+        </div>
+      ) : restoreFailed ? (
+        <div
+          role="alert"
+          style={{
+            minHeight: "100%",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 14,
+            padding: 32,
+            textAlign: "center",
+            color: T.text,
+          }}
+        >
+          <h1 style={{ margin: 0, fontFamily: T.disp, fontSize: 24 }}>Couldn’t restore session</h1>
+          <p style={{ margin: 0, color: T.sec, lineHeight: 1.5 }}>
+            You’re still signed in. Check your connection and try again.
+          </p>
+          <button
+            type="button"
+            onClick={restoreAuth}
+            style={{
+              minHeight: 48,
+              padding: "0 24px",
+              border: 0,
+              borderRadius: 14,
+              background: T.gold,
+              color: "#000",
+              fontFamily: T.disp,
+              fontWeight: 800,
+              cursor: "pointer",
+            }}
+          >
+            Try again
+          </button>
         </div>
       ) : (
         <div

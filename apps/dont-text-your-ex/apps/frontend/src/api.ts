@@ -93,6 +93,10 @@ class ApiError extends Error {
   }
 }
 
+export function isApiErrorStatus(error: unknown, status: number): boolean {
+  return error instanceof ApiError && error.status === status;
+}
+
 export const api = {
   // auth
   signInWithApple: (input: AppleAuthRequest) =>

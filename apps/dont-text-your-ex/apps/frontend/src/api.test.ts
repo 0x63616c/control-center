@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { JarIdSchema, ReportIdSchema } from "../../../contracts";
-import { api } from "./api";
+import { api, isApiErrorStatus } from "./api";
 
 describe("frontend response JSON boundary", () => {
   beforeEach(() => {
@@ -43,6 +43,18 @@ describe("frontend response JSON boundary", () => {
       message: "Bad Request",
       detail: undefined,
     });
+  });
+
+  it("identifies only API failures with the requested HTTP status", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ error: "not_authenticated" }, { status: 401 })),
+    );
+
+    const error = await api.me().catch((caught: unknown) => caught);
+    expect(isApiErrorStatus(error, 401)).toBe(true);
+    expect(isApiErrorStatus(error, 500)).toBe(false);
+    expect(isApiErrorStatus(new Error("network unavailable"), 401)).toBe(false);
   });
 
   it("routes branded jar and report identifiers to their matching resources", async () => {

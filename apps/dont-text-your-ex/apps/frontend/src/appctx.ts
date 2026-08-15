@@ -38,7 +38,8 @@ export interface AppCtx<CurrentRoute extends Route = Route> {
 
   /** auth screens call this after a successful sign-in / verify */
   signIn: (token: string, me: MeDTO) => void;
-  signOut: () => void;
+  /** resolves only after the server revokes the current bearer session */
+  signOut: () => Promise<void>;
   sessionExpired: boolean;
 
   /** fire the flying-money animation (used after logging a slip) */
