@@ -602,12 +602,16 @@ describe.skipIf(!HAS_DB)("reports", () => {
         }),
       });
       expect(response.status).toBe(500);
-      for (const table of ["reports", "report_evidence", "activity"] as const) {
+      for (const table of ["reports", "report_evidence"] as const) {
         const persisted = await pool.query<{ count: string }>(
           `SELECT COUNT(*)::text AS count FROM ${table}`,
         );
         expect(persisted.rows[0]?.count, table).toBe("0");
       }
+      const reportActivity = await pool.query<{ count: string }>(
+        "SELECT COUNT(*)::text AS count FROM activity WHERE type='report' AND note='rollback creation'",
+      );
+      expect(reportActivity.rows[0]?.count).toBe("0");
     } finally {
       await pool.query("DROP TRIGGER IF EXISTS fail_atomic_report_activity ON activity");
       await pool.query("DROP FUNCTION IF EXISTS fail_atomic_report_activity()");
