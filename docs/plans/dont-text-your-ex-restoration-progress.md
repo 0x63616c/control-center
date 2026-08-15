@@ -202,7 +202,7 @@ Review-fix commits:
 - [ ] Sign in with Apple succeeds end to end
 - [x] Authenticated session/account persists in Postgres
 - [x] TestFlight build uploaded to the existing app
-- [ ] External TestFlight group/link available
+- [x] External TestFlight group/link available
 - [ ] Non-team Apple ID installs and exercises core functionality
 - [x] A subsequent deployment succeeds without manual recovery
 - [ ] Final verified completion notification sent to `ntfy.sh/0x63616c`
@@ -454,22 +454,24 @@ those rows are superseded by this section.
   requires Sign in with Apple and exact associated domain
   `applinks:dont-text-your-ex.worldwidewebb.co`; the embedded App Store profile
   accepts Apple's Associated Domains wildcard.
-- App Store Connect build `1.0 (24)`
+- App Store Connect name **Don’t Text Your Ex Together** is saved. Build `1.0 (24)`
   (`0d340085-ab1e-4a9d-93d4-f4fe2cb72260`) uploaded, processed, reached
-  `Ready to Submit`, and is assigned to the Internal group. External group
-  `Friends` (`f3bfe9de-5fd7-4d25-b82e-93fa329035a8`) exists. The beta description,
-  What to Test, and feedback-email metadata are saved; no private value is
-  recorded here.
+  `Ready to Submit`, and is assigned to the Internal group with one tester.
+  External group `Friends` (`f3bfe9de-5fd7-4d25-b82e-93fa329035a8`) has build 24
+  assigned and shows one build. The beta description, What to Test, and
+  feedback-email metadata are saved; no private value is recorded here.
 - Origin GET of `/.well-known/apple-app-site-association` returned `200`
   `application/json` with exact app ID
   `X9E4HG27NK.co.worldwidewebb.textyourex` and path `/j/*`. Apple's CDN GET for
   the same host returned identical JSON. Only GET is evidence because the Apple
   CDN rejects HEAD with `405`.
-- The sole external TestFlight submission gate is a valid Beta App Review contact
-  phone number: the same-app contact fields were blank and reusable same-team
-  metadata had a name and email but no phone. Once supplied, build 24 can be
-  added to Friends, submitted for Beta App Review, and its public link enabled
-  and verified without rebuilding.
+- Beta App Review has been submitted for build 24; App Store Connect exposes the
+  `Remove from Review` action. The Friends public link is enabled and open to
+  anyone at `https://testflight.apple.com/join/6HcbUuV3`. An unauthenticated GET
+  returns `200`, while the page currently says
+  `This beta isn't accepting any new testers right now.` This proves the public
+  link exists without overstating external eligibility: testers cannot join
+  until Apple approves the build for the external group.
 - A non-team physical-device install and the resulting production Sign in with
   Apple/core-flow exercise remain user-assisted acceptance gates. The project is
   therefore deployed to production, but the full release completion threshold
@@ -477,8 +479,9 @@ those rows are superseded by this section.
 
 ## Blockers and user-assisted gates
 
-- External TestFlight submission is waiting only for a valid Beta App Review
-  contact phone number. Do not record the number in this ledger.
+- External TestFlight join eligibility is waiting for Apple to approve build 24
+  for the Friends group. The submitted review contains the required contact
+  metadata; no private value is recorded in this ledger.
 - External TestFlight verification requires a non-development-team Apple ID and a
   physical-device install; record who performed the check without recording an
   email address or other personal data.
