@@ -125,6 +125,19 @@ Review-fix commits:
   browser run was 7/10 before three stale assertions were corrected; the final
   local rerun was environment-blocked by uninterruptible macOS esbuild processes,
   so isolated Linux PR CI is the required authority before merge.
+- `b28613dde`: removed the decorative iOS status bar from pointer hit-testing;
+  genuine pointer navigation through Create now passes in hosted Playwright.
+- `28c2dacaa`: restored the recovered Invite completion action and tightened the
+  avatar browser assertion.
+- `3056f4190`: handles Apple's missing `fullName` without inventing a name and
+  removed the unwanted monthly TestFlight schedule.
+- `42d203f33` and `9bae5c9fa`: validated and persisted real PNG/JPEG/WebP report
+  evidence, added the platform picker and real viewer, and covered it in
+  contract, client, Storybook, and browser tests.
+- `029aaa694`: preserved branded jar/report identifiers through frontend routes
+  and narrowed caught unknown errors without broad casts.
+- `caa619db8`: added the durable v1 acceptance contract and required individual
+  agent QA evidence for every feature.
 
 ## Production evidence checklist
 
@@ -165,6 +178,33 @@ Review-fix commits:
 - [ ] Loading, error, validation, and empty states
 - [ ] Basic mobile pointer, layout, accessibility, and navigation QA
 - [ ] Recovered design vs implementation audit has no unresolved v1 blocker
+
+## Feature-by-feature QA ledger
+
+Initial independent audit was performed against `9bae5c9fa` by
+`fix_pr_browser_ci/independent_v1_audit`. `fix_pr_browser_ci` owns the independent
+reconciliation pass. A broad hosted happy-path suite is useful evidence but does
+not change a row to pass without its feature-specific states and privacy
+boundaries being exercised.
+
+| Feature | Implementation owner | Independent QA | Automated/hands-on evidence | Defects or missing states | Result |
+|---|---|---|---|---|---|
+| Apple auth, onboarding, profile | `apple_release`, `fix_ci_apple_arch` | v1 audit agents | Apple verifier/unit seams; onboarding/profile browser paths; unsigned simulator build | Physical Apple success/cancel/reload/cellular pending; avatar boundary validation, profile failures, and notification preferences incomplete | Blocked |
+| Create, join, invite, deep links | recovery/frontend agents | v1 audit agents | Create → Invite → Jar genuine-pointer browser path green; store join contract | Production invite URL, web/native deep-link hydration, share/copy, bad-code and auth-preserved link QA missing; join failure swallowed | Blocked |
+| Home, jar detail, activity, streak privacy | recovery/frontend agents | v1 audit agents | Home totals, ordering, and activity browser paths | Hidden `daysClean` is present in cross-user raw JSON; fetch failures look empty or load forever | Blocked — P0 privacy |
+| Self-log slip | recovery/frontend agents | v1 audit agents | Amount/confirm/tally/pot/streak browser flow; store tally contract | Private ex label is copied into shared activity; mutation/offline/duplicate/mobile states missing | Blocked — P0 privacy |
+| Reports, anonymity, real images, evidence, own/deny | reporting agents | v1 audit agents | Real PNG anonymous upload browser path; evidence contract/client tests; Postgres round trip; store Own and Deny | Anonymous accuser present in member-facing raw JSON; viewer accessibility and several image/deny/authorization states missing | Blocked — P0 privacy |
+| Settle and close lifecycle | recovery/frontend agents | v1 audit agents | Inert payment/owed amount browser path | Failed fetch renders a false `$0`; close/leave semantics and implementation absent | Blocked |
+| Sessions and logout | auth agents | v1 audit agents | Store session creation/deletion contracts | Transient `/me` error clears credentials; logout can leave server session; expiry/rotation/reload/revoke states missing | Blocked |
+| Loading, error, validation, empty | feature owners | v1 audit agents | Happy-path and selected empty/validation coverage only | Multiple screens swallow fetch/mutation failures or render false empty/success state | Blocked |
+| Mobile accessibility and clickability | frontend agents | v1 audit agents | Create overlay regression fixed; iOS simulator build | Missing accessible names/dialog focus/Escape; mobile viewport, VoiceOver, rotation, dynamic type, and physical-device QA pending | Blocked |
+| Notifications | Unassigned | v1 audit agents | None | Design calls notifications core; recovered README excludes them. Resolve scope explicitly, then implement preferences/APNs delivery or record a user-approved supersession | Blocked — product decision |
+| Authorization and data isolation | `fix_ci_apple_arch` follow-up | v1 audit agents | Existing membership checks plus new multi-user tests in progress | Three confirmed confidentiality leaks and incomplete outsider/role matrix | Blocked — P0 privacy |
+| Production and external TestFlight | infra/release agents | external-user acceptance | Container builds and product CI green at `9bae5c9fa`; ASC read-only baseline recorded | Merge/deploy, public/auth, restart, backup/restore, second deploy, signed build, Friends group and non-team install all pending | Blocked |
+
+Every blocked row requires a fixing commit and a fresh evidence entry. This table
+must be expanded or split if the audit discovers another independently testable
+feature; it is not a waiver for capabilities not listed here.
 
 ## Baseline before deployment
 
