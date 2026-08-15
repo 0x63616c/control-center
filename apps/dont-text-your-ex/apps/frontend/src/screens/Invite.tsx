@@ -1,14 +1,13 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { AppCtx } from "../appctx";
+import type { AppCtx, RouteFor } from "../appctx";
 import { Icon } from "../icons";
 import { T } from "../theme";
 import type { JarDetailDTO } from "../types";
 import { Btn, Screen, TopBar } from "../ui";
 
-export function Invite({ ctx }: { ctx: AppCtx }) {
-  const jarId = ctx.route.params.jarId as string;
-  const fresh = !!ctx.route.params.fresh;
+export function Invite({ ctx }: { ctx: AppCtx<RouteFor<"invite">> }) {
+  const { fresh = false, jarId } = ctx.route;
   const [jar, setJar] = useState<JarDetailDTO | null>(null);
   const [copied, setCopied] = useState(false);
 

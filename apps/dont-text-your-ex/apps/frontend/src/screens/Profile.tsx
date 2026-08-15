@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { AppCtx } from "../appctx";
+import type { AppCtx, RouteFor } from "../appctx";
 import { Toggle } from "../bits";
 import { Icon } from "../icons";
 import { getNativeAppInfo } from "../native/appInfo";
@@ -8,7 +8,7 @@ import { money, T } from "../theme";
 import type { JarSummaryDTO } from "../types";
 import { Avatar, DevBadge, Screen, TopBar } from "../ui";
 
-export function Profile({ ctx }: { ctx: AppCtx }) {
+export function Profile({ ctx }: { ctx: AppCtx<RouteFor<"profile">> }) {
   const me = ctx.me;
   const [jars, setJars] = useState<JarSummaryDTO[]>([]);
   const [shares, setShares] = useState<Record<string, boolean>>({});
@@ -67,7 +67,7 @@ export function Profile({ ctx }: { ctx: AppCtx }) {
 
       <button
         type="button"
-        onClick={() => ctx.nav("editProfile")}
+        onClick={() => ctx.nav({ name: "editProfile" })}
         style={{
           width: "100%",
           textAlign: "left",

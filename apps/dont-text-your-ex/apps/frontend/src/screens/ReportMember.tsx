@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { AppCtx } from "../appctx";
+import type { AppCtx, RouteFor } from "../appctx";
 import { EvidenceShot, EvidenceViewer, Toggle } from "../bits";
 import { Icon } from "../icons";
 import { T } from "../theme";
@@ -41,8 +41,8 @@ const ROLL: EvidenceThread[] = [
 
 const keyOf = (s: EvidenceThread) => `${s.to}-${s.time}`;
 
-export function ReportMember({ ctx }: { ctx: AppCtx }) {
-  const jarId = ctx.route.params.jarId as string;
+export function ReportMember({ ctx }: { ctx: AppCtx<RouteFor<"report">> }) {
+  const { jarId } = ctx.route;
   const [jar, setJar] = useState<JarDetailDTO | null>(null);
   const [target, setTarget] = useState<string | null>(null);
   const [note, setNote] = useState("");

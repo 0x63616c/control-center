@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { AppCtx } from "../appctx";
+import type { AppCtx, RouteFor } from "../appctx";
 import { Stepper } from "../bits";
 import { money, T } from "../theme";
 import type { JarDetailDTO } from "../types";
 import { Btn, Screen, TopBar } from "../ui";
 import { inputStyle, labelStyle } from "./common";
 
-export function LogSlip({ ctx }: { ctx: AppCtx }) {
-  const jarId = ctx.route.params.jarId as string;
+export function LogSlip({ ctx }: { ctx: AppCtx<RouteFor<"logSlip">> }) {
+  const { jarId } = ctx.route;
   const [jar, setJar] = useState<JarDetailDTO | null>(null);
   const [cents, setCents] = useState(500);
   const [note, setNote] = useState("");
@@ -47,7 +47,7 @@ export function LogSlip({ ctx }: { ctx: AppCtx }) {
       });
       ctx.fireBurst();
       ctx.refreshPending();
-      ctx.nav("jar", { jarId: jar.id }, true);
+      ctx.nav({ name: "jar", jarId: jar.id }, true);
     } catch {
       setBusy(false);
     }

@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { api } from "../api";
-import type { AppCtx } from "../appctx";
+import type { AppCtx, RouteFor } from "../appctx";
 import { money, T } from "../theme";
 import type { JarPreviewDTO, UserDTO } from "../types";
 import { AvatarStack, Btn, Screen, TopBar } from "../ui";
 import { inputStyle } from "./common";
 
-export function Join({ ctx }: { ctx: AppCtx }) {
+export function Join({ ctx }: { ctx: AppCtx<RouteFor<"join">> }) {
   const [code, setCode] = useState("");
   const [preview, setPreview] = useState<JarPreviewDTO | null>(null);
   const [members, setMembers] = useState<UserDTO[]>([]);
@@ -39,7 +39,7 @@ export function Join({ ctx }: { ctx: AppCtx }) {
     setBusy(true);
     try {
       const { jarId } = await api.joinJar(code);
-      ctx.nav("jar", { jarId }, true);
+      ctx.nav({ name: "jar", jarId }, true);
     } catch {
       setBusy(false);
     }

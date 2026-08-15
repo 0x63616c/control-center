@@ -1,7 +1,7 @@
 import { Capacitor } from "@capacitor/core";
 import { useCallback, useEffect, useState } from "react";
 import { api, getToken, setToken } from "./api";
-import type { AppCtx, Route, ScreenName, TabName } from "./appctx";
+import type { AppCtx, Route, TabName } from "./appctx";
 import { MoneyBurst } from "./bits";
 import { resolveDevice } from "./device";
 import { Icon } from "./icons";
@@ -91,28 +91,44 @@ function TabBar({
   );
 }
 
-const SCREENS: Record<ScreenName, (p: { ctx: AppCtx }) => React.ReactNode> = {
-  onboarding: S.Onboarding,
-  home: S.Home,
-  jar: S.JarDetail,
-  logSlip: S.LogSlip,
-  report: S.ReportMember,
-  confirmDeny: S.ConfirmDeny,
-  settle: S.Settle,
-  create: S.Create,
-  join: S.Join,
-  invite: S.Invite,
-  activity: S.ActivityTab,
-  profile: S.Profile,
-  setup: S.SetupProfile,
-  editProfile: S.EditProfile,
-};
-
 type ScrollMode = "auto" | "hidden";
 
-const ROUTE_SCROLL_MODE: Partial<Record<ScreenName, ScrollMode>> = {
-  onboarding: "hidden",
-};
+function routeForTab(tab: TabName): Route {
+  return { name: tab };
+}
+
+function renderRoute(ctx: AppCtx): React.ReactNode {
+  switch (ctx.route.name) {
+    case "onboarding":
+      return <S.Onboarding ctx={{ ...ctx, route: ctx.route }} />;
+    case "home":
+      return <S.Home ctx={{ ...ctx, route: ctx.route }} />;
+    case "jar":
+      return <S.JarDetail ctx={{ ...ctx, route: ctx.route }} />;
+    case "logSlip":
+      return <S.LogSlip ctx={{ ...ctx, route: ctx.route }} />;
+    case "report":
+      return <S.ReportMember ctx={{ ...ctx, route: ctx.route }} />;
+    case "confirmDeny":
+      return <S.ConfirmDeny ctx={{ ...ctx, route: ctx.route }} />;
+    case "settle":
+      return <S.Settle ctx={{ ...ctx, route: ctx.route }} />;
+    case "create":
+      return <S.Create ctx={{ ...ctx, route: ctx.route }} />;
+    case "join":
+      return <S.Join ctx={{ ...ctx, route: ctx.route }} />;
+    case "invite":
+      return <S.Invite ctx={{ ...ctx, route: ctx.route }} />;
+    case "activity":
+      return <S.ActivityTab ctx={{ ...ctx, route: ctx.route }} />;
+    case "profile":
+      return <S.Profile ctx={{ ...ctx, route: ctx.route }} />;
+    case "setup":
+      return <S.SetupProfile ctx={{ ...ctx, route: ctx.route }} />;
+    case "editProfile":
+      return <S.EditProfile ctx={{ ...ctx, route: ctx.route }} />;
+  }
+}
 
 function useFit() {
   const [scale, setScale] = useState(1);
@@ -159,7 +175,7 @@ export default function App() {
         setTabState("home");
         // A user with no name yet (Apple declined to share / first run) must
         // complete profile setup before using the app.
-        if (!u.name?.trim()) setStack([{ name: "setup", params: {} }]);
+        if (!u.name?.trim()) setStack([{ name: "setup" }]);
         refreshPending();
       })
       .catch(() => {
@@ -169,12 +185,9 @@ export default function App() {
       .finally(() => setBooted(true));
   }, [refreshPending]);
 
-  const nav = useCallback(
-    (name: ScreenName, params: Record<string, unknown> = {}, replaceRoot = false) => {
-      setStack((s) => (replaceRoot ? [{ name, params }] : [...s, { name, params }]));
-    },
-    [],
-  );
+  const nav = useCallback((route: Route, replaceRoot = false) => {
+    setStack((stack) => (replaceRoot ? [route] : [...stack, route]));
+  }, []);
   const back = useCallback(() => setStack((s) => s.slice(0, -1)), []);
   const goTab = useCallback((t: TabName) => {
     setTabState(t);
@@ -208,11 +221,9 @@ export default function App() {
     setTimeout(() => setBurst(false), 2200);
   }, []);
 
-  const route: Route = stack.length
-    ? stack[stack.length - 1]
-    : { name: tab as ScreenName, params: {} };
-  const routeKey = route.name + JSON.stringify(route.params);
-  const scrollMode = ROUTE_SCROLL_MODE[route.name] ?? "auto";
+  const route: Route = stack.at(-1) ?? routeForTab(tab);
+  const routeKey = JSON.stringify(route);
+  const scrollMode: ScrollMode = route.name === "onboarding" ? "hidden" : "auto";
 
   const ctx: AppCtx = {
     me,
@@ -229,7 +240,6 @@ export default function App() {
     refreshPending,
   };
 
-  const Cmp = SCREENS[route.name] ?? S.Home;
   const showTabs = booted && me != null && stack.length === 0 && tab !== "onboarding";
 
   const inner = (
@@ -254,7 +264,7 @@ export default function App() {
           className="screen-anim"
           style={{ minHeight: "100%", flex: 1, display: "flex", flexDirection: "column" }}
         >
-          <Cmp ctx={ctx} />
+          {renderRoute(ctx)}
         </div>
       )}
       <MoneyBurst show={burst} />

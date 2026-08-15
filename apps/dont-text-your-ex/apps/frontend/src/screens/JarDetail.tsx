@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { AppCtx } from "../appctx";
+import type { AppCtx, RouteFor } from "../appctx";
 import { Icon } from "../icons";
 import { money, streakLabel, T } from "../theme";
 import type { JarDetailDTO } from "../types";
 import { Avatar, Btn, IconBtn, Screen, TopBar } from "../ui";
 import { ActivityRow, useCountUp } from "./common";
 
-export function JarDetail({ ctx }: { ctx: AppCtx }) {
-  const jarId = ctx.route.params.jarId as string;
+export function JarDetail({ ctx }: { ctx: AppCtx<RouteFor<"jar">> }) {
+  const { jarId } = ctx.route;
   const [jar, setJar] = useState<JarDetailDTO | null>(null);
 
   useEffect(() => {
@@ -47,7 +47,7 @@ export function JarDetail({ ctx }: { ctx: AppCtx }) {
         onBack={() => ctx.back()}
         title={jar.name}
         trailing={
-          <IconBtn onClick={() => ctx.nav("invite", { jarId: jar.id })}>
+          <IconBtn onClick={() => ctx.nav({ name: "invite", jarId: jar.id })}>
             <Icon.share style={{ width: 17, height: 17 }} />
           </IconBtn>
         }
@@ -98,7 +98,7 @@ export function JarDetail({ ctx }: { ctx: AppCtx }) {
         <Btn
           kind="red"
           icon={<span style={{ fontSize: 20 }}>💔</span>}
-          onClick={() => ctx.nav("logSlip", { jarId: jar.id })}
+          onClick={() => ctx.nav({ name: "logSlip", jarId: jar.id })}
         >
           I texted my ex
         </Btn>
@@ -108,14 +108,14 @@ export function JarDetail({ ctx }: { ctx: AppCtx }) {
           kind="dark"
           style={{ height: 50, fontSize: 16 }}
           icon={<Icon.flag style={{ width: 17, height: 17 }} />}
-          onClick={() => ctx.nav("report", { jarId: jar.id })}
+          onClick={() => ctx.nav({ name: "report", jarId: jar.id })}
         >
           Report
         </Btn>
         <Btn
           kind="dark"
           style={{ height: 50, fontSize: 16 }}
-          onClick={() => ctx.nav("settle", { jarId: jar.id })}
+          onClick={() => ctx.nav({ name: "settle", jarId: jar.id })}
         >
           Settle up
         </Btn>

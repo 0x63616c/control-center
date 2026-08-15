@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { AppCtx } from "../appctx";
+import type { AppCtx, RouteFor } from "../appctx";
 import { Icon } from "../icons";
 import { money, T } from "../theme";
 import type { JarSummaryDTO, UserDTO } from "../types";
 import { AvatarStack, IconBtn, Screen, TopBar } from "../ui";
 
-export function Home({ ctx }: { ctx: AppCtx }) {
+export function Home({ ctx }: { ctx: AppCtx<RouteFor<"home">> }) {
   const [jars, setJars] = useState<JarSummaryDTO[] | null>(null);
   // member user objects for avatar stacks come from each jar detail lazily;
   // for the list we only need ids + a color, which the summary doesn't carry,
@@ -48,7 +48,7 @@ export function Home({ ctx }: { ctx: AppCtx }) {
       <TopBar
         title="Your jars"
         trailing={
-          <IconBtn data-testid="create-jar" onClick={() => ctx.nav("create")}>
+          <IconBtn data-testid="create-jar" onClick={() => ctx.nav({ name: "create" })}>
             <Icon.plus />
           </IconBtn>
         }
@@ -119,7 +119,7 @@ export function Home({ ctx }: { ctx: AppCtx }) {
               type="button"
               data-testid="jar-card"
               data-jar-name={j.name}
-              onClick={() => ctx.nav("jar", { jarId: j.id })}
+              onClick={() => ctx.nav({ name: "jar", jarId: j.id })}
               style={{
                 textAlign: "left",
                 background: T.surface,
@@ -220,7 +220,7 @@ export function Home({ ctx }: { ctx: AppCtx }) {
 
         <button
           type="button"
-          onClick={() => ctx.nav("join")}
+          onClick={() => ctx.nav({ name: "join" })}
           style={{
             background: "transparent",
             border: `1.5px dashed ${T.hair}`,

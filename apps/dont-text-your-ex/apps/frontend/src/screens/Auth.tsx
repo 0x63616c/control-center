@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { api } from "../api";
-import type { AppCtx } from "../appctx";
+import type { AppCtx, RouteFor } from "../appctx";
 import { T } from "../theme";
 import { Btn, Screen, TopBar } from "../ui";
 import { type AvatarDraft, AvatarEditor } from "./common";
 
 // ─────────────────────── New-user profile setup ───────────────────────
-export function SetupProfile({ ctx }: { ctx: AppCtx }) {
+export function SetupProfile({ ctx }: { ctx: AppCtx<RouteFor<"setup">> }) {
   const [draft, setDraft] = useState<AvatarDraft>({
     name: ctx.me?.name ?? "",
     color: ctx.me?.color ?? "#5E5CE6",
@@ -72,7 +72,7 @@ export function SetupProfile({ ctx }: { ctx: AppCtx }) {
 }
 
 // ─────────────────────── Edit existing profile ───────────────────────
-export function EditProfile({ ctx }: { ctx: AppCtx }) {
+export function EditProfile({ ctx }: { ctx: AppCtx<RouteFor<"editProfile">> }) {
   const cur = ctx.me;
   const [draft, setDraft] = useState<AvatarDraft>({
     name: cur?.name ?? "",

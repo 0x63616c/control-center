@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { AppCtx } from "../appctx";
+import type { AppCtx, RouteFor } from "../appctx";
 import { EvidenceShot, EvidenceViewer } from "../bits";
 import { money, T } from "../theme";
 import type { ReportDTO } from "../types";
 import { Btn, Screen, TopBar } from "../ui";
 
-export function ConfirmDeny({ ctx }: { ctx: AppCtx }) {
-  const reportId = ctx.route.params.reportId as string;
+export function ConfirmDeny({ ctx }: { ctx: AppCtx<RouteFor<"confirmDeny">> }) {
+  const { reportId } = ctx.route;
   const [report, setReport] = useState<ReportDTO | null>(null);
   const [viewer, setViewer] = useState<number | null>(null);
   const [done, setDone] = useState<"owned" | "denied" | null>(null);

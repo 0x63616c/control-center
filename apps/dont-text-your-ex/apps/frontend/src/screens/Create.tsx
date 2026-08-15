@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { api } from "../api";
-import type { AppCtx } from "../appctx";
+import type { AppCtx, RouteFor } from "../appctx";
 import { Stepper } from "../bits";
 import { T } from "../theme";
 import { Btn, Screen, TopBar } from "../ui";
 import { inputStyle, labelStyle } from "./common";
 
-export function Create({ ctx }: { ctx: AppCtx }) {
+export function Create({ ctx }: { ctx: AppCtx<RouteFor<"create">> }) {
   const [name, setName] = useState("");
   const [rule, setRule] = useState("");
   const [cents, setCents] = useState(500);
@@ -21,7 +21,7 @@ export function Create({ ctx }: { ctx: AppCtx }) {
         rule: rule.trim() || undefined,
         defaultCents: cents,
       });
-      ctx.nav("invite", { jarId: jar.id, fresh: true });
+      ctx.nav({ name: "invite", jarId: jar.id, fresh: true });
     } catch {
       setBusy(false);
     }

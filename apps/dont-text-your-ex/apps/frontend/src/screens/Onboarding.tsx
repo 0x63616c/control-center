@@ -1,7 +1,7 @@
 import { Capacitor } from "@capacitor/core";
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { AppCtx } from "../appctx";
+import type { AppCtx, RouteFor } from "../appctx";
 import { Icon } from "../icons";
 import { authorizeAppleSignIn, createAppleSignInRequest } from "../native/appleSignIn";
 import { T } from "../theme";
@@ -22,7 +22,7 @@ function describeError(error: unknown): {
   return { message };
 }
 
-export function Onboarding({ ctx }: { ctx: AppCtx }) {
+export function Onboarding({ ctx }: { ctx: AppCtx<RouteFor<"onboarding">> }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [eyebrowIndex, setEyebrowIndex] = useState(0);
@@ -67,7 +67,7 @@ export function Onboarding({ ctx }: { ctx: AppCtx }) {
       try {
         const { token, user, isNew } = await api.signInWithApple({ identityToken, fullName });
         ctx.signIn(token, user);
-        if (isNew) ctx.nav("setup", {});
+        if (isNew) ctx.nav({ name: "setup" });
       } catch (e) {
         console.error("[tye] signInApple API error", e);
         setErr("Apple sign-in could not be verified. Please try again.");

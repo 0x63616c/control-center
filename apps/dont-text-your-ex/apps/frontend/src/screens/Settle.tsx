@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { AppCtx } from "../appctx";
+import type { AppCtx, RouteFor } from "../appctx";
 import { money, T } from "../theme";
 import type { JarDetailDTO } from "../types";
 import { Btn, Screen, TopBar } from "../ui";
 
-export function Settle({ ctx }: { ctx: AppCtx }) {
-  const jarId = ctx.route.params.jarId as string;
+export function Settle({ ctx }: { ctx: AppCtx<RouteFor<"settle">> }) {
+  const { jarId } = ctx.route;
   const [jar, setJar] = useState<JarDetailDTO | null>(null);
 
   useEffect(() => {

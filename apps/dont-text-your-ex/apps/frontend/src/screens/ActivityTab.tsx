@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { AppCtx } from "../appctx";
+import type { AppCtx, RouteFor } from "../appctx";
 import { Icon } from "../icons";
 import { T } from "../theme";
 import type { ActivityDTO, ReportDTO } from "../types";
 import { Screen, TopBar } from "../ui";
 import { ActivityRow } from "./common";
 
-export function ActivityTab({ ctx }: { ctx: AppCtx }) {
+export function ActivityTab({ ctx }: { ctx: AppCtx<RouteFor<"activity">> }) {
   const [feed, setFeed] = useState<ActivityDTO[] | null>(null);
   const [pending, setPending] = useState<ReportDTO[]>([]);
 
@@ -39,7 +39,7 @@ export function ActivityTab({ ctx }: { ctx: AppCtx }) {
       {topReport && (
         <button
           type="button"
-          onClick={() => ctx.nav("confirmDeny", { reportId: topReport.id })}
+          onClick={() => ctx.nav({ name: "confirmDeny", reportId: topReport.id })}
           style={{
             width: "100%",
             textAlign: "left",
