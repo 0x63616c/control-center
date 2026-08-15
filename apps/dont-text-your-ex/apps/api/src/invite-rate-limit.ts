@@ -19,9 +19,16 @@ type ProbeLimiter = {
 
 export function createInviteProbeLimiter(): ProbeLimiter {
   const buckets = new Map<string, Bucket>();
+  let nextSweepAt = 0;
 
   return {
     check(sources, checkedAt = Date.now()) {
+      if (checkedAt >= nextSweepAt) {
+        for (const [source, bucket] of buckets) {
+          if (checkedAt - bucket.lastRefillAt >= WINDOW_MS) buckets.delete(source);
+        }
+        nextSweepAt = checkedAt + WINDOW_MS;
+      }
       const current = sources.map((source) => {
         const previous = buckets.get(source) ?? { tokens: CAPACITY, lastRefillAt: checkedAt };
         return {
