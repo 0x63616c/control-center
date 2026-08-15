@@ -108,13 +108,31 @@ describe("domain id parsers", () => {
 });
 
 describe("persisted report evidence", () => {
-  it("accepts real bounded image data and requires a note or image", () => {
-    expect(
-      EvidenceImageInputSchema.safeParse({ mimeType: "image/png", dataUrl: PNG_DATA_URL }).success,
-    ).toBe(true);
+  it("accepts PNG, JPEG, and WebP signatures and requires a note or image", () => {
+    for (const [mimeType, dataUrl] of [
+      ["image/png", PNG_DATA_URL],
+      ["image/jpeg", JPEG_DATA_URL],
+      ["image/webp", WEBP_DATA_URL],
+    ] as const) {
+      expect(EvidenceImageInputSchema.safeParse({ mimeType, dataUrl }).success).toBe(true);
+    }
     expect(
       CreateReportRequestSchema.safeParse({ accusedId: "usr_123", anonymous: false }).success,
     ).toBe(false);
+    expect(
+      CreateReportRequestSchema.safeParse({
+        accusedId: "usr_123",
+        note: "   ",
+        anonymous: false,
+      }).success,
+    ).toBe(false);
+    expect(
+      CreateReportRequestSchema.safeParse({
+        accusedId: "usr_123",
+        note: "Observed a message",
+        anonymous: false,
+      }).success,
+    ).toBe(true);
     expect(
       CreateReportRequestSchema.safeParse({
         accusedId: "usr_123",
@@ -124,8 +142,23 @@ describe("persisted report evidence", () => {
     ).toBe(true);
   });
 
-  it("rejects unsupported, oversized, and excess attachments", () => {
+  it("rejects MIME spoofing, malformed base64, unsupported, oversized, and excess attachments", () => {
     const oversized = `data:image/png;base64,${Buffer.alloc(EVIDENCE_MAX_BYTES + 1).toString("base64")}`;
+    expect(
+      EvidenceImageInputSchema.safeParse({ mimeType: "image/jpeg", dataUrl: PNG_DATA_URL }).success,
+    ).toBe(false);
+    expect(
+      EvidenceImageInputSchema.safeParse({
+        mimeType: "image/png",
+        dataUrl: PNG_DATA_URL.replace("iVBOR", "R0lGO"),
+      }).success,
+    ).toBe(false);
+    expect(
+      EvidenceImageInputSchema.safeParse({
+        mimeType: "image/png",
+        dataUrl: "data:image/png;base64,not-base64!",
+      }).success,
+    ).toBe(false);
     expect(
       EvidenceImageInputSchema.safeParse({ mimeType: "image/gif", dataUrl: PNG_DATA_URL }).success,
     ).toBe(false);
@@ -141,6 +174,23 @@ describe("persisted report evidence", () => {
         })),
       }).success,
     ).toBe(false);
+  });
+
+  it("accepts exactly three attachments and exactly 2 MiB per image", () => {
+    const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    const exactLimit = `data:image/png;base64,${Buffer.concat([
+      pngSignature,
+      Buffer.alloc(EVIDENCE_MAX_BYTES - pngSignature.length),
+    ]).toString("base64")}`;
+    const image = { mimeType: "image/png" as const, dataUrl: exactLimit };
+
+    expect(EvidenceImageInputSchema.safeParse(image).success).toBe(true);
+    expect(
+      CreateReportRequestSchema.safeParse({
+        accusedId: "usr_123",
+        evidence: Array.from({ length: EVIDENCE_MAX_FILES }, () => image),
+      }).success,
+    ).toBe(true);
   });
 
   it("parses valid persisted image JSON and rejects corrupt persisted JSON", () => {

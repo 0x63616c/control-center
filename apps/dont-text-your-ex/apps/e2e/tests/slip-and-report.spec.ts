@@ -55,6 +55,58 @@ test("reporting with a real screenshot + anonymous toggle reaches the snitched s
   await expect(page.getByText("won't know it was you", { exact: false })).toBeVisible();
 });
 
+test("report picker enforces note-or-image, malicious boundaries, and three real formats", async ({
+  page,
+}) => {
+  await signInAsCalum(page);
+  await openJar(page, "The Group Chat");
+  await page.getByRole("button", { name: "Report" }).click();
+  await page.getByRole("button", { name: "Ali", exact: true }).click();
+
+  const send = page.getByRole("button", { name: "Send the report" });
+  await expect(send).toBeDisabled();
+  await page.getByPlaceholder("“replied to her story in 4 seconds flat…”").fill("   ");
+  await expect(send).toBeDisabled();
+
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "base64",
+  );
+  await page.getByTestId("evidence-input").setInputFiles(
+    Array.from({ length: 4 }, (_, index) => ({
+      name: `too-many-${index}.png`,
+      mimeType: "image/png",
+      buffer: png,
+    })),
+  );
+  await expect(page.getByRole("alert")).toHaveText("Add no more than 3 screenshots.");
+  await expect(page.getByRole("img", { name: "Report attachment" })).toHaveCount(0);
+
+  await page.getByTestId("evidence-input").setInputFiles({
+    name: "spoofed.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("this is not a PNG"),
+  });
+  await expect(page.getByRole("alert")).toHaveText(
+    "That screenshot could not be read. Try another file.",
+  );
+
+  await page.getByTestId("evidence-input").setInputFiles([
+    { name: "receipt.png", mimeType: "image/png", buffer: png },
+    { name: "receipt.jpg", mimeType: "image/jpeg", buffer: Buffer.from([255, 216, 255, 0]) },
+    {
+      name: "receipt.webp",
+      mimeType: "image/webp",
+      buffer: Buffer.from("RIFF\u0000\u0000\u0000\u0000WEBP"),
+    },
+  ]);
+  await expect(page.getByRole("img", { name: "Report attachment" })).toHaveCount(3);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(send).toBeEnabled();
+  await send.click();
+  await expect(page.getByText("Snitched.")).toBeVisible();
+});
+
 test("report member fetch/send failures preserve every choice and retry without false success", async ({
   page,
 }) => {
