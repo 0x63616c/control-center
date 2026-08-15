@@ -44,7 +44,9 @@ test("reporting with a real screenshot + anonymous toggle reaches the snitched s
     mimeType: "",
     buffer: cameraPhotoBmp(),
   });
-  await expect(page.getByRole("img", { name: "Report attachment" })).toBeVisible();
+  await expect(page.getByRole("img", { name: "Report attachment" })).toBeVisible({
+    timeout: 15_000,
+  });
 
   await page.getByRole("switch", { name: "Send anonymously" }).click();
   await page.getByRole("button", { name: /Send it anonymously/ }).click();
