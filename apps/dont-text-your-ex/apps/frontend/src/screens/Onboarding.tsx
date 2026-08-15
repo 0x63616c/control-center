@@ -27,9 +27,42 @@ function describeError(error: unknown): {
   return { message: "unknown error" };
 }
 
-export function Onboarding({ ctx }: { ctx: AppCtx<RouteFor<"onboarding">> }) {
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+function isAppleCancellation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "apple_sign_in_cancelled"
+  );
+}
+
+export type OnboardingServices = {
+  readonly isNativePlatform: typeof Capacitor.isNativePlatform;
+  readonly createAppleSignInAttempt: typeof createAppleSignInAttempt;
+  readonly authorizeAppleSignIn: typeof authorizeAppleSignIn;
+  readonly signInWithApple: typeof api.signInWithApple;
+};
+
+const DEFAULT_SERVICES: OnboardingServices = {
+  isNativePlatform: Capacitor.isNativePlatform,
+  createAppleSignInAttempt,
+  authorizeAppleSignIn,
+  signInWithApple: api.signInWithApple,
+};
+
+type SignInState =
+  | { readonly status: "idle" }
+  | { readonly status: "submitting" }
+  | { readonly status: "failed"; readonly message: string };
+
+export function Onboarding({
+  ctx,
+  services = DEFAULT_SERVICES,
+}: {
+  ctx: AppCtx<RouteFor<"onboarding">>;
+  services?: OnboardingServices;
+}) {
+  const [signInState, setSignInState] = useState<SignInState>({ status: "idle" });
   const [eyebrowIndex, setEyebrowIndex] = useState(0);
   const titleLines = ctx.sessionExpired
     ? ["Still", "Texting", "Them?"]
@@ -43,36 +76,42 @@ export function Onboarding({ ctx }: { ctx: AppCtx<RouteFor<"onboarding">> }) {
   }, []);
 
   const signInApple = async () => {
-    if (busy) return;
-    setErr(null);
-    setBusy(true);
+    if (signInState.status === "submitting") return;
+    setSignInState({ status: "submitting" });
     try {
       // Real "Sign in with Apple" only works inside the native iOS app (the Apple
       // sheet can't run in a browser). On web the button is inert; local dev and
       // e2e mint a session through the non-production /auth/dev seam instead.
-      if (!Capacitor.isNativePlatform()) {
-        setBusy(false);
+      if (!services.isNativePlatform()) {
+        setSignInState({ status: "idle" });
         return;
       }
       let identityToken: string;
       let nonce: string;
       let fullName: string | undefined;
       try {
-        const attempt = await createAppleSignInAttempt();
+        const attempt = await services.createAppleSignInAttempt();
         const response = validateAppleSignInResponse(
           attempt.request,
-          await authorizeAppleSignIn(attempt.request),
+          await services.authorizeAppleSignIn(attempt.request),
         );
         identityToken = response.identityToken;
         nonce = attempt.rawNonce;
         fullName = response.fullName;
       } catch (e) {
         console.error("[tye] signInApple native error", e);
-        setBusy(false);
+        setSignInState(
+          isAppleCancellation(e)
+            ? { status: "idle" }
+            : {
+                status: "failed",
+                message: "Apple sign-in didn’t finish. Check your connection and try again.",
+              },
+        );
         return;
       }
       try {
-        const { token, user, status } = await api.signInWithApple({
+        const { token, user, status } = await services.signInWithApple({
           identityToken,
           nonce,
           fullName,
@@ -81,14 +120,15 @@ export function Onboarding({ ctx }: { ctx: AppCtx<RouteFor<"onboarding">> }) {
         if (status === "needs_profile") ctx.nav({ name: "setup" });
       } catch (e) {
         console.error("[tye] signInApple API error", e);
-        setErr("Apple sign-in could not be verified. Please try again.");
-        setBusy(false);
+        setSignInState({
+          status: "failed",
+          message: "Apple sign-in could not be verified. Please try again.",
+        });
       }
     } catch (e) {
       const { message } = describeError(e);
       console.error("[tye] signInApple unexpected error", e);
-      setErr(message);
-      setBusy(false);
+      setSignInState({ status: "failed", message });
     }
   };
 
@@ -189,7 +229,7 @@ export function Onboarding({ ctx }: { ctx: AppCtx<RouteFor<"onboarding">> }) {
         </div>
         <DevBadge />
       </div>
-      {err && (
+      {signInState.status === "failed" && (
         <div
           style={{
             marginTop: 14,
@@ -210,7 +250,7 @@ export function Onboarding({ ctx }: { ctx: AppCtx<RouteFor<"onboarding">> }) {
               fontWeight: 700,
             }}
           >
-            {err}
+            {signInState.message}
           </p>
         </div>
       )}
@@ -285,7 +325,7 @@ export function Onboarding({ ctx }: { ctx: AppCtx<RouteFor<"onboarding">> }) {
         <button
           type="button"
           onClick={signInApple}
-          disabled={busy}
+          disabled={signInState.status === "submitting"}
           style={{
             width: "100%",
             height: 56,
@@ -301,11 +341,17 @@ export function Onboarding({ ctx }: { ctx: AppCtx<RouteFor<"onboarding">> }) {
             fontFamily: T.ui,
             fontWeight: 700,
             fontSize: 18,
-            opacity: busy ? 0.6 : 1,
+            opacity: signInState.status === "submitting" ? 0.6 : 1,
           }}
         >
           <Icon.apple style={{ marginTop: -2 }} />{" "}
-          {ctx.sessionExpired ? "Continue with Apple" : "Sign in with Apple"}
+          {signInState.status === "submitting"
+            ? "Signing in…"
+            : signInState.status === "failed"
+              ? "Try Sign in with Apple again"
+              : ctx.sessionExpired
+                ? "Continue with Apple"
+                : "Sign in with Apple"}
         </button>
       </div>
     </div>
