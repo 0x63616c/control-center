@@ -213,8 +213,8 @@ export const ConfirmDenyMutationFailure: Story = {
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(await canvas.findByRole("button", { name: /I did it/ }));
+    await userEvent.click(await canvas.findByRole("button", { name: /Own it/ }));
     await expect(await canvas.findByRole("alert")).toHaveTextContent("couldn’t be updated");
-    await expect(canvas.getByRole("button", { name: /I did it/ })).toBeEnabled();
+    await expect(canvas.getByRole("button", { name: /Own it/ })).toBeEnabled();
   },
 };
