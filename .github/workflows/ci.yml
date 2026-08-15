@@ -47,6 +47,7 @@ jobs:
       worker: ${{ steps.filter.outputs.worker }}
       temporalworker: ${{ steps.filter.outputs.temporalworker }}
       mapprovision: ${{ steps.filter.outputs.mapprovision }}
+      dont_text_your_ex: ${{ steps.filter.outputs.dont_text_your_ex }}
       # infra-only changes (Pulumi program / specs) deploy without any image
       # rebuild: a `pulumi up` must still converge the declared stack.
       infra: ${{ steps.filter.outputs.infra }}
@@ -130,6 +131,12 @@ jobs:
             # own tree.
             mapprovision:
               - 'apps/map-provision/**'
+            # Don't Text Your Ex ships as two images from one standalone app
+            # tree; changes to shared packages or the lockfile rebuild both.
+            dont_text_your_ex:
+              - 'apps/dont-text-your-ex/**'
+              - 'packages/**'
+              - 'bun.lock'
             # any_app is true when at least one TypeScript-workspace image
             # needs to be built. An infra-only change is handled by the separate
             # `infra` filter above. Software-factory source and image builds
@@ -142,6 +149,7 @@ jobs:
               - 'apps/worker/**'
               - 'apps/temporal-worker/**'
               - 'apps/map-provision/**'
+              - 'apps/dont-text-your-ex/**'
               - 'packages/**'
               - 'app-kit/**'
               - 'features/**'
@@ -472,6 +480,44 @@ jobs:
           cache-scope: map-provision
 
 
+  build-dont-text-your-ex-frontend:
+    needs: [changes]
+    if: needs.changes.outputs.dont_text_your_ex == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build and push Don't Text Your Ex frontend image
+        uses: ./.github/actions/build-product-image
+        env:
+          SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
+        with:
+          image: www-dont-text-your-ex-frontend
+          dockerfile: apps/dont-text-your-ex/Dockerfile.frontend
+          cache-scope: dont-text-your-ex-frontend
+          build-args: |
+            VITE_API_BASE=https://dont-text-your-ex.worldwidewebb.co
+
+
+  build-dont-text-your-ex-api:
+    needs: [changes]
+    if: needs.changes.outputs.dont_text_your_ex == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build and push Don't Text Your Ex API image
+        uses: ./.github/actions/build-product-image
+        env:
+          SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
+        with:
+          image: www-dont-text-your-ex-api
+          dockerfile: apps/dont-text-your-ex/Dockerfile.api
+          cache-scope: dont-text-your-ex-api
+
+
   # After the images build on main, deploy to the home-server Talos cluster with
   # `pulumi up` (www-j934.14). The runner joins the tailnet with an EPHEMERAL
   # Tailscale key (auto-revoked when the job ends), reaches the kube-apiserver
@@ -494,6 +540,8 @@ jobs:
         build-worker,
         build-temporal-worker,
         build-map-provision,
+        build-dont-text-your-ex-frontend,
+        build-dont-text-your-ex-api,
       ]
     # always() lets us run even when some build jobs were skipped (no changes).
     # We proceed when: on main, an app OR infra changed, and no build failed.
@@ -586,7 +634,7 @@ jobs:
           # KEY is product-component scoped and matches the Pulumi imageDigests
           # config key, while repo names use full product slugs.
           declare -A out=()
-          for entry in www-control-center-web:control-center-web www-control-center-manage:control-center-manage www-control-center-api:control-center-api www-control-center-worker:control-center-worker www-control-center-temporal-worker:control-center-temporal-worker www-control-center-map-provision:control-center-map-provision; do
+          for entry in www-control-center-web:control-center-web www-control-center-manage:control-center-manage www-control-center-api:control-center-api www-control-center-worker:control-center-worker www-control-center-temporal-worker:control-center-temporal-worker www-control-center-map-provision:control-center-map-provision www-dont-text-your-ex-frontend:dont-text-your-ex-frontend www-dont-text-your-ex-api:dont-text-your-ex-api; do
             repo="${entry%%:*}"
             name="${entry#*:}"
             d=$(docker buildx imagetools inspect "ghcr.io/0x63616c/$repo:main" --format '{{.Manifest.Digest}}' 2>/dev/null || true)

@@ -36,6 +36,7 @@ describe("cluster namespaces", () => {
     expect(Object.keys(res.namespaces).sort()).toEqual([
       "cloudflare",
       "control-center",
+      "dont-text-your-ex",
       "software-factory",
     ]);
 
