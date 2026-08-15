@@ -8,7 +8,7 @@ import {
 } from "react";
 import "../avatar-editor.css";
 import { Icon } from "../icons";
-import { type LoadedImage, loadImageFile, SOURCE_IMAGE_MAX_BYTES } from "../image-processing";
+import { type LoadedImage, loadImageFile, validateImageSource } from "../image-processing";
 import { money, T } from "../theme";
 import type { ActivityDTO } from "../types";
 import { Avatar } from "../ui";
@@ -222,22 +222,23 @@ export function AvatarEditor({
     },
     [cropImage],
   );
-  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const input = e.currentTarget;
-    const f = input.files?.[0];
-    if (!f) return;
+  const onFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) return;
     setPhotoError(null);
-    if (!f.type.startsWith("image/") || f.size > SOURCE_IMAGE_MAX_BYTES) {
+    if (!validateImageSource(file).ok) {
       setPhotoError("Choose a photo smaller than 25 MiB.");
       input.value = "";
       return;
     }
-    try {
-      setCropImage(await loadImageFile(f));
-    } catch {
+    const loaded = await loadImageFile(file);
+    if (!loaded.ok) {
       setPhotoError("Choose a real photo that this iPhone can open.");
       input.value = "";
+      return;
     }
+    setCropImage(loaded.value);
   };
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>

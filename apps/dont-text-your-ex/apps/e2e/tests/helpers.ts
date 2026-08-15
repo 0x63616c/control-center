@@ -60,3 +60,32 @@ export async function openJar(page: Page, name: string) {
 export function shameRow(page: Page, member: string) {
   return page.locator(`[data-testid="shame-row"][data-member="${member}"]`);
 }
+
+/** A decodable 3000x2000 camera-sized image with no compressed-fixture shortcut. */
+export function cameraPhotoBmp(): Buffer {
+  const width = 3000;
+  const height = 2000;
+  const rowBytes = Math.ceil((width * 3) / 4) * 4;
+  const pixelBytes = rowBytes * height;
+  const bitmap = Buffer.allocUnsafe(54 + pixelBytes);
+  bitmap.write("BM", 0, "ascii");
+  bitmap.writeUInt32LE(bitmap.length, 2);
+  bitmap.writeUInt32LE(54, 10);
+  bitmap.writeUInt32LE(40, 14);
+  bitmap.writeInt32LE(width, 18);
+  bitmap.writeInt32LE(height, 22);
+  bitmap.writeUInt16LE(1, 26);
+  bitmap.writeUInt16LE(24, 28);
+  bitmap.writeUInt32LE(pixelBytes, 34);
+
+  for (let y = 0; y < height; y += 1) {
+    const rowStart = 54 + y * rowBytes;
+    for (let x = 0; x < width; x += 1) {
+      const offset = rowStart + x * 3;
+      bitmap[offset] = Math.floor((x / width) * 255);
+      bitmap[offset + 1] = Math.floor((y / height) * 255);
+      bitmap[offset + 2] = 180;
+    }
+  }
+  return bitmap;
+}

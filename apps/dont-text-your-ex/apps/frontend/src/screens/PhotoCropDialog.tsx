@@ -22,6 +22,7 @@ export function PhotoCropDialog({
   const dialogRef = useRef<HTMLDivElement>(null);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const pinch = useRef<{ distance: number; zoom: number } | null>(null);
+  const cancelled = useRef(false);
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [busy, setBusy] = useState(false);
@@ -30,10 +31,16 @@ export function PhotoCropDialog({
   useEffect(() => {
     closeRef.current?.focus();
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onCancel();
+      if (event.key === "Escape") {
+        cancelled.current = true;
+        onCancel();
+      }
     };
     window.addEventListener("keydown", handleEscape);
-    return () => window.removeEventListener("keydown", handleEscape);
+    return () => {
+      cancelled.current = true;
+      window.removeEventListener("keydown", handleEscape);
+    };
   }, [onCancel]);
 
   const constrain = (x: number, y: number, nextZoom = zoom) => {
@@ -55,13 +62,20 @@ export function PhotoCropDialog({
   const usePhoto = async () => {
     if (busy) return;
     setBusy(true);
+    cancelled.current = false;
     setError(null);
-    try {
-      onUse(await cropProfileImage(loaded.element, zoom, offset.x, offset.y, VIEWPORT));
-    } catch {
+    const cropped = await cropProfileImage(loaded.element, {
+      zoom,
+      offset,
+      viewportSize: VIEWPORT,
+    });
+    if (cancelled.current) return;
+    if (!cropped.ok) {
       setError("That photo could not be cropped. Try another one.");
       setBusy(false);
+      return;
     }
+    onUse(cropped.value);
   };
 
   return (
@@ -102,7 +116,10 @@ export function PhotoCropDialog({
           ref={closeRef}
           type="button"
           aria-label="Cancel cropping"
-          onClick={onCancel}
+          onClick={() => {
+            cancelled.current = true;
+            onCancel();
+          }}
           style={{
             width: 44,
             height: 44,
@@ -214,7 +231,13 @@ export function PhotoCropDialog({
           </div>
         )}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <Btn kind="ghost" onClick={onCancel}>
+          <Btn
+            kind="ghost"
+            onClick={() => {
+              cancelled.current = true;
+              onCancel();
+            }}
+          >
             Cancel
           </Btn>
           <Btn kind="gold" disabled={busy} onClick={usePhoto}>

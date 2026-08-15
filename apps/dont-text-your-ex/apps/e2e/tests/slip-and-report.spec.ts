@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { openJar, shameRow, signInAsCalum } from "./helpers";
+import { cameraPhotoBmp, openJar, shameRow, signInAsCalum } from "./helpers";
 
 // Each test starts from the seeded baseline (non-prod reset seam) so
 // absolute assertions on seeded values stay order-independent.
@@ -38,14 +38,11 @@ test("reporting with a real screenshot + anonymous toggle reaches the snitched s
 
   // pick Ali
   await page.getByRole("button", { name: "Ali", exact: true }).click();
-  const receiptPng = Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-    "base64",
-  );
   await page.getByTestId("evidence-input").setInputFiles({
-    name: "receipt.png",
-    mimeType: "image/png",
-    buffer: Buffer.concat([receiptPng, Buffer.alloc(8 * 1024 * 1024)]),
+    name: "IMG_1234.bmp",
+    // iOS can provide a decodable photo without useful MIME metadata.
+    mimeType: "",
+    buffer: cameraPhotoBmp(),
   });
   await expect(page.getByRole("img", { name: "Report attachment" })).toBeVisible();
 

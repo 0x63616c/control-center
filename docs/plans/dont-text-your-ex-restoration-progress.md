@@ -555,5 +555,18 @@ Captured 2026-08-14 on branch `codex/dont-text-your-ex-restoration`:
   replacing them with decodable images restored the format journey before the
   exact full rerun. The complete shared Storybook run passed 146 files and 536
   interactions, including the AvatarEditor and ReportMember stories.
+- Independent Spec and Standards review then found three material gaps: expected
+  decode/encode failures were thrown rather than typed, a crop could finish
+  after the user pressed Cancel, and the browser journey used a padded 1×1
+  fixture rather than a camera-resolution image. The review fixes centralize
+  source validation in a discriminated result seam, accept decodable files even
+  when iOS supplies empty MIME metadata, invalidate pending crops on Cancel or
+  Escape, and keep the crop transform in one typed value.
+- The strengthened browser journey decodes and normalizes a real 3000×2000,
+  approximately 18 MiB image with empty MIME metadata. It exercises a two-touch
+  pinch, drag and slider zoom, proves Cancel during delayed encoding cannot save,
+  and verifies the persisted avatar is exactly 512×512. Physical WebView HEIC
+  decoding remains an explicit iPhone acceptance step because Chromium cannot
+  supply authoritative WebKit codec evidence.
 - Immutable hosted CI, independent two-axis review, merge, production rollout,
   and physical iPhone picker/crop proof remain pending at this checkpoint.
