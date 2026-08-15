@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  AVATAR_MAX_BYTES,
+  AvatarPhotoDataUrlSchema,
   CreateJarRequestSchema,
   CreateReportRequestSchema,
   EVIDENCE_MAX_BYTES,
@@ -30,6 +32,24 @@ describe("request schemas", () => {
     ["report resolution", ResolveReportRequestSchema, { action: "delete" }],
   ])("rejects invalid %s JSON", (_name, schema, raw) => {
     expect(schema.safeParse(raw).success).toBe(false);
+  });
+});
+
+describe("avatar photo boundary", () => {
+  it("accepts a real supported image and rejects arbitrary or spoofed data", () => {
+    expect(AvatarPhotoDataUrlSchema.safeParse(PNG_DATA_URL).success).toBe(true);
+    expect(AvatarPhotoDataUrlSchema.safeParse("https://example.invalid/avatar.png").success).toBe(
+      false,
+    );
+    expect(
+      AvatarPhotoDataUrlSchema.safeParse("data:image/png;base64,R0lGODlhAQABAIAAAAAAAP///yw=")
+        .success,
+    ).toBe(false);
+  });
+
+  it("rejects oversized avatar data", () => {
+    const oversized = `data:image/png;base64,${Buffer.alloc(AVATAR_MAX_BYTES + 1).toString("base64")}`;
+    expect(AvatarPhotoDataUrlSchema.safeParse(oversized).success).toBe(false);
   });
 });
 

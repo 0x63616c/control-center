@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { AVATAR_MAX_BYTES, AvatarPhotoDataUrlSchema } from "../../../../contracts";
 import { Icon } from "../icons";
 import { money, T } from "../theme";
 import type { ActivityDTO } from "../types";
@@ -198,11 +199,25 @@ export function AvatarEditor({
   setDraft: Dispatch<SetStateAction<AvatarDraft>>;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const [photoError, setPhotoError] = useState<string | null>(null);
   const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
+    setPhotoError(null);
+    if (f.size > AVATAR_MAX_BYTES) {
+      setPhotoError("Choose an image smaller than 2 MiB.");
+      return;
+    }
     const r = new FileReader();
-    r.onload = () => setDraft((d) => ({ ...d, photo: r.result as string }));
+    r.onload = () => {
+      const parsed = AvatarPhotoDataUrlSchema.safeParse(r.result);
+      if (!parsed.success) {
+        setPhotoError("Choose a real PNG, JPEG, or WebP image.");
+        return;
+      }
+      setDraft((d) => ({ ...d, photo: parsed.data }));
+    };
+    r.onerror = () => setPhotoError("That image could not be read. Try another one.");
     r.readAsDataURL(f);
   };
   return (
@@ -218,6 +233,7 @@ export function AvatarEditor({
         <Avatar user={draft} size={104} />
         <button
           type="button"
+          aria-label="Choose profile photo"
           onClick={() => fileRef.current?.click()}
           style={{
             position: "absolute",
@@ -241,11 +257,16 @@ export function AvatarEditor({
         <input
           ref={fileRef}
           type="file"
-          accept="image/*"
+          accept="image/png,image/jpeg,image/webp"
           onChange={onFile}
           style={{ display: "none" }}
         />
       </div>
+      {photoError && (
+        <div role="alert" style={{ color: T.red, fontSize: 13, margin: "-8px 0 14px" }}>
+          {photoError}
+        </div>
+      )}
       {draft.photo && (
         <button
           type="button"

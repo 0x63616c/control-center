@@ -35,16 +35,6 @@ export const AppleAuthRequestSchema = z
   })
   .strict();
 
-export const UpdateMeRequestSchema = z
-  .object({
-    name: nonEmptyText.optional(),
-    color: z.string().optional(),
-    emoji: z.string().nullable().optional(),
-    photo: z.string().nullable().optional(),
-    exes: z.array(z.string()).optional(),
-  })
-  .strict();
-
 export const CreateJarRequestSchema = z
   .object({
     name: nonEmptyText,
@@ -65,6 +55,7 @@ export const LogSlipRequestSchema = z
 
 export const EVIDENCE_MAX_FILES = 3;
 export const EVIDENCE_MAX_BYTES = 2 * 1024 * 1024;
+export const AVATAR_MAX_BYTES = 2 * 1024 * 1024;
 const EVIDENCE_IMAGE_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
 
 function decodedBase64Bytes(payload: string): number | null {
@@ -130,6 +121,38 @@ export const EvidenceImageInputSchema = z
       ctx.addIssue({ code: "custom", path: ["dataUrl"], message: "image signature mismatch" });
     }
   });
+
+export const AvatarPhotoDataUrlSchema = z.string().superRefine((dataUrl, ctx) => {
+  const match = /^data:(image\/(?:png|jpeg|webp));base64,(.*)$/.exec(dataUrl);
+  if (!match) {
+    ctx.addIssue({ code: "custom", message: "avatar must be a supported image data URL" });
+    return;
+  }
+  const mimeType = EVIDENCE_IMAGE_MIME_TYPES.find((candidate) => candidate === match[1]);
+  if (!mimeType) {
+    ctx.addIssue({ code: "custom", message: "unsupported avatar image type" });
+    return;
+  }
+  const payload = match[2];
+  const bytes = decodedBase64Bytes(payload);
+  if (bytes == null) {
+    ctx.addIssue({ code: "custom", message: "invalid base64 avatar data" });
+  } else if (bytes > AVATAR_MAX_BYTES) {
+    ctx.addIssue({ code: "custom", message: "avatar exceeds size limit" });
+  } else if (!hasImageSignature(mimeType, payload)) {
+    ctx.addIssue({ code: "custom", message: "avatar image signature mismatch" });
+  }
+});
+
+export const UpdateMeRequestSchema = z
+  .object({
+    name: nonEmptyText.optional(),
+    color: z.string().optional(),
+    emoji: z.string().nullable().optional(),
+    photo: AvatarPhotoDataUrlSchema.nullable().optional(),
+    exes: z.array(z.string()).optional(),
+  })
+  .strict();
 
 export const CreateReportRequestSchema = z
   .object({
