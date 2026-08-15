@@ -111,7 +111,7 @@ export const NoteOnlySubmission: Story = {
       canvas.getByPlaceholderText("“replied to her story in 4 seconds flat…”"),
       submittedReport.note ?? "",
     );
-    await userEvent.click(within(canvas.getByTestId("anon-row")).getByRole("button"));
+    await userEvent.click(within(canvas.getByTestId("anon-row")).getByRole("switch"));
     await userEvent.click(canvas.getByRole("button", { name: "Send it anonymously" }));
 
     await expect(await canvas.findByText("Snitched.")).toBeInTheDocument();
