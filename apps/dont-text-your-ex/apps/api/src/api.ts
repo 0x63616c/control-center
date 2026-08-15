@@ -34,6 +34,7 @@ const log = createLogger({ service: "dont-text-your-ex-api" });
 
 const unauth = { error: "not_authenticated" } as const;
 const jarClosed = { error: "jar_closed" } as const;
+const notFound = { error: "not_found" } as const;
 
 // ─────────────────────────── health ───────────────────────────
 api.get("/health", (c) => c.json({ ok: true }));
@@ -205,7 +206,7 @@ api.get("/jars/:id", async (c) => {
   const parsed = parseRequestValue(c, JarIdSchema, c.req.param("id"));
   if (!parsed.ok) return parsed.response;
   const jarId = parsed.value;
-  if (!(await store.isMember(jarId, uid))) return c.json({ error: "not_member" }, 403);
+  if (!(await store.isMember(jarId, uid))) return c.json(notFound, 404);
   const detail = await store.getJarDetail(jarId, uid);
   if (!detail) return c.json({ error: "not_found" }, 404);
   return c.json(detail);
@@ -219,7 +220,7 @@ api.post("/jars/:id/close", async (c) => {
   const parsed = await parseRequestJson(c, CloseJarRequestSchema);
   if (!parsed.ok) return parsed.response;
   const result = await store.closeJar(parsedId.value, uid);
-  if (result.status === "not_found") return c.json({ error: "not_found" }, 404);
+  if (result.status === "not_found" || result.status === "not_member") return c.json(notFound, 404);
   if (result.status === "forbidden") return c.json({ error: "owner_required" }, 403);
   const detail = await store.getJarDetail(parsedId.value, uid);
   if (!detail) return c.json({ error: "not_found" }, 404);
@@ -237,8 +238,7 @@ api.post("/jars/:id/leave", async (c) => {
   if (result.status === "left") return c.json({ ok: true } as const);
   if (result.status === "owner_must_close") return c.json({ error: "owner_must_close" }, 409);
   if (result.status === "jar_closed") return c.json(jarClosed, 409);
-  if (result.status === "not_member") return c.json({ error: "not_member" }, 403);
-  return c.json({ error: "not_found" }, 404);
+  return c.json(notFound, 404);
 });
 
 api.post("/jars/:id/share-streak", async (c) => {
@@ -247,7 +247,7 @@ api.post("/jars/:id/share-streak", async (c) => {
   const parsedId = parseRequestValue(c, JarIdSchema, c.req.param("id"));
   if (!parsedId.ok) return parsedId.response;
   const jarId = parsedId.value;
-  if (!(await store.isMember(jarId, uid))) return c.json({ error: "not_member" }, 403);
+  if (!(await store.isMember(jarId, uid))) return c.json(notFound, 404);
   const parsed = await parseRequestJson(c, ShareStreakRequestSchema);
   if (!parsed.ok) return parsed.response;
   try {
@@ -266,7 +266,7 @@ api.post("/jars/:id/slips", async (c) => {
   const parsedId = parseRequestValue(c, JarIdSchema, c.req.param("id"));
   if (!parsedId.ok) return parsedId.response;
   const jarId = parsedId.value;
-  if (!(await store.isMember(jarId, uid))) return c.json({ error: "not_member" }, 403);
+  if (!(await store.isMember(jarId, uid))) return c.json(notFound, 404);
   const parsed = await parseRequestJson(c, LogSlipRequestSchema);
   if (!parsed.ok) return parsed.response;
   try {
@@ -285,7 +285,7 @@ api.post("/jars/:id/reports", async (c) => {
   const parsedId = parseRequestValue(c, JarIdSchema, c.req.param("id"));
   if (!parsedId.ok) return parsedId.response;
   const jarId = parsedId.value;
-  if (!(await store.isMember(jarId, uid))) return c.json({ error: "not_member" }, 403);
+  if (!(await store.isMember(jarId, uid))) return c.json(notFound, 404);
   const parsed = await parseRequestJson(c, CreateReportRequestSchema);
   if (!parsed.ok) return parsed.response;
   const body = parsed.value;

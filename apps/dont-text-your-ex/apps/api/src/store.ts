@@ -447,11 +447,12 @@ export async function joinJarByCode(
 export async function closeJar(
   jarId: string,
   userId: string,
-): Promise<{ status: "closed" | "forbidden" | "not_found" }> {
+): Promise<{ status: "closed" | "forbidden" | "not_member" | "not_found" }> {
   const jar = await jarRow(jarId);
   if (!jar) return { status: "not_found" };
   const membership = await membershipRow(jarId, userId);
-  if (membership?.role !== "owner") return { status: "forbidden" };
+  if (!membership) return { status: "not_member" };
+  if (membership.role !== "owner") return { status: "forbidden" };
   if (jar.closed_at == null) {
     await pool.query(
       "UPDATE jars SET closed_at=$1, closed_by=$2, invite_code=NULL WHERE id=$3 AND closed_at IS NULL",

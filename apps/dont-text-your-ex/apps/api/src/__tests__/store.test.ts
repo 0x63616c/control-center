@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { JarDetailSchema } from "../../../../contracts";
+import { JarDetailSchema, ReportSchema } from "../../../../contracts";
 import { pool } from "../db/index";
 import { runMigrations } from "../db/migrate";
 import { buildApp } from "../server";
@@ -308,8 +308,8 @@ describe.skipIf(!HAS_DB)("jar lifecycle", () => {
       headers: { Authorization: `Bearer ${outsiderToken}`, "Content-Type": "application/json" },
       body: JSON.stringify({ confirmed: true }),
     });
-    expect(outsiderCannotLeave.status).toBe(403);
-    expect(await outsiderCannotLeave.json()).toEqual({ error: "not_member" });
+    expect(outsiderCannotLeave.status).toBe(404);
+    expect(await outsiderCannotLeave.json()).toEqual({ error: "not_found" });
     const leave = await buildApp().request(`/api/jars/${jar.id}/leave`, {
       method: "POST",
       headers: { Authorization: `Bearer ${memberToken}`, "Content-Type": "application/json" },
@@ -344,7 +344,8 @@ describe.skipIf(!HAS_DB)("jar lifecycle", () => {
     const denied = await buildApp().request(`/api/jars/${jar.id}`, {
       headers: { Authorization: `Bearer ${memberToken}` },
     });
-    expect(denied.status).toBe(403);
+    expect(denied.status).toBe(404);
+    expect(await denied.json()).toEqual({ error: "not_found" });
   });
 
   it("hides a member's private streak from other members and rejects outsiders", async () => {
@@ -378,8 +379,8 @@ describe.skipIf(!HAS_DB)("jar lifecycle", () => {
     const response = await buildApp().request(`/api/jars/${jar.id}`, {
       headers: { Authorization: `Bearer ${outsiderToken}` },
     });
-    expect(response.status).toBe(403);
-    expect(await response.json()).toEqual({ error: "not_member" });
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "not_found" });
   });
 });
 
@@ -615,6 +616,220 @@ describe.skipIf(!HAS_DB)("reports", () => {
       [report.id],
     );
     expect(persisted.rows[0]?.accuser_id).toBe(accuser.id);
+  });
+});
+
+describe.skipIf(!HAS_DB)("authorization matrix", () => {
+  it("enforces capability and membership boundaries without existence leaks", async () => {
+    const owner = await store.createUser({ name: "Matrix Owner" });
+    const member = await store.createUser({ name: "Matrix Member" });
+    const accused = await store.createUser({ name: "Matrix Accused" });
+    const former = await store.createUser({ name: "Matrix Former" });
+    const outsider = await store.createUser({ name: "Matrix Outsider" });
+    const actors = { owner, member, accused, former, outsider } as const;
+    const tokens = {
+      owner: await store.createSession(owner.id),
+      member: await store.createSession(member.id),
+      accused: await store.createSession(accused.id),
+      former: await store.createSession(former.id),
+      outsider: await store.createSession(outsider.id),
+    } as const;
+    type Actor = keyof typeof actors;
+
+    const request = (actor: Actor, path: string, method = "GET", body?: unknown) =>
+      buildApp().request(`/api${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${tokens[actor]}`,
+          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    const expectStatuses = async (
+      path: string,
+      expected: Readonly<Record<Actor, number>>,
+      method = "GET",
+      body?: unknown,
+    ) => {
+      for (const actor of Object.keys(actors) as Actor[]) {
+        expect(
+          (await request(actor, path, method, body)).status,
+          `${actor} ${method} ${path}`,
+        ).toBe(expected[actor]);
+      }
+    };
+
+    const jar = await store.createJar({ userId: owner.id, name: "Matrix Jar" });
+    const detail = await store.getJarDetail(jar.id, owner.id);
+    const code = requireInviteCode(detail);
+    await store.joinJarByCode(member.id, code);
+    await store.joinJarByCode(accused.id, code);
+    await store.joinJarByCode(former.id, code);
+    const formerPendingReport = await store.createReport({
+      jarId: jar.id,
+      accuserId: owner.id,
+      accusedId: former.id,
+      note: "Must disappear after membership ends",
+      anonymous: false,
+      amountCents: 500,
+      evidence: [],
+    });
+    await store.leaveJar(jar.id, former.id);
+
+    const active200 = { owner: 200, member: 200, accused: 200, former: 404, outsider: 404 };
+    await expectStatuses(`/jars/${jar.id}`, active200);
+    const hidden = await request("outsider", `/jars/${jar.id}`);
+    const absent = await request("outsider", "/jars/jar_doesnotexist");
+    expect(await hidden.json()).toEqual(await absent.json());
+
+    await expectStatuses(`/jars/code/${code}`, {
+      owner: 200,
+      member: 200,
+      accused: 200,
+      former: 200,
+      outsider: 200,
+    });
+    await expectStatuses(`/jars/${jar.id}/slips`, active200, "POST", { amountCents: 500 });
+    await expectStatuses(`/jars/${jar.id}/share-streak`, active200, "POST", { value: true });
+
+    const reportResponse = await request("member", `/jars/${jar.id}/reports`, "POST", {
+      accusedId: accused.id,
+      note: "Matrix report",
+    });
+    expect(reportResponse.status).toBe(200);
+    const report = ReportSchema.parse(await reportResponse.json());
+    expect(
+      (
+        await request("owner", `/jars/${jar.id}/reports`, "POST", {
+          accusedId: accused.id,
+          note: "Owner report",
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await request("accused", `/jars/${jar.id}/reports`, "POST", {
+          accusedId: member.id,
+          note: "Accused can also report another member",
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await request("accused", `/jars/${jar.id}/reports`, "POST", {
+          accusedId: accused.id,
+          note: "self",
+        })
+      ).status,
+    ).toBe(400);
+    for (const actor of ["former", "outsider"] as const) {
+      expect(
+        (
+          await request(actor, `/jars/${jar.id}/reports`, "POST", {
+            accusedId: accused.id,
+            note: "blocked",
+          })
+        ).status,
+      ).toBe(404);
+    }
+    await expectStatuses(`/reports/${report.id}`, active200);
+    const hiddenReport = await request("outsider", `/reports/${report.id}`);
+    const absentReport = await request("outsider", "/reports/rpt_doesnotexist");
+    expect(await hiddenReport.json()).toEqual(await absentReport.json());
+
+    for (const actor of Object.keys(actors) as Actor[]) {
+      const pending = ReportSchema.array().parse(
+        await (await request(actor, "/reports/pending")).json(),
+      );
+      expect(pending.some((entry) => entry.id === report.id)).toBe(actor === "accused");
+      expect(pending.some((entry) => entry.id === formerPendingReport.id)).toBe(false);
+    }
+    await expectStatuses(
+      `/reports/${report.id}/resolve`,
+      {
+        owner: 404,
+        member: 404,
+        accused: 200,
+        former: 404,
+        outsider: 404,
+      },
+      "POST",
+      { action: "deny" },
+    );
+    for (const actor of Object.keys(actors) as Actor[]) {
+      const history = ReportSchema.array().parse(
+        await (await request(actor, "/reports/history")).json(),
+      );
+      expect(history.some((entry) => entry.id === report.id)).toBe(
+        actor === "owner" || actor === "member" || actor === "accused",
+      );
+    }
+
+    const leaveJar = await store.createJar({ userId: owner.id, name: "Leave Matrix" });
+    const leaveDetail = await store.getJarDetail(leaveJar.id, owner.id);
+    const leaveCode = requireInviteCode(leaveDetail);
+    await store.joinJarByCode(member.id, leaveCode);
+    await store.joinJarByCode(accused.id, leaveCode);
+    await store.joinJarByCode(former.id, leaveCode);
+    await store.leaveJar(leaveJar.id, former.id);
+    await expectStatuses(
+      `/jars/${leaveJar.id}/leave`,
+      {
+        owner: 409,
+        member: 200,
+        accused: 200,
+        former: 404,
+        outsider: 404,
+      },
+      "POST",
+      { confirmed: true },
+    );
+
+    const closeJar = await store.createJar({ userId: owner.id, name: "Close Matrix" });
+    const closeDetail = await store.getJarDetail(closeJar.id, owner.id);
+    const closeCode = requireInviteCode(closeDetail);
+    await store.joinJarByCode(member.id, closeCode);
+    await store.joinJarByCode(accused.id, closeCode);
+    await store.joinJarByCode(former.id, closeCode);
+    await store.leaveJar(closeJar.id, former.id);
+    for (const actor of ["member", "accused"] as const) {
+      expect(
+        (await request(actor, `/jars/${closeJar.id}/close`, "POST", { confirmed: true })).status,
+      ).toBe(403);
+    }
+    for (const actor of ["former", "outsider"] as const) {
+      expect(
+        (await request(actor, `/jars/${closeJar.id}/close`, "POST", { confirmed: true })).status,
+      ).toBe(404);
+    }
+    expect(
+      (await request("owner", `/jars/${closeJar.id}/close`, "POST", { confirmed: true })).status,
+    ).toBe(200);
+    await expectStatuses(`/jars/code/${closeCode}`, {
+      owner: 404,
+      member: 404,
+      accused: 404,
+      former: 404,
+      outsider: 404,
+    });
+
+    const joinJar = await store.createJar({ userId: owner.id, name: "Join Matrix" });
+    const joinDetail = await store.getJarDetail(joinJar.id, owner.id);
+    const joinCode = requireInviteCode(joinDetail);
+    await store.joinJarByCode(former.id, joinCode);
+    await store.leaveJar(joinJar.id, former.id);
+    await expectStatuses(
+      "/jars/join",
+      {
+        owner: 200,
+        member: 200,
+        accused: 200,
+        former: 200,
+        outsider: 200,
+      },
+      "POST",
+      { code: joinCode },
+    );
   });
 });
 

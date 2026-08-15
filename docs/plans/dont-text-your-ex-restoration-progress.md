@@ -242,6 +242,33 @@ Every blocked row requires a fixing commit and a fresh evidence entry. This tabl
 must be expanded or split if the audit discovers another independently testable
 feature; it is not a waiver for capabilities not listed here.
 
+### Authorization matrix contract
+
+The raw authenticated API suite treats an invite code as a capability, but does
+not let a jar or report identifier reveal whether a resource exists. `404` below
+therefore means the same response for a former member, an outsider, and an
+unknown identifier. An active non-owner may receive `403` for an owner-only
+operation because their authorized jar read already establishes existence.
+
+| Action | Active owner | Active member | Accused member | Former member | Outsider |
+|---|---:|---:|---:|---:|---:|
+| Read jar | 200 | 200 | 200 | 404 | 404 |
+| Preview open invite by code | 200 | 200 | 200 | 200 | 200 |
+| Join/rejoin open invite by code | 200 idempotent | 200 idempotent | 200 idempotent | 200 reactivates | 200 joins |
+| Log slip / change own streak sharing | 200 | 200 | 200 | 404 | 404 |
+| Create report against another active member | 200 | 200 | 200 | 404 | 404 |
+| Read report in an active jar | 200 | 200 | 200 | 404 | 404 |
+| Pending report list | Own accused reports only | Own accused reports only | Own accused reports only | Empty | Empty |
+| Resolve report | 404 unless accused | 404 unless accused | 200 for own pending report | 404 | 404 |
+| Read resolved report history | 200 for active jar reports | 200 | 200 | Empty | Empty |
+| Close jar | 200 | 403 owner required | 403 owner required | 404 | 404 |
+| Leave jar | 409 must close | 200 | 200 | 404 | 404 |
+| Preview/join after close | 404 | 404 | 404 | 404 | 404 |
+
+The matrix is exercised from raw HTTP requests with separate owner, member,
+accused, former-member, and outsider sessions against real Postgres. It also
+asserts that hidden and nonexistent jar/report responses have identical bodies.
+
 ## Baseline before deployment
 
 Captured 2026-08-14 before implementation was merged:
