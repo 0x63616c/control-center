@@ -345,7 +345,7 @@ export const SettleErrorAndRetry: Story = {
     );
     await expect(canvas.queryByText("$0.00")).not.toBeInTheDocument();
     await userEvent.click(canvas.getByRole("button", { name: "Retry" }));
-    await expect(await canvas.findByText("$5")).toBeInTheDocument();
+    await expect(await canvas.findAllByText("$5")).toHaveLength(2);
   },
 };
 
