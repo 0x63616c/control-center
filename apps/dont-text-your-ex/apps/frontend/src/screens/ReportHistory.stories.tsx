@@ -106,7 +106,7 @@ export const ResolvedList: Story = {
     await expect(await canvas.findByText("Owned")).toBeVisible();
     await expect(canvas.getByText("Denied")).toBeVisible();
     await expect(canvas.getByText("The screenshot survived the reload.")).toBeVisible();
-    await userEvent.click(canvas.getByRole("button", { name: /Alex · The Group Chat/ }));
+    await userEvent.click(canvas.getByRole("button", { name: /Alex · The Group Chat.*Owned/ }));
     await expect(navigate).toHaveBeenCalledWith({
       name: "reportDetail",
       reportId: resolved.id,

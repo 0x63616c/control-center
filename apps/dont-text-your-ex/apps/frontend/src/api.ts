@@ -34,8 +34,8 @@ export function getToken(): SessionToken | null {
   return parsed.success ? parsed.data : null;
 }
 
-export function setToken(token: string | null): void {
-  if (token) localStorage.setItem(TOKEN_KEY, SessionTokenSchema.parse(token));
+export function setToken(token: SessionToken | null): void {
+  if (token) localStorage.setItem(TOKEN_KEY, token);
   else localStorage.removeItem(TOKEN_KEY);
 }
 

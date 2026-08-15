@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SessionTokenSchema } from "../../../contracts";
 import { getToken, setToken } from "./api";
 import { restoreSession, revokeCurrentSession } from "./session-lifecycle";
 
-const TOKEN = "sess_testsession";
+const TOKEN = SessionTokenSchema.parse("sess_testsession");
 const USER = {
   id: "usr_session",
   name: "Session User",

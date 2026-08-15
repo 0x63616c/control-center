@@ -126,6 +126,7 @@ test("owner replaces a seven-day invite → old deep link stays revoked after re
   await page.getByRole("button", { name: "Replace invite" }).click();
   await expect(page.getByRole("alert")).toContainText("stop working immediately");
   await page.getByRole("button", { name: "Replace invite now" }).click();
+  await expect(page.getByRole("button", { name: "Replace invite" })).toBeVisible();
 
   const after = (await (await request.get(`/api/jars/${jar.id}`, { headers })).json()) as {
     inviteCode: string;

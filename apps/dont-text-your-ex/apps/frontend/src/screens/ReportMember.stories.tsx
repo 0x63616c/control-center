@@ -147,3 +147,38 @@ export const ImageOnlySubmission: Story = {
     });
   },
 };
+
+export const FetchAndSubmitFailureRetryWithoutFalseSuccess: Story = {
+  render: () => {
+    let fetchAttempts = 0;
+    let submitAttempts = 0;
+    const retryServices: ReportServices = {
+      jar: fn(async () => {
+        fetchAttempts += 1;
+        if (fetchAttempts === 1) throw new Error("offline");
+        return jar;
+      }),
+      createReport: fn(async () => {
+        submitAttempts += 1;
+        if (submitAttempts === 1) throw new Error("server unavailable");
+        return submittedReport;
+      }),
+    };
+    return <ReportMember ctx={ctx} services={retryServices} />;
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(await canvas.findByRole("alert")).toHaveTextContent("couldn’t be loaded");
+    await expect(canvas.queryByText("Snitched.")).not.toBeInTheDocument();
+    await userEvent.click(canvas.getByRole("button", { name: "Retry" }));
+    await userEvent.type(
+      await canvas.findByPlaceholderText("“replied to her story in 4 seconds flat…”"),
+      "Visible failure proof",
+    );
+    await userEvent.click(canvas.getByRole("button", { name: "Send the report" }));
+    await expect(await canvas.findByRole("alert")).toHaveTextContent("wasn’t sent");
+    await expect(canvas.queryByText("Snitched.")).not.toBeInTheDocument();
+    await userEvent.click(canvas.getByRole("button", { name: "Retry sending report" }));
+    await expect(await canvas.findByText("Snitched.")).toBeInTheDocument();
+  },
+};

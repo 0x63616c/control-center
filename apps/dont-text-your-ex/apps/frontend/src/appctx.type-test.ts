@@ -1,16 +1,21 @@
-import { JarIdSchema, ReportIdSchema } from "../../../contracts";
-import { api } from "./api";
+import { JarIdSchema, ReportIdSchema, SessionTokenSchema } from "../../../contracts";
+import { api, setToken } from "./api";
 import type { AppCtx, Route } from "./appctx";
 
 declare const navigate: AppCtx["nav"];
 const jarId = JarIdSchema.parse("jar_123");
 const reportId = ReportIdSchema.parse("rpt_123");
+const sessionToken = SessionTokenSchema.parse("sess_123");
+declare const signedInUser: NonNullable<AppCtx["me"]>;
 
 navigate({ name: "home" });
 navigate({ name: "jar", jarId });
 navigate({ name: "invite", jarId, fresh: true });
 api.jar(jarId);
 api.resolveReport(reportId, "own");
+setToken(sessionToken);
+declare const signIn: AppCtx["signIn"];
+signIn(sessionToken, signedInUser);
 
 // @ts-expect-error jar routes always carry the jar they display.
 const jarWithoutId: Route = { name: "jar" };
@@ -35,5 +40,11 @@ api.jar(reportId);
 
 // @ts-expect-error API report methods preserve the ReportId brand.
 api.resolveReport(jarId, "deny");
+
+// @ts-expect-error session storage accepts only a parsed SessionToken.
+setToken("sess_123");
+
+// @ts-expect-error authentication transitions preserve the SessionToken brand.
+signIn("sess_123", signedInUser);
 
 void jarWithoutId;

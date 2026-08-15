@@ -129,6 +129,7 @@ export function Btn({
   return (
     <button
       type="button"
+      disabled={disabled}
       onClick={disabled ? undefined : onClick}
       onPointerDown={() => setPress(true)}
       onPointerUp={() => setPress(false)}

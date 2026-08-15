@@ -1,4 +1,4 @@
-import type { JarId, ReportId } from "../../../contracts";
+import type { JarId, ReportId, SessionToken } from "../../../contracts";
 import type { MeDTO } from "./types";
 
 export type Route =
@@ -39,7 +39,7 @@ export interface AppCtx<CurrentRoute extends Route = Route> {
   tab: (tab: TabName) => void;
 
   /** auth screens call this after a successful sign-in / verify */
-  signIn: (token: string, me: MeDTO) => void;
+  signIn: (token: SessionToken, me: MeDTO) => void;
   /** resolves only after the server revokes the current bearer session */
   signOut: () => Promise<void>;
   sessionExpired: boolean;

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { EVIDENCE_MAX_FILES, type EvidenceImageInput } from "../../../../contracts";
 import { api } from "../api";
 import type { AppCtx, RouteFor } from "../appctx";
@@ -9,8 +9,15 @@ import { T } from "../theme";
 import type { JarDetailDTO, MemberDTO } from "../types";
 import { Avatar, Btn, Screen, TopBar } from "../ui";
 import { inputStyle, labelStyle } from "./common";
+import { ErrorState, type FetchedState, LoadingState, MutationError } from "./fetched-state";
 
 export type ReportServices = Pick<typeof api, "jar" | "createReport">;
+
+type ReportMutationState =
+  | { readonly status: "idle" }
+  | { readonly status: "submitting" }
+  | { readonly status: "failed" }
+  | { readonly status: "sent" };
 
 const EVIDENCE_ERROR_MESSAGE: Record<EvidenceFileError, string> = {
   too_many_files: `Add no more than ${EVIDENCE_MAX_FILES} screenshots.`,
@@ -27,32 +34,38 @@ export function ReportMember({
   services?: ReportServices;
 }) {
   const { jarId } = ctx.route;
-  const [jar, setJar] = useState<JarDetailDTO | null>(null);
+  const [jarState, setJarState] = useState<FetchedState<JarDetailDTO>>({ status: "loading" });
   const [target, setTarget] = useState<MemberDTO["user"]["id"] | null>(null);
   const [note, setNote] = useState("");
   const [evidence, setEvidence] = useState<readonly EvidenceImageInput[]>([]);
   const [evidenceError, setEvidenceError] = useState<string | null>(null);
   const [readingEvidence, setReadingEvidence] = useState(false);
   const [anon, setAnon] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [mutation, setMutation] = useState<ReportMutationState>({ status: "idle" });
   const fileInput = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
+  const loadJar = useCallback(() => {
     let alive = true;
+    setJarState({ status: "loading" });
     services
       .jar(jarId)
       .then((d) => {
         if (!alive) return;
-        setJar(d);
+        setJarState({ status: "loaded", value: d });
         const others = d.members.filter((m) => m.user.id !== ctx.me?.id);
         setTarget(others[0]?.user.id ?? null);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (alive) setJarState({ status: "error" });
+      });
     return () => {
       alive = false;
     };
   }, [jarId, ctx.me?.id, services]);
+
+  useEffect(() => loadJar(), [loadJar]);
+
+  const jar = jarState.status === "loaded" ? jarState.value : null;
 
   const others: MemberDTO[] = (jar?.members ?? []).filter((m) => m.user.id !== ctx.me?.id);
   const canSend = !!target && (note.trim().length > 0 || evidence.length > 0);
@@ -76,8 +89,8 @@ export function ReportMember({
   };
 
   const send = async () => {
-    if (!canSend || !jar || !target || busy) return;
-    setBusy(true);
+    if (!canSend || !jar || !target || mutation.status === "submitting") return;
+    setMutation({ status: "submitting" });
     try {
       await services.createReport(jar.id, {
         accusedId: target,
@@ -86,13 +99,33 @@ export function ReportMember({
         amountCents: jar.defaultCents,
         evidence: [...evidence],
       });
-      setSent(true);
+      setMutation({ status: "sent" });
     } catch {
-      setBusy(false);
+      setMutation({ status: "failed" });
     }
   };
 
-  if (sent && jar && target) {
+  if (jarState.status === "loading") {
+    return (
+      <Screen>
+        <TopBar onBack={() => ctx.back()} title="Report a slip" />
+        <LoadingState>Loading jar members…</LoadingState>
+      </Screen>
+    );
+  }
+
+  if (jarState.status === "error") {
+    return (
+      <Screen>
+        <TopBar onBack={() => ctx.back()} title="Report a slip" />
+        <ErrorState label="Jar members couldn’t be loaded." onRetry={loadJar} />
+      </Screen>
+    );
+  }
+
+  if (jarState.status === "empty" || !jar) return null;
+
+  if (mutation.status === "sent" && target) {
     const p = jar.members.find((m) => m.user.id === target)?.user;
     return (
       <Screen>
@@ -297,8 +330,17 @@ export function ReportMember({
           Add a note or screenshot to send.
         </div>
       )}
-      <Btn kind="red" disabled={!canSend || busy} onClick={send}>
-        {anon ? "Send it anonymously" : "Send the report"}
+      {mutation.status === "failed" && (
+        <MutationError>The report wasn’t sent. Check your connection, then retry.</MutationError>
+      )}
+      <Btn kind="red" disabled={!canSend || mutation.status === "submitting"} onClick={send}>
+        {mutation.status === "submitting"
+          ? "Sending report…"
+          : mutation.status === "failed"
+            ? "Retry sending report"
+            : anon
+              ? "Send it anonymously"
+              : "Send the report"}
       </Btn>
     </Screen>
   );

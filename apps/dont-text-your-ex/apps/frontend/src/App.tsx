@@ -1,6 +1,7 @@
 import { App as NativeApp } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import { useCallback, useEffect, useState } from "react";
+import type { SessionToken } from "../../../contracts";
 import { api, setToken } from "./api";
 import type { AppCtx, Route, TabName } from "./appctx";
 import { MoneyBurst } from "./bits";
@@ -254,7 +255,7 @@ export default function App() {
     setStack([]);
   }, []);
 
-  const signIn = useCallback((token: string, user: MeDTO) => {
+  const signIn = useCallback((token: SessionToken, user: MeDTO) => {
     setToken(token);
     setMeState(user);
     setSessionExpired(false);

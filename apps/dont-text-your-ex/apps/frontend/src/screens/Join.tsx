@@ -8,6 +8,21 @@ import { inputStyle } from "./common";
 
 export type JoinServices = Pick<typeof api, "jarByCode" | "joinJar">;
 
+type JoinMutationState =
+  | { readonly status: "idle" }
+  | { readonly status: "submitting" }
+  | { readonly status: "failed"; readonly message: string };
+
+type PreviewState =
+  | { readonly status: "idle" }
+  | { readonly status: "loading" }
+  | { readonly status: "failed"; readonly message: string }
+  | {
+      readonly status: "loaded";
+      readonly preview: JarPreviewDTO;
+      readonly join: JoinMutationState;
+    };
+
 function describeJoinError(error: unknown): string {
   if (isApiErrorStatus(error, 403)) return "You don’t have permission to join this jar.";
   if (isApiErrorStatus(error, 409)) return "This jar can’t be joined anymore.";
@@ -30,21 +45,16 @@ export function Join({
   services?: JoinServices;
 }) {
   const [code, setCode] = useState(ctx.route.code ?? "");
-  const [preview, setPreview] = useState<JarPreviewDTO | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [state, setState] = useState<PreviewState>({ status: "idle" });
 
   const loadPreview = useCallback(
     async (candidate: string) => {
-      setBusy(true);
-      setErr(null);
+      setState({ status: "loading" });
       try {
-        const p = await services.jarByCode(candidate);
-        setPreview(p);
+        const preview = await services.jarByCode(candidate);
+        setState({ status: "loaded", preview, join: { status: "idle" } });
       } catch (error) {
-        setErr(describePreviewError(error));
-      } finally {
-        setBusy(false);
+        setState({ status: "failed", message: describePreviewError(error) });
       }
     },
     [services],
@@ -55,34 +65,38 @@ export function Join({
   }, [ctx.route.code, loadPreview]);
 
   const doPreview = async () => {
-    if (busy) return;
+    if (state.status === "loading") return;
     if (!/^[A-Z0-9]{6}$/.test(code)) {
-      setErr("Enter the full six-letter invite code.");
+      setState({ status: "failed", message: "Enter the full six-letter invite code." });
       return;
     }
     await loadPreview(code);
   };
 
   const join = async () => {
-    if (!preview || busy) return;
-    setBusy(true);
+    if (state.status !== "loaded" || state.join.status === "submitting") return;
+    const preview = state.preview;
+    setState({ status: "loaded", preview, join: { status: "submitting" } });
     try {
-      setErr(null);
       const { jarId } = await services.joinJar(code);
       if (window.location.pathname.startsWith("/j/")) {
         window.history.replaceState({}, "", "/");
       }
       ctx.nav({ name: "jar", jarId }, true);
     } catch (error) {
-      setErr(describeJoinError(error));
-      setBusy(false);
+      setState({
+        status: "loaded",
+        preview,
+        join: { status: "failed", message: describeJoinError(error) },
+      });
     }
   };
 
-  if (preview) {
+  if (state.status === "loaded") {
+    const { preview, join: joinState } = state;
     return (
       <Screen>
-        <TopBar onBack={() => setPreview(null)} title="Join jar" />
+        <TopBar onBack={() => setState({ status: "idle" })} title="Join jar" />
         <div
           style={{
             background: T.surface,
@@ -131,15 +145,19 @@ export function Join({
             </div>
           </div>
         </div>
-        <Btn kind="gold" disabled={busy} onClick={join}>
-          {busy ? "Joining…" : err ? "Retry joining jar" : "Join the shame"}
+        <Btn kind="gold" disabled={joinState.status === "submitting"} onClick={join}>
+          {joinState.status === "submitting"
+            ? "Joining…"
+            : joinState.status === "failed"
+              ? "Retry joining jar"
+              : "Join the shame"}
         </Btn>
-        {err && (
+        {joinState.status === "failed" && (
           <div
             role="alert"
             style={{ color: T.red, fontSize: 14, textAlign: "center", marginTop: 12 }}
           >
-            {err}
+            {joinState.message}
           </div>
         )}
       </Screen>
@@ -156,12 +174,12 @@ export function Join({
         value={code}
         onChange={(e) => {
           setCode(e.target.value.toUpperCase().slice(0, 6));
-          setErr(null);
+          setState({ status: "idle" });
         }}
         placeholder="Invite code"
         style={{ ...inputStyle, textAlign: "center", marginBottom: 14, letterSpacing: "0.1em" }}
       />
-      {err && (
+      {state.status === "failed" && (
         <div
           role="alert"
           style={{
@@ -172,11 +190,19 @@ export function Join({
             marginBottom: 12,
           }}
         >
-          {err}
+          {state.message}
         </div>
       )}
-      <Btn kind="gold" disabled={code.length === 0 || busy} onClick={doPreview}>
-        {busy ? "Loading invite…" : err ? "Retry invite" : "Preview jar"}
+      <Btn
+        kind="gold"
+        disabled={code.length === 0 || state.status === "loading"}
+        onClick={doPreview}
+      >
+        {state.status === "loading"
+          ? "Loading invite…"
+          : state.status === "failed"
+            ? "Retry invite"
+            : "Preview jar"}
       </Btn>
     </Screen>
   );
