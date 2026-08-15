@@ -5,54 +5,133 @@ import { Icon } from "../icons";
 import { money, T } from "../theme";
 import type { JarSummaryDTO, UserDTO } from "../types";
 import { AvatarStack, IconBtn, Screen, TopBar } from "../ui";
+import { ErrorState, type FetchedState, LoadingState } from "./fetched-state";
 
-export function Home({ ctx }: { ctx: AppCtx<RouteFor<"home">> }) {
-  const [jars, setJars] = useState<JarSummaryDTO[] | null>(null);
-  // member user objects for avatar stacks come from each jar detail lazily;
-  // for the list we only need ids + a color, which the summary doesn't carry,
-  // so we resolve avatars from a small members map fetched alongside.
-  const [members, setMembers] = useState<Record<string, UserDTO>>({});
+export type HomeServices = Pick<typeof api, "jars" | "jar">;
+type HomeData = {
+  readonly jars: readonly JarSummaryDTO[];
+  readonly members: Readonly<Record<string, UserDTO>>;
+  readonly avatarsUnavailable: boolean;
+};
+
+export function Home({
+  ctx,
+  services = api,
+}: {
+  ctx: AppCtx<RouteFor<"home">>;
+  services?: HomeServices;
+}) {
+  const [state, setState] = useState<FetchedState<HomeData>>({ status: "loading" });
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
+    void retry;
     let alive = true;
-    api
+    setState({ status: "loading" });
+    services
       .jars()
       .then(async (js) => {
         if (!alive) return;
-        setJars(js);
-        // hydrate avatars: pull each jar detail once to learn member users
+        if (js.length === 0) {
+          setState({ status: "empty" });
+          return;
+        }
         const map: Record<string, UserDTO> = {};
+        let avatarsUnavailable = false;
         await Promise.all(
           js.map(async (j) => {
             try {
-              const d = await api.jar(j.id);
+              const d = await services.jar(j.id);
               for (const m of d.members) map[m.user.id] = m.user;
             } catch {
-              /* ignore */
+              avatarsUnavailable = true;
             }
           }),
         );
-        if (alive) setMembers(map);
+        if (alive)
+          setState({ status: "loaded", value: { jars: js, members: map, avatarsUnavailable } });
       })
-      .catch(() => setJars([]));
+      .catch(() => {
+        if (alive) setState({ status: "error" });
+      });
     return () => {
       alive = false;
     };
-  }, []);
+  }, [retry, services]);
 
-  const myTotal = (jars ?? []).reduce((s, j) => s + j.myTallyCents, 0);
-  const bestStreak = (jars ?? []).reduce((max, j) => Math.max(max, j.myDaysClean), 0);
+  const topBar = (
+    <TopBar
+      title="Your jars"
+      trailing={
+        <IconBtn data-testid="create-jar" onClick={() => ctx.nav({ name: "create" })}>
+          <Icon.plus />
+        </IconBtn>
+      }
+    />
+  );
+
+  if (state.status === "loading") {
+    return (
+      <Screen>
+        {topBar}
+        <LoadingState>Loading your jars…</LoadingState>
+      </Screen>
+    );
+  }
+  if (state.status === "error") {
+    return (
+      <Screen>
+        {topBar}
+        <ErrorState
+          label="Your jars couldn’t be loaded."
+          onRetry={() => setRetry((value) => value + 1)}
+        />
+      </Screen>
+    );
+  }
+  if (state.status === "empty") {
+    return (
+      <Screen>
+        {topBar}
+        <div style={{ textAlign: "center", color: T.sec, fontSize: 15, padding: "20px 0" }}>
+          No jars yet. Start one and drag your friends down with you.
+        </div>
+        <button
+          type="button"
+          onClick={() => ctx.nav({ name: "join" })}
+          style={{
+            width: "100%",
+            background: "transparent",
+            border: `1.5px dashed ${T.hair}`,
+            borderRadius: 24,
+            padding: 18,
+            color: T.sec,
+            fontFamily: T.ui,
+            fontWeight: 600,
+            fontSize: 15,
+            cursor: "pointer",
+          }}
+        >
+          <Icon.plus style={{ width: 16, height: 16 }} /> Join a jar with a code
+        </button>
+      </Screen>
+    );
+  }
+
+  const { avatarsUnavailable, jars, members } = state.value;
+
+  const myTotal = jars.reduce((s, j) => s + j.myTallyCents, 0);
+  const bestStreak = jars.reduce((max, j) => Math.max(max, j.myDaysClean), 0);
 
   return (
     <Screen>
-      <TopBar
-        title="Your jars"
-        trailing={
-          <IconBtn data-testid="create-jar" onClick={() => ctx.nav({ name: "create" })}>
-            <Icon.plus />
-          </IconBtn>
-        }
-      />
+      {topBar}
+
+      {avatarsUnavailable && (
+        <div role="status" style={{ color: T.ter, fontSize: 12.5, marginBottom: 12 }}>
+          Some member photos couldn’t be loaded.
+        </div>
+      )}
 
       <div
         style={{
@@ -111,7 +190,7 @@ export function Home({ ctx }: { ctx: AppCtx<RouteFor<"home">> }) {
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        {(jars ?? []).map((j) => {
+        {jars.map((j) => {
           const memberUsers = j.memberIds.map((id) => members[id]).filter(Boolean);
           return (
             <button
@@ -203,20 +282,6 @@ export function Home({ ctx }: { ctx: AppCtx<RouteFor<"home">> }) {
             </button>
           );
         })}
-
-        {jars && jars.length === 0 && (
-          <div
-            style={{
-              textAlign: "center",
-              color: T.sec,
-              fontSize: 15,
-              padding: "20px 0 8px",
-              lineHeight: 1.5,
-            }}
-          >
-            No jars yet. Start one and drag your friends down with you.
-          </div>
-        )}
 
         <button
           type="button"

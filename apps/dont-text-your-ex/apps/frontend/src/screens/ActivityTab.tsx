@@ -6,29 +6,76 @@ import { T } from "../theme";
 import type { ActivityDTO, ReportDTO } from "../types";
 import { Screen, TopBar } from "../ui";
 import { ActivityRow } from "./common";
+import { ErrorState, type FetchedState, LoadingState } from "./fetched-state";
 
-export function ActivityTab({ ctx }: { ctx: AppCtx<RouteFor<"activity">> }) {
-  const [feed, setFeed] = useState<ActivityDTO[] | null>(null);
-  const [pending, setPending] = useState<ReportDTO[]>([]);
+export type ActivityServices = Pick<typeof api, "activity" | "pendingReports">;
+type ActivityData = {
+  readonly feed: readonly ActivityDTO[];
+  readonly pending: readonly ReportDTO[];
+};
+
+export function ActivityTab({
+  ctx,
+  services = api,
+}: {
+  ctx: AppCtx<RouteFor<"activity">>;
+  services?: ActivityServices;
+}) {
+  const [state, setState] = useState<FetchedState<ActivityData>>({ status: "loading" });
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
+    void retry;
     let alive = true;
-    api
-      .activity()
-      .then((a) => {
-        if (alive) setFeed(a);
+    setState({ status: "loading" });
+    Promise.all([services.activity(), services.pendingReports()])
+      .then(([feed, pending]) => {
+        if (!alive) return;
+        setState(
+          feed.length === 0 && pending.length === 0
+            ? { status: "empty" }
+            : { status: "loaded", value: { feed, pending } },
+        );
       })
-      .catch(() => setFeed([]));
-    api
-      .pendingReports()
-      .then((p) => {
-        if (alive) setPending(p);
-      })
-      .catch(() => {});
+      .catch(() => {
+        if (alive) setState({ status: "error" });
+      });
     return () => {
       alive = false;
     };
-  }, []);
+  }, [retry, services]);
+
+  if (state.status === "loading") {
+    return (
+      <Screen>
+        <TopBar title="Activity" />
+        <LoadingState>Loading activity…</LoadingState>
+      </Screen>
+    );
+  }
+  if (state.status === "error") {
+    return (
+      <Screen>
+        <TopBar title="Activity" />
+        <ErrorState
+          label="Activity couldn’t be loaded."
+          onRetry={() => setRetry((value) => value + 1)}
+        />
+      </Screen>
+    );
+  }
+  if (state.status === "empty") {
+    return (
+      <Screen>
+        <TopBar title="Activity" />
+        <div style={{ textAlign: "center", color: T.ter, fontSize: 14, padding: "60px 0" }}>
+          No carnage yet. Give it time.
+        </div>
+      </Screen>
+    );
+  }
+
+  const { feed, pending } = state.value;
 
   const topReport = pending[0];
 
@@ -79,16 +126,11 @@ export function ActivityTab({ ctx }: { ctx: AppCtx<RouteFor<"activity">> }) {
       )}
 
       <div>
-        {(feed ?? []).map((a) => (
+        {feed.map((a) => (
           <ActivityRow key={a.id} a={a} showJar />
         ))}
       </div>
-      {feed && feed.length === 0 && !topReport && (
-        <div style={{ textAlign: "center", color: T.ter, fontSize: 14, padding: "60px 0" }}>
-          No carnage yet. Give it time.
-        </div>
-      )}
-      {feed && feed.length > 0 && (
+      {feed.length > 0 && (
         <div style={{ textAlign: "center", color: T.ter, fontSize: 13, padding: "24px 0 0" }}>
           That's all the carnage for now.
         </div>

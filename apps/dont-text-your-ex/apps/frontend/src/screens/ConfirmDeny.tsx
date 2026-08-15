@@ -5,41 +5,80 @@ import { EvidenceShot, EvidenceViewer } from "../bits";
 import { money, T } from "../theme";
 import type { ReportDTO } from "../types";
 import { Btn, Screen, TopBar } from "../ui";
+import { ErrorState, type FetchedState, LoadingState, MutationError } from "./fetched-state";
 
-export function ConfirmDeny({ ctx }: { ctx: AppCtx<RouteFor<"confirmDeny">> }) {
+export type ConfirmDenyServices = Pick<typeof api, "pendingReports" | "resolveReport">;
+
+export function ConfirmDeny({
+  ctx,
+  services = api,
+}: {
+  ctx: AppCtx<RouteFor<"confirmDeny">>;
+  services?: ConfirmDenyServices;
+}) {
   const { reportId } = ctx.route;
-  const [report, setReport] = useState<ReportDTO | null>(null);
+  const [state, setState] = useState<FetchedState<ReportDTO>>({ status: "loading" });
+  const [retry, setRetry] = useState(0);
   const [viewer, setViewer] = useState<number | null>(null);
   const [done, setDone] = useState<"owned" | "denied" | null>(null);
   const [busy, setBusy] = useState(false);
+  const [mutationError, setMutationError] = useState(false);
 
   useEffect(() => {
+    void retry;
     let alive = true;
-    api
+    setState({ status: "loading" });
+    services
       .pendingReports()
       .then((rs) => {
         if (!alive) return;
-        setReport(rs.find((r) => r.id === reportId) ?? rs[0] ?? null);
+        const report = rs.find((item) => item.id === reportId);
+        setState(report ? { status: "loaded", value: report } : { status: "empty" });
       })
-      .catch(() => {});
+      .catch(() => {
+        if (alive) setState({ status: "error" });
+      });
     return () => {
       alive = false;
     };
-  }, [reportId]);
+  }, [reportId, retry, services]);
+
+  const report = state.status === "loaded" ? state.value : null;
 
   const resolve = async (action: "own" | "deny") => {
     if (!report || busy) return;
     setBusy(true);
+    setMutationError(false);
     try {
-      await api.resolveReport(report.id, action);
+      await services.resolveReport(report.id, action);
       ctx.refreshPending();
       setDone(action === "own" ? "owned" : "denied");
     } catch {
       setBusy(false);
+      setMutationError(true);
     }
   };
 
-  if (!report) {
+  if (state.status === "loading") {
+    return (
+      <Screen>
+        <TopBar onBack={() => ctx.back()} title="You've been reported" />
+        <LoadingState>Loading report…</LoadingState>
+      </Screen>
+    );
+  }
+  if (state.status === "error") {
+    return (
+      <Screen>
+        <TopBar onBack={() => ctx.back()} title="You've been reported" />
+        <ErrorState
+          label="This report couldn’t be loaded."
+          onRetry={() => setRetry((value) => value + 1)}
+        />
+      </Screen>
+    );
+  }
+  if (state.status === "empty" || report == null) {
     return (
       <Screen>
         <TopBar onBack={() => ctx.back()} title="You've been reported" />
@@ -188,6 +227,11 @@ export function ConfirmDeny({ ctx }: { ctx: AppCtx<RouteFor<"confirmDeny">> }) {
           Deny it - wasn't me
         </Btn>
       </div>
+      {mutationError && (
+        <MutationError>
+          The report couldn’t be updated. Check your connection and try again.
+        </MutationError>
+      )}
       <p
         style={{
           textAlign: "center",

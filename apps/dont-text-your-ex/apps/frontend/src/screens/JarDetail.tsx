@@ -6,37 +6,72 @@ import { money, streakLabel, T } from "../theme";
 import type { JarDetailDTO } from "../types";
 import { Avatar, Btn, IconBtn, Screen, TopBar } from "../ui";
 import { ActivityRow, useCountUp } from "./common";
+import { ErrorState, type FetchedState, LoadingState } from "./fetched-state";
 
-export function JarDetail({ ctx }: { ctx: AppCtx<RouteFor<"jar">> }) {
+export type JarDetailServices = Pick<typeof api, "jar">;
+
+export function JarDetail({
+  ctx,
+  services = api,
+}: {
+  ctx: AppCtx<RouteFor<"jar">>;
+  services?: JarDetailServices;
+}) {
   const { jarId } = ctx.route;
-  const [jar, setJar] = useState<JarDetailDTO | null>(null);
+  const [state, setState] = useState<FetchedState<JarDetailDTO>>({ status: "loading" });
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
+    void retry;
     let alive = true;
-    api
+    setState({ status: "loading" });
+    services
       .jar(jarId)
       .then((d) => {
-        if (alive) setJar(d);
+        if (alive) setState({ status: "loaded", value: d });
       })
-      .catch(() => {});
+      .catch(() => {
+        if (alive) setState({ status: "error" });
+      });
     return () => {
       alive = false;
     };
-  }, [jarId]);
+  }, [jarId, retry, services]);
 
-  const total = jar?.jarTotalCents ?? 0;
+  const total = state.status === "loaded" ? state.value.jarTotalCents : 0;
   const animated = useCountUp(total);
 
-  if (!jar) {
+  if (state.status === "loading") {
     return (
       <Screen>
         <TopBar onBack={() => ctx.back()} title="" />
-        <div style={{ textAlign: "center", color: T.ter, paddingTop: 80, fontFamily: T.disp }}>
-          …
+        <LoadingState>Loading jar…</LoadingState>
+      </Screen>
+    );
+  }
+  if (state.status === "error") {
+    return (
+      <Screen>
+        <TopBar onBack={() => ctx.back()} title="Jar unavailable" />
+        <ErrorState
+          label="This jar couldn’t be loaded."
+          onRetry={() => setRetry((value) => value + 1)}
+        />
+      </Screen>
+    );
+  }
+  if (state.status === "empty") {
+    return (
+      <Screen>
+        <TopBar onBack={() => ctx.back()} title="Jar unavailable" />
+        <div role="status" style={{ textAlign: "center", color: T.sec, padding: "60px 0" }}>
+          This jar is no longer available.
         </div>
       </Screen>
     );
   }
+
+  const jar = state.value;
 
   const meId = ctx.me?.id;
   const feed = jar.activity.slice(0, 4);

@@ -4,25 +4,78 @@ import type { AppCtx, RouteFor } from "../appctx";
 import { money, T } from "../theme";
 import type { JarDetailDTO } from "../types";
 import { Btn, Screen, TopBar } from "../ui";
+import { ErrorState, type FetchedState, LoadingState } from "./fetched-state";
 
-export function Settle({ ctx }: { ctx: AppCtx<RouteFor<"settle">> }) {
+export type SettleServices = Pick<typeof api, "jar">;
+
+export function Settle({
+  ctx,
+  services = api,
+}: {
+  ctx: AppCtx<RouteFor<"settle">>;
+  services?: SettleServices;
+}) {
   const { jarId } = ctx.route;
-  const [jar, setJar] = useState<JarDetailDTO | null>(null);
+  const [state, setState] = useState<FetchedState<JarDetailDTO>>({ status: "loading" });
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
+    void retry;
     let alive = true;
-    api
+    setState({ status: "loading" });
+    services
       .jar(jarId)
       .then((d) => {
-        if (alive) setJar(d);
+        if (!alive) return;
+        setState(
+          d.members.some((member) => member.user.id === ctx.me?.id)
+            ? { status: "loaded", value: d }
+            : { status: "empty" },
+        );
       })
-      .catch(() => {});
+      .catch(() => {
+        if (alive) setState({ status: "error" });
+      });
     return () => {
       alive = false;
     };
-  }, [jarId]);
+  }, [ctx.me?.id, jarId, retry, services]);
 
-  const owe = jar?.members.find((m) => m.user.id === ctx.me?.id)?.tallyCents ?? 0;
+  if (state.status === "loading") {
+    return (
+      <Screen>
+        <TopBar onBack={() => ctx.back()} title="Settle up" />
+        <LoadingState>Loading your balance…</LoadingState>
+      </Screen>
+    );
+  }
+  if (state.status === "error") {
+    return (
+      <Screen>
+        <TopBar onBack={() => ctx.back()} title="Settle up" />
+        <ErrorState
+          label="Your balance couldn’t be loaded."
+          onRetry={() => setRetry((value) => value + 1)}
+        />
+      </Screen>
+    );
+  }
+  if (state.status === "empty") {
+    return (
+      <Screen>
+        <TopBar onBack={() => ctx.back()} title="Settle up" />
+        <div role="status" style={{ textAlign: "center", color: T.sec, padding: "60px 0" }}>
+          You aren’t a member of this jar.
+        </div>
+      </Screen>
+    );
+  }
+
+  const jar = state.value;
+  const membership = jar.members.find((member) => member.user.id === ctx.me?.id);
+  if (!membership) return null;
+
+  const owe = membership.tallyCents;
 
   return (
     <Screen>
@@ -62,7 +115,7 @@ export function Settle({ ctx }: { ctx: AppCtx<RouteFor<"settle">> }) {
             padding: "6px 0",
           }}
         >
-          <span style={{ color: T.sec }}>Your slips in {jar?.name ?? "this jar"}</span>
+          <span style={{ color: T.sec }}>Your slips in {jar.name}</span>
           <span style={{ fontWeight: 700, fontFamily: T.disp }}>{money(owe)}</span>
         </div>
       </div>
