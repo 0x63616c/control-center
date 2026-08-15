@@ -1,7 +1,8 @@
 import { registerPlugin } from "@capacitor/core";
+import { z } from "zod";
 
 type AppleSignInPlugin = {
-  authorize(input: AppleSignInRequest): Promise<AppleSignInResponse>;
+  authorize(input: AppleSignInRequest): Promise<unknown>;
 };
 
 export type AppleSignInRequest = {
@@ -18,6 +19,17 @@ export type AppleSignInResponse = {
   readonly attemptId: string;
   readonly state?: string;
 };
+
+const AppleSignInResponseSchema = z
+  .object({
+    identityToken: z.string().min(1),
+    hasAuthorizationCode: z.boolean(),
+    user: z.string().min(1),
+    fullName: z.string().optional(),
+    attemptId: z.string().min(1),
+    state: z.string().optional(),
+  })
+  .strict();
 
 export type AppleSignInAttempt = {
   readonly request: AppleSignInRequest;
@@ -59,6 +71,8 @@ export function validateAppleSignInResponse(
   return response;
 }
 
-export function authorizeAppleSignIn(input: AppleSignInRequest): Promise<AppleSignInResponse> {
-  return AppleSignIn.authorize(input);
+export async function authorizeAppleSignIn(
+  input: AppleSignInRequest,
+): Promise<AppleSignInResponse> {
+  return AppleSignInResponseSchema.parse(await AppleSignIn.authorize(input));
 }

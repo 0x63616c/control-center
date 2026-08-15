@@ -1,9 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type AppleSignInResponse,
+  authorizeAppleSignIn,
   createAppleSignInAttempt,
   validateAppleSignInResponse,
 } from "./appleSignIn";
+
+const nativeAuthorize = vi.hoisted(() => vi.fn());
+
+vi.mock("@capacitor/core", () => ({
+  registerPlugin: () => ({ authorize: nativeAuthorize }),
+}));
 
 function response(overrides: Partial<AppleSignInResponse> = {}): AppleSignInResponse {
   return {
@@ -17,6 +24,8 @@ function response(overrides: Partial<AppleSignInResponse> = {}): AppleSignInResp
 }
 
 describe("native Sign in with Apple request binding", () => {
+  beforeEach(() => nativeAuthorize.mockReset());
+
   it("hashes the nonce sent to Apple while retaining the raw nonce for the API", async () => {
     const attempt = await createAppleSignInAttempt();
 
@@ -39,5 +48,22 @@ describe("native Sign in with Apple request binding", () => {
     expect(() =>
       validateAppleSignInResponse(request, response({ state: "state_substituted" })),
     ).toThrow("Apple sign-in response did not match the active request");
+  });
+
+  it("parses the untrusted Capacitor plugin response before exposing it", async () => {
+    const request = {
+      attemptId: "attempt_active",
+      state: "state_active",
+      nonce: "hashed_nonce",
+    };
+    nativeAuthorize.mockResolvedValue(response());
+
+    await expect(authorizeAppleSignIn(request)).resolves.toEqual(response());
+
+    nativeAuthorize.mockResolvedValue({ ...response(), identityToken: 123 });
+    await expect(authorizeAppleSignIn(request)).rejects.toThrow();
+
+    nativeAuthorize.mockResolvedValue({ ...response(), unexpected: "native-field" });
+    await expect(authorizeAppleSignIn(request)).rejects.toThrow();
   });
 });
