@@ -47,7 +47,18 @@ const resolved = ReportSchema.parse({
     },
   ],
 });
+const denied = ReportSchema.parse({
+  ...resolved,
+  id: "rpt_denied_history",
+  note: "Denied, but still part of the jar history.",
+  status: "denied",
+  evidence: [],
+});
 const navigate = fn();
+
+function never<T>(): Promise<T> {
+  return new Promise(() => {});
+}
 
 function context<Name extends RouteFor<"reportHistory" | "reportDetail">["name"]>(
   route: RouteFor<Name>,
@@ -87,19 +98,76 @@ type Story = StoryObj<typeof meta>;
 export const ResolvedList: Story = {
   render: () => {
     const ctx = context({ name: "reportHistory" });
-    const services: ReportHistoryServices = { reportHistory: fn(async () => [resolved]) };
+    const services: ReportHistoryServices = { reportHistory: fn(async () => [resolved, denied]) };
     return <ReportHistory ctx={ctx} services={services} />;
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     navigate.mockClear();
     await expect(await canvas.findByText("Owned")).toBeVisible();
+    await expect(canvas.getByText("Denied")).toBeVisible();
     await expect(canvas.getByText("The screenshot survived the reload.")).toBeVisible();
     await userEvent.click(canvas.getByRole("button", { name: /Alex · The Group Chat/ }));
     await expect(navigate).toHaveBeenCalledWith({
       name: "reportDetail",
       reportId: resolved.id,
     });
+  },
+};
+
+export const HistoryLoading: Story = {
+  render: () => (
+    <ReportHistory
+      ctx={context({ name: "reportHistory" })}
+      services={{
+        reportHistory: fn(() =>
+          never<Awaited<ReturnType<ReportHistoryServices["reportHistory"]>>>(),
+        ),
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(await canvas.findByRole("status")).toHaveTextContent("Loading report history");
+    await expect(canvas.queryByText("No resolved reports yet.")).not.toBeInTheDocument();
+  },
+};
+
+export const HistoryEmpty: Story = {
+  render: () => (
+    <ReportHistory
+      ctx={context({ name: "reportHistory" })}
+      services={{ reportHistory: fn(async () => []) }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await expect(await within(canvasElement).findByText("No resolved reports yet.")).toBeVisible();
+  },
+};
+
+export const HistoryErrorAndRetry: Story = {
+  render: () => {
+    let attempts = 0;
+    return (
+      <ReportHistory
+        ctx={context({ name: "reportHistory" })}
+        services={{
+          reportHistory: fn(async () => {
+            attempts += 1;
+            if (attempts === 1) throw new Error("offline");
+            return [resolved];
+          }),
+        }}
+      />
+    );
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(await canvas.findByRole("alert")).toHaveTextContent(
+      "Report history couldn’t be loaded.",
+    );
+    await userEvent.click(canvas.getByRole("button", { name: "Retry" }));
+    await expect(await canvas.findByText("Owned")).toBeVisible();
   },
 };
 
@@ -119,5 +187,47 @@ export const AnonymousResolvedDetail: Story = {
     await userEvent.keyboard("{Escape}");
     await expect(canvas.queryByRole("dialog")).not.toBeInTheDocument();
     await expect(evidence).toHaveFocus();
+  },
+};
+
+export const DetailLoading: Story = {
+  render: () => (
+    <ReportDetail
+      ctx={context({ name: "reportDetail", reportId: resolved.id })}
+      services={{
+        report: fn(() => never<Awaited<ReturnType<ReportDetailServices["report"]>>>()),
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(await canvas.findByRole("status")).toHaveTextContent("Loading report");
+    await expect(canvas.queryByText("$5 consequence")).not.toBeInTheDocument();
+  },
+};
+
+export const DetailErrorAndRetry: Story = {
+  render: () => {
+    let attempts = 0;
+    return (
+      <ReportDetail
+        ctx={context({ name: "reportDetail", reportId: resolved.id })}
+        services={{
+          report: fn(async () => {
+            attempts += 1;
+            if (attempts === 1) throw new Error("offline");
+            return resolved;
+          }),
+        }}
+      />
+    );
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(await canvas.findByRole("alert")).toHaveTextContent(
+      "This report couldn’t be loaded.",
+    );
+    await userEvent.click(canvas.getByRole("button", { name: "Retry" }));
+    await expect(await canvas.findByText("Someone in the jar reported Alex")).toBeVisible();
   },
 };

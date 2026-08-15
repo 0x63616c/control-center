@@ -275,7 +275,9 @@ test("member confirms leave → loses access while owner-only close stays unavai
   await expect(page.getByText("Your jars", { exact: true })).toBeVisible();
   await expect(page.getByText("Loading your jars…", { exact: true })).toBeHidden();
   await expect(page.getByTestId("jar-card").filter({ hasText: "The Group Chat" })).toHaveCount(0);
-  expect((await request.get(`/api/jars/${jar.id}`, { headers })).status()).toBe(403);
+  const departedDetail = await request.get(`/api/jars/${jar.id}`, { headers });
+  expect(departedDetail.status()).toBe(404);
+  expect(await departedDetail.json()).toEqual({ error: "not_found" });
 
   await page.reload();
   await expect(page.getByText("Your jars", { exact: true })).toBeVisible();
