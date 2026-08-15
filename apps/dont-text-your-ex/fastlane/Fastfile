@@ -6,6 +6,7 @@ require "open3"
 require "tmpdir"
 require "spaceship"
 require_relative "release_entitlements"
+require_relative "release_metadata"
 
 # Fastfile for publish-setup (fastlane match flow).
 #
@@ -331,6 +332,10 @@ platform :ios do
         skip_submission: !external,
         distribute_external: external,
         groups: external ? [ENV.fetch("TESTFLIGHT_EXTERNAL_GROUP", "Friends")] : nil,
+        changelog: ReleaseMetadata.testflight_changelog(
+          external: external,
+          changelog: ENV["TESTFLIGHT_CHANGELOG"]
+        ),
         notify_external_testers: external
       )
     rescue => e
