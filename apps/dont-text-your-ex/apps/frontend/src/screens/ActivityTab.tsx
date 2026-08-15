@@ -23,6 +23,26 @@ export function ActivityTab({
 }) {
   const [state, setState] = useState<FetchedState<ActivityData>>({ status: "loading" });
   const [retry, setRetry] = useState(0);
+  const historyButton = (
+    <button
+      type="button"
+      onClick={() => ctx.nav({ name: "reportHistory" })}
+      style={{
+        width: "100%",
+        minHeight: 48,
+        borderRadius: 16,
+        border: `1px solid ${T.hair}`,
+        background: T.surface2,
+        color: T.text,
+        fontFamily: T.disp,
+        fontWeight: 700,
+        cursor: "pointer",
+        marginBottom: 18,
+      }}
+    >
+      View report history
+    </button>
+  );
 
   useEffect(() => {
     void retry;
@@ -68,6 +88,7 @@ export function ActivityTab({
     return (
       <Screen>
         <TopBar title="Activity" />
+        {historyButton}
         <div style={{ textAlign: "center", color: T.ter, fontSize: 14, padding: "60px 0" }}>
           No carnage yet. Give it time.
         </div>
@@ -82,6 +103,7 @@ export function ActivityTab({
   return (
     <Screen>
       <TopBar title="Activity" />
+      {historyButton}
 
       {topReport && (
         <button
@@ -126,9 +148,31 @@ export function ActivityTab({
       )}
 
       <div>
-        {feed.map((a) => (
-          <ActivityRow key={a.id} a={a} showJar />
-        ))}
+        {feed.map((a) => {
+          const reportId = a.reportId;
+          return reportId ? (
+            <button
+              key={a.id}
+              type="button"
+              aria-label={`View report in ${a.jarName}`}
+              onClick={() => ctx.nav({ name: "reportDetail", reportId })}
+              style={{
+                width: "100%",
+                minHeight: 44,
+                border: 0,
+                padding: 0,
+                background: "transparent",
+                color: T.text,
+                cursor: "pointer",
+                textAlign: "left",
+              }}
+            >
+              <ActivityRow a={a} showJar />
+            </button>
+          ) : (
+            <ActivityRow key={a.id} a={a} showJar />
+          );
+        })}
       </div>
       {feed.length > 0 && (
         <div style={{ textAlign: "center", color: T.ter, fontSize: 13, padding: "24px 0 0" }}>

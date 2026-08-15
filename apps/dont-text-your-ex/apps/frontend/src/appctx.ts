@@ -8,6 +8,8 @@ export type Route =
   | { readonly name: "logSlip"; readonly jarId: JarId }
   | { readonly name: "report"; readonly jarId: JarId }
   | { readonly name: "confirmDeny"; readonly reportId: ReportId }
+  | { readonly name: "reportHistory" }
+  | { readonly name: "reportDetail"; readonly reportId: ReportId }
   | { readonly name: "settle"; readonly jarId: JarId }
   | { readonly name: "create" }
   | { readonly name: "join"; readonly code?: string }

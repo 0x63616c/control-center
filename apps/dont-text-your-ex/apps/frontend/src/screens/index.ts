@@ -9,5 +9,6 @@ export { Join } from "./Join";
 export { LogSlip } from "./LogSlip";
 export { Onboarding } from "./Onboarding";
 export { Profile } from "./Profile";
+export { ReportDetail, ReportHistory } from "./ReportHistory";
 export { ReportMember } from "./ReportMember";
 export { Settle } from "./Settle";

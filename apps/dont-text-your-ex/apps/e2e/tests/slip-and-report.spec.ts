@@ -67,4 +67,20 @@ test("confirm/deny: owning the seeded report adds to Calum's tally", async ({ pa
   await expect(page.getByText(/The receipts/)).toHaveCount(0);
   await page.getByRole("button", { name: /Own it - add/ }).click();
   await expect(page.getByText("Respect.")).toBeVisible();
+
+  // Resolution is durable: after a full reload the linked activity and history
+  // both reach the owned report detail rather than losing it with the pending queue.
+  await page.reload();
+  await expect(page.getByText("Your jars", { exact: true })).toBeVisible();
+  await page.getByTestId("tab-activity").click();
+  await page.getByRole("button", { name: "View report in The Group Chat" }).click();
+  await expect(page.getByText("Owned", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Christie posted a story/)).toBeVisible();
+  await expect(page.getByText("Someone in the jar reported Calum")).toBeVisible();
+  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "View report history" }).click();
+  await expect(page.getByText("Report history", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: /Calum · The Group Chat/ }).click();
+  await expect(page.getByText("Owned", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Christie posted a story/)).toBeVisible();
 });

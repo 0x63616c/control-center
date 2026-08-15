@@ -114,6 +114,10 @@ function renderRoute(ctx: AppCtx): React.ReactNode {
       return <S.ReportMember ctx={{ ...ctx, route: ctx.route }} />;
     case "confirmDeny":
       return <S.ConfirmDeny ctx={{ ...ctx, route: ctx.route }} />;
+    case "reportHistory":
+      return <S.ReportHistory ctx={{ ...ctx, route: ctx.route }} />;
+    case "reportDetail":
+      return <S.ReportDetail ctx={{ ...ctx, route: ctx.route }} />;
     case "settle":
       return <S.Settle ctx={{ ...ctx, route: ctx.route }} />;
     case "create":

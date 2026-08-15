@@ -127,6 +127,8 @@ export const api = {
   createReport: (jarId: JarId, input: CreateReportRequest) =>
     req(ReportSchema, "POST", `/jars/${jarId}/reports`, input),
   pendingReports: () => req(ReportSchema.array(), "GET", "/reports/pending"),
+  reportHistory: () => req(ReportSchema.array(), "GET", "/reports/history"),
+  report: (id: ReportId) => req(ReportSchema, "GET", `/reports/${id}`),
   resolveReport: (id: ReportId, action: "own" | "deny") =>
     req(ReportSchema, "POST", `/reports/${id}/resolve`, { action }),
 
