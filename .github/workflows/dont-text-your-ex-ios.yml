@@ -1,0 +1,114 @@
+name: Don’t Text Your Ex iOS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/dont-text-your-ex/**"
+      - ".github/workflows/dont-text-your-ex-ios.yml"
+  workflow_dispatch:
+    inputs:
+      regenerate_profile:
+        description: Regenerate the provisioning profile after an App ID capability changes
+        type: boolean
+        default: false
+      distribute_external:
+        description: Submit the uploaded build to the configured external TestFlight group
+        type: boolean
+        default: false
+
+concurrency:
+  group: dont-text-your-ex-ios
+  cancel-in-progress: true
+
+jobs:
+  testflight:
+    name: Build and upload to TestFlight
+    runs-on: macos-26
+    timeout-minutes: 30
+    environment: production
+    defaults:
+      run:
+        working-directory: apps/dont-text-your-ex
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Decrypt Apple release credentials
+        env:
+          SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          brew install sops age 2>/dev/null || true
+
+          extract() { sops -d "$GITHUB_WORKSPACE/secrets/vault.yaml" | grep "^$1:" | cut -d' ' -f2-; }
+
+          MATCH_PWD=$(extract APP_STORE_CONNECT_API__MATCH_PASSWORD)
+          GIT_AUTH=$(extract MATCH_GIT_BASIC_AUTHORIZATION)
+          KEY_ID=$(extract APP_STORE_CONNECT_API__KEY_ID)
+          ISSUER_ID=$(extract APP_STORE_CONNECT_API__ISSUER_ID)
+          P8=$(extract APP_STORE_CONNECT_API__P8_CONTENT)
+
+          echo "::add-mask::$MATCH_PWD"
+          echo "::add-mask::$GIT_AUTH"
+          echo "::add-mask::$KEY_ID"
+          echo "::add-mask::$ISSUER_ID"
+          echo "::add-mask::$P8"
+
+          echo "MATCH_PASSWORD=$MATCH_PWD" >> "$GITHUB_ENV"
+          echo "MATCH_GIT_BASIC_AUTHORIZATION=$GIT_AUTH" >> "$GITHUB_ENV"
+          echo "ASC_KEY_ID=$KEY_ID" >> "$GITHUB_ENV"
+          echo "ASC_ISSUER_ID=$ISSUER_ID" >> "$GITHUB_ENV"
+          echo "ASC_KEY_CONTENT=$P8" >> "$GITHUB_ENV"
+          echo "MATCH_GIT_URL=https://github.com/0x63616c/certificates.git" >> "$GITHUB_ENV"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.19
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build production web bundle
+        env:
+          VITE_API_BASE: https://dont-text-your-ex.worldwidewebb.co
+        run: bun run build
+
+      - name: Sync Capacitor project
+        env:
+          VITE_API_BASE: https://dont-text-your-ex.worldwidewebb.co
+        run: bunx cap sync ios
+
+      - name: Verify Apple identity configuration
+        run: |
+          set -euo pipefail
+          grep -q 'appId: "co.worldwidewebb.textyourex"' capacitor.config.ts
+          grep -q 'PRODUCT_BUNDLE_IDENTIFIER = co.worldwidewebb.textyourex;' ios/App/App.xcodeproj/project.pbxproj
+          grep -q 'com.apple.developer.applesignin' ios/App/App/App.entitlements
+          grep -q 'com.apple.developer.associated-domains' ios/App/App/App.entitlements
+          grep -q 'applinks:dont-text-your-ex.worldwidewebb.co' ios/App/App/App.entitlements
+          grep -q 'CODE_SIGN_ENTITLEMENTS = App/App.entitlements;' ios/App/App.xcodeproj/project.pbxproj
+          grep -q 'Don’t Text Your Ex' ios/App/App/Info.plist
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+          working-directory: apps/dont-text-your-ex
+
+      - name: Build and upload
+        env:
+          ASC_KEY_ID: ${{ env.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ env.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ env.ASC_KEY_CONTENT }}
+          MATCH_PASSWORD: ${{ env.MATCH_PASSWORD }}
+          MATCH_GIT_URL: ${{ env.MATCH_GIT_URL }}
+          MATCH_GIT_BASIC_AUTHORIZATION: ${{ env.MATCH_GIT_BASIC_AUTHORIZATION }}
+          BUNDLE_ID: co.worldwidewebb.textyourex
+          APPLE_TEAM_ID: X9E4HG27NK
+          IOS_PROJECT: ios/App/App.xcodeproj
+          IOS_SCHEME: App
+          INITIAL_BUILD_NUMBER: "0"
+          MATCH_REGENERATE: ${{ inputs.regenerate_profile || 'false' }}
+          TESTFLIGHT_DISTRIBUTE_EXTERNAL: ${{ inputs.distribute_external || 'false' }}
+          TESTFLIGHT_EXTERNAL_GROUP: Friends
+        run: bundle exec fastlane ios release

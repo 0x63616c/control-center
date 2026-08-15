@@ -10,6 +10,7 @@ export const GHCR_PULL_SECRET_NAME = "ghcr-pull";
 // secret needed.
 export const GHCR_PULL_SECRET_NAMESPACES = [
   "control-center",
+  "dont-text-your-ex",
 ] as const satisfies readonly InfraNamespaceName[];
 
 type GhcrPullSecretConsumer = {

@@ -204,6 +204,7 @@ new cloudflare.ZeroTrustTunnelCloudflaredConfig(
       ingressRules: [
         ...desiredIngressRules(zoneName).map((r) => ({
           hostname: r.hostname,
+          ...(r.path ? { path: r.path } : {}),
           service: r.service,
           // Only rendered for the origins that declare it (the self-signed LAN
           // appliances); omitted entirely elsewhere so existing rules stay a

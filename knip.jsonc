@@ -39,6 +39,7 @@
     "features/*/manifest.ts",
     "docs/media-tiles/**", // Design handoff bundle (prototypes/reference, not app code)
     "docs/captive-portal/design/**", // Captive portal design handoff (reference, not app code)
+    "apps/dont-text-your-ex/docs/design-reference/**", // Restored historical design handoff; reference material, not runtime source
     "**/ios/**/public/**", // Capacitor web-bundle copies synced into iOS project (not source)
     // Agent harness config: skills, hooks and Workflow scripts. These are entrypoints
     // invoked by Claude Code by name, never imported, so knip cannot see an edge to them.
@@ -194,6 +195,18 @@
       // auto-detects a config at the package root; ours lives in a
       // subdirectory, so it isn't found without an explicit entry.
       "entry": ["src/portal/main.tsx", "e2e-portal/playwright.config.ts"]
+    },
+    "apps/dont-text-your-ex/apps/frontend": {
+      // Storybook is hosted by apps/web, so its glob crosses this workspace
+      // boundary. The route contract is compiler-only and intentionally has no
+      // runtime importer.
+      "entry": ["src/**/*.stories.tsx", "src/appctx.type-test.ts"]
+    },
+    "apps/dont-text-your-ex": {
+      // Capacitor discovers this native plugin from the product package during
+      // `cap sync`; the frontend workspace also imports it directly, but that
+      // import cannot make the app-shell declaration visible to Knip.
+      "ignoreDependencies": ["@capacitor/app"]
     }
   }
 }

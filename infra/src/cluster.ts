@@ -22,6 +22,7 @@ export const CLOUDFLARE_NAMESPACE = "cloudflare";
 // its namespace and database were intentionally retired.
 export type InfraNamespaceName =
   | Exclude<ProductSlug, "captive-portal">
+  | "dont-text-your-ex"
   | typeof CLOUDFLARE_NAMESPACE;
 export type InfraNamespaces = Readonly<Record<InfraNamespaceName, k8s.core.v1.Namespace>>;
 
@@ -61,6 +62,7 @@ export function makeCluster(context: string = DEFAULT_CONTEXT): ClusterResources
   // back to `[...productSlugs, CLOUDFLARE_NAMESPACE]`.
   const namespaceNames = [
     "control-center",
+    "dont-text-your-ex",
     "software-factory",
     CLOUDFLARE_NAMESPACE,
   ] as const satisfies readonly InfraNamespaceName[];

@@ -15,6 +15,7 @@ import { DEFAULT_METRICS_PORT } from "@www/platform/metrics/port";
 import type { InfraNamespaceName } from "./cluster.ts";
 import type { WorkloadSpec } from "./component.ts";
 import { ExternalService, HostBackedService, Workload } from "./component.ts";
+import { DONT_TEXT_YOUR_EX_IMAGE_DIGEST_KEYS } from "./dont-text-your-ex.ts";
 import { GHCR_PULL_SECRET_NAME, GHCR_PULL_SECRET_NAMESPACES } from "./ghcr-pull-secrets.ts";
 import { LAN_SERVICE_IPS } from "./metallb.ts";
 import { NVIDIA_RUNTIME_CLASS_NAME } from "./nvidia.ts";
@@ -126,9 +127,10 @@ const IMAGE_REPOSITORIES = {
   { product: ProductSlug; digestKey: string; repository: string }
 >;
 
-const IMAGE_DIGEST_KEYS = new Set(
-  Object.values(IMAGE_REPOSITORIES).map((image) => image.digestKey),
-);
+const IMAGE_DIGEST_KEYS = new Set([
+  ...Object.values(IMAGE_REPOSITORIES).map((image) => image.digestKey),
+  ...DONT_TEXT_YOUR_EX_IMAGE_DIGEST_KEYS,
+]);
 /**
  * The digest keys belonging to one product.
  *

@@ -1,0 +1,36 @@
+{
+  "name": "@dont-text-your-ex/app",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/frontend",
+    "apps/api",
+    "apps/e2e"
+  ],
+  "scripts": {
+    "dev": "bun run dev:all",
+    "dev:all": "concurrently -k -n server,web -c yellow,green \"bun run dev:server\" \"bun run dev:web\"",
+    "dev:server": "bun run --cwd apps/api dev",
+    "dev:web": "bun run --cwd apps/frontend dev",
+    "build": "bun run --cwd apps/frontend build",
+    "seed": "bun run --cwd apps/api seed",
+    "seed:reset": "bun run --cwd apps/api seed:reset",
+    "start": "NODE_ENV=production bun run --cwd apps/api start",
+    "typecheck": "bun run --cwd apps/api typecheck && bun run --cwd apps/frontend typecheck",
+    "test:e2e": "bun run --cwd apps/e2e test",
+    "ios:sync": "bun run build && cap sync ios",
+    "ios:open": "cap open ios",
+    "ios:sim": "cap run ios --live-reload --host localhost --port 5173"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.4.0",
+    "concurrently": "^9.1.2"
+  },
+  "dependencies": {
+    "@capacitor/app": "^8.1.0",
+    "@capacitor/core": "^8.4.0",
+    "@capacitor/ios": "^8.4.0",
+    "zod": "^4.4.2"
+  }
+}

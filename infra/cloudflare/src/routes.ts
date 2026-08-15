@@ -46,6 +46,9 @@ export interface DesiredOriginRequest {
 /** A live tunnel ingress rule: hostname -> in-cluster origin. */
 export interface DesiredIngressRule {
   hostname: string;
+  // Optional RE2 path regex. Rules sharing a hostname must put the narrower
+  // path first; the first matching cloudflared ingress rule wins.
+  path?: string;
   // The origin the tunnel forwards to (`http://<service>:<port>`, or an
   // `https://<ip>:<port>` LAN appliance paired with `originRequest` below).
   service: string;
@@ -218,6 +221,19 @@ function productRoutes(): CloudflareRoutes {
 export function desiredIngressRules(zone: string): DesiredIngressRule[] {
   return [
     ...productRoutes().ingressRules,
+    // One public hostname, two in-cluster origins. API must precede the
+    // frontend fallback or /api requests would be swallowed by the SPA server.
+    {
+      hostname: `dont-text-your-ex.${zone}`,
+      // cloudflared compiles this with Go's RE2 engine; non-capturing groups
+      // (`(?:...)`) are unsupported, so keep the optional suffix capturing.
+      path: "^/api(/.*)?$",
+      service: "http://api.dont-text-your-ex.svc.cluster.local:8787",
+    },
+    {
+      hostname: `dont-text-your-ex.${zone}`,
+      service: "http://frontend.dont-text-your-ex.svc.cluster.local:80",
+    },
     ...Object.entries(LEGACY_INGRESS).map(([sub, service]) => ({
       hostname: `${sub}.${zone}`,
       service,
@@ -229,6 +245,12 @@ export function desiredIngressRules(zone: string): DesiredIngressRule[] {
 export function desiredCnames(zone: string): DesiredCname[] {
   return [
     ...productRoutes().cnames,
+    {
+      hostname: `dont-text-your-ex.${zone}`,
+      proxied: true as const,
+      target: tunnelCnameTarget,
+      comment: "platform:don't text your ex public app route",
+    },
     ...Object.entries(LEGACY_CNAME_COMMENTS).map(([sub, comment]) => ({
       hostname: `${sub}.${zone}`,
       proxied: true as const,

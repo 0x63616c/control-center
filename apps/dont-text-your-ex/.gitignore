@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.local
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+server/data/
+e2e/test-results/
+e2e/playwright-report/
+.DS_Store
+fastlane/report.xml
+fastlane/test_output

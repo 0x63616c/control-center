@@ -14,6 +14,7 @@ import { makeCluster } from "./src/cluster.ts";
 import { installCnpg } from "./src/cnpg.ts";
 import { deployCrons } from "./src/crons.ts";
 import { installDbUi } from "./src/db-ui.ts";
+import { installDontTextYourEx } from "./src/dont-text-your-ex.ts";
 import { installEso } from "./src/eso.ts";
 import { verifyLiveGhcrPullSecrets } from "./src/ghcr-pull-secret-preflight.ts";
 import { installHomeAssistant } from "./src/homeassistant.ts";
@@ -172,6 +173,18 @@ const crons = deployCrons({
   imageDigests,
 });
 
+// Restored standalone product: its own namespace, generated CNPG application
+// credential, frontend/API workloads, and nightly logical backup. Cloudflare's
+// path-aware ingress exposes both workloads at one public hostname.
+const dontTextYourEx = installDontTextYourEx({
+  provider: cluster.provider,
+  namespace: namespaces["dont-text-your-ex"],
+  cnpgOperator: cnpg.operator,
+  imageDigests,
+  requireImageDigestPins: shouldRequireImageDigestPins(stackName) && !coldStart,
+  nasNfsServer,
+});
+
 // Task 4 (Talos migration): local-path-provisioner, MetalLB, the `nvidia`
 // RuntimeClass, and the Home Assistant workload + its dedicated CNPG cluster
 // + backup crons. ALL gated behind `target.substrate === "talos"` , on
@@ -290,4 +303,7 @@ export const cnpgClusterNames = cnpg.clusters.map((c) => c.metadata.name);
 export const controlCenterGuestCertName = controlCenterGuestCert.metadata.name;
 export const cnpgAuthSecretNames = cnpg.authSecrets.map((s) => s.metadata.name);
 export const workloadNames = services.workloads.map((w) => w.deployment.metadata.name);
+export const dontTextYourExWorkloadNames = dontTextYourEx.workloads.map(
+  (w) => w.deployment.metadata.name,
+);
 export const cronJobNames = crons.jobs.map((j) => j.cronJob.metadata.name);

@@ -126,6 +126,9 @@ export interface WorkloadSpec {
   // NOT be added to `ports` — anything exposed there becomes a Service and, for
   // the api, reachable through the Cloudflare tunnel.
   scrape?: { port: number; path?: string };
+  // HTTP lifecycle checks for user-facing services. Startup absorbs migrations
+  // and cold boot; readiness controls traffic; liveness restarts a wedged pod.
+  health?: { path: string; port: number };
 }
 
 export interface CronJobSpec {
@@ -184,6 +187,17 @@ interface Container {
   env: EnvVar[];
   resources: { limits: Record<string, string>; requests: Record<string, string> };
   volumeMounts: VolumeMount[];
+  startupProbe?: HttpProbe;
+  readinessProbe?: HttpProbe;
+  livenessProbe?: HttpProbe;
+}
+
+interface HttpProbe {
+  httpGet: { path: string; port: number };
+  initialDelaySeconds?: number;
+  periodSeconds: number;
+  timeoutSeconds: number;
+  failureThreshold: number;
 }
 
 interface DeploymentArgs {
@@ -341,6 +355,7 @@ interface PodInputs {
     mountPath: string;
     items?: { key: string; path: string }[];
   }[];
+  health?: WorkloadSpec["health"];
 }
 
 function claimVolumeName(claimVolumeNames: Map<string, string>, claim: string, fallback: string) {
@@ -450,6 +465,29 @@ function buildPod(
     env,
     resources: { limits, requests },
     volumeMounts,
+    ...(p.health
+      ? {
+          startupProbe: {
+            httpGet: p.health,
+            periodSeconds: 2,
+            timeoutSeconds: 2,
+            failureThreshold: 60,
+          },
+          readinessProbe: {
+            httpGet: p.health,
+            periodSeconds: 5,
+            timeoutSeconds: 2,
+            failureThreshold: 3,
+          },
+          livenessProbe: {
+            httpGet: p.health,
+            initialDelaySeconds: 10,
+            periodSeconds: 10,
+            timeoutSeconds: 2,
+            failureThreshold: 3,
+          },
+        }
+      : {}),
   };
 
   return { container, podVolumes, persistentVolumes, persistentVolumeClaims };

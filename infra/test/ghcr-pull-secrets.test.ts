@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { cronSpecs } from "../src/crons.ts";
+import { dontTextYourExSpecs } from "../src/dont-text-your-ex.ts";
 import {
   assertGhcrPullSecretNamespaceCoverage,
   collectGhcrPullSecretNamespaces,
@@ -17,8 +18,15 @@ const specsWith = (imageDigests?: ImageDigests): ReturnType<typeof serviceSpecs>
 
 describe("GHCR pull secret coverage", () => {
   test("declares the pull secret in every namespace with GHCR services or cron jobs", () => {
-    const consumers = [...specsWith(), ...cronSpecs("192.168.0.218")];
-    expect(collectGhcrPullSecretNamespaces(consumers)).toEqual(["control-center"]);
+    const consumers = [
+      ...specsWith(),
+      ...cronSpecs("192.168.0.218"),
+      ...dontTextYourExSpecs({}, false).workloads,
+    ];
+    expect(collectGhcrPullSecretNamespaces(consumers)).toEqual([
+      "control-center",
+      "dont-text-your-ex",
+    ]);
     expect(() => assertGhcrPullSecretNamespaceCoverage(consumers)).not.toThrow();
   });
 
