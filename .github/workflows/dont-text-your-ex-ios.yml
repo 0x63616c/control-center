@@ -16,6 +16,10 @@ on:
         description: Submit the uploaded build to the configured external TestFlight group
         type: boolean
         default: false
+      changelog:
+        description: What to Test for an external TestFlight release
+        type: string
+        default: "Restored Don’t Text Your Ex v1 with Sign in with Apple, shared jars, slips, reports, and production invite links."
 
 concurrency:
   group: dont-text-your-ex-ios
@@ -95,8 +99,10 @@ jobs:
           bundler-cache: true
           working-directory: apps/dont-text-your-ex
 
-      - name: Test release entitlement verifier
-        run: bundle exec ruby fastlane/release_entitlements_test.rb
+      - name: Test release guards
+        run: |
+          bundle exec ruby fastlane/release_entitlements_test.rb
+          bundle exec ruby fastlane/release_metadata_test.rb
 
       - name: Build and upload
         env:
@@ -114,4 +120,5 @@ jobs:
           MATCH_REGENERATE: ${{ inputs.regenerate_profile || 'false' }}
           TESTFLIGHT_DISTRIBUTE_EXTERNAL: ${{ inputs.distribute_external || 'false' }}
           TESTFLIGHT_EXTERNAL_GROUP: Friends
+          TESTFLIGHT_CHANGELOG: ${{ inputs.changelog || 'Restored Don’t Text Your Ex v1 with Sign in with Apple, shared jars, slips, reports, and production invite links.' }}
         run: bundle exec fastlane ios release
