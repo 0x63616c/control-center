@@ -77,7 +77,7 @@ type JarRow = {
   created_by: string;
   invite_code: string | null;
   created_at: number;
-  closed_at: number | null;
+  closed_at: string | null;
   closed_by: string | null;
 };
 
@@ -337,7 +337,7 @@ export async function listJarsForUser(userId: string): Promise<JarSummaryDTO[]> 
         myTallyCents: mine?.tally_cents ?? 0,
         myDaysClean: daysClean(mine?.streak_start_at ?? null),
         myShareStreak: !!mine?.share_streak,
-        closedAt: j.closed_at,
+        closedAt: j.closed_at == null ? null : Number(j.closed_at),
         closedBy: await closedByUser(j),
       });
     }),
@@ -360,7 +360,7 @@ export async function getJarDetail(jarId: string, meId: string): Promise<JarDeta
     jarTotalCents: await jarTotal(jarId),
     members,
     activity: await activityForJar(jarId, 8),
-    closedAt: j.closed_at,
+    closedAt: j.closed_at == null ? null : Number(j.closed_at),
     closedBy: await closedByUser(j),
   });
 }
