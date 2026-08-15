@@ -195,6 +195,12 @@
       // auto-detects a config at the package root; ours lives in a
       // subdirectory, so it isn't found without an explicit entry.
       "entry": ["src/portal/main.tsx", "e2e-portal/playwright.config.ts"]
+    },
+    "apps/dont-text-your-ex/apps/frontend": {
+      // Storybook is hosted by apps/web, so its glob crosses this workspace
+      // boundary. The route contract is compiler-only and intentionally has no
+      // runtime importer.
+      "entry": ["src/**/*.stories.tsx", "src/appctx.type-test.ts"]
     }
   }
 }

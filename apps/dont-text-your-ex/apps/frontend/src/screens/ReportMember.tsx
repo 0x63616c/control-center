@@ -7,10 +7,18 @@ import type { JarDetailDTO, MemberDTO } from "../types";
 import { Avatar, Btn, Screen, TopBar } from "../ui";
 import { inputStyle, labelStyle } from "./common";
 
-export function ReportMember({ ctx }: { ctx: AppCtx<RouteFor<"report">> }) {
+export type ReportServices = Pick<typeof api, "jar" | "createReport">;
+
+export function ReportMember({
+  ctx,
+  services = api,
+}: {
+  ctx: AppCtx<RouteFor<"report">>;
+  services?: ReportServices;
+}) {
   const { jarId } = ctx.route;
   const [jar, setJar] = useState<JarDetailDTO | null>(null);
-  const [target, setTarget] = useState<string | null>(null);
+  const [target, setTarget] = useState<MemberDTO["user"]["id"] | null>(null);
   const [note, setNote] = useState("");
   const [anon, setAnon] = useState(false);
   const [sent, setSent] = useState(false);
@@ -18,7 +26,7 @@ export function ReportMember({ ctx }: { ctx: AppCtx<RouteFor<"report">> }) {
 
   useEffect(() => {
     let alive = true;
-    api
+    services
       .jar(jarId)
       .then((d) => {
         if (!alive) return;
@@ -30,7 +38,7 @@ export function ReportMember({ ctx }: { ctx: AppCtx<RouteFor<"report">> }) {
     return () => {
       alive = false;
     };
-  }, [jarId, ctx.me?.id]);
+  }, [jarId, ctx.me?.id, services]);
 
   const others: MemberDTO[] = (jar?.members ?? []).filter((m) => m.user.id !== ctx.me?.id);
   const canSend = !!target && note.trim().length > 0;
@@ -39,7 +47,7 @@ export function ReportMember({ ctx }: { ctx: AppCtx<RouteFor<"report">> }) {
     if (!canSend || !jar || !target || busy) return;
     setBusy(true);
     try {
-      await api.createReport(jar.id, {
+      await services.createReport(jar.id, {
         accusedId: target,
         note: note || undefined,
         anonymous: anon,
