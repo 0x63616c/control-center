@@ -65,7 +65,7 @@ export const LogSlipRequestSchema = z
 
 export const EVIDENCE_MAX_FILES = 3;
 export const EVIDENCE_MAX_BYTES = 2 * 1024 * 1024;
-export const EVIDENCE_IMAGE_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
+const EVIDENCE_IMAGE_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
 
 function decodedBase64Bytes(payload: string): number | null {
   if (payload.length === 0 || payload.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(payload)) {
@@ -73,6 +73,40 @@ function decodedBase64Bytes(payload: string): number | null {
   }
   const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
   return (payload.length / 4) * 3 - padding;
+}
+
+function base64PrefixBytes(payload: string, count: number): readonly number[] {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const bytes: number[] = [];
+  for (let offset = 0; offset + 3 < payload.length && bytes.length < count; offset += 4) {
+    const a = alphabet.indexOf(payload[offset] ?? "");
+    const b = alphabet.indexOf(payload[offset + 1] ?? "");
+    const c = alphabet.indexOf(payload[offset + 2] ?? "");
+    const d = alphabet.indexOf(payload[offset + 3] ?? "");
+    if (a < 0 || b < 0) break;
+    bytes.push((a << 2) | (b >> 4));
+    if (c >= 0) bytes.push(((b & 15) << 4) | (c >> 2));
+    if (d >= 0 && c >= 0) bytes.push(((c & 3) << 6) | d);
+  }
+  return bytes.slice(0, count);
+}
+
+function hasImageSignature(mimeType: (typeof EVIDENCE_IMAGE_MIME_TYPES)[number], payload: string) {
+  const bytes = base64PrefixBytes(payload, 12);
+  if (mimeType === "image/png") {
+    return [137, 80, 78, 71, 13, 10, 26, 10].every((byte, index) => bytes[index] === byte);
+  }
+  if (mimeType === "image/jpeg") return bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
+  return (
+    bytes[0] === 82 &&
+    bytes[1] === 73 &&
+    bytes[2] === 70 &&
+    bytes[3] === 70 &&
+    bytes[8] === 87 &&
+    bytes[9] === 69 &&
+    bytes[10] === 66 &&
+    bytes[11] === 80
+  );
 }
 
 export const EvidenceImageInputSchema = z
@@ -92,6 +126,8 @@ export const EvidenceImageInputSchema = z
       ctx.addIssue({ code: "custom", path: ["dataUrl"], message: "invalid base64 image data" });
     } else if (bytes > EVIDENCE_MAX_BYTES) {
       ctx.addIssue({ code: "custom", path: ["dataUrl"], message: "image exceeds size limit" });
+    } else if (!hasImageSignature(image.mimeType, image.dataUrl.slice(prefix.length))) {
+      ctx.addIssue({ code: "custom", path: ["dataUrl"], message: "image signature mismatch" });
     }
   });
 

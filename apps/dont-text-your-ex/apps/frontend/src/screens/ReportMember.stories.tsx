@@ -60,9 +60,10 @@ const submittedReport = ReportSchema.parse({
   evidence: [],
 });
 
+const createReport = fn(async () => submittedReport);
 const services: ReportServices = {
   jar: fn(async () => jar),
-  createReport: fn(async () => submittedReport),
+  createReport,
 };
 
 const ctx: AppCtx<RouteFor<"report">> = {
@@ -100,11 +101,9 @@ type Story = StoryObj<typeof meta>;
 
 export const NoteOnlySubmission: Story = {
   play: async ({ canvasElement }) => {
+    createReport.mockClear();
     const canvas = within(canvasElement);
-    const attachmentControl = await canvas.findByRole("button", {
-      name: "Screenshot attachments unavailable",
-    });
-    await expect(attachmentControl).toBeDisabled();
+    await expect(await canvas.findByRole("button", { name: "Add screenshots" })).toBeEnabled();
     await expect(canvas.queryByText("Camera roll")).not.toBeInTheDocument();
 
     await userEvent.click(canvas.getByRole("button", { name: accused.name }));
@@ -121,6 +120,32 @@ export const NoteOnlySubmission: Story = {
       note: submittedReport.note,
       anonymous: true,
       amountCents: jar.defaultCents,
+      evidence: [],
+    });
+  },
+};
+
+export const ImageOnlySubmission: Story = {
+  play: async ({ canvasElement }) => {
+    createReport.mockClear();
+    const canvas = within(canvasElement);
+    const payload =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    const bytes = Uint8Array.from(atob(payload), (character) => character.charCodeAt(0));
+    const screenshot = new File([bytes], "receipt.png", { type: "image/png" });
+
+    await userEvent.upload(canvas.getByTestId("evidence-input"), screenshot);
+    await expect(await canvas.findByRole("img", { name: "Report attachment" })).toBeInTheDocument();
+    await userEvent.click(canvas.getByRole("button", { name: accused.name }));
+    await userEvent.click(canvas.getByRole("button", { name: "Send the report" }));
+
+    await expect(await canvas.findByText("Snitched.")).toBeInTheDocument();
+    await expect(createReport).toHaveBeenCalledWith(jar.id, {
+      accusedId: accused.id,
+      note: undefined,
+      anonymous: false,
+      amountCents: jar.defaultCents,
+      evidence: [{ mimeType: "image/png", dataUrl: `data:image/png;base64,${payload}` }],
     });
   },
 };

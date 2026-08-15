@@ -28,7 +28,7 @@ test("logging a slip bumps the tally, resets streak, grows the pot", async ({ pa
   await expect(shameRow(page, "Calum")).toContainText("$50");
 });
 
-test("reporting with an honest note + anonymous toggle reaches the snitched screen", async ({
+test("reporting with a real screenshot + anonymous toggle reaches the snitched screen", async ({
   page,
 }) => {
   await signInAsCalum(page);
@@ -38,15 +38,15 @@ test("reporting with an honest note + anonymous toggle reaches the snitched scre
 
   // pick Ali
   await page.getByRole("button", { name: "Ali", exact: true }).click();
-  // Image upload is not implemented yet. The UI says so and never presents
-  // fabricated camera-roll content as if it came from this device.
-  await expect(
-    page.getByRole("button", { name: "Screenshot attachments unavailable" }),
-  ).toBeDisabled();
-  await expect(page.getByText("Camera roll")).toHaveCount(0);
-  await page
-    .getByPlaceholder("“replied to her story in 4 seconds flat…”")
-    .fill("Saw the reply land in real time.");
+  await page.getByTestId("evidence-input").setInputFiles({
+    name: "receipt.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64",
+    ),
+  });
+  await expect(page.getByRole("img", { name: "Report attachment" })).toBeVisible();
 
   // turn on anonymous (click the toggle switch, not the label)
   await page.getByTestId("anon-row").getByRole("button").click();
@@ -62,9 +62,10 @@ test("confirm/deny: owning the seeded report adds to Calum's tally", async ({ pa
   await expect(page.getByText("You've been reported")).toBeVisible();
   await page.getByText("says you texted your ex", { exact: false }).click();
 
-  // accused view: anonymous accuser + evidence
+  // The seeded report is note-only; evidence is never fabricated for tests.
   await expect(page.getByText("Someone in the jar")).toBeVisible();
-  await expect(page.getByText(/The receipts/)).toBeVisible();
+  await expect(page.getByText(/Christie posted a story/)).toBeVisible();
+  await expect(page.getByText(/The receipts/)).toHaveCount(0);
   await page.getByRole("button", { name: /Own it - add/ }).click();
   await expect(page.getByText("Respect.")).toBeVisible();
 });

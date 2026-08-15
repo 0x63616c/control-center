@@ -1,13 +1,23 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { EVIDENCE_MAX_FILES, type EvidenceImageInput } from "../../../../contracts";
 import { api } from "../api";
 import type { AppCtx, RouteFor } from "../appctx";
-import { Toggle } from "../bits";
+import { EvidenceShot, Toggle } from "../bits";
+import { type EvidenceFileError, readEvidenceFiles } from "../evidence-files";
+import { Icon } from "../icons";
 import { T } from "../theme";
 import type { JarDetailDTO, MemberDTO } from "../types";
 import { Avatar, Btn, Screen, TopBar } from "../ui";
 import { inputStyle, labelStyle } from "./common";
 
 export type ReportServices = Pick<typeof api, "jar" | "createReport">;
+
+const EVIDENCE_ERROR_MESSAGE: Record<EvidenceFileError, string> = {
+  too_many_files: `Add no more than ${EVIDENCE_MAX_FILES} screenshots.`,
+  unsupported_type: "Choose PNG, JPEG, or WebP screenshots.",
+  file_too_large: "Each screenshot must be 2 MB or smaller.",
+  read_failed: "That screenshot could not be read. Try another file.",
+};
 
 export function ReportMember({
   ctx,
@@ -20,9 +30,13 @@ export function ReportMember({
   const [jar, setJar] = useState<JarDetailDTO | null>(null);
   const [target, setTarget] = useState<MemberDTO["user"]["id"] | null>(null);
   const [note, setNote] = useState("");
+  const [evidence, setEvidence] = useState<readonly EvidenceImageInput[]>([]);
+  const [evidenceError, setEvidenceError] = useState<string | null>(null);
+  const [readingEvidence, setReadingEvidence] = useState(false);
   const [anon, setAnon] = useState(false);
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let alive = true;
@@ -41,7 +55,25 @@ export function ReportMember({
   }, [jarId, ctx.me?.id, services]);
 
   const others: MemberDTO[] = (jar?.members ?? []).filter((m) => m.user.id !== ctx.me?.id);
-  const canSend = !!target && note.trim().length > 0;
+  const canSend = !!target && (note.trim().length > 0 || evidence.length > 0);
+
+  const selectEvidence = async (files: FileList | null) => {
+    const selected = Array.from(files ?? []);
+    if (selected.length === 0) return;
+    if (evidence.length + selected.length > EVIDENCE_MAX_FILES) {
+      setEvidenceError(EVIDENCE_ERROR_MESSAGE.too_many_files);
+      return;
+    }
+    setReadingEvidence(true);
+    setEvidenceError(null);
+    const result = await readEvidenceFiles(selected);
+    setReadingEvidence(false);
+    if (!result.ok) {
+      setEvidenceError(EVIDENCE_ERROR_MESSAGE[result.error]);
+      return;
+    }
+    setEvidence((current) => [...current, ...result.evidence]);
+  };
 
   const send = async () => {
     if (!canSend || !jar || !target || busy) return;
@@ -52,6 +84,7 @@ export function ReportMember({
         note: note || undefined,
         anonymous: anon,
         amountCents: jar.defaultCents,
+        evidence: [...evidence],
       });
       setSent(true);
     } catch {
@@ -153,19 +186,61 @@ export function ReportMember({
       <span style={labelStyle}>
         The receipts <span style={{ color: T.ter }}>(screenshots)</span>
       </span>
+      <div style={{ display: "flex", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+        {evidence.map((image, index) => (
+          <div key={image.dataUrl} style={{ position: "relative" }}>
+            <EvidenceShot image={image} w={104} />
+            <button
+              type="button"
+              aria-label={`Remove attachment ${index + 1}`}
+              onClick={() => setEvidence((current) => current.filter((_, i) => i !== index))}
+              style={{
+                position: "absolute",
+                top: -7,
+                right: -7,
+                width: 24,
+                height: 24,
+                borderRadius: "50%",
+                background: T.red,
+                border: "2px solid #000",
+                color: "#fff",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 0,
+              }}
+            >
+              <Icon.x style={{ width: 12, height: 12 }} />
+            </button>
+          </div>
+        ))}
+      </div>
       <div style={{ marginBottom: 24 }}>
+        <input
+          ref={fileInput}
+          data-testid="evidence-input"
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          multiple
+          onChange={(event) => {
+            void selectEvidence(event.currentTarget.files);
+            event.currentTarget.value = "";
+          }}
+          style={{ display: "none" }}
+        />
         <button
           type="button"
-          aria-label="Screenshot attachments unavailable"
-          disabled
+          onClick={() => fileInput.current?.click()}
+          disabled={readingEvidence || evidence.length >= EVIDENCE_MAX_FILES}
           style={{
             width: "100%",
             minHeight: 58,
             borderRadius: 16,
             border: `1.5px dashed ${T.hair}`,
             background: T.surface2,
-            color: T.ter,
-            cursor: "not-allowed",
+            color: T.sec,
+            cursor: readingEvidence ? "wait" : "pointer",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -174,8 +249,13 @@ export function ReportMember({
             fontSize: 13,
           }}
         >
-          Screenshot attachments aren’t available yet
+          <Icon.plus /> {readingEvidence ? "Reading screenshots…" : "Add screenshots"}
         </button>
+        {evidenceError && (
+          <div role="alert" style={{ color: T.red, fontSize: 12.5, marginTop: 8 }}>
+            {evidenceError}
+          </div>
+        )}
       </div>
 
       <span style={labelStyle}>Add what happened</span>
@@ -213,7 +293,7 @@ export function ReportMember({
 
       {!canSend && (
         <div style={{ fontSize: 12.5, color: T.ter, textAlign: "center", marginBottom: 12 }}>
-          Add a note to send.
+          Add a note or screenshot to send.
         </div>
       )}
       <Btn kind="red" disabled={!canSend || busy} onClick={send}>
