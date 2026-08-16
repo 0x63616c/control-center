@@ -859,8 +859,8 @@ revocation succeeded.
 | W01 Temporal runtime | IMPLEMENTED; LIVE PROOF PENDING | coordinator | PR #708 / `dd7f8f612` | Merge/deploy evidence remains in W13 |
 | W02 Outbox/orchestration | IMPLEMENTED; LIVE PROOF PENDING | coordinator | PR #708 / `codex/dtye-outbox-observability` | W12/W13 live failure drills remain |
 | W03 Push delivery | IMPLEMENTED; LIVE PROOF PENDING | coordinator | PR #708 / integrated from `9d9080a47` | Deploy projected Apple/APNs credentials and prove foreground/background/terminated delivery |
-| W04 Report accountability | NOT STARTED | — | — | W03 |
-| W05 Urge rescue | NOT STARTED | — | — | W03 |
+| W04 Report accountability | IN PROGRESS | `/root/report_accountability` | successor slice from PR #708 | W03 integrated; implementation active |
+| W05 Urge rescue | IN PROGRESS | `/root/foundation_review` | successor slice from PR #708 | W03 integrated; implementation active |
 | W06 Streak milestones | NOT STARTED | — | — | W03 |
 | W07 Monthly recap | NOT STARTED | — | — | W03, W06 terminology |
 | W08 Invite lifecycle | NOT STARTED | — | — | W03 |
@@ -889,6 +889,7 @@ commit/build, and proof boundary is not evidence.
 | 2026-08-16 | W02/W09 focused durability review | PASS after fixes; live proof pending | coordinator branch after `61e82c2da` | Dispatch is one event per activity with a 15-second Temporal RPC deadline, 25-second activity timeout, and 30-second row lease; post-commit nudges admit one unresolved batch; workflow inputs reject unknown schemas; session continue-as-new preserves one cutoff; cleanup now follows the exact daily contract. Worker passed 20/20 focused tests and both API/worker typechecks passed. | `/root/foundation_review`, coordinator |
 | 2026-08-16 | W03 native push and notification delivery | PASS locally; secrets/live-device proof pending | integrated from `9d9080a47` | Exact opaque workflow input, encrypted token keyring/rotation, authenticated preference and registration APIs, finite APNs outcomes, per-device durable retries, late authorization checks, native opt-in/settings, production entitlement guard, and shared worker-pool lifecycle are implemented. Notifications passed 15/15, frontend 29/29, integrated worker 25/25, root typecheck and Knip passed; source slice additionally passed real PostgreSQL 82/82, Storybook 535/535, production frontend, SwiftPM, and unsigned simulator builds. | `/root/workflow_acceptance_review`, coordinator |
 | 2026-08-16 | W02.9, W02.10, W09.4 operations instrumentation | PASS; live proof pending | `codex/dtye-outbox-observability` | Bounded platform metrics expose durable pending/oldest/quarantine gauges, retry/permanent outcomes, accepted dispatch latency, purge counts/duration, and activity freshness without identity labels. Checked-in Grafana panels and Prometheus rules cover old/growing/failed backlog and missing poller/recovery; deterministic collector/activity/infra tests pass and the runbook covers recovery. | `/root/outbox_workflows` |
+| 2026-08-16 | Integrated W02/W03/W09 migration and runtime proof | PASS | coordinator branch after `e259a3c85` | Fresh PostgreSQL 16 applied migrations 0001 through 0012 in order. The combined API suite passed 104/104 and the worker suite passed 33/33 including real-Postgres session purge and durable operational snapshot tests. | coordinator |
 
 ## Resume instructions
 
