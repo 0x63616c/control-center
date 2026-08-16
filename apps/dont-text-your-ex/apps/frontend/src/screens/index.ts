@@ -1,3 +1,4 @@
+export { AboutTally } from "./AboutTally";
 export { ActivityTab } from "./ActivityTab";
 export { EditProfile, SetupProfile } from "./Auth";
 export { ConfirmDeny } from "./ConfirmDeny";
@@ -12,4 +13,3 @@ export { Onboarding } from "./Onboarding";
 export { Profile } from "./Profile";
 export { ReportDetail, ReportHistory } from "./ReportHistory";
 export { ReportMember } from "./ReportMember";
-export { Settle } from "./Settle";

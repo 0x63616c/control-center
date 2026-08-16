@@ -16,7 +16,7 @@ const SIGNUP_EYEBROWS = [
   "EST. AFTER THE BREAKUP",
   "BLOCKED BUT CURIOUS",
   "YOUR FRIENDS WARNED YOU",
-  "ONE TEXT FROM A FINE",
+  "ONE TEXT FROM A RESET",
 ] as const;
 
 function describeError(error: unknown): {
@@ -193,7 +193,7 @@ export function Onboarding({
               flexShrink: 0,
             }}
           >
-            $
+            ♡
           </div>
           <span
             style={{
@@ -328,17 +328,21 @@ export function Onboarding({
             <>
               Stop texting your ex.
               <br />
-              Or don't, but <span style={{ color: T.gold }}>pay up.</span>
+              If you do, <span style={{ color: T.gold }}>log it and start again.</span>
             </>
           )}
         </p>
         <p style={{ width: "100%", fontSize: 16, color: T.sec, lineHeight: 1.45, margin: 0 }}>
           {ctx.sessionExpired
             ? "We cleared the stale device token because the server no longer recognized it."
-            : "A shared guilt jar for you and the friends who already know who you shouldn't be texting."}
+            : "An invite-only accountability jar for you and friends who want to help."}
         </p>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 10, flexShrink: 0 }}>
+        <p style={{ color: T.sec, fontSize: 14, lineHeight: 1.45, margin: 0, textAlign: "center" }}>
+          Don’t Text Your Ex does not read your messages. Jar activity is shared only with invited
+          jar members.
+        </p>
         <button
           type="button"
           onClick={signInApple}

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { AppCtx, RouteFor } from "../appctx";
 import { EvidenceShot, EvidenceViewer } from "../bits";
-import { money, T } from "../theme";
+import { formatPoints, T } from "../theme";
 import type { ReportDTO } from "../types";
 import { Btn, Screen, TopBar } from "../ui";
 import { ErrorState, type FetchedState, LoadingState, MutationError } from "./fetched-state";
@@ -64,17 +64,17 @@ export function ConfirmDeny({
   if (state.status === "loading") {
     return (
       <Screen>
-        <TopBar onBack={() => ctx.back()} title="You've been reported" />
-        <LoadingState>Loading report…</LoadingState>
+        <TopBar onBack={() => ctx.back()} title="Accountability check" />
+        <LoadingState>Loading check…</LoadingState>
       </Screen>
     );
   }
   if (state.status === "error") {
     return (
       <Screen>
-        <TopBar onBack={() => ctx.back()} title="You've been reported" />
+        <TopBar onBack={() => ctx.back()} title="Accountability check" />
         <ErrorState
-          label="This report couldn’t be loaded."
+          label="This check couldn’t be loaded."
           onRetry={() => setRetry((value) => value + 1)}
         />
       </Screen>
@@ -83,9 +83,9 @@ export function ConfirmDeny({
   if (state.status === "empty" || report == null) {
     return (
       <Screen>
-        <TopBar onBack={() => ctx.back()} title="You've been reported" />
+        <TopBar onBack={() => ctx.back()} title="Accountability check" />
         <div style={{ textAlign: "center", color: T.ter, paddingTop: 80, fontFamily: T.disp }}>
-          Nothing pending. You're (currently) clean.
+          No checks are waiting for your response.
         </div>
       </Screen>
     );
@@ -116,18 +116,17 @@ export function ConfirmDeny({
               margin: 0,
             }}
           >
-            {owned ? "Respect." : "Bold move."}
+            {owned ? "Respect." : "Response saved."}
           </h2>
           <p style={{ color: T.sec, fontSize: 16, lineHeight: 1.45, maxWidth: 290, margin: 0 }}>
             {owned ? (
               <>
-                You owned it. <b style={{ color: T.gold }}>{money(report.amountCents)}</b> added to
-                your tally and your streak's back to zero. The jar saw.
+                You accepted it. <b style={{ color: T.gold }}>{formatPoints(report.amountCents)}</b>{" "}
+                was added to your virtual tally, and your no-contact streak reset. Jar members can
+                see the update.
               </>
             ) : (
-              <>
-                Report dropped. We'll take your word for it… <i>this time.</i>
-              </>
+              <>The check is closed, and your tally did not change.</>
             )}
           </p>
           <div style={{ width: "100%", marginTop: 10 }}>
@@ -144,7 +143,7 @@ export function ConfirmDeny({
 
   return (
     <Screen>
-      <TopBar onBack={() => ctx.back()} title="You've been reported" />
+      <TopBar onBack={() => ctx.back()} title="Accountability check" />
       <div style={{ textAlign: "center", padding: "8px 0 4px" }}>
         <div style={{ fontSize: 46, marginBottom: 10 }}>👀</div>
         <h2
@@ -158,7 +157,7 @@ export function ConfirmDeny({
             maxWidth: 300,
           }}
         >
-          <span style={{ color: T.red }}>{accuser}</span> says you texted your ex.
+          <span style={{ color: T.red }}>{accuser}</span> sent you an accountability check.
         </h2>
         <div style={{ fontSize: 13.5, color: T.ter, marginTop: 10 }}>
           in {report.jarName} · {report.ago} ago
@@ -185,7 +184,7 @@ export function ConfirmDeny({
               letterSpacing: "0.04em",
             }}
           >
-            The accusation
+            What they shared
           </div>
           <div style={{ fontSize: 16, lineHeight: 1.45 }}>“{report.note}”</div>
         </div>
@@ -203,7 +202,7 @@ export function ConfirmDeny({
               letterSpacing: "0.04em",
             }}
           >
-            The receipts ({report.evidence.length})
+            Supporting screenshots ({report.evidence.length})
           </div>
           <div
             style={{
@@ -227,19 +226,19 @@ export function ConfirmDeny({
           disabled={resolution.status === "submitting"}
           onClick={() => resolve("own")}
         >
-          Own it - add {money(report.amountCents)} 🫡
+          Accept and add {formatPoints(report.amountCents)}
         </Btn>
         <Btn
           kind="dark"
           disabled={resolution.status === "submitting"}
           onClick={() => resolve("deny")}
         >
-          Deny it - wasn't me
+          Deny this check
         </Btn>
       </div>
       {resolution.status === "failed" && (
         <MutationError>
-          The report couldn’t be updated. Check your connection and try again.
+          The check couldn’t be updated. Check your connection and try again.
         </MutationError>
       )}
       <p
@@ -251,7 +250,7 @@ export function ConfirmDeny({
           lineHeight: 1.4,
         }}
       >
-        Denying drops the report. For now. A denied report can go to a jar vote later.
+        Denying closes this check without changing your tally.
       </p>
 
       <EvidenceViewer

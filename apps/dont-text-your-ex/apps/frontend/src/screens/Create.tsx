@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api } from "../api";
 import type { AppCtx, RouteFor } from "../appctx";
 import { Stepper } from "../bits";
-import { T } from "../theme";
+import { NO_MONEY_DISCLOSURE, T } from "../theme";
 import { Btn, Screen, TopBar } from "../ui";
 import { inputStyle, labelStyle } from "./common";
 import { MutationError } from "./fetched-state";
@@ -80,11 +80,11 @@ export function Create({
         value={rule}
         onChange={(e) => setRule(e.target.value)}
         rows={2}
-        placeholder="“Don't text your ex. We mean it.”"
+        placeholder="“No texting our exes. We’ve got each other.”"
         style={{ ...inputStyle, marginBottom: 22 }}
       />
 
-      <span style={labelStyle}>Cost per slip</span>
+      <span style={labelStyle}>Virtual amount per slip</span>
       <div
         style={{
           background: T.surface,
@@ -95,6 +95,9 @@ export function Create({
       >
         <Stepper cents={cents} onChange={setCents} step={100} />
       </div>
+      <p style={{ color: T.ter, fontSize: 12.5, lineHeight: 1.4, margin: "10px 2px 0" }}>
+        Scoreboard points only. {NO_MONEY_DISCLOSURE}
+      </p>
 
       <div style={{ flex: 1, minHeight: 24 }} />
       {createState.status === "failed" && (

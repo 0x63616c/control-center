@@ -300,6 +300,19 @@ the data model/deletion/moderation inventory is final.
   all changed screens receive visual review.
 - **Evidence:** scoped grep report, copy inventory, before/after screenshots,
   unit/Storybook/Playwright results, independent tone/policy review.
+- **Dependency-safe implementation (2026-08-15):** supportive runtime copy,
+  virtual-point terminology, explicit message-access/no-money disclosures,
+  neutral selectors, aligned tests/stories, and an AST runtime-copy regression
+  gate are implemented on `codex/dtye-supportive-copy`. Local gates include
+  41/41 frontend tests, 55/55 relevant Storybook tests (including all 14 changed
+  screens), and 20/20 real-Postgres Playwright tests. All 14 changed-screen
+  frames passed independent original-resolution visual review. Rendered evidence
+  and proof boundaries are recorded in
+  [`docs/evidence/dont-text-your-ex/p02/README.md`](../evidence/dont-text-your-ex/p02/README.md).
+  The implementation was merged in PR #709 at `647757a50`; merge-SHA CI,
+  CodeQL, the home-server rollout, public HTTPS/API probes, and independent
+  reviews all passed. This does not change P02 from `NOT STARTED` or increase
+  earned progress because P01 remains incomplete.
 
 ### P03 — Account-deletion domain, API, and data semantics — 8%
 
@@ -708,6 +721,8 @@ evidence with stable URLs/IDs. “Observed” without a timestamp/source is inva
 | 2026-08-16T04:17:52Z | P00 | Production, public edge, and AASA | PASS with recorded gaps | deployed pre-P00 images | [Machine/public evidence](../evidence/dont-text-your-ex/p00-baseline-2026-08-16.md); policy routes and `/version.json` proven SPA fallbacks | Production/public audit + coordinator |
 | 2026-08-16T04:19:55Z | P00 | Live Apple release state | PASS | Version 1.0; Build 24 | [Redacted UI-state evidence](../evidence/dont-text-your-ex/p00-baseline-2026-08-16.md); [public TestFlight link](https://testflight.apple.com/join/6HcbUuV3) | Coordinator browser inspection + independent screenshot review |
 | 2026-08-16T04:26:49Z | P00 | Durable baseline merge and review closure | PASS | `676623f18` | PR [#705](https://github.com/0x63616c/world-wide-webb/pull/705); all checks green; standards/spec review findings corrected before merge | Independent standards/spec reviewers + coordinator |
+| 2026-08-16T05:32:05Z | P02 | Dependency-safe implementation review | LOCAL PROOF PASS; PR/CI/DEPLOY PENDING | `b3dfeccdd` | Supportive copy, split-copy/payment/currency safeguards, legacy-row compatibility, and neutral internal terminology independently re-reviewed with no remaining code/spec findings. Frontend 41/41; relevant Storybook 55/55; real-Postgres Playwright 20/20 in 44.8s; all 14 changed-screen frames plus the six representative captures independently reviewed at original resolution with no defects or sensitive data. P02 remains dependency-gated by P01 | Independent standards/spec reviewers + independent original-resolution screenshot reviewer + coordinator |
+| 2026-08-16T05:53:21Z | P02 | Merge, interim iOS build, home-server deployment, and public edge | PASS; DEPENDENCY GATE REMAINS | `647757a50`, Build 25 | PR [#709](https://github.com/0x63616c/world-wide-webb/pull/709); main CI/deploy [31929697174](https://github.com/0x63616c/world-wide-webb/actions/runs/31929697174); iOS upload [31929697178](https://github.com/0x63616c/world-wide-webb/actions/runs/31929697178). Namespace deployments and CNPG were ready; public `/` and `/api/health` returned HTTP 200; health body SHA-256 `4062edaf…` was `{"ok":true}`; shipped bundle SHA-256 `f39526fc…` contained the supportive reset/accountability/no-money strings and none of the scoped legacy shame/payment strings. Build 25 is interim TestFlight evidence, not the final compliance RC. P02 remains dependency-gated by P01 | Main CI + coordinator public/cluster verification |
 | 2026-08-16T04:35:42Z | P01 | Requested App Store name | PASS — saved, not reviewed | App `6778544752` | [Saved name and current setup evidence](../evidence/dont-text-your-ex/p01-app-store-state-2026-08-16.md) and [cropped capture](../evidence/dont-text-your-ex/assets/p01-app-name-saved-2026-08-16.png), SHA-256 `3cd3ce07…`; remains subject to App Review | Coordinator + `/root/p01_name_screenshot_review` |
 | 2026-08-16 | P01 | Deletion and operator-plane decision analysis | PASS / OWNER CONFIRMATION OPEN | current schema/infrastructure | [Schema-aware decision analysis](../evidence/dont-text-your-ex/p01-decision-analysis-2026-08-16.md); operator architecture decided by coordinator after `/root/p01_operator_plane`; deletion consequences and operator responsibility await Calum after `/root/p01_deletion_decision` | Named audit agents + coordinator |
 | 2026-08-16 | P01/P03 | Temporal delivery reconciliation | PASS / OWNER CONFIRMATION OPEN | T-42 coordinator branch | [Temporal orchestration ADR](../adr/0014-dont-text-your-ex-temporal-orchestration.md) and [account-deletion data map](../../apps/dont-text-your-ex/docs/account-deletion-data-map.md) record the incompatible shared-jar and Apple-order proposals; W01/W02 may proceed, W10 destructive work may not | `/root/runtime_design`, `/root/outbox_workflows`, coordinator |
@@ -725,6 +740,8 @@ evidence with stable URLs/IDs. “Observed” without a timestamp/source is inva
 | 2026-08-15 | 2% | Control-document phase started | `KmPxBhNk5S6G` | Sent before packet-weight formula; earned progress was 0%. Correct in the next notification. |
 | 2026-08-15 | 0% | Control document merged; P00 refresh started | `XoGDGDjQvfOC` | Corrected earned progress; no P00 blocker; baseline refresh remained. |
 | 2026-08-16T04:26:59Z | 5% | P00 baseline proven and merged | `zPExehUPLTnr` | P01 owner decisions are next; compliance, RC, physical QA, listing, submission, approval, and public proof remain. |
+| 2026-08-16T05:17:08Z | 5% | P02 implementation/review update; no earned-progress change | `KVx7azibmFNU` | Review findings were fixed; the four initially rejected captures were subsequently corrected, recaptured, and passed. P01 owner/legal decisions still gate P02 and earned progress. |
+| 2026-08-16T05:53:40Z | 5% | P02 merged, deployed publicly, and uploaded as interim Build 25; no earned-progress change | `oWCgVOw5YMLK` | P01 owner/legal decisions still gate P02. Account deletion, UGC safety, legal pages, final RC, physical QA, listing, submission, approval, and public App Store proof remain. |
 
 ## Current status
 
@@ -733,7 +750,9 @@ evidence with stable URLs/IDs. “Observed” without a timestamp/source is inva
 - **Current blockers:** P01 requires Calum's remaining explicit legal, business,
   product, distribution, deletion, and moderation decisions. The requested App
   Store name is already saved. Build 24's Beta App Review is external waiting
-  state and is not on the public-submission critical path.
+  state and is not on the public-submission critical path. Build 25 uploaded
+  successfully after the P02 merge but is an interim TestFlight build, not the
+  final compliance release candidate.
 - **Next action:** obtain Calum’s explicit disposition for device family;
   privacy/legal/support/copyright; deletion consequences; moderation SLA and
   operator responsibility; price/tax/storefronts; categories; age/consent; DSA;

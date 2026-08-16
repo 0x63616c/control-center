@@ -94,7 +94,7 @@ export function Invite({
     (member) => member.user.id === ctx.me?.id && member.role === "owner",
   );
   const link = ready ? canonicalInviteUrl(code) : null;
-  const shareText = `Join my "${jar.name}" jar on Don’t Text Your Ex. Code: ${code} -> ${link}`;
+  const shareText = `Join my "${jar.name}" accountability jar on Don’t Text Your Ex. Code: ${code} -> ${link}`;
   const expiryLabel =
     expiresAt == null
       ? "Expiry unavailable"
@@ -172,7 +172,7 @@ export function Invite({
             fontWeight: 600,
           }}
         >
-          ✓ Jar created. Now drag your friends down with you.
+          ✓ Jar created. Now invite the friends who’ll have your back.
         </div>
       )}
 
@@ -260,7 +260,7 @@ export function Invite({
           }}
         >
           {ready
-            ? 'Send the code to your friends. They enter it on "Join a jar" to drag themselves down with you.'
+            ? "Send the code to your friends. They can preview the invite and choose whether to join."
             : expiresAt == null
               ? "This invite can’t be verified. Replace it to share a new link."
               : "This invite has expired. Replace it to share a new link."}

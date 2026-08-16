@@ -14,7 +14,9 @@ test("create a jar → invite screen shows a code → land in the new jar", asyn
   await expect(page.getByText("New jar")).toBeVisible();
 
   await page.getByPlaceholder("“The Group Chat”").fill("My Test Jar");
-  await page.getByPlaceholder("“Don't text your ex. We mean it.”").fill("no texting allowed");
+  await page
+    .getByPlaceholder("“No texting our exes. We’ve got each other.”")
+    .fill("no texting allowed");
 
   let createAttempts = 0;
   await page.route("**/api/jars", async (route) => {
@@ -48,7 +50,7 @@ test("create a jar → invite screen shows a code → land in the new jar", asyn
   await expect(page.getByText("Jar created.", { exact: false })).toBeVisible();
   await page.getByRole("button", { name: "Take me to my jar" }).click();
   await expect(page.getByText("My Test Jar")).toBeVisible();
-  await expect(page.getByTestId("jar-pot")).toHaveText("$0");
+  await expect(page.getByTestId("jar-total-tally")).toHaveText("0 pts");
   await page.reload();
   await expect(page.getByTestId("jar-card").filter({ hasText: "My Test Jar" })).toBeVisible();
 });
@@ -58,7 +60,7 @@ test("production invite path survives profile setup → previews → joins the j
 }) => {
   await signUpNewFromInvite(page, "XEX24K");
   await expect(page.getByText("The Group Chat")).toBeVisible();
-  await expect(page.getByText("$5")).toBeVisible();
+  await expect(page.getByText("5 pts")).toBeVisible();
   await expect(
     page.getByRole("img", { name: "Members: Ali, Calum, Giselle, Alyssa" }),
   ).toBeVisible();
@@ -88,7 +90,7 @@ test("production invite path survives profile setup → previews → joins the j
     if (joinAttempt === 4) return route.abort("internetdisconnected");
     await route.continue();
   });
-  await page.getByRole("button", { name: "Join the shame" }).click();
+  await page.getByRole("button", { name: "Join this jar" }).click();
   await expect(page.getByRole("alert")).toContainText("don’t have permission");
   await page.getByRole("button", { name: "Retry joining jar" }).click();
   await expect(page.getByRole("alert")).toContainText("can’t be joined anymore");
@@ -98,7 +100,7 @@ test("production invite path survives profile setup → previews → joins the j
   await expect(page.getByRole("alert")).toContainText("Check your connection");
   await page.getByRole("button", { name: "Retry joining jar" }).click();
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByTestId("jar-pot")).toBeVisible();
+  await expect(page.getByTestId("jar-total-tally")).toBeVisible();
   await expect(page.getByText("The Group Chat")).toBeVisible();
 });
 
@@ -167,7 +169,7 @@ test("invite preview errors are explicit, non-contradictory, and recoverable", a
   await page.getByRole("button", { name: "Retry invite" }).click();
   await expect(page.getByText("Recovered preview")).toBeVisible();
   await expect(page.getByRole("alert")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Join the shame" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Join this jar" })).toBeVisible();
 });
 
 test("owner replaces a seven-day invite → old deep link stays revoked after reload", async ({
@@ -224,13 +226,15 @@ test("owner replaces a seven-day invite → old deep link stays revoked after re
   await expect(page.getByText("Dry January (Failed)")).toBeVisible();
 });
 
-test("settle up is inert with a 'payments coming soon' badge", async ({ page }) => {
+test("about my tally explains that points are virtual", async ({ page }) => {
   await signInAsCalum(page);
   await openJar(page, "The Group Chat");
-  await page.getByRole("button", { name: "Settle up" }).click();
-  await expect(page.getByText("YOU OWE THE JAR")).toBeVisible();
-  await expect(page.getByText("Payments coming soon")).toBeVisible();
-  await expect(page.getByText("guilt scoreboard", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "About my tally" }).click();
+  await expect(page.getByText("YOUR VIRTUAL TALLY")).toBeVisible();
+  const disclosure = page.getByText("scoreboard value only", { exact: false });
+  await expect(disclosure).toContainText(
+    "No real money is charged, collected, paid, or transferred.",
+  );
 });
 
 test("log slip fetch and submit failures stay retryable without false success", async ({
@@ -252,10 +256,10 @@ test("log slip fetch and submit failures stay retryable without false success", 
     }
     return route.continue();
   });
-  await page.getByRole("button", { name: "I texted my ex" }).click();
+  await page.getByRole("button", { name: "Log a slip" }).click();
   await expect(page.getByRole("alert")).toContainText("jar couldn’t be loaded");
   await page.getByRole("button", { name: "Retry" }).click();
-  await expect(page.getByRole("button", { name: /Add .* to my shame/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Add .* pts to my virtual tally/ })).toBeVisible();
 
   let slipAttempts = 0;
   await page.route("**/api/jars/*/slips", async (route) => {
@@ -269,23 +273,23 @@ test("log slip fetch and submit failures stay retryable without false success", 
     }
     return route.continue();
   });
-  await page.getByRole("button", { name: /Add .* to my shame/ }).click();
-  await page.getByRole("button", { name: "Yeah. I did it. 💸" }).click();
+  await page.getByRole("button", { name: /Add .* pts to my virtual tally/ }).click();
+  await page.getByRole("button", { name: "Confirm and reset streak" }).click();
   await expect(page.getByRole("alert")).toContainText("tally has not changed");
-  await expect(page.getByText("You sure-sure?")).toBeVisible();
+  await expect(page.getByText("Log this slip?")).toBeVisible();
   expect(slipAttempts).toBe(1);
   await page.getByRole("button", { name: "Retry logging slip" }).click();
-  await expect(page.getByTestId("jar-pot")).toBeVisible();
+  await expect(page.getByTestId("jar-total-tally")).toBeVisible();
   expect(slipAttempts).toBe(2);
   await page.reload();
   await openJar(page, "The Group Chat");
-  await expect(page.getByTestId("jar-pot")).toBeVisible();
+  await expect(page.getByTestId("jar-total-tally")).toBeVisible();
 });
 
 test("profile: edit avatar and toggle share-streak", async ({ page }) => {
   await signInAsCalum(page);
   await page.getByTestId("tab-profile").click();
-  await expect(page.getByText("Share my clean streak")).toBeVisible();
+  await expect(page.getByText("Share my no-contact streak")).toBeVisible();
 
   // edit the profile avatar
   await page.getByText("Edit", { exact: true }).click();
@@ -329,12 +333,11 @@ test("profile: edit avatar and toggle share-streak", async ({ page }) => {
   await expect(firstShareRow).toContainText(wasHidden ? "Friends see your streak" : "Hidden");
 });
 
-test("activity tab shows the carnage feed", async ({ page }) => {
+test("activity tab shows the supportive check-in feed", async ({ page }) => {
   await signInAsCalum(page);
   await page.getByTestId("tab-activity").click();
-  // the feed renders slip rows with the roasty "caved" copy
-  await expect(page.getByText("caved", { exact: false }).first()).toBeVisible();
-  await expect(page.getByText("That's all the carnage for now.")).toBeVisible();
+  await expect(page.getByText("logged a slip", { exact: false }).first()).toBeVisible();
+  await expect(page.getByText("You’re all caught up.")).toBeVisible();
 });
 
 test("owner closes a jar → history survives → invite and mutations stay revoked", async ({
@@ -359,7 +362,7 @@ test("owner closes a jar → history survives → invite and mutations stay revo
   await expect(page.getByRole("alert")).toContainText("Close this jar permanently?");
   await page.getByRole("button", { name: "Close jar permanently" }).click();
   await expect(page.getByRole("status")).toContainText("history is read-only");
-  await expect(page.getByText("WALL OF SHAME", { exact: false })).toBeVisible();
+  await expect(page.getByText("PROGRESS BOARD", { exact: false })).toBeVisible();
   await expect(page.getByRole("button", { name: "I texted my ex" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Invite people" })).toHaveCount(0);
 
@@ -413,13 +416,17 @@ test("member confirms leave → loses access while owner-only close stays unavai
 
   await page.goto(`/j/${detail.inviteCode}`);
   await expect(page.getByText("Join jar")).toBeVisible();
-  await page.getByRole("button", { name: "Join the shame" }).click();
-  await expect(page.getByTestId("jar-pot")).toBeVisible();
+  await page.getByRole("button", { name: "Join this jar" }).click();
+  await expect(page.getByTestId("jar-total-tally")).toBeVisible();
   await page.reload();
   await openJar(page, "The Group Chat");
-  await expect(page.locator('[data-testid="shame-row"][data-member="Calum"]')).toContainText("$40");
+  await expect(page.locator('[data-testid="progress-row"][data-member="Calum"]')).toContainText(
+    "40 pts",
+  );
 
   await page.goto("/");
   await openJar(page, "The Group Chat");
-  await expect(page.locator('[data-testid="shame-row"][data-member="Calum"]')).toContainText("$40");
+  await expect(page.locator('[data-testid="progress-row"][data-member="Calum"]')).toContainText(
+    "40 pts",
+  );
 });

@@ -10,7 +10,7 @@ export type Route =
   | { readonly name: "confirmDeny"; readonly reportId: ReportId }
   | { readonly name: "reportHistory" }
   | { readonly name: "reportDetail"; readonly reportId: ReportId }
-  | { readonly name: "settle"; readonly jarId: JarId }
+  | { readonly name: "aboutTally"; readonly jarId: JarId }
   | { readonly name: "create" }
   | { readonly name: "join"; readonly code?: string }
   | { readonly name: "invite"; readonly jarId: JarId; readonly fresh?: boolean }
@@ -45,7 +45,7 @@ export interface AppCtx<CurrentRoute extends Route = Route> {
   signOut: () => Promise<void>;
   sessionExpired: boolean;
 
-  /** fire the flying-money animation (used after logging a slip) */
+  /** fire the supportive celebration animation (used after logging a slip) */
   fireBurst: () => void;
 
   /** pending-report badge state for the Activity tab */
