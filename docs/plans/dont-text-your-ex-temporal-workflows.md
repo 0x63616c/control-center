@@ -1,11 +1,11 @@
 # Don’t Text Your Ex Temporal workflow delivery contract
 
-**Status:** Goal-ready specification; implementation has not started  
-**Planning Ticket:** T-40; the later explicit implementation goal is a new request and receives one successor delivery Ticket  
-**Baseline:** `origin/main` at `f2426fdc8957b9409d1c0a0efb97e6dfd9fbbfe1` on 2026-08-15  
-**Product:** `apps/dont-text-your-ex`  
-**Production:** Pulumi stack `home-server`, Kubernetes namespace `dont-text-your-ex`  
-**Temporal namespace:** `dont-text-your-ex`  
+**Status:** Implementation goal active; W00, W01, and W02 in progress<br>
+**Tickets:** planning T-40; delivery T-42<br>
+**Baseline:** `origin/main` at `3b4697e37bdd451a279864c1005f7284ea2fdebc` on 2026-08-16<br>
+**Product:** `apps/dont-text-your-ex`<br>
+**Production:** Pulumi stack `home-server`, Kubernetes namespace `dont-text-your-ex`<br>
+**Temporal namespace:** `dont-text-your-ex`<br>
 **Temporal task queue:** `main` — exact spelling, fixed by the requester
 
 This document is the durable execution and acceptance contract for adding every
@@ -253,19 +253,19 @@ the exact typed registries/state machines before implementation.
 - [ ] W00.1 Current `origin/main`, open PRs, worktrees, production SHA, database
       migrations, Temporal namespaces/schedules, and TestFlight state are
       refreshed and recorded without relying on this dated baseline.
-- [ ] W00.2 Every workflow, activity, signal, query, event, notification category,
+- [x] W00.2 Every workflow, activity, signal, query, event, notification category,
       workflow ID, schedule ID, timer, retry policy, and terminal state is listed.
-- [ ] W00.3 Postgres-authoritative versus Temporal-orchestrated responsibilities
+- [x] W00.3 Postgres-authoritative versus Temporal-orchestrated responsibilities
       are explicit for every state transition.
 - [ ] W00.4 The deletion table-by-table map and backup policy are approved before
       a destructive migration or deletion path is written.
 - [ ] W00.5 All product/legal choices are dated and attributed; agents do not
       invent a legal retention requirement.
-- [ ] W00.6 The merged App Store control plan is updated where deletion packet
+- [x] W00.6 The merged App Store control plan is updated where deletion packet
       statuses/evidence change; its other release packets remain separate.
-- [ ] W00.7 The final design follows the scalable-TypeScript guide and records
+- [x] W00.7 The final design follows the scalable-TypeScript guide and records
       discriminated states rather than boolean combinations.
-- [ ] W00.8 The status/evidence ledgers in this document are current.
+- [x] W00.8 The status/evidence ledgers in this document are current.
 
 ## W01 — Product Temporal runtime and declarative registry
 
@@ -854,9 +854,9 @@ revocation succeeded.
 
 | Packet | Status | Owner | Branch/PR | Blocking decision or evidence |
 |---|---|---|---|---|
-| W00 Design/baseline | PLANNED | coordinator | T-40 | Confirm proposed defaults |
-| W01 Temporal runtime | NOT STARTED | — | — | W00 |
-| W02 Outbox/orchestration | NOT STARTED | — | — | W01 |
+| W00 Design/baseline | IN PROGRESS | coordinator | `codex/dtye-temporal-delivery`, T-42 | Reconcile the two committed deletion proposals with explicit owner choice |
+| W01 Temporal runtime | IN PROGRESS | `/root/runtime_design` | `codex/dtye-temporal-runtime-w01` | Stable non-deletion W00 inputs; coordinator integration review |
+| W02 Outbox/orchestration | IN PROGRESS | `/root/outbox_workflows` | `codex/dtye-temporal-outbox-w02` | Stable event seam; coordinator integration after W01 |
 | W03 Push delivery | NOT STARTED | — | — | W02, Apple/APNs credentials |
 | W04 Report accountability | NOT STARTED | — | — | W03 |
 | W05 Urge rescue | NOT STARTED | — | — | W03 |
@@ -878,6 +878,9 @@ commit/build, and proof boundary is not evidence.
 |---|---|---|---|---|---|
 | 2026-08-15 | Baseline/history trace | PASS | `f2426fdc8` | Source/ref/PR review proved no DTYE Temporal or deletion implementation; PR #703 merged the plan only | deletion Git/history review |
 | 2026-08-15 | Acceptance-contract review | PASS after corrections | plan branch | Independent review checked runtime, outbox, APNs guarantees, all workflow states, deletion/backup semantics, tests, and live proof; 24 findings were reconciled | workflow acceptance review |
+| 2026-08-16 | Delivery goal and tracker | PASS | T-42 | Explicit `Do it.` request created the implementation goal and the one successor delivery Ticket | coordinator |
+| 2026-08-16 | W00 repository/production refresh | PASS with implementation gaps | `3b4697e37` | Main CI/CodeQL green; migrations 0001–0009 live; API/frontend/CNPG healthy; Temporal has only `control-center` and `software-factory` product namespaces; no DTYE worker/namespace yet; Build 24 state is bounded by the merged P00 evidence | coordinator + live Git/Kubernetes/Postgres inspection |
+| 2026-08-16 | W00 runtime/outbox design trace | PASS | coordinator branch | Two independent traces fixed the product runtime seam, 22-event registry, transaction hazards, public TDD seams, schema dependencies, and deletion-plan conflict; ADR-0014 and the deletion data map are the durable synthesis | `/root/runtime_design`, `/root/outbox_workflows`, coordinator |
 
 ## Resume instructions
 
