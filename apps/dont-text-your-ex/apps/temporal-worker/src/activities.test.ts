@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DomainEventSchema } from "../../api/src/domain-events";
+import { DomainEventSchema, InviteVersionIdSchema } from "../../api/src/domain-events";
 import { MemoryOutbox } from "../../api/src/outbox";
 import { RecordingWorkflowDispatcher } from "../../api/src/workflow-dispatcher";
 import {
@@ -81,7 +81,7 @@ describe("outbox dispatch activity", () => {
   });
 
   it("publishes invite lifecycle activities through the production activity bundle", async () => {
-    const inviteVersionId = "inv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as never;
+    const inviteVersionId = InviteVersionIdSchema.parse("inv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     const activities = createDtyeActivities({
       outbox: new MemoryOutbox([]),
       dispatcher: new RecordingWorkflowDispatcher(),
