@@ -214,6 +214,30 @@ export function Profile({
 
       <button
         type="button"
+        onClick={() => ctx.nav({ name: "recaps" })}
+        style={{
+          width: "100%",
+          minHeight: 54,
+          marginBottom: 12,
+          padding: "0 16px",
+          borderRadius: 16,
+          background: T.surface,
+          border: `1px solid ${T.hair}`,
+          color: T.text,
+          display: "flex",
+          alignItems: "center",
+          textAlign: "left",
+        }}
+      >
+        <span aria-hidden="true" style={{ fontSize: 20, marginRight: 12 }}>
+          🗓️
+        </span>
+        <span style={{ flex: 1, fontSize: 16, fontWeight: 650 }}>Monthly recaps</span>
+        <Icon.chev style={{ width: 7, height: 12, color: T.ter }} />
+      </button>
+
+      <button
+        type="button"
         onClick={() => ctx.nav({ name: "notificationSettings" })}
         style={{
           width: "100%",

@@ -9,6 +9,7 @@ import {
   JarDetailSchema,
   type JarId,
   JarPreviewSchema,
+  JarRecapSchema,
   JarSummarySchema,
   JoinJarResponseSchema,
   type LogSlipRequest,
@@ -18,6 +19,7 @@ import {
   NotificationTargetSchema,
   OkResponseSchema,
   PushRegistrationResponseSchema,
+  type RecapId,
   type RegisterPushDeviceRequest,
   type ReportId,
   ReportSchema,
@@ -172,6 +174,10 @@ export const api = {
   startRescue: () => req(RescueInterventionSchema, "POST", "/rescue"),
   rescueCommand: (id: RescueInterventionId, action: RescueCommandRequest["action"]) =>
     req(RescueInterventionSchema, "POST", `/rescue/${id}/command`, { action }),
+
+  // immutable monthly jar recaps
+  recaps: () => req(JarRecapSchema.array(), "GET", "/recaps"),
+  recap: (id: RecapId) => req(JarRecapSchema, "GET", `/recaps/${id}`),
 
   // activity
   activity: () => req(ActivitySchema.array(), "GET", "/activity"),

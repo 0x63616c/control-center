@@ -239,7 +239,6 @@ export const JarRecapSchema = z
   })
   .strict();
 
-export type CalendarMonth = z.infer<typeof CalendarMonthSchema>;
 export type JarRecapDTO = z.infer<typeof JarRecapSchema>;
 
 const rescueBase = {

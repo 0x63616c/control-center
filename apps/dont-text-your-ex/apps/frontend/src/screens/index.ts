@@ -11,6 +11,7 @@ export { LogSlip } from "./LogSlip";
 export { NotificationSettings } from "./NotificationSettings";
 export { Onboarding } from "./Onboarding";
 export { Profile } from "./Profile";
+export { Recaps } from "./Recaps";
 export { ReportDetail, ReportHistory } from "./ReportHistory";
 export { ReportMember } from "./ReportMember";
 export { Rescue } from "./Rescue";

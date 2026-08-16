@@ -1,4 +1,4 @@
-import type { JarId, ReportId, SessionToken } from "../../../contracts";
+import type { JarId, RecapId, ReportId, SessionToken } from "../../../contracts";
 import type { MeDTO } from "./types";
 
 export type Route =
@@ -10,6 +10,7 @@ export type Route =
   | { readonly name: "report"; readonly jarId: JarId }
   | { readonly name: "confirmDeny"; readonly reportId: ReportId }
   | { readonly name: "reportHistory" }
+  | { readonly name: "recaps"; readonly recapId?: RecapId }
   | { readonly name: "reportDetail"; readonly reportId: ReportId }
   | { readonly name: "aboutTally"; readonly jarId: JarId }
   | { readonly name: "create" }

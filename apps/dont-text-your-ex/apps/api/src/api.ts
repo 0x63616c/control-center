@@ -10,6 +10,7 @@ import {
   DisablePushDeviceRequestSchema,
   InviteCodeSchema,
   JarIdSchema,
+  JarRecapSchema,
   JoinJarRequestSchema,
   LeaveJarRequestSchema,
   LogSlipRequestSchema,
@@ -17,6 +18,7 @@ import {
   NotificationPreferencesSchema,
   NotificationTargetSchema,
   PushRegistrationResponseSchema,
+  RecapIdSchema,
   RegisterPushDeviceRequestSchema,
   ReportIdSchema,
   RescueCommandRequestSchema,
@@ -36,6 +38,7 @@ import { errorDetails, parseRequestJson, parseRequestValue } from "./boundary";
 import { appleBundleId, isProduction } from "./env";
 import { id } from "./ids";
 import { notificationStore } from "./notifications";
+import * as recapStore from "./recap-store";
 import { rescueStore } from "./rescue";
 import { resetAndSeed } from "./seed";
 import * as store from "./store";
@@ -509,4 +512,20 @@ api.get("/activity", async (c) => {
   const uid = requireUser(c);
   if (!uid) return c.json(unauth, 401);
   return c.json(await store.activityForUser(uid));
+});
+
+// ─────────────────────────── monthly recaps ───────────────────────────
+api.get("/recaps", async (c) => {
+  const uid = requireUser(c);
+  if (!uid) return c.json(unauth, 401);
+  return c.json(JarRecapSchema.array().parse(await recapStore.listRecaps(uid)));
+});
+
+api.get("/recaps/:id", async (c) => {
+  const uid = requireUser(c);
+  if (!uid) return c.json(unauth, 401);
+  const parsed = parseRequestValue(c, RecapIdSchema, c.req.param("id"));
+  if (!parsed.ok) return parsed.response;
+  const recap = await recapStore.getRecap(uid, parsed.value);
+  return recap ? c.json(JarRecapSchema.parse(recap)) : c.json(notFound, 404);
 });

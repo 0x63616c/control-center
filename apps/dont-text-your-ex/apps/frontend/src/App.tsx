@@ -134,6 +134,8 @@ function renderRoute(ctx: AppCtx): React.ReactNode {
       return <S.ConfirmDeny ctx={{ ...ctx, route: ctx.route }} />;
     case "reportHistory":
       return <S.ReportHistory ctx={{ ...ctx, route: ctx.route }} />;
+    case "recaps":
+      return <S.Recaps ctx={{ ...ctx, route: ctx.route }} />;
     case "reportDetail":
       return <S.ReportDetail ctx={{ ...ctx, route: ctx.route }} />;
     case "aboutTally":

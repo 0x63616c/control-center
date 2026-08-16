@@ -3,6 +3,7 @@ export type {
   EvidenceImageInput,
   JarDetailDTO,
   JarPreviewDTO,
+  JarRecapDTO,
   JarSummaryDTO,
   MeDTO,
   MemberDTO,
