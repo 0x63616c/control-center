@@ -1,10 +1,17 @@
 import type { DomainEvent, DomainEventType } from "./domain-events";
 import type { Outbox } from "./outbox";
 
+const DISPATCH_FAILURE_CODES = [
+  "temporal_unavailable",
+  "unsupported_event_version",
+  "capability_not_registered",
+  "dispatch_unexpected",
+] as const;
+type DispatchFailureCode = (typeof DISPATCH_FAILURE_CODES)[number];
 export type WorkflowDispatchResult =
   | { readonly status: "accepted" }
-  | { readonly status: "retryable"; readonly code: string }
-  | { readonly status: "permanent"; readonly code: string };
+  | { readonly status: "retryable"; readonly code: DispatchFailureCode }
+  | { readonly status: "permanent"; readonly code: DispatchFailureCode };
 
 export interface WorkflowDispatcher {
   supportedEventTypes(): readonly DomainEventType[];
@@ -19,6 +26,7 @@ type DispatchOutboxPageInput = Readonly<{
   now: number;
   leaseUntil: number;
   retryAt: number;
+  eventIds?: readonly DomainEvent["id"][];
 }>;
 
 export async function dispatchOutboxPage(input: DispatchOutboxPageInput): Promise<{
@@ -35,7 +43,12 @@ export async function dispatchOutboxPage(input: DispatchOutboxPageInput): Promis
   let retried = 0;
   let failed = 0;
   for (const event of events) {
-    const result = await input.dispatcher.dispatch(event);
+    let result: WorkflowDispatchResult;
+    try {
+      result = await input.dispatcher.dispatch(event);
+    } catch {
+      result = { status: "retryable", code: "dispatch_unexpected" };
+    }
     switch (result.status) {
       case "accepted":
         if (

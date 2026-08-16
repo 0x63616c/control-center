@@ -92,4 +92,26 @@ describe.skipIf(!HAS_DB)("domain transaction seam", () => {
     expect(ids).toHaveLength(2);
     expect(new Set(ids).size).toBe(2);
   });
+
+  it("does not lease or increment attempts for an unsupported event type", async () => {
+    const runner = new DomainTransactionRunner({ pool, clock: () => 100 });
+    await runner.run(async ({ emit }) => {
+      await emit({ type: "jar.created", aggregateId: "jar_supported", aggregateVersion: 1 });
+      await emit({ type: "invite.issued", aggregateId: "inver_pending", aggregateVersion: 1 });
+    });
+
+    await expect(
+      new PostgresOutbox(pool).claimPage({
+        owner: "worker-a",
+        limit: 10,
+        now: 100,
+        leaseUntil: 200,
+        eventTypes: ["jar.created"],
+      }),
+    ).resolves.toEqual([expect.objectContaining({ type: "jar.created" })]);
+    const pending = await pool.query<{ state: string; attempt_count: number }>(
+      "SELECT state, attempt_count FROM domain_event WHERE event_type='invite.issued'",
+    );
+    expect(pending.rows).toEqual([{ state: "pending", attempt_count: 0 }]);
+  });
 });

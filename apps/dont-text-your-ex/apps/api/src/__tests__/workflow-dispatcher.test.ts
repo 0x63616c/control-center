@@ -138,4 +138,40 @@ describe("workflow dispatcher seam", () => {
     ).resolves.toEqual({ claimed: 1, accepted: 1, retried: 0, failed: 0 });
     expect(enabled.events()).toEqual([event]);
   });
+
+  it.each([0, 1])("isolates an unexpected adapter throw at page position %s", async (throwAt) => {
+    const events = ["one", "two", "three"].map((suffix, index) =>
+      DomainEventSchema.parse({
+        id: `evt_${suffix}`,
+        type: "jar.created",
+        schemaVersion: 1,
+        aggregateType: "jar",
+        aggregateId: `jar_${suffix}`,
+        aggregateVersion: 1,
+        occurredAt: index + 1,
+      }),
+    );
+    let call = 0;
+    const dispatcher = {
+      supportedEventTypes: () => ["jar.created"] as const,
+      dispatch: async () => {
+        const current = call;
+        call += 1;
+        if (current === throwAt) throw new Error("private upstream detail");
+        return { status: "accepted" as const };
+      },
+    };
+
+    await expect(
+      dispatchOutboxPage({
+        outbox: new MemoryOutbox(events),
+        dispatcher,
+        owner: "worker-a",
+        limit: 10,
+        now: 10,
+        leaseUntil: 20,
+        retryAt: 30,
+      }),
+    ).resolves.toEqual({ claimed: 3, accepted: 2, retried: 1, failed: 0 });
+  });
 });

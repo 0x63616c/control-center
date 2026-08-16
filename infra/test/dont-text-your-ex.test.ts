@@ -51,6 +51,7 @@ describe("Don't Text Your Ex production resources", () => {
         POSTGRES_HOST: "dont-text-your-ex-postgres-rw",
         POSTGRES_PASSWORD_FILE: "/run/secrets/POSTGRES_PASSWORD",
         POSTGRES_USER: "dont_text_your_ex",
+        TEMPORAL_ADDRESS: "temporal-server.temporal.svc.cluster.local:7233",
       },
       extraSecretMounts: [
         {

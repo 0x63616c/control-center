@@ -29,8 +29,10 @@ import {
   MembershipTenureIdSchema,
 } from "./domain-events";
 import { type DomainTransactionContext, DomainTransactionRunner } from "./domain-transaction";
+import { temporalAddress } from "./env";
 import { id, inviteCode } from "./ids";
 import { parseEvidenceImageJson, serializeEvidenceImageJson } from "./persistence";
+import { TemporalPostCommitNudge, temporalRecoveryWorkflowStarter } from "./temporal-nudge";
 import type {
   ActivityDTO,
   ActivityType,
@@ -140,7 +142,15 @@ function parseJarRow(row: JarDbRow): JarRow {
 
 type Queryable = Pick<PoolClient, "query">;
 
-const domainTransactions = new DomainTransactionRunner({ pool, clock: now });
+const configuredTemporalAddress = temporalAddress();
+const domainTransactions = new DomainTransactionRunner({
+  pool,
+  clock: now,
+  nudge:
+    configuredTemporalAddress === undefined
+      ? undefined
+      : new TemporalPostCommitNudge(temporalRecoveryWorkflowStarter(configuredTemporalAddress)),
+});
 
 async function withTransaction<T>(
   operation: (client: PoolClient, emit: DomainTransactionContext["emit"]) => Promise<T>,
