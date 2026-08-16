@@ -22,7 +22,7 @@ describe.skipIf(!HAS_DB)("PostgresMonthlyRecapStore", () => {
   beforeAll(runMigrations);
   beforeEach(async () => {
     await pool.query(
-      `TRUNCATE domain_event,jar_recap_recipients,jar_recaps,streak_achievements,
+      `TRUNCATE domain_event,jar_recap_recipients,jar_recap_work_pages,jar_recaps,streak_achievements,
          user_notification,notification_preference,jar_milestones,membership_tenures,
          report_evidence,reports,activity,slips,memberships,sessions,otps,user_exes,jars,users
        RESTART IDENTITY CASCADE`,
@@ -42,6 +42,8 @@ describe.skipIf(!HAS_DB)("PostgresMonthlyRecapStore", () => {
        VALUES
          ('jar_recapactive','Recap jar',$1,'RECAP1',1,'America/Los_Angeles',
           'inv_11111111111111111111111111111111',$2),
+         ('jar_recapsecond','Second recap jar',$1,'RECAP3',1,'America/Los_Angeles',
+          'inv_33333333333333333333333333333333',NULL),
          ('jar_recapempty','Empty jar',$1,'RECAP2',1,'America/Los_Angeles',
           'inv_22222222222222222222222222222222',NULL)`,
       [ownerId, AUGUST_START + 1],
@@ -52,7 +54,8 @@ describe.skipIf(!HAS_DB)("PostgresMonthlyRecapStore", () => {
          ('mem_recapcurrent','jar_recapactive',$2,'member',1,$7,NULL),
          ('mem_recapdeparted','jar_recapactive',$3,'member',1,$6,$8),
          ('mem_recaplate','jar_recapactive',$4,'member',1,$9,NULL),
-         ('mem_recaprejoined','jar_recapactive',$5,'member',1,$6,NULL)`,
+         ('mem_recaprejoined','jar_recapactive',$5,'member',1,$6,NULL),
+         ('mem_recapsecond','jar_recapsecond',$1,'owner',1,$6,NULL)`,
       [
         ownerId,
         currentId,
@@ -72,7 +75,8 @@ describe.skipIf(!HAS_DB)("PostgresMonthlyRecapStore", () => {
          ('mtn_33333333333333333333333333333333','mem_recapdeparted',$1,$3),
          ('mtn_44444444444444444444444444444444','mem_recaplate',$4,NULL),
          ('mtn_55555555555555555555555555555555','mem_recaprejoined',$1,$5),
-         ('mtn_66666666666666666666666666666666','mem_recaprejoined',$4,NULL)`,
+         ('mtn_66666666666666666666666666666666','mem_recaprejoined',$4,NULL),
+         ('mtn_77777777777777777777777777777777','mem_recapsecond',$1,NULL)`,
       [
         JULY_START,
         JULY_START + 10 * 86_400_000,
@@ -87,7 +91,8 @@ describe.skipIf(!HAS_DB)("PostgresMonthlyRecapStore", () => {
          ('act_recapend','jar_recapactive',$2,$2,'slip',$3),
          ('act_recapaugust','jar_recapactive',$1,$1,'slip',$4),
          ('act_recapstreak1','jar_recapactive',$1,$1,'milestone',$5),
-         ('act_recapstreak2','jar_recapactive',$2,$2,'milestone',$6)`,
+         ('act_recapstreak2','jar_recapactive',$2,$2,'milestone',$6),
+         ('act_recapsecond','jar_recapsecond',$1,$1,'slip',$2)`,
       [
         ownerId,
         JULY_START,
@@ -132,24 +137,31 @@ describe.skipIf(!HAS_DB)("PostgresMonthlyRecapStore", () => {
 
   it("creates immutable, exact, paged jar-month snapshots once", async () => {
     const store = new PostgresMonthlyRecapStore(new DomainTransactionRunner({ pool }));
-    await expect(store.generatePage({ cutoff: SEPTEMBER_START, limit: 1 })).resolves.toEqual({
+    const pages = await store.preparePages({ cutoff: SEPTEMBER_START, limit: 24 });
+    expect(pages.map((page) => page.calendarMonth)).toEqual(["2026-07", "2026-08"]);
+    const julyPageId = pages[0]?.pageId;
+    const augustPageId = pages[1]?.pageId;
+    if (!julyPageId || !augustPageId) throw new Error("expected persisted recap work pages");
+    await expect(store.generatePage({ pageId: julyPageId, limit: 1 })).resolves.toEqual({
       candidates: 1,
       recaps: 1,
       recipients: 3,
       notifications: 1,
       hasMore: true,
     });
-    await expect(store.generatePage({ cutoff: SEPTEMBER_START, limit: 1 })).resolves.toMatchObject({
+    await expect(store.generatePage({ pageId: julyPageId, limit: 1 })).resolves.toEqual({
       candidates: 1,
       recaps: 1,
-    });
-    await expect(store.generatePage({ cutoff: SEPTEMBER_START, limit: 1 })).resolves.toEqual({
-      candidates: 0,
-      recaps: 0,
-      recipients: 0,
-      notifications: 0,
+      recipients: 1,
+      notifications: 1,
       hasMore: false,
     });
+    await expect(store.generatePage({ pageId: augustPageId, limit: 1 })).resolves.toMatchObject({
+      candidates: 1,
+      recaps: 1,
+      hasMore: false,
+    });
+    await expect(store.preparePages({ cutoff: SEPTEMBER_START, limit: 24 })).resolves.toEqual([]);
 
     const snapshots = await pool.query<{
       id: string;
@@ -161,7 +173,7 @@ describe.skipIf(!HAS_DB)("PostgresMonthlyRecapStore", () => {
       tally_change_cents: string;
       shared_streak_highlights: unknown;
       crossed_milestones_cents: unknown;
-    }>("SELECT * FROM jar_recaps ORDER BY calendar_month");
+    }>("SELECT * FROM jar_recaps ORDER BY calendar_month,jar_id");
     expect(snapshots.rows[0]).toMatchObject({
       calendar_month: "2026-07",
       period_start_at: String(JULY_START),
@@ -172,7 +184,8 @@ describe.skipIf(!HAS_DB)("PostgresMonthlyRecapStore", () => {
       shared_streak_highlights: [{ days: 7, count: 2 }],
       crossed_milestones_cents: [1000],
     });
-    expect(snapshots.rows[1]).toMatchObject({ calendar_month: "2026-08", slip_count: 1 });
+    expect(snapshots.rows[1]).toMatchObject({ calendar_month: "2026-07", slip_count: 0 });
+    expect(snapshots.rows[2]).toMatchObject({ calendar_month: "2026-08", slip_count: 1 });
     await expect(
       pool.query("UPDATE jar_recaps SET slip_count=99 WHERE id=$1", [snapshots.rows[0]?.id]),
     ).rejects.toThrow("immutable");
@@ -181,7 +194,7 @@ describe.skipIf(!HAS_DB)("PostgresMonthlyRecapStore", () => {
     ).toBe(0);
     expect(
       (await pool.query("SELECT 1 FROM user_notification WHERE category='recap'")).rowCount,
-    ).toBe(2);
+    ).toBe(3);
     expect(
       (await pool.query("SELECT event_type FROM domain_event ORDER BY event_type")).rows.map(
         (row) => row.event_type,
@@ -189,19 +202,29 @@ describe.skipIf(!HAS_DB)("PostgresMonthlyRecapStore", () => {
     ).toEqual([
       "notification.requested",
       "notification.requested",
+      "notification.requested",
+      "recap.created",
       "recap.created",
       "recap.created",
     ]);
+
+    await pool.query("UPDATE jars SET name='Renamed later' WHERE id='jar_recapactive'");
+    expect(
+      (await listRecaps(ownerId)).find((recap) => recap.id === snapshots.rows[0]?.id)?.jarName,
+    ).toBe("Recap jar");
   });
 
   it("authorizes only a current recipient who overlapped the completed month", async () => {
     const store = new PostgresMonthlyRecapStore(new DomainTransactionRunner({ pool }));
-    await store.generatePage({ cutoff: AUGUST_START + 1, limit: 10 });
+    const [page] = await store.preparePages({ cutoff: AUGUST_START + 1, limit: 24 });
+    if (!page) throw new Error("expected July recap page");
+    await store.generatePage({ pageId: page.pageId, limit: 10 });
     const recapId = RecapIdSchema.parse(
-      (await pool.query<{ id: string }>("SELECT id FROM jar_recaps")).rows[0]?.id,
+      (await pool.query<{ id: string }>("SELECT id FROM jar_recaps WHERE jar_id='jar_recapactive'"))
+        .rows[0]?.id,
     );
 
-    await expect(listRecaps(ownerId)).resolves.toHaveLength(1);
+    await expect(listRecaps(ownerId)).resolves.toHaveLength(2);
     await expect(getRecap(currentId, recapId)).resolves.toMatchObject({ id: recapId });
     await expect(getRecap(rejoinedId, recapId)).resolves.toMatchObject({ id: recapId });
     await expect(getRecap(departedId, recapId)).resolves.toBeNull();
@@ -243,7 +266,9 @@ describe.skipIf(!HAS_DB)("PostgresMonthlyRecapStore", () => {
       [ownerId, novemberStart],
     );
     const store = new PostgresMonthlyRecapStore(new DomainTransactionRunner({ pool }));
-    await store.generatePage({ cutoff: decemberStart, limit: 10 });
+    const [page] = await store.preparePages({ cutoff: decemberStart, limit: 24 });
+    if (!page) throw new Error("expected November recap page");
+    await store.generatePage({ pageId: page.pageId, limit: 10 });
 
     const snapshot = await pool.query<{ period_start_at: string; period_end_at: string }>(
       "SELECT period_start_at::text,period_end_at::text FROM jar_recaps",

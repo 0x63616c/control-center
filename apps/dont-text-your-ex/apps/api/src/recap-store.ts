@@ -37,15 +37,17 @@ function parseRecap(row: RecapRow): JarRecapDTO {
 
 export async function listRecaps(userId: UserId): Promise<readonly JarRecapDTO[]> {
   const result = await pool.query<RecapRow>(
-    `SELECT r.id,r.jar_id,j.name AS jar_name,r.calendar_month,r.timezone,
+    `SELECT r.id,r.jar_id,r.jar_name,r.calendar_month,r.timezone,
        r.period_start_at::text,r.period_end_at::text,r.slip_count,
        r.total_amount_cents::text,r.tally_change_cents::text,
        r.shared_streak_highlights,r.crossed_milestones_cents,r.created_at::text
      FROM jar_recaps r
-     JOIN jars j ON j.id=r.jar_id
-     JOIN jar_recap_recipients rr ON rr.recap_id=r.id
-     JOIN memberships m ON m.jar_id=r.jar_id AND m.user_id=rr.user_id AND m.left_at IS NULL
-     WHERE rr.user_id=$1
+  JOIN memberships m ON m.jar_id=r.jar_id AND m.user_id=$1 AND m.left_at IS NULL
+     WHERE EXISTS (
+       SELECT 1 FROM membership_tenures mt
+       WHERE mt.membership_id=m.id AND mt.joined_at < r.period_end_at
+         AND (mt.left_at IS NULL OR mt.left_at >= r.period_start_at)
+     )
      ORDER BY r.calendar_month DESC,r.jar_id`,
     [userId],
   );
@@ -54,15 +56,17 @@ export async function listRecaps(userId: UserId): Promise<readonly JarRecapDTO[]
 
 export async function getRecap(userId: UserId, recapId: RecapId): Promise<JarRecapDTO | null> {
   const result = await pool.query<RecapRow>(
-    `SELECT r.id,r.jar_id,j.name AS jar_name,r.calendar_month,r.timezone,
+    `SELECT r.id,r.jar_id,r.jar_name,r.calendar_month,r.timezone,
        r.period_start_at::text,r.period_end_at::text,r.slip_count,
        r.total_amount_cents::text,r.tally_change_cents::text,
        r.shared_streak_highlights,r.crossed_milestones_cents,r.created_at::text
      FROM jar_recaps r
-     JOIN jars j ON j.id=r.jar_id
-     JOIN jar_recap_recipients rr ON rr.recap_id=r.id
-     JOIN memberships m ON m.jar_id=r.jar_id AND m.user_id=rr.user_id AND m.left_at IS NULL
-     WHERE rr.user_id=$1 AND r.id=$2`,
+  JOIN memberships m ON m.jar_id=r.jar_id AND m.user_id=$1 AND m.left_at IS NULL
+     WHERE r.id=$2 AND EXISTS (
+       SELECT 1 FROM membership_tenures mt
+       WHERE mt.membership_id=m.id AND mt.joined_at < r.period_end_at
+         AND (mt.left_at IS NULL OR mt.left_at >= r.period_start_at)
+     )`,
     [userId, recapId],
   );
   return result.rows[0] ? parseRecap(result.rows[0]) : null;

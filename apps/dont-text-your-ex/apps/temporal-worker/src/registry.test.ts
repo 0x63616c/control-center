@@ -12,12 +12,14 @@ describe("DTYE Temporal registry", () => {
       "ReportAccountabilityWorkflow",
       "UrgeRescueWorkflow",
       "MonthlyJarRecapWorkflow",
+      "MonthlyJarRecapScheduleWorkflow",
     ]);
     expect(Object.keys(workflows)).toContain("DtyeHealthCheckWorkflow");
     expect(Object.keys(workflows)).toContain("NotificationDeliveryWorkflow");
     expect(Object.keys(workflows)).toContain("ReportAccountabilityWorkflow");
     expect(Object.keys(workflows)).toContain("UrgeRescueWorkflow");
     expect(Object.keys(workflows)).toContain("MonthlyJarRecapWorkflow");
+    expect(Object.keys(workflows)).toContain("MonthlyJarRecapScheduleWorkflow");
     expect(ACTIVITY_TYPES).toEqual([
       "DtyeHealthCheckActivity",
       "OutboxDispatchActivity",
@@ -31,6 +33,7 @@ describe("DTYE Temporal registry", () => {
       "advanceRescueAtDeadline",
       "eraseRescueForAccountDeletion",
       "MonthlyJarRecapActivity",
+      "PrepareMonthlyRecapPagesActivity",
     ]);
     expect(MANAGED_SCHEDULE_PREFIX).toBe("dtye_");
     expect(SCHEDULES).toEqual([
@@ -63,7 +66,7 @@ describe("DTYE Temporal registry", () => {
       },
       {
         scheduleId: "dtye_monthly_recap",
-        workflowType: "MonthlyJarRecapWorkflow",
+        workflowType: "MonthlyJarRecapScheduleWorkflow",
         cron: "23 * * * *",
         timezone: "UTC",
         args: { schemaVersion: 1 },

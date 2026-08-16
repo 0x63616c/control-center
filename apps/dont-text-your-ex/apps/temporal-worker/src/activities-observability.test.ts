@@ -38,6 +38,7 @@ const rescue = {
 };
 
 const monthlyRecaps = {
+  preparePages: async () => [],
   generatePage: async () => ({
     candidates: 0,
     recaps: 0,

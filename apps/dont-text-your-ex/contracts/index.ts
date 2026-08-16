@@ -24,12 +24,17 @@ export const RecapIdSchema = z
   .string()
   .regex(/^rcp_[a-f0-9]{32}$/, "invalid RecapId")
   .brand<"RecapId">();
+export const RecapPageIdSchema = z
+  .string()
+  .regex(/^rpg_[a-f0-9]{32}$/, "invalid RecapPageId")
+  .brand<"RecapPageId">();
 
 export type UserId = z.infer<typeof UserIdSchema>;
 export type JarId = z.infer<typeof JarIdSchema>;
 export type ReportId = z.infer<typeof ReportIdSchema>;
 export type RescueInterventionId = z.infer<typeof RescueInterventionIdSchema>;
 export type RecapId = z.infer<typeof RecapIdSchema>;
+export type RecapPageId = z.infer<typeof RecapPageIdSchema>;
 export type SessionToken = z.infer<typeof SessionTokenSchema>;
 
 export const InviteCodeSchema = z

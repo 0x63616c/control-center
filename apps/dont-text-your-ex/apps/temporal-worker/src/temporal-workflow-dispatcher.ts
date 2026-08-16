@@ -161,8 +161,9 @@ export function temporalOperationFor(event: DomainEvent): TemporalOperation {
     case "jar.milestone_crossed":
     case "rescue.check_in_due":
     case "streak.milestone_reached":
-    case "recap.created":
       return { kind: "fanout" };
+    case "recap.created":
+      return { kind: "audit" };
   }
 }
 
@@ -263,6 +264,7 @@ const AUDIT_EVENT_TYPES = [
   "membership.left",
   "report.expired",
   "rescue.abandoned",
+  "recap.created",
 ] as const;
 
 export class TemporalWorkflowDispatcher implements WorkflowDispatcher {

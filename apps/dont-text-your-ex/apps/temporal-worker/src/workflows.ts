@@ -3,6 +3,7 @@ import {
   continueAsNew,
   defineQuery,
   defineSignal,
+  executeChild,
   proxyActivities,
   setHandler,
   sleep,
@@ -11,6 +12,8 @@ import {
   type NotificationDeliveryWorkflowInput,
   NotificationDeliveryWorkflowInputSchema,
   type NotificationId,
+  type RecapPageId,
+  RecapPageIdSchema,
   type ReportAccountabilitySignal,
   ReportAccountabilitySignalSchema,
   type ReportAccountabilityWorkflowInput,
@@ -106,8 +109,8 @@ const { SessionMaintenanceActivity } = proxyActivities<
   },
 });
 
-const { MonthlyJarRecapActivity } = proxyActivities<
-  Pick<DtyeActivities, "MonthlyJarRecapActivity">
+const { PrepareMonthlyRecapPagesActivity, MonthlyJarRecapActivity } = proxyActivities<
+  Pick<DtyeActivities, "PrepareMonthlyRecapPagesActivity" | "MonthlyJarRecapActivity">
 >({
   startToCloseTimeout: "5 minutes",
   retry: {
@@ -187,50 +190,47 @@ export async function SessionMaintenanceWorkflow(
 
 export interface MonthlyJarRecapWorkflowInput {
   readonly schemaVersion: 1;
-  readonly cutoff?: number;
-  readonly totals?: Readonly<{
-    candidates: number;
-    recaps: number;
-    recipients: number;
-    notifications: number;
-  }>;
-  readonly runs?: number;
+  readonly pageId: RecapPageId;
 }
 
 export interface MonthlyJarRecapWorkflowOutput {
-  readonly candidates: number;
-  readonly recaps: number;
-  readonly recipients: number;
-  readonly notifications: number;
-  readonly runs: number;
+  readonly schemaVersion: 1;
+  readonly pageId: RecapPageId;
 }
 
 export async function MonthlyJarRecapWorkflow(
   input: MonthlyJarRecapWorkflowInput,
 ): Promise<MonthlyJarRecapWorkflowOutput> {
   if (input.schemaVersion !== 1) throw new Error("unsupported monthly recap workflow schema");
-  const cutoff = input.cutoff ?? Date.now();
+  const pageId = RecapPageIdSchema.parse(input.pageId);
   let pages = 0;
-  let totals = input.totals ?? { candidates: 0, recaps: 0, recipients: 0, notifications: 0 };
   while (true) {
-    const page = await MonthlyJarRecapActivity({ cutoff, limit: 50 });
+    const page = await MonthlyJarRecapActivity({ pageId, limit: 50 });
     pages += 1;
-    totals = {
-      candidates: totals.candidates + page.candidates,
-      recaps: totals.recaps + page.recaps,
-      recipients: totals.recipients + page.recipients,
-      notifications: totals.notifications + page.notifications,
-    };
-    if (!page.hasMore) return { ...totals, runs: (input.runs ?? 0) + 1 };
+    if (!page.hasMore) return { schemaVersion: 1, pageId };
     if (pages >= 20) {
       return continueAsNew<typeof MonthlyJarRecapWorkflow>({
         schemaVersion: 1,
-        cutoff,
-        totals,
-        runs: (input.runs ?? 0) + 1,
+        pageId,
       });
     }
   }
+}
+
+export async function MonthlyJarRecapScheduleWorkflow(input: {
+  readonly schemaVersion: 1;
+}): Promise<{ readonly schemaVersion: 1 }> {
+  if (input.schemaVersion !== 1) throw new Error("unsupported monthly recap schedule schema");
+  const pages = await PrepareMonthlyRecapPagesActivity({ cutoff: Date.now(), limit: 24 });
+  await Promise.all(
+    pages.map((page) =>
+      executeChild(MonthlyJarRecapWorkflow, {
+        workflowId: `recap/${page.calendarMonth}/${page.pageId}`,
+        args: [{ schemaVersion: 1, pageId: page.pageId }],
+      }),
+    ),
+  );
+  return { schemaVersion: 1 };
 }
 
 export interface NotificationDeliveryWorkflowOutput {

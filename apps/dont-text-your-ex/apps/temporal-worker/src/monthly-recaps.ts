@@ -7,6 +7,7 @@ import {
   NotificationIdSchema,
   parseSharedStreakMilestoneActivityText,
   RecapIdSchema,
+  RecapPageIdSchema,
   UserIdSchema,
 } from "../../../contracts";
 import type {
@@ -16,8 +17,18 @@ import type {
 import { id } from "../../api/src/ids";
 
 export interface MonthlyRecapPageInput {
+  readonly pageId: z.infer<typeof RecapPageIdSchema>;
+  readonly limit: number;
+}
+
+export interface PrepareMonthlyRecapPagesInput {
   readonly cutoff: number;
   readonly limit: number;
+}
+
+export interface MonthlyRecapPageDescriptor {
+  readonly pageId: z.infer<typeof RecapPageIdSchema>;
+  readonly calendarMonth: z.infer<typeof CalendarMonthSchema>;
 }
 
 export interface MonthlyRecapPageResult {
@@ -29,6 +40,9 @@ export interface MonthlyRecapPageResult {
 }
 
 export interface MonthlyRecapStore {
+  preparePages(
+    input: PrepareMonthlyRecapPagesInput,
+  ): Promise<readonly MonthlyRecapPageDescriptor[]>;
   generatePage(input: MonthlyRecapPageInput): Promise<MonthlyRecapPageResult>;
 }
 
@@ -51,6 +65,11 @@ const RecipientRowSchema = z.object({
 });
 const SharedStreakActivityRowSchema = z.object({ text: z.string().nullable() });
 const MilestoneRowSchema = z.object({ threshold_cents: z.number().int().positive() });
+const WorkPageRowSchema = z.object({
+  id: RecapPageIdSchema,
+  calendar_month: CalendarMonthSchema,
+  cutoff: z.string().regex(/^\d+$/),
+});
 
 type CandidateRow = z.infer<typeof CandidateRowSchema>;
 
@@ -63,10 +82,64 @@ function parseNonnegativeSafeInteger(value: string, field: string): number {
 export class PostgresMonthlyRecapStore implements MonthlyRecapStore {
   constructor(private readonly transactions: Pick<DomainTransactionRunner, "run">) {}
 
-  async generatePage(input: MonthlyRecapPageInput): Promise<MonthlyRecapPageResult> {
+  async preparePages(
+    input: PrepareMonthlyRecapPagesInput,
+  ): Promise<readonly MonthlyRecapPageDescriptor[]> {
     if (!Number.isSafeInteger(input.cutoff) || input.cutoff < 0) {
       throw new Error("invalid monthly recap cutoff");
     }
+    if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 24) {
+      throw new Error("monthly recap page preparation limit must be between 1 and 24");
+    }
+    return this.transactions.run(async ({ db }) => {
+      const result = await db.query<Record<string, unknown>>(
+        `SELECT DISTINCT
+           to_char(to_timestamp(a.created_at / 1000.0) AT TIME ZONE j.timezone,'YYYY-MM')
+             AS calendar_month
+         FROM activity a
+         JOIN jars j ON j.id=a.jar_id
+         WHERE a.created_at < $1
+           AND to_char(to_timestamp(a.created_at / 1000.0) AT TIME ZONE j.timezone,'YYYY-MM')
+             < to_char(to_timestamp($1 / 1000.0) AT TIME ZONE j.timezone,'YYYY-MM')
+           AND NOT EXISTS (
+             SELECT 1 FROM jar_recaps r
+             WHERE r.jar_id=a.jar_id
+               AND r.calendar_month=to_char(
+                 to_timestamp(a.created_at / 1000.0) AT TIME ZONE j.timezone,'YYYY-MM'
+               )
+           )
+         ORDER BY calendar_month LIMIT $2`,
+        [input.cutoff, input.limit],
+      );
+      const pages: MonthlyRecapPageDescriptor[] = [];
+      for (const raw of result.rows) {
+        const calendarMonth = CalendarMonthSchema.parse(raw.calendar_month);
+        const pageId = RecapPageIdSchema.parse(id("rpg"));
+        const inserted = await db.query<Record<string, unknown>>(
+          `INSERT INTO jar_recap_work_pages (id,calendar_month,cutoff,created_at)
+           VALUES ($1,$2,$3,$3)
+           ON CONFLICT (calendar_month) WHERE completed_at IS NULL DO NOTHING
+           RETURNING id,calendar_month,cutoff::text`,
+          [pageId, calendarMonth, input.cutoff],
+        );
+        const persisted =
+          inserted.rows[0] ??
+          (
+            await db.query<Record<string, unknown>>(
+              `SELECT id,calendar_month,cutoff::text FROM jar_recap_work_pages
+               WHERE calendar_month=$1 AND completed_at IS NULL`,
+              [calendarMonth],
+            )
+          ).rows[0];
+        const page = WorkPageRowSchema.parse(persisted);
+        pages.push({ pageId: page.id, calendarMonth: page.calendar_month });
+      }
+      return pages;
+    });
+  }
+
+  async generatePage(input: MonthlyRecapPageInput): Promise<MonthlyRecapPageResult> {
+    RecapPageIdSchema.parse(input.pageId);
     if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 100) {
       throw new Error("monthly recap limit must be between 1 and 100");
     }
@@ -77,6 +150,13 @@ export class PostgresMonthlyRecapStore implements MonthlyRecapStore {
     context: DomainTransactionContext,
     input: MonthlyRecapPageInput,
   ): Promise<MonthlyRecapPageResult> {
+    const pageResult = await context.db.query<Record<string, unknown>>(
+      `SELECT id,calendar_month,cutoff::text FROM jar_recap_work_pages
+       WHERE id=$1 FOR UPDATE`,
+      [input.pageId],
+    );
+    const page = WorkPageRowSchema.parse(pageResult.rows[0]);
+    const cutoff = parseNonnegativeSafeInteger(page.cutoff, "monthly recap page cutoff");
     const candidateResult = await context.db.query<Record<string, unknown>>(
       `WITH activity_months AS (
          SELECT DISTINCT a.jar_id,
@@ -94,9 +174,10 @@ export class PostgresMonthlyRecapStore implements MonthlyRecapStore {
          SELECT 1 FROM jar_recaps r
          WHERE r.jar_id=am.jar_id AND r.calendar_month=am.calendar_month
        )
+         AND am.calendar_month=$2
        ORDER BY am.calendar_month,am.jar_id
-       LIMIT $2`,
-      [input.cutoff, input.limit + 1],
+       LIMIT $3`,
+      [cutoff, page.calendar_month, input.limit + 1],
     );
     const candidates = candidateResult.rows
       .slice(0, input.limit)
@@ -105,17 +186,24 @@ export class PostgresMonthlyRecapStore implements MonthlyRecapStore {
     let recipients = 0;
     let notifications = 0;
     for (const candidate of candidates) {
-      const inserted = await this.#createSnapshot(context, candidate, input.cutoff);
+      const inserted = await this.#createSnapshot(context, candidate, cutoff);
       recaps += inserted.recaps;
       recipients += inserted.recipients;
       notifications += inserted.notifications;
+    }
+    const hasMore = candidateResult.rows.length > input.limit;
+    if (!hasMore) {
+      await context.db.query(
+        "UPDATE jar_recap_work_pages SET completed_at=$2 WHERE id=$1 AND completed_at IS NULL",
+        [input.pageId, cutoff],
+      );
     }
     return {
       candidates: candidates.length,
       recaps,
       recipients,
       notifications,
-      hasMore: candidateResult.rows.length > input.limit,
+      hasMore,
     };
   }
 
@@ -195,13 +283,14 @@ export class PostgresMonthlyRecapStore implements MonthlyRecapStore {
     });
     await db.query(
       `INSERT INTO jar_recaps
-         (id,jar_id,calendar_month,timezone,period_start_at,period_end_at,slip_count,
+         (id,jar_id,jar_name,calendar_month,timezone,period_start_at,period_end_at,slip_count,
           total_amount_cents,tally_change_cents,shared_streak_highlights,
           crossed_milestones_cents,created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb,$13)`,
       [
         parsedSnapshot.id,
         parsedSnapshot.jarId,
+        parsedSnapshot.jarName,
         parsedSnapshot.calendarMonth,
         parsedSnapshot.timezone,
         parsedSnapshot.periodStartAt,
@@ -258,9 +347,15 @@ export class PostgresMonthlyRecapStore implements MonthlyRecapStore {
 }
 
 export interface MonthlyRecapActivities {
+  PrepareMonthlyRecapPagesActivity(
+    input: PrepareMonthlyRecapPagesInput,
+  ): Promise<readonly MonthlyRecapPageDescriptor[]>;
   MonthlyJarRecapActivity(input: MonthlyRecapPageInput): Promise<MonthlyRecapPageResult>;
 }
 
 export function createMonthlyRecapActivities(store: MonthlyRecapStore): MonthlyRecapActivities {
-  return { MonthlyJarRecapActivity: (input) => store.generatePage(input) };
+  return {
+    PrepareMonthlyRecapPagesActivity: (input) => store.preparePages(input),
+    MonthlyJarRecapActivity: (input) => store.generatePage(input),
+  };
 }

@@ -19,6 +19,18 @@ const inviteIssued = DomainEventSchema.parse({
 });
 
 describe("Temporal workflow dispatcher", () => {
+  it("accepts recap creation as an audit event without a second orchestration fanout", async () => {
+    const event = DomainEventSchema.parse({
+      ...inviteIssued,
+      type: "recap.created",
+      aggregateType: "recap",
+      aggregateId: "rcp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    });
+    expect(temporalOperationFor(event)).toEqual({ kind: "audit" });
+    await expect(new TemporalWorkflowDispatcher().dispatch(event)).resolves.toEqual({
+      status: "accepted",
+    });
+  });
   it("maps directly addressable lifecycle events to stable Temporal operations", () => {
     expect(temporalOperationFor(inviteIssued)).toEqual({
       kind: "start",
@@ -136,6 +148,7 @@ describe("Temporal workflow dispatcher", () => {
       "membership.left",
       "report.expired",
       "rescue.abandoned",
+      "recap.created",
       "invite.issued",
     ]);
     await expect(dispatcher.dispatch(inviteIssued)).resolves.toEqual({ status: "accepted" });

@@ -8,6 +8,7 @@ export const WORKFLOW_TYPES = [
   "ReportAccountabilityWorkflow",
   "UrgeRescueWorkflow",
   "MonthlyJarRecapWorkflow",
+  "MonthlyJarRecapScheduleWorkflow",
 ] as const;
 export const MANAGED_SCHEDULE_PREFIX = "dtye_";
 export const ACTIVITY_TYPES = [
@@ -23,6 +24,7 @@ export const ACTIVITY_TYPES = [
   "advanceRescueAtDeadline",
   "eraseRescueForAccountDeletion",
   "MonthlyJarRecapActivity",
+  "PrepareMonthlyRecapPagesActivity",
 ] as const;
 export const SCHEDULES = [
   {
@@ -54,7 +56,7 @@ export const SCHEDULES = [
   },
   {
     scheduleId: "dtye_monthly_recap",
-    workflowType: "MonthlyJarRecapWorkflow",
+    workflowType: "MonthlyJarRecapScheduleWorkflow",
     cron: "23 * * * *",
     timezone: "UTC",
     args: { schemaVersion: 1 },

@@ -1,6 +1,7 @@
 CREATE TABLE jar_recaps (
   id TEXT PRIMARY KEY,
   jar_id TEXT NOT NULL REFERENCES jars(id) ON DELETE CASCADE,
+  jar_name TEXT NOT NULL,
   calendar_month TEXT NOT NULL CHECK (calendar_month ~ '^\d{4}-(0[1-9]|1[0-2])$'),
   timezone TEXT NOT NULL,
   period_start_at BIGINT NOT NULL,
@@ -22,6 +23,17 @@ CREATE TABLE jar_recap_recipients (
 );
 
 CREATE INDEX idx_jar_recap_recipient ON jar_recap_recipients(user_id, recap_id);
+
+CREATE TABLE jar_recap_work_pages (
+  id TEXT PRIMARY KEY,
+  calendar_month TEXT NOT NULL CHECK (calendar_month ~ '^\d{4}-(0[1-9]|1[0-2])$'),
+  cutoff BIGINT NOT NULL,
+  created_at BIGINT NOT NULL,
+  completed_at BIGINT
+);
+
+CREATE UNIQUE INDEX idx_jar_recap_work_pages_open
+  ON jar_recap_work_pages(calendar_month) WHERE completed_at IS NULL;
 
 CREATE FUNCTION reject_jar_recap_update() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN

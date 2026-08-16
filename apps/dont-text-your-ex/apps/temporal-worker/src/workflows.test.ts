@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { RecapPageIdSchema } from "../../../contracts";
 
 const mocks = vi.hoisted(() => ({
   activity: vi.fn(async (_input: { readonly iteration: number }) => ({ status: "ok" as const })),
@@ -11,6 +12,8 @@ const mocks = vi.hoisted(() => ({
     notifications: 0,
     hasMore: false,
   })),
+  prepareRecapPages: vi.fn(async (_input: unknown): Promise<unknown[]> => []),
+  executeChild: vi.fn(async (_workflow: unknown, _options: unknown) => undefined),
   continueAsNew: vi.fn(async (input: unknown) => input),
   prepareNotification: vi.fn(async () => ({ deliveryIds: [] })),
   deliverNotification: vi.fn(async () => ({ kind: "accepted" as const })),
@@ -31,12 +34,14 @@ vi.mock("@temporalio/workflow", () => ({
     OutboxDispatchActivity: mocks.outbox,
     SessionMaintenanceActivity: mocks.sessions,
     MonthlyJarRecapActivity: mocks.monthlyRecaps,
+    PrepareMonthlyRecapPagesActivity: mocks.prepareRecapPages,
     prepareNotification: mocks.prepareNotification,
     deliverNotification: mocks.deliverNotification,
     suppressNotification: mocks.suppressNotification,
     ReportAccountabilityActivity: mocks.report,
   }),
   continueAsNew: mocks.continueAsNew,
+  executeChild: mocks.executeChild,
   setHandler: vi.fn((name: string, handler: (input: unknown) => void) => {
     mocks.handlers.set(name, handler);
   }),
@@ -45,6 +50,7 @@ vi.mock("@temporalio/workflow", () => ({
 
 import {
   DtyeHealthCheckWorkflow,
+  MonthlyJarRecapScheduleWorkflow,
   MonthlyJarRecapWorkflow,
   OutboxDispatchRecoveryWorkflow,
   SessionMaintenanceWorkflow,
@@ -61,6 +67,8 @@ beforeEach(() => {
     notifications: 0,
     hasMore: false,
   });
+  mocks.prepareRecapPages.mockReset().mockResolvedValue([]);
+  mocks.executeChild.mockReset().mockResolvedValue(undefined);
   mocks.continueAsNew.mockReset().mockImplementation(async (input: unknown) => input);
   mocks.prepareNotification.mockReset().mockResolvedValue({ deliveryIds: [] });
   mocks.deliverNotification.mockReset().mockResolvedValue({ kind: "accepted" });
@@ -144,8 +152,9 @@ describe("SessionMaintenanceWorkflow", () => {
 });
 
 describe("MonthlyJarRecapWorkflow", () => {
-  test("keeps one cutoff while paging and returns exact totals", async () => {
-    mocks.now.value = 1_725_192_000_000;
+  const pageId = RecapPageIdSchema.parse("rpg_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+
+  test("keeps only the opaque page id while paging", async () => {
     mocks.monthlyRecaps
       .mockResolvedValueOnce({
         candidates: 50,
@@ -162,17 +171,14 @@ describe("MonthlyJarRecapWorkflow", () => {
         hasMore: false,
       });
 
-    await expect(MonthlyJarRecapWorkflow({ schemaVersion: 1 })).resolves.toEqual({
-      candidates: 52,
-      recaps: 51,
-      recipients: 83,
-      notifications: 11,
-      runs: 1,
+    await expect(MonthlyJarRecapWorkflow({ schemaVersion: 1, pageId })).resolves.toEqual({
+      schemaVersion: 1,
+      pageId,
     });
     expect(mocks.monthlyRecaps).toHaveBeenCalledTimes(2);
     expect(mocks.monthlyRecaps.mock.calls).toEqual([
-      [{ cutoff: 1_725_192_000_000, limit: 50 }],
-      [{ cutoff: 1_725_192_000_000, limit: 50 }],
+      [{ pageId, limit: 50 }],
+      [{ pageId, limit: 50 }],
     ]);
   });
 
@@ -184,14 +190,34 @@ describe("MonthlyJarRecapWorkflow", () => {
       notifications: 0,
       hasMore: true,
     });
-    await MonthlyJarRecapWorkflow({ schemaVersion: 1, cutoff: 123 });
+    await MonthlyJarRecapWorkflow({ schemaVersion: 1, pageId });
     expect(mocks.monthlyRecaps).toHaveBeenCalledTimes(20);
     expect(mocks.continueAsNew).toHaveBeenCalledWith({
       schemaVersion: 1,
-      cutoff: 123,
-      totals: { candidates: 1_000, recaps: 1_000, recipients: 1_000, notifications: 0 },
-      runs: 1,
+      pageId,
     });
+  });
+
+  test("the schedule starts privacy-safe children with stable jar-month page ids", async () => {
+    mocks.now.value = 1_725_192_000_000;
+    mocks.prepareRecapPages.mockResolvedValue([
+      { calendarMonth: "2026-07", pageId },
+      { calendarMonth: "2026-08", pageId: "rpg_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+    ]);
+    await expect(MonthlyJarRecapScheduleWorkflow({ schemaVersion: 1 })).resolves.toEqual({
+      schemaVersion: 1,
+    });
+    expect(mocks.prepareRecapPages).toHaveBeenCalledWith({ cutoff: 1_725_192_000_000, limit: 24 });
+    expect(mocks.executeChild.mock.calls.map(([, options]) => options)).toEqual([
+      {
+        workflowId: `recap/2026-07/${pageId}`,
+        args: [{ schemaVersion: 1, pageId }],
+      },
+      {
+        workflowId: "recap/2026-08/rpg_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        args: [{ schemaVersion: 1, pageId: "rpg_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }],
+      },
+    ]);
   });
 });
 

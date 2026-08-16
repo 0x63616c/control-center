@@ -1,7 +1,8 @@
 # Monthly recap metric contract
 
 Monthly recaps are immutable snapshots for one completed calendar month in the
-jar's immutable IANA timezone. PostgreSQL derives both month boundaries with
+jar's immutable IANA timezone. The jar name and timezone are copied into the
+snapshot, so later jar edits cannot rewrite what an older recap says. PostgreSQL derives both month boundaries with
 `AT TIME ZONE`; the elapsed milliseconds may therefore include a daylight-saving
 hour rather than assuming every day is 24 hours.
 
@@ -27,3 +28,10 @@ removes access without mutating the snapshot.
 
 Missing source data produces an empty list or zero. The API and UI never
 calculate a trend, percentage, or previous-month comparison from missing data.
+
+The hourly managed schedule persists an opaque work-page record for each missing
+calendar month, then starts a child workflow with the stable execution ID
+`recap/<calendar month>/<opaque page ID>`. Workflow inputs, results, and
+continue-as-new state contain only the schema version and opaque page ID; the
+cutoff and calendar month stay in PostgreSQL. Every worker and child uses the
+single Temporal task queue `main`.

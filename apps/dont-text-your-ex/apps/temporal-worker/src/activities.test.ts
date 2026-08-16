@@ -55,6 +55,7 @@ describe("outbox dispatch activity", () => {
         eraseRescueForAccountDeletion: async () => ({ erased: true }),
       },
       monthlyRecaps: {
+        preparePages: async () => [],
         generatePage: async () => ({
           candidates: 0,
           recaps: 0,
