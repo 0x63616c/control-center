@@ -488,16 +488,16 @@ time.
 
 ### Acceptance criteria
 
-- [ ] W06.1 Users have a validated IANA timezone with an explicit migration
+- [x] W06.1 Users have a validated IANA timezone with an explicit migration
       fallback and a documented device-refresh policy.
-- [ ] W06.2 The hourly schedule uses task queue `main` and handles DST without
+- [x] W06.2 The hourly schedule uses task queue `main` and handles DST without
       skipped or duplicate local days.
-- [ ] W06.3 A unique membership/milestone record prevents repeated achievement.
-- [ ] W06.4 A streak reset before delivery suppresses stale notification.
-- [ ] W06.5 Milestones remain private by default; shared activity requires current
+- [x] W06.3 A unique membership/milestone record prevents repeated achievement.
+- [x] W06.4 A streak reset before delivery suppresses stale notification.
+- [x] W06.5 Milestones remain private by default; shared activity requires current
       explicit opt-in and never reveals earlier private history.
-- [ ] W06.6 Paging is deterministic and continues as new before unbounded history.
-- [ ] W06.7 Tests cover timezone and DST edges, null streaks, reset races,
+- [x] W06.6 Paging is deterministic and continues as new before unbounded history.
+- [x] W06.7 Tests cover timezone and DST edges, null streaks, reset races,
       timezone changes, repeat milestones after a genuine reset, opt-in/out,
       duplicates, departed members, closed jars, and large pages.
 
@@ -861,7 +861,7 @@ revocation succeeded.
 | W03 Push delivery | IMPLEMENTED; LIVE PROOF PENDING | coordinator | PR #708 / integrated from `9d9080a47` | Deploy projected Apple/APNs credentials and prove foreground/background/terminated delivery |
 | W04 Report accountability | IN PROGRESS | `/root/report_accountability` | successor slice from PR #708 | W03 integrated; implementation active |
 | W05 Urge rescue | IN PROGRESS | `/root/foundation_review` | successor slice from PR #708 | W03 integrated; implementation active |
-| W06 Streak milestones | NOT STARTED | — | — | W03 |
+| W06 Streak milestones | IMPLEMENTED; LIVE PROOF PENDING | `/root/streak_milestones` | `codex/dtye-w06-streak-milestones` / `01c3344fb` | W03 integrated; production Schedule/execution/push proof remains W13 |
 | W07 Monthly recap | NOT STARTED | — | — | W03, W06 terminology |
 | W08 Invite lifecycle | NOT STARTED | — | — | W03 |
 | W09 Session maintenance | IMPLEMENTED; LIVE PROOF PENDING | coordinator | PR #708 / coordinator branch | W12/W13 schedule and production purge proof remain |
@@ -888,6 +888,7 @@ commit/build, and proof boundary is not evidence.
 | 2026-08-16 | W02 dispatch/recovery and W09 session maintenance | PASS; ops/live proof pending | coordinator branch after `3e0eae35c` | Capability-filtered claims preserve unsupported facts unattempted; post-commit and scheduled recovery share the dispatcher; thrown adapters are isolated per event; error codes are finite at TypeScript and PostgreSQL boundaries; starts/signals use named opaque-ID contracts; session purge uses 500-row locked pages and continue-as-new. Real PostgreSQL API passed 96/96 and worker passed 16/16; linux/amd64 image and workflow bundle passed on the source slice. | `/root/outbox_workflows`, coordinator |
 | 2026-08-16 | W02/W09 focused durability review | PASS after fixes; live proof pending | coordinator branch after `61e82c2da` | Dispatch is one event per activity with a 15-second Temporal RPC deadline, 25-second activity timeout, and 30-second row lease; post-commit nudges admit one unresolved batch; workflow inputs reject unknown schemas; session continue-as-new preserves one cutoff; cleanup now follows the exact daily contract. Worker passed 20/20 focused tests and both API/worker typechecks passed. | `/root/foundation_review`, coordinator |
 | 2026-08-16 | W03 native push and notification delivery | PASS locally; secrets/live-device proof pending | integrated from `9d9080a47` | Exact opaque workflow input, encrypted token keyring/rotation, authenticated preference and registration APIs, finite APNs outcomes, per-device durable retries, late authorization checks, native opt-in/settings, production entitlement guard, and shared worker-pool lifecycle are implemented. Notifications passed 15/15, frontend 29/29, integrated worker 25/25, root typecheck and Knip passed; source slice additionally passed real PostgreSQL 82/82, Storybook 535/535, production frontend, SwiftPM, and unsigned simulator builds. | `/root/workflow_acceptance_review`, coordinator |
+| 2026-08-16 | W06 streak milestones | PASS locally; live proof pending | `01c3344fb` | Fresh PostgreSQL applied migrations through 0015 and proved spring/fall DST, 09:00 windows, idempotency, reset suppression after prepared delivery, timezone changes, genuine reset re-award, opt-in/out, privacy, departure/closure, and deterministic 205-member paging (6/6); a real Temporal time-skipping server proved the workflow on queue `main`; focused API 64/64, worker 21/21, frontend 2/2, all four package typechecks, Biome, and Knip passed. Production Schedule execution and APNs remain W13. | `/root/streak_milestones` |
 | 2026-08-16 | W02.9, W02.10, W09.4 operations instrumentation | PASS; live proof pending | `codex/dtye-outbox-observability` | Bounded platform metrics expose durable pending/oldest/quarantine gauges, retry/permanent outcomes, accepted dispatch latency, purge counts/duration, and activity freshness without identity labels. Checked-in Grafana panels and Prometheus rules cover old/growing/failed backlog and missing poller/recovery; deterministic collector/activity/infra tests pass and the runbook covers recovery. | `/root/outbox_workflows` |
 | 2026-08-16 | Integrated W02/W03/W09 migration and runtime proof | PASS | coordinator branch after `e259a3c85` | Fresh PostgreSQL 16 applied migrations 0001 through 0012 in order. The combined API suite passed 104/104 and the worker suite passed 33/33 including real-Postgres session purge and durable operational snapshot tests. | coordinator |
 
