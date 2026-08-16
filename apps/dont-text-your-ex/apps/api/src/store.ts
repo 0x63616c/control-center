@@ -863,6 +863,7 @@ type ReportRow = {
   status: string;
   created_at: number;
   resolved_at: number | null;
+  aggregate_version: number;
 };
 
 type ReportDbRow = Omit<ReportRow, "id" | "jar_id" | "accuser_id" | "accused_id"> & {
@@ -976,16 +977,16 @@ export async function resolveReport(
         reportedBy: r.accuser_id,
         reportId,
       });
-      await db.query("UPDATE reports SET status='owned', resolved_at=$1 WHERE id=$2", [
-        now(),
-        reportId,
-      ]);
+      await db.query(
+        "UPDATE reports SET status='owned', resolved_at=$1, aggregate_version=aggregate_version+1 WHERE id=$2",
+        [now(), reportId],
+      );
       await emit({ type: "report.owned", aggregateId: reportId, aggregateVersion: 2 });
     } else {
-      await db.query("UPDATE reports SET status='denied', resolved_at=$1 WHERE id=$2", [
-        now(),
-        reportId,
-      ]);
+      await db.query(
+        "UPDATE reports SET status='denied', resolved_at=$1, aggregate_version=aggregate_version+1 WHERE id=$2",
+        [now(), reportId],
+      );
       await logActivity(
         {
           jarId: r.jar_id,
