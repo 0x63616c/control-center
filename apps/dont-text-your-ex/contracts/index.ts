@@ -203,6 +203,22 @@ export const RotateInviteRequestSchema = z.object({ confirmed: z.literal(true) }
 
 export type AppleAuthRequest = z.infer<typeof AppleAuthRequestSchema>;
 export type UpdateMeRequest = z.infer<typeof UpdateMeRequestSchema>;
+
+export const IanaTimeZoneSchema = z
+  .string()
+  .refine((value) => value === "UTC" || value.includes("/"), "timezone must be an IANA name")
+  .refine((value) => {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: value }).format(0);
+      return true;
+    } catch {
+      return false;
+    }
+  }, "invalid IANA timezone")
+  .brand<"IanaTimeZone">();
+export type IanaTimeZone = z.infer<typeof IanaTimeZoneSchema>;
+export const UpdateTimeZoneRequestSchema = z.object({ timezone: IanaTimeZoneSchema }).strict();
+export type UpdateTimeZoneRequest = z.infer<typeof UpdateTimeZoneRequestSchema>;
 export type CreateJarRequest = z.infer<typeof CreateJarRequestSchema>;
 export type LogSlipRequest = z.infer<typeof LogSlipRequestSchema>;
 export type EvidenceImageInput = z.infer<typeof EvidenceImageInputSchema>;

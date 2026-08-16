@@ -30,6 +30,7 @@ import {
   ShareStreakRequestSchema,
   UpdateMeRequestSchema,
   UpdateNotificationPreferencesRequestSchema,
+  UpdateTimeZoneRequestSchema,
   type UserId,
 } from "../../../contracts";
 import { completeAppleAccountSignIn, verifyAppleIdentityToken } from "./apple-auth";
@@ -184,6 +185,15 @@ api.patch("/me", async (c) => {
   }
   if (body.exes !== undefined) await store.setExes(uid, body.exes);
   return c.json(await store.getMe(uid));
+});
+
+api.patch("/me/timezone", async (c) => {
+  const uid = requireUser(c);
+  if (!uid) return c.json(unauth, 401);
+  const parsed = await parseRequestJson(c, UpdateTimeZoneRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  await store.updateUserTimeZone(uid, parsed.value.timezone);
+  return c.json({ ok: true });
 });
 
 api.get("/me/notification-preferences", async (c) => {

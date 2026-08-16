@@ -18,6 +18,7 @@ import {
 import * as S from "./screens";
 import { restoreSession, revokeCurrentSession } from "./session-lifecycle";
 import { T } from "./theme";
+import { refreshStoredTimeZone } from "./timezone";
 import type { MeDTO } from "./types";
 
 const DEVICE = resolveDevice();
@@ -312,6 +313,18 @@ export default function App() {
       void removeActionListener?.();
     };
   }, [goTab, me, nav]);
+
+  useEffect(() => {
+    if (!me) return;
+    const refresh = () => {
+      if (document.visibilityState === "visible") {
+        void refreshStoredTimeZone(api.updateTimeZone).catch(() => undefined);
+      }
+    };
+    refresh();
+    document.addEventListener("visibilitychange", refresh);
+    return () => document.removeEventListener("visibilitychange", refresh);
+  }, [me]);
 
   const signIn = useCallback((token: SessionToken, user: MeDTO) => {
     setToken(token);
