@@ -19,6 +19,9 @@ import {
   NotificationDeliveryWorkflowInputSchema,
   type ReportId,
   ReportIdSchema,
+  RescueCommandRequestSchema,
+  RescueInterventionSchema,
+  RescueInterventionWorkflowInputSchema,
   ResolveReportRequestSchema,
   ShareStreakRequestSchema,
   UpdateMeRequestSchema,
@@ -34,6 +37,50 @@ const JPEG_DATA_URL = "data:image/jpeg;base64,/9j/AA==";
 const WEBP_DATA_URL = "data:image/webp;base64,UklGRgAAAABXRUJQ";
 
 describe("request schemas", () => {
+  it("locks rescue workflow history to one opaque intervention id and schema version", () => {
+    const input = {
+      schemaVersion: 1,
+      interventionId: "rsi_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    };
+    expect(RescueInterventionWorkflowInputSchema.parse(input)).toEqual(input);
+    expect(
+      RescueInterventionWorkflowInputSchema.safeParse({ ...input, messageDraft: "do not persist" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("models every rescue state as a strict discriminated union", () => {
+    const common = {
+      id: "rsi_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      startedAt: 1_000,
+      deadlineAt: 601_000,
+      extensionCount: 0,
+      aggregateVersion: 1,
+      updatedAt: 1_000,
+    };
+    expect(RescueInterventionSchema.parse({ ...common, status: "active" })).toMatchObject({
+      status: "active",
+    });
+    expect(
+      RescueInterventionSchema.parse({
+        ...common,
+        status: "check_in_due",
+        checkInDueAt: 601_000,
+        responseDeadlineAt: 901_000,
+      }),
+    ).toMatchObject({ status: "check_in_due" });
+    for (const status of ["safe", "slipped", "abandoned"] as const) {
+      expect(
+        RescueInterventionSchema.parse({ ...common, status, resolvedAt: 901_000 }),
+      ).toMatchObject({ status });
+    }
+    expect(
+      RescueInterventionSchema.safeParse({ ...common, status: "active", messageDraft: "private" })
+        .success,
+    ).toBe(false);
+    expect(RescueCommandRequestSchema.safeParse({ action: "charge" }).success).toBe(false);
+  });
+
   it("keeps notification workflow start input limited to its opaque id", () => {
     const exact = {
       schemaVersion: 1,
