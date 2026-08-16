@@ -1,0 +1,170 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "www-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "www_dtye_outbox_pending{service=\"dont-text-your-ex-temporal-worker\"}",
+          "refId": "A"
+        }
+      ],
+      "title": "Pending outbox events",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "www-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "www_dtye_outbox_oldest_age_seconds{service=\"dont-text-your-ex-temporal-worker\"}",
+          "refId": "A"
+        }
+      ],
+      "title": "Oldest pending age",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "www-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "www_dtye_outbox_permanent_failures{service=\"dont-text-your-ex-temporal-worker\"}",
+          "refId": "A"
+        }
+      ],
+      "title": "Quarantined events",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "www-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(www_dtye_outbox_dispatches_total{service=\"dont-text-your-ex-temporal-worker\",outcome=\"retry\"}[$__rate_interval]))",
+          "refId": "A"
+        }
+      ],
+      "title": "Dispatch retries",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "www-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "id": 5,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(www_dtye_outbox_dispatch_latency_seconds_bucket{service=\"dont-text-your-ex-temporal-worker\"}[$__rate_interval])))",
+          "legendFormat": "p95",
+          "refId": "A"
+        }
+      ],
+      "title": "Outbox event-to-dispatch latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "www-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "id": 6,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "expr": "sum by (outcome) (increase(www_dtye_session_purge_runs_total{service=\"dont-text-your-ex-temporal-worker\"}[$__rate_interval]))",
+          "legendFormat": "{{outcome}} pages",
+          "refId": "A"
+        },
+        {
+          "expr": "increase(www_dtye_session_purge_deleted_total{service=\"dont-text-your-ex-temporal-worker\"}[$__rate_interval])",
+          "legendFormat": "sessions deleted",
+          "refId": "B"
+        }
+      ],
+      "title": "Session purge outcomes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "www-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 13 },
+      "id": 7,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(www_dtye_session_purge_duration_seconds_bucket{service=\"dont-text-your-ex-temporal-worker\"}[$__rate_interval])))",
+          "legendFormat": "p95",
+          "refId": "A"
+        }
+      ],
+      "title": "Session purge page duration",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "tags": ["dont-text-your-ex", "temporal"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timezone": "browser",
+  "title": "Don't Text Your Ex - Temporal Operations",
+  "uid": "www-dtye-temporal",
+  "version": 1
+}

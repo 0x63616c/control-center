@@ -337,9 +337,9 @@ events in bounded pages.
 - [ ] W02.8 Signal-with-start or an equivalent ordering-safe design handles a
       resolution, closure, departure, or deletion arriving before creation is
       dispatched.
-- [ ] W02.9 Poison events stop after a declared policy, remain inspectable, alert,
+- [x] W02.9 Poison events stop after a declared policy, remain inspectable, alert,
       and do not block later events.
-- [ ] W02.10 Pending count, oldest age, retries, permanent failures, and dispatch
+- [x] W02.10 Pending count, oldest age, retries, permanent failures, and dispatch
       latency are measured without high-cardinality user labels.
 - [ ] W02.11 Failure injection proves rollback, Temporal outage, duplicates,
       worker death, poison events, and crash-after-side-effect recovery.
@@ -566,7 +566,7 @@ synchronously; maintenance is hygiene, never an authorization dependency.
 - [ ] W09.1 No session token enters workflow history, metrics, or logs.
 - [ ] W09.2 Purge is idempotent and safe with concurrent sign-in/session use.
 - [ ] W09.3 Active sessions survive and all eligible expired sessions are removed.
-- [ ] W09.4 Large purges continue as new and expose safe counts/duration metrics.
+- [x] W09.4 Large purges continue as new and expose safe counts/duration metrics.
 - [ ] W09.5 The schedule uses task queue `main` and produces inspectable history.
 
 ## W10 — AccountDeletionWorkflow and compliance erasure
@@ -857,8 +857,8 @@ revocation succeeded.
 |---|---|---|---|---|
 | W00 Design/baseline | IN PROGRESS | coordinator | `codex/dtye-temporal-delivery`, T-42 | Reconcile the two committed deletion proposals with explicit owner choice |
 | W01 Temporal runtime | IMPLEMENTED; LIVE PROOF PENDING | coordinator | PR #708 / `dd7f8f612` | Merge/deploy evidence remains in W13 |
-| W02 Outbox/orchestration | CORE IMPLEMENTED; OBSERVABILITY/LIVE PROOF PENDING | coordinator | PR #708 / coordinator branch | Metrics/alerts slice active; W12/W13 failure drills remain |
-| W03 Push delivery | IMPLEMENTED; SECRETS/LIVE PROOF PENDING | coordinator | PR #708 / integrated from `9d9080a47` | Provision Apple/APNs credentials and prove foreground/background/terminated delivery |
+| W02 Outbox/orchestration | IMPLEMENTED; LIVE PROOF PENDING | coordinator | PR #708 / `codex/dtye-outbox-observability` | W12/W13 live failure drills remain |
+| W03 Push delivery | IMPLEMENTED; LIVE PROOF PENDING | coordinator | PR #708 / integrated from `9d9080a47` | Deploy projected Apple/APNs credentials and prove foreground/background/terminated delivery |
 | W04 Report accountability | NOT STARTED | — | — | W03 |
 | W05 Urge rescue | NOT STARTED | — | — | W03 |
 | W06 Streak milestones | NOT STARTED | — | — | W03 |
@@ -888,6 +888,7 @@ commit/build, and proof boundary is not evidence.
 | 2026-08-16 | W02 dispatch/recovery and W09 session maintenance | PASS; ops/live proof pending | coordinator branch after `3e0eae35c` | Capability-filtered claims preserve unsupported facts unattempted; post-commit and scheduled recovery share the dispatcher; thrown adapters are isolated per event; error codes are finite at TypeScript and PostgreSQL boundaries; starts/signals use named opaque-ID contracts; session purge uses 500-row locked pages and continue-as-new. Real PostgreSQL API passed 96/96 and worker passed 16/16; linux/amd64 image and workflow bundle passed on the source slice. | `/root/outbox_workflows`, coordinator |
 | 2026-08-16 | W02/W09 focused durability review | PASS after fixes; live proof pending | coordinator branch after `61e82c2da` | Dispatch is one event per activity with a 15-second Temporal RPC deadline, 25-second activity timeout, and 30-second row lease; post-commit nudges admit one unresolved batch; workflow inputs reject unknown schemas; session continue-as-new preserves one cutoff; cleanup now follows the exact daily contract. Worker passed 20/20 focused tests and both API/worker typechecks passed. | `/root/foundation_review`, coordinator |
 | 2026-08-16 | W03 native push and notification delivery | PASS locally; secrets/live-device proof pending | integrated from `9d9080a47` | Exact opaque workflow input, encrypted token keyring/rotation, authenticated preference and registration APIs, finite APNs outcomes, per-device durable retries, late authorization checks, native opt-in/settings, production entitlement guard, and shared worker-pool lifecycle are implemented. Notifications passed 15/15, frontend 29/29, integrated worker 25/25, root typecheck and Knip passed; source slice additionally passed real PostgreSQL 82/82, Storybook 535/535, production frontend, SwiftPM, and unsigned simulator builds. | `/root/workflow_acceptance_review`, coordinator |
+| 2026-08-16 | W02.9, W02.10, W09.4 operations instrumentation | PASS; live proof pending | `codex/dtye-outbox-observability` | Bounded platform metrics expose durable pending/oldest/quarantine gauges, retry/permanent outcomes, accepted dispatch latency, purge counts/duration, and activity freshness without identity labels. Checked-in Grafana panels and Prometheus rules cover old/growing/failed backlog and missing poller/recovery; deterministic collector/activity/infra tests pass and the runbook covers recovery. | `/root/outbox_workflows` |
 
 ## Resume instructions
 
