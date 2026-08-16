@@ -14,10 +14,10 @@ import { Client, Connection } from "@temporalio/client";
 import { NativeConnection, Runtime, Worker } from "@temporalio/worker";
 import { createLogger } from "@www/logger";
 import { initMetrics, startMetricsServer } from "@www/platform/metrics";
+import { reconcileSchedules, temporalScheduleGateway } from "@www/temporal-runtime";
 import { GENERATED_ACTIVITIES } from "../../../features/_generated/activities.gen";
 import { GENERATED_SCHEDULES } from "../../../features/_generated/schedules.gen";
 import { temporalWorkerConfig } from "./config";
-import { reconcileSchedules } from "./reconcile";
 
 const logger = createLogger({ service: "temporal-worker" });
 
@@ -67,9 +67,21 @@ async function main(): Promise<void> {
   // Reconcile BEFORE run(): if the schedule set cannot be written the deploy
   // should fail loudly here, not come up green with nothing ever scheduled.
   await reconcileSchedules({
-    client,
+    gateway: temporalScheduleGateway(client),
     taskQueue: config.taskQueue,
-    schedules: GENERATED_SCHEDULES,
+    managedPrefix: "app_",
+    legacyManagedIds: ["health-check"],
+    schedules: GENERATED_SCHEDULES.map((schedule) => ({
+      scheduleId: schedule.scheduleId,
+      workflowType: schedule.workflowType,
+      cron: schedule.cron,
+      ...(schedule.timezone === undefined ? {} : { timezone: schedule.timezone }),
+      ...(schedule.argsJson === undefined
+        ? {}
+        : { args: JSON.parse(schedule.argsJson) as unknown }),
+      ...(schedule.timeout === undefined ? {} : { timeout: schedule.timeout }),
+      ...(schedule.catchupWindow === undefined ? {} : { catchupWindow: schedule.catchupWindow }),
+    })),
     logger,
   });
 

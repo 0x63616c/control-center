@@ -1,21 +1,19 @@
 {
-  "name": "@control-center/temporal-worker",
+  "name": "@www/temporal-runtime",
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
-    "dev": "node --experimental-strip-types src/index.ts",
-    "start": "node src/index.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@temporalio/client": "^1.21.1",
     "@temporalio/common": "^1.21.1",
-    "@temporalio/worker": "^1.21.1",
-    "@www/logger": "workspace:*",
-    "@www/platform": "workspace:*",
-    "@www/temporal-runtime": "workspace:*"
+    "@www/logger": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",

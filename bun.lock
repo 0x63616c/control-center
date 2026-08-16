@@ -97,6 +97,23 @@
         "vitest": "^3.2.4",
       },
     },
+    "apps/dont-text-your-ex/apps/temporal-worker": {
+      "name": "@dont-text-your-ex/temporal-worker",
+      "version": "0.0.0",
+      "dependencies": {
+        "@temporalio/client": "^1.21.1",
+        "@temporalio/worker": "^1.21.1",
+        "@temporalio/workflow": "^1.21.1",
+        "@www/logger": "workspace:*",
+        "@www/platform": "workspace:*",
+        "@www/temporal-runtime": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "^22.13.0",
+        "typescript": "^5.9.3",
+        "vitest": "^3.2.4",
+      },
+    },
     "apps/manage": {
       "name": "@control-center/manage",
       "version": "0.0.0",
@@ -140,6 +157,7 @@
         "@temporalio/worker": "^1.21.1",
         "@www/logger": "workspace:*",
         "@www/platform": "workspace:*",
+        "@www/temporal-runtime": "workspace:*",
       },
       "devDependencies": {
         "@types/node": "^22.13.0",
@@ -318,6 +336,20 @@
       },
       "devDependencies": {
         "@types/bun": "^1.3.13",
+        "typescript": "^5.9.3",
+        "vitest": "^3.2.4",
+      },
+    },
+    "packages/temporal-runtime": {
+      "name": "@www/temporal-runtime",
+      "version": "0.0.0",
+      "dependencies": {
+        "@temporalio/client": "^1.21.1",
+        "@temporalio/common": "^1.21.1",
+        "@www/logger": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "^22.13.0",
         "typescript": "^5.9.3",
         "vitest": "^3.2.4",
       },
@@ -625,6 +657,8 @@
     "@dont-text-your-ex/e2e": ["@dont-text-your-ex/e2e@workspace:apps/dont-text-your-ex/apps/e2e"],
 
     "@dont-text-your-ex/frontend": ["@dont-text-your-ex/frontend@workspace:apps/dont-text-your-ex/apps/frontend"],
+
+    "@dont-text-your-ex/temporal-worker": ["@dont-text-your-ex/temporal-worker@workspace:apps/dont-text-your-ex/apps/temporal-worker"],
 
     "@drizzle-team/brocli": ["@drizzle-team/brocli@0.10.2", "", {}, "sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w=="],
 
@@ -1315,6 +1349,8 @@
     "@www/logger": ["@www/logger@workspace:packages/logger"],
 
     "@www/platform": ["@www/platform@workspace:packages/platform"],
+
+    "@www/temporal-runtime": ["@www/temporal-runtime@workspace:packages/temporal-runtime"],
 
     "@www/theme": ["@www/theme@workspace:packages/theme"],
 
