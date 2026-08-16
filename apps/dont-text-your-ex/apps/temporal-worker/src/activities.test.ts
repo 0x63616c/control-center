@@ -42,6 +42,13 @@ describe("outbox dispatch activity", () => {
       outboxSnapshot: {
         snapshot: async () => ({ pending: 0, oldestAgeSeconds: 0, permanentFailures: 0 }),
       },
+      reports: {
+        advance: async ({ reportId }) => ({
+          state: "member_departed",
+          reportId,
+          aggregateVersion: 1,
+        }),
+      },
       clock: () => 10,
     });
 

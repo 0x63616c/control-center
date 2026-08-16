@@ -24,8 +24,10 @@ import {
   platformDtyeOperationsObserver,
 } from "./operations-observability";
 import { WORKFLOW_TYPES } from "./registry";
+import { PostgresReportAccountabilityStore } from "./report-accountability";
 import { PostgresSessionMaintenanceStore } from "./session-maintenance";
 import {
+  ReportAccountabilityFanoutHandler,
   registeredTemporalEventHandlers,
   TemporalClientWorkflowGateway,
   TemporalWorkflowDispatcher,
@@ -53,6 +55,8 @@ async function main(): Promise<void> {
     keyContent: config.apnsKeyContent,
   });
   const apnsTransport = createHttp2ApnsTransport();
+  const reports = new PostgresReportAccountabilityStore(pool);
+  const temporalGateway = new TemporalClientWorkflowGateway(client);
   const apnsClients = {
     production: createApnsClient({
       authorization: apnsAuthorization,
@@ -70,7 +74,10 @@ async function main(): Promise<void> {
   const activities = createDtyeActivities({
     outbox: new PostgresOutbox(pool),
     dispatcher: new TemporalWorkflowDispatcher(
-      registeredTemporalEventHandlers(new TemporalClientWorkflowGateway(client), WORKFLOW_TYPES),
+      registeredTemporalEventHandlers(temporalGateway, WORKFLOW_TYPES, {
+        "jar.closed": new ReportAccountabilityFanoutHandler(temporalGateway, reports),
+        "membership.left": new ReportAccountabilityFanoutHandler(temporalGateway, reports),
+      }),
     ),
     sessions: new PostgresSessionMaintenanceStore(pool),
     notifications: createNotificationActivities({
@@ -83,6 +90,7 @@ async function main(): Promise<void> {
     }),
     operations: platformDtyeOperationsObserver,
     outboxSnapshot: new PostgresOutboxOperationalSnapshotStore(pool),
+    reports,
   });
   const worker = await prepareTemporalWorker({
     config,

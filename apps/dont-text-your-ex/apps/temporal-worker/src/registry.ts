@@ -5,6 +5,7 @@ export const WORKFLOW_TYPES = [
   "OutboxDispatchRecoveryWorkflow",
   "SessionMaintenanceWorkflow",
   "NotificationDeliveryWorkflow",
+  "ReportAccountabilityWorkflow",
 ] as const;
 export const MANAGED_SCHEDULE_PREFIX = "dtye_";
 export const ACTIVITY_TYPES = [
@@ -15,6 +16,7 @@ export const ACTIVITY_TYPES = [
   "deliverNotification",
   "suppressNotification",
   "rotatePushTokenBatch",
+  "ReportAccountabilityActivity",
 ] as const;
 export const SCHEDULES = [
   {

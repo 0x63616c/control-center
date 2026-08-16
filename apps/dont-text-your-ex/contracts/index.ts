@@ -310,6 +310,16 @@ const EvidenceSchema = z
   .strict();
 
 export const ReportStatusSchema = z.enum(["pending", "owned", "denied", "expired"]);
+export const ReportAccountabilityWorkflowInputSchema = z
+  .object({ schemaVersion: z.literal(1), reportId: ReportIdSchema })
+  .strict();
+export const ReportAccountabilitySignalSchema = ReportAccountabilityWorkflowInputSchema.extend({
+  expectedAggregateVersion: z.number().int().positive(),
+}).strict();
+export type ReportAccountabilityWorkflowInput = z.infer<
+  typeof ReportAccountabilityWorkflowInputSchema
+>;
+export type ReportAccountabilitySignal = z.infer<typeof ReportAccountabilitySignalSchema>;
 export const ReportSchema = z
   .object({
     id: ReportIdSchema,

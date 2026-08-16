@@ -1,8 +1,10 @@
+import { readFileSync } from "node:fs";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ReportIdSchema, UserIdSchema } from "../../../contracts";
 import { pool as migrationPool } from "../../api/src/db/index";
 import { runMigrations } from "../../api/src/db/migrate";
+import { DomainEventSchema } from "../../api/src/domain-events";
 import { buildDatabaseUrl } from "../../api/src/env";
 import * as apiStore from "../../api/src/store";
 import { PostgresReportAccountabilityStore } from "./report-accountability";
@@ -43,6 +45,11 @@ beforeAll(async () => {
             ('mem_accountabilityaccused',$1,$3,'member',1)`,
     [jarId, reporterId, accusedId],
   );
+  await pool.query(
+    `INSERT INTO membership_tenures (id,membership_id,joined_at)
+     VALUES ('mtn_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','mem_accountabilityreporter',1),
+            ('mtn_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','mem_accountabilityaccused',1)`,
+  );
 });
 
 afterAll(async () => {
@@ -52,6 +59,72 @@ afterAll(async () => {
 });
 
 describe.skipIf(!HAS_DB)("Postgres report accountability", () => {
+  it("backfills existing pending reports from their original creation time", async () => {
+    const schema = "w04_report_backfill";
+    await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    await pool.query(`CREATE SCHEMA ${schema}`);
+    const isolated = new Pool({
+      connectionString: databaseUrl,
+      options: `-c search_path=${schema}`,
+    });
+    try {
+      const migrations = new URL("../../api/src/db/migrations/", import.meta.url);
+      for (const filename of [
+        "0001_initial.sql",
+        "0002_apple_id.sql",
+        "0003_drop_notif_prefs.sql",
+        "0004_private_streak_opt_in.sql",
+        "0005_session_lifecycle.sql",
+        "0006_close_jar.sql",
+        "0007_leave_jar.sql",
+        "0008_report_activity.sql",
+        "0009_invite_expiry.sql",
+        "0010_temporal_outbox_foundations.sql",
+        "0011_notifications.sql",
+        "0012_outbox_failure_code_constraint.sql",
+      ]) {
+        await isolated.query(readFileSync(new URL(filename, migrations), "utf8"));
+      }
+      await isolated.query(
+        `INSERT INTO users (id,name,created_at) VALUES
+           ('usr_backfillreporter','Reporter',1),('usr_backfillaccused','Accused',1);
+         INSERT INTO jars
+           (id,name,created_by,invite_code,created_at,invite_version_id)
+         VALUES
+           ('jar_backfill','Backfill','usr_backfillreporter','BACK01',1,
+            'inv_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+         INSERT INTO reports
+           (id,jar_id,accuser_id,accused_id,note,is_anonymous,amount_cents,status,created_at)
+         VALUES
+           ('rpt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','jar_backfill','usr_backfillreporter',
+            'usr_backfillaccused','private',1,500,'pending',123456);`,
+      );
+
+      await isolated.query(
+        readFileSync(new URL("0013_report_accountability.sql", migrations), "utf8"),
+      );
+
+      const event = await isolated.query<{
+        aggregate_id: string;
+        aggregate_version: string;
+        occurred_at: string;
+      }>(
+        `SELECT aggregate_id,aggregate_version,occurred_at FROM domain_event
+         WHERE event_type='report.created'`,
+      );
+      expect(event.rows).toEqual([
+        {
+          aggregate_id: "rpt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          aggregate_version: "1",
+          occurred_at: "123456",
+        },
+      ]);
+    } finally {
+      await isolated.end();
+      await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    }
+  });
+
   it("deduplicates reminders and atomically expires only a pending report", async () => {
     const reportId = ReportIdSchema.parse("rpt_11111111111111111111111111111111");
     const createdAt = 1_700_000_000_000;
@@ -149,6 +222,19 @@ describe.skipIf(!HAS_DB)("Postgres report accountability", () => {
     await expect(
       store.advance({ reportId: closedId, action: "remind_24h" }),
     ).resolves.toMatchObject({ state: "jar_closed" });
+    await expect(
+      store.signalTargets(
+        DomainEventSchema.parse({
+          id: "evt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          type: "jar.closed",
+          schemaVersion: 1,
+          aggregateType: "jar",
+          aggregateId: jarId,
+          aggregateVersion: 2,
+          occurredAt: 2,
+        }),
+      ),
+    ).resolves.toContainEqual({ reportId: closedId, aggregateVersion: 1 });
     await pool.query("UPDATE jars SET closed_at=NULL WHERE id=$1", [jarId]);
 
     const departedId = ReportIdSchema.parse("rpt_44444444444444444444444444444444");
@@ -160,6 +246,19 @@ describe.skipIf(!HAS_DB)("Postgres report accountability", () => {
     await expect(
       store.advance({ reportId: departedId, action: "remind_72h" }),
     ).resolves.toMatchObject({ state: "member_departed" });
+    await expect(
+      store.signalTargets(
+        DomainEventSchema.parse({
+          id: "evt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          type: "membership.left",
+          schemaVersion: 1,
+          aggregateType: "membership_tenure",
+          aggregateId: "mtn_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          aggregateVersion: 2,
+          occurredAt: 2,
+        }),
+      ),
+    ).resolves.toContainEqual({ reportId: departedId, aggregateVersion: 1 });
     const notifications = await pool.query<{ count: string }>(
       "SELECT COUNT(*)::text AS count FROM user_notification WHERE target_id IN ($1,$2)",
       [closedId, departedId],

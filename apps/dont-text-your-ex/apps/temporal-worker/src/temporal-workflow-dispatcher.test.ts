@@ -132,10 +132,62 @@ describe("Temporal workflow dispatcher", () => {
     const dispatcher = new TemporalWorkflowDispatcher({ "invite.issued": handler });
     expect(dispatcher.supportedEventTypes()).toEqual([
       "jar.created",
+      "report.expired",
       "rescue.abandoned",
       "invite.issued",
     ]);
     await expect(dispatcher.dispatch(inviteIssued)).resolves.toEqual({ status: "accepted" });
     expect(handler.operations()).toEqual([temporalOperationFor(inviteIssued)]);
+  });
+
+  it.each([
+    ["jar.closed", "jar", "jar_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "jarClosed"],
+    [
+      "membership.left",
+      "membership_tenure",
+      "mtn_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "memberDeparted",
+    ],
+  ] as const)("fans out %s to opaque report signals", async (type, aggregateType, aggregateId, signal) => {
+    const operations: unknown[] = [];
+    const gateway = { execute: async (operation: unknown) => operations.push(operation) };
+    const handler = new ReportAccountabilityFanoutHandler(gateway as never, {
+      signalTargets: async () => [
+        {
+          reportId: "rpt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as never,
+          aggregateVersion: 1,
+        },
+      ],
+    });
+    const event = DomainEventSchema.parse({
+      id: "evt_dddddddddddddddddddddddddddddddd",
+      type,
+      schemaVersion: 1,
+      aggregateType,
+      aggregateId,
+      aggregateVersion: 2,
+      occurredAt: 2,
+    });
+
+    await handler.handle(temporalOperationFor(event), event);
+
+    expect(operations).toEqual([
+      {
+        kind: "signal_with_start",
+        workflowType: "ReportAccountabilityWorkflow",
+        workflowId: "report/rpt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        signal,
+        startArgs: {
+          schemaVersion: 1,
+          reportId: "rpt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        },
+        signalArgs: {
+          schemaVersion: 1,
+          reportId: "rpt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          expectedAggregateVersion: 1,
+        },
+      },
+    ]);
+    expect(JSON.stringify(operations)).not.toContain("usr_");
   });
 });
