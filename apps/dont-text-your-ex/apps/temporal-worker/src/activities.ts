@@ -11,6 +11,7 @@ import {
   createReportAccountabilityActivities,
   type ReportAccountabilityStore,
 } from "./report-accountability";
+import type { RescueActivities } from "./rescue-activities";
 import { runSessionMaintenancePage, type SessionMaintenanceStore } from "./session-maintenance";
 
 interface DtyeHealthCheckActivityInput {
@@ -53,6 +54,7 @@ export type DtyeActivityDependencies = Readonly<{
   operations: DtyeOperationsObserver;
   outboxSnapshot: OutboxOperationalSnapshotStore;
   reports: ReportAccountabilityStore;
+  rescue: RescueActivities;
   clock?: () => number;
 }>;
 
@@ -120,6 +122,7 @@ export function createDtyeActivities(dependencies: DtyeActivityDependencies) {
     },
     ...dependencies.notifications,
     ...createReportAccountabilityActivities({ store: dependencies.reports }),
+    ...dependencies.rescue,
   };
 }
 

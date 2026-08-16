@@ -10,10 +10,12 @@ describe("DTYE Temporal registry", () => {
       "SessionMaintenanceWorkflow",
       "NotificationDeliveryWorkflow",
       "ReportAccountabilityWorkflow",
+      "UrgeRescueWorkflow",
     ]);
     expect(Object.keys(workflows)).toContain("DtyeHealthCheckWorkflow");
     expect(Object.keys(workflows)).toContain("NotificationDeliveryWorkflow");
     expect(Object.keys(workflows)).toContain("ReportAccountabilityWorkflow");
+    expect(Object.keys(workflows)).toContain("UrgeRescueWorkflow");
     expect(ACTIVITY_TYPES).toEqual([
       "DtyeHealthCheckActivity",
       "OutboxDispatchActivity",
@@ -23,6 +25,9 @@ describe("DTYE Temporal registry", () => {
       "suppressNotification",
       "rotatePushTokenBatch",
       "ReportAccountabilityActivity",
+      "loadRescue",
+      "advanceRescueAtDeadline",
+      "eraseRescueForAccountDeletion",
     ]);
     expect(MANAGED_SCHEDULE_PREFIX).toBe("dtye_");
     expect(SCHEDULES).toEqual([

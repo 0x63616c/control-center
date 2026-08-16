@@ -6,6 +6,7 @@ export const WORKFLOW_TYPES = [
   "SessionMaintenanceWorkflow",
   "NotificationDeliveryWorkflow",
   "ReportAccountabilityWorkflow",
+  "UrgeRescueWorkflow",
 ] as const;
 export const MANAGED_SCHEDULE_PREFIX = "dtye_";
 export const ACTIVITY_TYPES = [
@@ -17,6 +18,9 @@ export const ACTIVITY_TYPES = [
   "suppressNotification",
   "rotatePushTokenBatch",
   "ReportAccountabilityActivity",
+  "loadRescue",
+  "advanceRescueAtDeadline",
+  "eraseRescueForAccountDeletion",
 ] as const;
 export const SCHEDULES = [
   {

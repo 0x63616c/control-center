@@ -49,6 +49,11 @@ describe("outbox dispatch activity", () => {
           aggregateVersion: 1,
         }),
       },
+      rescue: {
+        loadRescue: async () => null,
+        advanceRescueAtDeadline: async () => null,
+        eraseRescueForAccountDeletion: async () => ({ erased: true }),
+      },
       clock: () => 10,
     });
 
