@@ -1,6 +1,7 @@
 # Don’t Text Your Ex Temporal workflow delivery contract
 
-**Status:** Implementation goal active; W00, W01, and W02 in progress<br>
+**Status:** Implementation goal active; W01 is implemented pending live proof;
+W00, W02, W03, and W09 are in progress<br>
 **Tickets:** planning T-40; delivery T-42<br>
 **Baseline:** `origin/main` at `3b4697e37bdd451a279864c1005f7284ea2fdebc` on 2026-08-16<br>
 **Product:** `apps/dont-text-your-ex`<br>
@@ -855,15 +856,15 @@ revocation succeeded.
 | Packet | Status | Owner | Branch/PR | Blocking decision or evidence |
 |---|---|---|---|---|
 | W00 Design/baseline | IN PROGRESS | coordinator | `codex/dtye-temporal-delivery`, T-42 | Reconcile the two committed deletion proposals with explicit owner choice |
-| W01 Temporal runtime | IN PROGRESS | `/root/runtime_design` | `codex/dtye-temporal-runtime-w01` | Stable non-deletion W00 inputs; coordinator integration review |
-| W02 Outbox/orchestration | IN PROGRESS | `/root/outbox_workflows` | `codex/dtye-temporal-outbox-w02` | Stable event seam; coordinator integration after W01 |
-| W03 Push delivery | NOT STARTED | — | — | W02, Apple/APNs credentials |
+| W01 Temporal runtime | IMPLEMENTED; LIVE PROOF PENDING | coordinator | PR #708 / `dd7f8f612` | Merge/deploy evidence remains in W13 |
+| W02 Outbox/orchestration | IN PROGRESS | `/root/outbox_workflows` | PR #708 / `dd7f8f612`; successor slice active | Transaction/outbox foundation integrated; real Temporal dispatch/recovery remains |
+| W03 Push delivery | IN PROGRESS | `/root/workflow_acceptance_review` | successor slice active | W02 dispatch integration, Apple/APNs credentials |
 | W04 Report accountability | NOT STARTED | — | — | W03 |
 | W05 Urge rescue | NOT STARTED | — | — | W03 |
 | W06 Streak milestones | NOT STARTED | — | — | W03 |
 | W07 Monthly recap | NOT STARTED | — | — | W03, W06 terminology |
 | W08 Invite lifecycle | NOT STARTED | — | — | W03 |
-| W09 Session maintenance | NOT STARTED | — | — | W02 |
+| W09 Session maintenance | IN PROGRESS | `/root/outbox_workflows` | successor slice active | W02 runtime integration |
 | W10 Account deletion | NOT STARTED | — | — | W00 deletion decisions, W02, Apple revocation |
 | W11 UI/operations integration | NOT STARTED | — | — | W03–W10 |
 | W12 Verification/migration | NOT STARTED | — | — | W01–W11 |
@@ -881,6 +882,8 @@ commit/build, and proof boundary is not evidence.
 | 2026-08-16 | Delivery goal and tracker | PASS | T-42 | Explicit `Do it.` request created the implementation goal and the one successor delivery Ticket | coordinator |
 | 2026-08-16 | W00 repository/production refresh | PASS with implementation gaps | `3b4697e37` | Main CI/CodeQL green; migrations 0001–0009 live; API/frontend/CNPG healthy; Temporal has only `control-center` and `software-factory` product namespaces; no DTYE worker/namespace yet; Build 24 state is bounded by the merged P00 evidence | coordinator + live Git/Kubernetes/Postgres inspection |
 | 2026-08-16 | W00 runtime/outbox design trace | PASS | coordinator branch | Two independent traces fixed the product runtime seam, 22-event registry, transaction hazards, public TDD seams, schema dependencies, and deletion-plan conflict; ADR-0014 and the deletion data map are the durable synthesis | `/root/runtime_design`, `/root/outbox_workflows`, coordinator |
+| 2026-08-16 | W01 implementation checkpoint | PASS; live proof pending | `dd7f8f612` | Product worker tests 7/7, shared runtime tests 2/2, infra tests 5/5, task-queue contract guard, root typecheck, Biome, Knip, and Node 22 slim/glibc image build passed; namespace/poller/amd64 rollout proof remains W13 | `/root/runtime_design`, coordinator |
+| 2026-08-16 | W02 transaction/outbox foundation | PASS; dispatch integration pending | `dd7f8f612` | Real PostgreSQL 16 suite passed 88/88 including rollback, concurrent mutation, lease race, exactly-once report resolution, and all implemented producer events; non-DB suite passed 52 with 36 database tests intentionally skipped | `/root/outbox_workflows`, coordinator |
 
 ## Resume instructions
 
