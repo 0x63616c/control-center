@@ -58,6 +58,23 @@ describe("DTYE activity observability", () => {
     expect(JSON.stringify(vi.mocked(operations.outboxDispatch).mock.calls)).not.toMatch(
       /evt_|jar_/,
     );
+    expect(operations.outboxRecoverySucceeded).toHaveBeenCalledWith(6_000);
+  });
+
+  test("a targeted post-commit nudge cannot mask a silent recovery schedule", async () => {
+    const operations = recordingObserver();
+    const activities = createDtyeActivities({
+      outbox: new MemoryOutbox([event]),
+      dispatcher: new RecordingWorkflowDispatcher([], ["jar.created"]),
+      sessions: new MemorySessionMaintenanceStore(),
+      operations,
+      outboxSnapshot: {
+        snapshot: vi.fn(async () => ({ pending: 0, oldestAgeSeconds: 0, permanentFailures: 0 })),
+      },
+      clock: () => 6_000,
+    });
+    await activities.OutboxDispatchActivity({ limit: 100, eventIds: [event.id] });
+    expect(operations.outboxRecoverySucceeded).not.toHaveBeenCalled();
   });
 
   test("records retry outcomes and continues after a snapshot collector failure", async () => {
