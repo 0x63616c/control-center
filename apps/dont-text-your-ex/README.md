@@ -103,6 +103,28 @@ docs/                 product spec + design handoff (design-reference/)
 
 The design is preserved under `docs/design-reference/` and the product spec under `docs/superpowers/specs/`.
 
+### Streak milestone timing and privacy
+
+`StreakMilestoneSweepWorkflow` runs hourly in the isolated `dont-text-your-ex`
+Temporal namespace on task queue `main`. PostgreSQL evaluates each active
+membership against the user's stored IANA timezone after 09:00 local time, so
+the delivery window follows local calendar days through daylight-saving
+changes. A stable cutoff and membership-ID cursor bound each execution; after
+20 pages the workflow continues as new.
+
+The app refreshes the authenticated user's timezone after session restoration
+and whenever the app returns to the foreground. The API validates the browser
+or device value and PostgreSQL enforces the same IANA-name boundary. Existing
+rows that predate device timezone collection explicitly fall back to
+`America/Los_Angeles`; a failed refresh never blocks sign-in or product use and
+is retried on the next foreground transition.
+
+Achievements are private by default. An opted-in push is generic and is
+suppressed if the streak resets, the member leaves, the jar closes, or the user
+opts out before delivery. Shared jar activity is written only while the current
+membership's `shareStreak` flag is true; later opt-in never backfills an earlier
+private milestone.
+
 ## Production deployment
 
 Two images are built by CI on push to main:

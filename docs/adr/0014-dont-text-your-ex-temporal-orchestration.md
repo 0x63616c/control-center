@@ -78,7 +78,7 @@ queue `main`, and a single object argument.
 |---|---|---|---|
 | `dtye_health` | `* * * * *`, UTC | `DtyeHealthCheckWorkflow` | 2 minutes |
 | `dtye_outbox_recovery` | `* * * * *`, UTC | `OutboxDispatchRecoveryWorkflow` | 5 minutes |
-| `dtye_streak_sweep` | `*/15 * * * *`, UTC | `StreakMilestoneSweepWorkflow` | 10 minutes |
+| `dtye_streak_sweep` | `0 * * * *`, UTC | `StreakMilestoneSweepWorkflow` | 10 minutes |
 | `dtye_monthly_recap` | `5 * * * *`, UTC | `MonthlyJarRecapWorkflow` | 30 minutes |
 | `dtye_session_maintenance` | `17 3 * * *`, UTC | `SessionMaintenanceWorkflow` | 10 minutes |
 | `dtye_deletion_history_sweep` | `47 * * * *`, UTC | `DeletionHistorySweepWorkflow` | 30 minutes |
