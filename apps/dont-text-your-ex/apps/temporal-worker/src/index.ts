@@ -3,10 +3,11 @@ import { Client, Connection } from "@temporalio/client";
 import { NativeConnection, Runtime, Worker } from "@temporalio/worker";
 import { createLogger } from "@www/logger";
 import { initMetrics, startMetricsServer } from "@www/platform/metrics";
-import { reconcileSchedules, temporalScheduleGateway } from "@www/temporal-runtime";
+import { temporalScheduleGateway } from "@www/temporal-runtime";
+import { prepareTemporalWorker } from "./boot";
 import { temporalWorkerConfig } from "./config";
 import { createWorkerLifecycle } from "./lifecycle";
-import { ACTIVITIES, MANAGED_SCHEDULE_PREFIX, SCHEDULES } from "./registry";
+import { ACTIVITIES } from "./registry";
 
 const logger = createLogger({ service: "dont-text-your-ex-temporal-worker" });
 const workflowsPath = new URL("./workflows.ts", import.meta.url).pathname;
@@ -23,20 +24,19 @@ async function main(): Promise<void> {
   const connection = await NativeConnection.connect({ address: config.address });
   const clientConnection = await Connection.connect({ address: config.address });
   const client = new Client({ connection: clientConnection, namespace: config.namespace });
-  await reconcileSchedules({
-    gateway: temporalScheduleGateway(client),
-    taskQueue: config.taskQueue,
-    managedPrefix: MANAGED_SCHEDULE_PREFIX,
-    schedules: SCHEDULES,
+  const worker = await prepareTemporalWorker({
+    config,
+    scheduleGateway: temporalScheduleGateway(client),
     logger,
-  });
-  const worker = await Worker.create({
-    connection,
-    namespace: config.namespace,
-    taskQueue: config.taskQueue,
-    workflowsPath,
-    activities: ACTIVITIES,
-    shutdownGraceTime: "20 seconds",
+    createWorker: ({ namespace, taskQueue }) =>
+      Worker.create({
+        connection,
+        namespace,
+        taskQueue,
+        workflowsPath,
+        activities: ACTIVITIES,
+        shutdownGraceTime: "20 seconds",
+      }),
   });
   const lifecycle = createWorkerLifecycle({
     worker,
