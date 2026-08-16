@@ -2,6 +2,7 @@ import type { PoolClient } from "pg";
 import {
   ActivitySchema,
   EvidenceIdSchema,
+  type IanaTimeZone,
   type InviteCode,
   InviteCodeSchema,
   JarDetailSchema,
@@ -221,6 +222,13 @@ export async function getMe(userId: UserId): Promise<MeDTO | null> {
     exes: await exesFor(u.id),
     phone: u.phone,
   };
+}
+
+export async function updateUserTimeZone(userId: UserId, timezone: IanaTimeZone): Promise<void> {
+  await pool.query("UPDATE users SET timezone=$1 WHERE id=$2 AND timezone IS DISTINCT FROM $1", [
+    timezone,
+    userId,
+  ]);
 }
 
 export async function createUser(opts: {
