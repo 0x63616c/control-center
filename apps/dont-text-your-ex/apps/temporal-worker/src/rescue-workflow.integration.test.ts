@@ -224,4 +224,58 @@ describe("UrgeRescueWorkflow time skipping", () => {
     await Worker.runReplayHistory({ workflowsPath }, history, `rescue/${interventionId}`);
     expect(fixture.advanceCalls).toEqual([1, 2]);
   });
+
+  it("resumes an open intervention on a replacement polling worker", async () => {
+    const environment = await TestWorkflowEnvironment.createLocal();
+    environments.push(environment);
+    const startedAt = Date.now();
+    let state: RescueIntervention | null = active(startedAt);
+    const workerOptions = {
+      connection: environment.nativeConnection,
+      taskQueue: "main",
+      workflowsPath,
+      activities: {
+        loadRescue: async () => state,
+        advanceRescueAtDeadline: async () => state,
+        eraseRescueForAccountDeletion: async () => ({ erased: true as const }),
+      },
+    };
+    const firstWorker = await Worker.create(workerOptions);
+    let handle: Awaited<ReturnType<typeof environment.client.workflow.start>> | undefined;
+
+    await firstWorker.runUntil(async () => {
+      handle = await environment.client.workflow.start(UrgeRescueWorkflow, {
+        workflowId: `rescue-restart/${interventionId}`,
+        taskQueue: "main",
+        args: [{ schemaVersion: 1, interventionId }],
+      });
+      let stateQuery = await handle.query(rescueStateQuery);
+      while (stateQuery === "loading") {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        stateQuery = await handle.query(rescueStateQuery);
+      }
+      expect(stateQuery).toBe("active");
+    });
+    if (!handle) throw new Error("workflow handle missing");
+    const activeHandle = handle;
+
+    state = RescueInterventionSchema.parse({
+      ...active(startedAt),
+      status: "safe",
+      aggregateVersion: 2,
+      resolvedAt: startedAt + 1_000,
+      updatedAt: startedAt + 1_000,
+    });
+    await activeHandle.signal(safeRescueSignal, {
+      schemaVersion: 1,
+      interventionId,
+      expectedAggregateVersion: 2,
+    });
+
+    const replacementWorker = await Worker.create(workerOptions);
+    await expect(replacementWorker.runUntil(() => activeHandle.result())).resolves.toEqual({
+      interventionId,
+      status: "safe",
+    });
+  }, 60_000);
 });
