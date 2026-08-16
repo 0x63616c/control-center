@@ -5,6 +5,7 @@ import { createLogger } from "@www/logger";
 import { initMetrics, startMetricsServer } from "@www/platform/metrics";
 import { reconcileSchedules, temporalScheduleGateway } from "@www/temporal-runtime";
 import { temporalWorkerConfig } from "./config";
+import { createWorkerLifecycle } from "./lifecycle";
 import { ACTIVITIES, MANAGED_SCHEDULE_PREFIX, SCHEDULES } from "./registry";
 
 const logger = createLogger({ service: "dont-text-your-ex-temporal-worker" });
@@ -37,16 +38,15 @@ async function main(): Promise<void> {
     activities: ACTIVITIES,
     shutdownGraceTime: "20 seconds",
   });
-  const shutdown = (signal: string) => {
-    logger.info({ signal }, "temporal worker shutting down");
-    worker.shutdown();
-  };
-  process.on("SIGTERM", () => shutdown("SIGTERM"));
-  process.on("SIGINT", () => shutdown("SIGINT"));
-  await worker.run();
-  await clientConnection.close();
-  await connection.close();
-  logger.info("temporal worker stopped");
+  const lifecycle = createWorkerLifecycle({
+    worker,
+    closeClient: () => clientConnection.close(),
+    closeNative: () => connection.close(),
+    logger,
+  });
+  process.on("SIGTERM", () => lifecycle.shutdown("SIGTERM"));
+  process.on("SIGINT", () => lifecycle.shutdown("SIGINT"));
+  await lifecycle.run();
 }
 
 main().catch((error) => {

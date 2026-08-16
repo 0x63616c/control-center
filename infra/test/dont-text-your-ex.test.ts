@@ -6,6 +6,7 @@ import {
   DONT_TEXT_YOUR_EX_HOSTNAME,
   DONT_TEXT_YOUR_EX_NAMESPACE,
   dontTextYourExSpecs,
+  dontTextYourExTemporalNamespaceSetupCommand,
 } from "../src/dont-text-your-ex.ts";
 
 const VALID = `sha256:${"a".repeat(64)}`;
@@ -84,6 +85,15 @@ describe("Don't Text Your Ex production resources", () => {
       retention: "2160h",
       taskQueue: "main",
     });
+    expect(dontTextYourExTemporalNamespaceSetupCommand()).toContain(
+      "namespace create --namespace dont-text-your-ex --retention 2160h",
+    );
+    expect(dontTextYourExTemporalNamespaceSetupCommand()).toContain(
+      "namespace update --namespace dont-text-your-ex --retention 2160h",
+    );
+    expect(dontTextYourExTemporalNamespaceSetupCommand()).toContain(
+      "namespace describe --namespace dont-text-your-ex",
+    );
   });
 
   test("declares a nightly, non-overlapping NAS backup with the generated app credential", () => {
