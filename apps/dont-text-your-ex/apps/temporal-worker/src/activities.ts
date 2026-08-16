@@ -18,6 +18,9 @@ import type { Outbox } from "../../api/src/outbox";
 import { dispatchOutboxPage, type WorkflowDispatcher } from "../../api/src/workflow-dispatcher";
 import { runSessionMaintenancePage, type SessionMaintenanceStore } from "./session-maintenance";
 
+export const OUTBOX_DISPATCH_ACTIVITY_TIMEOUT_MS = 25_000;
+export const OUTBOX_DISPATCH_LEASE_MS = 30_000;
+
 export interface OutboxDispatchActivityInput {
   readonly eventIds?: readonly DomainEvent["id"][];
   readonly limit: number;
@@ -52,9 +55,11 @@ export function createDtyeActivities(dependencies: DtyeActivityDependencies) {
         outbox: dependencies.outbox,
         dispatcher: dependencies.dispatcher,
         owner: `outbox-${randomUUID()}`,
-        limit: input.limit,
+        // A single bounded Temporal RPC must finish before this row's lease expires.
+        // The workflow drains up to 20 events, then continues as new.
+        limit: Math.min(input.limit, 1),
         now,
-        leaseUntil: now + 30_000,
+        leaseUntil: now + OUTBOX_DISPATCH_LEASE_MS,
         retryAt: now + 60_000,
         eventIds: input.eventIds,
       });

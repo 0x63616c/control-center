@@ -78,7 +78,11 @@ describe("Temporal workflow dispatcher", () => {
   it("advertises only audit facts and handlers backed by registered workflow exports", async () => {
     const handler = new RecordingTemporalEventHandler();
     const dispatcher = new TemporalWorkflowDispatcher({ "invite.issued": handler });
-    expect(dispatcher.supportedEventTypes()).toEqual(["jar.created", "invite.issued"]);
+    expect(dispatcher.supportedEventTypes()).toEqual([
+      "jar.created",
+      "rescue.abandoned",
+      "invite.issued",
+    ]);
     await expect(dispatcher.dispatch(inviteIssued)).resolves.toEqual({ status: "accepted" });
     expect(handler.operations()).toEqual([temporalOperationFor(inviteIssued)]);
   });

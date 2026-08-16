@@ -28,19 +28,24 @@ export class RecordingRecoveryWorkflowStarter implements RecoveryWorkflowStarter
 }
 
 export class TemporalPostCommitNudge implements PostCommitEventNudge {
+  #batchInFlight = false;
   constructor(private readonly starter: RecoveryWorkflowStarter) {}
 
   async nudge(eventIds: readonly DomainEvent["id"][]): Promise<void> {
-    await Promise.all(
-      eventIds.map((eventId) =>
-        this.starter.start({
+    if (this.#batchInFlight) return;
+    this.#batchInFlight = true;
+    try {
+      for (const eventId of eventIds) {
+        await this.starter.start({
           workflowType: "OutboxDispatchRecoveryWorkflow",
           workflowId: `outbox/${eventId}`,
           taskQueue: DTYE_TEMPORAL_TASK_QUEUE,
           args: { schemaVersion: 1, eventIds: [eventId] },
-        }),
-      ),
-    );
+        });
+      }
+    } finally {
+      this.#batchInFlight = false;
+    }
   }
 }
 
@@ -55,7 +60,9 @@ export function temporalRecoveryWorkflowStarter(address: string): RecoveryWorkfl
         args: [input.args],
       };
       try {
-        await client.workflow.start(input.workflowType, options);
+        await client.withDeadline(Date.now() + 75, () =>
+          client.workflow.start(input.workflowType, options),
+        );
       } catch (error) {
         if (!(error instanceof WorkflowExecutionAlreadyStartedError)) throw error;
       }

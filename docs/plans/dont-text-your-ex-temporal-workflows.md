@@ -857,8 +857,8 @@ revocation succeeded.
 |---|---|---|---|---|
 | W00 Design/baseline | IN PROGRESS | coordinator | `codex/dtye-temporal-delivery`, T-42 | Reconcile the two committed deletion proposals with explicit owner choice |
 | W01 Temporal runtime | IMPLEMENTED; LIVE PROOF PENDING | coordinator | PR #708 / `dd7f8f612` | Merge/deploy evidence remains in W13 |
-| W02 Outbox/orchestration | CORE IMPLEMENTED; OPS/LIVE PROOF PENDING | coordinator | PR #708 / coordinator branch | Outbox metrics/alerts and W12/W13 live failure drills remain |
-| W03 Push delivery | IN PROGRESS | `/root/workflow_acceptance_review` | successor slice active | W02 dispatch integration, Apple/APNs credentials |
+| W02 Outbox/orchestration | CORE IMPLEMENTED; OBSERVABILITY/LIVE PROOF PENDING | coordinator | PR #708 / coordinator branch | Metrics/alerts slice active; W12/W13 failure drills remain |
+| W03 Push delivery | IMPLEMENTED ON SUCCESSOR; INTEGRATION PENDING | coordinator | `codex/dtye-temporal-w03` at `9d9080a47` | Reconcile onto PR #708, provision Apple/APNs credentials, live-device proof |
 | W04 Report accountability | NOT STARTED | — | — | W03 |
 | W05 Urge rescue | NOT STARTED | — | — | W03 |
 | W06 Streak milestones | NOT STARTED | — | — | W03 |

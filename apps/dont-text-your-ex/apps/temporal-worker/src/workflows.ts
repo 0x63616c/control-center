@@ -38,8 +38,18 @@ export async function DtyeHealthCheckWorkflow(
   return { status: "healthy", checks: iterations };
 }
 
-const { OutboxDispatchActivity, SessionMaintenanceActivity } = proxyActivities<
-  Pick<DtyeActivities, "OutboxDispatchActivity" | "SessionMaintenanceActivity">
+const { OutboxDispatchActivity } = proxyActivities<Pick<DtyeActivities, "OutboxDispatchActivity">>({
+  startToCloseTimeout: "25 seconds",
+  retry: {
+    initialInterval: "2 seconds",
+    backoffCoefficient: 2,
+    maximumInterval: "1 minute",
+    maximumAttempts: 10,
+  },
+});
+
+const { SessionMaintenanceActivity } = proxyActivities<
+  Pick<DtyeActivities, "SessionMaintenanceActivity">
 >({
   startToCloseTimeout: "2 minutes",
   retry: {
@@ -60,17 +70,18 @@ export interface OutboxDispatchRecoveryWorkflowInput {
 export async function OutboxDispatchRecoveryWorkflow(
   input: OutboxDispatchRecoveryWorkflowInput,
 ): Promise<{ accepted: number; retried: number; failed: number; runs: number }> {
+  if (input.schemaVersion !== 1) throw new Error("unsupported outbox recovery workflow schema");
   let pageCount = 0;
   let totals = input.totals ?? { accepted: 0, retried: 0, failed: 0 };
   while (true) {
-    const page = await OutboxDispatchActivity({ eventIds: input.eventIds, limit: 100 });
+    const page = await OutboxDispatchActivity({ eventIds: input.eventIds, limit: 1 });
     pageCount += 1;
     totals = {
       accepted: totals.accepted + page.accepted,
       retried: totals.retried + page.retried,
       failed: totals.failed + page.failed,
     };
-    const decision = nextPagingDecision({ pageSize: 100, pageCount, processed: page.claimed });
+    const decision = nextPagingDecision({ pageSize: 1, pageCount, processed: page.claimed });
     if (decision === "complete") return { ...totals, runs: (input.runs ?? 0) + 1 };
     if (decision === "continue_as_new") {
       return continueAsNew<typeof OutboxDispatchRecoveryWorkflow>({
@@ -86,14 +97,19 @@ export interface SessionMaintenanceWorkflowInput {
   readonly schemaVersion: 1;
   readonly deleted?: number;
   readonly runs?: number;
+  /** Stable cutoff carried through continue-as-new so a run cannot chase new expirations. */
+  readonly purgeBefore?: number;
 }
 
 export async function SessionMaintenanceWorkflow(
   input: SessionMaintenanceWorkflowInput,
 ): Promise<{ deleted: number; runs: number }> {
+  if (input.schemaVersion !== 1) {
+    throw new Error("unsupported session maintenance workflow schema");
+  }
   let pageCount = 0;
   let deleted = input.deleted ?? 0;
-  const purgeBefore = Date.now();
+  const purgeBefore = input.purgeBefore ?? Date.now();
   while (true) {
     const page = await SessionMaintenanceActivity({ now: purgeBefore, limit: 500 });
     pageCount += 1;
@@ -105,6 +121,7 @@ export async function SessionMaintenanceWorkflow(
         schemaVersion: 1,
         deleted,
         runs: (input.runs ?? 0) + 1,
+        purgeBefore,
       });
     }
   }

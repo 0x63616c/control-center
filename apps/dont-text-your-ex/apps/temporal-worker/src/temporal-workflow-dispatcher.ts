@@ -162,29 +162,34 @@ export interface TemporalWorkflowGateway {
 }
 
 export class TemporalClientWorkflowGateway implements TemporalWorkflowGateway {
-  constructor(private readonly client: Client) {}
+  constructor(
+    private readonly client: Client,
+    private readonly rpcTimeoutMs = 15_000,
+  ) {}
   async execute(
     operation: Exclude<TemporalOperation, { kind: "audit" | "fanout" }>,
   ): Promise<void> {
-    if (operation.kind === "signal_with_start") {
-      await this.client.workflow.signalWithStart(operation.workflowType, {
-        workflowId: operation.workflowId,
-        taskQueue: "main",
-        args: [operation.startArgs],
-        signal: operation.signal,
-        signalArgs: [operation.signalArgs],
-      });
-      return;
-    }
-    try {
-      await this.client.workflow.start(operation.workflowType, {
-        workflowId: operation.workflowId,
-        taskQueue: "main",
-        args: [operation.args],
-      });
-    } catch (error) {
-      if (!(error instanceof WorkflowExecutionAlreadyStartedError)) throw error;
-    }
+    await this.client.withDeadline(Date.now() + this.rpcTimeoutMs, async () => {
+      if (operation.kind === "signal_with_start") {
+        await this.client.workflow.signalWithStart(operation.workflowType, {
+          workflowId: operation.workflowId,
+          taskQueue: "main",
+          args: [operation.startArgs],
+          signal: operation.signal,
+          signalArgs: [operation.signalArgs],
+        });
+        return;
+      }
+      try {
+        await this.client.workflow.start(operation.workflowType, {
+          workflowId: operation.workflowId,
+          taskQueue: "main",
+          args: [operation.args],
+        });
+      } catch (error) {
+        if (!(error instanceof WorkflowExecutionAlreadyStartedError)) throw error;
+      }
+    });
   }
 }
 
@@ -230,7 +235,7 @@ export class RecordingTemporalEventHandler implements TemporalEventHandler {
 }
 
 type HandlerRegistry = Partial<Record<DomainEventType, TemporalEventHandler>>;
-const AUDIT_EVENT_TYPES = ["jar.created"] as const;
+const AUDIT_EVENT_TYPES = ["jar.created", "rescue.abandoned"] as const;
 
 export class TemporalWorkflowDispatcher implements WorkflowDispatcher {
   constructor(private readonly handlers: HandlerRegistry = {}) {}

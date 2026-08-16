@@ -80,7 +80,7 @@ queue `main`, and a single object argument.
 | `dtye_outbox_recovery` | `* * * * *`, UTC | `OutboxDispatchRecoveryWorkflow` | 5 minutes |
 | `dtye_streak_sweep` | `*/15 * * * *`, UTC | `StreakMilestoneSweepWorkflow` | 10 minutes |
 | `dtye_monthly_recap` | `5 * * * *`, UTC | `MonthlyJarRecapWorkflow` | 30 minutes |
-| `dtye_session_maintenance` | `17 * * * *`, UTC | `SessionMaintenanceWorkflow` | 10 minutes |
+| `dtye_session_maintenance` | `17 3 * * *`, UTC | `SessionMaintenanceWorkflow` | 10 minutes |
 | `dtye_deletion_history_sweep` | `47 * * * *`, UTC | `DeletionHistorySweepWorkflow` | 30 minutes |
 
 The UTC sweeps select due records using each user's stored IANA timezone or the
@@ -147,6 +147,7 @@ and `WorkflowHistoryEraser`.
 | Class | Start-to-close | Retry policy |
 |---|---:|---|
 | Pure database read/conditional mutation | 30 seconds | initial 1s, coefficient 2, maximum 30s, 10 attempts; constraint/auth/ineligible failures are non-retryable |
+| One-event outbox dispatch | 25 seconds, 30-second row lease, 15-second Temporal RPC deadline | initial 2s, coefficient 2, maximum 1m, 10 attempts; at most 20 events before continue-as-new |
 | Bounded database page | 2 minutes with heartbeat | initial 2s, coefficient 2, maximum 1m, 10 attempts |
 | APNs delivery | 20 seconds | at-least-once; retry transient results up to 8 attempts, permanent/invalid-registration terminal; collapse ID is best-effort dedupe |
 | Apple token exchange/revocation | 30 seconds per call | workflow-owned retry loop bounded to 24h; HTTP 200/already-invalid succeeds, transient retries, terminal/missing legacy material becomes `manual_action_required` only after local erasure |

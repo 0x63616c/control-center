@@ -32,7 +32,7 @@ export const SCHEDULES = [
   {
     scheduleId: "dtye_session_maintenance",
     workflowType: "SessionMaintenanceWorkflow",
-    cron: "17 * * * *",
+    cron: "17 3 * * *",
     timezone: "UTC",
     args: { schemaVersion: 1 },
     timeout: "10 minutes",
