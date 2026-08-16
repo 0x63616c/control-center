@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { JarIdSchema, ReportIdSchema } from "../../../contracts";
+import { JarIdSchema, ReportIdSchema, RescueInterventionIdSchema } from "../../../contracts";
 
 const opaqueIdSchema = <Brand extends string>(prefix: string, brand: Brand) =>
   z
@@ -12,7 +12,6 @@ export const InviteVersionIdSchema = opaqueIdSchema("inv", "InviteVersionId");
 export const MembershipTenureIdSchema = opaqueIdSchema("mtn", "MembershipTenureId");
 const SlipIdSchema = opaqueIdSchema("slip", "SlipId");
 export const JarMilestoneIdSchema = opaqueIdSchema("jms", "JarMilestoneId");
-const RescueInterventionIdSchema = opaqueIdSchema("rsi", "RescueInterventionId");
 const StreakAchievementIdSchema = opaqueIdSchema("sta", "StreakAchievementId");
 const RecapIdSchema = opaqueIdSchema("rcp", "RecapId");
 const NotificationIdSchema = opaqueIdSchema("ntf", "NotificationId");
