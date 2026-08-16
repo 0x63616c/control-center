@@ -37,7 +37,7 @@ import type {
 
 // ─────────────────────────── time helpers ───────────────────────────
 function daysClean(streakStartAt: number | null): number {
-  if (streakStartAt == null) return -1; // never caved
+  if (streakStartAt == null) return -1; // no recorded slip has started the streak clock
   return Math.max(0, Math.floor((now() - streakStartAt) / DAY));
 }
 
@@ -625,7 +625,7 @@ export async function setShareStreak(jarId: JarId, userId: UserId, val: boolean)
 }
 
 // ─────────────────────────── slips ───────────────────────────
-const MILESTONE_STEP = 5000; // $50
+const MILESTONE_STEP = 5000; // 50 virtual points
 
 export async function logSlip(opts: {
   jarId: JarId;
@@ -700,7 +700,7 @@ async function logSlipInTransaction(
       {
         jarId: opts.jarId,
         type: "milestone",
-        text: `The jar just cracked $${t / 100}. Disgraceful.`,
+        text: `The jar reached ${t / 100} virtual points. Keep supporting each other.`,
       },
       db,
     );

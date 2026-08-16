@@ -39,7 +39,7 @@ describe("shared accessibility contracts", () => {
 
     expect(html).toContain('role="dialog"');
     expect(html).toContain('aria-modal="true"');
-    expect(html).toContain('aria-label="Report attachment viewer"');
+    expect(html).toContain('aria-label="Supporting screenshot viewer"');
     expect(html).toContain('aria-label="Close attachment viewer"');
   });
 
@@ -54,9 +54,9 @@ describe("shared accessibility contracts", () => {
       }),
     );
 
-    expect(html).toContain('alt="Report attachment"');
+    expect(html).toContain('alt="Accountability check attachment"');
     expect(html).not.toContain("<button");
-    expect(html).not.toContain("View report attachment");
+    expect(html).not.toContain("View supporting screenshot");
   });
 
   it("names visual avatar choices and exposes their selected state", () => {

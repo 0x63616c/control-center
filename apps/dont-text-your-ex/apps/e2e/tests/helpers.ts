@@ -29,9 +29,9 @@ export async function signInAsCalum(page: Page): Promise<void> {
 export async function signUpNew(page: Page, name = "Maker"): Promise<void> {
   await devLogin(page, { as: "new" });
   await page.goto("/");
-  await expect(page.getByText("Make it official")).toBeVisible();
+  await expect(page.getByText("Make it yours")).toBeVisible();
   await page.getByRole("textbox", { name: "Your name" }).fill(name);
-  await page.getByRole("button", { name: "Start the shame →" }).click();
+  await page.getByRole("button", { name: "Start your reset →" }).click();
   await waitForHomeReady(page);
 }
 
@@ -42,17 +42,17 @@ export async function signUpNewFromInvite(
 ): Promise<void> {
   await devLogin(page, { as: "new" });
   await page.goto(`/j/${code}`);
-  await expect(page.getByText("Make it official")).toBeVisible();
+  await expect(page.getByText("Make it yours")).toBeVisible();
   await page.getByRole("textbox", { name: "Your name" }).fill(name);
-  await page.getByRole("button", { name: "Start the shame →" }).click();
+  await page.getByRole("button", { name: "Start your reset →" }).click();
   await expect(page.getByText("Join jar")).toBeVisible();
 }
 
 export async function openJar(page: Page, name: string) {
   await page.locator(`[data-testid="jar-card"][data-jar-name="${name}"]`).click();
-  await expect(page.getByTestId("jar-pot")).toBeVisible();
+  await expect(page.getByTestId("jar-total-tally")).toBeVisible();
 }
 
-export function shameRow(page: Page, member: string) {
-  return page.locator(`[data-testid="shame-row"][data-member="${member}"]`);
+export function memberRow(page: Page, member: string) {
+  return page.locator(`[data-testid="progress-row"][data-member="${member}"]`);
 }

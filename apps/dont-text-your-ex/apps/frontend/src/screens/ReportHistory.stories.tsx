@@ -79,7 +79,7 @@ function context<Name extends RouteFor<"reportHistory" | "reportDetail">["name"]
 }
 
 const meta = {
-  title: "Don't Text Your Ex/Flows/Report history",
+  title: "Don't Text Your Ex/Flows/Check history",
   tags: ["autodocs"],
   parameters: { boardWrapper: false, layout: "centered" },
   decorators: [
@@ -103,10 +103,10 @@ export const ResolvedList: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     navigate.mockClear();
-    await expect(await canvas.findByText("Owned")).toBeVisible();
+    await expect(await canvas.findByText("Accepted")).toBeVisible();
     await expect(canvas.getByText("Denied")).toBeVisible();
     await expect(canvas.getByText("The screenshot survived the reload.")).toBeVisible();
-    await userEvent.click(canvas.getByRole("button", { name: /Alex · The Group Chat.*Owned/ }));
+    await userEvent.click(canvas.getByRole("button", { name: /Alex · The Group Chat.*Accepted/ }));
     await expect(navigate).toHaveBeenCalledWith({
       name: "reportDetail",
       reportId: resolved.id,
@@ -127,8 +127,8 @@ export const HistoryLoading: Story = {
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(await canvas.findByRole("status")).toHaveTextContent("Loading report history");
-    await expect(canvas.queryByText("No resolved reports yet.")).not.toBeInTheDocument();
+    await expect(await canvas.findByRole("status")).toHaveTextContent("Loading check history");
+    await expect(canvas.queryByText("No resolved checks yet.")).not.toBeInTheDocument();
   },
 };
 
@@ -140,7 +140,7 @@ export const HistoryEmpty: Story = {
     />
   ),
   play: async ({ canvasElement }) => {
-    await expect(await within(canvasElement).findByText("No resolved reports yet.")).toBeVisible();
+    await expect(await within(canvasElement).findByText("No resolved checks yet.")).toBeVisible();
   },
 };
 
@@ -163,14 +163,14 @@ export const HistoryErrorAndRetry: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(await canvas.findByRole("alert")).toHaveTextContent(
-      "Report history couldn’t be loaded.",
+      "Check history couldn’t be loaded.",
     );
     await userEvent.click(canvas.getByRole("button", { name: "Retry" }));
-    await expect(await canvas.findByText("Owned")).toBeVisible();
+    await expect(await canvas.findByText("Accepted")).toBeVisible();
   },
 };
 
-export const AnonymousResolvedDetail: Story = {
+export const HiddenSenderResolvedDetail: Story = {
   render: () => {
     const ctx = context({ name: "reportDetail", reportId: resolved.id });
     const services: ReportDetailServices = { report: fn(async () => resolved) };
@@ -178,11 +178,13 @@ export const AnonymousResolvedDetail: Story = {
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(await canvas.findByText("Someone in the jar reported Alex")).toBeVisible();
+    await expect(await canvas.findByText("Someone in the jar sent a check to Alex")).toBeVisible();
     await expect(canvas.queryByText("History Reporter")).not.toBeInTheDocument();
-    const evidence = canvas.getByRole("button", { name: "View report attachment" });
+    const evidence = canvas.getByRole("button", { name: "View supporting screenshot" });
     await userEvent.click(evidence);
-    await expect(canvas.getByRole("dialog", { name: "Report attachment viewer" })).toBeVisible();
+    await expect(
+      canvas.getByRole("dialog", { name: "Supporting screenshot viewer" }),
+    ).toBeVisible();
     await userEvent.keyboard("{Escape}");
     await expect(canvas.queryByRole("dialog")).not.toBeInTheDocument();
     await expect(evidence).toHaveFocus();
@@ -200,8 +202,8 @@ export const DetailLoading: Story = {
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(await canvas.findByRole("status")).toHaveTextContent("Loading report");
-    await expect(canvas.queryByText("$5 consequence")).not.toBeInTheDocument();
+    await expect(await canvas.findByRole("status")).toHaveTextContent("Loading check");
+    await expect(canvas.queryByText("5 pts")).not.toBeInTheDocument();
   },
 };
 
@@ -224,9 +226,9 @@ export const DetailErrorAndRetry: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(await canvas.findByRole("alert")).toHaveTextContent(
-      "This report couldn’t be loaded.",
+      "This check couldn’t be loaded.",
     );
     await userEvent.click(canvas.getByRole("button", { name: "Retry" }));
-    await expect(await canvas.findByText("Someone in the jar reported Alex")).toBeVisible();
+    await expect(await canvas.findByText("Someone in the jar sent a check to Alex")).toBeVisible();
   },
 };

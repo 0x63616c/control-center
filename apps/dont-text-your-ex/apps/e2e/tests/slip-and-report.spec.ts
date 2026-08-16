@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { openJar, shameRow, signInAsCalum } from "./helpers";
+import { memberRow, openJar, signInAsCalum } from "./helpers";
 
 // Each test starts from the seeded baseline (non-prod reset seam) so
 // absolute assertions on seeded values stay order-independent.
@@ -7,34 +7,34 @@ test.beforeEach(async ({ request }) => {
   await request.post("/api/test/reset");
 });
 
-test("logging a slip bumps the tally, resets streak, grows the pot", async ({ page }) => {
-  await signInAsCalum(page);
-  await openJar(page, "The Group Chat");
-
-  const potBefore = await page.getByTestId("jar-pot").innerText();
-  await expect(shameRow(page, "Calum")).toContainText("$40");
-
-  await page.getByRole("button", { name: "I texted my ex" }).click();
-  await expect(page.getByText(/How much is that gonna cost you/)).toBeVisible();
-  // jar default is $5 and the stepper increments by the default → $5 + $5 = $10
-  await page.getByRole("button", { name: "+", exact: true }).click();
-  await page.getByRole("button", { name: /Add \$10 to my shame/ }).click();
-  // friction sheet
-  await expect(page.getByText("You sure-sure?")).toBeVisible();
-  await page.getByRole("button", { name: /Yeah\. I did it/ }).click();
-
-  // back on jar detail; pot grew by $10 and Calum's seeded $40 became $50
-  await expect(page.getByTestId("jar-pot")).not.toHaveText(potBefore);
-  await expect(shameRow(page, "Calum")).toContainText("$50");
-});
-
-test("reporting with a real screenshot + anonymous toggle reaches the snitched screen", async ({
+test("logging a check-in bumps the virtual tally, resets streak, and grows the group tally", async ({
   page,
 }) => {
   await signInAsCalum(page);
   await openJar(page, "The Group Chat");
-  await page.getByRole("button", { name: "Report" }).click();
-  await expect(page.getByText("Caught someone red-handed?")).toBeVisible();
+
+  const tallyBefore = await page.getByTestId("jar-total-tally").innerText();
+  await expect(memberRow(page, "Calum")).toContainText("40 pts");
+
+  await page.getByRole("button", { name: "Log a slip" }).click();
+  await expect(page.getByText(/Choose the virtual amount/)).toBeVisible();
+  // The jar default is 5 pts and the stepper increments once to 10 pts.
+  await page.getByRole("button", { name: "+", exact: true }).click();
+  await page.getByRole("button", { name: "Add 10 pts to my virtual tally" }).click();
+  // friction sheet
+  await expect(page.getByText("Log this slip?")).toBeVisible();
+  await page.getByRole("button", { name: "Confirm and reset streak" }).click();
+
+  // Back on jar detail; the group grew by 10 pts and Calum moved from 40 to 50 pts.
+  await expect(page.getByTestId("jar-total-tally")).not.toHaveText(tallyBefore);
+  await expect(memberRow(page, "Calum")).toContainText("50 pts");
+});
+
+test("an accountability check with an attachment can keep the sender private", async ({ page }) => {
+  await signInAsCalum(page);
+  await openJar(page, "The Group Chat");
+  await page.getByRole("button", { name: "Accountability check" }).click();
+  await expect(page.getByText("Think someone slipped?", { exact: false })).toBeVisible();
 
   // pick Ali
   await page.getByRole("button", { name: "Ali", exact: true }).click();
@@ -46,26 +46,26 @@ test("reporting with a real screenshot + anonymous toggle reaches the snitched s
       "base64",
     ),
   });
-  await expect(page.getByRole("img", { name: "Report attachment" })).toBeVisible();
+  await expect(page.getByRole("img", { name: "Accountability check attachment" })).toBeVisible();
 
-  await page.getByRole("switch", { name: "Send anonymously" }).click();
-  await page.getByRole("button", { name: /Send it anonymously/ }).click();
+  await page.getByRole("switch", { name: "Hide my name from jar members" }).click();
+  await page.getByRole("button", { name: "Send check anonymously" }).click();
 
-  await expect(page.getByText("Snitched.")).toBeVisible();
-  await expect(page.getByText("won't know it was you", { exact: false })).toBeVisible();
+  await expect(page.getByText("Check sent", { exact: true })).toBeVisible();
+  await expect(page.getByText("name is hidden from jar members", { exact: false })).toBeVisible();
 });
 
-test("report picker enforces note-or-image, malicious boundaries, and three real formats", async ({
+test("accountability check enforces note-or-image, malicious boundaries, and three real formats", async ({
   page,
 }) => {
   await signInAsCalum(page);
   await openJar(page, "The Group Chat");
-  await page.getByRole("button", { name: "Report" }).click();
+  await page.getByRole("button", { name: "Accountability check" }).click();
   await page.getByRole("button", { name: "Ali", exact: true }).click();
 
-  const send = page.getByRole("button", { name: "Send the report" });
+  const send = page.getByRole("button", { name: "Send accountability check" });
   await expect(send).toBeDisabled();
-  await page.getByPlaceholder("“replied to her story in 4 seconds flat…”").fill("   ");
+  await page.getByPlaceholder("“I saw a message come through…”").fill("   ");
   await expect(send).toBeDisabled();
 
   const png = Buffer.from(
@@ -80,7 +80,7 @@ test("report picker enforces note-or-image, malicious boundaries, and three real
     })),
   );
   await expect(page.getByRole("alert")).toHaveText("Add no more than 3 screenshots.");
-  await expect(page.getByRole("img", { name: "Report attachment" })).toHaveCount(0);
+  await expect(page.getByRole("img", { name: "Accountability check attachment" })).toHaveCount(0);
 
   await page.getByTestId("evidence-input").setInputFiles({
     name: "spoofed.png",
@@ -100,14 +100,14 @@ test("report picker enforces note-or-image, malicious boundaries, and three real
       buffer: Buffer.from("RIFF\u0000\u0000\u0000\u0000WEBP"),
     },
   ]);
-  await expect(page.getByRole("img", { name: "Report attachment" })).toHaveCount(3);
+  await expect(page.getByRole("img", { name: "Accountability check attachment" })).toHaveCount(3);
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(send).toBeEnabled();
   await send.click();
-  await expect(page.getByText("Snitched.")).toBeVisible();
+  await expect(page.getByText("Check sent", { exact: true })).toBeVisible();
 });
 
-test("report member fetch/send failures preserve every choice and retry without false success", async ({
+test("accountability-check fetch/send failures preserve every choice and retry without false success", async ({
   page,
 }) => {
   await signInAsCalum(page);
@@ -138,16 +138,16 @@ test("report member fetch/send failures preserve every choice and retry without 
     if (fetchAttempt === 4) return route.abort("internetdisconnected");
     return route.continue();
   });
-  await page.getByRole("button", { name: "Report" }).click();
+  await page.getByRole("button", { name: "Accountability check" }).click();
   for (let attempt = 0; attempt < 4; attempt += 1) {
     await expect(page.getByRole("alert")).toContainText("couldn’t be loaded");
-    await expect(page.getByText("Caught someone red-handed?")).toHaveCount(0);
+    await expect(page.getByText("Think someone slipped?", { exact: false })).toHaveCount(0);
     await page.getByRole("button", { name: "Retry" }).click();
   }
-  await expect(page.getByText("Caught someone red-handed?")).toBeVisible();
+  await expect(page.getByText("Think someone slipped?", { exact: false })).toBeVisible();
 
   await page.getByRole("button", { name: "Ali", exact: true }).click();
-  const note = page.getByPlaceholder("“replied to her story in 4 seconds flat…”");
+  const note = page.getByPlaceholder("“I saw a message come through…”");
   await note.fill("Preserve this exact note");
   await page.getByTestId("evidence-input").setInputFiles({
     name: "retry-receipt.png",
@@ -157,8 +157,8 @@ test("report member fetch/send failures preserve every choice and retry without 
       "base64",
     ),
   });
-  const anonymous = page.getByRole("switch", { name: "Send anonymously" });
-  await anonymous.click();
+  const hideName = page.getByRole("switch", { name: "Hide my name from jar members" });
+  await hideName.click();
 
   let submitAttempt = 0;
   await page.route("**/api/jars/*/reports", async (route) => {
@@ -167,35 +167,37 @@ test("report member fetch/send failures preserve every choice and retry without 
     if (submitAttempt === 1) return route.abort("internetdisconnected");
     return route.continue();
   });
-  await page.getByRole("button", { name: "Send it anonymously" }).click();
+  await page.getByRole("button", { name: "Send check anonymously" }).click();
   await expect(page.getByRole("alert")).toContainText("wasn’t sent");
-  await expect(page.getByText("Snitched.")).toHaveCount(0);
+  await expect(page.getByText("Check sent", { exact: true })).toHaveCount(0);
   await expect(note).toHaveValue("Preserve this exact note");
-  await expect(anonymous).toBeChecked();
-  await expect(page.getByRole("img", { name: "Report attachment" })).toBeVisible();
+  await expect(hideName).toBeChecked();
+  await expect(page.getByRole("img", { name: "Accountability check attachment" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Ali", exact: true })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
 
-  await page.getByRole("button", { name: "Retry sending report" }).click();
-  await expect(page.getByText("Snitched.")).toBeVisible();
-  await expect(page.getByText("Ali is getting pinged", { exact: false })).toBeVisible();
-  await expect(page.getByText("won't know it was you", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "Retry sending check" }).click();
+  await expect(page.getByText("Check sent", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Ali will be asked to accept or deny it", { exact: false }),
+  ).toBeVisible();
+  await expect(page.getByText("name is hidden from jar members", { exact: false })).toBeVisible();
   expect(submitAttempt).toBe(2);
 });
 
-test("confirm/deny: owning the seeded report adds to Calum's tally", async ({ page }) => {
+test("confirm or dismiss: confirming the seeded check adds to Calum's tally", async ({ page }) => {
   await signInAsCalum(page);
   await page.getByTestId("tab-activity").click();
-  await expect(page.getByText("You've been reported")).toBeVisible();
-  await page.getByText("says you texted your ex", { exact: false }).click();
+  await expect(page.getByText("You have an accountability check")).toBeVisible();
+  await page.getByText("sent you a check", { exact: false }).click();
 
   // The seeded report is note-only; evidence is never fabricated for tests.
   await expect(page.getByText("Someone in the jar")).toBeVisible();
-  await expect(page.getByText(/Christie posted a story/)).toBeVisible();
-  await expect(page.getByText(/The receipts/)).toHaveCount(0);
-  await page.getByRole("button", { name: /Own it - add/ }).click();
+  await expect(page.getByText(/A reply came through/)).toBeVisible();
+  await expect(page.getByText(/Supporting screenshots/)).toHaveCount(0);
+  await page.getByRole("button", { name: /Accept and add/ }).click();
   await expect(page.getByText("Respect.")).toBeVisible();
 
   // Resolution is durable: after a full reload the linked activity and history
@@ -203,14 +205,14 @@ test("confirm/deny: owning the seeded report adds to Calum's tally", async ({ pa
   await page.reload();
   await expect(page.getByText("Your jars", { exact: true })).toBeVisible();
   await page.getByTestId("tab-activity").click();
-  await page.getByRole("button", { name: "View report in The Group Chat" }).click();
-  await expect(page.getByText("Owned", { exact: true })).toBeVisible();
-  await expect(page.getByText(/Christie posted a story/)).toBeVisible();
-  await expect(page.getByText("Someone in the jar reported Calum")).toBeVisible();
+  await page.getByRole("button", { name: "View accountability check in The Group Chat" }).click();
+  await expect(page.getByText("Accepted", { exact: true })).toBeVisible();
+  await expect(page.getByText(/A reply came through/)).toBeVisible();
+  await expect(page.getByText("Someone in the jar sent a check to Calum")).toBeVisible();
   await page.getByRole("button", { name: "Back" }).click();
-  await page.getByRole("button", { name: "View report history" }).click();
-  await expect(page.getByText("Report history", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "View check history" }).click();
+  await expect(page.getByText("Check history", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: /Calum · The Group Chat/ }).click();
-  await expect(page.getByText("Owned", { exact: true })).toBeVisible();
-  await expect(page.getByText(/Christie posted a story/)).toBeVisible();
+  await expect(page.getByText("Accepted", { exact: true })).toBeVisible();
+  await expect(page.getByText(/A reply came through/)).toBeVisible();
 });
