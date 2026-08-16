@@ -158,15 +158,20 @@ export class PostgresRescueStore implements RescueStore {
       }
 
       const now = this.#clock();
+      const absoluteDeadline = current.startedAt + THIRTY_MINUTES_MS;
+      const responseLimit =
+        current.status === "check_in_due"
+          ? current.responseDeadlineAt
+          : current.deadlineAt >= absoluteDeadline
+            ? current.deadlineAt
+            : current.deadlineAt + FIVE_MINUTES_MS;
+      if (now >= responseLimit) {
+        return { outcome: "ineligible", intervention: current };
+      }
       const nextVersion = current.aggregateVersion + 1;
       if (input.action === "extend") {
-        const responseLimit =
-          current.status === "check_in_due"
-            ? current.responseDeadlineAt
-            : current.deadlineAt + FIVE_MINUTES_MS;
         const nextDeadline = current.deadlineAt + TEN_MINUTES_MS;
-        const absoluteDeadline = current.startedAt + THIRTY_MINUTES_MS;
-        if (now > responseLimit || current.extensionCount >= 2 || nextDeadline > absoluteDeadline) {
+        if (current.extensionCount >= 2 || nextDeadline > absoluteDeadline) {
           return { outcome: "ineligible", intervention: current };
         }
         const updated = await db.query<RescueRow>(
