@@ -185,7 +185,7 @@ function violationsFor(path: string, source = readFileSync(path, "utf8")): Viola
       if (
         rule.id === "currency-amount" &&
         relativePath.startsWith("apps/api/") &&
-        /^(?:(?:delete\b[\s\S]*\bfrom|insert\b[\s\S]*\binto|select\b[\s\S]*\bfrom|update\b[\s\S]*\bset)\b|with\s+[a-z_][a-z0-9_]*\s+as\s*\()/i.test(
+        /^(?:(?:delete\b[\s\S]*\bfrom|insert\b[\s\S]*\binto|select\b[\s\S]*\bfrom|update\b[\s\S]*\bset)\b|select\s+[a-z_][a-z0-9_]*\s*\(|with\s+[a-z_][a-z0-9_]*\s+as\s*\()/i.test(
           normalized,
         )
       ) {
@@ -274,6 +274,7 @@ describe("runtime copy policy scanner", () => {
     const source = `
       const updateQuery = "update memberships set tally_cents = $1 where id = $2";
       const cteQuery = "with candidates as (select id from events where id = $5) select * from candidates";
+      const lockQuery = "select pg_advisory_xact_lock(hashtextextended($1, 0))";
     `;
 
     expect(violationsFor(resolve(PRODUCT_ROOT, "apps/api/src/fixture.ts"), source)).toEqual([]);

@@ -31,6 +31,12 @@ const reports: ReportAccountabilityStore = {
   },
 };
 
+const rescue = {
+  loadRescue: async () => null,
+  advanceRescueAtDeadline: async () => null,
+  eraseRescueForAccountDeletion: async () => ({ erased: true as const }),
+};
+
 function recordingObserver() {
   const observer: DtyeOperationsObserver = {
     outboxSnapshot: vi.fn(),
@@ -50,6 +56,7 @@ describe("DTYE activity observability", () => {
       sessions: new MemorySessionMaintenanceStore(),
       notifications,
       reports,
+      rescue,
       operations,
       outboxSnapshot: {
         snapshot: vi.fn(async () => ({ pending: 0, oldestAgeSeconds: 0, permanentFailures: 0 })),
@@ -86,6 +93,7 @@ describe("DTYE activity observability", () => {
       sessions: new MemorySessionMaintenanceStore(),
       notifications,
       reports,
+      rescue,
       operations,
       outboxSnapshot: {
         snapshot: vi.fn(async () => ({ pending: 0, oldestAgeSeconds: 0, permanentFailures: 0 })),
@@ -107,6 +115,7 @@ describe("DTYE activity observability", () => {
       sessions: new MemorySessionMaintenanceStore(),
       notifications,
       reports,
+      rescue,
       operations,
       outboxSnapshot: { snapshot: vi.fn(async () => Promise.reject(new Error("db unavailable"))) },
       clock: () => 6_000,
@@ -127,6 +136,7 @@ describe("DTYE activity observability", () => {
       sessions: new MemorySessionMaintenanceStore([{ token: "secret", expiresAt: 1 }]),
       notifications,
       reports,
+      rescue,
       operations: successObserver,
       outboxSnapshot: { snapshot: vi.fn() },
       clock: () => clockValues.shift() ?? 1_250,
@@ -146,6 +156,7 @@ describe("DTYE activity observability", () => {
       sessions: { purgeExpired: vi.fn(async () => Promise.reject(new Error("database down"))) },
       notifications,
       reports,
+      rescue,
       operations: failureObserver,
       outboxSnapshot: { snapshot: vi.fn() },
       clock: () => 2_000,

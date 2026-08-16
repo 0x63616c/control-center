@@ -53,7 +53,7 @@ function TerminalCard({ intervention }: { intervention: RescueInterventionDTO })
       detail = "That win stays private.";
       break;
     case "slipped":
-      title = "No shame. You’re not alone.";
+      title = "You’re not alone.";
       detail = "Choose a jar below to open the normal slip confirmation.";
       break;
     case "abandoned":
