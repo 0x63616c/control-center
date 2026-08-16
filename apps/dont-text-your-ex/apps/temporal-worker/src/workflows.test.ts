@@ -5,16 +5,26 @@ const mocks = vi.hoisted(() => ({
   outbox: vi.fn(async () => ({ claimed: 0, accepted: 0, retried: 0, failed: 0 })),
   sessions: vi.fn(async () => ({ deleted: 0 })),
   continueAsNew: vi.fn(async (input: unknown) => input),
+  prepareNotification: vi.fn(async () => ({ deliveryIds: [] })),
+  deliverNotification: vi.fn(async () => ({ kind: "accepted" as const })),
+  suppressNotification: vi.fn(async () => undefined),
   sleep: vi.fn(async () => undefined),
 }));
 
 vi.mock("@temporalio/workflow", () => ({
+  condition: vi.fn(async () => false),
+  defineQuery: (name: string) => name,
+  defineSignal: (name: string) => name,
   proxyActivities: () => ({
     DtyeHealthCheckActivity: mocks.activity,
     OutboxDispatchActivity: mocks.outbox,
     SessionMaintenanceActivity: mocks.sessions,
+    prepareNotification: mocks.prepareNotification,
+    deliverNotification: mocks.deliverNotification,
+    suppressNotification: mocks.suppressNotification,
   }),
   continueAsNew: mocks.continueAsNew,
+  setHandler: vi.fn(),
   sleep: mocks.sleep,
 }));
 
@@ -29,6 +39,9 @@ beforeEach(() => {
   mocks.outbox.mockReset().mockResolvedValue({ claimed: 0, accepted: 0, retried: 0, failed: 0 });
   mocks.sessions.mockReset().mockResolvedValue({ deleted: 0 });
   mocks.continueAsNew.mockReset().mockImplementation(async (input: unknown) => input);
+  mocks.prepareNotification.mockReset().mockResolvedValue({ deliveryIds: [] });
+  mocks.deliverNotification.mockReset().mockResolvedValue({ kind: "accepted" });
+  mocks.suppressNotification.mockReset().mockResolvedValue(undefined);
   mocks.sleep.mockReset().mockResolvedValue(undefined);
 });
 
@@ -95,5 +108,33 @@ describe("SessionMaintenanceWorkflow", () => {
       runs: 1,
       purgeBefore: 123_456,
     });
+  });
+});
+
+describe("NotificationDeliveryWorkflow", () => {
+  test("accepts only the exact opaque notification input and returns terminal outcomes", async () => {
+    const { NotificationDeliveryWorkflow } = await import("./workflows");
+    mocks.prepareNotification.mockResolvedValue({
+      deliveryIds: ["ndl_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"] as never,
+    });
+
+    await expect(
+      NotificationDeliveryWorkflow({
+        schemaVersion: 1,
+        notificationId: "ntf_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      } as never),
+    ).resolves.toEqual({
+      notificationId: "ntf_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      deliveryCount: 1,
+      outcomes: ["delivered"],
+    });
+    expect(mocks.deliverNotification).toHaveBeenCalledWith({
+      deliveryId: "ndl_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      finalAttempt: false,
+    });
+
+    await expect(
+      NotificationDeliveryWorkflow({ schemaVersion: 1, aggregateId: "usr_private" } as never),
+    ).rejects.toThrow();
   });
 });

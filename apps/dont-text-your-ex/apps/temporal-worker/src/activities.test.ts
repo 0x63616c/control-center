@@ -27,6 +27,12 @@ describe("outbox dispatch activity", () => {
       outbox: new MemoryOutbox(events),
       dispatcher,
       sessions: { purgeExpired: async () => ({ deleted: 0 }) },
+      notifications: {
+        prepareNotification: async () => ({ deliveryIds: [] }),
+        deliverNotification: async () => ({ kind: "already_terminal" }),
+        suppressNotification: async () => undefined,
+        rotatePushTokenBatch: async () => ({ rotated: 0 }),
+      },
       clock: () => 10,
     });
 

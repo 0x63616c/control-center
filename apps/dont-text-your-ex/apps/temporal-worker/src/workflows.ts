@@ -12,7 +12,6 @@ import {
   NotificationDeliveryWorkflowInputSchema,
 } from "../../../contracts";
 import type { DomainEvent } from "../../api/src/domain-events";
-import type * as activities from "./activities";
 import type { DtyeActivities } from "./activities";
 import { HEALTH_CHECK_PERIOD_MS, healthCheckSleepMs } from "./pacing";
 import { nextPagingDecision } from "./workflow-paging";
@@ -33,7 +32,7 @@ const { DtyeHealthCheckActivity } = proxyActivities<
 });
 
 const notificationActivities = proxyActivities<
-  Pick<typeof activities, "prepareNotification" | "deliverNotification" | "suppressNotification">
+  Pick<DtyeActivities, "prepareNotification" | "deliverNotification" | "suppressNotification">
 >({
   startToCloseTimeout: "20 seconds",
   retry: { maximumAttempts: 2 },

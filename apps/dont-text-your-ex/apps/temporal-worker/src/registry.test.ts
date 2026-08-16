@@ -1,11 +1,5 @@
 import { describe, expect, test } from "vitest";
-import {
-  ACTIVITIES,
-  ACTIVITY_TYPES,
-  MANAGED_SCHEDULE_PREFIX,
-  SCHEDULES,
-  WORKFLOW_TYPES,
-} from "./registry";
+import { ACTIVITY_TYPES, MANAGED_SCHEDULE_PREFIX, SCHEDULES, WORKFLOW_TYPES } from "./registry";
 import * as workflows from "./workflows";
 
 describe("DTYE Temporal registry", () => {
@@ -22,13 +16,6 @@ describe("DTYE Temporal registry", () => {
       "DtyeHealthCheckActivity",
       "OutboxDispatchActivity",
       "SessionMaintenanceActivity",
-      "prepareNotification",
-      "deliverNotification",
-      "suppressNotification",
-      "rotatePushTokenBatch",
-    ]);
-    expect(Object.keys(ACTIVITIES)).toEqual([
-      "DtyeHealthCheckActivity",
       "prepareNotification",
       "deliverNotification",
       "suppressNotification",

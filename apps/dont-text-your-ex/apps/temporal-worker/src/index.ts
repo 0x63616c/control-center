@@ -1,4 +1,12 @@
 import "./boot-env";
+import {
+  createApnsClient,
+  createCachedApnsAuthorization,
+  createHttp2ApnsTransport,
+  createNotificationStore,
+  createTokenCipher,
+  parseTokenKeyring,
+} from "@dont-text-your-ex/notifications";
 import { Client, Connection } from "@temporalio/client";
 import { NativeConnection, Runtime, Worker } from "@temporalio/worker";
 import { createLogger } from "@www/logger";
@@ -10,6 +18,7 @@ import { createDtyeActivities } from "./activities";
 import { prepareTemporalWorker } from "./boot";
 import { temporalWorkerConfig } from "./config";
 import { createWorkerLifecycle } from "./lifecycle";
+import { createNotificationActivities } from "./notification-activities";
 import { WORKFLOW_TYPES } from "./registry";
 import { PostgresSessionMaintenanceStore } from "./session-maintenance";
 import {
@@ -34,12 +43,40 @@ async function main(): Promise<void> {
   const clientConnection = await Connection.connect({ address: config.address });
   const client = new Client({ connection: clientConnection, namespace: config.namespace });
   const pool = new Pool({ connectionString: config.databaseUrl });
+  const apnsAuthorization = createCachedApnsAuthorization({
+    keyId: config.apnsKeyId,
+    teamId: config.apnsTeamId,
+    keyContent: config.apnsKeyContent,
+  });
+  const apnsTransport = createHttp2ApnsTransport();
+  const apnsClients = {
+    production: createApnsClient({
+      authorization: apnsAuthorization,
+      transport: apnsTransport,
+      host: "https://api.push.apple.com",
+      topic: "co.worldwidewebb.textyourex",
+    }),
+    sandbox: createApnsClient({
+      authorization: apnsAuthorization,
+      transport: apnsTransport,
+      host: "https://api.sandbox.push.apple.com",
+      topic: "co.worldwidewebb.textyourex",
+    }),
+  } as const;
   const activities = createDtyeActivities({
     outbox: new PostgresOutbox(pool),
     dispatcher: new TemporalWorkflowDispatcher(
       registeredTemporalEventHandlers(new TemporalClientWorkflowGateway(client), WORKFLOW_TYPES),
     ),
     sessions: new PostgresSessionMaintenanceStore(pool),
+    notifications: createNotificationActivities({
+      store: createNotificationStore(
+        pool,
+        createTokenCipher(parseTokenKeyring(JSON.parse(config.pushTokenKeyring))),
+      ),
+      apnsClient: (environment) => apnsClients[environment],
+      logger,
+    }),
   });
   const worker = await prepareTemporalWorker({
     config,

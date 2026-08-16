@@ -10,6 +10,10 @@ export interface TemporalWorkerConfig {
   readonly databaseUrl: string;
   readonly metricsPort: number;
   readonly otelCollectorUrl: string;
+  readonly apnsKeyId: string;
+  readonly apnsTeamId: string;
+  readonly apnsKeyContent: string;
+  readonly pushTokenKeyring: string;
 }
 
 type RawTemporalWorkerConfig = {
@@ -19,6 +23,10 @@ type RawTemporalWorkerConfig = {
   readonly DATABASE_URL: string;
   readonly METRICS_PORT: number;
   readonly TEMPORAL_OTEL_COLLECTOR_URL: string;
+  readonly APNS_KEY_ID?: string;
+  readonly APNS_TEAM_ID?: string;
+  readonly APNS_KEY_CONTENT?: string;
+  readonly PUSH_TOKEN_KEYRING?: string;
 };
 
 export function parseTemporalWorkerConfig(env: RawTemporalWorkerConfig): TemporalWorkerConfig {
@@ -28,6 +36,9 @@ export function parseTemporalWorkerConfig(env: RawTemporalWorkerConfig): Tempora
   if (env.TEMPORAL_TASK_QUEUE !== DTYE_TEMPORAL_TASK_QUEUE) {
     throw new Error(`Don't Text Your Ex Temporal task queue must be ${DTYE_TEMPORAL_TASK_QUEUE}`);
   }
+  if (!env.APNS_KEY_ID || !env.APNS_TEAM_ID || !env.APNS_KEY_CONTENT || !env.PUSH_TOKEN_KEYRING) {
+    throw new Error("Don't Text Your Ex notification delivery secrets must be configured");
+  }
   return {
     address: env.TEMPORAL_ADDRESS,
     namespace: DTYE_TEMPORAL_NAMESPACE,
@@ -35,6 +46,10 @@ export function parseTemporalWorkerConfig(env: RawTemporalWorkerConfig): Tempora
     databaseUrl: env.DATABASE_URL,
     metricsPort: env.METRICS_PORT,
     otelCollectorUrl: env.TEMPORAL_OTEL_COLLECTOR_URL,
+    apnsKeyId: env.APNS_KEY_ID,
+    apnsTeamId: env.APNS_TEAM_ID,
+    apnsKeyContent: env.APNS_KEY_CONTENT,
+    pushTokenKeyring: env.PUSH_TOKEN_KEYRING,
   };
 }
 
@@ -47,6 +62,10 @@ export function temporalWorkerConfig(): TemporalWorkerConfig {
       "DATABASE_URL",
       "METRICS_PORT",
       "TEMPORAL_OTEL_COLLECTOR_URL",
+      "APNS_KEY_ID",
+      "APNS_TEAM_ID",
+      "APNS_KEY_CONTENT",
+      "PUSH_TOKEN_KEYRING",
     ),
   );
 }

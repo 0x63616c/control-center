@@ -8,6 +8,10 @@ const valid = {
   DATABASE_URL: "postgresql://example.invalid/db",
   METRICS_PORT: 9464,
   TEMPORAL_OTEL_COLLECTOR_URL: "http://otel:4317",
+  APNS_KEY_ID: "key-id",
+  APNS_TEAM_ID: "team-id",
+  APNS_KEY_CONTENT: "private-key",
+  PUSH_TOKEN_KEYRING: '{"activeKeyId":"v1","keys":{"v1":"example"}}',
 };
 
 describe("DTYE worker config", () => {
@@ -28,5 +32,11 @@ describe("DTYE worker config", () => {
     expect(() =>
       parseTemporalWorkerConfig({ ...valid, TEMPORAL_NAMESPACE: "control-center" }),
     ).toThrow(/namespace must be dont-text-your-ex/);
+  });
+
+  test("fails before connecting when notification secrets are absent", () => {
+    expect(() => parseTemporalWorkerConfig({ ...valid, APNS_KEY_CONTENT: undefined })).toThrow(
+      /notification delivery secrets must be configured/,
+    );
   });
 });
