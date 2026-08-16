@@ -1,5 +1,16 @@
+import {
+  createNotificationStore,
+  createTokenCipher,
+  parseTokenKeyring,
+} from "@dont-text-your-ex/notifications";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { type InviteCode, JarDetailSchema, ReportSchema } from "../../../../contracts";
+import {
+  type InviteCode,
+  JarDetailSchema,
+  NotificationIdSchema,
+  PushInstallationIdSchema,
+  ReportSchema,
+} from "../../../../contracts";
 import { pool } from "../db/index";
 import { runMigrations } from "../db/migrate";
 import { PostgresOutbox } from "../outbox";
@@ -11,6 +22,17 @@ import * as store from "../store";
 // (buildDatabaseUrl returns undefined when unconfigured rather than throwing).
 // Locally: DATABASE_URL=postgresql://postgres:test@localhost:5432/tye_test bun run test --project dont-text-your-ex-api
 const HAS_DB = !!process.env.DATABASE_URL;
+
+const notificationStore = createNotificationStore(
+  pool,
+  createTokenCipher(
+    parseTokenKeyring({
+      activeKeyId: "test",
+      keys: { test: Buffer.alloc(32, 3).toString("base64") },
+    }),
+  ),
+  () => 1_750_000_000_000,
+);
 
 function requireInviteCode(detail: Awaited<ReturnType<typeof store.getJarDetail>>): InviteCode {
   if (!detail?.inviteCode) throw new Error("open jar invite missing");
@@ -116,6 +138,85 @@ describe.skipIf(!HAS_DB)("users / auth", () => {
 
     expect(updated?.name).toBe("Taylor");
     expect((await store.findUserByAppleId("apple-user-123"))?.name).toBe("Taylor");
+  });
+});
+
+describe.skipIf(!HAS_DB)("authenticated notification delivery", () => {
+  it("registers and disables only the current user's installation", async () => {
+    const user = await store.createUser({ name: "Push User" });
+    const other = await store.createUser({ name: "Other User" });
+    const installationId = PushInstallationIdSchema.parse("pdi_device1");
+    await notificationStore.registerDevice(user.id, {
+      installationId,
+      token: "ab".repeat(32),
+      platform: "ios",
+      environment: "sandbox",
+      appVersion: "1.0",
+      appBuild: "24",
+    });
+
+    await notificationStore.disableDevice(other.id, installationId);
+    const firstNotification = NotificationIdSchema.parse("ntf_first");
+    await pool.query(
+      `INSERT INTO user_notification
+       (id,recipient_user_id,category,dedupe_key,target_type,message_key,created_at)
+       VALUES ($1,$2,'reports','first','activity','reports.pending',$3)`,
+      [firstNotification, user.id, 1_750_000_000_000],
+    );
+    expect(await notificationStore.prepareDeliveries(firstNotification)).toHaveLength(1);
+
+    await notificationStore.disableDevice(user.id, installationId);
+    const secondNotification = NotificationIdSchema.parse("ntf_second");
+    await pool.query(
+      `INSERT INTO user_notification
+       (id,recipient_user_id,category,dedupe_key,target_type,message_key,created_at)
+       VALUES ($1,$2,'reports','second','activity','reports.pending',$3)`,
+      [secondNotification, user.id, 1_750_000_000_000],
+    );
+    expect(await notificationStore.prepareDeliveries(secondNotification)).toEqual([]);
+  });
+
+  it("applies safe defaults and persists authenticated preference patches", async () => {
+    const user = await store.createUser({ name: "Preference User" });
+    const token = await store.createSession(user.id);
+    const app = buildApp();
+
+    const defaults = await app.request("/api/me/notification-preferences", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(await defaults.json()).toMatchObject({ reports: true, rescue: true, slips: false });
+
+    const patched = await app.request("/api/me/notification-preferences", {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ reports: false, slips: true }),
+    });
+    expect(patched.status).toBe(200);
+    expect(await patched.json()).toMatchObject({ reports: false, rescue: true, slips: true });
+  });
+
+  it("reveals a target only to its recipient", async () => {
+    const recipient = await store.createUser({ name: "Recipient" });
+    const stranger = await store.createUser({ name: "Stranger" });
+    const recipientToken = await store.createSession(recipient.id);
+    const strangerToken = await store.createSession(stranger.id);
+    const notificationId = NotificationIdSchema.parse("ntf_private");
+    await pool.query(
+      `INSERT INTO user_notification
+       (id,recipient_user_id,category,dedupe_key,target_type,message_key,created_at)
+       VALUES ($1,$2,'reports','private','profile','reports.pending',$3)`,
+      [notificationId, recipient.id, 1_750_000_000_000],
+    );
+    const app = buildApp();
+
+    const allowed = await app.request(`/api/notifications/${notificationId}/target`, {
+      headers: { Authorization: `Bearer ${recipientToken}` },
+    });
+    const hidden = await app.request(`/api/notifications/${notificationId}/target`, {
+      headers: { Authorization: `Bearer ${strangerToken}` },
+    });
+    expect(await allowed.json()).toEqual({ type: "profile" });
+    expect(await hidden.json()).toEqual({ type: "unavailable" });
   });
 });
 

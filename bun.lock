@@ -60,6 +60,7 @@
     "apps/dont-text-your-ex/apps/api": {
       "name": "@dont-text-your-ex/api",
       "dependencies": {
+        "@dont-text-your-ex/notifications": "workspace:*",
         "@temporalio/client": "^1.21.1",
         "@www/logger": "workspace:*",
         "@www/platform": "workspace:*",
@@ -121,7 +122,7 @@
       "name": "@dont-text-your-ex/notifications",
       "version": "0.0.0",
       "dependencies": {
-        "@www/logger": "workspace:*",
+        "@www/platform": "workspace:*",
         "pg": "^8.13.3",
         "zod": "^4.4.2",
       },
