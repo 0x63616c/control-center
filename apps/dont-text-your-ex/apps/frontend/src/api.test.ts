@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { JarIdSchema, ReportIdSchema } from "../../../contracts";
+import { JarIdSchema, ReportIdSchema, RescueInterventionIdSchema } from "../../../contracts";
 import { api, inviteRetryAfterSeconds, isApiErrorStatus } from "./api";
 
 describe("frontend response JSON boundary", () => {
@@ -90,6 +90,42 @@ describe("frontend response JSON boundary", () => {
       2,
       "/api/reports/rpt_123/resolve",
       expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("uses the authenticated rescue resources and validates every returned state", async () => {
+    const intervention = {
+      id: "rsi_0123456789abcdef0123456789abcdef",
+      status: "active",
+      startedAt: 1_750_000_000_000,
+      deadlineAt: 1_750_000_600_000,
+      extensionCount: 0,
+      aggregateVersion: 1,
+      updatedAt: 1_750_000_000_000,
+    };
+    const fetchMock = vi.fn(async () => Response.json(intervention));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.currentRescue()).resolves.toMatchObject({ status: "active" });
+    await expect(api.startRescue()).resolves.toMatchObject({ status: "active" });
+    await expect(
+      api.rescueCommand(RescueInterventionIdSchema.parse(intervention.id), "extend"),
+    ).resolves.toMatchObject({ status: "active" });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/rescue",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/rescue",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      `/api/rescue/${intervention.id}/command`,
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ action: "extend" }) }),
     );
   });
 });
