@@ -10,6 +10,10 @@ import { createDtyeActivities } from "./activities";
 import { prepareTemporalWorker } from "./boot";
 import { temporalWorkerConfig } from "./config";
 import { createWorkerLifecycle } from "./lifecycle";
+import {
+  PostgresOutboxOperationalSnapshotStore,
+  platformDtyeOperationsObserver,
+} from "./operations-observability";
 import { WORKFLOW_TYPES } from "./registry";
 import { PostgresSessionMaintenanceStore } from "./session-maintenance";
 import {
@@ -40,6 +44,8 @@ async function main(): Promise<void> {
       registeredTemporalEventHandlers(new TemporalClientWorkflowGateway(client), WORKFLOW_TYPES),
     ),
     sessions: new PostgresSessionMaintenanceStore(pool),
+    operations: platformDtyeOperationsObserver,
+    outboxSnapshot: new PostgresOutboxOperationalSnapshotStore(pool),
   });
   const worker = await prepareTemporalWorker({
     config,
