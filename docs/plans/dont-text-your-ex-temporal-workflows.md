@@ -544,13 +544,13 @@ revalidates and reminds immediately once; an already expired invite is skipped.
 
 ### Acceptance criteria
 
-- [ ] W08.1 Workflow arguments/history contain the version ID, never the invite
+- [x] W08.1 Workflow arguments/history contain the version ID, never the invite
       code or URL.
-- [ ] W08.2 Revalidation immediately before sending proves open/current/unexpired.
-- [ ] W08.3 Rotation cannot produce an old-version reminder.
-- [ ] W08.4 Closure terminates the lifecycle and only the owner is eligible.
-- [ ] W08.5 Synchronous invite validation remains authoritative during outages.
-- [ ] W08.6 Rotation races, near-expiry creation, exact expiry, closure, disabled
+- [x] W08.2 Revalidation immediately before sending proves open/current/unexpired.
+- [x] W08.3 Rotation cannot produce an old-version reminder.
+- [x] W08.4 Closure terminates the lifecycle and only the owner is eligible.
+- [x] W08.5 Synchronous invite validation remains authoritative during outages.
+- [x] W08.6 Rotation races, near-expiry creation, exact expiry, closure, disabled
       notification, duplicate dispatch, and worker restart are tested.
 
 ## W09 — SessionMaintenanceWorkflow
@@ -889,6 +889,7 @@ commit/build, and proof boundary is not evidence.
 | 2026-08-16 | W02/W09 focused durability review | PASS after fixes; live proof pending | coordinator branch after `61e82c2da` | Dispatch is one event per activity with a 15-second Temporal RPC deadline, 25-second activity timeout, and 30-second row lease; post-commit nudges admit one unresolved batch; workflow inputs reject unknown schemas; session continue-as-new preserves one cutoff; cleanup now follows the exact daily contract. Worker passed 20/20 focused tests and both API/worker typechecks passed. | `/root/foundation_review`, coordinator |
 | 2026-08-16 | W03 native push and notification delivery | PASS locally; secrets/live-device proof pending | integrated from `9d9080a47` | Exact opaque workflow input, encrypted token keyring/rotation, authenticated preference and registration APIs, finite APNs outcomes, per-device durable retries, late authorization checks, native opt-in/settings, production entitlement guard, and shared worker-pool lifecycle are implemented. Notifications passed 15/15, frontend 29/29, integrated worker 25/25, root typecheck and Knip passed; source slice additionally passed real PostgreSQL 82/82, Storybook 535/535, production frontend, SwiftPM, and unsigned simulator builds. | `/root/workflow_acceptance_review`, coordinator |
 | 2026-08-16 | W06 streak milestones | PASS locally; live proof pending | `01c3344fb` | Fresh PostgreSQL applied migrations through 0015 and proved spring/fall DST, 09:00 windows, idempotency, reset suppression after prepared delivery, timezone changes, genuine reset re-award, opt-in/out, privacy, departure/closure, and deterministic 205-member paging (6/6); a real Temporal time-skipping server proved the workflow on queue `main`; focused API 64/64, worker 21/21, frontend 2/2, all four package typechecks, Biome, and Knip passed. Production Schedule execution and APNs remain W13. | `/root/streak_milestones` |
+| 2026-08-16 | W08 invite lifecycle and W12.4 tracer | PASS locally; live proof pending | `bf0e788d0` | Fresh PostgreSQL applied migrations through 0015; the combined worker suite passed 99/99. A real product transaction emitted `invite.issued`, the real outbox and dispatcher started `InviteLifecycleWorkflow` on task queue `main`, and the real activity reached `reminded`. Started history contained only `{schemaVersion, inviteVersionId}` and excluded invite code/URL; timer, replay, duplicate, rotation, closure, exact-expiry, disabled-preference, and replacement-worker cases passed. CI lane selection remains part of W12 hardening; production execution remains W13. | `/root/invite_integration`, coordinator |
 | 2026-08-16 | W02.9, W02.10, W09.4 operations instrumentation | PASS; live proof pending | `codex/dtye-outbox-observability` | Bounded platform metrics expose durable pending/oldest/quarantine gauges, retry/permanent outcomes, accepted dispatch latency, purge counts/duration, and activity freshness without identity labels. Checked-in Grafana panels and Prometheus rules cover old/growing/failed backlog and missing poller/recovery; deterministic collector/activity/infra tests pass and the runbook covers recovery. | `/root/outbox_workflows` |
 | 2026-08-16 | Integrated W02/W03/W09 migration and runtime proof | PASS | coordinator branch after `e259a3c85` | Fresh PostgreSQL 16 applied migrations 0001 through 0012 in order. The combined API suite passed 104/104 and the worker suite passed 33/33 including real-Postgres session purge and durable operational snapshot tests. | coordinator |
 | 2026-08-16 | W04 report accountability | PASS locally; live proof pending | integrated through `e08b255d0` | Migration 0013, exact 24-hour/72-hour/7-day timers, authoritative terminal signals, durable closure/departure events, account-deletion reason seam, immutable opaque history contracts, and replay safety are integrated. Combined worker tests passed 65/65 non-DB cases with 9 expected DB skips; source and integration real-Postgres proofs passed all W04 cases. | `/root/report_accountability`, coordinator |
