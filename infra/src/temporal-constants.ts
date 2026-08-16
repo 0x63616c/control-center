@@ -1,0 +1,6 @@
+export const TEMPORAL_VERSION = "1.31.2";
+export const TEMPORAL_K8S_NAMESPACE = "temporal";
+export const TEMPORAL_FRONTEND_SERVICE_NAME = "temporal-server";
+export const TEMPORAL_FRONTEND_GRPC_PORT = 7233;
+export const TEMPORAL_FRONTEND_CLUSTER_ADDRESS = `${TEMPORAL_FRONTEND_SERVICE_NAME}.${TEMPORAL_K8S_NAMESPACE}.svc.cluster.local:${TEMPORAL_FRONTEND_GRPC_PORT}`;
+export const TEMPORAL_ADMIN_TOOLS_IMAGE = `temporalio/admin-tools:${TEMPORAL_VERSION}`;

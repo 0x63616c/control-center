@@ -12,6 +12,7 @@ const VALID = `sha256:${"a".repeat(64)}`;
 const ALL_DIGESTS = {
   "dont-text-your-ex-api": VALID,
   "dont-text-your-ex-frontend": VALID,
+  "dont-text-your-ex-temporal-worker": VALID,
 };
 
 describe("Don't Text Your Ex production resources", () => {
@@ -27,10 +28,11 @@ describe("Don't Text Your Ex production resources", () => {
     });
   });
 
-  test("declares frontend and API workloads with health probes and generated CNPG credentials", () => {
+  test("declares frontend, API, and the isolated Temporal worker", () => {
     const specs = dontTextYourExSpecs(ALL_DIGESTS, true);
     const frontend = specs.workloads.find((workload) => workload.name === "frontend");
     const api = specs.workloads.find((workload) => workload.name === "api");
+    const worker = specs.workloads.find((workload) => workload.name === "temporal-worker");
 
     expect(frontend).toMatchObject({
       namespaceName: DONT_TEXT_YOUR_EX_NAMESPACE,
@@ -57,12 +59,31 @@ describe("Don't Text Your Ex production resources", () => {
         },
       ],
     });
+    expect(worker).toMatchObject({
+      namespaceName: "dont-text-your-ex",
+      image: `ghcr.io/0x63616c/www-dont-text-your-ex-temporal-worker@${VALID}`,
+      env: {
+        APP_ENV: "production",
+        TEMPORAL_NAMESPACE: "dont-text-your-ex",
+        TEMPORAL_TASK_QUEUE: "main",
+        TEMPORAL_ADDRESS: "temporal-server.temporal.svc.cluster.local:7233",
+      },
+      scrape: { port: 9464 },
+    });
     if (!api) throw new Error("missing api workload");
     const rendered = renderWorkload(api);
     const container = rendered.deployment.spec.template.spec.containers[0];
     expect(container.startupProbe?.httpGet).toEqual({ path: "/api/health", port: 8787 });
     expect(container.readinessProbe?.httpGet).toEqual({ path: "/api/health", port: 8787 });
     expect(container.livenessProbe?.httpGet).toEqual({ path: "/api/health", port: 8787 });
+  });
+
+  test("registers its Temporal namespace with 90-day retention", () => {
+    expect(dontTextYourExSpecs(ALL_DIGESTS, true).temporalNamespace).toEqual({
+      name: "dont-text-your-ex",
+      retention: "2160h",
+      taskQueue: "main",
+    });
   });
 
   test("declares a nightly, non-overlapping NAS backup with the generated app credential", () => {

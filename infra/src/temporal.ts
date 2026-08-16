@@ -50,9 +50,17 @@ import { controlCenterProductManifest } from "@www/platform";
 import { DEFAULT_METRICS_PORT } from "@www/platform/metrics/port";
 import { GHCR_PULL_SECRET_NAME } from "./ghcr-pull-secrets.ts";
 import { composeGhcrDockerConfigJson, ghcrImage, type ImageDigests } from "./services.ts";
+import {
+  TEMPORAL_ADMIN_TOOLS_IMAGE,
+  TEMPORAL_FRONTEND_CLUSTER_ADDRESS,
+  TEMPORAL_FRONTEND_GRPC_PORT,
+  TEMPORAL_FRONTEND_SERVICE_NAME,
+  TEMPORAL_K8S_NAMESPACE,
+  TEMPORAL_VERSION,
+} from "./temporal-constants.ts";
 
 /** The k8s namespace everything Temporal lives in. */
-export const TEMPORAL_NAMESPACE = "temporal";
+export const TEMPORAL_NAMESPACE = TEMPORAL_K8S_NAMESPACE;
 
 /**
  * The Temporal-level namespace (NOT the k8s one) our workflows run in, and the
@@ -71,8 +79,8 @@ export const TEMPORAL_TASK_QUEUE = "main";
 export const SOFTWARE_FACTORY_TEMPORAL_NAMESPACE = "software-factory";
 
 /** In-cluster address of the frontend's gRPC port. */
-export const TEMPORAL_FRONTEND_SERVICE = "temporal-server";
-const FRONTEND_GRPC_PORT = 7233;
+export const TEMPORAL_FRONTEND_SERVICE = TEMPORAL_FRONTEND_SERVICE_NAME;
+const FRONTEND_GRPC_PORT = TEMPORAL_FRONTEND_GRPC_PORT;
 
 /**
  * @public - the frontend's address as reached from ANOTHER namespace, fully
@@ -81,7 +89,8 @@ const FRONTEND_GRPC_PORT = 7233;
  * it that drifts when the port changes. Same-namespace clients keep using the
  * bare service name above.
  */
-export const TEMPORAL_FRONTEND_CLUSTER_ADDRESS = `${TEMPORAL_FRONTEND_SERVICE}.${TEMPORAL_NAMESPACE}.svc.cluster.local:${FRONTEND_GRPC_PORT}`;
+export { TEMPORAL_FRONTEND_CLUSTER_ADDRESS };
+
 const FRONTEND_HTTP_PORT = 7243;
 const UI_PORT = 8080;
 // Where the server's Prometheus reporter listens. 9090 is Temporal's own
@@ -93,9 +102,7 @@ const METRICS_PATH = "/metrics";
 
 // Image pins. `server` and `admin-tools` MUST move together: the schema the Job
 // installs is the schema the server expects.
-const TEMPORAL_VERSION = "1.31.2";
 const SERVER_IMAGE = `temporalio/server:${TEMPORAL_VERSION}`;
-const ADMIN_TOOLS_IMAGE = `temporalio/admin-tools:${TEMPORAL_VERSION}`;
 const UI_IMAGE = "temporalio/ui:2.52.1";
 
 // The OTel collector `temporal-worker`'s SDK-internal metrics (#233) go
@@ -202,7 +209,9 @@ export interface TemporalNamespaceSpec {
 }
 
 /**
- * Every Temporal namespace registered on this cluster. Adding one is an entry
+ * Every cluster-owned shared-product Temporal namespace. Independently deployed
+ * products may own a registration Job beside their worker (Don’t Text Your Ex).
+ * Adding a shared namespace is an entry
  * here and nothing else: each gets its OWN Job (`temporal-namespace-<name>`),
  * so a new namespace never mutates an existing namespace's Job and therefore
  * never makes Pulumi replace it.
@@ -535,7 +544,7 @@ export function installTemporal(args: TemporalArgs): TemporalResources {
             containers: [
               {
                 name: "schema",
-                image: ADMIN_TOOLS_IMAGE,
+                image: TEMPORAL_ADMIN_TOOLS_IMAGE,
                 command: ["/bin/sh", "-c", schemaSetupScript()],
                 // temporal-sql-tool reads the password from SQL_PASSWORD.
                 env: [databasePasswordEnv("SQL_PASSWORD")],
@@ -677,7 +686,7 @@ export function installTemporal(args: TemporalArgs): TemporalResources {
                   containers: [
                     {
                       name: "namespace",
-                      image: ADMIN_TOOLS_IMAGE,
+                      image: TEMPORAL_ADMIN_TOOLS_IMAGE,
                       command: ["/bin/sh", "-c", namespaceSetupScript(ns)],
                       resources: {
                         limits: { memory: "512Mi" },

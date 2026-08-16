@@ -1,10 +1,15 @@
 import * as k8s from "@pulumi/kubernetes";
 import type * as pulumi from "@pulumi/pulumi";
+import { DEFAULT_METRICS_PORT } from "@www/platform/metrics/port";
 import type { InfraNamespaceName } from "./cluster.ts";
 import type { CronJobSpec, WorkloadSpec } from "./component.ts";
 import { ScheduledJob, Workload } from "./component.ts";
 import { GHCR_PULL_SECRET_NAME } from "./ghcr-pull-secrets.ts";
 import type { ImageDigests } from "./services.ts";
+import {
+  TEMPORAL_ADMIN_TOOLS_IMAGE,
+  TEMPORAL_FRONTEND_CLUSTER_ADDRESS,
+} from "./temporal-constants.ts";
 
 export const DONT_TEXT_YOUR_EX_NAMESPACE = "dont-text-your-ex" as const;
 export const DONT_TEXT_YOUR_EX_HOSTNAME = "dont-text-your-ex.worldwidewebb.co";
@@ -22,12 +27,13 @@ export const DONT_TEXT_YOUR_EX_DATABASE = {
 export const DONT_TEXT_YOUR_EX_IMAGE_DIGEST_KEYS = [
   "dont-text-your-ex-api",
   "dont-text-your-ex-frontend",
+  "dont-text-your-ex-temporal-worker",
 ] as const;
 
 type OwnedWorkloadSpec = WorkloadSpec & { namespaceName: InfraNamespaceName };
 type OwnedCronJobSpec = CronJobSpec & { namespaceName: InfraNamespaceName };
 
-function image(component: "api" | "frontend", digests: ImageDigests): string {
+function image(component: "api" | "frontend" | "temporal-worker", digests: ImageDigests): string {
   const key = `dont-text-your-ex-${component}`;
   const repository = `ghcr.io/0x63616c/www-dont-text-your-ex-${component}`;
   const digest = digests[key];
@@ -41,7 +47,11 @@ export function dontTextYourExSpecs(
   imageDigests: ImageDigests,
   requireImageDigestPins: boolean,
   nasNfsServer = "192.168.0.218",
-): { workloads: OwnedWorkloadSpec[]; backup: OwnedCronJobSpec } {
+): {
+  workloads: OwnedWorkloadSpec[];
+  backup: OwnedCronJobSpec;
+  temporalNamespace: { name: string; retention: string; taskQueue: string };
+} {
   if (requireImageDigestPins) {
     const missing = DONT_TEXT_YOUR_EX_IMAGE_DIGEST_KEYS.filter((key) => !imageDigests[key]);
     if (missing.length > 0) {
@@ -92,6 +102,34 @@ export function dontTextYourExSpecs(
       ],
       imagePullSecrets: [GHCR_PULL_SECRET_NAME],
     },
+    {
+      logicalName: "dont-text-your-ex-temporal-worker",
+      name: "temporal-worker",
+      namespaceName: DONT_TEXT_YOUR_EX_NAMESPACE,
+      image: image("temporal-worker", imageDigests),
+      replicas: 1,
+      resources: { memory: "512M", reserveCpus: "0.1", reserveMemory: "256Mi" },
+      env: {
+        APP_ENV: "production",
+        TEMPORAL_ADDRESS: TEMPORAL_FRONTEND_CLUSTER_ADDRESS,
+        TEMPORAL_NAMESPACE: DONT_TEXT_YOUR_EX_NAMESPACE,
+        TEMPORAL_TASK_QUEUE: "main",
+        POSTGRES_HOST: DONT_TEXT_YOUR_EX_DATABASE.rwServiceName,
+        POSTGRES_PORT: "5432",
+        POSTGRES_USER: DONT_TEXT_YOUR_EX_DATABASE.owner,
+        POSTGRES_DB: DONT_TEXT_YOUR_EX_DATABASE.databaseName,
+        POSTGRES_PASSWORD_FILE: "/run/secrets/POSTGRES_PASSWORD",
+      },
+      scrape: { port: DEFAULT_METRICS_PORT },
+      extraSecretMounts: [
+        {
+          secretName: DONT_TEXT_YOUR_EX_DATABASE.appSecretName,
+          mountPath: "/run/secrets",
+          items: [{ key: "password", path: "POSTGRES_PASSWORD" }],
+        },
+      ],
+      imagePullSecrets: [GHCR_PULL_SECRET_NAME],
+    },
   ];
 
   const backup: OwnedCronJobSpec = {
@@ -124,7 +162,15 @@ export function dontTextYourExSpecs(
     ],
   };
 
-  return { workloads, backup };
+  return {
+    workloads,
+    backup,
+    temporalNamespace: {
+      name: DONT_TEXT_YOUR_EX_NAMESPACE,
+      retention: "2160h",
+      taskQueue: "main",
+    },
+  };
 }
 
 export interface DontTextYourExArgs {
@@ -140,6 +186,45 @@ export function installDontTextYourEx(args: DontTextYourExArgs) {
   const { provider, namespace, cnpgOperator, imageDigests, requireImageDigestPins, nasNfsServer } =
     args;
   const specs = dontTextYourExSpecs(imageDigests, requireImageDigestPins, nasNfsServer);
+  const temporalNamespaceJob = new k8s.batch.v1.Job(
+    "temporal-namespace-dont-text-your-ex",
+    {
+      metadata: { name: "temporal-namespace-dont-text-your-ex", namespace },
+      spec: {
+        backoffLimit: 6,
+        template: {
+          metadata: { labels: { app: "temporal-namespace-setup" } },
+          spec: {
+            restartPolicy: "Never",
+            automountServiceAccountToken: false,
+            containers: [
+              {
+                name: "namespace",
+                image: TEMPORAL_ADMIN_TOOLS_IMAGE,
+                command: [
+                  "/bin/sh",
+                  "-c",
+                  [
+                    "set -eu",
+                    `export TEMPORAL_ADDRESS=${TEMPORAL_FRONTEND_CLUSTER_ADDRESS}`,
+                    "until temporal operator cluster health >/dev/null 2>&1; do sleep 2; done",
+                    "temporal operator namespace create --namespace dont-text-your-ex --retention 2160h || true",
+                    "temporal operator namespace update --namespace dont-text-your-ex --retention 2160h",
+                    "temporal operator namespace describe --namespace dont-text-your-ex",
+                  ].join("\n"),
+                ],
+                resources: {
+                  limits: { memory: "512Mi" },
+                  requests: { cpu: "100m", memory: "128Mi" },
+                },
+              },
+            ],
+          },
+        },
+      },
+    },
+    { provider, replaceOnChanges: ["spec"], deleteBeforeReplace: true },
+  );
   const cluster = new k8s.apiextensions.CustomResource(
     DONT_TEXT_YOUR_EX_DATABASE.clusterName,
     {
@@ -168,7 +253,15 @@ export function installDontTextYourEx(args: DontTextYourExArgs) {
     ({ namespaceName: _namespaceName, ...spec }) =>
       new Workload(
         { ...spec, provider, namespace },
-        { provider, dependsOn: spec.name === "api" ? [cluster] : undefined },
+        {
+          provider,
+          dependsOn:
+            spec.name === "temporal-worker"
+              ? [cluster, temporalNamespaceJob]
+              : spec.name === "api"
+                ? [cluster]
+                : undefined,
+        },
       ),
   );
   const { namespaceName: _namespaceName, ...backupSpec } = specs.backup;
@@ -176,5 +269,5 @@ export function installDontTextYourEx(args: DontTextYourExArgs) {
     { ...backupSpec, provider, namespace },
     { provider, dependsOn: [cluster] },
   );
-  return { cluster, workloads, backup };
+  return { cluster, temporalNamespaceJob, workloads, backup };
 }

@@ -1,6 +1,5 @@
 import { proxyActivities, sleep } from "@temporalio/workflow";
 import type * as activities from "./activities";
-import type { DtyeHealthCheckActivityOutput } from "./activities";
 import { HEALTH_CHECK_PERIOD_MS, healthCheckSleepMs } from "./pacing";
 
 export interface DtyeHealthCheckWorkflowInput {
@@ -8,9 +7,8 @@ export interface DtyeHealthCheckWorkflowInput {
   readonly periodMs?: number;
 }
 export interface DtyeHealthCheckWorkflowOutput {
-  readonly iterations: number;
-  readonly checks: readonly DtyeHealthCheckActivityOutput[];
-  readonly elapsedMs: number;
+  readonly status: "healthy";
+  readonly checks: number;
 }
 
 const { DtyeHealthCheckActivity } = proxyActivities<typeof activities>({
@@ -23,7 +21,6 @@ export async function DtyeHealthCheckWorkflow(
 ): Promise<DtyeHealthCheckWorkflowOutput> {
   const periodMs = input.periodMs ?? HEALTH_CHECK_PERIOD_MS;
   const startedAtMs = Date.now();
-  const checks: DtyeHealthCheckActivityOutput[] = [];
   for (let iteration = 0; iteration < input.iterations; iteration += 1) {
     const waitMs = healthCheckSleepMs(
       iteration,
@@ -32,7 +29,7 @@ export async function DtyeHealthCheckWorkflow(
       periodMs,
     );
     if (waitMs > 0) await sleep(waitMs);
-    checks.push(await DtyeHealthCheckActivity({ iteration }));
+    await DtyeHealthCheckActivity({ iteration });
   }
-  return { iterations: input.iterations, checks, elapsedMs: Date.now() - startedAtMs };
+  return { status: "healthy", checks: input.iterations };
 }

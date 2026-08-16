@@ -23,4 +23,10 @@ describe("DTYE worker config", () => {
       /task queue must be main/,
     );
   });
+
+  test("fails before connecting when the namespace drifts", () => {
+    expect(() =>
+      parseTemporalWorkerConfig({ ...valid, TEMPORAL_NAMESPACE: "control-center" }),
+    ).toThrow(/namespace must be dont-text-your-ex/);
+  });
 });
