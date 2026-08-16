@@ -10,8 +10,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@temporalio/client": "1.21.1",
-    "@temporalio/worker": "1.21.1",
+    "@temporalio/client": "^1.21.1",
+    "@temporalio/worker": "^1.21.1",
     "@www/logger": "workspace:*",
     "@www/platform": "workspace:*",
     "@www/temporal-runtime": "workspace:*"

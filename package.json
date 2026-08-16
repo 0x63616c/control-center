@@ -70,7 +70,7 @@
   ],
   "dependencies": {
     "bdui": "^0.0.38",
-    "@temporalio/workflow": "1.21.1",
+    "@temporalio/workflow": "^1.21.1",
     "@trpc/server": "^11.17.0",
     "drizzle-orm": "^0.45.2",
     "drizzle-zod": "^0.8.3",
