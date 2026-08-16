@@ -1,11 +1,13 @@
 import type { Pool } from "pg";
-import { type DomainEvent, DomainEventSchema } from "./domain-events";
+import { type DomainEvent, DomainEventSchema, type DomainEventType } from "./domain-events";
 
 export type ClaimPageInput = Readonly<{
   owner: string;
   limit: number;
   now: number;
   leaseUntil: number;
+  eventIds?: readonly DomainEvent["id"][];
+  eventTypes?: readonly DomainEventType[];
 }>;
 type EventLeaseInput = Readonly<{
   eventId: DomainEvent["id"];
@@ -58,6 +60,8 @@ export class MemoryOutbox implements Outbox {
       .filter(
         (entry) =>
           entry.availableAt <= input.now &&
+          (input.eventIds === undefined || input.eventIds.includes(entry.event.id)) &&
+          (input.eventTypes === undefined || input.eventTypes.includes(entry.event.type)) &&
           (entry.state === "pending" ||
             (entry.state === "claimed" && (entry.claimExpiresAt ?? 0) <= input.now)),
       )
@@ -157,6 +161,8 @@ export class PostgresOutbox implements Outbox {
         `WITH candidates AS (
            SELECT id FROM domain_event
            WHERE available_at <= $1
+             AND ($5::text[] IS NULL OR id = ANY($5))
+             AND ($6::text[] IS NULL OR event_type = ANY($6))
              AND (state = 'pending' OR (state = 'claimed' AND claim_expires_at <= $1))
            ORDER BY occurred_at, id
            FOR UPDATE SKIP LOCKED
@@ -169,7 +175,14 @@ export class PostgresOutbox implements Outbox {
          WHERE event.id=candidates.id
          RETURNING event.id, event.event_type, event.schema_version, event.aggregate_type,
                    event.aggregate_id, event.aggregate_version, event.occurred_at`,
-        [input.now, input.limit, input.owner, input.leaseUntil],
+        [
+          input.now,
+          input.limit,
+          input.owner,
+          input.leaseUntil,
+          input.eventIds === undefined ? null : [...input.eventIds],
+          input.eventTypes === undefined ? null : [...input.eventTypes],
+        ],
       );
       await client.query("COMMIT");
       return rows

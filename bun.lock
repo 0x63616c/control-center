@@ -60,6 +60,7 @@
     "apps/dont-text-your-ex/apps/api": {
       "name": "@dont-text-your-ex/api",
       "dependencies": {
+        "@temporalio/client": "^1.21.1",
         "@www/logger": "workspace:*",
         "@www/platform": "workspace:*",
         "hono": "^4.6.14",
@@ -107,9 +108,11 @@
         "@www/logger": "workspace:*",
         "@www/platform": "workspace:*",
         "@www/temporal-runtime": "workspace:*",
+        "pg": "^8.13.3",
       },
       "devDependencies": {
         "@types/node": "^22.13.0",
+        "@types/pg": "^8.11.10",
         "typescript": "^5.9.3",
         "vitest": "^3.2.4",
       },
