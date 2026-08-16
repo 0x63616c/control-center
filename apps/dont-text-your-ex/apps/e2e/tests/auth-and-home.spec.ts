@@ -62,7 +62,7 @@ test("jar detail shows the virtual tally, rule, and progress board ordered by ta
   await signInAsCalum(page);
   await openJar(page, "The Group Chat");
   // Group tally = 6500 + 4000 cents = 105 pts.
-  await expect(page.getByTestId("jar-pot")).toHaveText("105 pts");
+  await expect(page.getByTestId("jar-total-tally")).toHaveText("105 pts");
   await expect(
     page.getByText("Don't text your ex. We all know who.", { exact: false }),
   ).toBeVisible();

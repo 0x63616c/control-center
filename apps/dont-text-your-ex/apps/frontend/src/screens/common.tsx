@@ -8,7 +8,7 @@ import {
 } from "react";
 import { AVATAR_MAX_BYTES, AvatarPhotoDataUrlSchema } from "../../../../contracts";
 import { Icon } from "../icons";
-import { money, T } from "../theme";
+import { formatPoints, T } from "../theme";
 import type { ActivityDTO } from "../types";
 import { Avatar } from "../ui";
 
@@ -32,6 +32,15 @@ export const labelStyle: CSSProperties = {
   marginBottom: 8,
   display: "block",
 };
+
+export function supportiveMilestoneText(text: string): string {
+  const legacy = /^The jar just cracked \$([\d.]+)\. Disgraceful\.$/.exec(text);
+  if (!legacy) return text;
+  const points = Number(legacy[1]);
+  if (!Number.isFinite(points))
+    return "The jar reached a new milestone. Keep supporting each other.";
+  return `The jar reached ${formatPoints(points * 100)}. Keep supporting each other.`;
+}
 
 // animated count-up for tallies / pot totals
 export function useCountUp(target: number, dur = 700): number {
@@ -68,7 +77,7 @@ export function ActivityRow({ a, showJar }: { a: ActivityDTO; showJar?: boolean 
     title = (
       <>
         <b>{a.user.name}</b> logged a slip{" "}
-        <span style={{ color: T.red, fontWeight: 700 }}>{money(a.amountCents ?? 0)}</span>
+        <span style={{ color: T.red, fontWeight: 700 }}>{formatPoints(a.amountCents ?? 0)}</span>
       </>
     );
     sub = a.note ? `“${a.note}”` : a.exLabel ? `context: ${a.exLabel}` : "started again";
@@ -143,7 +152,7 @@ export function ActivityRow({ a, showJar }: { a: ActivityDTO; showJar?: boolean 
         <Icon.party />
       </div>
     );
-    title = <b>{a.text}</b>;
+    title = <b>{supportiveMilestoneText(a.text ?? "")}</b>;
     sub = null;
   }
 

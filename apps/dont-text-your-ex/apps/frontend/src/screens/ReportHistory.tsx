@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { AppCtx, RouteFor } from "../appctx";
 import { EvidenceShot, EvidenceViewer } from "../bits";
-import { money, T } from "../theme";
+import { formatPoints, T } from "../theme";
 import type { ReportDTO } from "../types";
 import { Btn, Screen, TopBar } from "../ui";
 import { ErrorState, type FetchedState, LoadingState } from "./fetched-state";
@@ -207,7 +207,7 @@ export function ReportDetail({
           {reporter} sent a check to {report.accused.name}
         </div>
         <div style={{ color: T.gold, fontWeight: 750, marginTop: 8 }}>
-          {money(report.amountCents)} virtual amount
+          {formatPoints(report.amountCents)} virtual amount
         </div>
       </div>
 

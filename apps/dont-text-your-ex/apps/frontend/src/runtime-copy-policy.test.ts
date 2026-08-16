@@ -34,6 +34,12 @@ const PROHIBITED_COPY: readonly CopyRule[] = [
     pattern:
       /\b(?:amount owed|apple pay|in the hole|pay up|payments? (?:are )?coming soon|real payments?|settle up|stripe|you owe)\b/i,
   },
+  {
+    id: "payment-pressure",
+    pattern:
+      /\b(?:balance due|cash|charge now|debt|fine|penalties|penalty|pay\s+\d+\s*(?:points?|pts))\b/i,
+  },
+  { id: "currency-amount", pattern: /\$\s*\d+(?:\.\d+)?/i },
 ] as const;
 
 const MESSAGE_ACCESS_DISCLOSURE =
@@ -89,6 +95,30 @@ function typescriptLiterals(source: string, fileName = "fixture.tsx"): Literal[]
   );
   const literals: Literal[] = [];
 
+  const staticText = (node: ts.Node): string | null => {
+    if (ts.isStringLiteralLike(node) || ts.isJsxText(node)) return node.text;
+    if (ts.isParenthesizedExpression(node)) return staticText(node.expression);
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+      const left = staticText(node.left);
+      const right = staticText(node.right);
+      return left === null || right === null ? null : `${left} ${right}`;
+    }
+    if (ts.isJsxExpression(node)) return node.expression ? staticText(node.expression) : "";
+    if (ts.isJsxElement(node)) {
+      return node.children
+        .map(staticText)
+        .filter((text): text is string => text !== null)
+        .join(" ");
+    }
+    if (ts.isJsxFragment(node)) {
+      return node.children
+        .map(staticText)
+        .filter((text): text is string => text !== null)
+        .join(" ");
+    }
+    return null;
+  };
+
   const visit = (node: ts.Node): void => {
     if (ts.isTemplateExpression(node)) {
       literals.push({
@@ -97,6 +127,14 @@ function typescriptLiterals(source: string, fileName = "fixture.tsx"): Literal[]
       });
       for (const span of node.templateSpans) visit(span.expression);
       return;
+    }
+    if (
+      ts.isJsxElement(node) ||
+      ts.isJsxFragment(node) ||
+      (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken)
+    ) {
+      const text = staticText(node);
+      if (text?.trim()) literals.push({ text, offset: node.getStart(sourceFile) });
     }
     if (ts.isStringLiteralLike(node) || ts.isJsxText(node)) {
       literals.push({ text: node.text, offset: node.getStart(sourceFile) });
@@ -143,6 +181,12 @@ function violationsFor(path: string, source = readFileSync(path, "utf8")): Viola
   for (const literal of literalsFor(path, source)) {
     const normalized = normalizeCopy(literal.text);
     for (const rule of PROHIBITED_COPY) {
+      if (
+        rule.id === "currency-amount" &&
+        /\b(?:delete|from|insert|select|update|values|where)\b/.test(normalized)
+      ) {
+        continue;
+      }
       if (!rule.pattern.test(normalized)) continue;
       const location = lineAndColumn(source, literal.offset);
       violations.push({
@@ -174,10 +218,39 @@ describe("runtime copy policy scanner", () => {
       export const View = () => <p>Wall of shame</p>;
     `;
 
+    expect(
+      new Set(violationsFor(resolve(PRODUCT_ROOT, "fixture.tsx"), source).map((v) => v.rule)),
+    ).toEqual(new Set(["guilt", "payment-teasing", "shame"]));
+  });
+
+  it("finds prohibited copy split across static JSX and concatenated literals", () => {
+    const source = `
+      const payment = "Pay " + "up";
+      export const View = () => <p>Payments <strong>coming soon</strong></p>;
+    `;
+
     expect(violationsFor(resolve(PRODUCT_ROOT, "fixture.tsx"), source).map((v) => v.rule)).toEqual([
-      "guilt",
       "payment-teasing",
-      "shame",
+      "payment-teasing",
+    ]);
+  });
+
+  it("finds currency and payment-pressure copy without rejecting safety disclosures", () => {
+    const source = `
+      const dollar = "$5";
+      const cash = "Cash penalty";
+      const due = "Balance due";
+      const charge = "Charge now";
+      const points = "Pay 5 points";
+      const safe = "No real money is charged, collected, paid, or transferred.";
+    `;
+
+    expect(violationsFor(resolve(PRODUCT_ROOT, "fixture.ts"), source).map((v) => v.rule)).toEqual([
+      "currency-amount",
+      "payment-pressure",
+      "payment-pressure",
+      "payment-pressure",
+      "payment-pressure",
     ]);
   });
 
@@ -204,7 +277,11 @@ describe("Don't Text Your Ex runtime copy policy", () => {
   const visibleFrontendLiterals = runtimeFiles
     .filter((path) => {
       const relativePath = relativeProductPath(path);
-      return relativePath.startsWith("apps/frontend/src/screens/") || path.endsWith("index.html");
+      return (
+        relativePath.startsWith("apps/frontend/src/screens/") ||
+        relativePath === "apps/frontend/src/theme.ts" ||
+        path.endsWith("index.html")
+      );
     })
     .flatMap((path) => literalsFor(path).map((literal) => normalizeCopy(literal.text)));
 

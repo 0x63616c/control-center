@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, inviteRetryAfterSeconds, isApiErrorStatus } from "../api";
 import type { AppCtx, RouteFor } from "../appctx";
-import { money, T } from "../theme";
+import { formatPoints, T } from "../theme";
 import type { JarPreviewDTO } from "../types";
 import { AvatarStack, Btn, Screen, TopBar } from "../ui";
 import { inputStyle } from "./common";
@@ -175,7 +175,7 @@ export function Join({
             </div>
             <div>
               <div style={{ fontFamily: T.disp, fontWeight: 800, fontSize: 22, color: T.gold }}>
-                {money(preview.defaultCents)}
+                {formatPoints(preview.defaultCents)}
               </div>
               <div style={{ fontSize: 12, color: T.sec }}>virtual per slip</div>
             </div>

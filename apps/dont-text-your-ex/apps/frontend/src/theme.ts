@@ -16,9 +16,12 @@ export const T = {
   ui: "'Hanken Grotesk', system-ui, sans-serif",
 } as const;
 
+export const NO_MONEY_DISCLOSURE =
+  "No real money is charged, collected, paid, or transferred." as const;
+
 // The data model retains integer cents for compatibility, but V1 presents those
 // values exclusively as virtual accountability points. No money moves in the app.
-export function money(cents: number): string {
+export function formatPoints(cents: number): string {
   return `${Math.round(cents / 100)} pts`;
 }
 

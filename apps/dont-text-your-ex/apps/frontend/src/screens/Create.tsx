@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api } from "../api";
 import type { AppCtx, RouteFor } from "../appctx";
 import { Stepper } from "../bits";
-import { T } from "../theme";
+import { NO_MONEY_DISCLOSURE, T } from "../theme";
 import { Btn, Screen, TopBar } from "../ui";
 import { inputStyle, labelStyle } from "./common";
 import { MutationError } from "./fetched-state";
@@ -96,7 +96,7 @@ export function Create({
         <Stepper cents={cents} onChange={setCents} step={100} />
       </div>
       <p style={{ color: T.ter, fontSize: 12.5, lineHeight: 1.4, margin: "10px 2px 0" }}>
-        Scoreboard points only. No real money is charged, collected, paid, or transferred.
+        Scoreboard points only. {NO_MONEY_DISCLOSURE}
       </p>
 
       <div style={{ flex: 1, minHeight: 24 }} />

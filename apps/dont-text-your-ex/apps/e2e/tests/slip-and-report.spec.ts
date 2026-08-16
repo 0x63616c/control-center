@@ -13,7 +13,7 @@ test("logging a check-in bumps the virtual tally, resets streak, and grows the g
   await signInAsCalum(page);
   await openJar(page, "The Group Chat");
 
-  const potBefore = await page.getByTestId("jar-pot").innerText();
+  const tallyBefore = await page.getByTestId("jar-total-tally").innerText();
   await expect(memberRow(page, "Calum")).toContainText("40 pts");
 
   await page.getByRole("button", { name: "Log a slip" }).click();
@@ -26,7 +26,7 @@ test("logging a check-in bumps the virtual tally, resets streak, and grows the g
   await page.getByRole("button", { name: "Confirm and reset streak" }).click();
 
   // Back on jar detail; the group grew by 10 pts and Calum moved from 40 to 50 pts.
-  await expect(page.getByTestId("jar-pot")).not.toHaveText(potBefore);
+  await expect(page.getByTestId("jar-total-tally")).not.toHaveText(tallyBefore);
   await expect(memberRow(page, "Calum")).toContainText("50 pts");
 });
 

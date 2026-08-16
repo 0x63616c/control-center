@@ -44,7 +44,7 @@ export interface AppCtx<CurrentRoute extends Route = Route> {
   signOut: () => Promise<void>;
   sessionExpired: boolean;
 
-  /** fire the flying-money animation (used after logging a slip) */
+  /** fire the supportive celebration animation (used after logging a slip) */
   fireBurst: () => void;
 
   /** pending-report badge state for the Activity tab */

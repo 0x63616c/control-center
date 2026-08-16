@@ -4,7 +4,7 @@ import type { AppCtx, RouteFor } from "../appctx";
 import { Toggle } from "../bits";
 import { Icon } from "../icons";
 import { getNativeAppInfo } from "../native/appInfo";
-import { money, T } from "../theme";
+import { formatPoints, NO_MONEY_DISCLOSURE, T } from "../theme";
 import type { JarSummaryDTO } from "../types";
 import { Avatar, DevBadge, Screen, TopBar } from "../ui";
 
@@ -140,7 +140,7 @@ export function Profile({
             {me.name || "You"}
           </div>
           <div style={{ fontSize: 13.5, color: T.sec, marginTop: 2 }}>
-            {bestStreak} days no-contact · {money(totalTally)} virtual tally
+            {bestStreak} days no-contact · {formatPoints(totalTally)} virtual tally
           </div>
         </div>
         <span
@@ -208,8 +208,8 @@ export function Profile({
           <div style={{ padding: "14px 16px", color: T.ter, fontSize: 14 }}>Join a jar first.</div>
         )}
       </div>
-      <p style={{ textAlign: "center", fontSize: 12.5, color: T.ter, lineHeight: 1.45 }}>
-        Virtual tallies only. No real money is charged, collected, paid, or transferred.
+      <p style={{ textAlign: "center", fontSize: 14, color: T.sec, lineHeight: 1.45 }}>
+        Virtual tallies only. {NO_MONEY_DISCLOSURE}
       </p>
 
       <button
@@ -240,7 +240,9 @@ export function Profile({
           Couldn’t sign out. You’re still signed in. Check your connection and try again.
         </p>
       )}
-      <p style={{ textAlign: "center", fontSize: 12, color: T.ter, marginTop: 16 }}>
+      <p
+        style={{ textAlign: "center", fontSize: 13, color: T.sec, lineHeight: 1.4, marginTop: 16 }}
+      >
         Don’t Text Your Ex · {appVersion} · supportive accountability with friends
       </p>
     </Screen>

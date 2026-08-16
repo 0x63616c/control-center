@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { AppCtx, RouteFor } from "../appctx";
 import { Icon } from "../icons";
-import { money, streakLabel, T } from "../theme";
+import { formatPoints, NO_MONEY_DISCLOSURE, streakLabel, T } from "../theme";
 import type { JarDetailDTO } from "../types";
 import { Avatar, Btn, IconBtn, Screen, TopBar } from "../ui";
 import { ActivityRow, useCountUp } from "./common";
@@ -175,7 +175,7 @@ export function JarDetail({
         </div>
       )}
 
-      {/* HERO pot */}
+      {/* HERO tally */}
       <div style={{ textAlign: "center", padding: "14px 0 6px" }}>
         <div
           style={{
@@ -189,7 +189,7 @@ export function JarDetail({
           VIRTUAL TOTAL
         </div>
         <div
-          data-testid="jar-pot"
+          data-testid="jar-total-tally"
           style={{
             fontFamily: T.disp,
             fontWeight: 800,
@@ -200,7 +200,7 @@ export function JarDetail({
             fontVariantNumeric: "tabular-nums",
           }}
         >
-          {money(animated)}
+          {formatPoints(animated)}
         </div>
         <div
           style={{
@@ -215,7 +215,7 @@ export function JarDetail({
         </div>
       </div>
       <div style={{ color: T.ter, fontSize: 12.5, lineHeight: 1.4, textAlign: "center" }}>
-        Scoreboard points only. No real money is charged, collected, paid, or transferred.
+        Scoreboard points only. {NO_MONEY_DISCLOSURE}
       </div>
 
       {/* primary action */}
@@ -340,7 +340,7 @@ export function JarDetail({
                   fontVariantNumeric: "tabular-nums",
                 }}
               >
-                {money(m.tallyCents)}
+                {formatPoints(m.tallyCents)}
               </div>
             </div>
           );

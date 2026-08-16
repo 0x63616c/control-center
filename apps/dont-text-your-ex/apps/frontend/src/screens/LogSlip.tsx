@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { AppCtx, RouteFor } from "../appctx";
 import { Stepper } from "../bits";
-import { money, T } from "../theme";
+import { formatPoints, T } from "../theme";
 import type { JarDetailDTO } from "../types";
 import { Btn, Screen, TopBar } from "../ui";
 import { inputStyle, labelStyle } from "./common";
@@ -134,7 +134,7 @@ export function LogSlip({
         <div style={{ width: "100%", marginBottom: 30 }}>
           <Stepper cents={cents} onChange={setCents} step={jar.defaultCents} />
           <div style={{ textAlign: "center", fontSize: 12.5, color: T.ter, marginTop: 12 }}>
-            Jar default: {money(jar.defaultCents)} per slip
+            Jar default: {formatPoints(jar.defaultCents)} per slip
           </div>
         </div>
 
@@ -183,7 +183,7 @@ export function LogSlip({
         </div>
 
         <Btn kind="red" onClick={() => setMutation({ status: "confirming" })}>
-          Add {money(cents)} to my virtual tally
+          Add {formatPoints(cents)} to my virtual tally
         </Btn>
       </div>
 

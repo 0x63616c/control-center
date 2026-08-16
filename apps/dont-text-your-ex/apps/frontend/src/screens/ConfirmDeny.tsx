@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { AppCtx, RouteFor } from "../appctx";
 import { EvidenceShot, EvidenceViewer } from "../bits";
-import { money, T } from "../theme";
+import { formatPoints, T } from "../theme";
 import type { ReportDTO } from "../types";
 import { Btn, Screen, TopBar } from "../ui";
 import { ErrorState, type FetchedState, LoadingState, MutationError } from "./fetched-state";
@@ -121,9 +121,9 @@ export function ConfirmDeny({
           <p style={{ color: T.sec, fontSize: 16, lineHeight: 1.45, maxWidth: 290, margin: 0 }}>
             {owned ? (
               <>
-                You accepted it. <b style={{ color: T.gold }}>{money(report.amountCents)}</b> was
-                added to your virtual tally, and your no-contact streak reset. Jar members can see
-                the update.
+                You accepted it. <b style={{ color: T.gold }}>{formatPoints(report.amountCents)}</b>{" "}
+                was added to your virtual tally, and your no-contact streak reset. Jar members can
+                see the update.
               </>
             ) : (
               <>The check is closed, and your tally did not change.</>
@@ -226,7 +226,7 @@ export function ConfirmDeny({
           disabled={resolution.status === "submitting"}
           onClick={() => resolve("own")}
         >
-          Accept and add {money(report.amountCents)}
+          Accept and add {formatPoints(report.amountCents)}
         </Btn>
         <Btn
           kind="dark"

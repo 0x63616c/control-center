@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { AppCtx, RouteFor } from "../appctx";
 import { Icon } from "../icons";
-import { money, T } from "../theme";
+import { formatPoints, NO_MONEY_DISCLOSURE, T } from "../theme";
 import type { JarSummaryDTO, UserDTO } from "../types";
 import { AvatarStack, IconBtn, Screen, TopBar } from "../ui";
 import { ErrorState, type FetchedState, LoadingState } from "./fetched-state";
@@ -164,7 +164,7 @@ export function Home({
               lineHeight: 1,
             }}
           >
-            {money(myTotal)}
+            {formatPoints(myTotal)}
           </div>
         </div>
         <div
@@ -193,7 +193,7 @@ export function Home({
         </div>
       </div>
       <div style={{ color: T.ter, fontSize: 12.5, lineHeight: 1.4, margin: "-10px 2px 18px" }}>
-        Scoreboard points only. No real money is charged, collected, paid, or transferred.
+        Scoreboard points only. {NO_MONEY_DISCLOSURE}
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -267,7 +267,7 @@ export function Home({
                       color: j.myTallyCents ? T.gold : T.sec,
                     }}
                   >
-                    {money(j.myTallyCents)}
+                    {formatPoints(j.myTallyCents)}
                   </div>
                 </div>
                 <div
@@ -282,7 +282,7 @@ export function Home({
                     Jar total
                   </div>
                   <div style={{ fontFamily: T.disp, fontWeight: 700, fontSize: 22 }}>
-                    {money(j.jarTotalCents)}
+                    {formatPoints(j.jarTotalCents)}
                   </div>
                 </div>
               </div>

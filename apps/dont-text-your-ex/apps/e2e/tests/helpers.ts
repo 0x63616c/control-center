@@ -50,7 +50,7 @@ export async function signUpNewFromInvite(
 
 export async function openJar(page: Page, name: string) {
   await page.locator(`[data-testid="jar-card"][data-jar-name="${name}"]`).click();
-  await expect(page.getByTestId("jar-pot")).toBeVisible();
+  await expect(page.getByTestId("jar-total-tally")).toBeVisible();
 }
 
 export function memberRow(page: Page, member: string) {

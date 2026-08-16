@@ -55,6 +55,8 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
+export const IdleProfile: Story = {};
+
 export const FailedLogoutCanRetry: Story = {
   play: async ({ canvasElement }) => {
     signOut.mockReset();

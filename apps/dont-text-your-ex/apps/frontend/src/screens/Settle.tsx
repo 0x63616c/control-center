@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { AppCtx, RouteFor } from "../appctx";
-import { money, T } from "../theme";
+import { formatPoints, NO_MONEY_DISCLOSURE, T } from "../theme";
 import type { JarDetailDTO } from "../types";
 import { Screen, TopBar } from "../ui";
 import { ErrorState, type FetchedState, LoadingState } from "./fetched-state";
@@ -94,7 +94,7 @@ export function Settle({
             lineHeight: 0.9,
           }}
         >
-          {money(tally)}
+          {formatPoints(tally)}
         </div>
       </div>
 
@@ -116,7 +116,7 @@ export function Settle({
           }}
         >
           <span style={{ color: T.sec }}>Your slips in {jar.name}</span>
-          <span style={{ fontWeight: 700, fontFamily: T.disp }}>{money(tally)}</span>
+          <span style={{ fontWeight: 700, fontFamily: T.disp }}>{formatPoints(tally)}</span>
         </div>
       </div>
 
@@ -129,8 +129,7 @@ export function Settle({
           lineHeight: 1.55,
         }}
       >
-        This is a shared accountability scoreboard value only. Don’t Text Your Ex never charges,
-        collects, pays, or transfers real money.
+        This is a shared accountability scoreboard value only. {NO_MONEY_DISCLOSURE}
       </p>
     </Screen>
   );

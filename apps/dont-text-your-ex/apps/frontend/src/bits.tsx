@@ -1,6 +1,6 @@
 import { type CSSProperties, useEffect, useRef } from "react";
 import { Icon } from "./icons";
-import { money, T } from "./theme";
+import { formatPoints, T } from "./theme";
 import type { EvidenceImageInput } from "./types";
 
 type SupportBurstStyle = CSSProperties & {
@@ -117,7 +117,7 @@ export function Stepper({
           lineHeight: 1,
         }}
       >
-        {money(cents)}
+        {formatPoints(cents)}
       </div>
       <Round dir={1} />
     </div>
