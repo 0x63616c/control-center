@@ -1,4 +1,33 @@
 import { z } from "zod";
+import { JarIdSchema, ReportIdSchema } from "../../../contracts";
+
+const opaqueIdSchema = <Brand extends string>(prefix: string, brand: Brand) =>
+  z
+    .string()
+    .regex(new RegExp(`^${prefix}_[a-f0-9]{32}$`), `invalid ${brand}`)
+    .brand<Brand>();
+
+const EventIdSchema = opaqueIdSchema("evt", "EventId");
+export const InviteVersionIdSchema = opaqueIdSchema("inv", "InviteVersionId");
+export const MembershipTenureIdSchema = opaqueIdSchema("mtn", "MembershipTenureId");
+const SlipIdSchema = opaqueIdSchema("slip", "SlipId");
+export const JarMilestoneIdSchema = opaqueIdSchema("jms", "JarMilestoneId");
+const RescueInterventionIdSchema = opaqueIdSchema("rsi", "RescueInterventionId");
+const StreakAchievementIdSchema = opaqueIdSchema("sta", "StreakAchievementId");
+const RecapIdSchema = opaqueIdSchema("rcp", "RecapId");
+const NotificationIdSchema = opaqueIdSchema("ntf", "NotificationId");
+const AccountDeletionIdSchema = opaqueIdSchema("del", "AccountDeletionId");
+
+export type EventId = z.infer<typeof EventIdSchema>;
+export type InviteVersionId = z.infer<typeof InviteVersionIdSchema>;
+export type MembershipTenureId = z.infer<typeof MembershipTenureIdSchema>;
+export type SlipId = z.infer<typeof SlipIdSchema>;
+export type JarMilestoneId = z.infer<typeof JarMilestoneIdSchema>;
+export type RescueInterventionId = z.infer<typeof RescueInterventionIdSchema>;
+export type StreakAchievementId = z.infer<typeof StreakAchievementIdSchema>;
+export type RecapId = z.infer<typeof RecapIdSchema>;
+export type NotificationId = z.infer<typeof NotificationIdSchema>;
+export type AccountDeletionId = z.infer<typeof AccountDeletionIdSchema>;
 
 const DOMAIN_EVENT_DEFINITIONS = {
   "jar.created": { aggregateType: "jar", schemaVersion: 1 },
@@ -37,10 +66,19 @@ export function domainEventDefinition(type: DomainEventType) {
   return DOMAIN_EVENT_DEFINITIONS[type];
 }
 
-const EventIdSchema = z
-  .string()
-  .regex(/^evt_[A-Za-z0-9]+$/)
-  .brand<"EventId">();
+const AGGREGATE_ID_SCHEMAS = {
+  jar: JarIdSchema,
+  invite: InviteVersionIdSchema,
+  membership_tenure: MembershipTenureIdSchema,
+  slip: SlipIdSchema,
+  jar_milestone: JarMilestoneIdSchema,
+  report: ReportIdSchema,
+  rescue: RescueInterventionIdSchema,
+  streak_achievement: StreakAchievementIdSchema,
+  recap: RecapIdSchema,
+  notification: NotificationIdSchema,
+  account_deletion: AccountDeletionIdSchema,
+} as const;
 
 export const DomainEventSchema = z
   .object({
@@ -61,11 +99,45 @@ export const DomainEventSchema = z
     if (event.schemaVersion !== definition.schemaVersion) {
       context.addIssue({ code: "custom", path: ["schemaVersion"], message: "version mismatch" });
     }
+    if (!AGGREGATE_ID_SCHEMAS[definition.aggregateType].safeParse(event.aggregateId).success) {
+      context.addIssue({
+        code: "custom",
+        path: ["aggregateId"],
+        message: "aggregate identifier mismatch",
+      });
+    }
   });
 
 export type DomainEvent = z.infer<typeof DomainEventSchema>;
-export type NewDomainEvent = Readonly<{
-  type: DomainEventType;
-  aggregateId: string;
-  aggregateVersion: number;
-}>;
+type EventAggregateIds = {
+  "jar.created": z.infer<typeof JarIdSchema>;
+  "jar.closed": z.infer<typeof JarIdSchema>;
+  "invite.issued": InviteVersionId;
+  "invite.superseded": InviteVersionId;
+  "membership.joined": MembershipTenureId;
+  "membership.left": MembershipTenureId;
+  "slip.logged": SlipId;
+  "jar.milestone_crossed": JarMilestoneId;
+  "report.created": z.infer<typeof ReportIdSchema>;
+  "report.owned": z.infer<typeof ReportIdSchema>;
+  "report.denied": z.infer<typeof ReportIdSchema>;
+  "report.expired": z.infer<typeof ReportIdSchema>;
+  "rescue.started": RescueInterventionId;
+  "rescue.extended": RescueInterventionId;
+  "rescue.safe": RescueInterventionId;
+  "rescue.slipped": RescueInterventionId;
+  "rescue.check_in_due": RescueInterventionId;
+  "rescue.abandoned": RescueInterventionId;
+  "streak.milestone_reached": StreakAchievementId;
+  "recap.created": RecapId;
+  "notification.requested": NotificationId;
+  "account.deletion_requested": AccountDeletionId;
+};
+
+export type NewDomainEvent = {
+  [Type in DomainEventType]: Readonly<{
+    type: Type;
+    aggregateId: EventAggregateIds[Type];
+    aggregateVersion: number;
+  }>;
+}[DomainEventType];

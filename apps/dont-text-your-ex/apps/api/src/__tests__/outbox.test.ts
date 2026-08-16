@@ -3,20 +3,20 @@ import { DomainEventSchema } from "../domain-events";
 import { MemoryOutbox } from "../outbox";
 
 const first = DomainEventSchema.parse({
-  id: "evt_first",
+  id: `evt_${"1".repeat(32)}`,
   type: "jar.created",
   schemaVersion: 1,
   aggregateType: "jar",
-  aggregateId: "jar_first",
+  aggregateId: `jar_${"1".repeat(32)}`,
   aggregateVersion: 1,
   occurredAt: 10,
 });
 const second = DomainEventSchema.parse({
-  id: "evt_second",
+  id: `evt_${"2".repeat(32)}`,
   type: "invite.issued",
   schemaVersion: 1,
   aggregateType: "invite",
-  aggregateId: "inv_second",
+  aggregateId: `inv_${"2".repeat(32)}`,
   aggregateVersion: 1,
   occurredAt: 20,
 });

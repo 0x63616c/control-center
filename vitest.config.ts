@@ -13,9 +13,11 @@ export default defineConfig({
       "apps/worker",
       "apps/dont-text-your-ex/apps/api",
       "apps/dont-text-your-ex/apps/frontend",
+      "apps/dont-text-your-ex/apps/temporal-worker",
       "packages/core",
       "packages/logger",
       "packages/platform",
+      "packages/temporal-runtime",
       "packages/worker-runtime",
       // The `infra` project's default test glob also covers infra/unifi/test/**
       // (UniFi adopt-only stack, www-j934.3), so no separate project entry is

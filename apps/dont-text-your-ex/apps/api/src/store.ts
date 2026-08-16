@@ -21,6 +21,13 @@ import {
   UserSchema,
 } from "../../../contracts";
 import { DAY, now, pool } from "./db/index";
+import {
+  type InviteVersionId,
+  InviteVersionIdSchema,
+  JarMilestoneIdSchema,
+  type MembershipTenureId,
+  MembershipTenureIdSchema,
+} from "./domain-events";
 import { type DomainTransactionContext, DomainTransactionRunner } from "./domain-transaction";
 import { id, inviteCode } from "./ids";
 import { parseEvidenceImageJson, serializeEvidenceImageJson } from "./persistence";
@@ -85,7 +92,7 @@ type JarRow = {
   created_by: UserId;
   invite_code: InviteCode | null;
   invite_expires_at: string | null;
-  invite_version_id: string;
+  invite_version_id: InviteVersionId;
   timezone: string;
   created_at: number;
   closed_at: string | null;
@@ -97,10 +104,14 @@ type MembershipDbRow = Omit<MembershipRow, "jar_id" | "user_id"> & {
   readonly jar_id: string;
   readonly user_id: string;
 };
-type JarDbRow = Omit<JarRow, "id" | "created_by" | "invite_code" | "closed_by"> & {
+type JarDbRow = Omit<
+  JarRow,
+  "id" | "created_by" | "invite_code" | "invite_version_id" | "closed_by"
+> & {
   readonly id: string;
   readonly created_by: string;
   readonly invite_code: string | null;
+  readonly invite_version_id: string;
   readonly closed_by: string | null;
 };
 
@@ -122,6 +133,7 @@ function parseJarRow(row: JarDbRow): JarRow {
     id: JarIdSchema.parse(row.id),
     created_by: UserIdSchema.parse(row.created_by),
     invite_code: row.invite_code == null ? null : InviteCodeSchema.parse(row.invite_code),
+    invite_version_id: InviteVersionIdSchema.parse(row.invite_version_id),
     closed_by: row.closed_by == null ? null : UserIdSchema.parse(row.closed_by),
   };
 }
@@ -365,7 +377,7 @@ async function inviteCodeExists(code: InviteCode, db: Queryable = pool): Promise
 
 async function freshInvite(
   db: Queryable = pool,
-): Promise<{ code: InviteCode; expiresAt: number; versionId: string }> {
+): Promise<{ code: InviteCode; expiresAt: number; versionId: InviteVersionId }> {
   let code = inviteCode();
   while (await inviteCodeExists(code, db)) code = inviteCode();
   return { code, expiresAt: now() + 7 * DAY, versionId: id("inv") };
@@ -541,7 +553,7 @@ async function addMembership(
   role: "owner" | "member",
   db: Queryable = pool,
   createTenure = true,
-): Promise<{ membershipId: string; tenureId: string | null }> {
+): Promise<{ membershipId: string; tenureId: MembershipTenureId | null }> {
   const joinedAt = now();
   const { rows } = await db.query<{ id: string }>(
     "INSERT INTO memberships (id, jar_id, user_id, role, tally_cents, streak_start_at, share_streak, joined_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (jar_id, user_id) DO UPDATE SET left_at=NULL RETURNING id",
@@ -657,7 +669,9 @@ export async function leaveJar(
     );
     await emit({
       type: "membership.left",
-      aggregateId: requireValue(tenureResult.rows[0]?.id, "active membership tenure missing"),
+      aggregateId: MembershipTenureIdSchema.parse(
+        requireValue(tenureResult.rows[0]?.id, "active membership tenure missing"),
+      ),
       aggregateVersion: 2,
     });
     return { status: "left" };
@@ -757,7 +771,7 @@ async function logSlipInTransaction(
     if (milestone.rows[0]) {
       await emit({
         type: "jar.milestone_crossed",
-        aggregateId: milestone.rows[0].id,
+        aggregateId: JarMilestoneIdSchema.parse(milestone.rows[0].id),
         aggregateVersion: 1,
       });
     }

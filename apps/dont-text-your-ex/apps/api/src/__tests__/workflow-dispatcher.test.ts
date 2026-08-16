@@ -7,11 +7,11 @@ describe("workflow dispatcher seam", () => {
   it("records accepted events through the same interface as the future Temporal adapter", async () => {
     const dispatcher = new RecordingWorkflowDispatcher();
     const event = DomainEventSchema.parse({
-      id: "evt_example",
+      id: `evt_${"1".repeat(32)}`,
       type: "invite.issued",
       schemaVersion: 1,
       aggregateType: "invite",
-      aggregateId: "inv_example",
+      aggregateId: `inv_${"1".repeat(32)}`,
       aggregateVersion: 1,
       occurredAt: 1,
     });
@@ -26,11 +26,11 @@ describe("workflow dispatcher seam", () => {
       { status: "permanent", code: "unsupported_event_version" },
     ]);
     const event = DomainEventSchema.parse({
-      id: "evt_example",
+      id: `evt_${"2".repeat(32)}`,
       type: "jar.created",
       schemaVersion: 1,
       aggregateType: "jar",
-      aggregateId: "jar_example",
+      aggregateId: `jar_${"2".repeat(32)}`,
       aggregateVersion: 1,
       occurredAt: 1,
     });
@@ -47,29 +47,29 @@ describe("workflow dispatcher seam", () => {
 
   it("acknowledges accepted events while retrying and quarantining independent failures", async () => {
     const accepted = DomainEventSchema.parse({
-      id: "evt_accepted",
+      id: `evt_${"3".repeat(32)}`,
       type: "jar.created",
       schemaVersion: 1,
       aggregateType: "jar",
-      aggregateId: "jar_accepted",
+      aggregateId: `jar_${"3".repeat(32)}`,
       aggregateVersion: 1,
       occurredAt: 1,
     });
     const retryable = DomainEventSchema.parse({
-      id: "evt_retryable",
+      id: `evt_${"4".repeat(32)}`,
       type: "invite.issued",
       schemaVersion: 1,
       aggregateType: "invite",
-      aggregateId: "inv_retryable",
+      aggregateId: `inv_${"4".repeat(32)}`,
       aggregateVersion: 1,
       occurredAt: 2,
     });
     const permanent = DomainEventSchema.parse({
-      id: "evt_permanent",
+      id: `evt_${"5".repeat(32)}`,
       type: "report.created",
       schemaVersion: 1,
       aggregateType: "report",
-      aggregateId: "rpt_permanent",
+      aggregateId: `rpt_${"5".repeat(32)}`,
       aggregateVersion: 1,
       occurredAt: 3,
     });

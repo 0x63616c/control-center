@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { JarIdSchema } from "../../../../contracts";
 import { pool } from "../db/index";
 import { runMigrations } from "../db/migrate";
 import { DomainTransactionRunner, RecordingPostCommitNudge } from "../domain-transaction";
@@ -25,7 +26,11 @@ describe.skipIf(!HAS_DB)("domain transaction seam", () => {
     const value = await runner.run(async ({ db, emit }) => {
       await db.query("CREATE TEMP TABLE command_result (value TEXT)");
       await db.query("INSERT INTO command_result (value) VALUES ('committed')");
-      await emit({ type: "jar.created", aggregateId: "jar_example", aggregateVersion: 1 });
+      await emit({
+        type: "jar.created",
+        aggregateId: JarIdSchema.parse("jar_example"),
+        aggregateVersion: 1,
+      });
       return "ok" as const;
     });
 
@@ -48,7 +53,11 @@ describe.skipIf(!HAS_DB)("domain transaction seam", () => {
 
     await expect(
       runner.run(async ({ emit }) => {
-        await emit({ type: "jar.created", aggregateId: "jar_rollback", aggregateVersion: 1 });
+        await emit({
+          type: "jar.created",
+          aggregateId: JarIdSchema.parse("jar_rollback"),
+          aggregateVersion: 1,
+        });
         throw new Error("forced failure");
       }),
     ).rejects.toThrow("forced failure");
@@ -61,8 +70,16 @@ describe.skipIf(!HAS_DB)("domain transaction seam", () => {
   it("leases each event to at most one of two concurrent Postgres dispatchers", async () => {
     const runner = new DomainTransactionRunner({ pool, clock: () => 100 });
     await runner.run(async ({ emit }) => {
-      await emit({ type: "jar.created", aggregateId: "jar_first", aggregateVersion: 1 });
-      await emit({ type: "jar.created", aggregateId: "jar_second", aggregateVersion: 1 });
+      await emit({
+        type: "jar.created",
+        aggregateId: JarIdSchema.parse("jar_first"),
+        aggregateVersion: 1,
+      });
+      await emit({
+        type: "jar.created",
+        aggregateId: JarIdSchema.parse("jar_second"),
+        aggregateVersion: 1,
+      });
     });
     const first = new PostgresOutbox(pool);
     const second = new PostgresOutbox(pool);

@@ -3,8 +3,7 @@ import type * as activities from "./activities";
 import { HEALTH_CHECK_PERIOD_MS, healthCheckSleepMs } from "./pacing";
 
 export interface DtyeHealthCheckWorkflowInput {
-  readonly iterations: number;
-  readonly periodMs?: number;
+  readonly schemaVersion: 1;
 }
 export interface DtyeHealthCheckWorkflowOutput {
   readonly status: "healthy";
@@ -19,17 +18,18 @@ const { DtyeHealthCheckActivity } = proxyActivities<typeof activities>({
 export async function DtyeHealthCheckWorkflow(
   input: DtyeHealthCheckWorkflowInput,
 ): Promise<DtyeHealthCheckWorkflowOutput> {
-  const periodMs = input.periodMs ?? HEALTH_CHECK_PERIOD_MS;
+  if (input.schemaVersion !== 1) throw new Error("unsupported health workflow schema");
+  const iterations = 5;
   const startedAtMs = Date.now();
-  for (let iteration = 0; iteration < input.iterations; iteration += 1) {
+  for (let iteration = 0; iteration < iterations; iteration += 1) {
     const waitMs = healthCheckSleepMs(
       iteration,
       Date.now() - startedAtMs,
-      input.iterations,
-      periodMs,
+      iterations,
+      HEALTH_CHECK_PERIOD_MS,
     );
     if (waitMs > 0) await sleep(waitMs);
     await DtyeHealthCheckActivity({ iteration });
   }
-  return { status: "healthy", checks: input.iterations };
+  return { status: "healthy", checks: iterations };
 }

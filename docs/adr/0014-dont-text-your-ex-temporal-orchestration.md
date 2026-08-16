@@ -121,6 +121,14 @@ lease plus `FOR UPDATE SKIP LOCKED`. A dispatcher outcome is one of
 `failed` rows and cannot block later events. Post-commit dispatch has a short
 timeout/circuit breaker and never determines the HTTP mutation result.
 
+Every durable identifier generated after this decision carries 128 bits of
+random entropy. Event aggregate identifiers are prefix-validated at compile and
+runtime boundaries: `jar`, `inv`, `mtn`, `slip`, `jms`, `rpt`, `rsi`, `sta`,
+`rcp`, `ntf`, and `del` respectively for the aggregate types above. Human invite
+codes, Apple subjects, user-authored text, and raw provider errors cannot satisfy
+that contract. Legacy jar/report IDs remain valid only after a database-backed
+authorization lookup proves they name an existing aggregate.
+
 ## Activity and retry classes
 
 Activities expose domain operations, not SQL primitives. Their public seams are

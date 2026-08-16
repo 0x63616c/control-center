@@ -10,7 +10,7 @@ export const SCHEDULES = [
     workflowType: "DtyeHealthCheckWorkflow",
     cron: "* * * * *",
     timezone: "UTC",
-    args: { iterations: 5 },
+    args: { schemaVersion: 1 },
     timeout: "2 minutes",
     catchupWindow: "1 minute",
   },

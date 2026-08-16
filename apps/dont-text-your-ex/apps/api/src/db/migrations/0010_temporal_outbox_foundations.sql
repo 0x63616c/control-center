@@ -27,7 +27,7 @@ ALTER TABLE users ADD COLUMN timezone TEXT NOT NULL DEFAULT 'America/Los_Angeles
 ALTER TABLE jars ADD COLUMN timezone TEXT NOT NULL DEFAULT 'America/Los_Angeles';
 ALTER TABLE jars ADD COLUMN invite_version_id TEXT;
 UPDATE jars
-SET invite_version_id = 'inv_' || md5(id || ':' || COALESCE(invite_code, '') || ':' || created_at::TEXT)
+SET invite_version_id = 'inv_' || replace(gen_random_uuid()::text, '-', '')
 WHERE invite_version_id IS NULL;
 ALTER TABLE jars ALTER COLUMN invite_version_id SET NOT NULL;
 CREATE UNIQUE INDEX idx_jars_invite_version ON jars(invite_version_id);
