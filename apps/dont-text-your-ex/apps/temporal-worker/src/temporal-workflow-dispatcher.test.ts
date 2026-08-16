@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { WorkflowExecutionAlreadyStartedError, WorkflowIdReusePolicy } from "@temporalio/client";
+import { describe, expect, it, vi } from "vitest";
 import { DomainEventSchema } from "../../api/src/domain-events";
 import {
   RecordingTemporalEventHandler,
+  TemporalClientWorkflowGateway,
   TemporalWorkflowDispatcher,
   temporalOperationFor,
 } from "./temporal-workflow-dispatcher";
@@ -51,6 +53,56 @@ describe("Temporal workflow dispatcher", () => {
         schemaVersion: 1,
       },
     });
+  });
+
+  it("rejects workflow id reuse and accepts a duplicate after completion", async () => {
+    const start = vi.fn(async () => undefined);
+    const signalWithStart = vi.fn(async () => undefined);
+    const client = {
+      withDeadline: vi.fn(async (_deadline: number, operation: () => Promise<void>) => operation()),
+      workflow: { start, signalWithStart },
+    };
+    const gateway = new TemporalClientWorkflowGateway(client as never);
+    const startOperation = temporalOperationFor(inviteIssued);
+    const signalOperation = temporalOperationFor(
+      DomainEventSchema.parse({
+        ...inviteIssued,
+        id: "evt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        type: "invite.superseded",
+        aggregateVersion: 2,
+      }),
+    );
+    if (startOperation.kind !== "start" || signalOperation.kind !== "signal_with_start") {
+      throw new Error("expected direct Temporal operations");
+    }
+
+    await gateway.execute(startOperation);
+    await gateway.execute(signalOperation);
+    expect(start).toHaveBeenCalledWith(
+      "InviteLifecycleWorkflow",
+      expect.objectContaining({ workflowIdReusePolicy: WorkflowIdReusePolicy.REJECT_DUPLICATE }),
+    );
+    expect(signalWithStart).toHaveBeenCalledWith(
+      "InviteLifecycleWorkflow",
+      expect.objectContaining({ workflowIdReusePolicy: WorkflowIdReusePolicy.REJECT_DUPLICATE }),
+    );
+
+    start.mockRejectedValueOnce(
+      new WorkflowExecutionAlreadyStartedError(
+        "already completed",
+        startOperation.workflowId,
+        startOperation.workflowType,
+      ) as never,
+    );
+    signalWithStart.mockRejectedValueOnce(
+      new WorkflowExecutionAlreadyStartedError(
+        "already completed",
+        signalOperation.workflowId,
+        signalOperation.workflowType,
+      ) as never,
+    );
+    await expect(gateway.execute(startOperation)).resolves.toBeUndefined();
+    await expect(gateway.execute(signalOperation)).resolves.toBeUndefined();
   });
 
   it("uses the notification workflow's exact privacy-safe input contract", () => {

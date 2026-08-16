@@ -1,4 +1,8 @@
-import { type Client, WorkflowExecutionAlreadyStartedError } from "@temporalio/client";
+import {
+  type Client,
+  WorkflowExecutionAlreadyStartedError,
+  WorkflowIdReusePolicy,
+} from "@temporalio/client";
 import type { DomainEvent, DomainEventType } from "../../api/src/domain-events";
 import type { WorkflowDispatcher, WorkflowDispatchResult } from "../../api/src/workflow-dispatcher";
 
@@ -170,19 +174,21 @@ export class TemporalClientWorkflowGateway implements TemporalWorkflowGateway {
     operation: Exclude<TemporalOperation, { kind: "audit" | "fanout" }>,
   ): Promise<void> {
     await this.client.withDeadline(Date.now() + this.rpcTimeoutMs, async () => {
-      if (operation.kind === "signal_with_start") {
-        await this.client.workflow.signalWithStart(operation.workflowType, {
-          workflowId: operation.workflowId,
-          taskQueue: "main",
-          args: [operation.startArgs],
-          signal: operation.signal,
-          signalArgs: [operation.signalArgs],
-        });
-        return;
-      }
       try {
+        if (operation.kind === "signal_with_start") {
+          await this.client.workflow.signalWithStart(operation.workflowType, {
+            workflowId: operation.workflowId,
+            workflowIdReusePolicy: WorkflowIdReusePolicy.REJECT_DUPLICATE,
+            taskQueue: "main",
+            args: [operation.startArgs],
+            signal: operation.signal,
+            signalArgs: [operation.signalArgs],
+          });
+          return;
+        }
         await this.client.workflow.start(operation.workflowType, {
           workflowId: operation.workflowId,
+          workflowIdReusePolicy: WorkflowIdReusePolicy.REJECT_DUPLICATE,
           taskQueue: "main",
           args: [operation.args],
         });
