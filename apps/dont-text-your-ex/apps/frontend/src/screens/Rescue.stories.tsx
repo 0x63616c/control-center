@@ -28,6 +28,13 @@ const extended = RescueInterventionSchema.parse({
   aggregateVersion: 2,
   updatedAt: NOW + 1_000,
 });
+const checkInDue = RescueInterventionSchema.parse({
+  ...active,
+  status: "check_in_due",
+  checkInDueAt: NOW + 10 * 60_000,
+  responseDeadlineAt: NOW + 15 * 60_000,
+  updatedAt: NOW + 10 * 60_000,
+});
 const safe = RescueInterventionSchema.parse({
   ...active,
   status: "safe",
@@ -148,6 +155,19 @@ export const ActiveCountdownAndExtend: Story = {
   },
 };
 
+export const CheckInResponseWindow: Story = {
+  args: {
+    ctx: context(),
+    services: servicesFor(checkInDue),
+    now: () => NOW + 10 * 60_000,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(await canvas.findByText("CHECK IN NOW")).toBeInTheDocument();
+    await expect(canvas.getByRole("timer")).toHaveTextContent("5:00");
+  },
+};
+
 export const Safe: Story = {
   args: {
     ctx: context(),
@@ -194,6 +214,9 @@ export const Abandoned: Story = {
     const canvas = within(canvasElement);
     await expect(await canvas.findByText("This rescue ended.")).toBeInTheDocument();
     await expect(canvas.getByText(/Nothing was sent, shared, or charged/)).toBeInTheDocument();
+    const restart = canvas.getByRole("button", { name: "Start another rescue" });
+    await userEvent.pointer([{ target: restart, keys: "[TouchA>]" }, { keys: "[/TouchA]" }]);
+    await expect(await canvas.findByRole("timer")).toHaveTextContent("10:00");
   },
 };
 

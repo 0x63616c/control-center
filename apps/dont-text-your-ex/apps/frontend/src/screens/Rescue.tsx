@@ -23,6 +23,13 @@ type RescueMutationState =
   | { readonly status: "failed"; readonly action: "start" | "safe" | "slipped" | "extend" }
   | { readonly status: "unavailable" };
 
+type JarChoiceState =
+  | { readonly status: "loading" }
+  | { readonly status: "loaded"; readonly jars: readonly JarSummaryDTO[] }
+  | { readonly status: "error" };
+
+const systemNow = () => Date.now();
+
 function assertNever(value: never): never {
   throw new Error(`Unexpected rescue state: ${JSON.stringify(value)}`);
 }
@@ -46,7 +53,7 @@ function TerminalCard({ intervention }: { intervention: RescueInterventionDTO })
       detail = "That win stays private.";
       break;
     case "slipped":
-      title = "No shame. Keep it honest.";
+      title = "No shame. You’re not alone.";
       detail = "Choose a jar below to open the normal slip confirmation.";
       break;
     case "abandoned":
@@ -77,14 +84,21 @@ function TerminalCard({ intervention }: { intervention: RescueInterventionDTO })
 }
 
 function JarChoices({
-  jars,
+  state,
   onChoose,
+  onRetry,
 }: {
-  jars: readonly JarSummaryDTO[] | null;
+  state: JarChoiceState;
   onChoose: (jar: JarSummaryDTO) => void;
+  onRetry: () => void;
 }) {
-  if (jars === null) return <LoadingState>Loading your jars…</LoadingState>;
-  if (jars.length === 0) {
+  if (state.status === "loading") return <LoadingState>Loading your jars…</LoadingState>;
+  if (state.status === "error") {
+    return (
+      <ErrorState label="Your jars couldn’t be loaded. No slip was created." onRetry={onRetry} />
+    );
+  }
+  if (state.jars.length === 0) {
     return (
       <p role="status" style={{ color: T.sec, textAlign: "center", lineHeight: 1.5 }}>
         You don’t have a jar to log this in. No slip was created.
@@ -93,7 +107,7 @@ function JarChoices({
   }
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16 }}>
-      {jars.map((jar) => (
+      {state.jars.map((jar) => (
         <Btn key={jar.id} kind="dark" onClick={() => onChoose(jar)}>
           Continue to {jar.name}
         </Btn>
@@ -105,7 +119,7 @@ function JarChoices({
 export function Rescue({
   ctx,
   services = api,
-  now = () => Date.now(),
+  now = systemNow,
 }: {
   ctx: AppCtx<RouteFor<"rescue">>;
   services?: RescueServices;
@@ -114,8 +128,9 @@ export function Rescue({
   const [load, setLoad] = useState<RescueLoadState>({ status: "loading" });
   const [mutation, setMutation] = useState<RescueMutationState>({ status: "idle" });
   const [clock, setClock] = useState(now);
-  const [jars, setJars] = useState<readonly JarSummaryDTO[] | null>(null);
+  const [jarChoices, setJarChoices] = useState<JarChoiceState>({ status: "loading" });
   const submitting = useRef(false);
+  const lastDeadlineRefreshAt = useRef(0);
 
   const fetchCurrent = useCallback(async () => {
     setLoad({ status: "loading" });
@@ -137,24 +152,32 @@ export function Rescue({
   }, [now]);
 
   const intervention = load.status === "ready" ? load.intervention : null;
-  useEffect(() => {
-    if (intervention?.status !== "slipped") {
-      setJars(null);
-      return;
+  const loadJars = useCallback(async () => {
+    setJarChoices({ status: "loading" });
+    try {
+      setJarChoices({ status: "loaded", jars: await services.jars() });
+    } catch {
+      setJarChoices({ status: "error" });
     }
-    let alive = true;
-    services
-      .jars()
-      .then((next) => {
-        if (alive) setJars(next);
-      })
-      .catch(() => {
-        if (alive) setJars([]);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [intervention?.status, services]);
+  }, [services]);
+
+  useEffect(() => {
+    if (intervention?.status === "slipped") void loadJars();
+  }, [intervention?.status, loadJars]);
+
+  useEffect(() => {
+    if (intervention?.status !== "active" && intervention?.status !== "check_in_due") return;
+    const deadline =
+      intervention.status === "check_in_due"
+        ? intervention.responseDeadlineAt
+        : intervention.deadlineAt;
+    if (clock < deadline || clock - lastDeadlineRefreshAt.current < 5_000) return;
+    lastDeadlineRefreshAt.current = clock;
+    services.currentRescue().then(
+      (next) => setLoad({ status: "ready", intervention: next }),
+      () => undefined,
+    );
+  }, [clock, intervention, services]);
 
   const submit = async (action: "start" | "safe" | "slipped" | "extend") => {
     if (submitting.current) return;
@@ -172,6 +195,12 @@ export function Rescue({
       setLoad({ status: "ready", intervention: next });
       setMutation({ status: "idle" });
     } catch (error) {
+      if (action !== "start" && isApiErrorStatus(error, 409)) {
+        const current = await services.currentRescue().catch(() => intervention);
+        setLoad({ status: "ready", intervention: current });
+        setMutation({ status: "idle" });
+        return;
+      }
       setMutation(
         isApiErrorStatus(error, 503) ? { status: "unavailable" } : { status: "failed", action },
       );
@@ -241,6 +270,9 @@ export function Rescue({
           {mutation.status === "unavailable" && (
             <MutationError>Rescue is temporarily unavailable. Nothing was started.</MutationError>
           )}
+          {mutation.status === "unavailable" && (
+            <MutationError>Rescue is temporarily unavailable. Nothing was started.</MutationError>
+          )}
         </div>
       </Screen>
     );
@@ -258,9 +290,27 @@ export function Rescue({
           <TerminalCard intervention={intervention} />
           {intervention.status === "slipped" && (
             <JarChoices
-              jars={jars}
+              state={jarChoices}
               onChoose={(jar) => ctx.nav({ name: "logSlip", jarId: jar.id })}
+              onRetry={() => void loadJars()}
             />
+          )}
+          <div style={{ marginTop: 18 }}>
+            <Btn
+              kind="dark"
+              disabled={mutation.status === "submitting"}
+              onClick={() => void submit("start")}
+            >
+              {mutation.status === "submitting" ? "Starting rescue…" : "Start another rescue"}
+            </Btn>
+          </div>
+          {mutation.status === "failed" && (
+            <>
+              <MutationError>Rescue couldn’t start. Nothing was sent.</MutationError>
+              <Btn kind="dark" onClick={retryMutation}>
+                Retry starting rescue
+              </Btn>
+            </>
           )}
         </div>
       </Screen>
