@@ -53,6 +53,13 @@ const denied = ReportSchema.parse({
   status: "denied",
   evidence: [],
 });
+const expired = ReportSchema.parse({
+  ...resolved,
+  id: "rpt_expiredhistory",
+  note: "No response arrived before the accountability window closed.",
+  status: "expired",
+  evidence: [],
+});
 const navigate = fn();
 
 function never<T>(): Promise<T> {
@@ -97,7 +104,9 @@ type Story = StoryObj<typeof meta>;
 export const ResolvedList: Story = {
   render: () => {
     const ctx = context({ name: "reportHistory" });
-    const services: ReportHistoryServices = { reportHistory: fn(async () => [resolved, denied]) };
+    const services: ReportHistoryServices = {
+      reportHistory: fn(async () => [resolved, denied, expired]),
+    };
     return <ReportHistory ctx={ctx} services={services} />;
   },
   play: async ({ canvasElement }) => {
@@ -105,6 +114,7 @@ export const ResolvedList: Story = {
     navigate.mockClear();
     await expect(await canvas.findByText("Owned")).toBeVisible();
     await expect(canvas.getByText("Denied")).toBeVisible();
+    await expect(canvas.getByText("Expired")).toBeVisible();
     await expect(canvas.getByText("The screenshot survived the reload.")).toBeVisible();
     await userEvent.click(canvas.getByRole("button", { name: /Alex · The Group Chat.*Owned/ }));
     await expect(navigate).toHaveBeenCalledWith({

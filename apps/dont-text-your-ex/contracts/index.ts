@@ -309,7 +309,7 @@ const EvidenceSchema = z
   })
   .strict();
 
-export const ReportStatusSchema = z.enum(["pending", "owned", "denied"]);
+export const ReportStatusSchema = z.enum(["pending", "owned", "denied", "expired"]);
 export const ReportSchema = z
   .object({
     id: ReportIdSchema,
