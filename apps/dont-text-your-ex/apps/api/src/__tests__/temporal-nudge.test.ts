@@ -6,20 +6,23 @@ describe("Temporal post-commit nudge", () => {
     const starter = new RecordingRecoveryWorkflowStarter();
     const nudge = new TemporalPostCommitNudge(starter);
 
-    await nudge.nudge(["evt_one", "evt_two"] as never);
+    await nudge.nudge([
+      "evt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    ] as never);
 
     expect(starter.calls()).toEqual([
       {
         workflowType: "OutboxDispatchRecoveryWorkflow",
-        workflowId: "outbox/evt_one",
+        workflowId: "outbox/evt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         taskQueue: "main",
-        args: { schemaVersion: 1, eventIds: ["evt_one"] },
+        args: { schemaVersion: 1, eventIds: ["evt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"] },
       },
       {
         workflowType: "OutboxDispatchRecoveryWorkflow",
-        workflowId: "outbox/evt_two",
+        workflowId: "outbox/evt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         taskQueue: "main",
-        args: { schemaVersion: 1, eventIds: ["evt_two"] },
+        args: { schemaVersion: 1, eventIds: ["evt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"] },
       },
     ]);
   });

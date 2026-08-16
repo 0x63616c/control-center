@@ -101,11 +101,11 @@ describe("workflow dispatcher seam", () => {
 
   it("leaves unsupported events pending until a dispatcher registers their capability", async () => {
     const event = DomainEventSchema.parse({
-      id: "evt_later",
+      id: "evt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       type: "invite.issued",
       schemaVersion: 1,
       aggregateType: "invite",
-      aggregateId: "inv_later",
+      aggregateId: "inv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       aggregateVersion: 1,
       occurredAt: 1,
     });
@@ -140,9 +140,9 @@ describe("workflow dispatcher seam", () => {
   });
 
   it.each([0, 1])("isolates an unexpected adapter throw at page position %s", async (throwAt) => {
-    const events = ["one", "two", "three"].map((suffix, index) =>
+    const events = ["a", "b", "c"].map((suffix, index) =>
       DomainEventSchema.parse({
-        id: `evt_${suffix}`,
+        id: `evt_${suffix.repeat(32)}`,
         type: "jar.created",
         schemaVersion: 1,
         aggregateType: "jar",

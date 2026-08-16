@@ -7,11 +7,11 @@ import {
 } from "./temporal-workflow-dispatcher";
 
 const inviteIssued = DomainEventSchema.parse({
-  id: "evt_invite",
+  id: "evt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   type: "invite.issued",
   schemaVersion: 1,
   aggregateType: "invite",
-  aggregateId: "inver_invite",
+  aggregateId: "inv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   aggregateVersion: 1,
   occurredAt: 1,
 });
@@ -21,14 +21,18 @@ describe("Temporal workflow dispatcher", () => {
     expect(temporalOperationFor(inviteIssued)).toEqual({
       kind: "start",
       workflowType: "InviteLifecycleWorkflow",
-      workflowId: "invite/inver_invite",
-      args: { aggregateId: "inver_invite", aggregateVersion: 1, schemaVersion: 1 },
+      workflowId: "invite/inv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      args: {
+        aggregateId: "inv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        aggregateVersion: 1,
+        schemaVersion: 1,
+      },
     });
     expect(
       temporalOperationFor(
         DomainEventSchema.parse({
           ...inviteIssued,
-          id: "evt_superseded",
+          id: "evt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           type: "invite.superseded",
           aggregateVersion: 2,
         }),
@@ -36,9 +40,13 @@ describe("Temporal workflow dispatcher", () => {
     ).toEqual({
       kind: "signal_with_start",
       workflowType: "InviteLifecycleWorkflow",
-      workflowId: "invite/inver_invite",
+      workflowId: "invite/inv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       signal: "superseded",
-      args: { aggregateId: "inver_invite", aggregateVersion: 2, schemaVersion: 1 },
+      args: {
+        aggregateId: "inv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        aggregateVersion: 2,
+        schemaVersion: 1,
+      },
     });
   });
 
