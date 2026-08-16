@@ -74,9 +74,11 @@ export const Interactive: Story = {
     await userEvent.click(canvas.getByRole("button", { name: "Save" }));
     await expect(canvas.getByTestId("button-clicks")).toHaveTextContent("1");
 
-    const opener = canvas.getByRole("button", { name: "View report attachment" });
+    const opener = canvas.getByRole("button", { name: "View supporting screenshot" });
     await userEvent.click(opener);
-    await expect(canvas.getByRole("dialog", { name: "Report attachment viewer" })).toBeVisible();
+    await expect(
+      canvas.getByRole("dialog", { name: "Supporting screenshot viewer" }),
+    ).toBeVisible();
     await expect(canvas.getByRole("button", { name: "Close attachment viewer" })).toHaveFocus();
     await userEvent.keyboard("{Escape}");
     await expect(canvas.queryByRole("dialog")).not.toBeInTheDocument();

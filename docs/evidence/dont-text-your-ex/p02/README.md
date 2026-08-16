@@ -26,7 +26,7 @@ percentage yet.
 | -------------------------- | ---------------------------------------- |
 | AST runtime-copy policy    | PASS — 12/12                             |
 | Frontend Vitest            | PASS — 9 files, 41/41                    |
-| Relevant Storybook stories | PASS — 7 files, 54/54                    |
+| Relevant Storybook stories | PASS — 8 files, 55/55                    |
 | Frontend TypeScript        | PASS                                     |
 | Production frontend build  | PASS                                     |
 | Biome tracked-file lint    | PASS                                     |
