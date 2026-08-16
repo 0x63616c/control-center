@@ -190,11 +190,12 @@ Proven and reusable:
 - Immutable application revision `ecf47add229d590bdce7238e7130fb802e07b9da`
   passed run `31872702467`, including Postgres contracts, Playwright, Storybook,
   typecheck/Knip, images, and both home-server and Cloudflare deployment.
-- Current `origin/main` is
-  `f2426fdc8957b9409d1c0a0efb97e6dfd9fbbfe1` (PR `#703`). Its docs-only main
-  run `31926173581` and CodeQL run `31926173275` passed. Product-specific jobs
-  were path-skipped, so these runs prove the merged control document and current
-  main gates, not a fresh application build or deployment.
+- Current `origin/main` at P00 closure is
+  `676623f18479e278baad877742ccc4fa24c30f70` (PR `#705`), containing the
+  redacted baseline evidence. PR CI, CodeQL, Storybook, unit, typecheck/Knip,
+  and required `test-software-factory` checks passed. Product-specific jobs were
+  path-skipped, so these runs prove the merged control/evidence documents and
+  current main gates, not a fresh application build or deployment.
 - Production frontend/API/CNPG/migrations, public HTTPS, persistence across API
   and database restarts, backup/restore, cleanup, and a second deployment have
   evidence in the restoration ledger.
@@ -255,7 +256,7 @@ the data model/deletion/moderation inventory is final.
 
 ### P00 — Freeze and prove the current baseline — 5%
 
-- **Status:** `IN PROGRESS`
+- **Status:** `PROVEN`
 - **Dependencies:** none
 - **Deliverables:** this control document; refreshed origin/main SHA, CI state,
   production state, App Store version/build/TestFlight state, baseline evidence
@@ -699,6 +700,7 @@ evidence with stable URLs/IDs. “Observed” without a timestamp/source is inva
 | 2026-08-16T04:18:32Z | P00 | Repository, tracker, and current main gates | PASS | `f2426fdc8` | PR [#703](https://github.com/0x63616c/world-wide-webb/pull/703); main CI [31926173581](https://github.com/0x63616c/world-wide-webb/actions/runs/31926173581); CodeQL `31926173275`; `T-41` open; [redacted evidence](../evidence/dont-text-your-ex/p00-baseline-2026-08-16.md) | Engineering release audit + coordinator |
 | 2026-08-16T04:17:52Z | P00 | Production, public edge, and AASA | PASS with recorded gaps | deployed pre-P00 images | [Machine/public evidence](../evidence/dont-text-your-ex/p00-baseline-2026-08-16.md); policy routes and `/version.json` proven SPA fallbacks | Production/public audit + coordinator |
 | 2026-08-16T04:19:55Z | P00 | Live Apple release state | PASS | Version 1.0; Build 24 | [Redacted UI-state evidence](../evidence/dont-text-your-ex/p00-baseline-2026-08-16.md); [public TestFlight link](https://testflight.apple.com/join/6HcbUuV3) | Coordinator browser inspection + independent screenshot review |
+| 2026-08-16T04:26:49Z | P00 | Durable baseline merge and review closure | PASS | `676623f18` | PR [#705](https://github.com/0x63616c/world-wide-webb/pull/705); all checks green; standards/spec review findings corrected before merge | Independent standards/spec reviewers + coordinator |
 
 ## Blocker ledger
 
@@ -712,15 +714,15 @@ evidence with stable URLs/IDs. “Observed” without a timestamp/source is inva
 |---|---:|---|---|---|
 | 2026-08-15 | 2% | Control-document phase started | `KmPxBhNk5S6G` | Sent before packet-weight formula; earned progress was 0%. Correct in the next notification. |
 | 2026-08-15 | 0% | Control document merged; P00 refresh started | `XoGDGDjQvfOC` | Corrected earned progress; no P00 blocker; baseline refresh remained. |
+| 2026-08-16T04:26:59Z | 5% | P00 baseline proven and merged | `zPExehUPLTnr` | P01 owner decisions are next; compliance, RC, physical QA, listing, submission, approval, and public proof remain. |
 
 ## Current status
 
-- **Calculated progress:** 0%. P00 evidence is assembled but earns its 5% only
-  after the evidence refresh is merged and the required milestone notification
-  is sent and recorded.
-- **Current packet:** P00.
-- **Current blockers:** none for P00. Build 24's Beta App Review is external
-  waiting state and is not on the public-submission critical path.
-- **Next action:** merge this independently reviewed evidence refresh, send the
-  earned 5% notification, record its event ID in a packet-closing change, then
-  begin P01 without guessing legal or business declarations.
+- **Calculated progress:** 5% (`P00` proven).
+- **Current packet:** P01.
+- **Current blockers:** P01 requires Calum's explicit legal, business, product,
+  distribution, deletion, and moderation decisions. Build 24's Beta App Review
+  is external waiting state and is not on the public-submission critical path.
+- **Next action:** obtain and propagate the P01 owner decisions without guessing
+  legal or business declarations, then start the dependency-ready P02/P03/P05
+  implementation packets.
