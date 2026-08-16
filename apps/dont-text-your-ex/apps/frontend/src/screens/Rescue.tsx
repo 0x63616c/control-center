@@ -270,9 +270,6 @@ export function Rescue({
           {mutation.status === "unavailable" && (
             <MutationError>Rescue is temporarily unavailable. Nothing was started.</MutationError>
           )}
-          {mutation.status === "unavailable" && (
-            <MutationError>Rescue is temporarily unavailable. Nothing was started.</MutationError>
-          )}
         </div>
       </Screen>
     );
@@ -311,6 +308,9 @@ export function Rescue({
                 Retry starting rescue
               </Btn>
             </>
+          )}
+          {mutation.status === "unavailable" && (
+            <MutationError>Rescue is temporarily unavailable. Nothing was started.</MutationError>
           )}
         </div>
       </Screen>
