@@ -69,6 +69,13 @@ const jar = JarSummarySchema.parse({
   myShareStreak: false,
 });
 const slippedNavigation = fn();
+let duplicateStartAttempts = 0;
+const duplicateStart = fn(async () => {
+  duplicateStartAttempts += 1;
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  if (duplicateStartAttempts === 1) throw new Error("offline");
+  return active;
+});
 
 function context(nav = fn()): AppCtx<RouteFor<"rescue">> {
   return {
@@ -264,21 +271,24 @@ export const Unavailable: Story = {
 
 export const DuplicateSubmitAndRecoverableRetry: Story = {
   render: () => {
-    let attempts = 0;
-    const startRescue = fn(async () => {
-      attempts += 1;
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      if (attempts === 1) throw new Error("offline");
-      return active;
-    });
-    return <Rescue ctx={context()} services={servicesFor(null, { startRescue })} now={() => NOW} />;
+    duplicateStartAttempts = 0;
+    duplicateStart.mockClear();
+    return (
+      <Rescue
+        ctx={context()}
+        services={servicesFor(null, { startRescue: duplicateStart })}
+        now={() => NOW}
+      />
+    );
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const start = await canvas.findByRole("button", { name: "Start 10-minute rescue" });
     await userEvent.dblClick(start);
     await expect(await canvas.findByRole("alert")).toHaveTextContent("Nothing was sent");
+    await expect(duplicateStart).toHaveBeenCalledTimes(1);
     await userEvent.click(canvas.getByRole("button", { name: "Retry starting rescue" }));
     await expect(await canvas.findByRole("timer")).toHaveTextContent("10:00");
+    await expect(duplicateStart).toHaveBeenCalledTimes(2);
   },
 };
