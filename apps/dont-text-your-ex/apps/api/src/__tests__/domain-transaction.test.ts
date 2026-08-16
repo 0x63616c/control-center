@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { JarIdSchema } from "../../../../contracts";
 import { pool } from "../db/index";
 import { runMigrations } from "../db/migrate";
+import { InviteVersionIdSchema } from "../domain-events";
 import { DomainTransactionRunner, RecordingPostCommitNudge } from "../domain-transaction";
 import { PostgresOutbox } from "../outbox";
 
@@ -96,8 +97,16 @@ describe.skipIf(!HAS_DB)("domain transaction seam", () => {
   it("does not lease or increment attempts for an unsupported event type", async () => {
     const runner = new DomainTransactionRunner({ pool, clock: () => 100 });
     await runner.run(async ({ emit }) => {
-      await emit({ type: "jar.created", aggregateId: "jar_supported", aggregateVersion: 1 });
-      await emit({ type: "invite.issued", aggregateId: "inver_pending", aggregateVersion: 1 });
+      await emit({
+        type: "jar.created",
+        aggregateId: JarIdSchema.parse("jar_supported"),
+        aggregateVersion: 1,
+      });
+      await emit({
+        type: "invite.issued",
+        aggregateId: InviteVersionIdSchema.parse("inv_0123456789abcdef0123456789abcdef"),
+        aggregateVersion: 1,
+      });
     });
 
     await expect(
