@@ -1,0 +1,704 @@
+# Don’t Text Your Ex — Public App Store Release Control
+
+> **COMPACTION / CONTINUATION INSTRUCTIONS — READ THIS FIRST**
+>
+> This is the durable source of truth for the goal **publish Don’t Text Your Ex
+> on the public Apple App Store and prove an ordinary user can download and use
+> it**. After any context compaction, new session, or handoff, load this document
+> before doing work. Then read the linked V1 acceptance and execution ledger,
+> refresh repository/App Store Connect/production state, and resume deterministically:
+> (1) read `AGENTS.md` and this document; (2) call `get_goal` and confirm the
+> active goal; (3) fetch and record `origin/main`, worktree/branch/dirty state,
+> live agents, last evidence row, and current external state; (4) resume the one
+> `IN PROGRESS` packet, otherwise choose the lowest-numbered dependency-ready
+> `NOT STARTED` packet; skip `BLOCKED` packets until their named condition clears;
+> (5) re-check explicit approval gates before submit/release. Do not restart
+> completed work, trust stale status, or report a processed/TestFlight build as
+> public release proof.
+>
+> Keep this file current in the same change that moves a packet. Record exact
+> commits, builds, workflow URLs/IDs, screenshots, public URLs, and redacted
+> machine evidence. A checkbox is not evidence. Never record credentials,
+> tokens, Apple subjects, private screenshots, tester email addresses, or other
+> personal data here.
+
+## Goal and completion boundary
+
+The goal is complete only when all mandatory packets below are `PROVEN`, Apple
+has approved version 1.0, the release is publicly visible in the intended
+storefronts, a fresh non-TestFlight device/account can download the App Store
+binary, Sign in with Apple and the core two-user flow work against production,
+and post-release health/support/moderation checks pass.
+
+Apple approval is an external decision. The operating commitment is to drive
+the app through implementation, submission, review remediation, approval,
+release, and public verification rather than stopping at “submitted.”
+
+Locked identity and targets:
+
+- Repository: `0x63616c/world-wide-webb`
+- App path: `apps/dont-text-your-ex`
+- Product name: **Don’t Text Your Ex** (App Store Connect currently says
+  **Don’t Text Your Ex Together**; packet `P01` resolves this)
+- Bundle ID: `co.worldwidewebb.textyourex`
+- Version: `1.0`
+- Production: `https://dont-text-your-ex.worldwidewebb.co`
+- Kubernetes namespace: `dont-text-your-ex`
+- Production stack: `home-server`
+- Apple app ID: `6778544752`
+- Software-factory tracker: `T-41`
+- Notification endpoint: `https://ntfy.sh/0x63616c`
+
+Related sources that remain authoritative for their scope:
+
+1. [`dont-text-your-ex-v1-release.md`](./dont-text-your-ex-v1-release.md) —
+   restored product behavior and V1 acceptance.
+2. [`dont-text-your-ex-restoration-progress.md`](./dont-text-your-ex-restoration-progress.md)
+   — historical implementation and production evidence; its later live-evidence
+   section supersedes stale earlier blocked rows.
+3. [`dont-text-your-ex-restoration.md`](./dont-text-your-ex-restoration.md) —
+   recovery and infrastructure plan.
+4. `apps/dont-text-your-ex/docs/publishing-ios.md` — current signing/TestFlight
+   pipeline.
+5. Current source, tests, immutable CI, live production, App Store Connect, and
+   physical-device observations — current evidence wins over memory.
+
+## Operating protocol
+
+### Task sizing and delegation
+
+- Work one small-to-medium, dependency-ready packet at a time. Split a packet if
+  it cannot be implemented, verified, and documented coherently within a
+  context window.
+- Keep at most one coordinating packet `IN PROGRESS` unless this document names
+  an explicit parallel set with separate owners and non-conflicting inputs.
+- Use subagents for most bounded implementation, research, asset, QA, and
+  independent-review work. The coordinating agent owns dependency order,
+  integration, evidence reconciliation, external actions, and the final truth.
+- Implementation and independent QA should be separate agents whenever
+  capacity permits. The creator of a screenshot/icon/listing asset cannot be its
+  only reviewer.
+- Follow `AGENTS.md`: use a `wtp` worktree, branch from `origin/main`, use the
+  repository’s software-factory ticket workflow when creating implementation
+  tickets, commit and push coherent slices, open a PR, merge only green work,
+  and deploy only the `home-server` stack.
+- Never read or print secret values. Evidence must be redacted and must identify
+  what was checked without exposing the value checked.
+
+### Status vocabulary
+
+- `NOT STARTED` — no current execution evidence.
+- `IN PROGRESS` — active work exists but acceptance is incomplete.
+- `BLOCKED` — a named dependency, Apple state, or user-only action prevents
+  meaningful progress.
+- `PROVEN` — every mandatory acceptance item has current recorded evidence.
+- `N/A` — explicitly excluded with a recorded reason and owner approval.
+
+Only `PROVEN` and approved `N/A` earn progress. Code completion without current
+tests, visual review, deployment, or required live/device evidence earns no
+packet credit.
+
+Requirement classes used below:
+
+- `APPLE REQUIRED` — Apple submission, policy, or distribution requirement.
+- `PROJECT GATE` — an intentionally stricter release-quality requirement for
+  this project, even when Apple does not mandate the exact mechanism.
+- `RECOMMENDED` — strongly preferred but not completion-blocking unless promoted
+  by an owner decision.
+- `CONDITIONAL` — required only when the named capability, region, or business
+  condition applies.
+- `OWNER-ONLY` — legal/business attestation or irreversible external decision
+  that Calum must confirm.
+
+For example, Apple requires 1–10 accurate screenshots, but this project’s 5–7
+image narrative, deterministic composition pipeline, external TestFlight pass,
+and independent visual review are `PROJECT GATE`s rather than Apple mandates.
+
+### Progress formula
+
+Progress is the sum of the weights of `PROVEN` packets. Do not estimate by time
+spent or old checkbox count. Historical production restoration is represented
+by `P00`; it is not re-counted in later packets.
+
+| Packet | Weight | Packet | Weight |
+|---|---:|---|---:|
+| P00 | 5% | P09 | 5% |
+| P01 | 4% | P10 | 7% |
+| P02 | 4% | P11 | 5% |
+| P03 | 8% | P12 | 8% |
+| P04 | 4% | P13 | 9% |
+| P05 | 8% | P14 | 7% |
+| P06 | 5% | P15 | 5% |
+| P07 | 6% | P16 | 3% |
+| P08 | 4% | P17 | 3% |
+
+Total: **100%**. `Submitted`, `approved`, and `publicly verified` are distinct
+milestones. Never report 100% at submission or approval alone.
+
+### Notifications and user requests
+
+Send concise notifications to `https://ntfy.sh/0x63616c` at:
+
+- project start;
+- each newly proven packet or meaningful milestone (batch tiny events);
+- every 10-point progress crossing;
+- any blocker or user/legal/physical-device action needed;
+- submission, review decision, resubmission, approval, release, and final public
+  verification.
+
+Each message must contain: project, honest percentage, current milestone,
+blockers, user action if any, and what remains. Do not include PII or secrets.
+Record the returned ntfy event ID in the notification ledger.
+
+Notify Calum instead of guessing for:
+
+- legal entity/privacy-policy owner and content-rights attestations;
+- DSA trader status and any regional regulatory declaration;
+- price, tax, territories, developer/paid agreements, or banking/tax identity;
+- age/consent stance where it is a product/legal decision;
+- retained-data/legal-retention exceptions;
+- Apple 2FA or account-holder-only actions;
+- final approval immediately before `Submit for Review`;
+- final approval immediately before a manual public release.
+
+### Screenshot and visual evidence protocol
+
+- Keep fictional/redacted raw source captures, deterministic final assets,
+  manifest, hashes, contact sheet, and QA report in the repository. If App Store
+  Connect evidence includes contact information or private account state, commit
+  only a redacted derivative; keep the original outside version control or do
+  not retain it.
+- Inspect every generated image at original resolution and at App Store thumbnail
+  size. Check cropping, safe areas, spelling, contrast, status bar, fictional
+  data, accurate capability claims, and policy-safe tone.
+- Use one creator and one independent visual reviewer. Record creator/reviewer
+  names or agent task IDs, timestamp, reviewed manifest SHA, pass/fail per asset,
+  remediation, and fresh re-review. A global “looks good” is not evidence.
+- Capture App Store Connect before/after states for required sections, but redact
+  personal contact details and never store credentials.
+- Generated or edited images are not accepted merely because a tool completed;
+  visual inspection and explicit review are mandatory.
+
+## Current verified baseline — refresh before relying on it
+
+Snapshot date: **2026-08-15**.
+
+Proven and reusable:
+
+- The authoritative later monorepo app is restored at
+  `apps/dont-text-your-ex`; bundle ID and binary display name are correct.
+- Immutable application revision `ecf47add229d590bdce7238e7130fb802e07b9da`
+  passed run `31872702467`, including Postgres contracts, Playwright, Storybook,
+  typecheck/Knip, images, and both home-server and Cloudflare deployment.
+- Production frontend/API/CNPG/migrations, public HTTPS, persistence across API
+  and database restarts, backup/restore, cleanup, and a second deployment have
+  evidence in the restoration ledger.
+- Signed Build 24 carries Sign in with Apple and Associated Domains in the app
+  and provisioning profile. AASA origin and Apple CDN responses were proven.
+- Build 24 is processed and assigned to Internal and Friends. The public
+  TestFlight link exists. Live App Store Connect showed Build 24 **Waiting for
+  Review** for Beta App Review.
+- App Store version 1.0 is **Prepare for Submission**. Live inspection showed
+  zero screenshots, no App Store build attached, blank version metadata/reviewer
+  fields, unresolved app-level setup, and automatic release currently selected.
+
+Known open release gaps:
+
+- No account-deletion domain/API/UI or Sign in with Apple revocation flow.
+- Gameplay reporting is not abuse reporting. There is no block-user model,
+  operator moderation flow, or objectionable-content filtering.
+- `/privacy`, `/support`, `/terms`, and `/community-guidelines` currently return
+  the same SPA shell rather than genuine public documents.
+- Runtime/public-facing copy contains “shame,” “guilt,” and accusatory language
+  that creates Guideline 1.1/1.2 risk.
+- Physical production Sign in with Apple, external non-team install/core flow,
+  native picker/share/universal links, and physical accessibility remain open.
+- The iOS target declares `TARGETED_DEVICE_FAMILY = "1,2"`; iPad support is not
+  physically/visually proven and expands screenshot requirements.
+- The current dollar-sign icon can imply real payments. The current splash art
+  is default Capacitor artwork and does not match the product.
+- There is no deterministic App Store creative/listing pipeline.
+- Build 24 is beta evidence, not the public release candidate after compliance
+  code changes. Public submission requires Build 25 or later.
+
+## Critical path
+
+```text
+P00 -> P01 -> {P02,P03,P05} -> P09 -> P07 -> {P04,P06,P08} -> P10 -> P11 -> P12
+{P01,P02,P04,P06,P11,P12} -> P13
+{P01,P02,P07,P09,P12,P13} -> P14 -> P15 -> P16 -> P17
+```
+
+Parallel work is allowed only when inputs are stable. Do not capture final store
+screenshots before final UI/safety/copy work, or publish privacy answers before
+the data model/deletion/moderation inventory is final.
+
+## Execution packets
+
+### P00 — Freeze and prove the current baseline — 5%
+
+- **Status:** `IN PROGRESS`
+- **Dependencies:** none
+- **Deliverables:** this control document; refreshed origin/main SHA, CI state,
+  production state, App Store version/build/TestFlight state, baseline evidence
+  links, blocker list, progress and notification ledgers.
+- **Acceptance:** reconcile the old ledger’s historical blocked rows with its
+  newer live-evidence section; distinguish automated, production, Apple, and
+  physical-device proof; record live values without secrets.
+- **Evidence:** committed document, current repository status, live public probes,
+  App Store Connect screenshots/state, TestFlight state, first ntfy event ID.
+
+### P01 — Owner decisions and public-release contract — 4%
+
+- **Status:** `NOT STARTED`
+- **Dependencies:** P00
+- **Decisions:** final store name; iPhone-only versus universal iPhone/iPad;
+  privacy/legal owner; support contact; copyright; free/paid; territories;
+  categories; release mode; DSA trader status; age/consent stance; deletion
+  semantics for owned/shared data; moderation SLA and escalation path; standard
+  Apple EULA versus optional custom EULA; optional availability on compatible
+  Apple-silicon Macs and Apple Vision Pro; protected operator-plane strategy;
+  V1 localization scope.
+- **Initial release modes:** manually release after approval; automatically
+  release after approval; or automatically release no earlier than a selected
+  date/time. Phased release applies to updates, not initial version 1.0.
+- **Acceptance:** every decision is explicit, dated, attributed, and propagated
+  to downstream packets. Legal/business answers are confirmed by Calum, not
+  inferred by an agent.
+- **Evidence:** decision table in this document plus redacted App Store Connect
+  captures where applicable.
+
+### P02 — Supportive positioning and complete copy audit — 4%
+
+- **Status:** `NOT STARTED`
+- **Dependencies:** P01
+- **Work:** replace public/runtime “shame,” “wall of shame,” “guilt,” “snitched,”
+  “carnage,” “poor impulse control,” and payment-teasing copy with private,
+  consensual, supportive accountability. State clearly that the app does not
+  read messages or transfer money. Update tests/stories/docs.
+- **Acceptance:** no prohibited public/runtime strings except explicitly retained
+  historical design references; product still has a coherent, playful voice;
+  all changed screens receive visual review.
+- **Evidence:** scoped grep report, copy inventory, before/after screenshots,
+  unit/Storybook/Playwright results, independent tone/policy review.
+
+### P03 — Account-deletion domain, API, and data semantics — 8%
+
+- **Status:** `NOT STARTED`
+- **Dependencies:** P01
+- **Work:** transactional authenticated deletion; session revocation; Sign in
+  with Apple token revocation; removal/anonymization of profile, avatar, private
+  ex labels, uploads, and UGC; deterministic handling of owned jars and friends’
+  shared history; idempotency, rollback, and re-registration semantics.
+- **Acceptance:** deletion is deletion, not deactivation; shared users are not
+  surprised by destructive cascades; old sessions fail; retained data has a
+  documented lawful/product reason; repeat deletion is safe.
+- **Apple revocation plumbing:** the native bridge/shared contract returns the
+  authorization code; the API exchanges it without logging it; required Apple
+  key/client-secret configuration is presence-checked only; revocation material
+  is protected and retained only per policy. Cover success, already-revoked, and
+  transient failure through an injected adapter. Never place codes/tokens in
+  logs or evidence.
+- **Evidence:** migration/contract; real-Postgres matrix for owner/member/former,
+  owned/shared content, evidence, concurrent and failed transactions, second
+  delete, old-token rejection, mocked Apple revocation, and re-registration;
+  redacted before/after table inventory. Real-token Apple revocation is P12.
+- **Apple source:** https://developer.apple.com/support/offering-account-deletion-in-your-app/
+
+### P04 — Account-deletion UI and privacy choices — 4%
+
+- **Status:** `NOT STARTED`
+- **Dependencies:** P03, P07 wording
+- **Work:** Profile → Delete Account; clear consequences; confirmation; pending,
+  offline, failure, retry, and success states; local credential cleanup; policy
+  links; accessible focus and controls.
+- **Acceptance:** easy to find, understandable, no false success, successful
+  deletion returns to authentication, and re-registration follows the approved
+  semantics.
+- **Evidence:** Storybook, Playwright pointer flow, local accessibility/focus/
+  44-point review, and screenshots. Physical deletion/re-registration is P12.
+
+### P05 — UGC safety backend and moderation model — 8%
+
+- **Status:** `NOT STARTED`
+- **Dependencies:** P01
+- **Work:** separate abuse reports from gameplay reports; block/unblock model;
+  blocked interaction semantics; objectionable-text filtering at all relevant
+  server boundaries; moderation statuses/audit; rate limiting; safe evidence
+  handling and operator authorization.
+- **Operator plane:** implement P01’s explicit protected-operator strategy
+  (private kubectl/runbook or authenticated admin surface), define operator
+  identity/authorization, and prove ordinary users cannot list, read, or resolve
+  moderation reports.
+- **Acceptance:** meets Apple Guideline 1.2 filtering, reporting, blocking,
+  response, and contact requirements without leaking gameplay reporter identity
+  or moderation information.
+- **Evidence:** migrations; raw HTTP/real-Postgres authorization and privacy
+  matrix; filter corpus/boundaries; rate-limit/idempotency tests; audit records.
+- **Apple source:** https://developer.apple.com/app-store/review/guidelines/
+
+### P06 — UGC safety UX, consent, and user control — 5%
+
+- **Status:** `NOT STARTED`
+- **Dependencies:** P05, P07
+- **Work:** report content/user to operator, block/unblock, easy leave, community
+  rules/terms acknowledgement, support entry point, confirmations, safe errors,
+  and clear consensual/private-group language.
+- **Acceptance:** user can protect themselves from every relevant member/content
+  surface; normal, empty, offline, duplicate, unauthorized, and failure states
+  are honest and accessible.
+- **Evidence:** Storybook, Playwright two-session browser flow, local
+  accessibility/focus/target-size review, and independently reviewed screenshots.
+  Physical two-device proof is P12.
+
+### P07 — Genuine privacy, support, terms, and community pages — 6%
+
+- **Status:** `NOT STARTED`
+- **Dependencies:** P01, P09
+- **Work:** publish Privacy Policy, Support, Terms, Community Guidelines, and
+  optionally a dedicated Account Deletion page; link them from the app. Include
+  effective date, collection/use, visibility, retention, deletion, UGC,
+  reporting/moderation, and real support contact.
+- **Acceptance:** Calum-approved pages are accurate, distinct, locally reachable
+  without authentication, readable on phone/desktop, and not generic SPA
+  fallbacks. Public production proof is P10.
+- **Evidence:** local unique hashes/titles/content types and 200 responses for
+  each route, link checker, mobile/desktop browser screenshots, in-app link tests.
+
+### P08 — Operational moderation and support readiness — 4%
+
+- **Status:** `NOT STARTED`
+- **Dependencies:** P05, P07
+- **Work:** protected operator queue or safe runbook; new-report notification;
+  investigation/removal/block/resolve flow; moderation/support retention,
+  backup, observability, and stated response target.
+- **Acceptance:** operator authentication/runbook and an integration/synthetic
+  local drill prove one report produces one non-PII alert, ordinary users have no
+  operator access, and an authorized operator can resolve with an audit trail.
+  The production alert/queue/backup drill is P10.
+- **Evidence:** integration drill, redacted queue/audit capture, authorization
+  tests, notification-adapter test, runbook, and local observability contract.
+
+### P09 — Privacy data inventory and App Privacy answers — 5%
+
+- **Status:** `NOT STARTED`
+- **Dependencies:** P01, P03, P05
+- **Work:** inventory every field, upload, log, SDK, network destination,
+  retention rule, deletion rule, identity linkage, purpose, sharing, and
+  tracking status. Map it to App Store Connect privacy taxonomy.
+- **Privacy manifest:** audit the bundled `PrivacyInfo.xcprivacy`, required-reason
+  API declarations, and privacy manifests/signatures for listed third-party SDKs
+  including Capacitor; generate and review Xcode’s privacy report; fail on a
+  missing or invalid manifest/signature.
+- **Tracking/ATT:** if any first- or third-party data is used for tracking,
+  implement AppTrackingTransparency and prohibit tracking before authorization.
+  Otherwise prove no tracking through dependencies and current-runtime network
+  behavior.
+- **App Store fields:** privacy-policy URL is `APPLE REQUIRED`; privacy-choices
+  URL is optional. Draft all selected first-/third-party data types here. Final
+  RC reconciliation and Publish occur in P14/P15 because publishing is an
+  accuracy/compliance attestation requiring `OWNER-ONLY` confirmation.
+- **Acceptance:** declarations come from source/schema/dependency/runtime audit,
+  not guesses; first- and third-party collection are included; “no tracking” is
+  claimed only after dependency and current-runtime network verification.
+- **Evidence:** reviewed source/schema/log/data-flow table, dependency and
+  current-runtime network audit, draft exact App Privacy answer set, retention/
+  deletion mappings, and manifest/required-reason audit. Final-RC network capture,
+  saved/published App Privacy answers, and owner Publish attestation are P14/P15.
+- **Apple source:** https://developer.apple.com/help/app-store-connect/manage-app-information/manage-app-privacy
+- **Additional Apple sources:**
+  https://developer.apple.com/support/third-party-SDK-requirements/ and
+  https://developer.apple.com/documentation/bundleresources/privacy-manifest-files
+
+### P10 — Integrate, deploy, and prove compliance changes — 7%
+
+- **Status:** `NOT STARTED`
+- **Dependencies:** P02–P09 `PROVEN`
+- **Work:** implementation tickets/worktrees/PRs, independent review, merge only
+  green, `home-server` deployment, migrations, backup/restore, public routes,
+  moderation drill, and repeat deployment.
+- **Acceptance:** immutable SHA passes Postgres, unit, Storybook, Playwright,
+  typecheck/Knip, image builds, security/policy tests, deploy and Cloudflare;
+  production remains healthy with no temporary QA data.
+- **Evidence:** PRs, immutable workflow IDs, deployment SHA/digests, rollout/CNPG
+  status, migration list, public probes, backup and scratch restore, cleanup.
+- **Integrated production additions:** prove P07 policy/support routes publicly;
+  run P08’s production alert/queue/resolve/backup drill; verify moderation tables
+  survive restore; and remove synthetic data afterward.
+
+### P11 — Final signed iOS release candidate, Build 25+ — 5%
+
+- **Status:** `NOT STARTED`
+- **Dependencies:** P10, P01 device-family decision
+- **Work:** keep marketing version 1.0; monotonic build; final Capacitor sync;
+  archive/sign; verify Sign in with Apple and AASA entitlements/profile; resolve
+  export compliance; upload/process; distribute exact build through TestFlight.
+- **Toolchain gate:** at build time, check Apple’s currently supported Xcode,
+  SDK, validation, and upload requirements rather than relying on the historical
+  pipeline configuration.
+- **Privacy artifact gate:** inspect the archived binary for required app/SDK
+  privacy manifests, required-reason declarations, and signatures; attach the
+  reviewed Xcode privacy report to the evidence bundle.
+- **Permission strings:** audit the actual WKWebView picker/camera paths and the
+  archived Info.plist for `NSPhotoLibraryUsageDescription`,
+  `NSCameraUsageDescription`, and other usage strings. Add only permissions the
+  release uses; prove no physical picker/camera crash in P12.
+- **Device-family gate:** inspect the archived app’s `UIDeviceFamily`. An
+  iPhone-only release must equal `[1]`; a universal release must equal `[1,2]`
+  and triggers real iPad layout/interaction QA plus 13-inch iPad assets.
+- **Acceptance:** processed build is the exact immutable product SHA and later
+  becomes the build attached to App Store version 1.0.
+- **Evidence:** workflow URL/ID, build ID, signing/entitlement results, processed
+  status and group assignment screenshots, honest What to Test metadata.
+
+### P12 — Physical and external TestFlight release acceptance — 8%
+
+- **Status:** `NOT STARTED`
+- **Dependencies:** P11 and external Beta App Review eligibility
+- **Work:** fresh non-team install over public internet; first/return Sign in
+  with Apple; two users; create/join/invite; cold/warm universal link; picker and
+  share sheet; slips; gameplay report; abuse report/block/leave; deletion and
+  re-registration; offline/restart; VoiceOver, Dynamic Type, safe areas, touch;
+  equivalent iPad checks if iPad remains supported.
+- **Acceptance:** every V1/current-policy physical row is `PASS` or approved
+  `N/A`; failures are fixed in a newer build and the exact replacement is retested.
+- **Apple deletion proof:** perform real Sign in with Apple deletion/revocation
+  without recording tokens, then verify old credentials fail and the approved
+  re-registration semantics work.
+- **Evidence:** redacted device/OS/build matrix, screenshots/recordings, TestFlight
+  eligibility, API/DB/log correlation, independent tester signoff.
+- **Classification:** external TestFlight/Beta App Review is a `PROJECT GATE` for
+  this release’s physical QA, not an Apple prerequisite for submitting the same
+  eligible build to public App Review. Build 24’s beta status must not stall
+  independent engineering/listing work or be mistaken for App Store approval.
+
+### P13 — App icon, launch experience, and store screenshot system — 9%
+
+- **Status:** `NOT STARTED`
+- **Dependencies:** final UI from P02/P04/P06; P01 device-family decision; P11;
+  P12 physical/core-flow signoff
+- **Work:** replace dollar-sign icon and default Capacitor splash; create safe
+  deterministic fixture states; capture exact release UI; compose, verify, and
+  independently review 5–7 store screenshots. Suggested repository layout:
+
+  ```text
+  apps/dont-text-your-ex/app-store/
+    README.md
+    copy/en-US.json
+    fixtures/en-US.json
+    raw/iphone-6.9/
+    final/iphone-6.9/
+    final/ipad-13/          # only if iPad remains supported
+    review/contact-sheet.png
+    manifest.json
+    qa.json
+    scripts/capture.ts
+    scripts/compose.ts
+    scripts/verify.ts
+  ```
+
+- **Recommended narrative:** Stay no-contact together; progress at a glance;
+  private pact with friends; log without judgment; celebrate progress; resolve
+  respectfully; privacy/control. The first three must explain the product.
+- **Capture requirements:** use either the exact submitted-binary UI with a
+  dedicated fictional account/data, or the same immutable release
+  source/configuration with a screenshot-only seam proven compiled out of the
+  submitted archive. Never ship `/auth/dev`, fixture routing, authentication
+  bypass launch arguments, or active seeded invite codes. Use fictional names
+  and data, fixed locale/time/status bar, and no debug/loading/keyboard/window
+  chrome or real message screenshots. Do not imply message-reading or payments.
+- **Dimensions:** use current Apple-accepted highest-resolution device classes
+  verified at execution time and record the Apple-source retrieval date in the
+  manifest. Apple currently permits the required iPhone set at a supported
+  6.9-inch or 6.5-inch size; a 6.9-inch set can scale down when the UI is the
+  same. Allow 6.9-inch portrait `1260×2736`, `1290×2796`, or `1320×2868`;
+  recommend `1320×2868`. If universal, allow iPad 13-inch portrait `2064×2752`
+  or `2048×2732`. Use one consistent size/orientation per localization and
+  device set. A scaled iPhone composite is not iPad usability evidence.
+- **Icon gate:** 1024×1024 RGB master, no alpha or pre-rounded corners; no `$`,
+  text, third-party trademark, or implication of money transfer/message
+  interception. Record artwork rights/provenance. Review at 16, 29, 40, 60, 76,
+  120, 180, and 1024px on light/dark backgrounds, and verify installed-device,
+  TestFlight, and App Store Connect consistency.
+- **Launch gate:** static, product-matched launch content with no marketing text
+  or fake loading UI. Verify every asset-catalog variant. Inspect a simulator and
+  physical-device cold-launch video frame by frame for white flash, clipping,
+  logo jump, or mismatch with the first app frame.
+- **Acceptance:** 1–10 accurate app-in-use screenshots per required device class;
+  not merely login/onboarding/splash. Require flattened sRGB/RGB, no alpha,
+  exact dimensions/bytes, valid decode, and no unintended profile conversion.
+  Record cryptographic hashes for provenance and perceptual-hash/difference
+  thresholds for near-duplicate detection. Run a denylist scan for real seed
+  names, emails/phones, Apple IDs, production invite codes, and private ex labels,
+  plus human privacy review for avatars/embedded images. Fail on any real photo,
+  message, notification, contact, active invite, or production identifier.
+  Exclude unrelated platform logos/chrome and unsupported superlative, price,
+  medical/therapy, automatic-detection, payment, or safety claims; overlays may
+  explain real capability but cannot fabricate UI. Require correct ordering,
+  contact sheet, original-size/thumbnail review, per-asset independent
+  product/privacy/policy/polish signoff, successful App Store processing, and
+  re-download/preview inspection of order, crop, legibility, and device class.
+- **Invalidation:** `manifest.json` records the exact source SHA and build number.
+  Any later UI, icon, launch, localization, fixture, font, or layout change
+  invalidates P13 until all affected assets are regenerated and re-reviewed.
+- **Apple sources:**
+  https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications
+  and https://developer.apple.com/help/app-store-connect/manage-app-information/upload-app-previews-and-screenshots
+
+### P14 — Listing, app-level setup, privacy, and reviewer package — 7%
+
+- **Status:** `NOT STARTED`
+- **Dependencies:** P01, P02, P07, P09, P13
+- **Required version product page:** screenshots (1–10 per required device
+  class), description (≤4,000 characters), keywords (≤100 bytes), Support URL,
+  copyright, and version number. `What’s New` is not required/available for the
+  first version.
+- **Required app level:** app name (≤30 characters) and primary category.
+- **Optional metadata:** subtitle (≤30 characters), promotional text (≤170),
+  Marketing URL, secondary category, and app-preview video. Polish may promote
+  selected optional fields to `PROJECT GATE`, but they are not Apple-required.
+- **App-level:** Content Rights, age rating, DSA/trader status, regional
+  compliance, App Privacy, encryption/export status. Accessibility Nutrition
+  Labels are currently `RECOMMENDED/VOLUNTARY`; claim one only after all common
+  tasks meet Apple’s criteria.
+- **Commerce/availability:** price, tax category, storefronts, agreements; ensure
+  no stale IAP/subscription state. The latest developer/free-app agreement is an
+  Account Holder gate even for a free app; Paid Apps Agreement, banking, and tax
+  forms are `CONDITIONAL` on charging/monetization. Apple’s standard EULA applies
+  unless P01 deliberately chooses an optional custom EULA.
+- **Reviewer package:** required contact name/email/phone and Notes (≤4,000
+  bytes); for login-gated functionality provide stable non-expiring access and
+  every resource needed for review. Never store/share an Apple ID password in
+  the repo. Decide and test either reviewer Sign in with Apple using their own
+  Apple ID plus a stable, non-sensitive second actor/invite, or a dedicated
+  approved demo mechanism. Define its lifecycle/cleanup and prove it is not a
+  production dev-auth or privacy bypass. A demo mode used instead of account
+  access due to legal or security constraints may require prior Apple approval.
+  Include exact two-user steps, live data, safety/deletion locations, and “no
+  messages read / no money transferred.”
+- **Acceptance:** copy limits/lint pass; prohibited-copy grep passes; all URLs
+  pass; final-RC network capture matches P09; privacy answers are owner-confirmed
+  and published; reviewer instructions are independently replayed on a clean device;
+  every field is saved with redacted evidence; App Store Connect shows no
+  required-field warning.
+- **Optional dispositions:** record App Preview (expected `N/A` for V1), Marketing
+  URL, iPad screenshots (`N/A` only for archived `UIDeviceFamily=[1]`), phased
+  release (`N/A` for initial 1.0), and localization (en-US only unless P01 expands
+  scope). Never silently omit them.
+- **Apple sources:**
+  https://developer.apple.com/help/app-store-connect/reference/app-information/platform-version-information
+  and https://developer.apple.com/help/app-store-connect/manage-app-information/set-an-app-age-rating/
+
+### P15 — Final pre-submission gate — 5%
+
+- **Status:** `NOT STARTED`
+- **Dependencies:** P11–P14
+- **Acceptance checklist:**
+  - [ ] Exact tested Build 25+ attached to version 1.0.
+  - [ ] Production tests, policy tests, deployment, URLs, and final smoke green.
+  - [ ] Account deletion and Apple revocation proven.
+  - [ ] UGC filtering/reporting/blocking/contact/operations proven.
+  - [ ] Physical two-device/external release-candidate suite passes.
+  - [ ] Final icon, splash, screenshots, and listing independently reviewed.
+  - [ ] Screenshot manifest SHA/build matches the attached App Store binary; no
+        invalidating UI/asset change occurred afterward.
+  - [ ] Privacy answers audited, owner-confirmed, and published.
+  - [ ] Age rating is complete and not Unrated.
+  - [ ] Content Rights, DSA, agreements, pricing, tax, territories, and export
+        compliance resolved by the appropriate owner.
+  - [ ] Selected initial-release mode matches P01’s owner decision; manual is a
+        recommendation, not an Apple requirement.
+  - [ ] Reviewer instructions independently replayed.
+  - [ ] Backend and reviewer path are live and non-expiring for the review
+        window, are not blocked by rate limits, and pass pre-submit access checks.
+  - [ ] No App Store Connect missing-field/blocking warning.
+  - [ ] Frozen release SHA/build and rollback/support plan recorded.
+- **Evidence:** final acceptance report and redacted screenshots of Version, App
+  Information, App Privacy, Pricing/Availability, and Review submission pages.
+- **Boundary:** notify Calum with the complete evidence summary and obtain
+  explicit approval immediately before external submission.
+
+### P16 — Submit and complete the App Review loop — 3%
+
+- **Status:** `NOT STARTED`
+- **Dependencies:** P15, explicit submission approval
+- **Work:** Add for Review; inspect draft submission; Submit for Review; capture
+  timestamp/status; monitor messages; answer promptly. For rejection, map each
+  issue to reproduction/evidence, fix forward, upload a new build if binary
+  changes, retest, and resubmit.
+- **During review:** run and record a daily public-backend and reviewer-access
+  health check without personal data; notify immediately on failure.
+- **Acceptance:** version 1.0 reaches Apple approval with no unresolved issue.
+- **Evidence:** submission status/ID, redacted correspondence ledger, each issue’s
+  fix SHA/build/fresh evidence, approval screenshot/status.
+- **Apple sources:**
+  https://developer.apple.com/help/app-store-connect/manage-submissions-to-app-review/submit-an-app
+  and https://developer.apple.com/help/app-store-connect/manage-submissions-to-app-review/manage-a-submission-with-unresolved-issues
+
+### P17 — Release and prove public App Store availability — 3%
+
+- **Status:** `NOT STARTED`
+- **Dependencies:** P16 approval, explicit approval if manual release
+- **Work:** release using P01’s chosen mode; monitor propagation; verify intended
+  storefronts; install from the public store using a device/account without
+  TestFlight history; verify binary, Sign in with Apple, core two-user flow,
+  policies, support/moderation, production health and error rates.
+- **Acceptance:** status Ready for Distribution; public product page is logged-out
+  reachable and correct; ordinary fresh download succeeds; installed version/build
+  matches; production functionality and support paths work; no launch blocker.
+- **Evidence:** public `apps.apple.com` URL/status, listing screenshots, storefront
+  checks, fresh-install receipt/version/build, device flow, cluster/API/log health,
+  final acceptance report and 100% ntfy notification.
+- **Note:** phased release is not available for an initial version; it applies to
+  updates. Manual release is recommended for controlled V1 launch.
+
+## Owner decision ledger
+
+| Decision | Status | Decision / evidence | Date |
+|---|---|---|---|
+| Final App Store name | OPEN | Desired product name is Don’t Text Your Ex; availability/save still must be proven | — |
+| iPhone-only or iPhone+iPad | OPEN | Audit recommends iPhone-only for the shortest polished V1 path | — |
+| Privacy/legal owner and support contact | OPEN | Owner confirmation required | — |
+| Account deletion/shared-data behavior | OPEN | Must avoid blindly cascading friends’ shared data | — |
+| Moderation response target and escalation | OPEN | Owner confirmation required | — |
+| Price/tax/territories | OPEN | Expected free; do not infer | — |
+| Primary/secondary category | OPEN | Candidate Lifestyle; validate before save | — |
+| Age/consent stance | OPEN | Complete against actual UGC/social capabilities | — |
+| DSA trader status | OPEN | Legal owner-only determination | — |
+| Content Rights | OPEN | Owner attestation required | — |
+| Release mode | OPEN | Recommend manual V1 release | — |
+
+## Evidence ledger
+
+Append one row per proof event. Link repository artifacts with paths and external
+evidence with stable URLs/IDs. “Observed” without a timestamp/source is invalid.
+
+| Date/time | Packet | Scope | Result | Commit/build | Evidence | Reviewer |
+|---|---|---|---|---|---|---|
+| 2026-08-15 | P00 | Existing production restoration | PASS | `ecf47add2`, Build 24 | Restoration execution ledger; CI `31872702467` | Prior independent QA + coordinator |
+| 2026-08-15 | P00 | Live App Store version baseline | PASS | Version 1.0 | Prepare for Submission; 0 screenshots; no build attached; blank visible metadata/review fields | Coordinator browser inspection |
+| 2026-08-15 | P00 | Durable tracker | PASS | `T-41` | Verbatim request, source-of-truth path, and public completion boundary recorded | Coordinator |
+
+## Blocker ledger
+
+| Opened | Packet | Blocker | Owner | Next action | Status |
+|---|---|---|---|---|---|
+| 2026-08-15 | P01 | Owner/legal/product decisions not yet recorded | Calum | Batch a concise decision request when P00 is proven | OPEN |
+
+## Notification ledger
+
+| Date/time | Percent | Milestone | Event ID | Blockers / remaining |
+|---|---:|---|---|---|
+| 2026-08-15 | 2% | Control-document phase started | `KmPxBhNk5S6G` | Sent before packet-weight formula; earned progress was 0%. Correct in the next notification. |
+
+## Current status
+
+- **Calculated progress:** 0% until P00 is committed and its baseline refresh is
+  complete. The initial 2% notification described control-document work in
+  progress, not earned packet credit.
+- **Current packet:** P00.
+- **Current blockers:** none for P00. Final physical/external QA will later wait
+  for a compliant Build 25+; P01 owner decisions will be requested after the
+  baseline is finalized.
+- **Next action:** independently review this document, commit/push it, reconcile
+  live baseline evidence, then mark P00 `PROVEN` and notify 5%.
