@@ -1,5 +1,14 @@
-import type { QueryResult } from "pg";
-import { JarRecapSchema, NotificationIdSchema, RecapIdSchema } from "../../../contracts";
+import { z } from "zod";
+import {
+  CalendarMonthSchema,
+  IanaTimeZoneSchema,
+  JarIdSchema,
+  JarRecapSchema,
+  NotificationIdSchema,
+  parseSharedStreakMilestoneActivityText,
+  RecapIdSchema,
+  UserIdSchema,
+} from "../../../contracts";
 import type {
   DomainTransactionContext,
   DomainTransactionRunner,
@@ -23,21 +32,29 @@ export interface MonthlyRecapStore {
   generatePage(input: MonthlyRecapPageInput): Promise<MonthlyRecapPageResult>;
 }
 
-type CandidateRow = Readonly<{ jar_id: string; calendar_month: string }>;
-type SnapshotRow = Readonly<{
-  jar_id: string;
-  jar_name: string;
-  timezone: string;
-  period_start_at: string;
-  period_end_at: string;
-  slip_count: string;
-  total_amount_cents: string;
-}>;
-type RecipientRow = Readonly<{ user_id: string; notifications_enabled: boolean }>;
-type StreakRow = Readonly<{ milestone_days: number; count: string }>;
-type MilestoneRow = Readonly<{ threshold_cents: number }>;
+const CandidateRowSchema = z.object({
+  jar_id: JarIdSchema,
+  calendar_month: CalendarMonthSchema,
+});
+const SnapshotRowSchema = z.object({
+  jar_id: JarIdSchema,
+  jar_name: z.string(),
+  timezone: IanaTimeZoneSchema,
+  period_start_at: z.string().regex(/^\d+$/),
+  period_end_at: z.string().regex(/^\d+$/),
+  slip_count: z.string().regex(/^\d+$/),
+  total_amount_cents: z.string().regex(/^\d+$/),
+});
+const RecipientRowSchema = z.object({
+  user_id: UserIdSchema,
+  notifications_enabled: z.boolean(),
+});
+const SharedStreakActivityRowSchema = z.object({ text: z.string().nullable() });
+const MilestoneRowSchema = z.object({ threshold_cents: z.number().int().positive() });
 
-function safeCount(value: string, field: string): number {
+type CandidateRow = z.infer<typeof CandidateRowSchema>;
+
+function parseNonnegativeSafeInteger(value: string, field: string): number {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 0) throw new Error(`invalid ${field}`);
   return parsed;
@@ -60,7 +77,7 @@ export class PostgresMonthlyRecapStore implements MonthlyRecapStore {
     context: DomainTransactionContext,
     input: MonthlyRecapPageInput,
   ): Promise<MonthlyRecapPageResult> {
-    const candidateResult = await context.db.query<CandidateRow>(
+    const candidateResult = await context.db.query<Record<string, unknown>>(
       `WITH activity_months AS (
          SELECT DISTINCT a.jar_id,
            to_char(to_timestamp(a.created_at / 1000.0) AT TIME ZONE j.timezone,'YYYY-MM')
@@ -81,7 +98,9 @@ export class PostgresMonthlyRecapStore implements MonthlyRecapStore {
        LIMIT $2`,
       [input.cutoff, input.limit + 1],
     );
-    const candidates = candidateResult.rows.slice(0, input.limit);
+    const candidates = candidateResult.rows
+      .slice(0, input.limit)
+      .map((row) => CandidateRowSchema.parse(row));
     let recaps = 0;
     let recipients = 0;
     let notifications = 0;
@@ -112,7 +131,7 @@ export class PostgresMonthlyRecapStore implements MonthlyRecapStore {
     );
     if (existing.rows[0]) return { recaps: 0, recipients: 0, notifications: 0 };
 
-    const snapshot = await db.query<SnapshotRow>(
+    const snapshot = await db.query<Record<string, unknown>>(
       `SELECT j.id AS jar_id,j.name AS jar_name,j.timezone,
               (EXTRACT(EPOCH FROM (($2 || '-01')::timestamp AT TIME ZONE j.timezone))*1000)::bigint::text
                 AS period_start_at,
@@ -129,24 +148,28 @@ export class PostgresMonthlyRecapStore implements MonthlyRecapStore {
        GROUP BY j.id,j.name,j.timezone`,
       [candidate.jar_id, candidate.calendar_month],
     );
-    const row = snapshot.rows[0];
+    const row = SnapshotRowSchema.parse(snapshot.rows[0]);
     if (!row) throw new Error("monthly recap jar disappeared");
-    const periodStartAt = safeCount(row.period_start_at, "period start");
-    const periodEndAt = safeCount(row.period_end_at, "period end");
-    const slipCount = safeCount(row.slip_count, "slip count");
-    const totalAmountCents = safeCount(row.total_amount_cents, "total amount");
-    const streaks = await db.query<StreakRow>(
-      `SELECT substring(a.text FROM '^Reached a (7|30|100|365)-day clean streak[.]$')::integer
-                AS milestone_days,
-              COUNT(*)::text AS count
+    const periodStartAt = parseNonnegativeSafeInteger(row.period_start_at, "period start");
+    const periodEndAt = parseNonnegativeSafeInteger(row.period_end_at, "period end");
+    const slipCount = parseNonnegativeSafeInteger(row.slip_count, "slip count");
+    const totalAmountCents = parseNonnegativeSafeInteger(row.total_amount_cents, "total amount");
+    const streakActivities = await db.query<Record<string, unknown>>(
+      `SELECT a.text
        FROM activity a
        WHERE a.jar_id=$1 AND a.type='milestone'
          AND a.created_at >= $2 AND a.created_at < $3
-         AND a.text ~ '^Reached a (7|30|100|365)-day clean streak[.]$'
-       GROUP BY milestone_days ORDER BY milestone_days`,
+       ORDER BY a.created_at,a.id`,
       [candidate.jar_id, periodStartAt, periodEndAt],
     );
-    const milestones = await db.query<MilestoneRow>(
+    const streakCounts = new Map<number, number>();
+    for (const persisted of streakActivities.rows) {
+      const activity = SharedStreakActivityRowSchema.parse(persisted);
+      const days = parseSharedStreakMilestoneActivityText(activity.text);
+      if (days === null) continue;
+      streakCounts.set(days, (streakCounts.get(days) ?? 0) + 1);
+    }
+    const milestones = await db.query<Record<string, unknown>>(
       `SELECT threshold_cents FROM jar_milestones
        WHERE jar_id=$1 AND reached_at >= $2 AND reached_at < $3
        ORDER BY threshold_cents`,
@@ -164,11 +187,10 @@ export class PostgresMonthlyRecapStore implements MonthlyRecapStore {
       slipCount,
       totalAmountCents,
       tallyChangeCents: totalAmountCents,
-      sharedStreakHighlights: streaks.rows.map((highlight) => ({
-        days: highlight.milestone_days,
-        count: safeCount(highlight.count, "streak highlight count"),
-      })),
-      crossedMilestonesCents: milestones.rows.map((milestone) => milestone.threshold_cents),
+      sharedStreakHighlights: [...streakCounts.entries()].map(([days, count]) => ({ days, count })),
+      crossedMilestonesCents: milestones.rows.map(
+        (milestone) => MilestoneRowSchema.parse(milestone).threshold_cents,
+      ),
       createdAt,
     });
     await db.query(
@@ -192,7 +214,7 @@ export class PostgresMonthlyRecapStore implements MonthlyRecapStore {
         parsedSnapshot.createdAt,
       ],
     );
-    const recipientResult: QueryResult<RecipientRow> = await db.query<RecipientRow>(
+    const recipientResult = await db.query<Record<string, unknown>>(
       `SELECT m.user_id,COALESCE(pref.enabled,FALSE) AS notifications_enabled
        FROM memberships m
        LEFT JOIN notification_preference pref
@@ -206,7 +228,8 @@ export class PostgresMonthlyRecapStore implements MonthlyRecapStore {
        ORDER BY m.user_id`,
       [candidate.jar_id, periodStartAt, periodEndAt],
     );
-    for (const recipient of recipientResult.rows) {
+    const parsedRecipients = recipientResult.rows.map((row) => RecipientRowSchema.parse(row));
+    for (const recipient of parsedRecipients) {
       await db.query(
         "INSERT INTO jar_recap_recipients (recap_id,user_id,eligible_at) VALUES ($1,$2,$3)",
         [recapId, recipient.user_id, createdAt],
@@ -228,9 +251,8 @@ export class PostgresMonthlyRecapStore implements MonthlyRecapStore {
     await emit({ type: "recap.created", aggregateId: recapId, aggregateVersion: 1 });
     return {
       recaps: 1,
-      recipients: recipientResult.rows.length,
-      notifications: recipientResult.rows.filter((recipient) => recipient.notifications_enabled)
-        .length,
+      recipients: parsedRecipients.length,
+      notifications: parsedRecipients.filter((recipient) => recipient.notifications_enabled).length,
     };
   }
 }

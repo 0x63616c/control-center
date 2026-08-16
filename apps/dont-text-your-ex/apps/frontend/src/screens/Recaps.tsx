@@ -4,9 +4,15 @@ import type { AppCtx, RouteFor } from "../appctx";
 import { formatPoints, T } from "../theme";
 import type { JarRecapDTO } from "../types";
 import { Screen, TopBar } from "../ui";
-import { ErrorState, type FetchedState, LoadingState } from "./fetched-state";
+import { ErrorState, LoadingState } from "./fetched-state";
 
 export type RecapServices = Pick<typeof api, "recaps" | "recap">;
+type RecapState =
+  | { readonly status: "loading" }
+  | { readonly status: "loaded"; readonly value: readonly JarRecapDTO[] }
+  | { readonly status: "empty" }
+  | { readonly status: "unavailable" }
+  | { readonly status: "error" };
 
 function monthLabel(recap: JarRecapDTO): string {
   const [year, month] = recap.calendarMonth.split("-").map(Number);
@@ -68,14 +74,12 @@ export function Recaps({
   ctx: AppCtx<RouteFor<"recaps">>;
   services?: RecapServices;
 }) {
-  const [state, setState] = useState<FetchedState<readonly JarRecapDTO[]>>({ status: "loading" });
-  const [unavailable, setUnavailable] = useState(false);
+  const [state, setState] = useState<RecapState>({ status: "loading" });
   const [retry, setRetry] = useState(0);
 
   useEffect(() => {
     void retry;
     let alive = true;
-    setUnavailable(false);
     setState({ status: "loading" });
     const request = ctx.route.recapId
       ? services.recap(ctx.route.recapId).then((recap) => [recap])
@@ -88,8 +92,7 @@ export function Recaps({
       .catch((error: unknown) => {
         if (!alive) return;
         if (isApiErrorStatus(error, 404)) {
-          setUnavailable(true);
-          setState({ status: "empty" });
+          setState({ status: "unavailable" });
         } else {
           setState({ status: "error" });
         }
@@ -114,9 +117,15 @@ export function Recaps({
           role="status"
           style={{ color: T.sec, textAlign: "center", padding: "54px 18px", lineHeight: 1.5 }}
         >
-          {unavailable
-            ? "That recap is no longer available to this account."
-            : "No recaps yet. A jar gets one after a completed month with activity."}
+          No recaps yet. A jar gets one after a completed month with activity.
+        </div>
+      )}
+      {state.status === "unavailable" && (
+        <div
+          role="status"
+          style={{ color: T.sec, textAlign: "center", padding: "54px 18px", lineHeight: 1.5 }}
+        >
+          That recap is no longer available to this account.
         </div>
       )}
       {state.status === "loaded" &&

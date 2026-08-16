@@ -13,10 +13,12 @@ import {
   InviteCodeSchema,
   type JarId,
   JarIdSchema,
+  JarRecapSchema,
   JoinJarRequestSchema,
   LeaveJarRequestSchema,
   LogSlipRequestSchema,
   NotificationDeliveryWorkflowInputSchema,
+  parseSharedStreakMilestoneActivityText,
   ReportAccountabilitySignalSchema,
   ReportAccountabilityWorkflowInputSchema,
   type ReportId,
@@ -27,6 +29,7 @@ import {
   RescueInterventionWorkflowInputSchema,
   ResolveReportRequestSchema,
   ShareStreakRequestSchema,
+  sharedStreakMilestoneActivityText,
   UpdateMeRequestSchema,
   type UserId,
   UserIdSchema,
@@ -40,6 +43,28 @@ const JPEG_DATA_URL = "data:image/jpeg;base64,/9j/AA==";
 const WEBP_DATA_URL = "data:image/webp;base64,UklGRgAAAABXRUJQ";
 
 describe("request schemas", () => {
+  it("keeps recap timezones valid and shared milestone copy structured", () => {
+    expect(sharedStreakMilestoneActivityText(30)).toBe("Reached a 30-day clean streak.");
+    expect(parseSharedStreakMilestoneActivityText("Reached a 30-day clean streak.")).toBe(30);
+    expect(parseSharedStreakMilestoneActivityText("private streak")).toBeNull();
+    expect(
+      JarRecapSchema.safeParse({
+        id: "rcp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        jarId: "jar_contract",
+        jarName: "Contract",
+        calendarMonth: "2026-07",
+        timezone: "not-a-timezone",
+        periodStartAt: 1,
+        periodEndAt: 2,
+        slipCount: 0,
+        totalAmountCents: 0,
+        tallyChangeCents: 0,
+        sharedStreakHighlights: [],
+        crossedMilestonesCents: [],
+        createdAt: 2,
+      }).success,
+    ).toBe(false);
+  });
   it("exposes expired as a terminal report status", () => {
     expect(ReportStatusSchema.parse("expired")).toBe("expired");
   });

@@ -1,6 +1,8 @@
 import { z } from "zod";
+import { SharedStreakMilestoneDaysSchema } from "./streak-activity";
 
 export * from "./notifications";
+export * from "./streak-activity";
 
 const idSchema = <Prefix extends string, Brand extends string>(prefix: Prefix, brand: Brand) =>
   z
@@ -225,14 +227,14 @@ export type EvidenceImageInput = z.infer<typeof EvidenceImageInputSchema>;
 export type CreateReportRequest = z.infer<typeof CreateReportRequestSchema>;
 export type RescueCommandRequest = z.infer<typeof RescueCommandRequestSchema>;
 
-const CalendarMonthSchema = z
+export const CalendarMonthSchema = z
   .string()
   .regex(/^\d{4}-(?:0[1-9]|1[0-2])$/, "invalid calendar month")
   .brand<"CalendarMonth">();
 
 const SharedStreakHighlightSchema = z
   .object({
-    days: z.union([z.literal(7), z.literal(30), z.literal(100), z.literal(365)]),
+    days: SharedStreakMilestoneDaysSchema,
     count: z.number().int().positive(),
   })
   .strict();
@@ -243,7 +245,7 @@ export const JarRecapSchema = z
     jarId: JarIdSchema,
     jarName: z.string(),
     calendarMonth: CalendarMonthSchema,
-    timezone: z.string().min(1),
+    timezone: IanaTimeZoneSchema,
     periodStartAt: z.number().int().nonnegative(),
     periodEndAt: z.number().int().positive(),
     slipCount: z.number().int().nonnegative(),
