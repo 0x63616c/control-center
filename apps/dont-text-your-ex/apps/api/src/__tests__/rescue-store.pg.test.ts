@@ -74,6 +74,16 @@ describe.skipIf(!HAS_DB)("Postgres rescue store", () => {
               (SELECT COUNT(*) FROM domain_event WHERE event_type='rescue.safe')::text AS safe_events`,
     );
     expect(persisted.rows[0]).toEqual({ slips: "0", safe_events: "1" });
+
+    const bobIntervention = await store.start(bob);
+    await expect(
+      store.command({ userId: bob, interventionId: bobIntervention.id, action: "slipped" }),
+    ).resolves.toMatchObject({ outcome: "applied", intervention: { status: "slipped" } });
+    const afterSlipped = await pool.query<{ slips: string; slipped_events: string }>(
+      `SELECT (SELECT COUNT(*) FROM slips)::text AS slips,
+              (SELECT COUNT(*) FROM domain_event WHERE event_type='rescue.slipped')::text AS slipped_events`,
+    );
+    expect(afterSlipped.rows[0]).toEqual({ slips: "0", slipped_events: "1" });
   });
 
   it("uses prior deadlines for two extensions and abandons immediately at thirty minutes", async () => {
@@ -178,7 +188,7 @@ describe.skipIf(!HAS_DB)("Postgres rescue store", () => {
       interventionId: active.id,
       expectedAggregateVersion: active.aggregateVersion,
     });
-    if (!due || due.status !== "check_in_due") throw new Error("check-in missing");
+    if (due?.status !== "check_in_due") throw new Error("check-in missing");
 
     clock = due.responseDeadlineAt;
     await expect(
