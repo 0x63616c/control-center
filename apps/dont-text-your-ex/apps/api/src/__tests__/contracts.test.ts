@@ -9,6 +9,7 @@ import {
   EVIDENCE_MAX_BYTES,
   EVIDENCE_MAX_FILES,
   EvidenceImageInputSchema,
+  IanaTimeZoneSchema,
   type InviteCode,
   InviteCodeSchema,
   type JarId,
@@ -34,6 +35,13 @@ const JPEG_DATA_URL = "data:image/jpeg;base64,/9j/AA==";
 const WEBP_DATA_URL = "data:image/webp;base64,UklGRgAAAABXRUJQ";
 
 describe("request schemas", () => {
+  it("accepts only canonical IANA-style device timezones", () => {
+    expect(IanaTimeZoneSchema.safeParse("America/Los_Angeles").success).toBe(true);
+    expect(IanaTimeZoneSchema.safeParse("UTC").success).toBe(true);
+    expect(IanaTimeZoneSchema.safeParse("PST").success).toBe(false);
+    expect(IanaTimeZoneSchema.safeParse("Not/AZone").success).toBe(false);
+  });
+
   it("keeps notification workflow start input limited to its opaque id", () => {
     const exact = {
       schemaVersion: 1,

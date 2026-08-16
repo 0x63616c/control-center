@@ -107,8 +107,8 @@
       "version": "0.0.0",
       "dependencies": {
         "@dont-text-your-ex/notifications": "workspace:*",
-        "@temporalio/client": "^1.21.1",
-        "@temporalio/worker": "^1.21.1",
+        "@temporalio/client": "1.21.1",
+        "@temporalio/worker": "1.21.1",
         "@temporalio/workflow": "^1.21.1",
         "@www/logger": "workspace:*",
         "@www/platform": "workspace:*",
@@ -116,6 +116,7 @@
         "pg": "^8.13.3",
       },
       "devDependencies": {
+        "@temporalio/testing": "1.21.1",
         "@types/node": "^22.13.0",
         "@types/pg": "^8.11.10",
         "typescript": "^5.9.3",
@@ -366,7 +367,7 @@
       "name": "@www/temporal-runtime",
       "version": "0.0.0",
       "dependencies": {
-        "@temporalio/client": "^1.21.1",
+        "@temporalio/client": "1.21.1",
         "@temporalio/common": "^1.21.1",
         "@www/logger": "workspace:*",
       },
@@ -1212,13 +1213,15 @@
 
     "@temporalio/client": ["@temporalio/client@1.21.1", "", { "dependencies": { "@grpc/grpc-js": "^1.12.4", "@temporalio/common": "1.21.1", "@temporalio/proto": "1.21.1", "abort-controller": "^3.0.0", "long": "^5.2.3", "nexus-rpc": "^0.0.2", "uuid": "^11.1.0" } }, "sha512-rdZAh20wzI5i/SyS46Nv9mE6t2KkS9DTrB57HEMLsq6eqm58Nc6la0WQKJGsUNkmN98KKirByidZ5D/ik3kiQw=="],
 
-    "@temporalio/common": ["@temporalio/common@1.21.1", "", { "dependencies": { "@temporalio/proto": "1.21.1", "long": "^5.2.3", "ms": "3.0.0-canary.1", "nexus-rpc": "^0.0.2", "proto3-json-serializer": "^2.0.0" } }, "sha512-8Pis59xYLrGu6GfkkWvrYWkSPEvo8lBBILsR6gBHGbymNlEc0ynylRXqPmRjwuLfYS7jHzxqjjO7cvXJQ/z2Fg=="],
+    "@temporalio/common": ["@temporalio/common@1.22.0", "", { "dependencies": { "@temporalio/proto": "1.22.0", "long": "^5.2.3", "ms": "3.0.0-canary.1", "nexus-rpc": "^0.0.2", "proto3-json-serializer": "^2.0.0" } }, "sha512-1NpQpo/y6XU1ULbo/bXgBEhl6qQnOeB79NrsSJdjI38/hfXPom2IYGJcIxOFfsQICQ0zePEKzB9Yyo31KNpIxA=="],
 
     "@temporalio/core-bridge": ["@temporalio/core-bridge@1.21.1", "", { "dependencies": { "@grpc/grpc-js": "^1.12.4", "@temporalio/common": "1.21.1" } }, "sha512-gCy/6TFhcFAjFPRN1DeHSwAnXU380Jn/y6yG2dkSV+rYK0JRl66SE2NvdcAjzhoPO/twHEaHklbppojH0cUpUw=="],
 
     "@temporalio/nexus": ["@temporalio/nexus@1.21.1", "", { "dependencies": { "@temporalio/client": "1.21.1", "@temporalio/common": "1.21.1", "@temporalio/proto": "1.21.1", "long": "^5.2.3", "nexus-rpc": "^0.0.2" } }, "sha512-CIAoTt/WpSE0bn1mE9q5O6hU76q97W349e0FSrUuwQAYDXBy7jzFM6ZzYmm7S5Uk2tC1xrRCAjUGg1lMnHQppw=="],
 
     "@temporalio/proto": ["@temporalio/proto@1.21.1", "", { "dependencies": { "long": "^5.2.3", "protobufjs": "^7.6.4" } }, "sha512-eSHGrZ6CxbtjrAzxiMgKrWeDiBlWk6/JkIqsB1hrkPB6TQXC67Az8v0BL0Fj3ur8ktQZbaacON/xCDjTsvJyGw=="],
+
+    "@temporalio/testing": ["@temporalio/testing@1.21.1", "", { "dependencies": { "@temporalio/activity": "1.21.1", "@temporalio/client": "1.21.1", "@temporalio/common": "1.21.1", "@temporalio/core-bridge": "1.21.1", "@temporalio/proto": "1.21.1", "@temporalio/worker": "1.21.1", "@temporalio/workflow": "1.21.1" } }, "sha512-vKYQZsa8EFE4Rvlh0v1Ry2B0+vnnpgfHarSadue+3ZUWf3cx28HGCseZEgHcaG299ChsjbADntKO6YjwlMv1Jw=="],
 
     "@temporalio/worker": ["@temporalio/worker@1.21.1", "", { "dependencies": { "@grpc/grpc-js": "^1.12.4", "@swc/core": "^1.3.102", "@temporalio/activity": "1.21.1", "@temporalio/client": "1.21.1", "@temporalio/common": "1.21.1", "@temporalio/core-bridge": "1.21.1", "@temporalio/nexus": "1.21.1", "@temporalio/proto": "1.21.1", "@temporalio/workflow": "1.21.1", "heap-js": "^2.6.0", "memfs": "^4.6.0", "nexus-rpc": "^0.0.2", "protobufjs": "^7.6.4", "rxjs": "^7.8.1", "source-map": "^0.7.4", "source-map-loader": "^5.0.0", "supports-color": "^8.1.1", "swc-loader": "^0.2.3", "unionfs": "^4.5.1", "webpack": "^5.108.4" } }, "sha512-ccXus6+w317tL+NsJXEYWpHFxcy0VDPfstmBzej0yZrkzWNvAkaWVGQbguKoLToDM8+DMaqklx1dX4gJnknR1g=="],
 
@@ -2556,6 +2559,8 @@
 
     "@dont-text-your-ex/frontend/react-dom": ["react-dom@18.3.1", "", { "dependencies": { "loose-envify": "^1.1.0", "scheduler": "^0.23.2" }, "peerDependencies": { "react": "^18.3.1" } }, "sha512-5m4nQKp+rZRb09LNH59GM4BxTh9251/ylbKIbpe7TpGxfJ+9kv6BLkLBXIjjspbgbnIBNqlI23tRnTWT0snUIw=="],
 
+    "@dont-text-your-ex/temporal-worker/@temporalio/workflow": ["@temporalio/workflow@1.22.0", "", { "dependencies": { "@temporalio/common": "1.22.0", "@temporalio/proto": "1.22.0", "nexus-rpc": "^0.0.2" } }, "sha512-31Ax529+TvfH2RCexOhiCyM3lARJJoVzrnRUS1gX+jl+mka+pRRnEUx4B572mZz0oOlCCxbiztHZF72wwwWZDA=="],
+
     "@esbuild-kit/core-utils/esbuild": ["esbuild@0.18.20", "", { "optionalDependencies": { "@esbuild/android-arm": "0.18.20", "@esbuild/android-arm64": "0.18.20", "@esbuild/android-x64": "0.18.20", "@esbuild/darwin-arm64": "0.18.20", "@esbuild/darwin-x64": "0.18.20", "@esbuild/freebsd-arm64": "0.18.20", "@esbuild/freebsd-x64": "0.18.20", "@esbuild/linux-arm": "0.18.20", "@esbuild/linux-arm64": "0.18.20", "@esbuild/linux-ia32": "0.18.20", "@esbuild/linux-loong64": "0.18.20", "@esbuild/linux-mips64el": "0.18.20", "@esbuild/linux-ppc64": "0.18.20", "@esbuild/linux-riscv64": "0.18.20", "@esbuild/linux-s390x": "0.18.20", "@esbuild/linux-x64": "0.18.20", "@esbuild/netbsd-x64": "0.18.20", "@esbuild/openbsd-x64": "0.18.20", "@esbuild/sunos-x64": "0.18.20", "@esbuild/win32-arm64": "0.18.20", "@esbuild/win32-ia32": "0.18.20", "@esbuild/win32-x64": "0.18.20" }, "bin": { "esbuild": "bin/esbuild" } }, "sha512-ceqxoedUrcayh7Y7ZX6NdbbDzGROiyVBgC4PriJThBKSVPWnnFHZAkfI1lJT8QFkOwH4qOS2SJkS4wvpGl8BpA=="],
 
     "@ionic/utils-fs/fs-extra": ["fs-extra@9.1.0", "", { "dependencies": { "at-least-node": "^1.0.0", "graceful-fs": "^4.2.0", "jsonfile": "^6.0.1", "universalify": "^2.0.0" } }, "sha512-hcg3ZmepS30/7BSFqRvoo3DOMQu7IjqxO5nCDt+zM9XWjb33Wg7ziNT+Qvqbuc3+gWpzO02JubVyk2G4Zvo1OQ=="],
@@ -2605,6 +2610,22 @@
     "@tailwindcss/oxide-wasm32-wasi/@tybys/wasm-util": ["@tybys/wasm-util@0.10.2", "", { "dependencies": { "tslib": "^2.4.0" }, "bundled": true }, "sha512-RoBvJ2X0wuKlWFIjrwffGw1IqZHKQqzIchKaadZZfnNpsAYp2mM0h36JtPCjNDAHGgYez/15uMBpfGwchhiMgg=="],
 
     "@tailwindcss/oxide-wasm32-wasi/tslib": ["tslib@2.8.1", "", { "bundled": true }, "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w=="],
+
+    "@temporalio/activity/@temporalio/common": ["@temporalio/common@1.21.1", "", { "dependencies": { "@temporalio/proto": "1.21.1", "long": "^5.2.3", "ms": "3.0.0-canary.1", "nexus-rpc": "^0.0.2", "proto3-json-serializer": "^2.0.0" } }, "sha512-8Pis59xYLrGu6GfkkWvrYWkSPEvo8lBBILsR6gBHGbymNlEc0ynylRXqPmRjwuLfYS7jHzxqjjO7cvXJQ/z2Fg=="],
+
+    "@temporalio/client/@temporalio/common": ["@temporalio/common@1.21.1", "", { "dependencies": { "@temporalio/proto": "1.21.1", "long": "^5.2.3", "ms": "3.0.0-canary.1", "nexus-rpc": "^0.0.2", "proto3-json-serializer": "^2.0.0" } }, "sha512-8Pis59xYLrGu6GfkkWvrYWkSPEvo8lBBILsR6gBHGbymNlEc0ynylRXqPmRjwuLfYS7jHzxqjjO7cvXJQ/z2Fg=="],
+
+    "@temporalio/common/@temporalio/proto": ["@temporalio/proto@1.22.0", "", { "dependencies": { "long": "^5.2.3", "protobufjs": "^7.6.4" } }, "sha512-X7NVa0Z6HK3l9irZR48FKwZ9w9YXetCdF2z2KCIRr0W7Kul64Wt9o5hwvSXShAtrZuCEEHH8WO/ffHTXxJieLg=="],
+
+    "@temporalio/core-bridge/@temporalio/common": ["@temporalio/common@1.21.1", "", { "dependencies": { "@temporalio/proto": "1.21.1", "long": "^5.2.3", "ms": "3.0.0-canary.1", "nexus-rpc": "^0.0.2", "proto3-json-serializer": "^2.0.0" } }, "sha512-8Pis59xYLrGu6GfkkWvrYWkSPEvo8lBBILsR6gBHGbymNlEc0ynylRXqPmRjwuLfYS7jHzxqjjO7cvXJQ/z2Fg=="],
+
+    "@temporalio/nexus/@temporalio/common": ["@temporalio/common@1.21.1", "", { "dependencies": { "@temporalio/proto": "1.21.1", "long": "^5.2.3", "ms": "3.0.0-canary.1", "nexus-rpc": "^0.0.2", "proto3-json-serializer": "^2.0.0" } }, "sha512-8Pis59xYLrGu6GfkkWvrYWkSPEvo8lBBILsR6gBHGbymNlEc0ynylRXqPmRjwuLfYS7jHzxqjjO7cvXJQ/z2Fg=="],
+
+    "@temporalio/testing/@temporalio/common": ["@temporalio/common@1.21.1", "", { "dependencies": { "@temporalio/proto": "1.21.1", "long": "^5.2.3", "ms": "3.0.0-canary.1", "nexus-rpc": "^0.0.2", "proto3-json-serializer": "^2.0.0" } }, "sha512-8Pis59xYLrGu6GfkkWvrYWkSPEvo8lBBILsR6gBHGbymNlEc0ynylRXqPmRjwuLfYS7jHzxqjjO7cvXJQ/z2Fg=="],
+
+    "@temporalio/worker/@temporalio/common": ["@temporalio/common@1.21.1", "", { "dependencies": { "@temporalio/proto": "1.21.1", "long": "^5.2.3", "ms": "3.0.0-canary.1", "nexus-rpc": "^0.0.2", "proto3-json-serializer": "^2.0.0" } }, "sha512-8Pis59xYLrGu6GfkkWvrYWkSPEvo8lBBILsR6gBHGbymNlEc0ynylRXqPmRjwuLfYS7jHzxqjjO7cvXJQ/z2Fg=="],
+
+    "@temporalio/workflow/@temporalio/common": ["@temporalio/common@1.21.1", "", { "dependencies": { "@temporalio/proto": "1.21.1", "long": "^5.2.3", "ms": "3.0.0-canary.1", "nexus-rpc": "^0.0.2", "proto3-json-serializer": "^2.0.0" } }, "sha512-8Pis59xYLrGu6GfkkWvrYWkSPEvo8lBBILsR6gBHGbymNlEc0ynylRXqPmRjwuLfYS7jHzxqjjO7cvXJQ/z2Fg=="],
 
     "@testing-library/dom/aria-query": ["aria-query@5.3.0", "", { "dependencies": { "dequal": "^2.0.3" } }, "sha512-b0P0sZPKtyu8HkeRAfCq0IfURZK+SuwMjY1UXGBU27wpAiTwQAIlq56IbIO+ytk/JjS1fMR14ee5WBBfKi5J6A=="],
 
@@ -2749,6 +2770,8 @@
     "@capacitor/cli/open/define-lazy-prop": ["define-lazy-prop@2.0.0", "", {}, "sha512-Ds09qNh8yw3khSjiJjiUInaGX9xlqZDY7JVryGxdxV7NPeuqQfplOpQ66yJFZut3jLa5zOwkXw1g9EI2uKh4Og=="],
 
     "@dont-text-your-ex/frontend/react-dom/scheduler": ["scheduler@0.23.2", "", { "dependencies": { "loose-envify": "^1.1.0" } }, "sha512-UOShsPwz7NrMUqhR6t0hWjFduvOzbtv7toDH1/hIrfRNIDBnnBWd0CwJTGvTpngVlmwGCdP9/Zl/tVrDqcuYzQ=="],
+
+    "@dont-text-your-ex/temporal-worker/@temporalio/workflow/@temporalio/proto": ["@temporalio/proto@1.22.0", "", { "dependencies": { "long": "^5.2.3", "protobufjs": "^7.6.4" } }, "sha512-X7NVa0Z6HK3l9irZR48FKwZ9w9YXetCdF2z2KCIRr0W7Kul64Wt9o5hwvSXShAtrZuCEEHH8WO/ffHTXxJieLg=="],
 
     "@esbuild-kit/core-utils/esbuild/@esbuild/android-arm": ["@esbuild/android-arm@0.18.20", "", { "os": "android", "cpu": "arm" }, "sha512-fyi7TDI/ijKKNZTUJAQqiG5T7YjJXgnzkURqmGj13C6dCqckZBLdl4h7bkhHt/t0WP+zO9/zwroDvANaOqO5Sw=="],
 

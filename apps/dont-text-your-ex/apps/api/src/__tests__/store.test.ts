@@ -139,6 +139,37 @@ describe.skipIf(!HAS_DB)("users / auth", () => {
     expect(updated?.name).toBe("Taylor");
     expect((await store.findUserByAppleId("apple-user-123"))?.name).toBe("Taylor");
   });
+
+  it("authenticates and validates device timezone refreshes", async () => {
+    const user = await store.createUser({ name: "Timezone User" });
+    const token = await store.createSession(user.id);
+    const app = buildApp();
+
+    const updated = await app.request("/api/me/timezone", {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ timezone: "Europe/London" }),
+    });
+    expect(updated.status).toBe(200);
+    expect(await updated.json()).toEqual({ ok: true });
+    expect(
+      (await pool.query<{ timezone: string }>("SELECT timezone FROM users WHERE id=$1", [user.id]))
+        .rows[0]?.timezone,
+    ).toBe("Europe/London");
+
+    const invalid = await app.request("/api/me/timezone", {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ timezone: "PST" }),
+    });
+    expect(invalid.status).toBe(400);
+    const anonymous = await app.request("/api/me/timezone", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ timezone: "UTC" }),
+    });
+    expect(anonymous.status).toBe(401);
+  });
 });
 
 describe.skipIf(!HAS_DB)("authenticated notification delivery", () => {

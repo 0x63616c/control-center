@@ -9,9 +9,11 @@ describe("DTYE Temporal registry", () => {
       "OutboxDispatchRecoveryWorkflow",
       "SessionMaintenanceWorkflow",
       "NotificationDeliveryWorkflow",
+      "StreakMilestoneSweepWorkflow",
     ]);
     expect(Object.keys(workflows)).toContain("DtyeHealthCheckWorkflow");
     expect(Object.keys(workflows)).toContain("NotificationDeliveryWorkflow");
+    expect(Object.keys(workflows)).toContain("StreakMilestoneSweepWorkflow");
     expect(ACTIVITY_TYPES).toEqual([
       "DtyeHealthCheckActivity",
       "OutboxDispatchActivity",
@@ -20,6 +22,7 @@ describe("DTYE Temporal registry", () => {
       "deliverNotification",
       "suppressNotification",
       "rotatePushTokenBatch",
+      "StreakMilestoneSweepActivity",
     ]);
     expect(MANAGED_SCHEDULE_PREFIX).toBe("dtye_");
     expect(SCHEDULES).toEqual([
@@ -39,6 +42,15 @@ describe("DTYE Temporal registry", () => {
         timezone: "UTC",
         args: { schemaVersion: 1 },
         timeout: "5 minutes",
+        catchupWindow: "1 minute",
+      },
+      {
+        scheduleId: "dtye_streak_sweep",
+        workflowType: "StreakMilestoneSweepWorkflow",
+        cron: "0 * * * *",
+        timezone: "UTC",
+        args: { schemaVersion: 1 },
+        timeout: "10 minutes",
         catchupWindow: "1 minute",
       },
       {
