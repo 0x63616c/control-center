@@ -859,11 +859,11 @@ revocation succeeded.
 | W01 Temporal runtime | IMPLEMENTED; LIVE PROOF PENDING | coordinator | PR #708 / `dd7f8f612` | Merge/deploy evidence remains in W13 |
 | W02 Outbox/orchestration | IMPLEMENTED; LIVE PROOF PENDING | coordinator | PR #708 / `codex/dtye-outbox-observability` | W12/W13 live failure drills remain |
 | W03 Push delivery | IMPLEMENTED; LIVE PROOF PENDING | coordinator | PR #708 / integrated from `9d9080a47` | Deploy projected Apple/APNs credentials and prove foreground/background/terminated delivery |
-| W04 Report accountability | IN PROGRESS | `/root/report_accountability` | successor slice from PR #708 | W03 integrated; implementation active |
-| W05 Urge rescue | IN PROGRESS | `/root/foundation_review` | successor slice from PR #708 | W03 integrated; implementation active |
-| W06 Streak milestones | NOT STARTED | — | — | W03 |
-| W07 Monthly recap | NOT STARTED | — | — | W03, W06 terminology |
-| W08 Invite lifecycle | NOT STARTED | — | — | W03 |
+| W04 Report accountability | IMPLEMENTED; LIVE PROOF PENDING | coordinator | PR #708 / integrated from `05386fbbc` | Deployed outbox/APNs/expiry proof remains in W13 |
+| W05 Urge rescue | IMPLEMENTED; LIVE PROOF PENDING | coordinator | PR #708 / integrated from `7a58890e7` | Deployed timer/APNs/restart proof remains in W13 |
+| W06 Streak milestones | IN PROGRESS | `/root/streak_milestones` | successor slice from PR #708 | W03 integrated; implementation active; owns migration 0015 |
+| W07 Monthly recap | IN PROGRESS | `/root/monthly_recaps` | successor slice from PR #708 | W03 integrated; implementation active; owns migration 0016 |
+| W08 Invite lifecycle | IN PROGRESS | `/root/invite_integration` | successor slice from PR #708 | Core persistence/workflow landed; central wiring and replay proof active |
 | W09 Session maintenance | IMPLEMENTED; LIVE PROOF PENDING | coordinator | PR #708 / coordinator branch | W12/W13 schedule and production purge proof remain |
 | W10 Account deletion | NOT STARTED | — | — | W00 deletion decisions, W02, Apple revocation |
 | W11 UI/operations integration | NOT STARTED | — | — | W03–W10 |
@@ -890,6 +890,9 @@ commit/build, and proof boundary is not evidence.
 | 2026-08-16 | W03 native push and notification delivery | PASS locally; secrets/live-device proof pending | integrated from `9d9080a47` | Exact opaque workflow input, encrypted token keyring/rotation, authenticated preference and registration APIs, finite APNs outcomes, per-device durable retries, late authorization checks, native opt-in/settings, production entitlement guard, and shared worker-pool lifecycle are implemented. Notifications passed 15/15, frontend 29/29, integrated worker 25/25, root typecheck and Knip passed; source slice additionally passed real PostgreSQL 82/82, Storybook 535/535, production frontend, SwiftPM, and unsigned simulator builds. | `/root/workflow_acceptance_review`, coordinator |
 | 2026-08-16 | W02.9, W02.10, W09.4 operations instrumentation | PASS; live proof pending | `codex/dtye-outbox-observability` | Bounded platform metrics expose durable pending/oldest/quarantine gauges, retry/permanent outcomes, accepted dispatch latency, purge counts/duration, and activity freshness without identity labels. Checked-in Grafana panels and Prometheus rules cover old/growing/failed backlog and missing poller/recovery; deterministic collector/activity/infra tests pass and the runbook covers recovery. | `/root/outbox_workflows` |
 | 2026-08-16 | Integrated W02/W03/W09 migration and runtime proof | PASS | coordinator branch after `e259a3c85` | Fresh PostgreSQL 16 applied migrations 0001 through 0012 in order. The combined API suite passed 104/104 and the worker suite passed 33/33 including real-Postgres session purge and durable operational snapshot tests. | coordinator |
+| 2026-08-16 | W04 report accountability | PASS locally; live proof pending | integrated through `e08b255d0` | Migration 0013, exact 24-hour/72-hour/7-day timers, authoritative terminal signals, durable closure/departure events, account-deletion reason seam, immutable opaque history contracts, and replay safety are integrated. Combined worker tests passed 65/65 non-DB cases with 9 expected DB skips; source and integration real-Postgres proofs passed all W04 cases. | `/root/report_accountability`, coordinator |
+| 2026-08-16 | W05 private urge rescue | PASS locally; live proof pending | integrated through `21f036dd0` | Migration 0014, authenticated server-authoritative state, exact cooldown/check-in/extensions, idempotent command races, private notification, account-deletion erase seam, mobile UI/Storybook states, replay, and an actual replacement-worker restart are integrated on task queue `main`. | `/root/foundation_review`, coordinator |
+| 2026-08-16 | Combined W04/W05 integration | PASS after harness fix | `55c396a4b` | Fresh PostgreSQL 16 applied migrations 0001 through 0014. The combined API suite passed 117/117; combined worker suite passed 84/84 including all real-Postgres and actual Temporal tests; frontend passed 44/44 plus typecheck and production build. Integration exposed parallel shared-DB fixture deletion, now prevented by single-fork worker tests. The runtime-copy gate also gained coverage for SQL function calls and the rescue copy remains supportive. | coordinator |
 
 ## Resume instructions
 
