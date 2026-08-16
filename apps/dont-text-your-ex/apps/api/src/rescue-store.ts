@@ -329,7 +329,8 @@ export class PostgresRescueStore implements RescueStore {
     const result = await db.query<RescueRow>(
       `SELECT id,user_id,state,started_at,deadline_at,extension_count,aggregate_version,
               check_in_due_at,response_deadline_at,resolved_at,updated_at
-       FROM rescue_interventions WHERE user_id=$1 ORDER BY started_at DESC,id DESC LIMIT 1${
+       FROM rescue_interventions WHERE user_id=$1
+       ORDER BY (state IN ('active','check_in_due')) DESC,started_at DESC,id DESC LIMIT 1${
          lock ? " FOR UPDATE" : ""
 }`,
       [userId],
