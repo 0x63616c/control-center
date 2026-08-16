@@ -33,6 +33,13 @@ describe("outbox dispatch activity", () => {
         suppressNotification: async () => undefined,
         rotatePushTokenBatch: async () => ({ rotated: 0 }),
       },
+      reports: {
+        advance: async ({ reportId }) => ({
+          state: "member_departed",
+          reportId,
+          aggregateVersion: 1,
+        }),
+      },
       clock: () => 10,
     });
 

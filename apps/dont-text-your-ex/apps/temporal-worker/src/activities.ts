@@ -3,6 +3,10 @@ import type { DomainEvent } from "../../api/src/domain-events";
 import type { Outbox } from "../../api/src/outbox";
 import { dispatchOutboxPage, type WorkflowDispatcher } from "../../api/src/workflow-dispatcher";
 import type { NotificationActivities } from "./notification-activities";
+import {
+  createReportAccountabilityActivities,
+  type ReportAccountabilityStore,
+} from "./report-accountability";
 import { runSessionMaintenancePage, type SessionMaintenanceStore } from "./session-maintenance";
 
 interface DtyeHealthCheckActivityInput {
@@ -42,6 +46,7 @@ export type DtyeActivityDependencies = Readonly<{
   dispatcher: WorkflowDispatcher;
   sessions: SessionMaintenanceStore;
   notifications: NotificationActivities;
+  reports: ReportAccountabilityStore;
   clock?: () => number;
 }>;
 
@@ -70,6 +75,7 @@ export function createDtyeActivities(dependencies: DtyeActivityDependencies) {
       return runSessionMaintenancePage({ store: dependencies.sessions, ...input });
     },
     ...dependencies.notifications,
+    ...createReportAccountabilityActivities({ store: dependencies.reports }),
   };
 }
 

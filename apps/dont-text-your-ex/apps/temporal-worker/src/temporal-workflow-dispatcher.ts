@@ -1,6 +1,7 @@
 import { type Client, WorkflowExecutionAlreadyStartedError } from "@temporalio/client";
 import type { DomainEvent, DomainEventType } from "../../api/src/domain-events";
 import type { WorkflowDispatcher, WorkflowDispatchResult } from "../../api/src/workflow-dispatcher";
+import type { ReportAccountabilityFanoutStore } from "./report-accountability";
 
 type WorkflowType =
   | "InviteLifecycleWorkflow"
@@ -161,6 +162,32 @@ export interface TemporalWorkflowGateway {
   execute(operation: Exclude<TemporalOperation, { kind: "audit" | "fanout" }>): Promise<void>;
 }
 
+export class ReportAccountabilityFanoutHandler implements TemporalEventHandler {
+  constructor(
+    private readonly gateway: TemporalWorkflowGateway,
+    private readonly store: ReportAccountabilityFanoutStore,
+  ) {}
+
+  async handle(_operation: TemporalOperation, event: DomainEvent): Promise<void> {
+    if (event.type !== "jar.closed" && event.type !== "membership.left") {
+      throw new Error("unsupported report accountability fanout event");
+    }
+    const targets = await this.store.signalTargets(event);
+    const signal = event.type === "jar.closed" ? "jarClosed" : "memberDeparted";
+    for (const target of targets) {
+      const startArgs = startArgument("ReportAccountabilityWorkflow", target.reportId);
+      await this.gateway.execute({
+        kind: "signal_with_start",
+        workflowType: "ReportAccountabilityWorkflow",
+        workflowId: `report/${target.reportId}`,
+        signal,
+        startArgs,
+        signalArgs: signalArgument(startArgs, target.aggregateVersion),
+      });
+    }
+  }
+}
+
 export class TemporalClientWorkflowGateway implements TemporalWorkflowGateway {
   constructor(
     private readonly client: Client,
@@ -214,8 +241,9 @@ const DIRECT_EVENTS_BY_WORKFLOW = {
 export function registeredTemporalEventHandlers(
   gateway: TemporalWorkflowGateway,
   workflowTypes: readonly string[],
+  additionalHandlers: HandlerRegistry = {},
 ): HandlerRegistry {
-  const handlers: HandlerRegistry = {};
+  const handlers: HandlerRegistry = { ...additionalHandlers };
   const handler = new GatewayTemporalEventHandler(gateway);
   for (const [workflowType, eventTypes] of Object.entries(DIRECT_EVENTS_BY_WORKFLOW)) {
     if (!workflowTypes.includes(workflowType)) continue;
@@ -235,7 +263,7 @@ export class RecordingTemporalEventHandler implements TemporalEventHandler {
 }
 
 type HandlerRegistry = Partial<Record<DomainEventType, TemporalEventHandler>>;
-const AUDIT_EVENT_TYPES = ["jar.created", "rescue.abandoned"] as const;
+const AUDIT_EVENT_TYPES = ["jar.created", "report.expired", "rescue.abandoned"] as const;
 
 export class TemporalWorkflowDispatcher implements WorkflowDispatcher {
   constructor(private readonly handlers: HandlerRegistry = {}) {}

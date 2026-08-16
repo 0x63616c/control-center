@@ -8,11 +8,15 @@ const mocks = vi.hoisted(() => ({
   prepareNotification: vi.fn(async () => ({ deliveryIds: [] })),
   deliverNotification: vi.fn(async () => ({ kind: "accepted" as const })),
   suppressNotification: vi.fn(async () => undefined),
+  report: vi.fn(),
+  condition: vi.fn(async (_predicate: () => boolean, _timeout?: number) => false),
+  handlers: new Map<string, (input: unknown) => void>(),
+  now: { value: 0 },
   sleep: vi.fn(async () => undefined),
 }));
 
 vi.mock("@temporalio/workflow", () => ({
-  condition: vi.fn(async () => false),
+  condition: mocks.condition,
   defineQuery: (name: string) => name,
   defineSignal: (name: string) => name,
   proxyActivities: () => ({
@@ -22,9 +26,11 @@ vi.mock("@temporalio/workflow", () => ({
     prepareNotification: mocks.prepareNotification,
     deliverNotification: mocks.deliverNotification,
     suppressNotification: mocks.suppressNotification,
+    ReportAccountabilityActivity: mocks.report,
   }),
   continueAsNew: mocks.continueAsNew,
-  setHandler: vi.fn(),
+  setHandler: (name: string, handler: (input: unknown) => void) =>
+    mocks.handlers.set(name, handler),
   sleep: mocks.sleep,
 }));
 
@@ -42,6 +48,14 @@ beforeEach(() => {
   mocks.prepareNotification.mockReset().mockResolvedValue({ deliveryIds: [] });
   mocks.deliverNotification.mockReset().mockResolvedValue({ kind: "accepted" });
   mocks.suppressNotification.mockReset().mockResolvedValue(undefined);
+  mocks.report.mockReset();
+  mocks.condition.mockReset().mockImplementation(async (_predicate: () => boolean, timeout) => {
+    mocks.now.value += timeout ?? 0;
+    return false;
+  });
+  mocks.handlers.clear();
+  mocks.now.value = 0;
+  vi.spyOn(Date, "now").mockImplementation(() => mocks.now.value);
   mocks.sleep.mockReset().mockResolvedValue(undefined);
 });
 
@@ -136,5 +150,75 @@ describe("NotificationDeliveryWorkflow", () => {
     await expect(
       NotificationDeliveryWorkflow({ schemaVersion: 1, aggregateId: "usr_private" } as never),
     ).rejects.toThrow();
+  });
+});
+
+describe("ReportAccountabilityWorkflow", () => {
+  const reportId = "rpt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const pending = (createdAt = 0) => ({
+    state: "pending" as const,
+    reportId,
+    aggregateVersion: 1,
+    createdAt,
+  });
+
+  test("time-skips through immediate, 24-hour, 72-hour and seven-day expiry", async () => {
+    const { ReportAccountabilityWorkflow } = await import("./workflows");
+    mocks.report.mockImplementation(async (input: { action: string }) =>
+      input.action === "expire" ? { state: "expired", reportId, aggregateVersion: 2 } : pending(),
+    );
+
+    await expect(
+      ReportAccountabilityWorkflow({ schemaVersion: 1, reportId } as never),
+    ).resolves.toEqual({ schemaVersion: 1, reportId, aggregateVersion: 2, state: "expired" });
+    expect(mocks.report.mock.calls.map(([input]) => input.action)).toEqual([
+      "inspect",
+      "remind_immediate",
+      "remind_24h",
+      "remind_72h",
+      "expire",
+    ]);
+    expect(mocks.now.value).toBe(7 * 86_400_000);
+  });
+
+  test("expires an already-old backfill without historical reminders", async () => {
+    const { ReportAccountabilityWorkflow } = await import("./workflows");
+    mocks.now.value = 8 * 86_400_000;
+    mocks.report
+      .mockResolvedValueOnce(pending())
+      .mockResolvedValueOnce({ state: "expired", reportId, aggregateVersion: 2 });
+
+    await ReportAccountabilityWorkflow({ schemaVersion: 1, reportId } as never);
+    expect(mocks.report.mock.calls.map(([input]) => input.action)).toEqual(["inspect", "expire"]);
+    expect(mocks.condition).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ["owned", "owned"],
+    ["denied", "denied"],
+    ["jarClosed", "jar_closed"],
+    ["memberDeparted", "member_departed"],
+    ["accountDeleted", "account_deleted"],
+  ] as const)("ends on the authoritative %s signal", async (signalName, terminalState) => {
+    const { ReportAccountabilityWorkflow } = await import("./workflows");
+    mocks.report
+      .mockResolvedValueOnce(pending())
+      .mockResolvedValueOnce(pending())
+      .mockResolvedValueOnce({ state: terminalState, reportId, aggregateVersion: 2 });
+    mocks.condition.mockImplementationOnce(async () => {
+      const handler = mocks.handlers.get(signalName);
+      if (!handler) throw new Error(`missing ${signalName} handler`);
+      handler({ schemaVersion: 1, reportId, expectedAggregateVersion: 2 });
+      return true;
+    });
+
+    await expect(
+      ReportAccountabilityWorkflow({ schemaVersion: 1, reportId } as never),
+    ).resolves.toMatchObject({ state: terminalState, aggregateVersion: 2 });
+    expect(mocks.report).toHaveBeenLastCalledWith({
+      reportId,
+      action: "inspect",
+      expectedAggregateVersion: 2,
+    });
   });
 });

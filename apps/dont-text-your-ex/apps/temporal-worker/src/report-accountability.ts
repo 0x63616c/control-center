@@ -1,8 +1,9 @@
 import type { Pool, PoolClient } from "pg";
 import { type NotificationId, NotificationIdSchema, type ReportId } from "../../../contracts";
+import type { DomainEvent } from "../../api/src/domain-events";
 import { id } from "../../api/src/ids";
 
-export const REPORT_ACCOUNTABILITY_ACTIONS = [
+const REPORT_ACCOUNTABILITY_ACTIONS = [
   "inspect",
   "remind_immediate",
   "remind_24h",
@@ -11,7 +12,7 @@ export const REPORT_ACCOUNTABILITY_ACTIONS = [
 ] as const;
 export type ReportAccountabilityAction = (typeof REPORT_ACCOUNTABILITY_ACTIONS)[number];
 
-export const REPORT_ACCOUNTABILITY_TERMINAL_STATES = [
+const REPORT_ACCOUNTABILITY_TERMINAL_STATES = [
   "owned",
   "denied",
   "expired",
@@ -40,8 +41,15 @@ export interface ReportAccountabilityStore {
     input: Readonly<{
       reportId: ReportId;
       action: ReportAccountabilityAction;
+      expectedAggregateVersion?: number;
     }>,
   ): Promise<ReportAccountabilityProgress>;
+}
+
+export interface ReportAccountabilityFanoutStore {
+  signalTargets(
+    event: DomainEvent,
+  ): Promise<readonly Readonly<{ reportId: ReportId; aggregateVersion: number }>[]>;
 }
 
 type ReportRow = Readonly<{
@@ -148,15 +156,28 @@ async function createNotification(
 
 export class PostgresReportAccountabilityStore implements ReportAccountabilityStore {
   constructor(
-    private readonly pool: Pick<Pool, "connect">,
+    private readonly pool: Pick<Pool, "connect" | "query">,
     private readonly clock: () => number = Date.now,
   ) {}
 
-  async advance(input: Readonly<{ reportId: ReportId; action: ReportAccountabilityAction }>) {
+  async advance(
+    input: Readonly<{
+      reportId: ReportId;
+      action: ReportAccountabilityAction;
+      expectedAggregateVersion?: number;
+    }>,
+  ) {
     const db = await this.pool.connect();
     try {
       await db.query("BEGIN");
       const current = await eligibility(db, input.reportId);
+      if (
+        input.expectedAggregateVersion != null &&
+        current.row != null &&
+        Number(current.row.aggregate_version) < input.expectedAggregateVersion
+      ) {
+        throw new Error("report aggregate version is not visible yet");
+      }
       if (current.state !== "pending") {
         await db.query("COMMIT");
         return terminalProgress(input.reportId, current.state, current.row);
@@ -218,6 +239,34 @@ export class PostgresReportAccountabilityStore implements ReportAccountabilitySt
       db.release();
     }
   }
+
+  async signalTargets(
+    event: DomainEvent,
+  ): Promise<readonly Readonly<{ reportId: ReportId; aggregateVersion: number }>[]> {
+    if (event.type !== "jar.closed" && event.type !== "membership.left") {
+      throw new Error("unsupported report accountability fanout event");
+    }
+    const result =
+      event.type === "jar.closed"
+        ? await this.pool.query<{ id: ReportId; aggregate_version: string }>(
+            `SELECT id,aggregate_version FROM reports
+             WHERE jar_id=$1 AND status='pending' ORDER BY id`,
+            [event.aggregateId],
+          )
+        : await this.pool.query<{ id: ReportId; aggregate_version: string }>(
+            `SELECT r.id,r.aggregate_version
+             FROM membership_tenures t
+             JOIN memberships m ON m.id=t.membership_id
+             JOIN reports r ON r.jar_id=m.jar_id AND r.accused_id=m.user_id
+             WHERE t.id=$1 AND r.status='pending'
+             ORDER BY r.id`,
+            [event.aggregateId],
+          );
+    return result.rows.map((row) => ({
+      reportId: row.id,
+      aggregateVersion: Number(row.aggregate_version),
+    }));
+  }
 }
 
 export function createReportAccountabilityActivities(dependencies: {
@@ -227,6 +276,7 @@ export function createReportAccountabilityActivities(dependencies: {
     async ReportAccountabilityActivity(input: {
       readonly reportId: ReportId;
       readonly action: ReportAccountabilityAction;
+      readonly expectedAggregateVersion?: number;
     }): Promise<ReportAccountabilityProgress> {
       return dependencies.store.advance(input);
     },

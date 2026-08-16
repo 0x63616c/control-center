@@ -17,6 +17,8 @@ import {
   LeaveJarRequestSchema,
   LogSlipRequestSchema,
   NotificationDeliveryWorkflowInputSchema,
+  ReportAccountabilitySignalSchema,
+  ReportAccountabilityWorkflowInputSchema,
   type ReportId,
   ReportIdSchema,
   ReportStatusSchema,
@@ -37,6 +39,20 @@ const WEBP_DATA_URL = "data:image/webp;base64,UklGRgAAAABXRUJQ";
 describe("request schemas", () => {
   it("exposes expired as a terminal report status", () => {
     expect(ReportStatusSchema.parse("expired")).toBe("expired");
+  });
+
+  it("keeps report workflow arguments opaque and exact", () => {
+    const start = {
+      schemaVersion: 1,
+      reportId: "rpt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    };
+    expect(ReportAccountabilityWorkflowInputSchema.parse(start)).toEqual(start);
+    expect(
+      ReportAccountabilityWorkflowInputSchema.safeParse({ ...start, anonymous: true }).success,
+    ).toBe(false);
+    expect(
+      ReportAccountabilitySignalSchema.parse({ ...start, expectedAggregateVersion: 2 }),
+    ).toEqual({ ...start, expectedAggregateVersion: 2 });
   });
 
   it("keeps notification workflow start input limited to its opaque id", () => {

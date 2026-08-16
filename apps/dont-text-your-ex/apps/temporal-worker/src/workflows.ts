@@ -10,10 +10,19 @@ import {
 import {
   type NotificationDeliveryWorkflowInput,
   NotificationDeliveryWorkflowInputSchema,
+  type ReportAccountabilitySignal,
+  ReportAccountabilitySignalSchema,
+  type ReportAccountabilityWorkflowInput,
+  ReportAccountabilityWorkflowInputSchema,
 } from "../../../contracts";
 import type { DomainEvent } from "../../api/src/domain-events";
 import type { DtyeActivities } from "./activities";
 import { HEALTH_CHECK_PERIOD_MS, healthCheckSleepMs } from "./pacing";
+import type {
+  ReportAccountabilityActivities,
+  ReportAccountabilityProgress,
+  ReportAccountabilityTerminalState,
+} from "./report-accountability";
 import { nextPagingDecision } from "./workflow-paging";
 
 export interface DtyeHealthCheckWorkflowInput {
@@ -212,4 +221,140 @@ export async function NotificationDeliveryWorkflow(
     deliveryCount: prepared.deliveryIds.length,
     outcomes,
   };
+}
+
+const reportActivities = proxyActivities<ReportAccountabilityActivities>({
+  startToCloseTimeout: "30 seconds",
+  retry: {
+    initialInterval: "1 second",
+    backoffCoefficient: 2,
+    maximumInterval: "30 seconds",
+    maximumAttempts: 10,
+  },
+});
+
+export const reportOwnedSignal = defineSignal<[ReportAccountabilitySignal]>("owned");
+export const reportDeniedSignal = defineSignal<[ReportAccountabilitySignal]>("denied");
+export const reportJarClosedSignal = defineSignal<[ReportAccountabilitySignal]>("jarClosed");
+export const reportMemberDepartedSignal =
+  defineSignal<[ReportAccountabilitySignal]>("memberDeparted");
+export const reportAccountDeletedSignal =
+  defineSignal<[ReportAccountabilitySignal]>("accountDeleted");
+export const accountabilityStateQuery = defineQuery<
+  ReportAccountabilityTerminalState | "loading" | "pending"
+>("accountabilityState");
+
+export interface ReportAccountabilityWorkflowOutput {
+  readonly schemaVersion: 1;
+  readonly reportId: ReportAccountabilityWorkflowInput["reportId"];
+  readonly aggregateVersion: number;
+  readonly state: ReportAccountabilityTerminalState;
+}
+
+const DAY_MS = 86_400_000;
+
+function isTerminal(
+  progress: ReportAccountabilityProgress,
+): progress is Extract<ReportAccountabilityProgress, { state: ReportAccountabilityTerminalState }> {
+  return progress.state !== "pending";
+}
+
+export async function ReportAccountabilityWorkflow(
+  input: ReportAccountabilityWorkflowInput,
+): Promise<ReportAccountabilityWorkflowOutput> {
+  const parsed = ReportAccountabilityWorkflowInputSchema.parse(input);
+  let state: ReportAccountabilityTerminalState | "loading" | "pending" = "loading";
+  const signals: ReportAccountabilitySignal[] = [];
+  const receiveSignal = (raw: ReportAccountabilitySignal) => {
+    const signal = ReportAccountabilitySignalSchema.safeParse(raw);
+    if (signal.success && signal.data.reportId === parsed.reportId) signals.push(signal.data);
+  };
+  for (const signal of [
+    reportOwnedSignal,
+    reportDeniedSignal,
+    reportJarClosedSignal,
+    reportMemberDepartedSignal,
+    reportAccountDeletedSignal,
+  ]) {
+    setHandler(signal, receiveSignal);
+  }
+  setHandler(accountabilityStateQuery, () => state);
+
+  let progress = await reportActivities.ReportAccountabilityActivity({
+    reportId: parsed.reportId,
+    action: "inspect",
+  });
+  state = progress.state;
+
+  const terminalOutput = (
+    terminal: Extract<ReportAccountabilityProgress, { state: ReportAccountabilityTerminalState }>,
+  ): ReportAccountabilityWorkflowOutput => ({
+    schemaVersion: 1,
+    reportId: parsed.reportId,
+    aggregateVersion: terminal.aggregateVersion,
+    state: terminal.state,
+  });
+  if (isTerminal(progress)) return terminalOutput(progress);
+  const createdAt = progress.createdAt;
+
+  const reconcileSignals = async (): Promise<ReportAccountabilityWorkflowOutput | null> => {
+    while (signals.length > 0) {
+      const signal = signals.shift();
+      if (!signal) break;
+      progress = await reportActivities.ReportAccountabilityActivity({
+        reportId: parsed.reportId,
+        action: "inspect",
+        expectedAggregateVersion: signal.expectedAggregateVersion,
+      });
+      state = progress.state;
+      if (isTerminal(progress)) return terminalOutput(progress);
+    }
+    return null;
+  };
+
+  const waitUntil = async (
+    deadline: number,
+  ): Promise<ReportAccountabilityWorkflowOutput | null> => {
+    while (Date.now() < deadline) {
+      const signaled = await condition(() => signals.length > 0, deadline - Date.now());
+      if (!signaled) break;
+      const terminal = await reconcileSignals();
+      if (terminal) return terminal;
+    }
+    return reconcileSignals();
+  };
+
+  if (Date.now() < createdAt + DAY_MS) {
+    progress = await reportActivities.ReportAccountabilityActivity({
+      reportId: parsed.reportId,
+      action: "remind_immediate",
+    });
+    state = progress.state;
+    if (isTerminal(progress)) return terminalOutput(progress);
+  }
+
+  for (const reminder of [
+    { deadline: createdAt + DAY_MS, action: "remind_24h" as const },
+    { deadline: createdAt + 3 * DAY_MS, action: "remind_72h" as const },
+  ]) {
+    if (Date.now() >= reminder.deadline) continue;
+    const terminal = await waitUntil(reminder.deadline);
+    if (terminal) return terminal;
+    progress = await reportActivities.ReportAccountabilityActivity({
+      reportId: parsed.reportId,
+      action: reminder.action,
+    });
+    state = progress.state;
+    if (isTerminal(progress)) return terminalOutput(progress);
+  }
+
+  const terminal = await waitUntil(createdAt + 7 * DAY_MS);
+  if (terminal) return terminal;
+  progress = await reportActivities.ReportAccountabilityActivity({
+    reportId: parsed.reportId,
+    action: "expire",
+  });
+  state = progress.state;
+  if (!isTerminal(progress)) throw new Error("report expiry did not reach a terminal state");
+  return terminalOutput(progress);
 }
