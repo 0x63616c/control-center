@@ -269,7 +269,7 @@ the data model/deletion/moderation inventory is final.
 
 ### P01 — Owner decisions and public-release contract — 4%
 
-- **Status:** `NOT STARTED`
+- **Status:** `IN PROGRESS`
 - **Dependencies:** P00
 - **Decisions:** final store name; iPhone-only versus universal iPhone/iPad;
   privacy/legal owner; support contact; copyright; free/paid; territories;
@@ -675,17 +675,22 @@ the data model/deletion/moderation inventory is final.
 
 | Decision | Status | Decision / evidence | Date |
 |---|---|---|---|
-| Final App Store name | OPEN | Desired product name is Don’t Text Your Ex; availability/save still must be proven | — |
+| Final App Store name | DECIDED + SAVED | **Don’t Text Your Ex**; explicitly requested by Calum and accepted by App Store Connect with `Saved` state | 2026-08-16 |
 | iPhone-only or iPhone+iPad | OPEN | Audit recommends iPhone-only for the shortest polished V1 path | — |
 | Privacy/legal owner and support contact | OPEN | Owner confirmation required | — |
-| Account deletion/shared-data behavior | OPEN | Must avoid blindly cascading friends’ shared data | — |
+| Account deletion/shared-data behavior | OWNER CONFIRM | Recommend selective erasure + deterministic active-member succession; preserve friends’ data/container but delete the departing account, membership, tally, UGC, evidence, and linked activity. Reset creator-authored jar name/rule; delete sole-active-member owned jars; no former-member caretaker; fresh re-registration | 2026-08-16 |
 | Moderation response target and escalation | OPEN | Owner confirmation required | — |
-| Price/tax/territories | OPEN | Expected free; do not infer | — |
-| Primary/secondary category | OPEN | Candidate Lifestyle; validate before save | — |
+| Price/tax/territories | OPEN | Live state: no price schedule and no storefront availability configured; tax category is App Store software | 2026-08-16 |
+| Primary/secondary category | OPEN | Live state: both unset. Candidate primary Lifestyle; validate before save | 2026-08-16 |
 | Age/consent stance | OPEN | Complete against actual UGC/social capabilities | — |
-| DSA trader status | OPEN | Legal owner-only determination | — |
-| Content Rights | OPEN | Owner attestation required | — |
-| Release mode | OPEN | Recommend manual V1 release | — |
+| DSA trader status | OWNER RECONFIRM | App Store Connect currently identifies this app as non-trader; legal accuracy still requires Calum’s confirmation | 2026-08-16 |
+| Content Rights | OPEN | Live state: not set up; owner attestation required | 2026-08-16 |
+| Release mode | OPEN | Current version is automatic-after-approval; recommend manual V1 release | 2026-08-16 |
+| License agreement | OWNER RECONFIRM | Apple Standard License Agreement currently applies; confirm no custom EULA | 2026-08-16 |
+| Mac / Vision Pro availability | OPEN | Both availability boxes are checked; Apple reports V1 incompatible with Vision Pro. Recommend disabling both for V1 unless deliberately tested | 2026-08-16 |
+| Distribution method | OWNER RECONFIRM | Public/discoverable is currently selected; School Manager reduced-price option is also checked | 2026-08-16 |
+| Protected moderation operator plane | DECIDED | Private typed `moderationctl` + committed runbook in the existing API pod; no operator HTTP route/UI for V1; cluster-admin Calum is the declared single-operator root of trust | 2026-08-16 |
+| V1 localization | OWNER RECONFIRM | Primary language is English (U.S.); recommend en-US only for V1 | 2026-08-16 |
 
 ## Evidence ledger
 
@@ -701,12 +706,14 @@ evidence with stable URLs/IDs. “Observed” without a timestamp/source is inva
 | 2026-08-16T04:17:52Z | P00 | Production, public edge, and AASA | PASS with recorded gaps | deployed pre-P00 images | [Machine/public evidence](../evidence/dont-text-your-ex/p00-baseline-2026-08-16.md); policy routes and `/version.json` proven SPA fallbacks | Production/public audit + coordinator |
 | 2026-08-16T04:19:55Z | P00 | Live Apple release state | PASS | Version 1.0; Build 24 | [Redacted UI-state evidence](../evidence/dont-text-your-ex/p00-baseline-2026-08-16.md); [public TestFlight link](https://testflight.apple.com/join/6HcbUuV3) | Coordinator browser inspection + independent screenshot review |
 | 2026-08-16T04:26:49Z | P00 | Durable baseline merge and review closure | PASS | `676623f18` | PR [#705](https://github.com/0x63616c/world-wide-webb/pull/705); all checks green; standards/spec review findings corrected before merge | Independent standards/spec reviewers + coordinator |
+| 2026-08-16 | P01 | Requested App Store name | PASS | App `6778544752` | [Saved name and current setup evidence](../evidence/dont-text-your-ex/p01-app-store-state-2026-08-16.md): `Don’t Text Your Ex`; screenshot independently reviewed | Coordinator + independent screenshot reviewer |
+| 2026-08-16 | P01 | Deletion and operator-plane decision analysis | PASS / OWNER CONFIRMATION OPEN | current schema/infrastructure | [Schema-aware decision analysis](../evidence/dont-text-your-ex/p01-decision-analysis-2026-08-16.md); typed private operator plane decided; exact deletion consequence awaits Calum | Two independent technical audits + coordinator |
 
 ## Blocker ledger
 
 | Opened | Packet | Blocker | Owner | Next action | Status |
 |---|---|---|---|---|---|
-| 2026-08-15 | P01 | Owner/legal/product decisions not yet recorded | Calum | Batch a concise decision request when P00 is proven | OPEN |
+| 2026-08-15 | P01 | Owner/legal/product decisions not yet recorded | Calum | Confirm the exact P01 table after current-state and technical recommendations are merged | OPEN |
 
 ## Notification ledger
 
@@ -720,9 +727,10 @@ evidence with stable URLs/IDs. “Observed” without a timestamp/source is inva
 
 - **Calculated progress:** 5% (`P00` proven).
 - **Current packet:** P01.
-- **Current blockers:** P01 requires Calum's explicit legal, business, product,
-  distribution, deletion, and moderation decisions. Build 24's Beta App Review
-  is external waiting state and is not on the public-submission critical path.
-- **Next action:** obtain and propagate the P01 owner decisions without guessing
-  legal or business declarations, then start the dependency-ready P02/P03/P05
-  implementation packets.
+- **Current blockers:** P01 requires Calum's remaining explicit legal, business,
+  product, distribution, deletion, and moderation decisions. The requested App
+  Store name is already saved. Build 24's Beta App Review is external waiting
+  state and is not on the public-submission critical path.
+- **Next action:** finish the schema/operator decision audits, present the exact
+  owner-confirmation set, and propagate confirmed P01 decisions before starting
+  dependency-ready P02/P03/P05 implementation packets.
