@@ -19,6 +19,7 @@ import {
   NotificationDeliveryWorkflowInputSchema,
   type ReportId,
   ReportIdSchema,
+  ReportStatusSchema,
   ResolveReportRequestSchema,
   ShareStreakRequestSchema,
   UpdateMeRequestSchema,
@@ -34,6 +35,10 @@ const JPEG_DATA_URL = "data:image/jpeg;base64,/9j/AA==";
 const WEBP_DATA_URL = "data:image/webp;base64,UklGRgAAAABXRUJQ";
 
 describe("request schemas", () => {
+  it("exposes expired as a terminal report status", () => {
+    expect(ReportStatusSchema.parse("expired")).toBe("expired");
+  });
+
   it("keeps notification workflow start input limited to its opaque id", () => {
     const exact = {
       schemaVersion: 1,
