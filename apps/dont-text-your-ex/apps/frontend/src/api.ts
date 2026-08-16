@@ -28,6 +28,7 @@ import {
   SessionTokenSchema,
   type UpdateMeRequest,
   type UpdateNotificationPreferencesRequest,
+  type UpdateTimeZoneRequest,
 } from "../../../contracts";
 
 const TOKEN_KEY = "tye_token";
@@ -125,6 +126,8 @@ export const api = {
   // me
   me: () => req(MeSchema, "GET", "/me"),
   updateMe: (patch: UpdateMeRequest) => req(MeSchema, "PATCH", "/me", patch),
+  updateTimeZone: (input: UpdateTimeZoneRequest) =>
+    req(OkResponseSchema, "PATCH", "/me/timezone", input),
   notificationPreferences: () =>
     req(NotificationPreferencesSchema, "GET", "/me/notification-preferences"),
   updateNotificationPreferences: (patch: UpdateNotificationPreferencesRequest) =>
