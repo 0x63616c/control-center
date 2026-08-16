@@ -63,6 +63,12 @@ expected aggregate version, and schema version. They never carry a changed
 domain field. A signal causes the workflow to reload and conditionally apply
 the authoritative Postgres transition.
 
+Start arguments use the workflow's named opaque identifier (`notificationId`,
+`reportId`, `interventionId`, `inviteVersionId`, or `deletionRequestId`) plus
+`schemaVersion`; there is no generic `aggregateId` start contract. A
+signal-with-start uses that same minimal start argument and passes the expected
+aggregate version only in its separate signal argument.
+
 ## Schedule registry
 
 All schedules use overlap policy `SKIP`, a one-minute catch-up window, task

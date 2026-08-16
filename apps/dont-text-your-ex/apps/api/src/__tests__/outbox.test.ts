@@ -64,7 +64,12 @@ describe("outbox seam", () => {
     const outbox = new MemoryOutbox([first, second]);
     await outbox.claimPage({ owner: "worker-a", limit: 1, now: 100, leaseUntil: 200 });
     await expect(
-      outbox.markFailed({ eventId: first.id, owner: "worker-a", at: 110, code: "unsupported" }),
+      outbox.markFailed({
+        eventId: first.id,
+        owner: "worker-a",
+        at: 110,
+        code: "unsupported_event_version",
+      }),
     ).resolves.toBe(true);
 
     await expect(
@@ -81,7 +86,7 @@ describe("outbox seam", () => {
         owner: "worker-a",
         at: 101,
         availableAt: 102,
-        code: "still_broken",
+        code: "temporal_unavailable",
       }),
     ).resolves.toEqual({ status: "rescheduled" });
     await outbox.claimPage({ owner: "worker-b", limit: 1, now: 102, leaseUntil: 110 });
@@ -91,7 +96,7 @@ describe("outbox seam", () => {
         owner: "worker-b",
         at: 103,
         availableAt: 104,
-        code: "still_broken",
+        code: "temporal_unavailable",
       }),
     ).resolves.toEqual({ status: "failed" });
     await expect(

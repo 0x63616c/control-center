@@ -1,17 +1,9 @@
 import type { DomainEvent, DomainEventType } from "./domain-events";
-import type { Outbox } from "./outbox";
-
-const DISPATCH_FAILURE_CODES = [
-  "temporal_unavailable",
-  "unsupported_event_version",
-  "capability_not_registered",
-  "dispatch_unexpected",
-] as const;
-type DispatchFailureCode = (typeof DISPATCH_FAILURE_CODES)[number];
+import type { Outbox, OutboxFailureCode } from "./outbox";
 export type WorkflowDispatchResult =
   | { readonly status: "accepted" }
-  | { readonly status: "retryable"; readonly code: DispatchFailureCode }
-  | { readonly status: "permanent"; readonly code: DispatchFailureCode };
+  | { readonly status: "retryable"; readonly code: OutboxFailureCode }
+  | { readonly status: "permanent"; readonly code: OutboxFailureCode };
 
 export interface WorkflowDispatcher {
   supportedEventTypes(): readonly DomainEventType[];

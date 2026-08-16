@@ -123,4 +123,19 @@ describe.skipIf(!HAS_DB)("domain transaction seam", () => {
     );
     expect(pending.rows).toEqual([{ state: "pending", attempt_count: 0 }]);
   });
+
+  it("rejects arbitrary error text at the durable outbox boundary", async () => {
+    const runner = new DomainTransactionRunner({ pool, clock: () => 100 });
+    await runner.run(({ emit }) =>
+      emit({
+        type: "jar.created",
+        aggregateId: JarIdSchema.parse("jar_errorcodeboundary"),
+        aggregateVersion: 1,
+      }),
+    );
+
+    await expect(
+      pool.query("UPDATE domain_event SET last_error_code='raw provider response'"),
+    ).rejects.toThrow(/check constraint/i);
+  });
 });

@@ -23,8 +23,7 @@ describe("Temporal workflow dispatcher", () => {
       workflowType: "InviteLifecycleWorkflow",
       workflowId: "invite/inv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       args: {
-        aggregateId: "inv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        aggregateVersion: 1,
+        inviteVersionId: "inv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         schemaVersion: 1,
       },
     });
@@ -42,10 +41,36 @@ describe("Temporal workflow dispatcher", () => {
       workflowType: "InviteLifecycleWorkflow",
       workflowId: "invite/inv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       signal: "superseded",
-      args: {
-        aggregateId: "inv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        aggregateVersion: 2,
+      startArgs: {
+        inviteVersionId: "inv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         schemaVersion: 1,
+      },
+      signalArgs: {
+        inviteVersionId: "inv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        expectedAggregateVersion: 2,
+        schemaVersion: 1,
+      },
+    });
+  });
+
+  it("uses the notification workflow's exact privacy-safe input contract", () => {
+    expect(
+      temporalOperationFor(
+        DomainEventSchema.parse({
+          ...inviteIssued,
+          id: "evt_cccccccccccccccccccccccccccccccc",
+          type: "notification.requested",
+          aggregateType: "notification",
+          aggregateId: "ntf_cccccccccccccccccccccccccccccccc",
+        }),
+      ),
+    ).toEqual({
+      kind: "start",
+      workflowType: "NotificationDeliveryWorkflow",
+      workflowId: "notification/ntf_cccccccccccccccccccccccccccccccc",
+      args: {
+        schemaVersion: 1,
+        notificationId: "ntf_cccccccccccccccccccccccccccccccc",
       },
     });
   });

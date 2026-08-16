@@ -1,6 +1,14 @@
 import type { Pool } from "pg";
 import { type DomainEvent, DomainEventSchema, type DomainEventType } from "./domain-events";
 
+const OUTBOX_FAILURE_CODES = [
+  "temporal_unavailable",
+  "unsupported_event_version",
+  "capability_not_registered",
+  "dispatch_unexpected",
+] as const;
+export type OutboxFailureCode = (typeof OUTBOX_FAILURE_CODES)[number];
+
 export type ClaimPageInput = Readonly<{
   owner: string;
   limit: number;
@@ -14,8 +22,9 @@ type EventLeaseInput = Readonly<{
   owner: string;
   at: number;
 }>;
-export type RescheduleInput = EventLeaseInput & Readonly<{ availableAt: number; code: string }>;
-export type MarkFailedInput = EventLeaseInput & Readonly<{ code: string }>;
+export type RescheduleInput = EventLeaseInput &
+  Readonly<{ availableAt: number; code: OutboxFailureCode }>;
+export type MarkFailedInput = EventLeaseInput & Readonly<{ code: OutboxFailureCode }>;
 export type RescheduleResult = Readonly<{
   status: "rescheduled" | "failed" | "not_owned";
 }>;

@@ -857,14 +857,14 @@ revocation succeeded.
 |---|---|---|---|---|
 | W00 Design/baseline | IN PROGRESS | coordinator | `codex/dtye-temporal-delivery`, T-42 | Reconcile the two committed deletion proposals with explicit owner choice |
 | W01 Temporal runtime | IMPLEMENTED; LIVE PROOF PENDING | coordinator | PR #708 / `dd7f8f612` | Merge/deploy evidence remains in W13 |
-| W02 Outbox/orchestration | IN PROGRESS | `/root/outbox_workflows` | PR #708 / `dd7f8f612`; successor slice active | Transaction/outbox foundation integrated; real Temporal dispatch/recovery remains |
+| W02 Outbox/orchestration | CORE IMPLEMENTED; OPS/LIVE PROOF PENDING | coordinator | PR #708 / coordinator branch | Outbox metrics/alerts and W12/W13 live failure drills remain |
 | W03 Push delivery | IN PROGRESS | `/root/workflow_acceptance_review` | successor slice active | W02 dispatch integration, Apple/APNs credentials |
 | W04 Report accountability | NOT STARTED | — | — | W03 |
 | W05 Urge rescue | NOT STARTED | — | — | W03 |
 | W06 Streak milestones | NOT STARTED | — | — | W03 |
 | W07 Monthly recap | NOT STARTED | — | — | W03, W06 terminology |
 | W08 Invite lifecycle | NOT STARTED | — | — | W03 |
-| W09 Session maintenance | IN PROGRESS | `/root/outbox_workflows` | successor slice active | W02 runtime integration |
+| W09 Session maintenance | IMPLEMENTED; LIVE PROOF PENDING | coordinator | PR #708 / coordinator branch | W12/W13 schedule and production purge proof remain |
 | W10 Account deletion | NOT STARTED | — | — | W00 deletion decisions, W02, Apple revocation |
 | W11 UI/operations integration | NOT STARTED | — | — | W03–W10 |
 | W12 Verification/migration | NOT STARTED | — | — | W01–W11 |
@@ -885,6 +885,7 @@ commit/build, and proof boundary is not evidence.
 | 2026-08-16 | W01 implementation checkpoint | PASS; live proof pending | `dd7f8f612` | Product worker tests 7/7, shared runtime tests 2/2, infra tests 5/5, task-queue contract guard, root typecheck, Biome, Knip, and Node 22 slim/glibc image build passed; namespace/poller/amd64 rollout proof remains W13 | `/root/runtime_design`, coordinator |
 | 2026-08-16 | W02 transaction/outbox foundation | PASS; dispatch integration pending | `dd7f8f612` | Real PostgreSQL 16 suite passed 88/88 including rollback, concurrent mutation, lease race, exactly-once report resolution, and all implemented producer events; non-DB suite passed 52 with 36 database tests intentionally skipped | `/root/outbox_workflows`, coordinator |
 | 2026-08-16 | W01/W02 independent foundation review | PASS after fixes | coordinator branch after `8b98f9cb8` | Seven findings were traced: durable IDs now enforce 128-bit entropy, event aggregate IDs are prefix/brand checked, health input/result are locked, worker/runtime tests run in CI, invite backfill IDs are random, and a boot-composition test proves schedules and worker creation receive the same exact `main` queue. Real PostgreSQL suite then passed 89/89 and worker tests 10/10. Dispatcher throw isolation and finite redacted failure codes are assigned to the active recovery slice. | `/root/foundation_review`, coordinator |
+| 2026-08-16 | W02 dispatch/recovery and W09 session maintenance | PASS; ops/live proof pending | coordinator branch after `3e0eae35c` | Capability-filtered claims preserve unsupported facts unattempted; post-commit and scheduled recovery share the dispatcher; thrown adapters are isolated per event; error codes are finite at TypeScript and PostgreSQL boundaries; starts/signals use named opaque-ID contracts; session purge uses 500-row locked pages and continue-as-new. Real PostgreSQL API passed 96/96 and worker passed 16/16; linux/amd64 image and workflow bundle passed on the source slice. | `/root/outbox_workflows`, coordinator |
 
 ## Resume instructions
 

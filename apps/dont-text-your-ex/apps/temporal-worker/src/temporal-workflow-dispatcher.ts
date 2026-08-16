@@ -9,37 +9,54 @@ type WorkflowType =
   | "NotificationDeliveryWorkflow"
   | "AccountDeletionWorkflow";
 
-type WorkflowArgument = Readonly<{
-  aggregateId: string;
-  aggregateVersion: number;
-  schemaVersion: 1;
-}>;
+type WorkflowStartArgument =
+  | Readonly<{ schemaVersion: 1; inviteVersionId: string }>
+  | Readonly<{ schemaVersion: 1; reportId: string }>
+  | Readonly<{ schemaVersion: 1; interventionId: string }>
+  | Readonly<{ schemaVersion: 1; notificationId: string }>
+  | Readonly<{ schemaVersion: 1; deletionRequestId: string }>;
+type WorkflowSignalArgument = WorkflowStartArgument &
+  Readonly<{ expectedAggregateVersion: number }>;
 
 export type TemporalOperation =
   | Readonly<{
       kind: "start";
       workflowType: WorkflowType;
       workflowId: string;
-      args: WorkflowArgument;
+      args: WorkflowStartArgument;
     }>
   | Readonly<{
       kind: "signal_with_start";
       workflowType: WorkflowType;
       workflowId: string;
       signal: string;
-      args: WorkflowArgument;
+      startArgs: WorkflowStartArgument;
+      signalArgs: WorkflowSignalArgument;
     }>
   | Readonly<{ kind: "fanout" }>
   | Readonly<{ kind: "audit" }>;
 
-const argument = (event: DomainEvent): WorkflowArgument => ({
-  aggregateId: event.aggregateId,
-  aggregateVersion: event.aggregateVersion,
-  schemaVersion: 1,
-});
+function startArgument(workflowType: WorkflowType, aggregateId: string): WorkflowStartArgument {
+  switch (workflowType) {
+    case "InviteLifecycleWorkflow":
+      return { schemaVersion: 1, inviteVersionId: aggregateId };
+    case "ReportAccountabilityWorkflow":
+      return { schemaVersion: 1, reportId: aggregateId };
+    case "UrgeRescueWorkflow":
+      return { schemaVersion: 1, interventionId: aggregateId };
+    case "NotificationDeliveryWorkflow":
+      return { schemaVersion: 1, notificationId: aggregateId };
+    case "AccountDeletionWorkflow":
+      return { schemaVersion: 1, deletionRequestId: aggregateId };
+  }
+}
+
+const signalArgument = (
+  startArgs: WorkflowStartArgument,
+  expectedAggregateVersion: number,
+): WorkflowSignalArgument => ({ ...startArgs, expectedAggregateVersion });
 
 export function temporalOperationFor(event: DomainEvent): TemporalOperation {
-  const args = argument(event);
   switch (event.type) {
     case "jar.created":
     case "rescue.abandoned":
@@ -49,7 +66,7 @@ export function temporalOperationFor(event: DomainEvent): TemporalOperation {
         kind: "start",
         workflowType: "InviteLifecycleWorkflow",
         workflowId: `invite/${event.aggregateId}`,
-        args,
+        args: startArgument("InviteLifecycleWorkflow", event.aggregateId),
       };
     case "invite.superseded":
       return {
@@ -57,14 +74,18 @@ export function temporalOperationFor(event: DomainEvent): TemporalOperation {
         workflowType: "InviteLifecycleWorkflow",
         workflowId: `invite/${event.aggregateId}`,
         signal: "superseded",
-        args,
+        startArgs: startArgument("InviteLifecycleWorkflow", event.aggregateId),
+        signalArgs: signalArgument(
+          startArgument("InviteLifecycleWorkflow", event.aggregateId),
+          event.aggregateVersion,
+        ),
       };
     case "report.created":
       return {
         kind: "start",
         workflowType: "ReportAccountabilityWorkflow",
         workflowId: `report/${event.aggregateId}`,
-        args,
+        args: startArgument("ReportAccountabilityWorkflow", event.aggregateId),
       };
     case "report.owned":
     case "report.denied":
@@ -73,14 +94,18 @@ export function temporalOperationFor(event: DomainEvent): TemporalOperation {
         workflowType: "ReportAccountabilityWorkflow",
         workflowId: `report/${event.aggregateId}`,
         signal: event.type === "report.owned" ? "owned" : "denied",
-        args,
+        startArgs: startArgument("ReportAccountabilityWorkflow", event.aggregateId),
+        signalArgs: signalArgument(
+          startArgument("ReportAccountabilityWorkflow", event.aggregateId),
+          event.aggregateVersion,
+        ),
       };
     case "rescue.started":
       return {
         kind: "start",
         workflowType: "UrgeRescueWorkflow",
         workflowId: `rescue/${event.aggregateId}`,
-        args,
+        args: startArgument("UrgeRescueWorkflow", event.aggregateId),
       };
     case "rescue.extended":
     case "rescue.safe":
@@ -95,21 +120,25 @@ export function temporalOperationFor(event: DomainEvent): TemporalOperation {
             : event.type === "rescue.safe"
               ? "safe"
               : "slipped",
-        args,
+        startArgs: startArgument("UrgeRescueWorkflow", event.aggregateId),
+        signalArgs: signalArgument(
+          startArgument("UrgeRescueWorkflow", event.aggregateId),
+          event.aggregateVersion,
+        ),
       };
     case "notification.requested":
       return {
         kind: "start",
         workflowType: "NotificationDeliveryWorkflow",
         workflowId: `notification/${event.aggregateId}`,
-        args,
+        args: startArgument("NotificationDeliveryWorkflow", event.aggregateId),
       };
     case "account.deletion_requested":
       return {
         kind: "start",
         workflowType: "AccountDeletionWorkflow",
         workflowId: `deletion/${event.aggregateId}`,
-        args,
+        args: startArgument("AccountDeletionWorkflow", event.aggregateId),
       };
     case "jar.closed":
     case "membership.joined":
@@ -141,9 +170,9 @@ export class TemporalClientWorkflowGateway implements TemporalWorkflowGateway {
       await this.client.workflow.signalWithStart(operation.workflowType, {
         workflowId: operation.workflowId,
         taskQueue: "main",
-        args: [operation.args],
+        args: [operation.startArgs],
         signal: operation.signal,
-        signalArgs: [operation.args],
+        signalArgs: [operation.signalArgs],
       });
       return;
     }

@@ -12,7 +12,14 @@ CREATE TABLE domain_event (
   claim_expires_at BIGINT,
   attempt_count INTEGER NOT NULL DEFAULT 0,
   last_attempt_at BIGINT,
-  last_error_code TEXT,
+  last_error_code TEXT CHECK (
+    last_error_code IS NULL OR last_error_code IN (
+      'temporal_unavailable',
+      'unsupported_event_version',
+      'capability_not_registered',
+      'dispatch_unexpected'
+    )
+  ),
   dispatched_at BIGINT,
   failed_at BIGINT,
   UNIQUE (aggregate_type, aggregate_id, aggregate_version, event_type)
