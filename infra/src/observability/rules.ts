@@ -16,7 +16,10 @@ import { OBSERVABILITY_NAMESPACE } from "./constants.ts";
  *
  * The PrometheusRule CRD is the *derived* form of these; the mixin's native
  * output is a plain `groups:` file, which is why no operator is needed (#207).
- * Alerting rules are deliberately stripped — alerting is out of scope (#33).
+ * Kubernetes-mixin alerting rules are deliberately stripped. Small, owned
+ * product alerts may live beside the recording rules when they have a checked-in
+ * runbook; Prometheus evaluates them even though this stack does not yet route
+ * notifications through Alertmanager.
  */
 // Entry-relative, not cwd-relative: Pulumi and vitest run from different
 // directories, and `import.meta.dir` is bun-only so it does not type-check.

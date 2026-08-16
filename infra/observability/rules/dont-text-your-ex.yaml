@@ -1,0 +1,51 @@
+groups:
+  - name: dont-text-your-ex-temporal
+    rules:
+      - alert: DtyeOutboxOldestEventStale
+        expr: www_dtye_outbox_oldest_age_seconds{service="dont-text-your-ex-temporal-worker"} > 300
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: DTYE outbox has an event older than five minutes
+          runbook: apps/dont-text-your-ex/docs/temporal-operations.md#outbox-recovery
+      - alert: DtyeOutboxGrowing
+        expr: www_dtye_outbox_pending{service="dont-text-your-ex-temporal-worker"} > 10 and deriv(www_dtye_outbox_pending{service="dont-text-your-ex-temporal-worker"}[15m]) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: DTYE outbox backlog is growing
+          runbook: apps/dont-text-your-ex/docs/temporal-operations.md#outbox-recovery
+      - alert: DtyeOutboxHasPermanentFailures
+        expr: www_dtye_outbox_permanent_failures{service="dont-text-your-ex-temporal-worker"} > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: DTYE outbox contains quarantined events
+          runbook: apps/dont-text-your-ex/docs/temporal-operations.md#poison-events
+      - alert: DtyeTemporalMainPollerMissing
+        expr: absent(temporal_workflow_task_queue_poll_succeed{exported_namespace="dont-text-your-ex",task_queue="main"}) or sum(increase(temporal_workflow_task_queue_poll_succeed{exported_namespace="dont-text-your-ex",task_queue="main"}[5m])) == 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: No DTYE workflow poll succeeds on task queue main
+          runbook: apps/dont-text-your-ex/docs/temporal-operations.md#worker-or-schedule-outage
+      - alert: DtyeOutboxRecoverySilent
+        expr: absent(www_dtye_temporal_activity_last_success_timestamp_seconds{service="dont-text-your-ex-temporal-worker",activity="outbox_recovery"}) or time() - www_dtye_temporal_activity_last_success_timestamp_seconds{service="dont-text-your-ex-temporal-worker",activity="outbox_recovery"} > 300
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: DTYE outbox recovery activity has not succeeded recently
+          runbook: apps/dont-text-your-ex/docs/temporal-operations.md#worker-or-schedule-outage
+      - alert: DtyeSessionMaintenanceSilent
+        expr: absent(www_dtye_temporal_activity_last_success_timestamp_seconds{service="dont-text-your-ex-temporal-worker",activity="session_maintenance"}) or time() - www_dtye_temporal_activity_last_success_timestamp_seconds{service="dont-text-your-ex-temporal-worker",activity="session_maintenance"} > 7200
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: DTYE session maintenance has not succeeded in two hours
+          runbook: apps/dont-text-your-ex/docs/temporal-operations.md#session-maintenance-recovery
