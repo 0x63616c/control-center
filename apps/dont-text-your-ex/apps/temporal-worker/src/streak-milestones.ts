@@ -7,7 +7,7 @@ import type {
 } from "../../api/src/domain-transaction";
 import { id } from "../../api/src/ids";
 
-export const STREAK_MILESTONES = [7, 30, 100, 365] as const;
+const STREAK_MILESTONES = [7, 30, 100, 365] as const;
 export type StreakMilestoneDays = (typeof STREAK_MILESTONES)[number];
 export type LocalDate = string & { readonly __brand: "LocalDate" };
 
