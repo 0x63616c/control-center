@@ -158,11 +158,28 @@ sessions or bypass the bounded purge with an unreviewed bulk delete.
 ## Compatible rollout and rollback rehearsal
 
 Every candidate worker build must pass the registry-exhaustive replay test before
-it is eligible for production. That test starts every registered workflow with
-synthetic opaque identifiers, captures its history, rejects secret- or link-like
-history content, and replays the history against the candidate worker bundle.
-The replacement-worker integration tests separately prove that an open execution
-continues after the prior poller stops.
+it is eligible for production. That test requires one checked-in, sanitized
+protobuf history for every registered workflow, rejects secret- or link-like
+history content, and replays each retained history against the candidate worker
+bundle. Its registry equality assertion fails when a workflow is added without a
+fixture. The replacement-worker integration tests separately prove that an open
+execution continues after the prior poller stops.
+
+Create an initial fixture only when introducing a workflow, or deliberately
+replace an existing fixture after reviewing a compatible history-baseline
+change:
+
+```sh
+UPDATE_DTYE_REPLAY_FIXTURES=1 bun run --cwd \
+  apps/dont-text-your-ex/apps/temporal-worker test -- \
+  src/workflow-replay-compatibility.test.ts
+```
+
+Review and commit the resulting `src/replay-fixtures/*.json` files. Never update
+an existing fixture merely to bypass a nondeterminism failure: add Temporal
+versioning or a patch marker so the retained history still replays. The test
+also executes freshly generated histories as a smoke check before it loads the
+retained fixtures.
 
 Before the enabling merge, rehearse the production-shaped sequence against a
 scratch restore and record the commands, immutable candidate SHA, immutable
