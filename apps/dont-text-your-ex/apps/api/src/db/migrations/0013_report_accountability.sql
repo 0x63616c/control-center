@@ -2,6 +2,11 @@ ALTER TABLE reports
   ADD COLUMN aggregate_version BIGINT NOT NULL DEFAULT 1;
 
 ALTER TABLE reports
+  ADD COLUMN resolution_reason TEXT,
+  ADD CONSTRAINT reports_resolution_reason_check
+  CHECK (resolution_reason IS NULL OR resolution_reason IN ('timeout','account_deleted'));
+
+ALTER TABLE reports
   ADD CONSTRAINT reports_status_check
   CHECK (status IN ('pending','owned','denied','expired'));
 

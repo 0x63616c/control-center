@@ -1,10 +1,9 @@
 import { readFileSync } from "node:fs";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ReportIdSchema, UserIdSchema } from "../../../contracts";
+import { JarIdSchema, ReportIdSchema, UserIdSchema } from "../../../contracts";
 import { pool as migrationPool } from "../../api/src/db/index";
 import { runMigrations } from "../../api/src/db/migrate";
-import { DomainEventSchema } from "../../api/src/domain-events";
 import { buildDatabaseUrl } from "../../api/src/env";
 import * as apiStore from "../../api/src/store";
 import { PostgresReportAccountabilityStore } from "./report-accountability";
@@ -14,7 +13,7 @@ const HAS_DB = databaseUrl !== undefined;
 const pool = new Pool({ connectionString: databaseUrl });
 const reporterId = UserIdSchema.parse("usr_accountabilityreporter");
 const accusedId = UserIdSchema.parse("usr_accountabilityaccused");
-const jarId = "jar_accountability";
+const jarId = JarIdSchema.parse("jar_accountability");
 
 async function insertReport(reportId: string, createdAt: number): Promise<void> {
   await pool.query(
@@ -214,51 +213,51 @@ describe.skipIf(!HAS_DB)("Postgres report accountability", () => {
     }
   });
 
+  it("derives account deletion only from the persisted resolution reason", async () => {
+    const reportId = ReportIdSchema.parse("rpt_55555555555555555555555555555555");
+    await insertReport(reportId, 1_700_000_000_000);
+    await pool.query(
+      `UPDATE reports
+       SET status='expired',resolution_reason='account_deleted',resolved_at=2,
+           aggregate_version=aggregate_version+1
+       WHERE id=$1 AND status='pending'`,
+      [reportId],
+    );
+
+    const store = new PostgresReportAccountabilityStore(pool, () => 3);
+    await expect(
+      store.advance({ reportId, action: "inspect", expectedAggregateVersion: 2 }),
+    ).resolves.toEqual({ state: "account_deleted", reportId, aggregateVersion: 2 });
+  });
+
   it("ends harmlessly when the jar closes or the accused departs", async () => {
     const closedId = ReportIdSchema.parse("rpt_33333333333333333333333333333333");
     await insertReport(closedId, 1_700_000_000_000);
-    await pool.query("UPDATE jars SET closed_at=2 WHERE id=$1", [jarId]);
+    await apiStore.closeJar(jarId, reporterId);
     const store = new PostgresReportAccountabilityStore(pool, () => 3);
     await expect(
       store.advance({ reportId: closedId, action: "remind_24h" }),
     ).resolves.toMatchObject({ state: "jar_closed" });
     await expect(
-      store.signalTargets(
-        DomainEventSchema.parse({
-          id: "evt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          type: "jar.closed",
-          schemaVersion: 1,
-          aggregateType: "jar",
-          aggregateId: jarId,
-          aggregateVersion: 2,
-          occurredAt: 2,
-        }),
+      pool.query(
+        "SELECT 1 FROM domain_event WHERE event_type='report.jar_closed' AND aggregate_id=$1",
+        [closedId],
       ),
-    ).resolves.toContainEqual({ reportId: closedId, aggregateVersion: 1 });
+    ).resolves.toMatchObject({ rowCount: 1 });
     await pool.query("UPDATE jars SET closed_at=NULL WHERE id=$1", [jarId]);
 
     const departedId = ReportIdSchema.parse("rpt_44444444444444444444444444444444");
     await insertReport(departedId, 1_700_000_000_000);
-    await pool.query("UPDATE memberships SET left_at=2 WHERE jar_id=$1 AND user_id=$2", [
-      jarId,
-      accusedId,
-    ]);
+    await apiStore.leaveJar(jarId, accusedId);
     await expect(
       store.advance({ reportId: departedId, action: "remind_72h" }),
     ).resolves.toMatchObject({ state: "member_departed" });
     await expect(
-      store.signalTargets(
-        DomainEventSchema.parse({
-          id: "evt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          type: "membership.left",
-          schemaVersion: 1,
-          aggregateType: "membership_tenure",
-          aggregateId: "mtn_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          aggregateVersion: 2,
-          occurredAt: 2,
-        }),
+      pool.query(
+        "SELECT 1 FROM domain_event WHERE event_type='report.member_departed' AND aggregate_id=$1",
+        [departedId],
       ),
-    ).resolves.toContainEqual({ reportId: departedId, aggregateVersion: 1 });
+    ).resolves.toMatchObject({ rowCount: 1 });
     const notifications = await pool.query<{ count: string }>(
       "SELECT COUNT(*)::text AS count FROM user_notification WHERE target_id IN ($1,$2)",
       [closedId, departedId],

@@ -1,6 +1,12 @@
 import type { Pool, PoolClient } from "pg";
-import { type NotificationId, NotificationIdSchema, type ReportId } from "../../../contracts";
-import type { DomainEvent } from "../../api/src/domain-events";
+import { z } from "zod";
+import {
+  type NotificationId,
+  NotificationIdSchema,
+  type ReportId,
+  ReportIdSchema,
+  ReportStatusSchema,
+} from "../../../contracts";
 import { id } from "../../api/src/ids";
 
 const REPORT_ACCOUNTABILITY_ACTIONS = [
@@ -46,21 +52,43 @@ export interface ReportAccountabilityStore {
   ): Promise<ReportAccountabilityProgress>;
 }
 
-export interface ReportAccountabilityFanoutStore {
-  signalTargets(
-    event: DomainEvent,
-  ): Promise<readonly Readonly<{ reportId: ReportId; aggregateVersion: number }>[]>;
-}
-
 type ReportRow = Readonly<{
-  id: string;
+  id: ReportId;
   jar_id: string;
   accuser_id: string;
   accused_id: string;
-  status: string;
-  created_at: string;
-  aggregate_version: string;
+  status: "pending" | "owned" | "denied" | "expired";
+  resolution_reason: "timeout" | "account_deleted" | null;
+  created_at: number;
+  aggregate_version: number;
 }>;
+
+type ReportDbRow = Omit<
+  ReportRow,
+  "id" | "status" | "resolution_reason" | "created_at" | "aggregate_version"
+> &
+  Readonly<{
+    id: string;
+    status: string;
+    resolution_reason: string | null;
+    created_at: string;
+    aggregate_version: string;
+  }>;
+
+const AggregateVersionSchema = z.coerce.number().int().positive();
+const TimestampSchema = z.coerce.number().int().nonnegative();
+const ResolutionReasonSchema = z.enum(["timeout", "account_deleted"]).nullable();
+
+function parseReportRow(row: ReportDbRow): ReportRow {
+  return {
+    ...row,
+    id: ReportIdSchema.parse(row.id),
+    status: ReportStatusSchema.parse(row.status),
+    resolution_reason: ResolutionReasonSchema.parse(row.resolution_reason),
+    created_at: TimestampSchema.parse(row.created_at),
+    aggregate_version: AggregateVersionSchema.parse(row.aggregate_version),
+  };
+}
 
 type Eligibility =
   | Readonly<{ state: "pending"; row: ReportRow }>
@@ -80,16 +108,19 @@ function terminalProgress(
   return {
     state,
     reportId,
-    aggregateVersion: Number(row?.aggregate_version ?? 1),
+    aggregateVersion: row?.aggregate_version ?? 1,
   };
 }
 
 async function eligibility(db: PoolClient, reportId: ReportId): Promise<Eligibility> {
-  const result = await db.query<ReportRow>("SELECT * FROM reports WHERE id=$1 FOR UPDATE", [
+  const result = await db.query<ReportDbRow>("SELECT * FROM reports WHERE id=$1 FOR UPDATE", [
     reportId,
   ]);
-  const row = result.rows[0] ?? null;
+  const row = result.rows[0] ? parseReportRow(result.rows[0]) : null;
   if (!row) return { state: "member_departed", row: null };
+  if (row.status === "expired" && row.resolution_reason === "account_deleted") {
+    return { state: "account_deleted", row };
+  }
   if (row.status === "owned" || row.status === "denied" || row.status === "expired") {
     return { state: row.status, row };
   }
@@ -174,7 +205,7 @@ export class PostgresReportAccountabilityStore implements ReportAccountabilitySt
       if (
         input.expectedAggregateVersion != null &&
         current.row != null &&
-        Number(current.row.aggregate_version) < input.expectedAggregateVersion
+        current.row.aggregate_version < input.expectedAggregateVersion
       ) {
         throw new Error("report aggregate version is not visible yet");
       }
@@ -186,13 +217,13 @@ export class PostgresReportAccountabilityStore implements ReportAccountabilitySt
       if (input.action === "expire") {
         const expired = await db.query<{ aggregate_version: string }>(
           `UPDATE reports
-           SET status='expired',resolved_at=$2,aggregate_version=aggregate_version+1
+           SET status='expired',resolution_reason='timeout',resolved_at=$2,
+               aggregate_version=aggregate_version+1
            WHERE id=$1 AND status='pending'
            RETURNING aggregate_version`,
           [input.reportId, now],
         );
-        const version = Number(expired.rows[0]?.aggregate_version);
-        if (!version) throw new Error("pending report expiry lost its row lock");
+        const version = AggregateVersionSchema.parse(expired.rows[0]?.aggregate_version);
         await db.query(
           `INSERT INTO domain_event
              (id,event_type,schema_version,aggregate_type,aggregate_id,
@@ -212,7 +243,7 @@ export class PostgresReportAccountabilityStore implements ReportAccountabilitySt
         await db.query("COMMIT");
         return terminalProgress(input.reportId, "expired", {
           ...current.row,
-          aggregate_version: String(version),
+          aggregate_version: version,
         });
       }
       if (input.action !== "inspect") {
@@ -222,15 +253,15 @@ export class PostgresReportAccountabilityStore implements ReportAccountabilitySt
           dedupeKey: `report/${input.reportId}/${reminderStage[input.action]}`,
           messageKey: "report.pending",
           now,
-          expiresAt: Number(current.row.created_at) + 7 * 86_400_000,
+          expiresAt: current.row.created_at + 7 * 86_400_000,
         });
       }
       await db.query("COMMIT");
       return {
         state: "pending" as const,
         reportId: input.reportId,
-        aggregateVersion: Number(current.row.aggregate_version),
-        createdAt: Number(current.row.created_at),
+        aggregateVersion: current.row.aggregate_version,
+        createdAt: current.row.created_at,
       };
     } catch (error) {
       await db.query("ROLLBACK").catch(() => undefined);
@@ -238,34 +269,6 @@ export class PostgresReportAccountabilityStore implements ReportAccountabilitySt
     } finally {
       db.release();
     }
-  }
-
-  async signalTargets(
-    event: DomainEvent,
-  ): Promise<readonly Readonly<{ reportId: ReportId; aggregateVersion: number }>[]> {
-    if (event.type !== "jar.closed" && event.type !== "membership.left") {
-      throw new Error("unsupported report accountability fanout event");
-    }
-    const result =
-      event.type === "jar.closed"
-        ? await this.pool.query<{ id: ReportId; aggregate_version: string }>(
-            `SELECT id,aggregate_version FROM reports
-             WHERE jar_id=$1 AND status='pending' ORDER BY id`,
-            [event.aggregateId],
-          )
-        : await this.pool.query<{ id: ReportId; aggregate_version: string }>(
-            `SELECT r.id,r.aggregate_version
-             FROM membership_tenures t
-             JOIN memberships m ON m.id=t.membership_id
-             JOIN reports r ON r.jar_id=m.jar_id AND r.accused_id=m.user_id
-             WHERE t.id=$1 AND r.status='pending'
-             ORDER BY r.id`,
-            [event.aggregateId],
-          );
-    return result.rows.map((row) => ({
-      reportId: row.id,
-      aggregateVersion: Number(row.aggregate_version),
-    }));
   }
 }
 
