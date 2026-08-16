@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { Pool } from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { JarIdSchema, ReportIdSchema, UserIdSchema } from "../../../contracts";
 import { pool as migrationPool } from "../../api/src/db/index";
 import { runMigrations } from "../../api/src/db/migrate";
@@ -22,6 +22,23 @@ async function insertReport(reportId: string, createdAt: number): Promise<void> 
      VALUES ($1,$2,$3,$4,'private report text',1,500,'pending',$5)`,
     [reportId, jarId, reporterId, accusedId, createdAt],
   );
+}
+
+async function waitForBlockedReportLocks(expected: number): Promise<void> {
+  const deadline = performance.now() + 2_000;
+  while (performance.now() < deadline) {
+    const blocked = await pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+       FROM pg_stat_activity
+       WHERE datname=current_database()
+         AND pid<>pg_backend_pid()
+         AND wait_event_type='Lock'
+         AND query LIKE '%SELECT * FROM reports WHERE id=$1%FOR UPDATE%'`,
+    );
+    if (Number(blocked.rows[0]?.count) >= expected) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`timed out waiting for ${expected} blocked report lock(s)`);
 }
 
 beforeAll(async () => {
@@ -181,15 +198,58 @@ describe.skipIf(!HAS_DB)("Postgres report accountability", () => {
     ]);
   });
 
-  it("gives an own-versus-expire race one authoritative winner", async () => {
-    const reportId = ReportIdSchema.parse("rpt_22222222222222222222222222222222");
+  it.each([
+    ["own", "rpt_22222222222222222222222222222222"],
+    ["expire", "rpt_66666666666666666666666666666666"],
+  ] as const)("gives the %s command one authoritative race win", async (winner, rawReportId) => {
+    const reportId = ReportIdSchema.parse(rawReportId);
+    const previousStreakStartedAt = 1_600_000_000_000;
+    const ownedAt = 1_750_000_000_000;
+    await pool.query(
+      `UPDATE memberships
+       SET tally_cents=250,streak_start_at=$1
+       WHERE jar_id=$2 AND user_id=$3`,
+      [previousStreakStartedAt, jarId, accusedId],
+    );
     await insertReport(reportId, 1_700_000_000_000);
     const accountability = new PostgresReportAccountabilityStore(pool, () => 1_800_000_000_000);
+    const blocker = await pool.connect();
+    const now = vi.spyOn(Date, "now").mockReturnValue(ownedAt);
+    let own: Promise<Awaited<ReturnType<typeof apiStore.resolveReport>>> | undefined;
+    let expire: ReturnType<PostgresReportAccountabilityStore["advance"]> | undefined;
 
-    await Promise.all([
-      accountability.advance({ reportId, action: "expire" }),
-      apiStore.resolveReport(reportId, accusedId, "own"),
-    ]);
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query("SELECT * FROM reports WHERE id=$1 FOR UPDATE", [reportId]);
+
+      if (winner === "own") {
+        own = apiStore.resolveReport(reportId, accusedId, "own");
+        await waitForBlockedReportLocks(1);
+        expire = accountability.advance({ reportId, action: "expire" });
+      } else {
+        expire = accountability.advance({ reportId, action: "expire" });
+        await waitForBlockedReportLocks(1);
+        own = apiStore.resolveReport(reportId, accusedId, "own");
+      }
+      await waitForBlockedReportLocks(2);
+      await blocker.query("COMMIT");
+
+      const [ownResult, expireResult] = await Promise.all([own, expire]);
+      if (winner === "own") {
+        expect(ownResult).toMatchObject({ id: reportId, status: "owned" });
+        expect(expireResult).toMatchObject({ reportId, state: "owned", aggregateVersion: 2 });
+      } else {
+        expect(ownResult).toBeNull();
+        expect(expireResult).toMatchObject({ reportId, state: "expired", aggregateVersion: 2 });
+      }
+    } catch (error) {
+      await blocker.query("ROLLBACK").catch(() => undefined);
+      await Promise.allSettled([own, expire].filter((value) => value !== undefined));
+      throw error;
+    } finally {
+      now.mockRestore();
+      blocker.release();
+    }
 
     const report = await pool.query<{ status: "owned" | "expired" }>(
       "SELECT status FROM reports WHERE id=$1",
@@ -203,13 +263,17 @@ describe.skipIf(!HAS_DB)("Postgres report accountability", () => {
       "SELECT tally_cents,streak_start_at FROM memberships WHERE jar_id=$1 AND user_id=$2",
       [jarId, accusedId],
     );
-    if (report.rows[0]?.status === "owned") {
+    if (winner === "own") {
+      expect(report.rows[0]?.status).toBe("owned");
       expect(slipActivity.rows[0]?.count).toBe("1");
-      expect(membership.rows[0]).toMatchObject({ tally_cents: 500, streak_start_at: null });
+      expect(membership.rows[0]).toEqual({ tally_cents: 750, streak_start_at: String(ownedAt) });
     } else {
       expect(report.rows[0]?.status).toBe("expired");
       expect(slipActivity.rows[0]?.count).toBe("0");
-      expect(membership.rows[0]).toMatchObject({ tally_cents: 0, streak_start_at: null });
+      expect(membership.rows[0]).toEqual({
+        tally_cents: 250,
+        streak_start_at: String(previousStreakStartedAt),
+      });
     }
   });
 
