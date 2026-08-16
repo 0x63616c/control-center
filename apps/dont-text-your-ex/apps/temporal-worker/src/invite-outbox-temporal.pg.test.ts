@@ -6,10 +6,10 @@ import {
 } from "@dont-text-your-ex/notifications";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { PushInstallationIdSchema } from "../../../contracts";
+import { NotificationIdSchema, PushInstallationIdSchema } from "../../../contracts";
 import { pool } from "../../api/src/db/index";
 import { runMigrations } from "../../api/src/db/migrate";
-import { InviteVersionIdSchema } from "../../api/src/domain-events";
+import { DomainEventSchema, InviteVersionIdSchema } from "../../api/src/domain-events";
 import { DomainTransactionRunner } from "../../api/src/domain-transaction";
 import { buildDatabaseUrl } from "../../api/src/env";
 import { PostgresOutbox } from "../../api/src/outbox";
@@ -58,15 +58,34 @@ describe.skipIf(!HAS_DB).sequential("invite outbox to Temporal", () => {
       Date.now() + 60_000,
       jar.id,
     ]);
-    const emitted = await pool.query<{ id: string; aggregate_id: string; state: string }>(
-      `SELECT id,aggregate_id,state FROM domain_event
+    const emitted = await pool.query<{
+      id: string;
+      event_type: string;
+      schema_version: number;
+      aggregate_type: string;
+      aggregate_id: string;
+      aggregate_version: string;
+      occurred_at: string;
+      state: string;
+    }>(
+      `SELECT id,event_type,schema_version,aggregate_type,aggregate_id,aggregate_version,
+              occurred_at,state FROM domain_event
        WHERE event_type='invite.issued' AND aggregate_id=$1`,
       [inviteVersionId],
     );
     expect(emitted.rows).toEqual([
       expect.objectContaining({ aggregate_id: inviteVersionId, state: "pending" }),
     ]);
-    const eventId = emitted.rows[0]?.id as never;
+    const emittedRow = emitted.rows[0];
+    const eventId = DomainEventSchema.parse({
+      id: emittedRow?.id,
+      type: emittedRow?.event_type,
+      schemaVersion: emittedRow?.schema_version,
+      aggregateType: emittedRow?.aggregate_type,
+      aggregateId: emittedRow?.aggregate_id,
+      aggregateVersion: Number(emittedRow?.aggregate_version),
+      occurredAt: Number(emittedRow?.occurred_at),
+    }).id;
 
     const environment = await TestWorkflowEnvironment.createTimeSkipping();
     environments.push(environment);
@@ -122,7 +141,7 @@ describe.skipIf(!HAS_DB).sequential("invite outbox to Temporal", () => {
     expect(notifications.rows).toEqual([
       expect.objectContaining({ recipient_user_id: owner.id, category: "invite" }),
     ]);
-    const notificationId = notifications.rows[0]?.id as never;
+    const notificationId = NotificationIdSchema.parse(notifications.rows[0]?.id);
 
     const notificationStore = createNotificationStore(
       pool,
