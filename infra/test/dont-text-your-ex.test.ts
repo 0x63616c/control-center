@@ -5,6 +5,7 @@ import {
   DONT_TEXT_YOUR_EX_DATABASE,
   DONT_TEXT_YOUR_EX_HOSTNAME,
   DONT_TEXT_YOUR_EX_NAMESPACE,
+  DONT_TEXT_YOUR_EX_NOTIFICATION_SECRET_NAME,
   dontTextYourExSpecs,
   dontTextYourExTemporalNamespaceSetupCommand,
 } from "../src/dont-text-your-ex.ts";
@@ -59,6 +60,11 @@ describe("Don't Text Your Ex production resources", () => {
           mountPath: "/run/secrets",
           items: [{ key: "password", path: "POSTGRES_PASSWORD" }],
         },
+        {
+          secretName: DONT_TEXT_YOUR_EX_NOTIFICATION_SECRET_NAME,
+          mountPath: "/run/notification-secrets",
+          items: [{ key: "PUSH_TOKEN_KEYRING", path: "PUSH_TOKEN_KEYRING" }],
+        },
       ],
     });
     expect(worker).toMatchObject({
@@ -71,6 +77,23 @@ describe("Don't Text Your Ex production resources", () => {
         TEMPORAL_ADDRESS: "temporal-server.temporal.svc.cluster.local:7233",
       },
       scrape: { port: 9464 },
+      extraSecretMounts: [
+        {
+          secretName: "dont-text-your-ex-postgres-app",
+          mountPath: "/run/secrets",
+          items: [{ key: "password", path: "POSTGRES_PASSWORD" }],
+        },
+        {
+          secretName: "dont-text-your-ex-notification-secrets",
+          mountPath: "/run/notification-secrets",
+          items: [
+            { key: "APNS_KEY_ID", path: "APNS_KEY_ID" },
+            { key: "APNS_TEAM_ID", path: "APNS_TEAM_ID" },
+            { key: "APNS_KEY_CONTENT", path: "APNS_KEY_CONTENT" },
+            { key: "PUSH_TOKEN_KEYRING", path: "PUSH_TOKEN_KEYRING" },
+          ],
+        },
+      ],
     });
     if (!api) throw new Error("missing api workload");
     const rendered = renderWorkload(api);

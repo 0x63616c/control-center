@@ -1,5 +1,5 @@
 import * as k8s from "@pulumi/kubernetes";
-import type * as pulumi from "@pulumi/pulumi";
+import * as pulumi from "@pulumi/pulumi";
 import { DEFAULT_METRICS_PORT } from "@www/platform/metrics/port";
 import type { InfraNamespaceName } from "./cluster.ts";
 import type { CronJobSpec, WorkloadSpec } from "./component.ts";
@@ -14,6 +14,7 @@ import {
 export const DONT_TEXT_YOUR_EX_NAMESPACE = "dont-text-your-ex" as const;
 export const DONT_TEXT_YOUR_EX_HOSTNAME = "dont-text-your-ex.worldwidewebb.co";
 export const DONT_TEXT_YOUR_EX_API_PORT = 8787;
+export const DONT_TEXT_YOUR_EX_NOTIFICATION_SECRET_NAME = "dont-text-your-ex-notification-secrets";
 const DONT_TEXT_YOUR_EX_FRONTEND_PORT = 80;
 
 export const DONT_TEXT_YOUR_EX_DATABASE = {
@@ -93,12 +94,18 @@ export function dontTextYourExSpecs(
         POSTGRES_PASSWORD_FILE: "/run/secrets/POSTGRES_PASSWORD",
         APPLE_BUNDLE_ID: "co.worldwidewebb.textyourex",
         TEMPORAL_ADDRESS: TEMPORAL_FRONTEND_CLUSTER_ADDRESS,
+        PUSH_TOKEN_KEYRING_FILE: "/run/notification-secrets/PUSH_TOKEN_KEYRING",
       },
       extraSecretMounts: [
         {
           secretName: DONT_TEXT_YOUR_EX_DATABASE.appSecretName,
           mountPath: "/run/secrets",
           items: [{ key: "password", path: "POSTGRES_PASSWORD" }],
+        },
+        {
+          secretName: DONT_TEXT_YOUR_EX_NOTIFICATION_SECRET_NAME,
+          mountPath: "/run/notification-secrets",
+          items: [{ key: "PUSH_TOKEN_KEYRING", path: "PUSH_TOKEN_KEYRING" }],
         },
       ],
       imagePullSecrets: [GHCR_PULL_SECRET_NAME],
@@ -127,6 +134,16 @@ export function dontTextYourExSpecs(
           secretName: DONT_TEXT_YOUR_EX_DATABASE.appSecretName,
           mountPath: "/run/secrets",
           items: [{ key: "password", path: "POSTGRES_PASSWORD" }],
+        },
+        {
+          secretName: DONT_TEXT_YOUR_EX_NOTIFICATION_SECRET_NAME,
+          mountPath: "/run/notification-secrets",
+          items: [
+            { key: "APNS_KEY_ID", path: "APNS_KEY_ID" },
+            { key: "APNS_TEAM_ID", path: "APNS_TEAM_ID" },
+            { key: "APNS_KEY_CONTENT", path: "APNS_KEY_CONTENT" },
+            { key: "PUSH_TOKEN_KEYRING", path: "PUSH_TOKEN_KEYRING" },
+          ],
         },
       ],
       imagePullSecrets: [GHCR_PULL_SECRET_NAME],
@@ -181,6 +198,26 @@ export interface DontTextYourExArgs {
   imageDigests: ImageDigests;
   requireImageDigestPins: boolean;
   nasNfsServer: string;
+  vault: Record<string, string>;
+}
+
+const NOTIFICATION_VAULT_KEYS = {
+  APNS_KEY_ID: "APNS_AUTH_KEY__KEY_ID",
+  APNS_TEAM_ID: "APNS_AUTH_KEY__TEAM_ID",
+  APNS_KEY_CONTENT: "APNS_AUTH_KEY__P8_CONTENT",
+  PUSH_TOKEN_KEYRING: "DTYE_PUSH_TOKEN_KEYRING",
+} as const;
+
+function notificationSecretData(vault: Record<string, string>) {
+  return Object.fromEntries(
+    Object.entries(NOTIFICATION_VAULT_KEYS).map(([name, vaultKey]) => {
+      const value = vault[vaultKey];
+      if (value === undefined) {
+        throw new Error(`vault key "${vaultKey}" not found (needed by DTYE/${name})`);
+      }
+      return [name, pulumi.secret(value)];
+    }),
+  );
 }
 
 export function dontTextYourExTemporalNamespaceSetupCommand(): string {
@@ -195,8 +232,15 @@ export function dontTextYourExTemporalNamespaceSetupCommand(): string {
 }
 
 export function installDontTextYourEx(args: DontTextYourExArgs) {
-  const { provider, namespace, cnpgOperator, imageDigests, requireImageDigestPins, nasNfsServer } =
-    args;
+  const {
+    provider,
+    namespace,
+    cnpgOperator,
+    imageDigests,
+    requireImageDigestPins,
+    nasNfsServer,
+    vault,
+  } = args;
   const specs = dontTextYourExSpecs(imageDigests, requireImageDigestPins, nasNfsServer);
   const temporalNamespaceJob = new k8s.batch.v1.Job(
     "temporal-namespace-dont-text-your-ex",
@@ -249,6 +293,14 @@ export function installDontTextYourEx(args: DontTextYourExArgs) {
     },
     { provider, dependsOn: [cnpgOperator] },
   );
+  const notificationSecret = new k8s.core.v1.Secret(
+    DONT_TEXT_YOUR_EX_NOTIFICATION_SECRET_NAME,
+    {
+      metadata: { name: DONT_TEXT_YOUR_EX_NOTIFICATION_SECRET_NAME, namespace },
+      stringData: notificationSecretData(vault),
+    },
+    { provider },
+  );
 
   const workloads = specs.workloads.map(
     ({ namespaceName: _namespaceName, ...spec }) =>
@@ -258,9 +310,9 @@ export function installDontTextYourEx(args: DontTextYourExArgs) {
           provider,
           dependsOn:
             spec.name === "temporal-worker"
-              ? [cluster, temporalNamespaceJob]
+              ? [cluster, temporalNamespaceJob, notificationSecret]
               : spec.name === "api"
-                ? [cluster]
+                ? [cluster, notificationSecret]
                 : undefined,
         },
       ),
@@ -270,5 +322,5 @@ export function installDontTextYourEx(args: DontTextYourExArgs) {
     { ...backupSpec, provider, namespace },
     { provider, dependsOn: [cluster] },
   );
-  return { cluster, temporalNamespaceJob, workloads, backup };
+  return { cluster, temporalNamespaceJob, notificationSecret, workloads, backup };
 }

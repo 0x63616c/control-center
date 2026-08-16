@@ -183,6 +183,7 @@ const dontTextYourEx = installDontTextYourEx({
   imageDigests,
   requireImageDigestPins: shouldRequireImageDigestPins(stackName) && !coldStart,
   nasNfsServer,
+  vault,
 });
 
 // Task 4 (Talos migration): local-path-provisioner, MetalLB, the `nvidia`

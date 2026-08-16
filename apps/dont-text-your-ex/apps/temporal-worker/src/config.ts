@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { ENV } from "@www/platform/env";
 
 const DTYE_TEMPORAL_NAMESPACE = "dont-text-your-ex" as const;
@@ -54,18 +55,30 @@ export function parseTemporalWorkerConfig(env: RawTemporalWorkerConfig): Tempora
 }
 
 export function temporalWorkerConfig(): TemporalWorkerConfig {
-  return parseTemporalWorkerConfig(
-    ENV.pick(
-      "TEMPORAL_ADDRESS",
-      "TEMPORAL_NAMESPACE",
-      "TEMPORAL_TASK_QUEUE",
-      "DATABASE_URL",
-      "METRICS_PORT",
-      "TEMPORAL_OTEL_COLLECTOR_URL",
-      "APNS_KEY_ID",
-      "APNS_TEAM_ID",
-      "APNS_KEY_CONTENT",
-      "PUSH_TOKEN_KEYRING",
-    ),
+  const env = ENV.pick(
+    "TEMPORAL_ADDRESS",
+    "TEMPORAL_NAMESPACE",
+    "TEMPORAL_TASK_QUEUE",
+    "DATABASE_URL",
+    "METRICS_PORT",
+    "TEMPORAL_OTEL_COLLECTOR_URL",
+    "APNS_KEY_ID",
+    "APNS_TEAM_ID",
+    "APNS_KEY_CONTENT",
+    "PUSH_TOKEN_KEYRING",
   );
+  const secretFile = (name: string): string | undefined => {
+    try {
+      return readFileSync(`/run/notification-secrets/${name}`, "utf-8").trim();
+    } catch {
+      return undefined;
+    }
+  };
+  return parseTemporalWorkerConfig({
+    ...env,
+    APNS_KEY_ID: env.APNS_KEY_ID ?? secretFile("APNS_KEY_ID"),
+    APNS_TEAM_ID: env.APNS_TEAM_ID ?? secretFile("APNS_TEAM_ID"),
+    APNS_KEY_CONTENT: env.APNS_KEY_CONTENT ?? secretFile("APNS_KEY_CONTENT"),
+    PUSH_TOKEN_KEYRING: env.PUSH_TOKEN_KEYRING ?? secretFile("PUSH_TOKEN_KEYRING"),
+  });
 }
