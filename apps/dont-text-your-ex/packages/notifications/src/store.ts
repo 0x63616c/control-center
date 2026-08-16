@@ -192,6 +192,20 @@ export function createNotificationStore(
       );
       const notification = result.rows[0];
       if (!notification) return [];
+      if (notification.category === "streak_milestone") {
+        const authorized = await db.query(
+          `SELECT 1
+           FROM user_notification n
+           JOIN streak_achievements achievement ON achievement.id=n.target_id
+           JOIN memberships membership ON membership.id=achievement.membership_id
+           JOIN jars jar ON jar.id=membership.jar_id
+           WHERE n.id=$1 AND membership.user_id=n.recipient_user_id
+             AND membership.left_at IS NULL AND jar.closed_at IS NULL
+             AND membership.streak_start_at=achievement.streak_started_at`,
+          [notificationId],
+        );
+        if (!authorized.rowCount) return [];
+      }
       const preferences = await this.getPreferences(notification.recipient_user_id);
       if (!preferences[notification.category]) return [];
       const devices = await db.query<{ installation_id: PushInstallationId }>(
@@ -225,6 +239,14 @@ export function createNotificationStore(
            WHERE n.id=d.notification_id AND n.cancelled_at IS NULL
              AND (n.expires_at IS NULL OR n.expires_at>$2) AND p.active=TRUE
              AND COALESCE(pref.enabled, n.category IN ('report','rescue'))=TRUE
+             AND (n.category<>'streak_milestone' OR EXISTS (
+               SELECT 1 FROM streak_achievements achievement
+               JOIN memberships membership ON membership.id=achievement.membership_id
+               JOIN jars jar ON jar.id=membership.jar_id
+               WHERE achievement.id=n.target_id AND membership.user_id=n.recipient_user_id
+                 AND membership.left_at IS NULL AND jar.closed_at IS NULL
+                 AND membership.streak_start_at=achievement.streak_started_at
+             ))
          )`,
         [deliveryId, clock()],
       );
@@ -247,7 +269,15 @@ export function createNotificationStore(
            ON pref.user_id=n.recipient_user_id AND pref.category=n.category
          WHERE d.id=$1 AND d.status='pending' AND p.active=TRUE
            AND n.cancelled_at IS NULL AND (n.expires_at IS NULL OR n.expires_at>$2)
-           AND COALESCE(pref.enabled, n.category IN ('report','rescue'))=TRUE`,
+           AND COALESCE(pref.enabled, n.category IN ('report','rescue'))=TRUE
+           AND (n.category<>'streak_milestone' OR EXISTS (
+             SELECT 1 FROM streak_achievements achievement
+             JOIN memberships membership ON membership.id=achievement.membership_id
+             JOIN jars jar ON jar.id=membership.jar_id
+             WHERE achievement.id=n.target_id AND membership.user_id=n.recipient_user_id
+               AND membership.left_at IS NULL AND jar.closed_at IS NULL
+               AND membership.streak_start_at=achievement.streak_started_at
+           ))`,
         [deliveryId, clock()],
       );
       const row = result.rows[0];

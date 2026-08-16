@@ -13,6 +13,7 @@ import {
 } from "./report-accountability";
 import type { RescueActivities } from "./rescue-activities";
 import { runSessionMaintenancePage, type SessionMaintenanceStore } from "./session-maintenance";
+import type { StreakMilestoneActivities } from "./streak-milestones";
 
 interface DtyeHealthCheckActivityInput {
   readonly iteration: number;
@@ -51,6 +52,7 @@ export type DtyeActivityDependencies = Readonly<{
   dispatcher: WorkflowDispatcher;
   sessions: SessionMaintenanceStore;
   notifications: NotificationActivities;
+  streakMilestones: StreakMilestoneActivities;
   operations: DtyeOperationsObserver;
   outboxSnapshot: OutboxOperationalSnapshotStore;
   reports: ReportAccountabilityStore;
@@ -123,6 +125,7 @@ export function createDtyeActivities(dependencies: DtyeActivityDependencies) {
     ...dependencies.notifications,
     ...createReportAccountabilityActivities({ store: dependencies.reports }),
     ...dependencies.rescue,
+    ...dependencies.streakMilestones,
   };
 }
 

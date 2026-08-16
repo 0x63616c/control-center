@@ -24,6 +24,15 @@ const notifications: NotificationActivities = {
   suppressNotification: async () => undefined,
   rotatePushTokenBatch: async () => ({ rotated: 0 }),
 };
+const streakMilestones = {
+  StreakMilestoneSweepActivity: async () => ({
+    candidates: 0,
+    achievements: 0,
+    notifications: 0,
+    sharedActivities: 0,
+    hasMore: false,
+  }),
+};
 
 const reports: ReportAccountabilityStore = {
   advance: async () => {
@@ -57,6 +66,7 @@ describe("DTYE activity observability", () => {
       notifications,
       reports,
       rescue,
+      streakMilestones,
       operations,
       outboxSnapshot: {
         snapshot: vi.fn(async () => ({ pending: 0, oldestAgeSeconds: 0, permanentFailures: 0 })),
@@ -94,6 +104,7 @@ describe("DTYE activity observability", () => {
       notifications,
       reports,
       rescue,
+      streakMilestones,
       operations,
       outboxSnapshot: {
         snapshot: vi.fn(async () => ({ pending: 0, oldestAgeSeconds: 0, permanentFailures: 0 })),
@@ -116,6 +127,7 @@ describe("DTYE activity observability", () => {
       notifications,
       reports,
       rescue,
+      streakMilestones,
       operations,
       outboxSnapshot: { snapshot: vi.fn(async () => Promise.reject(new Error("db unavailable"))) },
       clock: () => 6_000,
@@ -137,6 +149,7 @@ describe("DTYE activity observability", () => {
       notifications,
       reports,
       rescue,
+      streakMilestones,
       operations: successObserver,
       outboxSnapshot: { snapshot: vi.fn() },
       clock: () => clockValues.shift() ?? 1_250,
@@ -157,6 +170,7 @@ describe("DTYE activity observability", () => {
       notifications,
       reports,
       rescue,
+      streakMilestones,
       operations: failureObserver,
       outboxSnapshot: { snapshot: vi.fn() },
       clock: () => 2_000,

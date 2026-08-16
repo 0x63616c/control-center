@@ -13,6 +13,7 @@ import { createLogger } from "@www/logger";
 import { initMetrics, startMetricsServer } from "@www/platform/metrics";
 import { temporalScheduleGateway } from "@www/temporal-runtime";
 import { Pool } from "pg";
+import { DomainTransactionRunner } from "../../api/src/domain-transaction";
 import { PostgresOutbox } from "../../api/src/outbox";
 import { PostgresRescueStore } from "../../api/src/rescue-store";
 import { createDtyeActivities } from "./activities";
@@ -28,6 +29,7 @@ import { WORKFLOW_TYPES } from "./registry";
 import { PostgresReportAccountabilityStore } from "./report-accountability";
 import { createRescueActivities } from "./rescue-activities";
 import { PostgresSessionMaintenanceStore } from "./session-maintenance";
+import { createStreakMilestoneActivities, PostgresStreakSweepStore } from "./streak-milestones";
 import {
   registeredTemporalEventHandlers,
   TemporalClientWorkflowGateway,
@@ -78,6 +80,9 @@ async function main(): Promise<void> {
       registeredTemporalEventHandlers(temporalGateway, WORKFLOW_TYPES),
     ),
     sessions: new PostgresSessionMaintenanceStore(pool),
+    streakMilestones: createStreakMilestoneActivities(
+      new PostgresStreakSweepStore(new DomainTransactionRunner({ pool })),
+    ),
     notifications: createNotificationActivities({
       store: createNotificationStore(
         pool,

@@ -106,6 +106,18 @@ const { SessionMaintenanceActivity } = proxyActivities<
   },
 });
 
+const { StreakMilestoneSweepActivity } = proxyActivities<
+  Pick<DtyeActivities, "StreakMilestoneSweepActivity">
+>({
+  startToCloseTimeout: "2 minutes",
+  retry: {
+    initialInterval: "2 seconds",
+    backoffCoefficient: 2,
+    maximumInterval: "1 minute",
+    maximumAttempts: 10,
+  },
+});
+
 export interface OutboxDispatchRecoveryWorkflowInput {
   readonly schemaVersion: 1;
   readonly eventIds?: readonly DomainEvent["id"][];
@@ -168,6 +180,68 @@ export async function SessionMaintenanceWorkflow(
         deleted,
         runs: (input.runs ?? 0) + 1,
         purgeBefore,
+      });
+    }
+  }
+}
+
+export interface StreakMilestoneSweepWorkflowInput {
+  readonly schemaVersion: 1;
+  readonly cutoff?: number;
+  readonly cursor?: string;
+  readonly totals?: Readonly<{
+    candidates: number;
+    achievements: number;
+    notifications: number;
+    sharedActivities: number;
+  }>;
+  readonly runs?: number;
+}
+
+export interface StreakMilestoneSweepWorkflowOutput {
+  readonly candidates: number;
+  readonly achievements: number;
+  readonly notifications: number;
+  readonly sharedActivities: number;
+  readonly runs: number;
+}
+
+export async function StreakMilestoneSweepWorkflow(
+  input: StreakMilestoneSweepWorkflowInput,
+): Promise<StreakMilestoneSweepWorkflowOutput> {
+  if (input.schemaVersion !== 1) throw new Error("unsupported streak sweep workflow schema");
+  const cutoff = input.cutoff ?? Date.now();
+  let cursor = input.cursor;
+  let pages = 0;
+  let totals = input.totals ?? {
+    candidates: 0,
+    achievements: 0,
+    notifications: 0,
+    sharedActivities: 0,
+  };
+  while (true) {
+    const page = await StreakMilestoneSweepActivity({
+      cutoff,
+      ...(cursor ? { cursor } : {}),
+      limit: 100,
+    });
+    pages += 1;
+    totals = {
+      candidates: totals.candidates + page.candidates,
+      achievements: totals.achievements + page.achievements,
+      notifications: totals.notifications + page.notifications,
+      sharedActivities: totals.sharedActivities + page.sharedActivities,
+    };
+    if (!page.hasMore) return { ...totals, runs: (input.runs ?? 0) + 1 };
+    if (!page.nextCursor) throw new Error("streak sweep page omitted its continuation cursor");
+    cursor = page.nextCursor;
+    if (pages >= 20) {
+      return continueAsNew<typeof StreakMilestoneSweepWorkflow>({
+        schemaVersion: 1,
+        cutoff,
+        cursor,
+        totals,
+        runs: (input.runs ?? 0) + 1,
       });
     }
   }
