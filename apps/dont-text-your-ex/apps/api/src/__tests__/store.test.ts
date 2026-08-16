@@ -154,21 +154,21 @@ describe.skipIf(!HAS_DB)("authenticated notification delivery", () => {
     });
 
     await notificationStore.disableDevice(other.id, installationId);
-    const firstNotification = NotificationIdSchema.parse("ntf_first");
+    const firstNotification = NotificationIdSchema.parse("ntf_11111111111111111111111111111111");
     await pool.query(
       `INSERT INTO user_notification
        (id,recipient_user_id,category,dedupe_key,target_type,message_key,created_at)
-       VALUES ($1,$2,'reports','first','activity','reports.pending',$3)`,
+       VALUES ($1,$2,'report','first','activity','reports.pending',$3)`,
       [firstNotification, user.id, 1_750_000_000_000],
     );
     expect(await notificationStore.prepareDeliveries(firstNotification)).toHaveLength(1);
 
     await notificationStore.disableDevice(user.id, installationId);
-    const secondNotification = NotificationIdSchema.parse("ntf_second");
+    const secondNotification = NotificationIdSchema.parse("ntf_22222222222222222222222222222222");
     await pool.query(
       `INSERT INTO user_notification
        (id,recipient_user_id,category,dedupe_key,target_type,message_key,created_at)
-       VALUES ($1,$2,'reports','second','activity','reports.pending',$3)`,
+       VALUES ($1,$2,'report','second','activity','reports.pending',$3)`,
       [secondNotification, user.id, 1_750_000_000_000],
     );
     expect(await notificationStore.prepareDeliveries(secondNotification)).toEqual([]);
@@ -182,15 +182,93 @@ describe.skipIf(!HAS_DB)("authenticated notification delivery", () => {
     const defaults = await app.request("/api/me/notification-preferences", {
       headers: { Authorization: `Bearer ${token}` },
     });
-    expect(await defaults.json()).toMatchObject({ reports: true, rescue: true, slips: false });
+    expect(await defaults.json()).toMatchObject({ report: true, rescue: true, slip: false });
 
     const patched = await app.request("/api/me/notification-preferences", {
       method: "PATCH",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ reports: false, slips: true }),
+      body: JSON.stringify({ report: false, slip: true }),
     });
     expect(patched.status).toBe(200);
-    expect(await patched.json()).toMatchObject({ reports: false, rescue: true, slips: true });
+    expect(await patched.json()).toMatchObject({ report: false, rescue: true, slip: true });
+  });
+
+  it("re-encrypts device tokens in bounded batches before old-key retirement", async () => {
+    const user = await store.createUser({ name: "Rotation User" });
+    const oldKey = Buffer.alloc(32, 1).toString("base64");
+    const newKey = Buffer.alloc(32, 2).toString("base64");
+    const oldStore = createNotificationStore(
+      pool,
+      createTokenCipher(parseTokenKeyring({ activeKeyId: "old", keys: { old: oldKey } })),
+      () => 1_750_000_000_000,
+    );
+    const installationId = PushInstallationIdSchema.parse("dev_rotation");
+    await oldStore.registerDevice(user.id, {
+      installationId,
+      token: "ef".repeat(32),
+      platform: "ios",
+      environment: "sandbox",
+      appVersion: "1.0",
+      appBuild: "24",
+    });
+    const rotatingStore = createNotificationStore(
+      pool,
+      createTokenCipher(
+        parseTokenKeyring({ activeKeyId: "new", keys: { old: oldKey, new: newKey } }),
+      ),
+      () => 1_750_000_000_000,
+    );
+
+    await expect(rotatingStore.rotateTokenBatch(100)).resolves.toBe(1);
+    await expect(rotatingStore.rotateTokenBatch(100)).resolves.toBe(0);
+    const persisted = await pool.query<{ token_key_id: string }>(
+      "SELECT token_key_id FROM push_device WHERE installation_id=$1",
+      [installationId],
+    );
+    expect(persisted.rows[0]?.token_key_id).toBe("new");
+  });
+
+  it("suppresses a prepared delivery after a late opt-out and never overwrites terminal state", async () => {
+    const user = await store.createUser({ name: "Late Opt Out" });
+    const installationId = PushInstallationIdSchema.parse("dev_lateoptout");
+    await notificationStore.registerDevice(user.id, {
+      installationId,
+      token: "cd".repeat(32),
+      platform: "ios",
+      environment: "sandbox",
+      appVersion: "1.0",
+      appBuild: "24",
+    });
+    const notificationId = NotificationIdSchema.parse("ntf_44444444444444444444444444444444");
+    await pool.query(
+      `INSERT INTO user_notification
+       (id,recipient_user_id,category,dedupe_key,target_type,message_key,created_at)
+       VALUES ($1,$2,'report','late-opt-out','activity','reports.pending',$3)`,
+      [notificationId, user.id, 1_750_000_000_000],
+    );
+    const [deliveryId] = await notificationStore.prepareDeliveries(notificationId);
+    if (!deliveryId) throw new Error("delivery was not prepared");
+    await notificationStore.updatePreferences(user.id, { report: false });
+
+    await expect(notificationStore.loadDelivery(deliveryId)).resolves.toBeNull();
+    expect(
+      (
+        await pool.query<{ status: string }>(
+          "SELECT status FROM notification_delivery WHERE id=$1",
+          [deliveryId],
+        )
+      ).rows[0]?.status,
+    ).toBe("suppressed");
+
+    await notificationStore.recordDeliveryOutcome(deliveryId, { kind: "accepted", apnsId: "late" });
+    expect(
+      (
+        await pool.query<{ status: string }>(
+          "SELECT status FROM notification_delivery WHERE id=$1",
+          [deliveryId],
+        )
+      ).rows[0]?.status,
+    ).toBe("suppressed");
   });
 
   it("reveals a target only to its recipient", async () => {
@@ -198,11 +276,11 @@ describe.skipIf(!HAS_DB)("authenticated notification delivery", () => {
     const stranger = await store.createUser({ name: "Stranger" });
     const recipientToken = await store.createSession(recipient.id);
     const strangerToken = await store.createSession(stranger.id);
-    const notificationId = NotificationIdSchema.parse("ntf_private");
+    const notificationId = NotificationIdSchema.parse("ntf_33333333333333333333333333333333");
     await pool.query(
       `INSERT INTO user_notification
        (id,recipient_user_id,category,dedupe_key,target_type,message_key,created_at)
-       VALUES ($1,$2,'reports','private','profile','reports.pending',$3)`,
+       VALUES ($1,$2,'report','private','profile','reports.pending',$3)`,
       [notificationId, recipient.id, 1_750_000_000_000],
     );
     const app = buildApp();

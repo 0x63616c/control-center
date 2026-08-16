@@ -11,6 +11,8 @@ describe("DTYE Temporal registry", () => {
       "DtyeHealthCheckActivity",
       "prepareNotification",
       "deliverNotification",
+      "suppressNotification",
+      "rotatePushTokenBatch",
     ]);
     expect(MANAGED_SCHEDULE_PREFIX).toBe("dtye_");
     expect(SCHEDULES).toEqual([

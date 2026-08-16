@@ -13,12 +13,18 @@ import {
   JoinJarResponseSchema,
   type LogSlipRequest,
   MeSchema,
+  NotificationIdSchema,
+  NotificationPreferencesSchema,
+  NotificationTargetSchema,
   OkResponseSchema,
+  PushRegistrationResponseSchema,
+  type RegisterPushDeviceRequest,
   type ReportId,
   ReportSchema,
   type SessionToken,
   SessionTokenSchema,
   type UpdateMeRequest,
+  type UpdateNotificationPreferencesRequest,
 } from "../../../contracts";
 
 const TOKEN_KEY = "tye_token";
@@ -116,6 +122,20 @@ export const api = {
   // me
   me: () => req(MeSchema, "GET", "/me"),
   updateMe: (patch: UpdateMeRequest) => req(MeSchema, "PATCH", "/me", patch),
+  notificationPreferences: () =>
+    req(NotificationPreferencesSchema, "GET", "/me/notification-preferences"),
+  updateNotificationPreferences: (patch: UpdateNotificationPreferencesRequest) =>
+    req(NotificationPreferencesSchema, "PATCH", "/me/notification-preferences", patch),
+  registerPushDevice: (input: RegisterPushDeviceRequest) =>
+    req(PushRegistrationResponseSchema, "POST", "/push/devices", input),
+  disablePushDevice: (installationId: RegisterPushDeviceRequest["installationId"]) =>
+    req(OkResponseSchema, "POST", "/push/devices/disable", { installationId }),
+  notificationTarget: (notificationId: string) =>
+    req(
+      NotificationTargetSchema,
+      "GET",
+      `/notifications/${NotificationIdSchema.parse(notificationId)}/target`,
+    ),
 
   // jars
   jars: () => req(JarSummarySchema.array(), "GET", "/jars"),

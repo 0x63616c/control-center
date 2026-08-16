@@ -4,6 +4,7 @@ export interface ApnsRequestInput {
   readonly authorization: string;
   readonly deviceToken: string;
   readonly notificationId: string;
+  readonly expiration: number;
 }
 
 export interface ApnsHttpRequest {
@@ -20,6 +21,7 @@ export function buildApnsRequest(input: ApnsRequestInput): ApnsHttpRequest {
     headers: {
       authorization: input.authorization,
       "apns-collapse-id": input.notificationId,
+      "apns-expiration": String(input.expiration),
       "apns-priority": "10",
       "apns-push-type": "alert",
       "apns-topic": input.topic,

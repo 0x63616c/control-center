@@ -19,6 +19,7 @@ import type { TokenCipher } from "./token-cipher";
 
 export type PersistedDeliveryOutcome =
   | { readonly kind: "accepted"; readonly apnsId: string | null }
+  | { readonly kind: "retry"; readonly reason: string; readonly retryAfterMs: number }
   | { readonly kind: "invalid_device"; readonly reason: string }
   | { readonly kind: "permanent_notification"; readonly reason: string }
   | { readonly kind: "provider_configuration"; readonly reason: string };
@@ -28,6 +29,7 @@ export interface DeliveryForSend {
   readonly notificationId: NotificationId;
   readonly deviceToken: string;
   readonly environment: "production" | "sandbox";
+  readonly expiresAtMs: number | null;
 }
 
 type Queryable = Pick<Pool | PoolClient, "query">;
@@ -42,6 +44,8 @@ export interface NotificationStore {
   ): Promise<NotificationPreferences>;
   resolveTarget(userId: UserId, notificationId: NotificationId): Promise<NotificationTarget>;
   prepareDeliveries(notificationId: NotificationId): Promise<readonly NotificationDeliveryId[]>;
+  suppressPending(notificationId: NotificationId): Promise<void>;
+  rotateTokenBatch(limit: number): Promise<number>;
   loadDelivery(deliveryId: NotificationDeliveryId): Promise<DeliveryForSend | null>;
   recordDeliveryOutcome(
     deliveryId: NotificationDeliveryId,
@@ -163,7 +167,7 @@ export function createNotificationStore(
       }
       if (row.target_type === "jar" && row.target_id) {
         const authorized = await db.query(
-          "SELECT 1 FROM memberships WHERE jar_id=$1 AND user_id=$2 LIMIT 1",
+          "SELECT 1 FROM memberships WHERE jar_id=$1 AND user_id=$2 AND left_at IS NULL LIMIT 1",
           [row.target_id, userId],
         );
         return authorized.rowCount
@@ -206,6 +210,19 @@ export function createNotificationStore(
     },
 
     async loadDelivery(deliveryId) {
+      await db.query(
+        `UPDATE notification_delivery d SET status='suppressed',updated_at=$2
+         WHERE d.id=$1 AND d.status='pending' AND NOT EXISTS (
+           SELECT 1 FROM user_notification n
+           LEFT JOIN notification_preference pref
+             ON pref.user_id=n.recipient_user_id AND pref.category=n.category
+           JOIN push_device p ON p.installation_id=d.installation_id
+           WHERE n.id=d.notification_id AND n.cancelled_at IS NULL
+             AND (n.expires_at IS NULL OR n.expires_at>$2) AND p.active=TRUE
+             AND COALESCE(pref.enabled, n.category IN ('report','rescue'))=TRUE
+         )`,
+        [deliveryId, clock()],
+      );
       const result = await db.query<{
         delivery_id: NotificationDeliveryId;
         notification_id: NotificationId;
@@ -214,12 +231,19 @@ export function createNotificationStore(
         token_nonce: string;
         token_key_id: string;
         environment: "production" | "sandbox";
+        expires_at: number | null;
       }>(
         `SELECT d.id AS delivery_id,d.notification_id,p.installation_id,p.token_ciphertext,
-                p.token_nonce,p.token_key_id,p.environment
-         FROM notification_delivery d JOIN push_device p ON p.installation_id=d.installation_id
-         WHERE d.id=$1 AND d.status='pending' AND p.active=TRUE`,
-        [deliveryId],
+                p.token_nonce,p.token_key_id,p.environment,n.expires_at
+         FROM notification_delivery d
+         JOIN push_device p ON p.installation_id=d.installation_id
+         JOIN user_notification n ON n.id=d.notification_id
+         LEFT JOIN notification_preference pref
+           ON pref.user_id=n.recipient_user_id AND pref.category=n.category
+         WHERE d.id=$1 AND d.status='pending' AND p.active=TRUE
+           AND n.cancelled_at IS NULL AND (n.expires_at IS NULL OR n.expires_at>$2)
+           AND COALESCE(pref.enabled, n.category IN ('report','rescue'))=TRUE`,
+        [deliveryId, clock()],
       );
       const row = result.rows[0];
       if (!row) return null;
@@ -227,6 +251,7 @@ export function createNotificationStore(
         deliveryId: row.delivery_id,
         notificationId: row.notification_id,
         environment: row.environment,
+        expiresAtMs: row.expires_at,
         deviceToken: cipher.open(
           { keyId: row.token_key_id, nonce: row.token_nonce, ciphertext: row.token_ciphertext },
           row.installation_id,
@@ -234,7 +259,58 @@ export function createNotificationStore(
       };
     },
 
+    async suppressPending(notificationId) {
+      await db.query(
+        `UPDATE notification_delivery SET status='suppressed',updated_at=$2
+         WHERE notification_id=$1 AND status='pending'`,
+        [notificationId, clock()],
+      );
+    },
+
+    async rotateTokenBatch(limit) {
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1_000) {
+        throw new Error("push token rotation batch must be between 1 and 1000");
+      }
+      const result = await db.query<{
+        installation_id: PushInstallationId;
+        token_ciphertext: string;
+        token_nonce: string;
+        token_key_id: string;
+      }>(
+        `SELECT installation_id,token_ciphertext,token_nonce,token_key_id
+         FROM push_device WHERE token_key_id<>$1 ORDER BY installation_id LIMIT $2`,
+        [cipher.activeKeyId, limit],
+      );
+      let rotated = 0;
+      for (const row of result.rows) {
+        const token = cipher.open(
+          {
+            keyId: row.token_key_id,
+            nonce: row.token_nonce,
+            ciphertext: row.token_ciphertext,
+          },
+          row.installation_id,
+        );
+        const sealed = cipher.seal(token, row.installation_id);
+        const updated = await db.query(
+          `UPDATE push_device SET token_ciphertext=$1,token_nonce=$2,token_key_id=$3
+           WHERE installation_id=$4 AND token_key_id=$5`,
+          [sealed.ciphertext, sealed.nonce, sealed.keyId, row.installation_id, row.token_key_id],
+        );
+        rotated += updated.rowCount ?? 0;
+      }
+      return rotated;
+    },
+
     async recordDeliveryOutcome(deliveryId, outcome) {
+      if (outcome.kind === "retry") {
+        await db.query(
+          `UPDATE notification_delivery SET attempt_count=attempt_count+1,
+             failure_code=$2,updated_at=$3 WHERE id=$1 AND status='pending'`,
+          [deliveryId, outcome.reason, clock()],
+        );
+        return;
+      }
       const status =
         outcome.kind === "accepted"
           ? "accepted"
@@ -246,7 +322,7 @@ export function createNotificationStore(
       await db.query(
         `WITH updated AS (
            UPDATE notification_delivery SET status=$2,attempt_count=attempt_count+1,
-             apns_id=$3,failure_code=$4,updated_at=$5 WHERE id=$1
+             apns_id=$3,failure_code=$4,updated_at=$5 WHERE id=$1 AND status='pending'
            RETURNING installation_id
          )
          UPDATE push_device SET

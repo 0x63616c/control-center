@@ -20,12 +20,12 @@ describe("classifyApnsResponse", () => {
   test("retries throttling and server failures", () => {
     expect(classifyApnsResponse({ status: 429, reason: "TooManyRequests", apnsId: null })).toEqual({
       kind: "retry",
-      reason: "TooManyRequests",
+      reason: "throttled",
       retryAfterMs: 60_000,
     });
     expect(classifyApnsResponse({ status: 503, reason: "Shutdown", apnsId: null })).toEqual({
       kind: "retry",
-      reason: "Shutdown",
+      reason: "provider_unavailable",
       retryAfterMs: 900_000,
     });
   });

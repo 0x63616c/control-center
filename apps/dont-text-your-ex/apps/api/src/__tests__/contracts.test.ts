@@ -16,6 +16,7 @@ import {
   JoinJarRequestSchema,
   LeaveJarRequestSchema,
   LogSlipRequestSchema,
+  NotificationDeliveryWorkflowInputSchema,
   type ReportId,
   ReportIdSchema,
   ResolveReportRequestSchema,
@@ -33,6 +34,17 @@ const JPEG_DATA_URL = "data:image/jpeg;base64,/9j/AA==";
 const WEBP_DATA_URL = "data:image/webp;base64,UklGRgAAAABXRUJQ";
 
 describe("request schemas", () => {
+  it("keeps notification workflow start input limited to its opaque id", () => {
+    const exact = {
+      schemaVersion: 1,
+      notificationId: "ntf_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    };
+    expect(NotificationDeliveryWorkflowInputSchema.parse(exact)).toEqual(exact);
+    expect(
+      NotificationDeliveryWorkflowInputSchema.safeParse({ ...exact, aggregateVersion: 1 }).success,
+    ).toBe(false);
+  });
+
   it.each([
     ["profile patch", UpdateMeRequestSchema, { exes: "not-an-array" }],
     ["jar creation", CreateJarRequestSchema, { name: "", defaultCents: -1 }],

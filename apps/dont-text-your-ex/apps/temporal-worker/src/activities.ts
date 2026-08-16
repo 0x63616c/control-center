@@ -1,3 +1,16 @@
+import {
+  createApnsClient,
+  createCachedApnsAuthorization,
+  createHttp2ApnsTransport,
+  createNotificationStore,
+  createTokenCipher,
+  parseTokenKeyring,
+} from "@dont-text-your-ex/notifications";
+import { createLogger } from "@www/logger";
+import { ENV } from "@www/platform/env";
+import { Pool } from "pg";
+import { createNotificationActivities } from "./notification-activities";
+
 export interface DtyeHealthCheckActivityInput {
   readonly iteration: number;
 }
@@ -13,6 +26,7 @@ export async function DtyeHealthCheckActivity(
 }
 
 let notificationActivities: ReturnType<typeof createNotificationActivities> | undefined;
+const notificationLogger = createLogger({ service: "dont-text-your-ex-temporal-worker" });
 
 function getNotificationActivities(): ReturnType<typeof createNotificationActivities> {
   if (notificationActivities) return notificationActivities;
@@ -57,6 +71,7 @@ function getNotificationActivities(): ReturnType<typeof createNotificationActivi
       createTokenCipher(parseTokenKeyring(JSON.parse(config.PUSH_TOKEN_KEYRING))),
     ),
     apnsClient: (environment) => clients[environment],
+    logger: notificationLogger,
   });
   return notificationActivities;
 }
@@ -73,14 +88,14 @@ export async function deliverNotification(
   return getNotificationActivities().deliverNotification(input);
 }
 
-import {
-  createApnsClient,
-  createCachedApnsAuthorization,
-  createHttp2ApnsTransport,
-  createNotificationStore,
-  createTokenCipher,
-  parseTokenKeyring,
-} from "@dont-text-your-ex/notifications";
-import { ENV } from "@www/platform/env";
-import { Pool } from "pg";
-import { createNotificationActivities } from "./notification-activities";
+export async function suppressNotification(
+  input: Parameters<ReturnType<typeof createNotificationActivities>["suppressNotification"]>[0],
+): ReturnType<ReturnType<typeof createNotificationActivities>["suppressNotification"]> {
+  return getNotificationActivities().suppressNotification(input);
+}
+
+export async function rotatePushTokenBatch(
+  input: Parameters<ReturnType<typeof createNotificationActivities>["rotatePushTokenBatch"]>[0],
+): ReturnType<ReturnType<typeof createNotificationActivities>["rotatePushTokenBatch"]> {
+  return getNotificationActivities().rotatePushTokenBatch(input);
+}

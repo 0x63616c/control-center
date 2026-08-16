@@ -14,6 +14,7 @@ const ENV = defineEnv({
   POSTGRES_DB: str().default("text_your_ex"),
   APPLE_BUNDLE_ID: str().default("co.worldwidewebb.textyourex"),
   PUSH_TOKEN_KEYRING_FILE: str().default("/run/secrets/PUSH_TOKEN_KEYRING"),
+  PUSH_TOKEN_KEYRING: str().optional(),
   TYE_RESET: str().optional(),
 });
 
@@ -37,7 +38,7 @@ export function appleBundleId(): string {
 
 export function pushTokenKeyringSource(): unknown {
   try {
-    return JSON.parse(readFileSync(ENV.PUSH_TOKEN_KEYRING_FILE, "utf-8"));
+    return JSON.parse(ENV.PUSH_TOKEN_KEYRING ?? readFileSync(ENV.PUSH_TOKEN_KEYRING_FILE, "utf-8"));
   } catch (error) {
     if (ENV.APP_ENV !== "production") {
       return { activeKeyId: "local", keys: { local: Buffer.alloc(32, 7).toString("base64") } };

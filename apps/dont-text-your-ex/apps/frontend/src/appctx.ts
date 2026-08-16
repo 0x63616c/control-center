@@ -16,6 +16,7 @@ export type Route =
   | { readonly name: "invite"; readonly jarId: JarId; readonly fresh?: boolean }
   | { readonly name: "activity" }
   | { readonly name: "profile" }
+  | { readonly name: "notificationSettings" }
   | { readonly name: "setup" }
   | { readonly name: "editProfile" };
 

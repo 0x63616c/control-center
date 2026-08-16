@@ -79,6 +79,8 @@ def verify_release_entitlements!(ipa_path:, profile_path:)
     expected_domain = "applinks:dont-text-your-ex.worldwidewebb.co"
     app_domains = plist_array_values!(app_entitlements, ":com.apple.developer.associated-domains")
     UI.user_error!("Signed app is missing production Associated Domain") unless app_domains.include?(expected_domain)
+    app_push = plist_value!(app_entitlements, ":aps-environment")
+    UI.user_error!("Signed app is missing production APNs entitlement") unless app_push == "production"
 
     profile_plist = File.join(dir, "profile.plist")
     File.write(profile_plist, run_capture!("security", "cms", "-D", "-i", profile_path))
@@ -88,8 +90,10 @@ def verify_release_entitlements!(ipa_path:, profile_path:)
     unless ReleaseEntitlements.profile_allows_associated_domain?(profile_domains, expected_domain)
       UI.user_error!("Provisioning profile is missing Associated Domains capability")
     end
+    profile_push = plist_value!(profile_plist, ":Entitlements:aps-environment")
+    UI.user_error!("Provisioning profile is missing production APNs entitlement") unless profile_push == "production"
 
-    UI.success("Sign in with Apple and Associated Domains verified in signed app and profile")
+    UI.success("Sign in with Apple, Associated Domains, and APNs verified in signed app and profile")
   end
 end
 

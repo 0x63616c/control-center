@@ -13,6 +13,7 @@ export interface ApnsClient {
   send(input: {
     readonly deviceToken: string;
     readonly notificationId: string;
+    readonly expiresAtMs: number | null;
   }): Promise<ApnsOutcome>;
 }
 
@@ -53,6 +54,7 @@ export function createApnsClient(deps: {
             host: deps.host,
             topic: deps.topic,
             authorization: await deps.authorization(),
+            expiration: input.expiresAtMs === null ? 0 : Math.floor(input.expiresAtMs / 1_000),
             ...input,
           }),
         );

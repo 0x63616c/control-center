@@ -7,6 +7,7 @@ export { Invite } from "./Invite";
 export { JarDetail } from "./JarDetail";
 export { Join } from "./Join";
 export { LogSlip } from "./LogSlip";
+export { NotificationSettings } from "./NotificationSettings";
 export { Onboarding } from "./Onboarding";
 export { Profile } from "./Profile";
 export { ReportDetail, ReportHistory } from "./ReportHistory";

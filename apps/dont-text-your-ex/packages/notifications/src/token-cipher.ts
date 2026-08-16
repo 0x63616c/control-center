@@ -26,6 +26,7 @@ export interface SealedToken {
 }
 
 export interface TokenCipher {
+  readonly activeKeyId: string;
   seal(token: string, context: string): SealedToken;
   open(sealed: SealedToken, context: string): string;
 }
@@ -38,6 +39,7 @@ export function parseTokenKeyring(input: unknown): TokenKeyring {
 
 export function createTokenCipher(keyring: TokenKeyring): TokenCipher {
   return {
+    activeKeyId: keyring.activeKeyId,
     seal(token, context) {
       const nonce = randomBytes(12);
       const key = keyring.keys[keyring.activeKeyId];

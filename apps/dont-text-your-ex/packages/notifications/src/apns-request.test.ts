@@ -8,7 +8,8 @@ describe("buildApnsRequest", () => {
       topic: "co.worldwidewebb.textyourex",
       authorization: "bearer provider-jwt",
       deviceToken: "ab".repeat(32),
-      notificationId: "ntf_example",
+      notificationId: "ntf_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      expiration: 0,
     });
 
     expect(request).toEqual({
@@ -16,7 +17,8 @@ describe("buildApnsRequest", () => {
       path: `/3/device/${"ab".repeat(32)}`,
       headers: {
         authorization: "bearer provider-jwt",
-        "apns-collapse-id": "ntf_example",
+        "apns-collapse-id": "ntf_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "apns-expiration": "0",
         "apns-priority": "10",
         "apns-push-type": "alert",
         "apns-topic": "co.worldwidewebb.textyourex",
@@ -27,7 +29,7 @@ describe("buildApnsRequest", () => {
           alert: { title: "Don’t Text Your Ex", body: "You have an update." },
           sound: "default",
         },
-        notificationId: "ntf_example",
+        notificationId: "ntf_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       }),
     });
     expect(request.body).not.toContain("reports");
