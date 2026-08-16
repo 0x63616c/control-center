@@ -92,6 +92,15 @@ describe("outbox dispatch activity", () => {
         suppressNotification: async () => undefined,
         rotatePushTokenBatch: async () => ({ rotated: 0 }),
       },
+      streakMilestones: {
+        StreakMilestoneSweepActivity: async () => ({
+          candidates: 0,
+          achievements: 0,
+          notifications: 0,
+          sharedActivities: 0,
+          hasMore: false,
+        }),
+      },
       operations: {
         outboxSnapshot: () => undefined,
         outboxDispatch: () => undefined,

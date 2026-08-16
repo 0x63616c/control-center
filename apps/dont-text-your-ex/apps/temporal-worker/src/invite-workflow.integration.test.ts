@@ -109,17 +109,17 @@ describe.sequential("InviteLifecycleWorkflow Temporal integration", () => {
         args: [{ schemaVersion: 1, inviteVersionId }],
       });
       await loaded;
-      let state = await handle.query(inviteStateQuery);
+      let state = await handle.query(inviteStateQuery.name);
       while (state !== "waiting") {
         await new Promise((resolve) => setTimeout(resolve, 25));
-        state = await handle.query(inviteStateQuery);
+        state = await handle.query(inviteStateQuery.name);
       }
     });
     if (!handle) throw new Error("workflow handle missing");
     const activeHandle = handle;
 
     authoritativeState = { kind: "superseded" };
-    await activeHandle.signal(inviteSupersededSignal, {
+    await activeHandle.signal(inviteSupersededSignal.name, {
       schemaVersion: 1,
       inviteVersionId,
       expectedAggregateVersion: 2,
