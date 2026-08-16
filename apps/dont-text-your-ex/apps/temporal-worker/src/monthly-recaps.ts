@@ -136,14 +136,15 @@ export class PostgresMonthlyRecapStore implements MonthlyRecapStore {
     const slipCount = safeCount(row.slip_count, "slip count");
     const totalAmountCents = safeCount(row.total_amount_cents, "total amount");
     const streaks = await db.query<StreakRow>(
-      `SELECT sa.milestone_days,COUNT(*)::text AS count
-       FROM streak_achievements sa
-       JOIN memberships m ON m.id=sa.membership_id
-       WHERE m.jar_id=$1 AND m.share_streak <> 0
-         AND sa.reached_local_date >= ($2 || '-01')::date
-         AND sa.reached_local_date < (($2 || '-01')::date + INTERVAL '1 month')
-       GROUP BY sa.milestone_days ORDER BY sa.milestone_days`,
-      [candidate.jar_id, candidate.calendar_month],
+      `SELECT substring(a.text FROM '^Reached a (7|30|100|365)-day clean streak[.]$')::integer
+                AS milestone_days,
+              COUNT(*)::text AS count
+       FROM activity a
+       WHERE a.jar_id=$1 AND a.type='milestone'
+         AND a.created_at >= $2 AND a.created_at < $3
+         AND a.text ~ '^Reached a (7|30|100|365)-day clean streak[.]$'
+       GROUP BY milestone_days ORDER BY milestone_days`,
+      [candidate.jar_id, periodStartAt, periodEndAt],
     );
     const milestones = await db.query<MilestoneRow>(
       `SELECT threshold_cents FROM jar_milestones

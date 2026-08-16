@@ -102,6 +102,8 @@ docs/                 product spec + design handoff (design-reference/)
 ```
 
 The design is preserved under `docs/design-reference/` and the product spec under `docs/superpowers/specs/`.
+Monthly recap metric, privacy, and authorization semantics are fixed in
+[`docs/monthly-recaps.md`](docs/monthly-recaps.md).
 
 ## Production deployment
 
