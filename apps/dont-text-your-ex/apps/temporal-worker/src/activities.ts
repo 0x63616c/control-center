@@ -79,7 +79,9 @@ export function createDtyeActivities(dependencies: DtyeActivityDependencies) {
       for (let index = 0; index < result.failed; index += 1) {
         dependencies.operations.outboxDispatch({ outcome: "permanent_failure" });
       }
-      dependencies.operations.outboxRecoverySucceeded(clock());
+      // A targeted post-commit nudge must not mask a dead managed Schedule.
+      // Only the unfiltered recovery activity proves the recovery path ran.
+      if (input.eventIds === undefined) dependencies.operations.outboxRecoverySucceeded(clock());
       try {
         dependencies.operations.outboxSnapshot(await dependencies.outboxSnapshot.snapshot(clock()));
       } catch {
