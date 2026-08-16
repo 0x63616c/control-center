@@ -185,7 +185,9 @@ function violationsFor(path: string, source = readFileSync(path, "utf8")): Viola
       if (
         rule.id === "currency-amount" &&
         relativePath.startsWith("apps/api/") &&
-        /^(?:delete|insert|select|update)\b/.test(normalized)
+        /^(?:delete\b[\s\S]*\bfrom|insert\b[\s\S]*\binto|select\b[\s\S]*\bfrom|update\b[\s\S]*\bset)\b/.test(
+          normalized,
+        )
       ) {
         continue;
       }
@@ -272,6 +274,16 @@ describe("runtime copy policy scanner", () => {
     const source = `const query = "update memberships set tally_cents = $1 where id = $2";`;
 
     expect(violationsFor(resolve(PRODUCT_ROOT, "apps/api/src/fixture.ts"), source)).toEqual([]);
+  });
+
+  it("still rejects API-generated public copy that begins with a SQL verb", () => {
+    const source = `const message = "Update your tally with $5";`;
+
+    expect(
+      new Set(
+        violationsFor(resolve(PRODUCT_ROOT, "apps/api/src/fixture.ts"), source).map((v) => v.rule),
+      ),
+    ).toEqual(new Set(["currency-amount"]));
   });
 
   it("ignores comments and identifiers while accepting explicit safety disclosures", () => {
