@@ -1,4 +1,4 @@
-import type { DomainEvent } from "./domain-events";
+import type { DomainEvent, DomainEventType } from "./domain-events";
 import type { Outbox } from "./outbox";
 
 export type WorkflowDispatchResult =
@@ -6,7 +6,8 @@ export type WorkflowDispatchResult =
   | { readonly status: "retryable"; readonly code: string }
   | { readonly status: "permanent"; readonly code: string };
 
-interface WorkflowDispatcher {
+export interface WorkflowDispatcher {
+  supportedEventTypes(): readonly DomainEventType[];
   dispatch(event: DomainEvent): Promise<WorkflowDispatchResult>;
 }
 
@@ -26,7 +27,10 @@ export async function dispatchOutboxPage(input: DispatchOutboxPageInput): Promis
   readonly retried: number;
   readonly failed: number;
 }> {
-  const events = await input.outbox.claimPage(input);
+  const events = await input.outbox.claimPage({
+    ...input,
+    eventTypes: input.dispatcher.supportedEventTypes(),
+  });
   let accepted = 0;
   let retried = 0;
   let failed = 0;
@@ -76,9 +80,41 @@ export async function dispatchOutboxPage(input: DispatchOutboxPageInput): Promis
 export class RecordingWorkflowDispatcher implements WorkflowDispatcher {
   readonly #events: DomainEvent[] = [];
   readonly #outcomes: WorkflowDispatchResult[];
+  readonly #supportedEventTypes: readonly DomainEventType[];
 
-  constructor(outcomes: readonly WorkflowDispatchResult[] = []) {
+  constructor(
+    outcomes: readonly WorkflowDispatchResult[] = [],
+    supportedEventTypes: readonly DomainEventType[] = [
+      "jar.created",
+      "jar.closed",
+      "invite.issued",
+      "invite.superseded",
+      "membership.joined",
+      "membership.left",
+      "slip.logged",
+      "jar.milestone_crossed",
+      "report.created",
+      "report.owned",
+      "report.denied",
+      "report.expired",
+      "rescue.started",
+      "rescue.extended",
+      "rescue.safe",
+      "rescue.slipped",
+      "rescue.check_in_due",
+      "rescue.abandoned",
+      "streak.milestone_reached",
+      "recap.created",
+      "notification.requested",
+      "account.deletion_requested",
+    ],
+  ) {
     this.#outcomes = [...outcomes];
+    this.#supportedEventTypes = [...supportedEventTypes];
+  }
+
+  supportedEventTypes(): readonly DomainEventType[] {
+    return [...this.#supportedEventTypes];
   }
 
   async dispatch(event: DomainEvent): Promise<WorkflowDispatchResult> {

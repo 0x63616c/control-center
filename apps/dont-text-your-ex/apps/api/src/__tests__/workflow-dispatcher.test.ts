@@ -98,4 +98,44 @@ describe("workflow dispatcher seam", () => {
       outbox.claimPage({ owner: "worker-b", limit: 10, now: 30, leaseUntil: 40 }),
     ).resolves.toEqual([retryable]);
   });
+
+  it("leaves unsupported events pending until a dispatcher registers their capability", async () => {
+    const event = DomainEventSchema.parse({
+      id: "evt_later",
+      type: "invite.issued",
+      schemaVersion: 1,
+      aggregateType: "invite",
+      aggregateId: "inv_later",
+      aggregateVersion: 1,
+      occurredAt: 1,
+    });
+    const outbox = new MemoryOutbox([event]);
+    const unsupported = new RecordingWorkflowDispatcher([], ["jar.created"]);
+
+    await expect(
+      dispatchOutboxPage({
+        outbox,
+        dispatcher: unsupported,
+        owner: "worker-a",
+        limit: 10,
+        now: 10,
+        leaseUntil: 20,
+        retryAt: 30,
+      }),
+    ).resolves.toEqual({ claimed: 0, accepted: 0, retried: 0, failed: 0 });
+
+    const enabled = new RecordingWorkflowDispatcher([], ["invite.issued"]);
+    await expect(
+      dispatchOutboxPage({
+        outbox,
+        dispatcher: enabled,
+        owner: "worker-b",
+        limit: 10,
+        now: 10,
+        leaseUntil: 20,
+        retryAt: 30,
+      }),
+    ).resolves.toEqual({ claimed: 1, accepted: 1, retried: 0, failed: 0 });
+    expect(enabled.events()).toEqual([event]);
+  });
 });
