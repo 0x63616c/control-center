@@ -19,6 +19,9 @@ import {
   PushRegistrationResponseSchema,
   RegisterPushDeviceRequestSchema,
   ReportIdSchema,
+  RescueCommandRequestSchema,
+  RescueInterventionIdSchema,
+  RescueInterventionSchema,
   ResolveReportRequestSchema,
   RotateInviteRequestSchema,
   type SessionToken,
@@ -33,6 +36,7 @@ import { errorDetails, parseRequestJson, parseRequestValue } from "./boundary";
 import { appleBundleId, isProduction } from "./env";
 import { id } from "./ids";
 import { notificationStore } from "./notifications";
+import { rescueStore } from "./rescue";
 import { resetAndSeed } from "./seed";
 import * as store from "./store";
 
@@ -225,6 +229,45 @@ api.get("/notifications/:id/target", async (c) => {
   return c.json(
     NotificationTargetSchema.parse(await notificationStore().resolveTarget(uid, parsed.value)),
   );
+});
+
+// ─────────────────────────── private urge rescue ───────────────────────────
+api.get("/rescue", async (c) => {
+  const uid = requireUser(c);
+  if (!uid) return c.json(unauth, 401);
+  const intervention = await rescueStore.current(uid);
+  return c.json(intervention === null ? null : RescueInterventionSchema.parse(intervention));
+});
+
+api.post("/rescue", async (c) => {
+  const uid = requireUser(c);
+  if (!uid) return c.json(unauth, 401);
+  return c.json(RescueInterventionSchema.parse(await rescueStore.start(uid)));
+});
+
+api.post("/rescue/:id/command", async (c) => {
+  const uid = requireUser(c);
+  if (!uid) return c.json(unauth, 401);
+  const parsedId = parseRequestValue(c, RescueInterventionIdSchema, c.req.param("id"));
+  if (!parsedId.ok) return parsedId.response;
+  const parsed = await parseRequestJson(c, RescueCommandRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  const outcome = await rescueStore.command({
+    userId: uid,
+    interventionId: parsedId.value,
+    action: parsed.value.action,
+  });
+  switch (outcome.outcome) {
+    case "applied":
+    case "terminal":
+      return c.json(RescueInterventionSchema.parse(outcome.intervention));
+    case "ineligible":
+      return c.json({ error: "rescue_command_ineligible" }, 409);
+    case "not_found":
+      return c.json(notFound, 404);
+    default:
+      return assertNever(outcome);
+  }
 });
 
 // ─────────────────────────── jars ───────────────────────────
