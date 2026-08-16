@@ -1,7 +1,7 @@
 import { ENV } from "@www/platform/env";
 
-export const DTYE_TEMPORAL_NAMESPACE = "dont-text-your-ex" as const;
-export const DTYE_TEMPORAL_TASK_QUEUE = "main" as const;
+const DTYE_TEMPORAL_NAMESPACE = "dont-text-your-ex" as const;
+const DTYE_TEMPORAL_TASK_QUEUE = "main" as const;
 
 export interface TemporalWorkerConfig {
   readonly address: string;
