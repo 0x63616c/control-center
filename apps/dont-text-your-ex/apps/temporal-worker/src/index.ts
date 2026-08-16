@@ -13,12 +13,14 @@ import { createLogger } from "@www/logger";
 import { initMetrics, startMetricsServer } from "@www/platform/metrics";
 import { temporalScheduleGateway } from "@www/temporal-runtime";
 import { Pool } from "pg";
+import { DomainTransactionRunner } from "../../api/src/domain-transaction";
 import { PostgresOutbox } from "../../api/src/outbox";
 import { PostgresRescueStore } from "../../api/src/rescue-store";
 import { createDtyeActivities } from "./activities";
 import { prepareTemporalWorker } from "./boot";
 import { temporalWorkerConfig } from "./config";
 import { createWorkerLifecycle } from "./lifecycle";
+import { PostgresMonthlyRecapStore } from "./monthly-recaps";
 import { createNotificationActivities } from "./notification-activities";
 import {
   PostgresOutboxOperationalSnapshotStore,
@@ -57,6 +59,7 @@ async function main(): Promise<void> {
   });
   const apnsTransport = createHttp2ApnsTransport();
   const reports = new PostgresReportAccountabilityStore(pool);
+  const transactions = new DomainTransactionRunner({ pool });
   const temporalGateway = new TemporalClientWorkflowGateway(client);
   const apnsClients = {
     production: createApnsClient({
@@ -90,6 +93,7 @@ async function main(): Promise<void> {
     outboxSnapshot: new PostgresOutboxOperationalSnapshotStore(pool),
     reports,
     rescue: createRescueActivities({ store: new PostgresRescueStore(pool) }),
+    monthlyRecaps: new PostgresMonthlyRecapStore(transactions),
   });
   const worker = await prepareTemporalWorker({
     config,

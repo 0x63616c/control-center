@@ -11,11 +11,13 @@ describe("DTYE Temporal registry", () => {
       "NotificationDeliveryWorkflow",
       "ReportAccountabilityWorkflow",
       "UrgeRescueWorkflow",
+      "MonthlyJarRecapWorkflow",
     ]);
     expect(Object.keys(workflows)).toContain("DtyeHealthCheckWorkflow");
     expect(Object.keys(workflows)).toContain("NotificationDeliveryWorkflow");
     expect(Object.keys(workflows)).toContain("ReportAccountabilityWorkflow");
     expect(Object.keys(workflows)).toContain("UrgeRescueWorkflow");
+    expect(Object.keys(workflows)).toContain("MonthlyJarRecapWorkflow");
     expect(ACTIVITY_TYPES).toEqual([
       "DtyeHealthCheckActivity",
       "OutboxDispatchActivity",
@@ -28,6 +30,7 @@ describe("DTYE Temporal registry", () => {
       "loadRescue",
       "advanceRescueAtDeadline",
       "eraseRescueForAccountDeletion",
+      "MonthlyJarRecapActivity",
     ]);
     expect(MANAGED_SCHEDULE_PREFIX).toBe("dtye_");
     expect(SCHEDULES).toEqual([
@@ -57,6 +60,15 @@ describe("DTYE Temporal registry", () => {
         args: { schemaVersion: 1 },
         timeout: "10 minutes",
         catchupWindow: "1 minute",
+      },
+      {
+        scheduleId: "dtye_monthly_recap",
+        workflowType: "MonthlyJarRecapWorkflow",
+        cron: "23 * * * *",
+        timezone: "UTC",
+        args: { schemaVersion: 1 },
+        timeout: "30 minutes",
+        catchupWindow: "1 hour",
       },
     ]);
   });

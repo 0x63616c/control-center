@@ -4,6 +4,13 @@ const mocks = vi.hoisted(() => ({
   activity: vi.fn(async (_input: { readonly iteration: number }) => ({ status: "ok" as const })),
   outbox: vi.fn(async () => ({ claimed: 0, accepted: 0, retried: 0, failed: 0 })),
   sessions: vi.fn(async () => ({ deleted: 0 })),
+  monthlyRecaps: vi.fn(async () => ({
+    candidates: 0,
+    recaps: 0,
+    recipients: 0,
+    notifications: 0,
+    hasMore: false,
+  })),
   continueAsNew: vi.fn(async (input: unknown) => input),
   prepareNotification: vi.fn(async () => ({ deliveryIds: [] })),
   deliverNotification: vi.fn(async () => ({ kind: "accepted" as const })),
@@ -23,6 +30,7 @@ vi.mock("@temporalio/workflow", () => ({
     DtyeHealthCheckActivity: mocks.activity,
     OutboxDispatchActivity: mocks.outbox,
     SessionMaintenanceActivity: mocks.sessions,
+    MonthlyJarRecapActivity: mocks.monthlyRecaps,
     prepareNotification: mocks.prepareNotification,
     deliverNotification: mocks.deliverNotification,
     suppressNotification: mocks.suppressNotification,
@@ -37,6 +45,7 @@ vi.mock("@temporalio/workflow", () => ({
 
 import {
   DtyeHealthCheckWorkflow,
+  MonthlyJarRecapWorkflow,
   OutboxDispatchRecoveryWorkflow,
   SessionMaintenanceWorkflow,
 } from "./workflows";
@@ -45,6 +54,13 @@ beforeEach(() => {
   mocks.activity.mockReset().mockResolvedValue({ status: "ok" });
   mocks.outbox.mockReset().mockResolvedValue({ claimed: 0, accepted: 0, retried: 0, failed: 0 });
   mocks.sessions.mockReset().mockResolvedValue({ deleted: 0 });
+  mocks.monthlyRecaps.mockReset().mockResolvedValue({
+    candidates: 0,
+    recaps: 0,
+    recipients: 0,
+    notifications: 0,
+    hasMore: false,
+  });
   mocks.continueAsNew.mockReset().mockImplementation(async (input: unknown) => input);
   mocks.prepareNotification.mockReset().mockResolvedValue({ deliveryIds: [] });
   mocks.deliverNotification.mockReset().mockResolvedValue({ kind: "accepted" });
@@ -123,6 +139,58 @@ describe("SessionMaintenanceWorkflow", () => {
       deleted: 10_000,
       runs: 1,
       purgeBefore: 123_456,
+    });
+  });
+});
+
+describe("MonthlyJarRecapWorkflow", () => {
+  test("keeps one cutoff while paging and returns exact totals", async () => {
+    mocks.now.value = 1_725_192_000_000;
+    mocks.monthlyRecaps
+      .mockResolvedValueOnce({
+        candidates: 50,
+        recaps: 49,
+        recipients: 80,
+        notifications: 10,
+        hasMore: true,
+      })
+      .mockResolvedValueOnce({
+        candidates: 2,
+        recaps: 2,
+        recipients: 3,
+        notifications: 1,
+        hasMore: false,
+      });
+
+    await expect(MonthlyJarRecapWorkflow({ schemaVersion: 1 })).resolves.toEqual({
+      candidates: 52,
+      recaps: 51,
+      recipients: 83,
+      notifications: 11,
+      runs: 1,
+    });
+    expect(mocks.monthlyRecaps).toHaveBeenCalledTimes(2);
+    expect(mocks.monthlyRecaps.mock.calls).toEqual([
+      [{ cutoff: 1_725_192_000_000, limit: 50 }],
+      [{ cutoff: 1_725_192_000_000, limit: 50 }],
+    ]);
+  });
+
+  test("continues as new before history grows without moving the cutoff", async () => {
+    mocks.monthlyRecaps.mockResolvedValue({
+      candidates: 50,
+      recaps: 50,
+      recipients: 50,
+      notifications: 0,
+      hasMore: true,
+    });
+    await MonthlyJarRecapWorkflow({ schemaVersion: 1, cutoff: 123 });
+    expect(mocks.monthlyRecaps).toHaveBeenCalledTimes(20);
+    expect(mocks.continueAsNew).toHaveBeenCalledWith({
+      schemaVersion: 1,
+      cutoff: 123,
+      totals: { candidates: 1_000, recaps: 1_000, recipients: 1_000, notifications: 0 },
+      runs: 1,
     });
   });
 });

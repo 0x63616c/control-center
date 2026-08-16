@@ -7,6 +7,7 @@ export const WORKFLOW_TYPES = [
   "NotificationDeliveryWorkflow",
   "ReportAccountabilityWorkflow",
   "UrgeRescueWorkflow",
+  "MonthlyJarRecapWorkflow",
 ] as const;
 export const MANAGED_SCHEDULE_PREFIX = "dtye_";
 export const ACTIVITY_TYPES = [
@@ -21,6 +22,7 @@ export const ACTIVITY_TYPES = [
   "loadRescue",
   "advanceRescueAtDeadline",
   "eraseRescueForAccountDeletion",
+  "MonthlyJarRecapActivity",
 ] as const;
 export const SCHEDULES = [
   {
@@ -49,5 +51,14 @@ export const SCHEDULES = [
     args: { schemaVersion: 1 },
     timeout: "10 minutes",
     catchupWindow: "1 minute",
+  },
+  {
+    scheduleId: "dtye_monthly_recap",
+    workflowType: "MonthlyJarRecapWorkflow",
+    cron: "23 * * * *",
+    timezone: "UTC",
+    args: { schemaVersion: 1 },
+    timeout: "30 minutes",
+    catchupWindow: "1 hour",
   },
 ] as const satisfies readonly ScheduleSpec[];

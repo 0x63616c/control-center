@@ -18,11 +18,16 @@ export const RescueInterventionIdSchema = z
 export const SessionTokenSchema = idSchema("sess", "SessionToken");
 const ActivityIdSchema = idSchema("act", "ActivityId");
 export const EvidenceIdSchema = idSchema("evi", "EvidenceId");
+export const RecapIdSchema = z
+  .string()
+  .regex(/^rcp_[a-f0-9]{32}$/, "invalid RecapId")
+  .brand<"RecapId">();
 
 export type UserId = z.infer<typeof UserIdSchema>;
 export type JarId = z.infer<typeof JarIdSchema>;
 export type ReportId = z.infer<typeof ReportIdSchema>;
 export type RescueInterventionId = z.infer<typeof RescueInterventionIdSchema>;
+export type RecapId = z.infer<typeof RecapIdSchema>;
 export type SessionToken = z.infer<typeof SessionTokenSchema>;
 
 export const InviteCodeSchema = z
@@ -203,6 +208,39 @@ export type LogSlipRequest = z.infer<typeof LogSlipRequestSchema>;
 export type EvidenceImageInput = z.infer<typeof EvidenceImageInputSchema>;
 export type CreateReportRequest = z.infer<typeof CreateReportRequestSchema>;
 export type RescueCommandRequest = z.infer<typeof RescueCommandRequestSchema>;
+
+const CalendarMonthSchema = z
+  .string()
+  .regex(/^\d{4}-(?:0[1-9]|1[0-2])$/, "invalid calendar month")
+  .brand<"CalendarMonth">();
+
+const SharedStreakHighlightSchema = z
+  .object({
+    days: z.union([z.literal(7), z.literal(30), z.literal(100), z.literal(365)]),
+    count: z.number().int().positive(),
+  })
+  .strict();
+
+export const JarRecapSchema = z
+  .object({
+    id: RecapIdSchema,
+    jarId: JarIdSchema,
+    jarName: z.string(),
+    calendarMonth: CalendarMonthSchema,
+    timezone: z.string().min(1),
+    periodStartAt: z.number().int().nonnegative(),
+    periodEndAt: z.number().int().positive(),
+    slipCount: z.number().int().nonnegative(),
+    totalAmountCents: z.number().int().nonnegative(),
+    tallyChangeCents: z.number().int().nonnegative(),
+    sharedStreakHighlights: z.array(SharedStreakHighlightSchema),
+    crossedMilestonesCents: z.array(z.number().int().positive()),
+    createdAt: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export type CalendarMonth = z.infer<typeof CalendarMonthSchema>;
+export type JarRecapDTO = z.infer<typeof JarRecapSchema>;
 
 const rescueBase = {
   id: RescueInterventionIdSchema,

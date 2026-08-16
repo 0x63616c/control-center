@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { DomainEvent } from "../../api/src/domain-events";
 import type { Outbox } from "../../api/src/outbox";
 import { dispatchOutboxPage, type WorkflowDispatcher } from "../../api/src/workflow-dispatcher";
+import { createMonthlyRecapActivities, type MonthlyRecapStore } from "./monthly-recaps";
 import type { NotificationActivities } from "./notification-activities";
 import type {
   DtyeOperationsObserver,
@@ -55,6 +56,7 @@ export type DtyeActivityDependencies = Readonly<{
   outboxSnapshot: OutboxOperationalSnapshotStore;
   reports: ReportAccountabilityStore;
   rescue: RescueActivities;
+  monthlyRecaps: MonthlyRecapStore;
   clock?: () => number;
 }>;
 
@@ -123,6 +125,7 @@ export function createDtyeActivities(dependencies: DtyeActivityDependencies) {
     ...dependencies.notifications,
     ...createReportAccountabilityActivities({ store: dependencies.reports }),
     ...dependencies.rescue,
+    ...createMonthlyRecapActivities(dependencies.monthlyRecaps),
   };
 }
 

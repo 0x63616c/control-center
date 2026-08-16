@@ -37,6 +37,16 @@ const rescue = {
   eraseRescueForAccountDeletion: async () => ({ erased: true as const }),
 };
 
+const monthlyRecaps = {
+  generatePage: async () => ({
+    candidates: 0,
+    recaps: 0,
+    recipients: 0,
+    notifications: 0,
+    hasMore: false,
+  }),
+};
+
 function recordingObserver() {
   const observer: DtyeOperationsObserver = {
     outboxSnapshot: vi.fn(),
@@ -57,6 +67,7 @@ describe("DTYE activity observability", () => {
       notifications,
       reports,
       rescue,
+      monthlyRecaps,
       operations,
       outboxSnapshot: {
         snapshot: vi.fn(async () => ({ pending: 0, oldestAgeSeconds: 0, permanentFailures: 0 })),
@@ -94,6 +105,7 @@ describe("DTYE activity observability", () => {
       notifications,
       reports,
       rescue,
+      monthlyRecaps,
       operations,
       outboxSnapshot: {
         snapshot: vi.fn(async () => ({ pending: 0, oldestAgeSeconds: 0, permanentFailures: 0 })),
@@ -116,6 +128,7 @@ describe("DTYE activity observability", () => {
       notifications,
       reports,
       rescue,
+      monthlyRecaps,
       operations,
       outboxSnapshot: { snapshot: vi.fn(async () => Promise.reject(new Error("db unavailable"))) },
       clock: () => 6_000,
@@ -137,6 +150,7 @@ describe("DTYE activity observability", () => {
       notifications,
       reports,
       rescue,
+      monthlyRecaps,
       operations: successObserver,
       outboxSnapshot: { snapshot: vi.fn() },
       clock: () => clockValues.shift() ?? 1_250,
@@ -157,6 +171,7 @@ describe("DTYE activity observability", () => {
       notifications,
       reports,
       rescue,
+      monthlyRecaps,
       operations: failureObserver,
       outboxSnapshot: { snapshot: vi.fn() },
       clock: () => 2_000,

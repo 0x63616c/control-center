@@ -106,6 +106,18 @@ const { SessionMaintenanceActivity } = proxyActivities<
   },
 });
 
+const { MonthlyJarRecapActivity } = proxyActivities<
+  Pick<DtyeActivities, "MonthlyJarRecapActivity">
+>({
+  startToCloseTimeout: "5 minutes",
+  retry: {
+    initialInterval: "2 seconds",
+    backoffCoefficient: 2,
+    maximumInterval: "1 minute",
+    maximumAttempts: 10,
+  },
+});
+
 export interface OutboxDispatchRecoveryWorkflowInput {
   readonly schemaVersion: 1;
   readonly eventIds?: readonly DomainEvent["id"][];
@@ -168,6 +180,54 @@ export async function SessionMaintenanceWorkflow(
         deleted,
         runs: (input.runs ?? 0) + 1,
         purgeBefore,
+      });
+    }
+  }
+}
+
+export interface MonthlyJarRecapWorkflowInput {
+  readonly schemaVersion: 1;
+  readonly cutoff?: number;
+  readonly totals?: Readonly<{
+    candidates: number;
+    recaps: number;
+    recipients: number;
+    notifications: number;
+  }>;
+  readonly runs?: number;
+}
+
+export interface MonthlyJarRecapWorkflowOutput {
+  readonly candidates: number;
+  readonly recaps: number;
+  readonly recipients: number;
+  readonly notifications: number;
+  readonly runs: number;
+}
+
+export async function MonthlyJarRecapWorkflow(
+  input: MonthlyJarRecapWorkflowInput,
+): Promise<MonthlyJarRecapWorkflowOutput> {
+  if (input.schemaVersion !== 1) throw new Error("unsupported monthly recap workflow schema");
+  const cutoff = input.cutoff ?? Date.now();
+  let pages = 0;
+  let totals = input.totals ?? { candidates: 0, recaps: 0, recipients: 0, notifications: 0 };
+  while (true) {
+    const page = await MonthlyJarRecapActivity({ cutoff, limit: 50 });
+    pages += 1;
+    totals = {
+      candidates: totals.candidates + page.candidates,
+      recaps: totals.recaps + page.recaps,
+      recipients: totals.recipients + page.recipients,
+      notifications: totals.notifications + page.notifications,
+    };
+    if (!page.hasMore) return { ...totals, runs: (input.runs ?? 0) + 1 };
+    if (pages >= 20) {
+      return continueAsNew<typeof MonthlyJarRecapWorkflow>({
+        schemaVersion: 1,
+        cutoff,
+        totals,
+        runs: (input.runs ?? 0) + 1,
       });
     }
   }
