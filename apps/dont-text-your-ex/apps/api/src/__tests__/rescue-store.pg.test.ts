@@ -169,4 +169,29 @@ describe.skipIf(!HAS_DB)("Postgres rescue store", () => {
     );
     expect(Number(cancelled.rows[0]?.cancelled_at)).toBe(clock);
   });
+
+  it("lets the deadline transition win commands at the response-window boundary", async () => {
+    const store = new PostgresRescueStore(pool, () => clock);
+    const active = await store.start(alice);
+    clock = active.deadlineAt;
+    const due = await store.advanceAtDeadline({
+      interventionId: active.id,
+      expectedAggregateVersion: active.aggregateVersion,
+    });
+    if (!due || due.status !== "check_in_due") throw new Error("check-in missing");
+
+    clock = due.responseDeadlineAt;
+    await expect(
+      store.command({ userId: alice, interventionId: active.id, action: "safe" }),
+    ).resolves.toMatchObject({ outcome: "ineligible", intervention: { status: "check_in_due" } });
+    await expect(
+      store.command({ userId: alice, interventionId: active.id, action: "extend" }),
+    ).resolves.toMatchObject({ outcome: "ineligible", intervention: { status: "check_in_due" } });
+    await expect(
+      store.advanceAtDeadline({
+        interventionId: active.id,
+        expectedAggregateVersion: due.aggregateVersion,
+      }),
+    ).resolves.toMatchObject({ status: "abandoned" });
+  });
 });
