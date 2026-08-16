@@ -26,6 +26,7 @@ COPY infra/cloudflare/package.json infra/cloudflare/
 COPY infra/unifi/package.json infra/unifi/
 RUN bun install --frozen-lockfile --production --ignore-scripts
 COPY apps/dont-text-your-ex/apps/temporal-worker apps/dont-text-your-ex/apps/temporal-worker
+COPY apps/dont-text-your-ex/apps/api/src apps/dont-text-your-ex/apps/api/src
 COPY packages/logger packages/logger
 COPY packages/platform packages/platform
 COPY packages/temporal-runtime packages/temporal-runtime

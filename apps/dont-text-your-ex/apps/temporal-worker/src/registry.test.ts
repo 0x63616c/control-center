@@ -1,12 +1,20 @@
 import { describe, expect, test } from "vitest";
-import { ACTIVITIES, MANAGED_SCHEDULE_PREFIX, SCHEDULES, WORKFLOW_TYPES } from "./registry";
+import { ACTIVITY_TYPES, MANAGED_SCHEDULE_PREFIX, SCHEDULES, WORKFLOW_TYPES } from "./registry";
 import * as workflows from "./workflows";
 
 describe("DTYE Temporal registry", () => {
-  test("registers only the W01 health workflow on the main queue contract", () => {
-    expect(WORKFLOW_TYPES).toEqual(["DtyeHealthCheckWorkflow"]);
+  test("registers health, outbox recovery, and session maintenance on the main queue contract", () => {
+    expect(WORKFLOW_TYPES).toEqual([
+      "DtyeHealthCheckWorkflow",
+      "OutboxDispatchRecoveryWorkflow",
+      "SessionMaintenanceWorkflow",
+    ]);
     expect(Object.keys(workflows)).toContain("DtyeHealthCheckWorkflow");
-    expect(Object.keys(ACTIVITIES)).toEqual(["DtyeHealthCheckActivity"]);
+    expect(ACTIVITY_TYPES).toEqual([
+      "DtyeHealthCheckActivity",
+      "OutboxDispatchActivity",
+      "SessionMaintenanceActivity",
+    ]);
     expect(MANAGED_SCHEDULE_PREFIX).toBe("dtye_");
     expect(SCHEDULES).toEqual([
       {
@@ -16,6 +24,24 @@ describe("DTYE Temporal registry", () => {
         timezone: "UTC",
         args: { schemaVersion: 1 },
         timeout: "2 minutes",
+        catchupWindow: "1 minute",
+      },
+      {
+        scheduleId: "dtye_outbox_recovery",
+        workflowType: "OutboxDispatchRecoveryWorkflow",
+        cron: "* * * * *",
+        timezone: "UTC",
+        args: { schemaVersion: 1 },
+        timeout: "5 minutes",
+        catchupWindow: "1 minute",
+      },
+      {
+        scheduleId: "dtye_session_maintenance",
+        workflowType: "SessionMaintenanceWorkflow",
+        cron: "17 * * * *",
+        timezone: "UTC",
+        args: { schemaVersion: 1 },
+        timeout: "10 minutes",
         catchupWindow: "1 minute",
       },
     ]);

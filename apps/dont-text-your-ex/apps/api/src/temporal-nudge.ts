@@ -3,8 +3,8 @@ import { Client, Connection, WorkflowExecutionAlreadyStartedError } from "@tempo
 import type { DomainEvent } from "./domain-events";
 import type { PostCommitEventNudge } from "./domain-transaction";
 
-export const DTYE_TEMPORAL_NAMESPACE = "dont-text-your-ex" as const;
-export const DTYE_TEMPORAL_TASK_QUEUE = "main" as const;
+const DTYE_TEMPORAL_NAMESPACE = "dont-text-your-ex" as const;
+const DTYE_TEMPORAL_TASK_QUEUE = "main" as const;
 
 export type RecoveryWorkflowStart = Readonly<{
   workflowType: "OutboxDispatchRecoveryWorkflow";

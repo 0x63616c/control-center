@@ -92,6 +92,7 @@ export function dontTextYourExSpecs(
         POSTGRES_DB: DONT_TEXT_YOUR_EX_DATABASE.databaseName,
         POSTGRES_PASSWORD_FILE: "/run/secrets/POSTGRES_PASSWORD",
         APPLE_BUNDLE_ID: "co.worldwidewebb.textyourex",
+        TEMPORAL_ADDRESS: TEMPORAL_FRONTEND_CLUSTER_ADDRESS,
       },
       extraSecretMounts: [
         {

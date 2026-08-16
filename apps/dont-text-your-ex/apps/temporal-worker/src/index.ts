@@ -4,10 +4,19 @@ import { NativeConnection, Runtime, Worker } from "@temporalio/worker";
 import { createLogger } from "@www/logger";
 import { initMetrics, startMetricsServer } from "@www/platform/metrics";
 import { temporalScheduleGateway } from "@www/temporal-runtime";
+import { Pool } from "pg";
+import { PostgresOutbox } from "../../api/src/outbox";
+import { createDtyeActivities } from "./activities";
 import { prepareTemporalWorker } from "./boot";
 import { temporalWorkerConfig } from "./config";
 import { createWorkerLifecycle } from "./lifecycle";
-import { ACTIVITIES } from "./registry";
+import { WORKFLOW_TYPES } from "./registry";
+import { PostgresSessionMaintenanceStore } from "./session-maintenance";
+import {
+  registeredTemporalEventHandlers,
+  TemporalClientWorkflowGateway,
+  TemporalWorkflowDispatcher,
+} from "./temporal-workflow-dispatcher";
 
 const logger = createLogger({ service: "dont-text-your-ex-temporal-worker" });
 const workflowsPath = new URL("./workflows.ts", import.meta.url).pathname;
@@ -24,6 +33,14 @@ async function main(): Promise<void> {
   const connection = await NativeConnection.connect({ address: config.address });
   const clientConnection = await Connection.connect({ address: config.address });
   const client = new Client({ connection: clientConnection, namespace: config.namespace });
+  const pool = new Pool({ connectionString: config.databaseUrl });
+  const activities = createDtyeActivities({
+    outbox: new PostgresOutbox(pool),
+    dispatcher: new TemporalWorkflowDispatcher(
+      registeredTemporalEventHandlers(new TemporalClientWorkflowGateway(client), WORKFLOW_TYPES),
+    ),
+    sessions: new PostgresSessionMaintenanceStore(pool),
+  });
   const worker = await prepareTemporalWorker({
     config,
     scheduleGateway: temporalScheduleGateway(client),
@@ -34,13 +51,16 @@ async function main(): Promise<void> {
         namespace,
         taskQueue,
         workflowsPath,
-        activities: ACTIVITIES,
+        activities,
         shutdownGraceTime: "20 seconds",
       }),
   });
   const lifecycle = createWorkerLifecycle({
     worker,
-    closeClient: () => clientConnection.close(),
+    closeClient: async () => {
+      await pool.end();
+      await clientConnection.close();
+    },
     closeNative: () => connection.close(),
     logger,
   });

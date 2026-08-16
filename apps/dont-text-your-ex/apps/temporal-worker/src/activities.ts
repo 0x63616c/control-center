@@ -1,13 +1,68 @@
-export interface DtyeHealthCheckActivityInput {
+interface DtyeHealthCheckActivityInput {
   readonly iteration: number;
 }
-export interface DtyeHealthCheckActivityOutput {
+interface DtyeHealthCheckActivityOutput {
   readonly status: "ok";
 }
 
-export async function DtyeHealthCheckActivity(
+async function DtyeHealthCheckActivity(
   input: DtyeHealthCheckActivityInput,
 ): Promise<DtyeHealthCheckActivityOutput> {
   void input;
   return { status: "ok" };
 }
+
+import { randomUUID } from "node:crypto";
+import type { DomainEvent } from "../../api/src/domain-events";
+import type { Outbox } from "../../api/src/outbox";
+import { dispatchOutboxPage, type WorkflowDispatcher } from "../../api/src/workflow-dispatcher";
+import { runSessionMaintenancePage, type SessionMaintenanceStore } from "./session-maintenance";
+
+export interface OutboxDispatchActivityInput {
+  readonly eventIds?: readonly DomainEvent["id"][];
+  readonly limit: number;
+}
+export interface OutboxDispatchActivityOutput {
+  readonly claimed: number;
+  readonly accepted: number;
+  readonly retried: number;
+  readonly failed: number;
+}
+export interface SessionMaintenanceActivityInput {
+  readonly now: number;
+  readonly limit: number;
+}
+
+export type DtyeActivityDependencies = Readonly<{
+  outbox: Outbox;
+  dispatcher: WorkflowDispatcher;
+  sessions: SessionMaintenanceStore;
+  clock?: () => number;
+}>;
+
+export function createDtyeActivities(dependencies: DtyeActivityDependencies) {
+  const clock = dependencies.clock ?? Date.now;
+  return {
+    DtyeHealthCheckActivity,
+    async OutboxDispatchActivity(
+      input: OutboxDispatchActivityInput,
+    ): Promise<OutboxDispatchActivityOutput> {
+      const now = clock();
+      return dispatchOutboxPage({
+        outbox: dependencies.outbox,
+        dispatcher: dependencies.dispatcher,
+        owner: `outbox-${randomUUID()}`,
+        limit: input.limit,
+        now,
+        leaseUntil: now + 30_000,
+        retryAt: now + 60_000,
+        eventIds: input.eventIds,
+      });
+    },
+    async SessionMaintenanceActivity(input: SessionMaintenanceActivityInput) {
+      return runSessionMaintenancePage({ store: dependencies.sessions, ...input });
+    },
+  };
+}
+
+export type DtyeActivities = ReturnType<typeof createDtyeActivities>;
