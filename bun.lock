@@ -4,7 +4,7 @@
     "": {
       "name": "control-center",
       "dependencies": {
-        "@temporalio/workflow": "1.21.1",
+        "@temporalio/workflow": "^1.21.1",
         "@trpc/server": "^11.17.0",
         "bdui": "^0.0.38",
         "drizzle-orm": "^0.45.2",
@@ -62,7 +62,7 @@
       "name": "@dont-text-your-ex/api",
       "dependencies": {
         "@dont-text-your-ex/notifications": "workspace:*",
-        "@temporalio/client": "1.21.1",
+        "@temporalio/client": "^1.21.1",
         "@www/logger": "workspace:*",
         "@www/platform": "workspace:*",
         "hono": "^4.6.14",
@@ -107,16 +107,16 @@
       "version": "0.0.0",
       "dependencies": {
         "@dont-text-your-ex/notifications": "workspace:*",
-        "@temporalio/client": "1.21.1",
-        "@temporalio/worker": "1.21.1",
-        "@temporalio/workflow": "1.21.1",
+        "@temporalio/client": "^1.21.1",
+        "@temporalio/worker": "^1.21.1",
+        "@temporalio/workflow": "^1.21.1",
         "@www/logger": "workspace:*",
         "@www/platform": "workspace:*",
         "@www/temporal-runtime": "workspace:*",
         "pg": "^8.13.3",
       },
       "devDependencies": {
-        "@temporalio/testing": "1.21.1",
+        "@temporalio/testing": "^1.21.1",
         "@types/node": "^22.13.0",
         "@types/pg": "^8.11.10",
         "typescript": "^5.9.3",
@@ -176,8 +176,8 @@
       "name": "@control-center/temporal-worker",
       "version": "0.0.0",
       "dependencies": {
-        "@temporalio/client": "1.21.1",
-        "@temporalio/worker": "1.21.1",
+        "@temporalio/client": "^1.21.1",
+        "@temporalio/worker": "^1.21.1",
         "@www/logger": "workspace:*",
         "@www/platform": "workspace:*",
         "@www/temporal-runtime": "workspace:*",
@@ -367,8 +367,8 @@
       "name": "@www/temporal-runtime",
       "version": "0.0.0",
       "dependencies": {
-        "@temporalio/client": "1.21.1",
-        "@temporalio/common": "1.21.1",
+        "@temporalio/client": "^1.21.1",
+        "@temporalio/common": "^1.21.1",
         "@www/logger": "workspace:*",
       },
       "devDependencies": {
