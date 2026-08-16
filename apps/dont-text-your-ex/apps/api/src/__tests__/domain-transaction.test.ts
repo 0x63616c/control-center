@@ -1,0 +1,78 @@
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { pool } from "../db/index";
+import { runMigrations } from "../db/migrate";
+import { DomainTransactionRunner, RecordingPostCommitNudge } from "../domain-transaction";
+import { PostgresOutbox } from "../outbox";
+
+const HAS_DB = !!process.env.DATABASE_URL;
+
+beforeAll(async () => {
+  if (HAS_DB) await runMigrations();
+});
+
+beforeEach(async () => {
+  if (HAS_DB) await pool.query("TRUNCATE domain_event");
+});
+
+afterAll(async () => {
+  if (HAS_DB) await pool.end();
+});
+
+describe.skipIf(!HAS_DB)("domain transaction seam", () => {
+  it("commits domain work and its event before nudging dispatch", async () => {
+    const nudge = new RecordingPostCommitNudge();
+    const runner = new DomainTransactionRunner({ pool, nudge, clock: () => 100 });
+    const value = await runner.run(async ({ db, emit }) => {
+      await db.query("CREATE TEMP TABLE command_result (value TEXT)");
+      await db.query("INSERT INTO command_result (value) VALUES ('committed')");
+      await emit({ type: "jar.created", aggregateId: "jar_example", aggregateVersion: 1 });
+      return "ok" as const;
+    });
+
+    expect(value).toBe("ok");
+    expect(nudge.calls()).toHaveLength(1);
+    const claimed = await new PostgresOutbox(pool).claimPage({
+      owner: "test",
+      limit: 10,
+      now: 100,
+      leaseUntil: 200,
+    });
+    expect(claimed).toEqual([
+      expect.objectContaining({ type: "jar.created", aggregateId: "jar_example" }),
+    ]);
+  });
+
+  it("rolls back the event and never nudges when domain work fails", async () => {
+    const nudge = new RecordingPostCommitNudge();
+    const runner = new DomainTransactionRunner({ pool, nudge, clock: () => 100 });
+
+    await expect(
+      runner.run(async ({ emit }) => {
+        await emit({ type: "jar.created", aggregateId: "jar_rollback", aggregateVersion: 1 });
+        throw new Error("forced failure");
+      }),
+    ).rejects.toThrow("forced failure");
+    expect(nudge.calls()).toEqual([]);
+    await expect(
+      new PostgresOutbox(pool).claimPage({ owner: "test", limit: 10, now: 100, leaseUntil: 200 }),
+    ).resolves.toEqual([]);
+  });
+
+  it("leases each event to at most one of two concurrent Postgres dispatchers", async () => {
+    const runner = new DomainTransactionRunner({ pool, clock: () => 100 });
+    await runner.run(async ({ emit }) => {
+      await emit({ type: "jar.created", aggregateId: "jar_first", aggregateVersion: 1 });
+      await emit({ type: "jar.created", aggregateId: "jar_second", aggregateVersion: 1 });
+    });
+    const first = new PostgresOutbox(pool);
+    const second = new PostgresOutbox(pool);
+
+    const pages = await Promise.all([
+      first.claimPage({ owner: "worker-a", limit: 2, now: 100, leaseUntil: 200 }),
+      second.claimPage({ owner: "worker-b", limit: 2, now: 100, leaseUntil: 200 }),
+    ]);
+    const ids = pages.flat().map((event) => event.id);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+  });
+});

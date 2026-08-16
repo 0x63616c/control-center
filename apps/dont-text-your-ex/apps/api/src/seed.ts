@@ -171,13 +171,19 @@ export async function seed(): Promise<void> {
   }
   for (const j of JARS) {
     await pool.query(
-      "INSERT INTO jars (id, name, rule, default_cents, currency, created_by, invite_code, invite_expires_at, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
-      [j.id, j.name, j.rule, j.defaultCents, "usd", j.createdBy, j.code, t + 7 * DAY, t],
+      "INSERT INTO jars (id, name, rule, default_cents, currency, created_by, invite_code, invite_expires_at, invite_version_id, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+      [j.id, j.name, j.rule, j.defaultCents, "usd", j.createdBy, j.code, t + 7 * DAY, id("inv"), t],
     );
     for (const m of j.members) {
+      const membershipId = id("mem");
+      const joinedAt = t;
       await pool.query(
         "INSERT INTO memberships (id, jar_id, user_id, role, tally_cents, streak_start_at, share_streak, joined_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-        [id("mem"), j.id, m.user, m.role, m.tally, streak(m.days), m.share, t],
+        [membershipId, j.id, m.user, m.role, m.tally, streak(m.days), m.share, joinedAt],
+      );
+      await pool.query(
+        "INSERT INTO membership_tenures (id, membership_id, joined_at) VALUES ($1,$2,$3)",
+        [id("mtn"), membershipId, joinedAt],
       );
     }
   }
@@ -220,7 +226,8 @@ export async function seed(): Promise<void> {
 // seam for per-test isolation.
 export async function resetAndSeed(): Promise<void> {
   await pool.query(`
-    TRUNCATE report_evidence, reports, activity, slips, memberships,
+    TRUNCATE domain_event, jar_milestones, membership_tenures,
+             report_evidence, reports, activity, slips, memberships,
              sessions, otps, user_exes, jars, users RESTART IDENTITY CASCADE
   `);
   await seed();

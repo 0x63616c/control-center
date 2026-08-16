@@ -21,6 +21,7 @@ import {
   UserSchema,
 } from "../../../contracts";
 import { DAY, now, pool } from "./db/index";
+import { type DomainTransactionContext, DomainTransactionRunner } from "./domain-transaction";
 import { id, inviteCode } from "./ids";
 import { parseEvidenceImageJson, serializeEvidenceImageJson } from "./persistence";
 import type {
@@ -84,6 +85,8 @@ type JarRow = {
   created_by: UserId;
   invite_code: InviteCode | null;
   invite_expires_at: string | null;
+  invite_version_id: string;
+  timezone: string;
   created_at: number;
   closed_at: string | null;
   closed_by: UserId | null;
@@ -125,19 +128,12 @@ function parseJarRow(row: JarDbRow): JarRow {
 
 type Queryable = Pick<PoolClient, "query">;
 
-async function withTransaction<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const result = await operation(client);
-    await client.query("COMMIT");
-    return result;
-  } catch (error) {
-    await client.query("ROLLBACK").catch(() => undefined);
-    throw error;
-  } finally {
-    client.release();
-  }
+const domainTransactions = new DomainTransactionRunner({ pool, clock: now });
+
+async function withTransaction<T>(
+  operation: (client: PoolClient, emit: DomainTransactionContext["emit"]) => Promise<T>,
+): Promise<T> {
+  return domainTransactions.run(({ db, emit }) => operation(db, emit));
 }
 
 export class JarClosedError extends Error {
@@ -362,15 +358,17 @@ async function jarRowByCode(
   return rows[0] ? parseJarRow(rows[0]) : null;
 }
 
-async function inviteCodeExists(code: InviteCode): Promise<boolean> {
-  const { rowCount } = await pool.query("SELECT 1 FROM jars WHERE invite_code=$1", [code]);
+async function inviteCodeExists(code: InviteCode, db: Queryable = pool): Promise<boolean> {
+  const { rowCount } = await db.query("SELECT 1 FROM jars WHERE invite_code=$1", [code]);
   return (rowCount ?? 0) > 0;
 }
 
-async function freshInvite(): Promise<{ code: InviteCode; expiresAt: number }> {
+async function freshInvite(
+  db: Queryable = pool,
+): Promise<{ code: InviteCode; expiresAt: number; versionId: string }> {
   let code = inviteCode();
-  while (await inviteCodeExists(code)) code = inviteCode();
-  return { code, expiresAt: now() + 7 * DAY };
+  while (await inviteCodeExists(code, db)) code = inviteCode();
+  return { code, expiresAt: now() + 7 * DAY, versionId: id("inv") };
 }
 
 async function assertJarOpen(jarId: JarId, db: Queryable = pool, lock = false): Promise<JarRow> {
@@ -503,10 +501,15 @@ export async function createJar(opts: {
   defaultCents?: number;
 }): Promise<JarSummaryDTO> {
   const jid = id("jar");
-  const invite = await freshInvite();
-  await withTransaction(async (db) => {
+  await withTransaction(async (db, emit) => {
+    const invite = await freshInvite(db);
+    const timezoneResult = await db.query<{ timezone: string }>(
+      "SELECT timezone FROM users WHERE id=$1",
+      [opts.userId],
+    );
+    const timezone = requireValue(timezoneResult.rows[0]?.timezone, "jar owner timezone missing");
     await db.query(
-      "INSERT INTO jars (id, name, rule, default_cents, currency, created_by, invite_code, invite_expires_at, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+      "INSERT INTO jars (id, name, rule, default_cents, currency, created_by, invite_code, invite_expires_at, invite_version_id, timezone, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
       [
         jid,
         opts.name,
@@ -516,10 +519,14 @@ export async function createJar(opts: {
         opts.userId,
         invite.code,
         invite.expiresAt,
+        invite.versionId,
+        timezone,
         now(),
       ],
     );
-    await addMembership(jid, opts.userId, "owner", db);
+    await addMembership(jid, opts.userId, "owner", db, true);
+    await emit({ type: "jar.created", aggregateId: jid, aggregateVersion: 1 });
+    await emit({ type: "invite.issued", aggregateId: invite.versionId, aggregateVersion: 1 });
   });
   const jars = await listJarsForUser(opts.userId);
   return requireValue(
@@ -533,27 +540,42 @@ async function addMembership(
   userId: UserId,
   role: "owner" | "member",
   db: Queryable = pool,
-): Promise<void> {
-  await db.query(
-    "INSERT INTO memberships (id, jar_id, user_id, role, tally_cents, streak_start_at, share_streak, joined_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (jar_id, user_id) DO UPDATE SET left_at=NULL",
-    [id("mem"), jarId, userId, role, 0, null, 0, now()],
+  createTenure = true,
+): Promise<{ membershipId: string; tenureId: string | null }> {
+  const joinedAt = now();
+  const { rows } = await db.query<{ id: string }>(
+    "INSERT INTO memberships (id, jar_id, user_id, role, tally_cents, streak_start_at, share_streak, joined_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (jar_id, user_id) DO UPDATE SET left_at=NULL RETURNING id",
+    [id("mem"), jarId, userId, role, 0, null, 0, joinedAt],
   );
+  const membershipId = requireValue(rows[0]?.id, "membership could not be persisted");
+  if (!createTenure) return { membershipId, tenureId: null };
+  const tenureId = id("mtn");
+  await db.query(
+    "INSERT INTO membership_tenures (id, membership_id, joined_at) VALUES ($1,$2,$3)",
+    [tenureId, membershipId, joinedAt],
+  );
+  return { membershipId, tenureId };
 }
 
 export async function joinJarByCode(
   userId: UserId,
   code: InviteCode,
 ): Promise<{ jarId: JarId } | null> {
-  return withTransaction(async (db) => {
+  return withTransaction(async (db, emit) => {
     // Lock and revalidate the invite in the same transaction that admits the
     // member. A concurrent close/rotation must serialize before or after this
     // join; it can no longer invalidate the code and then have this join commit.
     const j = await jarRowByCode(code, db, true);
     if (!j) return null;
     const already = await isMemberIn(db, j.id, userId, true);
-    await addMembership(j.id, userId, "member", db);
+    const membership = await addMembership(j.id, userId, "member", db, !already);
     if (!already) {
       await logActivity({ jarId: j.id, type: "join", actorId: userId }, db);
+      await emit({
+        type: "membership.joined",
+        aggregateId: requireValue(membership.tenureId, "joined membership tenure missing"),
+        aggregateVersion: 1,
+      });
     }
     return { jarId: j.id };
   });
@@ -563,36 +585,52 @@ export async function closeJar(
   jarId: JarId,
   userId: UserId,
 ): Promise<{ status: "closed" | "forbidden" | "not_member" | "not_found" }> {
-  const jar = await jarRow(jarId);
-  if (!jar) return { status: "not_found" };
-  const membership = await membershipRow(jarId, userId);
-  if (!membership) return { status: "not_member" };
-  if (membership.role !== "owner") return { status: "forbidden" };
-  if (jar.closed_at == null) {
-    await pool.query(
-      "UPDATE jars SET closed_at=$1, closed_by=$2, invite_code=NULL, invite_expires_at=NULL WHERE id=$3 AND closed_at IS NULL",
-      [now(), userId, jarId],
-    );
-  }
-  return { status: "closed" };
+  return withTransaction(async (db, emit) => {
+    const jar = await jarRow(jarId, db, true);
+    if (!jar) return { status: "not_found" };
+    const membership = await membershipRow(jarId, userId, db, true);
+    if (!membership) return { status: "not_member" };
+    if (membership.role !== "owner") return { status: "forbidden" };
+    if (jar.closed_at == null) {
+      await db.query(
+        "UPDATE jars SET closed_at=$1, closed_by=$2, invite_code=NULL, invite_expires_at=NULL WHERE id=$3 AND closed_at IS NULL",
+        [now(), userId, jarId],
+      );
+      await emit({ type: "jar.closed", aggregateId: jarId, aggregateVersion: 2 });
+      await emit({
+        type: "invite.superseded",
+        aggregateId: jar.invite_version_id,
+        aggregateVersion: 2,
+      });
+    }
+    return { status: "closed" };
+  });
 }
 
 export async function rotateInvite(
   jarId: JarId,
   userId: UserId,
 ): Promise<{ status: "rotated" | "forbidden" | "jar_closed" | "not_member" | "not_found" }> {
-  const jar = await jarRow(jarId);
-  if (!jar) return { status: "not_found" };
-  const membership = await membershipRow(jarId, userId);
-  if (!membership) return { status: "not_member" };
-  if (membership.role !== "owner") return { status: "forbidden" };
-  if (jar.closed_at != null) return { status: "jar_closed" };
-  const invite = await freshInvite();
-  await pool.query(
-    "UPDATE jars SET invite_code=$1, invite_expires_at=$2 WHERE id=$3 AND closed_at IS NULL",
-    [invite.code, invite.expiresAt, jarId],
-  );
-  return { status: "rotated" };
+  return withTransaction(async (db, emit) => {
+    const jar = await jarRow(jarId, db, true);
+    if (!jar) return { status: "not_found" };
+    const membership = await membershipRow(jarId, userId, db, true);
+    if (!membership) return { status: "not_member" };
+    if (membership.role !== "owner") return { status: "forbidden" };
+    if (jar.closed_at != null) return { status: "jar_closed" };
+    const invite = await freshInvite(db);
+    await db.query(
+      "UPDATE jars SET invite_code=$1, invite_expires_at=$2, invite_version_id=$3 WHERE id=$4 AND closed_at IS NULL",
+      [invite.code, invite.expiresAt, invite.versionId, jarId],
+    );
+    await emit({
+      type: "invite.superseded",
+      aggregateId: jar.invite_version_id,
+      aggregateVersion: 2,
+    });
+    await emit({ type: "invite.issued", aggregateId: invite.versionId, aggregateVersion: 1 });
+    return { status: "rotated" };
+  });
 }
 
 export async function leaveJar(
@@ -601,17 +639,29 @@ export async function leaveJar(
 ): Promise<{
   status: "left" | "owner_must_close" | "not_member" | "not_found" | "jar_closed";
 }> {
-  const jar = await jarRow(jarId);
-  if (!jar) return { status: "not_found" };
-  if (jar.closed_at != null) return { status: "jar_closed" };
-  const membership = await membershipRow(jarId, userId);
-  if (!membership) return { status: "not_member" };
-  if (membership.role === "owner") return { status: "owner_must_close" };
-  await pool.query(
-    "UPDATE memberships SET left_at=$1 WHERE jar_id=$2 AND user_id=$3 AND left_at IS NULL",
-    [now(), jarId, userId],
-  );
-  return { status: "left" };
+  return withTransaction(async (db, emit) => {
+    const jar = await jarRow(jarId, db, true);
+    if (!jar) return { status: "not_found" };
+    if (jar.closed_at != null) return { status: "jar_closed" };
+    const membership = await membershipRow(jarId, userId, db, true);
+    if (!membership) return { status: "not_member" };
+    if (membership.role === "owner") return { status: "owner_must_close" };
+    const leftAt = now();
+    await db.query(
+      "UPDATE memberships SET left_at=$1 WHERE jar_id=$2 AND user_id=$3 AND left_at IS NULL",
+      [leftAt, jarId, userId],
+    );
+    const tenureResult = await db.query<{ id: string }>(
+      "UPDATE membership_tenures SET left_at=$1 WHERE membership_id=$2 AND left_at IS NULL RETURNING id",
+      [leftAt, membership.id],
+    );
+    await emit({
+      type: "membership.left",
+      aggregateId: requireValue(tenureResult.rows[0]?.id, "active membership tenure missing"),
+      aggregateVersion: 2,
+    });
+    return { status: "left" };
+  });
 }
 
 export async function setShareStreak(jarId: JarId, userId: UserId, val: boolean): Promise<void> {
@@ -637,11 +687,12 @@ export async function logSlip(opts: {
   reportedBy?: UserId | null;
   reportId?: ReportId | null;
 }): Promise<void> {
-  await withTransaction((client) => logSlipInTransaction(client, opts));
+  await withTransaction((client, emit) => logSlipInTransaction(client, emit, opts));
 }
 
 async function logSlipInTransaction(
   db: Queryable,
+  emit: DomainTransactionContext["emit"],
   opts: {
     jarId: JarId;
     userId: UserId;
@@ -658,11 +709,12 @@ async function logSlipInTransaction(
     throw new Error("not a jar member");
   }
   const before = await jarTotal(opts.jarId, db);
+  const slipId = id("slip");
 
   await db.query(
     "INSERT INTO slips (id, jar_id, user_id, amount_cents, note, ex_label, source, reported_by, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
     [
-      id("slip"),
+      slipId,
       opts.jarId,
       opts.userId,
       opts.amountCents,
@@ -673,6 +725,7 @@ async function logSlipInTransaction(
       now(),
     ],
   );
+  await emit({ type: "slip.logged", aggregateId: slipId, aggregateVersion: 1 });
   await db.query(
     "UPDATE memberships SET tally_cents = tally_cents + $1, streak_start_at = $2 WHERE jar_id=$3 AND user_id=$4",
     [opts.amountCents, now(), opts.jarId, opts.userId],
@@ -696,6 +749,18 @@ async function logSlipInTransaction(
     t <= after;
     t += MILESTONE_STEP
   ) {
+    const milestoneId = id("jms");
+    const milestone = await db.query<{ id: string }>(
+      "INSERT INTO jar_milestones (id, jar_id, threshold_cents, reached_at) VALUES ($1,$2,$3,$4) ON CONFLICT (jar_id, threshold_cents) DO NOTHING RETURNING id",
+      [milestoneId, opts.jarId, t, now()],
+    );
+    if (milestone.rows[0]) {
+      await emit({
+        type: "jar.milestone_crossed",
+        aggregateId: milestone.rows[0].id,
+        aggregateVersion: 1,
+      });
+    }
     await logActivity(
       {
         jarId: opts.jarId,
@@ -718,7 +783,7 @@ export async function createReport(opts: {
   evidence: EvidenceImageInput[];
 }): Promise<ReportDTO> {
   const rid = id("rpt");
-  await withTransaction(async (db) => {
+  await withTransaction(async (db, emit) => {
     await assertJarOpen(opts.jarId, db, true);
     if (
       !(await isMemberIn(db, opts.jarId, opts.accuserId, true)) ||
@@ -758,6 +823,7 @@ export async function createReport(opts: {
       },
       db,
     );
+    await emit({ type: "report.created", aggregateId: rid, aggregateVersion: 1 });
   });
   return requireValue(await serializeReport(rid), "created report could not be loaded");
 }
@@ -871,13 +937,13 @@ export async function resolveReport(
   userId: UserId,
   action: "own" | "deny",
 ): Promise<ReportDTO | null> {
-  const resolved = await withTransaction(async (db) => {
+  const resolved = await withTransaction(async (db, emit) => {
     const r = await reportRow(reportId, db, true);
     if (!r || r.accused_id !== userId || r.status !== "pending") return false;
     await assertJarOpen(r.jar_id, db, true);
     if (!(await isMemberIn(db, r.jar_id, userId, true))) return false;
     if (action === "own") {
-      await logSlipInTransaction(db, {
+      await logSlipInTransaction(db, emit, {
         jarId: r.jar_id,
         userId: r.accused_id,
         amountCents: r.amount_cents,
@@ -890,6 +956,7 @@ export async function resolveReport(
         now(),
         reportId,
       ]);
+      await emit({ type: "report.owned", aggregateId: reportId, aggregateVersion: 2 });
     } else {
       await db.query("UPDATE reports SET status='denied', resolved_at=$1 WHERE id=$2", [
         now(),
@@ -904,6 +971,7 @@ export async function resolveReport(
         },
         db,
       );
+      await emit({ type: "report.denied", aggregateId: reportId, aggregateVersion: 2 });
     }
     return true;
   });

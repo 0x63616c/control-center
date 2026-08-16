@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { type InviteCode, JarDetailSchema, ReportSchema } from "../../../../contracts";
 import { pool } from "../db/index";
 import { runMigrations } from "../db/migrate";
+import { PostgresOutbox } from "../outbox";
 import { buildApp } from "../server";
 import * as store from "../store";
 
@@ -25,7 +26,8 @@ beforeEach(async () => {
   if (!HAS_DB) return;
   // Truncate all tables in reverse dep order
   await pool.query(`
-    TRUNCATE report_evidence, reports, activity, slips, memberships,
+    TRUNCATE domain_event, jar_milestones, membership_tenures,
+             report_evidence, reports, activity, slips, memberships,
              sessions, otps, user_exes, jars, users RESTART IDENTITY CASCADE
   `);
 });
@@ -1377,6 +1379,56 @@ describe.skipIf(!HAS_DB)("authorization matrix", () => {
       "POST",
       { code: joinCode },
     );
+  });
+});
+
+describe.skipIf(!HAS_DB)("transactional domain events", () => {
+  it("emits complete versioned events for existing jar, membership, slip, milestone and report mutations", async () => {
+    const owner = await store.createUser({ name: "Event Owner" });
+    const member = await store.createUser({ name: "Event Member" });
+    const jar = await store.createJar({ userId: owner.id, name: "Event Jar" });
+    const detail = await store.getJarDetail(jar.id, owner.id);
+    await store.joinJarByCode(member.id, requireInviteCode(detail));
+    await store.logSlip({ jarId: jar.id, userId: owner.id, amountCents: 5000 });
+    const report = await store.createReport({
+      jarId: jar.id,
+      accuserId: owner.id,
+      accusedId: member.id,
+      note: "event test",
+      anonymous: false,
+      amountCents: 500,
+      evidence: [],
+    });
+    await store.resolveReport(report.id, member.id, "own");
+    await store.rotateInvite(jar.id, owner.id);
+    await store.leaveJar(jar.id, member.id);
+    await store.closeJar(jar.id, owner.id);
+
+    const events = await new PostgresOutbox(pool).claimPage({
+      owner: "event-test",
+      limit: 50,
+      now: Date.now() + 1,
+      leaseUntil: Date.now() + 10_000,
+    });
+    const types = events.map((event) => event.type);
+    expect(types).toEqual(
+      expect.arrayContaining([
+        "jar.created",
+        "invite.issued",
+        "membership.joined",
+        "slip.logged",
+        "jar.milestone_crossed",
+        "report.created",
+        "report.owned",
+        "invite.superseded",
+        "membership.left",
+        "jar.closed",
+      ]),
+    );
+    expect(types.filter((type) => type === "slip.logged")).toHaveLength(2);
+    expect(types.filter((type) => type === "invite.issued")).toHaveLength(2);
+    expect(types.filter((type) => type === "invite.superseded")).toHaveLength(2);
+    expect(events).toHaveLength(13);
   });
 });
 
