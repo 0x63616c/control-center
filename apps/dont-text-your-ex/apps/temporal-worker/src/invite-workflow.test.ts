@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   condition: vi.fn(async () => false),
   load: vi.fn(async () => ({ kind: "superseded" as const })),
   request: vi.fn(async () => ({ kind: "reminded" as const })),
+  handlers: new Map<string, (input: never) => void>(),
 }));
 
 vi.mock("@temporalio/workflow", () => ({
@@ -14,7 +15,9 @@ vi.mock("@temporalio/workflow", () => ({
     loadInviteLifecycle: mocks.load,
     requestInviteReminder: mocks.request,
   }),
-  setHandler: vi.fn(),
+  setHandler: vi.fn((name: string, handler: (input: never) => void) => {
+    mocks.handlers.set(name, handler);
+  }),
 }));
 
 import {
@@ -34,6 +37,7 @@ beforeEach(() => {
   mocks.condition.mockReset().mockResolvedValue(false);
   mocks.load.mockReset().mockResolvedValue({ kind: "superseded" });
   mocks.request.mockReset().mockResolvedValue({ kind: "reminded" });
+  mocks.handlers.clear();
 });
 
 describe("InviteLifecycleWorkflow", () => {
@@ -62,6 +66,30 @@ describe("InviteLifecycleWorkflow", () => {
 
     await expect(InviteLifecycleWorkflow(input)).resolves.toBe("reminded");
     expect(mocks.condition).toHaveBeenCalledWith(expect.any(Function), 0);
+  });
+
+  it("wakes early only for a matching, monotonic version signal", async () => {
+    const predicateResults: boolean[] = [];
+    mocks.load.mockResolvedValue({
+      kind: "eligible",
+      expiresAt: Date.now() + 3 * 24 * 60 * 60 * 1000,
+    } as never);
+    mocks.condition.mockImplementation((async (predicate: () => boolean) => {
+      const signal = mocks.handlers.get("superseded");
+      signal?.({
+        schemaVersion: 1,
+        inviteVersionId: "inv_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        expectedAggregateVersion: 2,
+      } as never);
+      predicateResults.push(predicate());
+      signal?.({ ...input, expectedAggregateVersion: 2 } as never);
+      predicateResults.push(predicate());
+      return true;
+    }) as never);
+    mocks.request.mockResolvedValue({ kind: "superseded" } as never);
+
+    await expect(InviteLifecycleWorkflow(input)).resolves.toBe("superseded");
+    expect(predicateResults).toEqual([false, true]);
   });
 
   it.each([
