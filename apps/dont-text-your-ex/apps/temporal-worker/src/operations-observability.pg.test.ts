@@ -9,11 +9,13 @@ const databaseUrl = buildDatabaseUrl();
 const HAS_DB = databaseUrl !== undefined;
 const pool = new Pool({ connectionString: databaseUrl });
 const ids = [`evt_${"8".repeat(32)}`, `evt_${"9".repeat(32)}`, `evt_${"a".repeat(32)}`];
+let baseline = { pending: 0, oldestAgeSeconds: 0, permanentFailures: 0 };
 
 beforeAll(async () => {
   if (!HAS_DB) return;
   await runMigrations();
   await pool.query("DELETE FROM domain_event WHERE id = ANY($1)", [ids]);
+  baseline = await new PostgresOutboxOperationalSnapshotStore(pool).snapshot(11_000);
   await pool.query(
     `INSERT INTO domain_event
        (id,event_type,schema_version,aggregate_type,aggregate_id,aggregate_version,
@@ -36,9 +38,9 @@ describe.skipIf(!HAS_DB)("Postgres outbox operational snapshot", () => {
   test("counts pending plus claimed work, oldest age, and quarantined events", async () => {
     const store = new PostgresOutboxOperationalSnapshotStore(pool);
     await expect(store.snapshot(11_000)).resolves.toEqual({
-      pending: 2,
-      oldestAgeSeconds: 10,
-      permanentFailures: 1,
+      pending: baseline.pending + 2,
+      oldestAgeSeconds: Math.max(baseline.oldestAgeSeconds, 10),
+      permanentFailures: baseline.permanentFailures + 1,
     });
   });
 });
