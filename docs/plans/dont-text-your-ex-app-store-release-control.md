@@ -181,7 +181,7 @@ Notify Calum instead of guessing for:
 
 ## Current verified baseline — refresh before relying on it
 
-Snapshot date: **2026-08-15**.
+Snapshot date: **2026-08-16T04:19:55Z**.
 
 Proven and reusable:
 
@@ -190,14 +190,30 @@ Proven and reusable:
 - Immutable application revision `ecf47add229d590bdce7238e7130fb802e07b9da`
   passed run `31872702467`, including Postgres contracts, Playwright, Storybook,
   typecheck/Knip, images, and both home-server and Cloudflare deployment.
+- Current `origin/main` is
+  `f2426fdc8957b9409d1c0a0efb97e6dfd9fbbfe1` (PR `#703`). Its docs-only main
+  run `31926173581` and CodeQL run `31926173275` passed. Product-specific jobs
+  were path-skipped, so these runs prove the merged control document and current
+  main gates, not a fresh application build or deployment.
 - Production frontend/API/CNPG/migrations, public HTTPS, persistence across API
   and database restarts, backup/restore, cleanup, and a second deployment have
   evidence in the restoration ledger.
+- Live refresh found namespace `dont-text-your-ex` active; API and frontend
+  deployments `1/1` ready with zero pod restarts; CNPG healthy with continuous
+  archiving; and the latest scheduled backup job successful. Public Cloudflare
+  HTTPS returned `/` 200, `/api/health` 200 with `{"ok":true}`, and unauthenticated
+  `/api/me` 401 with `{"error":"not_authenticated"}`. This refresh did not repeat
+  the historical destructive restart or scratch-restore tests.
 - Signed Build 24 carries Sign in with Apple and Associated Domains in the app
   and provisioning profile. AASA origin and Apple CDN responses were proven.
+- The live origin and Apple CDN AASA responses remain exact 164-byte matches
+  (`sha256:63a9fc47b8ddbfdec31aa56e72a5bac627d74babdf6742a5f881d37a75f176a2`)
+  for app ID `X9E4HG27NK.co.worldwidewebb.textyourex` and `/j/*`.
 - Build 24 is processed and assigned to Internal and Friends. The public
-  TestFlight link exists. Live App Store Connect showed Build 24 **Waiting for
-  Review** for Beta App Review.
+  TestFlight link `https://testflight.apple.com/join/6HcbUuV3` exists. Live App
+  Store Connect showed Build 24 **Waiting for Review** for Beta App Review;
+  Friends has zero testers and cannot accept public-link testers until an
+  approved build is available.
 - App Store version 1.0 is **Prepare for Submission**. Live inspection showed
   zero screenshots, no App Store build attached, blank version metadata/reviewer
   fields, unresolved app-level setup, and automatic release currently selected.
@@ -208,7 +224,9 @@ Known open release gaps:
 - Gameplay reporting is not abuse reporting. There is no block-user model,
   operator moderation flow, or objectionable-content filtering.
 - `/privacy`, `/support`, `/terms`, and `/community-guidelines` currently return
-  the same SPA shell rather than genuine public documents.
+  the same 1,946-byte SPA shell as `/` rather than genuine public documents.
+- `/version.json` is also that SPA fallback, so production currently exposes no
+  direct source-SHA/build mapping.
 - Runtime/public-facing copy contains “shame,” “guilt,” and accusatory language
   that creates Guideline 1.1/1.2 risk.
 - Physical production Sign in with Apple, external non-team install/core flow,
@@ -678,6 +696,9 @@ evidence with stable URLs/IDs. “Observed” without a timestamp/source is inva
 | 2026-08-15 | P00 | Existing production restoration | PASS | `ecf47add2`, Build 24 | Restoration execution ledger; CI `31872702467` | Prior independent QA + coordinator |
 | 2026-08-15 | P00 | Live App Store version baseline | PASS | Version 1.0 | Prepare for Submission; 0 screenshots; no build attached; blank visible metadata/review fields | Coordinator browser inspection |
 | 2026-08-15 | P00 | Durable tracker | PASS | `T-41` | Verbatim request, source-of-truth path, and public completion boundary recorded | Coordinator |
+| 2026-08-16T04:18:32Z | P00 | Repository, tracker, and current main gates | PASS | `f2426fdc8` | PR [#703](https://github.com/0x63616c/world-wide-webb/pull/703); main CI [31926173581](https://github.com/0x63616c/world-wide-webb/actions/runs/31926173581); CodeQL `31926173275`; `T-41` open; [redacted evidence](../evidence/dont-text-your-ex/p00-baseline-2026-08-16.md) | Engineering release audit + coordinator |
+| 2026-08-16T04:17:52Z | P00 | Production, public edge, and AASA | PASS with recorded gaps | deployed pre-P00 images | [Machine/public evidence](../evidence/dont-text-your-ex/p00-baseline-2026-08-16.md); policy routes and `/version.json` proven SPA fallbacks | Production/public audit + coordinator |
+| 2026-08-16T04:19:55Z | P00 | Live Apple release state | PASS | Version 1.0; Build 24 | [Redacted UI-state evidence](../evidence/dont-text-your-ex/p00-baseline-2026-08-16.md); [public TestFlight link](https://testflight.apple.com/join/6HcbUuV3) | Coordinator browser inspection + independent screenshot review |
 
 ## Blocker ledger
 
@@ -690,15 +711,16 @@ evidence with stable URLs/IDs. “Observed” without a timestamp/source is inva
 | Date/time | Percent | Milestone | Event ID | Blockers / remaining |
 |---|---:|---|---|---|
 | 2026-08-15 | 2% | Control-document phase started | `KmPxBhNk5S6G` | Sent before packet-weight formula; earned progress was 0%. Correct in the next notification. |
+| 2026-08-15 | 0% | Control document merged; P00 refresh started | `XoGDGDjQvfOC` | Corrected earned progress; no P00 blocker; baseline refresh remained. |
 
 ## Current status
 
-- **Calculated progress:** 0% until P00 is committed and its baseline refresh is
-  complete. The initial 2% notification described control-document work in
-  progress, not earned packet credit.
+- **Calculated progress:** 0%. P00 evidence is assembled but earns its 5% only
+  after the evidence refresh is merged and the required milestone notification
+  is sent and recorded.
 - **Current packet:** P00.
-- **Current blockers:** none for P00. Final physical/external QA will later wait
-  for a compliant Build 25+; P01 owner decisions will be requested after the
-  baseline is finalized.
-- **Next action:** independently review this document, commit/push it, reconcile
-  live baseline evidence, then mark P00 `PROVEN` and notify 5%.
+- **Current blockers:** none for P00. Build 24's Beta App Review is external
+  waiting state and is not on the public-submission critical path.
+- **Next action:** merge this independently reviewed evidence refresh, send the
+  earned 5% notification, record its event ID in a packet-closing change, then
+  begin P01 without guessing legal or business declarations.
