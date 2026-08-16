@@ -17,22 +17,20 @@ import type { WeightReadingDay } from "@/components/tiles/WeightReadingsView";
 import { WeightReadingsView } from "@/components/tiles/WeightReadingsView";
 import { TileStatus } from "@/components/ui";
 import { POLL, useNow } from "@/lib/hooks";
+import { formatDateKey, formatInTimeZone, useTimeZone } from "@/lib/time-zone";
 import type { RouterOutputs } from "@/lib/trpc";
 import { trpc } from "@/lib/trpc";
 import type { DetailVariant, TileDetailPageEntry } from "../types";
 
-/** The panel's own IANA zone, e.g. "America/Los_Angeles". */
-const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
-
 /** "Jun 22 – Today" for the chart's bottom-right window label. */
-function windowLabelOf(daily: { day: string }[], now: Date): string | null {
+function windowLabelOf(daily: { day: string }[], now: Date, timeZone: string): string | null {
   const first = daily[0];
   const lastDay = daily[daily.length - 1];
   if (!first || !lastDay) return null;
   const fmt = (day: string) =>
     // day is a local YYYY-MM-DD; parse as local midnight, not UTC.
-    new Date(`${day}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  const end = formatRecency(`${lastDay.day}T00:00:00`, now);
+    formatDateKey(day, { month: "short", day: "numeric" });
+  const end = formatRecency(lastDay.day, now, timeZone);
   return `${fmt(first.day)} – ${end}`;
 }
 
@@ -63,19 +61,16 @@ function toComposition(
   });
 }
 
-function toViewDays(pages: RouterOutputs["weight"]["days"][], now: Date): WeightReadingDay[] {
+function toViewDays(pages: RouterOutputs["weight"]["days"][], now: Date, timeZone: string): WeightReadingDay[] {
   const all = pages.flatMap((page) =>
     page.days.map((d) => ({
       key: d.day,
-      label: formatRecency(`${d.day}T00:00:00`, now),
+      label: formatRecency(d.day, now, timeZone),
       medianLb: d.medianKg == null ? null : d.medianKg * LB_PER_KG,
       dayDeltaLb: d.dayDeltaKg == null ? null : d.dayDeltaKg * LB_PER_KG,
       readings: d.readings.map((r) => ({
         id: r.id,
-        timeLabel: new Date(r.measuredAt).toLocaleTimeString("en-US", {
-          hour: "numeric",
-          minute: "2-digit",
-        }),
+        timeLabel: formatInTimeZone(r.measuredAt, timeZone, { hour: "numeric", minute: "2-digit" }),
         lb: r.weightKg * LB_PER_KG,
         deltaLb: r.deltaKg == null ? null : r.deltaKg * LB_PER_KG,
         excluded: r.excludedReason != null,
@@ -115,10 +110,15 @@ function useWeightVariants(): { variants: DetailVariant[]; loading: boolean } {
   const [range, setRange] = useState<WeightRange>("30d");
   const [metric, setMetric] = useState<WeightMetricValue>("weight_kg");
   const now = useNow();
+  const timeZone = useTimeZone();
 
   const utils = trpc.useUtils();
+  useEffect(() => {
+    void utils.weight.summary.invalidate();
+    void utils.weight.days.invalidate();
+  }, [timeZone, utils]);
   const summaryQuery = trpc.weight.summary.useQuery(
-    { range, tz: TZ, metric },
+    { range, metric },
     { refetchInterval: POLL.weight, placeholderData: keepPreviousData },
   );
 
@@ -137,7 +137,7 @@ function useWeightVariants(): { variants: DetailVariant[]; loading: boolean } {
     setResolvedMetric(metric);
   }, [summaryQuery.data, summaryQuery.isPlaceholderData, metric]);
   const daysQuery = trpc.weight.days.useInfiniteQuery(
-    { tz: TZ },
+    {},
     {
       getNextPageParam: (last) => last.nextCursor ?? undefined,
       // No polling: pages are keyed by absolute day-string cursors, frozen at
@@ -216,7 +216,7 @@ function useWeightVariants(): { variants: DetailVariant[]; loading: boolean } {
             high={summary.high * f}
             average={summary.average * f}
             change={summary.change * f}
-            windowLabel={windowLabelOf(summary.daily, now) ?? undefined}
+            windowLabel={windowLabelOf(summary.daily, now, timeZone) ?? undefined}
           />
         ) : (
           // Null summary = nothing to plot for this metric — either day one, or
@@ -238,7 +238,7 @@ function useWeightVariants(): { variants: DetailVariant[]; loading: boolean } {
       render: () => (
         <WeightReadingsView
           status={pages ? TileStatus.Populated : TileStatus.Loading}
-          days={pages ? toViewDays(pages, now) : undefined}
+          days={pages ? toViewDays(pages, now, timeZone) : undefined}
           onToggle={(id, excluded) => setExcludedMutation.mutate({ id, excluded })}
           onDelete={(id) => deleteMutation.mutate({ id })}
           onLoadMore={daysQuery.hasNextPage ? loadMore : undefined}
