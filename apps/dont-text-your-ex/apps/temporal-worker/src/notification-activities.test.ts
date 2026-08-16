@@ -3,8 +3,9 @@ import { describe, expect, it, vi } from "vitest";
 import { NotificationDeliveryIdSchema, NotificationIdSchema } from "../../../contracts";
 import { createNotificationActivities } from "./notification-activities";
 
-const notificationId = NotificationIdSchema.parse("ntf_example");
+const notificationId = NotificationIdSchema.parse("ntf_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
 const deliveryId = NotificationDeliveryIdSchema.parse("ndl_example");
+const logger = { info: vi.fn(), warn: vi.fn() };
 
 function store(overrides: Partial<NotificationStore> = {}): NotificationStore {
   return {
@@ -14,11 +15,14 @@ function store(overrides: Partial<NotificationStore> = {}): NotificationStore {
     updatePreferences: vi.fn(),
     resolveTarget: vi.fn(),
     prepareDeliveries: vi.fn(async () => [deliveryId]),
+    suppressPending: vi.fn(),
+    rotateTokenBatch: vi.fn(async () => 0),
     loadDelivery: vi.fn(async () => ({
       deliveryId,
       notificationId,
       deviceToken: "ab".repeat(32),
       environment: "sandbox",
+      expiresAtMs: null,
     })),
     recordDeliveryOutcome: vi.fn(),
     ...overrides,
@@ -30,6 +34,7 @@ describe("notification delivery activities", () => {
     const activities = createNotificationActivities({
       store: store(),
       apnsClient: () => ({ send: vi.fn() }) as ApnsClient,
+      logger,
     });
 
     await expect(activities.prepareNotification({ notificationId })).resolves.toEqual({
@@ -37,7 +42,7 @@ describe("notification delivery activities", () => {
     });
   });
 
-  it("throws a retryable error instead of persisting a transient APNs result", async () => {
+  it("persists a finite retry result for durable workflow backoff", async () => {
     const recordDeliveryOutcome = vi.fn();
     const activities = createNotificationActivities({
       store: store({ recordDeliveryOutcome }),
@@ -48,12 +53,17 @@ describe("notification delivery activities", () => {
           retryAfterMs: 15_000,
         })),
       }),
+      logger,
     });
 
-    await expect(activities.deliverNotification({ deliveryId })).rejects.toThrow(
-      "retryable APNs failure: Shutdown",
-    );
-    expect(recordDeliveryOutcome).not.toHaveBeenCalled();
+    await expect(
+      activities.deliverNotification({ deliveryId, finalAttempt: false }),
+    ).resolves.toEqual({ kind: "retry", reason: "Shutdown", retryAfterMs: 15_000 });
+    expect(recordDeliveryOutcome).toHaveBeenCalledWith(deliveryId, {
+      kind: "retry",
+      reason: "Shutdown",
+      retryAfterMs: 15_000,
+    });
   });
 
   it("persists a terminal device rejection", async () => {
@@ -63,9 +73,12 @@ describe("notification delivery activities", () => {
       apnsClient: () => ({
         send: vi.fn(async () => ({ kind: "invalid_device" as const, reason: "Unregistered" })),
       }),
+      logger,
     });
 
-    await expect(activities.deliverNotification({ deliveryId })).resolves.toEqual({
+    await expect(
+      activities.deliverNotification({ deliveryId, finalAttempt: false }),
+    ).resolves.toEqual({
       kind: "invalid_device",
       reason: "Unregistered",
     });

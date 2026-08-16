@@ -1,17 +1,3 @@
-interface DtyeHealthCheckActivityInput {
-  readonly iteration: number;
-}
-interface DtyeHealthCheckActivityOutput {
-  readonly status: "ok";
-}
-
-async function DtyeHealthCheckActivity(
-  input: DtyeHealthCheckActivityInput,
-): Promise<DtyeHealthCheckActivityOutput> {
-  void input;
-  return { status: "ok" };
-}
-
 import { randomUUID } from "node:crypto";
 import {
   createApnsClient,
@@ -21,6 +7,7 @@ import {
   createTokenCipher,
   parseTokenKeyring,
 } from "@dont-text-your-ex/notifications";
+import { createLogger } from "@www/logger";
 import { ENV } from "@www/platform/env";
 import { Pool } from "pg";
 import type { DomainEvent } from "../../api/src/domain-events";
@@ -28,6 +15,20 @@ import type { Outbox } from "../../api/src/outbox";
 import { dispatchOutboxPage, type WorkflowDispatcher } from "../../api/src/workflow-dispatcher";
 import { createNotificationActivities } from "./notification-activities";
 import { runSessionMaintenancePage, type SessionMaintenanceStore } from "./session-maintenance";
+
+export interface DtyeHealthCheckActivityInput {
+  readonly iteration: number;
+}
+export interface DtyeHealthCheckActivityOutput {
+  readonly status: "ok";
+}
+
+export async function DtyeHealthCheckActivity(
+  input: DtyeHealthCheckActivityInput,
+): Promise<DtyeHealthCheckActivityOutput> {
+  void input;
+  return { status: "ok" };
+}
 
 export const OUTBOX_DISPATCH_ACTIVITY_TIMEOUT_MS = 25_000;
 export const OUTBOX_DISPATCH_LEASE_MS = 30_000;
@@ -84,6 +85,7 @@ export function createDtyeActivities(dependencies: DtyeActivityDependencies) {
 export type DtyeActivities = ReturnType<typeof createDtyeActivities>;
 
 let notificationActivities: ReturnType<typeof createNotificationActivities> | undefined;
+const notificationLogger = createLogger({ service: "dont-text-your-ex-temporal-worker" });
 
 function getNotificationActivities(): ReturnType<typeof createNotificationActivities> {
   if (notificationActivities) return notificationActivities;
@@ -128,6 +130,7 @@ function getNotificationActivities(): ReturnType<typeof createNotificationActivi
       createTokenCipher(parseTokenKeyring(JSON.parse(config.PUSH_TOKEN_KEYRING))),
     ),
     apnsClient: (environment) => clients[environment],
+    logger: notificationLogger,
   });
   return notificationActivities;
 }
@@ -142,4 +145,15 @@ export async function deliverNotification(
   input: Parameters<ReturnType<typeof createNotificationActivities>["deliverNotification"]>[0],
 ): ReturnType<ReturnType<typeof createNotificationActivities>["deliverNotification"]> {
   return getNotificationActivities().deliverNotification(input);
+}
+export async function suppressNotification(
+  input: Parameters<ReturnType<typeof createNotificationActivities>["suppressNotification"]>[0],
+): ReturnType<ReturnType<typeof createNotificationActivities>["suppressNotification"]> {
+  return getNotificationActivities().suppressNotification(input);
+}
+
+export async function rotatePushTokenBatch(
+  input: Parameters<ReturnType<typeof createNotificationActivities>["rotatePushTokenBatch"]>[0],
+): ReturnType<ReturnType<typeof createNotificationActivities>["rotatePushTokenBatch"]> {
+  return getNotificationActivities().rotatePushTokenBatch(input);
 }

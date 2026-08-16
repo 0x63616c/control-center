@@ -33,6 +33,7 @@
     "@capacitor/app": "^8.1.0",
     "@capacitor/core": "^8.4.0",
     "@capacitor/ios": "^8.4.0",
+    "@capacitor/push-notifications": "^8.0.3",
     "zod": "^4.4.2"
   }
 }

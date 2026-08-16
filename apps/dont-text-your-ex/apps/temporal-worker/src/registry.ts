@@ -1,5 +1,11 @@
 import type { ScheduleSpec } from "@www/temporal-runtime";
-import { DtyeHealthCheckActivity, deliverNotification, prepareNotification } from "./activities";
+import {
+  DtyeHealthCheckActivity,
+  deliverNotification,
+  prepareNotification,
+  rotatePushTokenBatch,
+  suppressNotification,
+} from "./activities";
 
 export const WORKFLOW_TYPES = [
   "DtyeHealthCheckWorkflow",
@@ -14,8 +20,16 @@ export const ACTIVITY_TYPES = [
   "SessionMaintenanceActivity",
   "prepareNotification",
   "deliverNotification",
+  "suppressNotification",
+  "rotatePushTokenBatch",
 ] as const;
-export const ACTIVITIES = { DtyeHealthCheckActivity, prepareNotification, deliverNotification };
+export const ACTIVITIES = {
+  DtyeHealthCheckActivity,
+  prepareNotification,
+  deliverNotification,
+  suppressNotification,
+  rotatePushTokenBatch,
+};
 export const SCHEDULES = [
   {
     scheduleId: "dtye_health",

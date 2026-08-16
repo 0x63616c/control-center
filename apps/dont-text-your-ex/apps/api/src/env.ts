@@ -15,6 +15,7 @@ const ENV = defineEnv({
   APPLE_BUNDLE_ID: str().default("co.worldwidewebb.textyourex"),
   TEMPORAL_ADDRESS: str().optional(),
   PUSH_TOKEN_KEYRING_FILE: str().default("/run/secrets/PUSH_TOKEN_KEYRING"),
+  PUSH_TOKEN_KEYRING: str().optional(),
   TYE_RESET: str().optional(),
 });
 
@@ -42,7 +43,7 @@ export function temporalAddress(): string | undefined {
 
 export function pushTokenKeyringSource(): unknown {
   try {
-    return JSON.parse(readFileSync(ENV.PUSH_TOKEN_KEYRING_FILE, "utf-8"));
+    return JSON.parse(ENV.PUSH_TOKEN_KEYRING ?? readFileSync(ENV.PUSH_TOKEN_KEYRING_FILE, "utf-8"));
   } catch (error) {
     if (ENV.APP_ENV !== "production") {
       return { activeKeyId: "local", keys: { local: Buffer.alloc(32, 7).toString("base64") } };

@@ -18,7 +18,7 @@ describe("request JSON boundary", () => {
       app.request("/api/push/devices/disable", { method: "POST" }),
       app.request("/api/me/notification-preferences"),
       app.request("/api/me/notification-preferences", { method: "PATCH" }),
-      app.request("/api/notifications/ntf_example/target"),
+      app.request("/api/notifications/ntf_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/target"),
     ]);
 
     expect(responses.map((response) => response.status)).toEqual([401, 401, 401, 401, 401]);

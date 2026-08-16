@@ -7,7 +7,10 @@ const notificationIdSchema = <Brand extends string>(prefix: string, brand: Brand
     .brand<Brand>();
 
 export const PushInstallationIdSchema = notificationIdSchema("dev", "PushInstallationId");
-export const NotificationIdSchema = notificationIdSchema("ntf", "NotificationId");
+export const NotificationIdSchema = z
+  .string()
+  .regex(/^ntf_[a-f0-9]{32}$/, "invalid NotificationId")
+  .brand<"NotificationId">();
 export const NotificationDeliveryIdSchema = notificationIdSchema("ndl", "NotificationDeliveryId");
 
 export type PushInstallationId = z.infer<typeof PushInstallationIdSchema>;
@@ -15,15 +18,23 @@ export type NotificationId = z.infer<typeof NotificationIdSchema>;
 export type NotificationDeliveryId = z.infer<typeof NotificationDeliveryIdSchema>;
 
 export const NOTIFICATION_CATEGORIES = {
-  reports: { defaultEnabled: true, label: "Reports" },
-  rescue: { defaultEnabled: true, label: "Rescue reminders" },
-  slips: { defaultEnabled: false, label: "Slips" },
-  joins: { defaultEnabled: false, label: "New members" },
-  jar_milestones: { defaultEnabled: false, label: "Jar milestones" },
-  streak_milestones: { defaultEnabled: false, label: "Streak milestones" },
-  recaps: { defaultEnabled: false, label: "Monthly recaps" },
-  invites: { defaultEnabled: false, label: "Invite reminders" },
-} as const satisfies Record<string, { readonly defaultEnabled: boolean; readonly label: string }>;
+  report: { defaultEnabled: true, label: "Reports", configurable: true },
+  rescue: { defaultEnabled: true, label: "Rescue reminders", configurable: true },
+  slip: { defaultEnabled: false, label: "Slips", configurable: true },
+  join: { defaultEnabled: false, label: "New members", configurable: true },
+  jar_milestone: { defaultEnabled: false, label: "Jar milestones", configurable: true },
+  streak_milestone: { defaultEnabled: false, label: "Streak milestones", configurable: true },
+  recap: { defaultEnabled: false, label: "Monthly recaps", configurable: true },
+  invite: { defaultEnabled: false, label: "Invite reminders", configurable: true },
+  account_deletion: {
+    defaultEnabled: false,
+    label: "Account deletion",
+    configurable: false,
+  },
+} as const satisfies Record<
+  string,
+  { readonly defaultEnabled: boolean; readonly label: string; readonly configurable: boolean }
+>;
 
 export const NotificationCategorySchema = z.enum(
   Object.keys(NOTIFICATION_CATEGORIES) as [
@@ -42,6 +53,7 @@ export type NotificationPreferences = z.infer<typeof NotificationPreferencesSche
 
 export const UpdateNotificationPreferencesRequestSchema = NotificationPreferencesSchema.partial()
   .refine((patch) => Object.keys(patch).length > 0, "at least one preference is required")
+  .refine((patch) => !("account_deletion" in patch), "account deletion push is immutable")
   .strict();
 export type UpdateNotificationPreferencesRequest = z.infer<
   typeof UpdateNotificationPreferencesRequestSchema

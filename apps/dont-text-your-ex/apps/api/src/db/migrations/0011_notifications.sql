@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS notification_preference (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  category TEXT NOT NULL CHECK (category IN ('reports','rescue','slips','joins','jar_milestones','streak_milestones','recaps','invites')),
+  category TEXT NOT NULL CHECK (category IN ('report','rescue','slip','join','jar_milestone','streak_milestone','recap','invite')),
   enabled BOOLEAN NOT NULL,
   updated_at BIGINT NOT NULL,
   PRIMARY KEY (user_id, category)
@@ -34,7 +34,7 @@ CREATE INDEX IF NOT EXISTS idx_push_device_key
 CREATE TABLE IF NOT EXISTS user_notification (
   id TEXT PRIMARY KEY,
   recipient_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  category TEXT NOT NULL CHECK (category IN ('reports','rescue','slips','joins','jar_milestones','streak_milestones','recaps','invites')),
+  category TEXT NOT NULL CHECK (category IN ('report','rescue','slip','join','jar_milestone','streak_milestone','recap','invite','account_deletion')),
   dedupe_key TEXT NOT NULL,
   target_type TEXT NOT NULL CHECK (target_type IN ('activity','report','jar','profile')),
   target_id TEXT,
@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS notification_delivery (
   id TEXT PRIMARY KEY,
   notification_id TEXT NOT NULL REFERENCES user_notification(id) ON DELETE CASCADE,
   installation_id TEXT NOT NULL REFERENCES push_device(installation_id) ON DELETE CASCADE,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted','invalid_device','permanent_failure')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted','invalid_device','permanent_failure','suppressed')),
   attempt_count INTEGER NOT NULL DEFAULT 0,
   apns_id TEXT,
   failure_code TEXT,

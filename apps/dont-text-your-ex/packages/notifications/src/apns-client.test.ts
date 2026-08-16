@@ -17,9 +17,10 @@ describe("APNs client", () => {
     await expect(
       client.send({
         deviceToken: "ab".repeat(32),
-        notificationId: "ntf_example",
+        notificationId: "ntf_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        expiresAtMs: null,
       }),
-    ).resolves.toEqual({ kind: "invalid_device", reason: "Unregistered" });
+    ).resolves.toEqual({ kind: "invalid_device", reason: "invalid_device" });
   });
 
   it("turns a network failure into a retryable result", async () => {
@@ -33,7 +34,11 @@ describe("APNs client", () => {
     });
 
     await expect(
-      client.send({ deviceToken: "ab".repeat(32), notificationId: "ntf_example" }),
+      client.send({
+        deviceToken: "ab".repeat(32),
+        notificationId: "ntf_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        expiresAtMs: null,
+      }),
     ).resolves.toEqual({ kind: "retry", reason: "network_error", retryAfterMs: 15_000 });
   });
 });
