@@ -58,7 +58,7 @@ Every production screen with user-facing copy changed from `origin/main` has a
 stable fixture in
 [`P02ChangedScreens.stories.tsx`](../../../../apps/dont-text-your-ex/apps/frontend/src/screens/P02ChangedScreens.stories.tsx).
 That story artifact has SHA-256
-`36eeab25e1001f21ac8a8bab197a4c69f596dcbf25c780e0fac615248e88a34e`.
+`17557278e2b18604221f8ea7a2516c03416db9b8ea71a37b054eaa3bb9b63519`.
 With `VITE_DTYE_P02_CAPTURE=1`, each passing Chromium story writes its named PNG
 through the repository's Vitest Browser context. All 14 PNGs below were then
 independently inspected at original resolution.
