@@ -176,6 +176,38 @@ describe.skipIf(!HAS_DB)("authenticated notification delivery", () => {
     expect(await notificationStore.prepareDeliveries(secondNotification)).toEqual([]);
   });
 
+  it("replays an accepted delivery as delivered without exposing the device token", async () => {
+    const user = await store.createUser({ name: "Replay User" });
+    const installationId = PushInstallationIdSchema.parse("dev_replay");
+    await notificationStore.registerDevice(user.id, {
+      installationId,
+      token: "ac".repeat(32),
+      platform: "ios",
+      environment: "sandbox",
+      appVersion: "1.0",
+      appBuild: "24",
+    });
+    const notificationId = NotificationIdSchema.parse("ntf_55555555555555555555555555555555");
+    await pool.query(
+      `INSERT INTO user_notification
+       (id,recipient_user_id,category,dedupe_key,target_type,message_key,created_at)
+       VALUES ($1,$2,'report','accepted-replay','activity','reports.pending',$3)`,
+      [notificationId, user.id, 1_750_000_000_000],
+    );
+    const [deliveryId] = await notificationStore.prepareDeliveries(notificationId);
+    if (!deliveryId) throw new Error("delivery was not prepared");
+
+    await notificationStore.recordDeliveryOutcome(deliveryId, {
+      kind: "accepted",
+      apnsId: "accepted-by-apns",
+    });
+
+    await expect(notificationStore.loadDelivery(deliveryId)).resolves.toEqual({
+      kind: "terminal",
+      state: "delivered",
+    });
+  });
+
   it("applies safe defaults and persists authenticated preference patches", async () => {
     const user = await store.createUser({ name: "Preference User" });
     const token = await store.createSession(user.id);
@@ -252,7 +284,10 @@ describe.skipIf(!HAS_DB)("authenticated notification delivery", () => {
     if (!deliveryId) throw new Error("delivery was not prepared");
     await notificationStore.updatePreferences(user.id, { report: false });
 
-    await expect(notificationStore.loadDelivery(deliveryId)).resolves.toBeNull();
+    await expect(notificationStore.loadDelivery(deliveryId)).resolves.toEqual({
+      kind: "terminal",
+      state: "suppressed",
+    });
     expect(
       (
         await pool.query<{ status: string }>(

@@ -32,6 +32,11 @@ export interface DeliveryForSend {
   readonly expiresAtMs: number | null;
 }
 
+export type DeliveryTerminalState = "delivered" | "suppressed" | "permanent_failure";
+export type DeliveryLoadResult =
+  | { readonly kind: "ready"; readonly delivery: DeliveryForSend }
+  | { readonly kind: "terminal"; readonly state: DeliveryTerminalState };
+
 type Queryable = Pick<Pool | PoolClient, "query">;
 
 export interface NotificationStore {
@@ -46,7 +51,7 @@ export interface NotificationStore {
   prepareDeliveries(notificationId: NotificationId): Promise<readonly NotificationDeliveryId[]>;
   suppressPending(notificationId: NotificationId): Promise<void>;
   rotateTokenBatch(limit: number): Promise<number>;
-  loadDelivery(deliveryId: NotificationDeliveryId): Promise<DeliveryForSend | null>;
+  loadDelivery(deliveryId: NotificationDeliveryId): Promise<DeliveryLoadResult | null>;
   recordDeliveryOutcome(
     deliveryId: NotificationDeliveryId,
     outcome: PersistedDeliveryOutcome,
@@ -246,16 +251,34 @@ export function createNotificationStore(
         [deliveryId, clock()],
       );
       const row = result.rows[0];
-      if (!row) return null;
+      if (row) {
+        return {
+          kind: "ready",
+          delivery: {
+            deliveryId: row.delivery_id,
+            notificationId: row.notification_id,
+            environment: row.environment,
+            expiresAtMs: row.expires_at,
+            deviceToken: cipher.open(
+              { keyId: row.token_key_id, nonce: row.token_nonce, ciphertext: row.token_ciphertext },
+              row.installation_id,
+            ),
+          },
+        };
+      }
+      const terminal = await db.query<{
+        status: "accepted" | "suppressed" | "invalid_device" | "permanent_failure" | "pending";
+      }>("SELECT status FROM notification_delivery WHERE id=$1", [deliveryId]);
+      const status = terminal.rows[0]?.status;
+      if (!status || status === "pending") return null;
       return {
-        deliveryId: row.delivery_id,
-        notificationId: row.notification_id,
-        environment: row.environment,
-        expiresAtMs: row.expires_at,
-        deviceToken: cipher.open(
-          { keyId: row.token_key_id, nonce: row.token_nonce, ciphertext: row.token_ciphertext },
-          row.installation_id,
-        ),
+        kind: "terminal",
+        state:
+          status === "accepted"
+            ? "delivered"
+            : status === "suppressed"
+              ? "suppressed"
+              : "permanent_failure",
       };
     },
 

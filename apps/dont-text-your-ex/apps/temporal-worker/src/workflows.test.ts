@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   deliverNotification: vi.fn(async () => ({ kind: "accepted" as const })),
   suppressNotification: vi.fn(async () => undefined),
   sleep: vi.fn(async () => undefined),
+  handlers: new Map<string, (input: never) => void>(),
 }));
 
 vi.mock("@temporalio/workflow", () => ({
@@ -24,7 +25,9 @@ vi.mock("@temporalio/workflow", () => ({
     suppressNotification: mocks.suppressNotification,
   }),
   continueAsNew: mocks.continueAsNew,
-  setHandler: vi.fn(),
+  setHandler: vi.fn((name: string, handler: (input: never) => void) => {
+    mocks.handlers.set(name, handler);
+  }),
   sleep: mocks.sleep,
 }));
 
@@ -43,6 +46,7 @@ beforeEach(() => {
   mocks.deliverNotification.mockReset().mockResolvedValue({ kind: "accepted" });
   mocks.suppressNotification.mockReset().mockResolvedValue(undefined);
   mocks.sleep.mockReset().mockResolvedValue(undefined);
+  mocks.handlers.clear();
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -136,5 +140,66 @@ describe("NotificationDeliveryWorkflow", () => {
     await expect(
       NotificationDeliveryWorkflow({ schemaVersion: 1, aggregateId: "usr_private" } as never),
     ).rejects.toThrow();
+  });
+
+  test("preserves an already persisted delivered outcome after activity replay", async () => {
+    const { NotificationDeliveryWorkflow } = await import("./workflows");
+    mocks.prepareNotification.mockResolvedValue({
+      deliveryIds: ["ndl_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"] as never,
+    });
+    mocks.deliverNotification.mockResolvedValue({
+      kind: "already_terminal",
+      state: "delivered",
+    } as never);
+
+    await expect(
+      NotificationDeliveryWorkflow({
+        schemaVersion: 1,
+        notificationId: "ntf_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      } as never),
+    ).resolves.toMatchObject({ outcomes: ["delivered"] });
+  });
+
+  test("accepts only a matching, monotonic account-deletion signal", async () => {
+    const { NotificationDeliveryWorkflow } = await import("./workflows");
+    mocks.prepareNotification.mockImplementation(async () => {
+      const signal = mocks.handlers.get("accountDeleted");
+      signal?.({
+        schemaVersion: 1,
+        notificationId: "ntf_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        expectedAggregateVersion: 1,
+      } as never);
+      return { deliveryIds: ["ndl_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"] as never };
+    });
+
+    await expect(
+      NotificationDeliveryWorkflow({
+        schemaVersion: 1,
+        notificationId: "ntf_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      } as never),
+    ).resolves.toMatchObject({ outcomes: ["delivered"] });
+    expect(mocks.deliverNotification).toHaveBeenCalledOnce();
+
+    mocks.prepareNotification.mockImplementation(async () => {
+      const signal = mocks.handlers.get("accountDeleted");
+      signal?.({
+        schemaVersion: 1,
+        notificationId: "ntf_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        expectedAggregateVersion: 1,
+      } as never);
+      return { deliveryIds: ["ndl_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"] as never };
+    });
+    mocks.deliverNotification.mockClear();
+
+    await expect(
+      NotificationDeliveryWorkflow({
+        schemaVersion: 1,
+        notificationId: "ntf_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      } as never),
+    ).resolves.toMatchObject({ outcomes: ["suppressed"] });
+    expect(mocks.deliverNotification).not.toHaveBeenCalled();
+    expect(mocks.suppressNotification).toHaveBeenCalledWith({
+      notificationId: "ntf_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    });
   });
 });

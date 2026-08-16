@@ -10,6 +10,7 @@ import {
 import {
   type NotificationDeliveryWorkflowInput,
   NotificationDeliveryWorkflowInputSchema,
+  type NotificationId,
 } from "../../../contracts";
 import type { DomainEvent } from "../../api/src/domain-events";
 import type { DtyeActivities } from "./activities";
@@ -158,7 +159,7 @@ export const accountDeletedSignal =
     [
       {
         readonly schemaVersion: 1;
-        readonly aggregateId: string;
+        readonly notificationId: NotificationId;
         readonly expectedAggregateVersion: number;
       },
     ]
@@ -172,8 +173,18 @@ export async function NotificationDeliveryWorkflow(
 ): Promise<NotificationDeliveryWorkflowOutput> {
   const parsed = NotificationDeliveryWorkflowInputSchema.parse(input);
   let accountDeleted = false;
+  let accountDeletionVersion = 0;
   let workflowState: NotificationDeliveryTerminalState | "delivering" = "delivering";
-  setHandler(accountDeletedSignal, () => {
+  setHandler(accountDeletedSignal, (signal) => {
+    if (
+      signal.schemaVersion !== 1 ||
+      signal.notificationId !== parsed.notificationId ||
+      !Number.isSafeInteger(signal.expectedAggregateVersion) ||
+      signal.expectedAggregateVersion <= accountDeletionVersion
+    ) {
+      return;
+    }
+    accountDeletionVersion = signal.expectedAggregateVersion;
     accountDeleted = true;
   });
   setHandler(deliveryStateQuery, () => workflowState);
@@ -189,7 +200,7 @@ export async function NotificationDeliveryWorkflow(
           finalAttempt: attempt === 8,
         });
         if (outcome.kind === "accepted") return "delivered";
-        if (outcome.kind === "already_terminal") return "suppressed";
+        if (outcome.kind === "already_terminal") return outcome.state;
         if (outcome.kind !== "retry") return "permanent_failure";
         await condition(
           () => accountDeleted,

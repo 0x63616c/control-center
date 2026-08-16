@@ -17,7 +17,13 @@ export interface NotificationActivities {
   deliverNotification(input: {
     readonly deliveryId: NotificationDeliveryId;
     readonly finalAttempt: boolean;
-  }): Promise<ApnsOutcome | { readonly kind: "already_terminal" }>;
+  }): Promise<
+    | ApnsOutcome
+    | {
+        readonly kind: "already_terminal";
+        readonly state: "delivered" | "suppressed" | "permanent_failure";
+      }
+  >;
 }
 
 interface NotificationActivityLogger {
@@ -50,11 +56,12 @@ export function createNotificationActivities(deps: {
     },
     async deliverNotification({ deliveryId, finalAttempt }) {
       const delivery = await deps.store.loadDelivery(deliveryId);
-      if (!delivery) return { kind: "already_terminal" };
-      const outcome = await deps.apnsClient(delivery.environment).send({
-        deviceToken: delivery.deviceToken,
-        notificationId: delivery.notificationId,
-        expiresAtMs: delivery.expiresAtMs,
+      if (!delivery) return { kind: "already_terminal", state: "suppressed" };
+      if (delivery.kind === "terminal") return { kind: "already_terminal", state: delivery.state };
+      const outcome = await deps.apnsClient(delivery.delivery.environment).send({
+        deviceToken: delivery.delivery.deviceToken,
+        notificationId: delivery.delivery.notificationId,
+        expiresAtMs: delivery.delivery.expiresAtMs,
       });
       if (outcome.kind === "retry") {
         const persistedOutcome: PersistedDeliveryOutcome = finalAttempt
@@ -64,7 +71,7 @@ export function createNotificationActivities(deps: {
         deps.logger.warn(
           {
             deliveryId,
-            notificationId: delivery.notificationId,
+            notificationId: delivery.delivery.notificationId,
             outcome: persistedOutcome.kind,
           },
           finalAttempt
@@ -75,7 +82,7 @@ export function createNotificationActivities(deps: {
       }
       await deps.store.recordDeliveryOutcome(deliveryId, outcome);
       deps.logger.info(
-        { deliveryId, notificationId: delivery.notificationId, outcome: outcome.kind },
+        { deliveryId, notificationId: delivery.delivery.notificationId, outcome: outcome.kind },
         "notification delivery completed",
       );
       return outcome;

@@ -19,7 +19,7 @@ const event = DomainEventSchema.parse({
 
 const notifications: NotificationActivities = {
   prepareNotification: async () => ({ deliveryIds: [] }),
-  deliverNotification: async () => ({ kind: "already_terminal" }),
+  deliverNotification: async () => ({ kind: "already_terminal", state: "suppressed" }),
   suppressNotification: async () => undefined,
   rotatePushTokenBatch: async () => ({ rotated: 0 }),
 };

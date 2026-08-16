@@ -18,11 +18,14 @@ function store(overrides: Partial<NotificationStore> = {}): NotificationStore {
     suppressPending: vi.fn(),
     rotateTokenBatch: vi.fn(async () => 0),
     loadDelivery: vi.fn(async () => ({
-      deliveryId,
-      notificationId,
-      deviceToken: "ab".repeat(32),
-      environment: "sandbox",
-      expiresAtMs: null,
+      kind: "ready" as const,
+      delivery: {
+        deliveryId,
+        notificationId,
+        deviceToken: "ab".repeat(32),
+        environment: "sandbox" as const,
+        expiresAtMs: null,
+      },
     })),
     recordDeliveryOutcome: vi.fn(),
     ...overrides,
@@ -86,5 +89,24 @@ describe("notification delivery activities", () => {
       kind: "invalid_device",
       reason: "Unregistered",
     });
+  });
+
+  it("replays the persisted terminal outcome without sending to APNs again", async () => {
+    const send = vi.fn();
+    const activities = createNotificationActivities({
+      store: store({
+        loadDelivery: vi.fn(async () => ({
+          kind: "terminal" as const,
+          state: "delivered" as const,
+        })),
+      }),
+      apnsClient: () => ({ send }) as ApnsClient,
+      logger,
+    });
+
+    await expect(
+      activities.deliverNotification({ deliveryId, finalAttempt: false }),
+    ).resolves.toEqual({ kind: "already_terminal", state: "delivered" });
+    expect(send).not.toHaveBeenCalled();
   });
 });

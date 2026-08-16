@@ -29,7 +29,7 @@ describe("outbox dispatch activity", () => {
       sessions: { purgeExpired: async () => ({ deleted: 0 }) },
       notifications: {
         prepareNotification: async () => ({ deliveryIds: [] }),
-        deliverNotification: async () => ({ kind: "already_terminal" }),
+        deliverNotification: async () => ({ kind: "already_terminal", state: "suppressed" }),
         suppressNotification: async () => undefined,
         rotatePushTokenBatch: async () => ({ rotated: 0 }),
       },
