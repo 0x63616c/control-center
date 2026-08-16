@@ -227,6 +227,8 @@ jobs:
         run: bash scripts/test-build-matrix.sh
       - name: Don't Text Your Ex Temporal contract guard
         run: bash scripts/test-dtye-temporal-contract.sh
+      - name: Don't Text Your Ex CI selection guard
+        run: bash scripts/test-dtye-ci-contract.sh
       - name: Software-factory image CI coverage guard
         # `infra/src/services.ts` is the source of truth for factory images.
         # Every entry needs both a producer and a digest collector: without
@@ -331,6 +333,8 @@ jobs:
         run: bun run --cwd apps/dont-text-your-ex/apps/api test
       - name: Test product Temporal worker
         run: bun run --cwd apps/dont-text-your-ex/apps/temporal-worker test
+      - name: Prove transaction to outbox to Temporal activity completion
+        run: bun run --cwd apps/dont-text-your-ex/apps/temporal-worker test:postgres-temporal
       - name: Test shared Temporal runtime
         run: bun run --cwd packages/temporal-runtime test
       - name: Cache Playwright browsers

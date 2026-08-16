@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
+    "test:postgres-temporal": "node -e \"if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required for the Postgres+Temporal proof')\" && vitest run src/invite-outbox-temporal.pg.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
