@@ -46,6 +46,7 @@ Locked identity and targets:
 - Kubernetes namespace: `dont-text-your-ex`
 - Production stack: `home-server`
 - Apple app ID: `6778544752`
+- Software-factory tracker: `T-41`
 - Notification endpoint: `https://ntfy.sh/0x63616c`
 
 Related sources that remain authoritative for their scope:
@@ -676,6 +677,7 @@ evidence with stable URLs/IDs. “Observed” without a timestamp/source is inva
 |---|---|---|---|---|---|---|
 | 2026-08-15 | P00 | Existing production restoration | PASS | `ecf47add2`, Build 24 | Restoration execution ledger; CI `31872702467` | Prior independent QA + coordinator |
 | 2026-08-15 | P00 | Live App Store version baseline | PASS | Version 1.0 | Prepare for Submission; 0 screenshots; no build attached; blank visible metadata/review fields | Coordinator browser inspection |
+| 2026-08-15 | P00 | Durable tracker | PASS | `T-41` | Verbatim request, source-of-truth path, and public completion boundary recorded | Coordinator |
 
 ## Blocker ledger
 
