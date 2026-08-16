@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DomainEventSchema } from "../domain-events";
-import { RecordingWorkflowDispatcher } from "../workflow-dispatcher";
+import { MemoryOutbox } from "../outbox";
+import { dispatchOutboxPage, RecordingWorkflowDispatcher } from "../workflow-dispatcher";
 
 describe("workflow dispatcher seam", () => {
   it("records accepted events through the same interface as the future Temporal adapter", async () => {
@@ -42,5 +43,59 @@ describe("workflow dispatcher seam", () => {
       status: "permanent",
       code: "unsupported_event_version",
     });
+  });
+
+  it("acknowledges accepted events while retrying and quarantining independent failures", async () => {
+    const accepted = DomainEventSchema.parse({
+      id: "evt_accepted",
+      type: "jar.created",
+      schemaVersion: 1,
+      aggregateType: "jar",
+      aggregateId: "jar_accepted",
+      aggregateVersion: 1,
+      occurredAt: 1,
+    });
+    const retryable = DomainEventSchema.parse({
+      id: "evt_retryable",
+      type: "invite.issued",
+      schemaVersion: 1,
+      aggregateType: "invite",
+      aggregateId: "inv_retryable",
+      aggregateVersion: 1,
+      occurredAt: 2,
+    });
+    const permanent = DomainEventSchema.parse({
+      id: "evt_permanent",
+      type: "report.created",
+      schemaVersion: 1,
+      aggregateType: "report",
+      aggregateId: "rpt_permanent",
+      aggregateVersion: 1,
+      occurredAt: 3,
+    });
+    const outbox = new MemoryOutbox([accepted, retryable, permanent]);
+    const dispatcher = new RecordingWorkflowDispatcher([
+      { status: "accepted" },
+      { status: "retryable", code: "temporal_unavailable" },
+      { status: "permanent", code: "unsupported_event_version" },
+    ]);
+
+    await expect(
+      dispatchOutboxPage({
+        outbox,
+        dispatcher,
+        owner: "worker-a",
+        limit: 10,
+        now: 10,
+        leaseUntil: 20,
+        retryAt: 30,
+      }),
+    ).resolves.toEqual({ claimed: 3, accepted: 1, retried: 1, failed: 1 });
+    await expect(
+      outbox.claimPage({ owner: "worker-b", limit: 10, now: 29, leaseUntil: 40 }),
+    ).resolves.toEqual([]);
+    await expect(
+      outbox.claimPage({ owner: "worker-b", limit: 10, now: 30, leaseUntil: 40 }),
+    ).resolves.toEqual([retryable]);
   });
 });

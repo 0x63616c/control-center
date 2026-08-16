@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const DOMAIN_EVENT_DEFINITIONS = {
+const DOMAIN_EVENT_DEFINITIONS = {
   "jar.created": { aggregateType: "jar", schemaVersion: 1 },
   "jar.closed": { aggregateType: "jar", schemaVersion: 1 },
   "invite.issued": { aggregateType: "invite", schemaVersion: 1 },
@@ -25,7 +25,7 @@ export const DOMAIN_EVENT_DEFINITIONS = {
   "account.deletion_requested": { aggregateType: "account_deletion", schemaVersion: 1 },
 } as const;
 
-export const DomainEventTypeSchema = z.enum(
+const DomainEventTypeSchema = z.enum(
   Object.keys(DOMAIN_EVENT_DEFINITIONS) as [
     keyof typeof DOMAIN_EVENT_DEFINITIONS,
     ...(keyof typeof DOMAIN_EVENT_DEFINITIONS)[],
