@@ -63,6 +63,10 @@ describe("outbox dispatch activity", () => {
         advanceRescueAtDeadline: async () => null,
         eraseRescueForAccountDeletion: async () => ({ erased: true }),
       },
+      invites: {
+        loadInviteLifecycle: async () => ({ kind: "superseded" }),
+        requestInviteReminder: async () => ({ kind: "superseded" }),
+      },
       clock: () => 10,
     });
 
@@ -74,5 +78,56 @@ describe("outbox dispatch activity", () => {
     });
     expect(dispatcher.events()).toEqual([events[0]]);
     expect(OUTBOX_DISPATCH_LEASE_MS).toBeGreaterThan(OUTBOX_DISPATCH_ACTIVITY_TIMEOUT_MS);
+  });
+
+  it("publishes invite lifecycle activities through the production activity bundle", async () => {
+    const inviteVersionId = "inv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as never;
+    const activities = createDtyeActivities({
+      outbox: new MemoryOutbox([]),
+      dispatcher: new RecordingWorkflowDispatcher(),
+      sessions: { purgeExpired: async () => ({ deleted: 0 }) },
+      notifications: {
+        prepareNotification: async () => ({ deliveryIds: [] }),
+        deliverNotification: async () => ({ kind: "already_terminal", state: "suppressed" }),
+        suppressNotification: async () => undefined,
+        rotatePushTokenBatch: async () => ({ rotated: 0 }),
+      },
+      operations: {
+        outboxSnapshot: () => undefined,
+        outboxDispatch: () => undefined,
+        outboxRecoverySucceeded: () => undefined,
+        sessionPurge: () => undefined,
+      },
+      outboxSnapshot: {
+        snapshot: async () => ({ pending: 0, oldestAgeSeconds: 0, permanentFailures: 0 }),
+      },
+      reports: {
+        advance: async ({ reportId }) => ({
+          state: "member_departed",
+          reportId,
+          aggregateVersion: 1,
+        }),
+      },
+      rescue: {
+        loadRescue: async () => null,
+        advanceRescueAtDeadline: async () => null,
+        eraseRescueForAccountDeletion: async () => ({ erased: true }),
+      },
+      invites: {
+        loadInviteLifecycle: async ({ inviteVersionId: received }) => ({
+          kind: received === inviteVersionId ? "eligible" : "superseded",
+          expiresAt: 123,
+        }),
+        requestInviteReminder: async () => ({ kind: "reminded" }),
+      },
+    });
+
+    await expect(activities.loadInviteLifecycle({ inviteVersionId })).resolves.toEqual({
+      kind: "eligible",
+      expiresAt: 123,
+    });
+    await expect(activities.requestInviteReminder({ inviteVersionId })).resolves.toEqual({
+      kind: "reminded",
+    });
   });
 });

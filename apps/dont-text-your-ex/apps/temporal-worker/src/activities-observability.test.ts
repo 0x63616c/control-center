@@ -46,6 +46,11 @@ const rescue = {
   eraseRescueForAccountDeletion: async () => ({ erased: true as const }),
 };
 
+const invites = {
+  loadInviteLifecycle: async () => ({ kind: "superseded" as const }),
+  requestInviteReminder: async () => ({ kind: "superseded" as const }),
+};
+
 function recordingObserver() {
   const observer: DtyeOperationsObserver = {
     outboxSnapshot: vi.fn(),
@@ -67,6 +72,7 @@ describe("DTYE activity observability", () => {
       reports,
       rescue,
       streakMilestones,
+      invites,
       operations,
       outboxSnapshot: {
         snapshot: vi.fn(async () => ({ pending: 0, oldestAgeSeconds: 0, permanentFailures: 0 })),
@@ -105,6 +111,7 @@ describe("DTYE activity observability", () => {
       reports,
       rescue,
       streakMilestones,
+      invites,
       operations,
       outboxSnapshot: {
         snapshot: vi.fn(async () => ({ pending: 0, oldestAgeSeconds: 0, permanentFailures: 0 })),
@@ -128,6 +135,7 @@ describe("DTYE activity observability", () => {
       reports,
       rescue,
       streakMilestones,
+      invites,
       operations,
       outboxSnapshot: { snapshot: vi.fn(async () => Promise.reject(new Error("db unavailable"))) },
       clock: () => 6_000,
@@ -150,6 +158,7 @@ describe("DTYE activity observability", () => {
       reports,
       rescue,
       streakMilestones,
+      invites,
       operations: successObserver,
       outboxSnapshot: { snapshot: vi.fn() },
       clock: () => clockValues.shift() ?? 1_250,
@@ -171,6 +180,7 @@ describe("DTYE activity observability", () => {
       reports,
       rescue,
       streakMilestones,
+      invites,
       operations: failureObserver,
       outboxSnapshot: { snapshot: vi.fn() },
       clock: () => 2_000,

@@ -19,6 +19,7 @@ import { PostgresRescueStore } from "../../api/src/rescue-store";
 import { createDtyeActivities } from "./activities";
 import { prepareTemporalWorker } from "./boot";
 import { temporalWorkerConfig } from "./config";
+import { createInviteLifecycleActivities, PostgresInviteLifecycleStore } from "./invite-lifecycle";
 import { createWorkerLifecycle } from "./lifecycle";
 import { createNotificationActivities } from "./notification-activities";
 import {
@@ -59,6 +60,7 @@ async function main(): Promise<void> {
   });
   const apnsTransport = createHttp2ApnsTransport();
   const reports = new PostgresReportAccountabilityStore(pool);
+  const transactions = new DomainTransactionRunner({ pool });
   const temporalGateway = new TemporalClientWorkflowGateway(client);
   const apnsClients = {
     production: createApnsClient({
@@ -95,6 +97,7 @@ async function main(): Promise<void> {
     outboxSnapshot: new PostgresOutboxOperationalSnapshotStore(pool),
     reports,
     rescue: createRescueActivities({ store: new PostgresRescueStore(pool) }),
+    invites: createInviteLifecycleActivities(new PostgresInviteLifecycleStore(pool, transactions)),
   });
   const worker = await prepareTemporalWorker({
     config,
