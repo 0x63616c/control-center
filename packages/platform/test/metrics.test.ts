@@ -8,6 +8,10 @@ import {
   metricsRegistry,
   OTHER_LABEL,
   observeCronRun,
+  observeDtyeOutboxDispatch,
+  observeDtyeOutboxRecoverySuccess,
+  observeDtyeOutboxSnapshot,
+  observeDtyeSessionPurge,
   observeHttpRequest,
   observeJobRun,
   startMetricsServer,
@@ -156,6 +160,38 @@ describe("cron helpers", () => {
       seriesValue(text, "www_cron_last_success_timestamp_seconds", 'cron="weather-ingest"'),
     ).toBe(1_700_000_000);
     expect(seriesValue(text, "www_cron_failures_total", 'cron="weather-ingest"')).toBe(1);
+  });
+});
+
+describe("DTYE Temporal helpers", () => {
+  test("exports bounded outbox backlog, outcomes, queue latency and activity health", async () => {
+    initMetrics({ service: "dont-text-your-ex-temporal-worker", collectDefaults: false });
+    observeDtyeOutboxSnapshot({ pending: 7, oldestAgeSeconds: 91, permanentFailures: 2 });
+    observeDtyeOutboxDispatch({ outcome: "retry" });
+    observeDtyeOutboxDispatch({ outcome: "permanent_failure" });
+    observeDtyeOutboxDispatch({ outcome: "accepted", latencySeconds: 4.2 });
+    observeDtyeOutboxRecoverySuccess(1_700_000_000_000);
+    observeDtyeSessionPurge({
+      outcome: "success",
+      deleted: 12,
+      durationSeconds: 0.25,
+      completedAtMs: 1_700_000_001_000,
+    });
+    const text = await exposition();
+    expect(seriesValue(text, "www_dtye_outbox_pending")).toBe(7);
+    expect(seriesValue(text, "www_dtye_outbox_oldest_age_seconds")).toBe(91);
+    expect(seriesValue(text, "www_dtye_outbox_permanent_failures")).toBe(2);
+    expect(seriesValue(text, "www_dtye_outbox_dispatches_total", 'outcome="retry"')).toBe(1);
+    expect(text).toContain("www_dtye_outbox_dispatch_latency_seconds_bucket");
+    expect(
+      seriesValue(
+        text,
+        "www_dtye_temporal_activity_last_success_timestamp_seconds",
+        'activity="outbox_recovery"',
+      ),
+    ).toBe(1_700_000_000);
+    expect(seriesValue(text, "www_dtye_session_purge_deleted_total")).toBe(12);
+    expect(text).not.toMatch(/user_id|jar_id|event_id|token=/);
   });
 });
 

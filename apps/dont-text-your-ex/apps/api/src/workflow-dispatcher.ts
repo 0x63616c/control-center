@@ -19,6 +19,7 @@ type DispatchOutboxPageInput = Readonly<{
   leaseUntil: number;
   retryAt: number;
   eventIds?: readonly DomainEvent["id"][];
+  onAccepted?: (observation: Readonly<{ latencySeconds: number }>) => void;
 }>;
 
 export async function dispatchOutboxPage(input: DispatchOutboxPageInput): Promise<{
@@ -47,6 +48,7 @@ export async function dispatchOutboxPage(input: DispatchOutboxPageInput): Promis
           await input.outbox.markAccepted({ eventId: event.id, owner: input.owner, at: input.now })
         ) {
           accepted += 1;
+          input.onAccepted?.({ latencySeconds: Math.max(0, input.now - event.occurredAt) / 1000 });
         }
         break;
       case "retryable":

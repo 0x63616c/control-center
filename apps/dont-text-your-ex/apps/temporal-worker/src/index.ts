@@ -19,6 +19,10 @@ import { prepareTemporalWorker } from "./boot";
 import { temporalWorkerConfig } from "./config";
 import { createWorkerLifecycle } from "./lifecycle";
 import { createNotificationActivities } from "./notification-activities";
+import {
+  PostgresOutboxOperationalSnapshotStore,
+  platformDtyeOperationsObserver,
+} from "./operations-observability";
 import { WORKFLOW_TYPES } from "./registry";
 import { PostgresSessionMaintenanceStore } from "./session-maintenance";
 import {
@@ -77,6 +81,8 @@ async function main(): Promise<void> {
       apnsClient: (environment) => apnsClients[environment],
       logger,
     }),
+    operations: platformDtyeOperationsObserver,
+    outboxSnapshot: new PostgresOutboxOperationalSnapshotStore(pool),
   });
   const worker = await prepareTemporalWorker({
     config,
