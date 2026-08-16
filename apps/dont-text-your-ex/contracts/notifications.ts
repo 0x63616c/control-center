@@ -1,0 +1,83 @@
+import { z } from "zod";
+
+const notificationIdSchema = <Brand extends string>(prefix: string, brand: Brand) =>
+  z
+    .string()
+    .regex(new RegExp(`^${prefix}_[A-Za-z0-9]+$`), `invalid ${brand}`)
+    .brand<Brand>();
+
+export const PushInstallationIdSchema = notificationIdSchema("pdi", "PushInstallationId");
+export const NotificationIdSchema = notificationIdSchema("ntf", "NotificationId");
+export const NotificationDeliveryIdSchema = notificationIdSchema("ndl", "NotificationDeliveryId");
+
+export type PushInstallationId = z.infer<typeof PushInstallationIdSchema>;
+export type NotificationId = z.infer<typeof NotificationIdSchema>;
+export type NotificationDeliveryId = z.infer<typeof NotificationDeliveryIdSchema>;
+
+export const NOTIFICATION_CATEGORIES = {
+  reports: { defaultEnabled: true, label: "Reports" },
+  rescue: { defaultEnabled: true, label: "Rescue reminders" },
+  slips: { defaultEnabled: false, label: "Slips" },
+  joins: { defaultEnabled: false, label: "New members" },
+  jar_milestones: { defaultEnabled: false, label: "Jar milestones" },
+  streak_milestones: { defaultEnabled: false, label: "Streak milestones" },
+  recaps: { defaultEnabled: false, label: "Monthly recaps" },
+  invites: { defaultEnabled: false, label: "Invite reminders" },
+} as const satisfies Record<string, { readonly defaultEnabled: boolean; readonly label: string }>;
+
+export const NotificationCategorySchema = z.enum(
+  Object.keys(NOTIFICATION_CATEGORIES) as [
+    keyof typeof NOTIFICATION_CATEGORIES,
+    ...(keyof typeof NOTIFICATION_CATEGORIES)[],
+  ],
+);
+export type NotificationCategory = z.infer<typeof NotificationCategorySchema>;
+
+export const NotificationPreferencesSchema = z.object(
+  Object.fromEntries(
+    Object.keys(NOTIFICATION_CATEGORIES).map((category) => [category, z.boolean()]),
+  ) as Record<NotificationCategory, z.ZodBoolean>,
+);
+export type NotificationPreferences = z.infer<typeof NotificationPreferencesSchema>;
+
+export const UpdateNotificationPreferencesRequestSchema = NotificationPreferencesSchema.partial()
+  .refine((patch) => Object.keys(patch).length > 0, "at least one preference is required")
+  .strict();
+export type UpdateNotificationPreferencesRequest = z.infer<
+  typeof UpdateNotificationPreferencesRequestSchema
+>;
+
+export const RegisterPushDeviceRequestSchema = z
+  .object({
+    installationId: PushInstallationIdSchema,
+    token: z
+      .string()
+      .trim()
+      .regex(/^[a-fA-F0-9]{32,256}$/)
+      .transform((value) => value.toLowerCase()),
+    platform: z.literal("ios"),
+    environment: z.enum(["production", "sandbox"]),
+    appVersion: z.string().trim().min(1).max(64),
+    appBuild: z.string().trim().min(1).max(64),
+  })
+  .strict();
+export type RegisterPushDeviceRequest = z.infer<typeof RegisterPushDeviceRequestSchema>;
+
+export const DisablePushDeviceRequestSchema = z
+  .object({ installationId: PushInstallationIdSchema })
+  .strict();
+
+export const PushRegistrationResponseSchema = z
+  .object({ status: z.literal("registered") })
+  .strict();
+
+export const NotificationTargetSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("activity") }).strict(),
+  z
+    .object({ type: z.literal("report"), reportId: z.string().regex(/^rpt_[A-Za-z0-9]+$/) })
+    .strict(),
+  z.object({ type: z.literal("jar"), jarId: z.string().regex(/^jar_[A-Za-z0-9]+$/) }).strict(),
+  z.object({ type: z.literal("profile") }).strict(),
+  z.object({ type: z.literal("unavailable") }).strict(),
+]);
+export type NotificationTarget = z.infer<typeof NotificationTargetSchema>;

@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export * from "./notifications";
+
 const idSchema = <Prefix extends string, Brand extends string>(prefix: Prefix, brand: Brand) =>
   z
     .string()

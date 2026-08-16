@@ -6,7 +6,9 @@
   "workspaces": [
     "apps/frontend",
     "apps/api",
-    "apps/e2e"
+    "apps/e2e",
+    "apps/temporal-worker",
+    "packages/notifications"
   ],
   "scripts": {
     "dev": "bun run dev:all",
@@ -17,7 +19,7 @@
     "seed": "bun run --cwd apps/api seed",
     "seed:reset": "bun run --cwd apps/api seed:reset",
     "start": "NODE_ENV=production bun run --cwd apps/api start",
-    "typecheck": "bun run --cwd apps/api typecheck && bun run --cwd apps/frontend typecheck && bun run --cwd apps/temporal-worker typecheck",
+    "typecheck": "bun run --cwd packages/notifications typecheck && bun run --cwd apps/api typecheck && bun run --cwd apps/frontend typecheck && bun run --cwd apps/temporal-worker typecheck",
     "test:e2e": "bun run --cwd apps/e2e test",
     "ios:sync": "bun run build && cap sync ios",
     "ios:open": "cap open ios",

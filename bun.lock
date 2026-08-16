@@ -114,6 +114,21 @@
         "vitest": "^3.2.4",
       },
     },
+    "apps/dont-text-your-ex/packages/notifications": {
+      "name": "@dont-text-your-ex/notifications",
+      "version": "0.0.0",
+      "dependencies": {
+        "@www/logger": "workspace:*",
+        "pg": "^8.13.3",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/node": "^22.13.0",
+        "@types/pg": "^8.11.10",
+        "typescript": "^5.9.3",
+        "vitest": "^3.2.4",
+      },
+    },
     "apps/manage": {
       "name": "@control-center/manage",
       "version": "0.0.0",
@@ -656,6 +671,8 @@
     "@dont-text-your-ex/e2e": ["@dont-text-your-ex/e2e@workspace:apps/dont-text-your-ex/apps/e2e"],
 
     "@dont-text-your-ex/frontend": ["@dont-text-your-ex/frontend@workspace:apps/dont-text-your-ex/apps/frontend"],
+
+    "@dont-text-your-ex/notifications": ["@dont-text-your-ex/notifications@workspace:apps/dont-text-your-ex/packages/notifications"],
 
     "@dont-text-your-ex/temporal-worker": ["@dont-text-your-ex/temporal-worker@workspace:apps/dont-text-your-ex/apps/temporal-worker"],
 
