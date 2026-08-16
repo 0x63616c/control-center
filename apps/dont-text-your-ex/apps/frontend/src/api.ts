@@ -21,6 +21,9 @@ import {
   type RegisterPushDeviceRequest,
   type ReportId,
   ReportSchema,
+  type RescueCommandRequest,
+  type RescueInterventionId,
+  RescueInterventionSchema,
   type SessionToken,
   SessionTokenSchema,
   type UpdateMeRequest,
@@ -163,6 +166,12 @@ export const api = {
   report: (id: ReportId) => req(ReportSchema, "GET", `/reports/${id}`),
   resolveReport: (id: ReportId, action: "own" | "deny") =>
     req(ReportSchema, "POST", `/reports/${id}/resolve`, { action }),
+
+  // private urge rescue
+  currentRescue: () => req(RescueInterventionSchema.nullable(), "GET", "/rescue"),
+  startRescue: () => req(RescueInterventionSchema, "POST", "/rescue"),
+  rescueCommand: (id: RescueInterventionId, action: RescueCommandRequest["action"]) =>
+    req(RescueInterventionSchema, "POST", `/rescue/${id}/command`, { action }),
 
   // activity
   activity: () => req(ActivitySchema.array(), "GET", "/activity"),

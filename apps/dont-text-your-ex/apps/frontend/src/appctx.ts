@@ -4,6 +4,7 @@ import type { MeDTO } from "./types";
 export type Route =
   | { readonly name: "onboarding" }
   | { readonly name: "home" }
+  | { readonly name: "rescue" }
   | { readonly name: "jar"; readonly jarId: JarId }
   | { readonly name: "logSlip"; readonly jarId: JarId }
   | { readonly name: "report"; readonly jarId: JarId }

@@ -122,6 +122,8 @@ function renderRoute(ctx: AppCtx): React.ReactNode {
       return <S.Onboarding ctx={{ ...ctx, route: ctx.route }} />;
     case "home":
       return <S.Home ctx={{ ...ctx, route: ctx.route }} />;
+    case "rescue":
+      return <S.Rescue ctx={{ ...ctx, route: ctx.route }} />;
     case "jar":
       return <S.JarDetail ctx={{ ...ctx, route: ctx.route }} />;
     case "logSlip":
