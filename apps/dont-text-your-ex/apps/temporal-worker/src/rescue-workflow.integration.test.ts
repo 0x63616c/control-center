@@ -151,9 +151,9 @@ describe("UrgeRescueWorkflow time skipping", () => {
         }),
       );
       const signal = { schemaVersion: 1 as const, interventionId, expectedAggregateVersion: 2 };
-      await handle.signal(safeRescueSignal, signal);
-      await handle.signal(safeRescueSignal, signal);
-      expect(await handle.query(rescueStateQuery)).toBe("active");
+      await handle.signal(safeRescueSignal.name, signal);
+      await handle.signal(safeRescueSignal.name, signal);
+      expect(await handle.query(rescueStateQuery.name)).toBe("active");
       await expect(handle.result()).resolves.toEqual({ interventionId, status: "safe" });
     });
     expect(fixture.advanceCalls).toEqual([]);
@@ -171,7 +171,7 @@ describe("UrgeRescueWorkflow time skipping", () => {
       });
       await fixture.environment.sleep("1 second");
       fixture.setState(active(startedAt, 1, 2));
-      await handle.signal(extendRescueSignal, {
+      await handle.signal(extendRescueSignal.name, {
         schemaVersion: 1,
         interventionId,
         expectedAggregateVersion: 2,
@@ -203,7 +203,7 @@ describe("UrgeRescueWorkflow time skipping", () => {
           updatedAt: startedAt + 1_000,
         }),
       );
-      await handle.signal(slippedRescueSignal, {
+      await handle.signal(slippedRescueSignal.name, {
         schemaVersion: 1,
         interventionId,
         expectedAggregateVersion: 2,
@@ -227,7 +227,7 @@ describe("UrgeRescueWorkflow time skipping", () => {
       });
       await fixture.environment.sleep("1 second");
       fixture.setState(active(startedAt, 2, 3));
-      await handle.signal(extendRescueSignal, {
+      await handle.signal(extendRescueSignal.name, {
         schemaVersion: 1,
         interventionId,
         expectedAggregateVersion: 3,
@@ -249,7 +249,7 @@ describe("UrgeRescueWorkflow time skipping", () => {
         taskQueue: "main",
         args: [{ schemaVersion: 1, interventionId }],
       });
-      await handle.signal(rescueAccountDeletedSignal, {
+      await handle.signal(rescueAccountDeletedSignal.name, {
         schemaVersion: 1,
         interventionId,
         expectedAggregateVersion: 1,
@@ -306,10 +306,10 @@ describe("UrgeRescueWorkflow time skipping", () => {
         taskQueue: "main",
         args: [{ schemaVersion: 1, interventionId }],
       });
-      let stateQuery = await handle.query(rescueStateQuery);
+      let stateQuery = await handle.query(rescueStateQuery.name);
       while (stateQuery === "loading") {
         await new Promise((resolve) => setTimeout(resolve, 25));
-        stateQuery = await handle.query(rescueStateQuery);
+        stateQuery = await handle.query(rescueStateQuery.name);
       }
       expect(stateQuery).toBe("active");
     });
@@ -323,7 +323,7 @@ describe("UrgeRescueWorkflow time skipping", () => {
       resolvedAt: startedAt + 1_000,
       updatedAt: startedAt + 1_000,
     });
-    await activeHandle.signal(safeRescueSignal, {
+    await activeHandle.signal(safeRescueSignal.name, {
       schemaVersion: 1,
       interventionId,
       expectedAggregateVersion: 2,
