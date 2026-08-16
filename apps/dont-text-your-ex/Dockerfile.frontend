@@ -37,6 +37,8 @@ RUN bun install --frozen-lockfile --ignore-scripts
 
 COPY apps/dont-text-your-ex/apps/frontend apps/dont-text-your-ex/apps/frontend
 COPY apps/dont-text-your-ex/contracts apps/dont-text-your-ex/contracts
+COPY packages/platform packages/platform
+COPY tsconfig.json ./
 RUN bun run --cwd apps/dont-text-your-ex/apps/frontend build
 
 FROM nginx:1.27-alpine AS runtime

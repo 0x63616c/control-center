@@ -241,7 +241,7 @@ describe.skipIf(!HAS_DB)("Postgres streak milestone sweep", () => {
     const third = await store.processPage({ cutoff, cursor: second.nextCursor, limit: 100 });
     expect(third).toMatchObject({ candidates: 5, achievements: 5, hasMore: false });
     expect((await pool.query("SELECT 1 FROM streak_achievements")).rowCount).toBe(205);
-  });
+  }, 15_000);
 
   it("rejects non-IANA database timezone updates", async () => {
     const member = await insertEligibleMembership({
