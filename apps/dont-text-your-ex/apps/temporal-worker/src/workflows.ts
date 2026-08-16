@@ -31,6 +31,8 @@ import type {
 } from "./report-accountability";
 import { nextPagingDecision } from "./workflow-paging";
 
+export { InviteLifecycleWorkflow } from "./invite-workflow";
+
 export interface DtyeHealthCheckWorkflowInput {
   readonly schemaVersion: 1;
 }
