@@ -339,6 +339,12 @@ export function Onboarding({
         </p>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 10, flexShrink: 0 }}>
+        <p
+          style={{ color: T.ter, fontSize: 12.5, lineHeight: 1.4, margin: 0, textAlign: "center" }}
+        >
+          Don’t Text Your Ex does not read your messages. Jar activity is shared only with invited
+          jar members.
+        </p>
         <button
           type="button"
           onClick={signInApple}
@@ -364,12 +370,6 @@ export function Onboarding({
           <Icon.apple style={{ marginTop: -2 }} />{" "}
           {signInButtonLabel(signInState, ctx.sessionExpired)}
         </button>
-        <p
-          style={{ color: T.ter, fontSize: 12.5, lineHeight: 1.4, margin: 0, textAlign: "center" }}
-        >
-          Don’t Text Your Ex does not read your messages. Jar activity is shared only with invited
-          jar members.
-        </p>
       </div>
     </div>
   );

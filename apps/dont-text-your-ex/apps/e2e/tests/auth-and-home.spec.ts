@@ -12,7 +12,7 @@ test("onboarding shows the wordmark and taglines", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /Don't\s*Text\s*Your\s*Ex/i })).toBeVisible();
   await expect(page.getByText("Stop texting your ex.")).toBeVisible();
-  await expect(page.getByText("never reads your messages", { exact: false })).toBeVisible();
+  await expect(page.getByText("does not read your messages", { exact: false })).toBeVisible();
 });
 
 test("Apple sign-in lands on home with seeded jars and a virtual tally", async ({ page }) => {
@@ -37,7 +37,7 @@ test("first-run unnamed Apple profile requires a name, persists it, and shows a 
   );
 
   await page.goto("/");
-  await expect(page.getByText("Make it official")).toBeVisible();
+  await expect(page.getByText("Make it yours")).toBeVisible();
   await expect(page.getByRole("button", { name: "Start your reset →" })).toBeDisabled();
   await page.getByRole("textbox", { name: "Your name" }).fill("New Apple QA");
   await page.getByRole("button", { name: "Start your reset →" }).click();

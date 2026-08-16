@@ -16,7 +16,7 @@ test("logging a check-in bumps the virtual tally, resets streak, and grows the g
   const potBefore = await page.getByTestId("jar-pot").innerText();
   await expect(memberRow(page, "Calum")).toContainText("40 pts");
 
-  await page.getByRole("button", { name: "I texted my ex" }).click();
+  await page.getByRole("button", { name: "Log a slip" }).click();
   await expect(page.getByText(/Choose the virtual amount/)).toBeVisible();
   // The jar default is 5 pts and the stepper increments once to 10 pts.
   await page.getByRole("button", { name: "+", exact: true }).click();
@@ -65,7 +65,7 @@ test("accountability check enforces note-or-image, malicious boundaries, and thr
 
   const send = page.getByRole("button", { name: "Send accountability check" });
   await expect(send).toBeDisabled();
-  await page.getByPlaceholder("“replied to her story in 4 seconds flat…”").fill("   ");
+  await page.getByPlaceholder("“I saw a message come through…”").fill("   ");
   await expect(send).toBeDisabled();
 
   const png = Buffer.from(
@@ -195,7 +195,7 @@ test("confirm or dismiss: confirming the seeded check adds to Calum's tally", as
 
   // The seeded report is note-only; evidence is never fabricated for tests.
   await expect(page.getByText("Someone in the jar")).toBeVisible();
-  await expect(page.getByText(/Christie posted a story/)).toBeVisible();
+  await expect(page.getByText(/A reply came through/)).toBeVisible();
   await expect(page.getByText(/Supporting screenshots/)).toHaveCount(0);
   await page.getByRole("button", { name: /Accept and add/ }).click();
   await expect(page.getByText("Respect.")).toBeVisible();
@@ -205,14 +205,14 @@ test("confirm or dismiss: confirming the seeded check adds to Calum's tally", as
   await page.reload();
   await expect(page.getByText("Your jars", { exact: true })).toBeVisible();
   await page.getByTestId("tab-activity").click();
-  await page.getByRole("button", { name: "View report in The Group Chat" }).click();
+  await page.getByRole("button", { name: "View accountability check in The Group Chat" }).click();
   await expect(page.getByText("Accepted", { exact: true })).toBeVisible();
-  await expect(page.getByText(/Christie posted a story/)).toBeVisible();
+  await expect(page.getByText(/A reply came through/)).toBeVisible();
   await expect(page.getByText("Someone in the jar sent a check to Calum")).toBeVisible();
   await page.getByRole("button", { name: "Back" }).click();
   await page.getByRole("button", { name: "View check history" }).click();
   await expect(page.getByText("Check history", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: /Calum · The Group Chat/ }).click();
   await expect(page.getByText("Accepted", { exact: true })).toBeVisible();
-  await expect(page.getByText(/Christie posted a story/)).toBeVisible();
+  await expect(page.getByText(/A reply came through/)).toBeVisible();
 });

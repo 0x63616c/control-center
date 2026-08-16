@@ -255,7 +255,7 @@ test("log slip fetch and submit failures stay retryable without false success", 
     }
     return route.continue();
   });
-  await page.getByRole("button", { name: "I texted my ex" }).click();
+  await page.getByRole("button", { name: "Log a slip" }).click();
   await expect(page.getByRole("alert")).toContainText("jar couldn’t be loaded");
   await page.getByRole("button", { name: "Retry" }).click();
   await expect(page.getByRole("button", { name: /Add .* pts to my virtual tally/ })).toBeVisible();
@@ -288,7 +288,7 @@ test("log slip fetch and submit failures stay retryable without false success", 
 test("profile: edit avatar and toggle share-streak", async ({ page }) => {
   await signInAsCalum(page);
   await page.getByTestId("tab-profile").click();
-  await expect(page.getByText("Share my clean streak")).toBeVisible();
+  await expect(page.getByText("Share my no-contact streak")).toBeVisible();
 
   // edit the profile avatar
   await page.getByText("Edit", { exact: true }).click();
