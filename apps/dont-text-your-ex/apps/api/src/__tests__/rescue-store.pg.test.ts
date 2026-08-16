@@ -204,4 +204,14 @@ describe.skipIf(!HAS_DB)("Postgres rescue store", () => {
       }),
     ).resolves.toMatchObject({ status: "abandoned" });
   });
+
+  it("reconstructs a newly restarted intervention even within the same millisecond", async () => {
+    const store = new PostgresRescueStore(pool, () => clock);
+    const first = await store.start(alice);
+    await store.command({ userId: alice, interventionId: first.id, action: "safe" });
+    const restarted = await store.start(alice);
+
+    expect(restarted.id).not.toBe(first.id);
+    await expect(store.current(alice)).resolves.toEqual(restarted);
+  });
 });
