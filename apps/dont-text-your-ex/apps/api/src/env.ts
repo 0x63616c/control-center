@@ -13,6 +13,9 @@ const ENV = defineEnv({
   // to its existing data rather than silently provisioning an empty database.
   POSTGRES_DB: str().default("text_your_ex"),
   APPLE_BUNDLE_ID: str().default("co.worldwidewebb.textyourex"),
+  TEMPORAL_ADDRESS: str().optional(),
+  PUSH_TOKEN_KEYRING_FILE: str().default("/run/secrets/PUSH_TOKEN_KEYRING"),
+  PUSH_TOKEN_KEYRING: str().optional(),
   TYE_RESET: str().optional(),
 });
 
@@ -32,6 +35,23 @@ export function buildDatabaseUrl(): string | undefined {
 
 export function appleBundleId(): string {
   return ENV.APPLE_BUNDLE_ID;
+}
+
+export function temporalAddress(): string | undefined {
+  return ENV.TEMPORAL_ADDRESS;
+}
+
+export function pushTokenKeyringSource(): unknown {
+  try {
+    return JSON.parse(ENV.PUSH_TOKEN_KEYRING ?? readFileSync(ENV.PUSH_TOKEN_KEYRING_FILE, "utf-8"));
+  } catch (error) {
+    if (ENV.APP_ENV !== "production") {
+      return { activeKeyId: "local", keys: { local: Buffer.alloc(32, 7).toString("base64") } };
+    }
+    throw new Error("Don't Text Your Ex: PUSH_TOKEN_KEYRING_FILE must contain valid JSON", {
+      cause: error,
+    });
+  }
 }
 
 export function requireDatabaseUrl(): string {

@@ -7,17 +7,28 @@ import {
   CloseJarRequestSchema,
   CreateJarRequestSchema,
   CreateReportRequestSchema,
+  DisablePushDeviceRequestSchema,
   InviteCodeSchema,
   JarIdSchema,
   JoinJarRequestSchema,
   LeaveJarRequestSchema,
   LogSlipRequestSchema,
+  NotificationIdSchema,
+  NotificationPreferencesSchema,
+  NotificationTargetSchema,
+  PushRegistrationResponseSchema,
+  RegisterPushDeviceRequestSchema,
   ReportIdSchema,
+  RescueCommandRequestSchema,
+  RescueInterventionIdSchema,
+  RescueInterventionSchema,
   ResolveReportRequestSchema,
   RotateInviteRequestSchema,
   type SessionToken,
   ShareStreakRequestSchema,
   UpdateMeRequestSchema,
+  UpdateNotificationPreferencesRequestSchema,
+  UpdateTimeZoneRequestSchema,
   type UserId,
 } from "../../../contracts";
 import { completeAppleAccountSignIn, verifyAppleIdentityToken } from "./apple-auth";
@@ -25,6 +36,8 @@ import { requireUser } from "./auth";
 import { errorDetails, parseRequestJson, parseRequestValue } from "./boundary";
 import { appleBundleId, isProduction } from "./env";
 import { id } from "./ids";
+import { notificationStore } from "./notifications";
+import { rescueStore } from "./rescue";
 import { resetAndSeed } from "./seed";
 import * as store from "./store";
 
@@ -169,6 +182,102 @@ api.patch("/me", async (c) => {
   }
   if (body.exes !== undefined) await store.setExes(uid, body.exes);
   return c.json(await store.getMe(uid));
+});
+
+api.patch("/me/timezone", async (c) => {
+  const uid = requireUser(c);
+  if (!uid) return c.json(unauth, 401);
+  const parsed = await parseRequestJson(c, UpdateTimeZoneRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  await store.updateUserTimeZone(uid, parsed.value.timezone);
+  return c.json({ ok: true });
+});
+
+api.get("/me/notification-preferences", async (c) => {
+  const uid = requireUser(c);
+  if (!uid) return c.json(unauth, 401);
+  return c.json(NotificationPreferencesSchema.parse(await notificationStore().getPreferences(uid)));
+});
+
+api.patch("/me/notification-preferences", async (c) => {
+  const uid = requireUser(c);
+  if (!uid) return c.json(unauth, 401);
+  const parsed = await parseRequestJson(c, UpdateNotificationPreferencesRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  return c.json(
+    NotificationPreferencesSchema.parse(
+      await notificationStore().updatePreferences(uid, parsed.value),
+    ),
+  );
+});
+
+// Push tokens are accepted only for the current authenticated account. There
+// is deliberately no route that lets a client create or raise a notification.
+api.post("/push/devices", async (c) => {
+  const uid = requireUser(c);
+  if (!uid) return c.json(unauth, 401);
+  const parsed = await parseRequestJson(c, RegisterPushDeviceRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  await notificationStore().registerDevice(uid, parsed.value);
+  return c.json(PushRegistrationResponseSchema.parse({ status: "registered" }));
+});
+
+api.post("/push/devices/disable", async (c) => {
+  const uid = requireUser(c);
+  if (!uid) return c.json(unauth, 401);
+  const parsed = await parseRequestJson(c, DisablePushDeviceRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  await notificationStore().disableDevice(uid, parsed.value.installationId);
+  return c.json({ ok: true });
+});
+
+api.get("/notifications/:id/target", async (c) => {
+  const uid = requireUser(c);
+  if (!uid) return c.json(unauth, 401);
+  const parsed = parseRequestValue(c, NotificationIdSchema, c.req.param("id"));
+  if (!parsed.ok) return parsed.response;
+  return c.json(
+    NotificationTargetSchema.parse(await notificationStore().resolveTarget(uid, parsed.value)),
+  );
+});
+
+// ─────────────────────────── private urge rescue ───────────────────────────
+api.get("/rescue", async (c) => {
+  const uid = requireUser(c);
+  if (!uid) return c.json(unauth, 401);
+  const intervention = await rescueStore.current(uid);
+  return c.json(intervention === null ? null : RescueInterventionSchema.parse(intervention));
+});
+
+api.post("/rescue", async (c) => {
+  const uid = requireUser(c);
+  if (!uid) return c.json(unauth, 401);
+  return c.json(RescueInterventionSchema.parse(await rescueStore.start(uid)));
+});
+
+api.post("/rescue/:id/command", async (c) => {
+  const uid = requireUser(c);
+  if (!uid) return c.json(unauth, 401);
+  const parsedId = parseRequestValue(c, RescueInterventionIdSchema, c.req.param("id"));
+  if (!parsedId.ok) return parsedId.response;
+  const parsed = await parseRequestJson(c, RescueCommandRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  const outcome = await rescueStore.command({
+    userId: uid,
+    interventionId: parsedId.value,
+    action: parsed.value.action,
+  });
+  switch (outcome.outcome) {
+    case "applied":
+    case "terminal":
+      return c.json(RescueInterventionSchema.parse(outcome.intervention));
+    case "ineligible":
+      return c.json({ error: "rescue_command_ineligible" }, 409);
+    case "not_found":
+      return c.json(notFound, 404);
+    default:
+      return assertNever(outcome);
+  }
 });
 
 // ─────────────────────────── jars ───────────────────────────

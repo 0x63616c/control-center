@@ -107,14 +107,24 @@ export const ENV = defineEnv({
     .forFeatures("deploys"),
 
   // ── APNs push (notif) ─────────────────────────────────────────────────────
-  APNS_KEY_ID: secret().optionalSecret().forRuntime("worker").forFeatures("notif"),
-  APNS_TEAM_ID: secret().optionalSecret().forRuntime("worker").forFeatures("notif"),
-  APNS_KEY_CONTENT: secret().optionalSecret().forRuntime("worker").forFeatures("notif"),
+  APNS_KEY_ID: secret()
+    .optionalSecret()
+    .forRuntime("worker", "temporal-worker")
+    .forFeatures("notif"),
+  APNS_TEAM_ID: secret()
+    .optionalSecret()
+    .forRuntime("worker", "temporal-worker")
+    .forFeatures("notif"),
+  APNS_KEY_CONTENT: secret()
+    .optionalSecret()
+    .forRuntime("worker", "temporal-worker")
+    .forFeatures("notif"),
   APNS_BUNDLE_ID: str()
     .default("co.worldwidewebb.theworkflowengine")
-    .forRuntime("worker")
+    .forRuntime("worker", "temporal-worker")
     .forFeatures("notif"),
   APNS_HOST: url().default("https://api.push.apple.com").forRuntime("worker").forFeatures("notif"),
+  PUSH_TOKEN_KEYRING: secret().optionalSecret().forRuntime("api", "temporal-worker"),
 
   // ── Camera / go2rtc (dogcam) ──────────────────────────────────────────────
   GO2RTC_URL: url().default("http://go2rtc:1984").forRuntime("api").forFeatures("dogcam"),

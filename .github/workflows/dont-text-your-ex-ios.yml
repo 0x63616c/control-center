@@ -75,11 +75,13 @@ jobs:
       - name: Build production web bundle
         env:
           VITE_API_BASE: https://dont-text-your-ex.worldwidewebb.co
+          VITE_APNS_ENVIRONMENT: production
         run: bun run build
 
       - name: Sync Capacitor project
         env:
           VITE_API_BASE: https://dont-text-your-ex.worldwidewebb.co
+          VITE_APNS_ENVIRONMENT: production
         run: bunx cap sync ios
 
       - name: Verify Apple identity configuration
@@ -89,6 +91,10 @@ jobs:
           grep -q 'PRODUCT_BUNDLE_IDENTIFIER = co.worldwidewebb.textyourex;' ios/App/App.xcodeproj/project.pbxproj
           grep -q 'com.apple.developer.applesignin' ios/App/App/App.entitlements
           grep -q 'com.apple.developer.associated-domains' ios/App/App/App.entitlements
+          grep -q 'aps-environment' ios/App/App/App.entitlements
+          grep -q 'didRegisterForRemoteNotificationsWithDeviceToken' ios/App/App/AppDelegate.swift
+          grep -q 'didFailToRegisterForRemoteNotificationsWithError' ios/App/App/AppDelegate.swift
+          grep -q 'CapacitorPushNotifications' ios/App/CapApp-SPM/Package.swift
           grep -q 'applinks:dont-text-your-ex.worldwidewebb.co' ios/App/App/App.entitlements
           grep -q 'CODE_SIGN_ENTITLEMENTS = App/App.entitlements;' ios/App/App.xcodeproj/project.pbxproj
           grep -q 'Don’t Text Your Ex' ios/App/App/Info.plist

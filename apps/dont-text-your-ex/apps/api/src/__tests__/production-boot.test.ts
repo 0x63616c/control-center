@@ -18,7 +18,8 @@ beforeAll(async () => {
 beforeEach(async () => {
   if (!HAS_DB) return;
   await pool.query(`
-    TRUNCATE report_evidence, reports, activity, slips, memberships,
+    TRUNCATE domain_event, jar_milestones, membership_tenures,
+             report_evidence, reports, activity, slips, memberships,
              sessions, otps, user_exes, jars, users RESTART IDENTITY CASCADE
   `);
 });

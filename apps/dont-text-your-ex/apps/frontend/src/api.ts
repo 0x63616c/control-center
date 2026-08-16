@@ -13,12 +13,22 @@ import {
   JoinJarResponseSchema,
   type LogSlipRequest,
   MeSchema,
+  NotificationIdSchema,
+  NotificationPreferencesSchema,
+  NotificationTargetSchema,
   OkResponseSchema,
+  PushRegistrationResponseSchema,
+  type RegisterPushDeviceRequest,
   type ReportId,
   ReportSchema,
+  type RescueCommandRequest,
+  type RescueInterventionId,
+  RescueInterventionSchema,
   type SessionToken,
   SessionTokenSchema,
   type UpdateMeRequest,
+  type UpdateNotificationPreferencesRequest,
+  type UpdateTimeZoneRequest,
 } from "../../../contracts";
 
 const TOKEN_KEY = "tye_token";
@@ -85,7 +95,7 @@ async function req<T>(
   return parsed.data;
 }
 
-class ApiError extends Error {
+export class ApiError extends Error {
   constructor(
     public readonly status: number,
     message: string,
@@ -116,6 +126,22 @@ export const api = {
   // me
   me: () => req(MeSchema, "GET", "/me"),
   updateMe: (patch: UpdateMeRequest) => req(MeSchema, "PATCH", "/me", patch),
+  updateTimeZone: (input: UpdateTimeZoneRequest) =>
+    req(OkResponseSchema, "PATCH", "/me/timezone", input),
+  notificationPreferences: () =>
+    req(NotificationPreferencesSchema, "GET", "/me/notification-preferences"),
+  updateNotificationPreferences: (patch: UpdateNotificationPreferencesRequest) =>
+    req(NotificationPreferencesSchema, "PATCH", "/me/notification-preferences", patch),
+  registerPushDevice: (input: RegisterPushDeviceRequest) =>
+    req(PushRegistrationResponseSchema, "POST", "/push/devices", input),
+  disablePushDevice: (installationId: RegisterPushDeviceRequest["installationId"]) =>
+    req(OkResponseSchema, "POST", "/push/devices/disable", { installationId }),
+  notificationTarget: (notificationId: string) =>
+    req(
+      NotificationTargetSchema,
+      "GET",
+      `/notifications/${NotificationIdSchema.parse(notificationId)}/target`,
+    ),
 
   // jars
   jars: () => req(JarSummarySchema.array(), "GET", "/jars"),
@@ -143,6 +169,12 @@ export const api = {
   report: (id: ReportId) => req(ReportSchema, "GET", `/reports/${id}`),
   resolveReport: (id: ReportId, action: "own" | "deny") =>
     req(ReportSchema, "POST", `/reports/${id}/resolve`, { action }),
+
+  // private urge rescue
+  currentRescue: () => req(RescueInterventionSchema.nullable(), "GET", "/rescue"),
+  startRescue: () => req(RescueInterventionSchema, "POST", "/rescue"),
+  rescueCommand: (id: RescueInterventionId, action: RescueCommandRequest["action"]) =>
+    req(RescueInterventionSchema, "POST", `/rescue/${id}/command`, { action }),
 
   // activity
   activity: () => req(ActivitySchema.array(), "GET", "/activity"),

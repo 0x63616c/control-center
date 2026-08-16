@@ -9,6 +9,7 @@ import {
   EVIDENCE_MAX_BYTES,
   EVIDENCE_MAX_FILES,
   EvidenceImageInputSchema,
+  IanaTimeZoneSchema,
   type InviteCode,
   InviteCodeSchema,
   type JarId,
@@ -16,8 +17,15 @@ import {
   JoinJarRequestSchema,
   LeaveJarRequestSchema,
   LogSlipRequestSchema,
+  NotificationDeliveryWorkflowInputSchema,
+  ReportAccountabilitySignalSchema,
+  ReportAccountabilityWorkflowInputSchema,
   type ReportId,
   ReportIdSchema,
+  ReportStatusSchema,
+  RescueCommandRequestSchema,
+  RescueInterventionSchema,
+  RescueInterventionWorkflowInputSchema,
   ResolveReportRequestSchema,
   ShareStreakRequestSchema,
   UpdateMeRequestSchema,
@@ -33,6 +41,86 @@ const JPEG_DATA_URL = "data:image/jpeg;base64,/9j/AA==";
 const WEBP_DATA_URL = "data:image/webp;base64,UklGRgAAAABXRUJQ";
 
 describe("request schemas", () => {
+  it("exposes expired as a terminal report status", () => {
+    expect(ReportStatusSchema.parse("expired")).toBe("expired");
+  });
+
+  it("keeps report workflow arguments opaque and exact", () => {
+    const start = {
+      schemaVersion: 1,
+      reportId: "rpt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    };
+    expect(ReportAccountabilityWorkflowInputSchema.parse(start)).toEqual(start);
+    expect(
+      ReportAccountabilityWorkflowInputSchema.safeParse({ ...start, anonymous: true }).success,
+    ).toBe(false);
+    expect(
+      ReportAccountabilitySignalSchema.parse({ ...start, expectedAggregateVersion: 2 }),
+    ).toEqual({ ...start, expectedAggregateVersion: 2 });
+  });
+
+  it("locks rescue workflow history to one opaque intervention id and schema version", () => {
+    const input = {
+      schemaVersion: 1,
+      interventionId: "rsi_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    };
+    expect(RescueInterventionWorkflowInputSchema.parse(input)).toEqual(input);
+    expect(
+      RescueInterventionWorkflowInputSchema.safeParse({ ...input, messageDraft: "do not persist" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("models every rescue state as a strict discriminated union", () => {
+    const common = {
+      id: "rsi_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      startedAt: 1_000,
+      deadlineAt: 601_000,
+      extensionCount: 0,
+      aggregateVersion: 1,
+      updatedAt: 1_000,
+    };
+    expect(RescueInterventionSchema.parse({ ...common, status: "active" })).toMatchObject({
+      status: "active",
+    });
+    expect(
+      RescueInterventionSchema.parse({
+        ...common,
+        status: "check_in_due",
+        checkInDueAt: 601_000,
+        responseDeadlineAt: 901_000,
+      }),
+    ).toMatchObject({ status: "check_in_due" });
+    for (const status of ["safe", "slipped", "abandoned"] as const) {
+      expect(
+        RescueInterventionSchema.parse({ ...common, status, resolvedAt: 901_000 }),
+      ).toMatchObject({ status });
+    }
+    expect(
+      RescueInterventionSchema.safeParse({ ...common, status: "active", messageDraft: "private" })
+        .success,
+    ).toBe(false);
+    expect(RescueCommandRequestSchema.safeParse({ action: "charge" }).success).toBe(false);
+  });
+
+  it("accepts only canonical IANA-style device timezones", () => {
+    expect(IanaTimeZoneSchema.safeParse("America/Los_Angeles").success).toBe(true);
+    expect(IanaTimeZoneSchema.safeParse("UTC").success).toBe(true);
+    expect(IanaTimeZoneSchema.safeParse("PST").success).toBe(false);
+    expect(IanaTimeZoneSchema.safeParse("Not/AZone").success).toBe(false);
+  });
+
+  it("keeps notification workflow start input limited to its opaque id", () => {
+    const exact = {
+      schemaVersion: 1,
+      notificationId: "ntf_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    };
+    expect(NotificationDeliveryWorkflowInputSchema.parse(exact)).toEqual(exact);
+    expect(
+      NotificationDeliveryWorkflowInputSchema.safeParse({ ...exact, aggregateVersion: 1 }).success,
+    ).toBe(false);
+  });
+
   it.each([
     ["profile patch", UpdateMeRequestSchema, { exes: "not-an-array" }],
     ["jar creation", CreateJarRequestSchema, { name: "", defaultCents: -1 }],

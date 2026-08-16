@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export * from "./notifications";
+
 const idSchema = <Prefix extends string, Brand extends string>(prefix: Prefix, brand: Brand) =>
   z
     .string()
@@ -9,6 +11,10 @@ const idSchema = <Prefix extends string, Brand extends string>(prefix: Prefix, b
 export const UserIdSchema = idSchema("usr", "UserId");
 export const JarIdSchema = idSchema("jar", "JarId");
 export const ReportIdSchema = idSchema("rpt", "ReportId");
+export const RescueInterventionIdSchema = z
+  .string()
+  .regex(/^rsi_[a-f0-9]{32}$/, "invalid RescueInterventionId")
+  .brand<"RescueInterventionId">();
 export const SessionTokenSchema = idSchema("sess", "SessionToken");
 const ActivityIdSchema = idSchema("act", "ActivityId");
 export const EvidenceIdSchema = idSchema("evi", "EvidenceId");
@@ -16,6 +22,7 @@ export const EvidenceIdSchema = idSchema("evi", "EvidenceId");
 export type UserId = z.infer<typeof UserIdSchema>;
 export type JarId = z.infer<typeof JarIdSchema>;
 export type ReportId = z.infer<typeof ReportIdSchema>;
+export type RescueInterventionId = z.infer<typeof RescueInterventionIdSchema>;
 export type SessionToken = z.infer<typeof SessionTokenSchema>;
 
 export const InviteCodeSchema = z
@@ -182,16 +189,93 @@ export const CreateReportRequestSchema = z
   });
 
 export const ResolveReportRequestSchema = z.object({ action: z.enum(["own", "deny"]) }).strict();
+export const RescueCommandRequestSchema = z
+  .object({ action: z.enum(["safe", "slipped", "extend"]) })
+  .strict();
 export const CloseJarRequestSchema = z.object({ confirmed: z.literal(true) }).strict();
 export const LeaveJarRequestSchema = z.object({ confirmed: z.literal(true) }).strict();
 export const RotateInviteRequestSchema = z.object({ confirmed: z.literal(true) }).strict();
 
 export type AppleAuthRequest = z.infer<typeof AppleAuthRequestSchema>;
 export type UpdateMeRequest = z.infer<typeof UpdateMeRequestSchema>;
+
+export const IanaTimeZoneSchema = z
+  .string()
+  .refine((value) => value === "UTC" || value.includes("/"), "timezone must be an IANA name")
+  .refine((value) => {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: value }).format(0);
+      return true;
+    } catch {
+      return false;
+    }
+  }, "invalid IANA timezone")
+  .brand<"IanaTimeZone">();
+export type IanaTimeZone = z.infer<typeof IanaTimeZoneSchema>;
+export const UpdateTimeZoneRequestSchema = z.object({ timezone: IanaTimeZoneSchema }).strict();
+export type UpdateTimeZoneRequest = z.infer<typeof UpdateTimeZoneRequestSchema>;
 export type CreateJarRequest = z.infer<typeof CreateJarRequestSchema>;
 export type LogSlipRequest = z.infer<typeof LogSlipRequestSchema>;
 export type EvidenceImageInput = z.infer<typeof EvidenceImageInputSchema>;
 export type CreateReportRequest = z.infer<typeof CreateReportRequestSchema>;
+export type RescueCommandRequest = z.infer<typeof RescueCommandRequestSchema>;
+
+const rescueBase = {
+  id: RescueInterventionIdSchema,
+  startedAt: z.number().int().nonnegative(),
+  deadlineAt: z.number().int().nonnegative(),
+  extensionCount: z.number().int().min(0).max(2),
+  aggregateVersion: z.number().int().positive(),
+  updatedAt: z.number().int().nonnegative(),
+} as const;
+
+export const RescueInterventionSchema = z.discriminatedUnion("status", [
+  z.object({ ...rescueBase, status: z.literal("active") }).strict(),
+  z
+    .object({
+      ...rescueBase,
+      status: z.literal("check_in_due"),
+      checkInDueAt: z.number().int().nonnegative(),
+      responseDeadlineAt: z.number().int().nonnegative(),
+    })
+    .strict(),
+  z
+    .object({
+      ...rescueBase,
+      status: z.literal("safe"),
+      resolvedAt: z.number().int().nonnegative(),
+    })
+    .strict(),
+  z
+    .object({
+      ...rescueBase,
+      status: z.literal("slipped"),
+      resolvedAt: z.number().int().nonnegative(),
+    })
+    .strict(),
+  z
+    .object({
+      ...rescueBase,
+      status: z.literal("abandoned"),
+      resolvedAt: z.number().int().nonnegative(),
+    })
+    .strict(),
+]);
+export type RescueIntervention = z.infer<typeof RescueInterventionSchema>;
+
+export const RescueInterventionWorkflowInputSchema = z
+  .object({ interventionId: RescueInterventionIdSchema, schemaVersion: z.literal(1) })
+  .strict();
+export type RescueInterventionWorkflowInput = z.infer<typeof RescueInterventionWorkflowInputSchema>;
+
+export const RescueSignalInputSchema = z
+  .object({
+    interventionId: RescueInterventionIdSchema,
+    expectedAggregateVersion: z.number().int().positive(),
+    schemaVersion: z.literal(1),
+  })
+  .strict();
+export type RescueSignalInput = z.infer<typeof RescueSignalInputSchema>;
 
 export const UserSchema = z
   .object({
@@ -307,7 +391,17 @@ const EvidenceSchema = z
   })
   .strict();
 
-export const ReportStatusSchema = z.enum(["pending", "owned", "denied"]);
+export const ReportStatusSchema = z.enum(["pending", "owned", "denied", "expired"]);
+export const ReportAccountabilityWorkflowInputSchema = z
+  .object({ schemaVersion: z.literal(1), reportId: ReportIdSchema })
+  .strict();
+export const ReportAccountabilitySignalSchema = ReportAccountabilityWorkflowInputSchema.extend({
+  expectedAggregateVersion: z.number().int().positive(),
+}).strict();
+export type ReportAccountabilityWorkflowInput = z.infer<
+  typeof ReportAccountabilityWorkflowInputSchema
+>;
+export type ReportAccountabilitySignal = z.infer<typeof ReportAccountabilitySignalSchema>;
 export const ReportSchema = z
   .object({
     id: ReportIdSchema,
@@ -372,3 +466,4 @@ export interface ActivityDTO {
 export type JarDetailDTO = z.infer<typeof JarDetailSchema>;
 export type JarPreviewDTO = z.infer<typeof JarPreviewSchema>;
 export type ReportDTO = z.infer<typeof ReportSchema>;
+export type RescueInterventionDTO = z.infer<typeof RescueInterventionSchema>;

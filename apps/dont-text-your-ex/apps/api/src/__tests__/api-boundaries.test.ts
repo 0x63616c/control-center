@@ -11,6 +11,19 @@ afterEach(() => {
 });
 
 describe("request JSON boundary", () => {
+  it("does not expose push registration, preferences, or notification targets without a session", async () => {
+    const app = buildApp();
+    const responses = await Promise.all([
+      app.request("/api/push/devices", { method: "POST" }),
+      app.request("/api/push/devices/disable", { method: "POST" }),
+      app.request("/api/me/notification-preferences"),
+      app.request("/api/me/notification-preferences", { method: "PATCH" }),
+      app.request("/api/notifications/ntf_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/target"),
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([401, 401, 401, 401, 401]);
+  });
+
   it("rejects an invalid development-login body before touching persistence", async () => {
     const response = await buildApp().request("/api/auth/dev", {
       method: "POST",

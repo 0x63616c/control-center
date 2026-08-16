@@ -1,7 +1,7 @@
 import { App as NativeApp } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import { useCallback, useEffect, useState } from "react";
-import type { SessionToken } from "../../../contracts";
+import { JarIdSchema, ReportIdSchema, type SessionToken } from "../../../contracts";
 import { api, setToken } from "./api";
 import type { AppCtx, Route, TabName } from "./appctx";
 import { SupportBurst } from "./bits";
@@ -9,9 +9,16 @@ import { resolveDevice } from "./device";
 import { Icon } from "./icons";
 import { installNativeInviteLinkListeners, inviteCodeFromPath } from "./invite-links";
 import { IOSDevice } from "./iosframe";
+import { getNativeAppInfo } from "./native/appInfo";
+import {
+  disableCurrentPush,
+  installNotificationActionListener,
+  refreshEnabledPush,
+} from "./native/push";
 import * as S from "./screens";
 import { restoreSession, revokeCurrentSession } from "./session-lifecycle";
 import { T } from "./theme";
+import { refreshStoredTimeZone } from "./timezone";
 import type { MeDTO } from "./types";
 
 const DEVICE = resolveDevice();
@@ -116,6 +123,8 @@ function renderRoute(ctx: AppCtx): React.ReactNode {
       return <S.Onboarding ctx={{ ...ctx, route: ctx.route }} />;
     case "home":
       return <S.Home ctx={{ ...ctx, route: ctx.route }} />;
+    case "rescue":
+      return <S.Rescue ctx={{ ...ctx, route: ctx.route }} />;
     case "jar":
       return <S.JarDetail ctx={{ ...ctx, route: ctx.route }} />;
     case "logSlip":
@@ -140,6 +149,8 @@ function renderRoute(ctx: AppCtx): React.ReactNode {
       return <S.ActivityTab ctx={{ ...ctx, route: ctx.route }} />;
     case "profile":
       return <S.Profile ctx={{ ...ctx, route: ctx.route }} />;
+    case "notificationSettings":
+      return <S.NotificationSettings ctx={{ ...ctx, route: ctx.route }} />;
     case "setup":
       return <S.SetupProfile ctx={{ ...ctx, route: ctx.route }} />;
     case "editProfile":
@@ -255,6 +266,64 @@ export default function App() {
     setStack([]);
   }, []);
 
+  useEffect(() => {
+    if (!NATIVE || !me) return;
+    const appInfo = async () => {
+      const info = await getNativeAppInfo();
+      if (!info) throw new Error("native app info unavailable");
+      return info;
+    };
+    void refreshEnabledPush(api.registerPushDevice, appInfo);
+    let disposed = false;
+    let removeActionListener: (() => Promise<void>) | undefined;
+    void installNotificationActionListener((notificationId) => {
+      void api.notificationTarget(notificationId).then(
+        (target) => {
+          switch (target.type) {
+            case "activity":
+              goTab("activity");
+              break;
+            case "profile":
+              goTab("profile");
+              break;
+            case "jar":
+              nav({ name: "jar", jarId: JarIdSchema.parse(target.jarId) }, true);
+              break;
+            case "report":
+              nav({ name: "reportDetail", reportId: ReportIdSchema.parse(target.reportId) }, true);
+              break;
+            case "unavailable":
+              goTab("activity");
+              break;
+          }
+        },
+        () => goTab("activity"),
+      );
+    }).then((remove) => {
+      if (disposed) {
+        void remove();
+      } else {
+        removeActionListener = remove;
+      }
+    });
+    return () => {
+      disposed = true;
+      void removeActionListener?.();
+    };
+  }, [goTab, me, nav]);
+
+  useEffect(() => {
+    if (!me) return;
+    const refresh = () => {
+      if (document.visibilityState === "visible") {
+        void refreshStoredTimeZone(api.updateTimeZone).catch(() => undefined);
+      }
+    };
+    refresh();
+    document.addEventListener("visibilitychange", refresh);
+    return () => document.removeEventListener("visibilitychange", refresh);
+  }, [me]);
+
   const signIn = useCallback((token: SessionToken, user: MeDTO) => {
     setToken(token);
     setMeState(user);
@@ -268,6 +337,7 @@ export default function App() {
   }, []);
 
   const signOut = useCallback(async () => {
+    await disableCurrentPush(api.disablePushDevice, false).catch(() => undefined);
     await revokeCurrentSession();
     setMeState(null);
     setStack([]);

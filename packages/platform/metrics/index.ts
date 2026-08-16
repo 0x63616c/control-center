@@ -13,6 +13,14 @@
  */
 export { __resetBoundedLabels, boundedLabel, OTHER_LABEL } from "./bounded";
 export { type CronObservation, type CronOutcome, observeCronRun } from "./cron";
+export {
+  type DtyeOutboxDispatchOutcome,
+  type DtyeOutboxSnapshot,
+  observeDtyeOutboxDispatch,
+  observeDtyeOutboxRecoverySuccess,
+  observeDtyeOutboxSnapshot,
+  observeDtyeSessionPurge,
+} from "./dtye-temporal";
 export { type HttpObservation, observeHttpRequest, statusClass } from "./http";
 export { type JobObservation, type JobOutcome, observeJobRun } from "./jobs";
 export { DEFAULT_METRICS_PORT, METRICS_PATH } from "./port";

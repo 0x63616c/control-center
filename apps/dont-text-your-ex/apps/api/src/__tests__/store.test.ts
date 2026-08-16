@@ -1,7 +1,19 @@
+import {
+  createNotificationStore,
+  createTokenCipher,
+  parseTokenKeyring,
+} from "@dont-text-your-ex/notifications";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { type InviteCode, JarDetailSchema, ReportSchema } from "../../../../contracts";
+import {
+  type InviteCode,
+  JarDetailSchema,
+  NotificationIdSchema,
+  PushInstallationIdSchema,
+  ReportSchema,
+} from "../../../../contracts";
 import { pool } from "../db/index";
 import { runMigrations } from "../db/migrate";
+import { PostgresOutbox } from "../outbox";
 import { buildApp } from "../server";
 import * as store from "../store";
 
@@ -10,6 +22,17 @@ import * as store from "../store";
 // (buildDatabaseUrl returns undefined when unconfigured rather than throwing).
 // Locally: DATABASE_URL=postgresql://postgres:test@localhost:5432/tye_test bun run test --project dont-text-your-ex-api
 const HAS_DB = !!process.env.DATABASE_URL;
+
+const notificationStore = createNotificationStore(
+  pool,
+  createTokenCipher(
+    parseTokenKeyring({
+      activeKeyId: "test",
+      keys: { test: Buffer.alloc(32, 3).toString("base64") },
+    }),
+  ),
+  () => 1_750_000_000_000,
+);
 
 function requireInviteCode(detail: Awaited<ReturnType<typeof store.getJarDetail>>): InviteCode {
   if (!detail?.inviteCode) throw new Error("open jar invite missing");
@@ -25,7 +48,8 @@ beforeEach(async () => {
   if (!HAS_DB) return;
   // Truncate all tables in reverse dep order
   await pool.query(`
-    TRUNCATE report_evidence, reports, activity, slips, memberships,
+    TRUNCATE domain_event, jar_milestones, membership_tenures,
+             report_evidence, reports, activity, slips, memberships,
              sessions, otps, user_exes, jars, users RESTART IDENTITY CASCADE
   `);
 });
@@ -114,6 +138,229 @@ describe.skipIf(!HAS_DB)("users / auth", () => {
 
     expect(updated?.name).toBe("Taylor");
     expect((await store.findUserByAppleId("apple-user-123"))?.name).toBe("Taylor");
+  });
+
+  it("authenticates and validates device timezone refreshes", async () => {
+    const user = await store.createUser({ name: "Timezone User" });
+    const token = await store.createSession(user.id);
+    const app = buildApp();
+
+    const updated = await app.request("/api/me/timezone", {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ timezone: "Europe/London" }),
+    });
+    expect(updated.status).toBe(200);
+    expect(await updated.json()).toEqual({ ok: true });
+    expect(
+      (await pool.query<{ timezone: string }>("SELECT timezone FROM users WHERE id=$1", [user.id]))
+        .rows[0]?.timezone,
+    ).toBe("Europe/London");
+
+    const invalid = await app.request("/api/me/timezone", {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ timezone: "PST" }),
+    });
+    expect(invalid.status).toBe(400);
+    const anonymous = await app.request("/api/me/timezone", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ timezone: "UTC" }),
+    });
+    expect(anonymous.status).toBe(401);
+  });
+});
+
+describe.skipIf(!HAS_DB)("authenticated notification delivery", () => {
+  it("registers and disables only the current user's installation", async () => {
+    const user = await store.createUser({ name: "Push User" });
+    const other = await store.createUser({ name: "Other User" });
+    const installationId = PushInstallationIdSchema.parse("dev_device1");
+    await notificationStore.registerDevice(user.id, {
+      installationId,
+      token: "ab".repeat(32),
+      platform: "ios",
+      environment: "sandbox",
+      appVersion: "1.0",
+      appBuild: "24",
+    });
+
+    await notificationStore.disableDevice(other.id, installationId);
+    const firstNotification = NotificationIdSchema.parse("ntf_11111111111111111111111111111111");
+    await pool.query(
+      `INSERT INTO user_notification
+       (id,recipient_user_id,category,dedupe_key,target_type,message_key,created_at)
+       VALUES ($1,$2,'report','first','activity','reports.pending',$3)`,
+      [firstNotification, user.id, 1_750_000_000_000],
+    );
+    expect(await notificationStore.prepareDeliveries(firstNotification)).toHaveLength(1);
+
+    await notificationStore.disableDevice(user.id, installationId);
+    const secondNotification = NotificationIdSchema.parse("ntf_22222222222222222222222222222222");
+    await pool.query(
+      `INSERT INTO user_notification
+       (id,recipient_user_id,category,dedupe_key,target_type,message_key,created_at)
+       VALUES ($1,$2,'report','second','activity','reports.pending',$3)`,
+      [secondNotification, user.id, 1_750_000_000_000],
+    );
+    expect(await notificationStore.prepareDeliveries(secondNotification)).toEqual([]);
+  });
+
+  it("replays an accepted delivery as delivered without exposing the device token", async () => {
+    const user = await store.createUser({ name: "Replay User" });
+    const installationId = PushInstallationIdSchema.parse("dev_replay");
+    await notificationStore.registerDevice(user.id, {
+      installationId,
+      token: "ac".repeat(32),
+      platform: "ios",
+      environment: "sandbox",
+      appVersion: "1.0",
+      appBuild: "24",
+    });
+    const notificationId = NotificationIdSchema.parse("ntf_55555555555555555555555555555555");
+    await pool.query(
+      `INSERT INTO user_notification
+       (id,recipient_user_id,category,dedupe_key,target_type,message_key,created_at)
+       VALUES ($1,$2,'report','accepted-replay','activity','reports.pending',$3)`,
+      [notificationId, user.id, 1_750_000_000_000],
+    );
+    const [deliveryId] = await notificationStore.prepareDeliveries(notificationId);
+    if (!deliveryId) throw new Error("delivery was not prepared");
+
+    await notificationStore.recordDeliveryOutcome(deliveryId, {
+      kind: "accepted",
+      apnsId: "accepted-by-apns",
+    });
+
+    await expect(notificationStore.loadDelivery(deliveryId)).resolves.toEqual({
+      kind: "terminal",
+      state: "delivered",
+    });
+  });
+
+  it("applies safe defaults and persists authenticated preference patches", async () => {
+    const user = await store.createUser({ name: "Preference User" });
+    const token = await store.createSession(user.id);
+    const app = buildApp();
+
+    const defaults = await app.request("/api/me/notification-preferences", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(await defaults.json()).toMatchObject({ report: true, rescue: true, slip: false });
+
+    const patched = await app.request("/api/me/notification-preferences", {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ report: false, slip: true }),
+    });
+    expect(patched.status).toBe(200);
+    expect(await patched.json()).toMatchObject({ report: false, rescue: true, slip: true });
+  });
+
+  it("re-encrypts device tokens in bounded batches before old-key retirement", async () => {
+    const user = await store.createUser({ name: "Rotation User" });
+    const oldKey = Buffer.alloc(32, 1).toString("base64");
+    const newKey = Buffer.alloc(32, 2).toString("base64");
+    const oldStore = createNotificationStore(
+      pool,
+      createTokenCipher(parseTokenKeyring({ activeKeyId: "old", keys: { old: oldKey } })),
+      () => 1_750_000_000_000,
+    );
+    const installationId = PushInstallationIdSchema.parse("dev_rotation");
+    await oldStore.registerDevice(user.id, {
+      installationId,
+      token: "ef".repeat(32),
+      platform: "ios",
+      environment: "sandbox",
+      appVersion: "1.0",
+      appBuild: "24",
+    });
+    const rotatingStore = createNotificationStore(
+      pool,
+      createTokenCipher(
+        parseTokenKeyring({ activeKeyId: "new", keys: { old: oldKey, new: newKey } }),
+      ),
+      () => 1_750_000_000_000,
+    );
+
+    await expect(rotatingStore.rotateTokenBatch(100)).resolves.toBe(1);
+    await expect(rotatingStore.rotateTokenBatch(100)).resolves.toBe(0);
+    const persisted = await pool.query<{ token_key_id: string }>(
+      "SELECT token_key_id FROM push_device WHERE installation_id=$1",
+      [installationId],
+    );
+    expect(persisted.rows[0]?.token_key_id).toBe("new");
+  });
+
+  it("suppresses a prepared delivery after a late opt-out and never overwrites terminal state", async () => {
+    const user = await store.createUser({ name: "Late Opt Out" });
+    const installationId = PushInstallationIdSchema.parse("dev_lateoptout");
+    await notificationStore.registerDevice(user.id, {
+      installationId,
+      token: "cd".repeat(32),
+      platform: "ios",
+      environment: "sandbox",
+      appVersion: "1.0",
+      appBuild: "24",
+    });
+    const notificationId = NotificationIdSchema.parse("ntf_44444444444444444444444444444444");
+    await pool.query(
+      `INSERT INTO user_notification
+       (id,recipient_user_id,category,dedupe_key,target_type,message_key,created_at)
+       VALUES ($1,$2,'report','late-opt-out','activity','reports.pending',$3)`,
+      [notificationId, user.id, 1_750_000_000_000],
+    );
+    const [deliveryId] = await notificationStore.prepareDeliveries(notificationId);
+    if (!deliveryId) throw new Error("delivery was not prepared");
+    await notificationStore.updatePreferences(user.id, { report: false });
+
+    await expect(notificationStore.loadDelivery(deliveryId)).resolves.toEqual({
+      kind: "terminal",
+      state: "suppressed",
+    });
+    expect(
+      (
+        await pool.query<{ status: string }>(
+          "SELECT status FROM notification_delivery WHERE id=$1",
+          [deliveryId],
+        )
+      ).rows[0]?.status,
+    ).toBe("suppressed");
+
+    await notificationStore.recordDeliveryOutcome(deliveryId, { kind: "accepted", apnsId: "late" });
+    expect(
+      (
+        await pool.query<{ status: string }>(
+          "SELECT status FROM notification_delivery WHERE id=$1",
+          [deliveryId],
+        )
+      ).rows[0]?.status,
+    ).toBe("suppressed");
+  });
+
+  it("reveals a target only to its recipient", async () => {
+    const recipient = await store.createUser({ name: "Recipient" });
+    const stranger = await store.createUser({ name: "Stranger" });
+    const recipientToken = await store.createSession(recipient.id);
+    const strangerToken = await store.createSession(stranger.id);
+    const notificationId = NotificationIdSchema.parse("ntf_33333333333333333333333333333333");
+    await pool.query(
+      `INSERT INTO user_notification
+       (id,recipient_user_id,category,dedupe_key,target_type,message_key,created_at)
+       VALUES ($1,$2,'report','private','profile','reports.pending',$3)`,
+      [notificationId, recipient.id, 1_750_000_000_000],
+    );
+    const app = buildApp();
+
+    const allowed = await app.request(`/api/notifications/${notificationId}/target`, {
+      headers: { Authorization: `Bearer ${recipientToken}` },
+    });
+    const hidden = await app.request(`/api/notifications/${notificationId}/target`, {
+      headers: { Authorization: `Bearer ${strangerToken}` },
+    });
+    expect(await allowed.json()).toEqual({ type: "profile" });
+    expect(await hidden.json()).toEqual({ type: "unavailable" });
   });
 });
 
@@ -1377,6 +1624,56 @@ describe.skipIf(!HAS_DB)("authorization matrix", () => {
       "POST",
       { code: joinCode },
     );
+  });
+});
+
+describe.skipIf(!HAS_DB)("transactional domain events", () => {
+  it("emits complete versioned events for existing jar, membership, slip, milestone and report mutations", async () => {
+    const owner = await store.createUser({ name: "Event Owner" });
+    const member = await store.createUser({ name: "Event Member" });
+    const jar = await store.createJar({ userId: owner.id, name: "Event Jar" });
+    const detail = await store.getJarDetail(jar.id, owner.id);
+    await store.joinJarByCode(member.id, requireInviteCode(detail));
+    await store.logSlip({ jarId: jar.id, userId: owner.id, amountCents: 5000 });
+    const report = await store.createReport({
+      jarId: jar.id,
+      accuserId: owner.id,
+      accusedId: member.id,
+      note: "event test",
+      anonymous: false,
+      amountCents: 500,
+      evidence: [],
+    });
+    await store.resolveReport(report.id, member.id, "own");
+    await store.rotateInvite(jar.id, owner.id);
+    await store.leaveJar(jar.id, member.id);
+    await store.closeJar(jar.id, owner.id);
+
+    const events = await new PostgresOutbox(pool).claimPage({
+      owner: "event-test",
+      limit: 50,
+      now: Date.now() + 1,
+      leaseUntil: Date.now() + 10_000,
+    });
+    const types = events.map((event) => event.type);
+    expect(types).toEqual(
+      expect.arrayContaining([
+        "jar.created",
+        "invite.issued",
+        "membership.joined",
+        "slip.logged",
+        "jar.milestone_crossed",
+        "report.created",
+        "report.owned",
+        "invite.superseded",
+        "membership.left",
+        "jar.closed",
+      ]),
+    );
+    expect(types.filter((type) => type === "slip.logged")).toHaveLength(2);
+    expect(types.filter((type) => type === "invite.issued")).toHaveLength(2);
+    expect(types.filter((type) => type === "invite.superseded")).toHaveLength(2);
+    expect(events).toHaveLength(13);
   });
 });
 

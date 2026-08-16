@@ -18,6 +18,8 @@ function outcome(report: ReportDTO): { label: string; color: string } {
       return { label: "Denied", color: T.sec };
     case "pending":
       return { label: "Awaiting response", color: T.red };
+    case "expired":
+      return { label: "Expired", color: T.ter };
   }
 }
 

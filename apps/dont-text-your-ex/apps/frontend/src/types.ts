@@ -7,5 +7,6 @@ export type {
   MeDTO,
   MemberDTO,
   ReportDTO,
+  RescueInterventionDTO,
   UserDTO,
 } from "../../../contracts";

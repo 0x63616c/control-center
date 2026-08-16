@@ -12,6 +12,7 @@
     "apps/map-provision",
     "apps/dont-text-your-ex",
     "apps/dont-text-your-ex/apps/*",
+    "apps/dont-text-your-ex/packages/*",
     "packages/*",
     "infra",
     "infra/unifi",

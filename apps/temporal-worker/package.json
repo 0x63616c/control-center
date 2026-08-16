@@ -11,10 +11,10 @@
   },
   "dependencies": {
     "@temporalio/client": "^1.21.1",
-    "@temporalio/common": "^1.21.1",
     "@temporalio/worker": "^1.21.1",
     "@www/logger": "workspace:*",
-    "@www/platform": "workspace:*"
+    "@www/platform": "workspace:*",
+    "@www/temporal-runtime": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",

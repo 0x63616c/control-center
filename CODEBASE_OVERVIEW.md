@@ -82,6 +82,9 @@ that run/deploy, `packages/` = things you import); product features live under
   the guest-WiFi HTTP listener.
 - `apps/worker` - Continuous interval workers for home-state reconciliation and ingest.
 - `apps/temporal-worker` - Temporal worker (Node, not bun) serving `HealthCheckWorkflow` on the `main` task queue.
+- `apps/dont-text-your-ex/apps/temporal-worker` - isolated product-owned Node
+  worker for the `dont-text-your-ex` Temporal namespace, also polling task queue
+  `main`; its first workflow is the product health check.
 - `apps/storybook` - Thin wrapper delegating to the web Storybook.
 - `apps/map-provision` - Basemap tile provisioner image.
 - Software-factory source, tests, image builds, and immutable releases live in
@@ -262,10 +265,15 @@ calls spread evenly across the minute. Each iteration sleeps against an absolute
 deadline (`i * 60s/N` from workflow start) rather than a fixed gap, so activity
 latency is absorbed by its own slot instead of accumulating.
 
-`apps/temporal-worker` is the ONE runtime here that runs on Node rather than bun:
+`apps/temporal-worker` is Control Center's runtime that runs on Node rather than bun:
 `@temporalio/core-bridge` publishes prebuilt glibc binaries only (no musl, so the
 image is `node:22-slim`, never alpine), and the workflow sandbox is built on
 node's `vm`.
+
+Don’t Text Your Ex has a second Node Temporal runtime for product isolation. It
+uses the shared schedule-reconciliation module but owns its workflow, activity,
+and `dtye_` schedule registry. Its Schedule reconciler cannot delete Control
+Center's `app_` schedules or workflow histories.
 
 ## Logging And Config
 

@@ -1,11 +1,12 @@
 # Don’t Text Your Ex Temporal workflow delivery contract
 
-**Status:** Goal-ready specification; implementation has not started  
-**Planning Ticket:** T-40; the later explicit implementation goal is a new request and receives one successor delivery Ticket  
-**Baseline:** `origin/main` at `f2426fdc8957b9409d1c0a0efb97e6dfd9fbbfe1` on 2026-08-15  
-**Product:** `apps/dont-text-your-ex`  
-**Production:** Pulumi stack `home-server`, Kubernetes namespace `dont-text-your-ex`  
-**Temporal namespace:** `dont-text-your-ex`  
+**Status:** Implementation goal active; W01 is implemented pending live proof;
+W00, W02, W03, and W09 are in progress<br>
+**Tickets:** planning T-40; delivery T-42<br>
+**Baseline:** `origin/main` at `3b4697e37bdd451a279864c1005f7284ea2fdebc` on 2026-08-16<br>
+**Product:** `apps/dont-text-your-ex`<br>
+**Production:** Pulumi stack `home-server`, Kubernetes namespace `dont-text-your-ex`<br>
+**Temporal namespace:** `dont-text-your-ex`<br>
 **Temporal task queue:** `main` — exact spelling, fixed by the requester
 
 This document is the durable execution and acceptance contract for adding every
@@ -253,19 +254,19 @@ the exact typed registries/state machines before implementation.
 - [ ] W00.1 Current `origin/main`, open PRs, worktrees, production SHA, database
       migrations, Temporal namespaces/schedules, and TestFlight state are
       refreshed and recorded without relying on this dated baseline.
-- [ ] W00.2 Every workflow, activity, signal, query, event, notification category,
+- [x] W00.2 Every workflow, activity, signal, query, event, notification category,
       workflow ID, schedule ID, timer, retry policy, and terminal state is listed.
-- [ ] W00.3 Postgres-authoritative versus Temporal-orchestrated responsibilities
+- [x] W00.3 Postgres-authoritative versus Temporal-orchestrated responsibilities
       are explicit for every state transition.
 - [ ] W00.4 The deletion table-by-table map and backup policy are approved before
       a destructive migration or deletion path is written.
 - [ ] W00.5 All product/legal choices are dated and attributed; agents do not
       invent a legal retention requirement.
-- [ ] W00.6 The merged App Store control plan is updated where deletion packet
+- [x] W00.6 The merged App Store control plan is updated where deletion packet
       statuses/evidence change; its other release packets remain separate.
-- [ ] W00.7 The final design follows the scalable-TypeScript guide and records
+- [x] W00.7 The final design follows the scalable-TypeScript guide and records
       discriminated states rather than boolean combinations.
-- [ ] W00.8 The status/evidence ledgers in this document are current.
+- [x] W00.8 The status/evidence ledgers in this document are current.
 
 ## W01 — Product Temporal runtime and declarative registry
 
@@ -336,9 +337,9 @@ events in bounded pages.
 - [ ] W02.8 Signal-with-start or an equivalent ordering-safe design handles a
       resolution, closure, departure, or deletion arriving before creation is
       dispatched.
-- [ ] W02.9 Poison events stop after a declared policy, remain inspectable, alert,
+- [x] W02.9 Poison events stop after a declared policy, remain inspectable, alert,
       and do not block later events.
-- [ ] W02.10 Pending count, oldest age, retries, permanent failures, and dispatch
+- [x] W02.10 Pending count, oldest age, retries, permanent failures, and dispatch
       latency are measured without high-cardinality user labels.
 - [ ] W02.11 Failure injection proves rollback, Temporal outage, duplicates,
       worker death, poison events, and crash-after-side-effect recovery.
@@ -487,16 +488,16 @@ time.
 
 ### Acceptance criteria
 
-- [ ] W06.1 Users have a validated IANA timezone with an explicit migration
+- [x] W06.1 Users have a validated IANA timezone with an explicit migration
       fallback and a documented device-refresh policy.
-- [ ] W06.2 The hourly schedule uses task queue `main` and handles DST without
+- [x] W06.2 The hourly schedule uses task queue `main` and handles DST without
       skipped or duplicate local days.
-- [ ] W06.3 A unique membership/milestone record prevents repeated achievement.
-- [ ] W06.4 A streak reset before delivery suppresses stale notification.
-- [ ] W06.5 Milestones remain private by default; shared activity requires current
+- [x] W06.3 A unique membership/milestone record prevents repeated achievement.
+- [x] W06.4 A streak reset before delivery suppresses stale notification.
+- [x] W06.5 Milestones remain private by default; shared activity requires current
       explicit opt-in and never reveals earlier private history.
-- [ ] W06.6 Paging is deterministic and continues as new before unbounded history.
-- [ ] W06.7 Tests cover timezone and DST edges, null streaks, reset races,
+- [x] W06.6 Paging is deterministic and continues as new before unbounded history.
+- [x] W06.7 Tests cover timezone and DST edges, null streaks, reset races,
       timezone changes, repeat milestones after a genuine reset, opt-in/out,
       duplicates, departed members, closed jars, and large pages.
 
@@ -543,13 +544,13 @@ revalidates and reminds immediately once; an already expired invite is skipped.
 
 ### Acceptance criteria
 
-- [ ] W08.1 Workflow arguments/history contain the version ID, never the invite
+- [x] W08.1 Workflow arguments/history contain the version ID, never the invite
       code or URL.
-- [ ] W08.2 Revalidation immediately before sending proves open/current/unexpired.
-- [ ] W08.3 Rotation cannot produce an old-version reminder.
-- [ ] W08.4 Closure terminates the lifecycle and only the owner is eligible.
-- [ ] W08.5 Synchronous invite validation remains authoritative during outages.
-- [ ] W08.6 Rotation races, near-expiry creation, exact expiry, closure, disabled
+- [x] W08.2 Revalidation immediately before sending proves open/current/unexpired.
+- [x] W08.3 Rotation cannot produce an old-version reminder.
+- [x] W08.4 Closure terminates the lifecycle and only the owner is eligible.
+- [x] W08.5 Synchronous invite validation remains authoritative during outages.
+- [x] W08.6 Rotation races, near-expiry creation, exact expiry, closure, disabled
       notification, duplicate dispatch, and worker restart are tested.
 
 ## W09 — SessionMaintenanceWorkflow
@@ -565,7 +566,7 @@ synchronously; maintenance is hygiene, never an authorization dependency.
 - [ ] W09.1 No session token enters workflow history, metrics, or logs.
 - [ ] W09.2 Purge is idempotent and safe with concurrent sign-in/session use.
 - [ ] W09.3 Active sessions survive and all eligible expired sessions are removed.
-- [ ] W09.4 Large purges continue as new and expose safe counts/duration metrics.
+- [x] W09.4 Large purges continue as new and expose safe counts/duration metrics.
 - [ ] W09.5 The schedule uses task queue `main` and produces inspectable history.
 
 ## W10 — AccountDeletionWorkflow and compliance erasure
@@ -854,16 +855,16 @@ revocation succeeded.
 
 | Packet | Status | Owner | Branch/PR | Blocking decision or evidence |
 |---|---|---|---|---|
-| W00 Design/baseline | PLANNED | coordinator | T-40 | Confirm proposed defaults |
-| W01 Temporal runtime | NOT STARTED | — | — | W00 |
-| W02 Outbox/orchestration | NOT STARTED | — | — | W01 |
-| W03 Push delivery | NOT STARTED | — | — | W02, Apple/APNs credentials |
-| W04 Report accountability | NOT STARTED | — | — | W03 |
-| W05 Urge rescue | NOT STARTED | — | — | W03 |
-| W06 Streak milestones | NOT STARTED | — | — | W03 |
-| W07 Monthly recap | NOT STARTED | — | — | W03, W06 terminology |
-| W08 Invite lifecycle | NOT STARTED | — | — | W03 |
-| W09 Session maintenance | NOT STARTED | — | — | W02 |
+| W00 Design/baseline | IN PROGRESS | coordinator | `codex/dtye-temporal-delivery`, T-42 | Reconcile the two committed deletion proposals with explicit owner choice |
+| W01 Temporal runtime | IMPLEMENTED; LIVE PROOF PENDING | coordinator | PR #708 / `dd7f8f612` | Merge/deploy evidence remains in W13 |
+| W02 Outbox/orchestration | IMPLEMENTED; LIVE PROOF PENDING | coordinator | PR #708 / `codex/dtye-outbox-observability` | W12/W13 live failure drills remain |
+| W03 Push delivery | IMPLEMENTED; LIVE PROOF PENDING | coordinator | PR #708 / integrated from `9d9080a47` | Deploy projected Apple/APNs credentials and prove foreground/background/terminated delivery |
+| W04 Report accountability | IMPLEMENTED; LIVE PROOF PENDING | coordinator | PR #708 / integrated from `05386fbbc` | Deployed outbox/APNs/expiry proof remains in W13 |
+| W05 Urge rescue | IMPLEMENTED; LIVE PROOF PENDING | coordinator | PR #708 / integrated from `7a58890e7` | Deployed timer/APNs/restart proof remains in W13 |
+| W06 Streak milestones | IMPLEMENTED; LIVE PROOF PENDING | `/root/streak_milestones` | PR #708 / integrated from `60c32cae0` | Production Schedule execution and APNs proof remain in W13 |
+| W07 Monthly recap | IN PROGRESS | `/root/monthly_recaps` | successor slice from PR #708 | W03 integrated; implementation active; owns migration 0016 |
+| W08 Invite lifecycle | IN PROGRESS | `/root/invite_integration` | successor slice from PR #708 | Core persistence/workflow landed; central wiring and replay proof active |
+| W09 Session maintenance | IMPLEMENTED; LIVE PROOF PENDING | coordinator | PR #708 / coordinator branch | W12/W13 schedule and production purge proof remain |
 | W10 Account deletion | NOT STARTED | — | — | W00 deletion decisions, W02, Apple revocation |
 | W11 UI/operations integration | NOT STARTED | — | — | W03–W10 |
 | W12 Verification/migration | NOT STARTED | — | — | W01–W11 |
@@ -878,6 +879,23 @@ commit/build, and proof boundary is not evidence.
 |---|---|---|---|---|---|
 | 2026-08-15 | Baseline/history trace | PASS | `f2426fdc8` | Source/ref/PR review proved no DTYE Temporal or deletion implementation; PR #703 merged the plan only | deletion Git/history review |
 | 2026-08-15 | Acceptance-contract review | PASS after corrections | plan branch | Independent review checked runtime, outbox, APNs guarantees, all workflow states, deletion/backup semantics, tests, and live proof; 24 findings were reconciled | workflow acceptance review |
+| 2026-08-16 | Delivery goal and tracker | PASS | T-42 | Explicit `Do it.` request created the implementation goal and the one successor delivery Ticket | coordinator |
+| 2026-08-16 | W00 repository/production refresh | PASS with implementation gaps | `3b4697e37` | Main CI/CodeQL green; migrations 0001–0009 live; API/frontend/CNPG healthy; Temporal has only `control-center` and `software-factory` product namespaces; no DTYE worker/namespace yet; Build 24 state is bounded by the merged P00 evidence | coordinator + live Git/Kubernetes/Postgres inspection |
+| 2026-08-16 | W00 runtime/outbox design trace | PASS | coordinator branch | Two independent traces fixed the product runtime seam, 22-event registry, transaction hazards, public TDD seams, schema dependencies, and deletion-plan conflict; ADR-0014 and the deletion data map are the durable synthesis | `/root/runtime_design`, `/root/outbox_workflows`, coordinator |
+| 2026-08-16 | W01 implementation checkpoint | PASS; live proof pending | `dd7f8f612` | Product worker tests 7/7, shared runtime tests 2/2, infra tests 5/5, task-queue contract guard, root typecheck, Biome, Knip, and Node 22 slim/glibc image build passed; namespace/poller/amd64 rollout proof remains W13 | `/root/runtime_design`, coordinator |
+| 2026-08-16 | W02 transaction/outbox foundation | PASS; dispatch integration pending | `dd7f8f612` | Real PostgreSQL 16 suite passed 88/88 including rollback, concurrent mutation, lease race, exactly-once report resolution, and all implemented producer events; non-DB suite passed 52 with 36 database tests intentionally skipped | `/root/outbox_workflows`, coordinator |
+| 2026-08-16 | W01/W02 independent foundation review | PASS after fixes | coordinator branch after `8b98f9cb8` | Seven findings were traced: durable IDs now enforce 128-bit entropy, event aggregate IDs are prefix/brand checked, health input/result are locked, worker/runtime tests run in CI, invite backfill IDs are random, and a boot-composition test proves schedules and worker creation receive the same exact `main` queue. Real PostgreSQL suite then passed 89/89 and worker tests 10/10. Dispatcher throw isolation and finite redacted failure codes are assigned to the active recovery slice. | `/root/foundation_review`, coordinator |
+| 2026-08-16 | W02 dispatch/recovery and W09 session maintenance | PASS; ops/live proof pending | coordinator branch after `3e0eae35c` | Capability-filtered claims preserve unsupported facts unattempted; post-commit and scheduled recovery share the dispatcher; thrown adapters are isolated per event; error codes are finite at TypeScript and PostgreSQL boundaries; starts/signals use named opaque-ID contracts; session purge uses 500-row locked pages and continue-as-new. Real PostgreSQL API passed 96/96 and worker passed 16/16; linux/amd64 image and workflow bundle passed on the source slice. | `/root/outbox_workflows`, coordinator |
+| 2026-08-16 | W02/W09 focused durability review | PASS after fixes; live proof pending | coordinator branch after `61e82c2da` | Dispatch is one event per activity with a 15-second Temporal RPC deadline, 25-second activity timeout, and 30-second row lease; post-commit nudges admit one unresolved batch; workflow inputs reject unknown schemas; session continue-as-new preserves one cutoff; cleanup now follows the exact daily contract. Worker passed 20/20 focused tests and both API/worker typechecks passed. | `/root/foundation_review`, coordinator |
+| 2026-08-16 | W03 native push and notification delivery | PASS locally; secrets/live-device proof pending | integrated from `9d9080a47` | Exact opaque workflow input, encrypted token keyring/rotation, authenticated preference and registration APIs, finite APNs outcomes, per-device durable retries, late authorization checks, native opt-in/settings, production entitlement guard, and shared worker-pool lifecycle are implemented. Notifications passed 15/15, frontend 29/29, integrated worker 25/25, root typecheck and Knip passed; source slice additionally passed real PostgreSQL 82/82, Storybook 535/535, production frontend, SwiftPM, and unsigned simulator builds. | `/root/workflow_acceptance_review`, coordinator |
+| 2026-08-16 | W06 streak milestones | PASS locally; live proof pending | `01c3344fb` | Fresh PostgreSQL applied migrations through 0015 and proved spring/fall DST, 09:00 windows, idempotency, reset suppression after prepared delivery, timezone changes, genuine reset re-award, opt-in/out, privacy, departure/closure, and deterministic 205-member paging (6/6); a real Temporal time-skipping server proved the workflow on queue `main`; focused API 64/64, worker 21/21, frontend 2/2, all four package typechecks, Biome, and Knip passed. Production Schedule execution and APNs remain W13. | `/root/streak_milestones` |
+| 2026-08-16 | W08 invite lifecycle and W12.4 tracer | PASS locally; live proof pending | `bf0e788d0` | Fresh PostgreSQL applied migrations through 0015; the combined worker suite passed 99/99. A real product transaction emitted `invite.issued`, the real outbox and dispatcher started `InviteLifecycleWorkflow` on task queue `main`, and the real activity reached `reminded`. Started history contained only `{schemaVersion, inviteVersionId}` and excluded invite code/URL; timer, replay, duplicate, rotation, closure, exact-expiry, disabled-preference, and replacement-worker cases passed. CI lane selection remains part of W12 hardening; production execution remains W13. | `/root/invite_integration`, coordinator |
+| 2026-08-16 | W10.17 backup-retention prerequisite | PARTIAL PASS | `04105fde5` | The production NFS backup job now deletes only dated DTYE PostgreSQL backup files older than 30 days, using an explicit directory and filename boundary; focused infra tests 5/5 and infra typecheck pass. W10.17 remains incomplete until isolated restore validation and restore-time erasure replay are implemented and rehearsed. | coordinator |
+| 2026-08-16 | W02.9, W02.10, W09.4 operations instrumentation | PASS; live proof pending | `codex/dtye-outbox-observability` | Bounded platform metrics expose durable pending/oldest/quarantine gauges, retry/permanent outcomes, accepted dispatch latency, purge counts/duration, and activity freshness without identity labels. Checked-in Grafana panels and Prometheus rules cover old/growing/failed backlog and missing poller/recovery; deterministic collector/activity/infra tests pass and the runbook covers recovery. | `/root/outbox_workflows` |
+| 2026-08-16 | Integrated W02/W03/W09 migration and runtime proof | PASS | coordinator branch after `e259a3c85` | Fresh PostgreSQL 16 applied migrations 0001 through 0012 in order. The combined API suite passed 104/104 and the worker suite passed 33/33 including real-Postgres session purge and durable operational snapshot tests. | coordinator |
+| 2026-08-16 | W04 report accountability | PASS locally; live proof pending | integrated through `e08b255d0` | Migration 0013, exact 24-hour/72-hour/7-day timers, authoritative terminal signals, durable closure/departure events, account-deletion reason seam, immutable opaque history contracts, and replay safety are integrated. Combined worker tests passed 65/65 non-DB cases with 9 expected DB skips; source and integration real-Postgres proofs passed all W04 cases. | `/root/report_accountability`, coordinator |
+| 2026-08-16 | W05 private urge rescue | PASS locally; live proof pending | integrated through `21f036dd0` | Migration 0014, authenticated server-authoritative state, exact cooldown/check-in/extensions, idempotent command races, private notification, account-deletion erase seam, mobile UI/Storybook states, replay, and an actual replacement-worker restart are integrated on task queue `main`. | `/root/foundation_review`, coordinator |
+| 2026-08-16 | Combined W04/W05 integration | PASS after harness fix | `55c396a4b` | Fresh PostgreSQL 16 applied migrations 0001 through 0014. The combined API suite passed 117/117; combined worker suite passed 84/84 including all real-Postgres and actual Temporal tests; frontend passed 44/44 plus typecheck and production build. Integration exposed parallel shared-DB fixture deletion, now prevented by single-fork worker tests. The runtime-copy gate also gained coverage for SQL function calls and the rescue copy remains supportive. | coordinator |
 
 ## Resume instructions
 
