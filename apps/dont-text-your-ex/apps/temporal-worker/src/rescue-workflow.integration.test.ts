@@ -11,6 +11,7 @@ import {
   rescueAccountDeletedSignal,
   rescueStateQuery,
   safeRescueSignal,
+  slippedRescueSignal,
   UrgeRescueWorkflow,
 } from "./workflows";
 
@@ -180,6 +181,62 @@ describe("UrgeRescueWorkflow time skipping", () => {
 
     expect(result).toEqual({ interventionId, status: "abandoned" });
     expect(fixture.advanceCalls).toEqual([2, 3]);
+  });
+
+  it("terminates slipped from authoritative state without creating a workflow side effect", async () => {
+    const startedAt = Date.now();
+    const fixture = await testWorker(active(startedAt));
+
+    const result = await fixture.worker.runUntil(async () => {
+      const handle = await fixture.environment.client.workflow.start(UrgeRescueWorkflow, {
+        workflowId: `rescue/${interventionId}`,
+        taskQueue: "main",
+        args: [{ schemaVersion: 1, interventionId }],
+      });
+      await fixture.environment.sleep("1 second");
+      fixture.setState(
+        RescueInterventionSchema.parse({
+          ...active(startedAt),
+          status: "slipped",
+          aggregateVersion: 2,
+          resolvedAt: startedAt + 1_000,
+          updatedAt: startedAt + 1_000,
+        }),
+      );
+      await handle.signal(slippedRescueSignal, {
+        schemaVersion: 1,
+        interventionId,
+        expectedAggregateVersion: 2,
+      });
+      return handle.result();
+    });
+
+    expect(result).toEqual({ interventionId, status: "slipped" });
+    expect(fixture.advanceCalls).toEqual([]);
+  });
+
+  it("abandons immediately at the two-extension absolute limit", async () => {
+    const startedAt = Date.now();
+    const fixture = await testWorker(active(startedAt));
+
+    const result = await fixture.worker.runUntil(async () => {
+      const handle = await fixture.environment.client.workflow.start(UrgeRescueWorkflow, {
+        workflowId: `rescue/${interventionId}`,
+        taskQueue: "main",
+        args: [{ schemaVersion: 1, interventionId }],
+      });
+      await fixture.environment.sleep("1 second");
+      fixture.setState(active(startedAt, 2, 3));
+      await handle.signal(extendRescueSignal, {
+        schemaVersion: 1,
+        interventionId,
+        expectedAggregateVersion: 3,
+      });
+      return handle.result();
+    });
+
+    expect(result).toEqual({ interventionId, status: "abandoned" });
+    expect(fixture.advanceCalls).toEqual([3]);
   });
 
   it("erases private state and terminates when account deletion wins the timer race", async () => {
