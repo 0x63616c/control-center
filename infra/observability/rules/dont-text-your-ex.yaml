@@ -42,10 +42,10 @@ groups:
           summary: DTYE outbox recovery activity has not succeeded recently
           runbook: apps/dont-text-your-ex/docs/temporal-operations.md#worker-or-schedule-outage
       - alert: DtyeSessionMaintenanceSilent
-        expr: absent(www_dtye_temporal_activity_last_success_timestamp_seconds{service="dont-text-your-ex-temporal-worker",activity="session_maintenance"}) or time() - www_dtye_temporal_activity_last_success_timestamp_seconds{service="dont-text-your-ex-temporal-worker",activity="session_maintenance"} > 7200
+        expr: absent(www_dtye_temporal_activity_last_success_timestamp_seconds{service="dont-text-your-ex-temporal-worker",activity="session_maintenance"}) or time() - www_dtye_temporal_activity_last_success_timestamp_seconds{service="dont-text-your-ex-temporal-worker",activity="session_maintenance"} > 108000
         for: 15m
         labels:
           severity: warning
         annotations:
-          summary: DTYE session maintenance has not succeeded in two hours
+          summary: DTYE daily session maintenance has not succeeded in 30 hours
           runbook: apps/dont-text-your-ex/docs/temporal-operations.md#session-maintenance-recovery

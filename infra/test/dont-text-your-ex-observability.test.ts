@@ -30,6 +30,9 @@ describe("DTYE Temporal operations observability", () => {
     expect(alerts.find((rule) => rule.alert === "DtyeOutboxRecoverySilent")?.expr).toContain(
       'activity="outbox_recovery"',
     );
+    expect(alerts.find((rule) => rule.alert === "DtyeSessionMaintenanceSilent")?.expr).toContain(
+      "> 108000",
+    );
   });
 
   test("rules and dashboard never create identity-labelled series", () => {
