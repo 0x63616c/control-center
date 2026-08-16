@@ -1,4 +1,10 @@
-# Temporal owns scheduled app work, declared from App facets
+# Temporal owns Control Center scheduled App work, declared from App facets
+
+This ADR's one-namespace and generated-facet decisions apply to Control Center
+Apps under `features/*`. The independently deployed Don’t Text Your Ex product
+uses the same cluster and the exact `main` task-queue spelling in its own
+`dont-text-your-ex` Temporal namespace, with a product-owned worker and registry.
+It does not join the Control Center generated barrels.
 
 App-level scheduled work runs as Temporal workflows on the self-hosted Temporal cluster
 (`infra/src/temporal.ts`, namespace `control-center`, task queue `main`), and is declared

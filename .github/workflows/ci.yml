@@ -225,6 +225,8 @@ jobs:
         # no arm64 leg or QEMU emulation creeps back in. The home-server Talos
         # node is the only deploy target and is x86.
         run: bash scripts/test-build-matrix.sh
+      - name: Don't Text Your Ex Temporal contract guard
+        run: bash scripts/test-dtye-temporal-contract.sh
       - name: Software-factory image CI coverage guard
         # `infra/src/services.ts` is the source of truth for factory images.
         # Every entry needs both a producer and a digest collector: without
@@ -569,6 +571,22 @@ jobs:
           dockerfile: apps/dont-text-your-ex/Dockerfile.api
           cache-scope: dont-text-your-ex-api
 
+  build-dont-text-your-ex-temporal-worker:
+    needs: [changes]
+    if: needs.changes.outputs.dont_text_your_ex == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_all)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build and push Don't Text Your Ex Temporal worker image
+        uses: ./.github/actions/build-product-image
+        env:
+          SOPS_AGE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
+        with:
+          image: www-dont-text-your-ex-temporal-worker
+          dockerfile: apps/dont-text-your-ex/Dockerfile.temporal-worker
+          cache-scope: dont-text-your-ex-temporal-worker
+
 
   # After the images build on main, deploy to the home-server Talos cluster with
   # `pulumi up` (www-j934.14). The runner joins the tailnet with an EPHEMERAL
@@ -595,6 +613,7 @@ jobs:
         build-map-provision,
         build-dont-text-your-ex-frontend,
         build-dont-text-your-ex-api,
+        build-dont-text-your-ex-temporal-worker,
       ]
     # always() lets us run even when some build jobs were skipped (no changes).
     # We proceed when: on main, an app OR infra changed, and no build failed.
@@ -687,7 +706,7 @@ jobs:
           # KEY is product-component scoped and matches the Pulumi imageDigests
           # config key, while repo names use full product slugs.
           declare -A out=()
-          for entry in www-control-center-web:control-center-web www-control-center-manage:control-center-manage www-control-center-api:control-center-api www-control-center-worker:control-center-worker www-control-center-temporal-worker:control-center-temporal-worker www-control-center-map-provision:control-center-map-provision www-dont-text-your-ex-frontend:dont-text-your-ex-frontend www-dont-text-your-ex-api:dont-text-your-ex-api; do
+          for entry in www-control-center-web:control-center-web www-control-center-manage:control-center-manage www-control-center-api:control-center-api www-control-center-worker:control-center-worker www-control-center-temporal-worker:control-center-temporal-worker www-control-center-map-provision:control-center-map-provision www-dont-text-your-ex-frontend:dont-text-your-ex-frontend www-dont-text-your-ex-api:dont-text-your-ex-api www-dont-text-your-ex-temporal-worker:dont-text-your-ex-temporal-worker; do
             repo="${entry%%:*}"
             name="${entry#*:}"
             d=$(docker buildx imagetools inspect "ghcr.io/0x63616c/$repo:main" --format '{{.Manifest.Digest}}' 2>/dev/null || true)
