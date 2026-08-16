@@ -186,7 +186,7 @@ export function JarDetail({
             marginBottom: 6,
           }}
         >
-          IN THE JAR
+          VIRTUAL TOTAL
         </div>
         <div
           data-testid="jar-pot"
@@ -214,6 +214,9 @@ export function JarDetail({
           “{jar.rule}”
         </div>
       </div>
+      <div style={{ color: T.ter, fontSize: 12.5, lineHeight: 1.4, textAlign: "center" }}>
+        Scoreboard points only. No real money is charged, collected, paid, or transferred.
+      </div>
 
       {/* primary action */}
       {!closed && (
@@ -224,7 +227,7 @@ export function JarDetail({
               icon={<span style={{ fontSize: 20 }}>💔</span>}
               onClick={() => ctx.nav({ name: "logSlip", jarId: jar.id })}
             >
-              I texted my ex
+              Log a slip
             </Btn>
           </div>
           <div style={{ display: "flex", gap: 10, marginBottom: 26 }}>
@@ -234,20 +237,20 @@ export function JarDetail({
               icon={<Icon.flag style={{ width: 17, height: 17 }} />}
               onClick={() => ctx.nav({ name: "report", jarId: jar.id })}
             >
-              Report
+              Accountability check
             </Btn>
             <Btn
               kind="dark"
               style={{ height: 50, fontSize: 16 }}
               onClick={() => ctx.nav({ name: "settle", jarId: jar.id })}
             >
-              Settle up
+              About my tally
             </Btn>
           </div>
         </>
       )}
 
-      {/* WALL OF SHAME */}
+      {/* Supportive progress board */}
       <div
         style={{
           display: "flex",
@@ -265,9 +268,9 @@ export function JarDetail({
             margin: 0,
           }}
         >
-          WALL OF SHAME 🏆
+          PROGRESS BOARD
         </h2>
-        <span style={{ fontSize: 12.5, color: T.ter }}>most slips up top</span>
+        <span style={{ fontSize: 12.5, color: T.ter }}>highest virtual tally first</span>
       </div>
       <div
         style={{
@@ -284,7 +287,7 @@ export function JarDetail({
           return (
             <div
               key={m.user.id}
-              data-testid="shame-row"
+              data-testid="progress-row"
               data-member={m.user.name}
               style={{
                 display: "flex",
@@ -318,14 +321,14 @@ export function JarDetail({
                     fontSize: 12.5,
                     marginTop: 1,
                     color:
-                      streak === "just caved"
+                      streak === "reset today"
                         ? T.red
-                        : streak === "forever clean"
+                        : streak === "no slips yet"
                           ? T.green
                           : T.sec,
                   }}
                 >
-                  {streak || "- streak hidden"}
+                  {streak || "streak not shared"}
                 </div>
               </div>
               <div
@@ -376,7 +379,7 @@ export function JarDetail({
         ))}
         {feed.length === 0 && (
           <div style={{ color: T.ter, fontSize: 13.5, padding: "10px 0" }}>
-            Nothing yet. Suspicious.
+            Nothing yet. Nice work.
           </div>
         )}
       </div>

@@ -1,4 +1,4 @@
-// Design tokens for Don’t Text Your Ex - true black + gold, loud and roasty.
+// Design tokens for Don’t Text Your Ex - true black + gold, playful and supportive.
 export const T = {
   bg: "#000000",
   surface: "#121212",
@@ -16,17 +16,17 @@ export const T = {
   ui: "'Hanken Grotesk', system-ui, sans-serif",
 } as const;
 
-// Whole-dollar only across the app (steps enforce whole dollars). Rounding here
-// also makes the pot count-up tick $0 -> $N in integers, never fractional cents.
+// The data model retains integer cents for compatibility, but V1 presents those
+// values exclusively as virtual accountability points. No money moves in the app.
 export function money(cents: number): string {
-  return `$${Math.round(cents / 100)}`;
+  return `${Math.round(cents / 100)} pts`;
 }
 
 // Mirror of the design's streakLabel, computed from the member DTO.
 import type { MemberDTO } from "./types";
 export function streakLabel(m: MemberDTO): string | null {
   if (!m.shareStreak) return null;
-  if (m.daysClean === 0) return "just caved";
-  if (m.daysClean < 0) return "forever clean";
-  return `${m.daysClean} ${m.daysClean === 1 ? "day" : "days"} clean`;
+  if (m.daysClean === 0) return "reset today";
+  if (m.daysClean < 0) return "no slips yet";
+  return `${m.daysClean} ${m.daysClean === 1 ? "day" : "days"} no-contact`;
 }

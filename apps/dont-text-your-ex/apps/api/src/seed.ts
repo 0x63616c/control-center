@@ -43,7 +43,7 @@ const PEOPLE = [
   { id: "usr_alyssa", name: "Alyssa", color: "#FF9F0A", phone: "+15550000004", exes: [] },
 ];
 
-// streak_start_at from a "days clean" value (null = forever clean / never caved)
+// streak_start_at from a no-contact day count (null = no recorded slip)
 const streak = (daysClean: number | null) => (daysClean == null ? null : now() - daysClean * DAY);
 
 const JARS = [
@@ -64,7 +64,7 @@ const JARS = [
   {
     id: "jar_3c91d7b0",
     name: "Dry January (Failed)",
-    rule: "New year, same bad decisions. $10 a pop.",
+    rule: "New year, fresh starts. Ten virtual points per slip.",
     defaultCents: 1000,
     code: "DRYJAN",
     createdBy: "usr_calum",
@@ -89,7 +89,7 @@ const ACTIVITY: ActivitySeed[] = [
   {
     jar: "jar_8af2e52a",
     type: "milestone",
-    text: "The jar just cracked $100. Disgraceful.",
+    text: "The jar reached 100 virtual points. Keep supporting each other.",
     at: 12 * MIN,
   },
   {
@@ -143,7 +143,7 @@ const PENDING = {
   anonymous: 1,
   amount: 500,
   at: 8 * MIN,
-  note: "Christie posted a story and you replied in 4 seconds flat. Pay up.",
+  note: "A reply came through. Please review this accountability check.",
 };
 
 // Production never seeds. Local dev and tests can call seed() or ensureSeed() explicitly.

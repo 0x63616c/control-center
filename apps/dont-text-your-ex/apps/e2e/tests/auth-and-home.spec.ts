@@ -12,13 +12,13 @@ test("onboarding shows the wordmark and taglines", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /Don't\s*Text\s*Your\s*Ex/i })).toBeVisible();
   await expect(page.getByText("Stop texting your ex.")).toBeVisible();
-  await expect(page.getByText("Payments coming soon.", { exact: false })).toHaveCount(0);
+  await expect(page.getByText("never reads your messages", { exact: false })).toBeVisible();
 });
 
-test("Apple sign-in lands on home with seeded jars and total damage", async ({ page }) => {
+test("Apple sign-in lands on home with seeded jars and a virtual tally", async ({ page }) => {
   await signInAsCalum(page);
-  // Calum is in two jars; total damage = 4000 + 3000 = $70
-  await expect(page.getByTestId("total-damage")).toHaveText("$70");
+  // Calum is in two jars; the virtual tally is 4000 + 3000 cents = 70 pts.
+  await expect(page.getByTestId("total-tally")).toHaveText("70 pts");
   await expect(page.getByText("The Group Chat")).toBeVisible();
   await expect(page.getByText("Dry January (Failed)")).toBeVisible();
 });
@@ -38,34 +38,36 @@ test("first-run unnamed Apple profile requires a name, persists it, and shows a 
 
   await page.goto("/");
   await expect(page.getByText("Make it official")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Start the shame →" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Start your reset →" })).toBeDisabled();
   await page.getByRole("textbox", { name: "Your name" }).fill("New Apple QA");
-  await page.getByRole("button", { name: "Start the shame →" }).click();
+  await page.getByRole("button", { name: "Start your reset →" }).click();
 
   await expect(
-    page.getByText("No jars yet. Start one and drag your friends down with you."),
+    page.getByText("No jars yet. Start one with friends, or join with an invite code."),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Join a jar with a code" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Create jar" })).toBeVisible();
 
   await page.reload();
   await expect(
-    page.getByText("No jars yet. Start one and drag your friends down with you."),
+    page.getByText("No jars yet. Start one with friends, or join with an invite code."),
   ).toBeVisible();
   await page.getByTestId("tab-profile").click();
   await expect(page.getByText("New Apple QA", { exact: true })).toBeVisible();
 });
 
-test("jar detail shows the pot, rule, and wall of shame ordered by tally", async ({ page }) => {
+test("jar detail shows the virtual tally, rule, and progress board ordered by tally", async ({
+  page,
+}) => {
   await signInAsCalum(page);
   await openJar(page, "The Group Chat");
-  // pot total = 6500 + 4000 = $105
-  await expect(page.getByTestId("jar-pot")).toHaveText("$105");
+  // Group tally = 6500 + 4000 cents = 105 pts.
+  await expect(page.getByTestId("jar-pot")).toHaveText("105 pts");
   await expect(
     page.getByText("Don't text your ex. We all know who.", { exact: false }),
   ).toBeVisible();
-  // Ali leads the wall of shame ($65)
-  const rows = page.getByTestId("shame-row");
+  // Ali leads the progress board with 65 pts.
+  const rows = page.getByTestId("progress-row");
   await expect(rows.first()).toContainText("Ali");
-  await expect(rows.first()).toContainText("$65");
+  await expect(rows.first()).toContainText("65 pts");
 });

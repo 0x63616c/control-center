@@ -3,7 +3,7 @@ import { api } from "../api";
 import type { AppCtx, RouteFor } from "../appctx";
 import { money, T } from "../theme";
 import type { JarDetailDTO } from "../types";
-import { Btn, Screen, TopBar } from "../ui";
+import { Screen, TopBar } from "../ui";
 import { ErrorState, type FetchedState, LoadingState } from "./fetched-state";
 
 export type SettleServices = Pick<typeof api, "jar">;
@@ -44,17 +44,17 @@ export function Settle({
   if (state.status === "loading") {
     return (
       <Screen>
-        <TopBar onBack={() => ctx.back()} title="Settle up" />
-        <LoadingState>Loading your balance…</LoadingState>
+        <TopBar onBack={() => ctx.back()} title="About my tally" />
+        <LoadingState>Loading your tally…</LoadingState>
       </Screen>
     );
   }
   if (state.status === "error") {
     return (
       <Screen>
-        <TopBar onBack={() => ctx.back()} title="Settle up" />
+        <TopBar onBack={() => ctx.back()} title="About my tally" />
         <ErrorState
-          label="Your balance couldn’t be loaded."
+          label="Your tally couldn’t be loaded."
           onRetry={() => setRetry((value) => value + 1)}
         />
       </Screen>
@@ -63,7 +63,7 @@ export function Settle({
   if (state.status === "empty") {
     return (
       <Screen>
-        <TopBar onBack={() => ctx.back()} title="Settle up" />
+        <TopBar onBack={() => ctx.back()} title="About my tally" />
         <div role="status" style={{ textAlign: "center", color: T.sec, padding: "60px 0" }}>
           You aren’t a member of this jar.
         </div>
@@ -75,14 +75,14 @@ export function Settle({
   const membership = jar.members.find((member) => member.user.id === ctx.me?.id);
   if (!membership) return null;
 
-  const owe = membership.tallyCents;
+  const tally = membership.tallyCents;
 
   return (
     <Screen>
-      <TopBar onBack={() => ctx.back()} title="Settle up" />
+      <TopBar onBack={() => ctx.back()} title="About my tally" />
       <div style={{ textAlign: "center", padding: "30px 0 10px" }}>
         <div style={{ fontSize: 13.5, color: T.sec, fontWeight: 600, marginBottom: 8 }}>
-          YOU OWE THE JAR
+          YOUR VIRTUAL TALLY
         </div>
         <div
           style={{
@@ -94,7 +94,7 @@ export function Settle({
             lineHeight: 0.9,
           }}
         >
-          {money(owe)}
+          {money(tally)}
         </div>
       </div>
 
@@ -116,45 +116,21 @@ export function Settle({
           }}
         >
           <span style={{ color: T.sec }}>Your slips in {jar.name}</span>
-          <span style={{ fontWeight: 700, fontFamily: T.disp }}>{money(owe)}</span>
+          <span style={{ fontWeight: 700, fontFamily: T.disp }}>{money(tally)}</span>
         </div>
       </div>
 
-      <div style={{ position: "relative" }}>
-        <Btn kind="gold" disabled>
-          Pay {money(owe)}
-        </Btn>
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            pointerEvents: "none",
-          }}
-        >
-          <span
-            style={{
-              background: "#000",
-              color: T.gold,
-              fontFamily: T.disp,
-              fontWeight: 700,
-              fontSize: 14,
-              padding: "5px 12px",
-              borderRadius: 999,
-              border: `1px solid ${T.gold}`,
-            }}
-          >
-            Payments coming soon
-          </span>
-        </div>
-      </div>
       <p
-        style={{ textAlign: "center", fontSize: 13, color: T.ter, marginTop: 16, lineHeight: 1.45 }}
+        style={{
+          textAlign: "center",
+          fontSize: 14,
+          color: T.sec,
+          marginTop: 16,
+          lineHeight: 1.55,
+        }}
       >
-        Right now this is purely a guilt scoreboard. Payments are coming soon. The shame, however,
-        is live.
+        This is a shared accountability scoreboard value only. Don’t Text Your Ex never charges,
+        collects, pays, or transfers real money.
       </p>
     </Screen>
   );

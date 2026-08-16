@@ -268,7 +268,7 @@ export const JoinValidationPreviewAndSubmitRetry: Story = {
     await userEvent.click(canvas.getByRole("button", { name: "Preview jar" }));
     await expect(await canvas.findByRole("alert")).toHaveTextContent("couldn’t be loaded");
     await userEvent.click(canvas.getByRole("button", { name: "Retry invite" }));
-    await userEvent.click(await canvas.findByRole("button", { name: "Join the shame" }));
+    await userEvent.click(await canvas.findByRole("button", { name: "Join this jar" }));
     await expect(await canvas.findByRole("alert")).toHaveTextContent("couldn’t be joined");
     await userEvent.click(canvas.getByRole("button", { name: "Retry joining jar" }));
   },
@@ -296,8 +296,10 @@ export const LogSlipFetchAndSubmitRetry: Story = {
     const canvas = within(canvasElement);
     await expect(await canvas.findByRole("alert")).toHaveTextContent("couldn’t be loaded");
     await userEvent.click(canvas.getByRole("button", { name: "Retry" }));
-    await userEvent.click(await canvas.findByRole("button", { name: /Add .* to my shame/ }));
-    await userEvent.click(canvas.getByRole("button", { name: "Yeah. I did it. 💸" }));
+    await userEvent.click(
+      await canvas.findByRole("button", { name: /Add .* pts to my virtual tally/ }),
+    );
+    await userEvent.click(canvas.getByRole("button", { name: "Confirm and reset streak" }));
     await expect(await canvas.findByRole("alert")).toHaveTextContent("wasn’t logged");
     await userEvent.click(canvas.getByRole("button", { name: "Retry logging slip" }));
   },

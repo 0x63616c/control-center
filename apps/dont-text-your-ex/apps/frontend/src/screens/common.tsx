@@ -67,11 +67,11 @@ export function ActivityRow({ a, showJar }: { a: ActivityDTO; showJar?: boolean 
     icon = <Avatar user={a.user} size={42} />;
     title = (
       <>
-        <b>{a.user.name}</b> caved{" "}
+        <b>{a.user.name}</b> logged a slip{" "}
         <span style={{ color: T.red, fontWeight: 700 }}>{money(a.amountCents ?? 0)}</span>
       </>
     );
-    sub = a.note ? `“${a.note}”` : a.exLabel ? `texted ${a.exLabel}` : "texted their ex";
+    sub = a.note ? `“${a.note}”` : a.exLabel ? `context: ${a.exLabel}` : "started again";
   } else if (a.type === "report" && a.user) {
     icon = (
       <div
@@ -91,10 +91,10 @@ export function ActivityRow({ a, showJar }: { a: ActivityDTO; showJar?: boolean 
     );
     title = (
       <>
-        <b>{a.user.name}</b> got reported
+        <b>{a.user.name}</b> received an accountability check
       </>
     );
-    sub = `by ${a.anonymous || !a.by ? "someone" : a.by.name}${a.note ? ` · “${a.note}”` : ""}`;
+    sub = `from ${a.anonymous || !a.by ? "someone in the jar" : a.by.name}${a.note ? ` · “${a.note}”` : ""}`;
   } else if (a.type === "join" && a.user) {
     icon = <Avatar user={a.user} size={42} />;
     title = (
@@ -102,7 +102,7 @@ export function ActivityRow({ a, showJar }: { a: ActivityDTO; showJar?: boolean 
         <b>{a.user.name}</b> joined the jar
       </>
     );
-    sub = "fresh meat";
+    sub = "ready to support each other";
   } else if (a.type === "deny" && a.user) {
     icon = (
       <div
@@ -122,10 +122,10 @@ export function ActivityRow({ a, showJar }: { a: ActivityDTO; showJar?: boolean 
     );
     title = (
       <>
-        <b>{a.user.name}</b> denied a report
+        <b>{a.user.name}</b> denied an accountability check
       </>
     );
-    sub = "innocent until proven otherwise";
+    sub = "tally unchanged";
   } else if (a.type === "milestone") {
     icon = (
       <div

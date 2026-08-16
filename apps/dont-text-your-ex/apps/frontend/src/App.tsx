@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { SessionToken } from "../../../contracts";
 import { api, setToken } from "./api";
 import type { AppCtx, Route, TabName } from "./appctx";
-import { MoneyBurst } from "./bits";
+import { SupportBurst } from "./bits";
 import { resolveDevice } from "./device";
 import { Icon } from "./icons";
 import { installNativeInviteLinkListeners, inviteCodeFromPath } from "./invite-links";
@@ -365,7 +365,7 @@ export default function App() {
           {renderRoute(ctx)}
         </div>
       )}
-      <MoneyBurst show={burst} />
+      <SupportBurst show={burst} />
       {showTabs && <TabBar active={tab} onTab={goTab} badge={hasPendingReport} />}
     </>
   );

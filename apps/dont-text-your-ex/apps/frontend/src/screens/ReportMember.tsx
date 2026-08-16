@@ -31,13 +31,13 @@ function assertNever(value: never): never {
 function reportButtonLabel(state: ReportMutationState, anonymous: boolean): string {
   switch (state.status) {
     case "idle":
-      return anonymous ? "Send it anonymously" : "Send the report";
+      return anonymous ? "Send check anonymously" : "Send accountability check";
     case "submitting":
-      return "Sending report…";
+      return "Sending check…";
     case "failed":
-      return "Retry sending report";
+      return "Retry sending check";
     case "sent":
-      return "Report sent";
+      return "Check sent";
     default:
       return assertNever(state);
   }
@@ -136,7 +136,7 @@ export function ReportMember({
   if (jarState.status === "loading") {
     return (
       <Screen>
-        <TopBar onBack={() => ctx.back()} title="Report a slip" />
+        <TopBar onBack={() => ctx.back()} title="Accountability check" />
         <LoadingState>Loading jar members…</LoadingState>
       </Screen>
     );
@@ -145,7 +145,7 @@ export function ReportMember({
   if (jarState.status === "error") {
     return (
       <Screen>
-        <TopBar onBack={() => ctx.back()} title="Report a slip" />
+        <TopBar onBack={() => ctx.back()} title="Accountability check" />
         <ErrorState label="Jar members couldn’t be loaded." onRetry={loadJar} />
       </Screen>
     );
@@ -178,18 +178,17 @@ export function ReportMember({
               margin: 0,
             }}
           >
-            Snitched.
+            Check sent
           </h2>
           <p style={{ color: T.sec, fontSize: 16, lineHeight: 1.45, maxWidth: 280, margin: 0 }}>
             {mutation.submission.anonymous ? (
               <>
-                <b style={{ color: T.text }}>{p?.name}</b> is getting pinged - and they won't know
-                it was you. 🤫
+                <b style={{ color: T.text }}>{p?.name}</b> will be asked to accept or deny it. Your
+                name is hidden from jar members.
               </>
             ) : (
               <>
-                <b style={{ color: T.text }}>{p?.name}</b> is getting pinged right now. They can own
-                it or deny it.
+                <b style={{ color: T.text }}>{p?.name}</b> will be asked to accept or deny it.
               </>
             )}
           </p>
@@ -205,12 +204,12 @@ export function ReportMember({
 
   return (
     <Screen>
-      <TopBar onBack={() => ctx.back()} title="Report a slip" />
+      <TopBar onBack={() => ctx.back()} title="Accountability check" />
       <p style={{ color: T.sec, fontSize: 15, lineHeight: 1.4, margin: "2px 0 22px" }}>
-        Caught someone red-handed? Drop the evidence.
+        Think someone slipped? Send a check they can accept or deny.
       </p>
 
-      <span style={labelStyle}>Who slipped?</span>
+      <span style={labelStyle}>Who should review this?</span>
       <div style={{ display: "flex", gap: 10, marginBottom: 24, flexWrap: "wrap" }}>
         {others.map((m) => {
           const on = m.user.id === target;
@@ -241,13 +240,13 @@ export function ReportMember({
         })}
         {others.length === 0 && (
           <div style={{ color: T.ter, fontSize: 14 }}>
-            You're the only one here. Invite someone to snitch on.
+            There are no other members to check in with yet.
           </div>
         )}
       </div>
 
       <span style={labelStyle}>
-        The receipts <span style={{ color: T.ter }}>(screenshots)</span>
+        Supporting screenshots <span style={{ color: T.ter }}>(optional)</span>
       </span>
       <div style={{ display: "flex", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
         {evidence.map((image, index) => (
@@ -281,6 +280,9 @@ export function ReportMember({
         ))}
       </div>
       <div style={{ marginBottom: 24 }}>
+        <p style={{ color: T.ter, fontSize: 12.5, lineHeight: 1.4, margin: "0 0 10px" }}>
+          Share only images you have permission to share. Jar members may be able to view them.
+        </p>
         <input
           ref={fileInput}
           data-testid="evidence-input"
@@ -326,13 +328,13 @@ export function ReportMember({
         )}
       </div>
 
-      <span style={labelStyle}>Add what happened</span>
+      <span style={labelStyle}>What happened?</span>
       <textarea
         value={note}
         disabled={mutation.status === "submitting"}
         onChange={(e) => setNote(e.target.value)}
         rows={3}
-        placeholder="“replied to her story in 4 seconds flat…”"
+        placeholder="“I saw a message come through…”"
         style={{ ...inputStyle, marginBottom: 20 }}
       />
 
@@ -351,14 +353,14 @@ export function ReportMember({
       >
         <div style={{ flex: 1 }}>
           <div style={{ fontFamily: T.disp, fontWeight: 700, fontSize: 15.5 }}>
-            Send anonymously 🥷
+            Hide my name from jar members
           </div>
           <div style={{ fontSize: 12.5, color: T.sec, marginTop: 2 }}>
-            They'll just see “someone in the jar.”
+            Members see “Someone in the jar.” We retain who sent it for safety and abuse handling.
           </div>
         </div>
         <Toggle
-          label="Send anonymously"
+          label="Hide my name from jar members"
           on={anon}
           onChange={setAnon}
           disabled={mutation.status === "submitting"}
@@ -371,7 +373,7 @@ export function ReportMember({
         </div>
       )}
       {mutation.status === "failed" && (
-        <MutationError>The report wasn’t sent. Check your connection, then retry.</MutationError>
+        <MutationError>The check wasn’t sent. Check your connection, then retry.</MutationError>
       )}
       <Btn kind="red" disabled={!canSend || mutation.status === "submitting"} onClick={send}>
         {reportButtonLabel(mutation, anon)}

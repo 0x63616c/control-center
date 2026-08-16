@@ -24,7 +24,7 @@ function slipButtonLabel(state: SlipMutationState): string {
   switch (state.status) {
     case "idle":
     case "confirming":
-      return "Yeah. I did it. 💸";
+      return "Confirm and reset streak";
     case "submitting":
       return "Logging slip…";
     case "failed":
@@ -94,7 +94,7 @@ export function LogSlip({
   if (state.status === "loading") {
     return (
       <Screen>
-        <TopBar onBack={() => ctx.back()} title="Fess up" />
+        <TopBar onBack={() => ctx.back()} title="Log a slip" />
         <LoadingState>Loading jar details…</LoadingState>
       </Screen>
     );
@@ -102,7 +102,7 @@ export function LogSlip({
   if (state.status === "error") {
     return (
       <Screen>
-        <TopBar onBack={() => ctx.back()} title="Fess up" />
+        <TopBar onBack={() => ctx.back()} title="Log a slip" />
         <ErrorState
           label="This jar couldn’t be loaded."
           onRetry={() => setRetry((value) => value + 1)}
@@ -114,7 +114,7 @@ export function LogSlip({
 
   return (
     <Screen style={{ display: "flex", flexDirection: "column" }}>
-      <TopBar onBack={() => ctx.back()} title="Fess up" />
+      <TopBar onBack={() => ctx.back()} title="Log a slip" />
       <div style={{ width: "100%" }}>
         <p
           style={{
@@ -127,20 +127,22 @@ export function LogSlip({
             margin: "6px 0 26px",
           }}
         >
-          So you <span style={{ color: T.red }}>caved.</span> How much is that gonna cost you?
+          It happens. Choose the <span style={{ color: T.gold }}>virtual amount</span> for this
+          slip.
         </p>
 
         <div style={{ width: "100%", marginBottom: 30 }}>
           <Stepper cents={cents} onChange={setCents} step={jar.defaultCents} />
           <div style={{ textAlign: "center", fontSize: 12.5, color: T.ter, marginTop: 12 }}>
-            jar default is {money(jar.defaultCents)} a slip
+            Jar default: {money(jar.defaultCents)} per slip
           </div>
         </div>
 
         {myExes.length > 0 && (
           <div style={{ width: "100%", marginBottom: 22 }}>
             <span style={labelStyle}>
-              Which one? <span style={{ color: T.ter }}>(private - only you see this)</span>
+              Context label{" "}
+              <span style={{ color: T.ter }}>(optional — visible to jar members)</span>
             </span>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {myExes.map((e) => (
@@ -169,19 +171,19 @@ export function LogSlip({
 
         <div style={{ width: "100%", marginBottom: 28 }}>
           <span style={labelStyle}>
-            Wanna explain yourself? <span style={{ color: T.ter }}>(optional)</span>
+            Note to your jar <span style={{ color: T.ter }}>(optional)</span>
           </span>
           <textarea
             value={note}
             onChange={(e) => setNote(e.target.value)}
             rows={2}
-            placeholder="“it was a moment of weakness…”"
+            placeholder="“I reached out and want a fresh start…”"
             style={inputStyle}
           />
         </div>
 
         <Btn kind="red" onClick={() => setMutation({ status: "confirming" })}>
-          Add {money(cents)} to my shame
+          Add {money(cents)} to my virtual tally
         </Btn>
       </div>
 
@@ -227,7 +229,7 @@ export function LogSlip({
                 margin: "0 0 6px",
               }}
             >
-              You sure-sure?
+              Log this slip?
             </h3>
             <p
               style={{
@@ -238,8 +240,8 @@ export function LogSlip({
                 margin: "0 0 22px",
               }}
             >
-              This resets your <b style={{ color: T.green }}>{myStreak}-day clean streak</b> to zero
-              and tells the whole jar. No takebacks.
+              This resets your <b style={{ color: T.green }}>{myStreak}-day no-contact streak</b> to
+              zero and shares the slip with jar members. It can’t currently be edited.
             </p>
             <Btn kind="red" disabled={mutation.status === "submitting"} onClick={doLog}>
               {slipButtonLabel(mutation)}
@@ -265,7 +267,7 @@ export function LogSlip({
                 cursor: "pointer",
               }}
             >
-              Actually I'm strong, never mind
+              Go back
             </button>
           </div>
         </div>

@@ -1,13 +1,17 @@
 # Don’t Text Your Ex
 
-> A shared guilt jar for friends trying not to text their exes.
+> Invite-only accountability for friends supporting each other through no-contact goals.
 
-You and your friends know who shouldn't be texting whom. Make a pact, throw your slip-ups
-into a shared **jar**, and watch the guilt money pile up. Every time someone caves and texts
-their ex, it gets logged. The tally grows. Your friends find out. Shame, but make it a leaderboard.
+Create a shared **jar**, agree on a goal, and support each other through the awkward moments.
+Members can log their own slips, track no-contact streaks, and send an accountability check that
+the recipient can accept or deny. Participation is opt-in: jars are invite-only, members preview
+an invite before joining, and non-owners can leave.
 
-No real money moves (the "Settle up" button is intentionally inert), and detection is honor-system:
-you log it yourself or a friend reports you.
+The app never reads users' messages or contacts. It relies on member-submitted activity. Tallies are
+virtual scoreboard points only: Don’t Text Your Ex never charges, collects, pays, or transfers real
+money. Jar activity, notes, context labels, and supporting screenshots are visible to applicable
+jar members; an anonymous accountability check hides its submitter from jar members but retains
+that association on the service for safety and abuse handling.
 
 ![onboarding](docs/design-reference/project/shots/onboarding.png)
 
@@ -21,8 +25,8 @@ you log it yourself or a friend reports you.
 | Tests | Vitest (API contract tests) + Playwright (E2E, requires Postgres) |
 | Deploy | Two images: `Dockerfile.api` (Bun/Hono) + `Dockerfile.frontend` (nginx static) |
 
-Money is stored as integer cents everywhere; the data model is Stripe-ready so real payments can
-drop in later without a schema rewrite.
+Virtual point values retain the existing integer-cent storage representation for compatibility.
+There is no transaction, wallet, purchase, payout, or message-reading integration.
 
 ## Quick start (local dev with Tilt)
 
@@ -60,14 +64,16 @@ Demo invite code: **`XEX24K`** (The Group Chat).
 
 ## Features
 
-- **Jars** - named accountability groups with a rule, a per-slip cost, members and a running pot.
-- **Slips** - self-log "I texted my ex" with an amount, optional private ex label, and a note.
-- **Clean streak** - "days since I last texted my ex," opt-in to share per jar.
-- **Reports** - flag a friend with text and/or screenshot evidence, optionally anonymously.
-  The accused gets to own it (logs the slip) or deny it.
-- **Wall of shame** - per-jar leaderboard sorted by tally, with streaks shown for sharers.
+- **Jars** - named, invite-only accountability groups with a rule, virtual points per slip, members,
+  and a running virtual tally.
+- **Slips** - self-log a slip with virtual points, an optional context label, and a note. Submitted
+  details are visible to jar members.
+- **No-contact streak** - days since the member's last logged slip, opt-in to share per jar.
+- **Accountability checks** - ask a friend to review text and/or screenshot context, optionally with
+  the submitter hidden from jar members. The recipient can accept the check or deny it.
+- **Progress board** - per-jar board sorted by virtual tally, with streaks shown for sharers.
 - **Invites** - share an invite code / link from any jar; join by code with a preview first.
-- **Activity feed** - slips, reports, joins, and milestones ("the jar just cracked $100").
+- **Activity feed** - slips, accountability checks, joins, and virtual-point milestones.
 - **Profile** - edit name/avatar and per-jar share-streak toggles.
 
 ## Architecture
@@ -120,16 +126,16 @@ Do not mark these complete until they have been verified against the current pro
 - [ ] API and frontend pods are healthy in `dont-text-your-ex`.
 - [ ] `https://dont-text-your-ex.worldwidewebb.co/api/health` returns `{"ok":true}`.
 - [ ] Native Sign in with Apple creates and resumes a production account.
-- [ ] Jar creation, slip logging, and report flows work end to end.
+- [ ] Jar creation, slip logging, and accountability-check flows work end to end.
 - [ ] A database backup completed and its artifact was verified.
 - [ ] A TestFlight build installs and uses the production host.
 - [ ] Production boot does not seed demo users.
 
 ## Not in v1
 
-Real payments, payouts, committee voting on denied reports, push notifications, and on-device
-contacts integration are out of scope. Authentication is real "Sign in with Apple" on iOS; there
-is no phone/OTP or web-browser login path.
+Transactions, wallets, purchases, payouts, automatic message detection, committee voting on denied
+checks, push notifications, and contacts integration are out of scope. Authentication is real
+"Sign in with Apple" on iOS; there is no phone/OTP or web-browser login path.
 
 **iOS Sign in with Apple capability:** the app ships the `com.apple.developer.applesignin`
 entitlement (`ios/App/App/App.entitlements`). The App ID's "Sign in with Apple" capability is

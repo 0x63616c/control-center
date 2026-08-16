@@ -43,7 +43,7 @@ const report = ReportSchema.parse({
   jarName: jar.name,
   accuser: meUser,
   accused: meUser,
-  note: "The receipts",
+  note: "Shared context",
   anonymous: false,
   amountCents: 500,
   status: "pending",
@@ -158,10 +158,8 @@ export const SettleLoading: Story = {
     />
   ),
   play: async ({ canvasElement }) => {
-    await expect(within(canvasElement).getByRole("status")).toHaveTextContent(
-      "Loading your balance",
-    );
-    await expect(within(canvasElement).queryByText("$0.00")).not.toBeInTheDocument();
+    await expect(within(canvasElement).getByRole("status")).toHaveTextContent("Loading your tally");
+    await expect(within(canvasElement).queryByText("0 pts")).not.toBeInTheDocument();
   },
 };
 
@@ -178,8 +176,10 @@ export const ConfirmDenyLoading: Story = {
     />
   ),
   play: async ({ canvasElement }) => {
-    await expect(within(canvasElement).getByRole("status")).toHaveTextContent("Loading report");
-    await expect(within(canvasElement).queryByText(/Nothing pending/)).not.toBeInTheDocument();
+    await expect(within(canvasElement).getByRole("status")).toHaveTextContent("Loading check");
+    await expect(
+      within(canvasElement).queryByText(/No checks are waiting/),
+    ).not.toBeInTheDocument();
   },
 };
 
@@ -225,7 +225,7 @@ export const ActivityErrorRetryAndEmpty: Story = {
       "Activity couldn’t be loaded.",
     );
     await userEvent.click(canvas.getByRole("button", { name: "Retry" }));
-    await expect(await canvas.findByText(/No carnage yet/)).toBeInTheDocument();
+    await expect(await canvas.findByText(/No activity yet/)).toBeInTheDocument();
   },
 };
 
@@ -297,8 +297,10 @@ export const ClosedJarKeepsHistoryReadOnly: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(await canvas.findByRole("status")).toHaveTextContent("closed by Alex");
-    await expect(canvas.getByText("WALL OF SHAME", { exact: false })).toBeInTheDocument();
-    await expect(canvas.queryByRole("button", { name: "Report" })).not.toBeInTheDocument();
+    await expect(canvas.getByText("PROGRESS BOARD", { exact: false })).toBeInTheDocument();
+    await expect(
+      canvas.queryByRole("button", { name: "Accountability check" }),
+    ).not.toBeInTheDocument();
     await expect(canvas.queryByRole("button", { name: "Close jar" })).not.toBeInTheDocument();
   },
 };
@@ -340,11 +342,11 @@ export const SettleErrorAndRetry: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(await canvas.findByRole("alert")).toHaveTextContent(
-      "Your balance couldn’t be loaded.",
+      "Your tally couldn’t be loaded.",
     );
-    await expect(canvas.queryByText("$0.00")).not.toBeInTheDocument();
+    await expect(canvas.queryByText("0 pts")).not.toBeInTheDocument();
     await userEvent.click(canvas.getByRole("button", { name: "Retry" }));
-    await expect(await canvas.findAllByText("$5")).toHaveLength(2);
+    await expect(await canvas.findAllByText("5 pts")).toHaveLength(2);
   },
 };
 
@@ -371,7 +373,7 @@ export const SettleGenuineNotMemberEmpty: Story = {
     await expect(await canvas.findByRole("status")).toHaveTextContent(
       "You aren’t a member of this jar.",
     );
-    await expect(canvas.queryByText("$0.00")).not.toBeInTheDocument();
+    await expect(canvas.queryByText("0 pts")).not.toBeInTheDocument();
   },
 };
 
@@ -396,10 +398,10 @@ export const ConfirmDenyErrorRetryAndEmpty: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(await canvas.findByRole("alert")).toHaveTextContent(
-      "This report couldn’t be loaded.",
+      "This check couldn’t be loaded.",
     );
     await userEvent.click(canvas.getByRole("button", { name: "Retry" }));
-    await expect(await canvas.findByText(/Nothing pending/)).toBeInTheDocument();
+    await expect(await canvas.findByText(/No checks are waiting/)).toBeInTheDocument();
   },
 };
 
@@ -418,8 +420,8 @@ export const ConfirmDenyMutationFailure: Story = {
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(await canvas.findByRole("button", { name: /Own it/ }));
+    await userEvent.click(await canvas.findByRole("button", { name: /Accept and add/ }));
     await expect(await canvas.findByRole("alert")).toHaveTextContent("couldn’t be updated");
-    await expect(canvas.getByRole("button", { name: /Own it/ })).toBeEnabled();
+    await expect(canvas.getByRole("button", { name: /Accept and add/ })).toBeEnabled();
   },
 };

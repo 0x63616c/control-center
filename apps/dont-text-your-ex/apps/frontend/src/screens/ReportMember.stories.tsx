@@ -88,7 +88,7 @@ const ctx: AppCtx<RouteFor<"report">> = {
 };
 
 const meta = {
-  title: "Don't Text Your Ex/Flows/Report member",
+  title: "Don't Text Your Ex/Flows/Accountability check",
   component: ReportMember,
   tags: ["autodocs"],
   parameters: { boardWrapper: false, layout: "centered" },
@@ -114,13 +114,13 @@ export const NoteOnlySubmission: Story = {
 
     await userEvent.click(canvas.getByRole("button", { name: accused.name }));
     await userEvent.type(
-      canvas.getByPlaceholderText("“replied to her story in 4 seconds flat…”"),
+      canvas.getByPlaceholderText("“I saw a message come through…”"),
       submittedReport.note ?? "",
     );
     await userEvent.click(within(canvas.getByTestId("anon-row")).getByRole("switch"));
-    await userEvent.click(canvas.getByRole("button", { name: "Send it anonymously" }));
+    await userEvent.click(canvas.getByRole("button", { name: "Send check anonymously" }));
 
-    await expect(await canvas.findByText("Snitched.")).toBeInTheDocument();
+    await expect(await canvas.findByText("Check sent")).toBeInTheDocument();
     await expect(services.createReport).toHaveBeenCalledWith(jar.id, {
       accusedId: accused.id,
       note: submittedReport.note,
@@ -141,11 +141,13 @@ export const ImageOnlySubmission: Story = {
     const screenshot = new File([bytes], "receipt.png", { type: "image/png" });
 
     await userEvent.upload(canvas.getByTestId("evidence-input"), screenshot);
-    await expect(await canvas.findByRole("img", { name: "Report attachment" })).toBeInTheDocument();
+    await expect(
+      await canvas.findByRole("img", { name: "Accountability check attachment" }),
+    ).toBeInTheDocument();
     await userEvent.click(canvas.getByRole("button", { name: accused.name }));
-    await userEvent.click(canvas.getByRole("button", { name: "Send the report" }));
+    await userEvent.click(canvas.getByRole("button", { name: "Send accountability check" }));
 
-    await expect(await canvas.findByText("Snitched.")).toBeInTheDocument();
+    await expect(await canvas.findByText("Check sent")).toBeInTheDocument();
     await expect(createReport).toHaveBeenCalledWith(jar.id, {
       accusedId: accused.id,
       note: undefined,
@@ -185,11 +187,11 @@ export const FetchAndSubmitFailureRetryWithoutFalseSuccess: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(await canvas.findByRole("alert")).toHaveTextContent("couldn’t be loaded");
-    await expect(canvas.queryByText("Snitched.")).not.toBeInTheDocument();
+    await expect(canvas.queryByText("Check sent")).not.toBeInTheDocument();
     await userEvent.click(canvas.getByRole("button", { name: "Retry" }));
     await expect(canvas.queryByRole("button", { name: former.name })).not.toBeInTheDocument();
     await userEvent.type(
-      await canvas.findByPlaceholderText("“replied to her story in 4 seconds flat…”"),
+      await canvas.findByPlaceholderText("“I saw a message come through…”"),
       "Visible failure proof",
     );
     const payload =
@@ -201,23 +203,23 @@ export const FetchAndSubmitFailureRetryWithoutFalseSuccess: Story = {
     );
     await userEvent.upload(canvas.getByTestId("evidence-input"), screenshot);
     await userEvent.click(within(canvas.getByTestId("anon-row")).getByRole("switch"));
-    await userEvent.click(canvas.getByRole("button", { name: "Send it anonymously" }));
+    await userEvent.click(canvas.getByRole("button", { name: "Send check anonymously" }));
     await expect(await canvas.findByRole("alert")).toHaveTextContent("wasn’t sent");
-    await expect(canvas.queryByText("Snitched.")).not.toBeInTheDocument();
+    await expect(canvas.queryByText("Check sent")).not.toBeInTheDocument();
+    await expect(canvas.getByPlaceholderText("“I saw a message come through…”")).toHaveValue(
+      "Visible failure proof",
+    );
     await expect(
-      canvas.getByPlaceholderText("“replied to her story in 4 seconds flat…”"),
-    ).toHaveValue("Visible failure proof");
-    await expect(canvas.getByRole("img", { name: "Report attachment" })).toBeVisible();
+      canvas.getByRole("img", { name: "Accountability check attachment" }),
+    ).toBeVisible();
     await expect(within(canvas.getByTestId("anon-row")).getByRole("switch")).toBeChecked();
-    await userEvent.click(canvas.getByRole("button", { name: "Retry sending report" }));
-    await expect(
-      canvas.getByPlaceholderText("“replied to her story in 4 seconds flat…”"),
-    ).toBeDisabled();
+    await userEvent.click(canvas.getByRole("button", { name: "Retry sending check" }));
+    await expect(canvas.getByPlaceholderText("“I saw a message come through…”")).toBeDisabled();
     await expect(within(canvas.getByTestId("anon-row")).getByRole("switch")).toBeDisabled();
     await expect(canvas.getByRole("button", { name: accused.name })).toBeDisabled();
     await expect(canvas.getByRole("button", { name: "Remove attachment 1" })).toBeDisabled();
-    await expect(canvas.queryByText("Snitched.")).not.toBeInTheDocument();
-    await expect(await canvas.findByText("Snitched.")).toBeInTheDocument();
-    await expect(canvas.getByText(/won't know it was you/)).toBeVisible();
+    await expect(canvas.queryByText("Check sent")).not.toBeInTheDocument();
+    await expect(await canvas.findByText("Check sent")).toBeInTheDocument();
+    await expect(canvas.getByText(/name is hidden from jar members/)).toBeVisible();
   },
 };

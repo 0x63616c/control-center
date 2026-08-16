@@ -3,7 +3,7 @@ import { Icon } from "./icons";
 import { money, T } from "./theme";
 import type { EvidenceImageInput } from "./types";
 
-type MoneyBurstStyle = CSSProperties & {
+type SupportBurstStyle = CSSProperties & {
   readonly "--rot": string;
 };
 
@@ -138,7 +138,7 @@ export function EvidenceShot({
   const picture = (
     <img
       src={image.dataUrl}
-      alt="Report attachment"
+      alt="Accountability check attachment"
       style={{
         display: "block",
         width: full ? "100%" : w,
@@ -173,7 +173,7 @@ export function EvidenceShot({
   return (
     <button
       type="button"
-      aria-label="View report attachment"
+      aria-label="View supporting screenshot"
       onClick={onOpen}
       style={{
         width: w,
@@ -251,7 +251,7 @@ export function EvidenceViewer({
       ref={dialogRef}
       role="dialog"
       aria-modal="true"
-      aria-label="Report attachment viewer"
+      aria-label="Supporting screenshot viewer"
       style={{
         all: "unset",
         position: "fixed",
@@ -357,9 +357,9 @@ export function EvidenceViewer({
   );
 }
 
-const BURST_IDS = Array.from({ length: 14 }, (_, i) => `bill-${i}`);
+const BURST_IDS = Array.from({ length: 14 }, (_, i) => `spark-${i}`);
 
-export function MoneyBurst({ show }: { show: boolean }) {
+export function SupportBurst({ show }: { show: boolean }) {
   if (!show) return null;
   return (
     <div
@@ -377,7 +377,7 @@ export function MoneyBurst({ show }: { show: boolean }) {
         const dur = 1.1 + Math.random() * 0.7;
         const size = 20 + Math.random() * 26;
         const rot = (Math.random() * 2 - 1) * 60;
-        const style: MoneyBurstStyle = {
+        const style: SupportBurstStyle = {
           position: "absolute",
           left: `${left}%`,
           top: "-12%",
@@ -387,7 +387,7 @@ export function MoneyBurst({ show }: { show: boolean }) {
         };
         return (
           <span key={id} style={style}>
-            💸
+            {Number(id.slice(-1)) % 2 === 0 ? "✨" : "💛"}
           </span>
         );
       })}

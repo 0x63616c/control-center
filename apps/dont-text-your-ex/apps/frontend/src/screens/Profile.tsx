@@ -87,7 +87,7 @@ export function Profile({
     };
   }, [services]);
 
-  const totalDamage = jars.reduce((s, j) => s + j.myTallyCents, 0);
+  const totalTally = jars.reduce((s, j) => s + j.myTallyCents, 0);
   const bestStreak = jars.reduce((m, j) => Math.max(m, j.myDaysClean), 0);
 
   const toggleShare = async (jarId: JarSummaryDTO["id"], v: boolean) => {
@@ -140,7 +140,7 @@ export function Profile({
             {me.name || "You"}
           </div>
           <div style={{ fontSize: 13.5, color: T.sec, marginTop: 2 }}>
-            {bestStreak} days clean · {money(totalDamage)} in the hole
+            {bestStreak} days no-contact · {money(totalTally)} virtual tally
           </div>
         </div>
         <span
@@ -168,7 +168,7 @@ export function Profile({
           letterSpacing: "0.04em",
         }}
       >
-        Share my clean streak
+        Share my no-contact streak
       </div>
       <div
         style={{
@@ -194,7 +194,7 @@ export function Profile({
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 15.5, fontWeight: 600 }}>{j.name}</div>
               <div style={{ fontSize: 12.5, color: T.sec, marginTop: 1 }}>
-                {shares[j.id] ? "Friends see your streak" : "Hidden - others see “-”"}
+                {shares[j.id] ? "Jar members see your streak" : "Hidden — members see “—”"}
               </div>
             </div>
             <Toggle
@@ -208,6 +208,9 @@ export function Profile({
           <div style={{ padding: "14px 16px", color: T.ter, fontSize: 14 }}>Join a jar first.</div>
         )}
       </div>
+      <p style={{ textAlign: "center", fontSize: 12.5, color: T.ter, lineHeight: 1.45 }}>
+        Virtual tallies only. No real money is charged, collected, paid, or transferred.
+      </p>
 
       <button
         type="button"
@@ -238,7 +241,7 @@ export function Profile({
         </p>
       )}
       <p style={{ textAlign: "center", fontSize: 12, color: T.ter, marginTop: 16 }}>
-        Don’t Text Your Ex · {appVersion} · made for people with poor impulse control
+        Don’t Text Your Ex · {appVersion} · supportive accountability with friends
       </p>
     </Screen>
   );

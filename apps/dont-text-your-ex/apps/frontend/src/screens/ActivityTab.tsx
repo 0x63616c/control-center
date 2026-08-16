@@ -40,7 +40,7 @@ export function ActivityTab({
         marginBottom: 18,
       }}
     >
-      View report history
+      View check history
     </button>
   );
 
@@ -90,7 +90,7 @@ export function ActivityTab({
         <TopBar title="Activity" />
         {historyButton}
         <div style={{ textAlign: "center", color: T.ter, fontSize: 14, padding: "60px 0" }}>
-          No carnage yet. Give it time.
+          No activity yet. Keep supporting each other.
         </div>
       </Screen>
     );
@@ -137,12 +137,12 @@ export function ActivityTab({
               <Icon.flag style={{ width: 16, height: 16 }} />
             </div>
             <span style={{ fontFamily: T.disp, fontWeight: 700, fontSize: 16, color: T.red }}>
-              You've been reported
+              You have an accountability check
             </span>
           </div>
           <div style={{ fontSize: 14, color: "#E8C9C6", lineHeight: 1.35 }}>
             {topReport.anonymous ? "Someone in the jar" : (topReport.accuser?.name ?? "Someone")}{" "}
-            says you texted your ex. Fess up or fight it →
+            sent you a check. Review and respond →
           </div>
         </button>
       )}
@@ -154,7 +154,7 @@ export function ActivityTab({
             <button
               key={a.id}
               type="button"
-              aria-label={`View report in ${a.jarName}`}
+              aria-label={`View accountability check in ${a.jarName}`}
               onClick={() => ctx.nav({ name: "reportDetail", reportId })}
               style={{
                 width: "100%",
@@ -176,7 +176,7 @@ export function ActivityTab({
       </div>
       {feed.length > 0 && (
         <div style={{ textAlign: "center", color: T.ter, fontSize: 13, padding: "24px 0 0" }}>
-          That's all the carnage for now.
+          You’re all caught up.
         </div>
       )}
     </Screen>

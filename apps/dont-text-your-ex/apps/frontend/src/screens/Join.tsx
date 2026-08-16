@@ -30,7 +30,7 @@ function assertNever(value: never): never {
 function joinButtonLabel(state: JoinMutationState): string {
   switch (state.status) {
     case "idle":
-      return "Join the shame";
+      return "Join this jar";
     case "submitting":
       return "Joining…";
     case "failed":
@@ -177,10 +177,13 @@ export function Join({
               <div style={{ fontFamily: T.disp, fontWeight: 800, fontSize: 22, color: T.gold }}>
                 {money(preview.defaultCents)}
               </div>
-              <div style={{ fontSize: 12, color: T.sec }}>per slip</div>
+              <div style={{ fontSize: 12, color: T.sec }}>virtual per slip</div>
             </div>
           </div>
         </div>
+        <p style={{ color: T.ter, fontSize: 12.5, lineHeight: 1.4, textAlign: "center" }}>
+          Joining shares your jar activity with these members. You can leave the jar later.
+        </p>
         <Btn kind="gold" disabled={joinState.status === "submitting"} onClick={join}>
           {joinButtonLabel(joinState)}
         </Btn>

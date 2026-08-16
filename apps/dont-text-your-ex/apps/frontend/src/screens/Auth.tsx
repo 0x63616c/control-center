@@ -58,7 +58,7 @@ export function SetupProfile({ ctx }: { ctx: AppCtx<RouteFor<"setup">> }) {
               margin: "0 0 6px",
             }}
           >
-            Make it official
+            Make it yours
           </h1>
           <p style={{ color: T.sec, fontSize: 15.5, lineHeight: 1.4, margin: 0 }}>
             Make your profile feel like yours.
@@ -67,7 +67,7 @@ export function SetupProfile({ ctx }: { ctx: AppCtx<RouteFor<"setup">> }) {
         <AvatarEditor draft={draft} setDraft={setDraft} />
       </div>
       <Btn kind="gold" disabled={busy || !draft.name.trim()} onClick={save}>
-        Start the shame →
+        Start your reset →
       </Btn>
     </Screen>
   );

@@ -98,7 +98,7 @@ export function Home({
       <Screen>
         {topBar}
         <div style={{ textAlign: "center", color: T.sec, fontSize: 15, padding: "20px 0" }}>
-          No jars yet. Start one and drag your friends down with you.
+          No jars yet. Start one with friends, or join with an invite code.
         </div>
         <button
           type="button"
@@ -151,10 +151,10 @@ export function Home({
       >
         <div>
           <div style={{ fontSize: 13.5, color: T.sec, fontWeight: 600, marginBottom: 4 }}>
-            Your total damage
+            Your virtual tally
           </div>
           <div
-            data-testid="total-damage"
+            data-testid="total-tally"
             style={{
               fontFamily: T.disp,
               fontWeight: 800,
@@ -189,8 +189,11 @@ export function Home({
           >
             {bestStreak}
           </div>
-          <div style={{ fontSize: 12, color: T.sec, fontWeight: 600 }}>days clean</div>
+          <div style={{ fontSize: 12, color: T.sec, fontWeight: 600 }}>days no-contact</div>
         </div>
+      </div>
+      <div style={{ color: T.ter, fontSize: 12.5, lineHeight: 1.4, margin: "-10px 2px 18px" }}>
+        Scoreboard points only. No real money is charged, collected, paid, or transferred.
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -254,7 +257,7 @@ export function Home({
                   }}
                 >
                   <div style={{ fontSize: 11.5, color: T.sec, fontWeight: 600, marginBottom: 2 }}>
-                    You owe
+                    Your tally
                   </div>
                   <div
                     style={{

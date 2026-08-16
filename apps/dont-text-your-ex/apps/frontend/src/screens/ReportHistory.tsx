@@ -13,7 +13,7 @@ export type ReportDetailServices = Pick<typeof api, "report">;
 function outcome(report: ReportDTO): { label: string; color: string } {
   switch (report.status) {
     case "owned":
-      return { label: "Owned", color: T.gold };
+      return { label: "Accepted", color: T.gold };
     case "denied":
       return { label: "Denied", color: T.sec };
     case "pending":
@@ -72,17 +72,17 @@ export function ReportHistory({
 
   return (
     <Screen>
-      <TopBar onBack={() => ctx.back()} title="Report history" />
-      {state.status === "loading" && <LoadingState>Loading report history…</LoadingState>}
+      <TopBar onBack={() => ctx.back()} title="Check history" />
+      {state.status === "loading" && <LoadingState>Loading check history…</LoadingState>}
       {state.status === "error" && (
         <ErrorState
-          label="Report history couldn’t be loaded."
+          label="Check history couldn’t be loaded."
           onRetry={() => setRetry((value) => value + 1)}
         />
       )}
       {state.status === "empty" && (
         <div style={{ textAlign: "center", color: T.ter, fontSize: 14, padding: "60px 0" }}>
-          No resolved reports yet.
+          No resolved checks yet.
         </div>
       )}
       {state.status === "loaded" && (
@@ -164,17 +164,17 @@ export function ReportDetail({
   if (state.status === "loading") {
     return (
       <Screen>
-        <TopBar onBack={() => ctx.back()} title="Report detail" />
-        <LoadingState>Loading report…</LoadingState>
+        <TopBar onBack={() => ctx.back()} title="Check detail" />
+        <LoadingState>Loading check…</LoadingState>
       </Screen>
     );
   }
   if (state.status === "error" || state.status === "empty") {
     return (
       <Screen>
-        <TopBar onBack={() => ctx.back()} title="Report detail" />
+        <TopBar onBack={() => ctx.back()} title="Check detail" />
         <ErrorState
-          label="This report couldn’t be loaded."
+          label="This check couldn’t be loaded."
           onRetry={() => setRetry((value) => value + 1)}
         />
       </Screen>
@@ -188,7 +188,7 @@ export function ReportDetail({
     <Screen>
       <TopBar
         onBack={() => ctx.back()}
-        title="Report detail"
+        title="Check detail"
         trailing={<OutcomePill report={report} />}
       />
       <div
@@ -204,10 +204,10 @@ export function ReportDetail({
           {report.jarName} · {report.ago} ago
         </div>
         <div style={{ fontFamily: T.disp, fontWeight: 800, fontSize: 20, lineHeight: 1.25 }}>
-          {reporter} reported {report.accused.name}
+          {reporter} sent a check to {report.accused.name}
         </div>
         <div style={{ color: T.gold, fontWeight: 750, marginTop: 8 }}>
-          {money(report.amountCents)} consequence
+          {money(report.amountCents)} virtual amount
         </div>
       </div>
 
@@ -229,7 +229,7 @@ export function ReportDetail({
       {report.evidence.length > 0 && (
         <>
           <div style={{ color: T.sec, fontSize: 12, fontWeight: 700, marginBottom: 10 }}>
-            THE RECEIPTS ({report.evidence.length})
+            SUPPORTING SCREENSHOTS ({report.evidence.length})
           </div>
           <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 18 }}>
             {report.evidence.map((image, index) => (
@@ -241,7 +241,7 @@ export function ReportDetail({
 
       {report.status === "pending" && ctx.me?.id === report.accused.id && (
         <Btn onClick={() => ctx.nav({ name: "confirmDeny", reportId: report.id })}>
-          Respond to report
+          Respond to check
         </Btn>
       )}
 
