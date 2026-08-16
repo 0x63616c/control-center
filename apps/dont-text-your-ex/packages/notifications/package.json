@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@www/logger": "workspace:*",
+    "@www/platform": "workspace:*",
     "pg": "^8.13.3",
     "zod": "^4.4.2"
   },

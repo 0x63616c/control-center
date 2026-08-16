@@ -60,6 +60,7 @@
     "apps/dont-text-your-ex/apps/api": {
       "name": "@dont-text-your-ex/api",
       "dependencies": {
+        "@dont-text-your-ex/notifications": "workspace:*",
         "@www/logger": "workspace:*",
         "@www/platform": "workspace:*",
         "hono": "^4.6.14",
@@ -118,7 +119,7 @@
       "name": "@dont-text-your-ex/notifications",
       "version": "0.0.0",
       "dependencies": {
-        "@www/logger": "workspace:*",
+        "@www/platform": "workspace:*",
         "pg": "^8.13.3",
         "zod": "^4.4.2",
       },
