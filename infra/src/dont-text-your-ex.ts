@@ -165,6 +165,7 @@ export function dontTextYourExSpecs(
         'out="/backup/text_your_ex-$(date +%Y%m%d).sql.gz"',
         `pg_dump -h ${DONT_TEXT_YOUR_EX_DATABASE.rwServiceName} -U ${DONT_TEXT_YOUR_EX_DATABASE.owner} -d ${DONT_TEXT_YOUR_EX_DATABASE.databaseName} | gzip -c > "$out"`,
         'echo "wrote $out"',
+        "find /backup -maxdepth 1 -type f -name 'text_your_ex-????????.sql.gz' -mmin +43200 -print -delete",
       ].join("\n"),
     ],
     env: { TZ: "America/Los_Angeles" },

@@ -120,7 +120,7 @@ describe("Don't Text Your Ex production resources", () => {
     );
   });
 
-  test("declares a nightly, non-overlapping NAS backup with the generated app credential", () => {
+  test("declares a nightly, non-overlapping NAS backup with enforced 30-day retention", () => {
     const backup = dontTextYourExSpecs(ALL_DIGESTS, true).backup;
     expect(backup).toMatchObject({
       name: "dont-text-your-ex-pg-backup",
@@ -137,8 +137,12 @@ describe("Don't Text Your Ex production resources", () => {
         },
       ],
     });
-    expect(backup.command?.join("\n")).toContain("set -eo pipefail");
-    expect(backup.command?.join("\n")).toContain("pg_dump -h dont-text-your-ex-postgres-rw");
+    const command = backup.command?.join("\n") ?? "";
+    expect(command).toContain("set -eo pipefail");
+    expect(command).toContain("pg_dump -h dont-text-your-ex-postgres-rw");
+    expect(command).toContain("find /backup -maxdepth 1 -type f");
+    expect(command).toContain("-name 'text_your_ex-????????.sql.gz'");
+    expect(command).toContain("-mmin +43200 -print -delete");
   });
 
   test("refuses mutable or malformed image references for the production stack", () => {
