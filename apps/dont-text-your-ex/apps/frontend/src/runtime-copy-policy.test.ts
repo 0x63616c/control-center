@@ -178,12 +178,14 @@ function lineAndColumn(source: string, offset: number): { line: number; column: 
 
 function violationsFor(path: string, source = readFileSync(path, "utf8")): Violation[] {
   const violations: Violation[] = [];
+  const relativePath = relativeProductPath(path);
   for (const literal of literalsFor(path, source)) {
     const normalized = normalizeCopy(literal.text);
     for (const rule of PROHIBITED_COPY) {
       if (
         rule.id === "currency-amount" &&
-        /\b(?:delete|from|insert|select|update|values|where)\b/.test(normalized)
+        relativePath.startsWith("apps/api/") &&
+        /^(?:delete|insert|select|update)\b/.test(normalized)
       ) {
         continue;
       }
@@ -252,6 +254,24 @@ describe("runtime copy policy scanner", () => {
       "payment-pressure",
       "payment-pressure",
     ]);
+  });
+
+  it("does not mistake frontend copy containing SQL-like words for a query", () => {
+    const source = `export const View = () => <p>Update your tally with $5</p>;`;
+
+    expect(
+      new Set(
+        violationsFor(resolve(PRODUCT_ROOT, "apps/frontend/src/fixture.tsx"), source).map(
+          (v) => v.rule,
+        ),
+      ),
+    ).toEqual(new Set(["currency-amount"]));
+  });
+
+  it("allows positional placeholders in API SQL literals", () => {
+    const source = `const query = "update memberships set tally_cents = $1 where id = $2";`;
+
+    expect(violationsFor(resolve(PRODUCT_ROOT, "apps/api/src/fixture.ts"), source)).toEqual([]);
   });
 
   it("ignores comments and identifiers while accepting explicit safety disclosures", () => {

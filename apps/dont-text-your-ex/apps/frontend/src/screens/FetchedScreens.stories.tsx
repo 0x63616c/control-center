@@ -2,11 +2,11 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "storybook/test";
 import { JarDetailSchema, MeSchema, ReportSchema, UserSchema } from "../../../../contracts";
 import type { AppCtx, RouteFor } from "../appctx";
+import { AboutTally, type AboutTallyServices } from "./AboutTally";
 import { type ActivityServices, ActivityTab } from "./ActivityTab";
 import { ConfirmDeny, type ConfirmDenyServices } from "./ConfirmDeny";
 import { Home, type HomeServices } from "./Home";
 import { JarDetail, type JarDetailServices } from "./JarDetail";
-import { Settle, type SettleServices } from "./Settle";
 
 const me = MeSchema.parse({
   id: "usr_fetchqa",
@@ -66,7 +66,7 @@ const memberJar = JarDetailSchema.parse({
 const leaveJarRequest = fn(async () => ({ ok: true as const }));
 
 function context<
-  Name extends RouteFor<"home" | "activity" | "jar" | "settle" | "confirmDeny">["name"],
+  Name extends RouteFor<"home" | "activity" | "jar" | "aboutTally" | "confirmDeny">["name"],
 >(route: RouteFor<Name>): AppCtx<RouteFor<Name>> {
   return {
     me,
@@ -150,11 +150,11 @@ export const JarDetailLoading: Story = {
   },
 };
 
-export const SettleLoading: Story = {
+export const AboutTallyLoading: Story = {
   render: () => (
-    <Settle
-      ctx={context({ name: "settle", jarId: jar.id })}
-      services={{ jar: fn(() => never<Awaited<ReturnType<SettleServices["jar"]>>>()) }}
+    <AboutTally
+      ctx={context({ name: "aboutTally", jarId: jar.id })}
+      services={{ jar: fn(() => never<Awaited<ReturnType<AboutTallyServices["jar"]>>>()) }}
     />
   ),
   play: async ({ canvasElement }) => {
@@ -327,17 +327,17 @@ export const MemberLeavesWithConfirmation: Story = {
   },
 };
 
-export const SettleErrorAndRetry: Story = {
+export const AboutTallyErrorAndRetry: Story = {
   render: () => {
     let attempts = 0;
-    const services: SettleServices = {
+    const services: AboutTallyServices = {
       jar: fn(async () => {
         attempts += 1;
         if (attempts === 1) throw new Error("offline");
         return jar;
       }),
     };
-    return <Settle ctx={context({ name: "settle", jarId: jar.id })} services={services} />;
+    return <AboutTally ctx={context({ name: "aboutTally", jarId: jar.id })} services={services} />;
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -350,7 +350,7 @@ export const SettleErrorAndRetry: Story = {
   },
 };
 
-export const SettleGenuineNotMemberEmpty: Story = {
+export const AboutTallyGenuineNotMemberEmpty: Story = {
   render: () => {
     const unavailable = JarDetailSchema.parse({
       ...jar,
@@ -362,8 +362,8 @@ export const SettleGenuineNotMemberEmpty: Story = {
       ],
     });
     return (
-      <Settle
-        ctx={context({ name: "settle", jarId: jar.id })}
+      <AboutTally
+        ctx={context({ name: "aboutTally", jarId: jar.id })}
         services={{ jar: fn(async () => unavailable) }}
       />
     );

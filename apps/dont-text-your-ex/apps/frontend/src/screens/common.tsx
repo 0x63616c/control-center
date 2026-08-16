@@ -42,7 +42,7 @@ export function supportiveMilestoneText(text: string): string {
   return `The jar reached ${formatPoints(points * 100)}. Keep supporting each other.`;
 }
 
-// animated count-up for tallies / pot totals
+// animated count-up for tallies / group totals
 export function useCountUp(target: number, dur = 700): number {
   const [v, setV] = useState(target);
   const prev = useRef(target);

@@ -6,14 +6,14 @@ import type { JarDetailDTO } from "../types";
 import { Screen, TopBar } from "../ui";
 import { ErrorState, type FetchedState, LoadingState } from "./fetched-state";
 
-export type SettleServices = Pick<typeof api, "jar">;
+export type AboutTallyServices = Pick<typeof api, "jar">;
 
-export function Settle({
+export function AboutTally({
   ctx,
   services = api,
 }: {
-  ctx: AppCtx<RouteFor<"settle">>;
-  services?: SettleServices;
+  ctx: AppCtx<RouteFor<"aboutTally">>;
+  services?: AboutTallyServices;
 }) {
   const { jarId } = ctx.route;
   const [state, setState] = useState<FetchedState<JarDetailDTO>>({ status: "loading" });

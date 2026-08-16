@@ -10,7 +10,7 @@ export type Route =
   | { readonly name: "confirmDeny"; readonly reportId: ReportId }
   | { readonly name: "reportHistory" }
   | { readonly name: "reportDetail"; readonly reportId: ReportId }
-  | { readonly name: "settle"; readonly jarId: JarId }
+  | { readonly name: "aboutTally"; readonly jarId: JarId }
   | { readonly name: "create" }
   | { readonly name: "join"; readonly code?: string }
   | { readonly name: "invite"; readonly jarId: JarId; readonly fresh?: boolean }

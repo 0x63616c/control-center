@@ -37,7 +37,7 @@ import type {
 
 // ─────────────────────────── time helpers ───────────────────────────
 function daysClean(streakStartAt: number | null): number {
-  if (streakStartAt == null) return -1; // never caved
+  if (streakStartAt == null) return -1; // no recorded slip has started the streak clock
   return Math.max(0, Math.floor((now() - streakStartAt) / DAY));
 }
 

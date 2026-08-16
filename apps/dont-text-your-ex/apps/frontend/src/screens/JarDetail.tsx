@@ -242,7 +242,7 @@ export function JarDetail({
             <Btn
               kind="dark"
               style={{ height: 50, fontSize: 16 }}
-              onClick={() => ctx.nav({ name: "settle", jarId: jar.id })}
+              onClick={() => ctx.nav({ name: "aboutTally", jarId: jar.id })}
             >
               About my tally
             </Btn>

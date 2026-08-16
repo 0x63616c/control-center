@@ -128,8 +128,8 @@ function renderRoute(ctx: AppCtx): React.ReactNode {
       return <S.ReportHistory ctx={{ ...ctx, route: ctx.route }} />;
     case "reportDetail":
       return <S.ReportDetail ctx={{ ...ctx, route: ctx.route }} />;
-    case "settle":
-      return <S.Settle ctx={{ ...ctx, route: ctx.route }} />;
+    case "aboutTally":
+      return <S.AboutTally ctx={{ ...ctx, route: ctx.route }} />;
     case "create":
       return <S.Create ctx={{ ...ctx, route: ctx.route }} />;
     case "join":

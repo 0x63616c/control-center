@@ -304,3 +304,19 @@ export const LogSlipFetchAndSubmitRetry: Story = {
     await userEvent.click(canvas.getByRole("button", { name: "Retry logging slip" }));
   },
 };
+
+export const LogSlipForm: Story = {
+  render: () => {
+    const services: LogSlipServices = {
+      jar: fn(async () => jar),
+      logSlip: fn(async () => jar),
+    };
+    return <LogSlip ctx={context({ name: "logSlip", jarId: jar.id })} services={services} />;
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(
+      await canvas.findByRole("button", { name: /Add .* pts to my virtual tally/ }),
+    ).toBeEnabled();
+  },
+};
