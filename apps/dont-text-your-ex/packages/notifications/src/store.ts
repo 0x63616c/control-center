@@ -17,6 +17,19 @@ import {
 } from "../../../contracts";
 import type { TokenCipher } from "./token-cipher";
 
+export type PersistedDeliveryOutcome =
+  | { readonly kind: "accepted"; readonly apnsId: string | null }
+  | { readonly kind: "invalid_device"; readonly reason: string }
+  | { readonly kind: "permanent_notification"; readonly reason: string }
+  | { readonly kind: "provider_configuration"; readonly reason: string };
+
+export interface DeliveryForSend {
+  readonly deliveryId: NotificationDeliveryId;
+  readonly notificationId: NotificationId;
+  readonly deviceToken: string;
+  readonly environment: "production" | "sandbox";
+}
+
 type Queryable = Pick<Pool | PoolClient, "query">;
 
 export interface NotificationStore {
@@ -29,6 +42,11 @@ export interface NotificationStore {
   ): Promise<NotificationPreferences>;
   resolveTarget(userId: UserId, notificationId: NotificationId): Promise<NotificationTarget>;
   prepareDeliveries(notificationId: NotificationId): Promise<readonly NotificationDeliveryId[]>;
+  loadDelivery(deliveryId: NotificationDeliveryId): Promise<DeliveryForSend | null>;
+  recordDeliveryOutcome(
+    deliveryId: NotificationDeliveryId,
+    outcome: PersistedDeliveryOutcome,
+  ): Promise<void>;
 }
 
 function defaultPreferences(): NotificationPreferences {
@@ -185,6 +203,60 @@ export function createNotificationStore(
         if (persisted) ids.push(persisted.id);
       }
       return ids;
+    },
+
+    async loadDelivery(deliveryId) {
+      const result = await db.query<{
+        delivery_id: NotificationDeliveryId;
+        notification_id: NotificationId;
+        installation_id: PushInstallationId;
+        token_ciphertext: string;
+        token_nonce: string;
+        token_key_id: string;
+        environment: "production" | "sandbox";
+      }>(
+        `SELECT d.id AS delivery_id,d.notification_id,p.installation_id,p.token_ciphertext,
+                p.token_nonce,p.token_key_id,p.environment
+         FROM notification_delivery d JOIN push_device p ON p.installation_id=d.installation_id
+         WHERE d.id=$1 AND d.status='pending' AND p.active=TRUE`,
+        [deliveryId],
+      );
+      const row = result.rows[0];
+      if (!row) return null;
+      return {
+        deliveryId: row.delivery_id,
+        notificationId: row.notification_id,
+        environment: row.environment,
+        deviceToken: cipher.open(
+          { keyId: row.token_key_id, nonce: row.token_nonce, ciphertext: row.token_ciphertext },
+          row.installation_id,
+        ),
+      };
+    },
+
+    async recordDeliveryOutcome(deliveryId, outcome) {
+      const status =
+        outcome.kind === "accepted"
+          ? "accepted"
+          : outcome.kind === "invalid_device"
+            ? "invalid_device"
+            : "permanent_failure";
+      const failureCode = outcome.kind === "accepted" ? null : outcome.reason;
+      const apnsId = outcome.kind === "accepted" ? outcome.apnsId : null;
+      await db.query(
+        `WITH updated AS (
+           UPDATE notification_delivery SET status=$2,attempt_count=attempt_count+1,
+             apns_id=$3,failure_code=$4,updated_at=$5 WHERE id=$1
+           RETURNING installation_id
+         )
+         UPDATE push_device SET
+           active=CASE WHEN $2='invalid_device' THEN FALSE ELSE active END,
+           disabled_at=CASE WHEN $2='invalid_device' THEN $5 ELSE disabled_at END,
+           last_success_at=CASE WHEN $2='accepted' THEN $5 ELSE last_success_at END,
+           last_failure_code=CASE WHEN $2='accepted' THEN NULL ELSE $4 END
+         WHERE installation_id=(SELECT installation_id FROM updated)`,
+        [deliveryId, status, apnsId, failureCode, clock()],
+      );
     },
   };
 }

@@ -143,7 +143,7 @@ describe.skipIf(!HAS_DB)("authenticated notification delivery", () => {
   it("registers and disables only the current user's installation", async () => {
     const user = await store.createUser({ name: "Push User" });
     const other = await store.createUser({ name: "Other User" });
-    const installationId = PushInstallationIdSchema.parse("pdi_device1");
+    const installationId = PushInstallationIdSchema.parse("dev_device1");
     await notificationStore.registerDevice(user.id, {
       installationId,
       token: "ab".repeat(32),

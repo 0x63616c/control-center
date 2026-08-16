@@ -3,10 +3,15 @@ import { ACTIVITIES, MANAGED_SCHEDULE_PREFIX, SCHEDULES, WORKFLOW_TYPES } from "
 import * as workflows from "./workflows";
 
 describe("DTYE Temporal registry", () => {
-  test("registers only the W01 health workflow on the main queue contract", () => {
-    expect(WORKFLOW_TYPES).toEqual(["DtyeHealthCheckWorkflow"]);
+  test("registers health and notification delivery on the main queue contract", () => {
+    expect(WORKFLOW_TYPES).toEqual(["DtyeHealthCheckWorkflow", "NotificationDeliveryWorkflow"]);
     expect(Object.keys(workflows)).toContain("DtyeHealthCheckWorkflow");
-    expect(Object.keys(ACTIVITIES)).toEqual(["DtyeHealthCheckActivity"]);
+    expect(Object.keys(workflows)).toContain("NotificationDeliveryWorkflow");
+    expect(Object.keys(ACTIVITIES)).toEqual([
+      "DtyeHealthCheckActivity",
+      "prepareNotification",
+      "deliverNotification",
+    ]);
     expect(MANAGED_SCHEDULE_PREFIX).toBe("dtye_");
     expect(SCHEDULES).toEqual([
       {

@@ -8,15 +8,18 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@dont-text-your-ex/notifications": "workspace:*",
     "@temporalio/client": "^1.21.1",
     "@temporalio/worker": "^1.21.1",
     "@temporalio/workflow": "^1.21.1",
     "@www/logger": "workspace:*",
     "@www/platform": "workspace:*",
-    "@www/temporal-runtime": "workspace:*"
+    "@www/temporal-runtime": "workspace:*",
+    "pg": "^8.13.3"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",
+    "@types/pg": "^8.11.10",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"
   }

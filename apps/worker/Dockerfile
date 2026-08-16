@@ -23,6 +23,7 @@ COPY apps/dont-text-your-ex/apps/api/package.json apps/dont-text-your-ex/apps/ap
 COPY apps/dont-text-your-ex/apps/e2e/package.json apps/dont-text-your-ex/apps/e2e/
 COPY apps/dont-text-your-ex/apps/frontend/package.json apps/dont-text-your-ex/apps/frontend/
 COPY apps/dont-text-your-ex/apps/temporal-worker/package.json apps/dont-text-your-ex/apps/temporal-worker/
+COPY apps/dont-text-your-ex/packages/notifications/package.json apps/dont-text-your-ex/packages/notifications/
 COPY packages/api/package.json packages/api/
 COPY packages/core/package.json packages/core/
 COPY packages/logger/package.json packages/logger/
