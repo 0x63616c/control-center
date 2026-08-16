@@ -247,7 +247,8 @@ export const OfflineThenRetry: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(await canvas.findByRole("alert")).toHaveTextContent("You appear to be offline");
-    await userEvent.click(canvas.getByRole("button", { name: "Retry" }));
+    const retry = canvas.getByRole("button", { name: "Retry" });
+    await userEvent.pointer([{ target: retry, keys: "[TouchA>]" }, { keys: "[/TouchA]" }]);
     await expect(await canvas.findByRole("timer")).toHaveTextContent("10:00");
   },
 };
@@ -284,10 +285,16 @@ export const DuplicateSubmitAndRecoverableRetry: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const start = await canvas.findByRole("button", { name: "Start 10-minute rescue" });
-    await userEvent.dblClick(start);
+    await userEvent.pointer([
+      { target: start, keys: "[TouchA>]" },
+      { keys: "[/TouchA]" },
+      { target: start, keys: "[TouchB>]" },
+      { keys: "[/TouchB]" },
+    ]);
     await expect(await canvas.findByRole("alert")).toHaveTextContent("Nothing was sent");
     await expect(duplicateStart).toHaveBeenCalledTimes(1);
-    await userEvent.click(canvas.getByRole("button", { name: "Retry starting rescue" }));
+    const retry = canvas.getByRole("button", { name: "Retry starting rescue" });
+    await userEvent.pointer([{ target: retry, keys: "[TouchA>]" }, { keys: "[/TouchA]" }]);
     await expect(await canvas.findByRole("timer")).toHaveTextContent("10:00");
     await expect(duplicateStart).toHaveBeenCalledTimes(2);
   },
