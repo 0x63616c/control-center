@@ -36,9 +36,11 @@ legal/product confirmations.
    materially riskier under Apple’s account-deletion guidance unless a specific,
    disclosed legal-retention duty exists.
 3. **Selective erasure with deterministic succession — recommended, awaiting
-   owner confirmation.** Preserve the shared container and every other user’s
-   data; physically delete the departing account, identifiers, membership, and
-   authored/linked UGC.
+   owner confirmation.** Preserve a shared container for current active friends
+   and preserve their unrelated data; physically delete the departing account,
+   identifiers, membership, and authored/linked UGC. Reports/evidence about the
+   departing person are deleted even when a friend authored them. A jar with no
+   other active member is deleted, so former members do not retain its history.
 
 ### Recommended Option 3 contract
 
@@ -73,8 +75,10 @@ retention exception (fields, purpose, duration, access, disclosure). Without a
 specified obligation, the implementation deletes the data.
 
 Machine acceptance for P03 includes real-Postgres owner/member/former-member and
-closed-jar matrices; exact before/after row inventories; friend-row hashes
-unchanged; invite rotation; old-token 401; concurrent/idempotent deletion;
+closed-jar matrices; exact before/after row inventories; explicitly unrelated
+friend-row hashes unchanged while successor role, jar metadata, invitation,
+and reports/evidence involving the departing user change as specified; invite
+rotation; old-token 401; concurrent/idempotent deletion;
 transaction fault injection; Apple success/already-revoked/transient failure;
 fresh re-registration; and log/contract scans for secrets and Apple identifiers.
 
@@ -123,7 +127,7 @@ production synthetic case causing one non-PII ntfy alert; removal/restriction
 proof; immutable audit row; PII-free Loki result; moderation metrics; and backup
 plus isolated restore of cases, blocks, audit rows, and outbox state.
 
-This operator-plane choice is a technical architecture decision. Calum still
-must set the moderation response target, escalation path, and public support
-contact.
-
+This operator-plane architecture was decided by the coordinating agent after the
+independent `/root/p01_operator_plane` audit. Calum still must confirm accepting
+the V1 single-operator responsibility and set the moderation response target,
+escalation path, and public support contact.
