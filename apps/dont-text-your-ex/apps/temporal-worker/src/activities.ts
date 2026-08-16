@@ -8,6 +8,7 @@ import type {
   OutboxOperationalSnapshotStore,
 } from "./operations-observability";
 import { runSessionMaintenancePage, type SessionMaintenanceStore } from "./session-maintenance";
+import type { StreakMilestoneActivities } from "./streak-milestones";
 
 interface DtyeHealthCheckActivityInput {
   readonly iteration: number;
@@ -46,6 +47,7 @@ export type DtyeActivityDependencies = Readonly<{
   dispatcher: WorkflowDispatcher;
   sessions: SessionMaintenanceStore;
   notifications: NotificationActivities;
+  streakMilestones: StreakMilestoneActivities;
   operations: DtyeOperationsObserver;
   outboxSnapshot: OutboxOperationalSnapshotStore;
   clock?: () => number;
@@ -114,6 +116,7 @@ export function createDtyeActivities(dependencies: DtyeActivityDependencies) {
       }
     },
     ...dependencies.notifications,
+    ...dependencies.streakMilestones,
   };
 }
 

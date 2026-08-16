@@ -4,6 +4,13 @@ const mocks = vi.hoisted(() => ({
   activity: vi.fn(async (_input: { readonly iteration: number }) => ({ status: "ok" as const })),
   outbox: vi.fn(async () => ({ claimed: 0, accepted: 0, retried: 0, failed: 0 })),
   sessions: vi.fn(async () => ({ deleted: 0 })),
+  streaks: vi.fn(async (_input: { readonly cutoff: number; readonly cursor?: string }) => ({
+    candidates: 0,
+    achievements: 0,
+    notifications: 0,
+    sharedActivities: 0,
+    hasMore: false,
+  })),
   continueAsNew: vi.fn(async (input: unknown) => input),
   prepareNotification: vi.fn(async () => ({ deliveryIds: [] })),
   deliverNotification: vi.fn(async () => ({ kind: "accepted" as const })),
@@ -20,6 +27,7 @@ vi.mock("@temporalio/workflow", () => ({
     DtyeHealthCheckActivity: mocks.activity,
     OutboxDispatchActivity: mocks.outbox,
     SessionMaintenanceActivity: mocks.sessions,
+    StreakMilestoneSweepActivity: mocks.streaks,
     prepareNotification: mocks.prepareNotification,
     deliverNotification: mocks.deliverNotification,
     suppressNotification: mocks.suppressNotification,
@@ -41,6 +49,13 @@ beforeEach(() => {
   mocks.activity.mockReset().mockResolvedValue({ status: "ok" });
   mocks.outbox.mockReset().mockResolvedValue({ claimed: 0, accepted: 0, retried: 0, failed: 0 });
   mocks.sessions.mockReset().mockResolvedValue({ deleted: 0 });
+  mocks.streaks.mockReset().mockResolvedValue({
+    candidates: 0,
+    achievements: 0,
+    notifications: 0,
+    sharedActivities: 0,
+    hasMore: false,
+  });
   mocks.continueAsNew.mockReset().mockImplementation(async (input: unknown) => input);
   mocks.prepareNotification.mockReset().mockResolvedValue({ deliveryIds: [] });
   mocks.deliverNotification.mockReset().mockResolvedValue({ kind: "accepted" });
@@ -112,6 +127,46 @@ describe("SessionMaintenanceWorkflow", () => {
       runs: 1,
       purgeBefore: 123_456,
     });
+  });
+});
+
+describe("StreakMilestoneSweepWorkflow", () => {
+  test("rejects an incompatible schema before scanning memberships", async () => {
+    const { StreakMilestoneSweepWorkflow } = await import("./workflows");
+    await expect(StreakMilestoneSweepWorkflow({ schemaVersion: 2 } as never)).rejects.toThrow(
+      "unsupported streak sweep workflow schema",
+    );
+    expect(mocks.streaks).not.toHaveBeenCalled();
+  });
+
+  test("uses a stable cutoff and continues deterministic pages as new", async () => {
+    const { StreakMilestoneSweepWorkflow } = await import("./workflows");
+    vi.spyOn(Date, "now").mockReturnValue(1_754_231_400_000);
+    mocks.streaks.mockImplementation(async ({ cursor }: { cursor?: string }) => ({
+      candidates: 100,
+      achievements: 1,
+      notifications: 1,
+      sharedActivities: 0,
+      nextCursor: `${cursor ?? "member"}x`,
+      hasMore: true,
+    }));
+    mocks.continueAsNew.mockImplementationOnce(async (input: unknown) => Promise.reject(input));
+
+    await expect(StreakMilestoneSweepWorkflow({ schemaVersion: 1 })).rejects.toMatchObject({
+      schemaVersion: 1,
+      cutoff: 1_754_231_400_000,
+      totals: {
+        candidates: 2_000,
+        achievements: 20,
+        notifications: 20,
+        sharedActivities: 0,
+      },
+      runs: 1,
+    });
+    expect(mocks.streaks).toHaveBeenCalledTimes(20);
+    expect(mocks.streaks.mock.calls.every(([input]) => input.cutoff === 1_754_231_400_000)).toBe(
+      true,
+    );
   });
 });
 

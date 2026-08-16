@@ -5,6 +5,7 @@ export const WORKFLOW_TYPES = [
   "OutboxDispatchRecoveryWorkflow",
   "SessionMaintenanceWorkflow",
   "NotificationDeliveryWorkflow",
+  "StreakMilestoneSweepWorkflow",
 ] as const;
 export const MANAGED_SCHEDULE_PREFIX = "dtye_";
 export const ACTIVITY_TYPES = [
@@ -15,6 +16,7 @@ export const ACTIVITY_TYPES = [
   "deliverNotification",
   "suppressNotification",
   "rotatePushTokenBatch",
+  "StreakMilestoneSweepActivity",
 ] as const;
 export const SCHEDULES = [
   {
@@ -33,6 +35,15 @@ export const SCHEDULES = [
     timezone: "UTC",
     args: { schemaVersion: 1 },
     timeout: "5 minutes",
+    catchupWindow: "1 minute",
+  },
+  {
+    scheduleId: "dtye_streak_sweep",
+    workflowType: "StreakMilestoneSweepWorkflow",
+    cron: "0 * * * *",
+    timezone: "UTC",
+    args: { schemaVersion: 1 },
+    timeout: "10 minutes",
     catchupWindow: "1 minute",
   },
   {
