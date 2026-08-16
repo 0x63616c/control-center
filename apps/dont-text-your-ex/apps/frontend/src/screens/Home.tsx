@@ -14,6 +14,42 @@ type HomeData = {
   readonly avatarsUnavailable: boolean;
 };
 
+function RescueEntry({ onOpen }: { onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      style={{
+        width: "100%",
+        minHeight: 78,
+        marginBottom: 18,
+        padding: "14px 18px",
+        border: `1px solid ${T.red}`,
+        borderRadius: 22,
+        background: "linear-gradient(135deg, rgba(255,69,58,.22), rgba(255,69,58,.07))",
+        color: T.text,
+        cursor: "pointer",
+        textAlign: "left",
+      }}
+    >
+      <span
+        style={{
+          display: "block",
+          color: T.red,
+          fontFamily: T.disp,
+          fontSize: 21,
+          fontWeight: 800,
+        }}
+      >
+        Don’t Send It
+      </span>
+      <span style={{ display: "block", color: T.sec, fontSize: 13, marginTop: 3 }}>
+        Start or resume a private cooldown
+      </span>
+    </button>
+  );
+}
+
 export function Home({
   ctx,
   services = api,
@@ -78,6 +114,7 @@ export function Home({
     return (
       <Screen>
         {topBar}
+        <RescueEntry onOpen={() => ctx.nav({ name: "rescue" })} />
         <LoadingState>Loading your jars…</LoadingState>
       </Screen>
     );
@@ -86,6 +123,7 @@ export function Home({
     return (
       <Screen>
         {topBar}
+        <RescueEntry onOpen={() => ctx.nav({ name: "rescue" })} />
         <ErrorState
           label="Your jars couldn’t be loaded."
           onRetry={() => setRetry((value) => value + 1)}
@@ -97,6 +135,7 @@ export function Home({
     return (
       <Screen>
         {topBar}
+        <RescueEntry onOpen={() => ctx.nav({ name: "rescue" })} />
         <div style={{ textAlign: "center", color: T.sec, fontSize: 15, padding: "20px 0" }}>
           No jars yet. Start one with friends, or join with an invite code.
         </div>
@@ -130,6 +169,8 @@ export function Home({
   return (
     <Screen>
       {topBar}
+
+      <RescueEntry onOpen={() => ctx.nav({ name: "rescue" })} />
 
       {avatarsUnavailable && (
         <div role="status" style={{ color: T.ter, fontSize: 12.5, marginBottom: 12 }}>

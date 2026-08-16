@@ -13,3 +13,4 @@ export { Onboarding } from "./Onboarding";
 export { Profile } from "./Profile";
 export { ReportDetail, ReportHistory } from "./ReportHistory";
 export { ReportMember } from "./ReportMember";
+export { Rescue } from "./Rescue";
