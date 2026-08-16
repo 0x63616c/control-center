@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { z } from "zod";
 import {
   ActivitySchema,
   EvidenceIdSchema,
@@ -619,6 +620,17 @@ export async function closeJar(
         [now(), userId, jarId],
       );
       await emit({ type: "jar.closed", aggregateId: jarId, aggregateVersion: 2 });
+      const pendingReports = await db.query<{ id: string; aggregate_version: string }>(
+        "SELECT id,aggregate_version FROM reports WHERE jar_id=$1 AND status='pending' ORDER BY id",
+        [jarId],
+      );
+      for (const report of pendingReports.rows) {
+        await emit({
+          type: "report.jar_closed",
+          aggregateId: ReportIdSchema.parse(report.id),
+          aggregateVersion: AggregateVersionSchema.parse(report.aggregate_version),
+        });
+      }
       await emit({
         type: "invite.superseded",
         aggregateId: jar.invite_version_id,
@@ -684,6 +696,18 @@ export async function leaveJar(
       ),
       aggregateVersion: 2,
     });
+    const pendingReports = await db.query<{ id: string; aggregate_version: string }>(
+      `SELECT id,aggregate_version FROM reports
+       WHERE jar_id=$1 AND accused_id=$2 AND status='pending' ORDER BY id`,
+      [jarId, userId],
+    );
+    for (const report of pendingReports.rows) {
+      await emit({
+        type: "report.member_departed",
+        aggregateId: ReportIdSchema.parse(report.id),
+        aggregateVersion: AggregateVersionSchema.parse(report.aggregate_version),
+      });
+    }
     return { status: "left" };
   });
 }
@@ -860,18 +884,25 @@ type ReportRow = {
   note: string | null;
   is_anonymous: number;
   amount_cents: number;
-  status: string;
+  status: ReportDTO["status"];
   created_at: number;
   resolved_at: number | null;
   aggregate_version: number;
 };
 
-type ReportDbRow = Omit<ReportRow, "id" | "jar_id" | "accuser_id" | "accused_id"> & {
+type ReportDbRow = Omit<
+  ReportRow,
+  "id" | "jar_id" | "accuser_id" | "accused_id" | "aggregate_version" | "status"
+> & {
   readonly id: string;
   readonly jar_id: string;
   readonly accuser_id: string;
   readonly accused_id: string;
+  readonly aggregate_version: string;
+  readonly status: string;
 };
+
+const AggregateVersionSchema = z.coerce.number().int().positive();
 
 function parseReportRow(row: ReportDbRow): ReportRow {
   return {
@@ -880,6 +911,8 @@ function parseReportRow(row: ReportDbRow): ReportRow {
     jar_id: JarIdSchema.parse(row.jar_id),
     accuser_id: UserIdSchema.parse(row.accuser_id),
     accused_id: UserIdSchema.parse(row.accused_id),
+    aggregate_version: AggregateVersionSchema.parse(row.aggregate_version),
+    status: ReportStatusSchema.parse(row.status),
   };
 }
 

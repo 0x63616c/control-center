@@ -23,7 +23,6 @@ import { WORKFLOW_TYPES } from "./registry";
 import { PostgresReportAccountabilityStore } from "./report-accountability";
 import { PostgresSessionMaintenanceStore } from "./session-maintenance";
 import {
-  ReportAccountabilityFanoutHandler,
   registeredTemporalEventHandlers,
   TemporalClientWorkflowGateway,
   TemporalWorkflowDispatcher,
@@ -70,10 +69,7 @@ async function main(): Promise<void> {
   const activities = createDtyeActivities({
     outbox: new PostgresOutbox(pool),
     dispatcher: new TemporalWorkflowDispatcher(
-      registeredTemporalEventHandlers(temporalGateway, WORKFLOW_TYPES, {
-        "jar.closed": new ReportAccountabilityFanoutHandler(temporalGateway, reports),
-        "membership.left": new ReportAccountabilityFanoutHandler(temporalGateway, reports),
-      }),
+      registeredTemporalEventHandlers(temporalGateway, WORKFLOW_TYPES),
     ),
     sessions: new PostgresSessionMaintenanceStore(pool),
     notifications: createNotificationActivities({

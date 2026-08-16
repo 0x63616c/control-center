@@ -1,7 +1,6 @@
 import { type Client, WorkflowExecutionAlreadyStartedError } from "@temporalio/client";
 import type { DomainEvent, DomainEventType } from "../../api/src/domain-events";
 import type { WorkflowDispatcher, WorkflowDispatchResult } from "../../api/src/workflow-dispatcher";
-import type { ReportAccountabilityFanoutStore } from "./report-accountability";
 
 type WorkflowType =
   | "InviteLifecycleWorkflow"
@@ -60,6 +59,9 @@ const signalArgument = (
 export function temporalOperationFor(event: DomainEvent): TemporalOperation {
   switch (event.type) {
     case "jar.created":
+    case "jar.closed":
+    case "membership.left":
+    case "report.expired":
     case "rescue.abandoned":
       return { kind: "audit" };
     case "invite.issued":
@@ -90,11 +92,20 @@ export function temporalOperationFor(event: DomainEvent): TemporalOperation {
       };
     case "report.owned":
     case "report.denied":
+    case "report.jar_closed":
+    case "report.member_departed":
       return {
         kind: "signal_with_start",
         workflowType: "ReportAccountabilityWorkflow",
         workflowId: `report/${event.aggregateId}`,
-        signal: event.type === "report.owned" ? "owned" : "denied",
+        signal:
+          event.type === "report.owned"
+            ? "owned"
+            : event.type === "report.denied"
+              ? "denied"
+              : event.type === "report.jar_closed"
+                ? "jarClosed"
+                : "memberDeparted",
         startArgs: startArgument("ReportAccountabilityWorkflow", event.aggregateId),
         signalArgs: signalArgument(
           startArgument("ReportAccountabilityWorkflow", event.aggregateId),
@@ -141,12 +152,9 @@ export function temporalOperationFor(event: DomainEvent): TemporalOperation {
         workflowId: `deletion/${event.aggregateId}`,
         args: startArgument("AccountDeletionWorkflow", event.aggregateId),
       };
-    case "jar.closed":
     case "membership.joined":
-    case "membership.left":
     case "slip.logged":
     case "jar.milestone_crossed":
-    case "report.expired":
     case "rescue.check_in_due":
     case "streak.milestone_reached":
     case "recap.created":
@@ -160,32 +168,6 @@ interface TemporalEventHandler {
 
 export interface TemporalWorkflowGateway {
   execute(operation: Exclude<TemporalOperation, { kind: "audit" | "fanout" }>): Promise<void>;
-}
-
-export class ReportAccountabilityFanoutHandler implements TemporalEventHandler {
-  constructor(
-    private readonly gateway: TemporalWorkflowGateway,
-    private readonly store: ReportAccountabilityFanoutStore,
-  ) {}
-
-  async handle(_operation: TemporalOperation, event: DomainEvent): Promise<void> {
-    if (event.type !== "jar.closed" && event.type !== "membership.left") {
-      throw new Error("unsupported report accountability fanout event");
-    }
-    const targets = await this.store.signalTargets(event);
-    const signal = event.type === "jar.closed" ? "jarClosed" : "memberDeparted";
-    for (const target of targets) {
-      const startArgs = startArgument("ReportAccountabilityWorkflow", target.reportId);
-      await this.gateway.execute({
-        kind: "signal_with_start",
-        workflowType: "ReportAccountabilityWorkflow",
-        workflowId: `report/${target.reportId}`,
-        signal,
-        startArgs,
-        signalArgs: signalArgument(startArgs, target.aggregateVersion),
-      });
-    }
-  }
 }
 
 export class TemporalClientWorkflowGateway implements TemporalWorkflowGateway {
@@ -232,7 +214,13 @@ class GatewayTemporalEventHandler implements TemporalEventHandler {
 
 const DIRECT_EVENTS_BY_WORKFLOW = {
   InviteLifecycleWorkflow: ["invite.issued", "invite.superseded"],
-  ReportAccountabilityWorkflow: ["report.created", "report.owned", "report.denied"],
+  ReportAccountabilityWorkflow: [
+    "report.created",
+    "report.owned",
+    "report.denied",
+    "report.jar_closed",
+    "report.member_departed",
+  ],
   UrgeRescueWorkflow: ["rescue.started", "rescue.extended", "rescue.safe", "rescue.slipped"],
   NotificationDeliveryWorkflow: ["notification.requested"],
   AccountDeletionWorkflow: ["account.deletion_requested"],
@@ -263,7 +251,13 @@ export class RecordingTemporalEventHandler implements TemporalEventHandler {
 }
 
 type HandlerRegistry = Partial<Record<DomainEventType, TemporalEventHandler>>;
-const AUDIT_EVENT_TYPES = ["jar.created", "report.expired", "rescue.abandoned"] as const;
+const AUDIT_EVENT_TYPES = [
+  "jar.created",
+  "jar.closed",
+  "membership.left",
+  "report.expired",
+  "rescue.abandoned",
+] as const;
 
 export class TemporalWorkflowDispatcher implements WorkflowDispatcher {
   constructor(private readonly handlers: HandlerRegistry = {}) {}

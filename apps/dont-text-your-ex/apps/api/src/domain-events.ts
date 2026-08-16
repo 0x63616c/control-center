@@ -42,6 +42,8 @@ const DOMAIN_EVENT_DEFINITIONS = {
   "report.owned": { aggregateType: "report", schemaVersion: 1 },
   "report.denied": { aggregateType: "report", schemaVersion: 1 },
   "report.expired": { aggregateType: "report", schemaVersion: 1 },
+  "report.jar_closed": { aggregateType: "report", schemaVersion: 1 },
+  "report.member_departed": { aggregateType: "report", schemaVersion: 1 },
   "rescue.started": { aggregateType: "rescue", schemaVersion: 1 },
   "rescue.extended": { aggregateType: "rescue", schemaVersion: 1 },
   "rescue.safe": { aggregateType: "rescue", schemaVersion: 1 },
@@ -122,6 +124,8 @@ type EventAggregateIds = {
   "report.owned": z.infer<typeof ReportIdSchema>;
   "report.denied": z.infer<typeof ReportIdSchema>;
   "report.expired": z.infer<typeof ReportIdSchema>;
+  "report.jar_closed": z.infer<typeof ReportIdSchema>;
+  "report.member_departed": z.infer<typeof ReportIdSchema>;
   "rescue.started": RescueInterventionId;
   "rescue.extended": RescueInterventionId;
   "rescue.safe": RescueInterventionId;
