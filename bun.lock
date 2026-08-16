@@ -103,6 +103,7 @@
       "name": "@dont-text-your-ex/temporal-worker",
       "version": "0.0.0",
       "dependencies": {
+        "@dont-text-your-ex/notifications": "workspace:*",
         "@temporalio/client": "^1.21.1",
         "@temporalio/worker": "^1.21.1",
         "@temporalio/workflow": "^1.21.1",

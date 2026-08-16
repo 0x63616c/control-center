@@ -1,19 +1,34 @@
 import { describe, expect, test } from "vitest";
-import { ACTIVITY_TYPES, MANAGED_SCHEDULE_PREFIX, SCHEDULES, WORKFLOW_TYPES } from "./registry";
+import {
+  ACTIVITIES,
+  ACTIVITY_TYPES,
+  MANAGED_SCHEDULE_PREFIX,
+  SCHEDULES,
+  WORKFLOW_TYPES,
+} from "./registry";
 import * as workflows from "./workflows";
 
 describe("DTYE Temporal registry", () => {
-  test("registers health, outbox recovery, and session maintenance on the main queue contract", () => {
+  test("registers all implemented workflows and activities on the main queue contract", () => {
     expect(WORKFLOW_TYPES).toEqual([
       "DtyeHealthCheckWorkflow",
       "OutboxDispatchRecoveryWorkflow",
       "SessionMaintenanceWorkflow",
+      "NotificationDeliveryWorkflow",
     ]);
     expect(Object.keys(workflows)).toContain("DtyeHealthCheckWorkflow");
+    expect(Object.keys(workflows)).toContain("NotificationDeliveryWorkflow");
     expect(ACTIVITY_TYPES).toEqual([
       "DtyeHealthCheckActivity",
       "OutboxDispatchActivity",
       "SessionMaintenanceActivity",
+      "prepareNotification",
+      "deliverNotification",
+    ]);
+    expect(Object.keys(ACTIVITIES)).toEqual([
+      "DtyeHealthCheckActivity",
+      "prepareNotification",
+      "deliverNotification",
     ]);
     expect(MANAGED_SCHEDULE_PREFIX).toBe("dtye_");
     expect(SCHEDULES).toEqual([

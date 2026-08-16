@@ -1,15 +1,21 @@
 import type { ScheduleSpec } from "@www/temporal-runtime";
+import { DtyeHealthCheckActivity, deliverNotification, prepareNotification } from "./activities";
+
 export const WORKFLOW_TYPES = [
   "DtyeHealthCheckWorkflow",
   "OutboxDispatchRecoveryWorkflow",
   "SessionMaintenanceWorkflow",
+  "NotificationDeliveryWorkflow",
 ] as const;
 export const MANAGED_SCHEDULE_PREFIX = "dtye_";
 export const ACTIVITY_TYPES = [
   "DtyeHealthCheckActivity",
   "OutboxDispatchActivity",
   "SessionMaintenanceActivity",
+  "prepareNotification",
+  "deliverNotification",
 ] as const;
+export const ACTIVITIES = { DtyeHealthCheckActivity, prepareNotification, deliverNotification };
 export const SCHEDULES = [
   {
     scheduleId: "dtye_health",

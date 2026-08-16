@@ -18,6 +18,7 @@ COPY apps/dont-text-your-ex/apps/api/package.json apps/dont-text-your-ex/apps/ap
 COPY apps/dont-text-your-ex/apps/e2e/package.json apps/dont-text-your-ex/apps/e2e/
 COPY apps/dont-text-your-ex/apps/frontend/package.json apps/dont-text-your-ex/apps/frontend/
 COPY apps/dont-text-your-ex/apps/temporal-worker/package.json apps/dont-text-your-ex/apps/temporal-worker/
+COPY apps/dont-text-your-ex/packages/notifications/package.json apps/dont-text-your-ex/packages/notifications/
 COPY packages/api/package.json packages/api/
 COPY packages/core/package.json packages/core/
 COPY packages/logger/package.json packages/logger/
@@ -33,6 +34,7 @@ RUN bun install --frozen-lockfile --ignore-scripts
 
 COPY apps/dont-text-your-ex/apps/api apps/dont-text-your-ex/apps/api
 COPY apps/dont-text-your-ex/contracts apps/dont-text-your-ex/contracts
+COPY apps/dont-text-your-ex/packages/notifications apps/dont-text-your-ex/packages/notifications
 COPY packages/logger packages/logger
 COPY packages/platform packages/platform
 
@@ -45,6 +47,7 @@ ENV PORT=8787
 COPY --from=build /app/node_modules node_modules
 COPY --from=build /app/apps/dont-text-your-ex/apps/api apps/dont-text-your-ex/apps/api
 COPY --from=build /app/apps/dont-text-your-ex/contracts apps/dont-text-your-ex/contracts
+COPY --from=build /app/apps/dont-text-your-ex/packages/notifications apps/dont-text-your-ex/packages/notifications
 COPY --from=build /app/packages/logger packages/logger
 COPY --from=build /app/packages/platform packages/platform
 COPY --from=build /app/package.json package.json

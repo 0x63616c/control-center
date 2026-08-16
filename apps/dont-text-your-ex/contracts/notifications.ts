@@ -6,7 +6,7 @@ const notificationIdSchema = <Brand extends string>(prefix: string, brand: Brand
     .regex(new RegExp(`^${prefix}_[A-Za-z0-9]+$`), `invalid ${brand}`)
     .brand<Brand>();
 
-export const PushInstallationIdSchema = notificationIdSchema("pdi", "PushInstallationId");
+export const PushInstallationIdSchema = notificationIdSchema("dev", "PushInstallationId");
 export const NotificationIdSchema = notificationIdSchema("ntf", "NotificationId");
 export const NotificationDeliveryIdSchema = notificationIdSchema("ndl", "NotificationDeliveryId");
 
@@ -81,3 +81,10 @@ export const NotificationTargetSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("unavailable") }).strict(),
 ]);
 export type NotificationTarget = z.infer<typeof NotificationTargetSchema>;
+
+export const NotificationDeliveryWorkflowInputSchema = z
+  .object({ notificationId: NotificationIdSchema, schemaVersion: z.literal(1) })
+  .strict();
+export type NotificationDeliveryWorkflowInput = z.infer<
+  typeof NotificationDeliveryWorkflowInputSchema
+>;
