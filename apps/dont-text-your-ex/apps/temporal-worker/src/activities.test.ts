@@ -33,6 +33,15 @@ describe("outbox dispatch activity", () => {
         suppressNotification: async () => undefined,
         rotatePushTokenBatch: async () => ({ rotated: 0 }),
       },
+      operations: {
+        outboxSnapshot: () => undefined,
+        outboxDispatch: () => undefined,
+        outboxRecoverySucceeded: () => undefined,
+        sessionPurge: () => undefined,
+      },
+      outboxSnapshot: {
+        snapshot: async () => ({ pending: 0, oldestAgeSeconds: 0, permanentFailures: 0 }),
+      },
       clock: () => 10,
     });
 

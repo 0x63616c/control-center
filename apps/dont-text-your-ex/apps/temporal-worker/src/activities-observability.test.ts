@@ -3,6 +3,7 @@ import { DomainEventSchema } from "../../api/src/domain-events";
 import { MemoryOutbox } from "../../api/src/outbox";
 import { RecordingWorkflowDispatcher } from "../../api/src/workflow-dispatcher";
 import { createDtyeActivities } from "./activities";
+import type { NotificationActivities } from "./notification-activities";
 import type { DtyeOperationsObserver } from "./operations-observability";
 import { MemorySessionMaintenanceStore } from "./session-maintenance";
 
@@ -15,6 +16,13 @@ const event = DomainEventSchema.parse({
   aggregateVersion: 1,
   occurredAt: 1_000,
 });
+
+const notifications: NotificationActivities = {
+  prepareNotification: async () => ({ deliveryIds: [] }),
+  deliverNotification: async () => ({ kind: "already_terminal" }),
+  suppressNotification: async () => undefined,
+  rotatePushTokenBatch: async () => ({ rotated: 0 }),
+};
 
 function recordingObserver() {
   const observer: DtyeOperationsObserver = {
@@ -33,6 +41,7 @@ describe("DTYE activity observability", () => {
       outbox: new MemoryOutbox([event]),
       dispatcher: new RecordingWorkflowDispatcher([], ["jar.created"]),
       sessions: new MemorySessionMaintenanceStore(),
+      notifications,
       operations,
       outboxSnapshot: {
         snapshot: vi.fn(async () => ({ pending: 0, oldestAgeSeconds: 0, permanentFailures: 0 })),
@@ -67,6 +76,7 @@ describe("DTYE activity observability", () => {
       outbox: new MemoryOutbox([event]),
       dispatcher: new RecordingWorkflowDispatcher([], ["jar.created"]),
       sessions: new MemorySessionMaintenanceStore(),
+      notifications,
       operations,
       outboxSnapshot: {
         snapshot: vi.fn(async () => ({ pending: 0, oldestAgeSeconds: 0, permanentFailures: 0 })),
@@ -86,6 +96,7 @@ describe("DTYE activity observability", () => {
         ["jar.created"],
       ),
       sessions: new MemorySessionMaintenanceStore(),
+      notifications,
       operations,
       outboxSnapshot: { snapshot: vi.fn(async () => Promise.reject(new Error("db unavailable"))) },
       clock: () => 6_000,
@@ -104,6 +115,7 @@ describe("DTYE activity observability", () => {
       outbox: new MemoryOutbox(),
       dispatcher: new RecordingWorkflowDispatcher(),
       sessions: new MemorySessionMaintenanceStore([{ token: "secret", expiresAt: 1 }]),
+      notifications,
       operations: successObserver,
       outboxSnapshot: { snapshot: vi.fn() },
       clock: () => clockValues.shift() ?? 1_250,
@@ -121,6 +133,7 @@ describe("DTYE activity observability", () => {
       outbox: new MemoryOutbox(),
       dispatcher: new RecordingWorkflowDispatcher(),
       sessions: { purgeExpired: vi.fn(async () => Promise.reject(new Error("database down"))) },
+      notifications,
       operations: failureObserver,
       outboxSnapshot: { snapshot: vi.fn() },
       clock: () => 2_000,
