@@ -1,13 +1,6 @@
-# Don’t Text Your Ex static frontend image. Build context: repository root.
-FROM oven/bun:1.2-alpine AS build
-
+# syntax=docker/dockerfile:1
+FROM oven/bun:1.2 AS build
 WORKDIR /app
-
-ARG VITE_API_BASE
-ENV VITE_API_BASE=$VITE_API_BASE
-
-# Keep this manifest list aligned with the root workspace list. Copying manifests
-# before source keeps dependency installation cacheable.
 COPY package.json bun.lock ./
 COPY apps/api/package.json apps/api/
 COPY apps/manage/package.json apps/manage/
@@ -31,17 +24,17 @@ COPY packages/worker-runtime/package.json packages/worker-runtime/
 COPY infra/package.json infra/
 COPY infra/cloudflare/package.json infra/cloudflare/
 COPY infra/unifi/package.json infra/unifi/
+RUN bun install --frozen-lockfile --production --ignore-scripts
+COPY apps/dont-text-your-ex/apps/temporal-worker apps/dont-text-your-ex/apps/temporal-worker
+COPY packages/logger packages/logger
+COPY packages/platform packages/platform
+COPY packages/temporal-runtime packages/temporal-runtime
+RUN cd apps/dont-text-your-ex/apps/temporal-worker && bun build src/index.ts --target=node \
+      --external '@temporalio/*' --outfile ../../../../dist/dtye-temporal-worker.mjs
 
-RUN bun install --frozen-lockfile --ignore-scripts
-
-COPY apps/dont-text-your-ex/apps/frontend apps/dont-text-your-ex/apps/frontend
-COPY apps/dont-text-your-ex/contracts apps/dont-text-your-ex/contracts
-RUN bun run --cwd apps/dont-text-your-ex/apps/frontend build
-
-FROM nginx:1.27-alpine AS runtime
-
-COPY --from=build /app/apps/dont-text-your-ex/apps/frontend/dist /usr/share/nginx/html
-RUN printf 'server {\n  listen 80;\n  root /usr/share/nginx/html;\n  index index.html;\n  location = /.well-known/apple-app-site-association { default_type application/json; try_files $uri =404; }\n  location / { try_files $uri $uri/ /index.html; }\n}\n' \
-  > /etc/nginx/conf.d/default.conf
-
-EXPOSE 80
+FROM node:22-slim AS runtime
+WORKDIR /app
+COPY --from=build /app/node_modules node_modules
+COPY --from=build /app/apps/dont-text-your-ex/apps/temporal-worker/src apps/dont-text-your-ex/apps/temporal-worker/src
+COPY --from=build /app/dist/dtye-temporal-worker.mjs apps/dont-text-your-ex/apps/temporal-worker/src/index.mjs
+CMD ["node", "apps/dont-text-your-ex/apps/temporal-worker/src/index.mjs"]
