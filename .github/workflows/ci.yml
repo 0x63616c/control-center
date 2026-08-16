@@ -229,6 +229,8 @@ jobs:
         run: bash scripts/test-dtye-temporal-contract.sh
       - name: Don't Text Your Ex CI selection guard
         run: bash scripts/test-dtye-ci-contract.sh
+      - name: Don't Text Your Ex migration compatibility guard
+        run: bash scripts/test-dtye-migration-contract.sh
       - name: Software-factory image CI coverage guard
         # `infra/src/services.ts` is the source of truth for factory images.
         # Every entry needs both a producer and a digest collector: without

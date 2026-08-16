@@ -95,6 +95,8 @@ describe("Don't Text Your Ex production resources", () => {
         },
       ],
     });
+    if (!worker) throw new Error("missing Temporal worker workload");
+    expect(renderWorkload(worker).deployment.spec.strategy).toBeUndefined();
     if (!api) throw new Error("missing api workload");
     const rendered = renderWorkload(api);
     const container = rendered.deployment.spec.template.spec.containers[0];

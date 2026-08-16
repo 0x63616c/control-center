@@ -154,3 +154,61 @@ Verify successful workflow history, a fresh `session_maintenance` activity
 timestamp, no new failure outcome, and expired count returning to zero. If it
 fails repeatedly, inspect worker logs and Postgres health; do not delete active
 sessions or bypass the bounded purge with an unreviewed bulk delete.
+
+## Compatible rollout and rollback rehearsal
+
+Every candidate worker build must pass the registry-exhaustive replay test before
+it is eligible for production. That test starts every registered workflow with
+synthetic opaque identifiers, captures its history, rejects secret- or link-like
+history content, and replays the history against the candidate worker bundle.
+The replacement-worker integration tests separately prove that an open execution
+continues after the prior poller stops.
+
+Before the enabling merge, rehearse the production-shaped sequence against a
+scratch restore and record the commands, immutable candidate SHA, immutable
+image digest, row counts, poller evidence, and rollback result under
+`docs/evidence/dont-text-your-ex/w12/`. The rehearsal is not complete until all
+of these are true:
+
+1. Restore the latest production-format backup into an isolated scratch
+   Postgres, run every migration, boot the prior API against the expanded
+   schema, then boot the candidate API and worker.
+2. Run `scripts/test-dtye-migration-contract.sh`. Applied migration checksums
+   must not change, and new Temporal-era migrations must be expand-only.
+3. Record the currently deployed worker image as the last compatible image. It
+   must be an immutable digest, never `:main`:
+
+   ```sh
+   LAST_COMPATIBLE_IMAGE="$(kubectl --context home-server -n dont-text-your-ex \
+     get deploy/temporal-worker \
+     -o jsonpath='{.spec.template.spec.containers[?(@.name=="temporal-worker")].image}')"
+   case "$LAST_COMPATIBLE_IMAGE" in *@sha256:*) ;; *) exit 1 ;; esac
+   printf '%s\n' "$LAST_COMPATIBLE_IMAGE"
+   ```
+
+4. Roll only the candidate worker first. Confirm the new pod is Ready and
+   Temporal reports a `main` poller before allowing any new event-emission
+   capability or backfill. During the overlap, both old and new workers must be
+   able to process the retained workflow names.
+5. Exercise one pre-roll execution, one post-roll execution, and one supported
+   outbox row. Confirm no unsupported event version was claimed.
+6. Rehearse rollback by restoring the exact recorded image and waiting for the
+   Deployment:
+
+   ```sh
+   kubectl --context home-server -n dont-text-your-ex set image \
+     deploy/temporal-worker temporal-worker="$LAST_COMPATIBLE_IMAGE"
+   kubectl --context home-server -n dont-text-your-ex rollout status \
+     deploy/temporal-worker --timeout=5m
+   ```
+
+Rollback changes only stateless API/worker images. It must never delete or
+recreate the `dont-text-your-ex` Temporal namespace, its workflow histories,
+the product Postgres cluster, database rows, backups, or outbox rows. Future
+event types remain pending until a compatible handler is present; operators do
+not mark them dispatched or delete them to make a rollback look green.
+
+The automated replay, migration, and replacement-worker tests are merge gates;
+the scratch-restore rehearsal, live poller check, immutable deployed-image
+capture, and live rollback are production evidence and cannot be claimed from
+CI alone.
