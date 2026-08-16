@@ -14,12 +14,14 @@ import { initMetrics, startMetricsServer } from "@www/platform/metrics";
 import { temporalScheduleGateway } from "@www/temporal-runtime";
 import { Pool } from "pg";
 import { PostgresOutbox } from "../../api/src/outbox";
+import { PostgresRescueStore } from "../../api/src/rescue-store";
 import { createDtyeActivities } from "./activities";
 import { prepareTemporalWorker } from "./boot";
 import { temporalWorkerConfig } from "./config";
 import { createWorkerLifecycle } from "./lifecycle";
 import { createNotificationActivities } from "./notification-activities";
 import { WORKFLOW_TYPES } from "./registry";
+import { createRescueActivities } from "./rescue-activities";
 import { PostgresSessionMaintenanceStore } from "./session-maintenance";
 import {
   registeredTemporalEventHandlers,
@@ -77,6 +79,7 @@ async function main(): Promise<void> {
       apnsClient: (environment) => apnsClients[environment],
       logger,
     }),
+    rescue: createRescueActivities({ store: new PostgresRescueStore(pool) }),
   });
   const worker = await prepareTemporalWorker({
     config,

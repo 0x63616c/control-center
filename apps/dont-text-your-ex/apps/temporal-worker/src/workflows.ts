@@ -10,6 +10,11 @@ import {
 import {
   type NotificationDeliveryWorkflowInput,
   NotificationDeliveryWorkflowInputSchema,
+  type RescueIntervention,
+  type RescueInterventionWorkflowInput,
+  RescueInterventionWorkflowInputSchema,
+  type RescueSignalInput,
+  RescueSignalInputSchema,
 } from "../../../contracts";
 import type { DomainEvent } from "../../api/src/domain-events";
 import type { DtyeActivities } from "./activities";
@@ -36,6 +41,18 @@ const notificationActivities = proxyActivities<
 >({
   startToCloseTimeout: "20 seconds",
   retry: { maximumAttempts: 2 },
+});
+
+const rescueActivities = proxyActivities<
+  Pick<DtyeActivities, "loadRescue" | "advanceRescueAtDeadline" | "eraseRescueForAccountDeletion">
+>({
+  startToCloseTimeout: "30 seconds",
+  retry: {
+    initialInterval: "1 second",
+    backoffCoefficient: 2,
+    maximumInterval: "30 seconds",
+    maximumAttempts: 10,
+  },
 });
 
 export async function DtyeHealthCheckWorkflow(
@@ -212,4 +229,81 @@ export async function NotificationDeliveryWorkflow(
     deliveryCount: prepared.deliveryIds.length,
     outcomes,
   };
+}
+
+export type RescueWorkflowState = RescueIntervention["status"] | "account_deleted" | "loading";
+export interface UrgeRescueWorkflowOutput {
+  readonly interventionId: RescueInterventionWorkflowInput["interventionId"];
+  readonly status: Exclude<RescueWorkflowState, "loading">;
+}
+
+export const safeRescueSignal = defineSignal<[RescueSignalInput]>("safe");
+export const slippedRescueSignal = defineSignal<[RescueSignalInput]>("slipped");
+export const extendRescueSignal = defineSignal<[RescueSignalInput]>("extend");
+export const rescueAccountDeletedSignal = defineSignal<[RescueSignalInput]>("accountDeleted");
+export const rescueStateQuery = defineQuery<RescueWorkflowState>("rescueState");
+
+export async function UrgeRescueWorkflow(
+  input: RescueInterventionWorkflowInput,
+): Promise<UrgeRescueWorkflowOutput> {
+  const parsed = RescueInterventionWorkflowInputSchema.parse(input);
+  let workflowState: RescueWorkflowState = "loading";
+  let wakeRevision = 0;
+  let accountDeleted = false;
+
+  const wakeForMatchingIntervention = (signalInput: RescueSignalInput) => {
+    const signal = RescueSignalInputSchema.parse(signalInput);
+    if (signal.interventionId === parsed.interventionId) wakeRevision += 1;
+  };
+  setHandler(safeRescueSignal, wakeForMatchingIntervention);
+  setHandler(slippedRescueSignal, wakeForMatchingIntervention);
+  setHandler(extendRescueSignal, wakeForMatchingIntervention);
+  setHandler(rescueAccountDeletedSignal, (signalInput) => {
+    const signal = RescueSignalInputSchema.parse(signalInput);
+    if (signal.interventionId !== parsed.interventionId) return;
+    accountDeleted = true;
+    wakeRevision += 1;
+  });
+  setHandler(rescueStateQuery, () => workflowState);
+
+  while (true) {
+    if (accountDeleted) {
+      await rescueActivities.eraseRescueForAccountDeletion({
+        interventionId: parsed.interventionId,
+      });
+      workflowState = "account_deleted";
+      return { interventionId: parsed.interventionId, status: workflowState };
+    }
+
+    const intervention = await rescueActivities.loadRescue({
+      interventionId: parsed.interventionId,
+    });
+    if (!intervention) {
+      workflowState = "account_deleted";
+      return { interventionId: parsed.interventionId, status: workflowState };
+    }
+    workflowState = intervention.status;
+    if (
+      intervention.status === "safe" ||
+      intervention.status === "slipped" ||
+      intervention.status === "abandoned"
+    ) {
+      return { interventionId: parsed.interventionId, status: intervention.status };
+    }
+
+    const observedWakeRevision = wakeRevision;
+    const deadlineAt =
+      intervention.status === "active" ? intervention.deadlineAt : intervention.responseDeadlineAt;
+    const woke = await condition(
+      () => accountDeleted || wakeRevision !== observedWakeRevision,
+      Math.max(0, deadlineAt - Date.now()),
+    );
+    if (woke) continue;
+
+    const advanced = await rescueActivities.advanceRescueAtDeadline({
+      interventionId: parsed.interventionId,
+      expectedAggregateVersion: intervention.aggregateVersion,
+    });
+    if (advanced) workflowState = advanced.status;
+  }
 }

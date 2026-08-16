@@ -3,6 +3,7 @@ import type { DomainEvent } from "../../api/src/domain-events";
 import type { Outbox } from "../../api/src/outbox";
 import { dispatchOutboxPage, type WorkflowDispatcher } from "../../api/src/workflow-dispatcher";
 import type { NotificationActivities } from "./notification-activities";
+import type { RescueActivities } from "./rescue-activities";
 import { runSessionMaintenancePage, type SessionMaintenanceStore } from "./session-maintenance";
 
 interface DtyeHealthCheckActivityInput {
@@ -42,6 +43,7 @@ export type DtyeActivityDependencies = Readonly<{
   dispatcher: WorkflowDispatcher;
   sessions: SessionMaintenanceStore;
   notifications: NotificationActivities;
+  rescue: RescueActivities;
   clock?: () => number;
 }>;
 
@@ -70,6 +72,7 @@ export function createDtyeActivities(dependencies: DtyeActivityDependencies) {
       return runSessionMaintenancePage({ store: dependencies.sessions, ...input });
     },
     ...dependencies.notifications,
+    ...dependencies.rescue,
   };
 }
 

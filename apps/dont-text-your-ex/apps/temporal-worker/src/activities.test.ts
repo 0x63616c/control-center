@@ -33,6 +33,11 @@ describe("outbox dispatch activity", () => {
         suppressNotification: async () => undefined,
         rotatePushTokenBatch: async () => ({ rotated: 0 }),
       },
+      rescue: {
+        loadRescue: async () => null,
+        advanceRescueAtDeadline: async () => null,
+        eraseRescueForAccountDeletion: async () => ({ erased: true }),
+      },
       clock: () => 10,
     });
 
