@@ -105,7 +105,7 @@ const METRICS_PATH = "/metrics";
 const SERVER_IMAGE = `temporalio/server:${TEMPORAL_VERSION}`;
 const UI_IMAGE = "temporalio/ui:2.52.1";
 
-// The OTel collector `temporal-worker`'s SDK-internal metrics (#233) go
+// The shared OTel collector receives each product worker's SDK-internal metrics
 // through: Runtime.install({ telemetryOptions: { metrics: { otel } } })
 // speaks OTLP/gRPC to this pod, which re-exports to its own Prometheus
 // exposition port for the existing generic `kubernetes-pods` scrape job to
@@ -128,8 +128,8 @@ const OTEL_COLLECTOR_CONFIG_FILE = `${OTEL_COLLECTOR_CONFIG_MOUNT}/config.yaml`;
 /**
  * A single OTLP-in, Prometheus-out pipeline — nothing else. `resource`
  * processor is skipped: the worker's Runtime.install `attachServiceName`
- * default already stamps `service_name`, and this collector serves exactly
- * one client so there is nothing to disambiguate.
+ * default already stamps `service_name`, which disambiguates the product
+ * workers sharing this pipeline.
  */
 function otelCollectorConfigYaml(): string {
   return [

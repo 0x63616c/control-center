@@ -182,6 +182,17 @@ export interface DontTextYourExArgs {
   nasNfsServer: string;
 }
 
+export function dontTextYourExTemporalNamespaceSetupCommand(): string {
+  return [
+    "set -eu",
+    `export TEMPORAL_ADDRESS=${TEMPORAL_FRONTEND_CLUSTER_ADDRESS}`,
+    "until temporal operator cluster health >/dev/null 2>&1; do sleep 2; done",
+    "temporal operator namespace create --namespace dont-text-your-ex --retention 2160h || true",
+    "temporal operator namespace update --namespace dont-text-your-ex --retention 2160h",
+    "temporal operator namespace describe --namespace dont-text-your-ex",
+  ].join("\n");
+}
+
 export function installDontTextYourEx(args: DontTextYourExArgs) {
   const { provider, namespace, cnpgOperator, imageDigests, requireImageDigestPins, nasNfsServer } =
     args;
@@ -201,18 +212,7 @@ export function installDontTextYourEx(args: DontTextYourExArgs) {
               {
                 name: "namespace",
                 image: TEMPORAL_ADMIN_TOOLS_IMAGE,
-                command: [
-                  "/bin/sh",
-                  "-c",
-                  [
-                    "set -eu",
-                    `export TEMPORAL_ADDRESS=${TEMPORAL_FRONTEND_CLUSTER_ADDRESS}`,
-                    "until temporal operator cluster health >/dev/null 2>&1; do sleep 2; done",
-                    "temporal operator namespace create --namespace dont-text-your-ex --retention 2160h || true",
-                    "temporal operator namespace update --namespace dont-text-your-ex --retention 2160h",
-                    "temporal operator namespace describe --namespace dont-text-your-ex",
-                  ].join("\n"),
-                ],
+                command: ["/bin/sh", "-c", dontTextYourExTemporalNamespaceSetupCommand()],
                 resources: {
                   limits: { memory: "512Mi" },
                   requests: { cpu: "100m", memory: "128Mi" },
