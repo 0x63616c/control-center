@@ -29,7 +29,6 @@
  * comes up evicted.
  */
 
-import { getDeviceName } from "../device-name";
 import { fuzzyMatch } from "./fuzzy";
 import type { LogEntry, LogLevel } from "./types";
 
@@ -39,13 +38,16 @@ const DB_NAME = "cc-logs";
 // v3: entries carry `sha` (was `build`). The upgrade drops and rebuilds either
 // way , these are debug logs, and carrying a legacy field forward through the
 // render path forever is a worse trade than losing a day of them once.
-// v4: entries carry `deviceName`. Unlike earlier steps this one PRESERVES the
-// existing store and backfills the missing field (the store is per-device, so
-// every existing row was produced by this device , see onupgradeneeded).
-const DB_VERSION = 4;
+// v4: entries carry `deviceName`.
+// v5: the local cache ceiling dropped from 1M/1GiB to 100k/64MiB. Rebuild the
+// redundant IndexedDB cache during upgrade rather than making the first append
+// cursor-delete roughly 900k rows on the iPad's main thread. Server retention
+// already has the shipped history and the native mirror keeps its own tail.
+const DB_VERSION = 5;
 const ENTRIES = "entries";
 const META = "meta";
 const META_KEY = "stats";
+const CAP_RESET_KEY = "v5-cap-reset";
 
 /**
  * Hard caps. Whichever trips first drives eviction.
@@ -134,43 +136,30 @@ function openDb(): Promise<IDBDatabase | null> {
       const db = req.result;
       const oldVersion = event.oldVersion;
       const hasEntries = db.objectStoreNames.contains(ENTRIES);
+      const capReset = oldVersion >= 3 && oldVersion < 5 && hasEntries;
 
-      // v1/v2 were keyed the old way (per-session `seq`, legacy `build` field);
-      // a fresh install has no store at all. In both cases (re)build clean ,
-      // there is nothing worth preserving, and carrying a v1 keyPath forward
-      // would silently reinstate the overwrite-on-reload bug (see types.ts).
-      if (oldVersion < 3 || !hasEntries) {
+      // v1/v2 were keyed the old way (per-session `seq`, legacy `build` field).
+      // v3/v4 can contain up to a million rows under the old cap. Recreate the
+      // object store for both cases: deleting one store during a versionchange
+      // is a bounded schema operation, unlike walking and deleting 900k records
+      // during the first normal append after rollout.
+      if (oldVersion < 3 || !hasEntries || capReset) {
         if (hasEntries) db.deleteObjectStore(ENTRIES);
         // keyPath "id" = "<bootMs>-<counter>", fixed-width and zero-padded, so
         // lexicographic key order IS insertion order across reloads.
         const store = db.createObjectStore(ENTRIES, { keyPath: "id" });
         store.createIndex("ts", "ts");
         store.createIndex("level", "level");
-      } else {
-        // v3 → v4: the store is already correctly keyed. Requirement: existing
-        // logs must be UPDATED, not lost. Walk the store inside this
-        // versionchange transaction and backfill `deviceName` on any row lacking
-        // it. The store is per-device, so `getDeviceName()` (read synchronously
-        // from localStorage , safe on the main thread here) is the honest name
-        // for every one of these rows.
-        const tx = req.transaction;
-        if (tx) {
-          const store = tx.objectStore(ENTRIES);
-          const deviceName = getDeviceName();
-          const cursorReq = store.openCursor();
-          cursorReq.onsuccess = () => {
-            const cursor = cursorReq.result;
-            if (!cursor) return;
-            const value = cursor.value as LogEntry;
-            if (!value.deviceName) cursor.update({ ...value, deviceName });
-            cursor.continue();
-          };
-        }
       }
 
+      // Reset meta with the cache so stale byte accounting cannot immediately
+      // trigger another large prune. The marker prevents boot from refilling the
+      // intentionally-reset cache from the native mirror on this one upgrade.
+      if (capReset && db.objectStoreNames.contains(META)) db.deleteObjectStore(META);
       if (!db.objectStoreNames.contains(META)) {
         db.createObjectStore(META);
       }
+      if (capReset) req.transaction?.objectStore(META).put(true, CAP_RESET_KEY);
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => resolve(null);
@@ -192,6 +181,25 @@ function txDone(tx: IDBTransaction): Promise<void> {
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error);
   });
+}
+
+/**
+ * Whether a missing IndexedDB history should be restored from the native mirror.
+ * A genuine WebKit eviction creates a fresh database and returns true. The v5
+ * cap migration deliberately returns false once, so it cannot refill the cache
+ * it just discarded and recreate the same oversized first-write workload.
+ */
+export async function shouldRestoreFromNative(): Promise<boolean> {
+  const db = await openDb();
+  if (!db) return false;
+  const tx = db.transaction([ENTRIES, META], "readonly");
+  const entries = tx.objectStore(ENTRIES);
+  const meta = tx.objectStore(META);
+  const [entryCount, capReset] = await Promise.all([
+    promisify(entries.count()),
+    promisify(meta.get(CAP_RESET_KEY)),
+  ]);
+  return entryCount === 0 && capReset !== true;
 }
 
 /** Approximate on-disk cost of an entry. Cheap and good enough to drive eviction. */
@@ -329,6 +337,7 @@ async function appendOnce(entries: LogEntry[]): Promise<void> {
   }
 
   meta.put({ bytes: Math.max(0, bytes) } satisfies Stats, META_KEY);
+  meta.delete(CAP_RESET_KEY);
   await txDone(tx);
 }
 
@@ -503,7 +512,9 @@ export async function clear(): Promise<void> {
   if (!db) return;
   const tx = db.transaction([ENTRIES, META], "readwrite");
   tx.objectStore(ENTRIES).clear();
-  tx.objectStore(META).put({ bytes: 0 } satisfies Stats, META_KEY);
+  const meta = tx.objectStore(META);
+  meta.put({ bytes: 0 } satisfies Stats, META_KEY);
+  meta.delete(CAP_RESET_KEY);
   await txDone(tx);
 }
 

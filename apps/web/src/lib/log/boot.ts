@@ -17,7 +17,7 @@ import { log, resolveBuild, startFlushing } from "./logger";
 import { restoreFromNative } from "./native";
 import { installQueryLogging } from "./query-log";
 import { startShipping } from "./ship";
-import { append, count, requestPersistence } from "./store";
+import { append, requestPersistence, shouldRestoreFromNative } from "./store";
 
 export function initLogging(): void {
   installCapture();
@@ -59,7 +59,7 @@ export function initLogging(): void {
   // If WebKit evicted IndexedDB since the last run, refill it from the native
   // mirror (no-op off-device and when the store has rows). Runs before the
   // first flush lands, so "empty" genuinely means "evicted", not "young".
-  void restoreFromNative(async () => (await count()) === 0, append).then((restored) => {
+  void restoreFromNative(shouldRestoreFromNative, append).then((restored) => {
     if (restored > 0) boot.info("log history restored from native mirror", { restored });
   });
 }

@@ -590,7 +590,11 @@ external debugger can attach to:
 
 - an in-memory ring (5k entries) is the live tail; IndexedDB (100k, 64MB, rotated
   on both caps) is the history that survives the KioskWatchdog's reloads; a
-  two-generation native JSONL mirror keeps the most recent 128MB outside WebKit
+  two-generation native JSONL mirror keeps the most recent 128MB outside WebKit.
+  The v5 store upgrade intentionally recreates the redundant IndexedDB cache
+  once when moving down from the former 1M/1GiB ceiling; it does not cursor-walk
+  the old cache or immediately refill it from the native mirror. Genuine later
+  WebKit eviction still restores from the mirror normally
 - automatic capture: patched `console.*`, `window.onerror`,
   `unhandledrejection`, failed tRPC/HTTP calls (procedure, duration, status,
   error/body shape), and React Query status transitions. Successful polling is
