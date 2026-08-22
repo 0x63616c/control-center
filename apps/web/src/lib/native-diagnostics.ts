@@ -14,7 +14,7 @@ import { log } from "./log/logger";
 const HEARTBEAT_MS = 5 * 60 * 1_000;
 const diagnosticsLog = log.child("native-diagnostics");
 
-export interface NativeRunRecord {
+interface NativeRunRecord {
   readonly runId: string;
   readonly startedAtMs: number;
   readonly lastUpdatedAtMs: number;
@@ -38,7 +38,7 @@ interface KioskDiagnosticsPlugin {
 const plugin = registerPlugin<KioskDiagnosticsPlugin>("KioskDiagnostics");
 let previousRunLogged = false;
 
-export function isNativeDiagnosticsAvailable(): boolean {
+function isNativeDiagnosticsAvailable(): boolean {
   return Capacitor.isNativePlatform() && Capacitor.isPluginAvailable("KioskDiagnostics");
 }
 
