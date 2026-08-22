@@ -1,7 +1,6 @@
 import "fake-indexeddb/auto";
 import { IDBFactory } from "fake-indexeddb";
 import { beforeEach, describe, expect, it } from "vitest";
-import { getDeviceName } from "../device-name";
 import * as store from "../log/store";
 import type { LogEntry, LogLevel } from "../log/types";
 
@@ -282,14 +281,12 @@ describe("log store", () => {
     expect(rows[0].id).toBe(id(0));
   });
 
-  it("preserves and backfills deviceName on the v3 -> v4 upgrade (existing logs kept)", async () => {
-    // Requirement #6: already-stored logs must be UPDATED, not lost. Seed a v3
-    // store keyed the current way but with rows that predate `deviceName`, then
-    // open at v4 and assert every row survived AND gained the device's name.
-    // The store is per-device, so backfilled rows get this device's resolved name.
-    const expected = getDeviceName();
+  it("resets a v4 cache without restoring the native mirror during the v5 cap migration", async () => {
+    // The old production cap allowed one million rows. Seed a v4 store and prove
+    // the v5 schema upgrade drops the whole redundant object store rather than
+    // making append() cursor-delete every excess record one-by-one.
     await new Promise<void>((resolve, reject) => {
-      const req = indexedDB.open("cc-logs", 3);
+      const req = indexedDB.open("cc-logs", 4);
       req.onupgradeneeded = () => {
         const db = req.result;
         const s = db.createObjectStore("entries", { keyPath: "id" });
@@ -299,44 +296,36 @@ describe("log store", () => {
       };
       req.onsuccess = () => {
         const db = req.result;
-        const s = db.transaction("entries", "readwrite").objectStore("entries");
-        // Deliberately no `deviceName` field on these legacy rows.
-        s.put({
-          id: id(0, 1),
-          seq: 0,
-          ts: 1,
-          sha: "abc1234",
-          level: "info",
-          source: "old",
-          msg: "row 0",
-        });
-        s.put({
-          id: id(1, 1),
-          seq: 1,
-          ts: 2,
-          sha: "abc1234",
-          level: "warn",
-          source: "old",
-          msg: "row 1",
-        });
-        db.close();
-        resolve();
+        const tx = db.transaction(["entries", "meta"], "readwrite");
+        tx.objectStore("entries").put(entry(1, { msg: "old oversized cache" }));
+        tx.objectStore("meta").put({ bytes: 900_000_000 }, "stats");
+        tx.oncomplete = () => {
+          db.close();
+          resolve();
+        };
+        tx.onerror = () => reject(tx.error);
       };
       req.onerror = () => reject(req.error);
     });
 
     store.resetForTests();
-    const rows = await store.query({ limit: 100 });
-    expect(rows).toHaveLength(2);
-    expect(rows.every((r) => r.deviceName === expected)).toBe(true);
-    expect(expected).not.toBe("");
-    expect(rows.some((r) => r.msg === "row 0")).toBe(true);
-    expect(rows.some((r) => r.msg === "row 1")).toBe(true);
+    expect(await store.count()).toBe(0);
+    expect(await store.bytesUsed()).toBe(0);
+    expect(await store.shouldRestoreFromNative()).toBe(false);
+
+    // The first normal write clears the one-shot marker. A later explicit clear
+    // or genuine store eviction is again eligible for native-mirror restore.
+    await store.append([entry(2, { msg: "new bounded cache" })]);
+    expect((await store.query()).map((row) => row.msg)).toEqual(["new bounded cache"]);
+    await store.clear();
+    expect(await store.shouldRestoreFromNative()).toBe(true);
   });
 
-  it("starts empty on a fresh v4 database", async () => {
-    // A fresh install creates the store empty , nothing to backfill.
+  it("allows native restore on a fresh v5 database", async () => {
+    // A fresh install is genuinely empty; unlike the intentional cap reset, its
+    // native mirror may contain the only surviving incident history.
     expect(await store.count()).toBe(0);
+    expect(await store.shouldRestoreFromNative()).toBe(true);
   });
 
   it("survives a QuotaExceededError by evicting and retrying", async () => {
