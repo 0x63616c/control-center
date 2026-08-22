@@ -44,7 +44,7 @@ final class KioskDiagnosticsRecorder {
         let support = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
-        ).first!
+        ).first ?? FileManager.default.temporaryDirectory
         try? FileManager.default.createDirectory(
             at: support,
             withIntermediateDirectories: true
