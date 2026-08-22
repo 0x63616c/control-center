@@ -1,42 +1,42 @@
 {
-  "version": "v0.1.10",
-  "commit": "6eea16b5715ab87e96af5c1b6671c2c9804c9a0a",
+  "version": "v0.1.11",
+  "commit": "79b3e43804a3ded5f0dba96d0caba1a07c5abb4f",
   "platform": "linux/amd64",
   "images": [
     {
       "name": "api",
       "image": "ghcr.io/0x63616c/software-factory-api",
-      "digest": "sha256:6409793ce34621c6d187925ae0d87e66296e5a564c967e323c1f2f72adf78d7b"
+      "digest": "sha256:b37a8bd9bdc4db41cb2e47389346fdba59666b87b45bd526bc22ecd3d372d0a8"
     },
     {
       "name": "blobs",
       "image": "ghcr.io/0x63616c/software-factory-blobs",
-      "digest": "sha256:750944445d8152c134e243b0389d41b7d1a278ccc09bd517b09ccf99dcf6984a"
+      "digest": "sha256:59164504d66d67a5710ed6af36f54063780fde23a517bfe652ce9b8b6e2a3f23"
     },
     {
       "name": "codec",
       "image": "ghcr.io/0x63616c/software-factory-codec",
-      "digest": "sha256:1bebae0eeb89494a980522cf7cc9bc6944d23d5befe27abb169279941b85b754"
+      "digest": "sha256:52fa820dfe78e3b32f9e41ef692b33d7b150d43c07ea87289e974d19be336a9c"
     },
     {
       "name": "console",
       "image": "ghcr.io/0x63616c/software-factory-console",
-      "digest": "sha256:7035389739460dbafc89100c6214c7ae00b82be1dfd0f58e46aa2c18dd0128d1"
+      "digest": "sha256:aa6506321b339e0670c32476065f4eab3645b9f9acf5a2307b018c868187180d"
     },
     {
       "name": "relay",
       "image": "ghcr.io/0x63616c/software-factory-relay",
-      "digest": "sha256:2f859559a80234bf1b8a9126aeb71202d80821ee9afbc620583f89d5319fbe45"
+      "digest": "sha256:11e2f3c99406545155e6e73fd678f432aedb349745797ef3b158ba64f06b3ff9"
     },
     {
       "name": "run-worker",
       "image": "ghcr.io/0x63616c/software-factory-run-worker",
-      "digest": "sha256:17320b0afebc84c62fa64dc61b65a0924aa3dbb7a2295a6e2938cba893747495"
+      "digest": "sha256:650bbb125fad1476c866623c8d7e849300ffc6198df9f5436a2f89bb4d745e05"
     },
     {
       "name": "worker",
       "image": "ghcr.io/0x63616c/software-factory-worker",
-      "digest": "sha256:de8dbea425799bb805ba08bbe86c4107cf7af9b9cdec0140ee5cd356fba4d909"
+      "digest": "sha256:aeb22b76854c869ae5123b0b6bb777274836ee481931e94c91fede19cd441952"
     }
   ]
 }
