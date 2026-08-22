@@ -14,10 +14,11 @@
  * you are standing at the panel trying to diagnose, and it is the case where the
  * old logging was blind.
  *
- * So this records the transport-level facts for every call: status, statusText,
- * content-type, duration, and , when the response is not a clean JSON 200 , a
- * snippet of the actual body. A Cloudflare error page or an nginx 502 says what
- * is wrong in its body; there is no reason to make you guess.
+ * So this records the transport-level facts for failures: status, statusText,
+ * content-type, duration, and a snippet of the actual body. A Cloudflare error
+ * page or an nginx 502 says what is wrong in its body; there is no reason to
+ * make you guess. Successful polling stays silent: recording every success
+ * caused millions of redundant on-device writes without adding incident value.
  */
 
 import { log } from "./logger";
@@ -50,8 +51,8 @@ async function snippet(res: Response): Promise<string | undefined> {
 }
 
 /**
- * Drop-in `fetch` for the tRPC client. Logs every request's HTTP outcome and,
- * on anything that is not a clean JSON 200, the body that came back instead.
+ * Drop-in `fetch` for the tRPC client. On anything that is not a clean JSON 200,
+ * logs the HTTP outcome and the body that came back instead.
  */
 export const loggingFetch: typeof fetch = async (input, init) => {
   const { url, method } = requestOf(input);
@@ -79,9 +80,6 @@ export const loggingFetch: typeof fetch = async (input, init) => {
   const isJson = contentType?.includes("application/json") ?? false;
 
   if (res.ok && isJson) {
-    // The happy path is the overwhelming majority of traffic on a polling
-    // dashboard, so it stays at debug and carries no body.
-    httpLog.debug(`${method} ${res.status} ${url}`, { method, url, status: res.status, ms });
     return res;
   }
 
