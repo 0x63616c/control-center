@@ -283,8 +283,10 @@ Logger behavior is keyed off runtime env like `APP_ENV`, `LOG_LEVEL`, and `LOG_P
 
 Frontend logs (the web app's own log store, `apps/web/src/lib/log/`) are shipped to Postgres: a cursor-tracked shipper pushes every entry to the `logs.ingest` tRPC mutation, which writes the `frontend_log` table (30-day retention, purged daily). Every entry carries a stable `deviceId` (`<model-slug>-<idfv8>`), the mutable display `deviceName`, the git `sha`, and the App Store `build` number. To read panel logs from a desk, query Postgres instead of exporting from the device:
 
+Successful polling is intentionally not logged. Failures, query error/recovery transitions, UI activity, and five-minute native process snapshots are retained; the native iOS recorder persists lifecycle state, physical/peak footprint, and memory-warning count atomically so the next launch can report an abruptly terminated process.
+
 ```
-kubectl --context home-server -n control-center exec control-center-1 -c postgres -- \
+kubectl --context home-server -n control-center exec control-center-postgres-1 -c postgres -- \
   psql -U postgres -d control_center -c "select ts, level, source, msg from frontend_log \
   where level in ('warn','error') and ts > now() - interval '1 day' order by ts desc limit 100"
 ```

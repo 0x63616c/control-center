@@ -588,24 +588,25 @@ section's original suggestion , the same `info/warn/error` vocabulary with a
 console wrapper, because the panel is a TestFlight Capacitor kiosk that no
 external debugger can attach to:
 
-- an in-memory ring (5k entries) is the live tail; IndexedDB (100k, ~50MB, rotated
-  on both caps) is the history that survives the KioskWatchdog's reloads
+- an in-memory ring (5k entries) is the live tail; IndexedDB (100k, 64MB, rotated
+  on both caps) is the history that survives the KioskWatchdog's reloads; a
+  two-generation native JSONL mirror keeps the most recent 128MB outside WebKit
 - automatic capture: patched `console.*`, `window.onerror`,
-  `unhandledrejection`, a tRPC link (procedure/duration/status/error), and a
-  React Query cache subscriber
-- read on-device via Settings , "View logs", with copy-to-clipboard as the only
-  way logs leave the panel
+  `unhandledrejection`, failed tRPC/HTTP calls (procedure, duration, status,
+  error/body shape), and React Query status transitions. Successful polling is
+  deliberately silent: it previously produced millions of redundant writes
+  while failures and recovery transitions carried the diagnostic value
+- the native shell atomically records lifecycle state, physical/peak memory
+  footprint, and memory-warning count every five minutes and on transitions;
+  the next process ships the prior process's last record even after an abrupt
+  iOS jetsam termination
+- read on-device via Settings , "View logs", or query the shipped Postgres rows
+  by stable `device_id`
 
-It does **not** POST to an api sink. That option was considered and dropped: the
-homelab is RAM-constrained and its previous log stack was deliberately removed, and
-a shipper that fails takes the diagnostics down with the thing you are trying to
-diagnose.
-
-> **Update 2026-07-18 / 2026-07-26.** The frontend does now ship, but to
+> **Update 2026-07-18 / 2026-07-26.** The frontend ships to
 > **Postgres** (`frontend_log`, see "Logging And Config" in
-> `CODEBASE_OVERVIEW.md`), not to an api log sink — the on-device layers above
-> remain the primary read path. And the RAM constraint above is gone: the 8 GiB
-> Mac mini was retired, and a Loki/Grafana stack exists again on home-server
+> `CODEBASE_OVERVIEW.md`), not Loki. The 8 GiB Mac mini was retired, and a
+> Loki/Grafana stack exists again on home-server
 > (#33/#216, `docs/observability.md`). It collects **container** logs; frontend
 > logs still go to Postgres.
 

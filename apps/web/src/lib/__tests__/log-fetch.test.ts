@@ -103,9 +103,7 @@ describe("loggingFetch", () => {
 
     const res = await loggingFetch("/trpc/tesla.get");
 
-    const [entry] = httpEntriesSince(before);
-    expect(entry.level).toBe("debug"); // a polling dashboard's traffic is mostly this
-    expect(entry.data).not.toHaveProperty("body");
+    expect(httpEntriesSince(before)).toEqual([]);
     // Critical: the caller still needs to parse the real response.
     await expect(res.json()).resolves.toEqual({ result: { data: 1 } });
   });

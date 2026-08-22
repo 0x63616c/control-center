@@ -1,5 +1,5 @@
 /**
- * A tRPC link that logs every call.
+ * A tRPC link that logs failed calls.
  *
  * This is the single highest-value source in the stack. `ConnectionLostBanner`
  * currently tells you the panel cannot reach the api and nothing else, because
@@ -66,18 +66,7 @@ export const loggingLink: TRPCLink<AppRouter> = () => {
           });
           observer.error(err);
         },
-        complete() {
-          // Successful calls are debug: on a dashboard that polls, they are the
-          // overwhelming majority of traffic. They stay in the buffer and the
-          // viewer filters them out by default, but they are there when you need
-          // to see that a call happened at all.
-          trpcLog.debug(`${op.path}`, {
-            ...base,
-            ms: Math.round(performance.now() - started),
-            input: op.input,
-          });
-          observer.complete();
-        },
+        complete: () => observer.complete(),
       });
 
       return () => subscription.unsubscribe();

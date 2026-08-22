@@ -51,20 +51,21 @@ const META_KEY = "stats";
  * Hard caps. Whichever trips first drives eviction.
  *
  * These are ceilings, not reservations , the store only grows to what is
- * actually logged. IndexedDB will hold this much, and requestPersistence() has
- * been granted on the prod origin, which is what keeps WebKit from evicting it.
+ * actually logged. requestPersistence() is best-effort and the production
+ * WKWebView currently denies it, which is why the native mirror remains the
+ * durable backstop rather than relying on IndexedDB surviving indefinitely.
  *
- * The honest caveat: the panel is WKWebView on iPadOS, where the per-origin quota
- * is tighter than desktop Chrome's, and 1 GB is near the ceiling rather than
- * comfortably under it. So the caps alone are not enough , append() also handles
- * QuotaExceededError by evicting hard and retrying, because the failure mode we
- * must avoid is the logger silently failing to write on the one day it matters.
+ * The server already retains shipped logs for 30 days and the native mirror
+ * keeps the recent disaster-recovery tail. The IndexedDB copy is deliberately
+ * small enough that maintaining it cannot become a material workload on the
+ * always-on iPad. append() still handles QuotaExceededError by evicting hard and
+ * retrying, because device storage pressure can lower WebKit's quota at runtime.
  */
-export const MAX_ENTRIES = 1_000_000;
-export const MAX_BYTES = 1024 * 1024 * 1024; // 1 GB
+export const MAX_ENTRIES = 100_000;
+export const MAX_BYTES = 64 * 1024 * 1024;
 
 /** Evict in chunks so a single append doesn't walk the whole store. */
-const PRUNE_SLACK = 20_000;
+const PRUNE_SLACK = 5_000;
 
 // Live caps. Indirected through a mutable object purely so tests can exercise
 // eviction without writing an actual gigabyte to prove a cap works.
