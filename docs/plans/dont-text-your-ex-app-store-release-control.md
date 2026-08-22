@@ -690,7 +690,7 @@ the data model/deletion/moderation inventory is final.
 |---|---|---|---|
 | Final App Store name | DECIDED + SAVED | **Don’t Text Your Ex**; explicitly requested by Calum and saved successfully in App Store Connect. It remains subject to App Review and is not yet publicly distributed | 2026-08-16 |
 | iPhone-only or iPhone+iPad | DECIDED | iPhone-only for V1; remove iPad from the final binary and record iPad screenshots as N/A | 2026-08-22 |
-| Privacy/legal owner and support contact | PARTIAL — SUPPORT OPEN | Individual privacy/legal owner: **Calum Peter Webb**. No company is required. Public support contact still needs explicit approval | 2026-08-22 |
+| Privacy/legal owner and support contact | DECIDED | Individual privacy/legal owner: **Calum Peter Webb**. No company is required. Publish **support@worldwidewebb.co** as the support contact; Calum will later configure private forwarding outside the repository | 2026-08-22 |
 | Copyright | DECIDED | **2026 Calum Peter Webb** | 2026-08-22 |
 | Account deletion/shared-data behavior | DECIDED | Immediate selective local erasure with deterministic active-member succession: shared jars survive when another active member remains; the active member with the lowest `(joined_at,id)` becomes owner; creator-authored jar text and the departing person's linked content are erased; invites rotate; sole-active-member jars are deleted; re-registration is fresh. Apple revocation is attempted from fresh authorization but cannot delay local erasure; failures retry durably and surface for manual action. No unspecified legal-retention exception was requested | 2026-08-22 |
 | Moderation response target and escalation | DECIDED | Calum is the single V1 operator; urgent safety reports target 24 hours, ordinary reports 48 hours; unresolved/legally sensitive cases escalate to the public support path | 2026-08-22 |
@@ -726,13 +726,13 @@ evidence with stable URLs/IDs. “Observed” without a timestamp/source is inva
 | 2026-08-16T04:35:42Z | P01 | Requested App Store name | PASS — saved, not reviewed | App `6778544752` | [Saved name and current setup evidence](../evidence/dont-text-your-ex/p01-app-store-state-2026-08-16.md) and [cropped capture](../evidence/dont-text-your-ex/assets/p01-app-name-saved-2026-08-16.png), SHA-256 `3cd3ce07…`; remains subject to App Review | Coordinator + `/root/p01_name_screenshot_review` |
 | 2026-08-16 | P01 | Deletion and operator-plane decision analysis | PASS / OWNER CONFIRMATION OPEN | current schema/infrastructure | [Schema-aware decision analysis](../evidence/dont-text-your-ex/p01-decision-analysis-2026-08-16.md); operator architecture decided by coordinator after `/root/p01_operator_plane`; deletion consequences and operator responsibility await Calum after `/root/p01_deletion_decision` | Named audit agents + coordinator |
 | 2026-08-16 | P01/P03 | Temporal delivery reconciliation | PASS / OWNER CONFIRMATION OPEN | T-42 coordinator branch | [Temporal orchestration ADR](../adr/0014-dont-text-your-ex-temporal-orchestration.md) and [account-deletion data map](../../apps/dont-text-your-ex/docs/account-deletion-data-map.md) record the incompatible shared-jar and Apple-order proposals; W01/W02 may proceed, W10 destructive work may not | `/root/runtime_design`, `/root/outbox_workflows`, coordinator |
-| 2026-08-22 | P01 | Recommended release defaults and legal identity | OWNER APPROVAL RECORDED; TWO FIELDS OPEN | `2940b01cd` baseline | Calum approved the recommended release defaults, identified the project as personal/non-commercial with no company, and supplied the individual legal/privacy-owner name **Calum Peter Webb**. The deletion conflict is resolved in favor of active-member succession plus immediate local erasure with durable Apple retry. Public support contact and Content Rights attestation remain open | Calum + coordinator; DSA wording checked against current Apple guidance |
+| 2026-08-22 | P01 | Recommended release defaults and legal identity | OWNER APPROVAL RECORDED; ONE FIELD OPEN | `2940b01cd` baseline | Calum approved the recommended release defaults, identified the project as personal/non-commercial with no company, supplied the individual legal/privacy-owner name **Calum Peter Webb**, and approved **support@worldwidewebb.co** as the public support contact. The private forwarding destination is intentionally not recorded in the public repository. The deletion conflict is resolved in favor of active-member succession plus immediate local erasure with durable Apple retry. Only the Content Rights attestation remains open | Calum + coordinator; DSA wording checked against current Apple guidance |
 
 ## Blocker ledger
 
 | Opened | Packet | Blocker | Owner | Next action | Status |
 |---|---|---|---|---|---|
-| 2026-08-15 | P01 | Owner/legal/product decisions not yet recorded | Calum | Confirm that the previously supplied private Apple-contact address may also be published as the support contact, and that all app content is owned or appropriately licensed | NARROWED — TWO OWNER FIELDS OPEN |
+| 2026-08-15 | P01 | Owner/legal/product decisions not yet recorded | Calum | Confirm that all app content is owned or appropriately licensed | NARROWED — ONE OWNER FIELD OPEN; SUPPORT CONTACT DECIDED |
 
 ## Notification ledger
 
@@ -748,11 +748,12 @@ evidence with stable URLs/IDs. “Observed” without a timestamp/source is inva
 
 - **Calculated progress:** 5% (`P00` proven).
 - **Current packet:** P01.
-- **Current blockers:** P01 has only two owner fields left: permission to publish
-  the proposed support email and the Content Rights ownership/license
-  attestation. All other P01 product/legal defaults, including deletion,
+- **Current blockers:** P01 has only one owner field left: the Content Rights
+  ownership/license attestation. The public support address is
+  `support@worldwidewebb.co`; its private forwarding destination is deliberately
+  excluded from repository evidence. All other P01 product/legal defaults, including deletion,
   moderation, distribution, and non-trader status, are decided. Build 25 remains
   an interim TestFlight build, not the final compliance release candidate.
-- **Next action:** obtain the two remaining owner confirmations, close P01, then
+- **Next action:** obtain the remaining Content Rights confirmation, close P01, then
   mark the already-proven P02 work against its now-satisfied dependency and
   start dependency-ready P03/P05 implementation.
