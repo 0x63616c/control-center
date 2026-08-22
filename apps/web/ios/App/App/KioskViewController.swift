@@ -27,6 +27,7 @@ class KioskViewController: CAPBridgeViewController {
     override func capacitorDidLoad() {
         bridge?.registerPluginInstance(UISoundPlugin())
         bridge?.registerPluginInstance(PanelVolumePlugin())
+        bridge?.registerPluginInstance(KioskDiagnosticsPlugin())
     }
 
     override func viewDidAppear(_ animated: Bool) {

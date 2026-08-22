@@ -9,6 +9,7 @@
 
 import { BUILD_HASH, BUILD_TIME } from "../../config/build";
 import { resolveDeviceId } from "../device-id";
+import { startNativeDiagnostics } from "../native-diagnostics";
 import { shortSha } from "../short-sha";
 import { queryClient } from "../trpc";
 import { installCapture } from "./capture";
@@ -26,6 +27,7 @@ export function initLogging(): void {
   // decoupled: a shipping failure never touches logging (see ship.ts). Ships in
   // the browser too (web sessions have a `web-*` device id).
   startShipping();
+  startNativeDiagnostics();
 
   // Warm the two async-resolved identity fields. Both are best-effort and cached;
   // entries captured before they land carry their defaults ("web" build, and the
