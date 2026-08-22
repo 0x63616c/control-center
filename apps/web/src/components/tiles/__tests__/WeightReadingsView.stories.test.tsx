@@ -12,6 +12,7 @@ import * as stories from "../WeightReadingsView.stories";
 const {
   Populated,
   DayExpanded,
+  EditIndividualMetric,
   BodyComposition,
   AutoFlagged,
   SingleDay,
@@ -52,6 +53,13 @@ describe("WeightReadingsView stories", () => {
   it("DayExpanded: delete is gated behind the confirm dialog", async () => {
     const { container } = render(<DayExpanded />);
     if (DayExpanded.play) await DayExpanded.play({ canvasElement: container });
+  });
+
+  it("EditIndividualMetric: clears fat without changing weight", async () => {
+    const { container } = render(<EditIndividualMetric />);
+    if (EditIndividualMetric.play) {
+      await EditIndividualMetric.play({ canvasElement: container });
+    }
   });
 
   it("BodyComposition: shows on Withings rows, absent on ha_ble-era rows", async () => {

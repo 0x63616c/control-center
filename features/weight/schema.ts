@@ -33,11 +33,21 @@ export const weightMeasurement = pgTable(
     measuredAt: timestamp("measured_at", { withTimezone: true }).notNull().unique(),
     // Canonical metric. lb is presentation-only.
     weightKg: doublePrecision("weight_kg").notNull(),
+    // Panel corrections are overlays, not rewrites of the Withings payload.
+    // Keeping the reported value intact means a later source re-sync cannot
+    // silently erase a correction and leaves the original evidence available.
+    manualWeightKg: doublePrecision("manual_weight_kg"),
     // Body composition as reported (fat/muscle/hydration/bone/fat-free), keyed
     // by the names in WEIGHT_METRICS. Null whenever a Withings sync didn't
     // include bio-impedance (e.g. socks/shoes on, or a failed impedance read) ,
     // a weight-only sync is a real, expected shape, not an error.
     bodyMetrics: jsonb("body_metrics").$type<Record<string, number>>(),
+    // Per-key overlay on bodyMetrics. A number replaces the reported value;
+    // JSON null deliberately clears only that metric. Unmentioned keys keep
+    // following Withings, including metrics added by a later sync.
+    manualBodyMetricOverrides: jsonb("manual_body_metric_overrides").$type<
+      Record<string, number | null>
+    >(),
     source: text("source").notNull(), // always 'withings_api'; the ha_ble rows were purged in #251
     // Withings' own measurement-group id (direct-API ingest only; null for
     // HA-sourced rows). Unique so a correction Calum makes in the Health Mate

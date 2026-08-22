@@ -132,16 +132,55 @@ export const WEIGHT_METRICS = {
 } as const;
 
 export type WeightMetric = keyof typeof WEIGHT_METRICS;
+export type BodyMetric = Exclude<WeightMetric, "weight_kg">;
+
+const BODY_METRICS = {
+  fat_ratio_percent: WEIGHT_METRICS.fat_ratio_percent,
+  fat_mass_kg: WEIGHT_METRICS.fat_mass_kg,
+  muscle_mass_kg: WEIGHT_METRICS.muscle_mass_kg,
+  hydration_kg: WEIGHT_METRICS.hydration_kg,
+  bone_mass_kg: WEIGHT_METRICS.bone_mass_kg,
+  fat_free_mass_kg: WEIGHT_METRICS.fat_free_mass_kg,
+} as const satisfies Record<BodyMetric, (typeof WEIGHT_METRICS)[WeightMetric]>;
 
 export const metricInput = z.enum(Object.keys(WEIGHT_METRICS) as [WeightMetric, ...WeightMetric[]]);
+export const bodyMetricInput = z.enum(Object.keys(BODY_METRICS) as [BodyMetric, ...BodyMetric[]]);
+
+const editedBodyMetricValueInput = z.number().finite().nonnegative().max(500).nullable();
+
+export const editReadingInput = z
+  .object({
+    id: z.string(),
+    weightKg: z.number().finite().min(1).max(500).optional(),
+    bodyMetrics: z.partialRecord(bodyMetricInput, editedBodyMetricValueInput).optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (input.weightKg === undefined && Object.keys(input.bodyMetrics ?? {}).length === 0) {
+      ctx.addIssue({ code: "custom", message: "at least one measurement change is required" });
+    }
+    const fat = input.bodyMetrics?.fat_ratio_percent;
+    if (fat != null && fat > 100) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["bodyMetrics", "fat_ratio_percent"],
+        message: "fat percentage must be at most 100",
+      });
+    }
+  });
 
 /**
  * The value being plotted, as a SQL expression. Body-composition metrics live
  * in jsonb, so they need an explicit ->> + cast; weight is a real column.
  */
 export function metricExpr(metric: WeightMetric): SQL<number> {
-  if (metric === "weight_kg") return sql<number>`${weightMeasurement.weightKg}`;
-  return sql<number>`(${weightMeasurement.bodyMetrics} ->> ${metric})::double precision`;
+  if (metric === "weight_kg") {
+    return sql<number>`coalesce(${weightMeasurement.manualWeightKg}, ${weightMeasurement.weightKg})`;
+  }
+  return sql<number>`case
+    when ${weightMeasurement.manualBodyMetricOverrides} ? ${metric}
+      then (${weightMeasurement.manualBodyMetricOverrides} ->> ${metric})::double precision
+    else (${weightMeasurement.bodyMetrics} ->> ${metric})::double precision
+  end`;
 }
 
 const RANGE_DAYS = { "7d": 7, "30d": 30, all: null } as const;
@@ -151,9 +190,23 @@ interface DayRow {
   day: string;
   measuredAt: Date;
   weightKg: number;
+  manualWeightKg?: number | null;
   excludedReason: string | null;
   /** Withings body composition; absent/null for a weight-only sync. */
   bodyMetrics?: Record<string, number> | null;
+  manualBodyMetricOverrides?: Record<string, number | null> | null;
+}
+
+export function applyBodyMetricOverrides(
+  reported: Record<string, number> | null | undefined,
+  overrides: Record<string, number | null> | null | undefined,
+): Record<string, number> | null {
+  const effective = { ...(reported ?? {}) };
+  for (const [key, value] of Object.entries(overrides ?? {})) {
+    if (value === null) delete effective[key];
+    else effective[key] = value;
+  }
+  return Object.keys(effective).length > 0 ? effective : null;
 }
 
 /**
@@ -185,15 +238,18 @@ export function assembleDays(rows: DayRow[]) {
     let prevIncludedKg: number | null = null;
     const withDeltas = oldestFirst.map((r) => {
       const deltaKg =
-        r.excludedReason == null && prevIncludedKg != null ? r.weightKg - prevIncludedKg : null;
-      if (r.excludedReason == null) prevIncludedKg = r.weightKg;
+        r.excludedReason == null && prevIncludedKg != null
+          ? (r.manualWeightKg ?? r.weightKg) - prevIncludedKg
+          : null;
+      const effectiveWeightKg = r.manualWeightKg ?? r.weightKg;
+      if (r.excludedReason == null) prevIncludedKg = effectiveWeightKg;
       return {
         id: r.id,
         measuredAt: r.measuredAt.toISOString(),
-        weightKg: r.weightKg,
+        weightKg: effectiveWeightKg,
         excludedReason: r.excludedReason,
         deltaKg,
-        bodyMetrics: r.bodyMetrics ?? null,
+        bodyMetrics: applyBodyMetricOverrides(r.bodyMetrics, r.manualBodyMetricOverrides),
       };
     });
     return {
@@ -202,7 +258,9 @@ export function assembleDays(rows: DayRow[]) {
       // is NaN, and there is no superjson transformer on this router, so a
       // NaN would silently serialise to `null` while the type still claimed
       // `number` and the client would render "0.0 lb".
-      medianKg: included.length ? median(included.map((r) => r.weightKg)) : null,
+      medianKg: included.length
+        ? median(included.map((r) => r.manualWeightKg ?? r.weightKg))
+        : null,
       readings: withDeltas.reverse(),
     };
   });
@@ -316,8 +374,10 @@ export async function getDays(tz: string, cursor: string | undefined, limit: num
       day,
       measuredAt: weightMeasurement.measuredAt,
       weightKg: weightMeasurement.weightKg,
+      manualWeightKg: weightMeasurement.manualWeightKg,
       excludedReason: weightMeasurement.excludedReason,
       bodyMetrics: weightMeasurement.bodyMetrics,
+      manualBodyMetricOverrides: weightMeasurement.manualBodyMetricOverrides,
     })
     .from(weightMeasurement)
     .where(and(notDeleted(), inArray(day, queryDays)))
@@ -342,6 +402,27 @@ export async function setExcluded(id: string, excluded: boolean): Promise<void> 
     .update(weightMeasurement)
     .set({ excludedReason: excluded ? "manual" : null })
     .where(and(eq(weightMeasurement.id, id), notDeleted()));
+}
+
+export async function editReading(input: z.infer<typeof editReadingInput>): Promise<boolean> {
+  const [current] = await db
+    .select({ overrides: weightMeasurement.manualBodyMetricOverrides })
+    .from(weightMeasurement)
+    .where(and(eq(weightMeasurement.id, input.id), notDeleted()))
+    .limit(1);
+  if (!current) return false;
+
+  const nextOverrides = input.bodyMetrics
+    ? { ...(current.overrides ?? {}), ...input.bodyMetrics }
+    : undefined;
+  await db
+    .update(weightMeasurement)
+    .set({
+      ...(input.weightKg === undefined ? {} : { manualWeightKg: input.weightKg }),
+      ...(nextOverrides === undefined ? {} : { manualBodyMetricOverrides: nextOverrides }),
+    })
+    .where(and(eq(weightMeasurement.id, input.id), notDeleted()));
+  return true;
 }
 
 // Tombstone, never a hard DELETE: a correction Calum makes in the Health Mate

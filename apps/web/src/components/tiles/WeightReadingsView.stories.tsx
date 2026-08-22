@@ -16,13 +16,13 @@ import { WeightReadingsView } from "./WeightReadingsView";
 
 /** Withings body composition, as the wiring layer formats it. */
 const COMPOSITION = [
-  { label: "Fat", value: "17.1%" },
-  { label: "Fat mass", value: "27.3 lb" },
-  { label: "Muscle", value: "126.1 lb" },
-  { label: "Hydration", value: "94.8 lb" },
-  { label: "Bone", value: "6.6 lb" },
-  { label: "Fat-free", value: "132.7 lb" },
-];
+  { key: "fat_ratio_percent", label: "Fat", unit: "%", value: 17.067 },
+  { key: "fat_mass_kg", label: "Fat mass", unit: "lb", value: 27.34 },
+  { key: "muscle_mass_kg", label: "Muscle", unit: "lb", value: 126.14 },
+  { key: "hydration_kg", label: "Hydration", unit: "lb", value: 94.76 },
+  { key: "bone_mass_kg", label: "Bone", unit: "lb", value: 6.58 },
+  { key: "fat_free_mass_kg", label: "Fat-free", unit: "lb", value: 132.74 },
+] satisfies WeightReadingRow["composition"];
 
 /**
  * Today's four rows are the real ones recorded on 2026-07-22. Deliberately
@@ -40,7 +40,7 @@ const TODAY: WeightReadingDay = {
     {
       id: "wm_01",
       timeLabel: "11:43 AM",
-      lb: 160.2,
+      lb: 160.24,
       deltaLb: -0.2,
       excluded: false,
       auto: false,
@@ -148,7 +148,7 @@ const meta = {
       </div>
     ),
   ],
-  args: { onToggle: fn(), onDelete: fn() },
+  args: { onToggle: fn(), onEdit: fn(), onDelete: fn() },
 } satisfies Meta<typeof WeightReadingsView>;
 
 export default meta;
@@ -180,6 +180,26 @@ export const DayExpanded: Story = {
     expect(args.onDelete).not.toHaveBeenCalled();
     await userEvent.click(await within(document.body).findByRole("button", { name: "Delete" }));
     expect(args.onDelete).toHaveBeenCalledWith("wm_01");
+  },
+};
+
+/** Edit can clear one bad body-composition value while preserving weight. */
+export const EditIndividualMetric: Story = {
+  args: { status: "populated", days: DAYS },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: /Today/ }));
+    await userEvent.click(canvas.getByRole("button", { name: "Actions for the 11:43 AM reading" }));
+    await userEvent.click(canvas.getByRole("menuitem", { name: "Edit" }));
+    const dialog = within(
+      await within(document.body).findByRole("dialog", { name: "Edit reading" }),
+    );
+    expect(dialog.getByRole("textbox", { name: "Weight in pounds" })).toHaveValue("160.2");
+    await userEvent.click(dialog.getByRole("button", { name: "Clear Fat" }));
+    await userEvent.click(dialog.getByRole("button", { name: "Save changes" }));
+    expect(args.onEdit).toHaveBeenCalledWith("wm_01", {
+      bodyMetrics: { fat_ratio_percent: null },
+    });
   },
 };
 

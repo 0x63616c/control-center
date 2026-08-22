@@ -85,6 +85,7 @@ vi.mock("@/lib/trpc", () => ({
         }),
       },
       setExcluded: { useMutation: () => ({ mutate: () => {} }) },
+      edit: { useMutation: () => ({ mutate: () => {} }) },
       delete: { useMutation: () => ({ mutate: () => {} }) },
     },
   },
