@@ -12,6 +12,10 @@ import * as stories from "../WeightReadingsView.stories";
 const {
   Populated,
   DayExpanded,
+  EditIndividualMetric,
+  CorrectIndividualMetric,
+  RejectInvalidMetric,
+  SaveFailure,
   BodyComposition,
   AutoFlagged,
   SingleDay,
@@ -52,6 +56,32 @@ describe("WeightReadingsView stories", () => {
   it("DayExpanded: delete is gated behind the confirm dialog", async () => {
     const { container } = render(<DayExpanded />);
     if (DayExpanded.play) await DayExpanded.play({ canvasElement: container });
+  });
+
+  it("EditIndividualMetric: clears fat without changing weight", async () => {
+    const { container } = render(<EditIndividualMetric />);
+    if (EditIndividualMetric.play) {
+      await EditIndividualMetric.play({ canvasElement: container });
+    }
+  });
+
+  it("CorrectIndividualMetric: corrects fat without changing weight", async () => {
+    const { container } = render(<CorrectIndividualMetric />);
+    if (CorrectIndividualMetric.play) {
+      await CorrectIndividualMetric.play({ canvasElement: container });
+    }
+  });
+
+  it("RejectInvalidMetric: validates fat percentage before saving", async () => {
+    const { container } = render(<RejectInvalidMetric />);
+    if (RejectInvalidMetric.play) {
+      await RejectInvalidMetric.play({ canvasElement: container });
+    }
+  });
+
+  it("SaveFailure: reports a failed save and keeps the editor open", async () => {
+    const { container } = render(<SaveFailure />);
+    if (SaveFailure.play) await SaveFailure.play({ canvasElement: container });
   });
 
   it("BodyComposition: shows on Withings rows, absent on ha_ble-era rows", async () => {

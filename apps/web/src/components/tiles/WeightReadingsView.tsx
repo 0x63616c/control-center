@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { ConfirmDialog, OverflowMenu, Pill, PillTone, Skeleton, TileStatus } from "@/components/ui";
+import type { WeightReadingComposition, WeightReadingEdit } from "./WeightReadingEditDialog";
+import { WeightReadingEditDialog } from "./WeightReadingEditDialog";
 
 /**
  * WeightReadingsView — presentational Readings variant of the weight detail
@@ -30,13 +32,8 @@ export interface WeightReadingRow {
   excluded: boolean;
   /** True when the exclusion came from the sanity band, not a manual toggle. */
   auto: boolean;
-  /**
-   * Body composition for this reading, already formatted and unit-suffixed by
-   * the wiring layer. Empty/absent for a weight-only Withings sync (no
-   * bio-impedance contact) — those simply render no strip rather than a row
-   * of dashes.
-   */
-  composition?: { label: string; value: string }[];
+  /** All editable fields; null values stay hidden in the collapsed evidence strip. */
+  composition?: WeightReadingComposition[];
 }
 
 export interface WeightReadingDay {
@@ -61,6 +58,7 @@ export interface WeightReadingsViewProps {
   /** Omitted until the tombstone column exists — the menu then hides Delete
    *  rather than offering an action that silently does nothing. */
   onDelete?: (id: string) => void;
+  onEdit?: (id: string, edit: WeightReadingEdit) => void | Promise<void>;
   /** Called when the end of the list scrolls into view. Omit when there is
    *  nothing more to load — the sentinel is then not rendered at all. */
   onLoadMore?: () => void;
@@ -175,13 +173,15 @@ function Chevron({ open }: { open: boolean }) {
 function ReadingRow({
   row,
   onToggle,
+  onRequestEdit,
   onRequestDelete,
 }: {
   row: WeightReadingRow;
   onToggle: (id: string, excluded: boolean) => void;
+  onRequestEdit: ((row: WeightReadingRow) => void) | undefined;
   onRequestDelete: ((row: WeightReadingRow) => void) | undefined;
 }) {
-  const composition = row.composition ?? [];
+  const composition = (row.composition ?? []).filter((metric) => metric.value !== null);
   return (
     <div style={{ opacity: row.excluded ? 0.55 : 1 }}>
       <div
@@ -214,6 +214,15 @@ function ReadingRow({
                   },
                 ]
               : []),
+            ...(onRequestEdit
+              ? [
+                  {
+                    key: "edit",
+                    label: "Edit",
+                    onSelect: () => onRequestEdit(row),
+                  },
+                ]
+              : []),
             ...(onRequestDelete
               ? [
                   {
@@ -243,7 +252,8 @@ function ReadingRow({
             <span key={c.label} style={{ fontSize: 12, color: "var(--ink-3)" }}>
               {c.label}{" "}
               <span className="mono" style={{ color: "var(--ink-2)" }}>
-                {c.value}
+                {c.value?.toFixed(1)}
+                {c.unit === "%" ? "%" : " lb"}
               </span>
             </span>
           ))}
@@ -256,10 +266,12 @@ function ReadingRow({
 function DayGroup({
   day,
   onToggle,
+  onRequestEdit,
   onRequestDelete,
 }: {
   day: WeightReadingDay;
   onToggle: (id: string, excluded: boolean) => void;
+  onRequestEdit: ((row: WeightReadingRow) => void) | undefined;
   onRequestDelete: ((row: WeightReadingRow) => void) | undefined;
 }) {
   const [open, setOpen] = useState(false);
@@ -304,6 +316,7 @@ function DayGroup({
               key={row.id}
               row={row}
               onToggle={onToggle}
+              onRequestEdit={onRequestEdit}
               onRequestDelete={onRequestDelete}
             />
           ))}
@@ -317,10 +330,12 @@ export function WeightReadingsView({
   status,
   days,
   onToggle,
+  onEdit,
   onDelete,
   onLoadMore,
 }: WeightReadingsViewProps) {
   const [pendingDelete, setPendingDelete] = useState<WeightReadingRow | null>(null);
+  const [pendingEdit, setPendingEdit] = useState<WeightReadingRow | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -369,6 +384,7 @@ export function WeightReadingsView({
             key={day.key}
             day={day}
             onToggle={onToggle}
+            onRequestEdit={onEdit ? setPendingEdit : undefined}
             onRequestDelete={onDelete ? setPendingDelete : undefined}
           />
         ))}
@@ -392,6 +408,11 @@ export function WeightReadingsView({
           setPendingDelete(null);
         }}
         onClose={() => setPendingDelete(null)}
+      />
+      <WeightReadingEditDialog
+        row={pendingEdit}
+        onSave={(id, edit) => onEdit?.(id, edit)}
+        onClose={() => setPendingEdit(null)}
       />
     </div>
   );

@@ -1,9 +1,13 @@
 import { PgDialect } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
+import { WEIGHT_METRICS } from "./metrics";
 import {
+  applyBodyMetricOverrides,
   assembleDays,
+  bodyMetricInput,
   dailyMedians,
   dayExpr,
+  editReadingInput,
   formatWeighInAlert,
   isOutsideSanityBand,
   isValidTimeZone,
@@ -12,7 +16,6 @@ import {
   metricInput,
   summarize,
   tzInput,
-  WEIGHT_METRICS,
 } from "./service";
 
 describe("median", () => {
@@ -131,15 +134,64 @@ describe("metricExpr", () => {
     const { sql } = dialect.sqlToQuery(metricExpr("weight_kg"));
     expect(sql).toContain("weight_kg");
     expect(sql).not.toContain("body_metrics");
+    expect(sql).toContain("manual_weight_kg");
   });
 
   it("reads body composition out of the jsonb as a number", () => {
     const { params, sql } = dialect.sqlToQuery(metricExpr("fat_ratio_percent"));
     expect(sql).toContain("body_metrics");
+    expect(sql).toContain("manual_body_metric_overrides");
     expect(sql).toContain("double precision");
     // The key is bound, never concatenated into the statement.
     expect(params).toContain("fat_ratio_percent");
     expect(sql).not.toContain("'fat_ratio_percent'");
+  });
+});
+
+describe("editReadingInput", () => {
+  it("accepts a weight correction and per-metric edits or clears", () => {
+    expect(
+      editReadingInput.parse({
+        id: "wm_1",
+        weightKg: 72,
+        bodyMetrics: { fat_ratio_percent: null, muscle_mass_kg: 55 },
+      }),
+    ).toEqual({
+      id: "wm_1",
+      weightKg: 72,
+      bodyMetrics: { fat_ratio_percent: null, muscle_mass_kg: 55 },
+    });
+  });
+
+  it("rejects empty edits, impossible percentages, and unknown metrics", () => {
+    expect(() => editReadingInput.parse({ id: "wm_1" })).toThrow();
+    expect(() =>
+      editReadingInput.parse({ id: "wm_1", bodyMetrics: { fat_ratio_percent: 101 } }),
+    ).toThrow();
+    expect(() => editReadingInput.parse({ id: "wm_1", bodyMetrics: { bmi: 20 } })).toThrow();
+  });
+});
+
+describe("applyBodyMetricOverrides", () => {
+  it("edits and clears individual metrics without disturbing the others", () => {
+    expect(
+      applyBodyMetricOverrides(
+        { fat_ratio_percent: 10.512, muscle_mass_kg: 55, hydration_kg: 42 },
+        { fat_ratio_percent: null, muscle_mass_kg: 56 },
+      ),
+    ).toEqual({ muscle_mass_kg: 56, hydration_kg: 42 });
+  });
+
+  it("returns null after the final reported metric is cleared", () => {
+    expect(
+      applyBodyMetricOverrides({ fat_ratio_percent: 10.512 }, { fat_ratio_percent: null }),
+    ).toBeNull();
+  });
+});
+
+describe("bodyMetricInput", () => {
+  it("excludes weight because it is a required column, not a body metric", () => {
+    expect(() => bodyMetricInput.parse("weight_kg")).toThrow();
   });
 });
 
@@ -229,6 +281,26 @@ describe("assembleDays", () => {
     });
     // undefined would serialise away; null is the explicit "never had any".
     expect(day?.readings[1]?.bodyMetrics).toBeNull();
+  });
+
+  it("uses manual overlays while preserving the valid parts of a reading", () => {
+    const [day] = assembleDays([
+      {
+        id: "wm_aug12",
+        day: "2026-08-12",
+        measuredAt: new Date("2026-08-12T13:26:53Z"),
+        weightKg: 71.71,
+        manualWeightKg: 72,
+        excludedReason: null,
+        bodyMetrics: { fat_ratio_percent: 10.512, muscle_mass_kg: 56 },
+        manualBodyMetricOverrides: { fat_ratio_percent: null },
+      },
+    ]);
+    expect(day?.medianKg).toBe(72);
+    expect(day?.readings[0]).toMatchObject({
+      weightKg: 72,
+      bodyMetrics: { muscle_mass_kg: 56 },
+    });
   });
 
   it("groups newest day first with medians and day-over-day deltas", () => {

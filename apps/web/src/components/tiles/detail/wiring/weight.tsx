@@ -8,11 +8,13 @@
  * lb only). Day grouping and all statistics happen server-side.
  */
 
+import { BODY_METRIC_KEYS, type BodyMetric, WEIGHT_METRICS } from "@features/weight/metrics";
 import { formatRecency, LB_PER_KG } from "@features/weight/web";
 import { keepPreviousData } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { WeightMetricValue, WeightRange, WeightUnit } from "@/components/tiles/WeightPageView";
 import { WeightPageView } from "@/components/tiles/WeightPageView";
+import type { WeightReadingEdit } from "@/components/tiles/WeightReadingEditDialog";
 import type { WeightReadingDay } from "@/components/tiles/WeightReadingsView";
 import { WeightReadingsView } from "@/components/tiles/WeightReadingsView";
 import { TileStatus } from "@/components/ui";
@@ -39,28 +41,44 @@ function windowLabelOf(daily: { day: string }[], now: Date): string | null {
 /**
  * Body composition for one reading, in display order and units. Masses convert
  * to lb like every other weight on this page; the fat ratio stays a percentage.
- * Keys the scale didn't report are skipped, so a partial sync renders what it
- * has instead of padding the row with blanks.
+ * Every known field is retained so the editor can add or clear a value; nulls
+ * remain hidden in the compact readings list.
  */
-const COMPOSITION_FIELDS: { key: string; label: string; unit: "lb" | "%" }[] = [
-  { key: "fat_ratio_percent", label: "Fat", unit: "%" },
-  { key: "fat_mass_kg", label: "Fat mass", unit: "lb" },
-  { key: "muscle_mass_kg", label: "Muscle", unit: "lb" },
-  { key: "hydration_kg", label: "Hydration", unit: "lb" },
-  { key: "bone_mass_kg", label: "Bone", unit: "lb" },
-  { key: "fat_free_mass_kg", label: "Fat-free", unit: "lb" },
-];
+const COMPOSITION_FIELDS: {
+  key: BodyMetric;
+  label: string;
+  unit: "lb" | "%";
+}[] = BODY_METRIC_KEYS.map((key) => ({
+  key,
+  label: WEIGHT_METRICS[key].label,
+  unit: WEIGHT_METRICS[key].unit === "percent" ? "%" : "lb",
+}));
 
 function toComposition(
   bodyMetrics: Record<string, number> | null,
-): { label: string; value: string }[] {
-  if (!bodyMetrics) return [];
-  return COMPOSITION_FIELDS.flatMap(({ key, label, unit }) => {
-    const raw = bodyMetrics[key];
-    if (raw == null) return [];
-    const value = unit === "%" ? `${raw.toFixed(1)}%` : `${(raw * LB_PER_KG).toFixed(1)} lb`;
-    return [{ label, value }];
+): { key: BodyMetric; label: string; unit: "lb" | "%"; value: number | null }[] {
+  return COMPOSITION_FIELDS.map(({ key, label, unit }) => {
+    const raw = bodyMetrics?.[key];
+    return {
+      key,
+      label,
+      unit,
+      value: raw == null ? null : unit === "%" ? raw : raw * LB_PER_KG,
+    };
   });
+}
+
+function editToApi(id: string, edit: WeightReadingEdit) {
+  const bodyMetrics: Partial<Record<BodyMetric, number | null>> = {};
+  for (const { key, value } of edit.bodyMetrics ?? []) {
+    const unit = WEIGHT_METRICS[key].unit;
+    bodyMetrics[key] = value === null || unit === "percent" ? value : value / LB_PER_KG;
+  }
+  return {
+    id,
+    ...(edit.weightLb === undefined ? {} : { weightKg: edit.weightLb / LB_PER_KG }),
+    ...(Object.keys(bodyMetrics).length === 0 ? {} : { bodyMetrics }),
+  };
 }
 
 function toViewDays(pages: RouterOutputs["weight"]["days"][], now: Date): WeightReadingDay[] {
@@ -152,6 +170,7 @@ function useWeightVariants(): { variants: DetailVariant[]; loading: boolean } {
     void utils.weight.days.invalidate();
   };
   const setExcludedMutation = trpc.weight.setExcluded.useMutation({ onSettled: invalidate });
+  const editMutation = trpc.weight.edit.useMutation({ onSettled: invalidate });
   const deleteMutation = trpc.weight.delete.useMutation({ onSettled: invalidate });
 
   // The Readings list can't poll (its day-string cursors are frozen at first
@@ -240,6 +259,7 @@ function useWeightVariants(): { variants: DetailVariant[]; loading: boolean } {
           status={pages ? TileStatus.Populated : TileStatus.Loading}
           days={pages ? toViewDays(pages, now) : undefined}
           onToggle={(id, excluded) => setExcludedMutation.mutate({ id, excluded })}
+          onEdit={(id, edit) => editMutation.mutateAsync(editToApi(id, edit)).then(() => undefined)}
           onDelete={(id) => deleteMutation.mutate({ id })}
           onLoadMore={daysQuery.hasNextPage ? loadMore : undefined}
         />

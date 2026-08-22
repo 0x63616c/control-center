@@ -48,6 +48,22 @@ export const weightRouter = router({
       return { ok: true } as const;
     }),
 
+  edit: publicProcedure.input(service.editReadingInput).mutation(async ({ input }) => {
+    const edited = await service.editReading(input);
+    if (!edited) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "weight measurement not found" });
+    }
+    getLogger().info(
+      {
+        id: input.id,
+        weightEdited: input.weightKg !== undefined,
+        bodyMetricsEdited: Object.keys(input.bodyMetrics ?? {}),
+      },
+      "weight measurement edited",
+    );
+    return { ok: true } as const;
+  }),
+
   // Tombstone, never a hard DELETE: ingest re-inserts any row it can still see
   // in the HA sensor's current state (weight-service.ts, apps/api).
   delete: publicProcedure.input(z.object({ id: z.string() })).mutation(async ({ input }) => {
