@@ -9,6 +9,7 @@ import type { SQL } from "drizzle-orm";
 import { and, desc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "./db";
+import { BODY_METRIC_KEYS, WEIGHT_METRICS, type WeightMetric } from "./metrics";
 import { weightMeasurement } from "./schema";
 
 const SANITY_BAND_KG = 5.4; // 12 lb
@@ -121,30 +122,8 @@ export const tzInput = z.string().refine(isValidTimeZone, {
  * web boundary (the panel speaks lb for body mass), "percent" values are NOT —
  * a fat ratio has no lb equivalent and multiplying it by 2.2 would be nonsense.
  */
-export const WEIGHT_METRICS = {
-  weight_kg: { label: "Weight", unit: "kg" },
-  fat_ratio_percent: { label: "Fat", unit: "percent" },
-  fat_mass_kg: { label: "Fat mass", unit: "kg" },
-  muscle_mass_kg: { label: "Muscle", unit: "kg" },
-  hydration_kg: { label: "Hydration", unit: "kg" },
-  bone_mass_kg: { label: "Bone", unit: "kg" },
-  fat_free_mass_kg: { label: "Fat-free", unit: "kg" },
-} as const;
-
-export type WeightMetric = keyof typeof WEIGHT_METRICS;
-export type BodyMetric = Exclude<WeightMetric, "weight_kg">;
-
-const BODY_METRICS = {
-  fat_ratio_percent: WEIGHT_METRICS.fat_ratio_percent,
-  fat_mass_kg: WEIGHT_METRICS.fat_mass_kg,
-  muscle_mass_kg: WEIGHT_METRICS.muscle_mass_kg,
-  hydration_kg: WEIGHT_METRICS.hydration_kg,
-  bone_mass_kg: WEIGHT_METRICS.bone_mass_kg,
-  fat_free_mass_kg: WEIGHT_METRICS.fat_free_mass_kg,
-} as const satisfies Record<BodyMetric, (typeof WEIGHT_METRICS)[WeightMetric]>;
-
 export const metricInput = z.enum(Object.keys(WEIGHT_METRICS) as [WeightMetric, ...WeightMetric[]]);
-export const bodyMetricInput = z.enum(Object.keys(BODY_METRICS) as [BodyMetric, ...BodyMetric[]]);
+export const bodyMetricInput = z.enum(BODY_METRIC_KEYS);
 
 const editedBodyMetricValueInput = z.number().finite().nonnegative().max(500).nullable();
 

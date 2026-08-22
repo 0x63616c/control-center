@@ -1,15 +1,10 @@
+import type { BodyMetric } from "@features/weight/metrics";
 import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
 import { Button, Field, Modal, TextInput } from "@/components/ui";
 import type { WeightReadingRow } from "./WeightReadingsView";
 
-export type WeightCompositionKey =
-  | "fat_ratio_percent"
-  | "fat_mass_kg"
-  | "muscle_mass_kg"
-  | "hydration_kg"
-  | "bone_mass_kg"
-  | "fat_free_mass_kg";
+export type WeightCompositionKey = BodyMetric;
 
 export interface WeightReadingComposition {
   key: WeightCompositionKey;
@@ -19,14 +14,23 @@ export interface WeightReadingComposition {
   value: number | null;
 }
 
-export interface WeightReadingEdit {
-  weightLb?: number;
-  bodyMetrics?: Partial<Record<WeightCompositionKey, number | null>>;
+export interface WeightBodyMetricEdit {
+  key: WeightCompositionKey;
+  value: number | null;
 }
 
-function compositionValue(row: WeightReadingRow, key: WeightCompositionKey): string {
-  const value = row.composition?.find((metric) => metric.key === key)?.value;
-  return value === null || value === undefined ? "" : value.toFixed(1);
+type NonEmptyBodyMetricEdits = readonly [WeightBodyMetricEdit, ...WeightBodyMetricEdit[]];
+
+export type WeightReadingEdit =
+  | { weightLb: number; bodyMetrics?: NonEmptyBodyMetricEdits }
+  | { weightLb?: never; bodyMetrics: NonEmptyBodyMetricEdits };
+
+function bodyValuesOf(row: WeightReadingRow): Partial<Record<WeightCompositionKey, string>> {
+  const values: Partial<Record<WeightCompositionKey, string>> = {};
+  for (const metric of row.composition ?? []) {
+    values[metric.key] = metric.value === null ? "" : metric.value.toFixed(1);
+  }
+  return values;
 }
 
 export function WeightReadingEditDialog({
@@ -35,35 +39,23 @@ export function WeightReadingEditDialog({
   onClose,
 }: {
   row: WeightReadingRow | null;
-  onSave: (id: string, edit: WeightReadingEdit) => void;
+  onSave: (id: string, edit: WeightReadingEdit) => void | Promise<void>;
   onClose: () => void;
 }) {
   const [weight, setWeight] = useState("");
-  const [bodyValues, setBodyValues] = useState<Record<WeightCompositionKey, string>>({
-    fat_ratio_percent: "",
-    fat_mass_kg: "",
-    muscle_mass_kg: "",
-    hydration_kg: "",
-    bone_mass_kg: "",
-    fat_free_mass_kg: "",
-  });
+  const [bodyValues, setBodyValues] = useState<Partial<Record<WeightCompositionKey, string>>>({});
   const [error, setError] = useState<string>();
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!row) return;
     setWeight(row.lb.toFixed(1));
-    setBodyValues({
-      fat_ratio_percent: compositionValue(row, "fat_ratio_percent"),
-      fat_mass_kg: compositionValue(row, "fat_mass_kg"),
-      muscle_mass_kg: compositionValue(row, "muscle_mass_kg"),
-      hydration_kg: compositionValue(row, "hydration_kg"),
-      bone_mass_kg: compositionValue(row, "bone_mass_kg"),
-      fat_free_mass_kg: compositionValue(row, "fat_free_mass_kg"),
-    });
+    setBodyValues(bodyValuesOf(row));
     setError(undefined);
+    setSaving(false);
   }, [row]);
 
-  const submit = (event: FormEvent) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!row) return;
     const nextWeight = Number(weight);
@@ -72,9 +64,9 @@ export function WeightReadingEditDialog({
       return;
     }
 
-    const bodyMetrics: Partial<Record<WeightCompositionKey, number | null>> = {};
+    const bodyMetrics: WeightBodyMetricEdit[] = [];
     for (const metric of row.composition ?? []) {
-      const text = bodyValues[metric.key].trim();
+      const text = (bodyValues[metric.key] ?? "").trim();
       const value = text === "" ? null : Number(text);
       const max = metric.unit === "%" ? 100 : 1_100;
       if (value !== null && (!Number.isFinite(value) || value < 0 || value > max)) {
@@ -82,18 +74,37 @@ export function WeightReadingEditDialog({
         return;
       }
       const displayedOriginal = metric.value === null ? null : Number(metric.value.toFixed(1));
-      if (value !== displayedOriginal) bodyMetrics[metric.key] = value;
+      if (value !== displayedOriginal) bodyMetrics.push({ key: metric.key, value });
     }
 
-    const edit: WeightReadingEdit = {};
-    if (nextWeight !== Number(row.lb.toFixed(1))) edit.weightLb = nextWeight;
-    if (Object.keys(bodyMetrics).length > 0) edit.bodyMetrics = bodyMetrics;
-    if (edit.weightLb === undefined && edit.bodyMetrics === undefined) {
+    const weightChanged = nextWeight !== Number(row.lb.toFixed(1));
+    const [firstBodyMetric, ...remainingBodyMetrics] = bodyMetrics;
+    if (!weightChanged && firstBodyMetric === undefined) {
       onClose();
       return;
     }
-    onSave(row.id, edit);
-    onClose();
+    let edit: WeightReadingEdit;
+    if (firstBodyMetric === undefined) {
+      edit = { weightLb: nextWeight };
+    } else {
+      const nonEmptyBodyMetrics: NonEmptyBodyMetricEdits = [
+        firstBodyMetric,
+        ...remainingBodyMetrics,
+      ];
+      edit = weightChanged
+        ? { weightLb: nextWeight, bodyMetrics: nonEmptyBodyMetrics }
+        : { bodyMetrics: nonEmptyBodyMetrics };
+    }
+
+    setSaving(true);
+    setError(undefined);
+    try {
+      await onSave(row.id, edit);
+      onClose();
+    } catch {
+      setError("Could not save this reading. Check the connection and try again.");
+      setSaving(false);
+    }
   };
 
   return (
@@ -110,6 +121,7 @@ export function WeightReadingEditDialog({
               label="Weight in pounds"
               value={weight}
               onChange={setWeight}
+              disabled={saving}
             />
             <span style={{ marginLeft: 8, color: "var(--ink-3)", fontSize: 13 }}>lb</span>
           </Field>
@@ -120,32 +132,30 @@ export function WeightReadingEditDialog({
                 <TextInput
                   id={id}
                   label={`${metric.label} in ${metric.unit === "%" ? "percent" : "pounds"}`}
-                  value={bodyValues[metric.key]}
+                  value={bodyValues[metric.key] ?? ""}
                   onChange={(value) =>
                     setBodyValues((current) => ({ ...current, [metric.key]: value }))
                   }
+                  disabled={saving}
                 />
                 <span style={{ marginLeft: 8, color: "var(--ink-3)", fontSize: 13 }}>
                   {metric.unit}
                 </span>
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
                   aria-label={`Clear ${metric.label}`}
                   onClick={() => setBodyValues((current) => ({ ...current, [metric.key]: "" }))}
-                  disabled={bodyValues[metric.key] === ""}
+                  disabled={(bodyValues[metric.key] ?? "") === "" || saving}
                   style={{
                     marginLeft: 8,
                     padding: "0 10px",
                     height: 36,
-                    borderRadius: 10,
-                    border: "1px solid var(--hair)",
-                    background: "var(--nest)",
-                    color: "var(--ink-2)",
-                    opacity: bodyValues[metric.key] === "" ? 0.4 : 1,
+                    opacity: (bodyValues[metric.key] ?? "") === "" ? 0.4 : 1,
                   }}
                 >
                   Clear
-                </button>
+                </Button>
               </Field>
             );
           })}
@@ -153,10 +163,12 @@ export function WeightReadingEditDialog({
             {error}
           </div>
           <div style={{ display: "flex", gap: 12 }}>
-            <Button type="button" variant="ghost" onClick={onClose}>
+            <Button type="button" variant="ghost" onClick={onClose} disabled={saving}>
               Cancel
             </Button>
-            <Button type="submit">Save changes</Button>
+            <Button type="submit" loading={saving}>
+              {saving ? "Saving…" : "Save changes"}
+            </Button>
           </div>
         </form>
       )}

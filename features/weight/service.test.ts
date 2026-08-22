@@ -1,5 +1,6 @@
 import { PgDialect } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
+import { WEIGHT_METRICS } from "./metrics";
 import {
   applyBodyMetricOverrides,
   assembleDays,
@@ -15,7 +16,6 @@ import {
   metricInput,
   summarize,
   tzInput,
-  WEIGHT_METRICS,
 } from "./service";
 
 describe("median", () => {

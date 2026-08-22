@@ -58,7 +58,7 @@ export interface WeightReadingsViewProps {
   /** Omitted until the tombstone column exists — the menu then hides Delete
    *  rather than offering an action that silently does nothing. */
   onDelete?: (id: string) => void;
-  onEdit?: (id: string, edit: WeightReadingEdit) => void;
+  onEdit?: (id: string, edit: WeightReadingEdit) => void | Promise<void>;
   /** Called when the end of the list scrolls into view. Omit when there is
    *  nothing more to load — the sentinel is then not rendered at all. */
   onLoadMore?: () => void;

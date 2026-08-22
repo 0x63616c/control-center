@@ -185,7 +185,7 @@ export const DayExpanded: Story = {
 
 /** Edit can clear one bad body-composition value while preserving weight. */
 export const EditIndividualMetric: Story = {
-  args: { status: "populated", days: DAYS },
+  args: { status: "populated", days: DAYS, onEdit: fn() },
   play: async ({ canvasElement, args }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole("button", { name: /Today/ }));
@@ -198,8 +198,75 @@ export const EditIndividualMetric: Story = {
     await userEvent.click(dialog.getByRole("button", { name: "Clear Fat" }));
     await userEvent.click(dialog.getByRole("button", { name: "Save changes" }));
     expect(args.onEdit).toHaveBeenCalledWith("wm_01", {
-      bodyMetrics: { fat_ratio_percent: null },
+      bodyMetrics: [{ key: "fat_ratio_percent", value: null }],
     });
+  },
+};
+
+/** Edit can correct one body-composition value without changing weight. */
+export const CorrectIndividualMetric: Story = {
+  args: { status: "populated", days: DAYS, onEdit: fn() },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: /Today/ }));
+    await userEvent.click(canvas.getByRole("button", { name: "Actions for the 11:43 AM reading" }));
+    await userEvent.click(canvas.getByRole("menuitem", { name: "Edit" }));
+    const dialog = within(
+      await within(document.body).findByRole("dialog", { name: "Edit reading" }),
+    );
+    const fat = dialog.getByRole("textbox", { name: "Fat in percent" });
+    await userEvent.clear(fat);
+    await userEvent.type(fat, "18.0");
+    await userEvent.click(dialog.getByRole("button", { name: "Save changes" }));
+    expect(args.onEdit).toHaveBeenCalledWith("wm_01", {
+      bodyMetrics: [{ key: "fat_ratio_percent", value: 18 }],
+    });
+  },
+};
+
+/** Invalid values stay in the editor with a specific validation message. */
+export const RejectInvalidMetric: Story = {
+  args: { status: "populated", days: DAYS, onEdit: fn() },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: /Today/ }));
+    await userEvent.click(canvas.getByRole("button", { name: "Actions for the 11:43 AM reading" }));
+    await userEvent.click(canvas.getByRole("menuitem", { name: "Edit" }));
+    const dialog = within(
+      await within(document.body).findByRole("dialog", { name: "Edit reading" }),
+    );
+    const fat = dialog.getByRole("textbox", { name: "Fat in percent" });
+    await userEvent.clear(fat);
+    await userEvent.type(fat, "101");
+    await userEvent.click(dialog.getByRole("button", { name: "Save changes" }));
+    expect(dialog.getByRole("alert")).toHaveTextContent("Fat must be between 0 and 100%.");
+    expect(args.onEdit).not.toHaveBeenCalled();
+  },
+};
+
+/** A failed save keeps the editor open and explains that nothing was saved. */
+export const SaveFailure: Story = {
+  args: {
+    status: "populated",
+    days: DAYS,
+    onEdit: fn(async () => {
+      throw new Error("offline");
+    }),
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: /Today/ }));
+    await userEvent.click(canvas.getByRole("button", { name: "Actions for the 11:43 AM reading" }));
+    await userEvent.click(canvas.getByRole("menuitem", { name: "Edit" }));
+    const dialog = within(
+      await within(document.body).findByRole("dialog", { name: "Edit reading" }),
+    );
+    await userEvent.click(dialog.getByRole("button", { name: "Clear Fat" }));
+    await userEvent.click(dialog.getByRole("button", { name: "Save changes" }));
+    await waitFor(() =>
+      expect(dialog.getByRole("alert")).toHaveTextContent("Could not save this reading"),
+    );
+    expect(dialog.getByRole("button", { name: "Save changes" })).toBeEnabled();
   },
 };
 
