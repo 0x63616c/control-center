@@ -116,9 +116,9 @@ No restored database may receive application traffic before this gate passes.
 The journal and live tombstone expire 31 days after local erasure, one day after
 the newest allowed backup containing the user has expired.
 
-## Shared-jar decision requiring explicit owner confirmation
+## Approved shared-jar and external-revocation decision
 
-Two committed documents currently conflict:
+Two committed documents previously conflicted:
 
 1. The Temporal delivery contract closes owned open jars, performs immediate
    local erasure, preserves only unlinkable numeric shared history, and retries
@@ -127,13 +127,29 @@ Two committed documents currently conflict:
    member, deleting the departing member's tallies/linked history, and requiring
    Apple revocation before changing the database.
 
-The coordinator recommends option 1 because an Apple outage cannot delay local
-deletion, authorship is never falsely transferred, and other members' records
-are not cascade-deleted. The requester's instruction to implement the delivery
-does not erase the explicit-confirmation guard in the two documents. Record the
-chosen option, attribution, and date here before writing the destructive
-migration.
+Calum approved the recommended release defaults on 2026-08-22. The resulting
+contract deliberately combines the user-visible shared-jar behavior from option
+2 with the outage-safe ordering from option 1:
 
-**Status:** `OWNER DECISION REQUIRED`<br>
-**Decision:** —<br>
-**Attributed to/date:** —
+- An owned jar survives when another active member remains. Exactly one
+  successor is selected by the lowest `(joined_at,id)` among active
+  non-deleting members. This changes authorization ownership only; it does not
+  rewrite `created_by` or claim the successor authored the jar.
+- Creator-authored jar name/rule are reset to neutral text, creator/closer
+  references are nulled, and the invite capability is rotated. The departing
+  person's membership, tally, slips, reports/evidence, linked activity, private
+  labels, and other authored/linked content are erased. Unrelated friends' rows
+  remain.
+- A jar with no other active member is deleted; former members are not promoted.
+- Local erasure is immediate and cannot wait on Apple availability. Fresh Apple
+  authorization is captured when available; revocation is attempted and then
+  retried durably for up to 24 hours, after which the request enters
+  `manual_action_required`. Revocation material is destroyed at the terminal
+  outcome and never logged.
+- Re-registration with the same Apple subject creates a fresh internal account
+  with no restored memberships or history. No unspecified legal-retention
+  exception applies.
+
+**Status:** `OWNER APPROVED`<br>
+**Decision:** active-member succession + immediate local erasure + durable Apple retry<br>
+**Attributed to/date:** Calum Peter Webb, 2026-08-22
