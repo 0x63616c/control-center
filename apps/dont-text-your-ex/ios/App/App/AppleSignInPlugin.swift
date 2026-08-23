@@ -76,12 +76,21 @@ extension AppleSignInPlugin: ASAuthorizationControllerDelegate {
             return
         }
 
+        guard let authorizationCodeData = credential.authorizationCode,
+              let authorizationCode = String(data: authorizationCodeData, encoding: .utf8),
+              !authorizationCode.isEmpty else {
+            logger.error("Apple sign-in returned no usable authorization code attemptId=\(attemptId, privacy: .public)")
+            reject(call, code: "apple_sign_in_missing_authorization_code", message: "Apple sign-in returned no authorization code")
+            finish()
+            return
+        }
+
         let fullName = credential.fullName.flatMap { PersonNameComponentsFormatter().string(from: $0).trimmingCharacters(in: .whitespacesAndNewlines) }
         logger.info("Apple sign-in returned identity token attemptId=\(attemptId, privacy: .public) hasAuthorizationCode=\(credential.authorizationCode != nil, privacy: .public) hasFullName=\(fullName?.isEmpty == false, privacy: .public)")
 
         var response: [String: Any] = [
             "identityToken": identityToken,
-            "hasAuthorizationCode": credential.authorizationCode != nil,
+            "authorizationCode": authorizationCode,
             "user": credential.user,
             "attemptId": attemptId
         ]

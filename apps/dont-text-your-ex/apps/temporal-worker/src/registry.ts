@@ -9,6 +9,7 @@ export const WORKFLOW_TYPES = [
   "UrgeRescueWorkflow",
   "StreakMilestoneSweepWorkflow",
   "InviteLifecycleWorkflow",
+  "AccountDeletionWorkflow",
 ] as const;
 export const MANAGED_SCHEDULE_PREFIX = "dtye_";
 export const ACTIVITY_TYPES = [
@@ -26,6 +27,9 @@ export const ACTIVITY_TYPES = [
   "StreakMilestoneSweepActivity",
   "loadInviteLifecycle",
   "requestInviteReminder",
+  "eraseAccountLocally",
+  "revokeAppleCredential",
+  "finishAccountDeletion",
 ] as const;
 export const SCHEDULES = [
   {

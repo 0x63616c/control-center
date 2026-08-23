@@ -12,6 +12,12 @@ const valid = {
   APNS_TEAM_ID: "team-id",
   APNS_KEY_CONTENT: "private-key",
   PUSH_TOKEN_KEYRING: '{"activeKeyId":"v1","keys":{"v1":"example"}}',
+  SIWA_KEY_ID: "siwa-key-id",
+  SIWA_TEAM_ID: "siwa-team-id",
+  SIWA_KEY_CONTENT: "siwa-private-key",
+  APPLE_BUNDLE_ID: "co.worldwidewebb.textyourex",
+  ACCOUNT_DELETION_KEYRING:
+    '{"activeKeyId":"v1","keys":{"v1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}',
 };
 
 describe("DTYE worker config", () => {
@@ -38,5 +44,14 @@ describe("DTYE worker config", () => {
     expect(() => parseTemporalWorkerConfig({ ...valid, APNS_KEY_CONTENT: undefined })).toThrow(
       /notification delivery secrets must be configured/,
     );
+  });
+
+  test("fails before connecting when account deletion secrets are absent", () => {
+    expect(() => parseTemporalWorkerConfig({ ...valid, SIWA_KEY_CONTENT: undefined })).toThrow(
+      /account deletion secrets must be configured/,
+    );
+    expect(() =>
+      parseTemporalWorkerConfig({ ...valid, ACCOUNT_DELETION_KEYRING: undefined }),
+    ).toThrow(/account deletion secrets must be configured/);
   });
 });

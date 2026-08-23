@@ -13,10 +13,17 @@ import { createLogger } from "@www/logger";
 import { initMetrics, startMetricsServer } from "@www/platform/metrics";
 import { temporalScheduleGateway } from "@www/temporal-runtime";
 import { Pool } from "pg";
+import {
+  createAccountDeletionCipher,
+  PostgresAccountDeletionStore,
+  parseAccountDeletionKeyring,
+} from "../../api/src/account-deletion";
 import { DomainTransactionRunner } from "../../api/src/domain-transaction";
 import { PostgresOutbox } from "../../api/src/outbox";
 import { PostgresRescueStore } from "../../api/src/rescue-store";
+import { createAccountDeletionActivities } from "./account-deletion";
 import { createDtyeActivities } from "./activities";
+import { createAppleClientSecret, createAppleRevocationGateway } from "./apple-revocation";
 import { prepareTemporalWorker } from "./boot";
 import { temporalWorkerConfig } from "./config";
 import { createInviteLifecycleActivities, PostgresInviteLifecycleStore } from "./invite-lifecycle";
@@ -62,6 +69,14 @@ async function main(): Promise<void> {
   const reports = new PostgresReportAccountabilityStore(pool);
   const transactions = new DomainTransactionRunner({ pool });
   const temporalGateway = new TemporalClientWorkflowGateway(client);
+  const accountDeletionStore = new PostgresAccountDeletionStore(
+    pool,
+    transactions,
+    Date.now,
+    createAccountDeletionCipher(
+      parseAccountDeletionKeyring(JSON.parse(config.accountDeletionKeyring)),
+    ),
+  );
   const apnsClients = {
     production: createApnsClient({
       authorization: apnsAuthorization,
@@ -98,6 +113,19 @@ async function main(): Promise<void> {
     reports,
     rescue: createRescueActivities({ store: new PostgresRescueStore(pool) }),
     invites: createInviteLifecycleActivities(new PostgresInviteLifecycleStore(pool, transactions)),
+    accountDeletion: createAccountDeletionActivities({
+      store: accountDeletionStore,
+      apple: createAppleRevocationGateway({
+        clientId: config.appleBundleId,
+        clientSecret: () =>
+          createAppleClientSecret({
+            keyId: config.siwaKeyId,
+            teamId: config.siwaTeamId,
+            clientId: config.appleBundleId,
+            keyContent: config.siwaKeyContent,
+          }),
+      }),
+    }),
   });
   const worker = await prepareTemporalWorker({
     config,

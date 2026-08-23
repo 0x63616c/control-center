@@ -7,6 +7,8 @@ import {
   CloseJarRequestSchema,
   CreateJarRequestSchema,
   CreateReportRequestSchema,
+  DeleteAccountRequestSchema,
+  DeleteAccountResponseSchema,
   DisablePushDeviceRequestSchema,
   InviteCodeSchema,
   JarIdSchema,
@@ -182,6 +184,15 @@ api.patch("/me", async (c) => {
   }
   if (body.exes !== undefined) await store.setExes(uid, body.exes);
   return c.json(await store.getMe(uid));
+});
+
+api.delete("/me", async (c) => {
+  const uid = requireUser(c);
+  if (!uid) return c.json(unauth, 401);
+  const parsed = await parseRequestJson(c, DeleteAccountRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  const receipt = await store.requestAccountDeletion(uid, parsed.value.authorizationCode);
+  return c.json(DeleteAccountResponseSchema.parse(receipt), 202);
 });
 
 api.patch("/me/timezone", async (c) => {

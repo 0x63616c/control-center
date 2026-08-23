@@ -13,6 +13,7 @@ describe("DTYE Temporal registry", () => {
       "UrgeRescueWorkflow",
       "StreakMilestoneSweepWorkflow",
       "InviteLifecycleWorkflow",
+      "AccountDeletionWorkflow",
     ]);
     expect(Object.keys(workflows)).toContain("DtyeHealthCheckWorkflow");
     expect(Object.keys(workflows)).toContain("NotificationDeliveryWorkflow");
@@ -20,6 +21,7 @@ describe("DTYE Temporal registry", () => {
     expect(Object.keys(workflows)).toContain("UrgeRescueWorkflow");
     expect(Object.keys(workflows)).toContain("StreakMilestoneSweepWorkflow");
     expect(Object.keys(workflows)).toContain("InviteLifecycleWorkflow");
+    expect(Object.keys(workflows)).toContain("AccountDeletionWorkflow");
     expect(ACTIVITY_TYPES).toEqual([
       "DtyeHealthCheckActivity",
       "OutboxDispatchActivity",
@@ -35,6 +37,9 @@ describe("DTYE Temporal registry", () => {
       "StreakMilestoneSweepActivity",
       "loadInviteLifecycle",
       "requestInviteReminder",
+      "eraseAccountLocally",
+      "revokeAppleCredential",
+      "finishAccountDeletion",
     ]);
     expect(MANAGED_SCHEDULE_PREFIX).toBe("dtye_");
     expect(SCHEDULES).toEqual([

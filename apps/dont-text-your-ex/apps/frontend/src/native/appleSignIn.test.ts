@@ -15,7 +15,7 @@ vi.mock("@capacitor/core", () => ({
 function response(overrides: Partial<AppleSignInResponse> = {}): AppleSignInResponse {
   return {
     identityToken: "signed.identity.token",
-    hasAuthorizationCode: true,
+    authorizationCode: "single-use-authorization-code",
     user: "apple-user-123",
     attemptId: "attempt_active",
     state: "state_active",
@@ -64,6 +64,13 @@ describe("native Sign in with Apple request binding", () => {
     await expect(authorizeAppleSignIn(request)).resolves.toEqual(response());
 
     nativeAuthorize.mockResolvedValue({ ...response(), identityToken: 123 });
+    await expect(authorizeAppleSignIn(request)).rejects.toThrow();
+
+    nativeAuthorize.mockResolvedValue({ ...response(), authorizationCode: "" });
+    await expect(authorizeAppleSignIn(request)).rejects.toThrow();
+
+    const { authorizationCode: _authorizationCode, ...withoutAuthorizationCode } = response();
+    nativeAuthorize.mockResolvedValue(withoutAuthorizationCode);
     await expect(authorizeAppleSignIn(request)).rejects.toThrow();
 
     nativeAuthorize.mockResolvedValue({ ...response(), unexpected: "native-field" });

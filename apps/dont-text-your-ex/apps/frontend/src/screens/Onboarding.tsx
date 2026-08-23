@@ -104,6 +104,7 @@ export function Onboarding({
         return;
       }
       let identityToken: string;
+      let authorizationCode: string;
       let nonce: string;
       let fullName: string | undefined;
       try {
@@ -113,6 +114,7 @@ export function Onboarding({
           await services.authorizeAppleSignIn(attempt.request),
         );
         identityToken = response.identityToken;
+        authorizationCode = response.authorizationCode;
         nonce = attempt.rawNonce;
         fullName = response.fullName;
       } catch (e) {
@@ -130,6 +132,7 @@ export function Onboarding({
       try {
         const { token, user, status } = await services.signInWithApple({
           identityToken,
+          authorizationCode,
           nonce,
           fullName,
         });

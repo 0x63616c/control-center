@@ -13,7 +13,7 @@ export type AppleSignInRequest = {
 
 export type AppleSignInResponse = {
   readonly identityToken: string;
-  readonly hasAuthorizationCode: boolean;
+  readonly authorizationCode: string;
   readonly user: string;
   readonly fullName?: string;
   readonly attemptId: string;
@@ -23,7 +23,7 @@ export type AppleSignInResponse = {
 const AppleSignInResponseSchema = z
   .object({
     identityToken: z.string().min(1),
-    hasAuthorizationCode: z.boolean(),
+    authorizationCode: z.string().min(1),
     user: z.string().min(1),
     fullName: z.string().optional(),
     attemptId: z.string().min(1),

@@ -22,6 +22,12 @@ import {
   UserIdSchema,
   UserSchema,
 } from "../../../contracts";
+import {
+  type AccountDeletionReceipt,
+  createAccountDeletionCipher,
+  PostgresAccountDeletionStore,
+  parseAccountDeletionKeyring,
+} from "./account-deletion";
 import { DAY, now, pool } from "./db/index";
 import {
   type InviteVersionId,
@@ -31,7 +37,7 @@ import {
   MembershipTenureIdSchema,
 } from "./domain-events";
 import { type DomainTransactionContext, DomainTransactionRunner } from "./domain-transaction";
-import { temporalAddress } from "./env";
+import { accountDeletionKeyringSource, temporalAddress } from "./env";
 import { id, inviteCode } from "./ids";
 import { parseEvidenceImageJson, serializeEvidenceImageJson } from "./persistence";
 import { TemporalPostCommitNudge, temporalRecoveryWorkflowStarter } from "./temporal-nudge";
@@ -153,6 +159,12 @@ const domainTransactions = new DomainTransactionRunner({
       ? undefined
       : new TemporalPostCommitNudge(temporalRecoveryWorkflowStarter(configuredTemporalAddress)),
 });
+const accountDeletions = new PostgresAccountDeletionStore(
+  pool,
+  domainTransactions,
+  now,
+  createAccountDeletionCipher(parseAccountDeletionKeyring(accountDeletionKeyringSource())),
+);
 
 async function withTransaction<T>(
   operation: (client: PoolClient, emit: DomainTransactionContext["emit"]) => Promise<T>,
@@ -305,10 +317,13 @@ const SESSION_ABSOLUTE_LIFETIME_MS = 30 * DAY;
 export async function createSession(userId: UserId): Promise<SessionToken> {
   const token = SessionTokenSchema.parse(id("sess", 24));
   const createdAt = now();
-  await pool.query(
-    "INSERT INTO sessions (token, user_id, created_at, expires_at, last_used_at) VALUES ($1,$2,$3,$4,$5)",
+  const result = await pool.query(
+    `INSERT INTO sessions (token, user_id, created_at, expires_at, last_used_at)
+     SELECT $1,id,$3,$4,$5 FROM users
+     WHERE id=$2 AND deletion_requested_at IS NULL`,
     [token, userId, createdAt, createdAt + SESSION_ABSOLUTE_LIFETIME_MS, createdAt],
   );
+  if (result.rowCount !== 1) throw new Error("account is being deleted");
   return token;
 }
 
@@ -326,6 +341,13 @@ export async function userIdForToken(token: SessionToken): Promise<UserId | null
 
 export async function deleteSession(token: SessionToken): Promise<void> {
   await pool.query("DELETE FROM sessions WHERE token=$1", [token]);
+}
+
+export function requestAccountDeletion(
+  userId: UserId,
+  authorizationCode?: string,
+): Promise<AccountDeletionReceipt> {
+  return accountDeletions.request({ userId, authorizationCode });
 }
 
 export async function findUserByPhone(phone: string): Promise<UserDTO | null> {

@@ -31,6 +31,7 @@ import type {
 } from "./report-accountability";
 import { nextPagingDecision } from "./workflow-paging";
 
+export { AccountDeletionWorkflow } from "./account-deletion-workflow";
 export { InviteLifecycleWorkflow } from "./invite-workflow";
 
 export interface DtyeHealthCheckWorkflowInput {
