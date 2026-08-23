@@ -759,6 +759,7 @@ evidence with stable URLs/IDs. “Observed” without a timestamp/source is inva
 | 2026-08-16T05:17:08Z | 5% | P02 implementation/review update; no earned-progress change | `KVx7azibmFNU` | Review findings were fixed; the four initially rejected captures were subsequently corrected, recaptured, and passed. P01 owner/legal decisions still gate P02 and earned progress. |
 | 2026-08-16T05:53:40Z | 5% | P02 merged, deployed publicly, and uploaded as interim Build 25; no earned-progress change | `oWCgVOw5YMLK` | P01 owner/legal decisions still gate P02. Account deletion, UGC safety, legal pages, final RC, physical QA, listing, submission, approval, and public App Store proof remain. |
 | 2026-08-23T16:48:33Z | 13% | P01 owner decisions and P02 supportive positioning proven | `cajXUWRyze2w` | P03 account deletion is in progress. UGC safety, edge/API abuse controls, legal pages, final RC, physical QA, listing, submission, approval, and public proof remain. |
+| 2026-08-23T18:24:17Z | 13% | P03 local gates green and branch pushed; no earned-progress change | `KL7sE0ZBfKeS` | Independent review is running. Production Apple revocation key, PR CI, merge, deployment, live restore rehearsal, public probes, and device proof remain. |
 
 ## Current status
 
