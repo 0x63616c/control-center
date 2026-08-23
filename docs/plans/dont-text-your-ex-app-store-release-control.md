@@ -38,8 +38,8 @@ Locked identity and targets:
 
 - Repository: `0x63616c/world-wide-webb`
 - App path: `apps/dont-text-your-ex`
-- Product name: **Don’t Text Your Ex** (App Store Connect currently says
-  **Don’t Text Your Ex Together**; packet `P01` resolves this)
+- Product name: **Don’t Text Your Ex** (saved in App Store Connect; still
+  subject to App Review)
 - Bundle ID: `co.worldwidewebb.textyourex`
 - Version: `1.0`
 - Production: `https://dont-text-your-ex.worldwidewebb.co`
@@ -269,7 +269,7 @@ the data model/deletion/moderation inventory is final.
 
 ### P01 — Owner decisions and public-release contract — 4%
 
-- **Status:** `IN PROGRESS`
+- **Status:** `PROVEN`
 - **Dependencies:** P00
 - **Decisions:** final store name; iPhone-only versus universal iPhone/iPad;
   privacy/legal owner; support contact; copyright; free/paid; territories;
@@ -289,7 +289,7 @@ the data model/deletion/moderation inventory is final.
 
 ### P02 — Supportive positioning and complete copy audit — 4%
 
-- **Status:** `NOT STARTED`
+- **Status:** `PROVEN`
 - **Dependencies:** P01
 - **Work:** replace public/runtime “shame,” “wall of shame,” “guilt,” “snitched,”
   “carnage,” “poor impulse control,” and payment-teasing copy with private,
@@ -311,12 +311,13 @@ the data model/deletion/moderation inventory is final.
   [`docs/evidence/dont-text-your-ex/p02/README.md`](../evidence/dont-text-your-ex/p02/README.md).
   The implementation was merged in PR #709 at `647757a50`; merge-SHA CI,
   CodeQL, the home-server rollout, public HTTPS/API probes, and independent
-  reviews all passed. This does not change P02 from `NOT STARTED` or increase
-  earned progress because P01 remains incomplete.
+  reviews all passed. Calum completed P01 on 2026-08-23, satisfying P02's final
+  dependency; the existing implementation, deployment, public probes, tests,
+  and independent visual review therefore prove this packet.
 
 ### P03 — Account-deletion domain, API, and data semantics — 8%
 
-- **Status:** `NOT STARTED`
+- **Status:** `IN PROGRESS`
 - **Dependencies:** P01
 - **Work:** transactional authenticated deletion; session revocation; Sign in
   with Apple token revocation; removal/anonymization of profile, avatar, private
@@ -356,8 +357,12 @@ the data model/deletion/moderation inventory is final.
 - **Dependencies:** P01
 - **Work:** separate abuse reports from gameplay reports; block/unblock model;
   blocked interaction semantics; objectionable-text filtering at all relevant
-  server boundaries; moderation statuses/audit; rate limiting; safe evidence
-  handling and operator authorization.
+  server boundaries; moderation statuses/audit; layered rate limiting; safe
+  evidence handling and operator authorization. Add Cloudflare zone-level WAF
+  rate-limit rules scoped to `dont-text-your-ex.worldwidewebb.co/api/*`, with
+  stricter budgets for authentication, invite probing/joining, uploads, reports,
+  and other state-changing operations. Add corresponding API-side per-user and
+  trusted-client-IP limits so origin safety does not depend solely on Cloudflare.
 - **Operator plane:** implement P01’s explicit protected-operator strategy
   (private kubectl/runbook or authenticated admin surface), define operator
   identity/authorization, and prove ordinary users cannot list, read, or resolve
@@ -366,7 +371,9 @@ the data model/deletion/moderation inventory is final.
   response, and contact requirements without leaking gameplay reporter identity
   or moderation information.
 - **Evidence:** migrations; raw HTTP/real-Postgres authorization and privacy
-  matrix; filter corpus/boundaries; rate-limit/idempotency tests; audit records.
+  matrix; filter corpus/boundaries; rate-limit/idempotency tests; Cloudflare
+  ruleset preview/live rule IDs; bounded 429 tests proving both edge and origin
+  enforcement without locking out ordinary app flows; audit records.
 - **Apple source:** https://developer.apple.com/app-store/review/guidelines/
 
 ### P06 — UGC safety UX, consent, and user control — 5%
@@ -456,7 +463,11 @@ the data model/deletion/moderation inventory is final.
   status, migration list, public probes, backup and scratch restore, cleanup.
 - **Integrated production additions:** prove P07 policy/support routes publicly;
   run P08’s production alert/queue/resolve/backup drill; verify moderation tables
-  survive restore; and remove synthetic data afterward.
+  survive restore; prove the public hostname routes only the configured frontend
+  and `/api` services through outbound-only Cloudflare Tunnel; exercise each WAF
+  and API-side limiter with safe bounded probes; confirm unrelated
+  `worldwidewebb.co` hosts and legitimate app flows are unaffected; and remove
+  synthetic data afterward.
 
 ### P11 — Final signed iOS release candidate, Build 25+ — 5%
 
@@ -689,23 +700,23 @@ the data model/deletion/moderation inventory is final.
 | Decision | Status | Decision / evidence | Date |
 |---|---|---|---|
 | Final App Store name | DECIDED + SAVED | **Don’t Text Your Ex**; explicitly requested by Calum and saved successfully in App Store Connect. It remains subject to App Review and is not yet publicly distributed | 2026-08-16 |
-| iPhone-only or iPhone+iPad | OPEN | Audit recommends iPhone-only for the shortest polished V1 path | — |
-| Privacy/legal owner and support contact | OPEN | Owner confirmation required | — |
-| Copyright | OPEN | Required version metadata; owner must provide exact wording | — |
-| Account deletion/shared-data behavior | OWNER CONFIRM — CONFLICT RECORDED | This plan's later audit recommends selective erasure + deterministic active-member succession and Apple-first revocation. The merged Temporal delivery contract instead closes owned jars, preserves only unlinkable numeric shared history, and erases locally before durable Apple retry. Delivery goal T-42 requested an explicit choice before W10; no destructive migration may implement either proposal until that answer is attributed here | 2026-08-16 |
-| Moderation response target and escalation | OPEN | Owner confirmation required | — |
-| Price/tax/territories | OPEN | Live state: no price schedule and no storefront availability configured; tax category is App Store software | 2026-08-16 |
-| Primary/secondary category | OPEN | Live state: both unset. Candidate primary Lifestyle; validate before save | 2026-08-16 |
-| Age/consent stance | OPEN | Complete against actual UGC/social capabilities | — |
-| DSA trader status | OWNER RECONFIRM | App Store Connect currently identifies this app as non-trader; legal accuracy still requires Calum’s confirmation | 2026-08-16 |
-| Content Rights | OPEN | Live state: not set up; owner attestation required | 2026-08-16 |
-| Release mode | OPEN | Current version is automatic-after-approval; recommend manual V1 release | 2026-08-16 |
-| License agreement | OWNER RECONFIRM | Apple Standard License Agreement currently applies; confirm no custom EULA | 2026-08-16 |
-| Mac / Vision Pro availability | OPEN | Both availability boxes are checked; Apple reports V1 incompatible with Vision Pro. Recommend disabling both for V1 unless deliberately tested | 2026-08-16 |
-| Distribution method | OWNER RECONFIRM | Public/discoverable is currently selected; School Manager reduced-price option is also checked | 2026-08-16 |
+| iPhone-only or iPhone+iPad | DECIDED | iPhone-only for V1; remove iPad from the final binary and record iPad screenshots as N/A | 2026-08-22 |
+| Privacy/legal owner and support contact | DECIDED | Individual privacy/legal owner: **Calum Peter Webb**. No company is required. Publish **support@worldwidewebb.co** as the support contact; Calum will later configure private forwarding outside the repository | 2026-08-22 |
+| Copyright | DECIDED | **2026 Calum Peter Webb** | 2026-08-22 |
+| Account deletion/shared-data behavior | DECIDED | Immediate selective local erasure with deterministic active-member succession: shared jars survive when another active member remains; the active member with the lowest `(joined_at,id)` becomes owner; creator-authored jar text and the departing person's linked content are erased; invites rotate; sole-active-member jars are deleted; re-registration is fresh. Apple revocation is attempted from fresh authorization but cannot delay local erasure; failures retry durably and surface for manual action. No unspecified legal-retention exception was requested | 2026-08-22 |
+| Moderation response target and escalation | DECIDED | Calum is the single V1 operator; urgent safety reports target 24 hours, ordinary reports 48 hours; unresolved/legally sensitive cases escalate to the public support path | 2026-08-22 |
+| Price/tax/territories | DECIDED | Free; no IAP, ads, or real payments; App Store software tax category; all storefronts Apple makes available | 2026-08-22 |
+| Primary/secondary category | DECIDED | Primary **Lifestyle**; secondary **Social Networking** | 2026-08-22 |
+| Age/consent stance | DECIDED | Product minimum age 13+; complete Apple's questionnaire truthfully against the final UGC/social feature set | 2026-08-22 |
+| DSA trader status | DECIDED — OWNER ATTESTED | **Non-trader**: Calum stated this is a personal project and he has no company. [Apple's current guidance](https://developer.apple.com/help/app-store-connect/manage-compliance-information/manage-european-union-digital-services-act-trader-requirements/) says a hobbyist acting outside a trade/business/profession with no intention to commercialize may not be a trader; the developer remains responsible for the self-assessment | 2026-08-22 |
+| Content Rights | DECIDED — OWNER ATTESTED | Calum confirms that the app's code, text, images, and other content are his or appropriately licensed | 2026-08-23 |
+| Release mode | DECIDED | Manual release after approval; phased release is N/A for initial V1 | 2026-08-22 |
+| License agreement | DECIDED | Apple Standard License Agreement; no custom EULA | 2026-08-22 |
+| Mac / Vision Pro availability | DECIDED | Disable both for V1; neither is represented as tested or supported | 2026-08-22 |
+| Distribution method | DECIDED | Public/discoverable App Store distribution; disable School Manager reduced-price availability for V1 | 2026-08-22 |
 | Protected moderation operator plane | DECIDED | Coordinator decision after `/root/p01_operator_plane` audit: private typed `moderationctl` + committed runbook in the existing API pod; no operator HTTP route/UI for V1 | 2026-08-16 |
-| V1 moderation operator responsibility | OWNER CONFIRM | Proposed: Calum operates the typed runbook using the existing cluster-admin credential as the single V1 root of trust; no additional operator until a least-privilege plane exists | 2026-08-16 |
-| V1 localization | OWNER RECONFIRM | Primary language is English (U.S.); recommend en-US only for V1 | 2026-08-16 |
+| V1 moderation operator responsibility | DECIDED | Calum operates the typed runbook using the existing cluster-admin credential as the single V1 root of trust; no additional operator until a least-privilege plane exists | 2026-08-22 |
+| V1 localization | DECIDED | English (U.S.) only for V1 | 2026-08-22 |
 
 ## Evidence ledger
 
@@ -726,12 +737,15 @@ evidence with stable URLs/IDs. “Observed” without a timestamp/source is inva
 | 2026-08-16T04:35:42Z | P01 | Requested App Store name | PASS — saved, not reviewed | App `6778544752` | [Saved name and current setup evidence](../evidence/dont-text-your-ex/p01-app-store-state-2026-08-16.md) and [cropped capture](../evidence/dont-text-your-ex/assets/p01-app-name-saved-2026-08-16.png), SHA-256 `3cd3ce07…`; remains subject to App Review | Coordinator + `/root/p01_name_screenshot_review` |
 | 2026-08-16 | P01 | Deletion and operator-plane decision analysis | PASS / OWNER CONFIRMATION OPEN | current schema/infrastructure | [Schema-aware decision analysis](../evidence/dont-text-your-ex/p01-decision-analysis-2026-08-16.md); operator architecture decided by coordinator after `/root/p01_operator_plane`; deletion consequences and operator responsibility await Calum after `/root/p01_deletion_decision` | Named audit agents + coordinator |
 | 2026-08-16 | P01/P03 | Temporal delivery reconciliation | PASS / OWNER CONFIRMATION OPEN | T-42 coordinator branch | [Temporal orchestration ADR](../adr/0014-dont-text-your-ex-temporal-orchestration.md) and [account-deletion data map](../../apps/dont-text-your-ex/docs/account-deletion-data-map.md) record the incompatible shared-jar and Apple-order proposals; W01/W02 may proceed, W10 destructive work may not | `/root/runtime_design`, `/root/outbox_workflows`, coordinator |
+| 2026-08-22 | P01 | Recommended release defaults and legal identity | OWNER APPROVAL RECORDED; ONE FIELD OPEN | `2940b01cd` baseline | Calum approved the recommended release defaults, identified the project as personal/non-commercial with no company, supplied the individual legal/privacy-owner name **Calum Peter Webb**, and approved **support@worldwidewebb.co** as the public support contact. The private forwarding destination is intentionally not recorded in the public repository. The deletion conflict is resolved in favor of active-member succession plus immediate local erasure with durable Apple retry. Only the Content Rights attestation remains open | Calum + coordinator; DSA wording checked against current Apple guidance |
+| 2026-08-23T16:48:33Z | P01/P02 | Final owner attestation and dependency closure | PASS — BOTH PACKETS PROVEN | `8b28d1ff2` branch baseline | Calum confirmed all app code, text, images, and other content are owned or appropriately licensed. This closes the final P01 field and satisfies P02's only dependency; P02's merged implementation, immutable CI, production deployment, public probes, and independently reviewed 20-image evidence set remain valid | Calum + coordinator |
+| 2026-08-23 | Operations | Temporal worker production repair | PASS | PR [#713](https://github.com/0x63616c/world-wide-webb/pull/713), `e710e1378` | Main CI [32598528985](https://github.com/0x63616c/world-wide-webb/actions/runs/32598528985) passed; live `dont-text-your-ex` deployment and pod were ready 1/1 with zero restarts after the runtime-image fix | Coordinator live cluster verification |
 
 ## Blocker ledger
 
 | Opened | Packet | Blocker | Owner | Next action | Status |
 |---|---|---|---|---|---|
-| 2026-08-15 | P01 | Owner/legal/product decisions not yet recorded | Calum | Confirm the exact P01 table after current-state and technical recommendations are merged | OPEN |
+| 2026-08-15 | P01 | Owner/legal/product decisions not yet recorded | Calum | None; all owner decisions are recorded | RESOLVED 2026-08-23 |
 
 ## Notification ledger
 
@@ -742,20 +756,16 @@ evidence with stable URLs/IDs. “Observed” without a timestamp/source is inva
 | 2026-08-16T04:26:59Z | 5% | P00 baseline proven and merged | `zPExehUPLTnr` | P01 owner decisions are next; compliance, RC, physical QA, listing, submission, approval, and public proof remain. |
 | 2026-08-16T05:17:08Z | 5% | P02 implementation/review update; no earned-progress change | `KVx7azibmFNU` | Review findings were fixed; the four initially rejected captures were subsequently corrected, recaptured, and passed. P01 owner/legal decisions still gate P02 and earned progress. |
 | 2026-08-16T05:53:40Z | 5% | P02 merged, deployed publicly, and uploaded as interim Build 25; no earned-progress change | `oWCgVOw5YMLK` | P01 owner/legal decisions still gate P02. Account deletion, UGC safety, legal pages, final RC, physical QA, listing, submission, approval, and public App Store proof remain. |
+| 2026-08-23T16:48:33Z | 13% | P01 owner decisions and P02 supportive positioning proven | `cajXUWRyze2w` | P03 account deletion is in progress. UGC safety, edge/API abuse controls, legal pages, final RC, physical QA, listing, submission, approval, and public proof remain. |
 
 ## Current status
 
-- **Calculated progress:** 5% (`P00` proven).
-- **Current packet:** P01.
-- **Current blockers:** P01 requires Calum's remaining explicit legal, business,
-  product, distribution, deletion, and moderation decisions. The requested App
-  Store name is already saved. Build 24's Beta App Review is external waiting
-  state and is not on the public-submission critical path. Build 25 uploaded
-  successfully after the P02 merge but is an interim TestFlight build, not the
-  final compliance release candidate.
-- **Next action:** obtain Calum’s explicit disposition for device family;
-  privacy/legal/support/copyright; deletion consequences; moderation SLA and
-  operator responsibility; price/tax/storefronts; categories; age/consent; DSA;
-  Content Rights; release mode; EULA; Mac/Vision/School Manager availability;
-  public distribution; and en-US-only localization. Then propagate the decisions
-  before starting dependency-ready P02/P03/P05 implementation packets.
+- **Calculated progress:** 13% (`P00`, `P01`, and `P02` proven).
+- **Current packet:** P03.
+- **Current blockers:** none. The public support address is
+  `support@worldwidewebb.co`; its private forwarding destination is deliberately
+  excluded from repository evidence. Build 25 remains an interim TestFlight
+  build, not the final compliance release candidate.
+- **Next action:** implement and prove transactional account deletion, Apple
+  revocation retry, session invalidation, shared-jar succession, and fresh
+  re-registration semantics against real Postgres.
